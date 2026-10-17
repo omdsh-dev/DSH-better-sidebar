@@ -1292,7 +1292,10 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   // kills a build still running and deletes the temp files it was holding —
   // an unmounted plugin must not leave orphan archives in the OS temp dir.
   const archiveTasks = createArchiveTasks()
-  ctx.effect(() => () => { archiveTasks.dispose() }, 'dsh-better-sidebar: archive task table')
+  // Return the teardown promise itself: Cordis awaits async disposers, and
+  // closing the in-flight descriptor before the unlink is what keeps a
+  // Windows temp file from becoming undeletable.
+  ctx.effect(() => () => archiveTasks.dispose(), 'dsh-better-sidebar: archive task table')
   const api = buildApi(ctx, resolved, () => settingsFace, assistantLive, archiveTasks)
   ctx.effect(() => ctx.webServer.register({
     kind: 'prefix',

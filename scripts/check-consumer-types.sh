@@ -124,6 +124,9 @@ import type {
   ClueReadResult, ClueSaveEditInput, ClueSourceRegistration, ClueTypeDescriptor,
   CluesService, Locator,
 } from 'dsh-better-sidebar/clues'
+// The host service must be visible on the VENDORED Cordis Context (the
+// `./clues` declaration augments it), not only as an `any` from ctx.get().
+import type { Context as VendoredContext } from '@deepseek-ai/cordis'
 
 const category: ClueErrorCategory = 'auth-required'
 const error = new ClueError(category, 'sign in to continue')
@@ -168,6 +171,11 @@ async function page(): Promise<ClueListResult> {
   return service.list({ workspaceId: 'ws-1', sourceId: 'x.docs' })
 }
 void page
+// The service augmentation: a source plugin's inject callback sees the typed
+// host face without importing this package's Context type or using `any`.
+declare const hostCtx: VendoredContext
+hostCtx.betterSidebarClues.registerSource(registration)
+void hostCtx.betterSidebarClues.getSources()
 EOF
 
 cat > "$WORK/tsconfig.json" <<'EOF'

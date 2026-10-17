@@ -1002,14 +1002,13 @@ S1 只交付**来源注册、领域操作、内置本地文件来源与错误/�
 **宿主半**：Cordis 服务 `betterSidebarClues`，公共类型与工厂从包子路径导入：
 
 ```ts
-import {
-  ClueError, createLocalFileSource, isClueError,
-  type ClueSourceRegistration, type Locator,
-} from 'dsh-better-sidebar/clues'
+import type { ClueSourceRegistration } from 'dsh-better-sidebar/clues'
 
 ctx.effect(() => {
-  const clues = ctx.get('betterSidebarClues') // 或用 inject 等待服务就绪
-  return clues.registerSource({
+  // 服务已在 `./clues` 的声明里合并进 Cordis Context，`ctx.get` 拿到的是
+  // 类型化的 `CluesService`（也可用 `ctx.inject(['betterSidebarClues'], …)` 等待就绪）。
+  const clues = ctx.get('betterSidebarClues')
+  const registration: ClueSourceRegistration = {
     descriptor: {
       sourceId: 'my-plugin:docs', name: 'My docs', order: 20, pluginId: 'my-plugin',
       types: ['my-plugin:docs.page'], transport: 'http',
@@ -1023,12 +1022,14 @@ ctx.effect(() => {
       async resolve(input, context) { /* 返回 ClueCandidate；context.workspaceId 是归属工作区 */ },
       async read(input, context) { /* 返回 ClueReadResult { format, data, fetchedAt, … } */ },
     },
-  })
+  }
+  return clues.registerSource(registration)
 })
 ```
 
 - **注册**：重复 `sourceId`/`typeId` 明确拒绝，不靠注册顺序覆盖；`builtin.*` 是核心保留身份，
-  外部 `registerSource` 会被拒绝（内置来源由插件自己在构造服务时注册）。返回的 disposer 只移除
+  外部 `registerSource` 会被拒绝（内置来源由插件自己在构造服务时注册）。`createLocalFileSource`
+  同样是核心自用：外部来源插件不要导入或注册它，内置本地来源由核心安装。返回的 disposer 只移除
   运行能力，不清除已保存的线索、置顶、包成员与绑定；同标识重新注册即可恢复解析。
 - **分发**：`resolve` / `list` / `search` / `read` / `loadEdit` / `saveEdit` / `portable`。可选操作
   必须在 descriptor / type 的能力位上如实声明，核心在调用前校验（未声明 = `unsupported`）；
@@ -1042,10 +1043,12 @@ ctx.effect(() => {
   `clues.ensure` 才复用同一个线索 id。locator 是 JSON 对象，必须自带解析根（例如内置本地来源的
   `{ root: { kind: 'workspace', workspaceId }, path, dialect }`），不能拿当前 cwd 当解析根。
 - **错误**：统一抛 `ClueError` 的固定类别（`source-missing` / `auth-required` / `not-found` /
-  `unsupported` / `rate-limited` / `conflict` / `cancelled` / `failed` / …）。**必须从
-  `dsh-better-sidebar/clues` 导入 `ClueError`**：宿主 bundle 与该子路径共享同一个类对象（构建期
-  externalize，由 `scripts/check-clue-artifact.mjs` 守护），自建错误类或从别的入口导入会让类别
-  退化成 `failed`。原始 stdout/stderr、Authorization、token、环境变量秘密不得写进 message。
+  `unsupported` / `invalid-request` / `rate-limited` / `conflict` / `cancelled` / `failed` / …）。
+  请求载荷本身不合法（缺字段、空 `resolve` 选择器、非法分页）使用 `invalid-request`，HTTP 为 400；
+  来源/存储的真实失败才是 `failed`（500）。**必须从 `dsh-better-sidebar/clues` 导入 `ClueError`**：
+  宿主 bundle 与该子路径共享同一个类对象（构建期 externalize，由 `scripts/check-clue-artifact.mjs`
+  守护），自建错误类或从别的入口导入会让类别退化成 `failed`。原始 stdout/stderr、Authorization、
+  token、环境变量秘密不得写进 message。
 - **分页**：`cursor` 是来源不透明值；`total` 缺失表示未知，UI 不得编造；来源切换或查询/范围改变时
   重置 cursor。内置本地文件来源把 cursor 上界与 `nextCursor` 对齐（不会交回自己会拒绝的值）。
 - **内置 `builtin.files`**：工作区浏览 / 搜索 / 路径解析 / 读 / 编辑（Markdown 与文本类型可编辑，

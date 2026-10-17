@@ -304,12 +304,12 @@ export function stableLocatorKey(value: JsonValue): string {
 /** Validate a raw locator/value as a plain JSON object. */
 function requireLocator(value: unknown, what = 'locator'): Locator {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
-    throw new ClueError('failed', `clue ${what} must be a JSON object`)
+    throw new ClueError('invalid-request', `clue ${what} must be a JSON object`)
   }
   try {
     JSON.stringify(value)
   } catch {
-    throw new ClueError('failed', `clue ${what} is not JSON-serializable`)
+    throw new ClueError('invalid-request', `clue ${what} is not JSON-serializable`)
   }
   return value as Locator
 }
@@ -318,7 +318,7 @@ function requireLocator(value: unknown, what = 'locator'): Locator {
 function pageLimitOf(limit: number | undefined, sourceId: string): number {
   if (limit === undefined) return DEFAULT_PAGE_LIMIT
   if (!Number.isInteger(limit) || limit < 1 || limit > MAX_PAGE_LIMIT) {
-    throw new ClueError('failed', `source "${sourceId}" received an invalid page limit (1..${MAX_PAGE_LIMIT})`)
+    throw new ClueError('invalid-request', `source "${sourceId}" received an invalid page limit (1..${MAX_PAGE_LIMIT})`)
   }
   return limit
 }
@@ -326,7 +326,7 @@ function pageLimitOf(limit: number | undefined, sourceId: string): number {
 /** Non-empty workspace id or a clear failure. */
 function requireWorkspaceId(workspaceId: string): string {
   if (typeof workspaceId !== 'string' || workspaceId.trim() === '') {
-    throw new ClueError('failed', 'a non-empty workspace id is required')
+    throw new ClueError('invalid-request', 'a non-empty workspace id is required')
   }
   return workspaceId
 }
@@ -335,7 +335,7 @@ function requireWorkspaceId(workspaceId: string): string {
 function packNameOf(name: string): string {
   const trimmed = typeof name === 'string' ? name.trim() : ''
   if (trimmed === '' || trimmed.length > MAX_PACK_NAME) {
-    throw new ClueError('failed', `a pack name must be 1..${MAX_PACK_NAME} characters`)
+    throw new ClueError('invalid-request', `a pack name must be 1..${MAX_PACK_NAME} characters`)
   }
   return trimmed
 }
@@ -343,6 +343,32 @@ function packNameOf(name: string): string {
 /** Target equality key of a binding. */
 function bindingKey(target: ClueBindingTarget): string {
   return target.kind === 'clue' ? `clue:${target.clueId}` : `pack:${target.packId}`
+}
+
+/**
+ * Copy one source descriptor down to the mutable-looking leaves.
+ *
+ * A plain `{ ...descriptor }` shares `capabilities` (and `dependencyIds`)
+ * with the registrant and with every caller, so mutating a returned
+ * `capabilities.read` silently disabled the registered source's read. The
+ * registry stores this copy and each getter hands out a fresh one.
+ */
+function copySourceDescriptor(descriptor: ClueSourceDescriptor): ClueSourceDescriptor {
+  return {
+    ...descriptor,
+    types: [...descriptor.types],
+    capabilities: { ...descriptor.capabilities },
+    ...(descriptor.dependencyIds === undefined ? {} : { dependencyIds: [...descriptor.dependencyIds] }),
+  }
+}
+
+/** Copy one type descriptor (capabilities and formats are the mutable leaves). */
+function copyTypeDescriptor(type: ClueTypeDescriptor): ClueTypeDescriptor {
+  return {
+    ...type,
+    formats: [...type.formats],
+    capabilities: { ...type.capabilities },
+  }
 }
 
 /**
@@ -580,7 +606,7 @@ export function createCluesService(options: CluesServiceOptions = {}): CluesServ
       return { source, typeId: clue.typeId, locator: clue.locator, clue }
     }
     if (params.sourceId === undefined || params.typeId === undefined || params.locator === undefined) {
-      throw new ClueError('failed', 'reading or editing requires a clueId or a sourceId + typeId + locator')
+      throw new ClueError('invalid-request', 'reading or editing requires a clueId or a sourceId + typeId + locator')
     }
     const source = sourceFor(params.sourceId)
     typeOf(source, params.typeId)
@@ -657,17 +683,18 @@ export function createCluesService(options: CluesServiceOptions = {}): CluesServ
     if (declaredTypes.length !== registration.types.length || declaredTypes.some(id => !seen.has(id))) {
       throw new Error(`[clues] source "${sourceId}" declares types it did not register`)
     }
+    const registeredTypes = registration.types.map(copyTypeDescriptor)
     const registered: RegisteredSource = {
-      descriptor: { ...descriptor, types: [...declaredTypes] },
-      types: [...registration.types],
+      descriptor: copySourceDescriptor({ ...descriptor, types: declaredTypes }),
+      types: registeredTypes,
       ...(registration.operations === undefined ? {} : { operations: registration.operations }),
     }
     sources.set(sourceId, registered)
-    for (const type of registration.types) types.set(type.typeId, type)
+    for (const type of registeredTypes) types.set(type.typeId, type)
     return () => {
       if (sources.get(sourceId) !== registered) return
       sources.delete(sourceId)
-      for (const type of registration.types) {
+      for (const type of registeredTypes) {
         if (types.get(type.typeId) === type) types.delete(type.typeId)
       }
     }
@@ -682,23 +709,18 @@ export function createCluesService(options: CluesServiceOptions = {}): CluesServ
     },
 
     getSources(): readonly ClueSourceDescriptor[] {
-      return orderedSources().map(source => ({
-        ...source.descriptor,
-        types: [...source.descriptor.types],
-      }))
+      return orderedSources().map(source => copySourceDescriptor(source.descriptor))
     },
 
     getSource(sourceId: string): ClueSourceDescriptor | undefined {
       const source = sources.get(sourceId)
-      return source === undefined ? undefined : { ...source.descriptor, types: [...source.descriptor.types] }
+      return source === undefined ? undefined : copySourceDescriptor(source.descriptor)
     },
 
     getTypes(sourceId?: string): readonly ClueTypeDescriptor[] {
       const all = [...types.values()]
-      return (sourceId === undefined ? all : all.filter(type => type.sourceId === sourceId)).map(type => ({
-        ...type,
-        formats: [...type.formats],
-      }))
+      return (sourceId === undefined ? all : all.filter(type => type.sourceId === sourceId))
+        .map(copyTypeDescriptor)
     },
 
     async resolve(params: CluesResolveParams, call: ClueCallOptions = {}): Promise<readonly ClueCandidate[]> {
@@ -910,7 +932,7 @@ export function createCluesService(options: CluesServiceOptions = {}): CluesServ
       const name = packNameOf(params.name)
       const requested = params.members ?? []
       if (requested.length > MAX_PACK_MEMBERS) {
-        throw new ClueError('failed', `a pack accepts at most ${MAX_PACK_MEMBERS} members`)
+        throw new ClueError('invalid-request', `a pack accepts at most ${MAX_PACK_MEMBERS} members`)
       }
       const members = [...new Set(requested.filter(id => typeof id === 'string' && id !== ''))]
       const transaction = await requireStore().transact(workspaceId, params.expectedRevision, (state) => {
@@ -1037,7 +1059,7 @@ export function createCluesService(options: CluesServiceOptions = {}): CluesServ
       const workspaceId = requireWorkspaceId(params.workspaceId)
       const target = params.target
       if (target === null || typeof target !== 'object' || (target.kind !== 'clue' && target.kind !== 'pack')) {
-        throw new ClueError('failed', 'a binding target must be a clue or a pack')
+        throw new ClueError('invalid-request', 'a binding target must be a clue or a pack')
       }
       const key = bindingKey(target)
       const transaction = await requireStore().transact(workspaceId, params.expectedRevision, (state) => {

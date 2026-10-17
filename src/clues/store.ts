@@ -102,7 +102,7 @@ function cloneJson<T>(value: T): T {
  */
 export function workspaceStoreDir(root: string, workspaceId: string): string {
   const workspacesRoot = join(root, WORKSPACES_DIR)
-  const component = encodeURIComponent(workspaceId).replaceAll('.', '%2E')
+  const component = encodeStorageComponent(workspaceId, 'workspace id').replaceAll('.', '%2E')
   const dir = join(workspacesRoot, component)
   const relativePath = relative(workspacesRoot, dir)
   if (
@@ -114,6 +114,29 @@ export function workspaceStoreDir(root: string, workspaceId: string): string {
     throw new ClueError('failed', `the workspace id "${workspaceId}" is not a valid clue storage name`)
   }
   return dir
+}
+
+/**
+ * Percent-encode one caller-supplied id for use as a filename component.
+ *
+ * `encodeURIComponent` throws a raw URIError for a lone surrogate; the store's
+ * public contract is the fixed {@link ClueError} vocabulary, so a malformed id
+ * must not escape as an untyped exception callers cannot branch on.
+ */
+function encodeStorageComponent(id: string, what: string): string {
+  if (typeof id !== 'string' || id === '') {
+    throw new ClueError('failed', `the ${what} must be a non-empty string`)
+  }
+  try {
+    return encodeURIComponent(id)
+  } catch {
+    throw new ClueError('failed', `the ${what} is not a valid clue storage name`)
+  }
+}
+
+/** Path of one snapshot half (`<encoded id><suffix>` inside the snapshot dir). */
+function snapshotFilePath(dir: string, snapshotId: string, suffix: string): string {
+  return join(dir, `${encodeStorageComponent(snapshotId, 'snapshot id')}${suffix}`)
 }
 
 /** The state document path of one workspace (exposed for diagnostics/tests). */
@@ -310,9 +333,11 @@ async function readJsonFile(path: string): Promise<unknown | undefined> {
 
 /** Write one JSON document atomically (unique temp sibling + rename). */
 async function writeJsonAtomic(path: string, value: unknown): Promise<void> {
-  await mkdir(dirname(path), { recursive: true })
   const tmp = `${path}.${randomUUID()}.tmp`
   try {
+    // `mkdir` belongs INSIDE the boundary: a read-only parent used to reject
+    // with a raw EACCES instead of the store's fixed `failed` category.
+    await mkdir(dirname(path), { recursive: true })
     await writeFile(tmp, `${JSON.stringify(value, null, 2)}\n`, 'utf8')
     await rename(tmp, path)
   } catch (error) {
@@ -438,9 +463,10 @@ export class CluesStore {
   /** Read one snapshot's metadata file only. */
   async readSnapshotMeta(workspaceId: string, snapshotId: string): Promise<ClueSnapshotMeta> {
     this.requireWorkspaceId(workspaceId)
-    const path = join(
+    const path = snapshotFilePath(
       workspaceSnapshotDir(this.rootOrThrow(), workspaceId),
-      `${encodeURIComponent(snapshotId)}${META_SUFFIX}`,
+      snapshotId,
+      META_SUFFIX,
     )
     const parsed = await readJsonFile(path)
     if (parsed === undefined) {
@@ -452,9 +478,10 @@ export class CluesStore {
   /** Read one snapshot's content file only (independent of any source). */
   async readSnapshotContent(workspaceId: string, snapshotId: string): Promise<ClueSnapshotContent> {
     this.requireWorkspaceId(workspaceId)
-    const path = join(
+    const path = snapshotFilePath(
       workspaceSnapshotDir(this.rootOrThrow(), workspaceId),
-      `${encodeURIComponent(snapshotId)}${CONTENT_SUFFIX}`,
+      snapshotId,
+      CONTENT_SUFFIX,
     )
     const parsed = await readJsonFile(path)
     if (parsed === undefined) {
@@ -495,8 +522,8 @@ export class CluesStore {
     }
     return this.enqueue(workspaceId, async () => {
       const dir = workspaceSnapshotDir(this.rootOrThrow(), workspaceId)
-      const contentPath = join(dir, `${encodeURIComponent(meta.snapshotId)}${CONTENT_SUFFIX}`)
-      const metaPath = join(dir, `${encodeURIComponent(meta.snapshotId)}${META_SUFFIX}`)
+      const contentPath = snapshotFilePath(dir, meta.snapshotId, CONTENT_SUFFIX)
+      const metaPath = snapshotFilePath(dir, meta.snapshotId, META_SUFFIX)
       if (await fileExists(metaPath) || await fileExists(contentPath)) {
         throw new ClueError('conflict', `clue snapshot "${meta.snapshotId}" already exists`)
       }

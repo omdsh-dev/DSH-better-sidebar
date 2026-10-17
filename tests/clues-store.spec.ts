@@ -252,6 +252,33 @@ describe('clue store', () => {
     })
   })
 
+  it('normalizes malformed workspace/snapshot ids instead of leaking a raw URIError', async () => {
+    const dir = root()
+    const store = new CluesStore({ root: dir })
+    // A lone surrogate makes `encodeURIComponent` throw. That is a caller
+    // error, but the store's public contract is the fixed ClueError vocabulary
+    // (a raw URIError is not something a source plugin can branch on).
+    const lone = String.fromCharCode(0xD800)
+    expect(() => workspaceStoreDir(dir, lone)).toThrow(ClueError)
+    await expect(store.read(lone)).rejects.toMatchObject({ category: 'failed' })
+    await expect(store.transact(lone, undefined, () => undefined)).rejects.toMatchObject({ category: 'failed' })
+
+    const meta: ClueSnapshotMeta = {
+      snapshotId: lone,
+      workspaceId: 'ws-1',
+      clueId: 'clue-1',
+      format: 'text/plain',
+      fetchedAt: '2026-10-17T00:00:00.000Z',
+      createdAt: '2026-10-17T00:00:01.000Z',
+    }
+    await expect(store.putSnapshot('ws-1', meta, { format: 'text/plain', data: { text: 'x' } }))
+      .rejects.toMatchObject({ category: 'failed' })
+    await expect(store.readSnapshotMeta('ws-1', lone)).rejects.toMatchObject({ category: 'failed' })
+    await expect(store.readSnapshotContent('ws-1', lone)).rejects.toMatchObject({ category: 'failed' })
+    // An empty snapshot id would otherwise name a bare `.meta.json` file.
+    await expect(store.readSnapshotMeta('ws-1', '')).rejects.toMatchObject({ category: 'failed' })
+  })
+
   it('writes atomically: no temp siblings survive a commit', async () => {
     const dir = root()
     const store = new CluesStore({ root: dir })

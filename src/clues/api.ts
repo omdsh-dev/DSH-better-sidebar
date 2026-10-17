@@ -70,7 +70,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 /** The payload object or a typed failure. */
 function requireRecord(payload: unknown): Payload {
-  if (!isRecord(payload)) throw new ClueError('failed', 'the clue request payload must be a JSON object')
+  if (!isRecord(payload)) throw new ClueError('invalid-request', 'the clue request payload must be a JSON object')
   return payload
 }
 
@@ -78,7 +78,7 @@ function requireRecord(payload: unknown): Payload {
 function requireString(payload: Payload, key: string): string {
   const value = payload[key]
   if (typeof value !== 'string' || value.trim() === '') {
-    throw new ClueError('failed', `"${key}" must be a non-empty string`)
+    throw new ClueError('invalid-request', `"${key}" must be a non-empty string`)
   }
   return value
 }
@@ -87,7 +87,7 @@ function requireString(payload: Payload, key: string): string {
 function optionalString(payload: Payload, key: string): string | undefined {
   const value = payload[key]
   if (value === undefined) return undefined
-  if (typeof value !== 'string') throw new ClueError('failed', `"${key}" must be a string`)
+  if (typeof value !== 'string') throw new ClueError('invalid-request', `"${key}" must be a string`)
   return value
 }
 
@@ -96,7 +96,7 @@ function optionalInteger(payload: Payload, key: string): number | undefined {
   const value = payload[key]
   if (value === undefined) return undefined
   if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) {
-    throw new ClueError('failed', `"${key}" must be a non-negative integer`)
+    throw new ClueError('invalid-request', `"${key}" must be a non-negative integer`)
   }
   return value
 }
@@ -105,7 +105,7 @@ function optionalInteger(payload: Payload, key: string): number | undefined {
 function optionalObject(payload: Payload, key: string): Record<string, unknown> | undefined {
   const value = payload[key]
   if (value === undefined) return undefined
-  if (!isRecord(value)) throw new ClueError('failed', `"${key}" must be a JSON object`)
+  if (!isRecord(value)) throw new ClueError('invalid-request', `"${key}" must be a JSON object`)
   return value
 }
 
@@ -114,7 +114,7 @@ function optionalStringArray(payload: Payload, key: string): string[] | undefine
   const value = payload[key]
   if (value === undefined) return undefined
   if (!Array.isArray(value) || value.some(item => typeof item !== 'string')) {
-    throw new ClueError('failed', `"${key}" must be an array of strings`)
+    throw new ClueError('invalid-request', `"${key}" must be an array of strings`)
   }
   return value as string[]
 }
@@ -127,7 +127,7 @@ function readParamsOf(payload: Payload): CluesReadParams {
   const typeId = optionalString(payload, 'typeId')
   const locator = optionalObject(payload, 'locator')
   if (clueId === undefined && (sourceId === undefined || typeId === undefined || locator === undefined)) {
-    throw new ClueError('failed', 'the request needs a clueId or a sourceId + typeId + locator')
+    throw new ClueError('invalid-request', 'the request needs a clueId or a sourceId + typeId + locator')
   }
   const offset = optionalInteger(payload, 'offset')
   const sessionId = optionalString(payload, 'sessionId')
@@ -145,24 +145,24 @@ function readParamsOf(payload: Payload): CluesReadParams {
 /** Validate one binding target. */
 function bindingTargetOf(payload: Payload): ClueBindingTarget {
   const target = optionalObject(payload, 'target')
-  if (target === undefined) throw new ClueError('failed', '"target" must be a clue or a pack binding')
+  if (target === undefined) throw new ClueError('invalid-request', '"target" must be a clue or a pack binding')
   if (target.kind === 'clue') {
     return { kind: 'clue', clueId: requireString(target, 'clueId') }
   }
   if (target.kind === 'pack') {
     return { kind: 'pack', packId: requireString(target, 'packId') }
   }
-  throw new ClueError('failed', 'a binding target must be { kind: "clue" } or { kind: "pack" }')
+  throw new ClueError('invalid-request', 'a binding target must be { kind: "clue" } or { kind: "pack" }')
 }
 
 /** Validate one edit document. */
 function saveDocumentOf(payload: Payload): ClueSaveEditInput {
   const document = optionalObject(payload, 'document')
-  if (document === undefined) throw new ClueError('failed', '"document" must carry the edit format and data')
+  if (document === undefined) throw new ClueError('invalid-request', '"document" must carry the edit format and data')
   if (typeof document.format !== 'string' || document.format.trim() === '') {
-    throw new ClueError('failed', '"document.format" must be a non-empty string')
+    throw new ClueError('invalid-request', '"document.format" must be a non-empty string')
   }
-  if (!('data' in document)) throw new ClueError('failed', '"document.data" is required')
+  if (!('data' in document)) throw new ClueError('invalid-request', '"document.data" is required')
   const baseRevision = optionalString(document, 'baseRevision')
   return {
     format: document.format,
@@ -229,6 +229,15 @@ export function cluesApiHandlers(service: CluesService): Record<CluesApiMethod, 
       const typeId = optionalString(record, 'typeId')
       const text = optionalString(record, 'text')
       const locator = optionalObject(record, 'locator')
+      // A bare workspaceId used to reach every source and answer an empty
+      // candidate list, which reads as "nothing matched" instead of "you did
+      // not ask for anything". Resolution needs exactly one selector.
+      if (text === undefined && locator === undefined) {
+        throw new ClueError('invalid-request', 'the request needs a "text" or a "locator" selector')
+      }
+      if (text !== undefined && text.trim() === '') {
+        throw new ClueError('invalid-request', '"text" must be a non-empty string when provided')
+      }
       return {
         candidates: await service.resolve({
           workspaceId,
@@ -293,7 +302,7 @@ export function cluesApiHandlers(service: CluesService): Record<CluesApiMethod, 
     'clues.ensure': async (payload, context) => {
       const record = requireRecord(payload)
       const locator = optionalObject(record, 'locator')
-      if (locator === undefined) throw new ClueError('failed', '"locator" must be a JSON object')
+      if (locator === undefined) throw new ClueError('invalid-request', '"locator" must be a JSON object')
       return service.ensure({
         workspaceId: requireString(record, 'workspaceId'),
         sourceId: requireString(record, 'sourceId'),

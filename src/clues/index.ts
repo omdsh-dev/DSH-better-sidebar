@@ -118,3 +118,19 @@ export function installClues(ctx: Context, options: InstallCluesOptions = {}): C
   }, 'dsh-better-sidebar: clue service')
   return service
 }
+
+/**
+ * Host-only Cordis service augmentation.
+ *
+ * `installClues` publishes the face at runtime with `ctx.provide`, but without
+ * this declaration a source plugin that imports `Context` from
+ * `@deepseek-ai/cordis` (plus this package's `./clues` types) cannot see
+ * `ctx.betterSidebarClues` and falls back to an `any`-typed
+ * `ctx.get('betterSidebarClues')`. It lives here, not in `context-types.ts`,
+ * because only the host half can depend on the node-backed service.
+ */
+declare module '@deepseek-ai/cordis' {
+  interface Context {
+    betterSidebarClues: CluesService
+  }
+}

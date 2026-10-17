@@ -27,6 +27,8 @@ export const CLUE_ERROR_CATEGORIES = [
   'conflict',
   'cancelled',
   'timeout',
+  /** The caller's payload is malformed (missing/ill-typed fields, empty selector). */
+  'invalid-request',
   'failed',
 ] as const
 

@@ -50,6 +50,18 @@ describe('client clue display registry', () => {
     expect(service.clues.registerSourceDisplay(display)).toBeTypeOf('function')
   })
 
+  it('publishes independent display copies', () => {
+    const { service } = serviceWithPrefs()
+    const display: ClueSourceDisplayDescriptor = { sourceId: 'x.source', name: 'Original' }
+    service.clues.registerSourceDisplay(display)
+    // Neither the registrant's object nor a returned row aliases the stored
+    // descriptor: the registry is the authority for published metadata.
+    ;(display as { name?: string }).name = 'Changed by registrant'
+    const returned = service.clues.getSourceDisplays() as unknown as Array<{ name?: string }>
+    returned[0]!.name = 'Changed by reader'
+    expect(service.clues.getSourceDisplays()[0]?.name).toBe('Original')
+  })
+
   it('rejects a display without a source id', () => {
     const { service } = serviceWithPrefs()
     expect(() => service.clues.registerSourceDisplay({ sourceId: '  ' })).toThrow(/sourceId/)

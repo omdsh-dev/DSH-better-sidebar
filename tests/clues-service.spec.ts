@@ -168,17 +168,50 @@ async function ensureClue(
 }
 
 describe('clue service registration', () => {
-  it('registers a source + its types and publishes ordered metadata copies', () => {
+  it('registers a source + its types and publishes ordered metadata copies', async () => {
     const service = makeService()
-    const dispose = service.registerSource(testSource())
+    const registration = testSource()
+    const dispose = service.registerSource(registration)
     expect(service.getSources()).toHaveLength(1)
     expect(service.getSources()[0]?.sourceId).toBe('test.source')
     expect(service.getSources()[0]?.types).toEqual(['test.source.text'])
     expect(service.getTypes('test.source').map(type => type.typeId)).toEqual(['test.source.text'])
-    // Copies: mutating the returned array must not mutate the registry.
-    const sources = service.getSources() as unknown as { sourceId: string }[]
+    // Copies, including the NESTED objects: a shallow spread used to share
+    // `capabilities`, so mutating one returned row disabled dispatch
+    // (`getSources()[0].capabilities.read = false` made every read unsupported).
+    const sources = service.getSources() as unknown as Array<{
+      sourceId: string
+      types: string[]
+      capabilities: { read: boolean }
+    }>
     sources[0]!.sourceId = 'mutated'
+    sources[0]!.types.push('mutated')
+    sources[0]!.capabilities.read = false
     expect(service.getSource('test.source')?.sourceId).toBe('test.source')
+    expect(service.getSource('test.source')?.types).toEqual(['test.source.text'])
+    expect(service.getSource('test.source')?.capabilities.read).toBe(true)
+
+    // Type rows are deep copies too (formats + capabilities).
+    const types = service.getTypes() as unknown as Array<{
+      formats: string[]
+      capabilities: { edit: boolean }
+    }>
+    types[0]!.formats.push('mutated')
+    types[0]!.capabilities.edit = false
+    expect(service.getTypes()[0]?.formats).toEqual(['text/plain'])
+    expect(service.getTypes()[0]?.capabilities.edit).toBe(true)
+
+    // The registry snapshotted the registration itself: mutating the object
+    // the caller registered later must not rewrite what dispatch checks.
+    ;(registration.descriptor.capabilities as { read: boolean }).read = false
+    ;(registration.types[0]!.capabilities as { edit: boolean }).edit = false
+    expect(service.getSource('test.source')?.capabilities.read).toBe(true)
+    expect(service.getTypes('test.source')[0]?.capabilities.edit).toBe(true)
+
+    // The exact regression: the source still dispatches after the caller
+    // mutated the capabilities it was handed.
+    const clueId = await ensureClue(service, 'x')
+    await expect(service.read({ workspaceId: 'ws-1', clueId })).resolves.toMatchObject({ text: 'x' })
     dispose()
   })
 
@@ -830,7 +863,7 @@ describe('packs, pins and bindings', () => {
     const service = makeService()
     service.registerSource(testSource())
     await expect(service.createPack({ workspaceId: 'ws-1', name: '   ' }))
-      .rejects.toMatchObject({ category: 'failed' })
+      .rejects.toMatchObject({ category: 'invalid-request' })
     await expect(service.createPack({ workspaceId: 'ws-1', name: 'x', members: ['nope'] }))
       .rejects.toMatchObject({ category: 'not-found' })
     const pack = await service.createPack({ workspaceId: 'ws-1', name: 'x' })

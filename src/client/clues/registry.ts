@@ -62,17 +62,21 @@ export function createCluesClientRegistry(getPrefs: () => SidebarPrefs): BetterS
       if (displays.has(descriptor.sourceId)) {
         throw new Error(`[dsh-better-sidebar] clue source display "${descriptor.sourceId}" already registered`)
       }
-      displays.set(descriptor.sourceId, descriptor)
+      // Store our own copy and hand out copies on read: the descriptor is
+      // caller-owned metadata, and a later mutation of it (or of a returned
+      // row) must never rewrite what the registry publishes.
+      const stored: ClueSourceDisplayDescriptor = { ...descriptor }
+      displays.set(stored.sourceId, stored)
       notify()
       return () => {
-        if (displays.get(descriptor.sourceId) !== descriptor) return
-        displays.delete(descriptor.sourceId)
+        if (displays.get(stored.sourceId) !== stored) return
+        displays.delete(stored.sourceId)
         notify()
       }
     },
 
     getSourceDisplays(): readonly ClueSourceDisplayDescriptor[] {
-      return [...displays.values()]
+      return [...displays.values()].map(display => ({ ...display }))
     },
 
     subscribe(listener: () => void): () => void {

@@ -16,6 +16,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { apply } from '../src/index.ts'
+import { installClues } from '../src/clues/index.ts'
 import { createCluesService, type CluesService } from '../src/clues/service.ts'
 import { createLocalFileSource, LOCAL_FILE_TYPE_IDS } from '../src/clues/local-files.ts'
 import { CLUES_API_METHODS, registerCluesApi } from '../src/clues/api.ts'
@@ -160,8 +161,11 @@ describe('clue API handlers', () => {
     const cases: Array<[string, unknown]> = [
       ['clues.resolve', {}],
       ['clues.resolve', null],
+      ['clues.resolve', { workspaceId: 'ws-1' }],
+      ['clues.resolve', { workspaceId: 'ws-1', text: '   ' }],
       ['clues.list', []],
       ['clues.list', { workspaceId: 'ws-1', sourceId: 7 }],
+      ['clues.list', { workspaceId: 'ws-1', sourceId: 'builtin.files', limit: 0 }],
       ['clues.search', { workspaceId: 'ws-1', sourceId: 'builtin.files' }],
       ['clues.read', { workspaceId: 'ws-1' }],
       ['clues.loadEdit', { workspaceId: 'ws-1', clueId: 1 }],
@@ -193,7 +197,7 @@ describe('clue API handlers', () => {
     for (const [method, payload] of cases) {
       const failure: unknown = await service.invokeApi(method, payload).then(() => undefined, (error: unknown) => error)
       expect(failure, `${method} ${JSON.stringify(payload)}`).toBeInstanceOf(ClueError)
-      expect((failure as ClueError).category, method).toBe('failed')
+      expect((failure as ClueError).category, method).toBe('invalid-request')
     }
   })
 
@@ -349,6 +353,45 @@ async function post(route: SidebarWebRoute, method: string, payload: unknown): P
   return { status, body: JSON.parse(raw) as CapturedResponse['body'] }
 }
 
+describe('installClues dependency lifecycle', () => {
+  it('uses a workspaceRegistry that arrives AFTER install on the first operation', async () => {
+    const base = mkdtempSync(join(tmpdir(), 'dsh-clues-late-registry-'))
+    roots.push(base)
+    const home = join(base, 'home')
+    const workspace = join(base, 'workspace')
+    mkdirSync(home, { recursive: true })
+    mkdirSync(workspace, { recursive: true })
+    writeFileSync(join(workspace, 'a.md'), '# late\n')
+
+    // At install time the registry is not there yet: the plugin must still
+    // install (dependencies arrive later in Cordis), and every operation must
+    // re-read the service instead of snapshotting it at install.
+    let registry: { get(id: string): { path?: string } | undefined } | undefined
+    const cleanups: Array<() => void> = []
+    const ctx = {
+      profileContext: { home },
+      logger: { warn: () => {} },
+      get: (key: string) => (key === 'workspaceRegistry' ? registry : undefined),
+      effect: (fn: () => void | (() => void)) => {
+        const cleanup = fn()
+        if (typeof cleanup === 'function') cleanups.push(cleanup)
+      },
+    }
+    const service = installClues(ctx as never)
+    try {
+      // Install succeeded WITHOUT the registry (dependencies may arrive
+      // later); the registry appears before the FIRST read.
+      expect(service.getSources().map(source => source.sourceId)).toContain('builtin.files')
+      registry = { get: id => (id === 'ws-1' ? { path: workspace } : undefined) }
+
+      const listing = await service.list({ workspaceId: 'ws-1', sourceId: 'builtin.files' })
+      expect(listing.items.map(item => item.title)).toEqual(['a.md'])
+    } finally {
+      for (const cleanup of cleanups.reverse()) cleanup()
+    }
+  })
+})
+
 describe('/sidebar/api clue dispatcher fallback', () => {
   it('serves owned clue methods through the one fenced route and leaves unknown methods 404', async () => {
     const base = mkdtempSync(join(tmpdir(), 'dsh-clues-dispatch-'))
@@ -422,9 +465,28 @@ describe('/sidebar/api clue dispatcher fallback', () => {
       const read = await post(route!, 'clues.read', { workspaceId: 'ws-1', clueId })
       expect(read.body).toMatchObject({ ok: true, value: { text: '# dispatched\n' } })
 
-      // A clue payload error keeps its clue category on the wire.
+      // A clue payload error keeps its clue category on the wire AND is a
+      // client error (400), not an internal 500: the request is malformed,
+      // the plugin is not failing.
       const invalid = await post(route!, 'clues.packs.create', { workspaceId: 'ws-1', members: 'nope' })
-      expect(invalid.body).toMatchObject({ ok: false, error: { code: 'failed' } })
+      expect(invalid.status).toBe(400)
+      expect(invalid.body).toMatchObject({ ok: false, error: { code: 'invalid-request' } })
+
+      // A resolve without a selector is a malformed request, not an empty
+      // candidate list.
+      const emptyResolve = await post(route!, 'clues.resolve', { workspaceId: 'ws-1' })
+      expect(emptyResolve.status).toBe(400)
+      expect(emptyResolve.body).toMatchObject({ ok: false, error: { code: 'invalid-request' } })
+
+      // A zero page limit fails in the service's shared validator and must
+      // reach the wire as 400 too.
+      const invalidLimit = await post(route!, 'clues.list', {
+        workspaceId: 'ws-1',
+        sourceId: 'builtin.files',
+        limit: 0,
+      })
+      expect(invalidLimit.status).toBe(400)
+      expect(invalidLimit.body).toMatchObject({ ok: false, error: { code: 'invalid-request' } })
 
       // The clue EDIT document is not bound by the 1 MiB control-payload cap:
       // a 1.5 MiB source document must load AND save back through this route.

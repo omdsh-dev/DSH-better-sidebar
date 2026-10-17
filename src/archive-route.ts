@@ -196,8 +196,13 @@ export interface ArchiveTasks {
   release(id: string): void
   /** Number of live tasks (tests / diagnostics). */
   size(): number
-  /** Kill every running build and delete every temp file (plugin teardown). */
-  dispose(): void
+  /**
+   * Kill every running build, close every in-flight descriptor, then delete
+   * every temp file (plugin teardown). Async because Windows refuses to unlink
+   * a file while a handle to it is still open: the descriptor must be closed
+   * (and the close awaited) before the `rm`.
+   */
+  dispose(): Promise<void>
 }
 
 /** Options of {@link createArchiveTasks} (tests inject the spawn + temp dir). */
@@ -216,14 +221,19 @@ export function createArchiveTasks(options: ArchiveTaskOptions = {}): ArchiveTas
   /** Running children, by task id (teardown kills them). */
   const children = new Map<string, { kill(): void }>()
   /**
-   * In-flight output descriptors, by task id. The descriptor stays open across
-   * the spawn (`stdio[1]` is that fd), so teardown must close it explicitly:
-   * a build whose child never reports back would otherwise leave the fd to the
-   * FileHandle GC finalizer (which Node now treats as an error).
+   * In-flight output descriptors, by task id (with the temp path they own).
+   * The descriptor stays open across the spawn (`stdio[1]` is that fd), so
+   * teardown must close it explicitly: a build whose child never reports back
+   * would otherwise leave the fd to the FileHandle GC finalizer (which Node
+   * now treats as an error). The path rides along because Windows refuses to
+   * unlink the file while the descriptor is open — teardown must close first,
+   * then remove.
    */
-  const handles = new Map<string, FileHandle>()
+  const handles = new Map<string, { handle: FileHandle; path: string }>()
   /** Teardown flag: an `open()` that resolves after dispose closes at once. */
   let disposed = false
+  /** One teardown per table: a second `dispose()` awaits the same cleanup. */
+  let disposing: Promise<void> | undefined
   const spawner = options.spawn ?? undefined
 
   const tempPathOf = (id: string, ext: string): string =>
@@ -311,21 +321,34 @@ export function createArchiveTasks(options: ArchiveTaskOptions = {}): ArchiveTas
       return tasks.size
     },
     dispose() {
-      disposed = true
-      for (const child of children.values()) {
-        try {
-          child.kill()
-        } catch {
-          // A child that already exited cannot be killed; nothing to do.
+      disposing ??= (async () => {
+        disposed = true
+        for (const child of children.values()) {
+          try {
+            child.kill()
+          } catch {
+            // A child that already exited cannot be killed; nothing to do.
+          }
         }
-      }
-      children.clear()
-      for (const handle of handles.values()) void handle.close().catch(() => undefined)
-      handles.clear()
-      for (const task of tasks.values()) {
-        if (task.file !== undefined) void rm(task.file.path, { force: true }).catch(() => {})
-      }
-      tasks.clear()
+        children.clear()
+        // Close every in-flight descriptor BEFORE unlinking its temp file:
+        // Windows answers EBUSY/EPERM for a file that still has an open handle,
+        // and a swallowed rm would leave the temp archive behind forever.
+        const closing: Promise<void>[] = []
+        const paths = new Set<string>()
+        for (const entry of handles.values()) {
+          paths.add(entry.path)
+          closing.push(entry.handle.close().catch(() => undefined))
+        }
+        handles.clear()
+        await Promise.all(closing)
+        for (const task of tasks.values()) {
+          if (task.file !== undefined) paths.add(task.file.path)
+        }
+        tasks.clear()
+        await Promise.all([...paths].map(path => rm(path, { force: true }).catch(() => undefined)))
+      })()
+      return disposing
     },
   }
 
@@ -359,7 +382,7 @@ export function createArchiveTasks(options: ArchiveTaskOptions = {}): ArchiveTas
         await rm(tempPath, { force: true }).catch(() => undefined)
         return
       }
-      handles.set(id, handle)
+      handles.set(id, { handle, path: tempPath })
       const result = await runArchiveTool(plan, handle.fd, spawner, child => { children.set(id, child) })
       await handle.close()
       handles.delete(id)

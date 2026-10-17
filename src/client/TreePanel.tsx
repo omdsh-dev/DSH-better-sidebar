@@ -214,7 +214,13 @@ export function TreePanel(props: {
       }).catch((failure: unknown) => {
         if (controller.signal.aborted) return
         setResults(null)
-        setError(failure instanceof Error ? failure.message : String(failure))
+        const message = failure instanceof Error ? failure.message : String(failure)
+        // An unreadable search root is now a real failure (the host used to
+        // answer it as an empty, legitimate-looking result). Keep the
+        // localized failure label in front of the host's concrete reason
+        // instead of showing a bare English errno sentence.
+        const code = (failure as { code?: unknown } | null)?.code
+        setError(code === 'fs-error' ? `${t('error')}: ${message}` : message)
       })
     }, 300)
     return () => {

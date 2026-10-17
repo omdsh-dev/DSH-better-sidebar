@@ -189,7 +189,8 @@ export function clueStatusOf(category: ClueErrorCategory): number {
     case 'timeout': return 504
     case 'dependency-missing':
     case 'dependency-incompatible': return 503
-    case 'unsupported': return 400
+    case 'unsupported':
+    case 'invalid-request': return 400
     case 'failed': return 500
   }
 }

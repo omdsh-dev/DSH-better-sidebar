@@ -41,6 +41,7 @@
 
 - 🧩 **新增公共线索扩展面**：宿主 Cordis 服务 `betterSidebarClues` 与包子路径 `dsh-better-sidebar/clues`（来源/类型/线索/包/置顶/绑定/快照的类型、服务、内置 `builtin.files` 本地来源、`clues.*` 路由方法）；客户端在 `ctx.betterSidebar.clues` 暴露来源展示注册、来源/@ 开关语义与类型化 wire 方法，`features` 新增 `'clues'`。接入方式见[外部插件指南 §7.1](docs/external-plugin-guide.md#71-线索扩展面s1-开发线来源--线索--线索包)。
 - ⚙️ **口径统一的修复**：`clues.saveEdit` 不再被 1 MiB JSON 上限限制（按 5 MiB 可编辑文档上限放宽）；宿主 bundle 与 `./clues` 子路径共用同一个 `ClueError` 类（外部来源的 `auth-required`/`conflict` 等固定类别不再退化为 `failed`）；工作区 locator 的 `workspaceId` 与操作工作区不匹配时拒绝解析；本地搜索的绝对路径命中重新归一到工作区 locator；缺失/文件 scope 的 list/search 分别返回 `not-found`/`unsupported`；分页不再产出会被自己拒绝的 cursor；编辑保存遇到文件被删除按 `conflict` 处理；类型/来源能力位在分发前强制校验；`registerApi` 在 dispose 后拒绝注册；快照 id 重复时拒绝覆盖；存储文档逐行深校验。
+- 🩹 **评审修复**：clue 请求载荷校验失败改用 `invalid-request`（HTTP 400，不再误报 500），`clues.resolve` 拒绝缺少 `text`/`locator` 的空选择器；`getSources`/`getSource`/`getTypes` 与客户端来源展示目录都返回独立副本（嵌套 `capabilities` 不再与注册者或调用者共享）；存储对畸形 workspace/snapshot id 与目录创建失败统一归一到 `ClueError`；插件卸载先关闭 archive 临时文件句柄、再删除文件（Windows 上可删除），不可读搜索根目录的错误在客户端显示本地化失败提示。
 
 ### v0.28.0
 
