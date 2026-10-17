@@ -2,8 +2,9 @@
  * S2 runtime vocabulary: CLI dependencies, one-click installs, connections and
  * the HTTP / CLI / DSH-MCP execution boundaries.
  *
- * This module is HOST-ONLY (`node:*` lives in the sibling implementation
- * files, not here) but every shape that crosses `/sidebar/api` or the source
+ * This module is node-free (every `node:*` import lives in the sibling
+ * implementation files), so the settings UI may import these DTOs type-only
+ * with `types: []`; every shape that crosses `/sidebar/api` or the source
  * adapters' code is plain JSON: statuses, plans, tasks and connection
  * projections must survive one JSON round trip, while raw stdout/stderr,
  * tokens, environment maps and device-code handles never appear in them.
@@ -48,9 +49,27 @@ export type DependencyState = 'unknown' | 'missing' | 'incompatible' | 'ready' |
 /** Which resolver won. Never inferred from a version string. */
 export type DependencyResolvedFrom = 'manual' | 'managed' | 'path'
 
+/**
+ * Node's platform vocabulary, restated locally so this module stays free of
+ * the `NodeJS` namespace: the settings UI consumes these DTOs type-only with
+ * `types: []` + `skipLibCheck: false` (see scripts/check-consumer-types.sh).
+ */
+export type NodePlatform =
+  | 'aix'
+  | 'android'
+  | 'darwin'
+  | 'freebsd'
+  | 'haiku'
+  | 'linux'
+  | 'openbsd'
+  | 'sunos'
+  | 'win32'
+  | 'cygwin'
+  | 'netbsd'
+
 /** One platform/architecture pair, using Node's platform vocabulary. */
 export interface DependencyTarget {
-  readonly platform: NodeJS.Platform
+  readonly platform: NodePlatform
   readonly arch: string
 }
 
@@ -194,6 +213,19 @@ export type DependencyInstallStage =
 /** A task is `running` until it settles exactly once. */
 export type DependencyInstallState = 'running' | 'succeeded' | 'failed' | 'cancelled'
 
+/**
+ * Stable ids of the plan's ordered actions. `actions` carries the same text
+ * for diagnostics, but a settings UI localizes from these ids instead of
+ * guessing from English prose.
+ */
+export type DependencyInstallActionId =
+  | 'download-archive'
+  | 'verify-sha256'
+  | 'extract-archive'
+  | 'install-npm-local'
+  | 'probe-version'
+  | 'replace-managed-copy'
+
 /** Progress that never fabricates a percentage when no total is known. */
 export interface DependencyInstallProgress {
   readonly stage: DependencyInstallStage
@@ -247,6 +279,8 @@ export interface DependencyInstallPlan {
   readonly unavailableReason?: string
   /** Ordered human-readable actions the confirmed plan will perform. */
   readonly actions: readonly string[]
+  /** Stable ids of {@link actions} for localization (same order). */
+  readonly actionIds: readonly DependencyInstallActionId[]
   readonly createdAt: string
   readonly expiresAt: string
 }
@@ -365,6 +399,8 @@ export interface CliWritable {
   write(chunk: string | Uint8Array): boolean
   end(): void
   on?(event: 'error', listener: (error: Error) => void): unknown
+  /** Emitted once `end()` flushed every buffered byte to the OS pipe. */
+  on?(event: 'finish', listener: () => void): unknown
 }
 
 /** The subset of node:child_process.ChildProcess the CLI runner consumes. */
@@ -408,7 +444,12 @@ export interface ClueHttpRequest {
   readonly method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
   readonly headers?: Readonly<Record<string, string>>
   readonly body?: string | Uint8Array
-  /** Exact host names this request (and its redirects) may contact. */
+  /**
+   * Exact hosts this request (and its redirects) may contact, written as
+   * `host` or `host:port`. A port-less entry covers only the scheme's default
+   * port. REQUIRED when `credential` is set (a credential must never be sent
+   * to an undeclared host).
+   */
   readonly allowedHosts?: readonly string[]
   /** Per-operation host credential (resolved once per request, never stored). */
   readonly credential?: ClueHttpCredential
@@ -463,18 +504,6 @@ export interface ClueHttpClient {
 }
 
 // ── DSH-internal MCP boundary ──────────────────────────────────────────────
-
-/** One DSH tool mapping declared by a source adapter. */
-export interface McpToolMapping {
-  /** Host-registered tool name (never synthesized from model output). */
-  readonly toolName: string
-  /**
-   * Whether the host may request approval for this tool. Defaults to `true`
-   * (fail closed): a UI request with no live agent then answers
-   * `approval-required` instead of executing unapproved.
-   */
-  readonly requiresApproval?: boolean
-}
 
 /** One MCP invocation request. */
 export interface McpCallRequest {
@@ -618,7 +647,12 @@ export interface ClueConnectionDefinition {
    * runtime calls this only for an explicit status request, never on a timer.
    */
   inspect(input: ConnectionConnectInput, context: ConnectionAdapterContext): Promise<ConnectionInspection>
-  /** Explicit user action: begin authorization. */
+  /**
+   * Explicit user action. Normally begins authorization; when the application
+   * `configuration` is missing it may run the adapter's own setup flow and
+   * answer a `missing`/`ready` inspection. The runtime projects the resulting
+   * state and never invents a provider-specific configuration protocol.
+   */
   connect?(input: ConnectionConnectInput, context: ConnectionAdapterContext): Promise<ConnectionConnectStart>
   /** Explicit user action: poll an in-flight device-code authorization. */
   poll?(input: ConnectionPollInput, context: ConnectionAdapterContext): Promise<ConnectionPollResult>
@@ -668,7 +702,7 @@ export interface ClueDependenciesRuntime {
   plan(dependencyId: string, options?: { readonly signal?: AbortSignal }): Promise<DependencyInstallPlan>
   /** Start the confirmed plan; a second start for the same dependency shares the task. */
   start(input: { readonly dependencyId: string; readonly planId: string }, options?: { readonly signal?: AbortSignal }): Promise<DependencyInstallTask>
-  /** Every task (or just one dependency's latest). */
+  /** The latest task per dependency (or just one dependency's latest). */
   tasks(dependencyId?: string): readonly DependencyInstallTask[]
   cancel(dependencyId: string, taskId?: string, options?: { readonly signal?: AbortSignal }): Promise<DependencyInstallTask>
   /** Explicit override: takes precedence over managed/PATH and never falls back silently. */

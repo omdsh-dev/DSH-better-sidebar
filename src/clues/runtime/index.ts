@@ -16,7 +16,7 @@
  * construct a second runtime, so multiple views/Tabs share one probe cache and
  * one install task (approved spec §5).
  */
-import { ClueError } from '../error.ts'
+import { ClueError } from '../types.ts'
 import type { Context } from '../../context-types.ts'
 import type {
   CliResult,
@@ -108,15 +108,28 @@ function hostFetchOf(injected: ClueFetch | undefined): ClueFetch {
   }
 }
 
-/** Lazily read one optional Cordis service without assuming the deployment. */
+/**
+ * Lazily read one optional Cordis service without assuming the deployment.
+ *
+ * In a real Cordis fiber, reading an uninjected service property THROWS
+ * ("cannot get property … without inject"); only `ctx.get(name)` answers
+ * undefined. Prefer `get` and wrap the legacy direct-property fallback in its
+ * own try so a missing service degrades to `undefined` (→ auth-required /
+ * operation-unavailable) instead of an uncaught Error normalized to 500.
+ */
 function lazyService<T>(ctx: Context, name: string, direct: T | undefined): T | undefined {
   if (direct !== undefined) return direct
-  const value = (ctx as unknown as Record<string, unknown>)[name]
-  if (value !== undefined) return value as T
   const get = (ctx as unknown as { get?: (key: string) => unknown }).get
-  if (typeof get !== 'function') return undefined
+  if (typeof get === 'function') {
+    try {
+      const value = get.call(ctx, name)
+      if (value !== undefined) return value as T
+    } catch {
+      // Fall through to the direct property for plain test/legacy contexts.
+    }
+  }
   try {
-    return get.call(ctx, name) as T | undefined
+    return (ctx as unknown as Record<string, unknown>)[name] as T | undefined
   } catch {
     return undefined
   }

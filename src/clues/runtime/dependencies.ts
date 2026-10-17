@@ -21,8 +21,8 @@
  */
 import { access } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
-import { delimiter, isAbsolute, join } from 'node:path'
-import { ClueError, isClueError } from '../error.ts'
+import { isAbsolute, posix, win32 } from 'node:path'
+import { ClueError, isClueError } from '../types.ts'
 import type {
   ClueDependencyDefinition,
   CliResult,
@@ -54,6 +54,35 @@ import {
 /** Whether an optional signal has been aborted (opaque to TS narrowing). */
 function isAborted(signal: AbortSignal | undefined): boolean {
   return signal?.aborted === true
+}
+
+/**
+ * Await shared single-flight work, but let THIS caller cancel locally.
+ * Cancellation must not abort the shared probe: another view (or a resolving
+ * source operation) may still be waiting for the same result. The probe itself
+ * stays bounded by its own 5 s timeout and is not tied to one caller.
+ */
+function waitForShared<T>(shared: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+  if (signal === undefined) return shared
+  if (signal.aborted) {
+    return Promise.reject(new ClueError('cancelled', 'the dependency inspection was cancelled'))
+  }
+  return new Promise<T>((resolvePromise, rejectPromise) => {
+    const onAbort = (): void => {
+      rejectPromise(new ClueError('cancelled', 'the dependency inspection was cancelled'))
+    }
+    signal.addEventListener('abort', onAbort, { once: true })
+    shared.then(
+      value => {
+        signal.removeEventListener('abort', onAbort)
+        resolvePromise(value)
+      },
+      error => {
+        signal.removeEventListener('abort', onAbort)
+        rejectPromise(error)
+      },
+    )
+  })
 }
 
 /** Default probe-cache lifetime (explicit refresh bypasses it). */
@@ -231,7 +260,15 @@ function validateDefinition(definition: ClueDependencyDefinition): void {
   }
 }
 
-/** PATH candidate paths for one command on the given target platform. */
+/**
+ * PATH candidate paths for one command on the given target platform.
+ *
+ * The dialect follows the ARGUMENT platform (never the host): Windows PATH is
+ * split on `;` and joined with `win32.join`, POSIX on `:`. Relative PATH entries
+ * (`.` or `bin`) are skipped: the resolved executable path must be absolute,
+ * and a relative candidate would be re-resolved by spawn against a different
+ * working directory than the probe used.
+ */
 export function pathCommandCandidates(
   command: string,
   platform: NodeJS.Platform,
@@ -239,15 +276,17 @@ export function pathCommandCandidates(
 ): string[] {
   const pathValue = env.PATH ?? env.Path ?? ''
   if (pathValue === '') return []
+  const api = platform === 'win32' ? win32 : posix
+  const separator = platform === 'win32' ? ';' : ':'
   const names = platform === 'win32'
     ? [command, `${command}.exe`, `${command}.cmd`, `${command}.bat`]
     : [command]
   const candidates: string[] = []
   const seen = new Set<string>()
-  for (const directory of pathValue.split(delimiter)) {
-    if (directory === '') continue
+  for (const directory of pathValue.split(separator)) {
+    if (directory === '' || !api.isAbsolute(directory)) continue
     for (const name of names) {
-      const candidate = join(directory, name)
+      const candidate = api.join(directory, name)
       if (!seen.has(candidate)) {
         seen.add(candidate)
         candidates.push(candidate)
@@ -521,6 +560,7 @@ export function createDependenciesRuntime(options: DependenciesRuntimeOptions): 
     refresh: boolean,
     signal: AbortSignal | undefined,
   ): Promise<DependencyStatus> => {
+    if (isAborted(signal)) throw new ClueError('cancelled', 'the dependency inspection was cancelled')
     const dependencyId = definition.dependencyId
     const task = install.latest(dependencyId)
     const cached = cache.get(dependencyId)
@@ -535,7 +575,9 @@ export function createDependenciesRuntime(options: DependenciesRuntimeOptions): 
     const key = `${dependencyId}:${generation}`
     let pending = inflight.get(key)
     if (pending === undefined) {
-      pending = computeStatus(definition, signal).then(status => {
+      // The shared probe is intentionally NOT bound to the first caller's
+      // signal; each waiter cancels locally through waitForShared.
+      pending = computeStatus(definition, undefined).then(status => {
         if (generation === atGeneration) {
           cache.set(dependencyId, { status, expiresAt: now() + probeTtlMs })
         }
@@ -546,7 +588,7 @@ export function createDependenciesRuntime(options: DependenciesRuntimeOptions): 
         if (inflight.get(key) === pending) inflight.delete(key)
       }).catch(() => undefined)
     }
-    return withTask(definition, await pending)
+    return withTask(definition, await waitForShared(pending, signal))
   }
 
   const installManager: InstallManager = createInstallManager({
@@ -558,8 +600,8 @@ export function createDependenciesRuntime(options: DependenciesRuntimeOptions): 
     ...(options.planTtlMs === undefined ? {} : { planTtlMs: options.planTtlMs }),
     ...(options.transport === undefined ? {} : { transport: options.transport }),
     ...(options.hashFile === undefined ? {} : { hashFile: options.hashFile }),
-    probeExecutable: async (executablePath, definition) => {
-      const outcome = await probeExecutable(definition, executablePath, undefined)
+    probeExecutable: async (executablePath, definition, signal) => {
+      const outcome = await probeExecutable(definition, executablePath, signal)
       return {
         compatible: outcome.compatible,
         ...(outcome.version === undefined ? {} : { version: outcome.version }),

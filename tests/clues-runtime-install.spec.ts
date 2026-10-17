@@ -16,25 +16,32 @@
 import { createHash } from 'node:crypto'
 import { existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, win32 } from 'node:path'
 import { gzipSync } from 'node:zlib'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   archiveExtractCommand,
   createInstallManager,
+  createNodeInstallTransport,
   managedTargetDir,
   npmInstallArgs,
+  npmLaunch,
   unsafeArchiveName,
   validateArchiveEntries,
   type InstallManager,
 } from '../src/clues/runtime/install.ts'
 import type {
+  CliCommandRequest,
+  CliResult,
+  CliRunner,
   ClueDependencyDefinition,
+  ClueFetch,
   DependencyInstallTask,
   InstallExtractInput,
   InstallNpmInput,
   InstallTransport,
 } from '../src/clues/runtime/types.ts'
+import { createCliRunner, createNodeSpawn } from '../src/clues/runtime/cli.ts'
 import { removeTree } from './temp-tree.ts'
 
 const roots: string[] = []
@@ -134,7 +141,7 @@ interface ManagerHarness {
 
 async function setup(options: {
   readonly transport?: InstallTransport
-  readonly probe?: (path: string) => Promise<{ compatible: boolean; version?: string }>
+  readonly probe?: (path: string, signal?: AbortSignal) => Promise<{ compatible: boolean; version?: string }>
   readonly now?: () => number
   readonly planTtlMs?: number
   readonly definition?: ClueDependencyDefinition
@@ -149,9 +156,9 @@ async function setup(options: {
     ...(options.now === undefined ? {} : { now: options.now }),
     ...(options.planTtlMs === undefined ? {} : { planTtlMs: options.planTtlMs }),
     ...(options.transport === undefined ? {} : { transport: options.transport }),
-    probeExecutable: async path => {
+    probeExecutable: async (path, _definition, signal) => {
       probes.push(path)
-      if (options.probe !== undefined) return await options.probe(path)
+      if (options.probe !== undefined) return await options.probe(path, signal)
       return { compatible: true, version: '2.40.1' }
     },
     detectSystemInstall: async () => undefined,
@@ -192,6 +199,9 @@ describe('install plan', () => {
     })
     expect(plan.actions.join('\n')).toMatch(/sha256/)
     expect(plan.actions.join('\n')).toMatch(/atomically replace/)
+    expect(plan.actionIds).toEqual([
+      'download-archive', 'verify-sha256', 'extract-archive', 'probe-version', 'replace-managed-copy',
+    ])
     expect(existsSync(join(home, 'tools'))).toBe(false)
     expect(transport.log.calls).toEqual([])
     manager.dispose()
@@ -203,6 +213,25 @@ describe('install plan', () => {
     timestamp += 5_000
     await expect(manager.start(definition(), plan.planId)).rejects.toMatchObject({ category: 'conflict' })
     expect(manager.latest('github.gh')).toBeUndefined()
+    manager.dispose()
+  })
+
+  it('binds start to the confirmed distribution, not a re-registered definition', async () => {
+    const { manager, plan } = await setup()
+    const original = definition().install!.distributions[0]!
+    const changed = definition({
+      install: {
+        distributions: [{
+          ...original,
+          url: 'https://example.invalid/gh-other.tar.gz',
+          sha256: 'b'.repeat(64),
+        }],
+      },
+    })
+    await expect(manager.start(changed, plan.planId)).rejects.toMatchObject({
+      category: 'conflict',
+      message: expect.stringMatching(/distribution changed/),
+    })
     manager.dispose()
   })
 
@@ -295,6 +324,71 @@ describe('install execution', () => {
     expect(task.error?.category).toBe('dependency-incompatible')
     expect(task.preservedPrevious).toBe(true)
     expect(readFileSync(join(oldDir, EXE), 'utf8')).toBe('old-working-binary')
+    expect(readdirSync(join(home, 'tools', 'github.gh'))).toEqual(['2.40.1'])
+    manager.dispose()
+  })
+
+  it('rejects a compatible but different version than the plan promised', async () => {
+    const home = tempHome()
+    const transport = fakeTransport()
+    const oldDir = managedTargetDir(home, 'github.gh', '2.40.1')
+    mkdirSync(join(oldDir, 'bin'), { recursive: true })
+    writeFileSync(join(oldDir, EXE), 'old-working-binary')
+    const { manager, plan } = await setup({
+      home,
+      transport,
+      probe: async () => ({ compatible: true, version: '2.41.0' }),
+    })
+    await manager.start(definition(), plan.planId)
+    const task = await settle(manager, 'github.gh')
+    expect(task.state).toBe('failed')
+    expect(task.error?.category).toBe('dependency-incompatible')
+    expect(task.error?.message).toContain('2.41.0')
+    expect(task.preservedPrevious).toBe(true)
+    expect(readFileSync(join(oldDir, EXE), 'utf8')).toBe('old-working-binary')
+    expect(readdirSync(join(home, 'tools', 'github.gh'))).toEqual(['2.40.1'])
+    manager.dispose()
+  })
+
+  it('accepts the planned version carrying build metadata', async () => {
+    const home = tempHome()
+    const transport = fakeTransport()
+    const { manager, plan } = await setup({
+      home,
+      transport,
+      probe: async () => ({ compatible: true, version: '2.40.1+official.7' }),
+    })
+    await manager.start(definition(), plan.planId)
+    const task = await settle(manager, 'github.gh')
+    expect(task.state).toBe('succeeded')
+    manager.dispose()
+  })
+
+  it('propagates cancellation to the post-swap probe and restores the previous copy', async () => {
+    const home = tempHome()
+    const transport = fakeTransport()
+    let signalProbeStarted!: () => void
+    const probeStarted = new Promise<void>((resolve) => { signalProbeStarted = resolve })
+    const { manager, plan } = await setup({
+      home,
+      transport,
+      probe: async (_path, signal) => {
+        signalProbeStarted()
+        await new Promise<void>((_resolve, reject) => {
+          const abort = (): void => reject(Object.assign(new Error('aborted'), { name: 'AbortError' }))
+          if (signal?.aborted === true) abort()
+          else signal?.addEventListener('abort', abort, { once: true })
+        })
+        return { compatible: true, version: '2.40.1' }
+      },
+    })
+    mkdirSync(join(plan.targetDir, 'bin'), { recursive: true })
+    writeFileSync(join(plan.targetDir, EXE), 'old-working-binary')
+    await manager.start(definition(), plan.planId)
+    await probeStarted
+    const task = await manager.cancel('github.gh')
+    expect(task.state).toBe('cancelled')
+    expect(readFileSync(join(plan.targetDir, EXE), 'utf8')).toBe('old-working-binary')
     expect(readdirSync(join(home, 'tools', 'github.gh'))).toEqual(['2.40.1'])
     manager.dispose()
   })
@@ -424,10 +518,23 @@ function tarGz(entries: ReadonlyArray<{ name: string; type?: string; data?: stri
   return gzipSync(Buffer.concat(blocks))
 }
 
-function zipBytes(names: readonly string[], options: { readonly encrypted?: boolean } = {}): Buffer {
+function zipBytes(
+  names: readonly string[],
+  options: {
+    readonly encrypted?: boolean
+    /** EOCD count to claim (defaults to the real number of central entries). */
+    readonly declaredEntries?: number
+    /** Unix st_mode (e.g. 0o120777 symlink) written to the external attributes. */
+    readonly unixMode?: number
+  } = {},
+): Buffer {
   const locals: Buffer[] = []
   const centrals: Buffer[] = []
   let offset = 0
+  const madeByHost = options.unixMode === undefined ? 0 : 3
+  const externalAttributes = options.unixMode === undefined
+    ? 0
+    : ((options.unixMode << 16) >>> 0)
   for (const name of names) {
     const nameBuffer = Buffer.from(name, 'utf8')
     const local = Buffer.alloc(30)
@@ -439,21 +546,23 @@ function zipBytes(names: readonly string[], options: { readonly encrypted?: bool
     locals.push(local, nameBuffer)
     const central = Buffer.alloc(46)
     central.writeUInt32LE(0x02014b50, 0)
-    central.writeUInt16LE(20, 4)
+    central.writeUInt16LE((madeByHost << 8) | 20, 4)
     central.writeUInt16LE(20, 6)
     central.writeUInt16LE(options.encrypted === true ? 1 : 0, 8)
     central.writeUInt16LE(0, 10)
     central.writeUInt16LE(nameBuffer.length, 28)
+    central.writeUInt32LE(externalAttributes, 38)
     central.writeUInt32LE(offset, 42)
     centrals.push(central, nameBuffer)
     offset += local.length + nameBuffer.length
   }
   const centralBuffer = Buffer.concat(centrals)
   const localBuffer = Buffer.concat(locals)
+  const declared = options.declaredEntries ?? names.length
   const eocd = Buffer.alloc(22)
   eocd.writeUInt32LE(0x06054b50, 0)
-  eocd.writeUInt16LE(names.length, 8)
-  eocd.writeUInt16LE(names.length, 10)
+  eocd.writeUInt16LE(declared, 8)
+  eocd.writeUInt16LE(declared, 10)
   eocd.writeUInt32LE(centralBuffer.length, 12)
   eocd.writeUInt32LE(localBuffer.length, 16)
   return Buffer.concat([localBuffer, centralBuffer, eocd])
@@ -495,6 +604,239 @@ describe('archive entry validation before extraction', () => {
       .toThrow(expect.objectContaining({ category: 'failed' }))
     expect(() => validateArchiveEntries('zip', Buffer.from('not a zip file')))
       .toThrow(expect.objectContaining({ category: 'failed' }))
+  })
+
+  it('validates every central entry even when the EOCD under-reports the count', () => {
+    // The second entry is traversal; a count-driven validator would stop after
+    // the first and let it through.
+    expect(() => validateArchiveEntries('zip', zipBytes(['bin/gh', '../escape'], { declaredEntries: 1 })))
+      .toThrow(expect.objectContaining({ category: 'failed' }))
+    expect(() => validateArchiveEntries('zip', zipBytes(['../escape', 'bin/gh'], { declaredEntries: 1 })))
+      .toThrow(expect.objectContaining({ category: 'failed' }))
+  })
+
+  it('refuses zip symlink and device entries using Unix external attributes', () => {
+    expect(() => validateArchiveEntries('zip', zipBytes(['bin/gh'], { unixMode: 0o120777 })))
+      .toThrow(expect.objectContaining({ category: 'failed' }))
+    expect(() => validateArchiveEntries('zip', zipBytes(['bin/gh'], { unixMode: 0o020644 })))
+      .toThrow(expect.objectContaining({ category: 'failed' }))
+    expect(() => validateArchiveEntries('zip', zipBytes(['bin/gh'], { unixMode: 0o060644 })))
+      .toThrow(expect.objectContaining({ category: 'failed' }))
+    // A regular Unix file and a directory remain acceptable.
+    expect(() => validateArchiveEntries('zip', zipBytes(['bin/gh'], { unixMode: 0o100755 }))).not.toThrow()
+    expect(() => validateArchiveEntries('zip', zipBytes(['bin/'], { unixMode: 0o040755 }))).not.toThrow()
+  })
+
+  it('refuses every special or unknown tar entry type with a traversal name', () => {
+    for (const type of ['3', '4', '6', 'S', 'D', 'M', 'N', 'V', 'K', 'A', 'Z']) {
+      expect(
+        () => validateArchiveEntries('tar.gz', tarGz([{ name: '../escape', type }])),
+        `tar type ${type}`,
+      ).toThrow(expect.objectContaining({ category: 'failed' }))
+    }
+    expect(() => validateArchiveEntries('tar.gz', tarGz([{ name: '../escape', type: '5' }])))
+      .toThrow(expect.objectContaining({ category: 'failed' }))
+  })
+
+  it('refuses a pax header that rewrites the next entry path', () => {
+    expect(() => validateArchiveEntries('tar.gz', tarGz([
+      { name: 'pax', type: 'x', data: 'path=../escape\n' },
+      { name: 'bin/gh', data: 'x' },
+    ]))).toThrow(expect.objectContaining({ category: 'failed' }))
+  })
+})
+
+function headerBag(headers: Record<string, string>): { get(name: string): string | null } {
+  const lower = new Map(Object.entries(headers).map(([name, value]) => [name.toLowerCase(), value]))
+  return { get: name => lower.get(name.toLowerCase()) ?? null }
+}
+
+function stubRunner(calls?: CliCommandRequest[]): CliRunner {
+  return {
+    async run(request): Promise<CliResult> {
+      calls?.push(request)
+      return {
+        exitCode: 0,
+        stdout: '',
+        stderr: '',
+        stdoutTruncated: false,
+        stderrTruncated: false,
+        durationMs: 1,
+      }
+    },
+    async runJson(): Promise<never> {
+      throw new Error('the install transport must never parse JSON')
+    },
+  }
+}
+
+describe('default download transport', () => {
+  it('stops a streamed download past the byte cap and cancels the reader', async () => {
+    const dir = tempHome()
+    let cancelled = false
+    const fetch: ClueFetch = async () => ({
+      status: 200,
+      headers: headerBag({}),
+      body: {
+        getReader: () => ({
+          read: async () => ({ done: false as const, value: Buffer.alloc(8) }),
+          cancel: async () => { cancelled = true },
+        }),
+      },
+    })
+    const transport = createNodeInstallTransport({
+      fetch,
+      runner: stubRunner(),
+      downloadMaxBytes: 16,
+      downloadTimeoutMs: 5_000,
+    })
+    await expect(transport.download({
+      url: 'https://example.invalid/asset',
+      destination: join(dir, 'asset'),
+    })).rejects.toMatchObject({
+      category: 'failed',
+      message: expect.stringMatching(/download limit/),
+    })
+    expect(cancelled).toBe(true)
+  })
+
+  it('refuses a declared content-length above the byte cap before reading', async () => {
+    const dir = tempHome()
+    let readerRequested = false
+    const fetch: ClueFetch = async () => ({
+      status: 200,
+      headers: headerBag({ 'content-length': '1000' }),
+      body: {
+        getReader: () => {
+          readerRequested = true
+          return { read: async () => ({ done: true as const }), cancel: async () => undefined }
+        },
+      },
+    })
+    const transport = createNodeInstallTransport({ fetch, runner: stubRunner(), downloadMaxBytes: 16 })
+    await expect(transport.download({
+      url: 'https://example.invalid/asset',
+      destination: join(dir, 'asset'),
+    })).rejects.toMatchObject({ category: 'failed', message: expect.stringMatching(/download limit/) })
+    expect(readerRequested).toBe(false)
+  })
+
+  it('times out a stalled download and a stalled body read', async () => {
+    const dir = tempHome()
+    const stalledFetch: ClueFetch = async (_url, init) => await new Promise((_resolve, reject) => {
+      init.signal?.addEventListener('abort', () => {
+        reject(Object.assign(new Error('aborted'), { name: 'AbortError' }))
+      }, { once: true })
+    })
+    const fetchTransport = createNodeInstallTransport({
+      fetch: stalledFetch,
+      runner: stubRunner(),
+      downloadTimeoutMs: 5,
+    })
+    await expect(fetchTransport.download({
+      url: 'https://example.invalid/asset',
+      destination: join(dir, 'asset-a'),
+    })).rejects.toMatchObject({ category: 'timeout' })
+
+    let cancelled = false
+    const stalledBody: ClueFetch = async () => ({
+      status: 200,
+      headers: headerBag({}),
+      body: {
+        getReader: () => ({
+          read: () => new Promise(() => undefined),
+          cancel: async () => { cancelled = true },
+        }),
+      },
+    })
+    const bodyTransport = createNodeInstallTransport({
+      fetch: stalledBody,
+      runner: stubRunner(),
+      downloadTimeoutMs: 5,
+    })
+    await expect(bodyTransport.download({
+      url: 'https://example.invalid/asset',
+      destination: join(dir, 'asset-b'),
+    })).rejects.toMatchObject({ category: 'timeout' })
+    expect(cancelled).toBe(true)
+  })
+})
+
+describe('npm launch resolution', () => {
+  it('runs the real npm-cli.js with the node executable on Windows when found', () => {
+    const node = 'C:\\Program Files\\nodejs\\node.exe'
+    const cli = win32.join(win32.dirname(node), 'node_modules', 'npm', 'bin', 'npm-cli.js')
+    expect(npmLaunch({
+      platform: 'win32',
+      env: {},
+      nodeExecutable: node,
+      exists: path => path === cli,
+    })).toEqual({ command: node, args: [cli] })
+  })
+
+  it('falls back to the npm.cmd shim on Windows and uses npm on POSIX', () => {
+    expect(npmLaunch({
+      platform: 'win32',
+      env: {},
+      nodeExecutable: 'C:\\node\\node.exe',
+      exists: () => false,
+    })).toEqual({ command: 'npm.cmd', args: [] })
+    expect(npmLaunch({ platform: 'linux', env: {} })).toEqual({ command: 'npm', args: [] })
+    expect(npmLaunch({ platform: 'darwin', env: {} })).toEqual({ command: 'npm', args: [] })
+  })
+
+  it('passes the npm-cli.js path before the install args through the transport', async () => {
+    const calls: CliCommandRequest[] = []
+    const transport = createNodeInstallTransport({
+      fetch: async () => { throw new Error('unused') },
+      runner: stubRunner(calls),
+      platform: 'win32',
+      env: {},
+      nodeExecutable: 'C:\\node\\node.exe',
+      npmCliExists: path => path.endsWith('npm-cli.js'),
+    })
+    await transport.npmInstall({
+      packageName: 'lark-cli',
+      packageVersion: '1.2.3',
+      directory: 'C:\\managed\\dir',
+    })
+    expect(calls[0]?.command).toBe('C:\\node\\node.exe')
+    expect(calls[0]?.args[0]).toBe(win32.join('C:\\node', 'node_modules', 'npm', 'bin', 'npm-cli.js'))
+    expect(calls[0]?.args.slice(1)).toEqual(npmInstallArgs('lark-cli', '1.2.3', 'C:\\managed\\dir'))
+  })
+
+  it('uses plain npm on POSIX with the exact local-only argv', async () => {
+    const calls: CliCommandRequest[] = []
+    const transport = createNodeInstallTransport({
+      fetch: async () => { throw new Error('unused') },
+      runner: stubRunner(calls),
+      platform: 'linux',
+      env: {},
+    })
+    await transport.npmInstall({
+      packageName: 'lark-cli',
+      packageVersion: '1.2.3',
+      directory: '/managed/dir',
+    })
+    expect(calls[0]?.command).toBe('npm')
+    expect(calls[0]?.args).toEqual(npmInstallArgs('lark-cli', '1.2.3', '/managed/dir'))
+  })
+})
+
+describe('real archive extraction', () => {
+  it('extracts a validated tar.gz through the system tar', async () => {
+    const dir = tempHome()
+    const archivePath = join(dir, 'asset.tar.gz')
+    writeFileSync(archivePath, tarGz([{ name: 'bin/gh', data: '#!/bin/sh\necho ok\n' }]))
+    const destination = join(dir, 'out')
+    mkdirSync(destination)
+    const transport = createNodeInstallTransport({
+      fetch: async () => { throw new Error('the extract path must not fetch') },
+      runner: createCliRunner({ spawn: createNodeSpawn(), env: process.env }),
+      platform: process.platform,
+    })
+    await transport.extract({ archivePath, archive: 'tar.gz', destination, stripComponents: 0 })
+    expect(readFileSync(join(destination, 'bin', 'gh'), 'utf8')).toBe('#!/bin/sh\necho ok\n')
   })
 })
 

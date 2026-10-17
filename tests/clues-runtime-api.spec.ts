@@ -13,10 +13,11 @@
  * - a missing profile home leaves installation explicitly unavailable.
  */
 import { createHash } from 'node:crypto'
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { ClueError, isClueError } from '../src/clues/error.ts'
 import { createCluesService, type CluesService } from '../src/clues/service.ts'
 import { CLUES_RUNTIME_API_METHODS } from '../src/clues/runtime/api.ts'
 import { installCluesRuntime } from '../src/clues/runtime/index.ts'
@@ -171,6 +172,67 @@ describe('runtime API registration', () => {
     // Idempotent, and the effect disposer stays safe to call.
     runtime.dispose()
     disposers[0]!()
+  })
+
+  it('keeps runtime ClueError identity on the S1 dispatcher', async () => {
+    const { service, runtime } = setup()
+    runtime.dependencies.register(definition())
+    const error = await service.invokeApi('clues.dependencies.plan', {}).catch((caught: unknown) => caught)
+    expect(error).toBeInstanceOf(ClueError)
+    expect(isClueError(error)).toBe(true)
+    expect((error as ClueError).category).toBe('invalid-request')
+    runtime.dispose()
+  })
+
+  it('imports ClueError through the shared types re-export so tsdown externalizes it', () => {
+    // tsdown's cluesSharedError plugin only rewrites imports from files directly
+    // under src/clues/*.ts. A runtime file importing '../error.ts' would inline a
+    // SECOND ClueError class (see src/clues/runtime/index.ts assembly).
+    const dir = join(process.cwd(), 'src', 'clues', 'runtime')
+    for (const file of readdirSync(dir).filter(name => name.endsWith('.ts'))) {
+      const source = readFileSync(join(dir, file), 'utf8')
+      expect(source, file).not.toMatch(/from '\.\.\/error\.ts'/)
+      if (/\b(?:ClueError|isClueError)\b/.test(source)) {
+        expect(source, file).toMatch(/from '\.\.\/types\.ts'/)
+      }
+    }
+  })
+
+  it('degrades missing Cordis services instead of throwing on the property getter', async () => {
+    const base = tempBase()
+    const home = join(base, 'home')
+    mkdirSync(home, { recursive: true })
+    const service = createCluesService({ root: join(base, 'store') })
+    const throwingCtx = {
+      profileContext: { home },
+      get: (): undefined => undefined,
+      // A real Cordis fiber throws on an accessor for a service the fiber does
+      // not inject; only ctx.get() answers undefined.
+      get credentials(): never {
+        throw new Error('cannot get property credentials without inject')
+      },
+      get tools(): never {
+        throw new Error('cannot get property tools without inject')
+      },
+    }
+    const runtime = installCluesRuntime(throwingCtx as unknown as Context, service, {
+      home,
+      env: { PATH: '' },
+      spawn: createFakeSpawn().spawn,
+      transport: fakeTransport(),
+      probeCwd: base,
+      fetch: async () => { throw new Error('the HTTP fetch must not run without a credential') },
+    })
+    await expect(runtime.http.request({
+      url: 'https://api.example.invalid/x',
+      credential: { ref: 'TOKEN' },
+      allowedHosts: ['api.example.invalid'],
+    })).rejects.toMatchObject({ category: 'auth-required' })
+    await expect(runtime.mcp.callTool(
+      { toolName: 'mcp.feishu.docs_read', arguments: {}, requiresApproval: false },
+      { caller: 'ui' },
+    )).resolves.toMatchObject({ status: 'operation-unavailable' })
+    runtime.dispose()
   })
 
   it('inspects, plans, starts and reports one shared install task through the API', async () => {

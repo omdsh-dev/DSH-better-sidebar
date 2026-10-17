@@ -4,7 +4,8 @@
  * A source plugin never calls `fetch` directly: this module owns the rules from
  * the approved spec §3:
  * - the target host is checked against the connection's allowlist before any
- *   byte leaves the process;
+ *   byte leaves the process, and a credentialed request MUST declare that
+ *   allowlist (`host`/`host:port`, default ports only unless a port is named);
  * - a secret is resolved PER OPERATION from the host credential seam (never
  *   copied into preferences, clues, exports or a cache). Caller-supplied
  *   `authorization`/`cookie` headers are refused — secrets use the seam;
@@ -15,7 +16,7 @@
  *   exposed through the safe header projection, and failures never echo request
  *   headers, tokens, raw bodies or provider diagnostics.
  */
-import { ClueError, isClueError } from '../error.ts'
+import { ClueError, isClueError } from '../types.ts'
 import type {
   ClueFetch,
   ClueFetchResponse,
@@ -123,6 +124,57 @@ function sameOrigin(left: URL, right: URL): boolean {
   return left.protocol === right.protocol && left.host === right.host
 }
 
+/** Effective port of a URL (explicit, or the scheme default). */
+function effectivePort(url: URL): string {
+  if (url.port !== '') return url.port
+  return url.protocol === 'https:' ? '443' : '80'
+}
+
+/** One allowlist entry (`host` or `host:port`, an optional scheme is ignored). */
+function hostEntry(value: string): { hostname: string; port?: string } | undefined {
+  const trimmed = value.trim().toLowerCase()
+  if (trimmed === '') return undefined
+  try {
+    const parsed = new URL(trimmed.includes('://') ? trimmed : `https://${trimmed}`)
+    if (parsed.hostname === '') return undefined
+    return {
+      hostname: parsed.hostname.toLowerCase(),
+      ...(parsed.port === '' ? {} : { port: parsed.port }),
+    }
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Whether a URL is covered by a connection's host allowlist. A port-less entry
+ * covers only the scheme's DEFAULT port: the same hostname on another port is
+ * not implied, so an injected URL cannot move a credential to a side service.
+ */
+function hostAllowed(url: URL, allowedHosts: readonly string[] | undefined): boolean {
+  if (allowedHosts === undefined || allowedHosts.length === 0) return true
+  return allowedHosts.some((entry) => {
+    const parsed = hostEntry(entry)
+    if (parsed === undefined || parsed.hostname !== url.hostname.toLowerCase()) return false
+    if (parsed.port !== undefined) return parsed.port === effectivePort(url)
+    return url.port === ''
+  })
+}
+
+/** Release a redirect response's body so its connection can be reused. */
+async function discardResponseBody(response: ClueFetchResponse): Promise<void> {
+  try {
+    if (response.body !== undefined && response.body !== null) {
+      const reader = response.body.getReader()
+      await reader.cancel()
+      return
+    }
+    if (response.text !== undefined) await response.text()
+  } catch {
+    // Best effort: the redirect outcome is decided by the headers alone.
+  }
+}
+
 /** Read a bounded response body (explicit truncation, no silent loss). */
 async function readResponseText(
   response: ClueFetchResponse,
@@ -203,9 +255,17 @@ export function createHttpClient(options: HttpClientOptions): ClueHttpClient {
       let current = parseTarget(request.url)
       const headers = requestHeadersOf(request.headers)
       const allowedHosts = request.allowedHosts
+      if (request.credential !== undefined && (allowedHosts === undefined || allowedHosts.length === 0)) {
+        throw new ClueError(
+          'invalid-request',
+          'a request carrying a connection credential must declare its allowedHosts',
+        )
+      }
       if (allowedHosts !== undefined && allowedHosts.length > 0) {
-        const host = current.hostname.toLowerCase()
-        if (!allowedHosts.some(entry => entry.toLowerCase() === host)) {
+        if (allowedHosts.some(entry => hostEntry(entry) === undefined)) {
+          throw new ClueError('invalid-request', 'the host allowlist contains an invalid entry')
+        }
+        if (!hostAllowed(current, allowedHosts)) {
           throw new ClueError('permission-denied', 'the request target host is not allowed for this connection')
         }
       }
@@ -283,40 +343,46 @@ export function createHttpClient(options: HttpClientOptions): ClueHttpClient {
             throw new ClueError('failed', 'the HTTP request failed')
           }
           if (REDIRECT_STATUSES.has(response.status)) {
-            const location = response.headers.get('location')
-            if (location === null || location === '') {
-              throw new ClueError('failed', 'the remote service answered a redirect without a location')
-            }
-            if (redirects >= maxRedirects) {
-              throw new ClueError('failed', 'the remote service redirected too many times')
-            }
-            let next: URL
             try {
-              next = new URL(location, current)
-            } catch {
-              throw new ClueError('failed', 'the remote service answered an invalid redirect location')
+              const location = response.headers.get('location')
+              if (location === null || location === '') {
+                throw new ClueError('failed', 'the remote service answered a redirect without a location')
+              }
+              if (redirects >= maxRedirects) {
+                throw new ClueError('failed', 'the remote service redirected too many times')
+              }
+              let next: URL
+              try {
+                next = new URL(location, current)
+              } catch {
+                throw new ClueError('failed', 'the remote service answered an invalid redirect location')
+              }
+              // Same-origin only: never forward an authorization header to a
+              // different host, and never downgrade https to http.
+              if (!sameOrigin(next, current)) {
+                throw new ClueError(
+                  'permission-denied',
+                  'refused to follow a redirect to a different host',
+                )
+              }
+              if (!hostAllowed(next, allowedHosts)) {
+                throw new ClueError('permission-denied', 'the redirect target host is not allowed for this connection')
+              }
+              if (
+                (response.status === 303)
+                || ((response.status === 301 || response.status === 302) && method === 'POST')
+              ) {
+                method = 'GET'
+                body = undefined
+              }
+              current = next
+              redirects += 1
+            } finally {
+              // A manual redirect response still owns its body. Release it
+              // before the next request (or before throwing) so a long-lived
+              // connection is not stuck on an unread stream.
+              await discardResponseBody(response)
             }
-            // Same-origin only: never forward an authorization header to a
-            // different host, and never downgrade https to http.
-            if (!sameOrigin(next, current)) {
-              throw new ClueError(
-                'permission-denied',
-                'refused to follow a redirect to a different host',
-              )
-            }
-            if (allowedHosts !== undefined && allowedHosts.length > 0
-              && !allowedHosts.some(entry => entry.toLowerCase() === next.hostname.toLowerCase())) {
-              throw new ClueError('permission-denied', 'the redirect target host is not allowed for this connection')
-            }
-            if (
-              (response.status === 303)
-              || ((response.status === 301 || response.status === 302) && method === 'POST')
-            ) {
-              method = 'GET'
-              body = undefined
-            }
-            current = next
-            redirects += 1
             continue
           }
           let bodyResult: { text: string; truncated: boolean }

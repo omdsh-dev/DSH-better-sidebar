@@ -19,7 +19,7 @@
  */
 import { spawn as nodeSpawn } from 'node:child_process'
 import { isAbsolute } from 'node:path'
-import { ClueError, isClueError } from '../error.ts'
+import { ClueError, isClueError } from '../types.ts'
 import type {
   CliChildProcess,
   CliCommandRequest,
@@ -43,6 +43,8 @@ export const MAX_CLI_STDERR_BYTES = 16 << 10
  */
 export const CLI_ENV_ALLOWLIST: readonly string[] = [
   'PATH',
+  // Windows exposes the same variable as `Path`; Node preserves the spelling.
+  'Path',
   'HOME',
   'USERPROFILE',
   'TMPDIR',
@@ -193,10 +195,13 @@ export interface CliRunnerOptions {
 }
 
 /**
- * One captured stream: keeps at most `limit` bytes, records whether it had to
- * drop data, and reports the first overflow so the child can be killed.
+ * One captured stream: keeps at most `limit` bytes and records whether it had
+ * to drop data. Overflow does NOT kill the child: the excess is drained but not
+ * buffered, so the process can still exit normally, the result carries an
+ * explicit `stdoutTruncated`/`stderrTruncated` flag, and `runJson` can refuse
+ * the incomplete payload instead of reporting a process it killed itself.
  */
-function createCapture(limit: number, onOverflow: () => void): {
+function createCapture(limit: number): {
   push(chunk: string | Uint8Array): void
   text(): string
   truncated(): boolean
@@ -217,7 +222,6 @@ function createCapture(limit: number, onOverflow: () => void): {
       if (remaining > 0) chunks.push(buffer.subarray(0, remaining))
       received += buffer.length
       truncated = true
-      onOverflow()
     },
     text(): string {
       return Buffer.concat(chunks).toString('utf8')
@@ -253,13 +257,8 @@ export function createCliRunner(options: CliRunnerOptions): CliRunner {
       let timedOut = false
       let aborted = false
 
-      const stdout = createCapture(maxOutputBytes, () => {
-        // The cap is explicit: stop the process rather than buffering forever.
-        try { child.kill('SIGKILL') } catch { /* already gone */ }
-      })
-      const stderr = createCapture(maxOutputBytes, () => {
-        try { child.kill('SIGKILL') } catch { /* already gone */ }
-      })
+      const stdout = createCapture(maxOutputBytes)
+      const stderr = createCapture(maxOutputBytes)
 
       const cleanup = (): void => {
         clearTimeout(timer)
@@ -316,6 +315,10 @@ export function createCliRunner(options: CliRunnerOptions): CliRunner {
       timer.unref?.()
       request.signal?.addEventListener('abort', onAbort, { once: true })
 
+      const stdinHasPayload = request.stdin !== undefined
+      // True once stdin finished flushing (or when there was no payload).
+      // A child that closes before this point did not receive the payload.
+      let stdinFinished = !stdinHasPayload
       child.stdout?.on('data', chunk => stdout.push(chunk))
       child.stderr?.on('data', chunk => stderr.push(chunk))
       child.on('error', error => fail(mapSpawnError(error)))
@@ -328,6 +331,12 @@ export function createCliRunner(options: CliRunnerOptions): CliRunner {
           fail(new ClueError('cancelled', 'the CLI operation was cancelled'))
           return
         }
+        if (stdinHasPayload && !stdinFinished) {
+          // Covers EPIPE that arrives AFTER `close` (the write callback never
+          // flushed), so an undelivered stdin can never be reported as success.
+          fail(new ClueError('failed', 'the CLI process closed before the input was fully written'))
+          return
+        }
         if (code === null) {
           fail(new ClueError(
             'failed',
@@ -338,13 +347,53 @@ export function createCliRunner(options: CliRunnerOptions): CliRunner {
         succeed(code)
       })
 
+      // An async stdin failure (typically EPIPE when the child exits before
+      // reading) is an EventEmitter ERROR: without a listener it becomes an
+      // uncaught exception and can take the host process down. It also means
+      // the payload was NOT delivered, so a run with `stdin` must fail instead
+      // of reporting the child's exit code as success. An EOF-only stdin may
+      // legitimately close early and keeps the close/exit outcome.
+      const onStdinError = (error: Error): void => {
+        if (!stdinHasPayload) return
+        kill()
+        if (timedOut) {
+          fail(new ClueError('timeout', 'the CLI operation timed out'))
+          return
+        }
+        if (aborted) {
+          fail(new ClueError('cancelled', 'the CLI operation was cancelled'))
+          return
+        }
+        const code = (error as { code?: unknown } | null)?.code
+        fail(new ClueError(
+          'failed',
+          code === 'EPIPE'
+            ? 'the CLI process closed its input before the payload was written'
+            : 'the CLI input could not be written',
+        ))
+      }
+      try {
+        child.stdin?.on?.('finish', () => { stdinFinished = true })
+        child.stdin?.on?.('error', onStdinError)
+      } catch {
+        // A structural fake may not expose `on`; the synchronous write path
+        // below still reports a broken stdin instead of pretending success.
+      }
+
       // Close stdin even when there is no payload: many CLIs wait for EOF.
       try {
-        if (request.stdin !== undefined) child.stdin?.write(request.stdin)
+        if (stdinHasPayload) {
+          if (child.stdin === null) {
+            fail(new ClueError('failed', 'the CLI process does not accept input'))
+            return
+          }
+          child.stdin.write(request.stdin!)
+        }
         child.stdin?.end()
       } catch {
-        // A closed stdin is not a command failure by itself; the close/error
-        // event still decides the outcome.
+        if (!stdinHasPayload) return
+        kill()
+        fail(new ClueError('failed', 'the CLI input could not be written'))
       }
     })
   }
@@ -373,13 +422,58 @@ export function createCliRunner(options: CliRunnerOptions): CliRunner {
   return { run, runJson: runJson as CliRunner['runJson'] }
 }
 
-/** Wrap node:child_process.spawn as the injectable seam. */
-export function createNodeSpawn(): CliSpawn {
-  return (command, args, options) => nodeSpawn(command, [...args], {
-    cwd: options.cwd,
-    env: options.env,
-    stdio: [...options.stdio],
-    shell: false,
-    windowsHide: options.windowsHide,
-  }) as unknown as CliChildProcess
+/**
+ * Build the command line used to run a `.cmd`/`.bat` shim through `cmd.exe`.
+ *
+ * Node cannot spawn a batch file directly (`shell: false` + CreateProcess), so
+ * the production seam wraps it in a CONTROLLED `cmd.exe /d /s /c` invocation.
+ * Every token is quoted, and characters cmd would expand/escape (`%`, quotes,
+ * line breaks, NUL) are refused instead of being passed through.
+ * @param command - absolute `.cmd`/`.bat` path.
+ * @param args - argv tokens (never a pre-joined shell string).
+ */
+export function windowsShimCommandLine(command: string, args: readonly string[]): string {
+  const quote = (value: string): string => {
+    // eslint-disable-next-line no-control-regex -- NUL cannot reach cmd.exe.
+    if (/["%\r\n\u0000]/.test(value)) {
+      throw new ClueError(
+        'invalid-request',
+        'the Windows command arguments contain characters that cmd.exe would reinterpret',
+      )
+    }
+    return `"${value}"`
+  }
+  return [command, ...args].map(quote).join(' ')
+}
+
+/**
+ * Wrap node:child_process.spawn as the injectable seam.
+ * @param options - platform override (tests); production uses `process.platform`.
+ */
+export function createNodeSpawn(options: { readonly platform?: NodeJS.Platform } = {}): CliSpawn {
+  const platform = options.platform ?? process.platform
+  return (command, args, spawnOptions) => {
+    if (platform === 'win32' && /\.(?:cmd|bat)$/i.test(command)) {
+      // Node's own `shell: true` path builds exactly this cmd.exe invocation;
+      // doing it here keeps the runner's argv array + shell:false contract while
+      // making npm/gh/lark-cli shims executable on Windows.
+      const comspec = spawnOptions.env.ComSpec ?? spawnOptions.env.COMSPEC ?? 'cmd.exe'
+      const commandLine = windowsShimCommandLine(command, args)
+      return nodeSpawn(comspec, ['/d', '/s', '/c', `"${commandLine}"`], {
+        cwd: spawnOptions.cwd,
+        env: spawnOptions.env,
+        stdio: [...spawnOptions.stdio],
+        shell: false,
+        windowsHide: spawnOptions.windowsHide,
+        windowsVerbatimArguments: true,
+      }) as unknown as CliChildProcess
+    }
+    return nodeSpawn(command, [...args], {
+      cwd: spawnOptions.cwd,
+      env: spawnOptions.env,
+      stdio: [...spawnOptions.stdio],
+      shell: false,
+      windowsHide: spawnOptions.windowsHide,
+    }) as unknown as CliChildProcess
+  }
 }

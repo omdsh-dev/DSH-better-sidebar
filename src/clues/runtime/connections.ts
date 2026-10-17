@@ -23,7 +23,7 @@
  *   observation renders as a sanitized `error` row instead of hiding the whole
  *   settings page.
  */
-import { ClueError, isClueError } from '../error.ts'
+import { ClueError, isClueError } from '../types.ts'
 import type { JsonValue } from '../types.ts'
 import type {
   ClueConnectionDefinition,

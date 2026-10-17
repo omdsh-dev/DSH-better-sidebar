@@ -15,12 +15,17 @@
  *   instead of pretending the command returned an empty list.
  */
 import { EventEmitter } from 'node:events'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ClueError } from '../src/clues/error.ts'
 import {
   buildCliEnv,
   createCliRunner,
+  createNodeSpawn,
   redactCliOutput,
+  windowsShimCommandLine,
 } from '../src/clues/runtime/cli.ts'
 import type {
   CliChildProcess,
@@ -40,22 +45,29 @@ class FakeReadable extends EventEmitter implements CliReadable {
 class FakeWritable implements CliWritable {
   data = ''
   ended = false
+  private readonly events = new EventEmitter()
+  constructor(private readonly finishOnEnd = true) {}
   write(chunk: string | Uint8Array): boolean {
     this.data += typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8')
     return true
   }
   end(): void {
     this.ended = true
+    if (this.finishOnEnd) this.events.emit('finish')
   }
-  on(): this {
+  on(event: 'error' | 'finish', listener: ((error: Error) => void) | (() => void)): this {
+    this.events.on(event, listener)
     return this
+  }
+  emitError(error: Error): void {
+    this.events.emit('error', error)
   }
 }
 
 class FakeChild implements CliChildProcess {
   readonly stdout = new FakeReadable()
   readonly stderr = new FakeReadable()
-  readonly stdin = new FakeWritable()
+  readonly stdin: FakeWritable
   readonly kills: Array<string | undefined> = []
   private readonly events = new EventEmitter()
 
@@ -64,7 +76,10 @@ class FakeChild implements CliChildProcess {
     readonly args: readonly string[],
     readonly options: CliSpawnOptions,
     private readonly autoCloseOnKill: boolean,
-  ) {}
+    stdin: FakeWritable = new FakeWritable(),
+  ) {
+    this.stdin = stdin
+  }
 
   on(event: 'error', listener: (error: Error) => void): this
   on(event: 'close', listener: (code: number | null, signal: string | null) => void): this
@@ -95,10 +110,16 @@ interface Harness {
   readonly runs: FakeChild[]
 }
 
-function harness(options: { autoCloseOnKill?: boolean } = {}): Harness {
+function harness(options: { autoCloseOnKill?: boolean; stdin?: FakeWritable } = {}): Harness {
   const runs: FakeChild[] = []
   const spawn: CliSpawn = (command, args, spawnOptions) => {
-    const child = new FakeChild(command, args, spawnOptions, options.autoCloseOnKill ?? true)
+    const child = new FakeChild(
+      command,
+      args,
+      spawnOptions,
+      options.autoCloseOnKill ?? true,
+      options.stdin,
+    )
     runs.push(child)
     return child
   }
@@ -126,9 +147,18 @@ const ENV = {
   SOME_UNLISTED: 'nope',
 }
 
+const roots: string[] = []
+
 afterEach(() => {
   vi.useRealTimers()
+  for (const path of roots.splice(0)) rmSync(path, { recursive: true, force: true })
 })
+
+function tempDir(): string {
+  const path = mkdtempSync(join(tmpdir(), 'dsh-clue-cli-'))
+  roots.push(path)
+  return path
+}
 
 describe('CLI boundary', () => {
   it('passes argv as an array with shell:false, an absolute cwd and structured stdin', async () => {
@@ -207,17 +237,65 @@ describe('CLI boundary', () => {
     expect(runs).toHaveLength(0)
   })
 
-  it('caps output explicitly and does not silently drop the overflow', async () => {
+  it('caps output explicitly, keeps draining and reports the truncation', async () => {
     const { spawn, runs } = harness()
     const runner = createCliRunner({ spawn, env: ENV })
     const promise = runner.run(request({ maxOutputBytes: 5 }))
     const child = runs[0]!
     child.stdout.emitData('1234567890')
-    expect(child.kills).toEqual(['SIGKILL'])
+    // Overflow is reported, not hidden by killing the process ourselves.
+    expect(child.kills).toEqual([])
     child.close(0)
     const result = await promise
     expect(result.stdout).toBe('12345')
     expect(result.stdoutTruncated).toBe(true)
+    expect(result.exitCode).toBe(0)
+  })
+
+  it('refuses runJson for a truncated stdout with the output-limit reason', async () => {
+    const { spawn, runs } = harness()
+    const runner = createCliRunner({ spawn, env: ENV })
+    const promise = runner.runJson(request({ maxOutputBytes: 5 }))
+    const child = runs[0]!
+    child.stdout.emitData('{"truncated":true}')
+    child.close(0)
+    await expect(promise).rejects.toMatchObject({
+      category: 'failed',
+      message: expect.stringMatching(/capture limit/),
+    })
+  })
+
+  it('settles failed when stdin emits EPIPE and the payload was not delivered', async () => {
+    const { spawn, runs } = harness()
+    const runner = createCliRunner({ spawn, env: ENV })
+    const promise = runner.run(request({ stdin: 'payload' }))
+    const child = runs[0]!
+    child.stdin.emitError(Object.assign(new Error('write EPIPE'), { code: 'EPIPE' }))
+    await expect(promise).rejects.toMatchObject({ category: 'failed' })
+    expect(child.kills).toEqual(['SIGKILL'])
+    // A second event after settlement must stay swallowed (no uncaught error).
+    child.stdin.emitError(Object.assign(new Error('write EPIPE'), { code: 'EPIPE' }))
+  })
+
+  it('fails when the child closes before stdin finished flushing the payload', async () => {
+    const { spawn, runs } = harness({ stdin: new FakeWritable(false) })
+    const runner = createCliRunner({ spawn, env: ENV })
+    const promise = runner.run(request({ stdin: 'payload' }))
+    runs[0]!.close(0)
+    await expect(promise).rejects.toMatchObject({
+      category: 'failed',
+      message: expect.stringMatching(/input was fully written/),
+    })
+  })
+
+  it('does not fail an EOF-only run when stdin closes early', async () => {
+    const { spawn, runs } = harness()
+    const runner = createCliRunner({ spawn, env: ENV })
+    const promise = runner.run(request())
+    const child = runs[0]!
+    child.stdin.emitError(Object.assign(new Error('write EPIPE'), { code: 'EPIPE' }))
+    child.close(0)
+    await expect(promise).resolves.toMatchObject({ exitCode: 0 })
   })
 
   it('redacts token-shaped stderr and strips ANSI before returning it', async () => {
@@ -291,6 +369,60 @@ describe('CLI boundary', () => {
     expect(error).toBeInstanceOf(ClueError)
     expect((error as ClueError).category).toBe('dependency-missing')
     expect((error as ClueError).message).not.toContain('/opt/missing')
+  })
+})
+
+describe('production spawn seam', () => {
+  it('runs a real child with structured stdin through createNodeSpawn', async () => {
+    const runner = createCliRunner({ spawn: createNodeSpawn(), env: process.env })
+    const result = await runner.run({
+      command: process.execPath,
+      args: ['-e', 'process.stdin.pipe(process.stdout)'],
+      cwd: process.cwd(),
+      stdin: 'hello-real-stdin',
+    })
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toBe('hello-real-stdin')
+  })
+
+  it('survives a real child that closes stdin early (EPIPE) without an uncaught error', async () => {
+    const runner = createCliRunner({ spawn: createNodeSpawn(), env: process.env })
+    // The child exits immediately without reading stdin: the 2 MiB write
+    // cannot be delivered (EPIPE may arrive before OR after `close`).
+    const error = await runner.run({
+      command: process.execPath,
+      args: ['-e', 'process.exit(0)'],
+      cwd: process.cwd(),
+      stdin: 'x'.repeat(2 * 1024 * 1024),
+      timeoutMs: 10_000,
+    }).catch((caught: unknown) => caught)
+    expect(error).toBeInstanceOf(ClueError)
+    expect((error as ClueError).category).toBe('failed')
+    expect((error as ClueError).message).not.toContain('EPIPE')
+  })
+})
+
+describe('Windows .cmd shim support', () => {
+  it('quotes every token and refuses characters cmd.exe would reinterpret', () => {
+    expect(windowsShimCommandLine('C:\\Program Files\\nodejs\\npm.cmd', ['install', 'C:\\a b']))
+      .toBe('"C:\\Program Files\\nodejs\\npm.cmd" "install" "C:\\a b"')
+    expect(() => windowsShimCommandLine('C:\\x\\npm.cmd', ['100%'])).toThrow(/cmd\.exe/)
+    expect(() => windowsShimCommandLine('C:\\x\\npm.cmd', ['a"b'])).toThrow(/cmd\.exe/)
+    expect(() => windowsShimCommandLine('C:\\x\\npm.cmd', ['a\nb'])).toThrow(/cmd\.exe/)
+  })
+
+  it.skipIf(process.platform !== 'win32')('executes a .cmd shim with shell:false', async () => {
+    const dir = tempDir()
+    const script = join(dir, 'probe.cmd')
+    writeFileSync(script, '@echo off\r\necho {%1}\r\n')
+    const runner = createCliRunner({ spawn: createNodeSpawn(), env: process.env })
+    const result = await runner.run({
+      command: script,
+      args: ['hello world'],
+      cwd: dir,
+    })
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout.trim()).toBe('{hello world}')
   })
 })
 

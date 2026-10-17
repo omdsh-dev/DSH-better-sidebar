@@ -16,7 +16,7 @@
  *   outside every system directory.
  */
 import { describe, expect, it } from 'vitest'
-import { delimiter, join } from 'node:path'
+import { join, posix, win32 } from 'node:path'
 import { ClueError } from '../src/clues/error.ts'
 import {
   createDependenciesRuntime,
@@ -147,14 +147,24 @@ describe('version helpers', () => {
     expect(versionAtLeast('3.0.0', '2.40.0')).toBe(true)
   })
 
-  it('derives PATH candidates from the argument platform', () => {
-    const winCandidates = pathCommandCandidates('gh', 'win32', { PATH: `/a${delimiter}/b` })
-    expect(winCandidates).toEqual([
-      join('/a', 'gh'), join('/a', 'gh.exe'), join('/a', 'gh.cmd'), join('/a', 'gh.bat'),
-      join('/b', 'gh'), join('/b', 'gh.exe'), join('/b', 'gh.cmd'), join('/b', 'gh.bat'),
+  it('derives PATH candidates in the argument platform dialect', () => {
+    expect(pathCommandCandidates('gh', 'win32', { PATH: 'C:\\a;C:\\b' })).toEqual([
+      win32.join('C:\\a', 'gh'), win32.join('C:\\a', 'gh.exe'),
+      win32.join('C:\\a', 'gh.cmd'), win32.join('C:\\a', 'gh.bat'),
+      win32.join('C:\\b', 'gh'), win32.join('C:\\b', 'gh.exe'),
+      win32.join('C:\\b', 'gh.cmd'), win32.join('C:\\b', 'gh.bat'),
     ])
-    expect(pathCommandCandidates('gh', 'linux', { PATH: `/a${delimiter}/b` }))
-      .toEqual([join('/a', 'gh'), join('/b', 'gh')])
+    // Windows exposes the variable as `Path`; both spellings are accepted.
+    expect(pathCommandCandidates('gh', 'win32', { Path: 'C:\\tools' }))
+      .toEqual([win32.join('C:\\tools', 'gh'), win32.join('C:\\tools', 'gh.exe'),
+        win32.join('C:\\tools', 'gh.cmd'), win32.join('C:\\tools', 'gh.bat')])
+    expect(pathCommandCandidates('gh', 'linux', { PATH: '/a:/b' }))
+      .toEqual([posix.join('/a', 'gh'), posix.join('/b', 'gh')])
+    // Relative PATH entries would yield a non-absolute executable path: skip.
+    expect(pathCommandCandidates('gh', 'linux', { PATH: '.:/a' })).toEqual([posix.join('/a', 'gh')])
+    expect(pathCommandCandidates('gh', 'win32', { PATH: '.\\bin;C:\\a' }))
+      .toEqual([win32.join('C:\\a', 'gh'), win32.join('C:\\a', 'gh.exe'),
+        win32.join('C:\\a', 'gh.cmd'), win32.join('C:\\a', 'gh.bat')])
   })
 })
 
@@ -265,6 +275,52 @@ describe('dependency resolution', () => {
     timestamp += 60_000
     await statusOf(runtime)
     expect(runner.calls).toHaveLength(3)
+    runtime.dispose()
+  })
+
+  it('lets one caller cancel without cancelling the shared probe for others', async () => {
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    const calls: CliCommandRequest[] = []
+    const runner: CliRunner = {
+      async run(probe): Promise<CliResult> {
+        calls.push(probe)
+        await gate
+        return {
+          exitCode: 0,
+          stdout: 'gh version 2.40.1',
+          stderr: '',
+          stdoutTruncated: false,
+          stderrTruncated: false,
+          durationMs: 1,
+        }
+      },
+      async runJson(): Promise<never> {
+        throw new Error('the dependency probe must never parse JSON')
+      },
+    }
+    const runtime = createDependenciesRuntime({
+      home: HOME,
+      platform: process.platform,
+      arch: process.arch,
+      env: ENV,
+      runProcess: runner,
+      probeCwd: HOME,
+      pathExists: fakeExists([PATH_GH]),
+    })
+    runtime.register(definition())
+    const controller = new AbortController()
+    const first = runtime.inspect('github.gh', { signal: controller.signal })
+    for (let attempt = 0; attempt < 100 && calls.length === 0; attempt += 1) {
+      await new Promise(resolve => setTimeout(resolve, 1))
+    }
+    const second = runtime.inspect('github.gh')
+    controller.abort()
+    await expect(first).rejects.toMatchObject({ category: 'cancelled' })
+    release()
+    const [status] = await second
+    expect(status).toMatchObject({ state: 'ready', resolvedFrom: 'path' })
+    expect(calls).toHaveLength(1)
     runtime.dispose()
   })
 

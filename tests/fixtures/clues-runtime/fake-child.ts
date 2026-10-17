@@ -44,14 +44,17 @@ export class FakeReadable extends EventEmitter implements CliReadable {
 export class FakeWritable implements CliWritable {
   data = ''
   ended = false
+  private readonly events = new EventEmitter()
   write(chunk: string | Uint8Array): boolean {
     this.data += typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8')
     return true
   }
   end(): void {
     this.ended = true
+    this.events.emit('finish')
   }
-  on(): this {
+  on(event: 'error' | 'finish', listener: ((error: Error) => void) | (() => void)): this {
+    this.events.on(event, listener)
     return this
   }
 }

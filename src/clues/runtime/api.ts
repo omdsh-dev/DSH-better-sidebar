@@ -12,7 +12,7 @@
  * gives agents no write or install interface. Read-only inspection remains
  * available for diagnostics.
  */
-import { ClueError } from '../error.ts'
+import { ClueError } from '../types.ts'
 import type { ClueApiContext, ClueApiHandler } from '../types.ts'
 import type { CluesService } from '../service.ts'
 import type { ClueRuntime, DependencyInstallPlan, DependencyInstallTask, DependencyStatus, ConnectionStatusProjection } from './types.ts'

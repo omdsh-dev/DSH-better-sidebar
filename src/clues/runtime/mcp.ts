@@ -20,7 +20,7 @@
  * - failures are normalized to fixed clue categories and never copy the host's
  *   raw failure text, content blocks or diagnostics.
  */
-import { ClueError, isClueError } from '../error.ts'
+import { ClueError, isClueError } from '../types.ts'
 import type { SidebarAgentsService, SidebarToolsService } from '../../context-types.ts'
 import type { JsonValue } from '../types.ts'
 import type { ClueMcpBridge, McpCallRequest, McpCallResult } from './types.ts'

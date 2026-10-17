@@ -144,8 +144,8 @@ describe('HTTP request boundary', () => {
       { credential: async () => `secret-${++counter}` },
     )
     const credential = { ref: 'FEISHU_TENANT_TOKEN' }
-    await client.request({ url: `${URL_BASE}/a`, credential })
-    await client.request({ url: `${URL_BASE}/b`, credential })
+    await client.request({ url: `${URL_BASE}/a`, credential, allowedHosts: ['api.example.invalid'] })
+    await client.request({ url: `${URL_BASE}/b`, credential, allowedHosts: ['api.example.invalid'] })
     expect(resolutions).toEqual(['FEISHU_TENANT_TOKEN', 'FEISHU_TENANT_TOKEN'])
   })
 
@@ -172,11 +172,58 @@ describe('HTTP request boundary', () => {
     const error = await client.request({
       url: `${URL_BASE}/x`,
       credential: { ref: 'MISSING_TOKEN' },
+      allowedHosts: ['api.example.invalid'],
     }).catch((caught: unknown) => caught)
     expect(error).toBeInstanceOf(ClueError)
     expect((error as ClueError).category).toBe('auth-required')
     expect(String(JSON.stringify((error as ClueError).meta))).not.toContain('MISSING_TOKEN')
     expect(fetcher.calls).toHaveLength(0)
+  })
+
+  it('requires an allowlist before resolving a connection credential', async () => {
+    const { client, fetcher, resolutions } = makeClient(() => textResponse(200, 'ok'), {
+      credential: async () => 'operation-secret',
+    })
+    await expect(client.request({
+      url: `${URL_BASE}/x`,
+      credential: { ref: 'TOKEN' },
+    })).rejects.toMatchObject({ category: 'invalid-request' })
+    expect(resolutions).toEqual([])
+    expect(fetcher.calls).toHaveLength(0)
+  })
+
+  it('refuses the same host on an undeclared port', async () => {
+    const { client, fetcher } = makeClient(() => textResponse(200, 'ok'))
+    await expect(client.request({
+      url: 'https://api.example.invalid:8443/x',
+      allowedHosts: ['api.example.invalid'],
+    })).rejects.toMatchObject({ category: 'permission-denied' })
+    expect(fetcher.calls).toHaveLength(0)
+    // An explicit host:port entry allows exactly that port.
+    const allowed = await client.request({
+      url: 'https://api.example.invalid:8443/x',
+      allowedHosts: ['api.example.invalid:8443'],
+    })
+    expect(allowed.status).toBe(200)
+    expect(fetcher.calls).toHaveLength(1)
+  })
+
+  it('releases a redirect response body before following it', async () => {
+    let cancelled = false
+    const redirect: ClueFetchResponse = {
+      status: 302,
+      headers: headerBag({ location: '/next' }),
+      body: {
+        getReader: () => ({
+          read: async () => ({ done: true as const }),
+          cancel: async () => { cancelled = true },
+        }),
+      },
+    }
+    const { client } = makeClient(url => url.endsWith('/next') ? textResponse(200, 'moved') : redirect)
+    const result = await client.request({ url: `${URL_BASE}/start` })
+    expect(result).toMatchObject({ status: 200, redirects: 1, text: 'moved' })
+    expect(cancelled).toBe(true)
   })
 
   it('refuses a target host outside the connection allowlist', async () => {
@@ -198,6 +245,7 @@ describe('HTTP request boundary', () => {
     const result = await client.request({
       url: `${URL_BASE}/start`,
       credential: { ref: 'TOKEN' },
+      allowedHosts: ['api.example.invalid'],
     })
     expect(result).toMatchObject({
       status: 200,
@@ -217,6 +265,7 @@ describe('HTTP request boundary', () => {
     const error = await client.request({
       url: `${URL_BASE}/start`,
       credential: { ref: 'TOKEN' },
+      allowedHosts: ['api.example.invalid'],
     }).catch((caught: unknown) => caught)
     expect(error).toBeInstanceOf(ClueError)
     expect((error as ClueError).category).toBe('permission-denied')
@@ -289,6 +338,7 @@ describe('HTTP request boundary', () => {
     const error = await client.request({
       url: `${URL_BASE}/x`,
       credential: { ref: 'TOKEN' },
+      allowedHosts: ['api.example.invalid'],
     }).catch((caught: unknown) => caught)
     expect(error).toBeInstanceOf(ClueError)
     expect((error as ClueError).category).toBe('failed')
