@@ -673,6 +673,7 @@ export const sv: Record<string, string> = {
   clueStateNotConfigured: 'Inte konfigurerad',
   clueStateAuthorizing: 'Auktoriserar',
   clueStateAuthExpired: 'Auktorisering har gått ut',
+  clueStateNotAuthorized: 'Inte auktoriserad',
   clueStateRequestFailed: 'Begäran misslyckades',
   clueStateReady: 'Klar',
   clueConfigTitle: 'Källinställningar: {source}',

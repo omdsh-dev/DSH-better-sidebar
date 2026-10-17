@@ -2,11 +2,12 @@
  * S8 clue source table (presentational, node-free).
  *
  * One compact row per REGISTERED source — icon + name, source switch, @ switch,
- * derived availability state and the configure entry — plus the local
- * clue-pack @ switch (an independent preference, never dressed up as a remote
- * source), the four batch actions over the currently registered set, and the
- * add-source plugin entry. All values and handlers arrive from the settings
- * section; this module owns only layout and accessible names.
+ * derived availability state and (only when the source actually declares a
+ * dependency or connection) the configure entry — plus the local clue-pack @
+ * switch (an independent preference, never dressed up as a remote source), the
+ * four batch actions over the currently registered set, and the add-source
+ * plugin entry. All values and handlers arrive from the settings section; this
+ * module owns only layout and accessible names.
  *
  * Preference semantics are S1's: an absent entry means ON. A source whose
  * plugin is not loaded any more stays visible with its stored switches (the
@@ -15,9 +16,10 @@
  */
 import type { ReactNode } from 'react'
 import { IconFolderOpenRegular, IconLinkOutlineRegular, Switch } from '@deepseek-ai/dsh-client-ui-primitives'
-import { t, type CopyKey } from '../../locales.ts'
+import { t } from '../../locales.ts'
 import type { ClueSourceDescriptor, ClueSourceDisplayDescriptor } from '../../../clues/types.ts'
-import type { ClueSourceStatus, ClueSourceStatusKind } from './status.ts'
+import type { ClueSourceStatus } from './status.ts'
+import { CLUE_SOURCE_STATUS_COPY } from './copy.ts'
 import css from './settings.module.css'
 
 /** The three clue preference maps/values the panel renders. */
@@ -35,7 +37,20 @@ export interface ClueSourcesPanelProps {
   readonly statuses: ReadonlyMap<string, ClueSourceStatus>
   readonly prefs: ClueSourcesPrefs
   readonly loading: boolean
+  /** The catalogue request failed; Retry is offered. */
   readonly error: string | null
+  /**
+   * A status probe failed even though the catalogue may be known. Unlike
+   * `error`, this line does NOT pretend the source list itself is unknown:
+   * the affected rows already say request-failed.
+   */
+  readonly statusError: string | null
+  /**
+   * Whether the catalogue was actually read. Before that, the stored
+   * preference maps cannot be classified as "configured but unloaded" — doing
+   * so would falsely label every known source as a missing plugin.
+   */
+  readonly catalogueLoaded: boolean
   onToggleSource(sourceId: string, next: boolean): void
   onToggleMention(sourceId: string, next: boolean): void
   onTogglePacksMention(next: boolean): void
@@ -48,17 +63,9 @@ export interface ClueSourcesPanelProps {
   onReload(): void
 }
 
-/** Copy key of each derived state. */
-const STATE_COPY: Record<ClueSourceStatusKind, CopyKey> = {
-  unchecked: 'clueStateUnchecked',
-  missing: 'clueStateMissing',
-  incompatible: 'clueStateIncompatible',
-  installing: 'clueStateInstalling',
-  'not-configured': 'clueStateNotConfigured',
-  authorizing: 'clueStateAuthorizing',
-  'auth-expired': 'clueStateAuthExpired',
-  'request-failed': 'clueStateRequestFailed',
-  ready: 'clueStateReady',
+/** Whether a source declares something the configuration page can show. */
+export function hasSourceConfiguration(source: ClueSourceDescriptor): boolean {
+  return (source.dependencyIds?.length ?? 0) > 0 || source.connectionId !== undefined
 }
 
 /** Resolve a display's icon node (fallback: the generic link glyph). */
@@ -82,7 +89,7 @@ function StatusBadge(props: { status: ClueSourceStatus }) {
       data-kind={status.kind}
       title={status.detail}
     >
-      {t(STATE_COPY[status.kind])}
+      {t(CLUE_SOURCE_STATUS_COPY[status.kind])}
     </span>
   )
 }
@@ -92,13 +99,18 @@ function StatusBadge(props: { status: ClueSourceStatus }) {
  * @param props - inventory, preferences, derived statuses and handlers.
  */
 export function ClueSourcesPanel(props: ClueSourcesPanelProps) {
-  const { sources, displays, statuses, prefs, loading, error } = props
+  const { sources, displays, statuses, prefs, loading, error, statusError, catalogueLoaded } = props
   const displayById = new Map(displays.map(display => [display.sourceId, display]))
   const registered = new Set(sources.map(source => source.sourceId))
-  const configuredOnly = [...new Set([
-    ...Object.keys(prefs.clueSourcesEnabled),
-    ...Object.keys(prefs.clueSourcesMentionEnabled),
-  ])].filter(sourceId => !registered.has(sourceId)).sort()
+  // Only a READ catalogue proves a source is unloaded. Before that (initial
+  // paint / failed request) the preference maps merely name sources; calling
+  // them unavailable would be a fabricated "plugin not loaded" verdict.
+  const configuredOnly = catalogueLoaded
+    ? [...new Set([
+      ...Object.keys(prefs.clueSourcesEnabled),
+      ...Object.keys(prefs.clueSourcesMentionEnabled),
+    ])].filter(sourceId => !registered.has(sourceId)).sort()
+    : []
 
   return (
     <div className={css.sources}>
@@ -113,10 +125,20 @@ export function ClueSourcesPanel(props: ClueSourcesPanelProps) {
         </div>
       )}
 
+      {statusError !== null && (
+        <div className={css.error} role="alert">
+          <span>{t('clueStateRequestFailed')} {statusError}</span>
+          <button type="button" className={css.smallButton} onClick={props.onReload}>
+            {t('retry')}
+          </button>
+        </div>
+      )}
+
       {loading ? (
         <div className={css.loading} role="status">{t('loading')}</div>
       ) : (
         <>
+          {catalogueLoaded && (
           <div className={css.batchBar} role="group" aria-label={t('settingsGroupSources')}>
             <span className={css.batchScope}>{t('clueSourcesBatchScope')}</span>
             <span className={css.batchButtons}>
@@ -134,10 +156,13 @@ export function ClueSourcesPanel(props: ClueSourcesPanelProps) {
               </button>
             </span>
           </div>
+          )}
 
-          {sources.length === 0 && configuredOnly.length === 0 ? (
+          {!catalogueLoaded && error === null ? (
+            <div className={css.loading} role="status">{t('loading')}</div>
+          ) : catalogueLoaded && sources.length === 0 && configuredOnly.length === 0 ? (
             <div className={css.empty}>{t('clueSourcesEmpty')}</div>
-          ) : (
+          ) : catalogueLoaded ? (
             <ul className={css.sourceList} aria-label={t('settingsGroupSources')}>
               {sources.map(source => {
                 const display = displayById.get(source.sourceId)
@@ -175,14 +200,16 @@ export function ClueSourcesPanel(props: ClueSourcesPanelProps) {
                         title={!enabled ? t('clueSourcesIntro') : undefined}
                         onChange={next => { props.onToggleMention(source.sourceId, next) }}
                       />
-                      <button
-                        type="button"
-                        className={css.smallButton}
-                        aria-label={t('clueSourceConfigureAria', { source: name })}
-                        onClick={() => { props.onConfigure(source.sourceId) }}
-                      >
-                        {t('clueConfigure')}
-                      </button>
+                      {hasSourceConfiguration(source) && (
+                        <button
+                          type="button"
+                          className={css.smallButton}
+                          aria-label={t('clueSourceConfigureAria', { source: name })}
+                          onClick={() => { props.onConfigure(source.sourceId) }}
+                        >
+                          {t('clueConfigure')}
+                        </button>
+                      )}
                     </span>
                   </li>
                 )
@@ -231,39 +258,42 @@ export function ClueSourcesPanel(props: ClueSourcesPanelProps) {
                 )
               })}
             </ul>
-          )}
-
-          {/* The local clue-pack library is NOT a source: its own @ switch, no
-              source switch and no configure entry. */}
-          <div className={css.packsRow} data-clue-packs="">
-            <span className={css.sourceIdentity}>
-              <span className={css.sourceIcon} aria-hidden="true"><IconFolderOpenRegular size={16} /></span>
-              <span className={css.sourceText}>
-                <span className={css.sourceName}>{t('cluePacksName')}</span>
-                <span className={css.sourceId}>{t('cluePacksDesc')}</span>
-              </span>
-            </span>
-            <span className={css.sourceControls}>
-              <Switch
-                label={t('cluePacksMentionAria')}
-                checked={prefs.cluePacksMentionEnabled !== false}
-                onChange={next => { props.onTogglePacksMention(next) }}
-              />
-            </span>
-          </div>
-
-          {/* The add-source entry reuses the repository's plugin discovery /
-              install-instruction flow (AddPluginModal body). Plugin install and
-              CLI install stay two separate things; nothing here claims either
-              one completed. */}
-          <div className={css.addSource}>
-            <button type="button" className={css.smallButton} onClick={props.onAddSource}>
-              {t('clueAddSource')}
-            </button>
-            <span className={css.addSourceDesc}>{t('clueAddSourceDesc')}</span>
-          </div>
+          ) : null}
         </>
       )}
+
+      {/* The pack switch and the add-source entry are independent of the
+          catalogue read, so they stay usable while it loads / after it fails. */}
+
+      {/* The local clue-pack library is NOT a source: its own @ switch, no
+          source switch and no configure entry. */}
+      <div className={css.packsRow} data-clue-packs="">
+        <span className={css.sourceIdentity}>
+          <span className={css.sourceIcon} aria-hidden="true"><IconFolderOpenRegular size={16} /></span>
+          <span className={css.sourceText}>
+            <span className={css.sourceName}>{t('cluePacksName')}</span>
+            <span className={css.sourceId}>{t('cluePacksDesc')}</span>
+          </span>
+        </span>
+        <span className={css.sourceControls}>
+          <Switch
+            label={t('cluePacksMentionAria')}
+            checked={prefs.cluePacksMentionEnabled !== false}
+            onChange={next => { props.onTogglePacksMention(next) }}
+          />
+        </span>
+      </div>
+
+      {/* The add-source entry reuses the repository's plugin discovery /
+          install-instruction flow (AddPluginModal body). Plugin install and
+          CLI install stay two separate things; nothing here claims either
+          one completed. */}
+      <div className={css.addSource}>
+        <button type="button" className={css.smallButton} onClick={props.onAddSource}>
+          {t('clueAddSource')}
+        </button>
+        <span className={css.addSourceDesc}>{t('clueAddSourceDesc')}</span>
+      </div>
     </div>
   )
 }

@@ -705,6 +705,7 @@ export const zhMO: Record<string, string> = {
   clueStateNotConfigured: '未設定',
   clueStateAuthorizing: '授權中',
   clueStateAuthExpired: '授權過期',
+  clueStateNotAuthorized: '未授權',
   clueStateRequestFailed: '請求失敗',
   clueStateReady: '就緒',
   clueConfigTitle: '來源設定：{source}',

@@ -690,6 +690,7 @@ export const vi: Record<string, string> = {
   clueStateNotConfigured: 'Chưa cấu hình',
   clueStateAuthorizing: 'Đang cấp quyền',
   clueStateAuthExpired: 'Quyền đã hết hạn',
+  clueStateNotAuthorized: 'Chưa được ủy quyền',
   clueStateRequestFailed: 'Yêu cầu thất bại',
   clueStateReady: 'Sẵn sàng',
   clueConfigTitle: 'Cài đặt nguồn: {source}',

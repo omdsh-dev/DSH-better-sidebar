@@ -688,6 +688,7 @@ export const ru: Record<string, string> = {
   clueStateNotConfigured: 'Не настроено',
   clueStateAuthorizing: 'Авторизация',
   clueStateAuthExpired: 'Авторизация истекла',
+  clueStateNotAuthorized: 'Не авторизовано',
   clueStateRequestFailed: 'Запрос не выполнен',
   clueStateReady: 'Готово',
   clueConfigTitle: 'Настройки источника: {source}',

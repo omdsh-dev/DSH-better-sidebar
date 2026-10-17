@@ -682,6 +682,7 @@ export const ko: Record<string, string> = {
   clueStateNotConfigured: '구성되지 않음',
   clueStateAuthorizing: '인증 중',
   clueStateAuthExpired: '인증 만료',
+  clueStateNotAuthorized: '인증되지 않음',
   clueStateRequestFailed: '요청 실패',
   clueStateReady: '준비됨',
   clueConfigTitle: '출처 설정: {source}',

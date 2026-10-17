@@ -688,6 +688,7 @@ export const id: Record<string, string> = {
   clueStateNotConfigured: 'Belum dikonfigurasi',
   clueStateAuthorizing: 'Mengotorisasi',
   clueStateAuthExpired: 'Otorisasi kedaluwarsa',
+  clueStateNotAuthorized: 'Belum diotorisasi',
   clueStateRequestFailed: 'Permintaan gagal',
   clueStateReady: 'Siap',
   clueConfigTitle: 'Pengaturan sumber: {source}',

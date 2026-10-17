@@ -66,6 +66,9 @@ describe('deriveClueSourceStatus: dependencies', () => {
 
   it('is unchecked until an explicit observation completed', () => {
     expect(derive({ checked: false }).kind).toBe('unchecked')
+    // An omitted flag means "no observation", not "observed": this pure API
+    // must not hand S9/a future caller a ready verdict it never observed.
+    expect(deriveClueSourceStatus({ dependencyIds: [], dependencies: [], connections: [] }).kind).toBe('unchecked')
   })
 
   it('reports a missing executable as missing (never ready)', () => {
@@ -156,10 +159,15 @@ describe('deriveClueSourceStatus: connections', () => {
     }).kind).toBe('auth-expired')
   })
 
-  it('reports a never-authorized connection as not-configured', () => {
+  it('keeps "connect this source" distinct from "configure the application"', () => {
     expect(derive({
       connectionId: 'feishu.auth',
       connections: [connection({ connectionId: 'feishu.auth', authorization: 'not-authorized', action: 'connect' })],
+    }).kind).toBe('not-authorized')
+    // A missing application configuration stays not-configured.
+    expect(derive({
+      connectionId: 'feishu.auth',
+      connections: [connection({ connectionId: 'feishu.auth', configuration: 'missing', authorization: 'not-authorized' })],
     }).kind).toBe('not-configured')
   })
 

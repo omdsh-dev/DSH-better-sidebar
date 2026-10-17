@@ -51,7 +51,7 @@ import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { SidebarPrefs } from '../prefs-shared.ts'
 import { api } from './api.ts'
 import { parsePrefs } from './prefs.ts'
-import { AddPluginModal, type PluginKind } from './add-plugin-modal.tsx'
+import { AddPluginModal, PluginListBody, type PluginKind } from './add-plugin-modal.tsx'
 import { t } from './locales.ts'
 import type { SidebarStore } from './state.ts'
 import type {
@@ -64,8 +64,9 @@ import type {
 import type { BetterSidebarCluesClientFace } from './clues/registry.ts'
 import { clueRuntimeApi, type ClueRuntimeApi } from './clues/runtime-api.ts'
 import { SourceConfigPage } from './clues/settings/config.tsx'
-import { ClueSourcesPanel } from './clues/settings/sources.tsx'
+import { ClueSourcesPanel, hasSourceConfiguration } from './clues/settings/sources.tsx'
 import { deriveClueSourceStatus, type ClueSourceStatus } from './clues/settings/status.ts'
+import { subscribeClueRuntime } from './clues/settings/runtime-state.ts'
 import {
   consumeClueSettingsTarget,
   peekClueSettingsTarget,
@@ -106,6 +107,31 @@ export interface SideCardSectionInjected {
 
 /** Full section props: the runtime share plus the injected face. */
 export type SideCardSectionProps = PropsRuntime<'settings.section'> & SideCardSectionInjected
+
+/**
+ * Host preferences the General group owns (approved S8 spec §2: 常规 covers
+ * auto-open / mobile behavior). A feature popup must not render a second
+ * control for the same key — the Subagents tab still DECLARES these two for
+ * history, but the one settings home is General.
+ */
+const GENERAL_OWNED_SETTING_KEYS = new Set<string>(['autoOpenSubagent', 'autoOpenJobs'])
+
+/**
+ * The last revision every mounted section has seen for one settings face.
+ *
+ * Both settings entry points render this component against the SAME document.
+ * A slow mount read in one entry must not overwrite a newer save made by the
+ * other, so the known revision is shared per injected face (production: the
+ * one `api` object; tests: the injected fake).
+ */
+const knownSettingsRevisions = new WeakMap<object, number>()
+
+/** Record a revision if it is newer than everything seen for this face. */
+function noteSettingsRevision(face: object, revision: number | undefined): void {
+  if (revision === undefined) return
+  const known = knownSettingsRevisions.get(face)
+  if (known === undefined || revision > known) knownSettingsRevisions.set(face, revision)
+}
 
 /** The five groups, in navigation order (approved S8 spec §2). */
 const SETTINGS_GROUPS: readonly { id: ClueSettingsGroup; label(): string }[] = [
@@ -163,7 +189,8 @@ function viewerOrder(a: FileViewerDescriptor, b: FileViewerDescriptor): number {
 function hasSettings(feature: TabDescriptor | FileViewerDescriptor): boolean {
   const settings = feature.settings
   return settings !== undefined && (
-    (settings.toggles?.length ?? 0) > 0
+    // Rows the General group owns are not repeated in a feature popup.
+    (settings.toggles?.filter(toggle => !GENERAL_OWNED_SETTING_KEYS.has(toggle.key)).length ?? 0) > 0
     || (settings.pluginToggles?.length ?? 0) > 0
     || settings.render !== undefined
   )
@@ -636,7 +663,11 @@ export function SettingsBody(props: {
 }) {
   const { feature, prefs, store, service, onToggle, onCommit, onSelectValue, onPatterns, onPluginToggle, onPluginCommit, onPluginSelectValue, onPluginPatterns, onPluginWrite, onClose } = props
   const render = feature.settings?.render
-  const toggles = feature.settings?.toggles ?? []
+  // General is the ONE home for the auto-open preferences (S8 §2); the
+  // Subagents card still declares them for history, but the popup must not
+  // render a duplicate control for the same host pref.
+  const toggles = (feature.settings?.toggles ?? [])
+    .filter(toggle => !GENERAL_OWNED_SETTING_KEYS.has(toggle.key))
   const pluginToggles = feature.settings?.pluginToggles ?? []
   if (render === undefined && toggles.length === 0 && pluginToggles.length === 0) return null
   // Plugin rows read their values from the descriptor's OWN blob through
@@ -714,7 +745,7 @@ export function SideCardSection(props: SideCardSectionProps) {
   const [settingsFor, setSettingsFor] = useState<TabDescriptor | FileViewerDescriptor | null>(null)
   // Whether the "add plugin" modal is open, and for which extension point
   // (null = closed). The source entry reuses the TAB plugin flow.
-  const [addPluginsOpen, setAddPluginsOpen] = useState<PluginKind | null>(null)
+  const [addPluginsOpen, setAddPluginsOpen] = useState<PluginKind | 'source' | null>(null)
   // The LATEST optimistic prefs, kept in sync with the state. Nested-map
   // merges (tabsEnabled / viewersEnabled / pluginSettings / clue source maps)
   // MUST build from this ref, not from the render-time `prefs`: two same-tick
@@ -741,20 +772,21 @@ export function SideCardSection(props: SideCardSectionProps) {
 
   // Clue source displays (client-registered names/icons) follow the registry.
   const [displays, setDisplays] = useState<readonly ClueSourceDisplayDescriptor[]>(() => clues.getSourceDisplays())
-  useEffect(() => clues.subscribe(() => { setDisplays(clues.getSourceDisplays()) }), [clues])
 
   // Clue source catalogue + S2 statuses. Loaded ONLY when the Clue sources
   // group is opened (an explicit status read — no timer, no auto-login).
   const [catalogue, setCatalogue] = useState<CluesSourcesCatalogResult | null>(null)
-  const [sourcesLoading, setSourcesLoading] = useState(false)
+  // Starts true: the first paint of the Sources group must not say "no
+  // sources / plugin not loaded" while the explicit read is still in flight.
+  const [sourcesLoading, setSourcesLoading] = useState(true)
   const [sourcesError, setSourcesError] = useState<string | null>(null)
   const [dependencyStatuses, setDependencyStatuses] = useState<readonly DependencyStatus[]>([])
   const [connectionStatuses, setConnectionStatuses] = useState<readonly ConnectionStatusProjection[]>([])
   const [dependencyProbeFailed, setDependencyProbeFailed] = useState(false)
   const [connectionProbeFailed, setConnectionProbeFailed] = useState(false)
-  // Sanitized one-line reason of a failed status read. It is rendered on the
-  // affected rows (their derived state is request-failed), not as a page
-  // banner pretending the WHOLE list failed.
+  // Sanitized one-line reason of a failed status read. The affected rows are
+  // request-failed AND the panel offers a retry: a probe failure is a
+  // retryable state, not a dead end.
   const [statusProbeError, setStatusProbeError] = useState<string | null>(null)
   const [statusChecked, setStatusChecked] = useState(false)
   const sourcesLoadedRef = useRef(false)
@@ -770,6 +802,7 @@ export function SideCardSection(props: SideCardSectionProps) {
     sourcesRequestRef.current = request
     setSourcesLoading(true)
     setSourcesError(null)
+    setStatusProbeError(null)
     try {
       const catalogueNext = await clues.api.sources()
       if (request !== sourcesRequestRef.current) return
@@ -818,6 +851,21 @@ export function SideCardSection(props: SideCardSectionProps) {
     void loadSources()
   }, [group, loadSources])
 
+  // The registry can change while the section stays mounted (a source plugin
+  // registers after the group was opened). Re-read the catalogue then, so the
+  // new source appears without closing/reopening Settings.
+  useEffect(() => clues.subscribe(() => {
+    setDisplays(clues.getSourceDisplays())
+    if (sourcesLoadedRef.current) void loadSources()
+  }), [clues, loadSources])
+
+  // Another view of the same runtime (a source config window) publishes the
+  // statuses it just observed: refresh the table badge without a remount.
+  useEffect(() => subscribeClueRuntime(runtime, observation => {
+    if (observation.kind !== 'statuses' || !sourcesLoadedRef.current) return
+    void loadSources()
+  }), [runtime, loadSources])
+
   /** Explicit reload of the source list (the panel's Retry action). */
   const reloadSources = (): void => {
     sourcesLoadedRef.current = true
@@ -845,6 +893,9 @@ export function SideCardSection(props: SideCardSectionProps) {
 
   /** Open one source's S6 configuration window (stable identity = focus). */
   const openSourceConfig = useCallback((source: ClueSourceDescriptor): void => {
+    // Nothing to configure means nothing to open: a source with no CLI
+    // dependency and no connection has no settings page.
+    if (!hasSourceConfiguration(source)) return
     const display = displaysRef.current.find(item => item.sourceId === source.sourceId)
     const name = display?.name ?? (source.name.trim() === '' ? source.sourceId : source.name)
     windows.open({
@@ -885,6 +936,9 @@ export function SideCardSection(props: SideCardSectionProps) {
       }
     }
     return subscribeClueSettingsTarget(target => {
+      // The live subscriber is the receiver: consume the one-shot target so a
+      // later mount of Settings does not replay this deep link.
+      consumeClueSettingsTarget()
       setGroup(target.group)
       if (target.sourceId !== undefined) openSourceConfigById(target.sourceId)
     })
@@ -906,10 +960,21 @@ export function SideCardSection(props: SideCardSectionProps) {
   // The settings document revision (guards concurrent writes). A ref: commits
   // read the freshest value at execution time, no re-render needed.
   const revisionRef = useRef<number | undefined>(undefined)
+  // The mount read: a click that lands before it settles waits for the same
+  // read instead of writing without `expectedRevision`.
+  const initialReadRef = useRef<Promise<{ value?: unknown; revision?: number }> | undefined>(undefined)
   // Whether the user already wrote since mount: the mount read must not
   // clobber a newer optimistic edit (the window is milliseconds, but a slow
   // route must never silently revert a just-made change).
   const dirtyRef = useRef(false)
+  // Writes between optimistic apply and settlement. Store notifications are
+  // ignored meanwhile: the broad subscription must not replace an edit that
+  // is still on its way to the server.
+  const inFlightWritesRef = useRef(0)
+  // A 409 whose retry also failed keeps its edit locally. The patch rides the
+  // NEXT write (so the kept value eventually saves instead of vanishing) and
+  // store notifications are ignored until it settles.
+  const unsavedPatchRef = useRef<Record<string, unknown> | null>(null)
   // Serialize commits: a queued write must observe the previous write's
   // revision; a failed write must not poison the queue for later ones.
   const inFlightRef = useRef<Promise<unknown>>(Promise.resolve())
@@ -918,9 +983,18 @@ export function SideCardSection(props: SideCardSectionProps) {
   // values (another tab may have changed them since the store hydrated).
   useEffect(() => {
     let cancelled = false
-    void settingsFace.settingsGet().then((view) => {
+    const read = settingsFace.settingsGet()
+    initialReadRef.current = read
+    void read.then((view) => {
       if (cancelled) return
-      revisionRef.current = view.revision
+      const known = knownSettingsRevisions.get(settingsFace)
+      if (view.revision !== undefined) {
+        noteSettingsRevision(settingsFace, view.revision)
+        revisionRef.current = Math.max(revisionRef.current ?? view.revision, view.revision)
+        // The other settings entry already saved a newer document. Adopting
+        // this older read would resurrect its values in the shared store.
+        if (known !== undefined && view.revision < known) return
+      }
       if (dirtyRef.current) return
       const next = parsePrefs(view.value)
       // Refresh the shared store too: both settings entry points render this
@@ -931,22 +1005,62 @@ export function SideCardSection(props: SideCardSectionProps) {
     return () => { cancelled = true }
   }, [settingsFace, store])
 
-  // Another surface's save refreshes this mounted surface (same store).
+  // Another surface's save refreshes this mounted surface (same store) — but
+  // only when this surface has no edit of its own in flight or kept after a
+  // 409. Otherwise a session/tab notification would silently replace the
+  // user's optimistic value with the last saved document.
   useEffect(() => store.subscribe(() => {
+    if (inFlightWritesRef.current > 0 || unsavedPatchRef.current !== null) return
     setPrefs(store.getPrefs())
   }), [store])
 
   /**
    * Persist one patch through the settings route (serialized, revision-guarded).
    * A 409 is NOT a failure of the user's intent: re-read the revision while
-   * keeping the edit on screen, then retry the same patch once.
+   * keeping the edit on screen, then retry the same patch once. A kept 409
+   * edit is retried together with the next write, so it is never silently
+   * dropped from the UI while missing on the server.
    */
   const commit = (patch: Record<string, unknown>): Promise<CommitOutcome> => {
     dirtyRef.current = true
     let conflicted = false
-    const write = async (): Promise<{ value?: unknown; revision?: number }> =>
-      settingsFace.settingsUpdate({ ...patch }, revisionRef.current)
+    const currentRevision = async (): Promise<number> => {
+      // Another entry may have advanced the document since this mount read.
+      const known = knownSettingsRevisions.get(settingsFace)
+      if (known !== undefined && (revisionRef.current === undefined || known > revisionRef.current)) {
+        revisionRef.current = known
+      }
+      if (revisionRef.current !== undefined) return revisionRef.current
+      const initial = initialReadRef.current
+      if (initial !== undefined) {
+        try {
+          const view = await initial
+          noteSettingsRevision(settingsFace, view.revision)
+          if (view.revision !== undefined) {
+            revisionRef.current = Math.max(revisionRef.current ?? view.revision, view.revision)
+          }
+        } catch {
+          // Fall through to a fresh read below.
+        }
+      }
+      if (revisionRef.current !== undefined) return revisionRef.current
+      const view = await settingsFace.settingsGet()
+      noteSettingsRevision(settingsFace, view.revision)
+      if (view.revision === undefined) {
+        // Never issue an unguarded write: without a revision the 409 contract
+        // cannot be honored, so fail visibly instead.
+        throw new Error('the settings document revision is unavailable')
+      }
+      revisionRef.current = Math.max(revisionRef.current ?? view.revision, view.revision)
+      return revisionRef.current
+    }
+    let attempted: Record<string, unknown> = patch
     const run = inFlightRef.current.then(async () => {
+      const unsaved = unsavedPatchRef.current
+      const combined = unsaved === null ? patch : { ...unsaved, ...patch }
+      attempted = combined
+      const write = async (): Promise<{ value?: unknown; revision?: number }> =>
+        settingsFace.settingsUpdate({ ...combined }, await currentRevision())
       let view: { value?: unknown; revision?: number }
       try {
         view = await write()
@@ -955,19 +1069,33 @@ export function SideCardSection(props: SideCardSectionProps) {
         conflicted = true
         // Keep the edit; fence the retry on the freshly read revision.
         const refreshed = await settingsFace.settingsGet()
-        revisionRef.current = refreshed.revision
+        noteSettingsRevision(settingsFace, refreshed.revision)
+        if (refreshed.revision === undefined) {
+          throw new Error('the settings document revision is unavailable', { cause: caught })
+        }
+        revisionRef.current = Math.max(revisionRef.current ?? refreshed.revision, refreshed.revision)
         view = await write()
       }
       const next = parsePrefs(view.value)
-      revisionRef.current = view.revision
+      if (view.revision !== undefined) {
+        revisionRef.current = Math.max(revisionRef.current ?? view.revision, view.revision)
+        noteSettingsRevision(settingsFace, view.revision)
+      }
+      unsavedPatchRef.current = null
       store.setPrefs(next)
       return next
     })
+    inFlightWritesRef.current += 1
     // A failed commit must not poison the queue: later writes still run.
     inFlightRef.current = run.then(() => undefined, () => undefined)
     return run.then(
-      (next) => ({ ok: true, prefs: next }),
+      (next) => {
+        inFlightWritesRef.current -= 1
+        return { ok: true, prefs: next }
+      },
       (caught) => {
+        inFlightWritesRef.current -= 1
+        if (conflicted) unsavedPatchRef.current = attempted
         setError(messageOf(caught))
         return conflicted
           ? { ok: false, prefs, keepEdit: true }
@@ -1320,6 +1448,32 @@ export function SideCardSection(props: SideCardSectionProps) {
                 />
               </div>
 
+              {/* 自动打开: the two task-page activation preferences live in
+                  General (approved S8 IA), even though the Subagents tab still
+                  declares them for the popup-era configuration. */}
+              <div className={css.row}>
+                <span className={css.rowText}>
+                  <span className={css.title}>{t('settingsSubagentTitle')}</span>
+                  <span className={css.desc}>{t('settingsSubagentDesc')}</span>
+                </span>
+                <Switch
+                  label={t('settingsSubagentTitle')}
+                  checked={prefs.autoOpenSubagent}
+                  onChange={(next) => { applyPref({ autoOpenSubagent: next }) }}
+                />
+              </div>
+              <div className={css.row}>
+                <span className={css.rowText}>
+                  <span className={css.title}>{t('settingsJobsTitle')}</span>
+                  <span className={css.desc}>{t('settingsJobsDesc')}</span>
+                </span>
+                <Switch
+                  label={t('settingsJobsTitle')}
+                  checked={prefs.autoOpenJobs}
+                  onChange={(next) => { applyPref({ autoOpenJobs: next }) }}
+                />
+              </div>
+
               {/* 手机: the narrow-viewport adaptations. Both switches only ever
                   change what happens on a NARROW viewport (the plugin's own
                   768px bracket), so a desktop reader's behaviour is untouched
@@ -1370,8 +1524,10 @@ export function SideCardSection(props: SideCardSectionProps) {
                   clueSourcesMentionEnabled: prefs.clueSourcesMentionEnabled,
                   cluePacksMentionEnabled: prefs.cluePacksMentionEnabled,
                 }}
-                loading={sourcesLoading}
+                loading={sourcesLoading && catalogue === null}
                 error={sourcesError}
+                statusError={statusProbeError}
+                catalogueLoaded={catalogue !== null}
                 onToggleSource={onToggleSource}
                 onToggleMention={onToggleSourceMention}
                 onTogglePacksMention={onTogglePacksMention}
@@ -1380,7 +1536,7 @@ export function SideCardSection(props: SideCardSectionProps) {
                 onMentionAll={() => { setAllSourceMentions(true) }}
                 onMentionNone={() => { setAllSourceMentions(false) }}
                 onConfigure={openSourceConfigById}
-                onAddSource={() => { setAddPluginsOpen('tab') }}
+                onAddSource={() => { setAddPluginsOpen('source') }}
                 onReload={reloadSources}
               />
             </div>
@@ -1444,18 +1600,38 @@ export function SideCardSection(props: SideCardSectionProps) {
           the extension point of the clicked kind, opens the GitHub topic,
           and lists the matching recommended plugin catalog with per-entry
           install buttons (copying the command; nothing claims a successful
-          install). The clue-source entry reuses this flow with the tab kind
-          (S8: sources ship as DSH plugins, and installing a plugin is not the
-          same action as installing the CLI it needs).
+          install). The clue-source entry reuses the same discovery/install
+          body under source-specific copy (S8: sources ship as DSH plugins,
+          and installing a plugin is not the same action as installing the CLI
+          it needs).
           Mounted only while open (Modal runs hooks unconditionally — same
           SSR rule as the settings popup above). */}
-      {addPluginsOpen !== null && (
+      {addPluginsOpen === 'source' ? (
+        // The source entry reuses the repository's plugin discovery/install
+        // body, but names the actual intent: sources are DSH plugins, and
+        // installing one is separate from installing the CLI it needs.
+        <Modal
+          open
+          onClose={() => { setAddPluginsOpen(null) }}
+          title={t('clueAddSource')}
+          description={t('clueAddSourceDesc')}
+          closeLabel={t('close')}
+          className={css.pluginModal}
+          footer={(
+            <button type="button" className={css.done} onClick={() => { setAddPluginsOpen(null) }}>
+              {t('settingsDone')}
+            </button>
+          )}
+        >
+          <PluginListBody service={service} kind="tab" />
+        </Modal>
+      ) : addPluginsOpen !== null ? (
         <AddPluginModal
           service={service}
           onClose={() => { setAddPluginsOpen(null) }}
           kind={addPluginsOpen}
         />
-      )}
+      ) : null}
 
       {error !== null && (
         <div className={css.error} role="alert">

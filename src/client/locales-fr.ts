@@ -683,6 +683,7 @@ export const fr: Record<string, string> = {
   clueStateNotConfigured: 'Non configuré',
   clueStateAuthorizing: 'Autorisation en cours',
   clueStateAuthExpired: 'Autorisation expirée',
+  clueStateNotAuthorized: 'Non autorisé',
   clueStateRequestFailed: 'Échec de la requête',
   clueStateReady: 'Prêt',
   clueConfigTitle: 'Réglages de la source : {source}',

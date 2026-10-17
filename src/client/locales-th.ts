@@ -690,6 +690,7 @@ export const th: Record<string, string> = {
   clueStateNotConfigured: 'ยังไม่ได้ตั้งค่า',
   clueStateAuthorizing: 'กำลังอนุญาต',
   clueStateAuthExpired: 'การอนุญาตหมดอายุ',
+  clueStateNotAuthorized: 'ยังไม่ได้รับอนุญาต',
   clueStateRequestFailed: 'คำขอล้มเหลว',
   clueStateReady: 'พร้อม',
   clueConfigTitle: 'การตั้งค่าแหล่ง: {source}',

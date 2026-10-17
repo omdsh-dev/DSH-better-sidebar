@@ -53,6 +53,11 @@ function mount(): { store: SidebarStore; service: BetterSidebarService } {
         key: 'autoOpenSubagent',
         title: () => 'Auto-open Subagents',
         desc: () => 'Expand on new subagent',
+      }, {
+        key: 'tasksViewMode',
+        type: 'select',
+        title: () => 'Tasks page view',
+        options: [{ value: 'graph', title: () => 'Graph' }],
       }],
     },
     component: () => null,
@@ -145,10 +150,46 @@ describe('SideCardSection declarative inventory', () => {
     expect(html).toContain('Default the Tasks page to the tree')
     // Both are ON by default; disarming one shows up as an unchecked box.
     expect(html).toContain('checked=""')
-    store.setPrefs({ ...store.getPrefs(), mobileNoAutoOpen: false, mobileDefaultTree: false })
+    store.setPrefs({
+      ...store.getPrefs(),
+      autoOpenSubagent: false,
+      autoOpenJobs: false,
+      mobileNoAutoOpen: false,
+      mobileDefaultTree: false,
+    })
     const off = renderSection(store, service)
     expect(off).toContain('>Mobile</div>')
     expect(off).not.toContain('checked=""')
+  })
+
+  it('renders the auto-open preferences in General (approved S8 IA), not only in the Subagents popup', () => {
+    const { store, service } = mount()
+    const html = renderSection(store, service, 'general')
+    expect(html).toContain('Auto-activate the Tasks page when a subagent appears')
+    expect(html).toContain('Auto-activate the Tasks page on a new background job')
+    // Both are real switches on the existing host pref keys.
+    expect(html).toContain('checked=""')
+    // The Subagents popup does not repeat the General-owned rows; it still
+    // exposes the feature-owned select.
+    const feature = service.getTabs().find(tab => tab.id === 'subagent')!
+    const popup = renderToString(createElement(SettingsBody, {
+      feature,
+      prefs: SIDEBAR_PREFS_DEFAULTS,
+      store,
+      service,
+      onToggle: () => {},
+      onCommit: () => '',
+      onSelectValue: () => {},
+      onPatterns: () => {},
+      onPluginToggle: () => {},
+      onPluginCommit: () => '',
+      onPluginSelectValue: () => {},
+      onPluginPatterns: () => {},
+      onPluginWrite: () => {},
+      onClose: () => {},
+    }))
+    expect(popup).not.toContain('Auto-open Subagents')
+    expect(popup).toContain('Tasks page view')
   })
 
   it('renders one small card per registered viewer: icon + title + exts', () => {
@@ -398,7 +439,7 @@ describe('SettingsBody rows + custom render panel (open-with seam)', () => {
       component: () => null,
       settings: {
         toggles: [{
-          key: 'autoOpenSubagent',
+          key: 'tasksViewMode',
           title: () => 'Auto row',
           desc: () => 'row description',
         }],

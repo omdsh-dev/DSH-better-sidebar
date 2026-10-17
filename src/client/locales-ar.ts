@@ -691,6 +691,7 @@ export const ar: Record<string, string> = {
   clueStateNotConfigured: 'غير مهيأ',
   clueStateAuthorizing: 'جارٍ التصريح',
   clueStateAuthExpired: 'انتهت صلاحية التصريح',
+  clueStateNotAuthorized: 'غير مصرّح به',
   clueStateRequestFailed: 'فشل الطلب',
   clueStateReady: 'جاهز',
   clueConfigTitle: 'إعدادات المصدر: {source}',

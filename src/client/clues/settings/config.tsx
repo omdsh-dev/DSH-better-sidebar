@@ -28,6 +28,11 @@ import { t, type CopyKey } from '../../locales.ts'
 // a second recurring timer, and the loop is gated by the running-task flag.
 import { usePolling } from '../../use-polling.ts'
 import { clueRuntimeApi, type ClueRuntimeApi } from '../runtime-api.ts'
+import {
+  publishClueStatuses,
+  publishClueTask,
+  subscribeClueRuntime,
+} from './runtime-state.ts'
 import type {
   ConnectionStatusProjection,
   DependencyInstallActionId,
@@ -37,6 +42,7 @@ import type {
   DependencyState,
 } from '../../../clues/runtime/types.ts'
 import type { ClueSourceStatusKind } from './status.ts'
+import { CLUE_SOURCE_STATUS_COPY } from './copy.ts'
 import css from './settings.module.css'
 
 /** Explicit install progress poll interval (only while a task runs). */
@@ -83,18 +89,8 @@ const DEPENDENCY_STATE_COPY: Record<DependencyState, ClueSourceStatusKind> = {
   failed: 'request-failed',
 }
 
-/** Copy key of one derived state. */
-const STATE_COPY: Record<ClueSourceStatusKind, CopyKey> = {
-  unchecked: 'clueStateUnchecked',
-  missing: 'clueStateMissing',
-  incompatible: 'clueStateIncompatible',
-  installing: 'clueStateInstalling',
-  'not-configured': 'clueStateNotConfigured',
-  authorizing: 'clueStateAuthorizing',
-  'auth-expired': 'clueStateAuthExpired',
-  'request-failed': 'clueStateRequestFailed',
-  ready: 'clueStateReady',
-}
+/** How many failed status polls before the page stops asking (Recheck resumes). */
+const MAX_POLL_FAILURES = 3
 
 /** The authorization button copy for each S2 action. */
 const CONNECTION_ACTION_COPY = {
@@ -129,6 +125,26 @@ function replaceConnection(
   const at = list.findIndex(item => item.connectionId === next.connectionId)
   if (at < 0) return [...list, next]
   return list.map((item, index) => (index === at ? next : item))
+}
+
+/**
+ * Merge one status read into the last known list. A failed probe returns no
+ * DTO for its dependency; dropping the previous row would lose the last
+ * observation (path/version) and make a transient failure look like an empty
+ * install. Untouched rows keep their identity; new rows append.
+ */
+function mergeDependencies(
+  current: readonly DependencyStatus[] | null,
+  next: readonly DependencyStatus[],
+): DependencyStatus[] {
+  const base = current ?? []
+  const nextById = new Map(next.map(item => [item.dependencyId, item]))
+  const merged = base.map(item => nextById.get(item.dependencyId) ?? item)
+  const seen = new Set(base.map(item => item.dependencyId))
+  for (const item of next) {
+    if (!seen.has(item.dependencyId)) merged.push(item)
+  }
+  return merged
 }
 
 /** A tiny inline action button (native, keyboard focusable). */
@@ -169,7 +185,15 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
   const [pathDrafts, setPathDrafts] = useState<Record<string, string>>({})
   const [pathErrors, setPathErrors] = useState<Record<string, string>>({})
   const [connecting, setConnecting] = useState(false)
+  /** The last connection read failed: the row must not claim "not configured". */
+  const [connectionReadFailed, setConnectionReadFailed] = useState(false)
   const mounted = useRef(true)
+  const tasksRef = useRef(tasks)
+  const pollFailuresRef = useRef<Map<string, number>>(new Map())
+  // Overlapping explicit reads (mount + a fast Recheck click) must not let the
+  // older answer overwrite the newer one.
+  const loadRequestRef = useRef(0)
+  useEffect(() => { tasksRef.current = tasks }, [tasks])
   useEffect(() => {
     mounted.current = true
     return () => { mounted.current = false }
@@ -177,6 +201,9 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
 
   /** Explicit status read. `refreshProbes` bypasses S2's probe cache. */
   const loadAll = useCallback(async (refreshProbes: boolean): Promise<void> => {
+    const request = loadRequestRef.current + 1
+    loadRequestRef.current = request
+    const isCurrent = (): boolean => mounted.current && request === loadRequestRef.current
     setRefreshing(true)
     setError(null)
     const failures: Record<string, true> = {}
@@ -189,26 +216,61 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
           return list.find(item => item.dependencyId === dependencyId) ?? list[0]
         } catch (caught) {
           failures[dependencyId] = true
-          if (mounted.current) setError(messageOf(caught))
+          if (isCurrent()) setError(messageOf(caught))
           return undefined
         }
       }))
+      const succeededDependencies = nextDependencies.filter((item): item is DependencyStatus => item !== undefined)
       let nextConnection: ConnectionStatusProjection | undefined
+      let connectionFailed = false
       if (connectionId !== undefined) {
-        nextConnection = await runtime.connectionsStatus(connectionId).then(
-          list => list.find(item => item.connectionId === connectionId) ?? list[0],
-          (caught: unknown) => {
-            if (mounted.current) setError(messageOf(caught))
-            return undefined
-          },
-        )
+        try {
+          const list = await runtime.connectionsStatus(connectionId)
+          nextConnection = list.find(item => item.connectionId === connectionId) ?? list[0]
+        } catch (caught) {
+          connectionFailed = true
+          if (isCurrent()) setError(messageOf(caught))
+        }
       }
-      if (!mounted.current) return
-      setDependencies(nextDependencies.filter((item): item is DependencyStatus => item !== undefined))
-      setConnections(nextConnection === undefined ? [] : [nextConnection])
+      if (!isCurrent()) return
+      // Merge, not replace: a failed probe has no DTO and must not erase the
+      // last observed path/version. The row shows request-failed meanwhile.
+      setDependencies(current => mergeDependencies(current, succeededDependencies))
       setFailedIds(failures)
+      if (!connectionFailed) {
+        setConnections(nextConnection === undefined ? [] : [nextConnection])
+        setConnectionReadFailed(false)
+      } else {
+        // Keep the last successful projection; the retryable failure is
+        // reported explicitly instead of pretending "not configured".
+        setConnectionReadFailed(true)
+      }
+      publishClueStatuses(
+        runtime,
+        succeededDependencies,
+        nextConnection === undefined ? [] : [nextConnection],
+      )
+      // Adopt a task another view started (multi-view install state): the
+      // runtime's latest task per dependency is authoritative.
+      if (ids.length > 0) {
+        try {
+          const latest = await runtime.dependenciesStatus()
+          if (!isCurrent()) return
+          const running = latest.filter(task => task.state === 'running' && ids.includes(task.dependencyId))
+          if (running.length > 0) {
+            setTasks(current => {
+              const next = { ...current }
+              for (const task of running) next[task.dependencyId] = task
+              return next
+            })
+            for (const task of running) publishClueTask(runtime, task)
+          }
+        } catch (caught) {
+          if (isCurrent()) setError(messageOf(caught))
+        }
+      }
     } finally {
-      if (mounted.current) setRefreshing(false)
+      if (isCurrent()) setRefreshing(false)
     }
   }, [runtime, ids, connectionId])
 
@@ -221,6 +283,7 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
       const next = list.find(item => item.dependencyId === dependencyId)
       if (next === undefined || !mounted.current) return
       setDependencies(current => replaceDependency(current ?? [], next))
+      publishClueStatuses(runtime, [next])
       setFailedIds(current => {
         if (current[dependencyId] === undefined) return current
         const nextFailures = { ...current }
@@ -232,30 +295,110 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
     }
   }, [runtime])
 
-  // Poll ONLY while a task actually runs, through the shared polling engine:
-  // the loop is gated by `enabled`, and teardown (settle, cancel, close,
-  // unmount) clears the schedule. No second recurring timer lives here.
-  const running = Object.values(tasks).find(item => item.state === 'running')
-  const runningDependencyId = running?.dependencyId
-  const runningTaskId = running?.taskId
-  const pollRunningTask = useCallback(async (signal: AbortSignal): Promise<void> => {
-    if (runningDependencyId === undefined || runningTaskId === undefined) return
-    try {
-      const list = await runtime.dependenciesStatus(runningDependencyId)
+  // Every running task is polled (not just one): two shared dependencies may
+  // install at once. The loop is gated by `enabled` and teardown clears it —
+  // no second recurring timer lives here.
+  const runningKey = Object.values(tasks)
+    .filter(item => item.state === 'running')
+    .map(item => `${item.dependencyId}:${item.taskId}`)
+    .sort()
+    .join('|')
+  const pollRunningTasks = useCallback(async (signal: AbortSignal): Promise<void> => {
+    const running = Object.values(tasksRef.current).filter(item => item.state === 'running')
+    for (const task of running) {
       if (signal.aborted) return
-      const next = list.find(item => item.taskId === runningTaskId)
-      if (next === undefined || !mounted.current) return
-      setTasks(current => ({ ...current, [runningDependencyId]: next }))
-      if (next.state !== 'running') await reloadDependency(runningDependencyId)
-    } catch (caught) {
-      if (!signal.aborted) setError(messageOf(caught))
+      try {
+        const list = await runtime.dependenciesStatus(task.dependencyId)
+        if (signal.aborted || !mounted.current) return
+        const next = list.find(item => item.taskId === task.taskId)
+        if (next === undefined) {
+          // The runtime no longer reports this task. Stop asking every second:
+          // drop it and re-read the dependency; Recheck can re-adopt a task
+          // that reappears.
+          pollFailuresRef.current.delete(task.taskId)
+          setTasks(current => {
+            if (current[task.dependencyId]?.taskId !== task.taskId) return current
+            const copy = { ...current }
+            delete copy[task.dependencyId]
+            return copy
+          })
+          await reloadDependency(task.dependencyId)
+          continue
+        }
+        pollFailuresRef.current.delete(task.taskId)
+        publishClueTask(runtime, next)
+        setTasks(current => ({ ...current, [task.dependencyId]: next }))
+        if (next.state !== 'running') await reloadDependency(task.dependencyId)
+      } catch (caught) {
+        if (signal.aborted || !mounted.current) return
+        const failures = (pollFailuresRef.current.get(task.taskId) ?? 0) + 1
+        pollFailuresRef.current.set(task.taskId, failures)
+        setError(messageOf(caught))
+        if (failures >= MAX_POLL_FAILURES) {
+          // A permanently failing status route must not spin at 1 Hz forever.
+          // The error stays on-page; Recheck re-discovers the live task.
+          pollFailuresRef.current.delete(task.taskId)
+          setTasks(current => {
+            if (current[task.dependencyId]?.taskId !== task.taskId) return current
+            const copy = { ...current }
+            delete copy[task.dependencyId]
+            return copy
+          })
+        }
+      }
     }
-  }, [runtime, runningDependencyId, runningTaskId, reloadDependency])
+  }, [runtime, reloadDependency])
   usePolling(
-    runningDependencyId !== undefined && runningTaskId !== undefined,
-    pollRunningTask,
+    runningKey !== '',
+    pollRunningTasks,
     { intervalMs: INSTALL_POLL_MS, mode: 'self-scheduling' },
   )
+
+  // Share observations with every other view of the same runtime and follow
+  // theirs: the source table refreshes a badge and a second config window gets
+  // the live task/prompt without a remount.
+  useEffect(() => subscribeClueRuntime(runtime, observation => {
+    if (!mounted.current) return
+    if (observation.kind === 'statuses') {
+      const nextDependencies = observation.dependencies.filter(item => ids.includes(item.dependencyId))
+      if (nextDependencies.length > 0) {
+        setDependencies(current => mergeDependencies(current, nextDependencies))
+        setFailedIds(current => {
+          let changed = false
+          const next = { ...current }
+          for (const item of nextDependencies) {
+            if (next[item.dependencyId] !== undefined) {
+              delete next[item.dependencyId]
+              changed = true
+            }
+          }
+          return changed ? next : current
+        })
+      }
+      if (connectionId !== undefined) {
+        const nextConnection = observation.connections.find(item => item.connectionId === connectionId)
+        if (nextConnection !== undefined) {
+          setConnections(current => replaceConnection(current ?? [], nextConnection))
+          setConnectionReadFailed(false)
+        }
+      }
+      return
+    }
+    const relevant = observation.tasks.filter(item => ids.includes(item.dependencyId))
+    if (relevant.length === 0) return
+    setTasks(current => {
+      let changed = false
+      const next = { ...current }
+      for (const task of relevant) {
+        const existing = next[task.dependencyId]
+        if (existing?.taskId !== task.taskId || existing.state !== task.state || existing.progress !== task.progress) {
+          next[task.dependencyId] = task
+          changed = true
+        }
+      }
+      return changed ? next : current
+    })
+  }), [runtime, ids, connectionId])
 
   const plan = async (dependencyId: string): Promise<void> => {
     setPlanningId(dependencyId)
@@ -278,6 +421,7 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
       const next = await runtime.dependenciesStart(dependencyId, current.planId)
       if (!mounted.current) return
       setTasks(state => ({ ...state, [dependencyId]: next }))
+      publishClueTask(runtime, next)
       setPlans(state => {
         const copy = { ...state }
         delete copy[dependencyId]
@@ -302,6 +446,7 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
       const next = await runtime.dependenciesCancel(task.dependencyId, task.taskId)
       if (!mounted.current) return
       setTasks(current => ({ ...current, [task.dependencyId]: next }))
+      publishClueTask(runtime, next)
       if (next.state !== 'running') await reloadDependency(task.dependencyId)
     } catch (caught) {
       if (mounted.current) setError(messageOf(caught))
@@ -323,6 +468,7 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
       const next = await runtime.dependenciesSetPath(dependencyId, raw)
       if (!mounted.current) return
       setDependencies(current => replaceDependency(current ?? [], next))
+      publishClueStatuses(runtime, [next])
       setError(null)
     } catch (caught) {
       if (mounted.current) setError(messageOf(caught))
@@ -334,6 +480,7 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
       const next = await runtime.dependenciesClearPath(dependencyId)
       if (!mounted.current) return
       setDependencies(current => replaceDependency(current ?? [], next))
+      publishClueStatuses(runtime, [next])
       setError(null)
     } catch (caught) {
       if (mounted.current) setError(messageOf(caught))
@@ -352,6 +499,7 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
       const next = await runtime.connectionsConnect(connectionId)
       if (!mounted.current) return
       setConnections(current => replaceConnection(current ?? [], next))
+      publishClueStatuses(runtime, [], [next])
     } catch (caught) {
       if (mounted.current) setError(messageOf(caught))
     } finally {
@@ -367,6 +515,7 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
       const next = await runtime.connectionsPoll(connectionId)
       if (!mounted.current) return
       setConnections(current => replaceConnection(current ?? [], next))
+      publishClueStatuses(runtime, [], [next])
     } catch (caught) {
       if (mounted.current) setError(messageOf(caught))
     } finally {
@@ -382,6 +531,7 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
       const next = await runtime.connectionsCancel(connectionId)
       if (!mounted.current) return
       setConnections(current => replaceConnection(current ?? [], next))
+      publishClueStatuses(runtime, [], [next])
     } catch (caught) {
       if (mounted.current) setError(messageOf(caught))
     } finally {
@@ -412,8 +562,13 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
               <div key={dependencyId} className={css.plan} data-clue-dependency={dependencyId}>
                 <div className={css.configRow}>
                   <span className={css.configLabel}>{current?.name ?? dependencyId}</span>
-                  <span className={css.status} data-kind={stateKind}>{t(STATE_COPY[stateKind])}</span>
+                  <span className={css.status} data-kind={stateKind}>{t(CLUE_SOURCE_STATUS_COPY[stateKind])}</span>
                 </div>
+                {current?.error !== undefined && (
+                  <p className={css.configError} data-clue-dependency-error={dependencyId}>
+                    {current.error.message}
+                  </p>
+                )}
                 <div className={css.configRow}>
                   <span className={css.configLabel}>{t('clueDependencyActualPath')}</span>
                   <span className={`${css.configValue} ${css.configMono}`}>
@@ -528,7 +683,7 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
                     <ul className={css.planActions}>
                       {currentPlan.actionIds.map((action, index) => (
                         <li key={`${action}:${index}`}>
-                          {ACTION_COPY[action] === undefined ? currentPlan.actions[index] ?? action : t(ACTION_COPY[action])}
+                          {t(ACTION_COPY[action])}
                         </li>
                       ))}
                     </ul>
@@ -593,7 +748,19 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
         <section className={css.configSection} aria-label={t('clueConnectionHeading')}>
           <h3 className={css.configHeading}>{t('clueConnectionHeading')}</h3>
           {connection === undefined ? (
-            <p className={css.configHint}>{t('clueStateNotConfigured')}</p>
+            // A failed read is NOT "this source was never configured": the
+            // distinction is the whole point of the status surface.
+            <div className={css.configRow}>
+              <span className={css.configLabel}>{t('clueConnectionAuthorization')}</span>
+              <span
+                className={css.status}
+                data-kind={connectionReadFailed ? 'request-failed' : 'not-configured'}
+              >
+                {t(connectionReadFailed
+                  ? CLUE_SOURCE_STATUS_COPY['request-failed']
+                  : CLUE_SOURCE_STATUS_COPY['not-configured'])}
+              </span>
+            </div>
           ) : (
             <>
               <div className={css.configRow}>
@@ -621,9 +788,11 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
                           ? t('clueConnectionDenied')
                           : connection.authorization === 'scope-insufficient'
                             ? t('clueConnectionScope')
-                            : connection.authorization === 'unknown'
-                              ? t('clueStateUnchecked')
-                              : t('clueStateNotConfigured')}
+                            : connection.authorization === 'not-authorized'
+                              ? t('clueStateNotAuthorized')
+                              : connection.authorization === 'unknown'
+                                ? t('clueStateUnchecked')
+                                : t('clueStateNotConfigured')}
                 </span>
               </div>
               {connection.account !== undefined && (
@@ -681,8 +850,9 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
                     </div>
                   )}
                   <div className={css.configRow}>
-                    <span className={css.configLabel}>{t('clueConnectionExpires')}</span>
-                    <span className={css.configValue}>{new Date(connection.prompt.expiresAt).toLocaleString()}</span>
+                    <span className={css.configLabel}>{t('clueConnectionExpires', {
+                      time: new Date(connection.prompt.expiresAt).toLocaleString(),
+                    })}</span>
                   </div>
                   {connection.prompt.instructions !== undefined && (
                     <p className={css.configHint}>{connection.prompt.instructions}</p>
@@ -690,6 +860,17 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
                 </div>
               )}
             </>
+          )}
+          {ids.length === 0 && (
+            // Dependency-less sources have no other Recheck entry point; the
+            // explicit read must stay available after a failed connection read.
+            <div className={css.configActions}>
+              <Action
+                label={t('clueDependencyRecheck')}
+                disabled={refreshing}
+                onClick={() => { void loadAll(true) }}
+              />
+            </div>
           )}
         </section>
       )}

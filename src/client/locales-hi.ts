@@ -690,6 +690,7 @@ export const hi: Record<string, string> = {
   clueStateNotConfigured: 'कॉन्फ़िगर नहीं है',
   clueStateAuthorizing: 'अधिकृत हो रहा है',
   clueStateAuthExpired: 'अधिकृति समाप्त',
+  clueStateNotAuthorized: 'अधिकृत नहीं',
   clueStateRequestFailed: 'अनुरोध विफल',
   clueStateReady: 'तैयार',
   clueConfigTitle: 'स्रोत सेटिंग्स: {source}',

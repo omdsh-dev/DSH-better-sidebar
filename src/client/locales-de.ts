@@ -676,6 +676,7 @@ export const de: Record<string, string> = {
   clueStateNotConfigured: 'Nicht konfiguriert',
   clueStateAuthorizing: 'Autorisierung läuft',
   clueStateAuthExpired: 'Autorisierung abgelaufen',
+  clueStateNotAuthorized: 'Nicht autorisiert',
   clueStateRequestFailed: 'Anfrage fehlgeschlagen',
   clueStateReady: 'Bereit',
   clueConfigTitle: 'Quelleneinstellungen: {source}',

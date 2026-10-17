@@ -690,6 +690,7 @@ export const tr: Record<string, string> = {
   clueStateNotConfigured: 'Yapılandırılmadı',
   clueStateAuthorizing: 'Yetkilendiriliyor',
   clueStateAuthExpired: 'Yetkilendirme süresi doldu',
+  clueStateNotAuthorized: 'Yetkilendirilmedi',
   clueStateRequestFailed: 'İstek başarısız',
   clueStateReady: 'Hazır',
   clueConfigTitle: 'Kaynak ayarları: {source}',

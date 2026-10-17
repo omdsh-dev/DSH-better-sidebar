@@ -690,6 +690,7 @@ export const ja: Record<string, string> = {
   clueStateNotConfigured: '未設定',
   clueStateAuthorizing: '認可中',
   clueStateAuthExpired: '認可の期限切れ',
+  clueStateNotAuthorized: '未認可',
   clueStateRequestFailed: 'リクエスト失敗',
   clueStateReady: '準備完了',
   clueConfigTitle: 'ソース設定：{source}',

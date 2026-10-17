@@ -688,6 +688,7 @@ export const nl: Record<string, string> = {
   clueStateNotConfigured: 'Niet geconfigureerd',
   clueStateAuthorizing: 'Autorisatie loopt',
   clueStateAuthExpired: 'Autorisatie verlopen',
+  clueStateNotAuthorized: 'Niet geautoriseerd',
   clueStateRequestFailed: 'Verzoek mislukt',
   clueStateReady: 'Gereed',
   clueConfigTitle: 'Broninstellingen: {source}',

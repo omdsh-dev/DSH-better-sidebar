@@ -69,6 +69,8 @@ function props(overrides: Partial<ClueSourcesPanelProps> = {}): ClueSourcesPanel
     },
     loading: false,
     error: null,
+    statusError: null,
+    catalogueLoaded: true,
     onToggleSource: () => {},
     onToggleMention: () => {},
     onTogglePacksMention: () => {},
@@ -151,10 +153,10 @@ describe('ClueSourcesPanel rows', () => {
       prefs: {
         clueSourcesEnabled: { 'builtin.files': false, 'acme.docs': false },
         clueSourcesMentionEnabled: { 'builtin.files': false, 'acme.docs': false },
-        cluePacksMentionEnabled: true,
+        cluePacksMentionEnabled: false,
       },
     })
-    expect(switches(html)).toContainEqual({ label: '@ candidates: clue packs', checked: true, disabled: false })
+    expect(switches(html)).toContainEqual({ label: '@ candidates: clue packs', checked: false, disabled: false })
   })
 
   it('uses the client display name and icon override when one is registered', () => {
@@ -183,7 +185,8 @@ describe('ClueSourcesPanel states', () => {
   it('renders each derived state as its own explicit label, never claiming ready for unknown work', () => {
     const kinds = [
       'unchecked', 'missing', 'incompatible', 'installing',
-      'not-configured', 'authorizing', 'auth-expired', 'request-failed', 'ready',
+      'not-configured', 'not-authorized', 'authorizing', 'auth-expired',
+      'request-failed', 'ready',
     ] as const
     const labels: Record<(typeof kinds)[number], string> = {
       unchecked: 'Not checked',
@@ -191,6 +194,7 @@ describe('ClueSourcesPanel states', () => {
       incompatible: 'Incompatible version',
       installing: 'Installing',
       'not-configured': 'Not configured',
+      'not-authorized': 'Not authorized',
       authorizing: 'Authorizing',
       'auth-expired': 'Authorization expired',
       'request-failed': 'Request failed',
@@ -243,6 +247,36 @@ describe('ClueSourcesPanel states', () => {
     expect(empty).toContain('No clue sources are registered yet.')
     expect(empty).toContain('Add source plugin')
   })
+
+  it('does not invent "plugin not loaded" rows before the catalogue was read', () => {
+    // First paint / failed catalogue: the stored preference maps merely name
+    // sources. Calling them unavailable fabricates a plugin-unloaded verdict.
+    const html = render({
+      sources: [],
+      catalogueLoaded: false,
+      loading: true,
+      prefs: {
+        clueSourcesEnabled: { 'later.source': false },
+        clueSourcesMentionEnabled: { 'later.source': true },
+        cluePacksMentionEnabled: true,
+      },
+    })
+    expect(html).not.toContain('data-clue-source="later.source"')
+    expect(html).not.toContain('The source plugin is not loaded')
+    // No batch scope is claimed while the registered set is unknown.
+    expect(html).not.toContain('Batch actions apply')
+  })
+
+  it('offers a retry for a failed status probe without pretending the list failed', () => {
+    const html = render({ statusError: 'the status route timed out' })
+    expect(html).toContain('role="alert"')
+    expect(html).toContain('the status route timed out')
+    expect(html).toContain('Request failed')
+    expect(html).toContain('Retry')
+    // The catalogue itself is still shown (rows keep their derived request-failed state).
+    expect(html).toContain('data-clue-source="builtin.files"')
+    expect(html).not.toContain('Could not load the source list.')
+  })
 })
 
 describe('ClueSourcesPanel batch controls', () => {
@@ -258,9 +292,11 @@ describe('ClueSourcesPanel batch controls', () => {
     expect(html).toContain('Batch actions apply to the currently registered sources only')
   })
 
-  it('names every configure control with the source it configures', () => {
+  it('names every configure control with the source it configures (only sources that HAVE configuration)', () => {
     const html = render()
-    expect(html).toContain('aria-label="Configure source: Local files"')
+    // Local files declares no dependency and no connection: nothing to
+    // configure, so no button (the empty-window trap).
+    expect(html).not.toContain('aria-label="Configure source: Local files"')
     expect(html).toContain('aria-label="Configure source: Acme Docs"')
     // The not-loaded source has no configure action (there is no plugin to configure).
     expect(html).not.toContain('aria-label="Configure source: legacy.source"')

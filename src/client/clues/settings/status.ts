@@ -10,10 +10,13 @@
  *
  * The approved spec names six user-facing distinctions: missing dependency,
  * incompatible version, not configured, authorization expired, ready and
- * request failed. Two transient states are kept explicit instead of being
- * folded into "ready" (which would mislabel an unverified source):
+ * request failed. Three more states are kept explicit instead of being folded
+ * into a neighboring bucket (which would mislabel the source):
  * - `unchecked`: no observation has completed yet;
- * - `installing`: S2 reports a live install task.
+ * - `installing`: S2 reports a live install task;
+ * - `not-authorized`: the application is configured, but the connection's
+ *   explicit connect/authorize step has not happened (S2's two-step contract;
+ *   never conflated with "not configured").
  *
  * `enabled` is a purely presentational preference and deliberately absent
  * from this derivation: a disabled source keeps its dependency/connection
@@ -31,6 +34,7 @@ export type ClueSourceStatusKind =
   | 'incompatible'
   | 'installing'
   | 'not-configured'
+  | 'not-authorized'
   | 'authorizing'
   | 'auth-expired'
   | 'request-failed'
@@ -52,7 +56,8 @@ export interface ClueSourceStatusInput {
   readonly requestFailedDetail?: string
   /**
    * Whether an explicit observation has completed. An un-inspected source is
-   * `unchecked`, NOT ready.
+   * `unchecked`, NOT ready — an omitted flag is treated as "not observed"
+   * (only `true` licenses a ready verdict).
    */
   readonly checked?: boolean
 }
@@ -108,7 +113,7 @@ export function deriveClueSourceStatus(input: ClueSourceStatusInput): ClueSource
       ? { kind: 'request-failed' }
       : { kind: 'request-failed', detail: input.requestFailedDetail }
   }
-  if (input.checked === false) return { kind: 'unchecked' }
+  if (input.checked !== true) return { kind: 'unchecked' }
 
   const dependencies = input.dependencies ?? []
   const ids = input.dependencyIds ?? []
@@ -172,7 +177,9 @@ export function deriveClueSourceStatus(input: ClueSourceStatusInput): ClueSource
       case 'authorizing':
         return { kind: 'authorizing', connection, ...withDependency }
       case 'not-authorized':
-        return { kind: 'not-configured', connection, ...withDependency }
+        // S2's two-step contract: "connect this source" is a different
+        // problem from "configure the application" — never fold them.
+        return { kind: 'not-authorized', connection, ...withDependency }
       case 'unknown':
         return { kind: 'unchecked', connection, ...withDependency }
       case 'ready':
@@ -181,9 +188,4 @@ export function deriveClueSourceStatus(input: ClueSourceStatusInput): ClueSource
   }
 
   return dependency === undefined ? { kind: 'ready' } : { kind: 'ready', dependency }
-}
-
-/** Whether a derived state means the source can be used right now. */
-export function isClueSourceUsable(status: ClueSourceStatus): boolean {
-  return status.kind === 'ready'
 }

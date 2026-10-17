@@ -40,7 +40,8 @@ import {
 import { cluesApi } from '../src/client/clues/api.ts'
 import type { BetterSidebarCluesClientFace } from '../src/client/clues/registry.ts'
 import type { ClueRuntimeApi } from '../src/client/clues/runtime-api.ts'
-import { openClueSettings } from '../src/client/clues/settings/navigation.ts'
+import { openClueSettings, peekClueSettingsTarget } from '../src/client/clues/settings/navigation.ts'
+import { en } from '../src/client/locales.ts'
 import { SIDEBAR_PREFS_DEFAULTS } from '../src/prefs-shared.ts'
 import type { CluesSourcesCatalogResult, ClueSourceDescriptor } from '../src/clues/types.ts'
 import type { ConnectionStatusProjection, DependencyStatus } from '../src/clues/runtime/types.ts'
@@ -203,9 +204,9 @@ function harness(options: { catalogue?: CluesSourcesCatalogResult; runtime?: Clu
   return { store, service, settings, runtime, clues }
 }
 
-/** Mount the section under act() and flush the mount reads' promises. */
-async function mount(h: Harness, injected: Partial<SideCardSectionProps> = {}): Promise<RenderedRoot> {
-  const rendered = renderRoot(createElement(SideCardSection, {
+/** Render without flushing the mount read (the read-gate tests need that). */
+function renderSection(h: Harness, injected: Partial<SideCardSectionProps> = {}): RenderedRoot {
+  return renderRoot(createElement(SideCardSection, {
     store: h.store,
     service: h.service,
     settings: h.settings,
@@ -213,6 +214,11 @@ async function mount(h: Harness, injected: Partial<SideCardSectionProps> = {}): 
     runtime: h.runtime,
     ...injected,
   } as unknown as SideCardSectionProps))
+}
+
+/** Mount the section under act() and flush the mount reads' promises. */
+async function mount(h: Harness, injected: Partial<SideCardSectionProps> = {}): Promise<RenderedRoot> {
+  const rendered = renderSection(h, injected)
   await flush()
   return rendered
 }
@@ -357,6 +363,18 @@ describe('SideCardSection existing preferences', () => {
     click(rendered.container, 'Image')
     await flush()
     expect(h.settings.updates.at(-1)?.patch).toEqual({ viewersEnabled: { image: false } })
+    rendered.unmount()
+  })
+
+  it('writes both auto-open preferences from General (approved S8 IA)', async () => {
+    const h = harness()
+    const rendered = await mount(h)
+    click(rendered.container, en.settingsSubagentTitle)
+    await flush()
+    expect(h.settings.updates.at(-1)).toEqual({ patch: { autoOpenSubagent: false }, expectedRevision: 0 })
+    click(rendered.container, en.settingsJobsTitle)
+    await flush()
+    expect(h.settings.updates.at(-1)).toEqual({ patch: { autoOpenJobs: false }, expectedRevision: 1 })
     rendered.unmount()
   })
 
@@ -507,12 +525,51 @@ describe('SideCardSection clue sources', () => {
     const rendered = await mountSources(h)
     click(rendered.container, 'Add source plugin')
     await flush()
-    // The existing AddPluginModal is mounted: its title/description come from
-    // the shared plugin flow, and its per-entry action still only copies the
-    // install command (nothing claims the plugin or the CLI was installed).
-    expect(document.body.textContent).toContain('Add tab plugins')
+    // The shared plugin discovery/install body is mounted under SOURCE copy
+    // (not the tab-plugin title), and its per-entry action still only copies
+    // the install command (nothing claims the plugin or the CLI was installed).
+    expect(document.body.textContent).toContain('Add source plugin')
     expect(document.body.textContent).toContain('Copy')
     expect(rendered.container.textContent).not.toContain('installed successfully')
+    rendered.unmount()
+  })
+
+  it('offers a retry when a status probe fails, and recovers without remounting', async () => {
+    const h = harness()
+    let fail = true
+    const originalInspect = h.runtime.dependenciesInspect
+    h.runtime.dependenciesInspect = async (...args) => {
+      if (fail) {
+        fail = false
+        throw new Error('the dependency probe is down')
+      }
+      return originalInspect(...args)
+    }
+    const rendered = await mountSources(h)
+    expect(rendered.container.textContent).toContain('the dependency probe is down')
+    const retry = [...rendered.container.querySelectorAll<HTMLElement>('button')]
+      .find(button => button.textContent?.trim() === 'Retry')
+    expect(retry).toBeDefined()
+    act(() => { retry!.click() })
+    await flush()
+    expect(rendered.container.textContent).not.toContain('the dependency probe is down')
+    expect(rendered.container.textContent).toContain('Ready')
+    rendered.unmount()
+  })
+
+  it('picks up a source registered while the section stays mounted', async () => {
+    const h = harness()
+    const rendered = await mountSources(h)
+    expect(rendered.container.textContent).not.toContain('Later source')
+    h.clues.api.sources = async () => ({
+      ...CATALOGUE,
+      sources: [...CATALOGUE.sources, source('later.source', 'Later source')],
+    })
+    act(() => {
+      h.clues.registerSourceDisplay({ sourceId: 'later.source', name: 'Later source' })
+    })
+    await flush()
+    expect(rendered.container.textContent).toContain('Later source')
     rendered.unmount()
   })
 
@@ -568,6 +625,104 @@ describe('SideCardSection conflict handling', () => {
     // The store keeps the last SAVED document, not the optimistic edit.
     expect(h.store.getPrefs().agentOpenTools).toBe(false)
     rendered.unmount()
+  })
+
+  it('does not let a later store notification clobber a kept 409 edit, and saves it with the next write', async () => {
+    const h = harness()
+    h.settings.conflicts = 2
+    const rendered = await mount(h)
+    h.settings.externalChange = { customCss: '/* moved again */' }
+    click(rendered.container, 'Inject the sidebar-open tool for the model')
+    await flush()
+    expect(checkboxState(rendered.container, 'Inject the sidebar-open tool for the model')).toBe(true)
+    // Any store notification (session/tab/unread change, the other settings
+    // entry saving) must not replace the edit the user still sees.
+    h.store.setPrefs({ ...h.store.getPrefs(), customCss: '/* session change */' })
+    await flush()
+    expect(checkboxState(rendered.container, 'Inject the sidebar-open tool for the model')).toBe(true)
+
+    // The next user write retries the kept patch too — the value the UI kept
+    // is not left permanently unsaved.
+    click(rendered.container, "Don't auto-open on narrow screens")
+    await flush()
+    expect(h.settings.updates.at(-1)?.patch).toEqual({
+      agentOpenTools: true,
+      mobileNoAutoOpen: false,
+    })
+    expect(h.settings.value.agentOpenTools).toBe(true)
+    expect(h.store.getPrefs().agentOpenTools).toBe(true)
+    expect(checkboxState(rendered.container, 'Inject the sidebar-open tool for the model')).toBe(true)
+    rendered.unmount()
+  })
+})
+
+// ── Revision fencing ──────────────────────────────────────────────────────
+
+describe('SideCardSection revision fencing', () => {
+  it('waits for the mount read before writing (never an unguarded settings update)', async () => {
+    const h = harness()
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const original = h.settings.settingsGet.bind(h.settings)
+    let reads = 0
+    h.settings.settingsGet = async () => {
+      reads += 1
+      if (reads === 1) await gate
+      return original()
+    }
+    const rendered = renderSection(h)
+    click(rendered.container, 'Inject the sidebar-open tool for the model')
+    await flush()
+    // The user's click is waiting on the (still pending) mount read.
+    expect(h.settings.updates).toHaveLength(0)
+    release()
+    await flush()
+    expect(h.settings.updates).toEqual([{ patch: { agentOpenTools: true }, expectedRevision: 0 }])
+    rendered.unmount()
+  })
+
+  it('fails visibly instead of writing unguarded when no revision can be read', async () => {
+    const h = harness()
+    h.settings.settingsGet = async () => { throw new Error('the settings route is down') }
+    const rendered = renderSection(h)
+    await flush()
+    click(rendered.container, 'Inject the sidebar-open tool for the model')
+    await flush()
+    // No expectedRevision could be obtained, so no update was sent at all.
+    expect(h.settings.updates).toHaveLength(0)
+    expect(rendered.container.textContent).toContain('the settings route is down')
+    // The failed write reverts the optimistic toggle.
+    expect(checkboxState(rendered.container, 'Inject the sidebar-open tool for the model')).toBe(false)
+    rendered.unmount()
+  })
+
+  it('a slow mount read cannot resurrect values another entry already superseded', async () => {
+    const h = harness()
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const original = h.settings.settingsGet.bind(h.settings)
+    let calls = 0
+    h.settings.settingsGet = async () => {
+      calls += 1
+      // Capture the OLD document before the gate: this is the stale read.
+      const snapshot = await original()
+      if (calls === 1) await gate
+      return snapshot
+    }
+    const slow = renderSection(h)
+    // The second entry reads normally, saves a newer value, and notifies the
+    // shared store; the slow read then resolves with the superseded document.
+    h.settings.settingsGet = original
+    const fast = await mount(h)
+    click(fast.container, 'Inject the sidebar-open tool for the model')
+    await flush()
+    expect(h.settings.value.agentOpenTools).toBe(true)
+    release()
+    await flush()
+    expect(h.store.getPrefs().agentOpenTools).toBe(true)
+    expect(checkboxState(slow.container, 'Inject the sidebar-open tool for the model')).toBe(true)
+    slow.unmount()
+    fast.unmount()
   })
 })
 
@@ -635,11 +790,30 @@ describe('SideCardSection deep links', () => {
     rendered.unmount()
   })
 
-  it('a live deep link switches an already-mounted section', async () => {
+  it('a live deep link switches an already-mounted section and is consumed exactly once', async () => {
     const h = harness()
     const rendered = await mount(h)
     act(() => { openClueSettings({ group: 'appearance' }) })
     expect(rendered.container.textContent).toContain('Custom CSS')
+    // The live receiver is the consumer: reopening Settings later must not
+    // replay this target.
+    expect(peekClueSettingsTarget()).toBeUndefined()
+    rendered.unmount()
+
+    const reopened = await mount(h)
+    expect(reopened.container.querySelector('nav button[aria-current="page"]')?.textContent?.trim()).toBe('General')
+    reopened.unmount()
+  })
+
+  it('does not open an empty configuration window for a source with nothing to configure', async () => {
+    openClueSettings({ group: 'sources', sourceId: 'builtin.files' })
+    const h = harness()
+    const rendered = await mount(h)
+    await flush()
+    expect(rendered.container.querySelector('nav button[aria-current="page"]')?.textContent?.trim()).toBe('Clue sources')
+    expect((h.service as unknown as BetterSidebarServiceHost).windowHost.getSnapshot().windows).toHaveLength(0)
+    // The pending target was consumed by the mount, not left to replay.
+    expect(peekClueSettingsTarget()).toBeUndefined()
     rendered.unmount()
   })
 })

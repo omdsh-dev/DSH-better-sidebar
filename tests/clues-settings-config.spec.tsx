@@ -111,8 +111,13 @@ interface FakeRuntime extends ClueRuntimeApi {
   taskResult: DependencyInstallTask
   /** Projection answered by an explicit connection poll (default: ready). */
   pollResult?: ConnectionStatusProjection
-  /** Tasks answered by the next `dependenciesStatus` poll. */
+  /** Tasks answered by `dependenciesStatus` (all latest tasks; filter by id). */
+  latestTasks?: DependencyInstallTask[]
+  /** Tasks answered by the next `dependenciesStatus` poll (single-task shortcut). */
   pollTask?: DependencyInstallTask
+  /** Per-dependency start/plan fixtures (multi-dependency windows). */
+  planByDependency?: Record<string, DependencyInstallPlan>
+  taskByDependency?: Record<string, DependencyInstallTask>
   inspectRejects?: Error
   planRejects?: Error
   startRejects?: Error
@@ -139,16 +144,21 @@ function fakeRuntime(overrides: Partial<FakeRuntime> = {}): FakeRuntime {
     dependenciesPlan: async (dependencyId) => {
       calls.push(`plan:${dependencyId}`)
       if (runtime.planRejects !== undefined) throw runtime.planRejects
-      return runtime.planResult
+      return runtime.planByDependency?.[dependencyId] ?? runtime.planResult
     },
     dependenciesStart: async (dependencyId, planId) => {
       calls.push(`start:${dependencyId}:${planId}`)
       if (runtime.startRejects !== undefined) throw runtime.startRejects
-      return runtime.taskResult
+      return runtime.taskByDependency?.[dependencyId] ?? runtime.taskResult
     },
     dependenciesStatus: async (dependencyId) => {
       calls.push(`status:${dependencyId ?? '*'}`)
       if (runtime.statusRejects !== undefined) throw runtime.statusRejects
+      if (runtime.latestTasks !== undefined) {
+        return dependencyId === undefined
+          ? runtime.latestTasks
+          : runtime.latestTasks.filter(task => task.dependencyId === dependencyId)
+      }
       return runtime.pollTask === undefined ? [] : [runtime.pollTask]
     },
     dependenciesCancel: async (dependencyId, taskId) => {
@@ -203,6 +213,13 @@ const BASE_PROPS = {
   connectionId: 'acme.auth',
 }
 
+/** Flush several promise turns through act() (loadAll has chained awaits). */
+async function flush(turns = 8): Promise<void> {
+  for (let index = 0; index < turns; index += 1) {
+    await act(async () => { await Promise.resolve() })
+  }
+}
+
 /** Mount the page and flush the mount read's promise chain. */
 async function mount(runtime: FakeRuntime, overrides: Partial<Parameters<typeof SourceConfigPage>[0]> = {}): Promise<RenderedRoot> {
   const rendered = renderRoot(createElement(SourceConfigPage, { ...BASE_PROPS, runtime, ...overrides }))
@@ -237,7 +254,9 @@ describe('SourceConfigPage dependency section', () => {
     expect(rendered.container.textContent).toContain('Minimum 1.2.0 · Recommended 1.4.0')
     expect(rendered.container.textContent).toContain('/opt/acme')
     // The mount read is an explicit status request, never a plan/install/login.
-    expect(runtime.calls.filter(call => !call.startsWith('inspect:') && !call.startsWith('connectionsStatus'))).toEqual([])
+    expect(runtime.calls.filter(call => !call.startsWith('inspect:')
+      && !call.startsWith('connectionsStatus')
+      && !call.startsWith('status:'))).toEqual([])
     rendered.unmount()
   })
 
@@ -247,7 +266,7 @@ describe('SourceConfigPage dependency section', () => {
     runtime.calls.length = 0
     click(rendered.container, 'Recheck')
     await act(async () => { await Promise.resolve() })
-    expect(runtime.calls).toEqual(['inspect:acme.cli:refresh', 'connectionsStatus'])
+    expect(runtime.calls).toEqual(['inspect:acme.cli:refresh', 'connectionsStatus', 'status:*'])
     expect(runtime.calls.some(call => call.startsWith('connect:') || call.startsWith('plan:') || call.startsWith('start:'))).toBe(false)
     rendered.unmount()
   })
@@ -380,7 +399,7 @@ describe('SourceConfigPage connection and authorization', () => {
     })
     const rendered = await mount(runtime)
     expect(rendered.container.textContent).toContain('Connection and authorization')
-    expect(rendered.container.textContent).toContain('Not configured')
+    expect(rendered.container.textContent).toContain('Not authorized')
     expect(runtime.calls.some(call => call.startsWith('connect:'))).toBe(false)
 
     click(rendered.container, 'Authorize')
@@ -391,6 +410,10 @@ describe('SourceConfigPage connection and authorization', () => {
     expect(rendered.container.textContent).toContain('ABCD-1234')
     expect(rendered.container.textContent).toContain('acme://device?code=ABCD-1234')
     expect(rendered.container.textContent).toContain('Open the URL and enter the code.')
+    // The expiry copy carries its {time} parameter at the RENDER site (the
+    // dictionary token alone is not enough).
+    expect(rendered.container.textContent).not.toContain('{time}')
+    expect(rendered.container.textContent).toContain(new Date('2026-10-17T00:10:00.000Z').toLocaleString())
     rendered.unmount()
   })
 
@@ -456,8 +479,213 @@ describe('SourceConfigPage connection and authorization', () => {
     click(rendered.container, 'Authorize')
     await act(async () => { await Promise.resolve() })
     expect(rendered.container.textContent).toContain('the authorization request failed')
-    expect(rendered.container.textContent).toContain('Not configured')
+    expect(rendered.container.textContent).toContain('Not authorized')
     expect(rendered.container.textContent).toContain('/usr/local/bin/acme')
     rendered.unmount()
+  })
+})
+
+// ── Failure / retry paths ─────────────────────────────────────────────────
+
+describe('SourceConfigPage failure handling', () => {
+  it('keeps the last path/version when a recheck probe fails, and recovers on retry', async () => {
+    const runtime = fakeRuntime({ dependencies: [dependency({ manualPath: '/opt/acme', version: '1.4.0' })] })
+    const rendered = await mount(runtime)
+    runtime.inspectRejects = new Error('the probe timed out')
+    click(rendered.container, 'Recheck')
+    await flush()
+    expect(rendered.container.textContent).toContain('the probe timed out')
+    // The failed probe did not erase the previous observation.
+    expect(rendered.container.textContent).toContain('/usr/local/bin/acme')
+    expect(rendered.container.textContent).toContain('1.4.0')
+    const row = rendered.container.querySelector('[data-clue-dependency="acme.cli"]')!
+    expect(row.querySelector('[data-kind="request-failed"]')).not.toBeNull()
+
+    runtime.inspectRejects = undefined
+    click(rendered.container, 'Recheck')
+    await flush()
+    expect(row.querySelector('[data-kind="ready"]')).not.toBeNull()
+    rendered.unmount()
+  })
+
+  it('shows a failed dependency DTO error inline instead of only a badge', async () => {
+    const runtime = fakeRuntime({
+      dependencies: [dependency({
+        state: 'failed',
+        error: { category: 'failed', message: 'the executable exited with 3' },
+      })],
+    })
+    const rendered = await mount(runtime)
+    expect(rendered.container.textContent).toContain('the executable exited with 3')
+    rendered.unmount()
+  })
+
+  it('reports plan/start failures inline and keeps the page usable', async () => {
+    const planRuntime = fakeRuntime({ planRejects: new Error('no verified release for this platform') })
+    const planned = await mount(planRuntime)
+    click(planned.container, 'One-click install')
+    await act(async () => { await Promise.resolve() })
+    expect(planned.container.textContent).toContain('no verified release for this platform')
+    expect(planned.container.textContent).not.toContain('Confirm and install')
+    planned.unmount()
+
+    const startRuntime = fakeRuntime({ startRejects: new Error('the installer refused to start') })
+    const started = await mount(startRuntime)
+    click(started.container, 'One-click install')
+    await act(async () => { await Promise.resolve() })
+    click(started.container, 'Confirm and install')
+    await act(async () => { await Promise.resolve() })
+    expect(started.container.textContent).toContain('the installer refused to start')
+    expect(started.container.querySelector('[role="progressbar"]')).toBeNull()
+    // The plan stays on screen so the user can retry without rebuilding it.
+    expect(started.container.textContent).toContain('Confirm and install')
+    started.unmount()
+  })
+
+  it('reports a failed connection status read as request-failed and offers a retry (connection-only source)', async () => {
+    const runtime = fakeRuntime({
+      connections: [connection({ authorization: 'not-authorized', action: 'connect' })],
+    })
+    runtime.connectionsStatus = async () => {
+      runtime.calls.push('connectionsStatus')
+      throw new Error('the connection status route failed')
+    }
+    const rendered = await mount(runtime, { dependencyIds: [] })
+    expect(rendered.container.textContent).toContain('the connection status route failed')
+    expect(rendered.container.textContent).toContain('Request failed')
+    // A failed READ is not "never configured".
+    expect(rendered.container.textContent).not.toContain('Not configured')
+    const recheck = [...rendered.container.querySelectorAll('button')]
+      .find(button => button.textContent?.trim() === 'Recheck')
+    expect(recheck).toBeDefined()
+
+    runtime.connectionsStatus = async () => {
+      runtime.calls.push('connectionsStatus')
+      return [connection({ authorization: 'not-authorized', action: 'connect' })]
+    }
+    click(rendered.container, 'Recheck')
+    await act(async () => { await Promise.resolve() })
+    expect(rendered.container.textContent).toContain('Not authorized')
+    expect(rendered.container.textContent).not.toContain('Request failed')
+    rendered.unmount()
+  })
+})
+
+// ── Install task polling / multi-view sharing ─────────────────────────────
+
+describe('SourceConfigPage install task polling', () => {
+  it('stops polling when the runtime no longer reports the remembered task', async () => {
+    vi.useFakeTimers()
+    try {
+      const runtime = fakeRuntime()
+      const rendered = await mount(runtime)
+      click(rendered.container, 'One-click install')
+      await act(async () => { await Promise.resolve() })
+      click(rendered.container, 'Confirm and install')
+      await act(async () => { await Promise.resolve() })
+      expect(rendered.container.querySelector('[role="progressbar"]')).not.toBeNull()
+      runtime.calls.length = 0
+      // dependenciesStatus answers [] (the task vanished).
+      await act(async () => { await vi.advanceTimersByTimeAsync(1000) })
+      expect(runtime.calls).toContain('status:acme.cli')
+      expect(rendered.container.querySelector('[role="progressbar"]')).toBeNull()
+      // The loop settled instead of asking every second forever.
+      const settled = runtime.calls.filter(call => call.startsWith('status:acme.cli')).length
+      expect(settled).toBe(1)
+      await act(async () => { await vi.advanceTimersByTimeAsync(3000) })
+      expect(runtime.calls.filter(call => call.startsWith('status:acme.cli'))).toHaveLength(settled)
+      rendered.unmount()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('gives up after repeated status failures instead of spinning at 1 Hz', async () => {
+    vi.useFakeTimers()
+    try {
+      const runtime = fakeRuntime({ statusRejects: new Error('the status route is down') })
+      const rendered = await mount(runtime)
+      click(rendered.container, 'One-click install')
+      await act(async () => { await Promise.resolve() })
+      click(rendered.container, 'Confirm and install')
+      await act(async () => { await Promise.resolve() })
+      runtime.calls.length = 0
+      for (let index = 0; index < 3; index += 1) {
+        await act(async () => { await vi.advanceTimersByTimeAsync(1000) })
+      }
+      expect(rendered.container.textContent).toContain('the status route is down')
+      expect(runtime.calls.filter(call => call.startsWith('status:acme.cli'))).toHaveLength(3)
+      expect(rendered.container.querySelector('[role="progressbar"]')).toBeNull()
+      await act(async () => { await vi.advanceTimersByTimeAsync(3000) })
+      expect(runtime.calls.filter(call => call.startsWith('status:acme.cli'))).toHaveLength(3)
+      rendered.unmount()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('polls EVERY running dependency, not just one', async () => {
+    vi.useFakeTimers()
+    try {
+      const other = dependency({ dependencyId: 'other.cli', name: 'Other CLI', command: 'other' })
+      const runtime = fakeRuntime({
+        dependencies: [dependency(), other],
+        planByDependency: {
+          'other.cli': plan({ planId: 'plan-2', dependencyId: 'other.cli', name: 'Other CLI' }),
+        },
+        taskByDependency: {
+          'other.cli': task({ taskId: 'task-2', dependencyId: 'other.cli', planId: 'plan-2' }),
+        },
+      })
+      const rendered = await mount(runtime, { dependencyIds: ['acme.cli', 'other.cli'] })
+      const clickIn = (dependencyId: string, label: string): void => {
+        const row = rendered.container.querySelector(`[data-clue-dependency="${dependencyId}"]`)!
+        const button = [...row.querySelectorAll<HTMLElement>('button')]
+          .find(candidate => candidate.textContent?.trim() === label)
+        if (button === undefined) throw new Error(`no "${label}" in ${dependencyId}`)
+        act(() => { button.click() })
+      }
+      clickIn('acme.cli', 'One-click install')
+      await act(async () => { await Promise.resolve() })
+      clickIn('acme.cli', 'Confirm and install')
+      await act(async () => { await Promise.resolve() })
+      clickIn('other.cli', 'One-click install')
+      await act(async () => { await Promise.resolve() })
+      clickIn('other.cli', 'Confirm and install')
+      await act(async () => { await Promise.resolve() })
+      expect(rendered.container.querySelectorAll('[role="progressbar"]')).toHaveLength(2)
+      runtime.latestTasks = [task(), task({ taskId: 'task-2', dependencyId: 'other.cli', planId: 'plan-2' })]
+      runtime.calls.length = 0
+      await act(async () => { await vi.advanceTimersByTimeAsync(1000) })
+      expect(runtime.calls).toContain('status:acme.cli')
+      expect(runtime.calls).toContain('status:other.cli')
+      rendered.unmount()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('adopts a task started elsewhere (multi-view shared install state)', async () => {
+    const runtime = fakeRuntime()
+    const first = await mount(runtime)
+    click(first.container, 'One-click install')
+    await act(async () => { await Promise.resolve() })
+    runtime.latestTasks = [task()]
+    click(first.container, 'Confirm and install')
+    await act(async () => { await Promise.resolve() })
+
+    // A second window opened after the install started sees the live task and
+    // can cancel it without having started it itself.
+    const second = await mount(runtime)
+    expect(second.container.querySelector('[role="progressbar"]')).not.toBeNull()
+    expect(second.container.textContent).toContain('Cancel install')
+    click(second.container, 'Cancel install')
+    await act(async () => { await Promise.resolve() })
+    expect(runtime.calls).toContain('cancel:acme.cli:task-1')
+    expect(second.container.textContent).toContain('Install cancelled')
+    // The view that started it observes the cancellation too.
+    expect(first.container.textContent).toContain('Install cancelled')
+    first.unmount()
+    second.unmount()
   })
 })

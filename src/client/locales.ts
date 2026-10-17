@@ -704,6 +704,7 @@ export const zh = {
   clueStateNotConfigured: '未配置',
   clueStateAuthorizing: '授权中',
   clueStateAuthExpired: '授权过期',
+  clueStateNotAuthorized: '未授权',
   clueStateRequestFailed: '请求失败',
   clueStateReady: '就绪',
 
@@ -1439,6 +1440,7 @@ export const en: Record<keyof typeof zh, string> = {
   clueStateNotConfigured: 'Not configured',
   clueStateAuthorizing: 'Authorizing',
   clueStateAuthExpired: 'Authorization expired',
+  clueStateNotAuthorized: 'Not authorized',
   clueStateRequestFailed: 'Request failed',
   clueStateReady: 'Ready',
 

@@ -401,12 +401,6 @@
   overflow-wrap: anywhere;
 }
 
-.configEmpty {
-  font-size: 11px;
-  line-height: 16px;
-  color: var(--dsw-alias-label-tertiary);
-}
-
 /* Narrow form: the row stacks; controls wrap under the identity so a 320px
    viewport never scrolls sideways. */
 @media (max-width: 767px) {
