@@ -5,11 +5,13 @@
  * - list/search are OFFICIAL single-page commands: native `task tasks list`
  *   (or `task tasklists tasks` for an explicit list range) and `task +search`
  *   with the documented keyword/completed/assignee/creator/follower/due
- *   filters and `--page-limit`; a tasklist search is rejected rather than
- *   silently widened, and the auto-paging shortcuts / `--page-all` never run;
+ *   filters and `--page-limit 1` (no `--page-size` exists); a tasklist search
+ *   is rejected rather than silently widened, and the auto-paging shortcuts /
+ *   `--page-all` never run;
  * - a cursor is bound to its query/range and cannot be replayed elsewhere;
- * - the task GUID is the only identity: applinks resolve through `guid`, a
- *   displayed number (`t104121`) is rejected for read and update;
+ * - the task GUID is the only identity: todo applinks (`/client/todo/detail`
+ *   and the older `/client/todo/task`) resolve through `guid`; a displayed
+ *   number (`t104121` / `suite_entity_num`) is rejected for read and update;
  * - read returns title/description/start/due/completed/updatedAt/GUID; the
  *   start-due relation is validated locally BEFORE any write;
  * - edits submit only changed fields through one `task +update`; completion /
@@ -163,7 +165,7 @@ describe('task browsing and search', () => {
     expect(runtime.requests).toHaveLength(1)
   })
 
-  it('uses task +search with a single page limit and never an auto-paging shortcut', async () => {
+  it('uses task +search with the documented single-page flag and never an auto-paging shortcut', async () => {
     const runtime = new FakeLarkRuntime().enqueue(okResult({
       tasks: [taskRecord({ summary: 'Release <hb>checklist</hb>' })],
       has_more: false,
@@ -177,9 +179,12 @@ describe('task browsing and search', () => {
       'task', '+search',
       '--query', 'release',
       '--completed=false',
-      '--page-limit', '20',
+      '--page-limit', '1',
       '--as', 'user', '--format', 'json',
     ])
+    // The CLI has no `--page-size` for +search; the caller's item limit is not
+    // a page-size claim, and `--page-limit 1` is the single-page bound.
+    expect(runtime.requests[0]!.args).not.toContain('--page-size')
     for (const request of runtime.requests) {
       expect(request.args).not.toContain('--page-all')
       expect(request.args).not.toContain('+get-my-tasks')
@@ -215,7 +220,7 @@ describe('task browsing and search', () => {
       '--creator', 'ou_grace',
       '--follower', 'ou_lin',
       '--due', '-1d,+7d',
-      '--page-limit', '20',
+      '--page-limit', '1',
       '--as', 'user', '--format', 'json',
     ])
     // A cursor from a different filter set must be refused, not replayed.
@@ -259,6 +264,21 @@ describe('task resolve', () => {
       typeId: FEISHU_TYPE_IDS.task,
       locator: { kind: 'task', guid: GUID, url: URL },
     })
+    expect(runtime.requests).toHaveLength(0)
+  })
+
+  it('accepts the documented /client/todo/detail applink and ignores suite_entity_num', async () => {
+    const runtime = new FakeLarkRuntime()
+    const { operations } = opsOf(runtime)
+    const detailUrl = `https://applink.feishu.cn/client/todo/detail?guid=${GUID}&suite_entity_num=12345`
+    const candidate = await operations.resolve!({ text: detailUrl, explicit: true }, context())
+    expect(candidate).toMatchObject({
+      typeId: FEISHU_TYPE_IDS.task,
+      locator: { kind: 'task', guid: GUID, url: detailUrl },
+    })
+    const withoutGuid = `https://applink.feishu.cn/client/todo/detail?suite_entity_num=12345`
+    await expect(operations.resolve!({ text: withoutGuid, explicit: true }, context()))
+      .rejects.toMatchObject({ category: 'invalid-request' })
     expect(runtime.requests).toHaveLength(0)
   })
 
@@ -510,10 +530,12 @@ describe('task save: changed fields, completion and partial success', () => {
     expect(runtime.requests).toHaveLength(2)
   })
 
-  it('reopens a completed task with +reopen', async () => {
+  it('reopens a completed task with +reopen and trusts a success envelope that echoes the old object', async () => {
     const runtime = new FakeLarkRuntime()
       .enqueue(taskGet({ completed: true, completed_at: '1700009999000' }))
-      .enqueue(okResult({ status: 'todo', completed_at: '0' }))
+      // The CLI documents only “report success”; it may echo the pre-reopen
+      // object. The envelope + exit 0 is the confirmation, not that echo.
+      .enqueue(okResult({ status: 'done', completed_at: '1700009999000' }))
       .enqueue(taskGet({ completed: false, updated_at: UPDATED_2 }))
     const { operations } = opsOf(runtime)
     await operations.saveEdit!(saveInput(editedDocument({ completed: false })), context())

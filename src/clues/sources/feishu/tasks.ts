@@ -6,10 +6,12 @@
  * - list: native `task tasks list` (or `task tasklists tasks` for an explicit
  *   tasklist range), continued only with the returned `page_token`;
  * - search: `task +search` with the documented keyword/completed/assignee/
- *   creator/follower/due filters, `--page-limit` and an explicit
- *   `--page-token`. A tasklist is a LIST range, not a documented search
- *   filter, so a tasklist search is rejected instead of silently widening to
- *   the global corpus;
+ *   creator/follower/due filters, an explicit `--page-token` and
+ *   `--page-limit 1` (the only documented way to bound it to a single page;
+ *   the caller's `limit` cannot set items per page because the CLI exposes no
+ *   `--page-size` for `+search`). A tasklist is a LIST range, not a documented
+ *   search filter, so a tasklist search is rejected instead of silently
+ *   widening to the global corpus;
  * - read: `task tasks get` by GUID;
  * - edit: `task +update` with ONLY the changed fields, then completion/reopen
  *   as a SEPARATE `task +complete` / `task +reopen` call. `+update` documents
@@ -89,7 +91,7 @@ const TASK_PAGE_SIZE = 20
 const MAX_TASK_UPDATE_BYTES = 32 * 1024
 
 /** The browsing range of the task source. */
-type TasksScope = {
+export type TasksScope = {
   readonly kind: 'tasks'
   readonly tasklistGuid?: string
   readonly completed?: boolean
@@ -100,7 +102,7 @@ type TasksScope = {
  * a search filter (the CLI has no tasklist argument for `+search`), so it is
  * rejected instead of silently returning global results.
  */
-type TaskSearchScope = {
+export type TaskSearchScope = {
   readonly kind: 'tasks'
   readonly completed?: boolean
   readonly assignee?: string
@@ -149,7 +151,7 @@ function searchFilterOf(value: unknown, field: string): string | undefined {
 }
 
 /** Parse one task list range; the default is the user's task list (an explicit range choice). */
-function parseTasksScope(value: JsonValue | undefined): TasksScope {
+export function parseFeishuTasksScope(value: JsonValue | undefined): TasksScope {
   if (value === undefined) return { kind: 'tasks' }
   if (!isRecord(value)) throw new ClueError('invalid-request', 'a task range must be a JSON object')
   if (value.kind !== undefined && value.kind !== 'tasks') {
@@ -177,7 +179,7 @@ function parseTasksScope(value: JsonValue | undefined): TasksScope {
 }
 
 /** Parse one task search scope; only the filters `task +search` documents. */
-function parseTaskSearchScope(value: JsonValue | undefined): TaskSearchScope {
+export function parseFeishuTaskSearchScope(value: JsonValue | undefined): TaskSearchScope {
   if (value === undefined) return { kind: 'tasks' }
   if (!isRecord(value)) throw new ClueError('invalid-request', 'a task search range must be a JSON object')
   if (value.kind !== undefined && value.kind !== 'tasks') {
@@ -347,14 +349,11 @@ async function submitCompletion(
     const updatedAt = success.data.updated_at
     return updatedAt === undefined ? {} : { updatedAt: String(updatedAt) }
   }
-  // Reopen: only a server answer that still says "done" (or a positive
-  // completion instant) is a non-confirmation; otherwise the envelope + exit 0
-  // is the documented result of `+reopen`.
-  if (status === 'done') throw new ClueError('failed', 'the server did not confirm the task reopen')
-  const completedAt = millisOf(success.data.completed_at)
-  if (completedAt !== undefined && completedAt > 0) {
-    throw new ClueError('failed', 'the server did not confirm the task reopen')
-  }
+  // Reopen: lark-cli documents the success envelope + exit 0 as the result of
+  // `+reopen` and specifies no completion field. Inspecting a possibly-echoed
+  // pre-reopen object was a false-negative trap, so the envelope is the
+  // confirmation here (never a claim that a failed request succeeded — a
+  // non-zero exit still throws upstream).
   const updatedAt = success.data.updated_at
   return updatedAt === undefined ? {} : { updatedAt: String(updatedAt) }
 }
@@ -459,7 +458,7 @@ export function createFeishuTasksSource(getRuntime: () => ClueRuntime): ClueSour
       },
 
       async list(input: ClueSourceListInput, context): Promise<ClueListResult> {
-        const scope = parseTasksScope(input.scope)
+        const scope = parseFeishuTasksScope(input.scope)
         const signature = stableJson(scope as unknown as JsonValue)
         const pageToken = pageTokenOf(signature, input.cursor)
         const limit = pageLimitOf(input.limit)
@@ -489,7 +488,7 @@ export function createFeishuTasksSource(getRuntime: () => ClueRuntime): ClueSour
 
       async search(input: ClueSourceSearchInput, context): Promise<ClueListResult> {
         const query = typeof input.query === 'string' ? input.query.trim() : ''
-        const scope = parseTaskSearchScope(input.scope)
+        const scope = parseFeishuTaskSearchScope(input.scope)
         const hasFilter = scope.completed !== undefined
           || scope.assignee !== undefined
           || scope.creator !== undefined
@@ -511,7 +510,9 @@ export function createFeishuTasksSource(getRuntime: () => ClueRuntime): ClueSour
           ...(scope.due === undefined ? {} : { due: scope.due }),
         } as unknown as JsonValue)
         const pageToken = pageTokenOf(signature, input.cursor)
-        const limit = pageLimitOf(input.limit)
+        // `task +search` documents no `--page-size`; `--page-limit` is a page
+        // count (capped at 40) and is the only way to keep it to one page. The
+        // caller's item limit therefore does not apply to search.
         const success = await runFeishuCommand(runtime(), {
           args: [
             'task', '+search',
@@ -521,7 +522,7 @@ export function createFeishuTasksSource(getRuntime: () => ClueRuntime): ClueSour
             ...(scope.creator === undefined ? [] : ['--creator', scope.creator]),
             ...(scope.follower === undefined ? [] : ['--follower', scope.follower]),
             ...(scope.due === undefined ? [] : ['--due', scope.due]),
-            '--page-limit', String(limit),
+            '--page-limit', '1',
             ...(pageToken === undefined ? [] : ['--page-token', pageToken]),
             '--as', 'user', '--format', 'json',
           ],

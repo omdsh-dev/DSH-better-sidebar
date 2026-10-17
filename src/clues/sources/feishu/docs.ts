@@ -20,24 +20,29 @@
  * - a wiki node is a separate identity: `/wiki/<token>` is resolved through
  *   `wiki +node-get`, and only `obj_type=docx` becomes a readable document.
  *
- * Reads fetch the whole document with `docs +fetch` and window it by byte
- * offset; lark-cli's stdout capture is capped at 8 MiB, so a document above
- * that cap is reported explicitly instead of being silently truncated.
- * Block-scoped partial fetch needs block ids, which the S4 read contract does
- * not carry, so fragment reads necessarily re-fetch the document.
+ * Reads fetch the whole document with `docs +fetch --api-version v2` and
+ * window it by byte offset; the plugin runner's stdout capture is capped at
+ * 8 MiB, so a document above that cap is reported explicitly instead of being
+ * silently truncated. Block-scoped partial fetch needs block ids, which the S4
+ * read contract does not carry, so fragment reads necessarily re-fetch the
+ * document.
  *
- * Edit is intentionally not offered: lark-cli documents no lossless local
- * text-block write (only global `str_replace`, whole-block replace/delete/move,
- * and append/overwrite), so this source is read-only instead of degrading to a
- * destructive write path. See {@link DOCS_EDIT_LIMITATION}.
+ * Edit is block-scoped and lossless for TEXT blocks: `loadEdit` fetches the XML
+ * with `--detail full` (block ids + styles), and `saveEdit` sends only the
+ * blocks the user changed through `docs +update --command block_replace
+ * --block-id <id>`. Complex containers are read-only. Markdown is never a save
+ * input. See {@link DOCS_EDIT_SCOPE_NOTE}.
  */
 import { ClueError } from '../../types.ts'
 import type {
   ClueCandidate,
+  ClueEditDocument,
   ClueListResult,
   ClueOperationContext,
   CluePortableRef,
   ClueReadResult,
+  ClueSaveEditInput,
+  ClueSaveEditResult,
   ClueTypeDescriptor,
   JsonValue,
   Locator,
@@ -46,26 +51,32 @@ import type {
   ClueSourceListInput,
   ClueSourceReadInput,
   ClueSourceRegistration,
+  ClueSourceSaveInput,
   ClueSourceSearchInput,
 } from '../../service.ts'
 import type { ClueRuntime } from '../../runtime/types.ts'
 import { decodeCursor, encodeCursor, stableJson } from './cursor.ts'
 import {
-  DOCS_EDIT_LIMITATION,
+  DOCS_EDIT_SCOPE_NOTE,
   FEISHU_CONNECTION_ID,
   FEISHU_DEPENDENCY_ID,
   FEISHU_FORMATS,
   FEISHU_PLUGIN_ID,
+  FEISHU_SCOPE_ROLE,
   FEISHU_SOURCE_IDS,
   FEISHU_TYPE_IDS,
   fallbackTitle,
   isRecord,
+  parseDocEditData,
   stripHighlight,
   stringOf,
+  type FeishuDocEditBlock,
+  type FeishuDocEditData,
   type FeishuDocLocator,
   type FeishuDocProjection,
   type FeishuDocReadData,
 } from './format.ts'
+import { buildDocBlockXml, buildDocTitleXml, parseDocEditXml } from './edit.ts'
 import {
   arrayField,
   larkWorkingDirectory,
@@ -96,16 +107,24 @@ const SEARCH_PAGE_SIZE = 20
 const DOC_READ_MAX_BYTES = 256 * 1024
 /** `drive +search` rejects a query longer than 30 Unicode code points. */
 const SEARCH_QUERY_MAX_CHARS = 30
+/** Bounds of one block-replace payload (argv size and accidental whole-doc writes). */
+const MAX_EDIT_BLOCK_BYTES = 64 * 1024
+const MAX_EDIT_TOTAL_BYTES = 256 * 1024
+const MAX_EDIT_BLOCKS = 200
+/** The `docs +fetch --detail full` invocation shared by loadEdit/save re-reads. */
+const FETCH_FULL_ARGS = ['docs', '+fetch', '--api-version', 'v2'] as const
+/** The native block update verb (one target block, no append/overwrite). */
+const UPDATE_BLOCK_COMMAND = 'block_replace'
 
 /** The explicit browsing ranges of the docs source. */
-type DocsListScope =
+export type DocsListScope =
   | { readonly kind: 'drive'; readonly folderToken: string }
   | { readonly kind: 'drive-root' }
   | { readonly kind: 'wiki'; readonly spaceId: string; readonly parentNodeToken?: string }
   | { readonly kind: 'wiki-spaces' }
 
 /** The range filter a document search may carry. */
-type DocsSearchScope =
+export type DocsSearchScope =
   | { readonly kind: 'drive'; readonly folderToken: string }
   | { readonly kind: 'wiki'; readonly spaceId: string }
 
@@ -132,7 +151,7 @@ function scopeRecord(value: JsonValue | undefined, what: string): Record<string,
 }
 
 /** Parse one list scope; absent/invalid is a typed empty-state failure, never "all documents". */
-function parseListScope(value: JsonValue | undefined): DocsListScope {
+export function parseDocsListScope(value: JsonValue | undefined): DocsListScope {
   const record = scopeRecord(value, 'listing Feishu documents')
   const kind = record.kind
   if (kind === 'drive') {
@@ -159,7 +178,7 @@ function parseListScope(value: JsonValue | undefined): DocsListScope {
 }
 
 /** Parse one optional search filter. */
-function parseSearchScope(value: JsonValue | undefined): DocsSearchScope | undefined {
+export function parseDocsSearchScope(value: JsonValue | undefined): DocsSearchScope | undefined {
   if (value === undefined) return undefined
   const record = scopeRecord(value, 'searching Feishu documents')
   if (record.kind === 'drive') {
@@ -218,7 +237,7 @@ function driveFolderScopeCandidate(
     } as unknown as Locator,
     title: title ?? `Feishu folder ${folderToken.slice(-8)}`,
     subtitle: 'Folder',
-    meta: { role: 'scope', scopeKind: 'drive-folder' },
+    meta: { role: FEISHU_SCOPE_ROLE, scopeKind: 'drive-folder' },
   }
 }
 
@@ -302,7 +321,7 @@ function wikiSpaceCandidate(space: Record<string, JsonValue>): ClueCandidate | u
     title: name,
     subtitle: 'Wiki space',
     meta: {
-      role: 'scope',
+      role: FEISHU_SCOPE_ROLE,
       spaceType: stringOf(space.space_type) ?? 'team',
       visibility: stringOf(space.visibility) ?? 'unknown',
     },
@@ -403,15 +422,17 @@ function titleOfContent(content: string): string | undefined {
 
 /**
  * Extract the title of a Markdown projection. Markdown has no structural
- * `<title>` node; the documented export starts the document with an ATX
- * heading, so the first heading is the best non-invented title. When the
- * export opens with a paragraph there is no title to claim (fall back to the
- * resolved node title / locator).
+ * `<title>` node; a leading level-1 heading is a best-effort heuristic, not a
+ * documented title field. When the export opens with a paragraph or a lower
+ * heading there is no title to claim (fall back to the resolved node title /
+ * locator). Markdown is never used as an edit/save input.
  */
 function titleOfMarkdown(content: string): string | undefined {
   const firstLine = content.split(/\r?\n/).find(line => line.trim() !== '')
   if (firstLine === undefined) return undefined
-  const match = /^#{1,6}\s+(.+?)\s*#*\s*$/.exec(firstLine.trim())
+  // Only a LEVEL-1 ATX heading is a plausible document title; a `## Section`
+  // opening line is a section, not the title, so do not claim it as one.
+  const match = /^#\s+(.+?)\s*#*\s*$/.exec(firstLine.trim())
   const title = match?.[1]?.trim()
   return title === undefined || title === '' ? undefined : title
 }
@@ -460,6 +481,9 @@ function fetchedDocumentOf(success: LarkSuccess): FetchedDocument {
     throw new ClueError('failed', 'lark-cli returned no document content')
   }
   const title = stringField(document, 'title')
+  // `document.title` is tolerated when present, but the documented
+  // `docs +fetch` payload has no title field; the XML `<title>` (or the
+  // resolved wiki node) is the authoritative source.
   const revision = document.revision_id
   const referenceMap = document.reference_map
   return {
@@ -496,6 +520,160 @@ async function docArgumentOf(
   return { token: resolved.objToken, title: resolved.title }
 }
 
+/**
+ * Fetch one document with block ids (`--detail full`). The docs read path uses
+ * `simple`; only the editor and its save-time re-read need ids and styles.
+ */
+async function fetchFullDocument(
+  runtime: ClueRuntime,
+  token: string,
+  context: ClueOperationContext,
+): Promise<FetchedDocument> {
+  const success = await runFeishuCommand(runtime, {
+    args: [
+      ...FETCH_FULL_ARGS,
+      '--doc', token,
+      '--doc-format', 'xml',
+      '--detail', 'full',
+      '--as', 'user', '--format', 'json',
+    ],
+    cwd: cwdOf(context),
+    ...(context.signal === undefined ? {} : { signal: context.signal }),
+  })
+  return fetchedDocumentOf(success)
+}
+
+/** UTF-8 byte length (argv/payload budget). */
+function utf8Length(value: string): number {
+  return new TextEncoder().encode(value).length
+}
+
+/** Project one full fetch into the renderer's edit data. */
+function editDataOf(
+  locator: FeishuDocLocator,
+  docToken: string,
+  fetched: FetchedDocument,
+): FeishuDocEditData {
+  const parsed = parseDocEditXml(fetched.content)
+  // Never invent a title for the editor: an absent/empty <title> stays empty
+  // (and may be uneditable when it has no block id). The read preview is the
+  // place that may fall back to a resolved wiki/locator title.
+  const title = parsed.title
+  return {
+    kind: locator.kind === 'docx' ? 'docx' : 'wiki',
+    docToken,
+    ...(locator.kind === 'wiki'
+      ? { wikiToken: locator.wikiToken, objToken: docToken, objType: 'docx' }
+      : {}),
+    ...(locator.url === undefined ? {} : { sourceUrl: locator.url }),
+    ...(fetched.revisionId === undefined ? {} : { revisionId: fetched.revisionId }),
+    title,
+    baselineTitle: title,
+    titleEditable: parsed.titleBlockId !== undefined,
+    ...(parsed.titleBlockId === undefined ? {} : { titleBlockId: parsed.titleBlockId }),
+    titleAttrs: parsed.titleAttrs,
+    blocks: parsed.blocks,
+    readOnlyBlocks: parsed.readOnlyBlocks,
+  }
+}
+
+/** The current block texts by id (save-time best-effort comparison). */
+function blockTextsOf(content: string): Map<string, string> {
+  const parsed = parseDocEditXml(content)
+  const map = new Map<string, string>()
+  for (const block of parsed.blocks) map.set(block.id, block.text)
+  return map
+}
+
+/** The current XML title (save-time best-effort comparison). */
+function titleOfEditContent(content: string): string {
+  return parseDocEditXml(content).title
+}
+
+/** The native revision id of one block update answer. */
+function revisionOfUpdate(success: LarkSuccess): string | undefined {
+  const document = recordField(success.data, 'document')
+  const revision = document?.revision_id
+  return revision === undefined ? undefined : String(revision)
+}
+
+/** Fail a write whose business result is not a full success. */
+function assertUpdateResult(success: LarkSuccess): void {
+  const result = stringField(success.data, 'result')
+  if (result === 'failed') {
+    throw new ClueError('failed', 'lark-cli reported the document update as failed')
+  }
+  if (result === 'partial_success') {
+    throw new ClueError('failed', 'lark-cli reported the document update as a partial success')
+  }
+}
+
+/** The safe partial-success error after at least one block was written. */
+function partialEditError(error: unknown, written: readonly string[], unwritten: readonly string[]): ClueError {
+  const base = error instanceof ClueError
+    ? error
+    : new ClueError('failed', 'the document block update failed')
+  return new ClueError(
+    base.category,
+    `partial success: ${written.length} block(s) were saved, but the remaining block(s) `
+    + `were not written (${base.message}); the draft is preserved`,
+    {
+      ...(base.meta ?? {}),
+      partial: 'true',
+      written: written.join(','),
+      unwritten: unwritten.join(','),
+    },
+  )
+}
+
+/** Validate one block id/change set before issuing any write. */
+function validateEditDocument(
+  edited: FeishuDocEditData,
+  changedBlocks: readonly FeishuDocEditBlock[],
+  titleChanged: boolean,
+): void {
+  if (changedBlocks.length + (titleChanged ? 1 : 0) > MAX_EDIT_BLOCKS) {
+    throw new ClueError('invalid-request', `a document save may update at most ${MAX_EDIT_BLOCKS} blocks`)
+  }
+  let total = 0
+  const seen = new Set<string>()
+  for (const block of changedBlocks) {
+    if (!/^[A-Za-z0-9:_-]{1,200}$/.test(block.id)) {
+      throw new ClueError('invalid-request', 'a document block id is not a safe identifier')
+    }
+    if (seen.has(block.id)) {
+      throw new ClueError('invalid-request', 'a document save repeats one block id')
+    }
+    seen.add(block.id)
+    const bytes = utf8Length(block.text)
+    if (bytes > MAX_EDIT_BLOCK_BYTES) {
+      throw new ClueError(
+        'invalid-request',
+        `one document block is too large to save (limit ${MAX_EDIT_BLOCK_BYTES} bytes)`,
+      )
+    }
+    total += bytes
+  }
+  if (titleChanged) {
+    total += utf8Length(edited.title)
+    if (edited.title.trim() === '') {
+      throw new ClueError('invalid-request', 'a document title cannot be empty')
+    }
+    if (!edited.titleEditable || edited.titleBlockId === undefined) {
+      throw new ClueError(
+        'unsupported',
+        'this document did not expose an editable title block; the title stays read-only',
+      )
+    }
+  }
+  if (total > MAX_EDIT_TOTAL_BYTES) {
+    throw new ClueError(
+      'invalid-request',
+      `the document edit is too large to save (limit ${MAX_EDIT_TOTAL_BYTES} bytes)`,
+    )
+  }
+}
+
 /** The source descriptor (client presentation is registered separately). */
 function docsDescriptor(): ClueSourceRegistration['descriptor'] {
   return {
@@ -511,8 +689,9 @@ function docsDescriptor(): ClueSourceRegistration['descriptor'] {
       list: true,
       search: true,
       read: true,
-      // No lossless local text-block write exists in lark-cli.
-      edit: false,
+      // Text blocks are edited through the native block-scoped replace verb;
+      // complex containers stay read-only (see DOCS_EDIT_SCOPE_NOTE).
+      edit: true,
       portable: true,
     },
     dependencyIds: [FEISHU_DEPENDENCY_ID],
@@ -522,13 +701,15 @@ function docsDescriptor(): ClueSourceRegistration['descriptor'] {
 
 /** Type descriptors; both document types share XML/Markdown read formats. */
 function docsTypes(): ClueTypeDescriptor[] {
-  const reason = { editLimitation: DOCS_EDIT_LIMITATION }
+  const note = { editScope: DOCS_EDIT_SCOPE_NOTE }
   return [FEISHU_TYPE_IDS.docx, FEISHU_TYPE_IDS.wiki].map(typeId => ({
     typeId,
     sourceId: FEISHU_SOURCE_IDS.docs,
     formats: [FEISHU_FORMATS.docsXml, FEISHU_FORMATS.docsMarkdown],
-    capabilities: { read: true, edit: false, concurrency: 'none' },
-    extensions: reason,
+    // The native revision id is used as the `--revision-id` baseline for each
+    // block write; this is a best-effort comparison, not an atomic CAS claim.
+    capabilities: { read: true, edit: true, concurrency: 'check-before-save' },
+    extensions: note,
   }))
 }
 
@@ -625,7 +806,7 @@ export function createFeishuDocsSource(getRuntime: () => ClueRuntime): ClueSourc
       },
 
       async list(input: ClueSourceListInput, context): Promise<ClueListResult> {
-        const scope = parseListScope(input.scope)
+        const scope = parseDocsListScope(input.scope)
         const signature = stableJson(scope as unknown as JsonValue)
         const pageToken = pageTokenOf(signature, input.cursor)
         const cwd = cwdOf(context)
@@ -713,7 +894,7 @@ export function createFeishuDocsSource(getRuntime: () => ClueRuntime): ClueSourc
             `a Feishu document search keyword is at most ${SEARCH_QUERY_MAX_CHARS} characters`,
           )
         }
-        const scope = parseSearchScope(input.scope)
+        const scope = parseDocsSearchScope(input.scope)
         if (query === '' && scope === undefined) {
           throw new ClueError('invalid-request', 'a Feishu document search needs a keyword or an explicit range')
         }
@@ -726,7 +907,9 @@ export function createFeishuDocsSource(getRuntime: () => ClueRuntime): ClueSourc
         const success = await runFeishuCommand(runtime(), {
           args: [
             'drive', '+search', '--query', query,
-            '--doc-types', 'docx,wiki,doc',
+            // The S4 source only models Docx and wiki nodes; asking for the
+            // legacy `doc` type produced hits the mapper then dropped.
+            '--doc-types', 'docx,wiki',
             ...(scope === undefined
               ? []
               : scope.kind === 'drive'
@@ -763,7 +946,7 @@ export function createFeishuDocsSource(getRuntime: () => ClueRuntime): ClueSourc
         try {
           success = await runFeishuCommand(runtimeNow, {
             args: [
-              'docs', '+fetch', '--doc', doc.token,
+              'docs', '+fetch', '--api-version', 'v2', '--doc', doc.token,
               '--doc-format', projection,
               '--detail', 'simple',
               '--as', 'user', '--format', 'json',
@@ -779,8 +962,9 @@ export function createFeishuDocsSource(getRuntime: () => ClueRuntime): ClueSourc
             const mebibytes = LARK_CLI_MAX_OUTPUT_BYTES / (1024 * 1024)
             throw new ClueError(
               'failed',
-              `the document exceeds lark-cli's ${mebibytes} MiB capture limit and cannot be read `
-              + 'in one fragment; open it in Feishu or narrow the read with lark-cli `docs +fetch --scope`',
+              `the document exceeds the plugin runner's ${mebibytes} MiB stdout capture limit and `
+              + 'cannot be read in one fragment; the S4 read contract has no block-scoped fragment '
+              + 'request, so no partial read is claimed',
             )
           }
           throw error
@@ -812,6 +996,142 @@ export function createFeishuDocsSource(getRuntime: () => ClueRuntime): ClueSourc
           text: fragment.text,
           ...(fragment.limited ? { limited: true } : {}),
           ...(fragment.nextOffset === undefined ? {} : { nextOffset: fragment.nextOffset }),
+        }
+      },
+
+      async loadEdit(input: ClueSourceReadInput, context): Promise<ClueEditDocument> {
+        const locator = parseDocLocator(input.locator)
+        const runtimeNow = runtime()
+        const doc = await docArgumentOf(runtimeNow, locator, context)
+        let fetched: FetchedDocument
+        try {
+          fetched = await fetchFullDocument(runtimeNow, doc.token, context)
+        } catch (error) {
+          // The editor needs the whole XML to assign block ids; a document past
+          // the runner cap cannot be edited safely through this path.
+          if (error instanceof ClueError && /capture limit/i.test(error.message)) {
+            const mebibytes = LARK_CLI_MAX_OUTPUT_BYTES / (1024 * 1024)
+            throw new ClueError(
+              'failed',
+              `the document exceeds the plugin runner's ${mebibytes} MiB stdout capture limit, `
+              + 'so it cannot be loaded for block-scoped editing',
+            )
+          }
+          throw error
+        }
+        const parsed = parseDocEditXml(fetched.content)
+        if (
+          fetched.content.trim() !== ''
+          && parsed.title === ''
+          && parsed.blocks.length === 0
+          && parsed.readOnlyBlocks.length === 0
+        ) {
+          throw new ClueError('failed', 'lark-cli returned document XML this editor could not parse')
+        }
+        const data = editDataOf(locator, doc.token, fetched)
+        return {
+          format: FEISHU_FORMATS.docsXml,
+          data: data as unknown as JsonValue,
+          ...(fetched.revisionId === undefined ? {} : { baseRevision: fetched.revisionId }),
+        }
+      },
+
+      async saveEdit(input: ClueSourceSaveInput, context): Promise<ClueSaveEditResult> {
+        // There is no agent write path: only the interactive editor may save.
+        if (context.caller === 'agent') {
+          throw new ClueError('permission-denied', 'document editing is available only to an interactive user request')
+        }
+        const locator = parseDocLocator(input.locator)
+        const document: ClueSaveEditInput = input.document
+        if (document.format !== FEISHU_FORMATS.docsXml) {
+          throw new ClueError('unsupported', 'a Feishu document save must use the XML edit format')
+        }
+        const edited = parseDocEditData(document.data)
+        if (edited === undefined) {
+          throw new ClueError('invalid-request', 'the document edit payload is not a Feishu XML edit document')
+        }
+        const runtimeNow = runtime()
+        const doc = await docArgumentOf(runtimeNow, locator, context)
+        if (edited.docToken !== doc.token && edited.objToken !== doc.token) {
+          throw new ClueError('invalid-request', 'the document edit payload belongs to a different document')
+        }
+        const titleChanged = edited.title !== edited.baselineTitle
+        const changedBlocks = edited.blocks.filter(block => block.text !== block.baseline)
+        if (!titleChanged && changedBlocks.length === 0) {
+          const revision = document.baseRevision ?? edited.revisionId
+          return {
+            savedAt: new Date().toISOString(),
+            ...(revision === undefined ? {} : { revision }),
+          }
+        }
+        validateEditDocument(edited, changedBlocks, titleChanged)
+
+        // Best-effort comparison against a fresh full read. The CLI's
+        // `--revision-id` cannot be used for a SEQUENCE of block writes (the
+        // first write advances the revision), so compare the changed blocks
+        // themselves and only write when their baselines are still current.
+        let current: FetchedDocument
+        try {
+          current = await fetchFullDocument(runtimeNow, doc.token, context)
+        } catch (error) {
+          if (error instanceof ClueError && /capture limit/i.test(error.message)) {
+            throw new ClueError('conflict', 'the document is now too large to re-read and compare; try again later')
+          }
+          throw error
+        }
+        const currentBlocks = blockTextsOf(current.content)
+        for (const block of changedBlocks) {
+          const currentText = currentBlocks.get(block.id)
+          if (currentText === undefined || currentText !== block.baseline) {
+            throw new ClueError('conflict', 'the document changed since it was loaded; re-read it and retry')
+          }
+        }
+        if (titleChanged && titleOfEditContent(current.content) !== edited.baselineTitle) {
+          throw new ClueError('conflict', 'the document title changed since it was loaded; re-read it and retry')
+        }
+
+        const writes: Array<{ readonly blockId: string; readonly xml: string }> = []
+        if (titleChanged) {
+          writes.push({
+            blockId: edited.titleBlockId!,
+            xml: buildDocTitleXml(edited.titleAttrs, edited.title),
+          })
+        }
+        for (const block of changedBlocks) {
+          writes.push({ blockId: block.id, xml: buildDocBlockXml(block, block.text) })
+        }
+
+        const written: string[] = []
+        let revision = current.revisionId ?? document.baseRevision ?? edited.revisionId
+        for (const write of writes) {
+          try {
+            const success = await runFeishuCommand(runtimeNow, {
+              args: [
+                'docs', '+update',
+                '--api-version', 'v2',
+                '--doc', doc.token,
+                '--command', UPDATE_BLOCK_COMMAND,
+                '--block-id', write.blockId,
+                '--content', write.xml,
+                '--doc-format', 'xml',
+                '--as', 'user',
+                '--format', 'json',
+              ],
+              cwd: cwdOf(context),
+              ...(context.signal === undefined ? {} : { signal: context.signal }),
+            })
+            assertUpdateResult(success)
+            revision = revisionOfUpdate(success) ?? revision
+            written.push(write.blockId)
+          } catch (error) {
+            if (written.length === 0) throw error
+            const unwritten = writes.slice(written.length).map(entry => entry.blockId)
+            throw partialEditError(error, written, unwritten)
+          }
+        }
+        return {
+          savedAt: new Date().toISOString(),
+          ...(revision === undefined ? {} : { revision }),
         }
       },
 
@@ -848,10 +1168,9 @@ export function createFeishuDocsSource(getRuntime: () => ClueRuntime): ClueSourc
         }
       },
 
-      // Deliberately absent: loadEdit / saveEdit. The docs source is read-only
-      // because no documented lark-cli verb performs a lossless local text-block
-      // update; append/overwrite/delete/move are forbidden by the approved spec.
-      // A caller asking to edit gets S1's `unsupported`, never a degraded write.
+      // Edits are block-scoped text replacements only. There is deliberately no
+      // append/overwrite/delete/move path: those verbs are forbidden by the
+      // approved spec, and complex containers are kept read-only.
     },
   }
 }

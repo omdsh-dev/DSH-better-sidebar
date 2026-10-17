@@ -32,21 +32,23 @@
  *   messages, hints, device codes and token-shaped values never do.
  */
 import { describe, expect, it } from 'vitest'
-import type { JsonValue } from '../src/clues/types.ts'
 import type {
-  CliResult,
-  CliRunRequest,
-  ClueRuntime,
   ConnectionAdapterContext,
 } from '../src/clues/runtime/index.ts'
+import type { JsonValue } from '../src/clues/types.ts'
 import { createConnectionsRuntime } from '../src/clues/runtime/connections.ts'
 import { createDependenciesRuntime } from '../src/clues/runtime/dependencies.ts'
 import {
   createFeishuSources,
   FEISHU_CONNECTION_ID,
   FEISHU_DEPENDENCY_ID,
+  FEISHU_SCOPE_ROLE,
   FEISHU_SOURCE_IDS,
   FEISHU_TYPE_IDS,
+  parseDocsListScope,
+  parseDocsSearchScope,
+  parseFeishuTaskSearchScope,
+  parseFeishuTasksScope,
   LARK_CLI_PACKAGE,
   LARK_CLI_VERSION,
   larkAuthLoginArgs,
@@ -61,57 +63,22 @@ import {
   runLark,
   type LarkFailure,
 } from '../src/clues/sources/feishu/lark.ts'
+import {
+  bareResult,
+  cliResult,
+  failResult,
+  FakeLarkRuntime,
+  okResult,
+  statusResult,
+} from './clues-feishu-fixture.ts'
+
+/** The real bare auth-status answer for one user identity. */
+function statusData(user: Record<string, JsonValue>): ReturnType<typeof statusResult> {
+  return statusResult({ user })
+}
 
 const NOW = '2026-10-17T00:00:00.000Z'
 const CWD = '/tmp/dsh-feishu-adapter'
-
-/** One captured CLI request with a queued answer. */
-class FakeRuntime {
-  readonly requests: CliRunRequest[] = []
-  private readonly answers: Array<CliResult | ((request: CliRunRequest) => CliResult)> = []
-
-  enqueue(...answers: Array<CliResult | ((request: CliRunRequest) => CliResult)>): this {
-    this.answers.push(...answers)
-    return this
-  }
-
-  async runCli(request: CliRunRequest): Promise<CliResult> {
-    this.requests.push(request)
-    const answer = this.answers.shift()
-    if (answer === undefined) throw new Error('[fake] no queued CLI answer')
-    return typeof answer === 'function' ? answer(request) : answer
-  }
-
-  async runCliJson(): Promise<never> {
-    throw new Error('[fake] runCliJson is not part of the lark adapter path')
-  }
-
-  dispose(): void {}
-
-  asRuntime(): ClueRuntime {
-    return this as unknown as ClueRuntime
-  }
-}
-
-function cliResult(overrides: Partial<CliResult>): CliResult {
-  return {
-    exitCode: 0,
-    stdout: '',
-    stderr: '',
-    stdoutTruncated: false,
-    stderrTruncated: false,
-    durationMs: 1,
-    ...overrides,
-  }
-}
-
-function okResult(data: JsonValue, extra: Record<string, JsonValue> = {}): CliResult {
-  return cliResult({ stdout: JSON.stringify({ ok: true, identity: 'user', data, ...extra }) })
-}
-
-function failResult(error: Record<string, JsonValue>, exitCode = 1): CliResult {
-  return cliResult({ exitCode, stderr: JSON.stringify({ ok: false, identity: 'user', error }) })
-}
 
 function adapterContext(observed: unknown[]): ConnectionAdapterContext {
   return {
@@ -121,22 +88,17 @@ function adapterContext(observed: unknown[]): ConnectionAdapterContext {
   }
 }
 
-function statusData(user: Record<string, JsonValue>): JsonValue {
-  return { identities: { user } }
-}
-
-/** The documented scope families that cover the four declared capabilities. */
+/** The real lark-cli 1.0.55 scope names that cover the four capabilities. */
 const ALL_SCOPES = [
-  'docx:document:read',
+  'docx:document:readonly',
   'search:docs:read',
   'task:task:read',
   'task:task:write',
 ]
 /** A docs/drive-only grant: no task scope was authorized. */
 const DOCS_ONLY_SCOPES = [
-  'docx:document:read',
-  'search:docs:read',
-  'drive:drive.metadata:readonly',
+  'docs:document.content:read',
+  'drive:drive.search:readonly',
 ]
 
 describe('createFeishuSources: lazy runtime and shared definitions', () => {
@@ -145,29 +107,32 @@ describe('createFeishuSources: lazy runtime and shared definitions', () => {
       runtime: () => { throw new Error('the runtime must stay lazy during construction') },
     })
 
-    expect(bundle.sources).toHaveLength(2)
-    expect(bundle.registrations).toBe(bundle.sources)
-    expect(bundle.sources.map(source => source.descriptor.sourceId)).toEqual([
+    expect(bundle.registrations).toHaveLength(2)
+    expect(bundle.dependencyIds).toEqual([FEISHU_DEPENDENCY_ID])
+    expect(bundle.connectionId).toBe(FEISHU_CONNECTION_ID)
+    expect(bundle.typeIds).toEqual([FEISHU_TYPE_IDS.docx, FEISHU_TYPE_IDS.wiki, FEISHU_TYPE_IDS.task])
+    expect(bundle.registrations.map(source => source.descriptor.sourceId)).toEqual([
       FEISHU_SOURCE_IDS.docs,
       FEISHU_SOURCE_IDS.tasks,
     ])
-    expect(bundle.sources[0]!.descriptor.types).toEqual([FEISHU_TYPE_IDS.docx, FEISHU_TYPE_IDS.wiki])
-    expect(bundle.sources[1]!.descriptor.types).toEqual([FEISHU_TYPE_IDS.task])
+    expect(bundle.registrations[0]!.descriptor.types).toEqual([FEISHU_TYPE_IDS.docx, FEISHU_TYPE_IDS.wiki])
+    expect(bundle.registrations[1]!.descriptor.types).toEqual([FEISHU_TYPE_IDS.task])
     // One shared CLI dependency and ONE shared authorization connection.
-    for (const source of bundle.sources) {
+    for (const source of bundle.registrations) {
       expect(source.descriptor.transport).toBe('cli')
       expect(source.descriptor.dependencyIds).toEqual([FEISHU_DEPENDENCY_ID])
       expect(source.descriptor.connectionId).toBe(FEISHU_CONNECTION_ID)
       expect(source.descriptor.pluginId).toBe('dsh-better-sidebar')
     }
-    expect(bundle.sources[0]!.descriptor.capabilities.edit).toBe(false)
-    expect(bundle.sources[1]!.descriptor.capabilities.edit).toBe(true)
-    // The docs type states WHY it is read-only instead of silently offering a
-    // lossy append/overwrite write path.
-    const docsType = bundle.sources[0]!.types[0]!
-    expect(docsType.capabilities).toMatchObject({ read: true, edit: false, concurrency: 'none' })
-    expect(JSON.stringify(docsType.extensions)).toMatch(/append|overwrite/i)
-    expect(JSON.stringify(docsType.extensions)).toMatch(/read-only|read only/i)
+    expect(bundle.registrations[0]!.descriptor.capabilities.edit).toBe(true)
+    expect(bundle.registrations[1]!.descriptor.capabilities.edit).toBe(true)
+    // The docs type is block-scoped editable; complex containers stay read-only
+    // and the note says so without claiming the whole source is read-only.
+    const docsType = bundle.registrations[0]!.types[0]!
+    expect(docsType.capabilities).toMatchObject({ read: true, edit: true, concurrency: 'check-before-save' })
+    expect(JSON.stringify(docsType.extensions)).toMatch(/text blocks/i)
+    expect(JSON.stringify(docsType.extensions)).toMatch(/read-only/i)
+    expect(JSON.stringify(docsType.extensions)).not.toMatch(/no lossless/i)
   })
 
   it('declares the pinned official npm dependency and a manual-install fallback', () => {
@@ -224,21 +189,21 @@ describe('createFeishuSources: lazy runtime and shared definitions', () => {
 
 describe('lark envelope adapter', () => {
   it('requires ok:true on stdout AND exit 0 for success', async () => {
-    const success = new FakeRuntime().enqueue(okResult({ value: 1 }))
+    const success = new FakeLarkRuntime().enqueue(okResult({ value: 1 }))
     const outcome = await executeLark({
       runtime: success.asRuntime(), args: ['x'], cwd: CWD,
     })
     expect(outcome.success?.data).toEqual({ value: 1 })
     expect(outcome.failure).toBeUndefined()
 
-    const okButNonZero = new FakeRuntime().enqueue(cliResult({
+    const okButNonZero = new FakeLarkRuntime().enqueue(cliResult({
       exitCode: 1,
       stdout: JSON.stringify({ ok: true, data: { value: 1 } }),
     }))
     await expect(runLark({ runtime: okButNonZero.asRuntime(), args: ['x'], cwd: CWD }))
       .rejects.toMatchObject({ category: 'failed' })
 
-    const notOkButZero = new FakeRuntime().enqueue(cliResult({
+    const notOkButZero = new FakeLarkRuntime().enqueue(cliResult({
       exitCode: 0,
       stdout: JSON.stringify({ ok: false, error: { type: 'unknown' } }),
     }))
@@ -247,21 +212,37 @@ describe('lark envelope adapter', () => {
   })
 
   it('never treats a top-level code==0 or a bare exit 0 as success', async () => {
-    const legacyCode = new FakeRuntime().enqueue(cliResult({ stdout: JSON.stringify({ code: 0, msg: 'ok' }) }))
+    const legacyCode = new FakeLarkRuntime().enqueue(cliResult({ stdout: JSON.stringify({ code: 0, msg: 'ok' }) }))
     const outcome = await executeLark({ runtime: legacyCode.asRuntime(), args: ['x'], cwd: CWD })
     expect(outcome.success).toBeUndefined()
     expect(outcome.failure).toBeUndefined()
-    const legacyRun = new FakeRuntime().enqueue(cliResult({ stdout: JSON.stringify({ code: 0, msg: 'ok' }) }))
+    const legacyRun = new FakeLarkRuntime().enqueue(cliResult({ stdout: JSON.stringify({ code: 0, msg: 'ok' }) }))
     await expect(runLark({ runtime: legacyRun.asRuntime(), args: ['x'], cwd: CWD }))
       .rejects.toMatchObject({ category: 'failed' })
 
-    const empty = new FakeRuntime().enqueue(cliResult({ exitCode: 0, stdout: '' }))
+    const empty = new FakeLarkRuntime().enqueue(cliResult({ exitCode: 0, stdout: '' }))
     await expect(runLark({ runtime: empty.asRuntime(), args: ['x'], cwd: CWD }))
       .rejects.toMatchObject({ category: 'failed' })
   })
 
+  it('accepts the real bare auth status object only when the auth calls opt in', async () => {
+    const bare = { appId: 'cli_test', identities: { user: { status: 'ready' } } }
+    const generic = new FakeLarkRuntime().enqueue(bareResult(bare))
+    const genericOutcome = await executeLark({
+      runtime: generic.asRuntime(), args: ['x'], cwd: CWD,
+    })
+    expect(genericOutcome.success).toBeUndefined()
+
+    const auth = new FakeLarkRuntime().enqueue(bareResult(bare))
+    const authOutcome = await executeLark({
+      runtime: auth.asRuntime(), args: ['auth', 'status', '--json'], cwd: CWD, bareSuccess: true,
+    })
+    expect(authOutcome.success?.data).toEqual(bare)
+    expect(authOutcome.success?.envelope).toEqual(bare)
+  })
+
   it('reads failures only from the stderr envelope and ignores _notice', async () => {
-    const runtime = new FakeRuntime().enqueue(cliResult({
+    const runtime = new FakeLarkRuntime().enqueue(cliResult({
       exitCode: 1,
       stdout: JSON.stringify({ ok: true, data: { should: 'not be read' } }),
       stderr: JSON.stringify({
@@ -275,7 +256,7 @@ describe('lark envelope adapter', () => {
     expect(classifyLarkFailure(outcome.failure!)).toBe('not-found')
     expect(JSON.stringify(outcome.failure)).not.toMatch(/new version|should|not be read/)
 
-    const success = new FakeRuntime().enqueue(cliResult({
+    const success = new FakeLarkRuntime().enqueue(cliResult({
       stdout: JSON.stringify({
         ok: true,
         data: { value: 'kept' },
@@ -344,7 +325,7 @@ describe('lark envelope adapter', () => {
   })
 
   it('passes the shared dependency id, an absolute cwd, a bounded budget and the notifier-free env', async () => {
-    const runtime = new FakeRuntime().enqueue(okResult({}))
+    const runtime = new FakeLarkRuntime().enqueue(okResult({}))
     await runLark({ runtime: runtime.asRuntime(), args: ['auth', 'status', '--json'], cwd: CWD })
     const request = runtime.requests[0]!
     expect(request.dependencyId).toBe(FEISHU_DEPENDENCY_ID)
@@ -359,13 +340,13 @@ describe('lark envelope adapter', () => {
 
 describe('connection adapter: explicit status and two-step authorization', () => {
   it('inspect runs auth status --json only — no --verify, no --dry-run', async () => {
-    const runtime = new FakeRuntime().enqueue(okResult(statusData({
+    const runtime = new FakeLarkRuntime().enqueue(statusData({
       status: 'ready',
       tokenStatus: 'valid',
       userName: 'Ada',
       openId: 'ou_ada',
       scope: ALL_SCOPES,
-    })))
+    }))
     const bundle = createFeishuSources({ runtime: () => runtime.asRuntime() })
     const observed: unknown[] = []
     const inspection = await bundle.connection.inspect({}, adapterContext(observed))
@@ -383,13 +364,71 @@ describe('connection adapter: explicit status and two-step authorization', () =>
     })
   })
 
+  it('reads app configuration from the real bot identity status/message strings', async () => {
+    const unconfigured = new FakeLarkRuntime().enqueue(statusResult({
+      bot: {
+        status: 'not_configured',
+        message: 'Bot identity: not configured (missing app config)',
+      },
+    }))
+    const bundle = createFeishuSources({ runtime: () => unconfigured.asRuntime() })
+    const inspection = await bundle.connection.inspect({}, adapterContext([]))
+    expect(inspection).toMatchObject({ configuration: 'missing', authorization: 'not-authorized' })
+    expect(inspection.detail).toMatch(/config init/)
+
+    const connectRuntime = new FakeLarkRuntime().enqueue(statusResult({
+      bot: {
+        status: 'not_configured',
+        message: 'Bot identity: not configured (missing app config)',
+      },
+    }))
+    const connectBundle = createFeishuSources({ runtime: () => connectRuntime.asRuntime() })
+    const start = await connectBundle.connection.connect!({}, adapterContext([]))
+    expect(start.prompt).toBeUndefined()
+    expect(connectRuntime.requests.map(request => request.args)).toEqual([larkAuthStatusArgs()])
+  })
+
+  it('uses the real 1.0.55 scope vocabulary and does not let a wiki-only grant claim docs.read', async () => {
+    const wikiOnly = new FakeLarkRuntime().enqueue(statusData({
+      status: 'ready',
+      tokenStatus: 'valid',
+      scope: ['wiki:node:read', 'wiki:space:read'],
+    }))
+    const wikiBundle = createFeishuSources({ runtime: () => wikiOnly.asRuntime() })
+    const wikiInspection = await wikiBundle.connection.inspect({}, adapterContext([]))
+    expect(wikiInspection.authorization).toBe('scope-insufficient')
+    expect(wikiInspection.detail).toMatch(/docs\.read/)
+
+    const contentRead = new FakeLarkRuntime().enqueue(statusData({
+      status: 'ready',
+      tokenStatus: 'valid',
+      scope: ['docx:document:readonly', 'docs:document.content:read', 'search:docs:read'],
+    }))
+    const contentBundle = createFeishuSources({ runtime: () => contentRead.asRuntime() })
+    const contentInspection = await contentBundle.connection.inspect({}, adapterContext([]))
+    expect(contentInspection.authorization).toBe('scope-insufficient')
+    expect(contentInspection.detail).toMatch(/tasks\.read/)
+    expect(contentInspection.detail).not.toMatch(/docs\.read/)
+
+    const allTask = new FakeLarkRuntime().enqueue(statusData({
+      status: 'ready',
+      tokenStatus: 'valid',
+      scope: ['task:task'],
+    }))
+    const allTaskBundle = createFeishuSources({ runtime: () => allTask.asRuntime() })
+    const allTaskInspection = await allTaskBundle.connection.inspect({}, adapterContext([]))
+    expect(allTaskInspection.authorization).toBe('scope-insufficient')
+    expect(allTaskInspection.detail).toMatch(/docs\.read/)
+    expect(allTaskInspection.detail).not.toMatch(/tasks\.read/)
+  })
+
   it('derives capabilities from identities.user.scope instead of a ready token alone', async () => {
-    const docsOnly = new FakeRuntime().enqueue(okResult(statusData({
+    const docsOnly = new FakeLarkRuntime().enqueue(statusData({
       status: 'ready',
       tokenStatus: 'valid',
       userName: 'Ada',
       scope: DOCS_ONLY_SCOPES,
-    })))
+    }))
     const docsBundle = createFeishuSources({ runtime: () => docsOnly.asRuntime() })
     const docsInspection = await docsBundle.connection.inspect({}, adapterContext([]))
     expect(docsInspection.authorization).toBe('scope-insufficient')
@@ -398,22 +437,22 @@ describe('connection adapter: explicit status and two-step authorization', () =>
     expect(docsInspection.detail).toMatch(/tasks\.edit/)
     expect(docsInspection.detail).toMatch(/task:task:read/)
 
-    const noScope = new FakeRuntime().enqueue(okResult(statusData({
+    const noScope = new FakeLarkRuntime().enqueue(statusData({
       status: 'ready',
       tokenStatus: 'valid',
       userName: 'Ada',
-    })))
+    }))
     const noScopeBundle = createFeishuSources({ runtime: () => noScope.asRuntime() })
     const noScopeInspection = await noScopeBundle.connection.inspect({}, adapterContext([]))
     expect(noScopeInspection.authorization).toBe('scope-insufficient')
     expect(noScopeInspection.detail).toMatch(/did not report the granted scopes/)
 
     // A comma/space-separated scope string is tolerated as well.
-    const stringScopes = new FakeRuntime().enqueue(okResult(statusData({
+    const stringScopes = new FakeLarkRuntime().enqueue(statusData({
       status: 'ready',
       tokenStatus: 'valid',
       scope: ALL_SCOPES.join(','),
-    })))
+    }))
     const stringBundle = createFeishuSources({ runtime: () => stringScopes.asRuntime() })
     const stringInspection = await stringBundle.connection.inspect({}, adapterContext([]))
     expect(stringInspection.authorization).toBe('ready')
@@ -422,7 +461,7 @@ describe('connection adapter: explicit status and two-step authorization', () =>
     ])
 
     // Some CLI versions put the scope list on `data` rather than the user.
-    const dataScopes = new FakeRuntime().enqueue(okResult({
+    const dataScopes = new FakeLarkRuntime().enqueue(okResult({
       identities: { user: { status: 'ready', tokenStatus: 'valid' } },
       scope: ALL_SCOPES,
     }))
@@ -435,11 +474,11 @@ describe('connection adapter: explicit status and two-step authorization', () =>
   })
 
   it('projects a docs-only grant as grant-scope with no declared capabilities', async () => {
-    const runtime = new FakeRuntime().enqueue(okResult(statusData({
+    const runtime = new FakeLarkRuntime().enqueue(statusData({
       status: 'ready',
       tokenStatus: 'valid',
       scope: DOCS_ONLY_SCOPES,
-    })))
+    }))
     const bundle = createFeishuSources({ runtime: () => runtime.asRuntime() })
     const connections = createConnectionsRuntime({ now: () => Date.parse(NOW) })
     try {
@@ -458,7 +497,7 @@ describe('connection adapter: explicit status and two-step authorization', () =>
   })
 
   it('inspect reports a missing application configuration as step one, not a login failure', async () => {
-    const runtime = new FakeRuntime().enqueue(failResult({ type: 'configuration', subtype: 'not_configured' }))
+    const runtime = new FakeLarkRuntime().enqueue(failResult({ type: 'configuration', subtype: 'not_configured' }))
     const bundle = createFeishuSources({ runtime: () => runtime.asRuntime() })
     const inspection = await bundle.connection.inspect({}, adapterContext([]))
     expect(inspection.configuration).toBe('missing')
@@ -467,15 +506,15 @@ describe('connection adapter: explicit status and two-step authorization', () =>
   })
 
   it('inspect distinguishes expired authorization and missing scopes', async () => {
-    const expiredRuntime = new FakeRuntime().enqueue(okResult(statusData({
+    const expiredRuntime = new FakeLarkRuntime().enqueue(statusData({
       status: 'expired',
       tokenStatus: 'expired',
       userName: 'Ada',
-    })))
+    }))
     const expired = createFeishuSources({ runtime: () => expiredRuntime.asRuntime() })
     expect((await expired.connection.inspect({}, adapterContext([]))).authorization).toBe('expired')
 
-    const scopeRuntime = new FakeRuntime().enqueue(failResult({
+    const scopeRuntime = new FakeLarkRuntime().enqueue(failResult({
       type: 'authorization',
       subtype: 'missing_scope',
       missing_scopes: ['task:task:read'],
@@ -493,8 +532,8 @@ describe('connection adapter: explicit status and two-step authorization', () =>
 
   it('connect checks the configuration first and starts exactly the documented device flow', async () => {
     const opaque = 'https://open.feishu.cn/device/verify?user_code=AB-CD&x=%2Fkept'
-    const runtime = new FakeRuntime()
-      .enqueue(okResult(statusData({ status: 'not-authorized', userName: 'Ada' })))
+    const runtime = new FakeLarkRuntime()
+      .enqueue(statusData({ status: 'not-authorized', userName: 'Ada' }))
       .enqueue(okResult({
         verification_url: opaque,
         device_code: 'device-code-secret',
@@ -528,7 +567,7 @@ describe('connection adapter: explicit status and two-step authorization', () =>
   })
 
   it('connect maps a missing application config to the configure step without launching login', async () => {
-    const runtime = new FakeRuntime().enqueue(
+    const runtime = new FakeLarkRuntime().enqueue(
       failResult({ type: 'configuration', subtype: 'not_configured' }),
     )
     const bundle = createFeishuSources({ runtime: () => runtime.asRuntime() })
@@ -541,7 +580,7 @@ describe('connection adapter: explicit status and two-step authorization', () =>
   })
 
   it('poll uses the device-code verb and finishes only on a ready server answer', async () => {
-    const pending = new FakeRuntime().enqueue(failResult({
+    const pending = new FakeLarkRuntime().enqueue(failResult({
       type: 'authorization',
       subtype: 'authorization_pending',
     }))
@@ -555,7 +594,7 @@ describe('connection adapter: explicit status and two-step authorization', () =>
     expect(pendingResult.complete).toBe(false)
     expect(pendingResult.inspection?.authorization).toBe('authorizing')
 
-    const ready = new FakeRuntime().enqueue(okResult({ status: 'ready', scope: ALL_SCOPES }))
+    const ready = new FakeLarkRuntime().enqueue(okResult({ status: 'ready', scope: ALL_SCOPES }))
     const readyBundle = createFeishuSources({ runtime: () => ready.asRuntime() })
     const readyResult = await readyBundle.connection.poll!(
       { authorizationId: 'a2', state: { deviceCode: 'dc-2' } },
@@ -565,7 +604,7 @@ describe('connection adapter: explicit status and two-step authorization', () =>
     expect(readyResult.inspection?.authorization).toBe('ready')
 
     // A success envelope that still says pending must NOT be projected ready.
-    const stillPending = new FakeRuntime().enqueue(okResult({
+    const stillPending = new FakeLarkRuntime().enqueue(okResult({
       status: 'authorization_pending',
       authorized: false,
     }))
@@ -577,7 +616,7 @@ describe('connection adapter: explicit status and two-step authorization', () =>
     expect(pendingSuccess.complete).toBe(false)
     expect(pendingSuccess.inspection?.authorization).toBe('authorizing')
 
-    const denied = new FakeRuntime().enqueue(okResult({ status: 'denied' }))
+    const denied = new FakeLarkRuntime().enqueue(okResult({ status: 'denied' }))
     const deniedBundle = createFeishuSources({ runtime: () => denied.asRuntime() })
     const deniedResult = await deniedBundle.connection.poll!(
       { authorizationId: 'a4', state: { deviceCode: 'dc-4' } },
@@ -587,8 +626,29 @@ describe('connection adapter: explicit status and two-step authorization', () =>
     expect(deniedResult.inspection?.authorization).toBe('denied')
   })
 
+  it('accepts bare login/poll payloads from the same auth family', async () => {
+    const runtime = new FakeLarkRuntime()
+      .enqueue(statusData({ status: 'not-authorized', userName: 'Ada' }))
+      .enqueue(bareResult({
+        verification_url: 'https://open.feishu.cn/device?bare=1',
+        device_code: 'dc-bare',
+        expires_in: 60,
+      }))
+      .enqueue(bareResult({ status: 'ready', scope: ALL_SCOPES }))
+    const bundle = createFeishuSources({ runtime: () => runtime.asRuntime() })
+    const start = await bundle.connection.connect!({}, adapterContext([]))
+    expect(start.prompt?.verificationUrl).toBe('https://open.feishu.cn/device?bare=1')
+    expect(JSON.stringify(start.state)).toMatch(/dc-bare/)
+    const polled = await bundle.connection.poll!(
+      { authorizationId: 'a-bare', state: { deviceCode: 'dc-bare' } },
+      adapterContext([]),
+    )
+    expect(polled.complete).toBe(true)
+    expect(polled.inspection?.authorization).toBe('ready')
+  })
+
   it('cancel drops the host-side handle without inventing a CLI verb or probing again', async () => {
-    const runtime = new FakeRuntime()
+    const runtime = new FakeLarkRuntime()
     const bundle = createFeishuSources({ runtime: () => runtime.asRuntime() })
     await bundle.connection.cancel!(
       { authorizationId: 'a1', state: { deviceCode: 'dc-1' } },
@@ -598,14 +658,14 @@ describe('connection adapter: explicit status and two-step authorization', () =>
   })
 
   it('drives the real connection lifecycle: configure → connect → poll → ready', async () => {
-    const runtime = new FakeRuntime()
+    const runtime = new FakeLarkRuntime()
       .enqueue(failResult({ type: 'configuration', subtype: 'not_configured' }))
       // First connect is still the configure step: the status check reports the
       // missing configuration and no login is launched.
       .enqueue(failResult({ type: 'configuration', subtype: 'not_configured' }))
       // After the user configured lark-cli in a terminal, the next connect sees
       // a ready app + unauthenticated user and starts the device flow.
-      .enqueue(okResult(statusData({ status: 'not-authorized', userName: 'Ada' })))
+      .enqueue(statusData({ status: 'not-authorized', userName: 'Ada' }))
       .enqueue(okResult({
         verification_url: 'https://open.feishu.cn/device?code=opaque',
         device_code: 'dc-live',
@@ -652,21 +712,41 @@ describe('connection adapter: explicit status and two-step authorization', () =>
   })
 })
 
+describe('S9 range-picker contract', () => {
+  it('exports the docs/task list+search scope parsers and the scope role marker', () => {
+    expect(FEISHU_SCOPE_ROLE).toBe('scope')
+    expect(parseDocsListScope({ kind: 'drive', folderToken: 'fldX' })).toEqual({
+      kind: 'drive', folderToken: 'fldX',
+    })
+    expect(parseDocsListScope({ kind: 'wiki', spaceId: 'my_library', parentNodeToken: 'wikcnN' }))
+      .toEqual({ kind: 'wiki', spaceId: 'my_library', parentNodeToken: 'wikcnN' })
+    expect(parseDocsSearchScope({ kind: 'drive', folderToken: 'fldX' }))
+      .toEqual({ kind: 'drive', folderToken: 'fldX' })
+    expect(parseFeishuTasksScope({ kind: 'tasks', tasklistGuid: 'tl-1', completed: false }))
+      .toEqual({ kind: 'tasks', tasklistGuid: 'tl-1', completed: false })
+    expect(parseFeishuTaskSearchScope({
+      kind: 'tasks', assignee: 'ou_a', due: '-1d,+7d',
+    })).toEqual({ kind: 'tasks', assignee: 'ou_a', due: '-1d,+7d' })
+    expect(() => parseDocsListScope(undefined)).toThrow(/explicit browsing range/)
+    expect(() => parseDocsSearchScope({ kind: 'drive-root' })).toThrow(/Drive folder or a wiki space/)
+  })
+})
+
 describe('no periodic or probing auth behaviour', () => {
   it('building the sources and reading descriptors issues zero CLI calls', () => {
-    const runtime = new FakeRuntime()
+    const runtime = new FakeLarkRuntime()
     const bundle = createFeishuSources({ runtime: () => runtime.asRuntime() })
-    void bundle.sources[0]!.descriptor
+    void bundle.registrations[0]!.descriptor
     void bundle.connection.configuration
     void bundle.dependency.command
     expect(runtime.requests).toHaveLength(0)
   })
 
   it('every status/connect/poll argv stays free of --verify, --dry-run and --page-all', async () => {
-    const runtime = new FakeRuntime()
-      .enqueue(okResult(statusData({ status: 'ready', tokenStatus: 'valid', scope: ALL_SCOPES })))
+    const runtime = new FakeLarkRuntime()
+      .enqueue(statusData({ status: 'ready', tokenStatus: 'valid', scope: ALL_SCOPES }))
       // Explicit status check inside connect (configuration preflight).
-      .enqueue(okResult(statusData({ status: 'ready', tokenStatus: 'valid', scope: ALL_SCOPES })))
+      .enqueue(statusData({ status: 'ready', tokenStatus: 'valid', scope: ALL_SCOPES }))
       .enqueue(okResult({
         verification_url: 'https://open.feishu.cn/device',
         device_code: 'dc',

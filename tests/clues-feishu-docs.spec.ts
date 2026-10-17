@@ -17,9 +17,12 @@
  * - reads are latest XML by default (Markdown is a read-only projection),
  *   long content is an explicit fragment with `nextOffset`, the
  *   reference_map sidecar travels with the content, and an oversized document
- *   reports lark-cli's 8 MiB capture limit instead of returning a partial read;
- * - docs are READ-ONLY: no loadEdit/saveEdit exists, because lark-cli has no
- *   lossless local text-block write (append/overwrite/block rewrite forbidden);
+ *   reports the plugin runner's 8 MiB capture limit instead of returning a
+ *   partial read;
+ * - edits are BLOCK-SCOPED text replacements: loadEdit fetches XML with block
+ *   ids, saveEdit compares the changed blocks against a fresh read and sends
+ *   only `block_replace`; complex containers stay read-only, and
+ *   append/overwrite/delete/move never appear;
  * - portable locators export only resource identifiers + original URL/host,
  *   never an access token.
  */
@@ -28,12 +31,18 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { ClueError } from '../src/clues/types.ts'
-import type { ClueCandidate, ClueOperationContext } from '../src/clues/types.ts'
+import type { ClueCandidate, ClueOperationContext, JsonValue } from '../src/clues/types.ts'
 import { createFeishuDocsSource } from '../src/clues/sources/feishu/docs.ts'
 import { createCluesService } from '../src/clues/service.ts'
 import { CluesStore } from '../src/clues/store.ts'
 import { removeTree } from './temp-tree.ts'
-import { DOCS_EDIT_LIMITATION, FEISHU_CONNECTION_ID, FEISHU_FORMATS, FEISHU_TYPE_IDS } from '../src/clues/sources/feishu/format.ts'
+import {
+  DOCS_EDIT_SCOPE_NOTE,
+  FEISHU_CONNECTION_ID,
+  FEISHU_FORMATS,
+  FEISHU_TYPE_IDS,
+  type FeishuDocEditData,
+} from '../src/clues/sources/feishu/format.ts'
 import {
   cliResult,
   failResult,
@@ -58,6 +67,30 @@ function opsOf(runtime: FakeLarkRuntime) {
 
 function context(): ClueOperationContext {
   return operationContext() as unknown as ClueOperationContext
+}
+
+/** One full XML edit fixture (block ids + a complex read-only table). */
+const EDIT_XML = [
+  '<title id="blk-title">Design notes</title>',
+  '<p id="blk-p1">Hello <b>world</b></p>',
+  '<h2 id="blk-h2">Section</h2>',
+  '<ul><li id="blk-li1">First</li><li id="blk-li2">Second</li></ul>',
+  '<table id="blk-table"><tbody><tr><td>Cell</td></tr></tbody></table>',
+  '<pre id="blk-pre" lang="ts"><code>const x = 1</code></pre>',
+  '<checkbox id="blk-todo" done="false">Todo</checkbox>',
+].join('')
+
+/** A full-fetch success answer for {@link EDIT_XML}. */
+function editFetch(revisionId = 7, content = EDIT_XML) {
+  return okResult({ document: { document_id: 'doccnA', revision_id: revisionId, content } })
+}
+
+/** Clone a loaded payload and replace one block's text. */
+function withEditBlock(data: FeishuDocEditData, id: string, text: string): FeishuDocEditData {
+  return {
+    ...data,
+    blocks: data.blocks.map(block => (block.id === id ? { ...block, text } : block)),
+  }
 }
 
 describe('docs browsing ranges', () => {
@@ -273,7 +306,7 @@ describe('docs search', () => {
     )
     expect(runtime.requests[0]!.args).toEqual([
       'drive', '+search', '--query', 'plan',
-      '--doc-types', 'docx,wiki,doc',
+      '--doc-types', 'docx,wiki',
       '--folder-tokens', 'fldRoot',
       '--page-size', '20',
       '--as', 'user', '--format', 'json',
@@ -427,7 +460,7 @@ describe('docs read', () => {
       context(),
     )
     expect(runtime.requests[0]!.args).toEqual([
-      'docs', '+fetch', '--doc', 'doccnA',
+      'docs', '+fetch', '--api-version', 'v2', '--doc', 'doccnA',
       '--doc-format', 'xml',
       '--detail', 'simple',
       '--as', 'user', '--format', 'json',
@@ -456,7 +489,7 @@ describe('docs read', () => {
       { typeId: FEISHU_TYPE_IDS.docx, locator: { kind: 'docx', docToken: 'doccnA', projection: 'markdown' } },
       context(),
     )
-    expect(runtime.requests[0]!.args[5]).toBe('markdown')
+    expect(runtime.requests[0]!.args[7]).toBe('markdown')
     expect(result.format).toBe(FEISHU_FORMATS.docsMarkdown)
     // Markdown has no <title>; the exported first heading is the real title,
     // not a token-derived fallback.
@@ -492,8 +525,8 @@ describe('docs read', () => {
       },
       context(),
     )
-    expect(runtime.requests[0]!.args[3]).toBe('doccnObj')
-    expect(runtime.requests[0]!.args[4]).toBe('--doc-format')
+    expect(runtime.requests[0]!.args[5]).toBe('doccnObj')
+    expect(runtime.requests[0]!.args[6]).toBe('--doc-format')
     expect(result.data).toMatchObject({ kind: 'wiki', wikiToken: 'wikcnN', objToken: 'doccnObj' })
   })
 
@@ -514,7 +547,7 @@ describe('docs read', () => {
       ['wiki', '+node-get'],
       ['docs', '+fetch'],
     ])
-    expect(runtime.requests[1]!.args[3]).toBe('doccnObj')
+    expect(runtime.requests[1]!.args[5]).toBe('doccnObj')
     expect(result.data).toMatchObject({ title: 'W', objToken: 'doccnObj' })
   })
 
@@ -559,7 +592,7 @@ describe('docs read', () => {
     expect(failure).toBeInstanceOf(ClueError)
     const clueError = failure as ClueError
     expect(clueError.category).toBe('failed')
-    expect(clueError.message).toMatch(/8 MiB capture limit/)
+    expect(clueError.message).toMatch(/plugin runner's 8 MiB stdout capture limit/)
     expect(clueError.message).toMatch(/cannot be read/)
   })
 
@@ -574,32 +607,208 @@ describe('docs read', () => {
     )).rejects.toMatchObject({ category: 'invalid-request' })
   })
 
-  it('is read-only: no loadEdit/saveEdit path and the type says why', () => {
-    const runtime = new FakeLarkRuntime()
+  it('loads an editable XML model with block ids and keeps complex containers read-only', async () => {
+    const runtime = new FakeLarkRuntime().enqueue(editFetch())
     const { source, operations } = opsOf(runtime)
-    expect(operations.loadEdit).toBeUndefined()
-    expect(operations.saveEdit).toBeUndefined()
-    expect(source.descriptor.capabilities.edit).toBe(false)
+    const loaded = await operations.loadEdit!(
+      { typeId: FEISHU_TYPE_IDS.docx, locator: { kind: 'docx', docToken: 'doccnA' } },
+      context(),
+    )
+    expect(runtime.requests[0]!.args).toEqual([
+      'docs', '+fetch', '--api-version', 'v2', '--doc', 'doccnA',
+      '--doc-format', 'xml',
+      '--detail', 'full',
+      '--as', 'user', '--format', 'json',
+    ])
+    expect(loaded.format).toBe(FEISHU_FORMATS.docsXml)
+    expect(loaded.baseRevision).toBe('7')
+    const data = loaded.data as unknown as FeishuDocEditData
+    expect(data).toMatchObject({
+      kind: 'docx',
+      docToken: 'doccnA',
+      title: 'Design notes',
+      baselineTitle: 'Design notes',
+      titleEditable: true,
+      titleBlockId: 'blk-title',
+      revisionId: '7',
+    })
+    expect(data.blocks.map(block => block.id)).toEqual([
+      'blk-p1', 'blk-h2', 'blk-li1', 'blk-li2', 'blk-pre', 'blk-todo',
+    ])
+    expect(data.blocks.find(block => block.id === 'blk-p1')!.text).toBe('Hello <b>world</b>')
+    expect(data.blocks.find(block => block.id === 'blk-pre')!.text).toBe('const x = 1')
+    expect(data.blocks.find(block => block.id === 'blk-todo')!.attrs).toContain('done="false"')
+    expect(data.readOnlyBlocks).toEqual([
+      expect.objectContaining({ tag: 'table', text: 'Cell' }),
+    ])
+    expect(source.descriptor.capabilities.edit).toBe(true)
     for (const type of source.types) {
-      expect(type.capabilities.edit).toBe(false)
-      expect(type.capabilities.concurrency).toBe('none')
-      expect(JSON.stringify(type.extensions)).toContain(DOCS_EDIT_LIMITATION)
+      expect(type.capabilities).toMatchObject({ read: true, edit: true, concurrency: 'check-before-save' })
+      expect(JSON.stringify(type.extensions)).toContain(DOCS_EDIT_SCOPE_NOTE)
     }
-    expect(DOCS_EDIT_LIMITATION).toMatch(/read-only/)
-    expect(DOCS_EDIT_LIMITATION).toMatch(/append|overwrite/)
-    // The user-visible reason names the actual documented verbs: str_replace is
-    // a whole-document find/replace, not a block-scoped edit.
-    expect(DOCS_EDIT_LIMITATION).toMatch(/str_replace/)
-    expect(DOCS_EDIT_LIMITATION).toMatch(/block scope|whole-document/)
+    expect(DOCS_EDIT_SCOPE_NOTE).toMatch(/text blocks/i)
+    expect(DOCS_EDIT_SCOPE_NOTE).toMatch(/read-only/i)
+    expect(DOCS_EDIT_SCOPE_NOTE).not.toMatch(/no lossless/i)
+  })
+
+  it('saves only the changed block through block_replace and returns the new revision', async () => {
+    const runtime = new FakeLarkRuntime()
+      .enqueue(editFetch(7))
+      // The save-time best-effort re-read: the changed block still matches.
+      .enqueue(editFetch(7))
+      .enqueue(okResult({ document: { revision_id: 8 }, result: 'success', updated_blocks_count: 1 }))
+    const { operations } = opsOf(runtime)
+    const locator = { kind: 'docx' as const, docToken: 'doccnA' }
+    const loaded = await operations.loadEdit!(
+      { typeId: FEISHU_TYPE_IDS.docx, locator },
+      context(),
+    )
+    const data = withEditBlock(
+      loaded.data as unknown as FeishuDocEditData,
+      'blk-p1',
+      'Hello <b>there</b>',
+    )
+    const result = await operations.saveEdit!(
+      {
+        typeId: FEISHU_TYPE_IDS.docx,
+        locator,
+        document: {
+          format: FEISHU_FORMATS.docsXml,
+          data: data as unknown as JsonValue,
+          baseRevision: '7',
+        },
+      },
+      context(),
+    )
+    expect(result.revision).toBe('8')
+    const update = runtime.requests[2]!
+    expect(update.args).toEqual([
+      'docs', '+update',
+      '--api-version', 'v2',
+      '--doc', 'doccnA',
+      '--command', 'block_replace',
+      '--block-id', 'blk-p1',
+      '--content', '<p>Hello <b>there</b></p>',
+      '--doc-format', 'xml',
+      '--as', 'user', '--format', 'json',
+    ])
+    for (const request of runtime.requests) {
+      expect(request.args.join(' ')).not.toMatch(/append|overwrite|block_delete|block_move_after|str_replace/)
+    }
+  })
+
+  it('edits the title only through its block id', async () => {
+    const runtime = new FakeLarkRuntime()
+      .enqueue(editFetch(7))
+      .enqueue(editFetch(7))
+      .enqueue(okResult({ document: { revision_id: 9 }, result: 'success' }))
+    const { operations } = opsOf(runtime)
+    const locator = { kind: 'docx' as const, docToken: 'doccnA' }
+    const loaded = await operations.loadEdit!(
+      { typeId: FEISHU_TYPE_IDS.docx, locator },
+      context(),
+    )
+    const data: FeishuDocEditData = { ...(loaded.data as unknown as FeishuDocEditData), title: 'Renamed' }
+    await operations.saveEdit!(
+      {
+        typeId: FEISHU_TYPE_IDS.docx,
+        locator,
+        document: { format: FEISHU_FORMATS.docsXml, data: data as unknown as JsonValue, baseRevision: '7' },
+      },
+      context(),
+    )
+    expect(runtime.requests[2]!.args).toEqual(expect.arrayContaining([
+      '--block-id', 'blk-title',
+      '--content', '<title>Renamed</title>',
+    ]))
+  })
+
+  it('returns conflict before writing when a changed block was already updated', async () => {
+    const runtime = new FakeLarkRuntime()
+      .enqueue(editFetch(7))
+      .enqueue(editFetch(8, EDIT_XML.replace('Hello <b>world</b>', 'Changed elsewhere')))
+    const { operations } = opsOf(runtime)
+    const locator = { kind: 'docx' as const, docToken: 'doccnA' }
+    const loaded = await operations.loadEdit!(
+      { typeId: FEISHU_TYPE_IDS.docx, locator },
+      context(),
+    )
+    const data = withEditBlock(loaded.data as unknown as FeishuDocEditData, 'blk-p1', 'Hello <b>mine</b>')
+    await expect(operations.saveEdit!(
+      {
+        typeId: FEISHU_TYPE_IDS.docx,
+        locator,
+        document: { format: FEISHU_FORMATS.docsXml, data: data as unknown as JsonValue, baseRevision: '7' },
+      },
+      context(),
+    )).rejects.toMatchObject({ category: 'conflict' })
+    expect(runtime.requests).toHaveLength(2)
+  })
+
+  it('reports a partial success when a later block write fails', async () => {
+    const runtime = new FakeLarkRuntime()
+      .enqueue(editFetch(7))
+      .enqueue(editFetch(7))
+      .enqueue(okResult({ document: { revision_id: 8 }, result: 'success' }))
+      .enqueue(failResult({
+        type: 'permission',
+        subtype: 'forbidden',
+        message: 'raw failure with a Bearer secret-token',
+      }))
+    const { operations } = opsOf(runtime)
+    const locator = { kind: 'docx' as const, docToken: 'doccnA' }
+    const loaded = await operations.loadEdit!(
+      { typeId: FEISHU_TYPE_IDS.docx, locator },
+      context(),
+    )
+    let data = withEditBlock(loaded.data as unknown as FeishuDocEditData, 'blk-p1', 'Hello <b>one</b>')
+    data = withEditBlock(data, 'blk-h2', 'Section two')
+    let failure: unknown
+    try {
+      await operations.saveEdit!(
+        {
+          typeId: FEISHU_TYPE_IDS.docx,
+          locator,
+          document: { format: FEISHU_FORMATS.docsXml, data: data as unknown as JsonValue, baseRevision: '7' },
+        },
+        context(),
+      )
+    } catch (error) {
+      failure = error
+    }
+    expect(failure).toBeInstanceOf(ClueError)
+    const clueError = failure as ClueError
+    expect(clueError.category).toBe('permission-denied')
+    expect(clueError.message).toMatch(/partial success/)
+    expect(clueError.meta).toMatchObject({ partial: 'true', written: 'blk-p1', unwritten: 'blk-h2' })
+    expect(clueError.message).not.toMatch(/secret-token|raw failure/)
+  })
+
+  it('refuses an agent save before any CLI call', async () => {
+    const runtime = new FakeLarkRuntime()
+    const { operations } = opsOf(runtime)
+    await expect(operations.saveEdit!(
+      {
+        typeId: FEISHU_TYPE_IDS.docx,
+        locator: { kind: 'docx', docToken: 'doccnA' },
+        document: { format: FEISHU_FORMATS.docsXml, data: {} },
+      },
+      { ...context(), caller: 'agent' },
+    )).rejects.toMatchObject({ category: 'permission-denied' })
+    expect(runtime.requests).toHaveLength(0)
   })
 })
 
-describe('service integration: stable identity and the read-only path', () => {
-  it('dedupes a resolved wiki node with its underlying docx and rejects edit', async () => {
+describe('service integration: stable identity and block edits', () => {
+  it('dedupes a resolved wiki node with its underlying docx and edits through the service', async () => {
     const root = mkdtempSync(join(tmpdir(), 'dsh-clues-feishu-docs-'))
+    const runtime = new FakeLarkRuntime()
+      .enqueue(editFetch(7))
+      .enqueue(editFetch(7))
+      .enqueue(okResult({ document: { revision_id: 8 }, result: 'success' }))
     const service = createCluesService({
       store: new CluesStore({ root }),
-      builtinSources: [sourceWith(new FakeLarkRuntime())],
+      builtinSources: [sourceWith(runtime)],
       now: () => '2026-10-17T00:00:00.000Z',
     })
     try {
@@ -625,14 +834,30 @@ describe('service integration: stable identity and the read-only path', () => {
       expect(direct.created).toBe(false)
       expect(direct.clue.id).toBe(wiki.clue.id)
 
-      // The service refuses the edit before the source is even asked.
-      await expect(service.loadEdit({ workspaceId: 'ws-feishu', clueId: wiki.clue.id }))
-        .rejects.toMatchObject({ category: 'unsupported' })
+      const loaded = await service.loadEdit({ workspaceId: 'ws-feishu', clueId: wiki.clue.id })
+      const data = withEditBlock(
+        loaded.data as unknown as FeishuDocEditData,
+        'blk-p1',
+        'Hello <b>service</b>',
+      )
+      const saved = await service.saveEdit({
+        workspaceId: 'ws-feishu',
+        clueId: wiki.clue.id,
+        document: {
+          format: FEISHU_FORMATS.docsXml,
+          data: data as unknown as JsonValue,
+          baseRevision: loaded.baseRevision,
+        },
+      })
+      expect(saved.revision).toBe('8')
+
+      // An agent-originated save is refused before the source runs.
       await expect(service.saveEdit({
         workspaceId: 'ws-feishu',
         clueId: wiki.clue.id,
-        document: { format: FEISHU_FORMATS.docsXml, data: {} },
-      })).rejects.toMatchObject({ category: 'unsupported' })
+        document: { format: FEISHU_FORMATS.docsXml, data: data as unknown as JsonValue },
+      }, { caller: 'agent' })).rejects.toMatchObject({ category: 'permission-denied' })
+      expect(runtime.requests).toHaveLength(3)
     } finally {
       service.dispose()
       removeTree(root)

@@ -7,9 +7,14 @@
  * stdout capture cap are all owned by the runtime.
  *
  * The lark-cli JSON contract this module implements:
- * - success = `ok:true` on STDOUT **and** exit code 0. `error.code` is an
- *   upstream number that only exists inside failure envelopes; a top-level
- *   `code == 0` is NOT success (the success envelope has no `code` at all);
+ * - resource commands use the documented success envelope: `ok:true` on
+ *   STDOUT **and** exit code 0. `error.code` is an upstream number that only
+ *   exists inside failure envelopes; a top-level `code == 0` is NOT success
+ *   (the success envelope has no `code` at all);
+ * - the auth family is the exception: `auth status --json` emits the status
+ *   object DIRECTLY (top-level `appId`/`brand`/`identities`/`identity`/`note`,
+ *   no `ok` and no `data`). The auth calls opt into `bareSuccess`, so the
+ *   envelope parser does not falsely reject the real CLI shape;
  * - failure = `ok:false` on STDERR **and** a non-zero exit. The two streams are
  *   never merged and `_notice` is never an error;
  * - a failure is projected to the fixed clue categories with only safe fields
@@ -35,7 +40,11 @@ import { FEISHU_DEPENDENCY_ID } from './format.ts'
 export const LARK_CLI_TIMEOUT_MS = 60_000
 /** Device-code polling blocks until the user acts or the CLI gives up. */
 export const LARK_AUTH_POLL_TIMEOUT_MS = 120_000
-/** Large enough for a long document; the source pages the CONTENT itself. */
+/**
+ * The plugin runner's stdout capture cap (S2's `maxOutputBytes`), NOT a
+ * lark-cli limit: the CLI may print a larger document, but this adapter cannot
+ * parse more than this in one capture and must report the boundary explicitly.
+ */
 export const LARK_CLI_MAX_OUTPUT_BYTES = 8 << 20
 
 /**
@@ -57,6 +66,14 @@ export interface LarkRequest {
   readonly timeoutMs?: number
   readonly maxOutputBytes?: number
   readonly stdin?: string
+  /**
+   * Accept a bare JSON object as a success payload (no `ok`/`data` envelope).
+   * `auth status --json` is documented to emit the status object directly;
+   * login/poll are accepted the same way because they belong to the same auth
+   * family. Never enable this for resource commands: their success contract is
+   * the envelope.
+   */
+  readonly bareSuccess?: boolean
 }
 
 /** A validated success envelope. */
@@ -325,16 +342,28 @@ export async function executeLark(request: LarkRequest): Promise<LarkOutcome> {
     return { result }
   }
   const envelope = recordOf(parsed)
-  if (envelope === undefined || envelope.ok !== true) return { result }
-  const data = recordOf(envelope.data)
-  if (data === undefined && envelope.data !== undefined) return { result }
-  return {
-    result,
-    success: {
-      data: data ?? {},
-      envelope,
-    },
+  if (envelope === undefined) return { result }
+  if (envelope.ok === true) {
+    const data = recordOf(envelope.data)
+    if (data === undefined && envelope.data !== undefined) return { result }
+    return {
+      result,
+      success: {
+        data: data ?? {},
+        envelope,
+      },
+    }
   }
+  if (
+    request.bareSuccess === true
+    && envelope.ok === undefined
+    && envelope.error === undefined
+  ) {
+    // A bare status/device-flow payload: the object itself is the data. The
+    // envelope stays available for callers that read `identity`/`meta`.
+    return { result, success: { data: envelope, envelope } }
+  }
+  return { result }
 }
 
 /**

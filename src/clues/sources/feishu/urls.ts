@@ -4,8 +4,10 @@
  * Route by URL PATH, not by domain: a `/docx/` path is a Docx document and a
  * `/wiki/` path is a wiki NODE token. The wiki token is never used as a docx
  * token — resolving a wiki URL first asks `wiki +node-get` for the underlying
- * object. Task links are applinks, and ONLY the `guid` query parameter is a
- * task identity; the display number (`t104121`) is rejected explicitly.
+ * object. Task links are todo applinks (`/client/todo/detail` or the older
+ * `/client/todo/task`), and ONLY the `guid` query parameter is a task
+ * identity; the display number (`t104121` / `suite_entity_num`) is rejected
+ * explicitly.
  *
  * Locators are canonical JSON objects (`kind` + stable resource identifiers +
  * an optional original URL). `locatorKey` deliberately ignores presentation
@@ -125,8 +127,12 @@ export function parseFeishuTaskText(text: string): ParsedTaskText | undefined {
     return undefined
   }
   if (!/^https?:$/i.test(url.protocol)) return undefined
-  const isTaskPath = /\/client\/todo\/task\/?$/i.test(url.pathname)
-  if (!isTaskPath) return undefined
+  // The CLI documents the task applink as `/client/todo/detail?guid=...`
+  // (`suite_entity_num` is the display number); older/share links use
+  // `/client/todo/task`. Accept the whole todo applink family and require a
+  // non-empty `guid`; the display number is never an identity.
+  const isTodoApplink = /^\/client\/todo\//i.test(url.pathname)
+  if (!isTodoApplink) return undefined
   const guid = url.searchParams.get('guid')?.trim() ?? ''
   if (guid === '') return { kind: 'display-id', value: 'applink-without-guid' }
   return { kind: 'applink', guid, url: trimmed }

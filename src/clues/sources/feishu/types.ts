@@ -17,12 +17,14 @@ export interface FeishuSourcesOptions {
 
 /** Everything S9 needs to register the two Feishu sources. */
 export interface FeishuSourcesBundle {
-  /** The two built-in source registrations (`docs`, then `tasks`). */
-  readonly sources: readonly ClueSourceRegistration[]
-  /** Alias of {@link sources} for callers that name the field `registrations`. */
+  /** The two source registrations (`docs`, then `tasks`). */
   readonly registrations: readonly ClueSourceRegistration[]
   /** The ONE shared lark-cli dependency. */
   readonly dependency: ClueDependencyDefinition
   /** The ONE shared application-config + user-authorization connection. */
   readonly connection: ClueConnectionDefinition
+  /** Ids the registrations reference, for settings wiring/assertions. */
+  readonly dependencyIds: readonly string[]
+  readonly connectionId: string
+  readonly typeIds: readonly string[]
 }

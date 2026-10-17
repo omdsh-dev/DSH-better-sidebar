@@ -12,13 +12,12 @@
  *   save path, so the UI and the write path can never disagree about the
  *   start-due rule.
  *
- * Read-only docs: the lark-cli document writes that touch EXISTING content are
- * whole-command operations (`str_replace` is a global find/replace with no
- * block scope, `block_replace` rebuilds the whole block, and `append` /
- * `overwrite` / `block_delete` / `block_move_after` are explicitly forbidden
- * by the approved spec). No documented verb performs a LOSSLESS local
- * text-block update, so docs stay read-only this round instead of degrading to
- * append/overwrite. See {@link DOCS_EDIT_LIMITATION}.
+ * Editing: the docs source edits ONLY text blocks through lark-cli's native
+ * block-scoped `docs +update block_replace` (the target block id comes from
+ * `docs +fetch --detail full`). Tables, callouts, grids, images and other
+ * complex containers stay read-only because rebuilding them is not a lossless
+ * text-block operation. Markdown remains a read-only projection and is never a
+ * save input. See {@link DOCS_EDIT_SCOPE_NOTE}.
  */
 import { BUILTIN_SOURCE_IDS, type JsonValue } from '../../types.ts'
 
@@ -52,12 +51,18 @@ export const FEISHU_FORMATS = {
   taskDocument: 'feishu.task.document',
 } as const
 
-/** Why document editing is not offered this round (surfaced to the UI). */
-export const DOCS_EDIT_LIMITATION =
-  'read-only: lark-cli has no lossless local text-block update — `str_replace` is a '
-  + 'whole-document find/replace with no block scope, `block_replace`/`block_delete`/'
-  + '`block_move_after` rebuild or remove blocks, and append/overwrite are forbidden; this '
-  + 'source does not offer a degraded write path'
+/** Which text-block surfaces the editor supports (surfaced to the UI). */
+export const DOCS_EDIT_SCOPE_NOTE =
+  'Only text blocks are editable (title, paragraphs, headings, lists, todos, quotes and code); '
+  + 'tables, callouts, grids, images and other complex blocks stay read-only. '
+  + 'Markdown is a read-only projection and never a save input.'
+
+/**
+ * Backwards-compatible name of {@link DOCS_EDIT_SCOPE_NOTE}.
+ * @deprecated The docs source is editable; this is no longer a source-level
+ * "read-only" limitation, only a per-block scope note.
+ */
+export const DOCS_EDIT_LIMITATION = DOCS_EDIT_SCOPE_NOTE
 
 /** The fixed detail shown when the lark-cli application configuration is missing. */
 export const FEISHU_CONFIGURATION_DETAIL =
@@ -80,6 +85,9 @@ export const FEISHU_CONNECTION_CAPABILITIES = [
   'tasks.read',
   'tasks.edit',
 ] as const
+
+/** The `meta.role` marker of a browsing-range candidate (folder/wiki space). */
+export const FEISHU_SCOPE_ROLE = 'scope'
 
 /** One declared connection capability. */
 export type FeishuConnectionCapability = (typeof FEISHU_CONNECTION_CAPABILITIES)[number]
@@ -164,6 +172,61 @@ export type FeishuDocReadData = {
   readonly referenceMap?: JsonValue
 }
 
+/**
+ * One editable text block of the XML edit model.
+ *
+ * `text` is the block's INNER XML (for title/code it is plain text). Sending
+ * the inner XML back inside the original outer tag preserves inline styles and
+ * unknown inline markup when the caller does not touch it. `baseline` is what
+ * `loadEdit` returned; a save only writes blocks whose `text` differs.
+ */
+export interface FeishuDocEditBlock {
+  /** The lark-cli block id (`--block-id` of `docs +update`). */
+  readonly id: string
+  /** Outer XML tag (`p`, `h1`…`h9`, `li`, `checkbox`, `blockquote`, `pre`). */
+  readonly tag: string
+  /** Original outer attributes EXCEPT `id` (align/done/lang/caption/…). */
+  readonly attrs: string
+  /** Editable inner XML (plain text for title/code blocks). */
+  readonly text: string
+  /** The text as loaded; used both for change detection and lossless diffs. */
+  readonly baseline: string
+  /**
+   * `plain` — `text` is escaped plain text (title/code);
+   * `xml` — `text` is inner XML whose inline tags are preserved verbatim.
+   */
+  readonly kind: 'plain' | 'xml'
+}
+
+/** The `data` of one document edit load (`docs +fetch --detail full`). */
+export interface FeishuDocEditData {
+  readonly kind: 'docx' | 'wiki'
+  readonly docToken: string
+  readonly wikiToken?: string
+  readonly objToken?: string
+  readonly objType?: string
+  readonly sourceUrl?: string
+  readonly revisionId?: string
+  readonly title: string
+  /** The title exactly as loaded; a save compares against this baseline. */
+  readonly baselineTitle: string
+  /** Editable only when `docs +fetch --detail full` gave the title block an id. */
+  readonly titleEditable: boolean
+  readonly titleBlockId?: string
+  readonly titleAttrs: string
+  readonly blocks: readonly FeishuDocEditBlock[]
+  /** Complex containers kept verbatim (read-only), in document order. */
+  readonly readOnlyBlocks: readonly FeishuDocReadOnlyBlock[]
+}
+
+/** One non-editable block (complex container/resource) kept for context. */
+export interface FeishuDocReadOnlyBlock {
+  readonly tag: string
+  /** Plain text projection of the block, for display only. */
+  readonly text: string
+  readonly reason: string
+}
+
 /** One task time. `timestamp` is an epoch-millisecond instant; `isAllDay` keeps the task's own semantics. */
 export type FeishuTaskTime = {
   readonly timestamp: string
@@ -187,9 +250,14 @@ export type FeishuTaskDocumentData = {
 /** One field-level validation failure the form can render. */
 export type FeishuTaskField = 'title' | 'description' | 'start' | 'due' | 'completed'
 
+/** Stable validation codes the client maps to localized copy. */
+export type FeishuTaskValidationCode = 'title-required' | 'invalid-time' | 'start-after-due'
+
 /** One validation failure. */
 export interface FeishuTaskValidationError {
   readonly field: FeishuTaskField
+  readonly code: FeishuTaskValidationCode
+  /** English fallback used by the host (the client renders the code). */
   readonly message: string
 }
 
@@ -261,8 +329,9 @@ export function parseTaskDocument(value: JsonValue, fallbackGuid: string): Feish
   const description = typeof value.description === 'string' ? value.description : ''
   const start = parseTaskTime(value.start)
   const due = parseTaskTime(value.due)
-  const completedAt = millisOf(value.completed_at)
-  const updatedAt = value.updated_at === undefined ? undefined : String(value.updated_at)
+  const completedAt = millisOf(value.completed_at ?? value.completedAt)
+  const updatedAtValue = value.updated_at ?? value.updatedAt
+  const updatedAt = updatedAtValue === undefined ? undefined : String(updatedAtValue)
   const url = stringOf(value.url) ?? stringOf(value.applink)
   return {
     kind: 'task',
@@ -324,24 +393,94 @@ export function parseDocReadData(value: JsonValue): FeishuDocReadData | undefine
   }
 }
 
+/** Parse one editable block (tolerant; a malformed row makes the document invalid). */
+function parseEditBlock(value: JsonValue): FeishuDocEditBlock | undefined {
+  if (!isRecord(value)) return undefined
+  const id = stringOf(value.id)
+  const tag = stringOf(value.tag)
+  const text = typeof value.text === 'string' ? value.text : undefined
+  const baseline = typeof value.baseline === 'string' ? value.baseline : undefined
+  const kind = value.kind === 'plain' ? 'plain' : value.kind === 'xml' ? 'xml' : undefined
+  if (id === undefined || tag === undefined || text === undefined || baseline === undefined || kind === undefined) {
+    return undefined
+  }
+  return {
+    id,
+    tag,
+    attrs: typeof value.attrs === 'string' ? value.attrs : '',
+    text,
+    baseline,
+    kind,
+  }
+}
+
+/**
+ * Parse the `data` of one document edit load (the shape `FeishuDocsEditor`
+ * consumes). Returns undefined for a read payload, so the renderer can dispatch
+ * safely on the data shape.
+ * @param value - the edit document's data.
+ */
+export function parseDocEditData(value: JsonValue): FeishuDocEditData | undefined {
+  if (!isRecord(value)) return undefined
+  const kind = value.kind === 'wiki' ? 'wiki' : value.kind === 'docx' ? 'docx' : undefined
+  const docToken = stringOf(value.docToken)
+  const title = typeof value.title === 'string' ? value.title : undefined
+  const baselineTitle = typeof value.baselineTitle === 'string' ? value.baselineTitle : undefined
+  if (kind === undefined || docToken === undefined || title === undefined || baselineTitle === undefined) {
+    return undefined
+  }
+  if (!Array.isArray(value.blocks) || !Array.isArray(value.readOnlyBlocks)) return undefined
+  const blocks: FeishuDocEditBlock[] = []
+  for (const row of value.blocks) {
+    const block = parseEditBlock(row)
+    if (block === undefined) return undefined
+    blocks.push(block)
+  }
+  const readOnlyBlocks: FeishuDocReadOnlyBlock[] = []
+  for (const row of value.readOnlyBlocks) {
+    if (!isRecord(row)) return undefined
+    const tag = stringOf(row.tag)
+    const text = typeof row.text === 'string' ? row.text : undefined
+    const reason = stringOf(row.reason)
+    if (tag === undefined || text === undefined || reason === undefined) return undefined
+    readOnlyBlocks.push({ tag, text, reason })
+  }
+  return {
+    kind,
+    docToken,
+    ...(stringOf(value.wikiToken) === undefined ? {} : { wikiToken: stringOf(value.wikiToken) }),
+    ...(stringOf(value.objToken) === undefined ? {} : { objToken: stringOf(value.objToken) }),
+    ...(stringOf(value.objType) === undefined ? {} : { objType: stringOf(value.objType) }),
+    ...(stringOf(value.sourceUrl) === undefined ? {} : { sourceUrl: stringOf(value.sourceUrl) }),
+    ...(value.revisionId === undefined ? {} : { revisionId: String(value.revisionId) }),
+    title,
+    baselineTitle,
+    titleEditable: value.titleEditable === true,
+    ...(stringOf(value.titleBlockId) === undefined ? {} : { titleBlockId: stringOf(value.titleBlockId) }),
+    titleAttrs: typeof value.titleAttrs === 'string' ? value.titleAttrs : '',
+    blocks,
+    readOnlyBlocks,
+  }
+}
+
 // ── Task validation and diffing (shared by UI + host) ──────────────────────
 
 /** Local start <= due validation, preserving each time's all-day semantics. */
 export function validateTaskDocument(data: FeishuTaskDocumentData): FeishuTaskValidationError[] {
   const errors: FeishuTaskValidationError[] = []
   if (typeof data.title !== 'string' || data.title.trim() === '') {
-    errors.push({ field: 'title', message: 'A task title is required.' })
+    errors.push({ field: 'title', code: 'title-required', message: 'A task title is required.' })
   }
   for (const [field, time] of [['start', data.start], ['due', data.due]] as const) {
     if (time !== null && millisOf(time.timestamp) === undefined) {
-      errors.push({ field, message: 'This time is not a valid instant.' })
+      errors.push({ field, code: 'invalid-time', message: 'This time is not a valid instant.' })
     }
   }
   if (data.start !== null && data.due !== null) {
     const start = millisOf(data.start.timestamp)
     const due = millisOf(data.due.timestamp)
     if (start !== undefined && due !== undefined && start > due) {
-      errors.push({ field: 'due', message: 'The start must not be later than the due time.' })
+      errors.push({ field: 'due', code: 'start-after-due', message: 'The start must not be later than the due time.' })
     }
   }
   return errors

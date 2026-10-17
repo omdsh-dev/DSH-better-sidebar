@@ -15,7 +15,7 @@
  * `+complete` / `+reopen` action — the form does not invent a second write
  * path. Read-only preview mode renders the same fields as static text.
  */
-import { useId, type ReactNode } from 'react'
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import type { ClueFormatRendererProps, JsonValue } from '../../../../clues/types.ts'
 import {
   parseTaskDocument,
@@ -56,6 +56,13 @@ function timeOfInput(value: string, allDay: boolean): FeishuTaskTime | undefined
   return { timestamp: String(millis), isAllDay: allDay }
 }
 
+/** Human-readable updated timestamp (local timezone, raw if unparseable). */
+function displayUpdatedAt(value: string | undefined): string | undefined {
+  if (value === undefined || value === '') return undefined
+  const millis = Number(value)
+  return Number.isFinite(millis) ? new Date(millis).toLocaleString() : value
+}
+
 /** Human-readable time for the read-only view (local timezone). */
 function displayTime(time: FeishuTaskTime | null, labels: FeishuClientLabels): string {
   if (time === null) return labels.noTime
@@ -93,7 +100,18 @@ function TaskReadOnly(props: {
           <dt>{labels.description}</dt>
           <dd>{task.description === '' ? labels.emptyDescription : task.description}</dd>
         </div>
+        {displayUpdatedAt(task.updatedAt) !== undefined && (
+          <div className={css.fieldRow} data-feishu-task-updated-at="">
+            <dt>{labels.updatedAt}</dt>
+            <dd>{displayUpdatedAt(task.updatedAt)}</dd>
+          </div>
+        )}
       </dl>
+      {task.url !== undefined && /^https?:\/\//i.test(task.url) && (
+        <a className={css.linkButton} href={task.url} target="_blank" rel="noreferrer">
+          {labels.sourceLink}
+        </a>
+      )}
     </section>
   )
 }
@@ -105,9 +123,19 @@ function TimeField(props: {
   readonly label: string
   readonly time: FeishuTaskTime | null
   readonly labels: FeishuClientLabels
+  readonly error?: string
   onChange(time: FeishuTaskTime): void
 }): ReactNode {
-  const { id, field, label, time, labels, onChange } = props
+  const { id, field, label, time, labels, error, onChange } = props
+  const inputRef = useRef<HTMLInputElement>(null)
+  const wasNull = useRef(time === null)
+  const [clearError, setClearError] = useState<string | undefined>(undefined)
+  useEffect(() => {
+    // Clicking “Set time” replaces the button with the input; move focus there
+    // so keyboard users are not dropped onto the document body.
+    if (wasNull.current && time !== null) inputRef.current?.focus()
+    wasNull.current = time === null
+  }, [time])
   if (time === null) {
     return (
       <div className={css.field} data-feishu-task-field={field}>
@@ -116,6 +144,7 @@ function TimeField(props: {
           type="button"
           className={css.linkButton}
           data-feishu-task-set-time={field}
+          aria-label={`${label}: ${labels.setTime}`}
           onClick={() => { onChange({ timestamp: String(Date.now()), isAllDay: false }) }}
         >
           {labels.setTime}
@@ -123,19 +152,32 @@ function TimeField(props: {
       </div>
     )
   }
+  const shownError = error ?? clearError
+  const errorId = `${id}-error`
   return (
     <div className={css.field} data-feishu-task-field={field}>
       <label className={css.fieldLabel} htmlFor={id}>{label}</label>
       <div className={css.timeRow}>
         <input
+          ref={inputRef}
           id={id}
           className={css.input}
           type={time.isAllDay ? 'date' : 'datetime-local'}
           value={inputValueOf(time)}
           data-feishu-task-input={field}
+          aria-invalid={shownError !== undefined}
+          aria-describedby={shownError === undefined ? undefined : errorId}
           onChange={(event) => {
+            if (event.target.value === '') {
+              // The CLI has no documented “clear time” update; keeping the old
+              // value and explaining why is safer than a silent no-op.
+              setClearError(labels.clearingTimeUnsupported)
+              return
+            }
+            setClearError(undefined)
             const next = timeOfInput(event.target.value, time.isAllDay)
             if (next !== undefined) onChange(next)
+            else setClearError(labels.invalidTime)
           }}
         />
         <label className={css.checkbox}>
@@ -143,11 +185,23 @@ function TimeField(props: {
             type="checkbox"
             checked={time.isAllDay}
             data-feishu-task-allday={field}
+            aria-label={`${label} ${labels.allDay}`}
             onChange={(event) => { onChange({ ...time, isAllDay: event.target.checked }) }}
           />
           {labels.allDay}
         </label>
       </div>
+      {shownError !== undefined && (
+        <p
+          className={css.error}
+          id={errorId}
+          data-feishu-task-error={field}
+          data-feishu-task-time-error={field}
+          role="alert"
+        >
+          {shownError}
+        </p>
+      )}
     </div>
   )
 }
@@ -173,14 +227,22 @@ export function FeishuTaskEditor(props: FeishuTaskEditorProps): ReactNode {
   const errorOf = (field: FeishuTaskField): string | undefined => {
     const error = errors.find(candidate => candidate.field === field)
     if (error === undefined) return undefined
-    if (field === 'title') return labels.titleRequired
-    if (error.message.includes('start must not be later')) return labels.startAfterDue
-    return error.message
+    switch (error.code) {
+      case 'title-required':
+        return labels.titleRequired
+      case 'start-after-due':
+        return labels.startAfterDue
+      case 'invalid-time':
+        return labels.invalidTime
+      default:
+        return labels.genericValidation
+    }
   }
   const emit = (patch: Partial<FeishuTaskDocumentData>): void => {
     props.onChange({ ...task, ...patch } as unknown as JsonValue)
   }
   const idOf = (field: string): string => `${idPrefix}-${field}`
+  const errorIdOf = (field: string): string => `${idPrefix}-${field}-error`
   return (
     <form
       className={css.panel}
@@ -202,10 +264,13 @@ export function FeishuTaskEditor(props: FeishuTaskEditorProps): ReactNode {
           value={task.title}
           data-feishu-task-input="title"
           aria-invalid={errorOf('title') !== undefined}
+          aria-describedby={errorOf('title') === undefined ? undefined : errorIdOf('title')}
           onChange={(event) => { emit({ title: event.target.value }) }}
         />
         {errorOf('title') !== undefined && (
-          <p className={css.error} data-feishu-task-error="title" role="alert">{errorOf('title')}</p>
+          <p className={css.error} id={errorIdOf('title')} data-feishu-task-error="title" role="alert">
+            {errorOf('title')}
+          </p>
         )}
       </div>
 
@@ -227,28 +292,25 @@ export function FeishuTaskEditor(props: FeishuTaskEditorProps): ReactNode {
         label={labels.start}
         time={task.start}
         labels={labels}
+        error={errorOf('start')}
         onChange={(time) => { emit({ start: time }) }}
       />
-      {errorOf('start') !== undefined && (
-        <p className={css.error} data-feishu-task-error="start" role="alert">{errorOf('start')}</p>
-      )}
       <TimeField
         id={idOf('due')}
         field="due"
         label={labels.due}
         time={task.due}
         labels={labels}
+        error={errorOf('due')}
         onChange={(time) => { emit({ due: time }) }}
       />
-      {errorOf('due') !== undefined && (
-        <p className={css.error} data-feishu-task-error="due" role="alert">{errorOf('due')}</p>
-      )}
 
       <label className={css.checkbox}>
         <input
           type="checkbox"
           checked={task.completed}
           data-feishu-task-input="completed"
+          aria-label={labels.completed}
           onChange={(event) => { emit({ completed: event.target.checked }) }}
         />
         {labels.completed}

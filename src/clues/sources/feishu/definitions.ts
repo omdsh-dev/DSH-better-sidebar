@@ -68,6 +68,7 @@ import {
   larkFailureError,
   larkScopeDetail,
   LARK_AUTH_POLL_TIMEOUT_MS,
+  LARK_CLI_ENV,
   type LarkFailure,
   type LarkSuccess,
 } from './lark.ts'
@@ -135,7 +136,9 @@ export function feishuDependencyDefinition(): ClueDependencyDefinition {
     version: { minimum: LARK_CLI_VERSION, recommended: LARK_CLI_VERSION },
     supportedPlatforms: supportedTargets(),
     // Notice suppression only; the runtime's safe allowlist still filters them.
-    envAllowlist: ['LARKSUITE_CLI_NO_UPDATE_NOTIFIER', 'LARKSUITE_CLI_NO_SKILLS_NOTIFIER'],
+    // Reuse the exact same names the adapter passes to every CLI call, so the
+    // dependency allowlist and the invocation can never drift apart.
+    envAllowlist: Object.keys(LARK_CLI_ENV),
     install: {
       distributions: [
         {
@@ -172,10 +175,31 @@ function userIdentityOf(success: LarkSuccess): Record<string, JsonValue> | undef
   return isRecord(user) ? user : undefined
 }
 
+/** Whether one identity object explicitly reports the app configuration absent. */
+function identityConfigMissing(value: JsonValue | undefined): boolean {
+  if (!isRecord(value)) return false
+  const text = `${stringOf(value.status) ?? ''} ${stringOf(value.message) ?? ''}`.toLowerCase()
+  return text.includes('missing app config')
+    || text.includes('not_configured')
+    || text.includes('not configured')
+    || text.includes('missing app secret')
+}
+
 /** Whether the status payload explicitly says the app configuration is absent. */
 function statusConfigMissing(success: LarkSuccess): boolean {
   const data = success.data
-  return data.configured === false || data.config === null || data.app === null
+  if (data.configured === false || data.config === null || data.app === null) return true
+  // The real bare `auth status` payload has no `configured` field; it reports
+  // the two identities instead. The unconfigured app is visible as
+  // `identities.bot.status/message` (e.g. “Bot identity: not configured
+  // (missing app config)”). Treating only the invented `data.configured` field
+  // as authoritative was the reason a real unconfigured CLI still looked
+  // authorized after B1.
+  const identities = isRecord(data.identities)
+    ? data.identities
+    : isRecord(success.envelope.identities) ? success.envelope.identities : undefined
+  if (identities === undefined) return false
+  return identityConfigMissing(identities.bot) || identityConfigMissing(identities.user)
 }
 
 /**
@@ -459,6 +483,7 @@ export function feishuConnectionDefinition(getRuntime: () => ClueRuntime): ClueC
     async inspect(_input, context) {
       const outcome = await executeLark({
         runtime: runtime(),
+        bareSuccess: true,
         args: larkAuthStatusArgs(),
         cwd: process.cwd(),
         ...(context.signal === undefined ? {} : { signal: context.signal }),
@@ -501,6 +526,7 @@ export function feishuConnectionDefinition(getRuntime: () => ClueRuntime): ClueC
       // side effects and this runs only for an explicit user action.
       const status = await executeLark({
         runtime: runtime(),
+        bareSuccess: true,
         args: larkAuthStatusArgs(),
         cwd: process.cwd(),
         ...(context.signal === undefined ? {} : { signal: context.signal }),
@@ -517,6 +543,7 @@ export function feishuConnectionDefinition(getRuntime: () => ClueRuntime): ClueC
       }
       const outcome = await executeLark({
         runtime: runtime(),
+        bareSuccess: true,
         args: larkAuthLoginArgs(),
         cwd: process.cwd(),
         ...(context.signal === undefined ? {} : { signal: context.signal }),
@@ -535,6 +562,7 @@ export function feishuConnectionDefinition(getRuntime: () => ClueRuntime): ClueC
       const deviceCode = deviceCodeOf(input.state)
       const outcome = await executeLark({
         runtime: runtime(),
+        bareSuccess: true,
         args: larkAuthPollArgs(deviceCode),
         cwd: process.cwd(),
         ...(context.signal === undefined ? {} : { signal: context.signal }),

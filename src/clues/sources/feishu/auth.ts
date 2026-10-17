@@ -14,9 +14,13 @@
  * are projected; raw stderr, messages, hints, device codes and tokens never
  * are.
  *
- * The exact scope spelling is taken from the local lark skill documentation
- * (`docx:document:read`, `search:docs:read`, `task:task:read`,
- * `task:task:write`, …); a real lark-cli account is NOT exercised here.
+ * The exact scope spelling is taken from the lark-cli 1.0.55 scope catalog
+ * (`docx:document:readonly`, `docs:document.content:read`,
+ * `search:docs:read`, `task:task:read`, `task:task:write`, …); a real
+ * lark-cli account is NOT exercised by the test suite. A wiki scope is
+ * deliberately NOT sufficient for `docs.read`: it grants wiki-node access but
+ * not Docx content, so treating it as full docs coverage would over-advertise
+ * the source exactly like the old token-only projection did.
  */
 import { ClueError } from '../../types.ts'
 import type { JsonValue } from '../../types.ts'
@@ -42,27 +46,30 @@ import {
  */
 const CAPABILITY_SCOPES: Readonly<Record<FeishuConnectionCapability, readonly string[]>> = {
   'docs.read': [
-    'docx:document:read',
+    // The real 1.0.55 scope vocabulary. `docx:document:read` / the plural
+    // `docs:document:read` are NOT real scope names.
+    'docx:document:readonly',
     'docx:document',
-    'docs:document:read',
-    'docs:document',
-    'wiki:node:read',
-    'wiki:node:retrieve',
-    'wiki:space:read',
-    'wiki:space:retrieve',
+    'docs:document.content:read',
+    'docs:doc:readonly',
+    'docs:doc',
   ],
   'docs.search': [
     'search:docs:read',
+    'drive:drive.search:readonly',
     'drive:drive',
+    'drive:drive:readonly',
     'drive:drive.metadata:readonly',
   ],
   'tasks.read': [
     'task:task:read',
-    'task:task:readwrite',
+    'task:task:readonly',
+    'task:task',
   ],
   'tasks.edit': [
     'task:task:write',
-    'task:task:readwrite',
+    'task:task:writeonly',
+    'task:task',
   ],
 }
 

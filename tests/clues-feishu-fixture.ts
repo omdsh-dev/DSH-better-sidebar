@@ -81,6 +81,28 @@ export function okResult(data: JsonValue, extra: Record<string, JsonValue> = {})
   return cliResult({ stdout: JSON.stringify({ ok: true, identity: 'user', data, ...extra }) })
 }
 
+/**
+ * The real `auth status --json` shape: a BARE object with top-level
+ * `appId`/`brand`/`identities`/`identity`/`note` (no `ok`, no `data`).
+ */
+export function bareResult(value: Record<string, JsonValue>): CliResult {
+  return cliResult({ stdout: JSON.stringify(value) })
+}
+
+/** A bare auth-status answer with the given identities. */
+export function statusResult(
+  identities: Record<string, JsonValue>,
+  extra: Record<string, JsonValue> = {},
+): CliResult {
+  return bareResult({
+    appId: 'cli_test',
+    brand: 'feishu',
+    identity: 'user',
+    identities,
+    ...extra,
+  })
+}
+
 /** A failed lark-cli envelope on stderr (non-zero exit). */
 export function failResult(error: Record<string, JsonValue>, exitCode = 1): CliResult {
   return cliResult({ exitCode, stderr: JSON.stringify({ ok: false, identity: 'user', error }) })
