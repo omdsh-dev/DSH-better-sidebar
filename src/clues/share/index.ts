@@ -50,6 +50,7 @@ import type { Context, SidebarHttpRequest, SidebarHttpResponse, SidebarWebRoute 
 import type { CluesService } from '../service.ts'
 import { ClueError, isClueError, type ClueApiContext, type ClueErrorCategory } from '../types.ts'
 import { readJsonBody, SidebarError, writeError, writeJson, writeOk } from '../../wire.ts'
+import { SAFE_FAILURE_REASONS } from './reasons.ts'
 import {
   exportPack as runExportPack,
   inspectExport as runInspectExport,
@@ -114,6 +115,43 @@ export interface InstallCluesShareOptions {
   readonly statFile?: (path: string) => Promise<{ readonly size: number; readonly isFile: boolean }>
   /** Decoded archive bound of the `clues.share.importPreview` API method. */
   readonly maxApiImportBytes?: number
+}
+
+/**
+ * JSON API method names of this surface, for S9 wiring.
+ *
+ * S9 calls these through the generic typed clue API (`call('clues.share.*')`);
+ * this module is node-only, so do NOT import these constants into a client
+ * bundle. They exist so the raw-route registration, S9 and tests share one
+ * spelling instead of duplicating string literals.
+ */
+export const CLUES_SHARE_API_METHODS = {
+  exportPreview: 'clues.share.exportPreview',
+  exportInspect: 'clues.share.exportInspect',
+  exportProgress: 'clues.share.exportProgress',
+  importPreview: 'clues.share.importPreview',
+  importProgress: 'clues.share.importProgress',
+  import: 'clues.share.import',
+} as const
+
+/** Prefix of S1 storage failures, whose raw message embeds a host path. */
+const S1_STORE_MESSAGE = /^clue (?:storage|snapshot)/i
+
+/**
+ * Strip the host's absolute data path from one S1 storage failure.
+ *
+ * `CluesStore` wraps an fs error (or the state file path) into its message.
+ * The share routes and the progress channels must not echo that to the
+ * browser: the clue errors are surfaced by category elsewhere, so replacing
+ * the message with the fixed category wording loses nothing actionable for a
+ * client. Every other error (archive validation, conflict reasons, …) keeps
+ * its own safe text.
+ */
+function safeShareErrorOf(error: unknown): unknown {
+  if (isClueError(error) && S1_STORE_MESSAGE.test(error.message)) {
+    return new ClueError(error.category, SAFE_FAILURE_REASONS[error.category])
+  }
+  return error
 }
 
 /**
@@ -483,26 +521,34 @@ export function createCluesShareService(
   const ensureLive = (): void => {
     if (disposed) throw new ClueError('failed', 'the clue share service is no longer mounted')
   }
+  /**
+   * One business call with the S1 storage message sanitized. S1 embeds the
+   * host's absolute data path in its storage errors, and every caller here
+   * (routes, progress channels, the JSON API dispatcher) would otherwise echo
+   * that path to the browser.
+   */
+  const guarded = <T>(run: Promise<T>): Promise<T> =>
+    run.catch((error: unknown) => { throw safeShareErrorOf(error) })
   return {
     previewExport(params) {
       ensureLive()
-      return runPreviewExport(exportDeps, params)
+      return guarded(runPreviewExport(exportDeps, params))
     },
     inspectExport(params) {
       ensureLive()
-      return runInspectExport(exportDeps, params)
+      return guarded(runInspectExport(exportDeps, params))
     },
     exportPack(params) {
       ensureLive()
-      return runExportPack(exportDeps, params)
+      return guarded(runExportPack(exportDeps, params))
     },
     previewImport(params) {
       ensureLive()
-      return runPreviewImport(importDeps, params)
+      return guarded(runPreviewImport(importDeps, params))
     },
     importPack(params) {
       ensureLive()
-      return runImportPack(importDeps, params)
+      return guarded(runImportPack(importDeps, params))
     },
     progress,
     importProgress,
@@ -642,26 +688,26 @@ export function installCluesShare(
     )
   }
   registeredDisposers.push(
-    clues.registerApi('clues.share.exportPreview', (payload, context) =>
+    clues.registerApi(CLUES_SHARE_API_METHODS.exportPreview, (payload, context) =>
       service.previewExport(exportParamsOf(payload, context.signal))),
     // The confirmation screen's "what exactly will be shared?" step. It calls
     // `portable` per live clue (never `read`) because spec §3 requires the
     // user to see the resource information before choosing the share scope.
-    clues.registerApi('clues.share.exportInspect', (payload, context) =>
+    clues.registerApi(CLUES_SHARE_API_METHODS.exportInspect, (payload, context) =>
       service.inspectExport(exportParamsOf(payload, context.signal))),
     // Progress/outcome polling for the raw export route (S9). Bounded and
     // in-memory: an unknown or expired exportId reads as `null`.
-    clues.registerApi('clues.share.exportProgress', (payload) => {
+    clues.registerApi(CLUES_SHARE_API_METHODS.exportProgress, (payload) => {
       if (!isRecord(payload) || typeof payload.exportId !== 'string' || payload.exportId.trim() === '') {
         throw new ClueError('invalid-request', '"exportId" must be a non-empty string')
       }
       return service.progress.read(payload.exportId) ?? null
     }),
-    clues.registerApi('clues.share.importPreview', (payload, context) =>
+    clues.registerApi(CLUES_SHARE_API_METHODS.importPreview, (payload, context) =>
       service.previewImport(importParamsOf(payload, context, maxApiImportBytes))),
     // JSON import for a moderate archive: unlike the raw route, the receiver
     // remap list travels in the BODY, so it is not capped by the URL length.
-    clues.registerApi('clues.share.import', async (payload, context) => {
+    clues.registerApi(CLUES_SHARE_API_METHODS.import, async (payload, context) => {
       const params = importParamsOf(payload, context, maxApiImportBytes)
       const importId = importIdOf(isRecord(payload) ? payload.importId : undefined)
       return trackImport(importId, onProgress => service.importPack({
@@ -671,7 +717,7 @@ export function installCluesShare(
     }),
     // Progress/outcome polling for the raw import route (symmetric with
     // exportProgress): a long import must be observable and cancellable.
-    clues.registerApi('clues.share.importProgress', (payload) => {
+    clues.registerApi(CLUES_SHARE_API_METHODS.importProgress, (payload) => {
       const importId = importIdOf(isRecord(payload) ? payload.importId : undefined)
       if (importId === undefined) {
         throw new ClueError('invalid-request', '"importId" must be a non-empty string')

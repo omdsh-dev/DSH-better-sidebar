@@ -9,7 +9,7 @@
  * disposer while the persisted clue library stays intact.
  */
 import { afterEach, describe, expect, it } from 'vitest'
-import { mkdirSync, mkdtempSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createCluesService, type CluesService, type ClueSourceRegistration } from '../src/clues/service.ts'
@@ -18,14 +18,22 @@ import {
   CLUES_SHARE_ROUTE_PATHS,
   DEFAULT_MAX_API_IMPORT_BYTES,
   cluepackDisposition,
+  CLUES_SHARE_API_METHODS,
   createCluesShareExportProgressStore,
   createCluesShareImportProgressStore,
   createCluesShareRoutes,
+  createCluesShareService,
   installCluesShare,
   type CluesShareService,
 } from '../src/clues/share/index.ts'
-import { CLUEPACK_MANIFEST_PATH } from '../src/clues/share/manifest.ts'
-import { readZip } from '../src/clues/share/zip.ts'
+import {
+  CLUEPACK_FORMAT,
+  CLUEPACK_MANIFEST_PATH,
+  serializeCluepackManifest,
+  type CluepackManifest,
+} from '../src/clues/share/manifest.ts'
+import { SAFE_FAILURE_REASONS } from '../src/clues/share/reasons.ts'
+import { createZip, readZip } from '../src/clues/share/zip.ts'
 import type {
   Context,
   SidebarHttpRequest,
@@ -851,5 +859,77 @@ describe('createCluesShareRoutes', () => {
     expect(download.headers['content-disposition']).toContain("filename*=UTF-8''")
     expect(download.headers['content-disposition']).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/)
     expect(readZip(Buffer.concat(download.chunks)).map(entry => entry.name)).toEqual([CLUEPACK_MANIFEST_PATH])
+  })
+})
+
+describe('S1 storage failure messages', () => {
+  it('never echoes the absolute store path through preview, route or progress', async () => {
+    const base = mkdtempSync(join(tmpdir(), 'dsh-clues-share-store-error-'))
+    roots.push(base)
+    const root = join(base, 'store')
+    const workspaceId = 'ws-1'
+    // A file where the store root directory is expected makes every read fail
+    // with ENOTDIR naming the absolute path, which S1 wraps verbatim.
+    writeFileSync(root, 'not a directory', 'utf8')
+    let next = 0
+    const service = createCluesService({ root, now: () => NOW, newId: kind => `${kind}-${++next}` })
+    const share = createCluesShareService({ clues: service })
+    const manifest: CluepackManifest = {
+      formatVersion: 1,
+      format: CLUEPACK_FORMAT,
+      exportedAt: NOW,
+      mode: 'references',
+      sources: [{ key: 'source-1', sourceId: 'missing.source', typeIds: ['missing.source.doc'] }],
+      clues: [{
+        key: 'clue-1',
+        sourceKey: 'source-1',
+        typeId: 'missing.source.doc',
+        title: 'X',
+        portable: { portable: true, locator: { id: 'a' } },
+      }],
+      packs: [],
+      issues: [],
+    }
+    const bytes = createZip([
+      { name: CLUEPACK_MANIFEST_PATH, data: serializeCluepackManifest(manifest) },
+    ])
+
+    const previewFailure = await share.previewImport({ workspaceId, bytes })
+      .then(() => undefined, (error: unknown) => error)
+    expect(previewFailure).toMatchObject({ category: 'failed', message: SAFE_FAILURE_REASONS.failed })
+
+    const routes = createCluesShareRoutes(share, () => true)
+    const preview = await call(routes.importPreview, {
+      url: `${CLUES_SHARE_ROUTE_PATHS.importPreview}?workspaceId=${workspaceId}`,
+      body: bytes,
+    })
+    expect(preview.statusCode).toBe(500)
+    const previewBody = jsonBody(preview) as { error: { message: string } }
+    expect(previewBody.error.message).toBe(SAFE_FAILURE_REASONS.failed)
+    expect(previewBody.error.message).not.toContain(root)
+
+    const imported = await call(routes.import, {
+      url: `${CLUES_SHARE_ROUTE_PATHS.import}?workspaceId=${workspaceId}&importId=imp-path`,
+      body: bytes,
+    })
+    expect(imported.statusCode).toBe(500)
+    const importedBody = jsonBody(imported) as { error: { message: string } }
+    expect(importedBody.error.message).toBe(SAFE_FAILURE_REASONS.failed)
+    expect(importedBody.error.message).not.toContain(root)
+    expect(share.importProgress.read('imp-path')?.failure).toEqual({
+      category: 'failed',
+      message: SAFE_FAILURE_REASONS.failed,
+    })
+  })
+
+  it('publishes the API method names S9 calls through the generic seam', () => {
+    expect(Object.values(CLUES_SHARE_API_METHODS)).toEqual([
+      'clues.share.exportPreview',
+      'clues.share.exportInspect',
+      'clues.share.exportProgress',
+      'clues.share.importPreview',
+      'clues.share.importProgress',
+      'clues.share.import',
+    ])
   })
 })
