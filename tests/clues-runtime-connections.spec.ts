@@ -615,3 +615,41 @@ describe('concurrent connect/poll/cancel lifecycle', () => {
     runtime.dispose()
   })
 })
+
+describe('terminal report supersedes an in-flight connect', () => {
+  it('drops the aborted attempt so a later connect starts a fresh flow', async () => {
+    let adapterStarted!: () => void
+    const started = new Promise<void>((resolve) => { adapterStarted = resolve })
+    let adapterCalls = 0
+    const { runtime } = harness({
+      connect: async (input) => {
+        adapterCalls += 1
+        adapterStarted()
+        await new Promise<void>((_resolve, reject) => {
+          const abort = (): void => reject(Object.assign(new Error('aborted'), { name: 'AbortError' }))
+          if (input.signal?.aborted === true) abort()
+          else input.signal?.addEventListener('abort', abort, { once: true })
+        })
+        return {
+          prompt: { verificationUrl: 'https://example.invalid/late', expiresAt: READY_PROMPT_EXPIRY },
+        }
+      },
+    })
+    const pending = runtime.connect('feishu.auth')
+    await started
+    runtime.report('feishu.auth', {
+      configuration: 'ready',
+      authorization: 'ready',
+      account: 'reported',
+    })
+    await expect(pending).rejects.toMatchObject({ category: 'cancelled' })
+    // The terminal observation must not leave a dead attempt behind: a new
+    // explicit connect starts its own adapter flow.
+    const again = runtime.connect('feishu.auth')
+    await new Promise(resolve => setTimeout(resolve, 1))
+    expect(adapterCalls).toBe(2)
+    await runtime.cancel('feishu.auth')
+    await expect(again).rejects.toMatchObject({ category: 'cancelled' })
+    runtime.dispose()
+  })
+})

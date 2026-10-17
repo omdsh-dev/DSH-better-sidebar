@@ -694,7 +694,13 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions = {}
         || normalized.authorization === 'scope-insufficient'
       ) {
         sessions.delete(connectionId)
-        attempts.get(connectionId)?.controller.abort()
+        const pending = attempts.get(connectionId)
+        if (pending !== undefined) {
+          // Drop the in-flight attempt so a late adapter answer can never
+          // re-enter `authorizing`; the running flow sees it is superseded.
+          pending.controller.abort()
+          attempts.delete(connectionId)
+        }
       }
     },
     dispose(): void {
