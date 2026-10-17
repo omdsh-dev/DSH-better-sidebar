@@ -450,7 +450,7 @@ export interface ClueFetchInit {
   readonly method: string
   readonly headers: Record<string, string>
   readonly body?: string | Uint8Array
-  readonly redirect: 'manual'
+  readonly redirect: 'manual' | 'follow'
   readonly signal?: AbortSignal
 }
 
@@ -481,6 +481,12 @@ export interface McpCallRequest {
   readonly toolName: string
   /** Lossless JSON arguments, forwarded verbatim to the host tool. */
   readonly arguments: JsonValue
+  /**
+   * Whether the host may ask for approval before executing. Defaults to
+   * `true` (fail closed): an idle UI request without a live agent then answers
+   * `approval-required` instead of running unapproved.
+   */
+  readonly requiresApproval?: boolean
   /** Session whose live agent carries the call (never fabricated). */
   readonly sessionId?: string
   readonly signal?: AbortSignal

@@ -820,13 +820,73 @@ export interface SidebarLoaderEntry {
 }
 
 /**
+ * One credential reference resolved for a single operation (mirror of
+ * @deepseek-ai/dsh-credentials' CredentialProvider.resolve). The value is
+ * consumed immediately and never copied into preferences, clues or a cache.
+ */
+export interface SidebarCredentialProvider {
+  /** Resolve one environment-variable-style reference, or undefined. */
+  resolve(ref: string): Promise<{ value: string; source: string } | undefined>
+  /** Presence/writability facts for configuration surfaces (never the value). */
+  describe?(ref: string): Promise<{ configured: boolean; source?: string; writable?: boolean }>
+}
+
+/** One registered host workspace (the subset clue operations resolve). */
+export interface SidebarWorkspaceRegistry {
+  get(id: string): { readonly id?: string; readonly path?: string } | undefined
+}
+
+/**
+ * The approval seam (mirror of @deepseek-ai/dsh-user-approval). S2 does not
+ * prompt approval itself: it only exposes the structural mirror so the host
+ * tool bridge is typed against the policy it actually goes through.
+ */
+export interface SidebarApprovalService {
+  request(request: {
+    readonly agent: unknown
+    readonly toolName: string
+    readonly reason?: string
+    readonly [key: string]: unknown
+  }): Promise<'allowed-once' | 'rejected' | 'cancelled' | 'unavailable'>
+}
+
+/** One tool execution handed to the host registry (structural mirror). */
+export interface SidebarToolExecutionInput {
+  readonly callId: string
+  readonly name: string
+  /** Losslessly JSON-serializable parsed arguments (the tool validates its schema). */
+  readonly arguments: unknown
+  /** The live agent on whose behalf the call runs; absent only for read-only UI calls. */
+  readonly agent?: unknown
+  readonly signal: AbortSignal
+}
+
+/** One host tool failure (the raw message never reaches a model projection here). */
+export interface SidebarToolExecutionFailure {
+  readonly message: string
+  readonly info?: { readonly name: string; readonly code: string; readonly reason?: string }
+}
+
+/** One materialized host tool outcome (structural mirror of ToolExecutionResult). */
+export interface SidebarToolExecutionResult {
+  readonly isError: boolean
+  readonly value?: unknown
+  readonly content?: readonly unknown[]
+  readonly error?: SidebarToolExecutionFailure
+}
+
+/**
  * The tools service face (mirror of @deepseek-ai/dsh-tools' ToolRuntime).
  * The host half registers model-facing tools here; the registry attaches the
  * returned disposer to the contributing fiber so unloading unregisters them.
+ * `execute` is the public dispatch path S2's MCP bridge uses — it runs the
+ * host's own guards/approval policy and is optional on trimmed deployments.
  */
 export interface SidebarToolsService {
   /** Register one tool definition (raw JSON-Schema or defineTool-sugar form). */
   register(tool: unknown): () => void
+  /** Dispatch one tool call through the registry pipeline (guards/approval included). */
+  execute?(input: SidebarToolExecutionInput): Promise<SidebarToolExecutionResult>
 }
 
 /**
@@ -875,6 +935,15 @@ export interface SidebarContextShape {
   settings: SidebarSettingsService
   /** The tool registry face. */
   tools: SidebarToolsService
+  /**
+   * Host credential seam (optional). S2 resolves a secret per operation from it
+   * and never copies the value into preferences, clues, exports or a cache.
+   */
+  credentials?: SidebarCredentialProvider
+  /** Host workspace registry (optional; existing S1 reads degrade gracefully). */
+  workspaceRegistry?: SidebarWorkspaceRegistry
+  /** Host approval seam (optional; the tool bridge never prompts on its own). */
+  approval?: SidebarApprovalService
   /** The client locale service face. */
   locale: SidebarLocaleService
   /** The client module system (rc.8+ chunk-loader externals). */
