@@ -274,6 +274,37 @@ describe('snapshot round-trip', () => {
     expect(readFileSync(join(sender.workspace, 'a.md'), 'utf8')).toBe('# sender snapshot body\n')
   })
 
+  it('stores a local text read as its declared JSON projection, not the raw UTF-16 bytes', async () => {
+    const sender = makeWorkspace()
+    // UTF-16LE BOM + "é\r\n". The local source decodes this to a text
+    // projection and exposes no raw asset; S7 deliberately stores the
+    // source-declared format + JSON projection (spec §4's structured-document
+    // branch). The original encoding/BOM is therefore not recoverable, and
+    // that limitation is pinned here instead of being silently assumed.
+    const original = Buffer.from([0xff, 0xfe, 0xe9, 0x00, 0x0d, 0x00, 0x0a, 0x00])
+    writeWorkspaceFile(sender.workspace, 'utf16.txt', original)
+    const clueId = await ensureWorkspaceFile(sender.service, 'ws-1', 'utf16.txt', 'UTF-16 text')
+    const exported = await exportPack({ clues: sender.service, now: () => NOW }, {
+      workspaceId: 'ws-1',
+      mode: 'snapshot',
+      clueIds: [clueId],
+    })
+    expect(exported.complete).toBe(true)
+    const manifest = JSON.parse(new TextDecoder().decode(
+      readZip(exported.bytes).find(entry => entry.name === 'manifest.json')!.data,
+    )) as CluepackManifest
+    const snapshot = manifest.clues[0]!.snapshot!
+    expect(snapshot).toMatchObject({ path: 'content/clue-1.json', encoding: 'json', format: 'text/plain' })
+    expect(snapshot.assets).toBeUndefined()
+    const body = readZip(exported.bytes).find(entry => entry.name === snapshot.path)!.data
+    expect(JSON.parse(new TextDecoder().decode(body))).toEqual({
+      format: 'text/plain',
+      data: { text: 'é\r\n' },
+      text: 'é\r\n',
+    })
+    expect(Buffer.from(body)).not.toEqual(original)
+  })
+
   it('keeps the snapshot readable when the receiving side has no source at all', async () => {
     const sender = makeWorkspace()
     writeWorkspaceFile(sender.workspace, 'a.md', 'offline body')
@@ -409,6 +440,122 @@ describe('locator remapping and path dialects', () => {
     expect(live.text).toBe('# receiver external\n')
   })
 
+  it('reports a conflict instead of orphaning the old row when the remap target is already live', async () => {
+    const sender = makeWorkspace()
+    const externalPath = writeWorkspaceFile(sender.workspace, 'external.md', '# sender external\n')
+    const externalLocator = { root: { kind: 'external' }, path: externalPath, dialect: HOST_DIALECT }
+    const pack = buildLocatorPack({ locator: externalLocator, title: 'External clue' })
+
+    const receiver = makeWorkspace({ workspaceId: 'ws-2' })
+    const first = await importPack({ clues: receiver.service }, {
+      workspaceId: 'ws-2',
+      bytes: pack,
+    })
+    const unresolvedId = first.clues[0]!.clueId
+    writeWorkspaceFile(receiver.workspace, 'already.md', '# already live\n')
+    const live = await receiver.service.ensure({
+      workspaceId: 'ws-2',
+      sourceId: FILES,
+      typeId: LOCAL_FILE_TYPE_IDS.markdown,
+      locator: {
+        root: { kind: 'workspace', workspaceId: 'ws-2' },
+        path: 'already.md',
+        dialect: HOST_DIALECT,
+      },
+      title: 'Already live',
+    })
+    const liveId = live.clue.id
+    expect(liveId).not.toBe(unresolvedId)
+
+    const remapped = await importPack({ clues: receiver.service }, {
+      workspaceId: 'ws-2',
+      bytes: pack,
+      remap: [{
+        clueKey: 'clue-1',
+        locator: {
+          root: { kind: 'workspace', workspaceId: 'ws-2' },
+          path: 'already.md',
+          dialect: HOST_DIALECT,
+        },
+      }],
+    })
+    // The target address is already a live clue; S1 cannot merge the old
+    // unresolved row, so the import must NOT report a silent complete.
+    expect(remapped).toMatchObject({ complete: false, partial: true, requiresAcceptance: true })
+    expect(remapped.issues).toContainEqual(expect.objectContaining({
+      target: 'clue',
+      key: 'clue-1',
+      category: 'conflict',
+    }))
+    expect(remapped.clues[0]!.clueId).toBe(liveId)
+    const library = await receiver.service.listClues('ws-2')
+    expect(library.clues).toHaveLength(2)
+    const old = library.clues.find(clue => clue.id === unresolvedId)!
+    expect(old.unresolved).toBeDefined()
+    // The old row's portable hint was not rewritten to the live address.
+    expect(old.unresolved?.portable?.locator).toEqual(externalLocator)
+  })
+
+  it('preserves a portable:false workspace hint across a cross-workspace re-import', async () => {
+    const sender = makeWorkspace()
+    const senderLocator = {
+      root: { kind: 'workspace', workspaceId: 'ws-1' },
+      path: 'hint.md',
+      dialect: HOST_DIALECT,
+    }
+    const seeded = await sender.service.importUnresolved({
+      workspaceId: 'ws-1',
+      sourceId: FILES,
+      typeId: LOCAL_FILE_TYPE_IDS.markdown,
+      locator: {},
+      title: 'Hint row',
+      reason: 'source is not installed',
+      portable: { portable: false, locator: senderLocator },
+    })
+    const exported = await exportPack({ clues: sender.service, now: () => NOW }, {
+      workspaceId: 'ws-1',
+      mode: 'references',
+      clueIds: [seeded.clue.id],
+    })
+    const manifest = JSON.parse(new TextDecoder().decode(
+      readZip(exported.bytes).find(entry => entry.name === 'manifest.json')!.data,
+    )) as CluepackManifest
+    expect(manifest.clues[0]!.portable).toMatchObject({ portable: false, locator: senderLocator })
+
+    const receiver = makeWorkspace({ workspaceId: 'ws-2' })
+    writeWorkspaceFile(receiver.workspace, 'hint.md', '# hint\n')
+    const first = await importPack({ clues: receiver.service }, {
+      workspaceId: 'ws-2',
+      bytes: exported.bytes,
+    })
+    const receiverId = first.clues[0]!.clueId
+    expect(first.clues[0]!.unresolved).toBe(true)
+    const firstRow = (await receiver.service.listClues('ws-2')).clues[0]!
+    expect(firstRow.unresolved?.portable?.locator).toEqual({
+      ...senderLocator,
+      root: { kind: 'workspace', workspaceId: 'ws-2' },
+    })
+
+    // Re-export the receiver's own unresolved row: the hint must survive, so a
+    // second import finds the same row instead of minting a duplicate.
+    const reExported = await exportPack({ clues: receiver.service, now: () => NOW }, {
+      workspaceId: 'ws-2',
+      mode: 'references',
+      clueIds: [receiverId],
+    })
+    const second = await importPack({ clues: receiver.service }, {
+      workspaceId: 'ws-2',
+      bytes: reExported.bytes,
+    })
+    expect(second.clues[0]!.clueId).toBe(receiverId)
+    const library = await receiver.service.listClues('ws-2')
+    expect(library.clues).toHaveLength(1)
+    expect(library.clues[0]!.unresolved?.portable?.locator).toEqual({
+      ...senderLocator,
+      root: { kind: 'workspace', workspaceId: 'ws-2' },
+    })
+  })
+
   it('keeps a cross-dialect locator unresolved until the receiver remaps it', async () => {
     const receiver = makeWorkspace({ workspaceId: 'ws-2' })
     writeWorkspaceFile(receiver.workspace, 'docs/a.md', '# path\n')
@@ -428,7 +575,7 @@ describe('locator remapping and path dialects', () => {
       bytes: pack,
     })
     expect(preview.items[0]!.willBeUnresolved).toBe(true)
-    expect(preview.items[0]!.unresolvedReason).toMatch(new RegExp(`${otherDialect}.*${HOST_DIALECT}`))
+    expect(preview.items[0]!.unresolvedReason).toMatch(/path dialect/i)
     const imported = await importPack({ clues: receiver.service }, {
       workspaceId: 'ws-2',
       bytes: pack,
@@ -472,6 +619,30 @@ describe('empty and partial packs', () => {
     expect(imported).toMatchObject({ complete: true, partial: false })
     expect(imported.clues).toEqual([])
     expect(imported.packs).toEqual([])
+  })
+
+  it('round-trips a named pack with an empty member set', async () => {
+    const sender = makeWorkspace()
+    const empty = await sender.service.createPack({ workspaceId: 'ws-1', name: 'Empty named pack', members: [] })
+    const exported = await exportPack({ clues: sender.service, now: () => NOW }, {
+      workspaceId: 'ws-1',
+      mode: 'references',
+      packIds: [empty.pack.id],
+    })
+    expect(exported.complete).toBe(true)
+    expect(exported.manifest.packs).toEqual([{ key: 'pack-1', name: 'Empty named pack', members: [] }])
+    const receiver = makeWorkspace({ workspaceId: 'ws-2' })
+    const imported = await importPack({ clues: receiver.service }, {
+      workspaceId: 'ws-2',
+      bytes: exported.bytes,
+    })
+    expect(imported.complete).toBe(true)
+    expect(imported.packs).toEqual([
+      expect.objectContaining({ name: 'Empty named pack', members: 0 }),
+    ])
+    const packs = (await receiver.service.listPacks('ws-2')).packs
+    expect(packs).toHaveLength(1)
+    expect(packs[0]!.members).toEqual([])
   })
 
   it('imports a partial export with its issue list and no invented content', async () => {

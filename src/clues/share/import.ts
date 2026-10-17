@@ -54,7 +54,6 @@ import {
   ClueError,
   isClueError,
   type Clue,
-  type ClueErrorCategory,
   type CluePack,
   type CluePortableRef,
   type ClueSnapshotMeta,
@@ -69,8 +68,21 @@ import {
   type CluepackIssue,
   type CluepackManifest,
   type CluepackMode,
+  type CluepackSnapshot,
   type CluepackSource,
 } from './manifest.ts'
+import {
+  SAFE_ADOPTED_REASON,
+  SAFE_CONNECTION_REASON,
+  SAFE_CROSS_DIALECT_REASON,
+  SAFE_EXTERNAL_PATH_REASON,
+  SAFE_NO_PORTABLE_REFERENCE,
+  SAFE_NON_PORTABLE_REASON,
+  SAFE_SOURCE_NOT_INSTALLED,
+  SAFE_TYPE_NOT_OFFERED,
+  SAFE_WORKSPACE_REMAP_REASON,
+  safeFailureOf,
+} from './reasons.ts'
 import { readZip, type ZipReadLimits } from './zip.ts'
 
 /** Maximum pack name S1 accepts (mirrors the service's own UTF-16 bound). */
@@ -315,10 +327,24 @@ export interface ClueShareImportResult {
   readonly reasons: readonly string[]
 }
 
+/** One integrity-checked raw asset of a snapshot. */
+interface ParsedAsset {
+  readonly kind: 'download' | 'open'
+  readonly mediaType: string
+  readonly bytes: Uint8Array
+  readonly sha256: string
+}
+
 /** Parsed snapshot payload, already integrity-checked. */
 type ParsedSnapshotContent =
-  | { readonly kind: 'json'; readonly format: string; readonly data: JsonValue; readonly text?: string }
-  | { readonly kind: 'raw'; readonly bytes: Uint8Array }
+  | {
+    readonly kind: 'json'
+    readonly format: string
+    readonly data: JsonValue
+    readonly text?: string
+    readonly assets: readonly ParsedAsset[]
+  }
+  | { readonly kind: 'raw'; readonly bytes: Uint8Array; readonly assets: readonly ParsedAsset[] }
 
 /** One validated archive. */
 interface ParsedArchive {
@@ -345,12 +371,6 @@ function aborted(signal: AbortSignal | undefined): boolean {
 /** Whether a value is a plain JSON object. */
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
-}
-
-/** Fixed category/message of one unexpected failure (never raw transport output). */
-function failureOf(error: unknown): { category: ClueErrorCategory; reason: string } {
-  if (error instanceof ClueError) return { category: error.category, reason: error.message }
-  return { category: 'failed', reason: 'the clue pack operation failed' }
 }
 
 /**
@@ -409,6 +429,62 @@ function parseJsonContent(bytes: Uint8Array, snapshotFormat: string, path: strin
     format: value.format,
     data: value.data as JsonValue,
     ...(value.text === undefined ? {} : { text: value.text }),
+    assets: [],
+  }
+}
+
+/**
+ * Project one verified archive snapshot into S1's JSON-only snapshot content.
+ *
+ * A single payload keeps the legacy shapes (`data`/`text` for JSON, the
+ * six-field binary wrapper for raw bytes). A read with extra assets uses the
+ * versioned bundle so no byte is dropped: the primary body/assets are base64
+ * encoded exactly, and the exporter recognizes the same marker when re-sharing
+ * offline content.
+ */
+function snapshotDataOf(
+  content: ParsedSnapshotContent,
+  snapshot: CluepackSnapshot,
+): { readonly data: JsonValue; readonly text?: string } {
+  if (content.assets.length === 0) {
+    if (content.kind === 'json') {
+      return { data: content.data, ...(content.text === undefined ? {} : { text: content.text }) }
+    }
+    return {
+      data: {
+        kind: 'binary',
+        mediaType: snapshot.mediaType,
+        size: snapshot.bytes,
+        sha256: snapshot.sha256,
+        encoding: 'base64',
+        base64: Buffer.from(content.bytes).toString('base64'),
+      } as JsonValue,
+    }
+  }
+  const primary: JsonValue = content.kind === 'json'
+    ? { encoding: 'json', data: content.data }
+    : {
+      encoding: 'raw',
+      mediaType: snapshot.mediaType,
+      size: snapshot.bytes,
+      sha256: snapshot.sha256,
+      base64: Buffer.from(content.bytes).toString('base64'),
+    }
+  const assets = content.assets.map(asset => ({
+    kind: asset.kind,
+    mediaType: asset.mediaType,
+    size: asset.bytes.byteLength,
+    sha256: asset.sha256,
+    base64: Buffer.from(asset.bytes).toString('base64'),
+  }))
+  return {
+    data: {
+      kind: 'cluepack-snapshot-bundle',
+      version: 1,
+      primary,
+      assets,
+    } as JsonValue,
+    ...(content.kind === 'json' && content.text !== undefined ? { text: content.text } : {}),
   }
 }
 
@@ -443,12 +519,30 @@ function loadArchive(deps: ClueShareImportDeps, bytes: Uint8Array): ParsedArchiv
     if (digest !== snapshot.sha256) {
       throw new ClueError('invalid-request', `archive content "${snapshot.path}" failed the checksum check`)
     }
-    contents.set(
-      snapshot.path,
-      snapshot.encoding === 'raw'
-        ? { kind: 'raw', bytes: data }
-        : parseJsonContent(data, snapshot.format, snapshot.path),
-    )
+    const assets: ParsedAsset[] = []
+    for (const asset of snapshot.assets ?? []) {
+      const assetData = byName.get(asset.path)
+      if (assetData === undefined) {
+        throw new ClueError('invalid-request', `archive content "${asset.path}" is missing`)
+      }
+      if (assetData.byteLength !== asset.bytes) {
+        throw new ClueError(
+          'invalid-request',
+          `archive content "${asset.path}" does not match its declared size`,
+        )
+      }
+      const assetDigest = createHash('sha256').update(assetData).digest('hex')
+      if (assetDigest !== asset.sha256) {
+        throw new ClueError('invalid-request', `archive content "${asset.path}" failed the checksum check`)
+      }
+      assets.push({ kind: asset.kind, mediaType: asset.mediaType, bytes: assetData, sha256: asset.sha256 })
+    }
+    if (snapshot.encoding === 'raw') {
+      contents.set(snapshot.path, { kind: 'raw', bytes: data, assets })
+    } else {
+      const parsed = parseJsonContent(data, snapshot.format, snapshot.path)
+      contents.set(snapshot.path, { ...parsed, assets })
+    }
   }
   return { manifest, contents }
 }
@@ -496,7 +590,7 @@ function crossDialectReason(sourceId: string, locator: Locator): string | undefi
   const dialect = (locator as Record<string, JsonValue>).dialect
   if (dialect !== 'posix' && dialect !== 'win32') return undefined
   if (dialect === HOST_DIALECT) return undefined
-  return `the reference uses the ${dialect} path dialect and cannot be opened on this ${HOST_DIALECT} host; choose a receiving-side file explicitly`
+  return SAFE_CROSS_DIALECT_REASON
 }
 
 /** Reject a mapped locator that this host could never read (keeps it unresolved). */
@@ -520,9 +614,7 @@ function defaultRemapLocator(sourceId: string, locator: Locator, workspaceId: st
     return { locator: { ...locator, root: { ...root, workspaceId } } }
   }
   if (root?.kind === 'external') {
-    return {
-      reason: 'an absolute path outside a workspace needs an explicit receiving-workspace remapping',
-    }
+    return { reason: SAFE_EXTERNAL_PATH_REASON }
   }
   return { locator }
 }
@@ -544,18 +636,14 @@ function remapForImport(
     if (explicit.connectionId !== undefined) {
       const installed = deps.clues.getSource(source.sourceId)
       if (installed?.connectionId !== explicit.connectionId) {
-        return {
-          reason: `the selected connection "${explicit.connectionId}" for source "${source.sourceId}" is not available on this machine`,
-        }
+        return { reason: SAFE_CONNECTION_REASON }
       }
     }
     return settleLocator(source.sourceId, { locator: explicit.locator })
   }
   const locator = clue.portable.locator
   if (locator === undefined) {
-    return {
-      reason: clue.portable.reason ?? 'the clue has no portable reference',
-    }
+    return { reason: SAFE_NO_PORTABLE_REFERENCE }
   }
   if (params.remapLocator !== undefined) {
     const mapped = params.remapLocator({
@@ -565,13 +653,20 @@ function remapForImport(
       workspaceId: params.workspaceId,
     })
     return mapped === undefined
-      ? { reason: 'the reference needs an explicit receiving-workspace remapping' }
+      ? { reason: SAFE_WORKSPACE_REMAP_REASON }
       : settleLocator(source.sourceId, { locator: mapped })
   }
   if (clue.portable.portable !== true) {
+    // A non-portable locator is a HINT, never an automatically usable address.
+    // Re-root a workspace-relative hint at the receiving workspace (otherwise
+    // S1 rejects the sender's foreign workspace id and the hint would be
+    // dropped entirely on re-import); an external absolute path stays exactly
+    // as the sender labelled it.
+    const defaulted = defaultRemapLocator(source.sourceId, locator, params.workspaceId)
+    const hint = defaulted.locator ?? locator
     return {
-      reason: clue.portable.reason
-        ?? 'the archived non-portable locator needs an explicit receiving-side remapping',
+      ...(Object.keys(hint).length === 0 ? {} : { hint }),
+      reason: SAFE_NON_PORTABLE_REASON,
     }
   }
   return settleLocator(source.sourceId, defaultRemapLocator(source.sourceId, locator, params.workspaceId))
@@ -588,13 +683,11 @@ function unresolvedReasonOf(
   remapped: RemappedLocator,
 ): string {
   if (remapped.reason !== undefined) return remapped.reason
-  if (deps.clues.getSource(source.sourceId) === undefined) {
-    return `the source "${source.sourceId}" is not installed on this machine`
-  }
+  if (deps.clues.getSource(source.sourceId) === undefined) return SAFE_SOURCE_NOT_INSTALLED
   if (!deps.clues.getTypes(source.sourceId).some(type => type.typeId === clue.typeId)) {
-    return `the source "${source.sourceId}" does not offer type "${clue.typeId}" here`
+    return SAFE_TYPE_NOT_OFFERED
   }
-  return clue.portable.reason ?? 'the clue has no portable reference'
+  return SAFE_NO_PORTABLE_REFERENCE
 }
 
 /**
@@ -829,26 +922,31 @@ export async function importPack(
    * updates an unresolved row in place and `ensure` then resolves it by the
    * remapped portable locator. Only built when a remap seam is in play.
    */
-  const unresolvedByArchivedAddress = remapByKey === undefined && params.remapLocator === undefined
+  const localIndex = remapByKey === undefined && params.remapLocator === undefined
     ? undefined
     : await (async () => {
+      const unresolvedByAddress = new Map<string, Clue>()
       const byAddress = new Map<string, Clue>()
       for (const existing of (await deps.clues.listClues(workspaceId)).clues) {
-        if (existing.unresolved === undefined) continue
-        for (const locator of [existing.locator, existing.unresolved.portable?.locator]) {
+        for (const locator of [existing.locator, existing.unresolved?.portable?.locator]) {
           if (locator === undefined || Object.keys(locator).length === 0) continue
           const key = addressKey(existing.sourceId, locator)
           if (!byAddress.has(key)) byAddress.set(key, existing)
+          if (existing.unresolved !== undefined && !unresolvedByAddress.has(key)) {
+            unresolvedByAddress.set(key, existing)
+          }
         }
       }
-      return byAddress
+      return { unresolvedByAddress, byAddress }
     })()
   throwIfAborted(params.signal)
   /** The item currently being committed (for a post-commit failure reason). */
   let active: { readonly target: 'clue' | 'pack'; readonly key: string } | undefined
 
-  /** How many archive objects were durably committed so far. */
-  const committedCount = (): number => clues.length + snapshots.length + packs.length
+  /** How many existing unresolved rows a remap adoption updated in place. */
+  let seedCommits = 0
+  /** How many archive/local objects were durably committed so far. */
+  const committedCount = (): number => clues.length + snapshots.length + packs.length + seedCommits
 
   /**
    * Return an EXPLICIT result once a failure/cancellation lands after at least
@@ -861,7 +959,7 @@ export async function importPack(
     const cancelled = aborted(params.signal)
       && isClueError(error)
       && error.category === 'cancelled'
-    const failure = failureOf(error)
+    const failure = safeFailureOf(error)
     if (!cancelled) {
       const target = active ?? { target: 'clue' as const, key: 'manifest' }
       issues.push({
@@ -871,9 +969,12 @@ export async function importPack(
         reason: failure.reason,
       })
     }
+    const seedNote = seedCommits === 0
+      ? ''
+      : `; ${seedCommits} existing unresolved reference${seedCommits === 1 ? '' : 's'} updated in place`
     const reason = cancelled
-      ? `the clue pack import was cancelled after committing ${clues.length} of ${total} clues and ${packs.length} of ${packTotal} packs; the committed items remain in the library and need explicit acceptance`
-      : `the clue pack import failed after committing ${clues.length} of ${total} clues and ${packs.length} of ${packTotal} packs: ${failure.reason}`
+      ? `the clue pack import was cancelled after committing ${clues.length} of ${total} clues and ${packs.length} of ${packTotal} packs${seedNote}; the committed items remain in the library and need explicit acceptance`
+      : `the clue pack import failed after committing ${clues.length} of ${total} clues and ${packs.length} of ${packTotal} packs${seedNote}: ${failure.reason}`
     const reasons = [...new Set([...issues.map(issue => issue.reason), reason])]
     progress({ phase: 'done', completed: total, total, status: 'issue', reason })
     return {
@@ -911,7 +1012,7 @@ export async function importPack(
     // A locator that this host cannot use (foreign dialect, external absolute
     // path, ambiguous connection) is a HINT, never a portable address.
     const portable = remapped.reason === undefined && clue.portable.portable === true
-    const portableReason = remapped.reason ?? clue.portable.reason ?? (portable ? undefined : reason)
+    const portableReason = remapped.reason ?? (portable ? undefined : reason)
     if (locator === undefined) return { portable: false, reason: portableReason ?? reason }
     return {
       portable,
@@ -995,10 +1096,11 @@ export async function importPack(
         if (defaulted !== undefined) priorAddresses.push(defaulted)
       }
       if (remapped.locator !== undefined) priorAddresses.push(remapped.locator)
-      const prior = unresolvedByArchivedAddress === undefined
+      if (remapped.hint !== undefined) priorAddresses.push(remapped.hint)
+      const prior = localIndex === undefined
         ? undefined
         : priorAddresses
-          .map(locator => unresolvedByArchivedAddress.get(addressKey(source.sourceId, locator)))
+          .map(locator => localIndex.unresolvedByAddress.get(addressKey(source.sourceId, locator)))
           .find(candidate => candidate !== undefined)
       active = { target: 'clue', key: clue.key }
       let clueId: string
@@ -1007,11 +1109,27 @@ export async function importPack(
       let unresolved = false
       let itemIssue = false
       if (live) {
+        let adoptionConflict = false
         if (prior !== undefined && remapped.locator !== undefined) {
           const targetKey = addressKey(source.sourceId, remapped.locator)
           const already = [prior.locator, prior.unresolved?.portable?.locator].some(locator =>
             locator !== undefined && addressKey(source.sourceId, locator) === targetKey)
-          if (!already) {
+          const targetRow = localIndex?.byAddress.get(targetKey)
+          if (!already && targetRow !== undefined && targetRow.id !== prior.id) {
+            // The remapped address already belongs to another local row (for
+            // example the receiver ensured it before this re-import). Seeding
+            // the old unresolved row would only move the orphan; S1 has no
+            // merge/delete API, so the import must say so instead of returning
+            // a silent complete:true.
+            adoptionConflict = true
+            itemIssue = true
+            issues.push({
+              target: 'clue',
+              key: clue.key,
+              category: 'conflict',
+              reason: 'the remapped address already belongs to another local clue; the existing unresolved reference was left untouched',
+            })
+          } else if (!already) {
             try {
               // Seed the remapped address as the row's portable hint; the
               // `ensure` below then finds and resolves the SAME row.
@@ -1024,12 +1142,16 @@ export async function importPack(
                 locator: prior.unresolved?.portable?.locator
                   ?? (archivedLocator !== undefined && Object.keys(archivedLocator).length > 0 ? archivedLocator : {}),
                 title: clue.title,
-                reason: prior.unresolved?.reason ?? 'the receiver selected this address explicitly',
+                reason: prior.unresolved?.reason ?? SAFE_ADOPTED_REASON,
                 portable: {
                   portable: clue.portable.portable === true,
                   locator: remapped.locator,
                 },
               }, options)
+              // S1's importUnresolved commits even when it reuses a row, so
+              // this write must be counted: an abort before the ensure below
+              // has already changed the library and cannot be a bare throw.
+              seedCommits += 1
             } catch (error) {
               if (aborted(params.signal)) throw error
               // Let `ensure` decide: if the address is invalid the normal
@@ -1049,10 +1171,15 @@ export async function importPack(
           title = ensured.clue.title
           created = ensured.created
           unresolved = ensured.clue.unresolved !== undefined
-          if (prior !== undefined && ensured.created) {
+          if (
+            prior !== undefined
+            && !adoptionConflict
+            && (ensured.created || ensured.clue.id !== prior.id)
+          ) {
             // The adoption attempt did not reach the old row (e.g. a
-            // source-specific normalization rejected the seeded hint). Keep
-            // the import honest instead of pretending the remap applied.
+            // source-specific normalization rejected the seeded hint, or a
+            // race created/reused another row). Keep the import honest
+            // instead of pretending the remap applied.
             itemIssue = true
             issues.push({
               target: 'clue',
@@ -1063,7 +1190,7 @@ export async function importPack(
           }
         } catch (error) {
           if (aborted(params.signal)) throw error
-          const failure = failureOf(error)
+          const failure = safeFailureOf(error)
           // The source is present but could not even normalize/store the
           // reference. Preserve the data as unresolved and surface the
           // failure: hiding it would make a half-imported pack look complete.
@@ -1101,29 +1228,15 @@ export async function importPack(
         const content = contents.get(clue.snapshot.path)!
         try {
           throwIfAborted(params.signal)
+          const projected = snapshotDataOf(content, clue.snapshot)
           const meta: ClueSnapshotMeta = await deps.clues.putSnapshot(workspaceId, {
             clueId,
             format: clue.snapshot.format,
             fetchedAt: clue.snapshot.fetchedAt,
             ...(clue.snapshot.sourceVersion === undefined ? {} : { sourceVersion: clue.snapshot.sourceVersion }),
             integrity: 'verified',
-            ...(content.kind === 'json'
-              ? {
-                data: content.data,
-                ...(content.text === undefined ? {} : { text: content.text }),
-              }
-              : {
-                // Raw bytes are preserved exactly (base64 is a transport
-                // encoding, not a rewrite): S1 snapshot storage is JSON-only.
-                data: {
-                  kind: 'binary',
-                  mediaType: clue.snapshot.mediaType,
-                  size: clue.snapshot.bytes,
-                  sha256: clue.snapshot.sha256,
-                  encoding: 'base64',
-                  base64: Buffer.from(content.bytes).toString('base64'),
-                } as JsonValue,
-              }),
+            data: projected.data,
+            ...(projected.text === undefined ? {} : { text: projected.text }),
           })
           snapshotId = meta.snapshotId
           snapshots.push({
@@ -1136,7 +1249,7 @@ export async function importPack(
         } catch (error) {
           if (aborted(params.signal)) throw error
           itemIssue = true
-          const failure = failureOf(error)
+          const failure = safeFailureOf(error)
           issues.push({ target: 'clue', key: clue.key, category: failure.category, reason: failure.reason })
           progress({
             phase: 'snapshot',
@@ -1203,7 +1316,7 @@ export async function importPack(
         })
       } catch (error) {
         if (aborted(params.signal)) throw error
-        const failure = failureOf(error)
+        const failure = safeFailureOf(error)
         issues.push({ target: 'pack', key: pack.key, category: failure.category, reason: failure.reason })
         progress({
           phase: 'pack',

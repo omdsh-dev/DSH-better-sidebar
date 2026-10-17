@@ -84,6 +84,20 @@ export interface CluepackSource {
   readonly typeIds?: readonly string[]
 }
 
+/** One extra binary asset stored beside a snapshot's primary payload. */
+export interface CluepackSnapshotAsset {
+  /** Archive-relative path under `content/` (validated, never a runtime id). */
+  readonly path: string
+  /** How the source exposed the asset. */
+  readonly kind: 'download' | 'open'
+  /** Media type of the stored bytes. */
+  readonly mediaType: string
+  /** Byte length of the asset as stored in the archive. */
+  readonly bytes: number
+  /** Lowercase hex SHA-256 of the asset bytes. */
+  readonly sha256: string
+}
+
 /** One snapshot descriptor attached to a clue record. */
 export interface CluepackSnapshot {
   /** Archive-relative path under `content/` (validated, never used as a runtime id). */
@@ -102,6 +116,12 @@ export interface CluepackSnapshot {
   readonly fetchedAt: string
   /** Source revision/version when one was reported. */
   readonly sourceVersion?: string
+  /**
+   * Additional raw assets captured from the same source read (the text body
+   * or first asset is the primary payload above). Optional and absent on
+   * packs that carry one payload.
+   */
+  readonly assets?: readonly CluepackSnapshotAsset[]
 }
 
 /** One clue record. */
@@ -171,10 +191,43 @@ function optionalString(value: unknown, path: string): string | undefined {
   return requireString(value, path)
 }
 
-/** One ISO-like timestamp string. */
+/** The strict ISO-8601 form the cluepack writes and accepts. */
+const ISO_TIMESTAMP = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?(Z|[+-]\d{2}:\d{2})$/
+
+/** Days in one proleptic Gregorian month (no Date year-0 remapping). */
+function daysInMonth(year: number, month: number): number {
+  if (month === 2) {
+    return year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0) ? 29 : 28
+  }
+  return [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1]!
+}
+
+/** One strict ISO-8601 timestamp (not merely something Date.parse accepts). */
 function requireTimestamp(value: unknown, path: string): string {
-  if (typeof value !== 'string' || Number.isNaN(Date.parse(value))) {
+  if (typeof value !== 'string') invalid(`${path} must be an ISO timestamp`)
+  const match = ISO_TIMESTAMP.exec(value)
+  if (match === null || Number.isNaN(Date.parse(value))) {
     invalid(`${path} must be an ISO timestamp`)
+  }
+  const year = Number(match[1])
+  const month = Number(match[2])
+  const day = Number(match[3])
+  const hour = Number(match[4])
+  const minute = Number(match[5])
+  const second = Number(match[6])
+  const zone = match[7]!
+  if (month < 1 || month > 12 || day < 1 || day > daysInMonth(year, month)) {
+    invalid(`${path} must be a valid ISO timestamp`)
+  }
+  if (hour > 23 || minute > 59 || second > 59) {
+    invalid(`${path} must be a valid ISO timestamp`)
+  }
+  if (zone !== 'Z') {
+    const zoneHour = Number(zone.slice(1, 3))
+    const zoneMinute = Number(zone.slice(4, 6))
+    if (zoneHour > 14 || zoneMinute > 59 || (zoneHour === 14 && zoneMinute !== 0)) {
+      invalid(`${path} must be a valid ISO timestamp`)
+    }
   }
   return value
 }
@@ -251,6 +304,25 @@ function parsePortable(value: unknown, path: string): CluePortableRef {
   }
 }
 
+/** Validate one extra snapshot asset descriptor. */
+function parseSnapshotAsset(value: unknown, path: string): CluepackSnapshotAsset {
+  if (!isRecord(value)) invalid(`${path} must be an object`)
+  const assetPath = requireString(value.path, `${path}.path`)
+  if (assetPath === CLUEPACK_CONTENT_PREFIX || !assetPath.startsWith(CLUEPACK_CONTENT_PREFIX)) {
+    invalid(`${path}.path must be a file under ${CLUEPACK_CONTENT_PREFIX}`)
+  }
+  assertZipEntryName(assetPath)
+  if (value.kind !== 'download' && value.kind !== 'open') {
+    invalid(`${path}.kind must be "download" or "open"`)
+  }
+  const mediaType = requireString(value.mediaType, `${path}.mediaType`)
+  const bytes = requireByteCount(value.bytes, `${path}.bytes`)
+  if (typeof value.sha256 !== 'string' || !SHA256.test(value.sha256)) {
+    invalid(`${path}.sha256 must be 64 lowercase hex characters`)
+  }
+  return { path: assetPath, kind: value.kind, mediaType, bytes, sha256: value.sha256 }
+}
+
 /** Validate one snapshot descriptor (path safety + integrity fields). */
 function parseSnapshot(value: unknown, path: string): CluepackSnapshot {
   if (!isRecord(value)) invalid(`${path} must be an object`)
@@ -271,6 +343,18 @@ function parseSnapshot(value: unknown, path: string): CluepackSnapshot {
   }
   const fetchedAt = requireTimestamp(value.fetchedAt, `${path}.fetchedAt`)
   const sourceVersion = optionalString(value.sourceVersion, `${path}.sourceVersion`)
+  let assets: CluepackSnapshotAsset[] | undefined
+  if (value.assets !== undefined) {
+    if (!Array.isArray(value.assets)) invalid(`${path}.assets must be an array`)
+    const seen = new Set<string>()
+    assets = value.assets.map((asset, index) => {
+      const parsed = parseSnapshotAsset(asset, `${path}.assets[${index}]`)
+      if (seen.has(parsed.path)) invalid(`duplicate snapshot asset path "${parsed.path}"`)
+      seen.add(parsed.path)
+      return parsed
+    })
+    if (assets.length === 0) assets = undefined
+  }
   return {
     path: snapshotPath,
     encoding: value.encoding,
@@ -280,6 +364,7 @@ function parseSnapshot(value: unknown, path: string): CluepackSnapshot {
     sha256: value.sha256,
     fetchedAt,
     ...(sourceVersion === undefined ? {} : { sourceVersion }),
+    ...(assets === undefined ? {} : { assets }),
   }
 }
 
@@ -368,8 +453,11 @@ export function parseCluepackManifest(value: unknown): CluepackManifest {
     const portable = parsePortable(entry.portable, `${path}.portable`)
     const snapshot = entry.snapshot === undefined ? undefined : parseSnapshot(entry.snapshot, `${path}.snapshot`)
     if (snapshot !== undefined) {
-      if (snapshotPaths.has(snapshot.path)) invalid(`duplicate snapshot path "${snapshot.path}"`)
-      snapshotPaths.add(snapshot.path)
+      const paths = [snapshot.path, ...(snapshot.assets ?? []).map(asset => asset.path)]
+      for (const snapshotPath of paths) {
+        if (snapshotPaths.has(snapshotPath)) invalid(`duplicate snapshot path "${snapshotPath}"`)
+        snapshotPaths.add(snapshotPath)
+      }
     }
     return { key, sourceKey, typeId, title, portable, ...(snapshot === undefined ? {} : { snapshot }) }
   })

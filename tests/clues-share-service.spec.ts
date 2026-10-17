@@ -348,7 +348,7 @@ describe('export progress store', () => {
     expect(store.read('missing')).toBeUndefined()
   })
 
-  it('bounds the map and expires entries', () => {
+  it('never evicts or expires an in-flight entry, only settled ones', () => {
     let clock = 0
     const store = createCluesShareExportProgressStore({ now: () => clock, ttlMs: 1_000, maxEntries: 2 })
     store.record('a', { phase: 'collect', completed: 0, total: 1 })
@@ -356,13 +356,32 @@ describe('export progress store', () => {
     store.record('b', { phase: 'collect', completed: 0, total: 1 })
     clock += 1
     store.record('c', { phase: 'collect', completed: 0, total: 1 })
-    // Oldest entry ('a') is evicted first.
+    // AGENTS: keys with a live request are never evicted, even above the bound.
+    expect(store.read('a')).toBeDefined()
+    expect(store.read('b')).toBeDefined()
+    expect(store.read('c')).toBeDefined()
+    // TTL does not drop a task that is still running.
+    clock += 5_000
+    expect(store.read('a')).toBeDefined()
+    expect(store.read('c')).toBeDefined()
+
+    // Settle the two oldest; a new entry now evicts only those settled keys.
+    store.fail('a', new Error('a failed'))
+    store.fail('b', new Error('b failed'))
+    store.record('d', { phase: 'collect', completed: 0, total: 1 })
+    // Only one settled outcome fits next to the two active keys; the oldest
+    // settled entry ('a') goes, while the newest ('b') stays pollable.
     expect(store.read('a')).toBeUndefined()
     expect(store.read('b')).toBeDefined()
     expect(store.read('c')).toBeDefined()
+    expect(store.read('d')).toBeDefined()
+
+    // Once 'c' settles it may expire; the active 'd' remains readable.
+    store.fail('c', new Error('c failed'))
     clock += 1_000
     expect(store.read('b')).toBeUndefined()
     expect(store.read('c')).toBeUndefined()
+    expect(store.read('d')).toBeDefined()
   })
 
   it('records the terminal outcome and failure of one export', () => {
@@ -431,11 +450,13 @@ describe('createCluesShareRoutes', () => {
     const f = await fixture()
     const share = installCluesShare(fakeContext(f.cleanups), f.service, { now: () => NOW })
     const routes = createCluesShareRoutes(share, () => true)
+    // Literal paths, not the implementation's own constants: a typo in
+    // CLUES_SHARE_ROUTE_PATHS must fail this S9 contract test.
     expect(routes.routes.map(route => [route.kind, route.path])).toEqual([
-      ['exact', CLUES_SHARE_ROUTE_PATHS.exportPreview],
-      ['exact', CLUES_SHARE_ROUTE_PATHS.export],
-      ['exact', CLUES_SHARE_ROUTE_PATHS.importPreview],
-      ['exact', CLUES_SHARE_ROUTE_PATHS.import],
+      ['exact', '/sidebar/clues/share/export-preview'],
+      ['exact', '/sidebar/clues/share/export'],
+      ['exact', '/sidebar/clues/share/import-preview'],
+      ['exact', '/sidebar/clues/share/import'],
     ])
   })
 
@@ -538,6 +559,9 @@ describe('createCluesShareRoutes', () => {
     const f = await fixture()
     const share = installCluesShare(fakeContext(f.cleanups), f.service, { now: () => NOW })
     const exported = await share.exportPack({ workspaceId: 'ws-1', mode: 'references', clueIds: [f.clueId] })
+    const before = await f.service.listClues('ws-1')
+    const beforePacks = (await f.service.listPacks('ws-1')).packs.length
+    const beforeSnapshots = (await f.service.listSnapshots('ws-1')).length
     const res = fakeResponse()
     const wrapped: CluesShareService = {
       ...share,
@@ -555,7 +579,71 @@ describe('createCluesShareRoutes', () => {
     // body must not be reported as a successful import after a disconnect.
     expect(res.statusCode).toBe(499)
     expect(jsonBody(res)).toMatchObject({ ok: false, error: { code: 'cancelled' } })
-    expect((await f.service.listClues('ws-1')).clues).toHaveLength(1)
+    const after = await f.service.listClues('ws-1')
+    expect(after.clues).toHaveLength(1)
+    expect(after.revision).toBe(before.revision)
+    expect((await f.service.listPacks('ws-1')).packs).toHaveLength(beforePacks)
+    expect(await f.service.listSnapshots('ws-1')).toHaveLength(beforeSnapshots)
+  })
+
+  it('cancels every raw route when the connection closes while the body is still arriving', async () => {
+    const f = await fixture()
+    const share = installCluesShare(fakeContext(f.cleanups), f.service, { now: () => NOW })
+    const routes = createCluesShareRoutes(share, () => true)
+    const exported = await share.exportPack({ workspaceId: 'ws-1', mode: 'references', clueIds: [f.clueId] })
+    const before = await f.service.listClues('ws-1')
+    const beforePacks = (await f.service.listPacks('ws-1')).packs.length
+    const beforeSnapshots = (await f.service.listSnapshots('ws-1')).length
+
+    const cases: Array<{
+      route: SidebarWebRoute
+      url: string
+      body: Uint8Array | string
+    }> = [
+      {
+        route: routes.exportPreview,
+        url: CLUES_SHARE_ROUTE_PATHS.exportPreview,
+        body: JSON.stringify({ workspaceId: 'ws-1', mode: 'references', packIds: [f.packId] }),
+      },
+      {
+        route: routes.export,
+        url: CLUES_SHARE_ROUTE_PATHS.export,
+        body: JSON.stringify({ workspaceId: 'ws-1', mode: 'references', packIds: [f.packId] }),
+      },
+      {
+        route: routes.importPreview,
+        url: `${CLUES_SHARE_ROUTE_PATHS.importPreview}?workspaceId=ws-1`,
+        body: exported.bytes,
+      },
+      {
+        route: routes.import,
+        url: `${CLUES_SHARE_ROUTE_PATHS.import}?workspaceId=ws-1`,
+        body: exported.bytes,
+      },
+    ]
+    for (const item of cases) {
+      const res = fakeResponse()
+      const body = typeof item.body === 'string' ? Buffer.from(item.body) : Buffer.from(item.body)
+      const request: SidebarHttpRequest = {
+        url: item.url,
+        method: 'POST',
+        headers: {},
+        async *[Symbol.asyncIterator](): AsyncIterator<string | Uint8Array> {
+          // The connection closes BEFORE the body iterator finishes. The
+          // route must already be listening, then re-check the signal after
+          // the read and answer 499 instead of committing the import.
+          res.emit('close')
+          yield body
+        },
+      }
+      await item.route.handler(request, res)
+      expect(res.statusCode, item.route.path).toBe(499)
+      expect(jsonBody(res), item.route.path).toMatchObject({ ok: false, error: { code: 'cancelled' } })
+    }
+    const after = await f.service.listClues('ws-1')
+    expect(after.revision).toBe(before.revision)
+    expect((await f.service.listPacks('ws-1')).packs).toHaveLength(beforePacks)
+    expect(await f.service.listSnapshots('ws-1')).toHaveLength(beforeSnapshots)
   })
 
   it('forwards an explicit JSON remap through the raw import route and the JSON preview API', async () => {

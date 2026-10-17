@@ -203,39 +203,58 @@ export interface CluesShareExportProgressStore {
   dispose(): void
 }
 
-/** Inner bounded map shared by both progress channels (TTL + LRU eviction). */
+/**
+ * Inner bounded map shared by both progress channels.
+ *
+ * Terminal entries expire after the TTL and are evicted oldest-first once the
+ * map grows past its bound. ACTIVE entries (a request still in flight) are
+ * never evicted or expired: AGENTS requires that a module-level Map keeps every
+ * key with a live request, otherwise a client polling a long-running export
+ * would lose the entry it is waiting for. The bound can therefore be exceeded
+ * transiently by active entries, and the map drops back as soon as they settle.
+ */
 function createBoundedStatusStore<T>(options: {
   readonly now?: () => number
   readonly ttlMs?: number
   readonly maxEntries?: number
 } = {}): {
-  put(id: string, status: T): void
+  put(id: string, status: T, terminal: boolean): void
   read(id: string): T | undefined
   dispose(): void
 } {
   const now = options.now ?? (() => Date.now())
   const ttlMs = options.ttlMs ?? EXPORT_PROGRESS_TTL_MS
   const maxEntries = options.maxEntries ?? MAX_TRACKED_EXPORTS
-  const entries = new Map<string, { status: T; at: number }>()
+  const entries = new Map<string, { status: T; at: number; terminal: boolean }>()
   let disposed = false
   const prune = (): void => {
     const cutoff = now() - ttlMs
     for (const [id, entry] of entries) {
-      if (entry.at <= cutoff) entries.delete(id)
+      if (entry.terminal && entry.at <= cutoff) entries.delete(id)
     }
-    while (entries.size > maxEntries) {
-      const oldest = entries.keys().next().value
-      if (oldest === undefined) break
+    // Active keys are never evicted. Settled entries get the remaining
+    // capacity, but always keep the newest outcome so a client that polls
+    // right after completion can still read it even when more than
+    // `maxEntries` requests are in flight.
+    const terminals: string[] = []
+    let active = 0
+    for (const [id, entry] of entries) {
+      if (entry.terminal) terminals.push(id)
+      else active += 1
+    }
+    const allowedTerminal = Math.max(1, maxEntries - active)
+    while (terminals.length > allowedTerminal) {
+      const oldest = terminals.shift()!
       entries.delete(oldest)
     }
   }
   return {
-    put(id, status) {
+    put(id, status, terminal) {
       if (disposed) return
-      prune()
       // Re-insert so Map iteration order really is "least recently written".
       entries.delete(id)
-      entries.set(id, { status, at: now() })
+      entries.set(id, { status, at: now(), terminal })
+      prune()
     },
     read(id) {
       if (disposed) return undefined
@@ -275,7 +294,7 @@ export function createCluesShareExportProgressStore(options: {
         ...(progress.status === undefined ? {} : { status: progress.status }),
         ...(progress.reason === undefined ? {} : { reason: progress.reason }),
         done: progress.phase === 'done',
-      })
+      }, progress.phase === 'done')
     },
     finish(exportId, result) {
       const previous = store.read(exportId)
@@ -292,7 +311,7 @@ export function createCluesShareExportProgressStore(options: {
           issues: result.issues,
           stats: result.stats,
         },
-      })
+      }, true)
     },
     fail(exportId, error) {
       const previous = store.read(exportId)
@@ -306,7 +325,7 @@ export function createCluesShareExportProgressStore(options: {
         failure: isClueError(error)
           ? { category: error.category, message: error.message }
           : { category: 'failed', message: 'the clue pack export failed' },
-      })
+      }, true)
     },
     read(exportId) {
       return store.read(exportId)
@@ -341,7 +360,7 @@ export function createCluesShareImportProgressStore(options: {
         ...(progress.status === undefined ? {} : { status: progress.status }),
         ...(progress.reason === undefined ? {} : { reason: progress.reason }),
         done: progress.phase === 'done',
-      })
+      }, progress.phase === 'done')
     },
     finish(importId, result) {
       const previous = store.read(importId)
@@ -364,7 +383,7 @@ export function createCluesShareImportProgressStore(options: {
           manifestIssues: result.manifestIssues,
           reasons: result.reasons,
         },
-      })
+      }, true)
     },
     fail(importId, error) {
       const previous = store.read(importId)
@@ -378,7 +397,7 @@ export function createCluesShareImportProgressStore(options: {
         failure: isClueError(error)
           ? { category: error.category, message: error.message }
           : { category: 'failed', message: 'the clue pack import failed' },
-      })
+      }, true)
     },
     read(importId) {
       return store.read(importId)
@@ -807,6 +826,13 @@ function cancellationOf(res: SidebarHttpResponse): { signal: AbortSignal; releas
   }
 }
 
+/** Refuse a request whose connection closed while its body was still arriving. */
+function throwIfCancelled(signal: AbortSignal): void {
+  if (signal.aborted) {
+    throw new ClueError('cancelled', 'the request was cancelled before the body was fully read')
+  }
+}
+
 /** Build the four raw route handlers. */
 export function createCluesShareRoutes(
   share: CluesShareService,
@@ -832,9 +858,10 @@ export function createCluesShareRoutes(
   })
 
   const exportPreview = route(CLUES_SHARE_ROUTE_PATHS.exportPreview, async (req, res) => {
-    const payload = await readJsonBody(req, maxJsonBytes)
     const { signal, release } = cancellationOf(res)
     try {
+      const payload = await readJsonBody(req, maxJsonBytes)
+      throwIfCancelled(signal)
       writeOk(res, await share.previewExport(exportParamsOf(payload, signal)))
     } finally {
       release()
@@ -842,15 +869,18 @@ export function createCluesShareRoutes(
   })
 
   const exportRoute = route(CLUES_SHARE_ROUTE_PATHS.export, async (req, res) => {
-    const payload = await readJsonBody(req, maxJsonBytes)
-    const exportId = exportIdOf(payload)
     const { signal, release } = cancellationOf(res)
+    let exportId: string | undefined
     try {
+      const payload = await readJsonBody(req, maxJsonBytes)
+      throwIfCancelled(signal)
+      const progressId = exportIdOf(payload)
+      exportId = progressId
       const result = await share.exportPack({
         ...exportParamsOf(payload, signal),
-        ...(exportId === undefined ? {} : { onProgress: progress => share.progress.record(exportId, progress) }),
+        ...(progressId === undefined ? {} : { onProgress: progress => share.progress.record(progressId, progress) }),
       })
-      if (exportId !== undefined) share.progress.finish(exportId, result)
+      if (progressId !== undefined) share.progress.finish(progressId, result)
       // The ZIP body cannot carry progress or a "this pack is incomplete"
       // marker, and a browser download would otherwise look like a clean
       // success even when items failed (spec §4). The counters + the exact
@@ -877,11 +907,12 @@ export function createCluesShareRoutes(
   })
 
   const importPreview = route(CLUES_SHARE_ROUTE_PATHS.importPreview, async (req, res) => {
-    const workspaceId = workspaceIdOf(req)
-    const remap = remapOf(req)
-    const bytes = await readBinaryBody(req, maxImportBytes)
     const { signal, release } = cancellationOf(res)
     try {
+      const workspaceId = workspaceIdOf(req)
+      const remap = remapOf(req)
+      const bytes = await readBinaryBody(req, maxImportBytes)
+      throwIfCancelled(signal)
       writeOk(res, await share.previewImport({
         workspaceId,
         bytes,
@@ -894,20 +925,23 @@ export function createCluesShareRoutes(
   })
 
   const importRoute = route(CLUES_SHARE_ROUTE_PATHS.import, async (req, res) => {
-    const workspaceId = workspaceIdOf(req)
-    const remap = remapOf(req)
-    const importId = importIdOf(new URL(req.url ?? '/', 'http://dsh.internal').searchParams.get('importId') ?? undefined)
-    const bytes = await readBinaryBody(req, maxImportBytes)
     const { signal, release } = cancellationOf(res)
+    let importId: string | undefined
     try {
+      const workspaceId = workspaceIdOf(req)
+      const remap = remapOf(req)
+      const progressId = importIdOf(new URL(req.url ?? '/', 'http://dsh.internal').searchParams.get('importId') ?? undefined)
+      importId = progressId
+      const bytes = await readBinaryBody(req, maxImportBytes)
+      throwIfCancelled(signal)
       const result = await share.importPack({
         workspaceId,
         bytes,
         signal,
         ...(remap === undefined ? {} : { remap }),
-        ...(importId === undefined ? {} : { onProgress: progress => share.importProgress.record(importId, progress) }),
+        ...(progressId === undefined ? {} : { onProgress: progress => share.importProgress.record(progressId, progress) }),
       })
-      if (importId !== undefined) share.importProgress.finish(importId, result)
+      if (progressId !== undefined) share.importProgress.finish(progressId, result)
       writeOk(res, result)
     } catch (error) {
       if (importId !== undefined) share.importProgress.fail(importId, error)

@@ -90,6 +90,23 @@ function setFlags(zip: Buffer, bit: number): Buffer {
   return copy
 }
 
+/** Clear one flag bit on the first central + local header. */
+function clearFlags(zip: Buffer, bit: number): Buffer {
+  const copy = Buffer.from(zip)
+  const central = centralOffset(copy)
+  copy.writeUInt16LE(copy.readUInt16LE(central + 8) & ~bit, central + 8)
+  const local = copy.indexOf(Buffer.from([0x50, 0x4b, 0x03, 0x04]))
+  copy.writeUInt16LE(copy.readUInt16LE(local + 6) & ~bit, local + 6)
+  return copy
+}
+
+/** Overwrite the first central entry's announced uncompressed size. */
+function setUncompressedSize(zip: Buffer, size: number): Buffer {
+  const copy = Buffer.from(zip)
+  copy.writeUInt32LE(size, centralOffset(copy) + 24)
+  return copy
+}
+
 /** Set the first entry's compression method in both headers. */
 function setMethod(zip: Buffer, method: number): Buffer {
   const copy = Buffer.from(zip)
@@ -238,6 +255,29 @@ describe('readZip security boundary', () => {
     expect(() => readZip(zip)).toThrowError(/ZIP64/i)
   })
 
+  it('rejects an entry name that is not UTF-8 flagged', () => {
+    const zip = clearFlags(createZip([
+      { name: 'content/中文.json', data: new TextEncoder().encode('{}') },
+    ]), 0x0800)
+    expect(() => readZip(zip)).toThrowError(/UTF-8 flagged/i)
+  })
+
+  it('rejects a central directory that overlaps the end record', () => {
+    const zip = sampleArchive()
+    const eocd = eocdOffset(zip)
+    const central = centralOffset(zip)
+    zip.writeUInt32LE(zip.length - central - 1, eocd + 12)
+    expect(() => readZip(zip)).toThrowError(/overlaps the end record/i)
+  })
+
+  it('rejects a lying deflate header instead of inflating past the declared size', () => {
+    const payload = new TextEncoder().encode('x'.repeat(4_096))
+    const zip = setUncompressedSize(createZip([
+      { name: 'bomb.txt', data: payload, compress: true },
+    ]), 16)
+    expect(() => readZip(zip)).toThrowError(/corrupt|declared size/i)
+  })
+
   it('rejects multi-disk archives', () => {
     const zip = Buffer.from(sampleArchive())
     zip.writeUInt16LE(1, eocdOffset(zip) + 4)
@@ -321,6 +361,29 @@ describe('createZip limits (writer/reader parity)', () => {
     // instead of surfacing a raw RangeError from writeUInt16LE.
     expect(() => createZip([tinyEntry('a.json')], { limits: { maxNameBytes: 70_000 } }))
       .toThrowError(/maxNameBytes/i)
+  })
+
+  it('refuses a surrogate name that would collapse to a duplicate UTF-8 name', () => {
+    expect(() => createZip([{ name: 'a\uD800', data: new Uint8Array() }]))
+      .toThrowError(/unpaired surrogate/i)
+    expect(() => createZip([{ name: 'a\uD801', data: new Uint8Array() }]))
+      .toThrowError(/unpaired surrogate/i)
+  })
+
+  it('refuses 65,535 entries, the ZIP64 sentinel its own reader rejects', () => {
+    const entries = Array.from({ length: 65_535 }, (_, index) => tinyEntry(`e-${index}`))
+    expect(() => createZip(entries)).toThrowError(/at most 65534 entries/i)
+  })
+
+  it('writes explicit directory entries with a directory mode', () => {
+    const zip = createZip([
+      { name: 'content/', data: new Uint8Array() },
+      { name: 'content/a.txt', data: new TextEncoder().encode('a') },
+    ])
+    const mode = (zip.readUInt32LE(centralOffset(zip) + 38) >>> 16) & 0o777_777
+    expect(mode & 0o170000).toBe(0o040000)
+    expect(mode & 0o777).toBe(0o755)
+    expect(readZip(zip).map(entry => entry.name)).toEqual(['content/a.txt'])
   })
 
   it('refuses canonically equivalent entry names', () => {

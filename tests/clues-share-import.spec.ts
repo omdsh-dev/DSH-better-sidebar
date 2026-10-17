@@ -29,6 +29,7 @@ import { createCluesService, type CluesService, type ClueSourceRegistration } fr
 import {
   ClueError,
   type CluePortableRef,
+  type ClueReadResult,
   type JsonValue,
 } from '../src/clues/types.ts'
 import {
@@ -37,6 +38,9 @@ import {
   type ClueShareImportProgress,
   type ClueShareImportResult,
 } from '../src/clues/share/import.ts'
+import {
+  SAFE_FAILURE_REASONS,
+} from '../src/clues/share/reasons.ts'
 import {
   CLUEPACK_FORMAT,
   serializeCluepackManifest,
@@ -48,7 +52,7 @@ import {
   type CluepackSnapshot,
   type CluepackSource,
 } from '../src/clues/share/manifest.ts'
-import { createZip } from '../src/clues/share/zip.ts'
+import { createZip, readZip } from '../src/clues/share/zip.ts'
 import { removeTree } from './temp-tree.ts'
 
 const NOW = '2026-10-17T00:00:00.000Z'
@@ -66,7 +70,7 @@ interface Fixture {
   base: string
   workspace: string
   service: CluesService
-  source: { calls: { read: number; portable: number } }
+  source: { calls: { read: number; portable: number }; read?: () => Promise<ClueReadResult> }
 }
 
 /**
@@ -97,7 +101,12 @@ function testSourceRegistration(
     operations: {
       async read() {
         source.calls.read += 1
-        return { format: 'text/plain', data: { text: 'live content' }, text: 'live content', fetchedAt: NOW }
+        return source.read?.() ?? {
+          format: 'text/plain',
+          data: { text: 'live content' },
+          text: 'live content',
+          fetchedAt: NOW,
+        }
       },
       async portable() {
         source.calls.portable += 1
@@ -156,6 +165,15 @@ interface SnapshotSpec {
   /** Override the recorded byte count. */
   bytes?: number
   path?: string
+  /** Additional raw assets stored beside the primary payload. */
+  assets?: Array<{
+    content: Uint8Array
+    path?: string
+    kind?: 'download' | 'open'
+    mediaType?: string
+    sha256?: string
+    bytes?: number
+  }>
 }
 
 /** One clue spec for the package builder. */
@@ -198,6 +216,17 @@ function buildPack(clues: ClueSpec[], options: BuildOptions = {}): { bytes: Buff
       const encoding = clue.snapshot.encoding ?? 'json'
       const path = clue.snapshot.path
         ?? `content/${clue.key}.${encoding === 'json' ? 'json' : 'bin'}`
+      const assets = (clue.snapshot.assets ?? []).map((asset, index) => {
+        const assetPath = asset.path ?? `content/${clue.key}.asset-${index + 1}.bin`
+        entries.push({ name: assetPath, data: asset.content })
+        return {
+          path: assetPath,
+          kind: asset.kind ?? 'download',
+          mediaType: asset.mediaType ?? 'application/octet-stream',
+          bytes: asset.bytes ?? asset.content.byteLength,
+          sha256: asset.sha256 ?? sha256Of(asset.content),
+        }
+      })
       snapshot = {
         path,
         encoding,
@@ -207,6 +236,7 @@ function buildPack(clues: ClueSpec[], options: BuildOptions = {}): { bytes: Buff
         sha256: clue.snapshot.sha256 ?? sha256Of(clue.snapshot.content),
         fetchedAt: clue.snapshot.fetchedAt ?? '2026-10-16T12:00:00.000Z',
         ...(clue.snapshot.sourceVersion === undefined ? {} : { sourceVersion: clue.snapshot.sourceVersion }),
+        ...(assets.length === 0 ? {} : { assets }),
       }
       entries.push({ name: path, data: clue.snapshot.content })
     }
@@ -551,6 +581,72 @@ describe('importPack with missing sources and snapshots', () => {
     expect(new Uint8Array(Buffer.from(data.base64, 'base64'))).toEqual(bytes)
   })
 
+  it('stores the body and every asset of a multi-part snapshot', async () => {
+    const f = fixture()
+    const first = new Uint8Array([1, 2, 3, 4])
+    const second = new Uint8Array([9, 8, 7])
+    const pack = buildPack([{
+      key: 'clue-1',
+      title: 'Body plus assets',
+      snapshot: {
+        content: jsonContent({ text: 'body text' }, 'body text'),
+        assets: [
+          { content: first, kind: 'download', mediaType: 'image/png' },
+          { content: second, kind: 'open', mediaType: 'image/png' },
+        ],
+      },
+    }], { mode: 'snapshot' })
+    const result = await importPack({ clues: f.service }, { workspaceId: 'ws-1', bytes: pack.bytes })
+    expect(result.complete).toBe(true)
+    const record = await f.service.readSnapshot({
+      workspaceId: 'ws-1',
+      snapshotId: result.snapshots[0]!.snapshotId,
+    })
+    expect(record.content).toMatchObject({ format: 'text/plain', text: 'body text' })
+    expect(record.content.data).toMatchObject({
+      kind: 'cluepack-snapshot-bundle',
+      version: 1,
+      primary: { encoding: 'json', data: { text: 'body text' } },
+    })
+    const assets = (record.content.data as {
+      assets: Array<{ kind: string; mediaType: string; base64: string; sha256: string; size: number }>
+    }).assets
+    expect(assets).toHaveLength(2)
+    expect(assets.map(asset => asset.kind)).toEqual(['download', 'open'])
+    expect(new Uint8Array(Buffer.from(assets[0]!.base64, 'base64'))).toEqual(first)
+    expect(new Uint8Array(Buffer.from(assets[1]!.base64, 'base64'))).toEqual(second)
+  })
+
+  it('rejects a missing or checksum-mismatched asset before writing anything', async () => {
+    const f = fixture()
+    const first = new Uint8Array([1, 2, 3])
+    const pack = buildPack([{
+      key: 'clue-1',
+      snapshot: {
+        content: jsonContent({ text: 'body' }, 'body'),
+        assets: [{ content: first, path: 'content/clue-1.asset-1.bin' }],
+      },
+    }], { mode: 'snapshot' })
+    const withoutAsset = createZip(
+      readZip(pack.bytes).filter(entry => entry.name !== 'content/clue-1.asset-1.bin'),
+      { modifiedAt: new Date(NOW) },
+    )
+    await expect(importPack({ clues: f.service }, { workspaceId: 'ws-1', bytes: withoutAsset }))
+      .rejects.toMatchObject({ category: 'invalid-request' })
+    expect(await libraryIds(f.service)).toEqual([])
+
+    const badPack = buildPack([{
+      key: 'clue-1',
+      snapshot: {
+        content: jsonContent({ text: 'body' }, 'body'),
+        assets: [{ content: first, sha256: 'a'.repeat(64) }],
+      },
+    }], { mode: 'snapshot' })
+    await expect(importPack({ clues: f.service }, { workspaceId: 'ws-1', bytes: badPack.bytes }))
+      .rejects.toMatchObject({ category: 'invalid-request' })
+    expect(await libraryIds(f.service)).toEqual([])
+  })
+
   it('reuses an existing live reference and keeps live reads live', async () => {
     const f = fixture()
     const liveId = await ensureClue(f.service, 'a', 'Live title')
@@ -762,7 +858,7 @@ describe('importPack partial results', () => {
     expect(result).toMatchObject({ complete: false, partial: true, requiresAcceptance: true })
     expect(result.clues).toHaveLength(1)
     expect(result.packs).toEqual([])
-    expect(result.reasons).toContain('the pack store is unavailable')
+    expect(result.reasons).toContain(SAFE_FAILURE_REASONS.failed)
     expect(await libraryIds(f.service)).toHaveLength(1)
   })
 
@@ -782,7 +878,7 @@ describe('importPack partial results', () => {
     expect(result).toMatchObject({ complete: false, partial: true, requiresAcceptance: true })
     expect(result.clues[0]).toMatchObject({ unresolved: false })
     expect(result.snapshots).toEqual([])
-    expect(result.reasons).toContain('the snapshot store is unavailable')
+    expect(result.reasons).toContain(SAFE_FAILURE_REASONS.failed)
   })
   it('keeps an auth-required commit failure as an unresolved row and a partial import', async () => {
     const f = fixture()
@@ -1050,6 +1146,52 @@ describe('importPack cancellation', () => {
     expect(await libraryIds(f.service)).toEqual([result.clues[0]!.clueId])
   })
 
+  it('counts the remap adoption seed write and returns partial when cancellation lands after it', async () => {
+    const f = fixture()
+    const pack = buildPack([{
+      key: 'clue-1',
+      portable: { portable: false, locator: { id: 'a' } },
+    }])
+    const first = await importPack({ clues: f.service }, { workspaceId: 'ws-1', bytes: pack.bytes })
+    expect(first.clues[0]!.unresolved).toBe(true)
+    const priorId = first.clues[0]!.clueId
+
+    const controller = new AbortController()
+    let seedCalls = 0
+    const seedThenAbort = {
+      ...f.service,
+      importUnresolved: async (
+        params: Parameters<CluesService['importUnresolved']>[0],
+        options?: Parameters<CluesService['importUnresolved']>[1],
+      ) => {
+        const result = await f.service.importUnresolved(params, options)
+        seedCalls += 1
+        if (seedCalls === 1) controller.abort()
+        return result
+      },
+    } as CluesService
+    const result = await importPack({ clues: seedThenAbort }, {
+      workspaceId: 'ws-1',
+      bytes: pack.bytes,
+      signal: controller.signal,
+      remap: [{ clueKey: 'clue-1', locator: { id: 'b' } }],
+    })
+    expect(result).toMatchObject({
+      complete: false,
+      partial: true,
+      cancelled: true,
+      requiresAcceptance: true,
+    })
+    // The seed write is durable even though the clue list stayed empty: the
+    // partial result must not look like "nothing happened".
+    expect(result.clues).toEqual([])
+    expect(result.reasons.join('\n')).toMatch(/existing unresolved reference updated in place/i)
+    const rows = (await f.service.listClues('ws-1')).clues
+    expect(rows).toHaveLength(1)
+    expect(rows[0]!.id).toBe(priorId)
+    expect(rows[0]!.unresolved?.portable?.locator).toEqual({ id: 'b' })
+  })
+
   it('converts a non-cancellation commit failure after a write into an explicit partial result', async () => {
     const f = fixture()
     const pack = buildPack([
@@ -1079,9 +1221,44 @@ describe('importPack cancellation', () => {
       requiresAcceptance: true,
     })
     expect(result.clues.map(clue => clue.clueKey)).toEqual(['clue-1'])
-    expect(result.reasons.join('\n')).toMatch(/failed after committing 1 of 2 clues.*second clue/i)
+    expect(result.reasons.join('\n')).toMatch(/failed after committing 1 of 2 clues/i)
+    expect(result.issues.find(issue => issue.key === 'clue-2')?.reason).toBe(SAFE_FAILURE_REASONS.failed)
     expect(result.issues.some(issue => issue.key === 'clue-2')).toBe(true)
     expect(await libraryIds(f.service)).toEqual([result.clues[0]!.clueId])
+  })
+})
+
+describe('offline snapshot with an authorization-invalid source', () => {
+  it('keeps the imported snapshot readable after the installed source really answers auth-required', async () => {
+    const f = fixture()
+    const pack = buildPack([{
+      key: 'clue-1',
+      title: 'Authorized once',
+      portable: { portable: true, locator: { id: 'a' } },
+      snapshot: { content: jsonContent({ text: 'offline snapshot body' }, 'offline snapshot body') },
+    }], { mode: 'snapshot' })
+    const imported = await importPack({ clues: f.service }, {
+      workspaceId: 'ws-1',
+      bytes: pack.bytes,
+    })
+    expect(imported.complete).toBe(true)
+    expect(imported.snapshots).toHaveLength(1)
+    const clueId = imported.clues[0]!.clueId
+
+    f.source.read = async () => {
+      throw new ClueError('auth-required', 'the installed source requires authorization')
+    }
+    await expect(f.service.read({ workspaceId: 'ws-1', clueId }))
+      .rejects.toMatchObject({ category: 'auth-required' })
+    const snapshot = await f.service.readSnapshot({
+      workspaceId: 'ws-1',
+      snapshotId: imported.snapshots[0]!.snapshotId,
+    })
+    expect(snapshot.content).toMatchObject({
+      format: 'text/plain',
+      data: { text: 'offline snapshot body' },
+      text: 'offline snapshot body',
+    })
   })
 })
 

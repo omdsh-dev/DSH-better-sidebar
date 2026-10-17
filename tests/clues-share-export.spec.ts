@@ -14,11 +14,13 @@
  * - credential-shaped values never appear in the archive.
  */
 import { afterEach, describe, expect, it } from 'vitest'
+import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createCluesService, type CluesService, type ClueSourceRegistration } from '../src/clues/service.ts'
+import { CluesStore } from '../src/clues/store.ts'
 import {
   ClueError,
   type CluePortableRef,
@@ -39,6 +41,11 @@ import {
   type ClueShareExportProgress,
 } from '../src/clues/share/export.ts'
 import { CLUEPACK_MANIFEST_PATH, MAX_MANIFEST_BYTES } from '../src/clues/share/manifest.ts'
+import {
+  SAFE_FAILURE_REASONS,
+  SAFE_PORTABLE_REFUSED_REASON,
+  SAFE_UNRESOLVED_REASON,
+} from '../src/clues/share/reasons.ts'
 import { previewImport } from '../src/clues/share/import.ts'
 import { DEFAULT_ZIP_LIMITS, readZip } from '../src/clues/share/zip.ts'
 import { removeTree } from './temp-tree.ts'
@@ -67,7 +74,7 @@ interface Fixture {
 }
 
 /** A service with one controllable source and deterministic ids. */
-function fixture(): Fixture {
+function fixture(storeOverride?: CluesStore): Fixture {
   const base = mkdtempSync(join(tmpdir(), 'dsh-clues-share-export-'))
   roots.push(base)
   const workspace = join(base, 'workspace')
@@ -101,7 +108,7 @@ function fixture(): Fixture {
     },
   }
   const service = createCluesService({
-    root: join(base, 'store'),
+    ...(storeOverride === undefined ? { root: join(base, 'store') } : { store: storeOverride }),
     now: () => NOW,
     newId: kind => `${kind}-${++next}`,
     resolveWorkspacePath: id => (id === 'ws-1' ? workspace : undefined),
@@ -204,13 +211,21 @@ describe('exportPack references mode', () => {
       portable: true,
       locator: { id: 'a', note: 'ordinary usage' },
     })
-    // Inject a secret-shaped body into the LIVE content: without one, the
-    // "no SECRET-TOKEN in the archive" assertion below proves nothing.
+    // Inject a secret-shaped body into the LIVE content and a cached snapshot:
+    // references mode must ship neither, or the "no SECRET-TOKEN in the
+    // archive" assertion below would prove nothing.
     f.source.read = async () => ({
       format: 'text/plain',
       data: { text: 'SECRET-TOKEN body' },
       text: 'SECRET-TOKEN body',
       fetchedAt: FETCHED_AT,
+    })
+    await f.service.putSnapshot('ws-1', {
+      clueId,
+      format: 'text/plain',
+      fetchedAt: FETCHED_AT,
+      data: { text: 'SECRET-CACHED body' },
+      text: 'SECRET-CACHED body',
     })
 
     const result = await exportPack(deps(f), {
@@ -238,7 +253,9 @@ describe('exportPack references mode', () => {
     // The live body was deliberately set to a secret-shaped value; neither the
     // archive bytes nor the manifest may carry it.
     expect(new TextDecoder().decode(result.bytes)).not.toContain('SECRET-TOKEN')
+    expect(new TextDecoder().decode(result.bytes)).not.toContain('SECRET-CACHED')
     expect(JSON.stringify(manifest)).not.toContain('SECRET-TOKEN')
+    expect(JSON.stringify(manifest)).not.toContain('SECRET-CACHED')
   })
 
   it('represents an unresolved clue as a non-portable reference with a reason', async () => {
@@ -259,7 +276,7 @@ describe('exportPack references mode', () => {
     })
     expect(f.source.calls.portable).toBe(0)
     const manifest = manifestOf(result.bytes) as unknown as { clues: Array<{ portable: CluePortableRef }> }
-    expect(manifest.clues[0]!.portable).toEqual({ portable: false, reason: 'no portable address' })
+    expect(manifest.clues[0]!.portable).toEqual({ portable: false, reason: SAFE_UNRESOLVED_REASON })
     expect(result.complete).toBe(true)
   })
 
@@ -280,6 +297,126 @@ describe('exportPack references mode', () => {
     expect(manifest.clues[0]!.portable.portable).toBe(false)
   })
 
+  it('never copies a source-provided portable reason or a stored unresolved reason', async () => {
+    const f = fixture()
+    const live = await ensureClue(f, 'a')
+    // A source may put a bearer token/path into a reason. The manifest must
+    // carry the fixed category wording, never this text.
+    f.source.portable = async () => ({
+      portable: false,
+      locator: { id: 'a' },
+      reason: 'Authorization failed Bearer SECRET-TOKEN at /Users/sender/.auth',
+    })
+    const liveExport = await exportPack(deps(f), {
+      workspaceId: 'ws-1',
+      mode: 'references',
+      clueIds: [live],
+    })
+    const liveManifest = manifestOf(liveExport.bytes)
+    expect(JSON.stringify(liveManifest)).not.toContain('SECRET-TOKEN')
+    expect(JSON.stringify(liveManifest)).not.toContain('/Users/sender')
+    expect((liveManifest as unknown as { clues: Array<{ portable: CluePortableRef }> }).clues[0]!.portable)
+      .toMatchObject({ portable: false, reason: SAFE_PORTABLE_REFUSED_REASON })
+
+    // A portable:true reference needs no reason; an untrusted one must not be
+    // copied either.
+    f.source.portable = async () => ({
+      portable: true,
+      locator: { id: 'a' },
+      reason: 'Bearer SECRET-PORTABLE-TOKEN at /Users/sender/.auth',
+    })
+    const portableExport = await exportPack(deps(f), {
+      workspaceId: 'ws-1',
+      mode: 'references',
+      clueIds: [live],
+    })
+    const portableManifest = manifestOf(portableExport.bytes)
+    expect(JSON.stringify(portableManifest)).not.toContain('SECRET-PORTABLE-TOKEN')
+    expect(JSON.stringify(portableManifest)).not.toContain('/Users/sender')
+    expect((portableManifest as unknown as { clues: Array<{ portable: CluePortableRef }> }).clues[0]!.portable)
+      .toEqual({ portable: true, locator: { id: 'a' } })
+
+    const imported = await f.service.importUnresolved({
+      workspaceId: 'ws-1',
+      sourceId: 'missing.source',
+      typeId: 'missing.source.doc',
+      locator: { id: 'offline' },
+      title: '离线记录',
+      reason: 'auth failed cookie=SECRET-COOKIE at /Users/sender/.auth',
+      portable: {
+        portable: false,
+        locator: { id: 'offline' },
+        reason: 'Bearer SECRET-PORTABLE-TOKEN',
+      },
+    })
+    const unresolvedExport = await exportPack(deps(f), {
+      workspaceId: 'ws-1',
+      mode: 'snapshot',
+      clueIds: [imported.clue.id],
+    })
+    const unresolvedManifest = manifestOf(unresolvedExport.bytes)
+    expect(JSON.stringify(unresolvedManifest)).not.toContain('SECRET-COOKIE')
+    expect(JSON.stringify(unresolvedManifest)).not.toContain('SECRET-PORTABLE-TOKEN')
+    expect(JSON.stringify(unresolvedManifest)).not.toContain('/Users/sender')
+    const unresolvedClue = (unresolvedManifest as unknown as {
+      clues: Array<{ portable: CluePortableRef }>
+      issues: Array<{ reason: string }>
+    }).clues[0]!
+    expect(unresolvedClue.portable.reason).toBe(SAFE_UNRESOLVED_REASON)
+    expect((unresolvedManifest as unknown as { issues: Array<{ reason: string }> }).issues[0]!.reason)
+      .toBe(`no snapshot was captured: ${SAFE_UNRESOLVED_REASON}`)
+    expect(unresolvedExport.complete).toBe(false)
+  })
+
+  it('never copies a source error message copied by an unresolved import into a re-export', async () => {
+    const f = fixture()
+    // The importer itself must store a fixed category message, not the raw
+    // ClueError message. Seed that path through the real import service.
+    const { importPack } = await import('../src/clues/share/import.ts')
+    const { createZip } = await import('../src/clues/share/zip.ts')
+    const { serializeCluepackManifest } = await import('../src/clues/share/manifest.ts')
+    const manifest = {
+      formatVersion: 1 as const,
+      format: 'dsh-cluepack' as const,
+      exportedAt: NOW,
+      mode: 'references' as const,
+      sources: [{ key: 'source-1', sourceId: 'test.share', name: 'Share test source' }],
+      clues: [{
+        key: 'clue-1',
+        sourceKey: 'source-1',
+        typeId: TEST_TYPE,
+        title: 'Auth secret',
+        portable: { portable: true as const, locator: { id: 'secret' } },
+      }],
+      packs: [],
+      issues: [],
+    }
+    const bytes = createZip([{ name: 'manifest.json', data: serializeCluepackManifest(manifest) }])
+    const failing = {
+      ...f.service,
+      ensure: async () => {
+        throw new ClueError(
+          'auth-required',
+          'auth failed cookie=SECRET-COOKIE at /Users/sender/.auth',
+        )
+      },
+    } as CluesService
+    const imported = await importPack({ clues: failing }, { workspaceId: 'ws-1', bytes })
+    expect(imported.complete).toBe(false)
+    const row = (await f.service.listClues('ws-1')).clues[0]!
+    expect(row.unresolved?.reason).toBe(SAFE_FAILURE_REASONS['auth-required'])
+    expect(row.unresolved?.reason).not.toContain('SECRET-COOKIE')
+
+    const reExported = await exportPack(deps(f), {
+      workspaceId: 'ws-1',
+      mode: 'references',
+      clueIds: [row.id],
+    })
+    const exportedManifest = manifestOf(reExported.bytes)
+    expect(JSON.stringify(exportedManifest)).not.toContain('SECRET-COOKIE')
+    expect(JSON.stringify(exportedManifest)).not.toContain('/Users/sender')
+  })
+
   it('never copies a sender-local path from a source error into the manifest', async () => {
     const f = fixture()
     const clueId = await ensureClue(f, 'a')
@@ -297,6 +434,43 @@ describe('exportPack references mode', () => {
     const manifest = manifestOf(result.bytes) as unknown as { issues: Array<{ reason: string }> }
     expect(JSON.stringify(manifest)).not.toContain('/var/folders')
     expect(manifest.issues[0]!.reason).toMatch(/not found/i)
+  })
+})
+
+describe('export reference lookups', () => {
+  it('does not read the whole workspace state once per selected clue', async () => {
+    class CountingStore extends CluesStore {
+      reads = 0
+      override async read(workspaceId: string) {
+        this.reads += 1
+        return super.read(workspaceId)
+      }
+    }
+    const storeBase = mkdtempSync(join(tmpdir(), 'dsh-clues-share-export-store-'))
+    roots.push(storeBase)
+    const store = new CountingStore({ root: join(storeBase, 'store') })
+    const f = fixture(store)
+    const ids: string[] = []
+    for (let index = 0; index < 10; index += 1) ids.push(await ensureClue(f, `id-${index}`))
+    store.reads = 0
+    const references = await exportPack(deps(f), {
+      workspaceId: 'ws-1',
+      mode: 'references',
+      clueIds: ids,
+    })
+    expect(references.complete).toBe(true)
+    // Exactly listClues + listPacks. A clueId-based portable/read lookup would
+    // add one full-store read per clue (12 reads here, 2N+2 for snapshot).
+    expect(store.reads).toBe(2)
+
+    store.reads = 0
+    const snapshot = await exportPack(deps(f), {
+      workspaceId: 'ws-1',
+      mode: 'snapshot',
+      clueIds: ids,
+    })
+    expect(snapshot.complete).toBe(true)
+    expect(store.reads).toBe(2)
   })
 })
 
@@ -331,6 +505,95 @@ describe('exportPack snapshot mode', () => {
       data: { text: 'hello world' },
       text: 'hello world',
     })
+  })
+
+  it('packages a structured body and every asset instead of silently taking the first asset', async () => {
+    const f = fixture()
+    const clueId = await ensureClue(f, 'multi')
+    const first = new Uint8Array([137, 80, 78, 71, 1, 2, 3])
+    const second = new Uint8Array([137, 80, 78, 71, 9, 8, 7, 6])
+    const firstPath = join(f.base, 'one.png')
+    const secondPath = join(f.base, 'two.png')
+    writeFileSync(firstPath, first)
+    writeFileSync(secondPath, second)
+    f.source.read = async () => ({
+      format: 'text/plain',
+      data: { text: 'DOCUMENT BODY' },
+      text: 'DOCUMENT BODY',
+      fetchedAt: FETCHED_AT,
+      assets: [
+        { kind: 'download', path: firstPath, mime: 'image/png', size: first.length },
+        { kind: 'open', path: secondPath, mime: 'image/png', size: second.length },
+      ],
+    })
+    const exported = await exportPack(deps(f), {
+      workspaceId: 'ws-1',
+      mode: 'snapshot',
+      clueIds: [clueId],
+    })
+    expect(exported.complete).toBe(true)
+    expect(exported.issues).toEqual([])
+    const entries = readZip(exported.bytes)
+    expect(entries.map(entry => entry.name).sort()).toEqual([
+      'content/clue-1.asset-1.bin',
+      'content/clue-1.asset-2.bin',
+      'content/clue-1.json',
+      'manifest.json',
+    ])
+    const manifest = manifestOf(exported.bytes) as unknown as {
+      clues: Array<{ snapshot: { path: string; encoding: string; assets?: Array<{ path: string; kind: string; mediaType: string; bytes: number; sha256: string }> } }>
+    }
+    const snapshot = manifest.clues[0]!.snapshot
+    expect(snapshot).toMatchObject({ path: 'content/clue-1.json', encoding: 'json' })
+    expect(snapshot.assets).toHaveLength(2)
+    expect(snapshot.assets!.map(asset => asset.kind)).toEqual(['download', 'open'])
+    const body = JSON.parse(new TextDecoder().decode(
+      entries.find(entry => entry.name === 'content/clue-1.json')!.data,
+    )) as { format: string; data: { text: string }; text: string }
+    expect(body).toEqual({ format: 'text/plain', data: { text: 'DOCUMENT BODY' }, text: 'DOCUMENT BODY' })
+    expect(entries.find(entry => entry.name === 'content/clue-1.asset-1.bin')!.data).toEqual(first)
+    expect(entries.find(entry => entry.name === 'content/clue-1.asset-2.bin')!.data).toEqual(second)
+
+    // A receiver stores every payload, and an offline re-share reproduces them.
+    let next = 0
+    const offline = createCluesService({
+      root: join(f.base, 'offline-store'),
+      now: () => NOW,
+      newId: kind => `${kind}-${++next}`,
+    })
+    const { importPack } = await import('../src/clues/share/import.ts')
+    const imported = await importPack({ clues: offline }, {
+      workspaceId: 'offline-ws',
+      bytes: exported.bytes,
+    })
+    expect(imported.complete).toBe(true)
+    expect(imported.snapshots).toHaveLength(1)
+    const stored = await offline.readSnapshot({
+      workspaceId: 'offline-ws',
+      snapshotId: imported.snapshots[0]!.snapshotId,
+    })
+    expect(stored.content).toMatchObject({ format: 'text/plain', text: 'DOCUMENT BODY' })
+    expect(stored.content.data).toMatchObject({
+      kind: 'cluepack-snapshot-bundle',
+      version: 1,
+      primary: { encoding: 'json', data: { text: 'DOCUMENT BODY' } },
+    })
+    expect((stored.content.data as { assets: unknown[] }).assets).toHaveLength(2)
+
+    const reExported = await exportPack({ clues: offline, now: () => NOW }, {
+      workspaceId: 'offline-ws',
+      mode: 'snapshot',
+      clueIds: [imported.clues[0]!.clueId],
+    })
+    expect(reExported.complete).toBe(true)
+    expect(reExported.issues).toEqual([])
+    const reEntries = readZip(reExported.bytes)
+    expect(reEntries.map(entry => entry.name).sort()).toEqual(entries.map(entry => entry.name).sort())
+    const reManifest = manifestOf(reExported.bytes) as unknown as {
+      clues: Array<{ snapshot: { assets?: Array<{ bytes: number; sha256: string }> } }>
+    }
+    expect(reManifest.clues[0]!.snapshot.assets).toHaveLength(2)
+    expect(reEntries.find(entry => entry.name === 'content/clue-1.asset-2.bin')!.data).toEqual(second)
   })
 
   it('preserves raw local-file bytes and media type', async () => {
@@ -433,6 +696,37 @@ describe('exportPack snapshot mode', () => {
     })).rejects.toThrowError(/entry limit/i)
     expect(f.source.calls.read).toBe(0)
   })
+
+  it.skipIf(process.platform === 'win32')(
+    'does not trust a regular-file stat when the asset was swapped for a FIFO',
+    async () => {
+      const f = fixture()
+      const clueId = await ensureClue(f, 'fifo')
+      const fifo = join(f.base, 'asset.fifo')
+      execFileSync('mkfifo', [fifo])
+      f.source.read = async () => ({
+        format: 'application/octet-stream',
+        data: { kind: 'binary', path: fifo, size: 0 },
+        fetchedAt: FETCHED_AT,
+        assets: [{ kind: 'download', path: fifo, mime: 'application/octet-stream', size: 0 }],
+      })
+      // Simulate the race: stat promised a regular file, but the object that
+      // is actually opened is a FIFO. O_NONBLOCK keeps the open from waiting
+      // for a writer and fstat refuses the real object.
+      const result = await exportPack(deps(f, {
+        statFile: async () => ({ size: 0, isFile: true }),
+      }), {
+        workspaceId: 'ws-1',
+        mode: 'snapshot',
+        clueIds: [clueId],
+      })
+      expect(result.complete).toBe(false)
+      expect(result.issues).toContainEqual(expect.objectContaining({
+        category: 'unsupported',
+        reason: SAFE_FAILURE_REASONS.unsupported,
+      }))
+    },
+  )
 
   it('never opens a non-regular local asset', async () => {
     const f = fixture()
@@ -767,7 +1061,7 @@ describe('inspectExport (share confirmation)', () => {
     })
     expect(inspection.items[0]!.portable).toMatchObject({
       portable: false,
-      reason: 'the source requires authorization on the sender machine',
+      reason: SAFE_FAILURE_REASONS['auth-required'],
     })
     expect(inspection.warnings.join('\n')).toMatch(/authorization/i)
     expect(f.source.calls.read).toBe(0)

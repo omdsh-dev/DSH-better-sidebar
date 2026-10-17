@@ -209,6 +209,69 @@ describe('parseCluepackManifest', () => {
     expect(() => parseCluepackManifest(duplicatePath)).toThrowError(/duplicate snapshot path/i)
   })
 
+  it('accepts only strict ISO-8601 timestamps, not anything Date.parse tolerates', () => {
+    for (const value of [
+      '1',
+      '2026-02-30T00:00:00.000Z',
+      '2026-13-01T00:00:00.000Z',
+      '2026-10-17T24:00:00.000Z',
+      '2026-10-17T00:60:00.000Z',
+      'Fri, 17 Oct 2026 00:00:00 GMT',
+      '2026-10-17',
+      '2026-10-17T00:00:00+15:00',
+    ]) {
+      const badExport = clone()
+      badExport.exportedAt = value
+      expect(() => parseCluepackManifest(badExport), value).toThrowError(/ISO timestamp/i)
+      const badFetched = clone()
+      badFetched.clues[0]!.snapshot!.fetchedAt = value
+      expect(() => parseCluepackManifest(badFetched), value).toThrowError(/ISO timestamp/i)
+    }
+    const offset = clone()
+    offset.exportedAt = '2026-10-17T08:00:00+08:00'
+    offset.clues[0]!.snapshot!.fetchedAt = '2026-10-17T00:00:00.123456789Z'
+    expect(parseCluepackManifest(offset).exportedAt).toBe('2026-10-17T08:00:00+08:00')
+  })
+
+  it('validates extra snapshot assets and rejects duplicate/unsafe paths', () => {
+    const valid = clone()
+    valid.clues[0]!.snapshot!.assets = [{
+      path: 'content/clue-1.asset-1.bin',
+      kind: 'download',
+      mediaType: 'image/png',
+      bytes: 7,
+      sha256: 'b'.repeat(64),
+    }]
+    expect(parseCluepackManifest(valid).clues[0]!.snapshot!.assets).toHaveLength(1)
+
+    const duplicate = clone()
+    duplicate.clues[0]!.snapshot!.assets = [
+      { ...valid.clues[0]!.snapshot!.assets![0]! },
+      { ...valid.clues[0]!.snapshot!.assets![0]! },
+    ]
+    expect(() => parseCluepackManifest(duplicate)).toThrowError(/duplicate snapshot asset path/i)
+
+    const collidesWithPrimary = clone()
+    collidesWithPrimary.clues[0]!.snapshot!.assets = [{
+      ...valid.clues[0]!.snapshot!.assets![0]!,
+      path: collidesWithPrimary.clues[0]!.snapshot!.path,
+    }]
+    expect(() => parseCluepackManifest(collidesWithPrimary)).toThrowError(/duplicate snapshot path/i)
+
+    for (const mutate of [
+      (asset: Record<string, unknown>) => { asset.path = '../asset.bin' },
+      (asset: Record<string, unknown>) => { asset.kind = 'link' },
+      (asset: Record<string, unknown>) => { asset.sha256 = 'abc' },
+      (asset: Record<string, unknown>) => { asset.bytes = -1 },
+    ]) {
+      const bad = clone()
+      const asset = { ...valid.clues[0]!.snapshot!.assets![0]! } as unknown as Record<string, unknown>
+      mutate(asset)
+      bad.clues[0]!.snapshot!.assets = [asset as never]
+      expect(() => parseCluepackManifest(bad)).toThrowError(ClueError)
+    }
+  })
+
   it('validates portable references without inventing a locator', () => {
     const noLocator = clone()
     noLocator.clues[0]!.portable = { portable: true }

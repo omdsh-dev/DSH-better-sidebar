@@ -59,6 +59,14 @@ import {
   type CluepackSnapshot,
   type CluepackSource,
 } from './manifest.ts'
+import {
+  SAFE_EXTERNAL_PATH_REASON,
+  SAFE_FAILURE_REASONS,
+  SAFE_PORTABLE_REFUSED_REASON,
+  SAFE_UNRESOLVED_REASON,
+  safeFailureOf,
+  safeStoredReason,
+} from './reasons.ts'
 import { createZip, DEFAULT_ZIP_LIMITS, type ZipEntryInput } from './zip.ts'
 
 /**
@@ -239,40 +247,6 @@ function throwIfAborted(signal: AbortSignal | undefined): void {
   }
 }
 
-/**
- * Safe, fixed reason of each clue failure category.
- *
- * A source error message can contain a credential-free but SENDER-LOCAL
- * address (e.g. builtin.files echoes the absolute path it failed to open) or a
- * private URL. The reason is written into `manifest.issues`, which travels to
- * the receiver and is shown by the import preview, so the exporter never
- * copies a raw error message: it reports the fixed category meaning instead.
- */
-const SAFE_FAILURE_REASONS: Record<ClueErrorCategory, string> = {
-  'source-missing': 'the source is not installed on the sender machine',
-  'dependency-missing': 'a source dependency is missing on the sender machine',
-  'dependency-incompatible': 'a source dependency is incompatible on the sender machine',
-  'auth-required': 'the source requires authorization on the sender machine',
-  'permission-denied': 'the source denied access on the sender machine',
-  'not-found': 'the resource was not found by the source',
-  unsupported: 'the source cannot export this content',
-  'rate-limited': 'the source rate limited the export',
-  conflict: 'the source reported a conflict',
-  cancelled: 'the source operation was cancelled',
-  timeout: 'the source operation timed out',
-  'invalid-request': 'the source rejected the export request',
-  failed: 'the source operation failed',
-}
-
-/** The fixed category/message of one source failure (never a raw payload). */
-function failureOf(error: unknown): { category: ClueErrorCategory; reason: string } {
-  if (isClueError(error)) return { category: error.category, reason: SAFE_FAILURE_REASONS[error.category] }
-  if (error instanceof Error && (error.name === 'AbortError' || error.name === 'TimeoutError')) {
-    return { category: 'cancelled', reason: 'the clue pack export was cancelled' }
-  }
-  return { category: 'failed', reason: SAFE_FAILURE_REASONS.failed }
-}
-
 /** Whether a value is a plain JSON object (locator shape). */
 function isRecord(value: unknown): value is Record<string, JsonValue> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -287,15 +261,25 @@ function isRecord(value: unknown): value is Record<string, JsonValue> {
  * hint is preserved, but `portable` stays false so no importer treats it as an
  * automatically usable address.
  */
-function portableRefOf(ref: CluePortableRef | undefined, fallbackReason: string): CluePortableRef {
+function portableRefOf(
+  ref: CluePortableRef | undefined,
+  fallbackReason: string,
+  origin: 'source' | 'stored' = 'source',
+): CluePortableRef {
   if (ref === undefined) return { portable: false, reason: fallbackReason }
   if (ref.portable && isRecord(ref.locator)) {
-    return { portable: true, locator: ref.locator as Locator, ...(ref.reason === undefined ? {} : { reason: ref.reason }) }
+    // A portable reference needs no explanation, and a SOURCE-provided reason
+    // is untrusted text: never copy it into the shared manifest.
+    return { portable: true, locator: ref.locator as Locator }
   }
+  // A stored reason is only trusted when it is one of this layer's own fixed
+  // catalogue entries (an older build or a hand-seeded row may carry a raw
+  // message with a token/path in it).
+  const storedReason = origin === 'stored' ? safeStoredReason(ref.reason, fallbackReason) : fallbackReason
   return {
     portable: false,
     ...(isRecord(ref.locator) ? { locator: ref.locator as Locator } : {}),
-    reason: ref.reason ?? (ref.portable ? 'the source did not provide a portable locator' : fallbackReason),
+    reason: ref.portable ? SAFE_PORTABLE_REFUSED_REASON : storedReason,
   }
 }
 
@@ -319,8 +303,7 @@ function externalPathHintOf(clue: Clue, portable: CluePortableRef): CluePortable
   return {
     portable: false,
     locator: clue.locator,
-    reason: portable.reason
-      ?? 'an absolute path outside a workspace has no portable reference; the receiver must remap it explicitly',
+    reason: portable.reason ?? SAFE_EXTERNAL_PATH_REASON,
   }
 }
 
@@ -445,6 +428,23 @@ function nowOf(deps: ClueShareExportDeps): string {
   return (deps.now ?? (() => new Date().toISOString()))()
 }
 
+/**
+ * The source-side read/portable params of one already-selected clue.
+ *
+ * Passing the selection's own `{sourceId, typeId, locator}` instead of a
+ * `clueId` keeps `resolveRef` from re-reading the whole workspace state once
+ * per clue (a 10,000-clue export previously did 10,000 full-store reads even
+ * though the exporter had already loaded the library).
+ */
+function liveCallOf(workspaceId: string, clue: Clue): {
+  workspaceId: string
+  sourceId: string
+  typeId: string
+  locator: Locator
+} {
+  return { workspaceId, sourceId: clue.sourceId, typeId: clue.typeId, locator: clue.locator }
+}
+
 /** Source attribution records of the selected clues, keyed by source id. */
 function collectSources(deps: ClueShareExportDeps, clues: readonly Clue[]): {
   sources: CluepackSource[]
@@ -479,11 +479,21 @@ function collectSources(deps: ClueShareExportDeps, clues: readonly Clue[]): {
   return { sources, keyBySourceId }
 }
 
-/** The payload + descriptor of one captured snapshot. */
+/** One extra asset captured from a source read. */
+interface CapturedAsset {
+  readonly kind: 'download' | 'open'
+  readonly mediaType: string
+  readonly bytes: Uint8Array
+}
+
+/** The payload(s) + descriptor of one captured snapshot. */
 interface CapturedSnapshot {
-  readonly descriptor: Omit<CluepackSnapshot, 'path'>
+  readonly descriptor: Omit<CluepackSnapshot, 'path' | 'assets'>
+  /** Primary payload: the JSON body or the first raw asset. */
   readonly bytes: Uint8Array
   readonly extension: 'json' | 'bin'
+  /** Additional raw assets captured from the same read. */
+  readonly assets?: readonly CapturedAsset[]
 }
 
 /** Read one structured read result into a JSON payload. */
@@ -552,9 +562,80 @@ async function readAssetBytes(
   }
 }
 
+/** One fixed issue of the clue currently being captured. */
+function issueOf(clue: Clue, category: ClueErrorCategory, reason: string): { readonly issue: CluepackIssue } {
+  return { issue: { target: 'clue', key: clue.id, category, reason } }
+}
+
+/** Whether a read is the local-file binary shape (path metadata + one asset). */
+function isBinaryRead(result: ClueReadResult): boolean {
+  return result.text === undefined
+    && isRecord(result.data)
+    && result.data.kind === 'binary'
+    && result.assets !== undefined
+    && result.assets.length > 0
+}
+
+/** Capture one asset path with the shared size bound and fixed failures. */
+async function captureAsset(
+  deps: ClueShareExportDeps,
+  clue: Clue,
+  asset: { readonly kind: 'download' | 'open'; readonly path?: string; readonly mime?: string },
+  maxSnapshotBytes: number,
+  signal: AbortSignal | undefined,
+): Promise<CapturedAsset | { readonly issue: CluepackIssue }> {
+  if (asset.path === undefined || asset.path === '') {
+    return issueOf(clue, 'unsupported', 'the source returned an asset without an exportable path')
+  }
+  const statFile = deps.statFile ?? (async path => {
+    const info = await stat(path)
+    return { size: info.size, isFile: info.isFile() }
+  })
+  try {
+    throwIfAborted(signal)
+    const info = await statFile(asset.path)
+    throwIfAborted(signal)
+    if (!info.isFile) {
+      return issueOf(clue, 'unsupported', 'the local asset is not a regular file')
+    }
+    if (info.size > maxSnapshotBytes) {
+      return issueOf(clue, 'unsupported', `content exceeds the ${maxSnapshotBytes} byte snapshot limit`)
+    }
+  } catch (error) {
+    if (isClueError(error)) {
+      return issueOf(clue, error.category, SAFE_FAILURE_REASONS[error.category])
+    }
+    return issueOf(clue, 'failed', 'the local asset could not be read for export')
+  }
+  let bytes: Uint8Array
+  try {
+    bytes = await readAssetBytes(deps, asset.path, maxSnapshotBytes, signal)
+  } catch (error) {
+    if (isClueError(error)) {
+      return issueOf(clue, error.category, SAFE_FAILURE_REASONS[error.category])
+    }
+    return issueOf(clue, 'failed', 'the local asset could not be read for export')
+  }
+  if (bytes.byteLength > maxSnapshotBytes) {
+    return issueOf(clue, 'unsupported', `content exceeds the ${maxSnapshotBytes} byte snapshot limit`)
+  }
+  return {
+    kind: asset.kind,
+    mediaType: asset.mime === undefined || asset.mime === '' ? 'application/octet-stream' : asset.mime,
+    bytes,
+  }
+}
+
 /**
  * Capture one clue's content for snapshot mode.
- * @returns the payload or an issue when the content cannot be fully captured.
+ *
+ * A source read may carry a structured/text body AND several assets. The
+ * primary payload is the body (JSON) when one exists; otherwise the first raw
+ * asset is primary and the remaining assets are stored beside it. Every asset
+ * is either captured completely or the whole clue becomes an explicit issue:
+ * a multi-asset read is never silently reduced to its first asset, and a body
+ * is never dropped just because one asset happened to have a path.
+ * @returns the payload(s) or an issue when the content cannot be fully captured.
  */
 async function captureSnapshot(
   deps: ClueShareExportDeps,
@@ -563,132 +644,71 @@ async function captureSnapshot(
   maxSnapshotBytes: number,
   signal: AbortSignal | undefined,
 ): Promise<CapturedSnapshot | { readonly issue: CluepackIssue }> {
-  const asset = result.assets?.find(candidate => candidate.path !== undefined
-    && (candidate.kind === 'download' || candidate.kind === 'open'))
-  if (asset?.path !== undefined) {
-    const statFile = deps.statFile ?? (async path => {
-      const info = await stat(path)
-      return { size: info.size, isFile: info.isFile() }
-    })
-    let size: number
+  const assets = result.assets ?? []
+  const declaredButUnreadable = assets.find(asset => asset.path === undefined || asset.path === '')
+  if (declaredButUnreadable !== undefined) {
+    return issueOf(clue, 'unsupported', 'the source returned an asset without an exportable path')
+  }
+  if (assets.some(asset => asset.kind !== 'download' && asset.kind !== 'open')) {
+    return issueOf(clue, 'unsupported', 'the source returned an asset with an unsupported kind')
+  }
+  const binary = isBinaryRead(result)
+  if (binary && assets.length === 0) {
+    return issueOf(clue, 'unsupported', 'the source returned a binary reference without an exportable asset')
+  }
+  let bodyBytes: Uint8Array | undefined
+  if (!binary) {
     try {
-      throwIfAborted(signal)
-      const info = await statFile(asset.path)
-      throwIfAborted(signal)
-      if (!info.isFile) {
-        return {
-          issue: {
-            target: 'clue',
-            key: clue.id,
-            category: 'unsupported',
-            reason: 'the local asset is not a regular file',
-          },
-        }
-      }
-      size = info.size
+      bodyBytes = jsonPayloadOf(result)
     } catch (error) {
-      if (isClueError(error)) throw error
-      return {
-        issue: {
-          target: 'clue',
-          key: clue.id,
-          category: 'failed',
-          reason: 'the local asset could not be read for export',
-        },
-      }
+      return issueOf(
+        clue,
+        isClueError(error) ? error.category : 'failed',
+        isClueError(error) ? SAFE_FAILURE_REASONS[error.category] : 'the source content is not JSON-serializable',
+      )
     }
-    if (size > maxSnapshotBytes) {
-      return {
-        issue: {
-          target: 'clue',
-          key: clue.id,
-          category: 'unsupported',
-          reason: `content exceeds the ${maxSnapshotBytes} byte snapshot limit`,
-        },
-      }
+    if (bodyBytes.byteLength > maxSnapshotBytes) {
+      return issueOf(clue, 'unsupported', `content exceeds the ${maxSnapshotBytes} byte snapshot limit`)
     }
-    let bytes: Uint8Array
-    try {
-      bytes = await readAssetBytes(deps, asset.path, maxSnapshotBytes, signal)
-    } catch (error) {
-      if (isClueError(error)) {
-        return {
-          issue: {
-            target: 'clue',
-            key: clue.id,
-            category: error.category,
-            reason: SAFE_FAILURE_REASONS[error.category],
-          },
-        }
-      }
-      return {
-        issue: {
-          target: 'clue',
-          key: clue.id,
-          category: 'failed',
-          reason: 'the local asset could not be read for export',
-        },
-      }
-    }
-    if (bytes.byteLength > maxSnapshotBytes) {
-      return {
-        issue: {
-          target: 'clue',
-          key: clue.id,
-          category: 'unsupported',
-          reason: `content exceeds the ${maxSnapshotBytes} byte snapshot limit`,
-        },
-      }
-    }
+  }
+  const capturedAssets: CapturedAsset[] = []
+  for (const asset of assets) {
+    const captured = await captureAsset(deps, clue, asset, maxSnapshotBytes, signal)
+    if ('issue' in captured) return captured
+    capturedAssets.push(captured)
+  }
+  const common = {
+    format: result.format,
+    fetchedAt: result.fetchedAt,
+    ...(result.revision === undefined ? {} : { sourceVersion: result.revision }),
+  }
+  if (binary) {
+    const primary = capturedAssets.shift()!
+    const rest = capturedAssets.length === 0 ? undefined : capturedAssets
     return {
-      bytes,
+      bytes: primary.bytes,
       extension: 'bin',
       descriptor: {
         encoding: 'raw',
-        mediaType: asset.mime ?? 'application/octet-stream',
-        format: result.format,
-        bytes: bytes.byteLength,
-        sha256: sha256Hex(bytes),
-        fetchedAt: result.fetchedAt,
-        ...(result.revision === undefined ? {} : { sourceVersion: result.revision }),
+        mediaType: primary.mediaType,
+        bytes: primary.bytes.byteLength,
+        sha256: sha256Hex(primary.bytes),
+        ...common,
       },
-    }
-  }
-  let bytes: Uint8Array
-  try {
-    bytes = jsonPayloadOf(result)
-  } catch (error) {
-    return {
-      issue: {
-        target: 'clue',
-        key: clue.id,
-        category: isClueError(error) ? error.category : 'failed',
-        reason: isClueError(error) ? error.message : 'the source content is not JSON-serializable',
-      },
-    }
-  }
-  if (bytes.byteLength > maxSnapshotBytes) {
-    return {
-      issue: {
-        target: 'clue',
-        key: clue.id,
-        category: 'unsupported',
-        reason: `content exceeds the ${maxSnapshotBytes} byte snapshot limit`,
-      },
+      ...(rest === undefined ? {} : { assets: rest }),
     }
   }
   return {
-    bytes,
+    bytes: bodyBytes!,
     extension: 'json',
     descriptor: {
       encoding: 'json',
       mediaType: 'application/json',
-      format: result.format,
-      bytes: bytes.byteLength,
-      sha256: sha256Hex(bytes),
-      fetchedAt: result.fetchedAt,
-      ...(result.revision === undefined ? {} : { sourceVersion: result.revision }),
+      bytes: bodyBytes!.byteLength,
+      sha256: sha256Hex(bodyBytes!),
+      ...common,
     },
+    ...(capturedAssets.length === 0 ? {} : { assets: capturedAssets }),
   }
 }
 
@@ -724,6 +744,195 @@ function binaryWrapperOf(data: JsonValue): {
     bytes: new Uint8Array(Buffer.from(raw.base64, 'base64')),
     sha256: raw.sha256,
     size: raw.size,
+  }
+}
+
+/**
+ * S1 stores one JSON value per snapshot. A read that carries several payloads
+ * (the structured body plus raw assets) is projected into this versioned
+ * wrapper so a later re-share can reproduce every byte. A normal single-part
+ * snapshot keeps the existing plain shape for backward compatibility.
+ */
+interface StoredSnapshotBundle {
+  readonly primary:
+    | { readonly encoding: 'json'; readonly data: JsonValue }
+    | {
+      readonly encoding: 'raw'
+      readonly mediaType: string
+      readonly size: number
+      readonly sha256: string
+      readonly base64: string
+    }
+  readonly assets: readonly {
+    readonly kind: 'download' | 'open'
+    readonly mediaType: string
+    readonly size: number
+    readonly sha256: string
+    readonly base64: string
+  }[]
+}
+
+/** Marker/version of the multi-payload S1 projection. */
+const STORED_BUNDLE_KIND = 'cluepack-snapshot-bundle'
+const STORED_BUNDLE_VERSION = 1
+
+/** Decode one base64 payload and verify its declared size/digest. */
+function verifiedBase64(
+  base64: unknown,
+  size: unknown,
+  digest: unknown,
+): { readonly bytes: Uint8Array } | undefined {
+  if (typeof base64 !== 'string' || typeof size !== 'number' || typeof digest !== 'string') return undefined
+  if (!Number.isSafeInteger(size) || size < 0) return undefined
+  const bytes = new Uint8Array(Buffer.from(base64, 'base64'))
+  if (bytes.byteLength !== size || sha256Hex(bytes) !== digest) return undefined
+  return { bytes }
+}
+
+/** Parse the versioned multi-payload projection, or `undefined` for a plain snapshot. */
+function storedBundleOf(data: JsonValue): StoredSnapshotBundle | undefined {
+  if (!isRecord(data)) return undefined
+  const raw = data as Record<string, JsonValue>
+  if (raw.kind !== STORED_BUNDLE_KIND || raw.version !== STORED_BUNDLE_VERSION) return undefined
+  if (!isRecord(raw.primary) || !Array.isArray(raw.assets)) return undefined
+  const primary = raw.primary
+  const primaryRecord = primary as Record<string, JsonValue>
+  let parsedPrimary: StoredSnapshotBundle['primary']
+  if (primaryRecord.encoding === 'json') {
+    if (!('data' in primaryRecord)) return undefined
+    parsedPrimary = { encoding: 'json', data: primaryRecord.data! }
+  } else if (primaryRecord.encoding === 'raw') {
+    const verified = verifiedBase64(primaryRecord.base64, primaryRecord.size, primaryRecord.sha256)
+    if (verified === undefined || typeof primaryRecord.mediaType !== 'string' || primaryRecord.mediaType === '') {
+      return undefined
+    }
+    parsedPrimary = {
+      encoding: 'raw',
+      mediaType: primaryRecord.mediaType,
+      size: primaryRecord.size as number,
+      sha256: primaryRecord.sha256 as string,
+      base64: primaryRecord.base64 as string,
+    }
+  } else {
+    return undefined
+  }
+  const assets: StoredSnapshotBundle['assets'][number][] = []
+  for (const entry of raw.assets) {
+    if (!isRecord(entry)) return undefined
+    const asset = entry as Record<string, JsonValue>
+    const verified = verifiedBase64(asset.base64, asset.size, asset.sha256)
+    if (
+      verified === undefined
+      || (asset.kind !== 'download' && asset.kind !== 'open')
+      || typeof asset.mediaType !== 'string'
+      || asset.mediaType === ''
+    ) {
+      return undefined
+    }
+    assets.push({
+      kind: asset.kind,
+      mediaType: asset.mediaType,
+      size: asset.size as number,
+      sha256: asset.sha256 as string,
+      base64: asset.base64 as string,
+    })
+  }
+  return { primary: parsedPrimary, assets }
+}
+
+/**
+ * Reconstruct one captured snapshot from the multi-payload S1 projection.
+ * Every raw part is hash-checked again so a corrupted store cannot be
+ * re-shared as if it were intact.
+ */
+function capturedStoredBundle(
+  record: ClueSnapshotRecord,
+  bundle: StoredSnapshotBundle,
+  maxSnapshotBytes: number,
+  key: string,
+): CapturedSnapshot | { readonly issue: CluepackIssue } {
+  const fail = (reason: string): { readonly issue: CluepackIssue } => ({
+    issue: { target: 'clue', key, category: 'failed', reason },
+  })
+  const common = {
+    format: record.content.format,
+    fetchedAt: record.meta.fetchedAt,
+    ...(record.meta.sourceVersion === undefined ? {} : { sourceVersion: record.meta.sourceVersion }),
+  }
+  const assets: CapturedAsset[] = []
+  for (const asset of bundle.assets) {
+    if (asset.size > maxSnapshotBytes) {
+      return {
+        issue: {
+          target: 'clue',
+          key,
+          category: 'unsupported',
+          reason: `content exceeds the ${maxSnapshotBytes} byte snapshot limit`,
+        },
+      }
+    }
+    const verified = verifiedBase64(asset.base64, asset.size, asset.sha256)
+    if (verified === undefined) return fail('the stored snapshot failed its integrity check')
+    assets.push({ kind: asset.kind, mediaType: asset.mediaType, bytes: verified.bytes })
+  }
+  if (bundle.primary.encoding === 'raw') {
+    const primary = bundle.primary
+    if (primary.size > maxSnapshotBytes) {
+      return {
+        issue: {
+          target: 'clue',
+          key,
+          category: 'unsupported',
+          reason: `content exceeds the ${maxSnapshotBytes} byte snapshot limit`,
+        },
+      }
+    }
+    const verified = verifiedBase64(primary.base64, primary.size, primary.sha256)
+    if (verified === undefined) return fail('the stored snapshot failed its integrity check')
+    return {
+      bytes: verified.bytes,
+      extension: 'bin',
+      descriptor: {
+        encoding: 'raw',
+        mediaType: primary.mediaType,
+        bytes: verified.bytes.byteLength,
+        sha256: primary.sha256,
+        ...common,
+      },
+      ...(assets.length === 0 ? {} : { assets }),
+    }
+  }
+  let bodyBytes: Uint8Array
+  try {
+    bodyBytes = new TextEncoder().encode(JSON.stringify({
+      format: record.content.format,
+      data: bundle.primary.data,
+      ...(record.content.text === undefined ? {} : { text: record.content.text }),
+    }))
+  } catch {
+    return fail('the stored snapshot is not JSON-serializable')
+  }
+  if (bodyBytes.byteLength > maxSnapshotBytes) {
+    return {
+      issue: {
+        target: 'clue',
+        key,
+        category: 'unsupported',
+        reason: `content exceeds the ${maxSnapshotBytes} byte snapshot limit`,
+      },
+    }
+  }
+  return {
+    bytes: bodyBytes,
+    extension: 'json',
+    descriptor: {
+      encoding: 'json',
+      mediaType: 'application/json',
+      bytes: bodyBytes.byteLength,
+      sha256: sha256Hex(bodyBytes),
+      ...common,
+    },
+    ...(assets.length === 0 ? {} : { assets }),
   }
 }
 
@@ -825,7 +1034,22 @@ async function captureStoredSnapshot(
     }
   }
   const format = record.content.format
-  const binary = binaryWrapperOf(record.content.data)
+  const rawData = record.content.data
+  if (isRecord(rawData) && rawData.kind === STORED_BUNDLE_KIND) {
+    const bundle = storedBundleOf(rawData)
+    if (bundle === undefined) {
+      return {
+        issue: {
+          target: 'clue',
+          key,
+          category: 'failed',
+          reason: 'the stored snapshot failed its integrity check',
+        },
+      }
+    }
+    return capturedStoredBundle(record, bundle, maxSnapshotBytes, key)
+  }
+  const binary = binaryWrapperOf(rawData)
   if (binary !== undefined) {
     const digest = sha256Hex(binary.bytes)
     if (binary.sha256 !== digest || binary.size !== binary.bytes.byteLength) {
@@ -932,20 +1156,24 @@ export async function inspectExport(
     throwIfAborted(params.signal)
     let portable: CluePortableRef
     if (clue.unresolved !== undefined) {
-      portable = externalPathHintOf(clue, portableRefOf(clue.unresolved.portable, clue.unresolved.reason))
+      portable = externalPathHintOf(clue, portableRefOf(
+        clue.unresolved.portable,
+        safeStoredReason(clue.unresolved.reason, SAFE_UNRESOLVED_REASON),
+        'stored',
+      ))
       warnings.push(`"${clue.title}" is unresolved: ${clue.unresolved.reason}`)
     } else {
       try {
         portable = externalPathHintOf(clue, portableRefOf(
-          await deps.clues.portable({ workspaceId, clueId: clue.id }, {
+          await deps.clues.portable(liveCallOf(workspaceId, clue), {
             caller: 'ui',
             ...(params.signal === undefined ? {} : { signal: params.signal }),
           }),
-          'the source did not provide a portable reference',
+          SAFE_PORTABLE_REFUSED_REASON,
         ))
       } catch (error) {
         if (params.signal?.aborted === true) throwIfAborted(params.signal)
-        const failure = failureOf(error)
+        const failure = safeFailureOf(error)
         portable = externalPathHintOf(clue, { portable: false, reason: failure.reason })
         warnings.push(`"${clue.title}": ${failure.reason}`)
       }
@@ -1053,9 +1281,10 @@ export async function exportPack(
   const maxManifestBytes = deps.maxManifestBytes ?? DEFAULT_MAX_MANIFEST_BYTES
   const selection = await collectSelection(deps, params)
   throwIfAborted(params.signal)
-  // References mode writes the manifest alone; snapshot mode writes at most
-  // one content entry per clue, so this is the exact upper bound. Refusing here
-  // means an impossible selection never starts a source read.
+  // References mode writes the manifest alone. Snapshot mode writes at least
+  // one content entry per clue (extra assets are discovered during the read and
+  // checked again before the archive is built), so this is a lower bound that
+  // refuses an impossible selection before the first source read.
   const plannedEntries = mode === 'snapshot' ? selection.clues.length + 1 : 1
   if (plannedEntries > maxEntries) {
     throw new ClueError(
@@ -1077,12 +1306,10 @@ export async function exportPack(
   }
   const issues: CluepackIssue[] = [...selection.issues]
   const clues: CluepackClue[] = []
-  /** Package clue key → manifest record (assembly/statistics, no O(N²) find). */
-  const clueByKey = new Map<string, CluepackClue>()
   /** clue id → package key (for pack members). */
   const keyByClueId = new Map<string, string>()
-  /** Package key → captured payload (assembled into ZIP entries later). */
-  const content = new Map<string, CapturedSnapshot>()
+  /** Archive path → payload (assembled into ZIP entries later). */
+  const content = new Map<string, { readonly bytes: Uint8Array; readonly compress: boolean }>()
   /** Bytes captured so far; checked on every capture to bound memory. */
   let capturedBytes = 0
   const progress = params.onProgress ?? (() => undefined)
@@ -1091,9 +1318,9 @@ export async function exportPack(
   // Snapshot fallback needs the catalogue once, not once per clue.
   const storedSnapshots = mode === 'snapshot' ? await indexStoredSnapshots(deps, workspaceId) : undefined
   throwIfAborted(params.signal)
-  const capture = (key: string, captured: CapturedSnapshot): void => {
-    capturedBytes += captured.bytes.byteLength
-    content.set(key, captured)
+  const capture = (path: string, bytes: Uint8Array, compress: boolean): void => {
+    capturedBytes += bytes.byteLength
+    content.set(path, { bytes, compress })
     // This is the importer's expanded-size bound. Checking it HERE means a
     // 10,000-snapshot selection stops at the 128 MiB boundary, not after
     // ~312 GiB of payloads have been retained. The archive-size bound is NOT
@@ -1106,6 +1333,32 @@ export async function exportPack(
       )
     }
   }
+  /**
+   * Give one captured snapshot its archive paths and stage every payload.
+   * The path derives only from the package clue key, never from a title or a
+   * local file name; the importer validates it again.
+   */
+  const attachCapturedSnapshot = (key: string, captured: CapturedSnapshot): CluepackSnapshot => {
+    const base = `content/${key}`
+    const primaryPath = `${base}.${captured.extension}`
+    const capturedAssets = captured.assets ?? []
+    const assets = capturedAssets.map((asset, index) => ({
+      path: `${base}.asset-${index + 1}.bin`,
+      kind: asset.kind,
+      mediaType: asset.mediaType,
+      bytes: asset.bytes.byteLength,
+      sha256: sha256Hex(asset.bytes),
+    }))
+    capture(primaryPath, captured.bytes, captured.extension === 'json')
+    for (const [index, asset] of capturedAssets.entries()) {
+      capture(`${base}.asset-${index + 1}.bin`, asset.bytes, false)
+    }
+    return {
+      ...captured.descriptor,
+      path: primaryPath,
+      ...(assets.length === 0 ? {} : { assets }),
+    }
+  }
   progress({ phase: 'collect', completed: 0, total })
 
   for (const [index, clue] of selection.clues.entries()) {
@@ -1115,19 +1368,23 @@ export async function exportPack(
     const itemIssues: CluepackIssue[] = []
     let portable: CluePortableRef
     if (clue.unresolved !== undefined) {
-      portable = externalPathHintOf(clue, portableRefOf(clue.unresolved.portable, clue.unresolved.reason))
+      portable = externalPathHintOf(clue, portableRefOf(
+        clue.unresolved.portable,
+        safeStoredReason(clue.unresolved.reason, SAFE_UNRESOLVED_REASON),
+        'stored',
+      ))
     } else {
       try {
         portable = externalPathHintOf(clue, portableRefOf(
-          await deps.clues.portable({ workspaceId, clueId: clue.id }, {
+          await deps.clues.portable(liveCallOf(workspaceId, clue), {
             caller: 'ui',
             ...(params.signal === undefined ? {} : { signal: params.signal }),
           }),
-          'the source did not provide a portable reference',
+          SAFE_PORTABLE_REFUSED_REASON,
         ))
       } catch (error) {
         if (params.signal?.aborted === true) throwIfAborted(params.signal)
-        const failure = failureOf(error)
+        const failure = safeFailureOf(error)
         itemIssues.push({ target: 'clue', key, category: failure.category, reason: failure.reason })
         portable = externalPathHintOf(clue, { portable: false, reason: failure.reason })
       }
@@ -1147,28 +1404,24 @@ export async function exportPack(
             target: 'clue',
             key,
             category: 'source-missing',
-            reason: `no snapshot was captured: ${clue.unresolved.reason}`,
+            reason: `no snapshot was captured: ${safeStoredReason(clue.unresolved.reason, SAFE_UNRESOLVED_REASON)}`,
           })
         } else if ('issue' in stored) {
           itemIssues.push({ ...stored.issue, key })
         } else {
-          snapshot = {
-            ...stored.descriptor,
-            path: `content/${key}.${stored.extension}`,
-          }
-          capture(key, stored)
+          snapshot = attachCapturedSnapshot(key, stored)
         }
       } else {
         let result: ClueReadResult | undefined
         let readFailure: { category: ClueErrorCategory; reason: string } | undefined
         try {
-          result = await deps.clues.read({ workspaceId, clueId: clue.id }, {
+          result = await deps.clues.read(liveCallOf(workspaceId, clue), {
             caller: 'ui',
             ...(params.signal === undefined ? {} : { signal: params.signal }),
           })
         } catch (error) {
           if (params.signal?.aborted === true) throwIfAborted(params.signal)
-          readFailure = failureOf(error)
+          readFailure = safeFailureOf(error)
         }
         if (readFailure !== undefined) {
           // A resolved clue may still own an imported snapshot. Spec §3/§5 say
@@ -1178,11 +1431,7 @@ export async function exportPack(
           const stored = await captureStoredSnapshot(deps, storedSnapshotsForClue, clue.id, key, maxSnapshotBytes)
           throwIfAborted(params.signal)
           if (stored !== undefined && !('issue' in stored)) {
-            snapshot = {
-              ...stored.descriptor,
-              path: `content/${key}.${stored.extension}`,
-            }
-            capture(key, stored)
+            snapshot = attachCapturedSnapshot(key, stored)
             // Never turn a failed live read into a silent success: the
             // receiver must be able to see that this content is an OLD
             // snapshot (with its real fetchedAt), not fresh source content.
@@ -1211,13 +1460,7 @@ export async function exportPack(
             if ('issue' in captured) {
               itemIssues.push({ ...captured.issue, key })
             } else {
-              // The path derives from the package key, never from a title or
-              // a local file name; the importer validates it again.
-              snapshot = {
-                ...captured.descriptor,
-                path: `content/${key}.${captured.extension}`,
-              }
-              capture(key, captured)
+              snapshot = attachCapturedSnapshot(key, captured)
             }
           }
         }
@@ -1233,7 +1476,6 @@ export async function exportPack(
       ...(snapshot === undefined ? {} : { snapshot }),
     }
     clues.push(record)
-    clueByKey.set(key, record)
     progress({
       phase: 'read',
       completed: index + 1,
@@ -1273,13 +1515,8 @@ export async function exportPack(
   const entries: ZipEntryInput[] = [
     { name: CLUEPACK_MANIFEST_PATH, data: manifestBytes, compress: true },
   ]
-  for (const [key, captured] of content) {
-    const clue = clueByKey.get(key)!
-    entries.push({
-      name: clue.snapshot!.path,
-      data: captured.bytes,
-      compress: captured.descriptor.encoding === 'json',
-    })
+  for (const [name, captured] of content) {
+    entries.push({ name, data: captured.bytes, compress: captured.compress })
   }
   // The entry count was pre-checked from the selection and `createZip`
   // re-checks it; this assembly step only needs the expanded-size parity

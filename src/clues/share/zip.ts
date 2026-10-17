@@ -101,6 +101,7 @@ const METHOD_STORED = 0
 const METHOD_DEFLATE = 8
 const UNIX_SYMLINK_MODE = 0o120000
 const UNIX_REGULAR_FILE_MODE = 0o100644
+const UNIX_DIRECTORY_MODE = 0o040755
 const LOCAL_HEADER_SIZE = 30
 const CENTRAL_HEADER_SIZE = 46
 const EOCD_SIZE = 22
@@ -157,6 +158,19 @@ export function assertZipEntryName(name: string, maxNameBytes = DEFAULT_ZIP_LIMI
   if (/^[A-Za-z]:/.test(name)) fail('drive paths are not allowed')
   if (name.length > maxNameBytes || UTF8_ENCODER.encode(name).length > maxNameBytes) {
     fail(`the name exceeds ${maxNameBytes} bytes`)
+  }
+  // A lone surrogate is not a Unicode scalar. TextEncoder would replace it
+  // with U+FFFD, so two distinct JS names could become the same archive name
+  // (the writer would emit duplicates its own reader rejects).
+  for (let index = 0; index < name.length; index += 1) {
+    const code = name.charCodeAt(index)
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = name.charCodeAt(index + 1)
+      if (!(next >= 0xdc00 && next <= 0xdfff)) fail('the name contains an unpaired surrogate')
+      index += 1
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      fail('the name contains an unpaired surrogate')
+    }
   }
   const directory = name.endsWith('/')
   const body = directory ? name.slice(0, -1) : name
@@ -221,8 +235,10 @@ function resolveLimits(overrides: Partial<ZipReadLimits> | undefined): ZipReadLi
  */
 export function createZip(entries: readonly ZipEntryInput[], options: ZipWriteOptions = {}): Buffer {
   const limits = resolveLimits(options.limits)
-  if (entries.length > MAX_UINT16) {
-    throw new ClueError('invalid-request', `a ZIP archive supports at most ${MAX_UINT16} entries`)
+  // 0xffff is the ZIP64 sentinel in the EOCD; a non-ZIP64 writer must stop at
+  // 0xfffe or its own reader (which refuses the sentinel) rejects the archive.
+  if (entries.length >= MAX_UINT16) {
+    throw new ClueError('invalid-request', `a non-ZIP64 archive supports at most ${MAX_UINT16 - 1} entries`)
   }
   if (entries.length > limits.maxEntries) {
     throw new ClueError(
@@ -233,6 +249,7 @@ export function createZip(entries: readonly ZipEntryInput[], options: ZipWriteOp
   const { time, date } = dosDateTime(options.modifiedAt ?? new Date())
   const seen = new Set<string>()
   interface Prepared {
+    name: string
     nameBytes: Buffer
     data: Uint8Array
     method: number
@@ -282,7 +299,7 @@ export function createZip(entries: readonly ZipEntryInput[], options: ZipWriteOp
     if (nameBytes.length > MAX_UINT16) {
       throw new ClueError('invalid-request', `archive entry "${entry.name}" has a name too long for a ZIP file`)
     }
-    prepared.push({ nameBytes, data, method, crc: crc32(data), compressed, offset })
+    prepared.push({ name: entry.name, nameBytes, data, method, crc: crc32(data), compressed, offset })
     offset += LOCAL_HEADER_SIZE + nameBytes.length + compressed.length
     // Checked per entry, i.e. while the archive is being prepared: the output
     // buffer is never allocated once the bound is already broken.
@@ -344,7 +361,8 @@ export function createZip(entries: readonly ZipEntryInput[], options: ZipWriteOp
     archive.writeUInt16LE(0, cursor + 32) // comment
     archive.writeUInt16LE(0, cursor + 34) // disk start
     archive.writeUInt16LE(0, cursor + 36) // internal attributes
-    archive.writeUInt32LE((UNIX_REGULAR_FILE_MODE << 16) >>> 0, cursor + 38)
+    const unixMode = entry.name.endsWith('/') ? UNIX_DIRECTORY_MODE : UNIX_REGULAR_FILE_MODE
+    archive.writeUInt32LE((unixMode << 16) >>> 0, cursor + 38)
     archive.writeUInt32LE(entry.offset, cursor + 42)
     entry.nameBytes.copy(archive, cursor + CENTRAL_HEADER_SIZE)
     cursor += CENTRAL_HEADER_SIZE + entry.nameBytes.length
@@ -425,6 +443,9 @@ export function readZip(input: Uint8Array, overrides?: Partial<ZipReadLimits>): 
   if (centralOffset + centralSize > buffer.length) {
     throw new ClueError('invalid-request', 'the zip central directory lies outside the archive')
   }
+  if (centralOffset + centralSize > eocd) {
+    throw new ClueError('invalid-request', 'the zip central directory overlaps the end record')
+  }
   const entries: ZipEntry[] = []
   const seen = new Set<string>()
   let cursor = centralOffset
@@ -453,6 +474,12 @@ export function readZip(input: Uint8Array, overrides?: Partial<ZipReadLimits>): 
       throw new ClueError('invalid-request', 'the zip central directory is truncated')
     }
     const nameBytes = buffer.subarray(nameStart, nameEnd)
+    if ((flags & UTF8_FLAG) === 0 && nameBytes.some(byte => byte >= 0x80)) {
+      throw new ClueError(
+        'invalid-request',
+        'an archive entry name is not UTF-8 flagged (CP437 names are not supported)',
+      )
+    }
     const name = decodeEntryName(nameBytes)
     cursor = nameEnd + extraLength + commentLength
     const unixMode = (externalAttributes >>> 16) & 0o170000
