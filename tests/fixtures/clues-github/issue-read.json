@@ -1,0 +1,20 @@
+{
+  "data": {
+    "repository": {
+      "isArchived": false,
+      "viewerPermission": "READ",
+      "issue": {
+        "number": 14609,
+        "title": "gh release list -R https://github.com/cli/cli/ -> error",
+        "body": "### Describe the bug\n\n`gh release list -R https://github.com/cli/cli/` returns a 401.\n\n### Steps to reproduce the behavior\n\n1. Run `gh release list -R https://github.com/cli/cli/`\n",
+        "state": "OPEN",
+        "stateReason": null,
+        "createdAt": "2026-10-05T09:12:00Z",
+        "updatedAt": "2026-10-16T07:44:20Z",
+        "url": "https://github.com/cli/cli/issues/14609",
+        "author": { "login": "tps800" },
+        "labels": { "nodes": [{ "name": "bug" }, { "name": "release" }] }
+      }
+    }
+  }
+}

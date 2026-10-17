@@ -1,0 +1,35 @@
+{
+  "data": {
+    "repository": {
+      "pullRequests": {
+        "totalCount": 71,
+        "pageInfo": {
+          "hasNextPage": true,
+          "endCursor": "Y3Vyc29yOnYyOpK0MjAyNi0xMC0xN1QxMDowMzo1NlrO_1hP-w=="
+        },
+        "nodes": [
+          {
+            "number": 14727,
+            "title": "fix(issue create): resolve --type before creating the issue",
+            "state": "OPEN",
+            "isDraft": false,
+            "updatedAt": "2026-10-17T15:26:56Z",
+            "url": "https://github.com/cli/cli/pull/14727",
+            "author": { "login": "umairnaeem0309" },
+            "mergedAt": null
+          },
+          {
+            "number": 14148,
+            "title": "Update glamour to v2",
+            "state": "MERGED",
+            "isDraft": false,
+            "updatedAt": "2026-10-17T10:03:56Z",
+            "url": "https://github.com/cli/cli/pull/14148",
+            "author": { "login": "heaths" },
+            "mergedAt": "2026-10-17T10:03:56Z"
+          }
+        ]
+      }
+    }
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "data": {
+    "search": {
+      "issueCount": 519,
+      "pageInfo": { "hasNextPage": true, "endCursor": "Y3Vyc29yOjI=" },
+      "nodes": [
+        {
+          "number": 14609,
+          "title": "gh release list -R https://github.com/cli/cli/ -> error",
+          "state": "OPEN",
+          "updatedAt": "2026-10-16T07:44:20Z",
+          "url": "https://github.com/cli/cli/issues/14609",
+          "author": { "login": "tps800" }
+        },
+        {
+          "number": 14312,
+          "title": "Add --generate-notes to gh release edit",
+          "state": "OPEN",
+          "updatedAt": "2026-09-02T15:24:12Z",
+          "url": "https://github.com/cli/cli/issues/14312",
+          "author": { "login": "TWiStErRob" }
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "data": {
+    "repository": {
+      "isArchived": false,
+      "viewerPermission": "TRIAGE",
+      "pullRequest": {
+        "number": 14727,
+        "title": "fix(issue create): resolve --type before creating the issue",
+        "body": "## Summary\n\nFixes #14703.\n",
+        "state": "OPEN",
+        "isDraft": false,
+        "merged": false,
+        "mergedAt": null,
+        "createdAt": "2026-10-17T12:00:00Z",
+        "updatedAt": "2026-10-17T15:26:56Z",
+        "url": "https://github.com/cli/cli/pull/14727",
+        "author": { "login": "umairnaeem0309" },
+        "labels": { "nodes": [] }
+      }
+    }
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "hosts": {
+    "github.com": [
+      {
+        "state": "success",
+        "active": true,
+        "host": "github.com",
+        "login": "octocat",
+        "tokenSource": "keyring",
+        "scopes": "gist, project, read:org, repo, workflow",
+        "gitProtocol": "https"
+      }
+    ]
+  }
+}
