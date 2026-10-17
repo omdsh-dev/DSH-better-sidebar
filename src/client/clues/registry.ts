@@ -10,7 +10,10 @@
  * (`prefs-shared.ts`), so a source the user never toggled is enabled and an
  * explicit `false` is the only disable.
  */
-import type { ClueSourceDisplayDescriptor } from '../../clues/types.ts'
+import type {
+  ClueFormatRenderer,
+  ClueSourceDisplayDescriptor,
+} from '../../clues/types.ts'
 import {
   isCluePacksMentionEnabled,
   isClueSourceEnabled,
@@ -30,7 +33,17 @@ export interface BetterSidebarCluesClientFace {
   registerSourceDisplay(descriptor: ClueSourceDisplayDescriptor): () => void
   /** Every registered display, in registration order. */
   getSourceDisplays(): readonly ClueSourceDisplayDescriptor[]
-  /** Subscribe to display registration/disposal (React store contract). */
+  /**
+   * Register the React renderer of one content format (S6 composes the
+   * editor/floating window). A duplicate format is rejected explicitly and
+   * the returned disposer removes exactly this registration.
+   */
+  registerFormatRenderer(format: string, renderer: ClueFormatRenderer): () => void
+  /** The renderer registered for one format, if any. */
+  getFormatRenderer(format: string): ClueFormatRenderer | undefined
+  /** Every format renderer, in registration order (a copy). */
+  getFormatRenderers(): ReadonlyMap<string, ClueFormatRenderer>
+  /** Subscribe to display/format-renderer registration/disposal. */
   subscribe(listener: () => void): () => void
   /** Whether a clue source is enabled (absent pref entry = ON). */
   isSourceEnabled(sourceId: string): boolean
@@ -48,6 +61,7 @@ export interface BetterSidebarCluesClientFace {
  */
 export function createCluesClientRegistry(getPrefs: () => SidebarPrefs): BetterSidebarCluesClientFace {
   const displays = new Map<string, ClueSourceDisplayDescriptor>()
+  const formatRenderers = new Map<string, ClueFormatRenderer>()
   const listeners = new Set<() => void>()
 
   const notify = (): void => {
@@ -77,6 +91,33 @@ export function createCluesClientRegistry(getPrefs: () => SidebarPrefs): BetterS
 
     getSourceDisplays(): readonly ClueSourceDisplayDescriptor[] {
       return [...displays.values()].map(display => ({ ...display }))
+    },
+
+    registerFormatRenderer(format: string, renderer: ClueFormatRenderer): () => void {
+      if (typeof format !== 'string' || format.trim() === '') {
+        throw new Error('[dsh-better-sidebar] a clue format renderer needs a non-empty format')
+      }
+      if (typeof renderer !== 'function') {
+        throw new Error(`[dsh-better-sidebar] clue format renderer "${format}" needs a function`)
+      }
+      if (formatRenderers.has(format)) {
+        throw new Error(`[dsh-better-sidebar] clue format renderer "${format}" already registered`)
+      }
+      formatRenderers.set(format, renderer)
+      notify()
+      return () => {
+        if (formatRenderers.get(format) !== renderer) return
+        formatRenderers.delete(format)
+        notify()
+      }
+    },
+
+    getFormatRenderer(format: string): ClueFormatRenderer | undefined {
+      return formatRenderers.get(format)
+    },
+
+    getFormatRenderers(): ReadonlyMap<string, ClueFormatRenderer> {
+      return new Map(formatRenderers)
     },
 
     subscribe(listener: () => void): () => void {

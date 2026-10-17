@@ -12,7 +12,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createBetterSidebarService } from '../src/client/service.ts'
 import { createSidebarStore } from '../src/client/state.ts'
 import { SidebarApiError } from '../src/client/api.ts'
-import type { ClueSourceDisplayDescriptor } from '../src/clues/types.ts'
+import type {
+  ClueFormatRenderer,
+  ClueFormatRendererProps,
+  ClueSourceDisplayDescriptor,
+} from '../src/clues/types.ts'
 import { SIDEBAR_PREFS_DEFAULTS, type SidebarPrefs } from '../src/prefs-shared.ts'
 
 afterEach(() => {
@@ -65,6 +69,82 @@ describe('client clue display registry', () => {
   it('rejects a display without a source id', () => {
     const { service } = serviceWithPrefs()
     expect(() => service.clues.registerSourceDisplay({ sourceId: '  ' })).toThrow(/sourceId/)
+  })
+
+  it('registers format renderers by format, rejects duplicates and disposes', () => {
+    const { service } = serviceWithPrefs()
+    const renderer: ClueFormatRenderer = props => props.document.format
+    const dispose = service.clues.registerFormatRenderer('text/markdown', renderer)
+    // Lookup by format, and the list form preserves registration order.
+    expect(service.clues.getFormatRenderer('text/markdown')).toBe(renderer)
+    expect([...service.clues.getFormatRenderers()]).toEqual([['text/markdown', renderer]])
+    expect(service.clues.getFormatRenderer('text/plain')).toBeUndefined()
+
+    // A second renderer for the same format is rejected: registration order
+    // never silently wins.
+    expect(() => service.clues.registerFormatRenderer('text/markdown', () => null))
+      .toThrow(/already registered/)
+    // Empty formats / non-functions cannot be registered.
+    expect(() => service.clues.registerFormatRenderer('  ', renderer)).toThrow(/format/)
+    expect(() => service.clues.registerFormatRenderer('text/plain', null as unknown as ClueFormatRenderer))
+      .toThrow(/function/)
+
+    // The disposer is identity-checked and releases exactly this format.
+    dispose()
+    expect(service.clues.getFormatRenderer('text/markdown')).toBeUndefined()
+    expect(service.clues.getFormatRenderers().size).toBe(0)
+    dispose()
+    // Re-registration after disposal is accepted again.
+    expect(service.clues.registerFormatRenderer('text/markdown', renderer)).toBeTypeOf('function')
+  })
+
+  it('hands the renderer its props and accepts a ReactNode result', () => {
+    const { service } = serviceWithPrefs()
+    const renderer: ClueFormatRenderer = props => {
+      expect(props.sourceId).toBe('my.source')
+      expect(props.typeId).toBe('my.source.page')
+      expect(props.format).toBe('text/markdown')
+      expect(props.readOnly).toBe(false)
+      expect(props.saving).toBe(true)
+      expect(props.document).toEqual({
+        format: 'text/markdown',
+        data: { text: '# hi' },
+        baseRevision: 'r1',
+      })
+      props.onChange({ text: '# edited' })
+      props.onSave?.()
+      return props.document.format
+    }
+    service.clues.registerFormatRenderer('text/markdown', renderer)
+    const onChange = vi.fn()
+    const onSave = vi.fn()
+    const props: ClueFormatRendererProps = {
+      sourceId: 'my.source',
+      typeId: 'my.source.page',
+      format: 'text/markdown',
+      document: { format: 'text/markdown', data: { text: '# hi' }, baseRevision: 'r1' },
+      readOnly: false,
+      saving: true,
+      onChange,
+      onSave,
+    }
+    // The signature itself is the seam: whatever ReactNode the source format
+    // returns is handed to S6 unchanged.
+    const node = service.clues.getFormatRenderer('text/markdown')!(props)
+    expect(node).toBe('text/markdown')
+    expect(onChange).toHaveBeenCalledWith({ text: '# edited' })
+    expect(onSave).toHaveBeenCalledTimes(1)
+  })
+
+  it('notifies subscribers on format-renderer register/dispose', () => {
+    const { service } = serviceWithPrefs()
+    let calls = 0
+    const unsubscribe = service.clues.subscribe(() => { calls += 1 })
+    const dispose = service.clues.registerFormatRenderer('text/plain', () => null)
+    expect(calls).toBe(1)
+    dispose()
+    expect(calls).toBe(2)
+    unsubscribe()
   })
 
   it('notifies subscribers on register/dispose and stops after unsubscribe', () => {

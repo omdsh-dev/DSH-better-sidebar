@@ -354,6 +354,28 @@ export interface ClueSourceDisplayDescriptor {
   readonly icon?: ClueDisplayIcon
 }
 
+/**
+ * Props of one client format renderer (S6's floating window / editor host).
+ *
+ * `document` is the SAME shape a source read/loadEdit returned: a renderer
+ * either previews a {@link ClueReadResult} (`readOnly`) or edits a
+ * {@link ClueEditDocument}. The core never converts a structured body to
+ * Markdown; the renderer owns presentation for its own format.
+ */
+export interface ClueFormatRendererProps {
+  readonly sourceId: string
+  readonly typeId: string
+  readonly format: string
+  readonly document: ClueEditDocument | ClueReadResult
+  readonly readOnly: boolean
+  readonly saving: boolean
+  onChange(data: JsonValue): void
+  onSave?(): void
+}
+
+/** One React renderer for a namespaced content format. */
+export type ClueFormatRenderer = (props: ClueFormatRendererProps) => ReactNode
+
 // ── Operation context ──────────────────────────────────────────────────────
 
 /** Who asked: an interactive UI request or a read-only agent tool call. */
