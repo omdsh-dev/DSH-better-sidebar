@@ -1,0 +1,114 @@
+/**
+ * Content styles of the public window host: the mounted navigation page stack
+ * and the read-only fallback for an unregistered content format.
+ *
+ * The page stack is the state-retention mechanism: covered pages are hidden
+ * with CSS (`display: none`) and never unmounted, so their inputs, selection
+ * and scroll position survive a push/back round trip. In `fill` bodies the
+ * ACTIVE page is flattened with `display: contents`, letting the caller's own
+ * single root become the body's stretchy child exactly as if no page wrapper
+ * existed.
+ *
+ * Tokens only (`--dsw-alias-*` / `--dsw-font-*`): the plugin owns no colors.
+ */
+.pages {
+  min-height: 0;
+}
+
+.pages[data-layout='fill'] {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.pages[data-layout='fill'] > .page[data-window-page='active'] {
+  display: contents;
+}
+
+.pages[data-layout='fill'] > .page[data-window-page='active'] > * {
+  flex: 1;
+  min-height: 0;
+}
+
+.page[data-window-page='hidden'] {
+  display: none;
+}
+
+/* Unknown format: a read-only summary, never a generic save affordance. */
+.unknownFormat {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-primary);
+}
+
+.unknownHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.readOnlyBadge {
+  flex: none;
+  padding: 1px 6px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 4px;
+  font-size: 10px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.unknownTitle {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.hint {
+  margin: 0;
+  color: var(--dsw-alias-label-tertiary);
+  overflow-wrap: anywhere;
+}
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin: 0;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.meta div {
+  display: flex;
+  gap: 4px;
+  min-width: 0;
+}
+
+.meta dt {
+  font-family: var(--ds-font-family-code, monospace);
+}
+
+.meta dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.raw {
+  flex: 1;
+  min-height: 120px;
+  margin: 0;
+  padding: 8px 10px;
+  overflow: auto;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-secondary);
+  font-family: var(--ds-font-family-code, monospace);
+  font-size: 11px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

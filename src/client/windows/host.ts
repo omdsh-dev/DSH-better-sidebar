@@ -33,6 +33,11 @@ export type { BetterSidebarWindowsClientFace, WindowHandle } from './types.ts'
 
 /** The layer key prefix the public host uses (legacy windows carry none). */
 const LAYER_PREFIX = 'window-host:'
+
+/** The unified-layer identity of one public window. */
+export function windowHostLayerKey(id: string): string {
+  return `${LAYER_PREFIX}${id}`
+}
 /** Navigation is a bounded in-surface stack, not an unbounded history. */
 const MAX_WINDOW_PAGES = 20
 /** Guard against pathological hosts that report no viewport at all. */
@@ -105,7 +110,7 @@ export function createWindowHost(options: WindowHostOptions = {}): WindowHostCon
   const currentRecord = (id: string): WindowRecord | undefined =>
     records.find(record => record.id === id)
 
-  const layerKey = (id: string): string => `${LAYER_PREFIX}${id}`
+  const layerKey = windowHostLayerKey
 
   function ensureLayerSubscription(): void {
     if (layerUnsubscribe !== undefined) return
