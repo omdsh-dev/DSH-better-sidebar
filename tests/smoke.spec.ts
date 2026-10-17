@@ -117,6 +117,11 @@ describe('host plugin smoke', () => {
     }
     apply(ctx as never)
     expect(routes.map(route => route.path)).toEqual([
+      // S7 share surface: four exact POST routes, each fenced per request.
+      '/sidebar/clues/share/export-preview',
+      '/sidebar/clues/share/export',
+      '/sidebar/clues/share/import-preview',
+      '/sidebar/clues/share/import',
       '/sidebar/api',
       '/sidebar/upload',
       '/sidebar/write',
@@ -1958,7 +1963,15 @@ describe('agent sidebar-open tool gating', () => {
         registerUpgrade: (route: SidebarWebUpgradeRoute) => { void route; return () => {} },
       },
       sessions: { get: () => undefined },
-      tools: { register: () => { registered += 1; return () => { disposed += 1 } } },
+      // Count the SIDEBAR_OPEN tool only: the clue read-only tools are part
+      // of the always-on clue stack and are not gated by this setting.
+      tools: {
+        register: (tool: { readonly name?: string }) => {
+          if (tool.name !== 'sidebar_open') return () => {}
+          registered += 1
+          return () => { disposed += 1 }
+        },
+      },
       effect: (fn: () => void | (() => void)) => { fn() },
       inject: (deps: readonly string[], callback: (sctx: { settings: unknown }) => void) => {
         if (deps.includes('settings')) callback({ settings })

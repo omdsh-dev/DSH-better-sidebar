@@ -37,6 +37,7 @@ import { appDateTime } from './clues/sources/feishu/time.ts'
 import { installClueInputTriggers } from './clues/mentions.ts'
 import { notifyClue } from './clues/notify.ts'
 import { resolveWorkspaceIdForSession } from './clues/workspace-id.ts'
+import { openClueReference } from './clues/open-reference.ts'
 import css from './sidebar.module.css'
 import './layout.css'
 
@@ -213,6 +214,7 @@ export function apply(ctx: Context): void {
       face: service.clues,
       resolveWorkspaceId: session => resolveWorkspaceIdForSession(ctx, session.sessionId),
       onNotice: message => { notifyClue(message) },
+      openReference: reference => openClueReference(ctx, reference),
     }),
     'dsh-better-sidebar: clue @ sources',
   )

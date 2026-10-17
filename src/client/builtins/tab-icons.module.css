@@ -39,7 +39,7 @@
 }
 
 .clues {
-  /* The clue feature's approved accent is #3388BB; it reaches the glyph through
-     the skin's brand token so a skin keeps control of the palette. */
+  /* The clue feature's approved accent is its blue; it reaches the glyph
+     through the skin's brand token so a skin keeps control of the palette. */
   color: var(--dsw-alias-brand-primary, var(--dsw-alias-label-primary));
 }

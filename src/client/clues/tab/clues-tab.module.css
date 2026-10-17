@@ -9,6 +9,7 @@
  */
 
 .root {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -97,4 +98,714 @@
 .stateAction:focus-visible {
   outline: 2px solid var(--dsw-alias-brand-primary);
   outline-offset: 1px;
+}
+
+/* ── shared section chrome ───────────────────────────────────────────────── */
+
+.regions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+}
+
+.divider {
+  height: 1px;
+  background: var(--dsw-alias-border-l1);
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 10px;
+  background: var(--dsw-alias-bg-layer-1);
+  padding: 8px 10px 10px;
+}
+
+.sectionHead,
+.browser > .sectionHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.sectionTitle {
+  margin: 0;
+  font-size: 12px;
+  line-height: 18px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+}
+
+.sectionTools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.searchBox {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1 1 160px;
+  padding: 2px 8px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-base);
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.searchInput {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.searchInput::placeholder {
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.toolButton,
+.stateAction,
+.primaryButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  font-size: 12px;
+  line-height: 18px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.toolButton:hover:not(:disabled),
+.stateAction:hover:not(:disabled),
+.primaryButton:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.toolButton:disabled,
+.primaryButton:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.primaryButton {
+  background: var(--dsw-alias-brand-primary);
+  border-color: var(--dsw-alias-brand-primary);
+  color: var(--dsw-alias-bg-base);
+}
+
+.toolButton:focus-visible,
+.stateAction:focus-visible,
+.primaryButton:focus-visible,
+.searchInput:focus-visible,
+.textInput:focus-visible,
+.select:focus-visible,
+.sourceTab:focus-visible,
+.rowTitle:focus-visible,
+.packMain:focus-visible,
+.packEdit:focus-visible,
+.pinsHead:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 1px;
+}
+
+.stateLine {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 2px;
+  color: var(--dsw-alias-label-tertiary);
+  overflow-wrap: anywhere;
+}
+
+.textInput,
+.select {
+  min-width: 0;
+  padding: 2px 8px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-base);
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.createRow,
+.scopeEditor {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 8px;
+  border: 1px dashed var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-2);
+}
+
+.pageBar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+.pageLabel {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+/* ── pack library ────────────────────────────────────────────────────────── */
+
+.packGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.packCard {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-2);
+  overflow: hidden;
+}
+
+.packMain {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 0;
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.packMain:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.packIcon {
+  display: inline-flex;
+  flex: none;
+  color: var(--dsw-alias-brand-primary);
+}
+
+.packName {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.packFooter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 2px 6px 2px 10px;
+  border-top: 1px solid var(--dsw-alias-border-l1);
+  background: var(--dsw-alias-bg-layer-1);
+}
+
+.packCount {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.packEdit {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+}
+
+.packEdit:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+/* ── source browser ──────────────────────────────────────────────────────── */
+
+.browser {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 10px;
+  background: var(--dsw-alias-bg-layer-1);
+  padding: 8px 10px 10px;
+}
+
+.browserBody {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  min-height: 0;
+}
+
+.sourceNav {
+  display: flex;
+  gap: 4px;
+  min-width: 0;
+  overflow-x: auto;
+  padding-bottom: 2px;
+  scrollbar-width: thin;
+}
+
+.sourceTab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  max-width: 180px;
+  padding: 3px 8px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 999px;
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: 12px;
+  line-height: 18px;
+  cursor: pointer;
+}
+
+.sourceTab[data-active='true'] {
+  border-color: var(--dsw-alias-brand-primary);
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-bg-layer-3);
+}
+
+.sourceGlyph {
+  display: inline-flex;
+  flex: none;
+  color: var(--dsw-alias-brand-primary);
+}
+
+.sourceName {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.browserMain {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  min-height: 0;
+}
+
+.scopeBar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.scopeLabel {
+  min-width: 0;
+  color: var(--dsw-alias-label-secondary);
+  overflow-wrap: anywhere;
+}
+
+.scopeHint {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 16px;
+  overflow-wrap: anywhere;
+}
+
+.scopeActions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1 1 180px;
+}
+
+.fieldLabel {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.fieldError {
+  flex-basis: 100%;
+  color: var(--dsw-alias-state-error-primary);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.queryRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.pins {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-2);
+}
+
+.pinsHead {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border: 0;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: 11px;
+  line-height: 16px;
+  text-align: start;
+  cursor: pointer;
+}
+
+.pinsHead > svg:last-child {
+  margin-inline-start: auto;
+}
+
+.pinsCount {
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.pinsBody {
+  max-height: 148px;
+  overflow: auto;
+  padding: 0 4px 4px;
+}
+
+.pinList,
+.resultList,
+.memberList,
+.addList {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pinRow,
+.resultRow,
+.memberRow,
+.addRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 2px 4px;
+  border-radius: 6px;
+}
+
+.pinRow:hover,
+.resultRow:hover,
+.memberRow:hover,
+.addRow:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.rowCheckbox {
+  flex: none;
+}
+
+.rowGlyph,
+.memberGlyph {
+  display: inline-flex;
+  flex: none;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.rowTitle,
+.memberTitle {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0;
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 2px;
+  border: 0;
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  font-size: 12px;
+  line-height: 18px;
+  text-align: start;
+  cursor: pointer;
+}
+
+.rowName,
+.memberTitle {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rowSubtitle {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.rowActions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+  /* Hover-revealed actions stay reachable: they are always in the layout and
+     become visible on hover OR keyboard focus OR on touch (no hover). */
+  opacity: 0.7;
+}
+
+.pinRow:hover .rowActions,
+.pinRow:focus-within .rowActions,
+.resultRow:hover .rowActions,
+.resultRow:focus-within .rowActions {
+  opacity: 1;
+}
+
+.resultArea {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  min-height: 0;
+}
+
+.resultRow[data-pinned='true'] {
+  background: var(--dsw-alias-bg-layer-2);
+}
+
+.pinnedBadge {
+  flex: none;
+  padding: 0 6px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 999px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 10px;
+  line-height: 16px;
+}
+
+.resolveHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.batchBar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-3);
+}
+
+.batchCount {
+  color: var(--dsw-alias-label-secondary);
+}
+
+/* ── help overlay ────────────────────────────────────────────────────────── */
+
+.helpBackdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+  background: var(--dsw-alias-bg-layer-2);
+}
+
+.helpDialog {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  max-width: 520px;
+  max-height: 100%;
+  overflow: auto;
+  padding: 12px 14px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 12px;
+  background: var(--dsw-alias-bg-layer-3);
+  box-shadow: none;
+}
+
+.helpHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.helpTitle {
+  margin: 0;
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+}
+
+.helpDiagram {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.helpNode {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-2);
+}
+
+.helpNodeTitle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+}
+
+.helpNodeBody {
+  color: var(--dsw-alias-label-secondary);
+  overflow-wrap: anywhere;
+}
+
+.helpArrow {
+  align-self: center;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.helpList {
+  margin: 0;
+  padding-inline-start: 18px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.helpList li {
+  margin: 2px 0;
+  overflow-wrap: anywhere;
+}
+
+.helpFoot {
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* ── wide layout: the source nav becomes a side rail ────────────────────── */
+
+@media (min-width: 768px) {
+  .browserBody {
+    flex-direction: row;
+    align-items: flex-start;
+  }
+
+  .sourceNav {
+    flex-direction: column;
+    overflow-x: visible;
+    flex: none;
+    width: 148px;
+  }
+
+  .sourceTab {
+    max-width: 100%;
+    justify-content: flex-start;
+  }
+
+  .browserMain {
+    flex: 1 1 auto;
+  }
+
+  .helpDiagram {
+    flex-direction: row;
+    align-items: stretch;
+  }
+
+  .helpNode {
+    flex: 1 1 0;
+  }
+
+  .helpArrow {
+    align-self: center;
+  }
 }

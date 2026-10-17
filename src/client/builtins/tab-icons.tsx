@@ -73,8 +73,8 @@ export const browserTabIcon: TabIcon = (size) =>
 
 /**
  * Clues — a collected reference. The glyph is the brand accent, which is where
- * the feature's approved #3388BB reaches the UI (through the skin token, never
- * as a literal).
+ * the feature's approved blue reaches the UI (through the skin token, never as
+ * a literal).
  */
 export const cluesTabIcon: TabIcon = (size) =>
   themed(css.clues, <VscReferences size={size} />)
