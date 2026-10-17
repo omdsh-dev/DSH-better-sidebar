@@ -14,11 +14,21 @@
  *
  * Route table (all exact paths, POST only):
  * ```
- * /sidebar/clues/share/export-preview   JSON  → JSON export preview
- * /sidebar/clues/share/export           JSON  → application/zip (download)
- * /sidebar/clues/share/import-preview   ZIP   → JSON import preview
- * /sidebar/clues/share/import           ZIP   → JSON import result
+ * /sidebar/clues/share/export-preview   JSON body → JSON export preview
+ * /sidebar/clues/share/export           JSON body → application/zip (download)
+ * /sidebar/clues/share/import-preview   ZIP body  → JSON import preview
+ * /sidebar/clues/share/import           ZIP body  → JSON import result
  * ```
+ *
+ * Request shapes (S9 must follow these exactly):
+ * - `export-preview` / `export`: JSON body
+ *   `{ workspaceId, mode, packIds?, clueIds?, exportId? }`. The export route
+ *   reads `exportId` from this body; the preview ignores it.
+ * - `import-preview` / `import`: the archive is the RAW request body; the
+ *   target workspace cannot also be JSON, so it travels as
+ *   `?workspaceId=<id>`. An explicit receiver remap list travels as
+ *   `?remap=<encodeURIComponent(JSON.stringify(ClueShareLocatorRemap[]))>`.
+ *   Both routes share this shape.
  *
  * The export route accepts an optional `exportId` in its JSON body. When one is
  * present, per-item progress and the terminal outcome (including a
@@ -49,11 +59,13 @@ import {
 } from './export.ts'
 import {
   importPack as runImportPack,
+  parseClueShareRemap,
   previewImport as runPreviewImport,
   type ClueShareImportDeps,
   type ClueShareImportParams,
   type ClueShareImportPreview,
   type ClueShareImportResult,
+  type ClueShareLocatorRemap,
 } from './import.ts'
 import type { CluepackIssue } from './manifest.ts'
 import { DEFAULT_ZIP_LIMITS, type ZipReadLimits } from './zip.ts'
@@ -93,7 +105,7 @@ export interface InstallCluesShareOptions {
   readonly maxTotalBytes?: number
   readonly maxManifestBytes?: number
   readonly readFileBytes?: (path: string) => Promise<Uint8Array>
-  readonly statSize?: (path: string) => Promise<number>
+  readonly statFile?: (path: string) => Promise<{ readonly size: number; readonly isFile: boolean }>
   /** Decoded archive bound of the `clues.share.importPreview` API method. */
   readonly maxApiImportBytes?: number
 }
@@ -394,9 +406,11 @@ function importParamsOf(
       `the archive is too large for the JSON clue API (${bytes.byteLength} bytes; limit ${maxBytes}); use the raw import route`,
     )
   }
+  const remap = parseClueShareRemap(payload.remap)
   return {
     workspaceId,
     bytes,
+    ...(remap === undefined ? {} : { remap }),
     ...(context.signal === undefined ? {} : { signal: context.signal }),
   }
 }
@@ -427,7 +441,7 @@ export function installCluesShare(
       ...(options.maxTotalBytes === undefined ? {} : { maxTotalBytes: options.maxTotalBytes }),
       ...(options.maxManifestBytes === undefined ? {} : { maxManifestBytes: options.maxManifestBytes }),
       ...(options.readFileBytes === undefined ? {} : { readFileBytes: options.readFileBytes }),
-      ...(options.statSize === undefined ? {} : { statSize: options.statSize }),
+      ...(options.statFile === undefined ? {} : { statFile: options.statFile }),
     },
     import: {
       ...(options.zipLimits === undefined ? {} : { zipLimits: options.zipLimits }),
@@ -478,15 +492,17 @@ async function readBinaryBody(req: SidebarHttpRequest, limit: number): Promise<B
 /**
  * Percent-encode one RFC 5987 `ext-value` (the `filename*=UTF-8''…` form).
  *
- * `encodeURIComponent` leaves `!'()*` unescaped, but RFC 5987's `attr-char`
- * excludes them; a pack name with an apostrophe therefore produced a
- * non-conformant header. `src/archive-route.ts` has the same encoder gap, but
- * that file is outside S7's write scope (EXEC-CONTRACTS §1) — the conformant
- * helper lives here until the integration owner converges both.
+ * `encodeURIComponent` leaves `!'()*` unescaped. RFC 5987's `attr-char`
+ * excludes `'()*` (it allows `!` and `.`), so those three are escaped here;
+ * the result is conformant, and an escaped `!` would also be legal. A pack
+ * name with an apostrophe therefore no longer produces a non-conformant
+ * header. `src/archive-route.ts` has the same encoder gap, but that file is
+ * outside S7's write scope (EXEC-CONTRACTS §1) — the conformant helper lives
+ * here until the integration owner converges both.
  */
 function rfc5987Value(value: string): string {
   return encodeURIComponent(value).replace(
-    /['()*!]/g,
+    /['()*]/g,
     char => `%${char.charCodeAt(0).toString(16).toUpperCase()}`,
   )
 }
@@ -515,6 +531,27 @@ function workspaceIdOf(req: SidebarHttpRequest): string {
     throw new SidebarError('bad-request', 'workspaceId is required')
   }
   return workspaceId
+}
+
+/**
+ * The request's optional remap list (`?remap=<JSON>`).
+ *
+ * The import routes carry the archive as the RAW body, so their receiver
+ * choices cannot be JSON fields of the same request. The query parameter is
+ * the serializable seam S9 forwards from its confirmation UI; it is validated
+ * by the same `parseClueShareRemap` the JSON API method uses.
+ */
+function remapOf(req: SidebarHttpRequest): ClueShareLocatorRemap[] | undefined {
+  const url = new URL(req.url ?? '/', 'http://dsh.internal')
+  const raw = url.searchParams.get('remap')
+  if (raw === null) return undefined
+  let value: unknown
+  try {
+    value = JSON.parse(raw) as unknown
+  } catch {
+    throw new SidebarError('bad-request', '"remap" must be JSON')
+  }
+  return parseClueShareRemap(value)
 }
 
 /**
@@ -639,10 +676,16 @@ export function createCluesShareRoutes(
 
   const importPreview = route(CLUES_SHARE_ROUTE_PATHS.importPreview, async (req, res) => {
     const workspaceId = workspaceIdOf(req)
+    const remap = remapOf(req)
     const bytes = await readBinaryBody(req, maxImportBytes)
     const { signal, release } = cancellationOf(res)
     try {
-      writeOk(res, await share.previewImport({ workspaceId, bytes, signal }))
+      writeOk(res, await share.previewImport({
+        workspaceId,
+        bytes,
+        signal,
+        ...(remap === undefined ? {} : { remap }),
+      }))
     } finally {
       release()
     }
@@ -650,10 +693,16 @@ export function createCluesShareRoutes(
 
   const importRoute = route(CLUES_SHARE_ROUTE_PATHS.import, async (req, res) => {
     const workspaceId = workspaceIdOf(req)
+    const remap = remapOf(req)
     const bytes = await readBinaryBody(req, maxImportBytes)
     const { signal, release } = cancellationOf(res)
     try {
-      writeOk(res, await share.importPack({ workspaceId, bytes, signal }))
+      writeOk(res, await share.importPack({
+        workspaceId,
+        bytes,
+        signal,
+        ...(remap === undefined ? {} : { remap }),
+      }))
     } finally {
       release()
     }

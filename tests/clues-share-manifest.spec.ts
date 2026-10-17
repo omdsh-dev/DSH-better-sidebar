@@ -176,6 +176,12 @@ describe('parseCluepackManifest', () => {
     expect(() => parseCluepackManifest(notArray)).toThrowError(/typeIds/i)
   })
 
+  it('rejects a references-mode manifest that carries snapshots', () => {
+    const raw = clone()
+    raw.mode = 'references'
+    expect(() => parseCluepackManifest(raw)).toThrowError(/references-mode.*snapshots/i)
+  })
+
   it('rejects unsafe or duplicated snapshot paths and invalid digests', () => {
     const cases: Array<(raw: DeepMutable<CluepackManifest>) => void> = [
       raw => { raw.clues[0]!.snapshot!.path = '../content/clue-1.json' },

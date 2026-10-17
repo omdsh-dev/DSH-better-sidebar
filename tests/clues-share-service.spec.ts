@@ -13,7 +13,7 @@ import { mkdirSync, mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createCluesService, type CluesService, type ClueSourceRegistration } from '../src/clues/service.ts'
-import { ClueError, type ClueReadResult } from '../src/clues/types.ts'
+import { ClueError, type CluePortableRef, type ClueReadResult } from '../src/clues/types.ts'
 import {
   CLUES_SHARE_ROUTE_PATHS,
   DEFAULT_MAX_API_IMPORT_BYTES,
@@ -120,7 +120,7 @@ interface Fixture {
   packId: string
   cleanups: Array<() => void>
   /** Mutable behavior of the test source (snapshot failures etc.). */
-  source: { read?: () => Promise<ClueReadResult> }
+  source: { read?: () => Promise<ClueReadResult>; portable?: () => Promise<CluePortableRef> }
 }
 
 /** A real service with one clue and one Chinese-named pack. */
@@ -157,7 +157,7 @@ async function fixture(): Promise<Fixture> {
         }
       },
       async portable() {
-        return { portable: true, locator: { id: 'a' } }
+        return source.portable?.() ?? { portable: true, locator: { id: 'a' } }
       },
       normalizeLocator(locator) {
         return { id: String(locator.id ?? '') }
@@ -429,6 +429,35 @@ describe('createCluesShareRoutes', () => {
     expect(importBody.value.clues[0]!.created).toBe(false)
   })
 
+  it('forwards an explicit JSON remap through the raw import route and the JSON preview API', async () => {
+    const f = await fixture()
+    const share = installCluesShare(fakeContext(f.cleanups), f.service, { now: () => NOW })
+    const routes = createCluesShareRoutes(share, () => true)
+    const exported = await share.exportPack({ workspaceId: 'ws-1', mode: 'references', clueIds: [f.clueId] })
+    const remap = [{ clueKey: 'clue-1', locator: { id: 'b' } }]
+
+    const preview = await f.service.invokeApi('clues.share.importPreview', {
+      workspaceId: 'ws-1',
+      archiveBase64: exported.bytes.toString('base64'),
+      remap,
+    }) as { items: Array<{ willBeUnresolved: boolean }> }
+    expect(preview.items[0]!.willBeUnresolved).toBe(false)
+
+    const imported = await call(routes.import, {
+      url: `${CLUES_SHARE_ROUTE_PATHS.import}?workspaceId=ws-1&remap=${encodeURIComponent(JSON.stringify(remap))}`,
+      body: exported.bytes,
+    })
+    expect(imported.statusCode).toBe(200)
+    const library = await f.service.listClues('ws-1')
+    expect(library.clues.some(clue => (clue.locator as { id?: string }).id === 'b')).toBe(true)
+
+    const malformed = await call(routes.importPreview, {
+      url: `${CLUES_SHARE_ROUTE_PATHS.importPreview}?workspaceId=ws-1&remap=${encodeURIComponent('{')}`,
+      body: exported.bytes,
+    })
+    expect(malformed.statusCode).toBe(400)
+  })
+
   it('bounds the import body, requires workspaceId and rejects malformed JSON', async () => {
     const f = await fixture()
     const share = installCluesShare(fakeContext(f.cleanups), f.service, { now: () => NOW })
@@ -462,11 +491,12 @@ describe('createCluesShareRoutes', () => {
   })
 
   it('percent-encodes the RFC 5987 attr-char exclusions and never throws on a lone surrogate', () => {
-    // encodeURIComponent leaves !'()* unescaped, but RFC 5987 attr-char
-    // excludes them; a pack name with an apostrophe used to be non-conformant.
+    // encodeURIComponent leaves !'()* unescaped; RFC 5987's attr-char excludes
+    // '()* (it allows ! and .). Those three are encoded; ! stays literal
+    // because it is a legal attr-char.
     const disposition = cluepackDisposition("a'b(c)*!.cluepack")
-    expect(disposition).toContain('filename*=UTF-8\'\'a%27b%28c%29%2A%21.cluepack')
-    expect(disposition).not.toMatch(/filename\*=UTF-8''[^;]*[!'()*]/)
+    expect(disposition).toContain('filename*=UTF-8\'\'a%27b%28c%29%2A!.cluepack')
+    expect(disposition).not.toMatch(/filename\*=UTF-8''[^;]*['()*]/)
     // A lone surrogate (a legal S1 pack name is arbitrary text within 200
     // code units) must not turn the download into a 500.
     expect(() => cluepackDisposition('a\uD800b.cluepack')).not.toThrow()

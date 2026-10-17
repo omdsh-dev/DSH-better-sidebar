@@ -386,6 +386,129 @@ describe('exportPack snapshot mode', () => {
     expect(result.stats).toMatchObject({ snapshots: 0 })
   })
 
+  it('stops reading as soon as the expanded limit is exceeded', async () => {
+    const f = fixture()
+    const first = await ensureClue(f, 'a')
+    const second = await ensureClue(f, 'b')
+    const third = await ensureClue(f, 'c')
+    await expect(exportPack(deps(f, { maxTotalBytes: 1 }), {
+      workspaceId: 'ws-1',
+      mode: 'snapshot',
+      clueIds: [first, second, third],
+    })).rejects.toThrowError(/expanded size limit/i)
+    // The old implementation read all three payloads and only checked after
+    // the loop; the bounds must be enforced while capturing.
+    expect(f.source.calls.read).toBe(1)
+  })
+
+  it('pre-checks the entry count before a source read', async () => {
+    const f = fixture()
+    const first = await ensureClue(f, 'a')
+    await expect(exportPack(deps(f, { maxEntries: 1 }), {
+      workspaceId: 'ws-1',
+      mode: 'snapshot',
+      clueIds: [first],
+    })).rejects.toThrowError(/entry limit/i)
+    expect(f.source.calls.read).toBe(0)
+  })
+
+  it('never opens a non-regular local asset', async () => {
+    const f = fixture()
+    const clueId = await ensureClue(f, 'binary')
+    let assetReads = 0
+    f.source.read = async () => ({
+      format: 'application/octet-stream',
+      data: { kind: 'binary', path: '/dev/null', size: 0 },
+      fetchedAt: FETCHED_AT,
+      assets: [{ kind: 'download', path: '/dev/null', mime: 'application/x-test', size: 0 }],
+    })
+    const result = await exportPack(deps(f, {
+      statFile: async () => ({ size: 0, isFile: false }),
+      readFileBytes: async () => {
+        assetReads += 1
+        return new Uint8Array()
+      },
+    }), {
+      workspaceId: 'ws-1',
+      mode: 'snapshot',
+      clueIds: [clueId],
+    })
+    expect(result.complete).toBe(false)
+    expect(result.issues[0]).toMatchObject({ category: 'unsupported', reason: /regular file/i })
+    expect(assetReads).toBe(0)
+  })
+
+  it('indexes stored snapshots once for every offline clue', async () => {
+    const f = fixture()
+    const first = await f.service.importUnresolved({
+      workspaceId: 'ws-1',
+      sourceId: 'missing.source',
+      typeId: 'missing.source.doc',
+      locator: {},
+      title: 'Offline one',
+      reason: 'source is not installed',
+    })
+    const second = await f.service.importUnresolved({
+      workspaceId: 'ws-1',
+      sourceId: 'missing.source',
+      typeId: 'missing.source.doc',
+      locator: {},
+      title: 'Offline two',
+      reason: 'source is not installed',
+    })
+    for (const clue of [first, second]) {
+      await f.service.putSnapshot('ws-1', {
+        clueId: clue.clue.id,
+        format: 'text/plain',
+        fetchedAt: FETCHED_AT,
+        data: { text: clue.clue.id },
+      })
+    }
+    let listCalls = 0
+    const counting = {
+      ...f.service,
+      listSnapshots: async (workspaceId: string) => {
+        listCalls += 1
+        return f.service.listSnapshots(workspaceId)
+      },
+    } as CluesService
+    const result = await exportPack({ clues: counting, now: () => NOW }, {
+      workspaceId: 'ws-1',
+      mode: 'snapshot',
+      clueIds: [first.clue.id, second.clue.id],
+    })
+    expect(result.complete).toBe(true)
+    expect(result.stats.snapshots).toBe(2)
+    expect(listCalls).toBe(1)
+  })
+
+  it('falls back to the newest stored snapshot when a live read now fails', async () => {
+    const f = fixture()
+    const clueId = await ensureClue(f, 'a', 'Live with old snapshot')
+    await f.service.putSnapshot('ws-1', {
+      clueId,
+      format: 'text/plain',
+      fetchedAt: FETCHED_AT,
+      data: { text: 'stored before the source disappeared' },
+      text: 'stored before the source disappeared',
+    })
+    f.source.read = async () => {
+      throw new ClueError('source-missing', 'the source is no longer installed')
+    }
+    const result = await exportPack(deps(f), {
+      workspaceId: 'ws-1',
+      mode: 'snapshot',
+      clueIds: [clueId],
+    })
+    expect(result.complete).toBe(true)
+    expect(result.issues).toEqual([])
+    expect(result.stats.snapshots).toBe(1)
+    const manifest = manifestOf(result.bytes) as unknown as {
+      clues: Array<{ snapshot: { fetchedAt: string; encoding: string } }>
+    }
+    expect(manifest.clues[0]!.snapshot).toMatchObject({ fetchedAt: FETCHED_AT, encoding: 'json' })
+  })
+
   it('fails loudly when the assembled archive exceeds the export limit', async () => {
     const f = fixture()
     const clueId = await ensureClue(f, 'a')

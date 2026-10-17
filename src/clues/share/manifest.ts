@@ -319,6 +319,13 @@ export function parseCluepackManifest(value: unknown): CluepackManifest {
     return { key, sourceKey, typeId, title, portable, ...(snapshot === undefined ? {} : { snapshot }) }
   })
 
+  // A references-mode pack promises it carries no bodies. Accepting a
+  // snapshot there would let a hand-built archive smuggle content past the
+  // mode's own guarantee, so the contradiction is refused instead of ignored.
+  if (mode === 'references' && clues.some(clue => clue.snapshot !== undefined)) {
+    invalid('a references-mode cluepack must not carry snapshots')
+  }
+
   if (!Array.isArray(value.packs)) invalid('manifest packs must be an array')
   const packKeys = new Set<string>()
   const packs = value.packs.map((entry, index) => {

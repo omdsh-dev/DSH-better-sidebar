@@ -85,6 +85,7 @@ function testSourceRegistration(
       pluginId: 'plugin.test',
       types: [TEST_TYPE],
       transport: 'mcp',
+      connectionId: 'conn-a',
       capabilities: { resolve: false, list: false, search: false, read: true, edit: false, portable: true },
     },
     types: [{
@@ -298,10 +299,34 @@ describe('previewImport', () => {
     })
     expect(preview.packs[0]).toMatchObject({ name: '发布材料', members: 1, snapshotMembers: 1 })
     expect(preview.items[0]).toMatchObject({ title: '设计与实现', portable: true, snapshot: true, willBeUnresolved: false })
-    expect(preview.sources[0]).toMatchObject({ sourceId: TEST_SOURCE, installed: true, missingTypeIds: [] })
+    expect(preview.sources[0]).toMatchObject({
+      sourceId: TEST_SOURCE,
+      installed: true,
+      connectionId: 'conn-a',
+      missingTypeIds: [],
+    })
     expect(f.source.calls).toEqual({ read: 0, portable: 0 })
     expect(await libraryIds(f.service)).toEqual([])
     expect((await f.service.listPacks('ws-1')).packs).toEqual([])
+  })
+
+  it('honors an abort that lands while the local library is being read', async () => {
+    const f = fixture()
+    const pack = buildPack([{ key: 'clue-1' }])
+    const controller = new AbortController()
+    const aborting = {
+      ...f.service,
+      listClues: async (workspaceId: string) => {
+        const result = await f.service.listClues(workspaceId)
+        controller.abort()
+        return result
+      },
+    } as CluesService
+    await expect(previewImport({ clues: aborting }, {
+      workspaceId: 'ws-1',
+      bytes: pack.bytes,
+      signal: controller.signal,
+    })).rejects.toMatchObject({ category: 'cancelled' })
   })
 
   it('labels missing sources and missing types without failing the preview', async () => {
@@ -471,7 +496,12 @@ describe('importPack with missing sources and snapshots', () => {
       snapshot: { content: jsonContent({ text: 'old archived body' }, 'old archived body') },
     }], { mode: 'snapshot' })
     const result = await importPack({ clues: f.service }, { workspaceId: 'ws-1', bytes: pack.bytes })
-    expect(result.clues[0]).toMatchObject({ clueId: liveId, created: false, unresolved: false })
+    expect(result.clues[0]).toMatchObject({
+      clueId: liveId,
+      created: false,
+      unresolved: false,
+      title: 'Live title',
+    })
     expect(await libraryIds(f.service)).toEqual([liveId])
     const library = await f.service.listClues('ws-1')
     expect(library.clues[0]).toMatchObject({ title: 'Live title', locator: { id: 'a' } })
@@ -577,7 +607,7 @@ describe('importPack partial results', () => {
       issues: [{ target: 'clue', key: 'clue-1', category: 'unsupported', reason: 'content was not fetched' }],
     })
     const result = await importPack({ clues: f.service }, { workspaceId: 'ws-1', bytes: pack.bytes })
-    expect(result).toMatchObject({ complete: false, partial: true })
+    expect(result).toMatchObject({ complete: false, partial: true, requiresAcceptance: true })
     expect(result.manifestIssues).toHaveLength(1)
     expect(result.reasons).toEqual(['content was not fetched'])
     expect(await libraryIds(f.service)).toHaveLength(1)
@@ -597,7 +627,7 @@ describe('importPack partial results', () => {
       workspaceId: 'ws-1',
       bytes: pack.bytes,
     })
-    expect(result).toMatchObject({ complete: false, partial: true })
+    expect(result).toMatchObject({ complete: false, partial: true, requiresAcceptance: true })
     expect(result.clues).toHaveLength(1)
     expect(result.packs).toEqual([])
     expect(result.reasons).toContain('the pack store is unavailable')
@@ -617,10 +647,70 @@ describe('importPack partial results', () => {
       },
     } as CluesService
     const result = await importPack({ clues: failing }, { workspaceId: 'ws-1', bytes: pack.bytes })
-    expect(result).toMatchObject({ complete: false, partial: true })
+    expect(result).toMatchObject({ complete: false, partial: true, requiresAcceptance: true })
     expect(result.clues[0]).toMatchObject({ unresolved: false })
     expect(result.snapshots).toEqual([])
     expect(result.reasons).toContain('the snapshot store is unavailable')
+  })
+})
+
+describe('explicit receiver remap', () => {
+  it('previews and commits a JSON-safe receiving-side locator choice', async () => {
+    const f = fixture()
+    const pack = buildPack([{
+      key: 'clue-1',
+      title: 'External clue',
+      portable: { portable: false, locator: { url: 'https://sender.invalid/private' } },
+    }])
+    const remap = [{ clueKey: 'clue-1', locator: { id: 'a' } }]
+    const preview = await previewImport({ clues: f.service }, {
+      workspaceId: 'ws-1',
+      bytes: pack.bytes,
+      remap,
+    })
+    expect(preview.items[0]!.willBeUnresolved).toBe(false)
+    expect(preview.unresolvedCount).toBe(0)
+
+    const result = await importPack({ clues: f.service }, {
+      workspaceId: 'ws-1',
+      bytes: pack.bytes,
+      remap,
+    })
+    expect(result.clues[0]).toMatchObject({ created: true, unresolved: false })
+    const clue = (await f.service.listClues('ws-1')).clues[0]!
+    expect(clue.locator).toEqual({ id: 'a' })
+    expect(clue.unresolved).toBeUndefined()
+  })
+
+  it('does not assume a same-named connection belongs to the receiver', async () => {
+    const f = fixture()
+    const pack = buildPack([{ key: 'clue-1' }])
+    const mismatch = await importPack({ clues: f.service }, {
+      workspaceId: 'ws-1',
+      bytes: pack.bytes,
+      remap: [{ clueKey: 'clue-1', locator: { id: 'a' }, connectionId: 'sender-connection' }],
+    })
+    expect(mismatch.clues[0]!.unresolved).toBe(true)
+    const unresolved = (await f.service.listClues('ws-1')).clues[0]!
+    expect(unresolved.unresolved?.reason).toMatch(/connection.*not available/i)
+
+    const matched = await importPack({ clues: f.service }, {
+      workspaceId: 'ws-1',
+      bytes: pack.bytes,
+      remap: [{ clueKey: 'clue-1', locator: { id: 'a' }, connectionId: 'conn-a' }],
+    })
+    expect(matched.clues[0]!.unresolved).toBe(false)
+  })
+
+  it('refuses a stale remap key instead of silently ignoring it', async () => {
+    const f = fixture()
+    const pack = buildPack([{ key: 'clue-1' }])
+    await expect(importPack({ clues: f.service }, {
+      workspaceId: 'ws-1',
+      bytes: pack.bytes,
+      remap: [{ clueKey: 'clue-gone', locator: { id: 'a' } }],
+    })).rejects.toThrowError(/unknown clue/i)
+    expect(await libraryIds(f.service)).toEqual([])
   })
 })
 
@@ -659,39 +749,56 @@ describe('importPack progress and edge shapes', () => {
     expect(result.complete).toBe(true)
     expect((await f.service.listClues('ws-1')).clues[0]!.title).toBe(longTitle)
     expect((await f.service.listPacks('ws-1')).packs[0]!.name).toBe(longPack.slice(0, 200))
+    expect(result.packs[0]!.name).toBe(longPack.slice(0, 200))
   })
 })
 
 describe('importPack cancellation', () => {
-  it('never reports success when the abort lands on the last clue', async () => {
+  it('returns an explicit late-cancelled result after the last clue committed', async () => {
     const f = fixture()
     const pack = buildPack([{ key: 'clue-1' }])
     const controller = new AbortController()
-    await expect(importPack({ clues: f.service }, {
+    const result = await importPack({ clues: f.service }, {
       workspaceId: 'ws-1',
       bytes: pack.bytes,
       signal: controller.signal,
       onProgress: (event) => {
         if (event.phase === 'clue') controller.abort()
       },
-    })).rejects.toMatchObject({ category: 'cancelled' })
-    // The write happened; the point is that the caller never sees a success
-    // result after an abort (the BLOCKER the review found).
+    })
+    // Every write completed, so the result is a fully applied import with an
+    // explicit late-cancel flag. It must not be a bare throw (which hid the
+    // committed row and invited a duplicate retry) and must not claim a late
+    // abort never happened.
+    expect(result).toMatchObject({
+      complete: true,
+      partial: false,
+      cancelled: true,
+      requiresAcceptance: false,
+    })
+    expect(result.clues).toHaveLength(1)
     expect(await libraryIds(f.service)).toHaveLength(1)
   })
 
-  it('never reports success when the abort lands on the last pack', async () => {
+  it('returns an explicit late-cancelled result after the last pack committed', async () => {
     const f = fixture()
     const pack = buildPack([{ key: 'clue-1' }], { packs: [{ name: 'P', members: ['clue-1'] }] })
     const controller = new AbortController()
-    await expect(importPack({ clues: f.service }, {
+    const result = await importPack({ clues: f.service }, {
       workspaceId: 'ws-1',
       bytes: pack.bytes,
       signal: controller.signal,
       onProgress: (event) => {
         if (event.phase === 'pack') controller.abort()
       },
-    })).rejects.toMatchObject({ category: 'cancelled' })
+    })
+    expect(result).toMatchObject({
+      complete: true,
+      partial: false,
+      cancelled: true,
+      requiresAcceptance: false,
+    })
+    expect(result.packs).toHaveLength(1)
     expect((await f.service.listPacks('ws-1')).packs).toHaveLength(1)
   })
 
@@ -717,6 +824,77 @@ describe('importPack cancellation', () => {
     })
     expect(result.clues.map(clue => clue.clueKey)).toEqual(['clue-1'])
     expect(result.reasons.join('\n')).toMatch(/cancelled after committing 1 of 2 clues/i)
+    expect(await libraryIds(f.service)).toEqual([result.clues[0]!.clueId])
+  })
+
+  it('records a clue committed just before the abort even when its snapshot never ran', async () => {
+    const f = fixture()
+    const pack = buildPack([
+      { key: 'clue-1', sourceId: 'missing.source' },
+      { key: 'clue-2', sourceId: 'missing.source' },
+    ])
+    const controller = new AbortController()
+    let calls = 0
+    const aborting = {
+      ...f.service,
+      importUnresolved: async (
+        params: Parameters<CluesService['importUnresolved']>[0],
+        options?: Parameters<CluesService['importUnresolved']>[1],
+      ) => {
+        const result = await f.service.importUnresolved(params, options)
+        calls += 1
+        if (calls === 1) controller.abort()
+        return result
+      },
+    } as CluesService
+    const result = await importPack({ clues: aborting }, {
+      workspaceId: 'ws-1',
+      bytes: pack.bytes,
+      signal: controller.signal,
+    })
+    expect(result).toMatchObject({
+      complete: false,
+      partial: true,
+      cancelled: true,
+      requiresAcceptance: true,
+    })
+    // The old accounting only counted a clue after its snapshot/loop tail, so
+    // this first-item abort looked like "zero committed" and threw.
+    expect(result.clues.map(clue => clue.clueKey)).toEqual(['clue-1'])
+    expect(await libraryIds(f.service)).toEqual([result.clues[0]!.clueId])
+  })
+
+  it('converts a non-cancellation commit failure after a write into an explicit partial result', async () => {
+    const f = fixture()
+    const pack = buildPack([
+      { key: 'clue-1', sourceId: 'missing.source' },
+      { key: 'clue-2', sourceId: 'missing.source' },
+    ])
+    let calls = 0
+    const failing = {
+      ...f.service,
+      importUnresolved: async (
+        params: Parameters<CluesService['importUnresolved']>[0],
+        options?: Parameters<CluesService['importUnresolved']>[1],
+      ) => {
+        calls += 1
+        if (calls === 2) throw new ClueError('failed', 'the second clue could not be committed')
+        return f.service.importUnresolved(params, options)
+      },
+    } as CluesService
+    const result = await importPack({ clues: failing }, {
+      workspaceId: 'ws-1',
+      bytes: pack.bytes,
+    })
+    expect(result).toMatchObject({
+      complete: false,
+      partial: true,
+      cancelled: false,
+      requiresAcceptance: true,
+    })
+    expect(result.clues.map(clue => clue.clueKey)).toEqual(['clue-1'])
+    expect(result.reasons.join('\n')).toMatch(/failed after committing 1 of 2 clues.*second clue/i)
+    expect(result.issues.some(issue => issue.key === 'clue-2')).toBe(true)
     expect(await libraryIds(f.service)).toEqual([result.clues[0]!.clueId])
   })
 })

@@ -24,9 +24,10 @@
  * before the user confirms.
  */
 import { createHash } from 'node:crypto'
-import { readFile, stat } from 'node:fs/promises'
+import { open, stat } from 'node:fs/promises'
 import type { CluesService } from '../service.ts'
 import {
+  BUILTIN_SOURCE_IDS,
   ClueError,
   isClueError,
   type Clue,
@@ -34,6 +35,7 @@ import {
   type CluePack,
   type CluePortableRef,
   type ClueReadResult,
+  type ClueSnapshotMeta,
   type ClueSnapshotRecord,
   type JsonValue,
   type Locator,
@@ -89,8 +91,8 @@ export interface ClueShareExportDeps {
   readonly maxManifestBytes?: number
   /** Raw-byte reader for an asset path (tests). */
   readonly readFileBytes?: (path: string) => Promise<Uint8Array>
-  /** Size probe of an asset path (tests). */
-  readonly statSize?: (path: string) => Promise<number>
+  /** Size + regular-file probe of an asset path (tests). */
+  readonly statFile?: (path: string) => Promise<{ readonly size: number; readonly isFile: boolean }>
 }
 
 /** Caller input of one export/preview. */
@@ -207,8 +209,6 @@ interface Selection {
   readonly packs: readonly SelectedPack[]
   readonly clues: readonly Clue[]
   readonly issues: readonly CluepackIssue[]
-  /** Member id → position in `clues`. */
-  readonly order: ReadonlyMap<string, number>
 }
 
 /** Refuse a malformed caller payload before touching the library. */
@@ -249,7 +249,15 @@ function isRecord(value: unknown): value is Record<string, JsonValue> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
-/** Copy a source-provided portable reference down to the contract fields. */
+/**
+ * Copy a source-provided portable reference down to the contract fields.
+ *
+ * A `portable:false` reference may still carry a credential-free locator as an
+ * explicitly marked HINT (spec §3: an external absolute path is shared as a
+ * labelled source clue and only remapped by an explicit receiver choice). The
+ * hint is preserved, but `portable` stays false so no importer treats it as an
+ * automatically usable address.
+ */
 function portableRefOf(ref: CluePortableRef | undefined, fallbackReason: string): CluePortableRef {
   if (ref === undefined) return { portable: false, reason: fallbackReason }
   if (ref.portable && isRecord(ref.locator)) {
@@ -257,7 +265,33 @@ function portableRefOf(ref: CluePortableRef | undefined, fallbackReason: string)
   }
   return {
     portable: false,
+    ...(isRecord(ref.locator) ? { locator: ref.locator as Locator } : {}),
     reason: ref.reason ?? (ref.portable ? 'the source did not provide a portable locator' : fallbackReason),
+  }
+}
+
+/**
+ * Preserve the sender's local external path as an explicitly non-portable
+ * hint.
+ *
+ * S1's local-file source declines to make an external absolute path portable
+ * (correctly: it must never be opened on the receiver's machine), and its
+ * `portable` answer carries no locator at all. Without this hint the receiver
+ * could not even SEE which path the sender shared, so it could never choose an
+ * explicit remap. Only the built-in file source gets this fallback: a
+ * third-party source's refusal to expose its locator is authoritative and is
+ * never overridden here.
+ */
+function externalPathHintOf(clue: Clue, portable: CluePortableRef): CluePortableRef {
+  if (portable.portable || portable.locator !== undefined) return portable
+  if (clue.sourceId !== BUILTIN_SOURCE_IDS.files) return portable
+  const root = isRecord(clue.locator.root) ? clue.locator.root : undefined
+  if (root?.kind !== 'external') return portable
+  return {
+    portable: false,
+    locator: clue.locator,
+    reason: portable.reason
+      ?? 'an absolute path outside a workspace has no portable reference; the receiver must remap it explicitly',
   }
 }
 
@@ -313,7 +347,6 @@ async function collectSelection(
     packs: selectedPacks,
     clues,
     issues,
-    order: new Map(clues.map((clue, index) => [clue.id, index])),
   }
 }
 
@@ -443,6 +476,42 @@ function sha256Hex(bytes: Uint8Array): string {
   return createHash('sha256').update(bytes).digest('hex')
 }
 
+/** One bounded local-asset read (never opens a FIFO/device or trusts stat). */
+async function readAssetBytes(
+  deps: ClueShareExportDeps,
+  path: string,
+  limit: number,
+  signal: AbortSignal | undefined,
+): Promise<Uint8Array> {
+  if (deps.readFileBytes !== undefined) {
+    throwIfAborted(signal)
+    const bytes = await deps.readFileBytes(path)
+    throwIfAborted(signal)
+    return bytes
+  }
+  const handle = await open(path, 'r')
+  try {
+    const chunks: Buffer[] = []
+    let total = 0
+    // One byte past the limit is enough to prove the file is too large; the
+    // same buffer size also keeps a file that GROWS after `stat` bounded.
+    const buffer = Buffer.allocUnsafe(Math.min(64 * 1024, limit + 1))
+    for (;;) {
+      throwIfAborted(signal)
+      const { bytesRead } = await handle.read(buffer, 0, buffer.length, null)
+      if (bytesRead === 0) break
+      total += bytesRead
+      if (total > limit) {
+        throw new ClueError('unsupported', `content exceeds the ${limit} byte snapshot limit`)
+      }
+      chunks.push(Buffer.from(buffer.subarray(0, bytesRead)))
+    }
+    return new Uint8Array(Buffer.concat(chunks))
+  } finally {
+    await handle.close()
+  }
+}
+
 /**
  * Capture one clue's content for snapshot mode.
  * @returns the payload or an issue when the content cannot be fully captured.
@@ -452,16 +521,33 @@ async function captureSnapshot(
   clue: Clue,
   result: ClueReadResult,
   maxSnapshotBytes: number,
+  signal: AbortSignal | undefined,
 ): Promise<CapturedSnapshot | { readonly issue: CluepackIssue }> {
   const asset = result.assets?.find(candidate => candidate.path !== undefined
     && (candidate.kind === 'download' || candidate.kind === 'open'))
   if (asset?.path !== undefined) {
-    const statSize = deps.statSize ?? (async path => (await stat(path)).size)
-    const readBytes = deps.readFileBytes ?? (async path => new Uint8Array(await readFile(path)))
+    const statFile = deps.statFile ?? (async path => {
+      const info = await stat(path)
+      return { size: info.size, isFile: info.isFile() }
+    })
     let size: number
     try {
-      size = await statSize(asset.path)
-    } catch {
+      throwIfAborted(signal)
+      const info = await statFile(asset.path)
+      throwIfAborted(signal)
+      if (!info.isFile) {
+        return {
+          issue: {
+            target: 'clue',
+            key: clue.id,
+            category: 'unsupported',
+            reason: 'the local asset is not a regular file',
+          },
+        }
+      }
+      size = info.size
+    } catch (error) {
+      if (isClueError(error)) throw error
       return {
         issue: {
           target: 'clue',
@@ -483,8 +569,18 @@ async function captureSnapshot(
     }
     let bytes: Uint8Array
     try {
-      bytes = await readBytes(asset.path)
-    } catch {
+      bytes = await readAssetBytes(deps, asset.path, maxSnapshotBytes, signal)
+    } catch (error) {
+      if (isClueError(error)) {
+        return {
+          issue: {
+            target: 'clue',
+            key: clue.id,
+            category: error.category,
+            reason: error.message,
+          },
+        }
+      }
       return {
         issue: {
           target: 'clue',
@@ -591,33 +687,85 @@ function binaryWrapperOf(data: JsonValue): {
   }
 }
 
+/** One workspace's stored snapshots, indexed by clue id (newest first). */
+interface StoredSnapshotIndex {
+  readonly newestByClueId: ReadonlyMap<string, ClueSnapshotMeta>
+  /** Present when the ONE listing call failed; per-clue fallback reports it. */
+  readonly failure?: { readonly category: ClueErrorCategory; readonly reason: string }
+}
+
+/** Whether `left` is newer than `right` (fetchedAt, then snapshot id). */
+function isNewerSnapshot(left: ClueSnapshotMeta, right: ClueSnapshotMeta): boolean {
+  const byTime = left.fetchedAt.localeCompare(right.fetchedAt)
+  return byTime > 0 || (byTime === 0 && left.snapshotId.localeCompare(right.snapshotId) > 0)
+}
+
+/**
+ * Read the workspace snapshot catalogue ONCE before the export loop.
+ *
+ * `listSnapshots` readdirs the snapshot directory and reads every meta file;
+ * calling it per unresolved clue would make a 1,000-clue offline export do
+ * ~1,000,000 file reads. The loop only needs the newest snapshot per clue.
+ */
+async function indexStoredSnapshots(
+  deps: ClueShareExportDeps,
+  workspaceId: string,
+): Promise<StoredSnapshotIndex> {
+  try {
+    const newestByClueId = new Map<string, ClueSnapshotMeta>()
+    for (const meta of await deps.clues.listSnapshots(workspaceId)) {
+      const current = newestByClueId.get(meta.clueId)
+      if (current === undefined || isNewerSnapshot(meta, current)) newestByClueId.set(meta.clueId, meta)
+    }
+    return { newestByClueId }
+  } catch (error) {
+    return {
+      newestByClueId: new Map(),
+      failure: {
+        category: isClueError(error) ? error.category : 'failed',
+        reason: 'the stored snapshots could not be listed for export',
+      },
+    }
+  }
+}
+
 /**
  * Re-share the newest snapshot S1 already stores for one clue.
  *
  * Snapshot mode normally reads the source. An UNRESOLVED clue has no source to
  * ask, but it may still carry an imported snapshot (offline import); spec §3
  * says a clue with a snapshot can still be shared, so the stored snapshot is
- * re-encoded into the archive instead of reporting a missing source. This is a
- * local read (`listSnapshots`/`readSnapshot`), never a source operation.
+ * re-encoded into the archive instead of reporting a missing source. The same
+ * fallback is used when a resolved clue's live read fails (source uninstalled,
+ * authorization expired), so its historical snapshot is not lost. This is a
+ * local read (`readSnapshot`), never a source operation.
  *
+ * @param index - the once-per-export snapshot catalogue.
  * @returns the payload; `undefined` when the clue has no stored snapshot;
  *   `{issue}` when the stored snapshot cannot be re-shared.
  */
 async function captureStoredSnapshot(
   deps: ClueShareExportDeps,
-  workspaceId: string,
+  index: StoredSnapshotIndex,
   clueId: string,
   key: string,
   maxSnapshotBytes: number,
 ): Promise<CapturedSnapshot | { readonly issue: CluepackIssue } | undefined> {
+  if (index.failure !== undefined) {
+    return {
+      issue: {
+        target: 'clue',
+        key,
+        category: index.failure.category,
+        reason: index.failure.reason,
+      },
+    }
+  }
+  const newest = index.newestByClueId.get(clueId)
+  if (newest === undefined) return undefined
   let record: ClueSnapshotRecord
   try {
-    const newest = (await deps.clues.listSnapshots(workspaceId))
-      .filter(meta => meta.clueId === clueId)
-      .sort((left, right) =>
-        right.fetchedAt.localeCompare(left.fetchedAt) || right.snapshotId.localeCompare(left.snapshotId))[0]
-    if (newest === undefined) return undefined
-    record = await deps.clues.readSnapshot({ workspaceId, snapshotId: newest.snapshotId })
+    record = await deps.clues.readSnapshot({ workspaceId: newest.workspaceId, snapshotId: newest.snapshotId })
   } catch (error) {
     return {
       issue: {
@@ -736,23 +884,28 @@ export async function inspectExport(
     throwIfAborted(params.signal)
     let portable: CluePortableRef
     if (clue.unresolved !== undefined) {
-      portable = portableRefOf(clue.unresolved.portable, clue.unresolved.reason)
+      portable = externalPathHintOf(clue, portableRefOf(clue.unresolved.portable, clue.unresolved.reason))
       warnings.push(`"${clue.title}" is unresolved: ${clue.unresolved.reason}`)
     } else {
       try {
-        portable = portableRefOf(await deps.clues.portable({ workspaceId, clueId: clue.id }, {
-          caller: 'ui',
-          ...(params.signal === undefined ? {} : { signal: params.signal }),
-        }), 'the source did not provide a portable reference')
+        portable = externalPathHintOf(clue, portableRefOf(
+          await deps.clues.portable({ workspaceId, clueId: clue.id }, {
+            caller: 'ui',
+            ...(params.signal === undefined ? {} : { signal: params.signal }),
+          }),
+          'the source did not provide a portable reference',
+        ))
       } catch (error) {
         if (params.signal?.aborted === true) throwIfAborted(params.signal)
         const failure = failureOf(error)
-        portable = { portable: false, reason: failure.reason }
+        portable = externalPathHintOf(clue, { portable: false, reason: failure.reason })
         warnings.push(`"${clue.title}": ${failure.reason}`)
       }
     }
     if (portable.portable !== true || portable.locator === undefined) {
-      warnings.push(`"${clue.title}": no portable locator will be shared`)
+      warnings.push(portable.locator === undefined
+        ? `"${clue.title}": no portable locator will be shared`
+        : `"${clue.title}": the shared locator is not portable and needs an explicit receiver remap`)
     }
     items.push({
       clueId: clue.id,
@@ -824,13 +977,17 @@ export async function previewExport(
  *
  * The archive is checked against the SAME limit set the importer enforces
  * (entry count, per-entry size, total expanded bytes, manifest size, archive
- * size). All of it is checked before or while the ZIP is prepared, so a
- * selection that would produce an unimportable archive is refused with a
- * readable error instead of being assembled and then discovered on import.
+ * size). Entry count is pre-checked from the selection; the expanded total is
+ * accumulated as each snapshot is captured, so a selection that exceeds it
+ * stops BEFORE the next source read instead of holding every payload in
+ * memory and only failing after the loop. The finished archive size is still
+ * checked by the writer (compression decides it), and a lower bound is checked
+ * before assembly.
  *
  * Cancellation and limit overflow throw (there is no bytes result to mistake
  * for a finished pack); per-item failures are reported through `issues` and
- * `complete: false`.
+ * `complete: false`. In snapshot mode a stored snapshot is the fallback when
+ * an unresolved clue has no source or a resolved clue's live read fails.
  * @param deps - service + test seams.
  * @param params - workspace/mode/selection/progress/signal.
  */
@@ -846,15 +1003,58 @@ export async function exportPack(
   const maxTotalBytes = deps.maxTotalBytes ?? DEFAULT_MAX_TOTAL_BYTES
   const maxManifestBytes = deps.maxManifestBytes ?? DEFAULT_MAX_MANIFEST_BYTES
   const selection = await collectSelection(deps, params)
+  throwIfAborted(params.signal)
+  // The manifest is one entry; every captured snapshot is at most one more.
+  // Refusing here means an impossible selection never starts a source read.
+  if (selection.clues.length + 1 > maxEntries) {
+    throw new ClueError(
+      'invalid-request',
+      `the selection exceeds the clue pack entry limit (${selection.clues.length + 1} entries; limit ${maxEntries})`,
+    )
+  }
   const issues: CluepackIssue[] = [...selection.issues]
   const clues: CluepackClue[] = []
+  /** Package clue key → manifest record (assembly/statistics, no O(N²) find). */
+  const clueByKey = new Map<string, CluepackClue>()
   /** clue id → package key (for pack members). */
   const keyByClueId = new Map<string, string>()
   /** Package key → captured payload (assembled into ZIP entries later). */
   const content = new Map<string, CapturedSnapshot>()
+  /** Bytes captured so far; checked on every capture to bound memory. */
+  let capturedBytes = 0
   const progress = params.onProgress ?? (() => undefined)
   const total = selection.clues.length
   const { sources, keyBySourceId } = collectSources(deps, selection.clues)
+  // Snapshot fallback needs the catalogue once, not once per clue.
+  const storedSnapshots = mode === 'snapshot' ? await indexStoredSnapshots(deps, workspaceId) : undefined
+  throwIfAborted(params.signal)
+  const capture = (key: string, captured: CapturedSnapshot): void => {
+    capturedBytes += captured.bytes.byteLength
+    content.set(key, captured)
+    // These are exactly the importer's bounds. Checking them HERE means a
+    // 10,000-snapshot selection stops at the 128 MiB boundary, not after
+    // ~312 GiB of payloads have been retained.
+    if (content.size + 1 > maxEntries) {
+      throw new ClueError(
+        'invalid-request',
+        `the selection exceeds the clue pack entry limit (${content.size + 1} entries; limit ${maxEntries})`,
+      )
+    }
+    if (capturedBytes > maxTotalBytes) {
+      throw new ClueError(
+        'invalid-request',
+        `the clue pack exceeds the expanded size limit (${capturedBytes} bytes captured; limit ${maxTotalBytes})`,
+      )
+    }
+    // A ZIP is never smaller than its stored payloads, so exceeding this
+    // bound cannot be rescued by compression; stop before reading more.
+    if (capturedBytes > maxArchiveBytes) {
+      throw new ClueError(
+        'invalid-request',
+        `the clue pack exceeds the archive size limit (${capturedBytes} bytes captured; limit ${maxArchiveBytes})`,
+      )
+    }
+  }
   progress({ phase: 'collect', completed: 0, total })
 
   for (const [index, clue] of selection.clues.entries()) {
@@ -864,28 +1064,33 @@ export async function exportPack(
     const itemIssues: CluepackIssue[] = []
     let portable: CluePortableRef
     if (clue.unresolved !== undefined) {
-      portable = portableRefOf(clue.unresolved.portable, clue.unresolved.reason)
+      portable = externalPathHintOf(clue, portableRefOf(clue.unresolved.portable, clue.unresolved.reason))
     } else {
       try {
-        portable = portableRefOf(await deps.clues.portable({ workspaceId, clueId: clue.id }, {
-          caller: 'ui',
-          ...(params.signal === undefined ? {} : { signal: params.signal }),
-        }), 'the source did not provide a portable reference')
+        portable = externalPathHintOf(clue, portableRefOf(
+          await deps.clues.portable({ workspaceId, clueId: clue.id }, {
+            caller: 'ui',
+            ...(params.signal === undefined ? {} : { signal: params.signal }),
+          }),
+          'the source did not provide a portable reference',
+        ))
       } catch (error) {
         if (params.signal?.aborted === true) throwIfAborted(params.signal)
         const failure = failureOf(error)
         itemIssues.push({ target: 'clue', key, category: failure.category, reason: failure.reason })
-        portable = { portable: false, reason: failure.reason }
+        portable = externalPathHintOf(clue, { portable: false, reason: failure.reason })
       }
     }
     let snapshot: CluepackSnapshot | undefined
     if (mode === 'snapshot') {
+      const storedSnapshotsForClue = storedSnapshots!
       if (clue.unresolved !== undefined) {
         // No source to read, but an offline import may still own a snapshot:
         // re-share the newest stored one instead of pretending the clue has no
         // content (spec §3: a clue with a snapshot can still be shared).
         throwIfAborted(params.signal)
-        const stored = await captureStoredSnapshot(deps, workspaceId, clue.id, key, maxSnapshotBytes)
+        const stored = await captureStoredSnapshot(deps, storedSnapshotsForClue, clue.id, key, maxSnapshotBytes)
+        throwIfAborted(params.signal)
         if (stored === undefined) {
           itemIssues.push({
             target: 'clue',
@@ -900,10 +1105,11 @@ export async function exportPack(
             ...stored.descriptor,
             path: `content/${key}.${stored.extension}`,
           }
-          content.set(key, stored)
+          capture(key, stored)
         }
       } else {
         let result: ClueReadResult | undefined
+        let readFailure: { category: ClueErrorCategory; reason: string } | undefined
         try {
           result = await deps.clues.read({ workspaceId, clueId: clue.id }, {
             caller: 'ui',
@@ -911,10 +1117,27 @@ export async function exportPack(
           })
         } catch (error) {
           if (params.signal?.aborted === true) throwIfAborted(params.signal)
-          const failure = failureOf(error)
-          itemIssues.push({ target: 'clue', key, category: failure.category, reason: failure.reason })
+          readFailure = failureOf(error)
         }
-        if (result !== undefined) {
+        if (readFailure !== undefined) {
+          // A resolved clue may still own an imported snapshot. Spec §3/§5 say
+          // a failed live read keeps the snapshot readable; re-share it instead
+          // of losing the content just because the source was uninstalled.
+          throwIfAborted(params.signal)
+          const stored = await captureStoredSnapshot(deps, storedSnapshotsForClue, clue.id, key, maxSnapshotBytes)
+          throwIfAborted(params.signal)
+          if (stored !== undefined && !('issue' in stored)) {
+            snapshot = {
+              ...stored.descriptor,
+              path: `content/${key}.${stored.extension}`,
+            }
+            capture(key, stored)
+          } else if (stored !== undefined && 'issue' in stored) {
+            itemIssues.push({ ...stored.issue, key })
+          } else {
+            itemIssues.push({ target: 'clue', key, category: readFailure.category, reason: readFailure.reason })
+          }
+        } else if (result !== undefined) {
           if (result.limited === true) {
             itemIssues.push({
               target: 'clue',
@@ -924,7 +1147,7 @@ export async function exportPack(
             })
           } else {
             throwIfAborted(params.signal)
-            const captured = await captureSnapshot(deps, clue, result, maxSnapshotBytes)
+            const captured = await captureSnapshot(deps, clue, result, maxSnapshotBytes, params.signal)
             if ('issue' in captured) {
               itemIssues.push({ ...captured.issue, key })
             } else {
@@ -934,21 +1157,23 @@ export async function exportPack(
                 ...captured.descriptor,
                 path: `content/${key}.${captured.extension}`,
               }
-              content.set(key, captured)
+              capture(key, captured)
             }
           }
         }
       }
     }
     issues.push(...itemIssues)
-    clues.push({
+    const record: CluepackClue = {
       key,
       sourceKey: keyBySourceId.get(clue.sourceId)!,
       typeId: clue.typeId,
       title: clue.title,
       portable,
       ...(snapshot === undefined ? {} : { snapshot }),
-    })
+    }
+    clues.push(record)
+    clueByKey.set(key, record)
     progress({
       phase: 'read',
       completed: index + 1,
@@ -989,7 +1214,7 @@ export async function exportPack(
     { name: CLUEPACK_MANIFEST_PATH, data: manifestBytes, compress: true },
   ]
   for (const [key, captured] of content) {
-    const clue = clues.find(candidate => candidate.key === key)!
+    const clue = clueByKey.get(key)!
     entries.push({
       name: clue.snapshot!.path,
       data: captured.bytes,
@@ -1005,11 +1230,19 @@ export async function exportPack(
       `the selection exceeds the clue pack entry limit (${entries.length} entries; limit ${maxEntries})`,
     )
   }
-  const expandedBytes = entries.reduce((sum, entry) => sum + entry.data.byteLength, 0)
+  const expandedBytes = capturedBytes + manifestBytes.byteLength
   if (expandedBytes > maxTotalBytes) {
     throw new ClueError(
       'invalid-request',
       `the clue pack exceeds the expanded size limit (${expandedBytes} bytes; limit ${maxTotalBytes})`,
+    )
+  }
+  // A ZIP entry is never smaller than the payload it stores, so this lower
+  // bound proves the archive limit is already broken before assembly.
+  if (expandedBytes > maxArchiveBytes) {
+    throw new ClueError(
+      'invalid-request',
+      `the clue pack exceeds the archive size limit (${expandedBytes} bytes; limit ${maxArchiveBytes})`,
     )
   }
   const bytes = createZip(entries, {

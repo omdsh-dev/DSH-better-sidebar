@@ -17,7 +17,7 @@ import { dirname, join } from 'node:path'
 import { createCluesService, type CluesService } from '../src/clues/service.ts'
 import { createLocalFileSource, LOCAL_FILE_TYPE_IDS } from '../src/clues/local-files.ts'
 import { ClueError, type Locator } from '../src/clues/types.ts'
-import { exportPack, previewExport } from '../src/clues/share/export.ts'
+import { exportPack, inspectExport, previewExport } from '../src/clues/share/export.ts'
 import { importPack, previewImport } from '../src/clues/share/import.ts'
 import {
   CLUEPACK_FORMAT,
@@ -336,6 +336,70 @@ describe('locator remapping and path dialects', () => {
     })
     const live = await remappedWorkspace.service.read({ workspaceId: 'ws-4', clueId: remappedClue.id })
     expect(live.text).toBe('# remapped\n')
+  })
+
+  it('keeps an external absolute path as a labelled hint and remaps it explicitly on import', async () => {
+    const sender = makeWorkspace()
+    const externalPath = writeWorkspaceFile(sender.workspace, 'external.md', '# sender external\n')
+    const externalLocator = { root: { kind: 'external' }, path: externalPath, dialect: HOST_DIALECT }
+    const ensured = await sender.service.ensure({
+      workspaceId: 'ws-1',
+      sourceId: FILES,
+      typeId: LOCAL_FILE_TYPE_IDS.markdown,
+      locator: externalLocator,
+      title: 'External clue',
+    })
+    const exported = await exportPack({ clues: sender.service, now: () => NOW }, {
+      workspaceId: 'ws-1',
+      mode: 'references',
+      clueIds: [ensured.clue.id],
+    })
+    const manifest = JSON.parse(new TextDecoder().decode(
+      readZip(exported.bytes).find(entry => entry.name === 'manifest.json')!.data,
+    )) as CluepackManifest
+    // The sender's absolute path is a HINT (portable:false), never an address
+    // the receiver may open automatically.
+    expect(manifest.clues[0]!.portable).toMatchObject({
+      portable: false,
+      locator: externalLocator,
+    })
+    const inspection = await inspectExport({ clues: sender.service, now: () => NOW }, {
+      workspaceId: 'ws-1',
+      mode: 'references',
+      clueIds: [ensured.clue.id],
+    })
+    expect(inspection.items[0]!.portable).toMatchObject({ portable: false, locator: externalLocator })
+
+    const receiver = makeWorkspace({ workspaceId: 'ws-2' })
+    writeWorkspaceFile(receiver.workspace, 'external.md', '# receiver external\n')
+    const receiverPreview = await previewImport({ clues: receiver.service }, {
+      workspaceId: 'ws-2',
+      bytes: exported.bytes,
+    })
+    // The receiver's remap UI can see the sender's explicitly marked hint,
+    // but the preview still never opens it.
+    expect(receiverPreview.items[0]).toMatchObject({ locator: externalLocator, portable: false })
+    const unresolved = await importPack({ clues: receiver.service }, {
+      workspaceId: 'ws-2',
+      bytes: exported.bytes,
+    })
+    expect(unresolved.clues[0]!.unresolved).toBe(true)
+
+    const receiverLocator = {
+      root: { kind: 'workspace', workspaceId: 'ws-2' },
+      path: 'external.md',
+      dialect: HOST_DIALECT,
+    }
+    const remapped = await importPack({ clues: receiver.service }, {
+      workspaceId: 'ws-2',
+      bytes: exported.bytes,
+      remap: [{ clueKey: 'clue-1', locator: receiverLocator }],
+    })
+    expect(remapped.clues[0]!.unresolved).toBe(false)
+    const clue = (await receiver.service.listClues('ws-2')).clues.find(row => row.id === remapped.clues[0]!.clueId)!
+    expect(clue.locator).toMatchObject(receiverLocator)
+    const live = await receiver.service.read({ workspaceId: 'ws-2', clueId: clue.id })
+    expect(live.text).toBe('# receiver external\n')
   })
 
   it('preserves a win32 workspace locator through the receiver remap', async () => {
