@@ -416,6 +416,15 @@ export interface CluesSourcesResult {
   readonly sources: readonly ClueSourceDescriptor[]
 }
 
+/**
+ * `clues.sources` result including the registered type descriptors: the
+ * host-side catalogue is the only source of truth for type formats and edit
+ * capability, so the wire carries both halves in one round trip.
+ */
+export interface CluesSourcesCatalogResult extends CluesSourcesResult {
+  readonly types: readonly ClueTypeDescriptor[]
+}
+
 /** `clues.resolve` params. A path/URL text OR an existing locator. */
 export interface CluesResolveParams {
   readonly workspaceId: string

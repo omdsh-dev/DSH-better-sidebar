@@ -68,7 +68,6 @@ import {
   type CluePin,
   type CluePortableRef,
   type ClueReadResult,
-  type ClueResourceRef,
   type ClueSaveEditInput,
   type ClueSaveEditResult,
   type ClueSnapshotContent,

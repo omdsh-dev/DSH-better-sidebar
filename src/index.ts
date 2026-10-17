@@ -70,6 +70,7 @@ import {
 import { FS_TREES_MAX_PATHS } from './fs-batch.ts'
 import { activeWorktreeRootOf } from './active-worktree.ts'
 import { WRITE_BODY_GUARD_BYTES } from './editor-limits.ts'
+import { installClues } from './clues/index.ts'
 import { readPage, readText } from './fs-read.ts'
 
 export { Config }
@@ -1156,6 +1157,10 @@ async function importLegacyPrefs(
  */
 export function apply(ctx: Context, config?: SidebarConfig): void {
   const resolved = resolveSidebarConfig(config)
+  // Clue collection (S1): the host service, durable store, built-in local-file
+  // source and `clues.*` API seam. Installed before the routes so the
+  // dispatcher's fallback sees it; installClues owns its effect-based teardown.
+  installClues(ctx)
   // Connection owns both deployment trust and authentication; never infer or
   // bypass its policy from invocation flags or a copied trust list.
   const fence = (req: SidebarHttpRequest): boolean => ctx.connection.requestRejection(req) === undefined
@@ -1307,7 +1312,12 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
         writeError(res, new SidebarError('not-found', 'unknown sidebar API method', 404))
         return
       }
-      const controller = method === 'changes.ops' ? new AbortController() : undefined
+      // Clue methods are cancellable too: the dispatcher below is the one
+      // route that serves them (no second route, no second fence).
+      const clueService = ctx.get('betterSidebarClues') as import('./clues/service.ts').CluesService | undefined
+      const controller = method === 'changes.ops' || clueService?.hasApi(method) === true
+        ? new AbortController()
+        : undefined
       const response = controller === undefined ? undefined : res as ServerResponse
       const abort = (): void => { controller?.abort() }
       response?.once('close', abort)
@@ -1319,11 +1329,21 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
         // 200 "[object Undefined]", valueOf/hasOwnProperty answered 500.
         // The typeof guard also rejects a non-function own value.
         const handler = Object.hasOwn(api, method) ? api[method] : undefined
-        if (typeof handler !== 'function') {
+        if (typeof handler === 'function') {
+          const result = await handler(payload, controller?.signal)
+          if (controller?.signal.aborted !== true) writeOk(res, result)
+        } else if (clueService !== undefined && clueService.hasApi(method)) {
+          // The clue service's API seam: later specs (S2+) register their own
+          // methods on it, so this is the only dispatcher fallback they need.
+          // Caller is the interactive UI; the abort signal is forwarded.
+          const result = await clueService.invokeApi(method, payload, {
+            caller: 'ui',
+            ...(controller?.signal === undefined ? {} : { signal: controller.signal }),
+          })
+          if (controller?.signal.aborted !== true) writeOk(res, result)
+        } else {
           throw new SidebarError('not-found', `unknown sidebar API method "${method}"`, 404)
         }
-        const result = await handler(payload, controller?.signal)
-        if (controller?.signal.aborted !== true) writeOk(res, result)
       } catch (error) {
         if (controller?.signal.aborted !== true) writeError(res, error)
       } finally {

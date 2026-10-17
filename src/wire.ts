@@ -9,6 +9,7 @@ import type { SidebarHttpRequest, SidebarHttpResponse } from './context-types.ts
 // node builtins, so this introduces no cycle; wire.ts is host-half only and is
 // never reachable from the browser bundle.
 import { GitCommandError } from './git.ts'
+import { ClueError, type ClueErrorCategory } from './clues/types.ts'
 
 /** Machine-readable error codes of the sidebar API. */
 export type SidebarErrorCode =
@@ -136,10 +137,42 @@ export function writeOk(res: SidebarHttpResponse, value: unknown): void {
   writeJson(res, 200, { ok: true, value })
 }
 
+/**
+ * HTTP status of one clue failure category. The clue surface keeps its own
+ * machine-readable categories on the wire (the client branches on them), so
+ * this is only the transport-level status; no original stdout/token ever
+ * reaches it (the service's normalization guarantees that).
+ */
+export function clueStatusOf(category: ClueErrorCategory): number {
+  switch (category) {
+    case 'not-found':
+    case 'source-missing': return 404
+    case 'auth-required':
+    case 'permission-denied': return 403
+    case 'rate-limited': return 429
+    case 'conflict': return 409
+    case 'cancelled': return 499
+    case 'timeout': return 504
+    case 'dependency-missing':
+    case 'dependency-incompatible': return 503
+    case 'unsupported': return 400
+    case 'failed': return 500
+  }
+}
+
 /** Write the failure envelope for any thrown value (unknown → internal 500). */
 export function writeError(res: SidebarHttpResponse, error: unknown): void {
   if (error instanceof SidebarError) {
     writeJson(res, error.status, { ok: false, error: { code: error.code, message: error.message } })
+    return
+  }
+  // Clue categories are their own wire codes: the client needs `conflict`,
+  // `cancelled`, `source-missing` etc. to render the right sentence.
+  if (error instanceof ClueError) {
+    writeJson(res, clueStatusOf(error.category), {
+      ok: false,
+      error: { code: error.category, message: error.message },
+    })
     return
   }
   // A git failure is a state/input problem the user caused (unknown ref, path
