@@ -342,6 +342,34 @@ describe('clue service registration', () => {
     expect((await service.listPacks('ws-1')).packs[0]?.members).toEqual([clueId])
   })
 
+  it('remaps an unresolved clue imported with only a portable locator', async () => {
+    const service = makeService()
+    const imported = await service.importUnresolved({
+      workspaceId: 'ws-1',
+      sourceId: 'test.source',
+      typeId: 'test.source.text',
+      // No resolvable locator was known at import time: the portable one is
+      // the only address the retry can use.
+      locator: {},
+      title: 'Portable only',
+      reason: 'source offline',
+      portable: { portable: true, locator: { id: 'portable' } },
+    })
+    expect(imported.clue.locator).toEqual({})
+    service.registerSource(testSource())
+    const remapped = await service.ensure({
+      workspaceId: 'ws-1',
+      sourceId: 'test.source',
+      typeId: 'test.source.text',
+      locator: { id: 'portable' },
+      title: 'Portable only',
+    })
+    expect(remapped.created).toBe(false)
+    expect(remapped.clue.id).toBe(imported.clue.id)
+    expect(remapped.clue.unresolved).toBeUndefined()
+    expect((await service.read({ workspaceId: 'ws-1', clueId: imported.clue.id })).text).toBe('portable')
+  })
+
   it('preserves namespaced descriptor extensions in registry copies', async () => {
     const service = makeService()
     const registration = testSource()

@@ -891,7 +891,14 @@ export function createCluesService(options: CluesServiceOptions = {}): CluesServ
         ? params.title.trim()
         : String(locator.path ?? locator.id ?? locator.url ?? 'clue')
       const transaction = await requireStore().transact(workspaceId, undefined, (state) => {
+        // A direct locator match wins. An import that only knew a portable
+        // locator stored `{}` as its locator, so retry the portable one too:
+        // remapping must not mint a second id for the same resource.
         const existing = findClueByLocator(state, source, key)
+          ?? state.clues.find(clue =>
+            clue.sourceId === source.descriptor.sourceId
+            && clue.unresolved?.portable?.locator !== undefined
+            && locatorKeyOf(source, clue.unresolved.portable.locator) === key)
         if (existing !== undefined) {
           if (existing.unresolved === undefined) return { clue: existing, created: false }
           // REMAP: the same stable reference resolves now. Keep its id (packs,
