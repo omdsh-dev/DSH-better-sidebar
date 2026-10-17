@@ -97,6 +97,14 @@ const CENTRAL_HEADER_SIGNATURE = 0x0201_4b50
 const EOCD_SIGNATURE = 0x0605_4b50
 const UTF8_FLAG = 0x0800
 const ENCRYPTED_FLAG = 0x0001
+/**
+ * "Sizes/CRC follow the payload in a data descriptor" flag.
+ *
+ * APPNOTE says the local header then carries zeros; the central directory
+ * always carries the real values. The reader still uses the central values,
+ * but it must not mistake the zeroed local fields for a corrupt header.
+ */
+const DATA_DESCRIPTOR_FLAG = 0x0008
 const METHOD_STORED = 0
 const METHOD_DEFLATE = 8
 const UNIX_SYMLINK_MODE = 0o120000
@@ -508,7 +516,11 @@ export function readZip(input: Uint8Array, overrides?: Partial<ZipReadLimits>): 
     seen.add(canonical)
     const directory = name.endsWith('/')
     if (directory) {
-      if (compressedSize !== 0 || uncompressedSize !== 0) {
+      // Python's `zipfile` deflates an empty directory entry into a small
+      // (non-zero) compressed stream, so `compressedSize` is not proof of data.
+      // Only the EXPANDED size shows that the entry carries nothing; the bytes
+      // are not inflated and no path is ever created from the name.
+      if (uncompressedSize !== 0) {
         throw new ClueError('invalid-request', `archive directory entry "${name}" carries data`)
       }
       continue
@@ -542,6 +554,31 @@ export function readZip(input: Uint8Array, overrides?: Partial<ZipReadLimits>): 
     }
     if (localMethod !== method) {
       throw new ClueError('invalid-request', `archive entry "${name}" has a mismatched compression method`)
+    }
+    // The central directory is authoritative for sizes/CRC, but a local header
+    // that disagrees with it means the two halves describe different bytes (a
+    // classic ZIP-confusion bug). Compare them before trusting either side.
+    const localCrc = buffer.readUInt32LE(localOffset + 14)
+    const localCompressedSize = buffer.readUInt32LE(localOffset + 18)
+    const localUncompressedSize = buffer.readUInt32LE(localOffset + 22)
+    if ((flags & DATA_DESCRIPTOR_FLAG) !== 0) {
+      // With a data descriptor the local fields must be zero; the real values
+      // live in the central directory (and after the payload).
+      if (localCrc !== 0 || localCompressedSize !== 0 || localUncompressedSize !== 0) {
+        throw new ClueError(
+          'invalid-request',
+          `archive entry "${name}" has a local header that disagrees with its data descriptor`,
+        )
+      }
+    } else if (
+      localCrc !== recordedCrc
+      || localCompressedSize !== compressedSize
+      || localUncompressedSize !== uncompressedSize
+    ) {
+      throw new ClueError(
+        'invalid-request',
+        `archive entry "${name}" has mismatched local header sizes or checksum`,
+      )
     }
     const dataStart = localNameEnd + localExtraLength
     const dataEnd = dataStart + compressedSize

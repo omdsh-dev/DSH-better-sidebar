@@ -100,13 +100,6 @@ function clearFlags(zip: Buffer, bit: number): Buffer {
   return copy
 }
 
-/** Overwrite the first central entry's announced uncompressed size. */
-function setUncompressedSize(zip: Buffer, size: number): Buffer {
-  const copy = Buffer.from(zip)
-  copy.writeUInt32LE(size, centralOffset(copy) + 24)
-  return copy
-}
-
 /** Set the first entry's compression method in both headers. */
 function setMethod(zip: Buffer, method: number): Buffer {
   const copy = Buffer.from(zip)
@@ -134,6 +127,105 @@ function corruptPayload(zip: Buffer): Buffer {
   const dataOffset = local + 30 + nameLength + extraLength
   copy[dataOffset] = copy[dataOffset]! ^ 0xff
   return copy
+}
+
+/** Offset of the first local file header. */
+function localOffset(zip: Buffer): number {
+  const offset = zip.indexOf(Buffer.from([0x50, 0x4b, 0x03, 0x04]))
+  if (offset === -1) throw new Error('local header not found')
+  return offset
+}
+
+/** Flip only the first entry's LOCAL header CRC (central stays correct). */
+function setLocalCrc(zip: Buffer): Buffer {
+  const copy = Buffer.from(zip)
+  const local = localOffset(copy)
+  copy.writeUInt32LE((copy.readUInt32LE(local + 14) ^ 0xffff_ffff) >>> 0, local + 14)
+  return copy
+}
+
+/** Write arbitrary LOCAL header sizes (central stays correct). */
+function setLocalSizes(zip: Buffer, compressedSize: number, uncompressedSize: number): Buffer {
+  const copy = Buffer.from(zip)
+  const local = localOffset(copy)
+  copy.writeUInt32LE(compressedSize, local + 18)
+  copy.writeUInt32LE(uncompressedSize, local + 22)
+  return copy
+}
+
+/** Declare one uncompressed size in BOTH headers (a self-consistent lie). */
+function setDeclaredUncompressedSize(zip: Buffer, size: number): Buffer {
+  const copy = Buffer.from(zip)
+  copy.writeUInt32LE(size, centralOffset(copy) + 24)
+  copy.writeUInt32LE(size, localOffset(copy) + 22)
+  return copy
+}
+
+/** Declare one compressed size in BOTH headers. */
+function setDeclaredCompressedSize(zip: Buffer, size: number): Buffer {
+  const copy = Buffer.from(zip)
+  copy.writeUInt32LE(size, centralOffset(copy) + 20)
+  copy.writeUInt32LE(size, localOffset(copy) + 18)
+  return copy
+}
+
+/** Zero the local data descriptor fields (APPNOTE shape when bit 3 is set). */
+function zeroLocalDataFields(zip: Buffer): Buffer {
+  const copy = Buffer.from(zip)
+  const local = localOffset(copy)
+  copy.writeUInt32LE(0, local + 14)
+  copy.writeUInt32LE(0, local + 18)
+  copy.writeUInt32LE(0, local + 22)
+  return copy
+}
+
+/** Point the first central-directory entry at an arbitrary local header. */
+function setCentralLocalOffset(zip: Buffer, offset: number): Buffer {
+  const copy = Buffer.from(zip)
+  copy.writeUInt32LE(offset, centralOffset(copy) + 42)
+  return copy
+}
+
+/**
+ * A minimal ZIP with one directory entry written the way Python's `zipfile`
+ * does for `ZIP_DEFLATED`: an empty directory still gets a 2-byte deflate
+ * stream (`03 00`), so `compressedSize` is non-zero while the payload is empty.
+ */
+function pythonStyleDirectory(payload = new Uint8Array()): Buffer {
+  const name = Buffer.from('content/', 'utf8')
+  const compressed = deflateRawSync(payload)
+  const local = Buffer.alloc(30 + name.length + compressed.length)
+  local.writeUInt32LE(0x0403_4b50, 0)
+  local.writeUInt16LE(20, 4)
+  local.writeUInt16LE(0x0800, 6)
+  local.writeUInt16LE(8, 8)
+  local.writeUInt32LE(0, 14)
+  local.writeUInt32LE(compressed.length, 18)
+  local.writeUInt32LE(payload.length, 22)
+  local.writeUInt16LE(name.length, 26)
+  local.writeUInt16LE(0, 28)
+  name.copy(local, 30)
+  compressed.copy(local, 30 + name.length)
+  const central = Buffer.alloc(46 + name.length)
+  central.writeUInt32LE(0x0201_4b50, 0)
+  central.writeUInt16LE((3 << 8) | 20, 4)
+  central.writeUInt16LE(20, 6)
+  central.writeUInt16LE(0x0800, 8)
+  central.writeUInt16LE(8, 10)
+  central.writeUInt32LE(0, 16)
+  central.writeUInt32LE(compressed.length, 20)
+  central.writeUInt32LE(payload.length, 24)
+  central.writeUInt16LE(name.length, 28)
+  central.writeUInt32LE((0o040755 << 16) >>> 0, 38)
+  central.writeUInt32LE(0, 42)
+  name.copy(central, 46)
+  const eocd = Buffer.alloc(22)
+  eocd.writeUInt32LE(0x0605_4b50, 0)
+  eocd.writeUInt16LE(1, 8)
+  eocd.writeUInt16LE(1, 10)
+  eocd.writeUInt32LE(central.length, 12)
+  eocd.writeUInt32LE(local.length, 16)
+  return Buffer.concat([local, central, eocd])
 }
 
 describe('CRC32', () => {
@@ -271,11 +363,48 @@ describe('readZip security boundary', () => {
   })
 
   it('rejects a lying deflate header instead of inflating past the declared size', () => {
-    const payload = new TextEncoder().encode('x'.repeat(4_096))
-    const zip = setUncompressedSize(createZip([
+    // Both headers agree on the small size, so only the streaming cap can stop
+    // the 1 MiB expansion. The old 4 KiB payload could also fail for other
+    // reasons and did not prove the cap itself.
+    const payload = new TextEncoder().encode('x'.repeat(1024 * 1024))
+    const zip = setDeclaredUncompressedSize(createZip([
       { name: 'bomb.txt', data: payload, compress: true },
     ]), 16)
-    expect(() => readZip(zip)).toThrowError(/corrupt|declared size/i)
+    expect(() => readZip(zip)).toThrowError(/corrupt or exceeds its declared size/i)
+  })
+
+  it('skips a Python-style deflated empty directory entry', () => {
+    expect(readZip(pythonStyleDirectory())).toEqual([])
+  })
+
+  it('rejects a directory entry that declares file data', () => {
+    expect(() => readZip(pythonStyleDirectory(new TextEncoder().encode('abc'))))
+      .toThrowError(/directory entry .* carries data/i)
+  })
+
+  it('rejects a local header whose CRC or sizes disagree with the central directory', () => {
+    expect(() => readZip(setLocalCrc(sampleArchive()))).toThrowError(/mismatched local header/i)
+    expect(() => readZip(setLocalSizes(sampleArchive(), 1, 1))).toThrowError(/mismatched local header/i)
+  })
+
+  it('accepts zeroed local sizes when the data-descriptor flag is set', () => {
+    const zip = zeroLocalDataFields(setFlags(sampleArchive(), 0x0008))
+    expect(readZip(zip).map(entry => entry.name)).toEqual(['manifest.json', 'content/blob.bin'])
+  })
+
+  it('rejects a data-descriptor local header that still carries sizes', () => {
+    expect(() => readZip(setFlags(sampleArchive(), 0x0008)))
+      .toThrowError(/data descriptor/i)
+  })
+
+  it('rejects a local header offset outside the archive', () => {
+    expect(() => readZip(setCentralLocalOffset(sampleArchive(), 0xffff_fff0)))
+      .toThrowError(/invalid local header offset/i)
+  })
+
+  it('rejects a payload that runs past the archive bounds', () => {
+    expect(() => readZip(setDeclaredCompressedSize(sampleArchive(), 10_000)))
+      .toThrowError(/payload lies outside the archive/i)
   })
 
   it('rejects multi-disk archives', () => {
