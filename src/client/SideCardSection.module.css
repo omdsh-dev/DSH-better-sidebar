@@ -28,6 +28,7 @@
   flex-direction: column;
   gap: 16px;
   width: 100%;
+  min-width: 0;
   max-width: 760px;
   /* The DSH settings shell's `.options` area owns vertical scrolling. Keep
      this page a plain content column like Plugins → Plugin list so its
@@ -997,10 +998,6 @@
 }
 
 /* ── S8: grouped settings shell (wide nav + narrow select) ───────────────── */
-
-.section {
-  min-width: 0;
-}
 
 .settingsShell {
   display: flex;

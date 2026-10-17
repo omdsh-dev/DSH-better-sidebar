@@ -21,7 +21,7 @@ const S8_KEYS = [
   'clueSourceToggleAria', 'clueSourceMentionAria', 'clueSourceConfigureAria',
   'clueConfigure', 'cluePacksName', 'cluePacksMentionAria', 'cluePacksDesc',
   'clueSourcesEmpty', 'clueSourcesLoadFailed', 'clueSourcesUnavailable',
-  'clueAddSource', 'clueAddSourceDesc',
+  'clueAddSource', 'clueAddSourceDesc', 'clueAddSourceNoCatalog',
   'clueStateUnchecked', 'clueStateMissing', 'clueStateIncompatible',
   'clueStateInstalling', 'clueStateNotConfigured', 'clueStateNotAuthorized',
   'clueStateAuthorizing', 'clueStateAuthExpired', 'clueStateRequestFailed',

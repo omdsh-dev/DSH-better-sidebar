@@ -46,7 +46,7 @@ import { CLUE_SOURCE_STATUS_COPY } from './copy.ts'
 import css from './settings.module.css'
 
 /** Explicit install progress poll interval (only while a task runs). */
-export const INSTALL_POLL_MS = 1_000
+const INSTALL_POLL_MS = 1_000
 
 /** Props of the configuration page (S6 window content). */
 export interface SourceConfigPageProps {
@@ -100,14 +100,40 @@ const CONNECTION_ACTION_COPY = {
   configure: 'clueConfigure',
 } as const
 
+/**
+ * The authorization-state copy. A `Record` over the whole union (not a chain
+ * of comparisons ending in a catch-all): adding a state to S2's contract is a
+ * compile error here instead of being silently rendered as "not configured".
+ */
+const CONNECTION_AUTHORIZATION_COPY: Record<ConnectionStatusProjection['authorization'], CopyKey> = {
+  ready: 'clueStateReady',
+  expired: 'clueStateAuthExpired',
+  authorizing: 'clueStateAuthorizing',
+  denied: 'clueConnectionDenied',
+  'scope-insufficient': 'clueConnectionScope',
+  'not-authorized': 'clueStateNotAuthorized',
+  unknown: 'clueStateUnchecked',
+}
+
 /** One user-readable failure line (sanitized message only). */
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
 /** Whether a path is absolute in either host dialect (client is node-free). */
-export function isAbsoluteHostPath(path: string): boolean {
+function isAbsoluteHostPath(path: string): boolean {
   return path.startsWith('/') || /^[A-Za-z]:[\\/]/.test(path) || /^\\\\/.test(path)
+}
+
+/**
+ * A dependency value cell's fallback. "Not installed" is only a claim the DTO
+ * actually supports (`state === 'missing'`); before an observation completes,
+ * or when a probe failed without a DTO, the honest value is the unchecked
+ * placeholder, never a fabricated missing install.
+ */
+function missingDependencyValue(current: DependencyStatus | undefined): string {
+  if (current === undefined) return t('clueStateUnchecked')
+  return current.state === 'missing' ? t('clueDependencyNotInstalled') : '—'
 }
 
 /** Replace one dependency in a list (identity preserved for untouched rows). */
@@ -176,6 +202,8 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
 
   const [dependencies, setDependencies] = useState<readonly DependencyStatus[] | null>(null)
   const [connections, setConnections] = useState<readonly ConnectionStatusProjection[] | null>(null)
+  // Page-level alert: explicit status READ failures only. Action failures are
+  // rendered on the row that owns the action (S8 spec §7).
   const [error, setError] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
   const [failedIds, setFailedIds] = useState<Record<string, true>>({})
@@ -184,7 +212,11 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
   const [planningId, setPlanningId] = useState<string | null>(null)
   const [pathDrafts, setPathDrafts] = useState<Record<string, string>>({})
   const [pathErrors, setPathErrors] = useState<Record<string, string>>({})
+  /** Per-dependency action/poll failures (plan/start/cancel/clear/poll). */
+  const [rowErrors, setRowErrors] = useState<Record<string, string>>({})
   const [connecting, setConnecting] = useState(false)
+  /** A connection action (authorize/check/cancel) failed; shown in its section. */
+  const [connectionActionError, setConnectionActionError] = useState<string | null>(null)
   /** The last connection read failed: the row must not claim "not configured". */
   const [connectionReadFailed, setConnectionReadFailed] = useState(false)
   const mounted = useRef(true)
@@ -199,6 +231,46 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
     return () => { mounted.current = false }
   }, [])
 
+  /** Show a sanitized failure on one dependency row (never the page banner). */
+  const failRow = (dependencyId: string, caught: unknown): void => {
+    setRowErrors(current => ({ ...current, [dependencyId]: messageOf(caught) }))
+  }
+
+  /** Clear one dependency row's action/poll failure. */
+  const clearRowError = (dependencyId: string): void => {
+    setRowErrors(current => {
+      if (current[dependencyId] === undefined) return current
+      const next = { ...current }
+      delete next[dependencyId]
+      return next
+    })
+  }
+
+  /** Show a manual-path failure under that dependency's path input. */
+  const failPath = (dependencyId: string, message: string): void => {
+    setPathErrors(current => ({ ...current, [dependencyId]: message }))
+  }
+
+  /** Clear one dependency's manual-path failure. */
+  const clearPathError = (dependencyId: string): void => {
+    setPathErrors(current => {
+      if (current[dependencyId] === undefined) return current
+      const next = { ...current }
+      delete next[dependencyId]
+      return next
+    })
+  }
+
+  /** Drop one dependency from `failedIds` (a later observation succeeded). */
+  const clearFailedDependency = (dependencyId: string): void => {
+    setFailedIds(current => {
+      if (current[dependencyId] === undefined) return current
+      const next = { ...current }
+      delete next[dependencyId]
+      return next
+    })
+  }
+
   /** Explicit status read. `refreshProbes` bypasses S2's probe cache. */
   const loadAll = useCallback(async (refreshProbes: boolean): Promise<void> => {
     const request = loadRequestRef.current + 1
@@ -206,6 +278,8 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
     const isCurrent = (): boolean => mounted.current && request === loadRequestRef.current
     setRefreshing(true)
     setError(null)
+    // A fresh explicit read supersedes the previous action failure it retries.
+    setConnectionActionError(null)
     const failures: Record<string, true> = {}
     try {
       const nextDependencies = await Promise.all(ids.map(async (dependencyId): Promise<DependencyStatus | undefined> => {
@@ -237,6 +311,8 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
       // last observed path/version. The row shows request-failed meanwhile.
       setDependencies(current => mergeDependencies(current, succeededDependencies))
       setFailedIds(failures)
+      // An explicit read is the retry path for plan/start/poll failures too.
+      setRowErrors({})
       if (!connectionFailed) {
         setConnections(nextConnection === undefined ? [] : [nextConnection])
         setConnectionReadFailed(false)
@@ -290,6 +366,12 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
         delete nextFailures[dependencyId]
         return nextFailures
       })
+      setRowErrors(current => {
+        if (current[dependencyId] === undefined) return current
+        const nextErrors = { ...current }
+        delete nextErrors[dependencyId]
+        return nextErrors
+      })
     } catch {
       // The re-probe is a refresh, not a user action: the old row stays.
     }
@@ -328,15 +410,24 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
         pollFailuresRef.current.delete(task.taskId)
         publishClueTask(runtime, next)
         setTasks(current => ({ ...current, [task.dependencyId]: next }))
+        // A recovered poll clears the row's transient failure immediately.
+        setRowErrors(current => {
+          if (current[task.dependencyId] === undefined) return current
+          const nextErrors = { ...current }
+          delete nextErrors[task.dependencyId]
+          return nextErrors
+        })
         if (next.state !== 'running') await reloadDependency(task.dependencyId)
       } catch (caught) {
         if (signal.aborted || !mounted.current) return
         const failures = (pollFailuresRef.current.get(task.taskId) ?? 0) + 1
         pollFailuresRef.current.set(task.taskId, failures)
-        setError(messageOf(caught))
+        // The failure belongs to this dependency's progress row, not the page:
+        // one failing task must not hide the rest of the settings.
+        setRowErrors(current => ({ ...current, [task.dependencyId]: messageOf(caught) }))
         if (failures >= MAX_POLL_FAILURES) {
           // A permanently failing status route must not spin at 1 Hz forever.
-          // The error stays on-page; Recheck re-discovers the live task.
+          // The row keeps the error; Recheck re-discovers the live task.
           pollFailuresRef.current.delete(task.taskId)
           setTasks(current => {
             if (current[task.dependencyId]?.taskId !== task.taskId) return current
@@ -402,13 +493,13 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
 
   const plan = async (dependencyId: string): Promise<void> => {
     setPlanningId(dependencyId)
-    setError(null)
+    clearRowError(dependencyId)
     try {
       const next = await runtime.dependenciesPlan(dependencyId)
       if (!mounted.current) return
       setPlans(current => ({ ...current, [dependencyId]: next }))
     } catch (caught) {
-      if (mounted.current) setError(messageOf(caught))
+      if (mounted.current) failRow(dependencyId, caught)
     } finally {
       if (mounted.current) setPlanningId(null)
     }
@@ -417,6 +508,7 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
   const startPlan = async (dependencyId: string): Promise<void> => {
     const current = plans[dependencyId]
     if (current === undefined) return
+    clearRowError(dependencyId)
     try {
       const next = await runtime.dependenciesStart(dependencyId, current.planId)
       if (!mounted.current) return
@@ -427,9 +519,8 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
         delete copy[dependencyId]
         return copy
       })
-      setError(null)
     } catch (caught) {
-      if (mounted.current) setError(messageOf(caught))
+      if (mounted.current) failRow(dependencyId, caught)
     }
   }
 
@@ -442,6 +533,7 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
   }
 
   const cancelInstall = async (task: DependencyInstallTask): Promise<void> => {
+    clearRowError(task.dependencyId)
     try {
       const next = await runtime.dependenciesCancel(task.dependencyId, task.taskId)
       if (!mounted.current) return
@@ -449,7 +541,7 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
       publishClueTask(runtime, next)
       if (next.state !== 'running') await reloadDependency(task.dependencyId)
     } catch (caught) {
-      if (mounted.current) setError(messageOf(caught))
+      if (mounted.current) failRow(task.dependencyId, caught)
     }
   }
 
@@ -469,21 +561,24 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
       if (!mounted.current) return
       setDependencies(current => replaceDependency(current ?? [], next))
       publishClueStatuses(runtime, [next])
-      setError(null)
+      // A successful write is a fresh observation: the old probe failure no
+      // longer describes this dependency.
+      clearFailedDependency(dependencyId)
     } catch (caught) {
-      if (mounted.current) setError(messageOf(caught))
+      if (mounted.current) failPath(dependencyId, messageOf(caught))
     }
   }
 
   const clearPath = async (dependencyId: string): Promise<void> => {
+    clearPathError(dependencyId)
     try {
       const next = await runtime.dependenciesClearPath(dependencyId)
       if (!mounted.current) return
       setDependencies(current => replaceDependency(current ?? [], next))
       publishClueStatuses(runtime, [next])
-      setError(null)
+      clearFailedDependency(dependencyId)
     } catch (caught) {
-      if (mounted.current) setError(messageOf(caught))
+      if (mounted.current) failPath(dependencyId, messageOf(caught))
     }
   }
 
@@ -494,14 +589,15 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
   const connect = async (): Promise<void> => {
     if (connectionId === undefined) return
     setConnecting(true)
-    setError(null)
+    setConnectionActionError(null)
     try {
       const next = await runtime.connectionsConnect(connectionId)
       if (!mounted.current) return
       setConnections(current => replaceConnection(current ?? [], next))
+      setConnectionReadFailed(false)
       publishClueStatuses(runtime, [], [next])
     } catch (caught) {
-      if (mounted.current) setError(messageOf(caught))
+      if (mounted.current) setConnectionActionError(messageOf(caught))
     } finally {
       if (mounted.current) setConnecting(false)
     }
@@ -510,14 +606,15 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
   const pollConnection = async (): Promise<void> => {
     if (connectionId === undefined) return
     setConnecting(true)
-    setError(null)
+    setConnectionActionError(null)
     try {
       const next = await runtime.connectionsPoll(connectionId)
       if (!mounted.current) return
       setConnections(current => replaceConnection(current ?? [], next))
+      setConnectionReadFailed(false)
       publishClueStatuses(runtime, [], [next])
     } catch (caught) {
-      if (mounted.current) setError(messageOf(caught))
+      if (mounted.current) setConnectionActionError(messageOf(caught))
     } finally {
       if (mounted.current) setConnecting(false)
     }
@@ -526,21 +623,24 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
   const cancelConnection = async (): Promise<void> => {
     if (connectionId === undefined) return
     setConnecting(true)
-    setError(null)
+    setConnectionActionError(null)
     try {
       const next = await runtime.connectionsCancel(connectionId)
       if (!mounted.current) return
       setConnections(current => replaceConnection(current ?? [], next))
+      setConnectionReadFailed(false)
       publishClueStatuses(runtime, [], [next])
     } catch (caught) {
-      if (mounted.current) setError(messageOf(caught))
+      if (mounted.current) setConnectionActionError(messageOf(caught))
     } finally {
       if (mounted.current) setConnecting(false)
     }
   }
 
   return (
-    <div className={css.config} data-clue-config={sourceId} aria-label={sourceName}>
+    // A named <section> exposes the window content's accessible name (a bare
+    // div's aria-label would not); the page is one region with its own rows.
+    <section className={css.config} data-clue-config={sourceId} aria-label={sourceName}>
       {error !== null && (
         <p className={css.configError} role="alert">{error}</p>
       )}
@@ -572,13 +672,13 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
                 <div className={css.configRow}>
                   <span className={css.configLabel}>{t('clueDependencyActualPath')}</span>
                   <span className={`${css.configValue} ${css.configMono}`}>
-                    {current?.executablePath ?? t('clueDependencyNotInstalled')}
+                    {current?.executablePath ?? missingDependencyValue(current)}
                   </span>
                 </div>
                 <div className={css.configRow}>
                   <span className={css.configLabel}>{t('clueDependencyVersion')}</span>
                   <span className={`${css.configValue} ${css.configMono}`}>
-                    {current?.version ?? t('clueDependencyNotInstalled')}
+                    {current?.version ?? missingDependencyValue(current)}
                   </span>
                 </div>
                 {current !== undefined && (
@@ -615,7 +715,18 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
                   <Action label={t('clueDependencyApplyPath')} onClick={() => { void applyPath(dependencyId) }} />
                 </div>
                 {pathErrors[dependencyId] !== undefined && (
-                  <p className={css.configError} role="alert">{pathErrors[dependencyId]}</p>
+                  <p className={css.configError} role="alert" data-clue-path-error={dependencyId}>
+                    {pathErrors[dependencyId]}
+                  </p>
+                )}
+                {rowErrors[dependencyId] !== undefined && (
+                  <p
+                    className={css.configError}
+                    role="alert"
+                    data-clue-dependency-action-error={dependencyId}
+                  >
+                    {rowErrors[dependencyId]}
+                  </p>
                 )}
                 <div className={css.configActions}>
                   <Action
@@ -747,7 +858,15 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
       {connectionId !== undefined && (
         <section className={css.configSection} aria-label={t('clueConnectionHeading')}>
           <h3 className={css.configHeading}>{t('clueConnectionHeading')}</h3>
-          {connection === undefined ? (
+          {connections === null && !connectionReadFailed ? (
+            // The first explicit read is still in flight. "Not configured" is
+            // a terminal verdict this page has not earned yet (the table's
+            // `checked` rule, applied here too).
+            <div className={css.configRow}>
+              <span className={css.configLabel}>{t('clueConnectionAuthorization')}</span>
+              <span className={css.status} data-kind="unchecked">{t(CLUE_SOURCE_STATUS_COPY.unchecked)}</span>
+            </div>
+          ) : connection === undefined ? (
             // A failed read is NOT "this source was never configured": the
             // distinction is the whole point of the status surface.
             <div className={css.configRow}>
@@ -777,23 +896,18 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
               </div>
               <div className={css.configRow}>
                 <span className={css.configLabel}>{t('clueConnectionAuthorization')}</span>
-                <span className={css.configValue} data-authorization={connection.authorization}>
-                  {connection.authorization === 'ready'
-                    ? t('clueStateReady')
-                    : connection.authorization === 'expired'
-                      ? t('clueStateAuthExpired')
-                      : connection.authorization === 'authorizing'
-                        ? t('clueStateAuthorizing')
-                        : connection.authorization === 'denied'
-                          ? t('clueConnectionDenied')
-                          : connection.authorization === 'scope-insufficient'
-                            ? t('clueConnectionScope')
-                            : connection.authorization === 'not-authorized'
-                              ? t('clueStateNotAuthorized')
-                              : connection.authorization === 'unknown'
-                                ? t('clueStateUnchecked')
-                                : t('clueStateNotConfigured')}
-                </span>
+                {connectionReadFailed ? (
+                  // A failed re-read must mark the row itself, even when a
+                  // previous projection is still on screen — the old "Ready"
+                  // is not the current answer.
+                  <span className={css.status} data-kind="request-failed">
+                    {t(CLUE_SOURCE_STATUS_COPY['request-failed'])}
+                  </span>
+                ) : (
+                  <span className={css.configValue} data-authorization={connection.authorization}>
+                    {t(CONNECTION_AUTHORIZATION_COPY[connection.authorization])}
+                  </span>
+                )}
               </div>
               {connection.account !== undefined && (
                 <div className={css.configRow}>
@@ -803,6 +917,11 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
               )}
               {connection.detail !== undefined && <p className={css.configHint}>{connection.detail}</p>}
               {connection.error !== undefined && <p className={css.configError} role="alert">{connection.error.message}</p>}
+              {connectionActionError !== null && (
+                <p className={css.configError} role="alert" data-clue-connection-action-error="">
+                  {connectionActionError}
+                </p>
+              )}
 
               <div className={css.configActions}>
                 {connection.action !== 'none' && (
@@ -874,6 +993,6 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
           )}
         </section>
       )}
-    </div>
+    </section>
   )
 }

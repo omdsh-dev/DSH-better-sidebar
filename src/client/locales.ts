@@ -384,7 +384,6 @@ export const zh = {
   settingsShellArgsTitle: 'Shell 参数',
   settingsShellArgsDesc: '显式 shell 启动参数，空格分隔；非空时完全替换默认参数（与 yaml 的 shellArgs 契约一致）',
   settingsShellArgsPlaceholder: '如 -l（留空用默认参数）',
-  settingsTabsTitle: '侧边栏内容',
   settingsViewersTitle: '文件预览',
   settingsMobileTitle: '手机',
   settingsMobileNoAutoOpenTitle: '窄屏时不自动弹出',
@@ -695,6 +694,7 @@ export const zh = {
   clueSourcesUnavailable: '来源插件未加载；已保留原有偏好与引用。',
   clueAddSource: '添加来源插件',
   clueAddSourceDesc: '来源以 DSH 插件形式安装；安装插件与安装它需要的 CLI 是两件事，这里只提供发现与复制安装命令。',
+  clueAddSourceNoCatalog: '当前宿主还没有来源类插件目录；请通过下方 GitHub topic 查找来源插件。',
 
   // ── S8: clue source states ──
   clueStateUnchecked: '未检测',
@@ -1122,7 +1122,6 @@ export const en: Record<keyof typeof zh, string> = {
   settingsShellArgsDesc: 'Explicit shell arguments, space-separated; when non-empty they fully replace the defaults (same contract as the yaml shellArgs)',
   settingsShellArgsPlaceholder: 'e.g. -l (empty = defaults)',
   settingsFontSizeDesc: 'Terminal font size in px (9–32, default 13)',
-  settingsTabsTitle: 'Sidebar content',
   settingsViewersTitle: 'File viewers',
   settingsMobileTitle: 'Mobile',
   settingsMobileNoAutoOpenTitle: "Don't auto-open on narrow screens",
@@ -1431,6 +1430,7 @@ export const en: Record<keyof typeof zh, string> = {
   clueSourcesUnavailable: 'The source plugin is not loaded; its preferences and references were kept.',
   clueAddSource: 'Add source plugin',
   clueAddSourceDesc: 'Sources ship as DSH plugins; installing the plugin and installing the CLI it needs are separate steps, and this only offers discovery plus install-command copying.',
+  clueAddSourceNoCatalog: 'No source-category plugin catalogue is available in this host yet; browse the GitHub topic below to find source plugins.',
 
   // ── S8: clue source states ──
   clueStateUnchecked: 'Not checked',

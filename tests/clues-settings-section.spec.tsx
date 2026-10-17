@@ -41,6 +41,7 @@ import { cluesApi } from '../src/client/clues/api.ts'
 import type { BetterSidebarCluesClientFace } from '../src/client/clues/registry.ts'
 import type { ClueRuntimeApi } from '../src/client/clues/runtime-api.ts'
 import { openClueSettings, peekClueSettingsTarget } from '../src/client/clues/settings/navigation.ts'
+import { builtinTabPlugins } from '../src/client/plugins-tabs.ts'
 import { en } from '../src/client/locales.ts'
 import { SIDEBAR_PREFS_DEFAULTS } from '../src/prefs-shared.ts'
 import type { CluesSourcesCatalogResult, ClueSourceDescriptor } from '../src/clues/types.ts'
@@ -516,21 +517,28 @@ describe('SideCardSection clue sources', () => {
     expect(windows).toHaveLength(1)
     expect(windows[0]!.id).toBe('clue-source:acme.docs')
     expect(windows[0]!.title).toBe('Source settings: Acme Docs')
+    // S6 §3: a small form-shaped configuration window uses the compact preset.
+    expect(windows[0]!.size).toBe('compact')
     expect((windows[0]!.content as { props?: { sourceId?: string } }).props?.sourceId).toBe('acme.docs')
     rendered.unmount()
   })
 
-  it('reuses the existing plugin modal for the add-source entry (no fake install success)', async () => {
+  it('offers the explicit no-source-catalog state instead of tab-plugin recommendations', async () => {
     const h = harness()
     const rendered = await mountSources(h)
     click(rendered.container, 'Add source plugin')
     await flush()
-    // The shared plugin discovery/install body is mounted under SOURCE copy
-    // (not the tab-plugin title), and its per-entry action still only copies
-    // the install command (nothing claims the plugin or the CLI was installed).
-    expect(document.body.textContent).toContain('Add source plugin')
-    expect(document.body.textContent).toContain('Copy')
-    expect(rendered.container.textContent).not.toContain('installed successfully')
+    const body = document.body.textContent ?? ''
+    // The source modal names the actual intent (sources are DSH plugins) and
+    // admits there is no source-category catalogue. The repo's TAB catalogue
+    // must not be wrapped as source recommendations (S8 spec §5).
+    expect(body).toContain('Add source plugin')
+    expect(body).toContain(en.clueAddSourceNoCatalog)
+    expect(body).toContain('Browse more plugins on GitHub')
+    for (const entry of builtinTabPlugins) expect(body).not.toContain(entry.install)
+    expect(body).not.toContain('Copy')
+    // Nothing claims the plugin or its CLI was installed.
+    expect(body).not.toContain('installed successfully')
     rendered.unmount()
   })
 
@@ -554,6 +562,40 @@ describe('SideCardSection clue sources', () => {
     await flush()
     expect(rendered.container.textContent).not.toContain('the dependency probe is down')
     expect(rendered.container.textContent).toContain('Ready')
+    rendered.unmount()
+  })
+
+  it('keeps rows unchecked while a failed catalogue retry is still probing', async () => {
+    const h = harness()
+    let failCatalogue = true
+    const originalSources = h.clues.api.sources
+    h.clues.api.sources = async () => {
+      if (failCatalogue) throw new Error('the source catalogue is down')
+      return originalSources()
+    }
+    const rendered = await mountSources(h)
+    expect(rendered.container.textContent).toContain('the source catalogue is down')
+    failCatalogue = false
+    // Hold the status probes after the catalogue has already answered: this
+    // is the window where an over-eager `checked` flag used to derive
+    // "missing dependency" from an empty projection.
+    let releaseProbe!: () => void
+    const probeGate = new Promise<void>(resolve => { releaseProbe = resolve })
+    const originalInspect = h.runtime.dependenciesInspect
+    h.runtime.dependenciesInspect = async (...args) => {
+      await probeGate
+      return originalInspect(...args)
+    }
+    click(rendered.container, 'Retry')
+    await flush()
+    const row = rendered.container.querySelector('[data-clue-source="acme.docs"]')
+    expect(row).not.toBeNull()
+    expect(row!.getAttribute('data-clue-source-status')).toBe('unchecked')
+    expect(row!.textContent).toContain('Not checked')
+    releaseProbe()
+    await flush()
+    expect(rendered.container.querySelector('[data-clue-source="acme.docs"]')!
+      .getAttribute('data-clue-source-status')).toBe('ready')
     rendered.unmount()
   })
 
@@ -654,9 +696,26 @@ describe('SideCardSection conflict handling', () => {
     expect(checkboxState(rendered.container, 'Inject the sidebar-open tool for the model')).toBe(true)
     rendered.unmount()
   })
-})
 
-// ── Revision fencing ──────────────────────────────────────────────────────
+  it('two rapid failed writes settle on the last confirmed values (the first failure is not resurrected)', async () => {
+    const h = harness()
+    const rendered = await mount(h)
+    h.settings.settingsUpdate = async () => { throw new Error('the settings route is down') }
+    // Both edits land before either write settles. The first snapshot used to
+    // be the rollback base of the second write, which resurrected the first
+    // failed edit after the second failure.
+    click(rendered.container, 'Inject the sidebar-open tool for the model')
+    click(rendered.container, "Don't auto-open on narrow screens")
+    await flush()
+    expect(checkboxState(rendered.container, 'Inject the sidebar-open tool for the model')).toBe(false)
+    expect(checkboxState(rendered.container, "Don't auto-open on narrow screens")).toBe(true)
+    // The page reports the failure and the store keeps the confirmed values.
+    expect(rendered.container.textContent).toContain('the settings route is down')
+    expect(h.store.getPrefs().agentOpenTools).toBe(false)
+    expect(h.store.getPrefs().mobileNoAutoOpen).toBe(true)
+    rendered.unmount()
+  })
+})
 
 describe('SideCardSection revision fencing', () => {
   it('waits for the mount read before writing (never an unguarded settings update)', async () => {

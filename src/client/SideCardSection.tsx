@@ -51,7 +51,8 @@ import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { SidebarPrefs } from '../prefs-shared.ts'
 import { api } from './api.ts'
 import { parsePrefs } from './prefs.ts'
-import { AddPluginModal, PluginListBody, type PluginKind } from './add-plugin-modal.tsx'
+import { AddPluginModal, type PluginKind } from './add-plugin-modal.tsx'
+import { PLUGIN_TOPIC_URL } from './plugins-shared.ts'
 import { t } from './locales.ts'
 import type { SidebarStore } from './state.ts'
 import type {
@@ -68,6 +69,7 @@ import { ClueSourcesPanel, hasSourceConfiguration } from './clues/settings/sourc
 import { deriveClueSourceStatus, type ClueSourceStatus } from './clues/settings/status.ts'
 import { subscribeClueRuntime } from './clues/settings/runtime-state.ts'
 import {
+  CLUE_SETTINGS_GROUPS,
   consumeClueSettingsTarget,
   peekClueSettingsTarget,
   subscribeClueSettingsTarget,
@@ -133,14 +135,22 @@ function noteSettingsRevision(face: object, revision: number | undefined): void 
   if (known === undefined || revision > known) knownSettingsRevisions.set(face, revision)
 }
 
-/** The five groups, in navigation order (approved S8 spec §2). */
-const SETTINGS_GROUPS: readonly { id: ClueSettingsGroup; label(): string }[] = [
-  { id: 'general', label: () => t('settingsGeneralTitle') },
-  { id: 'tabs', label: () => t('settingsGroupTabs') },
-  { id: 'viewers', label: () => t('settingsViewersTitle') },
-  { id: 'sources', label: () => t('settingsGroupSources') },
-  { id: 'appearance', label: () => t('settingsGroupAppearance') },
-]
+/** The label of each group, keyed by the navigation tuple's ids. */
+const SETTINGS_GROUP_LABEL: Record<ClueSettingsGroup, () => string> = {
+  general: () => t('settingsGeneralTitle'),
+  tabs: () => t('settingsGroupTabs'),
+  viewers: () => t('settingsViewersTitle'),
+  sources: () => t('settingsGroupSources'),
+  appearance: () => t('settingsGroupAppearance'),
+}
+
+/**
+ * The five groups, in navigation order (approved S8 spec §2). The ORDER is
+ * the navigation module's tuple; this list only attaches the copy, so adding
+ * or reordering a group is one edit, not two drifting lists.
+ */
+const SETTINGS_GROUPS: readonly { id: ClueSettingsGroup; label(): string }[] =
+  CLUE_SETTINGS_GROUPS.map(id => ({ id, label: SETTINGS_GROUP_LABEL[id] }))
 
 /** The one-line wire failure text (no prefix). */
 function errorTextOf(error: unknown): string {
@@ -744,7 +754,8 @@ export function SideCardSection(props: SideCardSectionProps) {
   // Which feature's secondary settings popup is open (null = closed).
   const [settingsFor, setSettingsFor] = useState<TabDescriptor | FileViewerDescriptor | null>(null)
   // Whether the "add plugin" modal is open, and for which extension point
-  // (null = closed). The source entry reuses the TAB plugin flow.
+  // (null = closed). The source entry has its own explicit no-catalog body
+  // (there is no source-category catalog to reuse).
   const [addPluginsOpen, setAddPluginsOpen] = useState<PluginKind | 'source' | null>(null)
   // The LATEST optimistic prefs, kept in sync with the state. Nested-map
   // merges (tabsEnabled / viewersEnabled / pluginSettings / clue source maps)
@@ -754,6 +765,11 @@ export function SideCardSection(props: SideCardSectionProps) {
   // earlier key even though the commits are serialized.
   const optimisticRef = useRef(prefs)
   useEffect(() => { optimisticRef.current = prefs }, [prefs])
+  // The last values the SERVER confirmed (mount read or a successful write).
+  // A failed optimistic edit rolls back HERE, not to its own pre-write
+  // snapshot: two rapid writes that both fail must not let the second
+  // rollback resurrect the first edit the server rejected.
+  const confirmedRef = useRef(prefs)
 
   // The active settings group. A pending deep link (Tab gear → Clue sources)
   // seeds it; the mount effect consumes it exactly once.
@@ -803,6 +819,10 @@ export function SideCardSection(props: SideCardSectionProps) {
     setSourcesLoading(true)
     setSourcesError(null)
     setStatusProbeError(null)
+    // NOTE: `statusChecked`, the probe flags and the last projections are NOT
+    // reset here. A reload of an already-checked table keeps showing its
+    // last-known verdict while the fresh read is in flight; the failure path
+    // below must simply never upgrade an unchecked table to "checked".
     try {
       const catalogueNext = await clues.api.sources()
       if (request !== sourcesRequestRef.current) return
@@ -837,8 +857,10 @@ export function SideCardSection(props: SideCardSectionProps) {
       setStatusChecked(true)
     } catch (caught) {
       if (request === sourcesRequestRef.current) {
+        // The catalogue itself failed. `statusChecked` stays as it was: a
+        // first-load failure never checked anything, and a later failure
+        // leaves the previous completed observation visible as last-known.
         setSourcesError(errorTextOf(caught))
-        setStatusChecked(true)
       }
     } finally {
       if (request === sourcesRequestRef.current) setSourcesLoading(false)
@@ -901,7 +923,8 @@ export function SideCardSection(props: SideCardSectionProps) {
     windows.open({
       id: `clue-source:${source.sourceId}`,
       title: t('clueConfigTitle', { source: name }),
-      size: 'collection',
+      // S6 §3: a small form-shaped configuration window uses `compact`.
+      size: 'compact',
       content: (
         <SourceConfigPage
           sourceId={source.sourceId}
@@ -993,10 +1016,16 @@ export function SideCardSection(props: SideCardSectionProps) {
         revisionRef.current = Math.max(revisionRef.current ?? view.revision, view.revision)
         // The other settings entry already saved a newer document. Adopting
         // this older read would resurrect its values in the shared store.
-        if (known !== undefined && view.revision < known) return
+        if (known !== undefined && view.revision < known) {
+          // The store holds that newer confirmed document; use it as the
+          // rollback base for a later failed edit from this entry.
+          confirmedRef.current = store.getPrefs()
+          return
+        }
       }
       if (dirtyRef.current) return
       const next = parsePrefs(view.value)
+      confirmedRef.current = next
       // Refresh the shared store too: both settings entry points render this
       // ONE component against the same store and revision chain.
       store.setPrefs(next)
@@ -1082,6 +1111,7 @@ export function SideCardSection(props: SideCardSectionProps) {
         noteSettingsRevision(settingsFace, view.revision)
       }
       unsavedPatchRef.current = null
+      confirmedRef.current = next
       store.setPrefs(next)
       return next
     })
@@ -1104,10 +1134,24 @@ export function SideCardSection(props: SideCardSectionProps) {
     )
   }
 
-  /** Settle one commit: success adopts the server values; a conflict keeps the edit. */
-  const applyOutcome = (previous: SidebarPrefs, outcome: CommitOutcome): void => {
-    if (outcome.ok) setPrefs(outcome.prefs)
-    else if (outcome.keepEdit !== true) setPrefs(previous)
+  /**
+   * Settle one commit. Success adopts the server values. A non-conflict
+   * failure rolls back to the last SERVER-CONFIRMED values (plus any edit the
+   * 409 path is still keeping for the next write) — not to this write's own
+   * pre-write snapshot, which may already contain an earlier failed edit.
+   */
+  const applyOutcome = (outcome: CommitOutcome): void => {
+    if (outcome.ok) {
+      setPrefs(outcome.prefs)
+      return
+    }
+    if (outcome.keepEdit === true) return
+    const kept = unsavedPatchRef.current
+    const rollback = (kept === null
+      ? confirmedRef.current
+      : { ...confirmedRef.current, ...kept }) as SidebarPrefs
+    optimisticRef.current = rollback
+    setPrefs(rollback)
   }
 
   /** Optimistically apply one pref patch, then commit (revert on failure). */
@@ -1117,7 +1161,7 @@ export function SideCardSection(props: SideCardSectionProps) {
     optimisticRef.current = next
     setPrefs(next)
     setError(null)
-    void commit(patch).then(outcome => applyOutcome(previous, outcome))
+    void commit(patch).then(outcome => applyOutcome(outcome))
   }
 
   /** Flip one per-tab enable switch (merge into the tabsEnabled map). */
@@ -1392,6 +1436,15 @@ export function SideCardSection(props: SideCardSectionProps) {
     <div className={css.section}>
       <p className={css.intro}>{t('settingsIntro')}</p>
 
+      {/* A failed settings save belongs to the surface that made the write.
+          It stays at the TOP of the section (not after the long groups at the
+          bottom, where it is easy to miss) and role=alert announces it. */}
+      {error !== null && (
+        <div className={css.error} role="alert">
+          {error}
+        </div>
+      )}
+
       {/* The managing plugin's own identity: name + version badge, so the
           section is attributable at a glance (the version is the service
           instance's, kept in lockstep with package.json by
@@ -1519,11 +1572,7 @@ export function SideCardSection(props: SideCardSectionProps) {
                 sources={catalogue?.sources ?? []}
                 displays={displays}
                 statuses={statusById}
-                prefs={{
-                  clueSourcesEnabled: prefs.clueSourcesEnabled,
-                  clueSourcesMentionEnabled: prefs.clueSourcesMentionEnabled,
-                  cluePacksMentionEnabled: prefs.cluePacksMentionEnabled,
-                }}
+                prefs={prefs}
                 loading={sourcesLoading && catalogue === null}
                 error={sourcesError}
                 statusError={statusProbeError}
@@ -1600,16 +1649,14 @@ export function SideCardSection(props: SideCardSectionProps) {
           the extension point of the clicked kind, opens the GitHub topic,
           and lists the matching recommended plugin catalog with per-entry
           install buttons (copying the command; nothing claims a successful
-          install). The clue-source entry reuses the same discovery/install
-          body under source-specific copy (S8: sources ship as DSH plugins,
-          and installing a plugin is not the same action as installing the CLI
-          it needs).
+          install). The clue-source entry is deliberately DIFFERENT: the repo
+          has no source-category catalog, so it must not present the TAB
+          catalog as source recommendations (S8 §5). It shows the explicit
+          "no source catalog" state and the topic page where source plugins
+          actually live.
           Mounted only while open (Modal runs hooks unconditionally — same
           SSR rule as the settings popup above). */}
       {addPluginsOpen === 'source' ? (
-        // The source entry reuses the repository's plugin discovery/install
-        // body, but names the actual intent: sources are DSH plugins, and
-        // installing one is separate from installing the CLI it needs.
         <Modal
           open
           onClose={() => { setAddPluginsOpen(null) }}
@@ -1623,7 +1670,16 @@ export function SideCardSection(props: SideCardSectionProps) {
             </button>
           )}
         >
-          <PluginListBody service={service} kind="tab" />
+          <div className={css.pluginList} data-clue-add-source="">
+            <button
+              type="button"
+              className={css.pluginTopicBtn}
+              onClick={() => { window.open(PLUGIN_TOPIC_URL, '_blank', 'noopener') }}
+            >
+              {t('addPluginsBrowseMore')}
+            </button>
+            <div className={css.pluginEmpty}>{t('clueAddSourceNoCatalog')}</div>
+          </div>
         </Modal>
       ) : addPluginsOpen !== null ? (
         <AddPluginModal
@@ -1632,12 +1688,6 @@ export function SideCardSection(props: SideCardSectionProps) {
           kind={addPluginsOpen}
         />
       ) : null}
-
-      {error !== null && (
-        <div className={css.error} role="alert">
-          {error}
-        </div>
-      )}
     </div>
   )
 }

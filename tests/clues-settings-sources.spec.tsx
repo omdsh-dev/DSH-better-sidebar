@@ -17,6 +17,7 @@ import { renderToString } from 'react-dom/server'
 import { createElement } from 'react'
 import { ClueSourcesPanel, type ClueSourcesPanelProps } from '../src/client/clues/settings/sources.tsx'
 import type { ClueSourceStatus } from '../src/client/clues/settings/status.ts'
+import { SIDEBAR_PREFS_DEFAULTS, type SidebarPrefs } from '../src/prefs-shared.ts'
 import type { ClueSourceDescriptor } from '../src/clues/types.ts'
 
 beforeAll(() => {
@@ -56,17 +57,18 @@ function statuses(overrides: Record<string, ClueSourceStatus> = {}): ReadonlyMap
   ])
 }
 
+/** Full shared prefs (the panel consumes the S1 object and its helpers). */
+function prefs(overrides: Partial<SidebarPrefs> = {}): SidebarPrefs {
+  return { ...SIDEBAR_PREFS_DEFAULTS, ...overrides }
+}
+
 /** Default props: everything enabled (S1 absent = ON). */
 function props(overrides: Partial<ClueSourcesPanelProps> = {}): ClueSourcesPanelProps {
   return {
     sources: SOURCES,
     displays: [],
     statuses: statuses(),
-    prefs: {
-      clueSourcesEnabled: {},
-      clueSourcesMentionEnabled: {},
-      cluePacksMentionEnabled: true,
-    },
+    prefs: prefs(),
     loading: false,
     error: null,
     statusError: null,
@@ -124,11 +126,10 @@ describe('ClueSourcesPanel rows', () => {
 
   it('renders an explicit false as off and preserves the stored @ value while the source is off', () => {
     const html = render({
-      prefs: {
+      prefs: prefs({
         clueSourcesEnabled: { 'builtin.files': false },
         clueSourcesMentionEnabled: { 'builtin.files': true },
-        cluePacksMentionEnabled: true,
-      },
+      }),
     })
     expect(switches(html)).toContainEqual({ label: 'Enable source: Local files', checked: false, disabled: false })
     // The stored @ pref is still true, but the control is inert while the
@@ -150,11 +151,11 @@ describe('ClueSourcesPanel rows', () => {
 
   it('renders the pack @ switch as off when the preference is false (independent of every source)', () => {
     const html = render({
-      prefs: {
+      prefs: prefs({
         clueSourcesEnabled: { 'builtin.files': false, 'acme.docs': false },
         clueSourcesMentionEnabled: { 'builtin.files': false, 'acme.docs': false },
         cluePacksMentionEnabled: false,
-      },
+      }),
     })
     expect(switches(html)).toContainEqual({ label: '@ candidates: clue packs', checked: false, disabled: false })
   })
@@ -222,11 +223,10 @@ describe('ClueSourcesPanel states', () => {
 
   it('keeps configured-but-not-loaded sources visible with their stored preferences', () => {
     const html = render({
-      prefs: {
+      prefs: prefs({
         clueSourcesEnabled: { 'legacy.source': false },
         clueSourcesMentionEnabled: { 'legacy.source': true },
-        cluePacksMentionEnabled: true,
-      },
+      }),
     })
     expect(html).toContain('data-clue-source="legacy.source"')
     expect(html).toContain('The source plugin is not loaded')
@@ -255,11 +255,10 @@ describe('ClueSourcesPanel states', () => {
       sources: [],
       catalogueLoaded: false,
       loading: true,
-      prefs: {
+      prefs: prefs({
         clueSourcesEnabled: { 'later.source': false },
         clueSourcesMentionEnabled: { 'later.source': true },
-        cluePacksMentionEnabled: true,
-      },
+      }),
     })
     expect(html).not.toContain('data-clue-source="later.source"')
     expect(html).not.toContain('The source plugin is not loaded')

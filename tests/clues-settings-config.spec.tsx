@@ -245,10 +245,35 @@ function type(input: HTMLInputElement, value: string): void {
 }
 
 describe('SourceConfigPage dependency section', () => {
+  it('does not claim "not installed" / "not configured" before the first read completes', async () => {
+    const runtime = fakeRuntime()
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    runtime.dependenciesInspect = async () => { await gate; return runtime.dependencies }
+    runtime.connectionsStatus = async () => { await gate; return runtime.connections }
+    // Render without flushing the mount read: this is the first frame.
+    const rendered = renderRoot(createElement(SourceConfigPage, { ...BASE_PROPS, runtime }))
+    const text = rendered.container.textContent ?? ''
+    expect(text).toContain('Not checked')
+    // A slow/mounting read must not print a terminal missing verdict.
+    expect(text).not.toContain('Not installed')
+    expect(text).not.toContain('Not configured')
+    const row = rendered.container.querySelector('[data-clue-dependency="acme.cli"]')!
+    expect(row.querySelector('[data-kind="unchecked"]')).not.toBeNull()
+    release()
+    await flush()
+    expect(rendered.container.textContent).toContain('/usr/local/bin/acme')
+    expect(rendered.container.textContent).toContain('Ready')
+    rendered.unmount()
+  })
+
   it('shows the actual path, version, compatibility contract and manual path', async () => {
     const runtime = fakeRuntime({ dependencies: [dependency({ manualPath: '/opt/acme', version: '1.4.0' })] })
     const rendered = await mount(runtime)
     expect(rendered.container.textContent).toContain('CLI dependency')
+    // The window content is a named region, not a bare div with aria-label.
+    expect(rendered.container.querySelector('section[data-clue-config="acme.docs"]')?.getAttribute('aria-label'))
+      .toBe('Acme Docs')
     expect(rendered.container.textContent).toContain('/usr/local/bin/acme')
     expect(rendered.container.textContent).toContain('1.4.0')
     expect(rendered.container.textContent).toContain('Minimum 1.2.0 · Recommended 1.4.0')
@@ -304,6 +329,9 @@ describe('SourceConfigPage dependency section', () => {
     await act(async () => { await Promise.resolve() })
     expect(runtime.calls).toContain('setPath:acme.cli:/nope/acme')
     expect(rendered.container.textContent).toContain('the path does not exist')
+    // The failure sits on the path row, not in a page-wide banner.
+    expect(rendered.container.querySelector('[data-clue-path-error="acme.cli"]')?.textContent)
+      .toContain('the path does not exist')
     // The page and the existing status stay in place after the failure.
     expect(rendered.container.textContent).toContain('/usr/local/bin/acme')
     rendered.unmount()
@@ -470,6 +498,21 @@ describe('SourceConfigPage connection and authorization', () => {
     rendered.unmount()
   })
 
+  it('marks the connection row request-failed after a failed re-read, even with a previous projection', async () => {
+    const runtime = fakeRuntime()
+    const rendered = await mount(runtime)
+    expect(rendered.container.querySelector('[data-authorization="ready"]')).not.toBeNull()
+    runtime.connectionsStatus = async () => { throw new Error('the connection status route failed') }
+    click(rendered.container, 'Recheck')
+    await flush()
+    const section = rendered.container.querySelector<HTMLElement>('[aria-label="Connection and authorization"]')!
+    expect(section.querySelector('[data-kind="request-failed"]')).not.toBeNull()
+    // The old "Ready" is not presented as the current authorization answer.
+    expect(section.querySelector('[data-authorization]')).toBeNull()
+    expect(section.textContent).toContain('Request failed')
+    rendered.unmount()
+  })
+
   it('hands a connect failure back to the same page with the settings preserved', async () => {
     const runtime = fakeRuntime({
       connections: [connection({ authorization: 'not-authorized', action: 'connect' })],
@@ -479,6 +522,8 @@ describe('SourceConfigPage connection and authorization', () => {
     click(rendered.container, 'Authorize')
     await act(async () => { await Promise.resolve() })
     expect(rendered.container.textContent).toContain('the authorization request failed')
+    expect(rendered.container.querySelector('[data-clue-connection-action-error]')?.textContent)
+      .toContain('the authorization request failed')
     expect(rendered.container.textContent).toContain('Not authorized')
     expect(rendered.container.textContent).toContain('/usr/local/bin/acme')
     rendered.unmount()
@@ -508,6 +553,28 @@ describe('SourceConfigPage failure handling', () => {
     rendered.unmount()
   })
 
+  it('clears a failed probe after a successful manual path write (no stale request-failed badge)', async () => {
+    const runtime = fakeRuntime()
+    const rendered = await mount(runtime)
+    runtime.inspectRejects = new Error('the probe timed out')
+    click(rendered.container, 'Recheck')
+    await flush()
+    const row = rendered.container.querySelector('[data-clue-dependency="acme.cli"]')!
+    expect(row.querySelector('[data-kind="request-failed"]')).not.toBeNull()
+
+    runtime.inspectRejects = undefined
+    const input = rendered.container.querySelector<HTMLInputElement>('input[placeholder="Absolute path to the executable"]')!
+    type(input, '/opt/acme')
+    click(rendered.container, 'Use path')
+    await flush()
+    // The successful path write is a fresh observation: the old probe failure
+    // must not keep winning over the new DTO.
+    expect(row.querySelector('[data-kind="request-failed"]')).toBeNull()
+    expect(row.querySelector('[data-kind="ready"]')).not.toBeNull()
+    expect(row.textContent).toContain('/opt/acme')
+    rendered.unmount()
+  })
+
   it('shows a failed dependency DTO error inline instead of only a badge', async () => {
     const runtime = fakeRuntime({
       dependencies: [dependency({
@@ -526,6 +593,8 @@ describe('SourceConfigPage failure handling', () => {
     click(planned.container, 'One-click install')
     await act(async () => { await Promise.resolve() })
     expect(planned.container.textContent).toContain('no verified release for this platform')
+    expect(planned.container.querySelector('[data-clue-dependency-action-error="acme.cli"]')?.textContent)
+      .toContain('no verified release for this platform')
     expect(planned.container.textContent).not.toContain('Confirm and install')
     planned.unmount()
 
@@ -618,6 +687,40 @@ describe('SourceConfigPage install task polling', () => {
       expect(rendered.container.querySelector('[role="progressbar"]')).toBeNull()
       await act(async () => { await vi.advanceTimersByTimeAsync(3000) })
       expect(runtime.calls.filter(call => call.startsWith('status:acme.cli'))).toHaveLength(3)
+      rendered.unmount()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('clears a transient status-poll failure when the next poll succeeds', async () => {
+    vi.useFakeTimers()
+    try {
+      const runtime = fakeRuntime()
+      const rendered = await mount(runtime)
+      click(rendered.container, 'One-click install')
+      await act(async () => { await Promise.resolve() })
+      click(rendered.container, 'Confirm and install')
+      await act(async () => { await Promise.resolve() })
+      runtime.statusRejects = new Error('the status route is temporarily down')
+      await act(async () => { await vi.advanceTimersByTimeAsync(1000) })
+      expect(rendered.container.textContent).toContain('the status route is temporarily down')
+      // The failure is on the dependency row (the page-level banner is only
+      // for read failures), so it is visible next to the progress row.
+      expect(rendered.container.querySelector('[data-clue-dependency-action-error="acme.cli"]')?.textContent)
+        .toContain('the status route is temporarily down')
+      // The next poll recovers: the row's error must go away (the old page
+      // banner never did, and could outlive the failure).
+      runtime.statusRejects = undefined
+      runtime.pollTask = task({
+        state: 'succeeded',
+        progress: { stage: 'completed' },
+        finishedAt: '2026-10-17T00:01:00.000Z',
+      })
+      await act(async () => { await vi.advanceTimersByTimeAsync(1000) })
+      expect(rendered.container.textContent).not.toContain('the status route is temporarily down')
+      expect(rendered.container.querySelector('[data-clue-dependency-action-error]')).toBeNull()
+      expect(rendered.container.querySelector('[role="progressbar"]')).toBeNull()
       rendered.unmount()
     } finally {
       vi.useRealTimers()

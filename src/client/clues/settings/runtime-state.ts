@@ -8,7 +8,10 @@
  * is the one in-memory fan-out for those sanitized DTOs. It is NOT a second
  * store or RPC: values still come from `clues.dependencies.*` /
  * `clues.connections.*` through the typed wrapper; a view that already read
- * them publishes the result so another view does not have to re-ask.
+ * them publishes the result so another view can ADOPT the fresh observation
+ * instead of duplicating that read. This bus carries observations only: it
+ * does not cache, deduplicate or elect a leader, and each view still owns its
+ * explicit reads (plus its own running-task poller when it shows a task).
  *
  * Each notification carries exactly the values that read/task observed — not
  * an accumulated mirror — so a receiver can tell a FRESH status from an older

@@ -17,17 +17,16 @@
 import type { ReactNode } from 'react'
 import { IconFolderOpenRegular, IconLinkOutlineRegular, Switch } from '@deepseek-ai/dsh-client-ui-primitives'
 import { t } from '../../locales.ts'
+import {
+  isCluePacksMentionEnabled,
+  isClueSourceEnabled,
+  isClueSourceMentionEnabled,
+  type SidebarPrefs,
+} from '../../../prefs-shared.ts'
 import type { ClueSourceDescriptor, ClueSourceDisplayDescriptor } from '../../../clues/types.ts'
 import type { ClueSourceStatus } from './status.ts'
 import { CLUE_SOURCE_STATUS_COPY } from './copy.ts'
 import css from './settings.module.css'
-
-/** The three clue preference maps/values the panel renders. */
-export interface ClueSourcesPrefs {
-  readonly clueSourcesEnabled: Record<string, boolean>
-  readonly clueSourcesMentionEnabled: Record<string, boolean>
-  readonly cluePacksMentionEnabled: boolean
-}
 
 /** Props of the whole sources panel. */
 export interface ClueSourcesPanelProps {
@@ -35,7 +34,12 @@ export interface ClueSourcesPanelProps {
   readonly displays: readonly ClueSourceDisplayDescriptor[]
   /** Derived state per source id (absent = unchecked, never fabricated ready). */
   readonly statuses: ReadonlyMap<string, ClueSourceStatus>
-  readonly prefs: ClueSourcesPrefs
+  /**
+   * The full shared preferences object. The "absent entry means ON" rule is
+   * S1's (`prefs-shared.ts`); the panel calls those helpers instead of
+   * re-deriving `!== false` locally, so a future default change is one edit.
+   */
+  readonly prefs: SidebarPrefs
   readonly loading: boolean
   /** The catalogue request failed; Retry is offered. */
   readonly error: string | null
@@ -105,6 +109,13 @@ export function ClueSourcesPanel(props: ClueSourcesPanelProps) {
   // Only a READ catalogue proves a source is unloaded. Before that (initial
   // paint / failed request) the preference maps merely name sources; calling
   // them unavailable would be a fabricated "plugin not loaded" verdict.
+  //
+  // LIMIT: this retains only sources that carry an explicit preference entry.
+  // A source that stayed at the default (absent entry = ON) leaves no durable
+  // identity in S8's owned state, so it cannot be listed after its plugin
+  // unloads without a persisted non-secret source inventory (S1/S2 wiring,
+  // outside this Spec). Writing such entries from a catalogue read would
+  // fabricate "configured" sources, so it is deliberately not done.
   const configuredOnly = catalogueLoaded
     ? [...new Set([
       ...Object.keys(prefs.clueSourcesEnabled),
@@ -167,10 +178,10 @@ export function ClueSourcesPanel(props: ClueSourcesPanelProps) {
               {sources.map(source => {
                 const display = displayById.get(source.sourceId)
                 const name = displayName(source, display)
-                const enabled = prefs.clueSourcesEnabled[source.sourceId] !== false
+                const enabled = isClueSourceEnabled(prefs, source.sourceId)
                 // The stored @ preference is preserved even while the source is
                 // off; the switch is inert because the effective mention is off.
-                const mention = prefs.clueSourcesMentionEnabled[source.sourceId] !== false
+                const mention = isClueSourceMentionEnabled(prefs, source.sourceId)
                 const status = statuses.get(source.sourceId) ?? { kind: 'unchecked' as const }
                 return (
                   <li
@@ -219,8 +230,8 @@ export function ClueSourcesPanel(props: ClueSourcesPanelProps) {
                   fact that the plugin is missing are both preserved (never
                   presented as ready, never silently dropped). */}
               {configuredOnly.map(sourceId => {
-                const enabled = prefs.clueSourcesEnabled[sourceId] !== false
-                const mention = prefs.clueSourcesMentionEnabled[sourceId] !== false
+                const enabled = isClueSourceEnabled(prefs, sourceId)
+                const mention = isClueSourceMentionEnabled(prefs, sourceId)
                 return (
                   <li
                     key={sourceId}
@@ -278,7 +289,7 @@ export function ClueSourcesPanel(props: ClueSourcesPanelProps) {
         <span className={css.sourceControls}>
           <Switch
             label={t('cluePacksMentionAria')}
-            checked={prefs.cluePacksMentionEnabled !== false}
+            checked={isCluePacksMentionEnabled(prefs)}
             onChange={next => { props.onTogglePacksMention(next) }}
           />
         </span>
