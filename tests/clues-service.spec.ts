@@ -212,10 +212,12 @@ describe('clue service registration', () => {
 
   it('reports unknown sources and unsupported operations with fixed categories', async () => {
     const service = makeService()
-    service.registerSource(testSource({ capabilities: { list: false } }))
+    service.registerSource(testSource({ capabilities: { list: false, search: false } }))
     await expect(service.list({ workspaceId: 'ws-1', sourceId: 'missing.source' }))
       .rejects.toMatchObject({ category: 'source-missing' })
     await expect(service.list({ workspaceId: 'ws-1', sourceId: 'test.source' }))
+      .rejects.toMatchObject({ category: 'unsupported' })
+    await expect(service.search({ workspaceId: 'ws-1', sourceId: 'test.source', query: 'x' }))
       .rejects.toMatchObject({ category: 'unsupported' })
     await expect(service.read({
       workspaceId: 'ws-1',
@@ -300,6 +302,69 @@ describe('clue service dispatch', () => {
     })
     expect(saved.revision).toBe('r2')
     expect((await service.portable({ workspaceId: 'ws-1', clueId })).portable).toBe(true)
+  })
+
+  it('passes a source-owned structured format through load/save unmodified', async () => {
+    // The core must not depend on Markdown: a namespaced structured format is
+    // the source's own business, and the exact document it loaded comes back
+    // on save without the core rewriting a single field.
+    const service = makeService()
+    const saved: unknown[] = []
+    service.registerSource({
+      descriptor: {
+        sourceId: 'test.struct',
+        name: 'structured',
+        order: 1,
+        pluginId: 'test',
+        types: ['test.struct.doc'],
+        transport: 'mcp',
+        capabilities: { resolve: false, list: false, search: false, read: true, edit: true, portable: false },
+      },
+      types: [{
+        typeId: 'test.struct.doc',
+        sourceId: 'test.struct',
+        formats: ['application/vnd.test.structure+json'],
+        capabilities: { read: true, edit: true },
+      }],
+      operations: {
+        async read() {
+          return {
+            format: 'application/vnd.test.structure+json',
+            data: { blocks: [{ kind: 'x', text: 'y' }] },
+            revision: 'r1',
+            fetchedAt: NOW,
+          }
+        },
+        async loadEdit() {
+          return {
+            format: 'application/vnd.test.structure+json',
+            data: { blocks: [{ kind: 'x', text: 'y' }], unknown: { keep: true } },
+            baseRevision: 'r1',
+          }
+        },
+        async saveEdit(input) {
+          saved.push(input.document)
+          return { revision: 'r2', savedAt: NOW }
+        },
+      },
+    })
+    const ensured = await service.ensure({
+      workspaceId: 'ws-1',
+      sourceId: 'test.struct',
+      typeId: 'test.struct.doc',
+      locator: { id: 'doc-1' },
+      title: 'doc',
+    })
+    const edit = await service.loadEdit({ workspaceId: 'ws-1', clueId: ensured.clue.id })
+    expect(edit.format).toBe('application/vnd.test.structure+json')
+    expect(edit.data).toEqual({ blocks: [{ kind: 'x', text: 'y' }], unknown: { keep: true } })
+    const document = {
+      format: 'application/vnd.test.structure+json',
+      data: { blocks: [{ kind: 'x', text: 'edited' }], unknown: { keep: true } },
+      baseRevision: edit.baseRevision,
+    }
+    await service.saveEdit({ workspaceId: 'ws-1', clueId: ensured.clue.id, document })
+    expect(saved).toEqual([document])
   })
 
   it('reports portable unsupported sources as unresolved instead of throwing', async () => {

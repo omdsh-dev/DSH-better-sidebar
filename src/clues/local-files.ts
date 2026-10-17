@@ -104,12 +104,6 @@ export type LocalFileScope =
   | null
   | undefined
 
-/** Options of {@link createLocalFileSource}. */
-export interface LocalFileSourceOptions {
-  /** Row cap of one listing level before pagination takes over (default 1000). */
-  readonly listLimit?: number
-}
-
 /** The host platform's own dialect: what a bare relative input means here. */
 const HOST_DIALECT: LocalFileDialect = process.platform === 'win32' ? 'win32' : 'posix'
 
@@ -690,10 +684,8 @@ function portableOf(locator: LocalFileLocator): CluePortableRef {
 /**
  * Create the `builtin.files` source registration. The returned object is what
  * `CluesService.registerSource` takes; installing it is the caller's job.
- * @param options - listing bound.
  */
-export function createLocalFileSource(options: LocalFileSourceOptions = {}): ClueSourceRegistration {
-  void options.listLimit
+export function createLocalFileSource(): ClueSourceRegistration {
   const operations: ClueSourceOperations = {
     async resolve(input: ClueResolveInput, context: ClueOperationContext): Promise<ClueCandidate | undefined> {
       throwIfAborted(context)
