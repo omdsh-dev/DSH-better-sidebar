@@ -171,14 +171,14 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # Pin the exact 0.2.1-alpha.5 host CLI; never use a dist-tag.
+      # Pin the exact 0.2.1-rc.1 host CLI; never use a dist-tag.
       # Keep peer resolution ON: do not add --legacy-peer-deps; it skips boot peers.
       # The lanes speak the slash-only RPC dialect (tests/e2e/host-protocol.ts).
       # NODE_OPTIONS below preserves the heap budget needed for prerelease peer resolution.
       - name: Install dsh CLI (pinned)
         env:
           NODE_OPTIONS: --max-old-space-size=4096
-        run: npm install -g @deepseek-ai/dsh@0.2.1-alpha.5
+        run: npm install -g @deepseek-ai/dsh@0.2.1-rc.1
 
       # lib/ is gitignored; the tarball is produced from this build.
       - name: Build and pack the npm tarball

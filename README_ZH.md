@@ -7,7 +7,7 @@
   <a href="https://github.com/omdsh-dev/DSH-better-sidebar/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/omdsh-dev/DSH-better-sidebar/actions/workflows/ci.yml/badge.svg" /></a>
   <a href="https://github.com/omdsh-dev/DSH-better-sidebar/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/omdsh-dev/DSH-better-sidebar" /></a>
   <a href="https://opensource.org/licenses/MIT"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-yellow.svg" /></a>
-  <a href="https://www.npmjs.com/package/@deepseek-ai/dsh?activeTab=versions"><img alt="支持的 DSH 版本：0.2.1-alpha.5+" src="https://img.shields.io/badge/DSH-0.2.1--alpha.5%2B-4d6bfe" /></a>
+  <a href="https://www.npmjs.com/package/@deepseek-ai/dsh?activeTab=versions"><img alt="支持的 DSH 版本：0.2.1-rc.1+" src="https://img.shields.io/badge/DSH-0.2.1--rc.1%2B-4d6bfe" /></a>
 </div>
 
 <div align="center">
@@ -42,14 +42,14 @@
 dsh plugin --profile web add dsh-better-sidebar@0.28.0-alpha.0
 ```
 
-装完**硬刷新浏览器**（Cmd/Ctrl+Shift+R）即可。要求 DSH **0.2.1-alpha.5+**。
+装完**硬刷新浏览器**（Cmd/Ctrl+Shift+R）即可。要求 DSH **0.2.1-rc.1+**（已发布的 v0.28.0-alpha.0 也可跑在 0.2.1-alpha.5 上）。
 
 <details>
 <summary><b>按 DSH 版本选插件版本</b></summary>
 
 | 你的 DSH 版本 | 安装命令 |
 | --- | --- |
-| **0.2.1-alpha.5+**（本 alpha 支持线） | `dsh plugin --profile web add dsh-better-sidebar@0.28.0-alpha.0` |
+| **0.2.1-rc.1+**（本预发布支持线；`dsh-better-sidebar@0.28.0-alpha.0` 也可跑在 0.2.1-alpha.5 上） | `dsh plugin --profile web add dsh-better-sidebar@0.28.0-alpha.0` |
 | **0.2.0-rc.2** | `dsh plugin --profile web add dsh-better-sidebar@0.26.1` |
 | **0.2.0-rc.1** | `dsh plugin --profile web add dsh-better-sidebar@0.24.1` |
 | **0.1.7-rc.1 ~ 0.1.7 正式版** | `dsh plugin --profile web add dsh-better-sidebar@0.22.1` |
@@ -89,7 +89,7 @@ dsh plugin --profile web add dsh-better-sidebar@0.28.0-alpha.0
 | 页面出现**两个侧边栏** | 双挂载。删掉 `~/.dsh/profiles/web/cordis.patch.yml` 里旧的手动挂载行（`- insert: ... better-sidebar ...`）；聚合包以不同 id 挂载本包时会自动退让，无需处理。 |
 | 升级后设置页的值去哪了 | DSH 0.1.7 起偏好写在 profile 里本插件的挂载行上（默认 entry id `better-sidebar`），插件首次启动会把旧 `settings.yaml` 里的配置一次性回迁，不会覆盖新设的值。 |
 | 终端无法使用 | 终端由 **DSH 自身**提供（本插件不自带 PTY），请查 DSH 侧文档；底部终端显示「宿主未提供终端能力」= 这个部署没挂终端控制器。 |
-| 提示 `dsh: command not found` | 先安装 DSH；或用 `npx -y --package @deepseek-ai/dsh@0.2.1-alpha.5 dsh plugin --profile web add dsh-better-sidebar@0.28.0-alpha.0`。 |
+| 提示 `dsh: command not found` | 先安装 DSH；或用 `npx -y --package @deepseek-ai/dsh@0.2.1-rc.1 dsh plugin --profile web add dsh-better-sidebar@0.28.0-alpha.0`。 |
 
 </details>
 

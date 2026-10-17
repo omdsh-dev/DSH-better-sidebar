@@ -44,7 +44,7 @@ e2e_require_cmd() {
 # 回退的 npx 版本是显式钉死的：不钉就会解析 npm 的 dist-tag，可能静默挂到
 # 插件不支持的宿主上。**必须写精确版本，不能写 `@next`/`@alpha` 等 dist-tag**。
 # 该版本必须与 package.json 的 DSH peer 基线同步。
-DSH_NPX_SPEC="${DSH_NPX_SPEC:-@deepseek-ai/dsh@0.2.1-alpha.5}"
+DSH_NPX_SPEC="${DSH_NPX_SPEC:-@deepseek-ai/dsh@0.2.1-rc.1}"
 e2e_resolve_dsh_cmd() {
   local explicit="${DSH_CMD}"
   if ! command -v "$DSH_CMD" >/dev/null 2>&1; then
@@ -66,7 +66,7 @@ e2e_resolve_dsh_cmd() {
 # 己在挂什么），只告警。
 e2e_check_dsh_version() {
   local explicit="$1" actual expected
-  expected="${DSH_EXPECT_VERSION:-0.2.1-alpha.5}"
+  expected="${DSH_EXPECT_VERSION:-0.2.1-rc.1}"
   # `dsh --version` 冷启动要走 npx，给足预算；拿不到版本就只告警。
   actual="$($DSH_CMD --version 2>/dev/null | tr -d '[:space:]' | head -c 64 || true)"
   case "$actual" in

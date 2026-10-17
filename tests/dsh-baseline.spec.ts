@@ -5,7 +5,7 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
-const baseline = '0.2.1-alpha.5'
+const baseline = '0.2.1-rc.1'
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
 const bash = readFileSync(new URL('../scripts/install.sh', import.meta.url), 'utf8')
 const powershell = readFileSync(new URL('../scripts/install.ps1', import.meta.url), 'utf8')

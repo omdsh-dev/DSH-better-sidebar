@@ -31,7 +31,7 @@
 
 本地：`pnpm build && pnpm pack && pnpm exec playwright install chromium && pnpm test:mount`。
 
-- **钉版写精确版本号，绝不写 dist-tag**（`alpha` / `latest` / `next` 的指向与候选版经常不一致）；默认与 CI 同为 `@deepseek-ai/dsh@0.2.1-alpha.5`。
+- **钉版写精确版本号，绝不写 dist-tag**（`alpha` / `latest` / `next` 的指向与候选版经常不一致）；默认与 CI 同为 `@deepseek-ai/dsh@0.2.1-rc.1`。
 - 该步骤需要 `NODE_OPTIONS=--max-old-space-size=4096`（浮动的传递依赖会组出混合 peer 图 → ERESOLVE 后 OOM）；**不要加 `--legacy-peer-deps`**（会跳掉 boot 必需的 peer，CLI 直接 `ERR_MODULE_NOT_FOUND`）。
 - 本机 npm registry 是 npmmirror、对新预发布滞后：装不到时 `pnpm install --registry https://registry.npmjs.org`。
 - Windows lane 跑 `pnpm test:windows`（`--maxWorkers=1`），`vitest.config.ts` 的 `testTimeout: 30_000` 与它配套。e2e spec 命名 `*.e2e.ts` + vitest `exclude` 双保险；**改 `exclude` 必须保留默认排除项**。
@@ -40,7 +40,7 @@
 
 ## 3. DSH 版本适配
 
-- **当前基线 DSH 0.2.1-alpha.5（v0.28.0-alpha.0 起）**。13 条 `@deepseek-ai/dsh-*` peer 一律写 `^<基线>` 浮动 caret 范围、**绝不钉精确版本**（只有 devDependencies 精确钉）；本包不声明 `package.json#engines.dsh`，因此走 peer 兼容性检查；alpha.5 对声明了该字段的包优先且仅按它判定，不读 peer。`dsh.plugin.json#engines.dsh` 不参与这一规则。`tests/market-manifest.spec.ts` 钉住这条形状。
+- **当前基线 DSH 0.2.1-rc.1（v0.28.0-alpha.0 线，rc.1 为零 API 的版本对齐发布）**。13 条 `@deepseek-ai/dsh-*` peer 一律写 `^<基线>` 浮动 caret 范围、**绝不钉精确版本**（只有 devDependencies 精确钉）；本包不声明 `package.json#engines.dsh`，因此走 peer 兼容性检查；alpha.5 对声明了该字段的包优先且仅按它判定，不读 peer。`dsh.plugin.json#engines.dsh` 不参与这一规则。`tests/market-manifest.spec.ts` 钉住这条形状。
 - **0.x caret 不跨 minor，但可跨 patch**：`^0.1.7-rc.1` 对 `0.2.0-rc.1` 判定为 false → 整行 `disabled`、插件静默不加载。**抬基线必须同批抬 peer 下限。**
 - 支持线（用户侧）：0.2.0-rc.2 用户固定 npm 已发布的 **v0.26.1**（v0.27.0 尚未发布）；0.2.0-rc.1 用户固定 v0.24.1；0.1.7 线的最后支持版是 **v0.22.1**（v0.23.0 从未发布到 npm）。按本仓库先例**不写运行时兼容层**。
 - **抬基线动作清单**：① `pnpm peers check`，把失配的传递 peer 提升进 devDependencies；② 扫宿主包产物的**裸 import 差集**（`pnpm peers check` 看不到这类失败，0.1.7 线是 `zustand` / `immer`）；③ 对消费的宿主包做类型面 diff（重点 `ui-primitives` / `dsh-session` / `sidebar-right`），确认导出只增不减；④ 复查会话格式版本、`SUBAGENT_DESCRIPTOR_VERSION`、web profile 的 inject 列表；⑤ 同批同步 CI 钉版、`scripts/e2e-common.sh`、**`scripts/install.sh` / `scripts/install.ps1`（随包发布、会直接给用户 npx 命令）** 与 README / 指南的版本行。
