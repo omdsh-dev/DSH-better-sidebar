@@ -354,6 +354,35 @@ describe('SourceConfigPage dependency section', () => {
     expect(runtime.calls).toContain('clearPath:acme.cli')
     rendered.unmount()
   })
+
+  it('waits for the first status read instead of cancelling it when a path is applied', async () => {
+    const runtime = fakeRuntime()
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const originalInspect = runtime.dependenciesInspect
+    let gated = false
+    runtime.dependenciesInspect = async (input) => {
+      if (gated) await gate
+      return originalInspect(input)
+    }
+    gated = true
+    const rendered = renderRoot(createElement(SourceConfigPage, { ...BASE_PROPS, runtime }))
+    await act(async () => { await Promise.resolve() })
+    const input = rendered.container.querySelector<HTMLInputElement>(
+      'input[placeholder="Absolute path to the executable"]',
+    )!
+    type(input, '/opt/acme')
+    click(rendered.container, 'Use path')
+    await act(async () => { await Promise.resolve() })
+    // The mount read also covers the connection projection: the write waits
+    // for it instead of cancelling the only read that carries that answer.
+    expect(runtime.calls.some(call => call.startsWith('setPath:'))).toBe(false)
+    release()
+    await flush()
+    expect(runtime.calls).toContain('setPath:acme.cli:/opt/acme')
+    expect(rendered.container.textContent).toContain('/opt/acme')
+    rendered.unmount()
+  })
 })
 
 describe('SourceConfigPage install plan, progress and cancellation', () => {
@@ -857,6 +886,89 @@ describe('SourceConfigPage install task polling', () => {
     }
   })
 
+  it('re-reads every dependency when two tasks settle in the same tick', async () => {
+    vi.useFakeTimers()
+    try {
+      const other = dependency({ dependencyId: 'other.cli', name: 'Other CLI', command: 'other' })
+      const runtime = fakeRuntime({
+        dependencies: [dependency(), other],
+        planByDependency: {
+          'other.cli': plan({ planId: 'plan-2', dependencyId: 'other.cli', name: 'Other CLI' }),
+        },
+        taskByDependency: {
+          'other.cli': task({ taskId: 'task-2', dependencyId: 'other.cli', planId: 'plan-2' }),
+        },
+      })
+      const rendered = await mount(runtime, { dependencyIds: ['acme.cli', 'other.cli'] })
+      const clickIn = (dependencyId: string, label: string): void => {
+        const row = rendered.container.querySelector(`[data-clue-dependency="${dependencyId}"]`)!
+        const button = [...row.querySelectorAll<HTMLElement>('button')]
+          .find(candidate => candidate.textContent?.trim() === label)
+        if (button === undefined) throw new Error(`no "${label}" in ${dependencyId}`)
+        act(() => { button.click() })
+      }
+      clickIn('acme.cli', 'One-click install')
+      await act(async () => { await Promise.resolve() })
+      clickIn('acme.cli', 'Confirm and install')
+      await act(async () => { await Promise.resolve() })
+      clickIn('other.cli', 'One-click install')
+      await act(async () => { await Promise.resolve() })
+      clickIn('other.cli', 'Confirm and install')
+      await act(async () => { await Promise.resolve() })
+
+      const fresh = new Map([
+        ['acme.cli', dependency({ version: '2.0.0', executablePath: '/opt/acme/2.0.0/bin/acme' })],
+        ['other.cli', dependency({
+          dependencyId: 'other.cli',
+          name: 'Other CLI',
+          command: 'other',
+          version: '3.0.0',
+          executablePath: '/opt/other/3.0.0/bin/other',
+        })],
+      ])
+      const reRead: string[] = []
+      runtime.dependenciesInspect = async (input) => {
+        const dependencyId = input?.dependencyId ?? ''
+        reRead.push(dependencyId)
+        const item = fresh.get(dependencyId)
+        return item === undefined ? [] : [item]
+      }
+      runtime.latestTasks = [
+        task({
+          taskId: 'task-1',
+          dependencyId: 'acme.cli',
+          planId: 'plan-1',
+          state: 'succeeded',
+          progress: { stage: 'completed' },
+          finishedAt: '2026-10-17T00:01:00.000Z',
+        }),
+        task({
+          taskId: 'task-2',
+          dependencyId: 'other.cli',
+          planId: 'plan-2',
+          state: 'succeeded',
+          progress: { stage: 'completed' },
+          finishedAt: '2026-10-17T00:01:00.000Z',
+        }),
+      ]
+      await act(async () => { await vi.advanceTimersByTimeAsync(1000) })
+      await flush()
+
+      // BOTH settled dependencies were re-read: the first batch's mutation
+      // fence must not invalidate the second dependency's probe.
+      expect(new Set(reRead)).toEqual(new Set(['acme.cli', 'other.cli']))
+      for (const [dependencyId, item] of fresh) {
+        const row = rendered.container.querySelector(`[data-clue-dependency="${dependencyId}"]`)!
+        expect(row.querySelector('[data-kind]')?.getAttribute('data-kind')).toBe('ready')
+        expect(row.textContent).toContain(item.version!)
+        expect(row.textContent).toContain(item.executablePath!)
+      }
+      rendered.unmount()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('two configuration windows share ONE status poll per tick', async () => {
     vi.useFakeTimers()
     try {
@@ -1048,6 +1160,118 @@ describe('SourceConfigPage cross-window observation fencing', () => {
     rendered.unmount()
   })
 
+  it('an unrelated dependency observation does not cancel an in-flight explicit read', async () => {
+    const runtime = fakeRuntime()
+    const rendered = await mount(runtime)
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const originalInspect = runtime.dependenciesInspect
+    let gated = false
+    runtime.dependencies = [dependency({ version: '5.0.0', executablePath: '/opt/acme-5' })]
+    runtime.dependenciesInspect = async (input) => {
+      if (gated) await gate
+      return originalInspect(input)
+    }
+    gated = true
+    click(rendered.container, 'Recheck')
+    await act(async () => { await Promise.resolve() })
+    // Another window observed a DIFFERENT dependency while this Recheck was
+    // probing. It is not this page's answer and must not discard the read.
+    act(() => {
+      publishClueStatuses(runtime, [dependency({
+        dependencyId: 'other.cli',
+        name: 'Other CLI',
+        command: 'other',
+        state: 'missing',
+      })])
+    })
+    release()
+    await flush()
+    const row = rendered.container.querySelector('[data-clue-dependency="acme.cli"]')!
+    expect(row.textContent).toContain('/opt/acme-5')
+    expect(row.querySelector('[data-kind]')?.getAttribute('data-kind')).toBe('ready')
+    rendered.unmount()
+  })
+
+  it('re-reads a dependency whose probe a same-dependency observation superseded', async () => {
+    vi.useFakeTimers()
+    try {
+      const runtime = fakeRuntime()
+      const rendered = await mount(runtime)
+      click(rendered.container, 'One-click install')
+      await act(async () => { await Promise.resolve() })
+      click(rendered.container, 'Confirm and install')
+      await act(async () => { await Promise.resolve() })
+
+      let release!: () => void
+      const gate = new Promise<void>(resolve => { release = resolve })
+      const originalInspect = runtime.dependenciesInspect
+      let calls = 0
+      runtime.dependencies = [dependency({ version: '2.0.0', executablePath: '/opt/acme-2' })]
+      runtime.dependenciesInspect = async (input) => {
+        calls += 1
+        if (calls === 1) await gate
+        return originalInspect(input)
+      }
+      runtime.pollTask = task({
+        state: 'succeeded',
+        progress: { stage: 'completed' },
+        finishedAt: '2026-10-17T00:01:00.000Z',
+      })
+      await act(async () => { await vi.advanceTimersByTimeAsync(1000) })
+      expect(calls).toBe(1)
+      // Another window publishes ITS answer for the SAME dependency while the
+      // post-install probe is in flight: that probe is superseded, not wrong.
+      act(() => {
+        publishClueStatuses(runtime, [dependency({
+          version: '1.4.0',
+          executablePath: '/usr/local/bin/acme',
+        })])
+      })
+      release()
+      await flush()
+      // The superseded probe is re-done once instead of being dropped.
+      expect(calls).toBe(2)
+      const row = rendered.container.querySelector('[data-clue-dependency="acme.cli"]')!
+      expect(row.textContent).toContain('/opt/acme-2')
+      expect(row.textContent).not.toContain('/usr/local/bin/acme')
+      expect(row.querySelector('[data-kind]')?.getAttribute('data-kind')).toBe('ready')
+      rendered.unmount()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('shows a failed post-install re-probe on the row instead of swallowing it', async () => {
+    vi.useFakeTimers()
+    try {
+      const runtime = fakeRuntime()
+      const rendered = await mount(runtime)
+      click(rendered.container, 'One-click install')
+      await act(async () => { await Promise.resolve() })
+      click(rendered.container, 'Confirm and install')
+      await act(async () => { await Promise.resolve() })
+      // The mount read succeeded; only the post-install re-probe fails.
+      runtime.dependenciesInspect = async () => { throw new Error('the dependency probe is down') }
+      runtime.pollTask = task({
+        state: 'succeeded',
+        progress: { stage: 'completed' },
+        finishedAt: '2026-10-17T00:01:00.000Z',
+      })
+      await act(async () => { await vi.advanceTimersByTimeAsync(1000) })
+      await flush()
+      const row = rendered.container.querySelector('[data-clue-dependency="acme.cli"]')!
+      expect(row.querySelector('[data-kind]')?.getAttribute('data-kind')).toBe('request-failed')
+      expect(row.querySelector('[data-clue-poll-error="acme.cli"]')?.textContent)
+        .toContain('the dependency probe is down')
+      // The last observed path/version is kept, not blanked by the failure.
+      expect(row.textContent).toContain('/usr/local/bin/acme')
+      rendered.unmount()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('an older task-adoption read cannot resurrect a task another view already settled', async () => {
     const runtime = fakeRuntime()
     const rendered = await mount(runtime)
@@ -1107,6 +1331,21 @@ describe('SourceConfigPage install action gating', () => {
     release()
     await flush()
     expect(rendered.container.querySelector('[role="progressbar"]')).not.toBeNull()
+    rendered.unmount()
+  })
+
+  it('disables one-click install while a task for that dependency is running', async () => {
+    const runtime = fakeRuntime()
+    const rendered = await mount(runtime)
+    click(rendered.container, 'One-click install')
+    await act(async () => { await Promise.resolve() })
+    click(rendered.container, 'Confirm and install')
+    await act(async () => { await Promise.resolve() })
+    const install = [...rendered.container.querySelectorAll<HTMLButtonElement>('button')]
+      .find(button => button.textContent?.trim() === 'One-click install')!
+    expect(install.disabled).toBe(true)
+    // The same row can still cancel the live task.
+    expect(rendered.container.textContent).toContain('Cancel install')
     rendered.unmount()
   })
 

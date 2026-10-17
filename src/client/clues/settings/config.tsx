@@ -85,6 +85,13 @@ const DEPENDENCY_STATE_COPY: Record<DependencyState, ClueSourceStatusKind> = {
   failed: 'request-failed',
 }
 
+/**
+ * How many times one post-install re-read may be repeated after a fresher
+ * observation of the same dependency superseded it. Bounded so two windows
+ * observing each other's probes can never livelock this page.
+ */
+const MAX_RELOAD_ATTEMPTS = 3
+
 /** Copy key per install distribution kind. */
 const DISTRIBUTION_COPY: Record<DependencyInstallPlan['distribution']['kind'], CopyKey> = {
   archive: 'clueDistributionArchive',
@@ -249,15 +256,31 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
   // that starts while the action is pending) must not apply its older answer
   // afterwards. Bumping on both sides of the action fences both directions.
   const writeEpochRef = useRef(0)
-  // Another view of the same runtime published a FRESH observation. Any read
-  // that started before it is stale: it must not apply its older answer nor
-  // publish it back to the other view (the cross-window "old read overwrites
-  // new observation" race). Every bus notification bumps this generation; a
-  // read captures it at start and re-checks before applying OR publishing.
-  const readGenerationRef = useRef(0)
+  // Another view of the same runtime published a FRESH observation. A read
+  // that started before it is stale for the ids it actually carries: it must
+  // not apply its older answer nor publish it back to the other view (the
+  // cross-window "old read overwrites new observation" race). Generations are
+  // scoped per dependency and per connection — an observation of an UNRELATED
+  // dependency (another window, another source) is NOT a fresher answer for
+  // anything this page reads and must not cancel its in-flight read.
+  const dependencyGenerationsRef = useRef(new Map<string, number>())
+  const connectionGenerationRef = useRef(0)
   // The currently in-flight explicit read, aborted when a newer read starts
   // or the window closes (S9 §6: closing a floating window releases requests).
   const loadAbortRef = useRef<AbortController | null>(null)
+  // The mount status read. A write clicked while it is still in flight must
+  // not cancel it (the read also covers the connection and every sibling
+  // dependency); the click waits for it instead.
+  const initialStatusReadRef = useRef<Promise<void> | null>(null)
+  // Serial post-install re-read queue. Two tasks settling in the SAME tick are
+  // two dependencies: each re-read used to fence the page with its own
+  // mutation epoch, so the first settled one invalidated the second and that
+  // dependency stayed on its pre-install badge/path. Re-reads therefore run
+  // one batch at a time, and a batch's mutation fence never overlaps another
+  // batch.
+  const reloadQueueRef = useRef<string[]>([])
+  const reloadQueuedRef = useRef(new Set<string>())
+  const reloadRunningRef = useRef(false)
   // One mount-lifetime signal for every other request (plan/start/cancel/
   // path/connect/poll): closing the S6 window aborts all of them, not just the
   // explicit status read.
@@ -327,6 +350,22 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
     })
   }, [])
 
+  /** Current freshness token of one dependency. */
+  const dependencyGeneration = useCallback((dependencyId: string): number =>
+    dependencyGenerationsRef.current.get(dependencyId) ?? 0, [])
+
+  /** Snapshot the freshness tokens of every dependency this page reads. */
+  const snapshotGenerations = useCallback((dependencyIds: readonly string[]): Map<string, number> =>
+    new Map(dependencyIds.map(dependencyId => [dependencyId, dependencyGeneration(dependencyId)])), [dependencyGeneration])
+
+  /** Whether no relevant observation arrived since the snapshot. */
+  const generationsCurrent = useCallback((snapshot: ReadonlyMap<string, number>): boolean => {
+    for (const [dependencyId, generation] of snapshot) {
+      if (dependencyGeneration(dependencyId) !== generation) return false
+    }
+    return true
+  }, [dependencyGeneration])
+
   /**
    * Fence an in-flight read around one user action: the old read loses, and a
    * read that starts while the action is pending loses too (the epoch bumps
@@ -348,7 +387,8 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
     const request = loadRequestRef.current + 1
     loadRequestRef.current = request
     const epoch = writeEpochRef.current
-    const generation = readGenerationRef.current
+    const generation = snapshotGenerations(ids)
+    const connectionGeneration = connectionGenerationRef.current
     const controller = new AbortController()
     loadAbortRef.current?.abort()
     loadAbortRef.current = controller
@@ -357,7 +397,8 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
       && !controller.signal.aborted
       && request === loadRequestRef.current
       && epoch === writeEpochRef.current
-      && generation === readGenerationRef.current
+      && generationsCurrent(generation)
+      && connectionGeneration === connectionGenerationRef.current
     setRefreshing(true)
     setError(null)
     // A fresh explicit read supersedes the previous action failure it retries.
@@ -417,13 +458,13 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
       if (ids.length > 0) {
         const taskRequest = loadRequestRef.current
         const taskEpoch = writeEpochRef.current
-        const taskGeneration = readGenerationRef.current
+        const taskGeneration = snapshotGenerations(ids)
         const taskIsCurrent = (): boolean =>
           mounted.current
           && !controller.signal.aborted
           && taskRequest === loadRequestRef.current
           && taskEpoch === writeEpochRef.current
-          && taskGeneration === readGenerationRef.current
+          && generationsCurrent(taskGeneration)
         try {
           const latest = await runtime.dependenciesStatus(undefined, controller.signal)
           if (!taskIsCurrent()) return
@@ -445,51 +486,147 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
       // this read's own publish, so it must not keep the spinner on forever.
       if (mounted.current && request === loadRequestRef.current) setRefreshing(false)
     }
-  }, [runtime, ids, connectionId])
+  }, [runtime, ids, connectionId, snapshotGenerations, generationsCurrent])
 
-  useEffect(() => { void loadAll(false) }, [loadAll])
+  useEffect(() => {
+    // Track (and clear) the mount status read: a write clicked before it
+    // settles waits for it instead of cancelling the only read that carries
+    // the connection projection and the sibling dependencies.
+    const read = loadAll(false).catch(() => {
+      // loadAll already surfaces its per-request failures; this catch only
+      // keeps a rejected read from becoming an unhandled rejection.
+    })
+    initialStatusReadRef.current = read
+    void read.then(() => {
+      if (initialStatusReadRef.current === read) initialStatusReadRef.current = null
+    })
+  }, [loadAll])
 
-  /** Re-read one dependency after a settled install/manual path change. */
-  const reloadDependency = useCallback(async (dependencyId: string): Promise<void> => {
-    const generation = readGenerationRef.current
+  /**
+   * Re-read a batch of dependencies after settled tasks / manual path writes.
+   *
+   * One batch = one mutation fence: every dependency a settled tick reports is
+   * read before the fence closes. A dependency whose probe is superseded by a
+   * fresher observation of THAT dependency is read again (bounded), because
+   * the replacing observation may be the other window's pre-install answer;
+   * an unrelated dependency's observation never invalidates this batch.
+   */
+  const reloadBatch = useCallback(async (batch: readonly string[]): Promise<void> => {
     beginMutation()
     const epoch = writeEpochRef.current
-    // The pre-install DTO is no longer the answer: hold the row unchecked
-    // until this probe completes (S2 §6.3: only a passing probe may be ready).
-    if (mounted.current) setProbingIds(current => ({ ...current, [dependencyId]: true }))
+    // The pre-install DTO is no longer the answer: hold every batch member
+    // unchecked until its probe completes (S2 §6.3: only a passing probe may
+    // be ready).
+    setProbingIds(current => {
+      const next = { ...current }
+      for (const dependencyId of batch) next[dependencyId] = true
+      return next
+    })
+    const pending = new Set(batch)
     try {
-      const list = await runtime.dependenciesInspect({ dependencyId }, lifecycleAbortRef.current?.signal)
-      const next = list.find(item => item.dependencyId === dependencyId)
-      if (next === undefined
-        || !mounted.current
-        || generation !== readGenerationRef.current
-        || epoch !== writeEpochRef.current) return
-      setDependencies(current => replaceDependency(current ?? [], next))
-      publishClueStatuses(runtime, [next])
-      setFailedIds(current => {
-        if (current[dependencyId] === undefined) return current
-        const nextFailures = { ...current }
-        delete nextFailures[dependencyId]
-        return nextFailures
-      })
-      // A settled task's fresh probe clears its transient POLL failure; a
-      // plan/start/cancel failure on the same row is a different answer and
-      // stays until the user's explicit Recheck.
-      clearPollError(dependencyId)
-    } catch {
-      // The re-probe is a refresh, not a user action: the old row stays.
+      for (let attempt = 0; attempt < MAX_RELOAD_ATTEMPTS && pending.size > 0; attempt += 1) {
+        if (!mounted.current) return
+        const reading = [...pending]
+        const generation = snapshotGenerations(reading)
+        const results: DependencyStatus[] = []
+        for (const dependencyId of reading) {
+          try {
+            const list = await runtime.dependenciesInspect({ dependencyId }, lifecycleAbortRef.current?.signal)
+            if (!mounted.current) return
+            const next = list.find(item => item.dependencyId === dependencyId)
+            if (next !== undefined) results.push(next)
+          } catch (caught) {
+            if (!mounted.current) return
+            // The refresh failed: keep the last observed path/version, but do
+            // not swallow the retryable reason — the row says request-failed
+            // and carries the sanitized message until a later read succeeds.
+            setFailedIds(current => ({ ...current, [dependencyId]: true }))
+            setPollErrors(current => ({ ...current, [dependencyId]: messageOf(caught) }))
+          }
+        }
+        if (!mounted.current) return
+        // A user action fenced the page while probing: its own write is the
+        // fresher answer for this batch, so the re-read is dropped.
+        if (epoch !== writeEpochRef.current) return
+        const superseded = new Set(reading.filter(dependencyId =>
+          dependencyGeneration(dependencyId) !== (generation.get(dependencyId) ?? 0)))
+        const applied = results.filter(item => !superseded.has(item.dependencyId))
+        if (applied.length > 0 && mounted.current) {
+          setDependencies(current => {
+            let next = current ?? []
+            for (const item of applied) next = replaceDependency(next, item)
+            return next
+          })
+          setFailedIds(current => {
+            let changed = false
+            const next = { ...current }
+            for (const item of applied) {
+              if (next[item.dependencyId] !== undefined) {
+                delete next[item.dependencyId]
+                changed = true
+              }
+            }
+            return changed ? next : current
+          })
+          for (const item of applied) clearPollError(item.dependencyId)
+          publishClueStatuses(runtime, applied)
+        }
+        for (const dependencyId of reading) pending.delete(dependencyId)
+        // A same-dependency observation replaced this probe's answer. Re-read
+        // once more (bounded) so the page settles on a post-install DTO
+        // instead of adopting the other window's older badge.
+        if (attempt < MAX_RELOAD_ATTEMPTS - 1) {
+          for (const dependencyId of superseded) pending.add(dependencyId)
+        }
+      }
     } finally {
       endMutation()
       if (mounted.current) {
         setProbingIds(current => {
-          if (current[dependencyId] === undefined) return current
+          let changed = false
           const next = { ...current }
-          delete next[dependencyId]
-          return next
+          for (const dependencyId of batch) {
+            if (next[dependencyId] !== undefined) {
+              delete next[dependencyId]
+              changed = true
+            }
+          }
+          return changed ? next : current
         })
       }
     }
-  }, [runtime, beginMutation, endMutation, clearPollError])
+  }, [runtime, beginMutation, endMutation, clearPollError, snapshotGenerations, dependencyGeneration])
+
+  /**
+   * Queue one dependency for a post-install re-read. Requests coalesce while
+   * queued; batches run serially so a second settled install in the same tick
+   * cannot be invalidated by the first batch's mutation epoch.
+   */
+  const requestReload = useCallback((dependencyId: string): void => {
+    if (!mounted.current) return
+    if (!reloadQueuedRef.current.has(dependencyId)) {
+      reloadQueuedRef.current.add(dependencyId)
+      reloadQueueRef.current.push(dependencyId)
+    }
+    if (reloadRunningRef.current) return
+    reloadRunningRef.current = true
+    void (async () => {
+      try {
+        while (mounted.current && reloadQueueRef.current.length > 0) {
+          const batch = reloadQueueRef.current.splice(0)
+          for (const id of batch) reloadQueuedRef.current.delete(id)
+          try {
+            await reloadBatch(batch)
+          } catch {
+            // One batch failing must not strand the rest of the queue; the
+            // batch's own finally has released its fence and probing rows.
+          }
+        }
+      } finally {
+        reloadRunningRef.current = false
+      }
+    })()
+  }, [reloadBatch])
 
   // Every running task is polled (not just one): two shared dependencies may
   // install at once. The loop is gated by `enabled` and teardown clears it —
@@ -557,7 +694,7 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
             delete copy[local.dependencyId]
             return copy
           })
-          void reloadDependency(local.dependencyId)
+          requestReload(local.dependencyId)
           continue
         }
         setTasks(current => {
@@ -568,22 +705,33 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
             && existing.error === next.error) return current
           return { ...current, [local.dependencyId]: next }
         })
-        if (next.state !== 'running') void reloadDependency(local.dependencyId)
+        if (next.state !== 'running') requestReload(local.dependencyId)
       }
     })
-  }, [runtime, runningKey, reloadDependency])
+  }, [runtime, runningKey, requestReload])
 
   // Share observations with every other view of the same runtime and follow
   // theirs: the source table refreshes a badge and a second config window gets
   // the live task/prompt without a remount.
   useEffect(() => subscribeClueRuntime(runtime, observation => {
     if (!mounted.current) return
-    // This observation is fresher than any read that started before it. The
-    // read must lose: if it applied (or republished) its older answer it
-    // would roll the other window's row back to a superseded path/prompt/task.
-    readGenerationRef.current += 1
     if (observation.kind === 'statuses') {
       const nextDependencies = observation.dependencies.filter(item => ids.includes(item.dependencyId))
+      const nextConnection = connectionId === undefined
+        ? undefined
+        : observation.connections.find(item => item.connectionId === connectionId)
+      // An observation of another source's dependency/connection is NOT a
+      // fresher answer for anything this page shows: it must neither overwrite
+      // this page nor cancel a read that is still in flight.
+      if (nextDependencies.length === 0 && nextConnection === undefined) return
+      // A fresh observation supersedes an older read of the SAME ids only.
+      for (const item of nextDependencies) {
+        dependencyGenerationsRef.current.set(
+          item.dependencyId,
+          dependencyGeneration(item.dependencyId) + 1,
+        )
+      }
+      if (nextConnection !== undefined) connectionGenerationRef.current += 1
       if (nextDependencies.length > 0) {
         setDependencies(current => mergeDependencies(current, nextDependencies))
         setFailedIds(current => {
@@ -598,17 +746,20 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
           return changed ? next : current
         })
       }
-      if (connectionId !== undefined) {
-        const nextConnection = observation.connections.find(item => item.connectionId === connectionId)
-        if (nextConnection !== undefined) {
-          setConnections(current => replaceConnection(current ?? [], nextConnection))
-          setConnectionReadFailed(false)
-        }
+      if (nextConnection !== undefined) {
+        setConnections(current => replaceConnection(current ?? [], nextConnection))
+        setConnectionReadFailed(false)
       }
       return
     }
     const relevant = observation.tasks.filter(item => ids.includes(item.dependencyId))
     if (relevant.length === 0) return
+    for (const task of relevant) {
+      dependencyGenerationsRef.current.set(
+        task.dependencyId,
+        dependencyGeneration(task.dependencyId) + 1,
+      )
+    }
     setTasks(current => {
       let changed = false
       const next = { ...current }
@@ -621,7 +772,7 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
       }
       return changed ? next : current
     })
-  }), [runtime, ids, connectionId])
+  }), [runtime, ids, connectionId, dependencyGeneration])
 
   const plan = async (dependencyId: string): Promise<void> => {
     setPlanningId(dependencyId)
@@ -694,6 +845,7 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
     setBusy(task.dependencyId, 'cancelling')
     clearRowError(task.dependencyId)
     beginMutation()
+    let settled = false
     try {
       const next = await runtime.dependenciesCancel(task.dependencyId, task.taskId, lifecycleAbortRef.current?.signal)
       if (!mounted.current) return
@@ -701,7 +853,7 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
       publishClueTask(runtime, next)
       if (next.state !== 'running') {
         clearPollError(task.dependencyId)
-        await reloadDependency(task.dependencyId)
+        settled = true
       }
     } catch (caught) {
       if (mounted.current) failRow(task.dependencyId, caught)
@@ -709,6 +861,9 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
       clearBusy(task.dependencyId)
       endMutation()
     }
+    // The re-read runs AFTER this action's own fence closes: it takes its own
+    // mutation fence, and the two must not invalidate each other.
+    if (settled && mounted.current) requestReload(task.dependencyId)
   }
 
   const applyPath = async (dependencyId: string): Promise<void> => {
@@ -722,6 +877,12 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
       delete copy[dependencyId]
       return copy
     })
+    // The mount read also carries the connection projection and the sibling
+    // dependencies: a click that lands before it settles waits for it instead
+    // of cancelling it (a fresh write is still fenced against later reads).
+    const initialRead = initialStatusReadRef.current
+    if (initialRead !== null) await initialRead
+    if (!mounted.current) return
     beginMutation()
     try {
       const next = await runtime.dependenciesSetPath(dependencyId, raw, lifecycleAbortRef.current?.signal)
@@ -741,6 +902,9 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
 
   const clearPath = async (dependencyId: string): Promise<void> => {
     clearPathError(dependencyId)
+    const initialRead = initialStatusReadRef.current
+    if (initialRead !== null) await initialRead
+    if (!mounted.current) return
     beginMutation()
     try {
       const next = await runtime.dependenciesClearPath(dependencyId, lifecycleAbortRef.current?.signal)
@@ -957,7 +1121,14 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
                   />
                   <Action
                     label={t('clueDependencyInstall')}
-                    disabled={!installable || currentPlan !== undefined || planningId === dependencyId}
+                    // A live task (or an in-flight start/cancel) already owns
+                    // this dependency: a second install must not be startable
+                    // from a pre-install row while the first one runs.
+                    disabled={!installable
+                      || currentPlan !== undefined
+                      || planningId === dependencyId
+                      || currentTask?.state === 'running'
+                      || busy !== undefined}
                     onClick={() => { void plan(dependencyId) }}
                   />
                   {currentTask !== undefined && currentTask.state === 'running' && (
