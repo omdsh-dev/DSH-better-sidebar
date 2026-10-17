@@ -44,6 +44,7 @@ import { CLUEPACK_MANIFEST_PATH, MAX_MANIFEST_BYTES } from '../src/clues/share/m
 import {
   SAFE_FAILURE_REASONS,
   SAFE_PORTABLE_REFUSED_REASON,
+  SAFE_SOURCE_NOT_INSTALLED,
   SAFE_UNRESOLVED_REASON,
 } from '../src/clues/share/reasons.ts'
 import { previewImport } from '../src/clues/share/import.ts'
@@ -73,8 +74,15 @@ interface Fixture {
   }
 }
 
+/** Optional per-test overrides of the shared fixture. */
+interface FixtureOptions {
+  readonly store?: CluesStore
+  /** Override the registered source's optional attribution metadata. */
+  readonly descriptor?: { readonly pluginId?: string; readonly name?: string }
+}
+
 /** A service with one controllable source and deterministic ids. */
-function fixture(storeOverride?: CluesStore): Fixture {
+function fixture(options: FixtureOptions = {}): Fixture {
   const base = mkdtempSync(join(tmpdir(), 'dsh-clues-share-export-'))
   roots.push(base)
   const workspace = join(base, 'workspace')
@@ -108,7 +116,7 @@ function fixture(storeOverride?: CluesStore): Fixture {
     },
   }
   const service = createCluesService({
-    ...(storeOverride === undefined ? { root: join(base, 'store') } : { store: storeOverride }),
+    ...(options.store === undefined ? { root: join(base, 'store') } : { store: options.store }),
     now: () => NOW,
     newId: kind => `${kind}-${++next}`,
     resolveWorkspacePath: id => (id === 'ws-1' ? workspace : undefined),
@@ -118,6 +126,7 @@ function fixture(storeOverride?: CluesStore): Fixture {
         name: 'Share test source',
         order: 20,
         pluginId: 'plugin.test',
+        ...(options.descriptor ?? {}),
         types: [TEST_TYPE],
         transport: 'mcp',
         capabilities: { resolve: false, list: false, search: false, read: true, edit: false, portable: true },
@@ -186,20 +195,47 @@ describe('previewExport', () => {
       typeId: 'missing.source.doc',
       locator: {},
       title: '离线记录',
-      reason: 'source is not installed',
+      reason: SAFE_SOURCE_NOT_INSTALLED,
     })
     const preview = await previewExport(deps(f), {
       workspaceId: 'ws-1',
       mode: 'references',
       clueIds: [imported.clue.id],
     })
-    expect(preview.items[0]).toMatchObject({ title: '离线记录', unresolved: 'source is not installed' })
+    expect(preview.items[0]).toMatchObject({ title: '离线记录', unresolved: SAFE_SOURCE_NOT_INSTALLED })
     expect(preview.warnings.join('\n')).toMatch(/source is not installed/i)
     await expect(previewExport(deps(f), {
       workspaceId: 'ws-1',
       mode: 'references',
       packIds: ['pack-missing'],
     })).rejects.toMatchObject({ category: 'not-found' })
+  })
+  it('never echoes an untrusted stored unresolved reason', async () => {
+    const f = fixture()
+    const senderPath = join(f.base, 'private', 'notes.md')
+    const imported = await f.service.importUnresolved({
+      workspaceId: 'ws-1',
+      sourceId: 'missing.source',
+      typeId: 'missing.source.doc',
+      locator: {},
+      title: '历史行',
+      reason: `cannot open ${senderPath}`,
+      portable: { portable: true, locator: { docId: 'doc-1' } },
+    })
+    const preview = await previewExport(deps(f), {
+      workspaceId: 'ws-1',
+      mode: 'references',
+      clueIds: [imported.clue.id],
+    })
+    expect(preview.items[0]!.unresolved).toBe(SAFE_UNRESOLVED_REASON)
+    expect(JSON.stringify(preview)).not.toContain(senderPath)
+    const inspection = await inspectExport(deps(f), {
+      workspaceId: 'ws-1',
+      mode: 'references',
+      clueIds: [imported.clue.id],
+    })
+    expect(inspection.items[0]!.unresolved).toBe(SAFE_UNRESOLVED_REASON)
+    expect(JSON.stringify(inspection)).not.toContain(senderPath)
   })
 })
 
@@ -295,6 +331,28 @@ describe('exportPack references mode', () => {
     expect(result.issues[0]).toMatchObject({ target: 'clue', category: 'auth-required' })
     const manifest = manifestOf(result.bytes) as unknown as { clues: Array<{ portable: CluePortableRef }> }
     expect(manifest.clues[0]!.portable.portable).toBe(false)
+  })
+
+  it('omits empty optional source attribution instead of failing the export', async () => {
+    const f = fixture({ descriptor: { pluginId: '', name: '' } })
+    const clueId = await ensureClue(f, 'a')
+    const result = await exportPack(deps(f), {
+      workspaceId: 'ws-1',
+      mode: 'references',
+      clueIds: [clueId],
+    })
+    // The manifest itself refuses empty optional strings; copying the
+    // descriptor's empty pluginId/name used to fail after every read.
+    expect(result.complete).toBe(true)
+    const manifest = manifestOf(result.bytes) as unknown as {
+      sources: Array<Record<string, unknown>>
+    }
+    expect(manifest.sources[0]).toEqual({
+      key: 'source-1',
+      sourceId: TEST_SOURCE,
+      transport: 'mcp',
+      typeIds: [TEST_TYPE],
+    })
   })
 
   it('never copies a source-provided portable reason or a stored unresolved reason', async () => {
@@ -449,7 +507,7 @@ describe('export reference lookups', () => {
     const storeBase = mkdtempSync(join(tmpdir(), 'dsh-clues-share-export-store-'))
     roots.push(storeBase)
     const store = new CountingStore({ root: join(storeBase, 'store') })
-    const f = fixture(store)
+    const f = fixture({ store })
     const ids: string[] = []
     for (let index = 0; index < 10; index += 1) ids.push(await ensureClue(f, `id-${index}`))
     store.reads = 0
@@ -505,6 +563,30 @@ describe('exportPack snapshot mode', () => {
       data: { text: 'hello world' },
       text: 'hello world',
     })
+  })
+
+  it('omits an empty source revision instead of failing the export', async () => {
+    const f = fixture()
+    const clueId = await ensureClue(f, 'a')
+    f.source.read = async () => ({
+      format: 'text/plain',
+      data: { text: 'x' },
+      text: 'x',
+      revision: '',
+      fetchedAt: FETCHED_AT,
+    })
+    const result = await exportPack(deps(f), {
+      workspaceId: 'ws-1',
+      mode: 'snapshot',
+      clueIds: [clueId],
+    })
+    // `optionalString` in the manifest rejects an empty value, so copying the
+    // source's empty revision failed the whole export after the read.
+    expect(result.complete).toBe(true)
+    const manifest = manifestOf(result.bytes) as unknown as {
+      clues: Array<{ snapshot: { sourceVersion?: string } }>
+    }
+    expect(manifest.clues[0]!.snapshot).not.toHaveProperty('sourceVersion')
   })
 
   it('packages a structured body and every asset instead of silently taking the first asset', async () => {
@@ -771,6 +853,70 @@ describe('exportPack snapshot mode', () => {
     // The old implementation read all three payloads and only checked after
     // the loop; the bounds must be enforced while capturing.
     expect(f.source.calls.read).toBe(1)
+  })
+
+  it('refuses a multi-asset read before reading past the entry budget', async () => {
+    const f = fixture()
+    const clueId = await ensureClue(f, 'a')
+    let assetReads = 0
+    f.source.read = async () => ({
+      format: 'text/plain',
+      data: { text: 'body' },
+      text: 'body',
+      fetchedAt: FETCHED_AT,
+      assets: [
+        { kind: 'download', path: '/virtual/one.bin', mime: 'application/octet-stream', size: 4 },
+        { kind: 'open', path: '/virtual/two.bin', mime: 'application/octet-stream', size: 4 },
+      ],
+    })
+    // manifest + ONE content entry fits; the body plus two assets needs three.
+    // The limit is a request-level failure (as the old ZIP-assembly check
+    // was), but it must trip BEFORE any asset byte is read.
+    await expect(exportPack(deps(f, {
+      maxEntries: 2,
+      statFile: async () => ({ size: 4, isFile: true }),
+      readFileBytes: async () => {
+        assetReads += 1
+        return new Uint8Array(4)
+      },
+    }), {
+      workspaceId: 'ws-1',
+      mode: 'snapshot',
+      clueIds: [clueId],
+    })).rejects.toThrowError(/entry limit/i)
+    expect(assetReads).toBe(0)
+  })
+
+  it('stops reading a multi-asset read at the remaining expanded budget', async () => {
+    const f = fixture()
+    const clueId = await ensureClue(f, 'a')
+    let assetReads = 0
+    const assetBytes = () => {
+      assetReads += 1
+      return new Uint8Array(900)
+    }
+    f.source.read = async () => ({
+      format: 'text/plain',
+      data: { text: 'body' },
+      text: 'body',
+      fetchedAt: FETCHED_AT,
+      assets: [
+        { kind: 'download', path: '/virtual/one.bin', mime: 'application/octet-stream', size: 900 },
+        { kind: 'open', path: '/virtual/two.bin', mime: 'application/octet-stream', size: 900 },
+      ],
+    })
+    await expect(exportPack(deps(f, {
+      maxTotalBytes: 1_500,
+      statFile: async () => ({ size: 900, isFile: true }),
+      readFileBytes: async () => assetBytes(),
+    }), {
+      workspaceId: 'ws-1',
+      mode: 'snapshot',
+      clueIds: [clueId],
+    })).rejects.toThrowError(/expanded size limit/i)
+    // The first asset fits; the second is refused BEFORE its bytes are read
+    // (the old loop read them all with only the per-content bound).
+    expect(assetReads).toBe(1)
   })
 
   it('pre-checks the entry count before a source read', async () => {
@@ -1118,7 +1264,7 @@ describe('inspectExport (share confirmation)', () => {
       typeId: 'missing.source.doc',
       locator: {},
       title: '离线记录',
-      reason: 'source is not installed',
+      reason: SAFE_SOURCE_NOT_INSTALLED,
       portable: { portable: true, locator: { docId: 'doc-42' } },
     })
     const inspection = await inspectExport(deps(f), {
@@ -1127,7 +1273,7 @@ describe('inspectExport (share confirmation)', () => {
       clueIds: [imported.clue.id],
     })
     expect(inspection.items[0]).toMatchObject({
-      unresolved: 'source is not installed',
+      unresolved: SAFE_SOURCE_NOT_INSTALLED,
       portable: { portable: true, locator: { docId: 'doc-42' } },
       snapshotMode: true,
     })

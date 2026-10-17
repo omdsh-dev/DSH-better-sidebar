@@ -469,8 +469,11 @@ function collectSources(deps: ClueShareExportDeps, clues: readonly Clue[]): {
       ...(descriptor === undefined
         ? {}
         : {
-          pluginId: descriptor.pluginId,
-          name: descriptor.name,
+          // An empty optional attribution string is "unknown", not a value:
+          // the manifest rejects empty strings, and copying one used to fail
+          // the whole export after every snapshot had already been read.
+          ...(descriptor.pluginId.trim() === '' ? {} : { pluginId: descriptor.pluginId }),
+          ...(descriptor.name.trim() === '' ? {} : { name: descriptor.name }),
           transport: descriptor.transport,
         }),
       typeIds: [...typeIds],
@@ -495,6 +498,28 @@ interface CapturedSnapshot {
   /** Additional raw assets captured from the same read. */
   readonly assets?: readonly CapturedAsset[]
 }
+
+/**
+ * Archive resources still available to ONE snapshot capture.
+ *
+ * Passed into the capture loop so assets are bounded as they are read, not
+ * only after every payload of a multi-asset read is already in memory. The
+ * final `capture()` check remains the authoritative parity bound; this makes an
+ * over-budget read stop before it holds the whole set.
+ */
+interface CaptureBudget {
+  /** Expanded bytes available to this snapshot (body + assets). */
+  readonly bytes: number
+  /** Archive entries available to this snapshot (primary + assets). */
+  readonly entries: number
+}
+
+/** Fixed reason when the entry budget cannot hold a multi-payload snapshot. */
+const SAFE_ENTRY_BUDGET_REASON
+  = 'the clue pack exceeds the entry limit (a multi-payload snapshot does not fit the remaining entries)'
+/** Fixed reason when the expanded-size budget cannot hold a multi-payload snapshot. */
+const SAFE_BYTE_BUDGET_REASON
+  = 'the clue pack exceeds the expanded size limit (the remaining budget cannot hold this snapshot)'
 
 /** Fixed reason of a read payload that cannot be stored as an importable snapshot. */
 const SAFE_NOT_JSON_REASON = 'the source content is not a JSON value that can be stored as a snapshot'
@@ -710,6 +735,7 @@ async function captureSnapshot(
   clue: Clue,
   result: ClueReadResult,
   maxSnapshotBytes: number,
+  budget: CaptureBudget,
   signal: AbortSignal | undefined,
 ): Promise<CapturedSnapshot | { readonly issue: CluepackIssue }> {
   const assets = result.assets ?? []
@@ -735,16 +761,41 @@ async function captureSnapshot(
       return issueOf(clue, 'unsupported', `content exceeds the ${maxSnapshotBytes} byte snapshot limit`)
     }
   }
+  // The primary payload (body or first asset) plus every extra asset needs one
+  // archive entry. Refuse an over-budget multi-asset read BEFORE reading any of
+  // them, so a hostile source cannot make the exporter hold the whole set.
+  if (1 + assets.length > budget.entries) {
+    throw new ClueError('invalid-request', SAFE_ENTRY_BUDGET_REASON)
+  }
+  let remainingBytes = budget.bytes - (bodyBytes?.byteLength ?? 0)
+  if (remainingBytes < 0) throw new ClueError('invalid-request', SAFE_BYTE_BUDGET_REASON)
   const capturedAssets: CapturedAsset[] = []
   for (const asset of assets) {
-    const captured = await captureAsset(deps, clue, asset, maxSnapshotBytes, signal)
-    if ('issue' in captured) return captured
+    // Each asset is bounded by BOTH the per-content limit and what is left of
+    // the aggregate expanded budget: the old loop read every asset with the
+    // per-content bound first and only discovered the aggregate overflow later.
+    const allowance = Math.min(maxSnapshotBytes, remainingBytes)
+    if (allowance <= 0) throw new ClueError('invalid-request', SAFE_BYTE_BUDGET_REASON)
+    const captured = await captureAsset(deps, clue, asset, allowance, signal)
+    if ('issue' in captured) {
+      // An asset that only fails because the AGGREGATE allowance ran out is a
+      // request-level limit failure (like the old post-capture check), not a
+      // per-item content problem.
+      if (allowance < maxSnapshotBytes
+        && captured.issue.reason === `content exceeds the ${allowance} byte snapshot limit`) {
+        throw new ClueError('invalid-request', SAFE_BYTE_BUDGET_REASON)
+      }
+      return captured
+    }
+    remainingBytes -= captured.bytes.byteLength
     capturedAssets.push(captured)
   }
   const common = {
     format: result.format,
     fetchedAt: result.fetchedAt,
-    ...(result.revision === undefined ? {} : { sourceVersion: result.revision }),
+    ...(result.revision === undefined || result.revision.trim() === ''
+      ? {}
+      : { sourceVersion: result.revision }),
   }
   if (binary) {
     const primary = capturedAssets.shift()!
@@ -914,43 +965,57 @@ function capturedStoredBundle(
   bundle: StoredSnapshotBundle,
   maxSnapshotBytes: number,
   key: string,
+  budget: CaptureBudget,
 ): CapturedSnapshot | { readonly issue: CluepackIssue } {
   const fail = (reason: string): { readonly issue: CluepackIssue } => ({
     issue: { target: 'clue', key, category: 'failed', reason },
   })
+  const tooLarge = (): { readonly issue: CluepackIssue } => ({
+    issue: {
+      target: 'clue',
+      key,
+      category: 'unsupported',
+      reason: `content exceeds the ${maxSnapshotBytes} byte snapshot limit`,
+    },
+  })
+  const overBudget = (): never => {
+    throw new ClueError('invalid-request', SAFE_BYTE_BUDGET_REASON)
+  }
   const common = {
     format: record.content.format,
     fetchedAt: record.meta.fetchedAt,
-    ...(record.meta.sourceVersion === undefined ? {} : { sourceVersion: record.meta.sourceVersion }),
+    ...(record.meta.sourceVersion === undefined || record.meta.sourceVersion.trim() === ''
+      ? {}
+      : { sourceVersion: record.meta.sourceVersion }),
   }
+  if (1 + bundle.assets.length > budget.entries) {
+    throw new ClueError('invalid-request', SAFE_ENTRY_BUDGET_REASON)
+  }
+  // Validate/serialize the JSON primary before decoding assets so the aggregate
+  // budget can subtract its real bytes; a later share must not read every asset
+  // into memory first.
+  const body = bundle.primary.encoding === 'json'
+    ? jsonBodyOf(record.content.format, bundle.primary.data, record.content.text)
+    : undefined
+  if (body !== undefined && 'reason' in body) return fail(body.reason)
+  if (body !== undefined && body.bytes.byteLength > maxSnapshotBytes) return tooLarge()
+  const primarySize = bundle.primary.encoding === 'raw'
+    ? bundle.primary.size
+    : body!.bytes.byteLength
+  if (primarySize > maxSnapshotBytes) return tooLarge()
+  let remainingBytes = budget.bytes - primarySize
+  if (remainingBytes < 0) return overBudget()
   const assets: CapturedAsset[] = []
   for (const asset of bundle.assets) {
-    if (asset.size > maxSnapshotBytes) {
-      return {
-        issue: {
-          target: 'clue',
-          key,
-          category: 'unsupported',
-          reason: `content exceeds the ${maxSnapshotBytes} byte snapshot limit`,
-        },
-      }
-    }
+    if (asset.size > maxSnapshotBytes) return tooLarge()
+    if (asset.size > remainingBytes) return overBudget()
     const verified = verifiedBase64(asset.base64, asset.size, asset.sha256)
     if (verified === undefined) return fail('the stored snapshot failed its integrity check')
+    remainingBytes -= verified.bytes.byteLength
     assets.push({ kind: asset.kind, mediaType: asset.mediaType, bytes: verified.bytes })
   }
   if (bundle.primary.encoding === 'raw') {
     const primary = bundle.primary
-    if (primary.size > maxSnapshotBytes) {
-      return {
-        issue: {
-          target: 'clue',
-          key,
-          category: 'unsupported',
-          reason: `content exceeds the ${maxSnapshotBytes} byte snapshot limit`,
-        },
-      }
-    }
     const verified = verifiedBase64(primary.base64, primary.size, primary.sha256)
     if (verified === undefined) return fail('the stored snapshot failed its integrity check')
     return {
@@ -966,19 +1031,7 @@ function capturedStoredBundle(
       ...(assets.length === 0 ? {} : { assets }),
     }
   }
-  const body = jsonBodyOf(record.content.format, bundle.primary.data, record.content.text)
-  if ('reason' in body) return fail(body.reason)
-  const bodyBytes = body.bytes
-  if (bodyBytes.byteLength > maxSnapshotBytes) {
-    return {
-      issue: {
-        target: 'clue',
-        key,
-        category: 'unsupported',
-        reason: `content exceeds the ${maxSnapshotBytes} byte snapshot limit`,
-      },
-    }
-  }
+  const bodyBytes = body!.bytes
   return {
     bytes: bodyBytes,
     extension: 'json',
@@ -1064,6 +1117,7 @@ async function captureStoredSnapshot(
   clueId: string,
   key: string,
   maxSnapshotBytes: number,
+  budget: CaptureBudget,
 ): Promise<CapturedSnapshot | { readonly issue: CluepackIssue } | undefined> {
   if (index.failure !== undefined) {
     return {
@@ -1104,7 +1158,7 @@ async function captureStoredSnapshot(
         },
       }
     }
-    return capturedStoredBundle(record, bundle, maxSnapshotBytes, key)
+    return capturedStoredBundle(record, bundle, maxSnapshotBytes, key, budget)
   }
   const binary = binaryWrapperOf(rawData)
   if (binary !== undefined) {
@@ -1129,6 +1183,8 @@ async function captureStoredSnapshot(
         },
       }
     }
+    if (budget.entries < 1) throw new ClueError('invalid-request', SAFE_ENTRY_BUDGET_REASON)
+    if (binary.bytes.byteLength > budget.bytes) throw new ClueError('invalid-request', SAFE_BYTE_BUDGET_REASON)
     return {
       bytes: binary.bytes,
       extension: 'bin',
@@ -1139,7 +1195,9 @@ async function captureStoredSnapshot(
         bytes: binary.bytes.byteLength,
         sha256: digest,
         fetchedAt: record.meta.fetchedAt,
-        ...(record.meta.sourceVersion === undefined ? {} : { sourceVersion: record.meta.sourceVersion }),
+        ...(record.meta.sourceVersion === undefined || record.meta.sourceVersion.trim() === ''
+          ? {}
+          : { sourceVersion: record.meta.sourceVersion }),
       },
     }
   }
@@ -1165,6 +1223,8 @@ async function captureStoredSnapshot(
       },
     }
   }
+  if (budget.entries < 1) throw new ClueError('invalid-request', SAFE_ENTRY_BUDGET_REASON)
+  if (bytes.byteLength > budget.bytes) throw new ClueError('invalid-request', SAFE_BYTE_BUDGET_REASON)
   return {
     bytes,
     extension: 'json',
@@ -1175,7 +1235,9 @@ async function captureStoredSnapshot(
       bytes: bytes.byteLength,
       sha256: sha256Hex(bytes),
       fetchedAt: record.meta.fetchedAt,
-      ...(record.meta.sourceVersion === undefined ? {} : { sourceVersion: record.meta.sourceVersion }),
+      ...(record.meta.sourceVersion === undefined || record.meta.sourceVersion.trim() === ''
+        ? {}
+        : { sourceVersion: record.meta.sourceVersion }),
     },
   }
 }
@@ -1212,7 +1274,7 @@ export async function inspectExport(
         safeStoredReason(clue.unresolved.reason, SAFE_UNRESOLVED_REASON),
         'stored',
       ))
-      warnings.push(`"${clue.title}" is unresolved: ${clue.unresolved.reason}`)
+      warnings.push(`"${clue.title}" is unresolved: ${safeStoredReason(clue.unresolved.reason, SAFE_UNRESOLVED_REASON)}`)
     } else {
       try {
         portable = externalPathHintOf(clue, portableRefOf(
@@ -1240,7 +1302,9 @@ export async function inspectExport(
       sourceId: clue.sourceId,
       typeId: clue.typeId,
       portable,
-      ...(clue.unresolved === undefined ? {} : { unresolved: clue.unresolved.reason }),
+      ...(clue.unresolved === undefined
+        ? {}
+        : { unresolved: safeStoredReason(clue.unresolved.reason, SAFE_UNRESOLVED_REASON) }),
       snapshotMode: mode === 'snapshot',
     })
   }
@@ -1273,14 +1337,16 @@ export async function previewExport(
   const warnings: string[] = []
   const items: ClueShareExportItemPreview[] = selection.clues.map((clue) => {
     if (clue.unresolved !== undefined) {
-      warnings.push(`"${clue.title}" is unresolved: ${clue.unresolved.reason}`)
+      warnings.push(`"${clue.title}" is unresolved: ${safeStoredReason(clue.unresolved.reason, SAFE_UNRESOLVED_REASON)}`)
     }
     return {
       clueId: clue.id,
       title: clue.title,
       sourceId: clue.sourceId,
       typeId: clue.typeId,
-      ...(clue.unresolved === undefined ? {} : { unresolved: clue.unresolved.reason }),
+      ...(clue.unresolved === undefined
+        ? {}
+        : { unresolved: safeStoredReason(clue.unresolved.reason, SAFE_UNRESOLVED_REASON) }),
       snapshotMode: mode === 'snapshot',
     }
   })
@@ -1416,6 +1482,13 @@ export async function exportPack(
     throwIfAborted(params.signal)
     const key = `clue-${index + 1}`
     keyByClueId.set(clue.id, key)
+    // Remaining archive resources for THIS clue's snapshot. The manifest is
+    // always one entry and `content` holds what earlier clues already staged,
+    // so a multi-asset read is bounded as each asset is read.
+    const budget: CaptureBudget = {
+      bytes: maxTotalBytes - capturedBytes,
+      entries: maxEntries - content.size - 1,
+    }
     const itemIssues: CluepackIssue[] = []
     let portable: CluePortableRef
     if (clue.unresolved !== undefined) {
@@ -1448,7 +1521,7 @@ export async function exportPack(
         // re-share the newest stored one instead of pretending the clue has no
         // content (spec §3: a clue with a snapshot can still be shared).
         throwIfAborted(params.signal)
-        const stored = await captureStoredSnapshot(deps, storedSnapshotsForClue, clue.id, key, maxSnapshotBytes)
+        const stored = await captureStoredSnapshot(deps, storedSnapshotsForClue, clue.id, key, maxSnapshotBytes, budget)
         throwIfAborted(params.signal)
         if (stored === undefined) {
           itemIssues.push({
@@ -1479,7 +1552,7 @@ export async function exportPack(
           // a failed live read keeps the snapshot readable; re-share it instead
           // of losing the content just because the source was uninstalled.
           throwIfAborted(params.signal)
-          const stored = await captureStoredSnapshot(deps, storedSnapshotsForClue, clue.id, key, maxSnapshotBytes)
+          const stored = await captureStoredSnapshot(deps, storedSnapshotsForClue, clue.id, key, maxSnapshotBytes, budget)
           throwIfAborted(params.signal)
           if (stored !== undefined && !('issue' in stored)) {
             snapshot = attachCapturedSnapshot(key, stored)
@@ -1507,7 +1580,7 @@ export async function exportPack(
             })
           } else {
             throwIfAborted(params.signal)
-            const captured = await captureSnapshot(deps, clue, result, maxSnapshotBytes, params.signal)
+            const captured = await captureSnapshot(deps, clue, result, maxSnapshotBytes, budget, params.signal)
             if ('issue' in captured) {
               itemIssues.push({ ...captured.issue, key })
             } else {
