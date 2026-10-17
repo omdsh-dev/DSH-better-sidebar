@@ -80,20 +80,31 @@ function displayIcon(display: ClueSourceDisplayDescriptor | undefined): ReactNod
   return typeof display.icon === 'function' ? display.icon(16) : display.icon
 }
 
-/** The display name of one source (client override → descriptor → id). */
-function displayName(source: ClueSourceDescriptor, display: ClueSourceDisplayDescriptor | undefined): string {
-  const name = display?.name ?? source.name
-  return name.trim() === '' ? source.sourceId : name
+/**
+ * The display name of one source (client override → descriptor → id).
+ *
+ * ONE fallback chain for every surface: the source table row AND the S6
+ * configuration window title both call this, so a whitespace-only override
+ * can never produce an empty window title while the row shows a name.
+ */
+export function sourceDisplayName(
+  source: ClueSourceDescriptor,
+  display: ClueSourceDisplayDescriptor | undefined,
+): string {
+  if (display?.name !== undefined && display.name.trim() !== '') return display.name
+  if (source.name.trim() !== '') return source.name
+  return source.sourceId
 }
 
-/** One compact status badge. */
-function StatusBadge(props: { status: ClueSourceStatus }) {
-  const { status } = props
+/** One compact status badge (its detail is also rendered on the row). */
+function StatusBadge(props: { status: ClueSourceStatus; detailId?: string }) {
+  const { status, detailId } = props
   return (
     <span
       className={css.status}
       data-kind={status.kind}
       title={status.detail}
+      aria-describedby={status.detail === undefined ? undefined : detailId}
     >
       {t(CLUE_SOURCE_STATUS_COPY[status.kind])}
     </span>
@@ -147,24 +158,31 @@ export function ClueSourcesPanel(props: ClueSourcesPanelProps) {
         </div>
       )}
 
-      {loading ? (
+      {loading && !catalogueLoaded ? (
         <div className={css.loading} role="status">{t('loading')}</div>
       ) : (
         <>
+          {/* A reload over an already-loaded table keeps the old rows visible;
+              this busy line is the only cue that the list is being refreshed. */}
+          {loading && (
+            <div className={css.loading} role="status">{t('loading')}</div>
+          )}
           {catalogueLoaded && (
           <div className={css.batchBar} role="group" aria-label={t('settingsGroupSources')}>
             <span className={css.batchScope}>{t('clueSourcesBatchScope')}</span>
             <span className={css.batchButtons}>
-              <button type="button" className={css.smallButton} onClick={props.onEnableAll}>
+              {/* No registered source = no batch scope: the handlers would
+                  no-op, so the controls must not look actionable. */}
+              <button type="button" className={css.smallButton} disabled={sources.length === 0} onClick={props.onEnableAll}>
                 {t('clueSourcesEnableAll')}
               </button>
-              <button type="button" className={css.smallButton} onClick={props.onDisableAll}>
+              <button type="button" className={css.smallButton} disabled={sources.length === 0} onClick={props.onDisableAll}>
                 {t('clueSourcesDisableAll')}
               </button>
-              <button type="button" className={css.smallButton} onClick={props.onMentionAll}>
+              <button type="button" className={css.smallButton} disabled={sources.length === 0} onClick={props.onMentionAll}>
                 {t('clueSourcesMentionAll')}
               </button>
-              <button type="button" className={css.smallButton} onClick={props.onMentionNone}>
+              <button type="button" className={css.smallButton} disabled={sources.length === 0} onClick={props.onMentionNone}>
                 {t('clueSourcesMentionNone')}
               </button>
             </span>
@@ -184,12 +202,13 @@ export function ClueSourcesPanel(props: ClueSourcesPanelProps) {
             <ul className={css.sourceList} aria-label={t('settingsGroupSources')}>
               {sources.map(source => {
                 const display = displayById.get(source.sourceId)
-                const name = displayName(source, display)
+                const name = sourceDisplayName(source, display)
                 const enabled = isClueSourceEnabled(prefs, source.sourceId)
                 // The stored @ preference is preserved even while the source is
                 // off; the switch is inert because the effective mention is off.
                 const mention = isClueSourceMentionEnabled(prefs, source.sourceId)
                 const status = statuses.get(source.sourceId) ?? { kind: 'unchecked' as const }
+                const detailId = `clue-source-status-detail:${source.sourceId}`
                 return (
                   <li
                     key={source.sourceId}
@@ -204,7 +223,7 @@ export function ClueSourcesPanel(props: ClueSourcesPanelProps) {
                         <span className={css.sourceId}>{source.sourceId}</span>
                       </span>
                     </span>
-                    <StatusBadge status={status} />
+                    <StatusBadge status={status} detailId={detailId} />
                     <span className={css.sourceControls}>
                       <Switch
                         label={t('clueSourceToggleAria', { source: name })}
@@ -237,6 +256,18 @@ export function ClueSourcesPanel(props: ClueSourcesPanelProps) {
                         </p>
                       )
                     })}
+                    {/* The sanitized reason is ROW TEXT (plus the badge's
+                        aria-describedby), not a hover-only title: keyboard and
+                        screen-reader users get the same explanation. */}
+                    {status.detail !== undefined && (
+                      <p
+                        className={css.sourceDetail}
+                        id={detailId}
+                        data-clue-source-detail={source.sourceId}
+                      >
+                        {status.detail}
+                      </p>
+                    )}
                   </li>
                 )
               })}

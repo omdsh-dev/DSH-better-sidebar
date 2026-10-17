@@ -215,6 +215,17 @@
   gap: 8px;
 }
 
+/* The sanitized reason of a non-ready state, readable on the row itself. */
+.sourceDetail {
+  flex: 1 1 100%;
+  margin: 0;
+  padding: 0 2px;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--dsw-alias-label-tertiary);
+  overflow-wrap: anywhere;
+}
+
 /* The local pack library: same row geometry, no source switch. */
 .packsRow {
   display: flex;

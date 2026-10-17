@@ -22,6 +22,12 @@ beforeAll(() => {
 })
 
 import { SourceConfigPage } from '../src/client/clues/settings/config.tsx'
+import { subscribeInstallPolling } from '../src/client/clues/settings/install-polling.ts'
+import {
+  publishClueStatuses,
+  publishClueTask,
+  subscribeClueRuntime,
+} from '../src/client/clues/settings/runtime-state.ts'
 import type { ClueRuntimeApi } from '../src/client/clues/runtime-api.ts'
 import type {
   ConnectionStatusProjection,
@@ -379,6 +385,10 @@ describe('SourceConfigPage install plan, progress and cancellation', () => {
     expect(runtime.calls).toContain('start:acme.cli:plan-1')
     expect(rendered.container.textContent).toContain('Downloading')
     expect(rendered.container.querySelector('[role="progressbar"]')).not.toBeNull()
+    // A live task outranks the pre-install dependency DTO: the READY badge
+    // must not stay on screen while the install is running.
+    expect(rendered.container.querySelector('[data-clue-dependency="acme.cli"] [data-kind]')
+      ?.getAttribute('data-kind')).toBe('installing')
     rendered.unmount()
   })
 
@@ -450,6 +460,39 @@ describe('SourceConfigPage install plan, progress and cancellation', () => {
     expect(runtime.calls).toContain('cancel:acme.cli:task-1')
     expect(rendered.container.textContent).toContain('Install cancelled')
     rendered.unmount()
+  })
+
+  it('shows unchecked while the post-install probe is in flight, never the pre-install Ready', async () => {
+    vi.useFakeTimers()
+    try {
+      const runtime = fakeRuntime()
+      const rendered = await mount(runtime)
+      click(rendered.container, 'One-click install')
+      await act(async () => { await Promise.resolve() })
+      click(rendered.container, 'Confirm and install')
+      await act(async () => { await Promise.resolve() })
+      // The settled task triggers a re-probe; hold that probe.
+      let release!: () => void
+      const gate = new Promise<void>(resolve => { release = resolve })
+      const originalInspect = runtime.dependenciesInspect
+      let gated = false
+      runtime.dependenciesInspect = async (input) => {
+        if (gated) await gate
+        return originalInspect(input)
+      }
+      gated = true
+      runtime.pollTask = task({ state: 'succeeded', progress: { stage: 'completed' } })
+      await act(async () => { await vi.advanceTimersByTimeAsync(1000) })
+      const row = rendered.container.querySelector('[data-clue-dependency="acme.cli"]')!
+      expect(row.querySelector('[data-kind]')?.getAttribute('data-kind')).toBe('unchecked')
+      expect(row.textContent).toContain('Not checked')
+      release()
+      await flush()
+      expect(row.querySelector('[data-kind]')?.getAttribute('data-kind')).toBe('ready')
+      rendered.unmount()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 
@@ -927,5 +970,255 @@ describe('SourceConfigPage install task polling', () => {
     expect(first.container.textContent).toContain('Install cancelled')
     first.unmount()
     second.unmount()
+  })
+})
+
+describe('SourceConfigPage cross-window observation fencing', () => {
+  it('a status observation from another view invalidates an in-flight read and the read does not republish its old answer', async () => {
+    const runtime = fakeRuntime()
+    const rendered = await mount(runtime)
+    const seen: DependencyStatus[][] = []
+    const unsubscribe = subscribeClueRuntime(runtime, observation => {
+      if (observation.kind === 'statuses') seen.push([...observation.dependencies])
+    })
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const originalInspect = runtime.dependenciesInspect
+    let gated = false
+    runtime.dependenciesInspect = async (input) => {
+      if (gated) await gate
+      return originalInspect(input)
+    }
+    gated = true
+    seen.length = 0
+    click(rendered.container, 'Recheck')
+    await act(async () => { await Promise.resolve() })
+    // Another configuration window observed the user's fresh manual path
+    // while this window's Recheck is still probing.
+    act(() => {
+      publishClueStatuses(runtime, [dependency({
+        manualPath: '/opt/acme',
+        executablePath: '/opt/acme',
+        resolvedFrom: 'manual',
+      })])
+    })
+    expect(rendered.container.textContent).toContain('/opt/acme')
+    release()
+    await flush()
+    const row = rendered.container.querySelector('[data-clue-dependency="acme.cli"]')!
+    expect(row.textContent).toContain('/opt/acme')
+    expect(row.textContent).not.toContain('/usr/local/bin/acme')
+    // The superseded read must not be published back on the shared bus: that
+    // is what used to roll the OTHER window back to the old path.
+    expect(seen.some(batch => batch.some(item => item.executablePath === '/usr/local/bin/acme'))).toBe(false)
+    unsubscribe()
+    rendered.unmount()
+  })
+
+  it('a newer authorization observation is not rolled back by an older connection read', async () => {
+    const runtime = fakeRuntime({ connections: [connection({ authorization: 'not-authorized', action: 'connect' })] })
+    const rendered = await mount(runtime)
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const originalStatus = runtime.connectionsStatus
+    let gated = false
+    runtime.connectionsStatus = async (...args) => {
+      if (gated) await gate
+      return originalStatus(...args)
+    }
+    gated = true
+    click(rendered.container, 'Recheck')
+    await act(async () => { await Promise.resolve() })
+    act(() => {
+      publishClueStatuses(runtime, [], [connection({
+        authorization: 'authorizing',
+        action: 'none',
+        prompt: {
+          verificationUrl: 'https://example.test/fresh-auth',
+          expiresAt: '2026-10-17T00:20:00.000Z',
+        },
+      })])
+    })
+    expect(rendered.container.textContent).toContain('https://example.test/fresh-auth')
+    release()
+    await flush()
+    // The stale connection read (ready, no prompt) lost: the other window's
+    // newer prompt is still the truth.
+    expect(rendered.container.textContent).toContain('https://example.test/fresh-auth')
+    rendered.unmount()
+  })
+
+  it('an older task-adoption read cannot resurrect a task another view already settled', async () => {
+    const runtime = fakeRuntime()
+    const rendered = await mount(runtime)
+    runtime.latestTasks = [task()]
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const originalStatus = runtime.dependenciesStatus
+    let gated = false
+    runtime.dependenciesStatus = async (...args) => {
+      if (gated) await gate
+      return originalStatus(...args)
+    }
+    gated = true
+    click(rendered.container, 'Recheck')
+    await flush()
+    // The other window observed the terminal state while the adoption read
+    // (which will answer with the older RUNNING task) is still in flight.
+    act(() => {
+      publishClueTask(runtime, task({
+        state: 'succeeded',
+        progress: { stage: 'completed' },
+        finishedAt: '2026-10-17T00:01:00.000Z',
+      }))
+    })
+    expect(rendered.container.textContent).toContain('Done')
+    release()
+    await flush()
+    expect(rendered.container.querySelector('[role="progressbar"]')).toBeNull()
+    expect(rendered.container.textContent).toContain('Done')
+    rendered.unmount()
+  })
+})
+
+describe('SourceConfigPage install action gating', () => {
+  it('confirming twice sends exactly one start and disables the button while it runs', async () => {
+    const runtime = fakeRuntime()
+    const rendered = await mount(runtime)
+    click(rendered.container, 'One-click install')
+    await act(async () => { await Promise.resolve() })
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const originalStart = runtime.dependenciesStart
+    runtime.dependenciesStart = async (...args) => {
+      const result = await originalStart(...args)
+      await gate
+      return result
+    }
+    const confirm = [...rendered.container.querySelectorAll<HTMLButtonElement>('button')]
+      .find(button => button.textContent?.trim() === 'Confirm and install')!
+    act(() => {
+      confirm.click()
+      confirm.click()
+    })
+    await act(async () => { await Promise.resolve() })
+    expect(runtime.calls.filter(call => call.startsWith('start:'))).toHaveLength(1)
+    expect(confirm.disabled).toBe(true)
+    release()
+    await flush()
+    expect(rendered.container.querySelector('[role="progressbar"]')).not.toBeNull()
+    rendered.unmount()
+  })
+
+  it('cancelling twice sends exactly one cancel and disables the button while it runs', async () => {
+    const runtime = fakeRuntime()
+    const rendered = await mount(runtime)
+    click(rendered.container, 'One-click install')
+    await act(async () => { await Promise.resolve() })
+    click(rendered.container, 'Confirm and install')
+    await act(async () => { await Promise.resolve() })
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const originalCancel = runtime.dependenciesCancel
+    runtime.dependenciesCancel = async (...args) => {
+      const result = await originalCancel(...args)
+      await gate
+      return result
+    }
+    const cancel = [...rendered.container.querySelectorAll<HTMLButtonElement>('button')]
+      .find(button => button.textContent?.trim() === 'Cancel install')!
+    act(() => {
+      cancel.click()
+      cancel.click()
+    })
+    await act(async () => { await Promise.resolve() })
+    expect(runtime.calls.filter(call => call.startsWith('cancel:'))).toHaveLength(1)
+    expect(cancel.disabled).toBe(true)
+    release()
+    await flush()
+    expect(rendered.container.textContent).toContain('Install cancelled')
+    rendered.unmount()
+  })
+
+  it('aborts the in-flight mount read when the window closes', async () => {
+    const runtime = fakeRuntime()
+    let signal: AbortSignal | undefined
+    runtime.dependenciesInspect = async (_input, nextSignal) => {
+      signal = nextSignal
+      return new Promise<readonly DependencyStatus[]>(() => {})
+    }
+    const rendered = renderRoot(createElement(SourceConfigPage, { ...BASE_PROPS, runtime }))
+    await act(async () => { await Promise.resolve() })
+    expect(signal).toBeDefined()
+    rendered.unmount()
+    expect(signal?.aborted).toBe(true)
+  })
+})
+
+describe('shared install poller steady state', () => {
+  /** Flush pending microtasks outside React's act(). */
+  const settle = async (turns = 6): Promise<void> => {
+    for (let index = 0; index < turns; index += 1) await Promise.resolve()
+  }
+
+  it('a subscriber arriving during an in-flight tick cannot start a concurrent status request', async () => {
+    vi.useFakeTimers()
+    try {
+      const runtime = fakeRuntime()
+      let calls = 0
+      let release!: () => void
+      const gate = new Promise<void>(resolve => { release = resolve })
+      runtime.dependenciesStatus = async () => {
+        calls += 1
+        if (calls === 1) await gate
+        return []
+      }
+      const first = subscribeInstallPolling(runtime, () => {})
+      await vi.advanceTimersByTimeAsync(1000)
+      expect(calls).toBe(1)
+      // The second window opens while the first request is still awaiting.
+      const second = subscribeInstallPolling(runtime, () => {})
+      await vi.advanceTimersByTimeAsync(1000)
+      // No second timer may fire: at most one request in flight.
+      expect(calls).toBe(1)
+      release()
+      await settle()
+      await vi.advanceTimersByTimeAsync(1000)
+      expect(calls).toBe(2)
+      first()
+      second()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('stops while the document is hidden and runs one catch-up tick when visible again', async () => {
+    vi.useFakeTimers()
+    let hidden = false
+    Object.defineProperty(document, 'visibilityState', {
+      configurable: true,
+      get: () => (hidden ? 'hidden' : 'visible'),
+    })
+    try {
+      const runtime = fakeRuntime()
+      let calls = 0
+      runtime.dependenciesStatus = async () => {
+        calls += 1
+        return []
+      }
+      const off = subscribeInstallPolling(runtime, () => {})
+      hidden = true
+      document.dispatchEvent(new Event('visibilitychange'))
+      await vi.advanceTimersByTimeAsync(5000)
+      expect(calls).toBe(0)
+      hidden = false
+      document.dispatchEvent(new Event('visibilitychange'))
+      await settle()
+      expect(calls).toBe(1)
+      off()
+    } finally {
+      delete (document as unknown as { visibilityState?: unknown }).visibilityState
+      vi.useRealTimers()
+    }
   })
 })

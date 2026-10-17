@@ -41,11 +41,16 @@ import { cluesApi } from '../src/client/clues/api.ts'
 import type { BetterSidebarCluesClientFace } from '../src/client/clues/registry.ts'
 import type { ClueRuntimeApi } from '../src/client/clues/runtime-api.ts'
 import { openClueSettings, peekClueSettingsTarget } from '../src/client/clues/settings/navigation.ts'
+import { publishClueTask } from '../src/client/clues/settings/runtime-state.ts'
 import { builtinTabPlugins } from '../src/client/plugins-tabs.ts'
 import { en } from '../src/client/locales.ts'
 import { SIDEBAR_PREFS_DEFAULTS } from '../src/prefs-shared.ts'
 import type { CluesSourcesCatalogResult, ClueSourceDescriptor } from '../src/clues/types.ts'
-import type { ConnectionStatusProjection, DependencyStatus } from '../src/clues/runtime/types.ts'
+import type {
+  ConnectionStatusProjection,
+  DependencyInstallTask,
+  DependencyStatus,
+} from '../src/clues/runtime/types.ts'
 
 // ── Fixtures ───────────────────────────────────────────────────────────────
 
@@ -83,6 +88,22 @@ function dependency(overrides: Partial<DependencyStatus> = {}): DependencyStatus
     minimumVersion: '1.0.0',
     recommendedVersion: '1.0.0',
     executablePath: '/usr/local/bin/acme',
+    ...overrides,
+  }
+}
+
+function installTask(overrides: Partial<DependencyInstallTask> = {}): DependencyInstallTask {
+  return {
+    taskId: 'task-1',
+    dependencyId: 'acme.cli',
+    planId: 'plan-1',
+    version: '1.0.0',
+    platform: 'darwin',
+    arch: 'arm64',
+    targetDir: '/home/u/.dsh/tools/acme.cli/1.0.0',
+    state: 'running',
+    progress: { stage: 'downloading', fraction: 0.5 },
+    startedAt: '2026-10-17T00:00:00.000Z',
     ...overrides,
   }
 }
@@ -609,6 +630,91 @@ describe('SideCardSection clue sources', () => {
     rendered.unmount()
   })
 
+  it('uses one display-name fallback for the row and the configuration window title', async () => {
+    const h = harness()
+    // A whitespace-only client override must not produce an empty row/window
+    // title: the descriptor name is the next fallback on BOTH surfaces.
+    h.clues.registerSourceDisplay({ sourceId: 'acme.docs', name: '   ' })
+    const rendered = await mountSources(h)
+    expect(rendered.container.textContent).toContain('Acme Docs')
+    click(rendered.container, 'Configure source: Acme Docs')
+    const windows = (h.service as unknown as BetterSidebarServiceHost).windowHost.getSnapshot().windows
+    expect(windows[0]!.title).toBe('Source settings: Acme Docs')
+    rendered.unmount()
+  })
+
+  it('shows installing while another view runs a task and restores the probed state after it settles', async () => {
+    const h = harness()
+    const rendered = await mountSources(h)
+    const row = (): Element => rendered.container.querySelector('[data-clue-source="acme.docs"]')!
+    expect(row().getAttribute('data-clue-source-status')).toBe('ready')
+    act(() => { publishClueTask(h.runtime, installTask()) })
+    expect(row().getAttribute('data-clue-source-status')).toBe('installing')
+    expect(row().textContent).toContain('Installing')
+    // The terminal observation triggers a fresh status read; hold it to check
+    // the intermediate state: the pre-install "ready" is NOT the answer yet.
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const originalSources = h.clues.api.sources
+    h.clues.api.sources = async () => {
+      await gate
+      return originalSources()
+    }
+    act(() => {
+      publishClueTask(h.runtime, installTask({
+        state: 'succeeded',
+        progress: { stage: 'completed' },
+        finishedAt: '2026-10-17T00:01:00.000Z',
+      }))
+    })
+    await act(async () => { await Promise.resolve() })
+    expect(row().getAttribute('data-clue-source-status')).toBe('unchecked')
+    expect(row().textContent).toContain('Not checked')
+    release()
+    await flush()
+    // Only the completed probe may return the row to ready.
+    expect(row().getAttribute('data-clue-source-status')).toBe('ready')
+    rendered.unmount()
+  })
+
+  it('keeps the old table visible with a busy cue while a reload is probing', async () => {
+    const h = harness()
+    const rendered = await mountSources(h)
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const originalSources = h.clues.api.sources
+    h.clues.api.sources = async () => {
+      await gate
+      return originalSources()
+    }
+    act(() => {
+      h.clues.registerSourceDisplay({ sourceId: 'acme.docs', name: 'Acme Docs' })
+    })
+    await act(async () => { await Promise.resolve() })
+    // The old rows are still there (no table blank-out) AND the reload is
+    // announced as busy.
+    expect(rendered.container.querySelector('[data-clue-source="acme.docs"]')).not.toBeNull()
+    expect(rendered.container.textContent).toContain('Loading')
+    release()
+    await flush()
+    expect(rendered.container.querySelector('[data-clue-source="acme.docs"]')).not.toBeNull()
+    rendered.unmount()
+  })
+
+  it('aborts the catalogue read when the settings section unmounts', async () => {
+    const h = harness()
+    let signal: AbortSignal | undefined
+    h.clues.api.sources = async nextSignal => {
+      signal = nextSignal
+      return new Promise<CluesSourcesCatalogResult>(() => {})
+    }
+    const rendered = renderSection(h, { initialGroup: 'sources' })
+    await act(async () => { await Promise.resolve() })
+    expect(signal).toBeDefined()
+    rendered.unmount()
+    expect(signal?.aborted).toBe(true)
+  })
+
   it('offers the explicit no-source-catalog state instead of tab-plugin recommendations', async () => {
     const h = harness()
     const rendered = await mountSources(h)
@@ -953,6 +1059,78 @@ describe('SideCardSection revision fencing', () => {
     expect(checkboxState(slow.container, 'Inject the sidebar-open tool for the model')).toBe(true)
     slow.unmount()
     fast.unmount()
+  })
+
+  it('does not adopt a write response older than another entry’s confirmed document', async () => {
+    const h = harness()
+    const first = await mount(h)
+    const second = await mount(h)
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const originalUpdate = h.settings.settingsUpdate.bind(h.settings)
+    let delay = true
+    h.settings.settingsUpdate = async (patch, expectedRevision) => {
+      const view = await originalUpdate(patch, expectedRevision)
+      if (delay) {
+        delay = false
+        await gate
+      }
+      return view
+    }
+    // A writes rev1 (agentOpenTools=true) but its response is delayed. Its
+    // full-document payload still says mobileNoAutoOpen=true.
+    click(first.container, 'Inject the sidebar-open tool for the model')
+    await flush()
+    expect(h.settings.value.agentOpenTools).toBe(true)
+    // B hits the rev1 document, retries with the fresh revision, saves rev2
+    // with mobileNoAutoOpen=false; the shared store now holds that document.
+    click(second.container, "Don't auto-open on narrow screens")
+    await flush()
+    expect(h.settings.value.mobileNoAutoOpen).toBe(false)
+    expect(h.store.getPrefs().mobileNoAutoOpen).toBe(false)
+    // A's OLD rev1 response arrives: it must not overwrite the store (and B's
+    // saved edit must remain visible in both entries).
+    release()
+    await flush()
+    expect(h.store.getPrefs().mobileNoAutoOpen).toBe(false)
+    expect(checkboxState(first.container, "Don't auto-open on narrow screens")).toBe(false)
+    expect(checkboxState(second.container, "Don't auto-open on narrow screens")).toBe(false)
+    first.unmount()
+    second.unmount()
+  })
+
+  it('does not let an older write response hide a later queued optimistic edit', async () => {
+    const h = harness()
+    const rendered = await mount(h)
+    let releaseFirst!: () => void
+    let releaseSecond!: () => void
+    const firstGate = new Promise<void>(resolve => { releaseFirst = resolve })
+    const secondGate = new Promise<void>(resolve => { releaseSecond = resolve })
+    const originalUpdate = h.settings.settingsUpdate.bind(h.settings)
+    let calls = 0
+    h.settings.settingsUpdate = async (patch, expectedRevision) => {
+      const view = await originalUpdate(patch, expectedRevision)
+      calls += 1
+      if (calls === 1) await firstGate
+      if (calls === 2) await secondGate
+      return view
+    }
+    click(rendered.container, 'Inject the sidebar-open tool for the model')
+    await flush()
+    // The second edit is optimistic and QUEUED behind the delayed first write.
+    click(rendered.container, "Don't auto-open on narrow screens")
+    expect(checkboxState(rendered.container, "Don't auto-open on narrow screens")).toBe(false)
+    releaseFirst()
+    await flush()
+    // The first response (which predates the second edit) settled; the UI
+    // must still show the queued edit instead of its pre-edit value.
+    expect(checkboxState(rendered.container, "Don't auto-open on narrow screens")).toBe(false)
+    releaseSecond()
+    await flush()
+    expect(h.settings.value.mobileNoAutoOpen).toBe(false)
+    expect(h.store.getPrefs().mobileNoAutoOpen).toBe(false)
+    expect(checkboxState(rendered.container, "Don't auto-open on narrow screens")).toBe(false)
+    rendered.unmount()
   })
 })
 

@@ -15,7 +15,11 @@
 import { beforeAll, describe, expect, it } from 'vitest'
 import { renderToString } from 'react-dom/server'
 import { createElement } from 'react'
-import { ClueSourcesPanel, type ClueSourcesPanelProps } from '../src/client/clues/settings/sources.tsx'
+import {
+  ClueSourcesPanel,
+  sourceDisplayName,
+  type ClueSourcesPanelProps,
+} from '../src/client/clues/settings/sources.tsx'
 import type { ClueSourceStatus } from '../src/client/clues/settings/status.ts'
 import { SIDEBAR_PREFS_DEFAULTS, type SidebarPrefs } from '../src/prefs-shared.ts'
 import type { ClueSourceDescriptor } from '../src/clues/types.ts'
@@ -169,6 +173,15 @@ describe('ClueSourcesPanel rows', () => {
     expect(html).toContain('ACME-ICON')
   })
 
+  it('falls back from a blank display name to the descriptor name, then the id', () => {
+    const descriptor = source('acme.docs', 'Acme Docs')
+    expect(sourceDisplayName(descriptor, { sourceId: 'acme.docs', name: '   ' })).toBe('Acme Docs')
+    expect(sourceDisplayName(source('acme.docs', '   '), { sourceId: 'acme.docs', name: '' }))
+      .toBe('acme.docs')
+    expect(sourceDisplayName(descriptor, { sourceId: 'acme.docs', name: 'Acme Cloud' }))
+      .toBe('Acme Cloud')
+  })
+
   it('renders the derived state label and keeps a long name intact (layout wraps, never truncates)', () => {
     const longName = 'A very long source name that should still be announced in full by the accessible label'
     const html = render({
@@ -211,14 +224,19 @@ describe('ClueSourcesPanel states', () => {
     }
   })
 
-  it('shows the sanitized failure detail as hover text, never as a fabricated success', () => {
+  it('shows the sanitized failure detail as row text, not only a hover title', () => {
     const html = render({
       statuses: statuses({
         'acme.docs': { kind: 'request-failed', detail: 'the probe timed out' },
       }),
     })
     expect(html).toContain('Request failed')
+    // Keyboard and screen-reader users get the same reason: row text plus
+    // aria-describedby on the badge (the title remains as a hover extra).
     expect(html).toContain('title="the probe timed out"')
+    expect(html).toContain('data-clue-source-detail="acme.docs"')
+    expect(html).toContain('the probe timed out')
+    expect(html).toContain('aria-describedby="clue-source-status-detail:acme.docs"')
   })
 
   it('keeps configured-but-not-loaded sources visible with their stored preferences', () => {
@@ -305,5 +323,15 @@ describe('ClueSourcesPanel batch controls', () => {
     const html = render()
     expect(html).toContain('Add source plugin')
     expect(html).toContain('installing the plugin and installing the CLI it needs are separate steps')
+  })
+
+  it('disables the batch controls when the registered source set is empty', () => {
+    const html = render({ sources: [] })
+    for (const label of ['Enable all sources', 'Disable all sources', 'Enable all @', 'Disable all @']) {
+      const tag = [...html.matchAll(/<button[^>]*>([^<]*)<\/button>/g)]
+        .find(match => match[1] === label)?.[0]
+      expect(tag, label).toBeDefined()
+      expect(tag, label).toContain('disabled')
+    }
   })
 })

@@ -65,7 +65,7 @@ import type {
 import type { BetterSidebarCluesClientFace } from './clues/registry.ts'
 import { clueRuntimeApi, type ClueRuntimeApi } from './clues/runtime-api.ts'
 import { SourceConfigPage } from './clues/settings/config.tsx'
-import { ClueSourcesPanel, hasSourceConfiguration } from './clues/settings/sources.tsx'
+import { ClueSourcesPanel, hasSourceConfiguration, sourceDisplayName } from './clues/settings/sources.tsx'
 import { deriveClueSourceStatus, type ClueSourceStatus } from './clues/settings/status.ts'
 import { subscribeClueRuntime } from './clues/settings/runtime-state.ts'
 import {
@@ -891,17 +891,34 @@ export function SideCardSection(props: SideCardSectionProps) {
   // instead of fabricating a terminal missing / not-configured verdict from
   // the previous table read.
   const [statusCoverage, setStatusCoverage] = useState<ReadonlyMap<string, string>>(() => new Map())
+  // Whether any DEPENDENCY of a source currently has a running install task
+  // (bus observation). The table overlays `installing` on top of the last
+  // status read: the pre-install badge must not stay Ready/Missing while the
+  // task runs, and a terminal observation restores the derived state.
+  const [installingDependencies, setInstallingDependencies] = useState<ReadonlySet<string>>(() => new Set())
+  // Dependencies whose install just settled: their pre-install status is no
+  // longer an answer. Keep the row `unchecked` until the post-install probe
+  // completes (S2 §6.3: only a passing probe may show ready).
+  const [postInstallDependencies, setPostInstallDependencies] = useState<ReadonlySet<string>>(() => new Set())
   const sourcesLoadedRef = useRef(false)
   const sourcesRequestRef = useRef(0)
+  const sourcesAbortRef = useRef<AbortController | null>(null)
+  // Terminal task ids already used to trigger one post-install re-read.
+  const terminalTaskIdsRef = useRef<Set<string>>(new Set())
   const catalogueRef = useRef<CluesSourcesCatalogResult | null>(null)
   useEffect(() => { catalogueRef.current = catalogue }, [catalogue])
   const displaysRef = useRef(displays)
   useEffect(() => { displaysRef.current = displays }, [displays])
+  useEffect(() => () => { sourcesAbortRef.current?.abort() }, [])
 
   /** Read the catalogue, then the S2 status projections it needs. */
   const loadSources = useCallback(async (): Promise<void> => {
     const request = sourcesRequestRef.current + 1
     sourcesRequestRef.current = request
+    const controller = new AbortController()
+    sourcesAbortRef.current?.abort()
+    sourcesAbortRef.current = controller
+    const isCurrent = (): boolean => !controller.signal.aborted && request === sourcesRequestRef.current
     setSourcesLoading(true)
     setSourcesError(null)
     setStatusProbeError(null)
@@ -910,8 +927,8 @@ export function SideCardSection(props: SideCardSectionProps) {
     // last-known verdict while the fresh read is in flight; the failure path
     // below must simply never upgrade an unchecked table to "checked".
     try {
-      const catalogueNext = await clues.api.sources()
-      if (request !== sourcesRequestRef.current) return
+      const catalogueNext = await clues.api.sources(controller.signal)
+      if (!isCurrent()) return
       setCatalogue(catalogueNext)
       const needsDependencies = catalogueNext.sources.some(source => (source.dependencyIds?.length ?? 0) > 0)
       const needsConnections = catalogueNext.sources.some(source => source.connectionId !== undefined)
@@ -921,21 +938,21 @@ export function SideCardSection(props: SideCardSectionProps) {
       let connectionsFailed = false
       if (needsDependencies) {
         try {
-          dependenciesNext = await runtime.dependenciesInspect()
+          dependenciesNext = await runtime.dependenciesInspect(undefined, controller.signal)
         } catch (caught) {
           dependenciesFailed = true
-          if (request === sourcesRequestRef.current) setStatusProbeError(errorTextOf(caught))
+          if (isCurrent()) setStatusProbeError(errorTextOf(caught))
         }
       }
       if (needsConnections) {
         try {
-          connectionsNext = await runtime.connectionsStatus()
+          connectionsNext = await runtime.connectionsStatus(undefined, controller.signal)
         } catch (caught) {
           connectionsFailed = true
-          if (request === sourcesRequestRef.current) setStatusProbeError(errorTextOf(caught))
+          if (isCurrent()) setStatusProbeError(errorTextOf(caught))
         }
       }
-      if (request !== sourcesRequestRef.current) return
+      if (!isCurrent()) return
       setDependencyStatuses(dependenciesNext)
       setConnectionStatuses(connectionsNext)
       setDependencyProbeFailed(dependenciesFailed)
@@ -944,15 +961,18 @@ export function SideCardSection(props: SideCardSectionProps) {
       // needs. Anything that changed meanwhile is re-checked next read.
       setStatusCoverage(new Map(catalogueNext.sources.map(source => [source.sourceId, sourceNeedsKey(source)])))
       setStatusChecked(true)
+      // The completed probe is the post-install answer for every settled
+      // dependency (cleared only on success: a failed read stays unchecked).
+      setPostInstallDependencies(current => (current.size === 0 ? current : new Set()))
     } catch (caught) {
-      if (request === sourcesRequestRef.current) {
+      if (isCurrent()) {
         // The catalogue itself failed. `statusChecked` stays as it was: a
         // first-load failure never checked anything, and a later failure
         // leaves the previous completed observation visible as last-known.
         setSourcesError(errorTextOf(caught))
       }
     } finally {
-      if (request === sourcesRequestRef.current) setSourcesLoading(false)
+      if (isCurrent()) setSourcesLoading(false)
     }
   }, [clues, runtime])
 
@@ -971,9 +991,61 @@ export function SideCardSection(props: SideCardSectionProps) {
   }), [clues, loadSources])
 
   // Another view of the same runtime (a source config window) publishes the
-  // statuses it just observed: refresh the table badge without a remount.
+  // statuses/tasks it just observed: refresh the table badge without a
+  // remount. A running install task overlays `installing` immediately; a
+  // terminal observation triggers ONE post-install status re-read (S2 §6.3:
+  // only a passing probe may return the row to ready).
   useEffect(() => subscribeClueRuntime(runtime, observation => {
-    if (observation.kind !== 'statuses' || !sourcesLoadedRef.current) return
+    if (!sourcesLoadedRef.current) return
+    if (observation.kind === 'statuses') {
+      // A status read that no longer reports `installing` means the task has
+      // settled (or vanished): drop the overlay before the reload lands.
+      if (observation.dependencies.length > 0) {
+        setInstallingDependencies(current => {
+          if (current.size === 0) return current
+          let changed = false
+          const next = new Set(current)
+          for (const dependency of observation.dependencies) {
+            if (dependency.state !== 'installing' && next.delete(dependency.dependencyId)) changed = true
+          }
+          return changed ? next : current
+        })
+      }
+      void loadSources()
+      return
+    }
+    if (observation.tasks.length === 0) return
+    setInstallingDependencies(current => {
+      let changed = false
+      const next = new Set(current)
+      for (const task of observation.tasks) {
+        if (task.state === 'running') {
+          if (!next.has(task.dependencyId)) {
+            next.add(task.dependencyId)
+            changed = true
+          }
+        } else if (next.delete(task.dependencyId)) {
+          changed = true
+        }
+      }
+      return changed ? next : current
+    })
+    const terminal = observation.tasks.filter(task =>
+      task.state !== 'running' && !terminalTaskIdsRef.current.has(task.taskId))
+    if (terminal.length === 0) return
+    for (const task of terminal) terminalTaskIdsRef.current.add(task.taskId)
+    setPostInstallDependencies(current => {
+      const next = new Set(current)
+      for (const task of terminal) next.add(task.dependencyId)
+      return next
+    })
+    // Bound the "already refreshed" set: task ids cannot accumulate for the
+    // lifetime of a settings page (AGENTS §5 module/instance bookkeeping).
+    while (terminalTaskIdsRef.current.size > 128) {
+      const oldest = terminalTaskIdsRef.current.values().next().value
+      if (oldest === undefined) break
+      terminalTaskIdsRef.current.delete(oldest)
+    }
     void loadSources()
   }), [runtime, loadSources])
 
@@ -987,6 +1059,20 @@ export function SideCardSection(props: SideCardSectionProps) {
   const statusById = useMemo(() => {
     const map = new Map<string, ClueSourceStatus>()
     for (const source of catalogue?.sources ?? []) {
+      const installing = (source.dependencyIds ?? []).some(id => installingDependencies.has(id))
+      if (installing) {
+        // The task observation outranks the last dependency DTO (which was
+        // read before the install started and may still say ready/missing).
+        map.set(source.sourceId, { kind: 'installing' })
+        continue
+      }
+      const awaitingProbe = (source.dependencyIds ?? []).some(id => postInstallDependencies.has(id))
+      if (awaitingProbe) {
+        // The install settled; the pre-install DTO is not the post-install
+        // answer. Stay unchecked until the re-read actually completes.
+        map.set(source.sourceId, { kind: 'unchecked' })
+        continue
+      }
       const needsDependencies = (source.dependencyIds?.length ?? 0) > 0
       map.set(source.sourceId, deriveClueSourceStatus({
         dependencyIds: source.dependencyIds,
@@ -1000,7 +1086,7 @@ export function SideCardSection(props: SideCardSectionProps) {
       }))
     }
     return map
-  }, [catalogue, dependencyStatuses, connectionStatuses, dependencyProbeFailed, connectionProbeFailed, statusProbeError, statusChecked, statusCoverage])
+  }, [catalogue, dependencyStatuses, connectionStatuses, dependencyProbeFailed, connectionProbeFailed, statusProbeError, statusChecked, statusCoverage, installingDependencies, postInstallDependencies])
 
   /** Open one source's S6 configuration window (stable identity = focus). */
   const openSourceConfig = useCallback((source: ClueSourceDescriptor): void => {
@@ -1008,7 +1094,9 @@ export function SideCardSection(props: SideCardSectionProps) {
     // dependency and no connection has no settings page.
     if (!hasSourceConfiguration(source)) return
     const display = displaysRef.current.find(item => item.sourceId === source.sourceId)
-    const name = display?.name ?? (source.name.trim() === '' ? source.sourceId : source.name)
+    // ONE fallback chain, shared with the source table row: a whitespace-only
+    // client override must not produce an empty window title.
+    const name = sourceDisplayName(source, display)
     windows.open({
       id: `clue-source:${source.sourceId}`,
       title: t('clueConfigTitle', { source: name }),
@@ -1092,6 +1180,13 @@ export function SideCardSection(props: SideCardSectionProps) {
   // Serialize commits: a queued write must observe the previous write's
   // revision; a failed write must not poison the queue for later ones.
   const inFlightRef = useRef<Promise<unknown>>(Promise.resolve())
+  // The wire patch of every commit that has not settled yet, in queue order.
+  // A settled write's response is the document at THAT revision: when a later
+  // optimistic edit is still queued, the response must be overlaid with the
+  // queued patches, otherwise the older response hides the newer edit
+  // (`applyOutcome` would otherwise setPrefs the pre-edit document).
+  const pendingWritesRef = useRef<{ token: number; patch: Record<string, unknown> }[]>([])
+  const writeTokenRef = useRef(0)
 
   // Sync the persisted document once on mount: the revision and the current
   // values (another tab may have changed them since the store hydrated).
@@ -1146,6 +1241,14 @@ export function SideCardSection(props: SideCardSectionProps) {
   const commit = (patch: Record<string, unknown>, rowKey: string): Promise<CommitOutcome> => {
     dirtyRef.current = true
     let conflicted = false
+    // Register the sparse wire patch before the write enters the queue: a
+    // response may settle while this entry's LATER edits are still queued.
+    const token = writeTokenRef.current + 1
+    writeTokenRef.current = token
+    pendingWritesRef.current = [...pendingWritesRef.current, { token, patch }]
+    const dropPending = (): void => {
+      pendingWritesRef.current = pendingWritesRef.current.filter(entry => entry.token !== token)
+    }
     const currentRevision = async (): Promise<number> => {
       // Another entry may have advanced the document since this mount read.
       const known = knownSettingsRevisions.get(settingsFace)
@@ -1200,7 +1303,16 @@ export function SideCardSection(props: SideCardSectionProps) {
         revisionRef.current = Math.max(revisionRef.current ?? refreshed.revision, refreshed.revision)
         view = await write()
       }
+      // Read the newest revision observed BEFORE this response. A newer
+      // successful write from the other settings entry may have already
+      // confirmed a later document while this request was in flight; adopting
+      // this older full-document response would overwrite it in the shared
+      // store and hide the other entry's saved edit.
+      const knownBefore = knownSettingsRevisions.get(settingsFace)
       const next = parsePrefs(view.value)
+      const superseded = view.revision !== undefined
+        && knownBefore !== undefined
+        && view.revision < knownBefore
       if (view.revision !== undefined) {
         revisionRef.current = Math.max(revisionRef.current ?? view.revision, view.revision)
         noteSettingsRevision(settingsFace, view.revision)
@@ -1208,19 +1320,40 @@ export function SideCardSection(props: SideCardSectionProps) {
       const savedRows = [...unsavedRowsRef.current]
       unsavedRowsRef.current.clear()
       unsavedPatchRef.current = null
-      confirmedRef.current = next
-      store.setPrefs(next)
-      return { next, savedRows }
+      let display: SidebarPrefs
+      if (superseded) {
+        // Keep the other entry's newer confirmed document. This write still
+        // saved its own rows (their errors clear), but its older values must
+        // not win over that newer revision.
+        confirmedRef.current = store.getPrefs()
+        display = store.getPrefs()
+      } else {
+        confirmedRef.current = next
+        store.setPrefs(next)
+        display = next
+      }
+      // Re-apply edits that are still queued behind this write: the response
+      // is the document at THIS revision, and must not hide a later click.
+      for (const entry of pendingWritesRef.current) {
+        if (entry.token === token) continue
+        display = parsePrefs(mergeWirePatch(display as unknown as Record<string, unknown>, entry.patch))
+      }
+      // Drop this write before the next queued run starts (the queue's
+      // chained promise may resume before the outer settle handler).
+      dropPending()
+      return { next: display, savedRows }
     })
     inFlightWritesRef.current += 1
     // A failed commit must not poison the queue: later writes still run.
     inFlightRef.current = run.then(() => undefined, () => undefined)
     return run.then(
       ({ next, savedRows }) => {
+        dropPending()
         inFlightWritesRef.current -= 1
         return { ok: true, prefs: next, savedRows }
       },
       (caught) => {
+        dropPending()
         inFlightWritesRef.current -= 1
         if (conflicted) {
           unsavedPatchRef.current = attempted
@@ -1257,16 +1390,29 @@ export function SideCardSection(props: SideCardSectionProps) {
    */
   const applyOutcome = (outcome: CommitOutcome, rowKey: string): void => {
     if (outcome.ok) {
-      setPrefs(outcome.prefs)
+      // A click that landed AFTER the response but BEFORE this settle handler
+      // is in the queue (its patch registered, response not adopted yet).
+      // Overlay it here too, or the older response's document hides it.
+      let display = outcome.prefs
+      for (const entry of pendingWritesRef.current) {
+        display = parsePrefs(mergeWirePatch(display as unknown as Record<string, unknown>, entry.patch))
+      }
+      optimisticRef.current = display
+      setPrefs(display)
       clearWriteError(rowKey)
       for (const savedRow of outcome.savedRows ?? []) clearWriteError(savedRow)
       return
     }
     if (outcome.keepEdit !== true) {
       const kept = unsavedPatchRef.current
-      const rollback = (kept === null
+      let rollback = (kept === null
         ? confirmedRef.current
         : mergeWirePatch(confirmedRef.current as unknown as Record<string, unknown>, kept)) as SidebarPrefs
+      // A later edit is still queued: roll back only THIS write's optimistic
+      // value, never the newer edit the user just made.
+      for (const entry of pendingWritesRef.current) {
+        rollback = parsePrefs(mergeWirePatch(rollback as unknown as Record<string, unknown>, entry.patch))
+      }
       optimisticRef.current = rollback
       setPrefs(rollback)
     }
@@ -1749,7 +1895,7 @@ export function SideCardSection(props: SideCardSectionProps) {
                 statuses={statusById}
                 prefs={prefs}
                 writeErrors={writeErrors}
-                loading={sourcesLoading && catalogue === null}
+                loading={sourcesLoading}
                 error={sourcesError}
                 statusError={statusProbeError}
                 catalogueLoaded={catalogue !== null}

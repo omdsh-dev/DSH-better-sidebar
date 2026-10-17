@@ -223,6 +223,8 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
   const [failedIds, setFailedIds] = useState<Record<string, true>>({})
   const [plans, setPlans] = useState<Record<string, DependencyInstallPlan>>({})
   const [tasks, setTasks] = useState<Record<string, DependencyInstallTask>>({})
+  /** Dependencies being re-probed after a settled install (show unchecked). */
+  const [probingIds, setProbingIds] = useState<Record<string, true>>({})
   const [planningId, setPlanningId] = useState<string | null>(null)
   const [pathDrafts, setPathDrafts] = useState<Record<string, string>>({})
   const [pathErrors, setPathErrors] = useState<Record<string, string>>({})
@@ -232,6 +234,8 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
    *  clears only its own transient error, never a plan/start/cancel failure. */
   const [pollErrors, setPollErrors] = useState<Record<string, string>>({})
   const [connecting, setConnecting] = useState(false)
+  /** In-flight start/cancel per dependency (double-click protection + UI gate). */
+  const [installBusy, setInstallBusy] = useState<Record<string, 'starting' | 'cancelling'>>({})
   /** A connection action (authorize/check/cancel) failed; shown in its section. */
   const [connectionActionError, setConnectionActionError] = useState<string | null>(null)
   /** The last connection read failed: the row must not claim "not configured". */
@@ -245,10 +249,32 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
   // that starts while the action is pending) must not apply its older answer
   // afterwards. Bumping on both sides of the action fences both directions.
   const writeEpochRef = useRef(0)
+  // Another view of the same runtime published a FRESH observation. Any read
+  // that started before it is stale: it must not apply its older answer nor
+  // publish it back to the other view (the cross-window "old read overwrites
+  // new observation" race). Every bus notification bumps this generation; a
+  // read captures it at start and re-checks before applying OR publishing.
+  const readGenerationRef = useRef(0)
+  // The currently in-flight explicit read, aborted when a newer read starts
+  // or the window closes (S9 §6: closing a floating window releases requests).
+  const loadAbortRef = useRef<AbortController | null>(null)
+  // One mount-lifetime signal for every other request (plan/start/cancel/
+  // path/connect/poll): closing the S6 window aborts all of them, not just the
+  // explicit status read.
+  const lifecycleAbortRef = useRef<AbortController | null>(null)
+  // Synchronous double-click guard; React state alone would let two clicks in
+  // one tick past the disabled attribute.
+  const installBusyRef = useRef(new Map<string, 'starting' | 'cancelling'>())
   useEffect(() => { tasksRef.current = tasks }, [tasks])
   useEffect(() => {
     mounted.current = true
-    return () => { mounted.current = false }
+    const lifecycle = new AbortController()
+    lifecycleAbortRef.current = lifecycle
+    return () => {
+      mounted.current = false
+      lifecycle.abort()
+      loadAbortRef.current?.abort()
+    }
   }, [])
 
   /** Show a sanitized failure on one dependency row (never the page banner). */
@@ -322,8 +348,16 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
     const request = loadRequestRef.current + 1
     loadRequestRef.current = request
     const epoch = writeEpochRef.current
+    const generation = readGenerationRef.current
+    const controller = new AbortController()
+    loadAbortRef.current?.abort()
+    loadAbortRef.current = controller
     const isCurrent = (): boolean =>
-      mounted.current && request === loadRequestRef.current && epoch === writeEpochRef.current
+      mounted.current
+      && !controller.signal.aborted
+      && request === loadRequestRef.current
+      && epoch === writeEpochRef.current
+      && generation === readGenerationRef.current
     setRefreshing(true)
     setError(null)
     // A fresh explicit read supersedes the previous action failure it retries.
@@ -334,6 +368,7 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
         try {
           const list = await runtime.dependenciesInspect(
             refreshProbes ? { dependencyId, refresh: true } : { dependencyId },
+            controller.signal,
           )
           return list.find(item => item.dependencyId === dependencyId) ?? list[0]
         } catch (caught) {
@@ -347,7 +382,7 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
       let connectionFailed = false
       if (connectionId !== undefined) {
         try {
-          const list = await runtime.connectionsStatus(connectionId)
+          const list = await runtime.connectionsStatus(connectionId, controller.signal)
           nextConnection = list.find(item => item.connectionId === connectionId) ?? list[0]
         } catch (caught) {
           connectionFailed = true
@@ -375,12 +410,23 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
         succeededDependencies,
         nextConnection === undefined ? [] : [nextConnection],
       )
-      // Adopt a task another view started (multi-view install state): the
-      // runtime's latest task per dependency is authoritative.
+      // The publish above is itself a bus notification (this window's own
+      // listener bumps the generation), so the task-adoption step captures a
+      // FRESH token afterwards: only an observation arriving while the status
+      // call is in flight may invalidate the adoption.
       if (ids.length > 0) {
+        const taskRequest = loadRequestRef.current
+        const taskEpoch = writeEpochRef.current
+        const taskGeneration = readGenerationRef.current
+        const taskIsCurrent = (): boolean =>
+          mounted.current
+          && !controller.signal.aborted
+          && taskRequest === loadRequestRef.current
+          && taskEpoch === writeEpochRef.current
+          && taskGeneration === readGenerationRef.current
         try {
-          const latest = await runtime.dependenciesStatus()
-          if (!isCurrent()) return
+          const latest = await runtime.dependenciesStatus(undefined, controller.signal)
+          if (!taskIsCurrent()) return
           const running = latest.filter(task => task.state === 'running' && ids.includes(task.dependencyId))
           if (running.length > 0) {
             setTasks(current => {
@@ -391,11 +437,13 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
             for (const task of running) publishClueTask(runtime, task)
           }
         } catch (caught) {
-          if (isCurrent()) setError(messageOf(caught))
+          if (taskIsCurrent()) setError(messageOf(caught))
         }
       }
     } finally {
-      if (isCurrent()) setRefreshing(false)
+      // Request/mount liveness only: the generation was (correctly) bumped by
+      // this read's own publish, so it must not keep the spinner on forever.
+      if (mounted.current && request === loadRequestRef.current) setRefreshing(false)
     }
   }, [runtime, ids, connectionId])
 
@@ -403,11 +451,19 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
 
   /** Re-read one dependency after a settled install/manual path change. */
   const reloadDependency = useCallback(async (dependencyId: string): Promise<void> => {
+    const generation = readGenerationRef.current
     beginMutation()
+    const epoch = writeEpochRef.current
+    // The pre-install DTO is no longer the answer: hold the row unchecked
+    // until this probe completes (S2 §6.3: only a passing probe may be ready).
+    if (mounted.current) setProbingIds(current => ({ ...current, [dependencyId]: true }))
     try {
-      const list = await runtime.dependenciesInspect({ dependencyId })
+      const list = await runtime.dependenciesInspect({ dependencyId }, lifecycleAbortRef.current?.signal)
       const next = list.find(item => item.dependencyId === dependencyId)
-      if (next === undefined || !mounted.current) return
+      if (next === undefined
+        || !mounted.current
+        || generation !== readGenerationRef.current
+        || epoch !== writeEpochRef.current) return
       setDependencies(current => replaceDependency(current ?? [], next))
       publishClueStatuses(runtime, [next])
       setFailedIds(current => {
@@ -424,6 +480,14 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
       // The re-probe is a refresh, not a user action: the old row stays.
     } finally {
       endMutation()
+      if (mounted.current) {
+        setProbingIds(current => {
+          if (current[dependencyId] === undefined) return current
+          const next = { ...current }
+          delete next[dependencyId]
+          return next
+        })
+      }
     }
   }, [runtime, beginMutation, endMutation, clearPollError])
 
@@ -514,6 +578,10 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
   // the live task/prompt without a remount.
   useEffect(() => subscribeClueRuntime(runtime, observation => {
     if (!mounted.current) return
+    // This observation is fresher than any read that started before it. The
+    // read must lose: if it applied (or republished) its older answer it
+    // would roll the other window's row back to a superseded path/prompt/task.
+    readGenerationRef.current += 1
     if (observation.kind === 'statuses') {
       const nextDependencies = observation.dependencies.filter(item => ids.includes(item.dependencyId))
       if (nextDependencies.length > 0) {
@@ -559,7 +627,7 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
     setPlanningId(dependencyId)
     clearRowError(dependencyId)
     try {
-      const next = await runtime.dependenciesPlan(dependencyId)
+      const next = await runtime.dependenciesPlan(dependencyId, lifecycleAbortRef.current?.signal)
       if (!mounted.current) return
       setPlans(current => ({ ...current, [dependencyId]: next }))
     } catch (caught) {
@@ -569,13 +637,34 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
     }
   }
 
+  /** Mark one install action in flight (synchronous ref + rendered state). */
+  const setBusy = (dependencyId: string, kind: 'starting' | 'cancelling'): void => {
+    installBusyRef.current.set(dependencyId, kind)
+    setInstallBusy(current => ({ ...current, [dependencyId]: kind }))
+  }
+
+  /** Clear one install action's in-flight state. */
+  const clearBusy = (dependencyId: string): void => {
+    installBusyRef.current.delete(dependencyId)
+    if (!mounted.current) return
+    setInstallBusy(current => {
+      if (current[dependencyId] === undefined) return current
+      const next = { ...current }
+      delete next[dependencyId]
+      return next
+    })
+  }
+
   const startPlan = async (dependencyId: string): Promise<void> => {
     const current = plans[dependencyId]
-    if (current === undefined) return
+    // The ref, not the state: two clicks in one React batch both see the
+    // pre-render closure, and S2 rejects a duplicate start after the fact.
+    if (current === undefined || installBusyRef.current.has(dependencyId)) return
+    setBusy(dependencyId, 'starting')
     clearRowError(dependencyId)
     beginMutation()
     try {
-      const next = await runtime.dependenciesStart(dependencyId, current.planId)
+      const next = await runtime.dependenciesStart(dependencyId, current.planId, lifecycleAbortRef.current?.signal)
       if (!mounted.current) return
       setTasks(state => ({ ...state, [dependencyId]: next }))
       publishClueTask(runtime, next)
@@ -587,6 +676,7 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
     } catch (caught) {
       if (mounted.current) failRow(dependencyId, caught)
     } finally {
+      clearBusy(dependencyId)
       endMutation()
     }
   }
@@ -600,10 +690,12 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
   }
 
   const cancelInstall = async (task: DependencyInstallTask): Promise<void> => {
+    if (installBusyRef.current.has(task.dependencyId)) return
+    setBusy(task.dependencyId, 'cancelling')
     clearRowError(task.dependencyId)
     beginMutation()
     try {
-      const next = await runtime.dependenciesCancel(task.dependencyId, task.taskId)
+      const next = await runtime.dependenciesCancel(task.dependencyId, task.taskId, lifecycleAbortRef.current?.signal)
       if (!mounted.current) return
       setTasks(current => ({ ...current, [task.dependencyId]: next }))
       publishClueTask(runtime, next)
@@ -614,6 +706,7 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
     } catch (caught) {
       if (mounted.current) failRow(task.dependencyId, caught)
     } finally {
+      clearBusy(task.dependencyId)
       endMutation()
     }
   }
@@ -631,7 +724,7 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
     })
     beginMutation()
     try {
-      const next = await runtime.dependenciesSetPath(dependencyId, raw)
+      const next = await runtime.dependenciesSetPath(dependencyId, raw, lifecycleAbortRef.current?.signal)
       if (!mounted.current) return
       setDependencies(current => replaceDependency(current ?? [], next))
       publishClueStatuses(runtime, [next])
@@ -650,7 +743,7 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
     clearPathError(dependencyId)
     beginMutation()
     try {
-      const next = await runtime.dependenciesClearPath(dependencyId)
+      const next = await runtime.dependenciesClearPath(dependencyId, lifecycleAbortRef.current?.signal)
       if (!mounted.current) return
       setDependencies(current => replaceDependency(current ?? [], next))
       publishClueStatuses(runtime, [next])
@@ -696,7 +789,7 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
     setConnectionActionError(null)
     beginMutation()
     try {
-      const next = await runtime.connectionsConnect(connectionId)
+      const next = await runtime.connectionsConnect(connectionId, lifecycleAbortRef.current?.signal)
       if (!mounted.current) return
       setConnections(current => replaceConnection(current ?? [], next))
       setConnectionReadFailed(false)
@@ -715,7 +808,7 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
     setConnectionActionError(null)
     beginMutation()
     try {
-      const next = await runtime.connectionsPoll(connectionId)
+      const next = await runtime.connectionsPoll(connectionId, lifecycleAbortRef.current?.signal)
       if (!mounted.current) return
       setConnections(current => replaceConnection(current ?? [], next))
       setConnectionReadFailed(false)
@@ -734,7 +827,7 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
     setConnectionActionError(null)
     beginMutation()
     try {
-      const next = await runtime.connectionsCancel(connectionId)
+      const next = await runtime.connectionsCancel(connectionId, lifecycleAbortRef.current?.signal)
       if (!mounted.current) return
       setConnections(current => replaceConnection(current ?? [], next))
       setConnectionReadFailed(false)
@@ -763,11 +856,20 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
             const currentPlan = plans[dependencyId]
             const currentTask = tasks[dependencyId]
             const installable = current?.installable === true
-            const stateKind: ClueSourceStatusKind = failedIds[dependencyId] === true
-              ? 'request-failed'
-              : current === undefined
+            const busy = installBusy[dependencyId]
+            // A live install task is the freshest answer: the dependency DTO
+            // read before the install started may still say ready/missing
+            // until the post-install probe. Never show the pre-install badge
+            // while the task is running (S2 §6.3 / S8 §3).
+            const stateKind: ClueSourceStatusKind = currentTask?.state === 'running'
+              ? 'installing'
+              : probingIds[dependencyId] === true
                 ? 'unchecked'
-                : DEPENDENCY_STATE_COPY[current.state]
+                : failedIds[dependencyId] === true
+                  ? 'request-failed'
+                  : current === undefined
+                    ? 'unchecked'
+                    : DEPENDENCY_STATE_COPY[current.state]
             return (
               <div key={dependencyId} className={css.dependencyBlock} data-clue-dependency={dependencyId}>
                 <div className={css.configRow}>
@@ -859,7 +961,11 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
                     onClick={() => { void plan(dependencyId) }}
                   />
                   {currentTask !== undefined && currentTask.state === 'running' && (
-                    <Action label={t('clueDependencyInstallCancel')} onClick={() => { void cancelInstall(currentTask) }} />
+                    <Action
+                      label={t('clueDependencyInstallCancel')}
+                      disabled={busy !== undefined}
+                      onClick={() => { void cancelInstall(currentTask) }}
+                    />
                   )}
                 </div>
 
@@ -969,10 +1075,15 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
                       {currentPlan.installable && (
                         <Action
                           label={t('clueDependencyPlanConfirm')}
+                          disabled={busy !== undefined}
                           onClick={() => { void startPlan(dependencyId) }}
                         />
                       )}
-                      <Action label={t('cancel')} onClick={() => { cancelPlan(dependencyId) }} />
+                      <Action
+                        label={t('cancel')}
+                        disabled={busy !== undefined}
+                        onClick={() => { cancelPlan(dependencyId) }}
+                      />
                     </div>
                   </div>
                 )}

@@ -18,6 +18,11 @@
  * spinning at 1 Hz forever. The failure text reaches every subscriber so its
  * own dependency row can show it; a later explicit Recheck re-discovers the
  * task and a fresh subscription restarts the timer.
+ *
+ * Steady-state rules (AGENTS §5): at most ONE request in flight (a listener
+ * that subscribes while a tick awaits must not schedule a second timer); the
+ * published-signature Map is bounded; and the timer is gated by document
+ * visibility (hidden = no timer, visible = one immediate catch-up tick).
  */
 import type { ClueRuntimeApi } from '../runtime-api.ts'
 import type { DependencyInstallTask } from '../../../clues/runtime/types.ts'
@@ -28,6 +33,9 @@ const INSTALL_POLL_MS = 1_000
 
 /** Consecutive failed status reads before the shared poller gives up. */
 const MAX_POLL_FAILURES = 3
+
+/** Upper bound of remembered task signatures (in-use/running keys are kept). */
+const MAX_PUBLISHED_TASKS = 64
 
 /** One tick's observation. */
 export interface InstallPollObservation {
@@ -47,7 +55,11 @@ interface SharedPoller {
   readonly published: Map<string, string>
   timer: number | undefined
   scheduled: boolean
+  /** A status request is awaiting its answer (no second timer may start). */
+  inFlight: boolean
   failures: number
+  /** The one visibilitychange listener bound while this poller has listeners. */
+  visibilityHandler?: () => void
 }
 
 const pollers = new WeakMap<ClueRuntimeApi, SharedPoller>()
@@ -61,10 +73,26 @@ function pollerOf(runtime: ClueRuntimeApi): SharedPoller {
     published: new Map(),
     timer: undefined,
     scheduled: false,
+    inFlight: false,
     failures: 0,
   }
   pollers.set(runtime, created)
   return created
+}
+
+/** Whether the document is currently hidden (SSR/older hosts: not hidden). */
+function documentHidden(): boolean {
+  return typeof document !== 'undefined' && document.visibilityState === 'hidden'
+}
+
+/** Keep the signature map bounded without evicting a RUNNING task. */
+function trimPublished(poller: SharedPoller, tasks: readonly DependencyInstallTask[]): void {
+  if (poller.published.size <= MAX_PUBLISHED_TASKS) return
+  const running = new Set(tasks.filter(task => task.state === 'running').map(task => task.taskId))
+  for (const taskId of [...poller.published.keys()]) {
+    if (poller.published.size <= MAX_PUBLISHED_TASKS) break
+    if (!running.has(taskId)) poller.published.delete(taskId)
+  }
 }
 
 /** One user-readable failure line (sanitized message only). */
@@ -94,9 +122,17 @@ function notify(poller: SharedPoller, observation: InstallPollObservation): void
   }
 }
 
-/** Schedule the next tick (self-scheduling: at most one request in flight). */
+/**
+ * Schedule the next tick (self-scheduling). `inFlight` is the gate the timer
+ * alone cannot provide: `tick` clears `scheduled` before awaiting the status
+ * answer, so without it a subscriber arriving mid-request would schedule a
+ * second timer and two status requests would race.
+ */
 function schedule(runtime: ClueRuntimeApi, poller: SharedPoller): void {
-  if (poller.listeners.size === 0 || poller.scheduled) return
+  if (poller.listeners.size === 0 || poller.scheduled || poller.inFlight) return
+  // Hidden settings windows do not need live progress; becoming visible again
+  // schedules one immediate catch-up tick (see onVisibilityChange).
+  if (documentHidden()) return
   poller.scheduled = true
   poller.timer = window.setTimeout(() => { void tick(runtime, poller) }, INSTALL_POLL_MS)
 }
@@ -106,6 +142,7 @@ async function tick(runtime: ClueRuntimeApi, poller: SharedPoller): Promise<void
   poller.timer = undefined
   poller.scheduled = false
   if (poller.listeners.size === 0) return
+  poller.inFlight = true
   try {
     const tasks = await runtime.dependenciesStatus()
     if (poller.listeners.size === 0) return
@@ -116,6 +153,7 @@ async function tick(runtime: ClueRuntimeApi, poller: SharedPoller): Promise<void
       poller.published.set(task.taskId, signature)
       publishClueTask(runtime, task)
     }
+    trimPublished(poller, tasks)
     notify(poller, { tasks })
   } catch (caught) {
     if (poller.listeners.size === 0) return
@@ -129,8 +167,33 @@ async function tick(runtime: ClueRuntimeApi, poller: SharedPoller): Promise<void
       notify(poller, { tasks: [], gaveUp: true })
       return
     }
+  } finally {
+    poller.inFlight = false
   }
   schedule(runtime, poller)
+}
+
+/** Stop the timer without dropping the subscribers. */
+function stopTimer(poller: SharedPoller): void {
+  if (poller.timer !== undefined) {
+    window.clearTimeout(poller.timer)
+    poller.timer = undefined
+  }
+  poller.scheduled = false
+}
+
+/** A visible document gets one immediate catch-up tick (no 1 Hz while hidden). */
+function onVisibilityChange(runtime: ClueRuntimeApi, poller: SharedPoller): void {
+  if (poller.listeners.size === 0) return
+  if (documentHidden()) {
+    stopTimer(poller)
+    return
+  }
+  // A tick already awaiting its answer will schedule the next one itself.
+  if (poller.inFlight) return
+  stopTimer(poller)
+  poller.failures = 0
+  void tick(runtime, poller)
 }
 
 /**
@@ -151,18 +214,23 @@ export function subscribeInstallPolling(
 ): () => void {
   const poller = pollerOf(runtime)
   poller.listeners.add(listener)
-  if (poller.listeners.size === 1 || !poller.scheduled) {
+  if (poller.listeners.size === 1 && typeof document !== 'undefined') {
+    const handler = (): void => { onVisibilityChange(runtime, poller) }
+    poller.visibilityHandler = handler
+    document.addEventListener('visibilitychange', handler)
+  }
+  if (poller.listeners.size === 1 || (!poller.scheduled && !poller.inFlight)) {
     poller.failures = 0
     schedule(runtime, poller)
   }
   return () => {
     poller.listeners.delete(listener)
     if (poller.listeners.size === 0) {
-      if (poller.timer !== undefined) {
-        window.clearTimeout(poller.timer)
-        poller.timer = undefined
+      stopTimer(poller)
+      if (poller.visibilityHandler !== undefined && typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', poller.visibilityHandler)
       }
-      poller.scheduled = false
+      poller.visibilityHandler = undefined
       poller.published.clear()
     }
   }
