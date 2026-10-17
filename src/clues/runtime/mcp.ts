@@ -48,6 +48,28 @@ function toolFailureCategory(result: { error?: { info?: { code?: string } } }): 
 }
 
 /**
+ * Recognize a structured host denial that has no `info.code`. Only the host's
+ * own structured name/reason markers are inspected (never the raw message), so
+ * a recognisable approval/channel denial becomes an explicit call outcome while
+ * everything else stays a sanitized `failed`.
+ */
+function structuredDenial(
+  result: { error?: { info?: { code?: string; name?: string; reason?: string } } },
+): 'approval-required' | 'operation-unavailable' | undefined {
+  const info = result.error?.info
+  if (info === undefined) return undefined
+  const markers = [info.code, info.name, info.reason]
+    .filter((value): value is string => typeof value === 'string')
+    .join(' ')
+    .toLowerCase()
+  if (markers.includes('approval')) return 'approval-required'
+  if (/(?:operation[-_ ]?unavailable|not[-_ ]?available|no[-_ ]?(?:active|live)[-_ ]?(?:agent|turn)|inactive)/.test(markers)) {
+    return 'operation-unavailable'
+  }
+  return undefined
+}
+
+/**
  * Create the DSH-MCP bridge.
  * @param options - lazy tool/agent accessors + call-id generator.
  */
@@ -119,6 +141,21 @@ export function createMcpBridge(options: McpBridgeOptions = {}): ClueMcpBridge {
       }
       if (result.isError) {
         const category = toolFailureCategory(result)
+        if (category === 'failed') {
+          const denial = structuredDenial(result)
+          if (denial === 'approval-required') {
+            return {
+              status: 'approval-required',
+              message: 'the DSH tool denied this call pending an approval channel unavailable in this context',
+            }
+          }
+          if (denial === 'operation-unavailable') {
+            return {
+              status: 'operation-unavailable',
+              message: 'the DSH tool is not executable in this context',
+            }
+          }
+        }
         const message = category === 'unsupported'
           ? `the DSH tool "${toolName}" is not available`
           : category === 'cancelled'

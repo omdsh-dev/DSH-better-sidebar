@@ -217,3 +217,55 @@ describe('MCP bridge guard rules', () => {
     )).rejects.toMatchObject({ category: 'failed' })
   })
 })
+
+describe('MCP host denial mapping', () => {
+  it('maps a structured approval denial without info.code to approval-required', async () => {
+    const { bridge, executions } = harness({
+      execute: async () => ({
+        isError: true,
+        error: { message: 'raw provider secret', info: { name: 'ToolApprovalRequiredError' } },
+      }),
+    })
+    const result = await bridge.callTool(
+      { toolName: 'mcp.feishu.doc_update', arguments: {}, requiresApproval: false },
+      { caller: 'ui' },
+    )
+    expect(result.status).toBe('approval-required')
+    expect(JSON.stringify(result)).not.toContain('raw provider secret')
+    expect(executions).toHaveLength(1)
+  })
+
+  it('maps a structured unavailable denial without info.code to operation-unavailable', async () => {
+    const { bridge } = harness({
+      execute: async () => ({
+        isError: true,
+        error: {
+          message: 'raw provider secret',
+          info: { name: 'ToolError', reason: 'no live agent for this session' },
+        },
+      }),
+    })
+    const result = await bridge.callTool(
+      { toolName: 'mcp.feishu.doc_update', arguments: {}, requiresApproval: false },
+      { caller: 'ui' },
+    )
+    expect(result.status).toBe('operation-unavailable')
+    expect(JSON.stringify(result)).not.toContain('raw provider secret')
+  })
+
+  it('keeps an unrecognized code-less denial as a sanitized failed', async () => {
+    const { bridge } = harness({
+      execute: async () => ({
+        isError: true,
+        error: { message: 'raw provider secret', info: { name: 'ToolError', reason: 'provider exploded' } },
+      }),
+    })
+    const error = await bridge.callTool(
+      { toolName: 'mcp.feishu.doc_update', arguments: {}, requiresApproval: false },
+      { caller: 'ui' },
+    ).catch((caught: unknown) => caught)
+    expect(error).toBeInstanceOf(ClueError)
+    expect((error as ClueError).category).toBe('failed')
+    expect((error as ClueError).message).not.toContain('raw provider secret')
+  })
+})

@@ -130,6 +130,22 @@ function effectivePort(url: URL): string {
   return url.protocol === 'https:' ? '443' : '80'
 }
 
+/**
+ * The port exactly as the allowlist author wrote it. WHATWG URL parsing drops
+ * an explicit default port (`https://host:443` serializes to `https://host`),
+ * so `parsed.port` alone cannot distinguish `host:443` from a port-less entry.
+ */
+function explicitPortOf(entry: string): string | undefined {
+  const withoutScheme = entry.replace(/^[a-z][a-z0-9+.-]*:\/\//, '')
+  const authority = withoutScheme.split(/[/?#]/, 1)[0] ?? ''
+  // Ignore any userinfo; the URL parser has already rejected credentials.
+  const hostPort = authority.slice(authority.lastIndexOf('@') + 1)
+  const match = hostPort.startsWith('[')
+    ? /^\[[^\]]*\]:(\d+)$/.exec(hostPort)
+    : /:(\d+)$/.exec(hostPort)
+  return match?.[1]
+}
+
 /** One allowlist entry (`host` or `host:port`, an optional scheme is ignored). */
 function hostEntry(value: string): { hostname: string; port?: string } | undefined {
   const trimmed = value.trim().toLowerCase()
@@ -137,9 +153,10 @@ function hostEntry(value: string): { hostname: string; port?: string } | undefin
   try {
     const parsed = new URL(trimmed.includes('://') ? trimmed : `https://${trimmed}`)
     if (parsed.hostname === '') return undefined
+    const port = parsed.port !== '' ? parsed.port : explicitPortOf(trimmed)
     return {
       hostname: parsed.hostname.toLowerCase(),
-      ...(parsed.port === '' ? {} : { port: parsed.port }),
+      ...(port === undefined ? {} : { port }),
     }
   } catch {
     return undefined
@@ -150,6 +167,8 @@ function hostEntry(value: string): { hostname: string; port?: string } | undefin
  * Whether a URL is covered by a connection's host allowlist. A port-less entry
  * covers only the scheme's DEFAULT port: the same hostname on another port is
  * not implied, so an injected URL cannot move a credential to a side service.
+ * An entry that names a port (including a default port such as `:443`) compares
+ * effective ports exactly and never covers the other scheme's default.
  */
 function hostAllowed(url: URL, allowedHosts: readonly string[] | undefined): boolean {
   if (allowedHosts === undefined || allowedHosts.length === 0) return true

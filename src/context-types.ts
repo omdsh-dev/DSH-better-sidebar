@@ -831,25 +831,6 @@ export interface SidebarCredentialProvider {
   describe?(ref: string): Promise<{ configured: boolean; source?: string; writable?: boolean }>
 }
 
-/** One registered host workspace (the subset clue operations resolve). */
-export interface SidebarWorkspaceRegistry {
-  get(id: string): { readonly id?: string; readonly path?: string } | undefined
-}
-
-/**
- * The approval seam (mirror of @deepseek-ai/dsh-user-approval). S2 does not
- * prompt approval itself: it only exposes the structural mirror so the host
- * tool bridge is typed against the policy it actually goes through.
- */
-export interface SidebarApprovalService {
-  request(request: {
-    readonly agent: unknown
-    readonly toolName: string
-    readonly reason?: string
-    readonly [key: string]: unknown
-  }): Promise<'allowed-once' | 'rejected' | 'cancelled' | 'unavailable'>
-}
-
 /** One tool execution handed to the host registry (structural mirror). */
 export interface SidebarToolExecutionInput {
   readonly callId: string
@@ -864,7 +845,12 @@ export interface SidebarToolExecutionInput {
 /** One host tool failure (the raw message never reaches a model projection here). */
 export interface SidebarToolExecutionFailure {
   readonly message: string
-  readonly info?: { readonly name: string; readonly code: string; readonly reason?: string }
+  /**
+   * Structured failure metadata. `code` is absent on some host denials (for
+   * example an approval/channel denial), so the MCP bridge also recognizes the
+   * structured `name`/`reason` before falling back to a sanitized `failed`.
+   */
+  readonly info?: { readonly name: string; readonly code?: string; readonly reason?: string }
 }
 
 /** One materialized host tool outcome (structural mirror of ToolExecutionResult). */
@@ -940,10 +926,6 @@ export interface SidebarContextShape {
    * and never copies the value into preferences, clues, exports or a cache.
    */
   credentials?: SidebarCredentialProvider
-  /** Host workspace registry (optional; existing S1 reads degrade gracefully). */
-  workspaceRegistry?: SidebarWorkspaceRegistry
-  /** Host approval seam (optional; the tool bridge never prompts on its own). */
-  approval?: SidebarApprovalService
   /** The client locale service face. */
   locale: SidebarLocaleService
   /** The client module system (rc.8+ chunk-loader externals). */

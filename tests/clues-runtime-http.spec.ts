@@ -370,3 +370,35 @@ describe('requireHttpOk', () => {
     expect(categoryOf(503)).toBe('failed')
   })
 })
+
+describe('allowlist default-port normalization', () => {
+  it('compares named ports exactly, including explicit default ports', async () => {
+    const { client } = makeClient(() => textResponse(200, 'ok'))
+    // `https://host:443` is an explicit :443 entry and must not cover the
+    // other scheme's default port (http/80).
+    await expect(client.request({
+      url: 'http://api.example.invalid/x',
+      allowedHosts: ['https://api.example.invalid:443'],
+    })).rejects.toMatchObject({ category: 'permission-denied' })
+    // ...but it does cover https on its default port (WHATWG URL serializes the
+    // explicit :443 away, so the entry's written port must be preserved).
+    await expect(client.request({
+      url: 'https://api.example.invalid/x',
+      allowedHosts: ['api.example.invalid:443'],
+    })).resolves.toMatchObject({ status: 200 })
+    // The same holds for an explicit http :80.
+    await expect(client.request({
+      url: 'https://api.example.invalid/x',
+      allowedHosts: ['http://api.example.invalid:80'],
+    })).rejects.toMatchObject({ category: 'permission-denied' })
+    await expect(client.request({
+      url: 'http://api.example.invalid/x',
+      allowedHosts: ['api.example.invalid:80'],
+    })).resolves.toMatchObject({ status: 200 })
+    // A port-less entry covers only the scheme's default port.
+    await expect(client.request({
+      url: 'https://api.example.invalid:443/x',
+      allowedHosts: ['api.example.invalid'],
+    })).resolves.toMatchObject({ status: 200 })
+  })
+})
