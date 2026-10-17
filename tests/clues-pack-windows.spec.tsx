@@ -486,6 +486,68 @@ describe('clue share window', () => {
     view.unmount()
   })
 
+  it('exports with the protocol mode "references" (not the singular client spelling)', async () => {
+    const { face } = faceOf()
+    const bodies: Record<string, unknown>[] = []
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (typeof init?.body === 'string') bodies.push(JSON.parse(init.body) as Record<string, unknown>)
+      if (String(url).includes('/sidebar/api/clues.share.exportPreview')) {
+        return new Response(JSON.stringify({
+          ok: true,
+          value: {
+            mode: 'references',
+            fileName: 'release.cluepack',
+            items: [],
+            packs: [{ packId: 'p1', name: 'Release clues', members: 2 }],
+            warnings: [],
+            totals: { clues: 2, packs: 1, sources: 1 },
+          },
+        }), { status: 200 })
+      }
+      if (String(url).includes('/sidebar/clues/share/export')) {
+        return new Response(new Uint8Array([1, 2, 3]), {
+          status: 200,
+          headers: {
+            'content-type': 'application/zip',
+            'content-disposition': 'attachment; filename="release.cluepack"',
+            'x-cluepack-complete': 'true',
+            'x-cluepack-issues': '0',
+          },
+        })
+      }
+      throw new Error(`unexpected fetch ${String(url)}`)
+    })
+
+    const view = renderRoot(createElement(SharePage, {
+      windows: recordingWindows().windows,
+      workspaceId: 'ws-1',
+      face,
+      packIds: ['p1'],
+    }))
+    await flush(6)
+    const select = view.container.querySelector<HTMLSelectElement>('select')!
+    expect([...select.options].map(option => option.value)).toContain('references')
+    act(() => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!
+      setter.call(select, 'references')
+      select.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+    await flush()
+    click(view.container, 'Preview')
+    await flush(6)
+    click(view.container, 'Export .cluepack')
+    await flush(8)
+
+    // Progress polls are a different payload shape; only preview/export carry
+    // the archive mode.
+    const archiveBodies = bodies.filter(body => body.workspaceId === 'ws-1')
+    expect(archiveBodies).toHaveLength(2)
+    expect(archiveBodies.every(body => body.mode === 'references')).toBe(true)
+    // The host protocol only knows the plural spelling.
+    expect(bodies.some(body => body.mode === 'reference')).toBe(false)
+    view.unmount()
+  })
+
   it('previews an import and reports unresolved rows and missing sources', async () => {
     const { face } = faceOf()
     fetchMock.mockImplementation(async (url: string) => {

@@ -22,7 +22,7 @@ import { call } from '../api.ts'
 import { hostRouteUrl } from '../host-route-url.ts'
 
 /** The two archive modes (mirrors the S7 protocol; no node import). */
-export type CluepackMode = 'snapshot' | 'reference'
+export type CluepackMode = 'snapshot' | 'references'
 
 /** One preview row shown on the export confirmation screen. */
 export interface ShareExportItemPreview {

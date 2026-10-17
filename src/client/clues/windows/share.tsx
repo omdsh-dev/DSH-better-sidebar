@@ -292,7 +292,7 @@ export function SharePage(props: OpenShareWindowOptions): ReactNode {
               }}
             >
               <option value="snapshot">{t('clueShareModeSnapshot')}</option>
-              <option value="reference">{t('clueShareModeReference')}</option>
+              <option value="references">{t('clueShareModeReference')}</option>
             </select>
           </label>
 
