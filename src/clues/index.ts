@@ -106,7 +106,7 @@ export function installClues(ctx: Context, options: InstallCluesOptions = {}): C
   // a foreign registrant can never claim `builtin.files`.
   const disposeSource = service.registerSource(createLocalFileSource())
   const disposeApi = registerCluesApi(service)
-  // Crodis' `provide` publishes the face on the current fiber. Test contexts
+  // Cordis' `provide` publishes the face on the current fiber. Test contexts
   // used by the plugin's own route specs are structural fakes that omit it, so
   // the publish is feature-detected; a real mount always has it.
   const provide = (ctx as { provide?: (name: string, value?: unknown) => unknown }).provide
