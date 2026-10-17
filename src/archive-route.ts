@@ -218,8 +218,11 @@ export interface ArchiveTaskOptions {
 /** Create one archive task table (one per plugin mount). */
 export function createArchiveTasks(options: ArchiveTaskOptions = {}): ArchiveTasks {
   const tasks = new Map<string, ArchiveTask>()
-  /** Running children, by task id (teardown kills them). */
-  const children = new Map<string, { kill(): void }>()
+  /**
+   * Running children, by task id (teardown kills them and then AWAITS their
+   * close event before unlinking the file they were writing).
+   */
+  const children = new Map<string, { kill(): void; closed: Promise<void> }>()
   /**
    * In-flight output descriptors, by task id (with the temp path they own).
    * The descriptor stays open across the spawn (`stdio[1]` is that fd), so
@@ -261,6 +264,7 @@ export function createArchiveTasks(options: ArchiveTaskOptions = {}): ArchiveTas
 
   return {
     async start({ sessionId, name, paths }) {
+      if (disposed) throw new SidebarError('unavailable', 'archive tasks were shut down', 503)
       sweep(Date.now())
       let building = 0
       for (const task of tasks.values()) if (task.state === 'building') building += 1
@@ -271,6 +275,10 @@ export function createArchiveTasks(options: ArchiveTaskOptions = {}): ArchiveTas
       // One call either way: `spawn` has a default, so passing `undefined`
       // selects the real implementation without a second code path.
       const spec = await resolve(spawner)
+      // Teardown may land during the (async) tool probe: after this point no
+      // await separates the check from `tasks.set`, so the task cannot be
+      // created after dispose cleared the table.
+      if (disposed) throw new SidebarError('unavailable', 'archive tasks were shut down', 503)
       if (spec === undefined) {
         // A NEW wire code, and deliberately its own: "this machine has no zip
         // and no tar" is not a failure of the selection, and the client shows
@@ -323,7 +331,8 @@ export function createArchiveTasks(options: ArchiveTaskOptions = {}): ArchiveTas
     dispose() {
       disposing ??= (async () => {
         disposed = true
-        for (const child of children.values()) {
+        const running = [...children.values()]
+        for (const child of running) {
           try {
             child.kill()
           } catch {
@@ -331,6 +340,11 @@ export function createArchiveTasks(options: ArchiveTaskOptions = {}): ArchiveTas
           }
         }
         children.clear()
+        // Wait for the killed builds to REPORT their close before closing the
+        // output descriptor and unlinking: on Windows the child may still hold
+        // the file, and `rm` would fail with EBUSY (a swallowed error that
+        // leaves the temp archive behind).
+        await Promise.all(running.map(child => child.closed))
         // Close every in-flight descriptor BEFORE unlinking its temp file:
         // Windows answers EBUSY/EPERM for a file that still has an open handle,
         // and a swallowed rm would leave the temp archive behind forever.
@@ -380,10 +394,22 @@ export function createArchiveTasks(options: ArchiveTaskOptions = {}): ArchiveTas
       if (disposed) {
         await handle.close().catch(() => undefined)
         await rm(tempPath, { force: true }).catch(() => undefined)
+        // A race that slipped past `start`'s checks must settle as `error`,
+        // never leave a `building` task behind forever.
+        settle('archive tasks were shut down')
         return
       }
       handles.set(id, { handle, path: tempPath })
-      const result = await runArchiveTool(plan, handle.fd, spawner, child => { children.set(id, child) })
+      const result = await runArchiveTool(plan, handle.fd, spawner, child => {
+        // `close` (not `exit`) is the event that also means the child is done
+        // touching whatever it inherited. Attached synchronously with the
+        // spawn, so a very fast child cannot emit it before we listen.
+        const closed = new Promise<void>(resolve => {
+          child.once('close', () => resolve())
+          child.once('error', () => resolve())
+        })
+        children.set(id, { kill: () => { child.kill() }, closed })
+      })
       await handle.close()
       handles.delete(id)
       handle = undefined

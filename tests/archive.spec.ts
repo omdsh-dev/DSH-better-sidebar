@@ -608,6 +608,22 @@ describe('archive task table (injected spawn)', () => {
     expect(running.tasks.size()).toBe(0)
     expect(ready.tasks.size()).toBe(0)
   })
+
+  it('refuses a build that races teardown instead of leaving it building', async () => {
+    const { tasks } = makeTable({ behavior: { run: { hang: true } } })
+    // `start` awaits the tool probe; dispose lands while that await is in
+    // flight. The post-probe disposed check must refuse the build rather than
+    // create a task after the table was cleared.
+    const starting = tasks.start({ sessionId: 's-1', name: 'race', paths: sampleSelection() })
+    const disposing = tasks.dispose()
+    await expect(starting).rejects.toMatchObject({ code: 'unavailable', status: 503 })
+    await disposing
+    expect(tasks.size()).toBe(0)
+
+    // A build requested after teardown is refused for the same reason.
+    await expect(tasks.start({ sessionId: 's-1', name: 'late', paths: sampleSelection() }))
+      .rejects.toMatchObject({ code: 'unavailable', status: 503 })
+  })
 })
 
 describe('respondArchiveDownload branches', () => {
