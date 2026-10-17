@@ -15,7 +15,7 @@
  *   instead of pretending the command returned an empty list.
  */
 import { EventEmitter } from 'node:events'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -210,6 +210,22 @@ describe('CLI boundary', () => {
     expect(env).toEqual({ PATH: '/bin', GH_CONFIG_DIR: '/cfg' })
   })
 
+  it('refuses plural secret stores and browser credential names', () => {
+    const env = buildCliEnv(
+      {
+        PATH: '/bin',
+        GH_TOKENS: 'plural-token',
+        AWS_CREDENTIALS: 'plural-credential',
+        HTTP_AUTHORIZATION: 'authorization',
+        SESSION_COOKIE: 'cookie',
+        SAFE_CFG: 'keep',
+      },
+      {},
+      ['GH_TOKENS', 'AWS_CREDENTIALS', 'HTTP_AUTHORIZATION', 'SESSION_COOKIE', 'SAFE_CFG'],
+    )
+    expect(env).toEqual({ PATH: '/bin', SAFE_CFG: 'keep' })
+  })
+
   it('kills the child and answers timeout after the deadline', async () => {
     const { spawn, runs } = harness({ autoCloseOnKill: true })
     const runner = createCliRunner({ spawn, env: ENV })
@@ -225,6 +241,24 @@ describe('CLI boundary', () => {
     const promise = runner.run(request({ signal: controller.signal }))
     controller.abort()
     await expect(promise).rejects.toMatchObject({ category: 'cancelled' })
+    expect(runs[0]!.kills).toEqual(['SIGKILL'])
+  })
+
+  it('settles cancelled even when the killed child never emits close', async () => {
+    // A grandchild may inherit the pipes and keep `close` from ever firing.
+    const { spawn, runs } = harness({ autoCloseOnKill: false })
+    const runner = createCliRunner({ spawn, env: ENV })
+    const controller = new AbortController()
+    const promise = runner.run(request({ signal: controller.signal }))
+    controller.abort()
+    await expect(promise).rejects.toMatchObject({ category: 'cancelled' })
+    expect(runs[0]!.kills).toEqual(['SIGKILL'])
+  })
+
+  it('settles timeout even when the killed child never emits close', async () => {
+    const { spawn, runs } = harness({ autoCloseOnKill: false })
+    const runner = createCliRunner({ spawn, env: ENV })
+    await expect(runner.run(request({ timeoutMs: 5 }))).rejects.toMatchObject({ category: 'timeout' })
     expect(runs[0]!.kills).toEqual(['SIGKILL'])
   })
 
@@ -400,6 +434,43 @@ describe('production spawn seam', () => {
     expect((error as ClueError).category).toBe('failed')
     expect((error as ClueError).message).not.toContain('EPIPE')
   })
+
+  it('settles the timeout when a real grandchild keeps the inherited stdio open', async () => {
+    const dir = tempDir()
+    const pidFile = join(dir, 'grandchild.pid')
+    // The direct child exits immediately; its grandchild inherits stdout and
+    // stderr, so Node's `close` event (which waits for every stdio stream) can
+    // never fire until the runner releases those pipes.
+    const script = [
+      "const { spawn } = require('node:child_process')",
+      "const { writeFileSync } = require('node:fs')",
+      "const grandchild = spawn(process.execPath, ['-e', 'setInterval(() => undefined, 1000)'], { stdio: ['ignore', 'inherit', 'inherit'] })",
+      'writeFileSync(process.argv[1], String(grandchild.pid))',
+      'grandchild.unref()',
+      'process.exit(0)',
+    ].join(';')
+    let pid: number | undefined
+    try {
+      const runner = createCliRunner({ spawn: createNodeSpawn(), env: process.env })
+      const startedAt = Date.now()
+      const error = await runner.run({
+        command: process.execPath,
+        args: ['-e', script, pidFile],
+        cwd: dir,
+        timeoutMs: 200,
+      }).catch((caught: unknown) => caught)
+      expect(error).toBeInstanceOf(ClueError)
+      expect((error as ClueError).category).toBe('timeout')
+      // No `close` can arrive while the grandchild lives: only the forced
+      // settlement makes this resolve, close to the configured deadline.
+      expect(Date.now() - startedAt).toBeLessThan(10_000)
+      pid = Number(readFileSync(pidFile, 'utf8'))
+    } finally {
+      if (pid !== undefined && Number.isInteger(pid) && pid > 0) {
+        try { process.kill(pid, 'SIGKILL') } catch { /* already gone */ }
+      }
+    }
+  })
 })
 
 describe('Windows .cmd shim support', () => {
@@ -442,5 +513,20 @@ describe('redactCliOutput', () => {
     expect(redacted).not.toContain('abc123')
     expect(redacted).not.toContain('xoxb-123456789012')
     expect(redacted).not.toContain('AKIAABCDEFGHIJKLMNOP')
+  })
+
+  it('redacts Cookie and Set-Cookie headers and key-value forms', () => {
+    const text = [
+      'Cookie: sessionid=abcdef123456',
+      'Set-Cookie: sid=zyx987654321; Path=/; HttpOnly',
+      '{"cookie":"ghi789","safe":"keep"}',
+      'cookie=plainvalue',
+    ].join('\n')
+    const redacted = redactCliOutput(text)
+    expect(redacted).toContain('"safe":"keep"')
+    expect(redacted).not.toContain('abcdef123456')
+    expect(redacted).not.toContain('zyx987654321')
+    expect(redacted).not.toContain('ghi789')
+    expect(redacted).not.toContain('plainvalue')
   })
 })

@@ -392,6 +392,11 @@ export interface CliSpawnOptions {
 export interface CliReadable {
   on(event: 'data', listener: (chunk: string | Uint8Array) => void): unknown
   on(event: 'error', listener: (error: Error) => void): unknown
+  /**
+   * Release the underlying pipe. Required to settle a timed-out run when a
+   * surviving grandchild inherited the stream and `close` never fires.
+   */
+  destroy?(): void
 }
 
 /** One process's writable stdin. */
@@ -401,6 +406,8 @@ export interface CliWritable {
   on?(event: 'error', listener: (error: Error) => void): unknown
   /** Emitted once `end()` flushed every buffered byte to the OS pipe. */
   on?(event: 'finish', listener: () => void): unknown
+  /** Release the pipe (see {@link CliReadable.destroy}). */
+  destroy?(): void
 }
 
 /** The subset of node:child_process.ChildProcess the CLI runner consumes. */

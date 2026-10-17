@@ -11,7 +11,9 @@
  * - structured stdin for large bodies (they do not belong in argv);
  * - a timeout and an explicit per-stream output cap. A capped/truncated result
  *   says so; it is never presented as the complete output;
- * - cancellation through an AbortSignal that kills the child;
+ * - cancellation through an AbortSignal that kills the child; the stdio
+ *   handles are destroyed and settlement is forced after a short grace, so a
+ *   grandchild holding the inherited pipes cannot hang the promise;
  * - stderr projection: ANSI stripped, token patterns redacted and bounded.
  *   stdout is returned to the trusted adapter ONLY; it never enters an error,
  *   a log message or a model-facing string. `runJson` refuses non-zero exits,
@@ -35,6 +37,12 @@ export const DEFAULT_CLI_TIMEOUT_MS = 30_000
 export const DEFAULT_CLI_MAX_OUTPUT_BYTES = 1 << 20
 /** Bound of the sanitized stderr projection (diagnostics only). */
 export const MAX_CLI_STDERR_BYTES = 16 << 10
+/**
+ * After a timeout/cancellation kills the direct child, wait at most this long
+ * for `close` before settling anyway. A grandchild that inherited stdout/stderr
+ * keeps those pipes open, so `close` may never arrive; the run must not hang.
+ */
+const TERMINATION_GRACE_MS = 100
 
 /**
  * Variables a CLI may inherit. Deliberately small: PATH/HOME/temp/locale plus
@@ -77,9 +85,11 @@ export const CLI_ENV_ALLOWLIST: readonly string[] = [
 
 /**
  * Names that are never forwarded, even when a dependency asks for them:
- * DSH's own environment and anything that reads as a secret store.
+ * DSH's own environment and anything that reads as a secret store. Plurals and
+ * the browser credential names (`AUTHORIZATION`/`COOKIE`) are included on
+ * purpose: they are exactly the names a CLI would never need as configuration.
  */
-const FORBIDDEN_ENV_NAME = /^(?:DSH_|DSH$)|(?:^|_)(?:TOKEN|SECRET|PASSWORD|PASSWD|PASS|API_?KEY|ACCESS_?KEY|PRIVATE_?KEY|CREDENTIAL|AUTH)(?:_|$)/i
+const FORBIDDEN_ENV_NAME = /^(?:DSH_|DSH$)|(?:^|_)(?:TOKENS?|SECRETS?|PASSWORDS?|PASSWD|PASS|API_?KEYS?|ACCESS_?KEYS?|PRIVATE_?KEYS?|CREDENTIALS?|AUTH|AUTHORIZATION|COOKIES?|SESSION_?KEY|BEARER)(?:_|$)/i
 
 /** Whether one environment name is safe to hand to a child. */
 export function isAllowedCliEnvName(name: string): boolean {
@@ -124,14 +134,18 @@ function stripAnsi(text: string): string {
  */
 export function redactCliOutput(text: string): string {
   let output = stripAnsi(text)
-  // Whole authorization headers first: `Authorization: Bearer …` (the scheme
-  // word alone must not be the only redacted part).
-  output = output.replace(/^([ \t]*(?:proxy-)?authorization[ \t]*:[ \t]*).*$/gim, '$1[redacted]')
-  // Header / key-value forms: `token=…`, `"api_key": "…"`. Keep the key,
-  // replace the value. Longer token names come first so `access_token` is not
-  // half-matched by the bare `token` alternative.
+  // Whole credential headers first: `Authorization: Bearer …`,
+  // `Cookie: …` and `Set-Cookie: …` (the scheme word alone must not be the
+  // only redacted part).
   output = output.replace(
-    /((?:access[_-]?token|refresh[_-]?token|id[_-]?token|api[_-]?token|auth[_-]?token|token|api[_-]?key|private[_-]?key|password|passwd|secret)["']?\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s,;}]+)/gi,
+    /^([ \t]*(?:(?:proxy-)?authorization|(?:set-)?cookie)[ \t]*:[ \t]*).*$/gim,
+    '$1[redacted]',
+  )
+  // Header / key-value forms: `token=…`, `"api_key": "…"`, `"cookie":"…"`.
+  // Keep the key, replace the value. Longer token names come first so
+  // `access_token` is not half-matched by the bare `token` alternative.
+  output = output.replace(
+    /((?:access[_-]?token|refresh[_-]?token|id[_-]?token|api[_-]?token|auth[_-]?token|token|api[_-]?key|private[_-]?key|password|passwd|secret|(?:set[_-]?)?cookie)["']?\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s,;}]+)/gi,
     '$1[redacted]',
   )
   output = output.replace(/\bBearer\s+[A-Za-z0-9\-._~+/]{8,}=*/gi, 'Bearer [redacted]')
@@ -256,12 +270,14 @@ export function createCliRunner(options: CliRunnerOptions): CliRunner {
       let settled = false
       let timedOut = false
       let aborted = false
+      let forceTimer: ReturnType<typeof setTimeout> | undefined
 
       const stdout = createCapture(maxOutputBytes)
       const stderr = createCapture(maxOutputBytes)
 
       const cleanup = (): void => {
         clearTimeout(timer)
+        if (forceTimer !== undefined) clearTimeout(forceTimer)
         request.signal?.removeEventListener('abort', onAbort)
       }
       const fail = (error: ClueError): void => {
@@ -289,9 +305,41 @@ export function createCliRunner(options: CliRunnerOptions): CliRunner {
       const kill = (): void => {
         try { child.kill('SIGKILL') } catch { /* already gone */ }
       }
+      /** Release a stdio pipe even when a surviving grandchild still holds it. */
+      const destroyStream = (stream: { destroy?(): void } | null | undefined): void => {
+        try { stream?.destroy?.() } catch { /* already closed */ }
+      }
+      /** The final answer after a kill whose `close` event never arrives. */
+      const forceSettle = (): void => {
+        if (timedOut) {
+          fail(new ClueError('timeout', 'the CLI operation timed out'))
+          return
+        }
+        if (aborted) {
+          fail(new ClueError('cancelled', 'the CLI operation was cancelled'))
+          return
+        }
+        fail(new ClueError('failed', 'the CLI process could not be terminated cleanly'))
+      }
+      /**
+       * Kill the child AND destroy the three stdio handles. Node emits `close`
+       * only once every stdio stream is closed; a grandchild that inherited
+       * stdout/stderr keeps the pipe open after the direct child exits. In that
+       * case the short grace timer settles the promise instead of hanging it.
+       */
+      const terminate = (): void => {
+        kill()
+        destroyStream(child.stdout)
+        destroyStream(child.stderr)
+        destroyStream(child.stdin)
+        if (forceTimer === undefined) {
+          forceTimer = setTimeout(forceSettle, TERMINATION_GRACE_MS)
+          forceTimer.unref?.()
+        }
+      }
       const onAbort = (): void => {
         aborted = true
-        kill()
+        terminate()
       }
 
       try {
@@ -309,7 +357,7 @@ export function createCliRunner(options: CliRunnerOptions): CliRunner {
 
       const timer = setTimeout(() => {
         timedOut = true
-        kill()
+        terminate()
       }, timeoutMs)
       // Do not keep the event loop alive just for a pending child timeout.
       timer.unref?.()
