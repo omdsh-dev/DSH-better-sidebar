@@ -54,12 +54,21 @@ function rawText(value: JsonValue): string {
  */
 export function ClueFormatHost(props: ClueFormatHostProps): ReactNode {
   const {
-    registry, sourceId, typeId, format, document, readOnly, saving, onChange, onSave,
+    registry, sourceId, typeId, format, document, readOnly, saving, loading, error, onChange, onSave,
   } = props
   const renderer = useFormatRenderer(registry, format)
+  const status = (
+    <>
+      {loading === true && <div className={css.documentStatus} data-window-loading>{t('loading')}</div>}
+      {error !== undefined && error !== '' && (
+        <div className={css.documentError} data-window-error role="alert">{error}</div>
+      )}
+    </>
+  )
   if (renderer !== undefined) {
     return (
       <>
+        {status}
         {renderer({
           sourceId,
           typeId,
@@ -75,6 +84,7 @@ export function ClueFormatHost(props: ClueFormatHostProps): ReactNode {
   }
   return (
     <section className={css.unknownFormat} data-window-unknown-format role="note">
+      {status}
       <div className={css.unknownHead}>
         <span className={css.readOnlyBadge} data-window-read-only>{t('windowReadOnly')}</span>
         <span className={css.unknownTitle}>{t('windowUnknownFormat')}</span>

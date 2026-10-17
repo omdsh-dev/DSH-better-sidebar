@@ -44,6 +44,7 @@ import {
 import { createPortal } from 'react-dom'
 import { Button, IconCloseFillRegular, IconFullscreenOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import { createFrameBatcher } from './frame-batcher.ts'
+import { isNarrowWidth } from './breakpoints.ts'
 import { clampNumber, clampWindowBox, maximizedWindowBox, placeWindowBox, type WindowBox } from './windows/geometry.ts'
 import { useWindowLayer } from './windows/layer.ts'
 import { t } from './locales.ts'
@@ -131,13 +132,18 @@ function initialBox(
   min: { width: number; height: number },
   viewport: { width: number; height: number },
 ): WindowBox {
+  // A caller-provided size (the task window's compact form, a log's explicit
+  // box) is honoured. An unsized window on a NARROW viewport uses the
+  // near-fullscreen form instead of a shrunken 70%/60% box — the same rule the
+  // public host applies to its presets.
+  const narrow = size === undefined && isNarrowWidth(viewport.width)
   const width = clampNumber(
-    size?.width ?? viewport.width * DEFAULT_WIDTH_RATIO,
+    size?.width ?? (narrow ? viewport.width - VIEWPORT_MARGIN * 2 : viewport.width * DEFAULT_WIDTH_RATIO),
     min.width,
     Math.max(min.width, viewport.width - VIEWPORT_MARGIN * 2),
   )
   const height = clampNumber(
-    size?.height ?? viewport.height * DEFAULT_HEIGHT_RATIO,
+    size?.height ?? (narrow ? viewport.height - VIEWPORT_MARGIN * 2 : viewport.height * DEFAULT_HEIGHT_RATIO),
     min.height,
     Math.max(min.height, viewport.height - VIEWPORT_MARGIN * 2),
   )

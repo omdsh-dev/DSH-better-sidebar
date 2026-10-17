@@ -35,6 +35,21 @@
   display: none;
 }
 
+/* Source-reported load/save state: explicit, in the same surface. */
+.documentStatus {
+  margin: 0 0 8px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.documentError {
+  margin: 0 0 8px;
+  padding: 4px 8px;
+  border: 1px solid var(--dsw-alias-state-error-primary);
+  border-radius: 4px;
+  color: var(--dsw-alias-state-error-primary);
+  overflow-wrap: anywhere;
+}
+
 /* Unknown format: a read-only summary, never a generic save affordance. */
 .unknownFormat {
   display: flex;

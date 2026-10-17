@@ -131,6 +131,28 @@ describe('window format renderer seat', () => {
     expect(frame('Unknown').textContent).toContain('late renderer')
   })
 
+  it('renders explicit loading and source error states in the same surface', () => {
+    act(() => {
+      host!.open({
+        id: 'state',
+        title: 'State',
+        content: {
+          kind: 'document',
+          sourceId: 'test.docs',
+          typeId: 'test.docs.blocks',
+          format: 'application/x-state-format',
+          document: { format: 'application/x-state-format', data: { blocks: [] } },
+          loading: true,
+          error: 'save conflict: reread the source',
+        },
+      })
+    })
+    expect(frame('State').querySelector('[data-window-loading]')?.textContent).toBe('加载中…')
+    expect(frame('State').querySelector('[data-window-error]')?.textContent).toBe('save conflict: reread the source')
+    // No registered renderer: the status + read-only summary still render.
+    expect(frame('State').querySelector('[data-window-unknown-format]')).not.toBeNull()
+  })
+
   it('renders a plain React node content unchanged', () => {
     act(() => {
       host!.open({ id: 'plain', title: 'Plain', content: createElement('p', { 'data-plain': '' }, 'hello') })

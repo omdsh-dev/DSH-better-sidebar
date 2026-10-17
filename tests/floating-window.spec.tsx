@@ -105,6 +105,14 @@ describe('FloatingWindow frame', () => {
     unmount()
   })
 
+  it('uses the near-fullscreen form for an unsized window on a narrow viewport', () => {
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 })
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 844 })
+    const { unmount } = renderWindow()
+    expect(box()).toEqual({ left: 8, top: 8, width: 374, height: 828 })
+    unmount()
+  })
+
   it('opens next to its anchor, clamped into the viewport', () => {
     const anchor = document.createElement('button')
     document.body.append(anchor)

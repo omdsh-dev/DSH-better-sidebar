@@ -40,6 +40,10 @@ export interface WindowDocumentContent {
   readonly readOnly?: boolean
   /** A save owned by the source is in flight (the renderer must not claim success). */
   readonly saving?: boolean
+  /** Initial/refresh load in flight: the host renders the shared loading line. */
+  readonly loading?: boolean
+  /** Source-reported failure/conflict copy: rendered in the same surface, above the content. */
+  readonly error?: string
   onChange?(data: JsonValue): void
   onSave?(): void
 }
