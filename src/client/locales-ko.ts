@@ -635,4 +635,6 @@ export const ko: Record<string, string> = {
   pluginTurnOutlineDesc: "세션을 사용자 턴(입력 + 도구 단계 + 출력)으로 접어 요약하고, 아무 단계나 클릭하면 대화의 정확한 위치로 한 번에 점프합니다. LLM 호출 없음, 읽기 전용",
   pluginDshMemoryDeltaName: 'dsh-memory-delta 메모리',
   pluginDshMemoryDeltaDesc: '세션 간 기억: 변경된 부분만 주입하고(변경이 없으면 아무것도 주입하지 않음), 검토 시점 알림, 관련도 정렬 검색, 사이드바 탭을 제공합니다.',
+  pluginPrInboxName: "dsh-pr-inbox PR 받은편지함",
+  pluginPrInboxDesc: "현재 워크스페이스의 GitHub PR을 「내가 올린 / 내 리뷰 대기 / 내가 병합한」 세 구역으로 표시합니다. 패널에서 본문·댓글 요약·변경 파일 목록을 읽을 수 있고, 로컬 gh 로그인을 사용하는 읽기 전용 플러그인입니다",
 }

@@ -629,4 +629,6 @@ export const de: Record<string, string> = {
   pluginTurnOutlineDesc: "Faltet die Sitzung in Benutzerrunden (Eingabe + Tool-Schritte + Ausgabe); Klick auf einen Schritt springt an die genaue Stelle im Gespräch — ohne LLM, nur lesend",
   pluginDshMemoryDeltaName: 'dsh-memory-delta Gedächtnis',
   pluginDshMemoryDeltaDesc: 'Sitzungsübergreifendes Gedächtnis: nur Änderungen werden injiziert (nichts, wenn sich nichts geändert hat), mit Erinnerung an den Prüftermin, Relevanz-Suche und Sidebar-Tab.',
+  pluginPrInboxName: "dsh-pr-inbox PR-Posteingang",
+  pluginPrInboxDesc: "Die GitHub-PRs des aktuellen Workspace in drei Gruppen — von mir erstellt / wartet auf mein Review / von mir gemergt — mit Text, Kommentarübersicht und geänderten Dateien im Panel; schreibgeschützt über deinen lokalen gh-Login",
 }

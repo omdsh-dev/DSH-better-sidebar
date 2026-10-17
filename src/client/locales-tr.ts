@@ -643,4 +643,6 @@ export const tr: Record<string, string> = {
   pluginTurnOutlineDesc: "Oturumu kullanıcı turlarına (girdi + araç adımları + çıktı) katlar; herhangi bir adıma tıklayarak sohbette tam konumuna atlayın — LLM çağrısı yok, yalnızca okunur",
   pluginDshMemoryDeltaName: 'dsh-memory-delta Bellek',
   pluginDshMemoryDeltaDesc: 'Oturumlar arası bellek: yalnızca değişenler enjekte edilir (değişiklik yoksa hiçbir şey), gözden geçirme tarihi hatırlatması, alaka sıralı arama ve kenar çubuğu sekmesi ile.',
+  pluginPrInboxName: "dsh-pr-inbox PR Gelen Kutusu",
+  pluginPrInboxDesc: "Geçerli çalışma alanının GitHub PR'ları üç grupta — benim açtıklarım / incelememi bekleyenler / benim birleştirdiklerim — panelde gövde, yorum özeti ve değişen dosyalarla; yerel gh oturumunuzla salt okunur",
 }
