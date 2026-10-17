@@ -28,6 +28,7 @@ import {
   ClueError,
   type ClueCandidate,
   type ClueListResult,
+  type CluePortableRef,
 } from '../src/clues/types.ts'
 import { removeTree } from './temp-tree.ts'
 
@@ -368,6 +369,84 @@ describe('clue service registration', () => {
     expect(remapped.clue.id).toBe(imported.clue.id)
     expect(remapped.clue.unresolved).toBeUndefined()
     expect((await service.read({ workspaceId: 'ws-1', clueId: imported.clue.id })).text).toBe('portable')
+  })
+
+  it('refuses a malformed portable reference before it can corrupt the library', async () => {
+    const service = makeService()
+    const base = {
+      workspaceId: 'ws-1',
+      sourceId: 'test.source',
+      typeId: 'test.source.text',
+      locator: { id: 'lost' },
+      title: 'Lost doc',
+      reason: 'the source plugin is not installed',
+    }
+    const malformed: unknown[] = [
+      { locator: { id: 'lost' } }, // no `portable` boolean at all
+      { portable: 'yes', locator: { id: 'lost' } },
+      { portable: true, locator: null },
+      { portable: true, locator: [{ id: 'lost' }] },
+      { portable: true, reason: 42 },
+      null,
+    ]
+    for (const portable of malformed) {
+      await expect(service.importUnresolved({ ...base, portable: portable as CluePortableRef }))
+        .rejects.toMatchObject({ category: 'invalid-request' })
+    }
+    // Nothing was written. A malformed marker is validated on every READ, so
+    // one persisted here would make the whole workspace library unreadable.
+    await expect(service.listClues('ws-1')).resolves.toMatchObject({ clues: [], revision: 0 })
+
+    // The valid shape is copied down to the contract fields only: an unknown
+    // key from the importer is not persisted.
+    const imported = await service.importUnresolved({
+      ...base,
+      portable: { portable: true, locator: { id: 'lost' }, extra: 'ignored' } as unknown as CluePortableRef,
+    })
+    expect(imported.clue.unresolved?.portable).toEqual({ portable: true, locator: { id: 'lost' } })
+    expect(await service.listClues('ws-1')).toMatchObject({ clues: [{ id: imported.clue.id }] })
+  })
+
+  it('deduplicates a portable-only import and keeps one row through a later remap', async () => {
+    const service = makeService()
+    const input = {
+      workspaceId: 'ws-1',
+      sourceId: 'test.source',
+      typeId: 'test.source.text',
+      locator: {},
+      title: 'Portable only',
+      reason: 'source offline',
+      portable: { portable: true, locator: { id: 'only-portable' } },
+    } as const
+    const first = await service.importUnresolved(input)
+    expect(first.created).toBe(true)
+    // The row's own locator is `{}`; the portable locator is the only address.
+    // Importing the same share again must reuse the id, not mint a second row.
+    const second = await service.importUnresolved({ ...input, title: 'Renamed share' })
+    expect(second.created).toBe(false)
+    expect(second.clue.id).toBe(first.clue.id)
+    expect(second.clue.title).toBe('Renamed share')
+    expect(second.clue.unresolved?.portable).toEqual({
+      portable: true,
+      locator: { id: 'only-portable' },
+    })
+    expect((await service.listClues('ws-1')).clues).toHaveLength(1)
+
+    // Once the source is registered, `ensure` remaps that same row (no
+    // duplicate residue) and clears the unresolved marker.
+    service.registerSource(testSource())
+    const remapped = await service.ensure({
+      workspaceId: 'ws-1',
+      sourceId: 'test.source',
+      typeId: 'test.source.text',
+      locator: { id: 'only-portable' },
+      title: 'Portable only',
+    })
+    expect(remapped.created).toBe(false)
+    expect(remapped.clue.id).toBe(first.clue.id)
+    expect(remapped.clue.unresolved).toBeUndefined()
+    expect((await service.listClues('ws-1')).clues).toHaveLength(1)
+    expect((await service.read({ workspaceId: 'ws-1', clueId: first.clue.id })).text).toBe('only-portable')
   })
 
   it('preserves namespaced descriptor extensions in registry copies', async () => {

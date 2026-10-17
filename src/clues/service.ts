@@ -327,6 +327,35 @@ function requireLocator(value: unknown, what = 'locator'): Locator {
   return value as Locator
 }
 
+/**
+ * Validate and copy one portable reference supplied by an importer.
+ *
+ * The store validates `ClueUnresolved.portable` on every READ, so a malformed
+ * one written here would make the whole workspace library unreadable (every
+ * later `listClues` / import fails as corrupt). The public boundary therefore
+ * refuses it before the write, and copies only the contract fields: unknown
+ * keys from an untrusted importer must not be persisted.
+ */
+function portableRefOf(value: unknown): CluePortableRef | undefined {
+  if (value === undefined) return undefined
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw new ClueError('invalid-request', 'clue portable reference must be a JSON object')
+  }
+  const raw = value as Record<string, unknown>
+  if (typeof raw.portable !== 'boolean') {
+    throw new ClueError('invalid-request', 'clue portable reference needs a boolean "portable" field')
+  }
+  const locator = raw.locator === undefined ? undefined : requireLocator(raw.locator, 'portable locator')
+  if (raw.reason !== undefined && typeof raw.reason !== 'string') {
+    throw new ClueError('invalid-request', 'clue portable reference "reason" must be a string')
+  }
+  return {
+    portable: raw.portable,
+    ...(locator === undefined ? {} : { locator }),
+    ...(raw.reason === undefined ? {} : { reason: raw.reason as string }),
+  }
+}
+
 /** Validate and clamp one explicit page limit. */
 function pageLimitOf(limit: number | undefined, sourceId: string): number {
   if (limit === undefined) return DEFAULT_PAGE_LIMIT
@@ -510,12 +539,26 @@ export function createCluesService(options: CluesServiceOptions = {}): CluesServ
     return stableLocatorKey(locator)
   }
 
+  /**
+   * Equality key of a STORED locator. A portable-only import deliberately
+   * stores `{}` until the source is re-registered; a source-specific key
+   * implementation may reject that placeholder, which is simply "not a
+   * match" — it must not make every later lookup in the workspace fail.
+   */
+  const storedLocatorKeyOf = (source: RegisteredSource, locator: Locator): string | undefined => {
+    try {
+      return locatorKeyOf(source, locator)
+    } catch {
+      return undefined
+    }
+  }
+
   const findClueByLocator = (
     state: WorkspaceState,
     source: RegisteredSource,
     key: string,
   ): Clue | undefined => state.clues.find(clue =>
-    clue.sourceId === source.descriptor.sourceId && locatorKeyOf(source, clue.locator) === key)
+    clue.sourceId === source.descriptor.sourceId && storedLocatorKeyOf(source, clue.locator) === key)
 
   const stateOrEmpty = async (workspaceId: string): Promise<WorkspaceState> => {
     if (!store.available) {
@@ -593,7 +636,8 @@ export function createCluesService(options: CluesServiceOptions = {}): CluesServ
       : String(locator.path ?? locator.id ?? locator.url ?? 'clue')
     const key = locatorKeyOf(source, locator)
     const clueId = existing?.clues.find(clue =>
-      clue.sourceId === source.descriptor.sourceId && locatorKeyOf(source, clue.locator) === key)?.id
+      clue.sourceId === source.descriptor.sourceId
+      && storedLocatorKeyOf(source, clue.locator) === key)?.id
     return {
       sourceId: source.descriptor.sourceId,
       typeId: declared,
@@ -898,7 +942,7 @@ export function createCluesService(options: CluesServiceOptions = {}): CluesServ
           ?? state.clues.find(clue =>
             clue.sourceId === source.descriptor.sourceId
             && clue.unresolved?.portable?.locator !== undefined
-            && locatorKeyOf(source, clue.unresolved.portable.locator) === key)
+            && storedLocatorKeyOf(source, clue.unresolved.portable.locator) === key)
         if (existing !== undefined) {
           if (existing.unresolved === undefined) return { clue: existing, created: false }
           // REMAP: the same stable reference resolves now. Keep its id (packs,
@@ -955,40 +999,45 @@ export function createCluesService(options: CluesServiceOptions = {}): CluesServ
         throw new ClueError('invalid-request', 'an unresolved clue needs a non-empty reason')
       }
       const locator = requireLocator(params.locator)
-      const portable = params.portable
-      // The stored locator is exactly what the importer supplied (a portable
-      // locator or `{}`), never a fabricated resolvable address. For DEDUPE
-      // only, a usable locator (the row's own, else the portable one) is
-      // normalized through the source when it is registered, so a later
-      // `ensure` sees the same key.
-      const dedupeLocator = Object.keys(locator).length > 0
-        ? locator
-        : portable?.locator !== undefined && Object.keys(portable.locator).length > 0
-          ? portable.locator
-          : undefined
+      const portable = portableRefOf(params.portable)
       const source = sources.get(sourceId)
       const context = contextOf(workspaceId, call)
-      const normalizedDedupe = dedupeLocator === undefined
-        ? undefined
-        : source === undefined
-          ? requireLocator(dedupeLocator, 'portable locator')
-          : normalizeSourceLocator(source, dedupeLocator, context)
-      const dedupeKey = normalizedDedupe === undefined
-        ? undefined
-        : source === undefined
-          ? stableLocatorKey(normalizedDedupe)
-          : locatorKeyOf(source, normalizedDedupe)
+      // The row stores exactly what the importer supplied (a portable locator
+      // or `{}`), never a fabricated resolvable address. DEDUPE, however, must
+      // recognize the resource under EVERY address the import carries: a
+      // portable-only row has an empty locator, so comparing `clue.locator`
+      // alone minted a second id for the same resource.
+      const keyOf = (value: Locator): string => source === undefined
+        ? stableLocatorKey(value)
+        : locatorKeyOf(source, normalizeSourceLocator(source, value, context))
+      const importKeys = new Set<string>()
+      for (const value of [locator, portable?.locator]) {
+        if (value === undefined || Object.keys(value).length === 0) continue
+        importKeys.add(keyOf(value))
+      }
+      /** Keys under which one stored row already names this resource. */
+      const storedKeysOf = (clue: Clue): string[] => {
+        const keys: string[] = []
+        for (const value of [clue.locator, clue.unresolved?.portable?.locator]) {
+          if (value === undefined) continue
+          if (source === undefined) {
+            keys.push(stableLocatorKey(value))
+            continue
+          }
+          const key = storedLocatorKeyOf(source, value)
+          if (key !== undefined) keys.push(key)
+        }
+        return keys
+      }
       const unresolved: ClueUnresolved = {
         reason,
         ...(portable === undefined ? {} : { portable }),
       }
       const transaction = await requireStore().transact(workspaceId, undefined, (state) => {
-        if (dedupeKey !== undefined) {
+        if (importKeys.size > 0) {
           const existing = state.clues.find(clue =>
             clue.sourceId === sourceId
-            && (source === undefined
-              ? stableLocatorKey(clue.locator) === dedupeKey
-              : locatorKeyOf(source, clue.locator) === dedupeKey))
+            && storedKeysOf(clue).some(key => importKeys.has(key)))
           if (existing !== undefined) {
             if (existing.unresolved === undefined) return { clue: existing, created: false }
             const next: Clue = { ...existing, title, unresolved, updatedAt: now() }
