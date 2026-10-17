@@ -483,6 +483,22 @@ describe('read and loadEdit', () => {
     expect(fake.runs[0]!.args).not.toContain('auth')
   })
 
+  it('reads and exports a saved clue by id through the stored locator', async () => {
+    const { fake, service } = setup(() => cliResult({ stdout: fixture('issue-read.json') }))
+    const ensured = await service.ensure({
+      workspaceId: WORKSPACE,
+      sourceId: GITHUB_SOURCE_IDS.issue,
+      typeId: GITHUB_TYPE_IDS.issue,
+      locator: locatorOf('issue', 14609),
+      title: 'saved issue',
+    })
+    const read = await service.read({ workspaceId: WORKSPACE, clueId: ensured.clue.id })
+    expect(read.data).toMatchObject({ number: 14609, owner: 'cli', repo: 'cli' })
+    expect(argValue(fake.runs[0]!.args, 'number')).toBe('14609')
+    const portable = await service.portable({ workspaceId: WORKSPACE, clueId: ensured.clue.id })
+    expect(portable).toEqual({ portable: true, locator: locatorOf('issue', 14609) })
+  })
+
   it('reads PR-only draft/merged state', async () => {
     const { service } = setup(() => cliResult({ stdout: fixture('pull-read.json') }))
     const result = await service.read(readParams('pull'))
