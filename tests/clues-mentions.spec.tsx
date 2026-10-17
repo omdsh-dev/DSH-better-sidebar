@@ -2,24 +2,35 @@
  * S5 composer `@` sources contract (client half).
  *
  * The harness is a fake clue face (`ctx.betterSidebar.clues`) plus a fake
- * `inputTriggers` service; no React tree is mounted. Pins:
+ * `inputTriggers` service; no React tree is mounted. One integration case
+ * drives the REAL clue service/store so the production search shape (raw
+ * source candidates WITHOUT a clueId) is exercised, not assumed.
+ *
+ * Pins:
  * - exactly two sources with the frozen codec names, both on `@`;
  * - empty query stays LOCAL (pinned clues / packs) and never calls
  *   `clues.sources()`;
  * - a non-empty query searches only enabled/mention-enabled sources, with
  *   bounded concurrency, cancellation and per-source failure isolation;
- * - every row carries a stable id (existing `clueId` or an explicit `ensure`);
- * - serialize emits only the token (no remote read) and the clipboard is the
- *   same stable reference;
+ * - browsing reuses library rows by sourceId + locator and does NOT rewrite
+ *   the library for them; only genuinely new rows are ensured;
+ * - every row offers an explicit content option; default serialization emits
+ *   only the token (no remote read), content mode reads at submit time and
+ *   rejects failures/limits so the host restores the draft;
+ * - clipboard text is always the stable token, including content mode;
+ * - candidate names are display titles (no UUID alias);
  * - onPick uses only host-supported appearances and the injectable
  *   `openReference` callback, never a fabricated field;
  * - source icons are wrapped (node or size-aware factory, 16px default);
  * - registration/disposal follows the injected Cordis scope.
  */
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { createElement } from 'react'
 import type { ReactNode } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Context } from '../src/context-types.ts'
 import {
   CLUE_CODEC_SOURCE,
@@ -27,18 +38,43 @@ import {
   type Clue,
   type ClueCandidate,
   type CluePack,
+  type ClueReadResult,
   type ClueSourceDescriptor,
   type ClueSourceDisplayDescriptor,
 } from '../src/clues/types.ts'
 import {
+  createCluesService,
+  type ClueSourceRegistration,
+  type CluesService,
+} from '../src/clues/service.ts'
+import type {
+  ClueClientEnsureInput,
+  ClueClientResourceInput,
+  ClueClientSearchInput,
+} from '../src/client/clues/api.ts'
+import {
   createClueInputTriggers,
   installClueInputTriggers,
   type ClueCandidateRequest,
+  type ClueContentPreview,
+  type ClueInputCandidate,
   type ClueInputTriggerSource,
   type ClueMentionsFace,
 } from '../src/client/clues/mentions.ts'
+import { removeTree } from './temp-tree.ts'
 
 const NOW = '2026-10-17T00:00:00.000Z'
+const roots: string[] = []
+
+function tempRoot(): string {
+  const path = mkdtempSync(join(tmpdir(), 'dsh-clues-mentions-'))
+  roots.push(path)
+  return path
+}
+
+afterEach(() => {
+  for (const path of roots.splice(0)) removeTree(path)
+})
 
 /** One source descriptor fixture. */
 function sourceDescriptor(sourceId: string, search = true): ClueSourceDescriptor {
@@ -88,6 +124,7 @@ interface FaceOptions {
   readonly packs?: readonly CluePack[]
   readonly search?: (workspaceId: string, sourceId: string, query: string, signal: AbortSignal) => Promise<{ items: ClueCandidate[] }>
   readonly ensure?: (input: { sourceId: string; typeId: string; title: string }) => Promise<{ id: string; title: string }>
+  readonly read?: (workspaceId: string, input: { readonly clueId: string }, signal: AbortSignal) => Promise<ClueReadResult>
   readonly enabled?: (sourceId: string) => boolean
   readonly mentionEnabled?: (sourceId: string) => boolean
   readonly packsMention?: boolean
@@ -98,6 +135,13 @@ function makeFace(options: FaceOptions = {}) {
   const sources = options.sources ?? [sourceDescriptor('test.alpha')]
   const ensureCalls: Array<{ sourceId: string; typeId: string; title: string }> = []
   let ensureSequence = 0
+  const defaultRead = async (input: { readonly clueId: string }): Promise<ClueReadResult> => ({
+    format: 'text/plain',
+    data: { text: `body:${input.clueId}` },
+    text: `body:${input.clueId}`,
+    fetchedAt: NOW,
+    freshness: 'live',
+  })
   const api = {
     sources: vi.fn(async () => ({ sources: [...sources], types: [] })),
     search: vi.fn(async (workspaceId: string, input: { sourceId: string; query: string }, signal: AbortSignal) => {
@@ -119,9 +163,9 @@ function makeFace(options: FaceOptions = {}) {
     })),
     clues: vi.fn(async () => ({ clues: [...(options.library ?? [])], revision: 0 })),
     packsList: vi.fn(async () => ({ packs: [...(options.packs ?? [])], revision: 0 })),
-    read: vi.fn(async () => {
-      throw new Error('serialize must never read content')
-    }),
+    read: vi.fn(async (workspaceId: string, input: { readonly clueId: string }, signal: AbortSignal) => (
+      options.read === undefined ? defaultRead(input) : options.read(workspaceId, input, signal)
+    )),
   }
   const face: ClueMentionsFace = {
     api: api as unknown as ClueMentionsFace['api'],
@@ -140,6 +184,35 @@ function request(query: string, signal: AbortSignal = new AbortController().sign
 
 const SESSION = { sessionId: 'session-1' }
 
+/** One parsed candidate value. */
+interface CandidateValue {
+  readonly kind: 'clue' | 'pack'
+  readonly id: string
+  readonly mode?: 'content'
+  readonly appearance?: string
+  readonly workspaceId?: string
+}
+
+/** Parse one candidate value produced by the module. */
+function valueOf(candidate: ClueInputCandidate): CandidateValue {
+  return JSON.parse(candidate.value!) as CandidateValue
+}
+
+/** Normal (reference-mode) rows only. */
+function referenceRows(candidates: readonly ClueInputCandidate[]): ClueInputCandidate[] {
+  return candidates.filter(candidate => valueOf(candidate).mode === undefined)
+}
+
+/** The content-mode row of one stable id. */
+function contentRow(candidates: readonly ClueInputCandidate[], id: string): ClueInputCandidate {
+  const found = candidates.find(candidate => {
+    const value = valueOf(candidate)
+    return value.id === id && value.mode === 'content'
+  })
+  if (found === undefined) throw new Error(`no content row for "${id}"`)
+  return found
+}
+
 /** Register a source list through a fake trigger service. */
 function captureSources(): {
   service: { registerSource(source: ClueInputTriggerSource): () => void }
@@ -153,6 +226,66 @@ function captureSources(): {
         sources.set(source.name, source)
         return () => { sources.delete(source.name) }
       },
+    },
+  }
+}
+
+/** Build the real-service clue face (production search shape, no fakes). */
+function realFace(service: CluesService): ClueMentionsFace {
+  return {
+    api: {
+      sources: async () => ({ sources: service.getSources(), types: service.getTypes() }),
+      search: (workspaceId: string, input: ClueClientSearchInput, signal: AbortSignal) =>
+        service.search({ workspaceId, ...input } as Parameters<CluesService['search']>[0], { signal }),
+      clues: (workspaceId: string) => service.listClues(workspaceId),
+      ensure: (workspaceId: string, input: ClueClientEnsureInput, signal: AbortSignal) =>
+        service.ensure({ workspaceId, ...input }, { signal }),
+      pinsList: (workspaceId: string) => service.listPins(workspaceId),
+      packsList: (workspaceId: string) => service.listPacks(workspaceId),
+      read: (workspaceId: string, input: ClueClientResourceInput, signal: AbortSignal) =>
+        service.read({ workspaceId, ...input }, { signal }),
+    } as unknown as ClueMentionsFace['api'],
+    getSourceDisplays: () => [],
+    isSourceEnabled: () => true,
+    isSourceMentionEnabled: () => true,
+    isPacksMentionEnabled: () => true,
+  }
+}
+
+/** One real source with search + read; search deliberately returns raw candidates. */
+function realSearchSource(): ClueSourceRegistration {
+  const sourceId = 'test.real'
+  const typeId = 'test.real.text'
+  return {
+    descriptor: {
+      sourceId,
+      name: sourceId,
+      order: 0,
+      pluginId: 'test',
+      types: [typeId],
+      transport: 'http',
+      capabilities: { resolve: false, list: false, search: true, read: true, edit: false, portable: false },
+    },
+    types: [{
+      typeId,
+      sourceId,
+      formats: ['text/plain'],
+      capabilities: { read: true, edit: false, concurrency: 'none' },
+    }],
+    operations: {
+      search: async () => ({
+        items: [
+          { sourceId, typeId, locator: { id: 'a' }, title: 'Known A' },
+          { sourceId, typeId, locator: { id: 'b' }, title: 'Fresh B' },
+        ],
+      }),
+      read: async (input) => ({
+        format: 'text/plain',
+        data: { text: `body:${String(input.locator.id)}` },
+        text: `body:${String(input.locator.id)}`,
+        fetchedAt: NOW,
+        freshness: 'live',
+      }),
     },
   }
 }
@@ -181,6 +314,16 @@ describe('createClueInputTriggers: source identity and codecs', () => {
     await expect(created.sources[0]!.codec!.serialize('clue-9', controller.signal)).rejects.toMatchObject({ name: 'AbortError' })
     created.dispose()
   })
+
+  it('refuses an id that cannot be represented instead of emitting a bare id', async () => {
+    const { face } = makeFace()
+    const created = createClueInputTriggers({ face, resolveWorkspaceId: () => 'ws-1' })
+    const signal = new AbortController().signal
+    await expect(created.sources[0]!.codec!.serialize('bad id', signal)).rejects.toMatchObject({ category: 'invalid-request' })
+    await expect(created.sources[1]!.codec!.serialize('bad]]id', signal)).rejects.toMatchObject({ category: 'invalid-request' })
+    expect(() => created.sources[0]!.codec!.clipboardText('bad id')).toThrow()
+    created.dispose()
+  })
 })
 
 describe('clues source: empty query', () => {
@@ -192,11 +335,14 @@ describe('clues source: empty query', () => {
     })
     const created = createClueInputTriggers({ face, resolveWorkspaceId: () => 'ws-1' })
     const candidates = await created.sources[0]!.candidates(SESSION, request(''))
-    expect(candidates.map(row => row.label)).toEqual(['Beta', 'Alpha'])
-    expect(candidates[0]!.description).toBe('Alpha source · test.alpha.text')
-    expect(JSON.parse(candidates[0]!.value!)).toEqual({ kind: 'clue', id: 'clue-2', appearance: 'file' })
+    expect(referenceRows(candidates).map(row => row.label)).toEqual(['Beta', 'Alpha'])
+    expect(referenceRows(candidates)[0]!.description).toBe('Alpha source · test.alpha.text')
+    expect(valueOf(referenceRows(candidates)[0]!)).toEqual({ kind: 'clue', id: 'clue-2', appearance: 'file' })
+    // Every reference row also offers the explicit content mode.
+    expect(contentRow(candidates, 'clue-2').label).toBe('Beta (include content)')
     expect(api.sources).not.toHaveBeenCalled()
     expect(api.search).not.toHaveBeenCalled()
+    expect(api.ensure).not.toHaveBeenCalled()
     created.dispose()
   })
 
@@ -206,7 +352,7 @@ describe('clues source: empty query', () => {
       pins: [{ clueId: 'clue-1' }],
     })
     const created = createClueInputTriggers({ face, resolveWorkspaceId: () => 'ws-1' })
-    const [candidate] = await created.sources[0]!.candidates(SESSION, request(''))
+    const [candidate] = referenceRows(await created.sources[0]!.candidates(SESSION, request('')))
     const outcome = created.sources[0]!.onPick!({
       candidate: candidate!,
       session: SESSION,
@@ -223,6 +369,21 @@ describe('clues source: empty query', () => {
         clipboardText: '[[dsh-clue:clue-1]]',
       },
     })
+    created.dispose()
+  })
+
+  it('uses display titles as candidate names, never the stable UUID', async () => {
+    const { face } = makeFace({
+      library: [clue('clue-1', 'test.alpha', 'A readable title')],
+      pins: [{ clueId: 'clue-1' }],
+      packs: [pack('pack-1', 'A readable pack', ['clue-1'])],
+    })
+    const created = createClueInputTriggers({ face, resolveWorkspaceId: () => 'ws-1' })
+    const clues = await created.sources[0]!.candidates(SESSION, request(''))
+    expect(clues.every(candidate => candidate.name === candidate.label)).toBe(true)
+    expect(clues.map(candidate => candidate.name)).not.toContain('clue-1')
+    const packs = await created.sources[1]!.candidates(SESSION, request(''))
+    expect(packs.every(candidate => candidate.name === candidate.label)).toBe(true)
     created.dispose()
   })
 
@@ -252,11 +413,12 @@ describe('packs source', () => {
     const { face, api } = makeFace({ packs: [first, second] })
     const created = createClueInputTriggers({ face, resolveWorkspaceId: () => 'ws-1' })
     const candidates = await created.sources[1]!.candidates(SESSION, request(''))
-    expect(candidates.map(row => row.label)).toEqual(['Drafts', 'Reading list'])
-    expect(candidates[0]!.label).toBe('Drafts')
+    expect(referenceRows(candidates).map(row => row.label)).toEqual(['Drafts', 'Reading list'])
+    expect(referenceRows(candidates)[0]!.label).toBe('Drafts')
+    expect(contentRow(candidates, 'pack-2').label).toBe('Drafts (include content)')
     expect(api.sources).not.toHaveBeenCalled()
     expect(created.sources[1]!.onPick!({
-      candidate: candidates[0]!,
+      candidate: referenceRows(candidates)[0]!,
       session: SESSION,
       position: 'inline',
       via: 'menu',
@@ -276,7 +438,8 @@ describe('packs source', () => {
   it('filters by name on a non-empty query and honours the @ switch', async () => {
     const { face } = makeFace({ packs: [pack('pack-1', 'Reading list'), pack('pack-2', 'Drafts')] })
     const created = createClueInputTriggers({ face, resolveWorkspaceId: () => 'ws-1' })
-    expect((await created.sources[1]!.candidates(SESSION, request('read'))).map(row => row.label)).toEqual(['Reading list'])
+    expect(referenceRows(await created.sources[1]!.candidates(SESSION, request('read'))).map(row => row.label))
+      .toEqual(['Reading list'])
     created.dispose()
 
     const off = createClueInputTriggers({
@@ -316,35 +479,39 @@ describe('clues source: non-empty query', () => {
     expect(api.search).toHaveBeenCalledTimes(2)
     expect(api.search.mock.calls.map(call => (call[1] as { sourceId: string }).sourceId).sort())
       .toEqual(['test.broken', 'test.healthy'])
-    expect(candidates).toHaveLength(1)
-    expect(candidates[0]!.label).toBe('test.healthy issue')
+    expect(referenceRows(candidates)).toHaveLength(1)
+    expect(referenceRows(candidates)[0]!.label).toBe('test.healthy issue')
+    expect(contentRow(candidates, valueOf(referenceRows(candidates)[0]!).id)).toBeDefined()
     expect(onError).toHaveBeenCalled()
     expect(JSON.stringify(candidates)).not.toContain('source-outage')
     created.dispose()
   })
 
-  it('reuses an existing clueId and ensures only the rows that lack one', async () => {
+  it('reuses a library clue by sourceId + locator and ensures only the new row', async () => {
     const { face, api, ensureCalls } = makeFace({
       sources: [sourceDescriptor('test.alpha')],
+      library: [{ ...clue('clue-known', 'test.alpha', 'Known'), locator: { id: 'a' } }],
       search: async () => ({
+        // Production search does NOT add clueId (the real service is covered below).
         items: [
-          { sourceId: 'test.alpha', typeId: 'test.alpha.text', locator: { id: 'a' }, title: 'Known', clueId: 'clue-known' },
+          { sourceId: 'test.alpha', typeId: 'test.alpha.text', locator: { id: 'a' }, title: 'Known' },
           { sourceId: 'test.alpha', typeId: 'test.alpha.text', locator: { id: 'b' }, title: 'Fresh' },
         ],
       }),
     })
     const created = createClueInputTriggers({ face, resolveWorkspaceId: () => 'ws-1' })
-    const candidates = await created.sources[0]!.candidates(SESSION, request('doc'))
+    const candidates = referenceRows(await created.sources[0]!.candidates(SESSION, request('doc')))
     expect(ensureCalls).toHaveLength(1)
     expect(ensureCalls[0]!.title).toBe('Fresh')
-    expect(candidates.map(row => row.name)).toEqual(['clue-known', 'ensured-1'])
-    expect(candidates[1]!.label).toBe('Fresh')
+    expect(candidates.map(row => valueOf(row).id)).toEqual(['clue-known', 'ensured-1'])
+    expect(candidates.map(row => row.label)).toEqual(['Known', 'Fresh'])
     expect(api.read).not.toHaveBeenCalled()
     created.dispose()
   })
 
-  it('drops a row whose ensure fails without failing the other rows', async () => {
+  it('drops a row whose ensure fails, keeps the others and asks for a notice', async () => {
     const onError = vi.fn()
+    const onNotice = vi.fn()
     const { face } = makeFace({
       sources: [sourceDescriptor('test.alpha')],
       search: async () => ({
@@ -358,15 +525,16 @@ describe('clues source: non-empty query', () => {
         return { id: 'ensured-good', title: input.title }
       },
     })
-    const created = createClueInputTriggers({ face, resolveWorkspaceId: () => 'ws-1', onError })
-    const candidates = await created.sources[0]!.candidates(SESSION, request('doc'))
-    expect(candidates.map(row => row.name)).toEqual(['ensured-good'])
+    const created = createClueInputTriggers({ face, resolveWorkspaceId: () => 'ws-1', onError, onNotice })
+    const candidates = referenceRows(await created.sources[0]!.candidates(SESSION, request('doc')))
+    expect(candidates.map(row => valueOf(row).id)).toEqual(['ensured-good'])
     expect(onError).toHaveBeenCalled()
+    expect(onNotice).toHaveBeenCalledWith(expect.stringContaining('draft was left unchanged'))
     expect(JSON.stringify(candidates)).not.toContain('SECRET=abc')
     created.dispose()
   })
 
-  it('caps the merged result at the configured limit', async () => {
+  it('caps the logical rows at the configured limit and adds one content option each', async () => {
     const { face } = makeFace({
       sources: [sourceDescriptor('test.alpha')],
       search: async () => ({
@@ -375,12 +543,13 @@ describe('clues source: non-empty query', () => {
           typeId: 'test.alpha.text',
           locator: { id: String(index) },
           title: `Row ${index}`,
-          clueId: `clue-${index}`,
         })),
       }),
     })
     const created = createClueInputTriggers({ face, resolveWorkspaceId: () => 'ws-1', limit: 2 })
-    expect(await created.sources[0]!.candidates(SESSION, request('row'))).toHaveLength(2)
+    const candidates = await created.sources[0]!.candidates(SESSION, request('row'))
+    expect(referenceRows(candidates)).toHaveLength(2)
+    expect(candidates.filter(candidate => valueOf(candidate).mode === 'content')).toHaveLength(2)
     created.dispose()
   })
 
@@ -401,6 +570,217 @@ describe('clues source: non-empty query', () => {
     await expect(pending).resolves.toEqual([])
     created.dispose()
   })
+
+  it('hides a stored clue id that cannot be represented as a stable token', async () => {
+    const onError = vi.fn()
+    const { face } = makeFace({
+      library: [clue('bad id')],
+      pins: [{ clueId: 'bad id' }],
+    })
+    const created = createClueInputTriggers({ face, resolveWorkspaceId: () => 'ws-1', onError })
+    const candidates = await created.sources[0]!.candidates(SESSION, request(''))
+    expect(candidates).toEqual([])
+    expect(onError).toHaveBeenCalled()
+    created.dispose()
+  })
+})
+
+describe('content mode', () => {
+  it('keeps default serialization offline and reads live content for the explicit mode', async () => {
+    const { face, api } = makeFace({
+      sources: [sourceDescriptor('test.alpha')],
+      library: [clue('clue-1', 'test.alpha', 'Alpha')],
+      pins: [{ clueId: 'clue-1' }],
+    })
+    const created = createClueInputTriggers({ face, resolveWorkspaceId: () => 'ws-1' })
+    const candidates = await created.sources[0]!.candidates(SESSION, request(''))
+    const normal = referenceRows(candidates)[0]!
+    const content = contentRow(candidates, 'clue-1')
+    const signal = new AbortController().signal
+
+    const normalOutcome = created.sources[0]!.onPick!({
+      candidate: normal, session: SESSION, position: 'inline', via: 'menu', action: 'pick',
+    }) as { insert: { ref: string; clipboardText: string } }
+    expect(normalOutcome.insert.ref).toBe('clue-1')
+    await expect(created.sources[0]!.codec!.serialize(normalOutcome.insert.ref, signal)).resolves.toBe('[[dsh-clue:clue-1]]')
+    expect(api.read).not.toHaveBeenCalled()
+
+    const outcome = created.sources[0]!.onPick!({
+      candidate: content, session: SESSION, position: 'inline', via: 'menu', action: 'pick',
+    }) as { insert: { ref: string; clipboardText: string; label: string } }
+    expect(outcome.insert.clipboardText).toBe('[[dsh-clue:clue-1]]')
+    expect(outcome.insert.label).toBe('Alpha (include content)')
+    expect(outcome.insert.ref.startsWith('dsh-clue-content:v1:')).toBe(true)
+    expect(created.sources[0]!.codec!.clipboardText(outcome.insert.ref)).toBe('[[dsh-clue:clue-1]]')
+
+    const text = await created.sources[0]!.codec!.serialize(outcome.insert.ref, signal)
+    expect(text).toContain('[[dsh-clue:clue-1]]')
+    expect(text).toContain('source test.alpha')
+    expect(text).toContain(NOW)
+    expect(text).toContain('freshness: live')
+    expect(text).toContain('body:clue-1')
+    expect(api.read).toHaveBeenCalledTimes(1)
+    created.dispose()
+  })
+
+  it('keeps the draft on a content read failure and on an over-limit projection', async () => {
+    const auth = makeFace({
+      library: [clue('clue-1')],
+      pins: [{ clueId: 'clue-1' }],
+      read: async () => { throw Object.assign(new Error('authorization expired'), { code: 'auth-required' }) },
+    })
+    const created = createClueInputTriggers({ face: auth.face, resolveWorkspaceId: () => 'ws-1' })
+    const candidates = await created.sources[0]!.candidates(SESSION, request(''))
+    const content = contentRow(candidates, 'clue-1')
+    const outcome = created.sources[0]!.onPick!({
+      candidate: content, session: SESSION, position: 'inline', via: 'menu', action: 'pick',
+    }) as { insert: { ref: string } }
+    await expect(created.sources[0]!.codec!.serialize(outcome.insert.ref, new AbortController().signal))
+      .rejects.toMatchObject({ category: 'auth-required' })
+    created.dispose()
+
+    const long = makeFace({
+      library: [clue('clue-1')],
+      pins: [{ clueId: 'clue-1' }],
+      read: async () => ({
+        format: 'text/plain',
+        data: { text: 'x'.repeat(50) },
+        text: 'x'.repeat(50),
+        fetchedAt: NOW,
+      }),
+    })
+    const limited = createClueInputTriggers({
+      face: long.face,
+      resolveWorkspaceId: () => 'ws-1',
+      includeContentMaxChars: 20,
+    })
+    const rows = await limited.sources[0]!.candidates(SESSION, request(''))
+    const limitedOutcome = limited.sources[0]!.onPick!({
+      candidate: contentRow(rows, 'clue-1'), session: SESSION, position: 'inline', via: 'menu', action: 'pick',
+    }) as { insert: { ref: string } }
+    const error = await limited.sources[0]!.codec!.serialize(limitedOutcome.insert.ref, new AbortController().signal)
+      .then(() => undefined, (reason: unknown) => reason)
+    expect(error).toMatchObject({ category: 'invalid-request' })
+    expect((error as Error).message).toMatch(/characters, over the 20-character limit/)
+    expect((error as Error).message).not.toContain('x'.repeat(21))
+    expect((error as Error).message).toContain('draft was kept')
+    limited.dispose()
+  })
+
+  it('projects every current pack member and fails the whole send when one is unreadable', async () => {
+    const healthy = makeFace({
+      packs: [pack('pack-1', 'Reading list', ['clue-1', 'clue-2'])],
+      library: [clue('clue-1', 'test.alpha', 'A'), clue('clue-2', 'test.alpha', 'B')],
+      read: async (_workspaceId, input) => ({
+        format: 'text/plain',
+        data: { text: `body:${input.clueId}` },
+        text: `body:${input.clueId}`,
+        fetchedAt: NOW,
+        freshness: 'live',
+      }),
+    })
+    const created = createClueInputTriggers({ face: healthy.face, resolveWorkspaceId: () => 'ws-1' })
+    const packs = await created.sources[1]!.candidates(SESSION, request(''))
+    const content = contentRow(packs, 'pack-1')
+    const outcome = created.sources[1]!.onPick!({
+      candidate: content, session: SESSION, position: 'inline', via: 'menu', action: 'pick',
+    }) as { insert: { ref: string; clipboardText: string } }
+    expect(outcome.insert.clipboardText).toBe('[[dsh-cluepack:pack-1]]')
+    const text = await created.sources[1]!.codec!.serialize(outcome.insert.ref, new AbortController().signal)
+    expect(text).toContain('[[dsh-cluepack:pack-1]]')
+    expect(text).toContain('[[dsh-clue:clue-1]]')
+    expect(text).toContain('[[dsh-clue:clue-2]]')
+    expect(text).toContain('body:clue-1')
+    expect(text).toContain('body:clue-2')
+    created.dispose()
+
+    const broken = makeFace({
+      packs: [pack('pack-1', 'Reading list', ['clue-1', 'clue-2'])],
+      library: [clue('clue-1', 'test.alpha', 'A'), clue('clue-2', 'test.alpha', 'B')],
+      read: async (_workspaceId, input) => {
+        if (input.clueId === 'clue-2') throw Object.assign(new Error('denied'), { code: 'permission-denied' })
+        return { format: 'text/plain', data: {}, text: 'ok', fetchedAt: NOW }
+      },
+    })
+    const failing = createClueInputTriggers({ face: broken.face, resolveWorkspaceId: () => 'ws-1' })
+    const failingPacks = await failing.sources[1]!.candidates(SESSION, request(''))
+    const failingOutcome = failing.sources[1]!.onPick!({
+      candidate: contentRow(failingPacks, 'pack-1'), session: SESSION, position: 'inline', via: 'menu', action: 'pick',
+    }) as { insert: { ref: string } }
+    const failure = await failing.sources[1]!.codec!.serialize(failingOutcome.insert.ref, new AbortController().signal)
+      .then(() => undefined, (reason: unknown) => reason)
+    expect(failure).toMatchObject({ category: 'permission-denied' })
+    expect((failure as Error).message).toContain('[[dsh-clue:clue-2]]')
+    expect((failure as Error).message).toContain('draft was kept')
+    failing.dispose()
+  })
+
+  it('reports the pre-send projection volume after a content insert', async () => {
+    const previews: ClueContentPreview[] = []
+    let resolvePreview!: (preview: ClueContentPreview) => void
+    const reported = new Promise<ClueContentPreview>((resolve) => { resolvePreview = resolve })
+    const { face } = makeFace({
+      library: [clue('clue-1')],
+      pins: [{ clueId: 'clue-1' }],
+    })
+    const created = createClueInputTriggers({
+      face,
+      resolveWorkspaceId: () => 'ws-1',
+      onContentPreview: (preview) => {
+        previews.push(preview)
+        resolvePreview(preview)
+      },
+    })
+    const candidates = await created.sources[0]!.candidates(SESSION, request(''))
+    created.sources[0]!.onPick!({
+      candidate: contentRow(candidates, 'clue-1'), session: SESSION, position: 'inline', via: 'menu', action: 'pick',
+    })
+    const preview = await reported
+    expect(preview).toMatchObject({ kind: 'clue', id: 'clue-1', token: '[[dsh-clue:clue-1]]' })
+    expect(preview.chars).toBeGreaterThan(0)
+    expect(previews).toHaveLength(1)
+    created.dispose()
+  })
+})
+
+describe('real clue service integration', () => {
+  it('never rewrites the library for rows the real search already has', async () => {
+    let next = 0
+    const service = createCluesService({
+      root: tempRoot(),
+      now: () => NOW,
+      newId: kind => `${kind}-${++next}`,
+    })
+    service.registerSource(realSearchSource())
+    try {
+      const existing = await service.ensure({
+        workspaceId: 'ws-1',
+        sourceId: 'test.real',
+        typeId: 'test.real.text',
+        locator: { id: 'a' },
+        title: 'Known A',
+      })
+      const rawSearch = await service.search({ workspaceId: 'ws-1', sourceId: 'test.real', query: 'doc' })
+      // This is the production shape the fake tests used to hide.
+      expect(rawSearch.items.every(item => item.clueId === undefined)).toBe(true)
+
+      const before = (await service.listClues('ws-1')).revision
+      const created = createClueInputTriggers({ face: realFace(service), resolveWorkspaceId: () => 'ws-1' })
+      const first = referenceRows(await created.sources[0]!.candidates(SESSION, request('doc')))
+      const after = (await service.listClues('ws-1')).revision
+      expect(after - before).toBe(1) // only the genuinely new row is ensured
+      expect(first.map(row => valueOf(row).id)).toContain(existing.clue.id)
+      expect(first).toHaveLength(2)
+
+      // The second browse matches both rows in the library: no write at all.
+      const second = referenceRows(await created.sources[0]!.candidates(SESSION, request('doc')))
+      expect(second).toHaveLength(2)
+      expect((await service.listClues('ws-1')).revision).toBe(after)
+      created.dispose()
+    } finally {
+      service.dispose()
+    }
+  })
 })
 
 describe('openReference and icons', () => {
@@ -408,7 +788,7 @@ describe('openReference and icons', () => {
     const { face } = makeFace({ packs: [pack('pack-1', 'P')] })
     const openReference = vi.fn(() => true)
     const created = createClueInputTriggers({ face, resolveWorkspaceId: () => 'ws-1', openReference })
-    const [candidate] = await created.sources[1]!.candidates(SESSION, request(''))
+    const [candidate] = referenceRows(await created.sources[1]!.candidates(SESSION, request('')))
     expect(created.sources[1]!.openReference!(SESSION, { ref: 'pack-1', appearance: 'folder' })).toBe(true)
     expect(openReference).toHaveBeenCalledWith({ kind: 'pack', id: 'pack-1', sessionId: 'session-1' })
     expect(candidate).toBeDefined()
@@ -417,6 +797,23 @@ describe('openReference and icons', () => {
     const none = createClueInputTriggers({ face, resolveWorkspaceId: () => 'ws-1' })
     expect(none.sources[1]!.openReference!(SESSION, { ref: 'pack-1' })).toBe(false)
     none.dispose()
+  })
+
+  it('opens the underlying clue from a content-mode ref', async () => {
+    const { face } = makeFace({
+      library: [clue('clue-1')],
+      pins: [{ clueId: 'clue-1' }],
+    })
+    const openReference = vi.fn(() => true)
+    const created = createClueInputTriggers({ face, resolveWorkspaceId: () => 'ws-1', openReference })
+    const candidates = await created.sources[0]!.candidates(SESSION, request(''))
+    const content = contentRow(candidates, 'clue-1')
+    const outcome = created.sources[0]!.onPick!({
+      candidate: content, session: SESSION, position: 'inline', via: 'menu', action: 'pick',
+    }) as { insert: { ref: string } }
+    expect(created.sources[0]!.openReference!(SESSION, { ref: outcome.insert.ref, appearance: 'file' })).toBe(true)
+    expect(openReference).toHaveBeenCalledWith({ kind: 'clue', id: 'clue-1', sessionId: 'session-1' })
+    created.dispose()
   })
 
   it('wraps a size-aware source icon at the host 16px default', async () => {
@@ -429,7 +826,7 @@ describe('openReference and icons', () => {
       }],
     })
     const created = createClueInputTriggers({ face, resolveWorkspaceId: () => 'ws-1' })
-    const [candidate] = await created.sources[0]!.candidates(SESSION, request(''))
+    const [candidate] = referenceRows(await created.sources[0]!.candidates(SESSION, request('')))
     expect(typeof candidate!.icon).toBe('function')
     const html = renderToStaticMarkup(createElement(candidate!.icon as () => ReactNode))
     expect(html).toContain('icon:16')

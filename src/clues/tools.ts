@@ -37,7 +37,7 @@ import {
   type ClueSnapshotMeta,
   type JsonValue,
 } from './types.ts'
-import { serializeClueToken } from './context/tokens.ts'
+import { clueTokenOrUndefined, escapeClueTitle } from './context/tokens.ts'
 
 /** Public tool names (fixed by the approved spec). */
 export const CLUE_LIST_TOOL = 'sidebar_clue_list'
@@ -234,7 +234,17 @@ async function resolveScope(
     }
     target = cwd
   }
-  const resolved = scopeOf(await registry.resolveByPath(target))
+  let resolved: WorkspaceScope | undefined
+  try {
+    resolved = scopeOf(await registry.resolveByPath(target))
+  } catch {
+    // `resolveByPath` rejects (for example ENOENT after realpath) when the
+    // directory does not exist. The host error is not a model-facing category,
+    // so map it to the stable contract instead of leaking a raw failure.
+    throw explicitPath === undefined
+      ? new ClueError('failed', 'the calling session working directory could not be resolved; pass an explicit registered workspace path')
+      : new ClueError('not-found', `"${target}" is not a registered local workspace directory`)
+  }
   if (resolved === undefined) {
     throw new ClueError('not-found', `"${target}" is not a registered local workspace directory`)
   }
@@ -262,13 +272,24 @@ function candidateScopes(ctx: Context, primary: WorkspaceScope): WorkspaceScope[
   return scopes
 }
 
-/** One token for a stable id, or undefined when the stored id is unrepresentable. */
-function tokenOrUndefined(kind: 'clue' | 'pack' | 'snapshot', id: string): string | undefined {
-  try {
-    return serializeClueToken(kind, id)
-  } catch {
-    return undefined
-  }
+/** Escape one untrusted metadata value for model-facing text. */
+function displayText(value: unknown, fallback = 'unknown'): string {
+  return typeof value === 'string' ? escapeClueTitle(value) || fallback : fallback
+}
+
+/**
+ * One stable token for a model-facing render. An unrepresentable stored id is
+ * shown as escaped, quoted data — never concatenated into token brackets.
+ */
+function tokenForText(kind: 'clue' | 'pack', id: string): string {
+  return clueTokenOrUndefined(kind, id)
+    ?? `(id ${JSON.stringify(displayText(id))}; not token-safe)`
+}
+
+/** One snapshot id rendered as a token, or as escaped metadata when unsafe. */
+function snapshotForText(id: string): string {
+  return clueTokenOrUndefined('snapshot', id)
+    ?? `(snapshot ${JSON.stringify(displayText(id))}; not token-safe)`
 }
 
 /** Project one snapshot metadata row (no content). */
@@ -351,17 +372,24 @@ function jsonText(value: JsonValue): string {
   }
 }
 
-/** Render the `sidebar_clue_list` result. */
+/**
+ * Render the `sidebar_clue_list` result.
+ *
+ * Every metadata field here is source-owned and therefore untrusted: titles
+ * and names are escaped and quoted, and only validated ids ever appear inside
+ * token brackets. A stored id that cannot be represented is shown as quoted
+ * data, so it cannot forge a reference or break the line structure.
+ */
 function renderList(value: ListValue): string {
   const where = value.workspace.path === undefined
-    ? `workspace ${value.workspace.id}`
-    : `workspace ${value.workspace.path}`
+    ? `workspace ${displayText(value.workspace.id)}`
+    : `workspace ${displayText(value.workspace.path)}`
   if (value.target === 'sources') {
     const sources = value.sources ?? []
     if (sources.length === 0) return `No clue sources are registered (${where}).`
     return [
       `${sources.length} clue source${sources.length === 1 ? '' : 's'} (${where}):`,
-      ...sources.map(source => `- ${source.sourceId} — ${source.name} (${source.transport}); types: ${source.types.join(', ') || 'none'}`),
+      ...sources.map(source => `- ${displayText(source.sourceId)} — ${displayText(source.name)} (${displayText(source.transport)}); types: ${source.types.map(typeId => displayText(typeId)).join(', ') || 'none'}`),
     ].join('\n')
   }
   if (value.target === 'packs') {
@@ -369,14 +397,14 @@ function renderList(value: ListValue): string {
     if (packs.length === 0) return `No clue packs in ${where}.`
     return [
       `${value.total} pack${value.total === 1 ? '' : 's'} in ${where} (showing ${packs.length} from offset ${value.offset}):`,
-      ...packs.map(pack => `- ${pack.token ?? pack.id} "${pack.name}" — ${pack.memberCount} member${pack.memberCount === 1 ? '' : 's'}, revision ${pack.revision}`),
+      ...packs.map(pack => `- ${tokenForText('pack', pack.id)} ${JSON.stringify(displayText(pack.name))} — ${pack.memberCount} member${pack.memberCount === 1 ? '' : 's'}, revision ${pack.revision}`),
     ].join('\n')
   }
   const rows = value.clues ?? []
   if (rows.length === 0) return `No clue references in ${where}.`
   return [
     `${value.total} clue reference${value.total === 1 ? '' : 's'} in ${where} (showing ${rows.length} from offset ${value.offset}):`,
-    ...rows.map(row => `- ${row.token ?? row.id} "${row.title}" — ${row.sourceId} · ${row.typeId}${row.pinned ? ' · pinned' : ''}${row.unresolved ? ' · unresolved (source unavailable; snapshots may still be readable)' : ''}`),
+    ...rows.map(row => `- ${tokenForText('clue', row.id)} ${JSON.stringify(displayText(row.title))} — ${displayText(row.sourceId)} · ${displayText(row.typeId)}${row.pinned ? ' · pinned' : ''}${row.unresolved ? ' · unresolved (source unavailable; snapshots may still be readable)' : ''}`),
   ].join('\n')
 }
 
@@ -385,32 +413,36 @@ function renderRead(value: ReadValue): string {
   if (value.status === 'error') {
     const error = value.error ?? { category: 'failed', message: 'the clue operation failed' }
     const snapshots = value.snapshots ?? []
+    const source = value.sourceId === undefined
+      ? ''
+      : `\nSource: ${displayText(value.sourceId)}${value.typeId === undefined ? '' : ` · ${displayText(value.typeId)}`}${value.title === undefined ? '' : ` — ${JSON.stringify(displayText(value.title))}`}`
     if (value.kind === 'clue') {
       return [
-        `Live read failed (${error.category}): ${error.message}`,
+        `${value.kind} read failed (${displayText(error.category)}): ${displayText(error.message)}${source}`,
         'No fallback content was used. Available snapshots for this clue:',
         ...(snapshots.length === 0
           ? ['- none']
-          : snapshots.map(snapshot => `- [[dsh-clue-snapshot:${snapshot.snapshotId}]] fetched ${snapshot.fetchedAt} (${snapshot.format}, integrity: ${snapshot.integrity ?? 'unknown'})`)),
+          : snapshots.map(snapshot => `- ${snapshotForText(snapshot.snapshotId)} fetched ${displayText(snapshot.fetchedAt)} (${displayText(snapshot.format)}, integrity: ${displayText(snapshot.integrity ?? 'unknown')})`)),
       ].join('\n')
     }
-    return `${value.kind} read failed (${error.category}): ${error.message}`
+    return `${value.kind} read failed (${displayText(error.category)}): ${displayText(error.message)}${source}`
   }
   if (value.kind === 'pack') {
     const members = value.members ?? []
     return [
-      `Pack ${value.token ?? value.id} "${value.name ?? ''}" (revision ${value.packRevision ?? 0}, ${members.length} current member${members.length === 1 ? '' : 's'}):`,
+      `Pack ${tokenForText('pack', value.id)} ${JSON.stringify(displayText(value.name, '?'))} (revision ${value.packRevision ?? 0}, ${members.length} current member${members.length === 1 ? '' : 's'}):`,
       ...members.map(member => [
-        `- ${member.token ?? member.clueId}${member.title === undefined ? '' : ` "${member.title}"`}`,
-        member.sourceId === undefined ? '' : ` — ${member.sourceId} · ${member.typeId ?? ''}`,
+        `- ${tokenForText('clue', member.clueId)}${member.title === undefined ? '' : ` ${JSON.stringify(displayText(member.title))}`}`,
+        member.sourceId === undefined ? '' : ` — ${displayText(member.sourceId)} · ${displayText(member.typeId ?? '')}`,
         member.unresolved === true ? ' · unresolved' : '',
-        ` · snapshots: ${member.snapshots.length === 0 ? 'none' : member.snapshots.map(item => item.snapshotId).join(', ')}`,
+        ` · snapshots: ${member.snapshots.length === 0 ? 'none' : member.snapshots.map(item => snapshotForText(item.snapshotId)).join(', ')}`,
       ].join('')),
     ].join('\n')
   }
+  const clueRef = value.clueId === undefined ? 'unknown clue' : tokenForText('clue', value.clueId)
   const header = value.kind === 'snapshot'
-    ? `Snapshot [[dsh-clue-snapshot:${value.id}]] of clue ${value.clueId ?? '?'} — fetched ${value.fetchedAt ?? '?'} (${value.format ?? 'unknown'}, integrity: ${value.integrity ?? 'unknown'})`
-    : `Live clue ${value.token ?? value.id} "${value.title ?? ''}" — fetched ${value.fetchedAt ?? '?'} (${value.format ?? 'unknown'})`
+    ? `Snapshot ${snapshotForText(value.id)} of clue ${clueRef} — fetched ${displayText(value.fetchedAt, '?')} (${displayText(value.format)}, integrity: ${displayText(value.integrity ?? 'unknown')})`
+    : `Live clue ${tokenForText('clue', value.id)} ${JSON.stringify(displayText(value.title, ''))} — fetched ${displayText(value.fetchedAt, '?')} (${displayText(value.format)})`
   const body = value.text !== undefined
     ? value.text
     : value.data === undefined
@@ -630,7 +662,7 @@ export function installClueTools(ctx: Context, clues: CluesService): () => void 
           workspace: { id: scope.id, ...(scope.path === undefined ? {} : { path: scope.path }) },
           packs: page.map(pack => ({
             id: pack.id,
-            ...(tokenOrUndefined('pack', pack.id) === undefined ? {} : { token: tokenOrUndefined('pack', pack.id)! }),
+            ...(clueTokenOrUndefined('pack', pack.id) === undefined ? {} : { token: clueTokenOrUndefined('pack', pack.id)! }),
             name: pack.name,
             revision: pack.revision,
             memberCount: pack.members.length,
@@ -670,7 +702,7 @@ export function installClueTools(ctx: Context, clues: CluesService): () => void 
         workspace: { id: scope.id, ...(scope.path === undefined ? {} : { path: scope.path }) },
         clues: page.map(clue => ({
           id: clue.id,
-          ...(tokenOrUndefined('clue', clue.id) === undefined ? {} : { token: tokenOrUndefined('clue', clue.id)! }),
+          ...(clueTokenOrUndefined('clue', clue.id) === undefined ? {} : { token: clueTokenOrUndefined('clue', clue.id)! }),
           title: clue.title,
           sourceId: clue.sourceId,
           typeId: clue.typeId,
@@ -804,7 +836,7 @@ export function installClueTools(ctx: Context, clues: CluesService): () => void 
           try {
             const record = await clues.readSnapshot({ workspaceId: workspace.id, snapshotId: id })
             const meta = record.meta
-            const snapshotToken = tokenOrUndefined('snapshot', id)
+            const snapshotToken = clueTokenOrUndefined('snapshot', id)
             return {
               status: 'ok',
               kind: 'snapshot',
@@ -866,7 +898,7 @@ export function installClueTools(ctx: Context, clues: CluesService): () => void 
               members.push({ clueId, missing: true, snapshots })
               continue
             }
-            const token = tokenOrUndefined('clue', clue.id)
+            const token = clueTokenOrUndefined('clue', clue.id)
             members.push({
               clueId: clue.id,
               ...(token === undefined ? {} : { token }),
@@ -877,7 +909,7 @@ export function installClueTools(ctx: Context, clues: CluesService): () => void 
               snapshots,
             })
           }
-          const token = tokenOrUndefined('pack', located.pack.id)
+          const token = clueTokenOrUndefined('pack', located.pack.id)
           return {
             status: 'ok',
             kind: 'pack',
@@ -902,7 +934,7 @@ export function installClueTools(ctx: Context, clues: CluesService): () => void 
           error: { category: 'not-found', message: `clue "${id}" does not exist in any local workspace` },
         }
       }
-      const token = tokenOrUndefined('clue', located.clue.id)
+      const token = clueTokenOrUndefined('clue', located.clue.id)
       let snapshots: SnapshotRow[]
       try {
         snapshots = await snapshotsOf(clues, located.workspace.id, located.clue.id)
@@ -950,6 +982,12 @@ export function installClueTools(ctx: Context, clues: CluesService): () => void 
           id: located.clue.id,
           ...(token === undefined ? {} : { token }),
           workspaceId: located.workspace.id,
+          // Keep the actionable source identity in the error projection: an
+          // auth-required/permission-denied answer must point the model (and
+          // the user) at the source whose settings need attention.
+          sourceId: located.clue.sourceId,
+          typeId: located.clue.typeId,
+          title: located.clue.title,
           error: safeErrorOf(error),
           ...(snapshots.length === 0 ? {} : { snapshots }),
         }

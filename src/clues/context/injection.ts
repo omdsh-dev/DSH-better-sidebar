@@ -35,7 +35,7 @@ import {
   isClueSourceEnabled,
   type SidebarPrefs,
 } from '../../prefs-shared.ts'
-import { escapeClueTitle, serializeClueToken } from './tokens.ts'
+import { clueTokenOrUndefined, escapeClueTitle } from './tokens.ts'
 
 /**
  * The plugin's producer-owned message source kind.
@@ -103,7 +103,6 @@ interface InjectionContext {
   ) => () => void
   get?: (name: string) => unknown
   logger?: { warn?: (message: string) => void }
-  effect?: (fn: () => () => void, label?: string) => unknown
 }
 
 /** One `agent/pre-step` payload (structural subset). */
@@ -124,7 +123,12 @@ interface SessionEventLike {
 /** The live session slice the injection reads. */
 interface SessionLike {
   readonly id?: unknown
-  readonly header?: { readonly cwd?: unknown; readonly isSeeded?: unknown }
+  readonly header?: {
+    readonly cwd?: unknown
+    readonly isSeeded?: unknown
+    /** Host session creation time in epoch milliseconds (or an ISO string on fakes). */
+    readonly createdAt?: unknown
+  }
   snapshotEvents?(): readonly SessionEventLike[]
   ownEvents?(): readonly SessionEventLike[]
 }
@@ -146,6 +150,8 @@ const DEFAULT_MAX_CONTEXT_CHARS = 4000
 
 /** Bound on the process-local re-entry guard (one entry per session+fingerprint). */
 const REENTRY_GUARD_MAX = 512
+/** Bound on remembered degraded-setup warnings (one entry per failure kind). */
+const WARNED_MAX = 512
 
 /**
  * FNV-1a, 32-bit. The marker only needs a stable, short change detector — it
@@ -255,6 +261,32 @@ export function renderClueBindingContext(
   return [...header, ...body, ...footer].join('\n')
 }
 
+/** Epoch milliseconds of the session's creation, when the host exposes it. */
+function sessionCreatedAtOf(session: SessionLike): number | undefined {
+  const value = session.header?.createdAt
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string') {
+    const parsed = Date.parse(value)
+    if (Number.isFinite(parsed)) return parsed
+  }
+  return undefined
+}
+
+/**
+ * Whether one binding existed when the session was created.
+ *
+ * A binding added later must never be delivered to an already-existing
+ * (possibly idle) session: the spec says new bindings apply to NEW sessions
+ * only. A host/fake without a usable timestamp keeps the old behavior — the
+ * first-step and durable-marker gates still prevent duplicates.
+ */
+function bindingExistedAt(binding: ClueBinding, sessionCreatedAt: number | undefined): boolean {
+  if (sessionCreatedAt === undefined) return true
+  const createdAt = Date.parse(binding.createdAt)
+  if (!Number.isFinite(createdAt)) return true
+  return createdAt <= sessionCreatedAt
+}
+
 /** Whether two markers describe the same injected binding state. */
 function sameMarker(marker: ClueContextMarker | undefined, workspaceId: string, fingerprint: string): boolean {
   return marker !== undefined && marker.workspaceId === workspaceId && marker.fingerprint === fingerprint
@@ -330,6 +362,10 @@ export function installClueInjection(
   const warnOnce = (key: string, message: string): void => {
     if (warned.has(key)) return
     warned.add(key)
+    if (warned.size > WARNED_MAX) {
+      const oldest = warned.values().next().value
+      if (oldest !== undefined) warned.delete(oldest)
+    }
     injectionCtx.logger?.warn?.(message)
   }
 
@@ -361,7 +397,7 @@ export function installClueInjection(
     }
   }
 
-  const entriesOf = async (workspaceId: string): Promise<ClueContextEntry[]> => {
+  const entriesOf = async (workspaceId: string, sessionCreatedAt: number | undefined): Promise<ClueContextEntry[]> => {
     const prefs = readPrefs()
     const [bindings, library, packs] = await Promise.all([
       clues.listBindings(workspaceId),
@@ -370,42 +406,51 @@ export function installClueInjection(
     ])
     const clueById = new Map<string, Clue>(library.clues.map(clue => [clue.id, clue]))
     const packById = new Map<string, CluePack>(packs.packs.map(pack => [pack.id, pack]))
-    const seen = new Set<string>()
-    const entries: ClueContextEntry[] = []
     const enabled = (clue: Clue): boolean => isClueSourceEnabled(prefs, clue.sourceId)
-    const tokenOf = (kind: 'clue' | 'pack', id: string): string | undefined => {
-      try {
-        return serializeClueToken(kind, id)
-      } catch {
-        return undefined
-      }
-    }
-    for (const binding of bindings.bindings as readonly ClueBinding[]) {
+    const effective = (bindings.bindings as readonly ClueBinding[])
+      .filter(binding => bindingExistedAt(binding, sessionCreatedAt))
+    // Process packs BEFORE direct clue bindings: a member bound both ways is
+    // then listed under its pack, and the later single row is deduped. The
+    // reverse order used to leave the pack with an empty member list, which
+    // rendered as "no currently attachable members" for a clue that WAS shown
+    // elsewhere — and made the fingerprint depend on binding order.
+    const packBindings = effective.filter(binding => binding.target.kind === 'pack')
+    const clueBindings = effective.filter(binding => binding.target.kind === 'clue')
+    const seenRows = new Set<string>()
+    const embeddedTokens = new Set<string>()
+    const entries: ClueContextEntry[] = []
+    for (const binding of packBindings) {
       const target = binding.target
-      if (target.kind === 'clue') {
-        const clue = clueById.get(target.clueId)
-        if (clue === undefined || !enabled(clue)) continue
-        const token = tokenOf('clue', clue.id)
-        if (token === undefined || seen.has(token)) continue
-        seen.add(token)
-        entries.push({ kind: 'clue', token, title: escapeClueTitle(clue.title) })
-        continue
-      }
+      if (target.kind !== 'pack') continue
       const pack = packById.get(target.packId)
       if (pack === undefined) continue
-      const token = tokenOf('pack', pack.id)
-      if (token === undefined || seen.has(token)) continue
-      seen.add(token)
+      const token = clueTokenOrUndefined('pack', pack.id)
+      if (token === undefined || seenRows.has(token)) continue
+      seenRows.add(token)
       const members: { token: string; title: string }[] = []
+      const memberSeen = new Set<string>()
       for (const clueId of pack.members) {
         const clue = clueById.get(clueId)
         if (clue === undefined || !enabled(clue)) continue
-        const memberToken = tokenOf('clue', clue.id)
-        if (memberToken === undefined || seen.has(memberToken)) continue
-        seen.add(memberToken)
+        const memberToken = clueTokenOrUndefined('clue', clue.id)
+        if (memberToken === undefined || memberSeen.has(memberToken)) continue
+        memberSeen.add(memberToken)
         members.push({ token: memberToken, title: escapeClueTitle(clue.title) })
       }
+      // Pack members are also top-level for the dedup below, but they do not
+      // make a later pack's member list empty (packs keep their own list).
+      for (const member of members) embeddedTokens.add(member.token)
       entries.push({ kind: 'pack', token, title: escapeClueTitle(pack.name), members })
+    }
+    for (const binding of clueBindings) {
+      const target = binding.target
+      if (target.kind !== 'clue') continue
+      const clue = clueById.get(target.clueId)
+      if (clue === undefined || !enabled(clue)) continue
+      const token = clueTokenOrUndefined('clue', clue.id)
+      if (token === undefined || seenRows.has(token) || embeddedTokens.has(token)) continue
+      seenRows.add(token)
+      entries.push({ kind: 'clue', token, title: escapeClueTitle(clue.title) })
     }
     return entries
   }
@@ -433,7 +478,7 @@ export function installClueInjection(
 
     let entries: ClueContextEntry[]
     try {
-      entries = await entriesOf(workspaceId)
+      entries = await entriesOf(workspaceId, sessionCreatedAtOf(session))
     } catch (error) {
       warnOnce(
         `bindings:${workspaceId}`,

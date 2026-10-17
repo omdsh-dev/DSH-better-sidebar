@@ -83,6 +83,26 @@ export function serializeClueToken(kind: ClueTokenKind, id: string): string {
   return `${CLUE_TOKEN_PREFIXES[kind]}${id}${CLUE_TOKEN_SUFFIX}`
 }
 
+/**
+ * Serialize one stable reference when the id is representable.
+ *
+ * This is the tolerant form used by projections (list rows, injection lines,
+ * composer candidates): a corrupt stored id must degrade to "no token" instead
+ * of throwing in the middle of a multi-row render. Sending paths
+ * ({@link serializeClueToken} directly) still fail loudly.
+ *
+ * @param kind - the reference kind.
+ * @param id - the S1 stable id.
+ * @returns the exact token, or undefined when the id cannot be represented.
+ */
+export function clueTokenOrUndefined(kind: ClueTokenKind, id: string): string | undefined {
+  try {
+    return serializeClueToken(kind, id)
+  } catch {
+    return undefined
+  }
+}
+
 /** The kind named by a matched token's opening spelling. */
 function kindOfRaw(raw: string): ClueTokenKind {
   if (raw.startsWith(CLUE_TOKEN_PREFIXES.snapshot)) return 'snapshot'

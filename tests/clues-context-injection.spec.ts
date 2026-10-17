@@ -40,8 +40,8 @@ function clue(id: string, sourceId = 'test.source', title = `title ${id}`): Clue
   }
 }
 
-function binding(target: ClueBinding['target']): ClueBinding {
-  return { workspaceId: 'ws-1', target, createdAt: NOW }
+function binding(target: ClueBinding['target'], createdAt = NOW): ClueBinding {
+  return { workspaceId: 'ws-1', target, createdAt }
 }
 
 function pack(id: string, members: readonly string[], name = `pack ${id}`): CluePack {
@@ -121,7 +121,14 @@ function stepStart(turn: number, step = 1): { type: string; data: unknown } {
 /** One session with a full log and an own-events slice. */
 function session(
   events: readonly { type: string; data: unknown }[],
-  options: { ownFrom?: number; cwd?: string; isSeeded?: boolean; id?: string } = {},
+  options: {
+    ownFrom?: number
+    cwd?: string
+    isSeeded?: boolean
+    id?: string
+    createdAt?: number
+    origin?: 'subagent'
+  } = {},
 ) {
   const ownFrom = options.ownFrom ?? 0
   return {
@@ -129,6 +136,8 @@ function session(
     header: {
       ...(options.cwd === undefined ? { cwd: '/ws' } : { cwd: options.cwd }),
       ...(options.isSeeded === true ? { isSeeded: true } : {}),
+      ...(options.createdAt === undefined ? {} : { createdAt: options.createdAt }),
+      ...(options.origin === undefined ? {} : { origin: options.origin }),
     },
     snapshotEvents: () => events,
     ownEvents: () => events.slice(ownFrom),
@@ -269,6 +278,80 @@ describe('installClueInjection', () => {
     const decision = await harness.run(claimed, nextOf(claimed))
     const text = injectedOf(decision)!.content?.map(block => block.text ?? '').join('') ?? ''
     expect(text.match(/\[\[dsh-clue:clue-1\]\]/g)).toHaveLength(1)
+  })
+
+  it('lists a clue under its pack regardless of binding order (no misleading empty members)', async () => {
+    const fixture: Fixture = {
+      clues: [clue('clue-1')],
+      packs: [pack('pack-1', ['clue-1'])],
+    }
+    const packFirst = mount({
+      ...fixture,
+      bindings: [binding({ kind: 'pack', packId: 'pack-1' }), binding({ kind: 'clue', clueId: 'clue-1' })],
+    })
+    const clueFirst = mount({
+      ...fixture,
+      bindings: [binding({ kind: 'clue', clueId: 'clue-1' }), binding({ kind: 'pack', packId: 'pack-1' })],
+    })
+    const run = async (harness: ReturnType<typeof mount>): Promise<string> => {
+      const claimed = payload(session([turnStart(1)]))
+      const decision = await harness.run(claimed, nextOf(claimed))
+      return injectedOf(decision)!.content?.map(block => block.text ?? '').join('') ?? ''
+    }
+    const first = await run(packFirst)
+    const second = await run(clueFirst)
+    expect(first).toBe(second)
+    expect(first).toContain('[[dsh-cluepack:pack-1]]')
+    expect(first).toContain('current members: [[dsh-clue:clue-1]]')
+    expect(first).not.toContain('no currently attachable members')
+    expect(first.match(/\[\[dsh-clue:clue-1\]\]/g)).toHaveLength(1)
+    packFirst.dispose()
+    clueFirst.dispose()
+  })
+
+  it('does not deliver a binding added after an existing idle session was created', async () => {
+    const harness = mount({
+      clues: [clue('clue-1')],
+      bindings: [binding({ kind: 'clue', clueId: 'clue-1' }, '2026-10-17T00:00:01.000Z')],
+    })
+    const claimed = payload(session([turnStart(1)], { createdAt: Date.parse(NOW) }))
+    expect(injectedOf(await harness.run(claimed, nextOf(claimed)))).toBeUndefined()
+    harness.dispose()
+  })
+
+  it('delivers only bindings that existed when the session was created', async () => {
+    const harness = mount({
+      clues: [clue('clue-old'), clue('clue-new')],
+      bindings: [
+        binding({ kind: 'clue', clueId: 'clue-old' }),
+        binding({ kind: 'clue', clueId: 'clue-new' }, '2026-10-17T00:00:01.000Z'),
+      ],
+    })
+    const claimed = payload(session([turnStart(1)], { createdAt: Date.parse(NOW) }))
+    const decision = await harness.run(claimed, nextOf(claimed))
+    const text = injectedOf(decision)!.content?.map(block => block.text ?? '').join('') ?? ''
+    expect(text).toContain('[[dsh-clue:clue-old]]')
+    expect(text).not.toContain('[[dsh-clue:clue-new]]')
+    harness.dispose()
+  })
+
+  it('injects for a same-workspace subagent session', async () => {
+    const harness = mount(FIXTURE)
+    const claimed = payload(session([turnStart(1)], {
+      origin: 'subagent',
+      createdAt: Date.parse(NOW),
+    }))
+    const decision = await harness.run(claimed, nextOf(claimed))
+    expect(injectedOf(decision)).toBeDefined()
+    harness.dispose()
+  })
+
+  it('does not re-inject on an explicit compact follow-up turn', async () => {
+    const harness = mount(FIXTURE)
+    const events = [turnStart(1), stepStart(1), turnStart(2)]
+    const claimed = payload(session(events, { ownFrom: 1, createdAt: Date.parse(NOW) }), 2)
+    expect(injectedOf(await harness.run(claimed, nextOf(claimed)))).toBeUndefined()
+    harness.dispose()
   })
 
   it('escapes hostile titles so they can never mint a token', async () => {
