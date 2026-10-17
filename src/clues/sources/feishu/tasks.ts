@@ -5,10 +5,16 @@
  * Commands (official, single page only):
  * - list: native `task tasks list` (or `task tasklists tasks` for an explicit
  *   tasklist range), continued only with the returned `page_token`;
- * - search: `task +search` with `--page-limit` and an explicit `--page-token`;
+ * - search: `task +search` with the documented keyword/completed/assignee/
+ *   creator/follower/due filters, `--page-limit` and an explicit
+ *   `--page-token`. A tasklist is a LIST range, not a documented search
+ *   filter, so a tasklist search is rejected instead of silently widening to
+ *   the global corpus;
  * - read: `task tasks get` by GUID;
  * - edit: `task +update` with ONLY the changed fields, then completion/reopen
- *   as a SEPARATE `task +complete` / `task +reopen` call.
+ *   as a SEPARATE `task +complete` / `task +reopen` call. `+update` documents
+ *   no `updated_at`, so a field save does a best-effort fresh read for the next
+ *   baseline (never a CAS claim).
  *
  * The auto-paginating shortcuts (`+get-my-tasks` / `+get-related-tasks`) and
  * `--page-all` are never used: they silently loop up to 20–40 pages, which the
@@ -66,10 +72,10 @@ import {
   arrayField,
   larkWorkingDirectory,
   recordField,
-  runLark,
   stringField,
   type LarkSuccess,
 } from './lark.ts'
+import { runFeishuCommand } from './auth.ts'
 import {
   normalizeTaskLocator,
   parseFeishuTaskText,
@@ -89,6 +95,23 @@ type TasksScope = {
   readonly completed?: boolean
 }
 
+/**
+ * The search range: the documented `task +search` filters. A tasklist is NOT
+ * a search filter (the CLI has no tasklist argument for `+search`), so it is
+ * rejected instead of silently returning global results.
+ */
+type TaskSearchScope = {
+  readonly kind: 'tasks'
+  readonly completed?: boolean
+  readonly assignee?: string
+  readonly creator?: string
+  readonly follower?: string
+  readonly due?: string
+}
+
+/** Bound of one open-id / due-range filter argument. */
+const MAX_SEARCH_FILTER_CHARS = 500
+
 /** Page-size bound of one explicit page. */
 function pageLimitOf(limit: number | undefined): number {
   if (limit === undefined) return TASK_PAGE_SIZE
@@ -103,7 +126,29 @@ function cwdOf(context: ClueOperationContext): string {
   return larkWorkingDirectory(context.workspacePath)
 }
 
-/** Parse one task range; the default is the user's task list (an explicit range choice). */
+/** Whether a value contains ASCII control characters (never valid in an argv filter). */
+function hasControlCharacters(value: string): boolean {
+  for (const character of value) {
+    const code = character.codePointAt(0) ?? 0
+    if (code < 0x20 || code === 0x7f) return true
+  }
+  return false
+}
+
+/** One non-empty, bounded search filter (argv-only; never a shell string). */
+function searchFilterOf(value: unknown, field: string): string | undefined {
+  if (value === undefined) return undefined
+  if (typeof value !== 'string') {
+    throw new ClueError('invalid-request', `a task search "${field}" filter must be a string`)
+  }
+  const trimmed = value.trim()
+  if (trimmed === '' || trimmed.length > MAX_SEARCH_FILTER_CHARS || hasControlCharacters(trimmed)) {
+    throw new ClueError('invalid-request', `a task search "${field}" filter is invalid`)
+  }
+  return trimmed
+}
+
+/** Parse one task list range; the default is the user's task list (an explicit range choice). */
 function parseTasksScope(value: JsonValue | undefined): TasksScope {
   if (value === undefined) return { kind: 'tasks' }
   if (!isRecord(value)) throw new ClueError('invalid-request', 'a task range must be a JSON object')
@@ -113,10 +158,51 @@ function parseTasksScope(value: JsonValue | undefined): TasksScope {
   if (value.completed !== undefined && typeof value.completed !== 'boolean') {
     throw new ClueError('invalid-request', 'a task range "completed" filter must be a boolean')
   }
+  for (const field of ['assignee', 'creator', 'follower', 'due'] as const) {
+    if (value[field] !== undefined) {
+      throw new ClueError(
+        'invalid-request',
+        `a task list range does not support the "${field}" filter; use task search`,
+      )
+    }
+  }
+  if (value.tasklistGuid !== undefined && stringOf(value.tasklistGuid) === undefined) {
+    throw new ClueError('invalid-request', 'a tasklist range needs a non-empty tasklist GUID')
+  }
   return {
     kind: 'tasks',
     ...(stringOf(value.tasklistGuid) === undefined ? {} : { tasklistGuid: stringOf(value.tasklistGuid) }),
     ...(value.completed === undefined ? {} : { completed: value.completed }),
+  }
+}
+
+/** Parse one task search scope; only the filters `task +search` documents. */
+function parseTaskSearchScope(value: JsonValue | undefined): TaskSearchScope {
+  if (value === undefined) return { kind: 'tasks' }
+  if (!isRecord(value)) throw new ClueError('invalid-request', 'a task search range must be a JSON object')
+  if (value.kind !== undefined && value.kind !== 'tasks') {
+    throw new ClueError('invalid-request', 'unknown Feishu task range')
+  }
+  if (value.tasklistGuid !== undefined) {
+    throw new ClueError(
+      'invalid-request',
+      'a Feishu task search cannot filter by tasklist; use the task list range instead',
+    )
+  }
+  if (value.completed !== undefined && typeof value.completed !== 'boolean') {
+    throw new ClueError('invalid-request', 'a task search "completed" filter must be a boolean')
+  }
+  const assignee = searchFilterOf(value.assignee, 'assignee')
+  const creator = searchFilterOf(value.creator, 'creator')
+  const follower = searchFilterOf(value.follower, 'follower')
+  const due = searchFilterOf(value.due, 'due')
+  return {
+    kind: 'tasks',
+    ...(value.completed === undefined ? {} : { completed: value.completed }),
+    ...(assignee === undefined ? {} : { assignee }),
+    ...(creator === undefined ? {} : { creator }),
+    ...(follower === undefined ? {} : { follower }),
+    ...(due === undefined ? {} : { due }),
   }
 }
 
@@ -166,8 +252,7 @@ async function readTask(
   guid: string,
   context: ClueOperationContext,
 ): Promise<FeishuTaskDocumentData> {
-  const success = await runLark({
-    runtime,
+  const success = await runFeishuCommand(runtime, {
     args: [
       'task', 'tasks', 'get',
       '--params', JSON.stringify({ task_guid: guid }),
@@ -243,8 +328,7 @@ async function submitCompletion(
   completed: boolean,
   context: ClueOperationContext,
 ): Promise<{ readonly updatedAt?: string }> {
-  const success = await runLark({
-    runtime,
+  const success = await runFeishuCommand(runtime, {
     args: [
       'task', completed ? '+complete' : '+reopen',
       '--task-id', guid,
@@ -384,8 +468,7 @@ export function createFeishuTasksSource(getRuntime: () => ClueRuntime): ClueSour
           ...(pageToken === undefined ? {} : { page_token: pageToken }),
           ...(scope.completed === undefined ? {} : { completed: scope.completed }),
         }
-        const success = await runLark({
-          runtime: runtime(),
+        const success = await runFeishuCommand(runtime(), {
           args: scope.tasklistGuid === undefined
             ? ['task', 'tasks', 'list', '--params', JSON.stringify(params), '--as', 'user', '--format', 'json']
             : [
@@ -406,22 +489,38 @@ export function createFeishuTasksSource(getRuntime: () => ClueRuntime): ClueSour
 
       async search(input: ClueSourceSearchInput, context): Promise<ClueListResult> {
         const query = typeof input.query === 'string' ? input.query.trim() : ''
-        const scope = parseTasksScope(input.scope)
-        if (query === '' && scope.completed === undefined) {
-          throw new ClueError('invalid-request', 'a Feishu task search needs a keyword or a completion filter')
+        const scope = parseTaskSearchScope(input.scope)
+        const hasFilter = scope.completed !== undefined
+          || scope.assignee !== undefined
+          || scope.creator !== undefined
+          || scope.follower !== undefined
+          || scope.due !== undefined
+        if (query === '' && !hasFilter) {
+          throw new ClueError(
+            'invalid-request',
+            'a Feishu task search needs a keyword or at least one documented filter',
+          )
         }
+        // The cursor is bound to every filter, not just the keyword.
         const signature = stableJson({
           query,
           ...(scope.completed === undefined ? {} : { completed: scope.completed }),
+          ...(scope.assignee === undefined ? {} : { assignee: scope.assignee }),
+          ...(scope.creator === undefined ? {} : { creator: scope.creator }),
+          ...(scope.follower === undefined ? {} : { follower: scope.follower }),
+          ...(scope.due === undefined ? {} : { due: scope.due }),
         } as unknown as JsonValue)
         const pageToken = pageTokenOf(signature, input.cursor)
         const limit = pageLimitOf(input.limit)
-        const success = await runLark({
-          runtime: runtime(),
+        const success = await runFeishuCommand(runtime(), {
           args: [
             'task', '+search',
             ...(query === '' ? [] : ['--query', query]),
             ...(scope.completed === undefined ? [] : [`--completed=${scope.completed}`]),
+            ...(scope.assignee === undefined ? [] : ['--assignee', scope.assignee]),
+            ...(scope.creator === undefined ? [] : ['--creator', scope.creator]),
+            ...(scope.follower === undefined ? [] : ['--follower', scope.follower]),
+            ...(scope.due === undefined ? [] : ['--due', scope.due]),
             '--page-limit', String(limit),
             ...(pageToken === undefined ? [] : ['--page-token', pageToken]),
             '--as', 'user', '--format', 'json',
@@ -518,8 +617,7 @@ export function createFeishuTasksSource(getRuntime: () => ClueRuntime): ClueSour
           if (new TextEncoder().encode(json).length > MAX_TASK_UPDATE_BYTES) {
             throw new ClueError('invalid-request', 'the task edit payload is too large')
           }
-          const success = await runLark({
-            runtime: runtime(),
+          const success = await runFeishuCommand(runtime(), {
             args: [
               'task', '+update', '--task-id', locator.guid,
               '--data', json,
@@ -530,7 +628,10 @@ export function createFeishuTasksSource(getRuntime: () => ClueRuntime): ClueSour
           })
           const confirmation = updateConfirmationOf(success)
           requireUpdateConfirmation(confirmation, update, fields)
-          if (confirmation.updatedAt !== undefined) revision = confirmation.updatedAt
+          // Once a write happened, the OLD baseline is no longer a valid
+          // revision to return. Prefer the server's stamp, then a fresh read;
+          // if neither is available, omit the revision instead of lying.
+          revision = confirmation.updatedAt
           if (completionChanged) {
             try {
               const completion = await submitCompletion(runtime(), locator.guid, edited.completed, context)
@@ -544,13 +645,18 @@ export function createFeishuTasksSource(getRuntime: () => ClueRuntime): ClueSour
                 { partial: 'true', written: fields.join(','), unwritten: 'completed' },
               )
             }
+          } else {
+            // `task +update` documents `updated_fields`/`confirmed` but no
+            // `updated_at`. A best-effort fresh read gives the next save a real
+            // baseline instead of a guaranteed false conflict; it is not CAS.
+            revision = await refreshRevision(runtime(), locator.guid, context) ?? revision
           }
           return { savedAt, ...(revision === undefined ? {} : { revision }) }
         }
 
         if (completionChanged) {
           const completion = await submitCompletion(runtime(), locator.guid, edited.completed, context)
-          revision = completion.updatedAt ?? await refreshRevision(runtime(), locator.guid, context) ?? revision
+          revision = completion.updatedAt ?? await refreshRevision(runtime(), locator.guid, context)
           return { savedAt, ...(revision === undefined ? {} : { revision }) }
         }
         // Nothing changed: no write is issued and the draft is considered clean.

@@ -7,7 +7,8 @@
  *   disposer removes exactly those registrations (idempotent; a partial
  *   failure cleans up what already succeeded);
  * - docs previews are READ-ONLY XML/Markdown text: no save control, content is
- *   escaped as text (never injected as HTML), fragments/truncation are stated;
+ *   escaped as text (never injected as HTML), fragments/truncation are stated,
+ *   and empty documents use dedicated empty copy rather than a time label;
  * - the task renderer is a controlled form with title/description/start/due/
  *   completed fields and a disabled save on local validation errors; the
  *   read-only mode is static text;
@@ -245,6 +246,14 @@ describe('docs preview (read-only)', () => {
     expect(markup).toContain(DEFAULT_FEISHU_LABELS.limitedFragment)
   })
 
+  it('uses an empty-content label rather than the time "Not set" copy', () => {
+    const face = new FakeFace()
+    registerFeishuSourceClient(face)
+    const markup = renderFormat(face, FEISHU_FORMATS.docsXml, rendererProps(docsRead('')))
+    expect(markup).toContain(DEFAULT_FEISHU_LABELS.emptyContent)
+    expect(markup).not.toContain(DEFAULT_FEISHU_LABELS.noTime)
+  })
+
   it('degrades to a readable note for an unknown payload instead of crashing', () => {
     const face = new FakeFace()
     registerFeishuSourceClient(face)
@@ -307,6 +316,21 @@ describe('task form editor', () => {
     const markup = renderFormat(face, FEISHU_FORMATS.taskDocument, props)
     expect(markup).toContain('data-feishu-task-error="title"')
     expect(markup).toMatch(/data-feishu-task-save=""[^>]*disabled/)
+  })
+
+  it('uses an empty-description label in the read-only task projection', () => {
+    const face = new FakeFace()
+    registerFeishuSourceClient(face)
+    const props = rendererProps(
+      {
+        format: FEISHU_FORMATS.taskDocument,
+        data: taskDocument({ description: '' }) as unknown as JsonValue,
+      },
+      { sourceId: FEISHU_SOURCE_IDS.tasks, typeId: FEISHU_TYPE_IDS.task, readOnly: true },
+    )
+    const markup = renderFormat(face, FEISHU_FORMATS.taskDocument, props)
+    expect(markup).toContain(DEFAULT_FEISHU_LABELS.emptyDescription)
+    expect(markup).not.toContain(DEFAULT_FEISHU_LABELS.noTime)
   })
 
   it('renders a static read-only task preview with no inputs or save button', () => {

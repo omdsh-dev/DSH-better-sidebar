@@ -5,16 +5,35 @@
  * and never touch a real lark-cli, a real account or the network. Answers are
  * queued per call; an unqueued call is a test bug, not an empty result.
  */
-import type { CliResult, CliRunRequest, ClueRuntime } from '../../../src/clues/runtime/types.ts'
-import type { JsonValue } from '../../../src/clues/types.ts'
+import type {
+  CliResult,
+  CliRunRequest,
+  ClueRuntime,
+  ConnectionInspection,
+} from '../src/clues/runtime/types.ts'
+import type { JsonValue } from '../src/clues/types.ts'
 
 /** One queued answer (a value or a function of the captured request). */
 export type FakeAnswer = CliResult | ((request: CliRunRequest) => CliResult | Promise<CliResult>)
 
+/** One connection observation captured from a resource request. */
+export interface FakeConnectionReport {
+  readonly connectionId: string
+  readonly inspection: ConnectionInspection
+}
+
 /** A capturing fake of the S2 runtime's CLI face. */
 export class FakeLarkRuntime {
   readonly requests: CliRunRequest[] = []
+  /** Observations the adapter published through `runtime.connections.report`. */
+  readonly reports: FakeConnectionReport[] = []
   private readonly answers: FakeAnswer[] = []
+
+  readonly connections = {
+    report: (connectionId: string, inspection: ConnectionInspection): void => {
+      this.reports.push({ connectionId, inspection })
+    },
+  }
 
   enqueue(...answers: FakeAnswer[]): this {
     this.answers.push(...answers)

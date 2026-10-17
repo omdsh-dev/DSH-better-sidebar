@@ -14,10 +14,14 @@
  *   `lark-cli auth status --json` — never `--verify`, never `--dry-run`, and
  *   never on a timer/health check. dry-run previously triggered auth side
  *   effects, and the approved spec forbids periodic verification probes;
- * - `connect` (called by an explicit click) runs exactly
- *   `lark-cli auth login --domain docs --domain drive --no-wait --json` and
- *   projects the opaque verification URL / user code. The QR payload is the
- *   SAME opaque string (no re-encoding);
+ * - `connect` (called by an explicit click) first checks the configuration with
+ *   the read-only status verb (so a "configure" step never launches a login it
+ *   cannot complete), then runs exactly
+ *   `lark-cli auth login --domain docs --domain drive --domain task --no-wait
+ *   --json` and projects the opaque verification URL / user code. The QR
+ *   payload is the SAME opaque string (no re-encoding). The task domain is part
+ *   of the union so a docs-only login can never leave the tasks capability
+ *   unusable;
  * - `poll` runs `lark-cli auth login --device-code <host-side code> --json` on
  *   explicit request only;
  * - `cancel` drops the host-side handle. lark-cli documents no device-code
@@ -39,10 +43,11 @@ import type {
   DependencyTarget,
   ConnectionCancelInput,
 } from '../../runtime/types.ts'
-import { ClueError } from '../../types.ts'
+import { ClueError, type JsonValue } from '../../types.ts'
 import {
   FEISHU_CONNECTION_CAPABILITIES,
   FEISHU_CONNECTION_ID,
+  FEISHU_CLI_COMMAND,
   FEISHU_DEPENDENCY_ID,
   FEISHU_PLUGIN_ID,
   isRecord,
@@ -51,9 +56,18 @@ import {
   stringOf,
 } from './format.ts'
 import {
+  capabilitiesForScopes,
+  grantedScopesOf,
+  missingConfigurationInspection,
+  missingConnectionCapabilities,
+  missingScopesDetail,
+} from './auth.ts'
+import {
   classifyLarkFailure,
   executeLark,
   larkFailureError,
+  larkScopeDetail,
+  LARK_AUTH_POLL_TIMEOUT_MS,
   type LarkFailure,
   type LarkSuccess,
 } from './lark.ts'
@@ -65,7 +79,13 @@ export function larkAuthStatusArgs(): string[] {
 
 /** The explicit authorization-start argv fixed by the shared contract. */
 export function larkAuthLoginArgs(): string[] {
-  return ['auth', 'login', '--domain', 'docs', '--domain', 'drive', '--no-wait', '--json']
+  return [
+    'auth', 'login',
+    '--domain', 'docs',
+    '--domain', 'drive',
+    '--domain', 'task',
+    '--no-wait', '--json',
+  ]
 }
 
 /**
@@ -110,7 +130,7 @@ export function feishuDependencyDefinition(): ClueDependencyDefinition {
   return {
     dependencyId: FEISHU_DEPENDENCY_ID,
     name: 'Lark CLI',
-    command: 'lark-cli',
+    command: FEISHU_CLI_COMMAND,
     pluginId: FEISHU_PLUGIN_ID,
     version: { minimum: LARK_CLI_VERSION, recommended: LARK_CLI_VERSION },
     supportedPlatforms: supportedTargets(),
@@ -142,35 +162,14 @@ export function feishuDependencyDefinition(): ClueDependencyDefinition {
   }
 }
 
-/** The fixed detail shown when the application configuration is missing. */
-const CONFIGURATION_DETAIL =
-  'The lark-cli application is not configured. Run `lark-cli config init` in a terminal '
-  + '(lark-cli drives its own interactive flow), then check the connection again.'
-
-/** Safe scope detail (only missing scope names and the console URL). */
-function scopeDetail(failure: LarkFailure): string {
-  const parts: string[] = []
-  if (failure.missingScopes.length > 0) {
-    parts.push(`Missing Feishu scopes: ${failure.missingScopes.join(', ')}.`)
-  } else {
-    parts.push('A required Feishu scope is missing; authorize it incrementally and retry.')
-  }
-  if (failure.consoleUrl !== undefined) {
-    parts.push(`Developer console: ${failure.consoleUrl}`)
-  }
-  return parts.join(' ')
-}
-
 /** The user identity object of an auth-status answer, when present. */
-function userIdentityOf(success: LarkSuccess): Record<string, unknown> | undefined {
+function userIdentityOf(success: LarkSuccess): Record<string, JsonValue> | undefined {
   const identities = isRecord(success.data.identities)
     ? success.data.identities
     : isRecord(success.envelope.identities) ? success.envelope.identities : undefined
   if (identities === undefined) return undefined
   const user = identities.user
-  return user !== null && typeof user === 'object' && !Array.isArray(user)
-    ? user as Record<string, unknown>
-    : undefined
+  return isRecord(user) ? user : undefined
 }
 
 /** Whether the status payload explicitly says the app configuration is absent. */
@@ -179,11 +178,14 @@ function statusConfigMissing(success: LarkSuccess): boolean {
   return data.configured === false || data.config === null || data.app === null
 }
 
-/** Project one successful auth-status answer. */
+/**
+ * Project one successful auth-status answer. A ready token is necessary but
+ * not sufficient: a docs/drive-only grant must not advertise the task
+ * capabilities, so the declared capabilities are filtered by the scopes the
+ * CLI reports (`identities.user.scope`).
+ */
 function inspectionOfStatus(success: LarkSuccess): ConnectionInspection {
-  if (statusConfigMissing(success)) {
-    return { configuration: 'missing', authorization: 'not-authorized', detail: CONFIGURATION_DETAIL }
-  }
+  if (statusConfigMissing(success)) return missingConfigurationInspection()
   const user = userIdentityOf(success)
   const account = user === undefined ? undefined : stringOf(user.userName) ?? stringOf(user.openId)
   if (user === undefined) {
@@ -201,19 +203,46 @@ function inspectionOfStatus(success: LarkSuccess): ConnectionInspection {
     status === 'ready' || status === 'active' || status === 'valid'
     || tokenStatus === 'valid' || tokenStatus === 'active'
   )
-  const inspection: ConnectionInspection = {
-    configuration: 'ready',
-    authorization: ready ? 'ready' : expired ? 'expired' : denied ? 'denied' : 'not-authorized',
-    ...(account === undefined ? {} : { account }),
-    ...(ready
-      ? { capabilities: [...FEISHU_CONNECTION_CAPABILITIES] }
-      : { detail: expired
+  if (!ready) {
+    return {
+      configuration: 'ready',
+      authorization: expired ? 'expired' : denied ? 'denied' : 'not-authorized',
+      ...(account === undefined ? {} : { account }),
+      detail: expired
         ? 'The Feishu authorization expired; connect the account again.'
         : denied
           ? 'The Feishu authorization was denied or revoked; connect the account again.'
-          : 'The Feishu account is not authorized yet; connect it.' }),
+          : 'The Feishu account is not authorized yet; connect it.',
+    }
   }
-  return inspection
+  const scopes = grantedScopesOf(user)
+  if (scopes === undefined) {
+    // The documented status shape carries the granted scopes; without them we
+    // cannot honestly claim the tasks capability after a docs-only login.
+    return {
+      configuration: 'ready',
+      authorization: 'scope-insufficient',
+      ...(account === undefined ? {} : { account }),
+      detail: 'lark-cli did not report the granted scopes; re-run authorization to confirm '
+        + 'the docs and task scopes.',
+    }
+  }
+  const capabilities = capabilitiesForScopes(scopes)
+  const missing = missingConnectionCapabilities(capabilities)
+  if (missing.length > 0) {
+    return {
+      configuration: 'ready',
+      authorization: 'scope-insufficient',
+      ...(account === undefined ? {} : { account }),
+      detail: missingScopesDetail(missing),
+    }
+  }
+  return {
+    configuration: 'ready',
+    authorization: 'ready',
+    ...(account === undefined ? {} : { account }),
+    capabilities,
+  }
 }
 
 /** One expiry instant, derived only from explicit fields (never invented as "valid"). */
@@ -295,12 +324,87 @@ function readyInspectionOf(success: LarkSuccess): ConnectionInspection {
   const account = user === undefined
     ? stringOf(success.data.userName)
     : stringOf(user.userName) ?? stringOf(user.openId)
+  const scopes = grantedScopesOf(user) ?? grantedScopesOf(success.data)
+  if (scopes === undefined) {
+    // The documented poll success means the requested domains were granted;
+    // only an explicit scope list can narrow that claim.
+    return {
+      configuration: 'ready',
+      authorization: 'ready',
+      ...(account === undefined ? {} : { account }),
+      capabilities: [...FEISHU_CONNECTION_CAPABILITIES],
+    }
+  }
+  const capabilities = capabilitiesForScopes(scopes)
+  const missing = missingConnectionCapabilities(capabilities)
+  if (missing.length > 0) {
+    return {
+      configuration: 'ready',
+      authorization: 'scope-insufficient',
+      ...(account === undefined ? {} : { account }),
+      detail: missingScopesDetail(missing),
+    }
+  }
   return {
     configuration: 'ready',
     authorization: 'ready',
     ...(account === undefined ? {} : { account }),
-    capabilities: [...FEISHU_CONNECTION_CAPABILITIES],
+    capabilities,
   }
+}
+
+/**
+ * Project one SUCCESSFUL device-code poll. A success envelope is not a ready
+ * claim by itself: when the payload carries a status/authorized field, a
+ * pending/denied/expired answer must stay in that state.
+ */
+function pollResultOf(success: LarkSuccess): ConnectionPollResult {
+  const status = (
+    stringOf(success.data.status)
+    ?? stringOf(success.data.authorization_status)
+    ?? ''
+  ).toLowerCase()
+  if (status !== '') {
+    if (
+      status.includes('pending')
+      || status.includes('waiting')
+      || status.includes('slow_down')
+      || status === 'authorizing'
+    ) {
+      return {
+        complete: false,
+        inspection: { configuration: 'ready', authorization: 'authorizing' },
+      }
+    }
+    if (status.includes('denied') || status.includes('revoked') || status.includes('access_denied')) {
+      return { complete: true, inspection: { configuration: 'ready', authorization: 'denied' } }
+    }
+    if (status.includes('expired') || status.includes('timeout')) {
+      return { complete: true, inspection: { configuration: 'ready', authorization: 'expired' } }
+    }
+    if (status.includes('not_authorized') || status.includes('unauthorized')) {
+      return {
+        complete: true,
+        inspection: { configuration: 'ready', authorization: 'not-authorized' },
+      }
+    }
+    const readyStatus = ['ready', 'authorized', 'active', 'valid', 'done', 'success', 'complete', 'completed']
+    if (!readyStatus.includes(status)) {
+      // Unknown non-terminal status: never claim ready; keep the explicit
+      // authorization attempt open for the next poll.
+      return {
+        complete: false,
+        inspection: { configuration: 'ready', authorization: 'authorizing' },
+      }
+    }
+  }
+  if (success.data.authorized === false || success.data.complete === false) {
+    return {
+      complete: false,
+      inspection: { configuration: 'ready', authorization: 'authorizing' },
+    }
+  }
+  return { complete: true, inspection: readyInspectionOf(success) }
 }
 
 /** Project one failed device-code poll into a terminal state or a still-pending one. */
@@ -308,15 +412,16 @@ function pollFailureOf(failure: LarkFailure): ConnectionPollResult | undefined {
   const failureClass = classifyLarkFailure(failure)
   const subtype = failure.subtype.toLowerCase()
   if (failureClass === 'config-missing') {
-    return {
-      complete: true,
-      inspection: { configuration: 'missing', authorization: 'not-authorized', detail: CONFIGURATION_DETAIL },
-    }
+    return { complete: true, inspection: missingConfigurationInspection() }
   }
   if (failureClass === 'missing-scope') {
     return {
       complete: true,
-      inspection: { configuration: 'ready', authorization: 'scope-insufficient', detail: scopeDetail(failure) },
+      inspection: {
+        configuration: 'ready',
+        authorization: 'scope-insufficient',
+        detail: larkScopeDetail(failure.missingScopes, failure.consoleUrl),
+      },
     }
   }
   if (failureClass === 'authorization') {
@@ -364,11 +469,13 @@ export function feishuConnectionDefinition(getRuntime: () => ClueRuntime): ClueC
         throw new ClueError('failed', 'lark-cli auth status returned no usable status envelope')
       }
       const failureClass = classifyLarkFailure(outcome.failure)
-      if (failureClass === 'config-missing') {
-        return { configuration: 'missing', authorization: 'not-authorized', detail: CONFIGURATION_DETAIL }
-      }
+      if (failureClass === 'config-missing') return missingConfigurationInspection()
       if (failureClass === 'missing-scope') {
-        return { configuration: 'ready', authorization: 'scope-insufficient', detail: scopeDetail(outcome.failure) }
+        return {
+          configuration: 'ready',
+          authorization: 'scope-insufficient',
+          detail: larkScopeDetail(outcome.failure.missingScopes, outcome.failure.consoleUrl),
+        }
       }
       if (failureClass === 'authorization') {
         const subtype = outcome.failure.subtype.toLowerCase()
@@ -387,6 +494,27 @@ export function feishuConnectionDefinition(getRuntime: () => ClueRuntime): ClueC
       throw larkFailureError(outcome.failure)
     },
     async connect(_input, context) {
+      // `connect` is also the runtime's "configure" action. Check the
+      // configuration with the read-only status verb FIRST: an unconfigured
+      // app must surface the terminal `config init` instruction without
+      // launching a login it cannot complete. `auth status` is not a probe with
+      // side effects and this runs only for an explicit user action.
+      const status = await executeLark({
+        runtime: runtime(),
+        args: larkAuthStatusArgs(),
+        cwd: process.cwd(),
+        ...(context.signal === undefined ? {} : { signal: context.signal }),
+        timeoutMs: 30_000,
+      })
+      if (status.success !== undefined && statusConfigMissing(status.success)) {
+        return { inspection: missingConfigurationInspection() }
+      }
+      if (
+        status.failure !== undefined
+        && classifyLarkFailure(status.failure) === 'config-missing'
+      ) {
+        return { inspection: missingConfigurationInspection() }
+      }
       const outcome = await executeLark({
         runtime: runtime(),
         args: larkAuthLoginArgs(),
@@ -399,9 +527,7 @@ export function feishuConnectionDefinition(getRuntime: () => ClueRuntime): ClueC
         throw new ClueError('failed', 'lark-cli auth login returned no usable authorization envelope')
       }
       if (classifyLarkFailure(outcome.failure) === 'config-missing') {
-        return {
-          inspection: { configuration: 'missing', authorization: 'not-authorized', detail: CONFIGURATION_DETAIL },
-        }
+        return { inspection: missingConfigurationInspection() }
       }
       throw larkFailureError(outcome.failure)
     },
@@ -412,11 +538,9 @@ export function feishuConnectionDefinition(getRuntime: () => ClueRuntime): ClueC
         args: larkAuthPollArgs(deviceCode),
         cwd: process.cwd(),
         ...(context.signal === undefined ? {} : { signal: context.signal }),
-        timeoutMs: 120_000,
+        timeoutMs: LARK_AUTH_POLL_TIMEOUT_MS,
       })
-      if (outcome.success !== undefined) {
-        return { complete: true, inspection: readyInspectionOf(outcome.success) }
-      }
+      if (outcome.success !== undefined) return pollResultOf(outcome.success)
       if (outcome.failure === undefined) {
         throw new ClueError('failed', 'lark-cli device authorization returned no usable envelope')
       }

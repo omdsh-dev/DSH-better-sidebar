@@ -15,9 +15,11 @@ export interface FeishuClientLabels {
   readonly revision: string
   readonly contentTruncated: string
   readonly limitedFragment: string
+  readonly emptyContent: string
   readonly invalidDocument: string
   readonly title: string
   readonly description: string
+  readonly emptyDescription: string
   readonly start: string
   readonly due: string
   readonly allDay: string
@@ -42,9 +44,11 @@ export const DEFAULT_FEISHU_LABELS: FeishuClientLabels = {
   revision: 'Revision',
   contentTruncated: 'Preview truncated; the full document is available through the source.',
   limitedFragment: 'This is one fragment of a longer document.',
+  emptyContent: 'This document has no text content.',
   invalidDocument: 'This document payload could not be previewed.',
   title: 'Title',
   description: 'Description',
+  emptyDescription: 'No description.',
   start: 'Start',
   due: 'Due',
   allDay: 'All day',

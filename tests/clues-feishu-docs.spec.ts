@@ -8,13 +8,16 @@
  *   +node-list`, `wiki +space-list`, `drive +search`), continued only by the
  *   returned page token; `--page-all` never appears; a cursor from another
  *   range/query is refused instead of mixing pages;
+ * - a Drive folder row is returned as a `drive-folder` scope candidate; one
+ *   explicit follow-up list call descends one level (no recursive walk);
  * - no invented `total`; an unpaginatable root or search-index coverage is
  *   reported as `limited`;
  * - a wiki URL resolves through `wiki +node-get` and the wiki NODE token is
  *   never used as a docx token;
  * - reads are latest XML by default (Markdown is a read-only projection),
- *   long content is an explicit fragment with `nextOffset`, and the
- *   reference_map sidecar travels with the content;
+ *   long content is an explicit fragment with `nextOffset`, the
+ *   reference_map sidecar travels with the content, and an oversized document
+ *   reports lark-cli's 8 MiB capture limit instead of returning a partial read;
  * - docs are READ-ONLY: no loadEdit/saveEdit exists, because lark-cli has no
  *   lossless local text-block write (append/overwrite/block rewrite forbidden);
  * - portable locators export only resource identifiers + original URL/host,
@@ -30,13 +33,14 @@ import { createFeishuDocsSource } from '../src/clues/sources/feishu/docs.ts'
 import { createCluesService } from '../src/clues/service.ts'
 import { CluesStore } from '../src/clues/store.ts'
 import { removeTree } from './temp-tree.ts'
-import { DOCS_EDIT_LIMITATION, FEISHU_FORMATS, FEISHU_TYPE_IDS } from '../src/clues/sources/feishu/format.ts'
+import { DOCS_EDIT_LIMITATION, FEISHU_CONNECTION_ID, FEISHU_FORMATS, FEISHU_TYPE_IDS } from '../src/clues/sources/feishu/format.ts'
 import {
+  cliResult,
   failResult,
   FakeLarkRuntime,
   okResult,
   operationContext,
-} from './fixtures/clues-feishu/fake-lark.ts'
+} from './clues-feishu-fixture.ts'
 
 const CWD = '/tmp/dsh-feishu'
 const PROBE = 'https://acme.feishu.cn'
@@ -94,12 +98,22 @@ describe('docs browsing ranges', () => {
       '--as', 'user', '--format', 'json',
     ])
     expect(runtime.requests[0]!.cwd).toBe(CWD)
-    expect(first.items).toHaveLength(1)
+    expect(first.items).toHaveLength(2)
     expect(first.items[0]).toMatchObject({
       sourceId: 'builtin.feishu.docs',
       typeId: FEISHU_TYPE_IDS.docx,
       title: 'Design notes',
       locator: { kind: 'docx', docToken: 'doccnA' },
+    })
+    // A subfolder is returned as an explicit scope row (token + role), never
+    // silently dropped and never walked recursively.
+    expect(first.items[1]).toMatchObject({
+      sourceId: 'builtin.feishu.docs',
+      typeId: FEISHU_TYPE_IDS.docx,
+      title: 'A subfolder',
+      subtitle: 'Folder',
+      locator: { kind: 'drive-folder', folderToken: 'fldChild' },
+      meta: { role: 'scope', scopeKind: 'drive-folder' },
     })
     expect(first.total).toBeUndefined()
     expect(first.nextCursor).toBeTruthy()
@@ -114,6 +128,36 @@ describe('docs browsing ranges', () => {
     expect(runtime.requests[1]!.args[4]).toBe(JSON.stringify({
       folder_token: 'fldRoot', page_size: 100, page_token: 'pt-2',
     }))
+  })
+
+  it('descends one folder level only when the caller explicitly picks the folder scope row', async () => {
+    const runtime = new FakeLarkRuntime()
+      .enqueue(okResult({
+        files: [{ type: 'folder', token: 'fldChild', name: 'Child' }],
+        has_more: false,
+      }))
+      .enqueue(okResult({
+        files: [{ type: 'docx', token: 'doccnInner', name: 'Inner doc' }],
+        has_more: false,
+      }))
+    const { operations } = opsOf(runtime)
+    const parent = await operations.list!(
+      { scope: { kind: 'drive', folderToken: 'fldRoot' } },
+      context(),
+    )
+    const folder = parent.items[0]!
+    expect(folder.locator).toMatchObject({ kind: 'drive-folder', folderToken: 'fldChild' })
+    const child = await operations.list!(
+      { scope: { kind: 'drive', folderToken: (folder.locator as { folderToken: string }).folderToken } },
+      context(),
+    )
+    expect(runtime.requests[1]!.args[4]).toBe(JSON.stringify({
+      folder_token: 'fldChild', page_size: 100,
+    }))
+    expect(child.items[0]).toMatchObject({
+      locator: { kind: 'docx', docToken: 'doccnInner' },
+      title: 'Inner doc',
+    })
   })
 
   it('refuses a cursor minted for another range instead of mixing pages', async () => {
@@ -279,6 +323,27 @@ describe('docs resolve (URLs and wiki node unpacking)', () => {
     expect(runtime.requests).toHaveLength(0)
   })
 
+  it('resolves a Drive folder URL/token to a scope row without a CLI call', async () => {
+    const runtime = new FakeLarkRuntime()
+    const { operations } = opsOf(runtime)
+    const fromUrl = await operations.resolve!(
+      { text: `${PROBE}/drive/folder/fldChild?from=share`, explicit: true },
+      context(),
+    ) as ClueCandidate
+    expect(fromUrl).toMatchObject({
+      sourceId: 'builtin.feishu.docs',
+      subtitle: 'Folder',
+      locator: { kind: 'drive-folder', folderToken: 'fldChild' },
+      meta: { role: 'scope', scopeKind: 'drive-folder' },
+    })
+    const fromToken = await operations.resolve!(
+      { text: 'fldChildToken', explicit: true },
+      context(),
+    ) as ClueCandidate
+    expect(fromToken.locator).toMatchObject({ kind: 'drive-folder', folderToken: 'fldChildToken' })
+    expect(runtime.requests).toHaveLength(0)
+  })
+
   it('ignores a foreign URL instead of guessing a Feishu resource', async () => {
     const runtime = new FakeLarkRuntime()
     const { operations } = opsOf(runtime)
@@ -316,13 +381,33 @@ describe('docs resolve (URLs and wiki node unpacking)', () => {
     expect((candidate.locator as { docToken?: string }).docToken).toBeUndefined()
   })
 
-  it('refuses a wiki node that wraps a non-document object', async () => {
+  it('refuses a wiki node that wraps a non-document object without echoing its obj_type', async () => {
     const runtime = new FakeLarkRuntime().enqueue(okResult({
-      node: { obj_type: 'sheet', obj_token: 'sht1', node_token: 'wikcnSheet' },
+      node: { obj_type: 'sheet <script>alert(1)</script>', obj_token: 'sht1', node_token: 'wikcnSheet' },
     }))
     const { operations } = opsOf(runtime)
-    await expect(operations.resolve!({ text: `${PROBE}/wiki/wikcnSheet`, explicit: true }, context()))
-      .rejects.toMatchObject({ category: 'unsupported' })
+    let failure: unknown
+    try {
+      await operations.resolve!({ text: `${PROBE}/wiki/wikcnSheet`, explicit: true }, context())
+    } catch (error) {
+      failure = error
+    }
+    expect(failure).toBeInstanceOf(ClueError)
+    const clueError = failure as ClueError
+    expect(clueError.category).toBe('unsupported')
+    expect(clueError.message).not.toMatch(/script|sheet <|alert/)
+    expect(clueError.message).toMatch(/non-document object/)
+
+    const locatorFailure = await operations.read!(
+      {
+        typeId: FEISHU_TYPE_IDS.wiki,
+        locator: { kind: 'wiki', wikiToken: 'wikcnN', objType: 'evil<script>' },
+      },
+      context(),
+    ).catch(error => error)
+    expect(locatorFailure).toBeInstanceOf(ClueError)
+    expect((locatorFailure as ClueError).message).not.toMatch(/evil|script/)
+    expect((locatorFailure as ClueError).message).toMatch(/non-document object/)
   })
 })
 
@@ -373,7 +458,9 @@ describe('docs read', () => {
     )
     expect(runtime.requests[0]!.args[5]).toBe('markdown')
     expect(result.format).toBe(FEISHU_FORMATS.docsMarkdown)
-    expect(result.data).toMatchObject({ projection: 'markdown' })
+    // Markdown has no <title>; the exported first heading is the real title,
+    // not a token-derived fallback.
+    expect(result.data).toMatchObject({ projection: 'markdown', title: 'Design notes' })
   })
 
   it('reads a resolved wiki document through its underlying docx token, without node-get', async () => {
@@ -440,6 +527,25 @@ describe('docs read', () => {
     expect(first.text! + second.text!).toBe(content)
   })
 
+  it('reports the bounded capture limit explicitly instead of returning a partial read', async () => {
+    const runtime = new FakeLarkRuntime().enqueue(cliResult({ stdoutTruncated: true, stdout: '{"ok":true' }))
+    const { operations } = opsOf(runtime)
+    let failure: unknown
+    try {
+      await operations.read!(
+        { typeId: FEISHU_TYPE_IDS.docx, locator: { kind: 'docx', docToken: 'doccnHuge' } },
+        context(),
+      )
+    } catch (error) {
+      failure = error
+    }
+    expect(failure).toBeInstanceOf(ClueError)
+    const clueError = failure as ClueError
+    expect(clueError.category).toBe('failed')
+    expect(clueError.message).toMatch(/8 MiB capture limit/)
+    expect(clueError.message).toMatch(/cannot be read/)
+  })
+
   it('rejects an out-of-range byte offset instead of inventing an empty document', async () => {
     const runtime = new FakeLarkRuntime().enqueue(okResult({
       document: { document_id: 'doccnA', revision_id: 1, content: 'short' },
@@ -464,6 +570,10 @@ describe('docs read', () => {
     }
     expect(DOCS_EDIT_LIMITATION).toMatch(/read-only/)
     expect(DOCS_EDIT_LIMITATION).toMatch(/append|overwrite/)
+    // The user-visible reason names the actual documented verbs: str_replace is
+    // a whole-document find/replace, not a block-scoped edit.
+    expect(DOCS_EDIT_LIMITATION).toMatch(/str_replace/)
+    expect(DOCS_EDIT_LIMITATION).toMatch(/block scope|whole-document/)
   })
 })
 
@@ -514,6 +624,48 @@ describe('service integration: stable identity and the read-only path', () => {
 })
 
 describe('docs portable and errors', () => {
+  it('propagates the safe missing-scope detail through the service and reports the connection observation', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-clues-feishu-scope-'))
+    const runtime = new FakeLarkRuntime().enqueue(failResult({
+      type: 'authorization',
+      subtype: 'missing_scope',
+      missing_scopes: ['docx:document:read'],
+      console_url: 'https://open.feishu.cn/app/cli_x/auth',
+      message: 'Bearer secret-token leaked',
+    }))
+    const service = createCluesService({
+      store: new CluesStore({ root }),
+      builtinSources: [sourceWith(runtime)],
+      now: () => '2026-10-17T00:00:00.000Z',
+    })
+    try {
+      const ensured = await service.ensure({
+        workspaceId: 'ws-feishu',
+        sourceId: 'builtin.feishu.docs',
+        typeId: FEISHU_TYPE_IDS.docx,
+        locator: { kind: 'docx', docToken: 'doccnA' },
+        title: 'A document',
+      })
+      let failure: unknown
+      try {
+        await service.read({ workspaceId: 'ws-feishu', clueId: ensured.clue.id })
+      } catch (error) {
+        failure = error
+      }
+      expect(failure).toBeInstanceOf(ClueError)
+      const clueError = failure as ClueError
+      expect(clueError.category).toBe('auth-required')
+      expect(clueError.message).toContain('docx:document:read')
+      expect(clueError.message).toContain('https://open.feishu.cn/app/cli_x/auth')
+      expect(clueError.message).not.toMatch(/secret-token/)
+      expect(runtime.reports).toHaveLength(1)
+      expect(runtime.reports[0]!.inspection.authorization).toBe('scope-insufficient')
+    } finally {
+      service.dispose()
+      removeTree(root)
+    }
+  })
+
   it('exports only resource identifiers + original URL/host (never a token)', async () => {
     const runtime = new FakeLarkRuntime()
     const { operations } = opsOf(runtime)
@@ -572,6 +724,12 @@ describe('docs portable and errors', () => {
     )
     expect(portable).toMatchObject({ portable: false })
     expect(portable.reason).toMatch(/scope/)
+    const folder = await operations.portable!(
+      { typeId: FEISHU_TYPE_IDS.docx, locator: { kind: 'drive-folder', folderToken: 'fldX' } },
+      context(),
+    )
+    expect(folder).toMatchObject({ portable: false })
+    expect(folder.reason).toMatch(/folder.*scope|scope.*folder/)
   })
 
   it('maps a missing-scope failure to a safe auth error with no raw stderr', async () => {
@@ -598,5 +756,19 @@ describe('docs portable and errors', () => {
     expect(clueError.category).toBe('auth-required')
     expect(clueError.message).not.toMatch(/secret-token|raw hint/)
     expect(clueError.meta?.missingScopes).toBe('docx:document:read')
+    // The wire only carries { code, message }; the actionable detail must be in
+    // the message, and the resource request must update the shared connection.
+    expect(clueError.message).toContain('docx:document:read')
+    expect(clueError.message).toContain('https://open.feishu.cn/app/cli_x/auth')
+    expect(runtime.reports).toHaveLength(1)
+    expect(runtime.reports[0]).toMatchObject({
+      connectionId: FEISHU_CONNECTION_ID,
+      inspection: {
+        configuration: 'ready',
+        authorization: 'scope-insufficient',
+      },
+    })
+    expect(runtime.reports[0]!.inspection.detail).toContain('docx:document:read')
+    expect(runtime.reports[0]!.inspection.detail).toContain('https://open.feishu.cn/app/cli_x/auth')
   })
 })

@@ -9,6 +9,9 @@
  * - one request = one provider page (`drive files list`, `wiki +node-list`,
  *   `wiki +space-list`, `drive +search`), continued only with the provider's
  *   `page_token`. `--page-all` and the multi-page shortcuts are never used;
+ * - a Drive folder row is returned as a `drive-folder` SCOPE candidate (its
+ *   token is the next explicit list range); only a user choice descends one
+ *   level. The source never walks subfolders recursively;
  * - cursors are bound to the exact range/query that produced them; a stale
  *   cursor from another range is refused instead of silently mixing pages;
  * - `total` is never invented (Drive list/search expose no reliable total), and
@@ -16,6 +19,12 @@
  *   `limited`;
  * - a wiki node is a separate identity: `/wiki/<token>` is resolved through
  *   `wiki +node-get`, and only `obj_type=docx` becomes a readable document.
+ *
+ * Reads fetch the whole document with `docs +fetch` and window it by byte
+ * offset; lark-cli's stdout capture is capped at 8 MiB, so a document above
+ * that cap is reported explicitly instead of being silently truncated.
+ * Block-scoped partial fetch needs block ids, which the S4 read contract does
+ * not carry, so fragment reads necessarily re-fetch the document.
  *
  * Edit is intentionally not offered: lark-cli documents no lossless local
  * text-block write (only global `str_replace`, whole-block replace/delete/move,
@@ -61,15 +70,17 @@ import {
   arrayField,
   larkWorkingDirectory,
   recordField,
-  runLark,
   stringField,
+  LARK_CLI_MAX_OUTPUT_BYTES,
   type LarkSuccess,
 } from './lark.ts'
+import { runFeishuCommand } from './auth.ts'
 import {
   docLocatorKey,
   docProjectionOf,
   docLocatorTitle,
   hostOf,
+  isDriveFolderLocator,
   isWikiLocator,
   isWikiSpaceLocator,
   normalizeDocLocator,
@@ -185,6 +196,39 @@ function pageOf(
   return hasMore ? { limited: true } : {}
 }
 
+/**
+ * Build one Drive FOLDER scope candidate. The locator carries the token the
+ * caller passes as the next explicit `drive` list range; the source never
+ * descends on its own. `meta.role='scope'` mirrors the wiki-space row.
+ */
+function driveFolderScopeCandidate(
+  folderToken: string,
+  title?: string,
+  url?: string,
+): ClueCandidate {
+  return {
+    sourceId: FEISHU_SOURCE_IDS.docs,
+    // There is no content type for a folder: this is a scope row, identified
+    // by its locator kind/meta.role exactly like a wiki-space row.
+    typeId: FEISHU_TYPE_IDS.docx,
+    locator: {
+      kind: 'drive-folder',
+      folderToken,
+      ...(url === undefined ? {} : { url }),
+    } as unknown as Locator,
+    title: title ?? `Feishu folder ${folderToken.slice(-8)}`,
+    subtitle: 'Folder',
+    meta: { role: 'scope', scopeKind: 'drive-folder' },
+  }
+}
+
+/** Build one Drive folder candidate from a `drive files list` row. */
+function driveFolderCandidate(file: Record<string, JsonValue>): ClueCandidate | undefined {
+  const token = stringOf(file.token)
+  if (token === undefined) return undefined
+  return driveFolderScopeCandidate(token, stringOf(file.name), stringOf(file.url))
+}
+
 /** Build one Docx candidate from a Drive file row. */
 function driveDocCandidate(file: Record<string, JsonValue>): ClueCandidate | undefined {
   const type = stringOf(file.type)
@@ -205,6 +249,12 @@ function driveDocCandidate(file: Record<string, JsonValue>): ClueCandidate | und
       ...(modifiedTime === undefined ? {} : { modifiedTime }),
     },
   }
+}
+
+/** Map one Drive row to either a folder SCOPE candidate or a readable Docx. */
+function driveRowCandidate(file: Record<string, JsonValue>): ClueCandidate | undefined {
+  if (stringOf(file.type) === 'folder') return driveFolderCandidate(file)
+  return driveDocCandidate(file)
 }
 
 /** Build one wiki-node candidate from a `+node-list` row. */
@@ -308,8 +358,7 @@ async function resolveWikiNode(
   url: string | undefined,
   context: ClueOperationContext,
 ): Promise<ResolvedWikiNode> {
-  const success = await runLark({
-    runtime,
+  const success = await runFeishuCommand(runtime, {
     args: ['wiki', '+node-get', '--node-token', url ?? wikiToken, '--as', 'user', '--format', 'json'],
     cwd: cwdOf(context),
     ...(context.signal === undefined ? {} : { signal: context.signal }),
@@ -322,9 +371,11 @@ async function resolveWikiNode(
     throw new ClueError('failed', 'lark-cli did not resolve the wiki node to an underlying object token')
   }
   if (objType !== 'docx') {
+    // Do not interpolate the upstream obj_type: an anomalous/malicious value
+    // would otherwise flow into a user/model-visible error.
     throw new ClueError(
       'unsupported',
-      `the wiki node wraps a ${objType ?? 'non-document'} object; only Docx documents are supported`,
+      'the wiki node wraps a non-document object; only Docx documents are supported',
     )
   }
   return {
@@ -348,6 +399,21 @@ function titleOfContent(content: string): string | undefined {
     .replace(/&amp;/g, '&')
     .trim()
   return title === '' ? undefined : title
+}
+
+/**
+ * Extract the title of a Markdown projection. Markdown has no structural
+ * `<title>` node; the documented export starts the document with an ATX
+ * heading, so the first heading is the best non-invented title. When the
+ * export opens with a paragraph there is no title to claim (fall back to the
+ * resolved node title / locator).
+ */
+function titleOfMarkdown(content: string): string | undefined {
+  const firstLine = content.split(/\r?\n/).find(line => line.trim() !== '')
+  if (firstLine === undefined) return undefined
+  const match = /^#{1,6}\s+(.+?)\s*#*\s*$/.exec(firstLine.trim())
+  const title = match?.[1]?.trim()
+  return title === undefined || title === '' ? undefined : title
 }
 
 /** UTF-8-safe fragment of one document content. */
@@ -378,6 +444,7 @@ function fragmentOf(content: string, offset: number): {
 /** The server-side document payload of one `docs +fetch` answer. */
 interface FetchedDocument {
   readonly content: string
+  readonly title?: string
   readonly revisionId?: string
   readonly referenceMap?: JsonValue
 }
@@ -392,10 +459,12 @@ function fetchedDocumentOf(success: LarkSuccess): FetchedDocument {
   if (content === undefined) {
     throw new ClueError('failed', 'lark-cli returned no document content')
   }
+  const title = stringField(document, 'title')
   const revision = document.revision_id
   const referenceMap = document.reference_map
   return {
     content,
+    ...(title === undefined ? {} : { title }),
     ...(revision === undefined ? {} : { revisionId: String(revision) }),
     ...(referenceMap === undefined ? {} : { referenceMap }),
   }
@@ -411,10 +480,15 @@ async function docArgumentOf(
   if (locator.kind === 'wiki-space') {
     throw new ClueError('invalid-request', 'a wiki space is a browsing scope, not a document')
   }
+  if (locator.kind === 'drive-folder') {
+    throw new ClueError('invalid-request', 'a Drive folder is a browsing scope, not a document')
+  }
   if (locator.objType !== undefined && locator.objType !== 'docx') {
+    // The locator is caller-supplied; never interpolate its objType into the
+    // visible message.
     throw new ClueError(
       'unsupported',
-      `the wiki node wraps a ${locator.objType} object; only Docx documents are supported`,
+      'the wiki locator points at a non-document object; only Docx documents are supported',
     )
   }
   if (locator.objToken !== undefined) return { token: locator.objToken }
@@ -481,6 +555,13 @@ export function createFeishuDocsSource(getRuntime: () => ClueRuntime): ClueSourc
         const locator = input.locator === undefined ? undefined : parseDocLocator(input.locator)
         if (locator !== undefined) {
           if (isWikiSpaceLocator(locator)) return undefined
+          if (isDriveFolderLocator(locator)) {
+            return driveFolderScopeCandidate(
+              locator.folderToken,
+              docLocatorTitle(locator),
+              locator.url,
+            )
+          }
           if (isWikiLocator(locator) && (locator.objToken === undefined || locator.objType === undefined)) {
             const resolved = await resolveWikiNode(runtime(), locator.wikiToken, locator.url, context)
             return {
@@ -522,6 +603,9 @@ export function createFeishuDocsSource(getRuntime: () => ClueRuntime): ClueSourc
             subtitle: 'Docx',
           }
         }
+        if (parsed.kind === 'drive-folder') {
+          return driveFolderScopeCandidate(parsed.folderToken, undefined, parsed.url)
+        }
         const resolved = await resolveWikiNode(runtime(), parsed.wikiToken, parsed.url, context)
         return {
           sourceId: FEISHU_SOURCE_IDS.docs,
@@ -557,8 +641,7 @@ export function createFeishuDocsSource(getRuntime: () => ClueRuntime): ClueSourc
             page_size: limit,
             ...(pageToken === undefined ? {} : { page_token: pageToken }),
           }
-          const success = await runLark({
-            runtime: runtime(),
+          const success = await runFeishuCommand(runtime(), {
             args: ['drive', 'files', 'list', '--params', JSON.stringify(params), '--as', 'user', '--format', 'json'],
             cwd,
             ...signal,
@@ -567,7 +650,7 @@ export function createFeishuDocsSource(getRuntime: () => ClueRuntime): ClueSourc
           const items: ClueCandidate[] = []
           for (const file of files) {
             if (!isRecord(file)) continue
-            const candidate = driveDocCandidate(file)
+            const candidate = driveRowCandidate(file)
             if (candidate !== undefined) items.push(candidate)
           }
           const page = pageOf(success, signature)
@@ -581,8 +664,7 @@ export function createFeishuDocsSource(getRuntime: () => ClueRuntime): ClueSourc
 
         if (scope.kind === 'wiki-spaces') {
           const limit = pageLimitOf(input.limit, WIKI_PAGE_SIZE, WIKI_PAGE_SIZE)
-          const success = await runLark({
-            runtime: runtime(),
+          const success = await runFeishuCommand(runtime(), {
             args: [
               'wiki', '+space-list', '--page-size', String(limit),
               ...(pageToken === undefined ? [] : ['--page-token', pageToken]),
@@ -602,8 +684,7 @@ export function createFeishuDocsSource(getRuntime: () => ClueRuntime): ClueSourc
         }
 
         const limit = pageLimitOf(input.limit, WIKI_PAGE_SIZE, WIKI_PAGE_SIZE)
-        const success = await runLark({
-          runtime: runtime(),
+        const success = await runFeishuCommand(runtime(), {
           args: [
             'wiki', '+node-list', '--space-id', scope.spaceId,
             ...(scope.parentNodeToken === undefined ? [] : ['--parent-node-token', scope.parentNodeToken]),
@@ -642,8 +723,7 @@ export function createFeishuDocsSource(getRuntime: () => ClueRuntime): ClueSourc
         } as unknown as JsonValue)
         const pageToken = pageTokenOf(signature, input.cursor)
         const limit = pageLimitOf(input.limit, SEARCH_PAGE_SIZE, SEARCH_PAGE_SIZE)
-        const success = await runLark({
-          runtime: runtime(),
+        const success = await runFeishuCommand(runtime(), {
           args: [
             'drive', '+search', '--query', query,
             '--doc-types', 'docx,wiki,doc',
@@ -679,20 +759,38 @@ export function createFeishuDocsSource(getRuntime: () => ClueRuntime): ClueSourc
         const runtimeNow = runtime()
         const doc = await docArgumentOf(runtimeNow, locator, context)
         const projection: FeishuDocProjection = docProjectionOf(locator)
-        const success = await runLark({
-          runtime: runtimeNow,
-          args: [
-            'docs', '+fetch', '--doc', doc.token,
-            '--doc-format', projection,
-            '--detail', 'simple',
-            '--as', 'user', '--format', 'json',
-          ],
-          cwd: cwdOf(context),
-          ...(context.signal === undefined ? {} : { signal: context.signal }),
-        })
+        let success: LarkSuccess
+        try {
+          success = await runFeishuCommand(runtimeNow, {
+            args: [
+              'docs', '+fetch', '--doc', doc.token,
+              '--doc-format', projection,
+              '--detail', 'simple',
+              '--as', 'user', '--format', 'json',
+            ],
+            cwd: cwdOf(context),
+            ...(context.signal === undefined ? {} : { signal: context.signal }),
+          })
+        } catch (error) {
+          // The read is a whole-document fetch windowed by byte offset. An
+          // oversized document cannot be fetched through the bounded runner;
+          // report the fixed limit instead of returning a silent partial read.
+          if (error instanceof ClueError && /capture limit/i.test(error.message)) {
+            const mebibytes = LARK_CLI_MAX_OUTPUT_BYTES / (1024 * 1024)
+            throw new ClueError(
+              'failed',
+              `the document exceeds lark-cli's ${mebibytes} MiB capture limit and cannot be read `
+              + 'in one fragment; open it in Feishu or narrow the read with lark-cli `docs +fetch --scope`',
+            )
+          }
+          throw error
+        }
         const fetched = fetchedDocumentOf(success)
         const fragment = fragmentOf(fetched.content, input.offset ?? 0)
-        const title = titleOfContent(fetched.content) ?? doc.title ?? docLocatorTitle(locator)
+        const contentTitle = projection === 'xml'
+          ? titleOfContent(fetched.content)
+          : titleOfMarkdown(fetched.content)
+        const title = contentTitle ?? fetched.title ?? doc.title ?? docLocatorTitle(locator)
         const data: FeishuDocReadData = {
           kind: locator.kind === 'docx' ? 'docx' : 'wiki',
           title,
@@ -720,6 +818,9 @@ export function createFeishuDocsSource(getRuntime: () => ClueRuntime): ClueSourc
         const locator = parseDocLocator(input.locator)
         if (isWikiSpaceLocator(locator)) {
           return { portable: false, reason: 'a wiki space is a browsing scope, not a shareable document' }
+        }
+        if (isDriveFolderLocator(locator)) {
+          return { portable: false, reason: 'a Drive folder is a browsing scope, not a shareable document' }
         }
         const host = hostOf(locator.url)
         if (locator.kind === 'docx') {

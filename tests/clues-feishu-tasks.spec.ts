@@ -4,14 +4,18 @@
  * Pins the approved task semantics:
  * - list/search are OFFICIAL single-page commands: native `task tasks list`
  *   (or `task tasklists tasks` for an explicit list range) and `task +search`
- *   with `--page-limit`; the auto-paging shortcuts and `--page-all` never run;
+ *   with the documented keyword/completed/assignee/creator/follower/due
+ *   filters and `--page-limit`; a tasklist search is rejected rather than
+ *   silently widened, and the auto-paging shortcuts / `--page-all` never run;
  * - a cursor is bound to its query/range and cannot be replayed elsewhere;
  * - the task GUID is the only identity: applinks resolve through `guid`, a
  *   displayed number (`t104121`) is rejected for read and update;
  * - read returns title/description/start/due/completed/updatedAt/GUID; the
  *   start-due relation is validated locally BEFORE any write;
  * - edits submit only changed fields through one `task +update`; completion /
- *   reopen is a SEPARATE `+complete` / `+reopen` action;
+ *   reopen is a SEPARATE `+complete` / `+reopen` action; a field save refreshes
+ *   the baseline with a best-effort read (the CLI documents no `updated_at` on
+ *   `+update`) and omits the revision when no fresh one is confirmed;
  * - conflicts are detected by a best-effort fresh read (never claimed as CAS),
  *   a partially applied save is reported as partial and never as success;
  * - portable exports contain the GUID + plain link only.
@@ -21,6 +25,7 @@ import { ClueError } from '../src/clues/types.ts'
 import type { ClueOperationContext, JsonValue } from '../src/clues/types.ts'
 import { createFeishuTasksSource } from '../src/clues/sources/feishu/tasks.ts'
 import {
+  FEISHU_CONNECTION_ID,
   FEISHU_FORMATS,
   FEISHU_TYPE_IDS,
   type FeishuTaskDocumentData,
@@ -30,7 +35,7 @@ import {
   FakeLarkRuntime,
   okResult,
   operationContext,
-} from './fixtures/clues-feishu/fake-lark.ts'
+} from './clues-feishu-fixture.ts'
 
 const CWD = '/tmp/dsh-feishu'
 const GUID = '2f4d8c1e-7a3b-4c5d-9e8f-0123456789ab'
@@ -183,6 +188,58 @@ describe('task browsing and search', () => {
     expect(page.items[0]!.title).toBe('Release checklist')
   })
 
+  it('passes the documented search filters and binds them into the cursor', async () => {
+    const runtime = new FakeLarkRuntime().enqueue(okResult({
+      tasks: [taskRecord()], has_more: true, page_token: 'filtered-pt',
+    }))
+    const { operations } = opsOf(runtime)
+    const page = await operations.search!(
+      {
+        query: 'release',
+        scope: {
+          kind: 'tasks',
+          completed: false,
+          assignee: 'ou_ada',
+          creator: 'ou_grace',
+          follower: 'ou_lin',
+          due: '-1d,+7d',
+        },
+      },
+      context(),
+    )
+    expect(runtime.requests[0]!.args).toEqual([
+      'task', '+search',
+      '--query', 'release',
+      '--completed=false',
+      '--assignee', 'ou_ada',
+      '--creator', 'ou_grace',
+      '--follower', 'ou_lin',
+      '--due', '-1d,+7d',
+      '--page-limit', '20',
+      '--as', 'user', '--format', 'json',
+    ])
+    // A cursor from a different filter set must be refused, not replayed.
+    await expect(operations.search!(
+      { query: 'release', scope: { kind: 'tasks', assignee: 'ou_other' }, cursor: page.nextCursor },
+      context(),
+    )).rejects.toMatchObject({ category: 'invalid-request' })
+    expect(runtime.requests).toHaveLength(1)
+  })
+
+  it('rejects a tasklist search instead of silently returning global results', async () => {
+    const runtime = new FakeLarkRuntime()
+    const { operations } = opsOf(runtime)
+    await expect(operations.search!(
+      { query: 'release', scope: { kind: 'tasks', tasklistGuid: 'tl-1' } },
+      context(),
+    )).rejects.toMatchObject({ category: 'invalid-request' })
+    await expect(operations.search!(
+      { query: 'release', scope: { kind: 'tasks', assignee: 'ou_' + 'x'.repeat(600) } },
+      context(),
+    )).rejects.toMatchObject({ category: 'invalid-request' })
+    expect(runtime.requests).toHaveLength(0)
+  })
+
   it('requires a keyword or a completion filter for task search', async () => {
     const runtime = new FakeLarkRuntime()
     const { operations } = opsOf(runtime)
@@ -255,6 +312,34 @@ describe('task read and edit loading', () => {
     expect(runtime.requests).toHaveLength(0)
   })
 
+  it('reports a task authorization failure to the shared connection', async () => {
+    const runtime = new FakeLarkRuntime().enqueue(failResult({
+      type: 'authorization',
+      subtype: 'missing_scope',
+      missing_scopes: ['task:task:read'],
+      console_url: 'https://open.feishu.cn/app/cli_x/auth',
+      message: 'raw token secret',
+    }))
+    const { operations } = opsOf(runtime)
+    let failure: unknown
+    try {
+      await operations.read!({ typeId: FEISHU_TYPE_IDS.task, locator: locator() }, context())
+    } catch (error) {
+      failure = error
+    }
+    expect(failure).toBeInstanceOf(ClueError)
+    const clueError = failure as ClueError
+    expect(clueError.category).toBe('auth-required')
+    expect(clueError.message).toContain('task:task:read')
+    expect(clueError.message).not.toMatch(/raw token secret/)
+    expect(runtime.reports).toHaveLength(1)
+    expect(runtime.reports[0]).toMatchObject({
+      connectionId: FEISHU_CONNECTION_ID,
+      inspection: { configuration: 'ready', authorization: 'scope-insufficient' },
+    })
+    expect(runtime.reports[0]!.inspection.detail).toContain('task:task:read')
+  })
+
   it('loadEdit returns the editable document plus the updated-at baseline', async () => {
     const runtime = new FakeLarkRuntime().enqueue(taskGet())
     const { operations } = opsOf(runtime)
@@ -295,7 +380,7 @@ describe('task save: changed fields, completion and partial success', () => {
     expect(runtime.requests).toHaveLength(0)
   })
 
-  it('submits ONLY the changed fields and accepts a server-confirmed update', async () => {
+  it('submits ONLY the changed fields and refreshes the baseline after the update', async () => {
     const runtime = new FakeLarkRuntime()
       .enqueue(taskGet())
       .enqueue(okResult({
@@ -306,20 +391,59 @@ describe('task save: changed fields, completion and partial success', () => {
           confirmed: { summary: 'New title', description: 'New description' },
         }],
       }))
+      // `task +update` documents no updated_at; the source re-reads the task so
+      // the NEXT save compares against a fresh baseline instead of a false
+      // conflict.
+      .enqueue(taskGet({ summary: 'New title', description: 'New description', updated_at: UPDATED_2 }))
     const { operations } = opsOf(runtime)
     const result = await operations.saveEdit!(
       saveInput(editedDocument({ title: 'New title', description: 'New description' })),
       context(),
     )
 
-    expect(runtime.requests).toHaveLength(2)
+    expect(runtime.requests).toHaveLength(3)
     expect(runtime.requests[0]!.args.slice(0, 2)).toEqual(['task', 'tasks'])
     const updateArgs = runtime.requests[1]!.args
     expect(updateArgs.slice(0, 4)).toEqual(['task', '+update', '--task-id', GUID])
     const payload = JSON.parse(updateArgs[5]!) as Record<string, JsonValue>
     expect(payload).toEqual({ summary: 'New title', description: 'New description' })
     expect(updateArgs).not.toContain('--page-all')
+    expect(runtime.requests[2]!.args.slice(0, 3)).toEqual(['task', 'tasks', 'get'])
     expect(result.revision).toBe(UPDATED_2)
+  })
+
+  it('gets a fresh revision even when the update confirmation carries no updated_at', async () => {
+    const runtime = new FakeLarkRuntime()
+      .enqueue(taskGet())
+      .enqueue(okResult({
+        updated_fields: ['summary'],
+        tasks: [{ guid: GUID, confirmed: { summary: 'No stamp' } }],
+      }))
+      .enqueue(taskGet({ summary: 'No stamp', updated_at: '1700002222000' }))
+    const { operations } = opsOf(runtime)
+    const result = await operations.saveEdit!(
+      saveInput(editedDocument({ title: 'No stamp' })),
+      context(),
+    )
+    expect(result.revision).toBe('1700002222000')
+    expect(runtime.requests).toHaveLength(3)
+  })
+
+  it('omits the revision when neither the update nor a fresh read confirms it', async () => {
+    const runtime = new FakeLarkRuntime()
+      .enqueue(taskGet())
+      .enqueue(okResult({
+        updated_fields: ['summary'],
+        tasks: [{ guid: GUID, confirmed: { summary: 'No stamp' } }],
+      }))
+    const { operations } = opsOf(runtime)
+    const result = await operations.saveEdit!(
+      saveInput(editedDocument({ title: 'No stamp' })),
+      context(),
+    )
+    // Returning the OLD baseline would guarantee a false conflict next save.
+    expect(result.revision).toBeUndefined()
+    expect(result.savedAt).toBeTruthy()
   })
 
   it('submits a changed due time alone, preserving all-day semantics', async () => {
@@ -332,6 +456,10 @@ describe('task save: changed fields, completion and partial success', () => {
           updated_at: UPDATED_2,
           confirmed: { due: { timestamp: '1700007200000', is_all_day: true } },
         }],
+      }))
+      .enqueue(taskGet({
+        due: { timestamp: '1700007200000', is_all_day: true },
+        updated_at: UPDATED_2,
       }))
     const { operations } = opsOf(runtime)
     await operations.saveEdit!(

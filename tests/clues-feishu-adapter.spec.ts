@@ -12,13 +12,20 @@
  *   CLI call and does not need the runtime at all;
  * - `inspect` runs `auth status --json` ONLY when the explicit status path
  *   calls it — never `--verify`, never `--dry-run`, never on a timer;
- * - `connect` runs exactly `auth login --domain docs --domain drive
- *   --no-wait --json`; the verification URL is forwarded as the SAME opaque
- *   string (no re-encoding), the QR payload is that same string, and the
- *   device code stays in the host-side `state` (never in the prompt);
+ * - `connect` first runs the read-only `auth status` check (so a "configure"
+ *   click never launches a login it cannot complete), then exactly
+ *   `auth login --domain docs --domain drive --domain task --no-wait --json`;
+ *   the verification URL is forwarded as the SAME opaque string (no
+ *   re-encoding), the QR payload is that same string, and the device code stays
+ *   in the host-side `state` (never in the prompt);
  * - `poll` runs `auth login --device-code … --json` for the explicit poll
- *   only; `cancel` performs no CLI call (the CLI documents no device-code
- *   cancel verb — dropping the handle is the cancellation);
+ *   only, and a success envelope with a pending/denied status stays pending or
+ *   denied instead of claiming ready;
+ * - the shared connection derives its declared capabilities from
+ *   `identities.user.scope`: a docs/drive-only grant reports
+ *   `scope-insufficient` instead of advertising the task capabilities;
+ * - cancel performs no CLI call (the CLI documents no device-code cancel verb
+ *   — dropping the handle is the cancellation);
  * - success needs `ok:true` AND exit 0; failures come only from the stderr
  *   envelope; `error.code` is an upstream number, never the success signal;
  * - missing scopes and `console_url` survive as a safe projection, while raw
@@ -117,6 +124,20 @@ function adapterContext(observed: unknown[]): ConnectionAdapterContext {
 function statusData(user: Record<string, JsonValue>): JsonValue {
   return { identities: { user } }
 }
+
+/** The documented scope families that cover the four declared capabilities. */
+const ALL_SCOPES = [
+  'docx:document:read',
+  'search:docs:read',
+  'task:task:read',
+  'task:task:write',
+]
+/** A docs/drive-only grant: no task scope was authorized. */
+const DOCS_ONLY_SCOPES = [
+  'docx:document:read',
+  'search:docs:read',
+  'drive:drive.metadata:readonly',
+]
 
 describe('createFeishuSources: lazy runtime and shared definitions', () => {
   it('builds registrations, dependency and connection without touching the runtime', () => {
@@ -292,6 +313,10 @@ describe('lark envelope adapter', () => {
     const error = larkFailureError(failure)
     expect(error.category).toBe('auth-required')
     expect(error.message).not.toMatch(/super-secret|dc_secret/)
+    // The wire only carries { code, message }, so the actionable detail must be
+    // in the message as well as the meta.
+    expect(error.message).toContain('docx:document:read')
+    expect(error.message).toContain('https://open.feishu.cn/app/cli_x/auth?q=scope&op=1')
     expect(JSON.stringify(error.meta)).not.toMatch(/super-secret|dc_secret/)
     expect(error.meta?.missingScopes).toBe('docx:document:read,drive:drive:read')
     expect(error.meta?.consoleUrl).toBe('https://open.feishu.cn/app/cli_x/auth?q=scope&op=1')
@@ -339,6 +364,7 @@ describe('connection adapter: explicit status and two-step authorization', () =>
       tokenStatus: 'valid',
       userName: 'Ada',
       openId: 'ou_ada',
+      scope: ALL_SCOPES,
     })))
     const bundle = createFeishuSources({ runtime: () => runtime.asRuntime() })
     const observed: unknown[] = []
@@ -353,7 +379,70 @@ describe('connection adapter: explicit status and two-step authorization', () =>
       configuration: 'ready',
       authorization: 'ready',
       account: 'Ada',
+      capabilities: ['docs.read', 'docs.search', 'tasks.read', 'tasks.edit'],
     })
+  })
+
+  it('derives capabilities from identities.user.scope instead of a ready token alone', async () => {
+    const docsOnly = new FakeRuntime().enqueue(okResult(statusData({
+      status: 'ready',
+      tokenStatus: 'valid',
+      userName: 'Ada',
+      scope: DOCS_ONLY_SCOPES,
+    })))
+    const docsBundle = createFeishuSources({ runtime: () => docsOnly.asRuntime() })
+    const docsInspection = await docsBundle.connection.inspect({}, adapterContext([]))
+    expect(docsInspection.authorization).toBe('scope-insufficient')
+    expect(docsInspection.capabilities).toBeUndefined()
+    expect(docsInspection.detail).toMatch(/tasks\.read/)
+    expect(docsInspection.detail).toMatch(/tasks\.edit/)
+    expect(docsInspection.detail).toMatch(/task:task:read/)
+
+    const noScope = new FakeRuntime().enqueue(okResult(statusData({
+      status: 'ready',
+      tokenStatus: 'valid',
+      userName: 'Ada',
+    })))
+    const noScopeBundle = createFeishuSources({ runtime: () => noScope.asRuntime() })
+    const noScopeInspection = await noScopeBundle.connection.inspect({}, adapterContext([]))
+    expect(noScopeInspection.authorization).toBe('scope-insufficient')
+    expect(noScopeInspection.detail).toMatch(/did not report the granted scopes/)
+
+    // A comma/space-separated scope string is tolerated as well.
+    const stringScopes = new FakeRuntime().enqueue(okResult(statusData({
+      status: 'ready',
+      tokenStatus: 'valid',
+      scope: ALL_SCOPES.join(','),
+    })))
+    const stringBundle = createFeishuSources({ runtime: () => stringScopes.asRuntime() })
+    const stringInspection = await stringBundle.connection.inspect({}, adapterContext([]))
+    expect(stringInspection.authorization).toBe('ready')
+    expect(stringInspection.capabilities).toEqual([
+      'docs.read', 'docs.search', 'tasks.read', 'tasks.edit',
+    ])
+  })
+
+  it('projects a docs-only grant as grant-scope with no declared capabilities', async () => {
+    const runtime = new FakeRuntime().enqueue(okResult(statusData({
+      status: 'ready',
+      tokenStatus: 'valid',
+      scope: DOCS_ONLY_SCOPES,
+    })))
+    const bundle = createFeishuSources({ runtime: () => runtime.asRuntime() })
+    const connections = createConnectionsRuntime({ now: () => Date.parse(NOW) })
+    try {
+      connections.register(bundle.connection)
+      const [status] = await connections.status(FEISHU_CONNECTION_ID)
+      expect(status).toMatchObject({
+        configuration: 'ready',
+        authorization: 'scope-insufficient',
+        action: 'grant-scope',
+        capabilities: [],
+      })
+      expect(status?.detail).toMatch(/tasks\.read/)
+    } finally {
+      connections.dispose()
+    }
   })
 
   it('inspect reports a missing application configuration as step one, not a login failure', async () => {
@@ -390,23 +479,32 @@ describe('connection adapter: explicit status and two-step authorization', () =>
     expect(JSON.stringify(inspection)).not.toMatch(/secret-token|raw message|raw hint/)
   })
 
-  it('connect starts exactly the documented device flow and keeps the machine handle host-side', async () => {
+  it('connect checks the configuration first and starts exactly the documented device flow', async () => {
     const opaque = 'https://open.feishu.cn/device/verify?user_code=AB-CD&x=%2Fkept'
-    const runtime = new FakeRuntime().enqueue(okResult({
-      verification_url: opaque,
-      device_code: 'device-code-secret',
-      user_code: 'AB-CD',
-      expires_in: 60,
-      interval: 5,
-    }))
+    const runtime = new FakeRuntime()
+      .enqueue(okResult(statusData({ status: 'not-authorized', userName: 'Ada' })))
+      .enqueue(okResult({
+        verification_url: opaque,
+        device_code: 'device-code-secret',
+        user_code: 'AB-CD',
+        expires_in: 60,
+        interval: 5,
+      }))
     const bundle = createFeishuSources({ runtime: () => runtime.asRuntime() })
     const observed: unknown[] = []
     const start = await bundle.connection.connect!({}, adapterContext(observed))
 
     expect(larkAuthLoginArgs()).toEqual([
-      'auth', 'login', '--domain', 'docs', '--domain', 'drive', '--no-wait', '--json',
+      'auth', 'login',
+      '--domain', 'docs',
+      '--domain', 'drive',
+      '--domain', 'task',
+      '--no-wait', '--json',
     ])
-    expect(runtime.requests[0]!.args).toEqual(larkAuthLoginArgs())
+    expect(runtime.requests.map(request => request.args)).toEqual([
+      larkAuthStatusArgs(),
+      larkAuthLoginArgs(),
+    ])
     expect(start.prompt?.verificationUrl).toBe(opaque)
     expect(start.prompt?.qr?.uri).toBe(opaque)
     expect(start.prompt?.userCode).toBe('AB-CD')
@@ -417,13 +515,17 @@ describe('connection adapter: explicit status and two-step authorization', () =>
     expect(JSON.stringify(start.inspection)).not.toMatch(/device-code-secret/)
   })
 
-  it('connect maps a missing application config to the configure step without a prompt', async () => {
-    const runtime = new FakeRuntime().enqueue(failResult({ type: 'configuration', subtype: 'not_configured' }))
+  it('connect maps a missing application config to the configure step without launching login', async () => {
+    const runtime = new FakeRuntime().enqueue(
+      failResult({ type: 'configuration', subtype: 'not_configured' }),
+    )
     const bundle = createFeishuSources({ runtime: () => runtime.asRuntime() })
     const start = await bundle.connection.connect!({}, adapterContext([]))
     expect(start.prompt).toBeUndefined()
     expect(start.inspection).toMatchObject({ configuration: 'missing', authorization: 'not-authorized' })
-    expect(runtime.requests[0]!.args).toEqual(larkAuthLoginArgs())
+    // The read-only status check is the only call: the configure/edit flow is
+    // lark-cli's own terminal flow and is never faked with a login.
+    expect(runtime.requests.map(request => request.args)).toEqual([larkAuthStatusArgs()])
   })
 
   it('poll uses the device-code verb and finishes only on a ready server answer', async () => {
@@ -441,7 +543,7 @@ describe('connection adapter: explicit status and two-step authorization', () =>
     expect(pendingResult.complete).toBe(false)
     expect(pendingResult.inspection?.authorization).toBe('authorizing')
 
-    const ready = new FakeRuntime().enqueue(okResult({ status: 'ready' }))
+    const ready = new FakeRuntime().enqueue(okResult({ status: 'ready', scope: ALL_SCOPES }))
     const readyBundle = createFeishuSources({ runtime: () => ready.asRuntime() })
     const readyResult = await readyBundle.connection.poll!(
       { authorizationId: 'a2', state: { deviceCode: 'dc-2' } },
@@ -449,6 +551,28 @@ describe('connection adapter: explicit status and two-step authorization', () =>
     )
     expect(readyResult.complete).toBe(true)
     expect(readyResult.inspection?.authorization).toBe('ready')
+
+    // A success envelope that still says pending must NOT be projected ready.
+    const stillPending = new FakeRuntime().enqueue(okResult({
+      status: 'authorization_pending',
+      authorized: false,
+    }))
+    const pendingSuccessBundle = createFeishuSources({ runtime: () => stillPending.asRuntime() })
+    const pendingSuccess = await pendingSuccessBundle.connection.poll!(
+      { authorizationId: 'a3', state: { deviceCode: 'dc-3' } },
+      adapterContext([]),
+    )
+    expect(pendingSuccess.complete).toBe(false)
+    expect(pendingSuccess.inspection?.authorization).toBe('authorizing')
+
+    const denied = new FakeRuntime().enqueue(okResult({ status: 'denied' }))
+    const deniedBundle = createFeishuSources({ runtime: () => denied.asRuntime() })
+    const deniedResult = await deniedBundle.connection.poll!(
+      { authorizationId: 'a4', state: { deviceCode: 'dc-4' } },
+      adapterContext([]),
+    )
+    expect(deniedResult.complete).toBe(true)
+    expect(deniedResult.inspection?.authorization).toBe('denied')
   })
 
   it('cancel drops the host-side handle without inventing a CLI verb or probing again', async () => {
@@ -464,12 +588,18 @@ describe('connection adapter: explicit status and two-step authorization', () =>
   it('drives the real connection lifecycle: configure → connect → poll → ready', async () => {
     const runtime = new FakeRuntime()
       .enqueue(failResult({ type: 'configuration', subtype: 'not_configured' }))
+      // First connect is still the configure step: the status check reports the
+      // missing configuration and no login is launched.
+      .enqueue(failResult({ type: 'configuration', subtype: 'not_configured' }))
+      // After the user configured lark-cli in a terminal, the next connect sees
+      // a ready app + unauthenticated user and starts the device flow.
+      .enqueue(okResult(statusData({ status: 'not-authorized', userName: 'Ada' })))
       .enqueue(okResult({
         verification_url: 'https://open.feishu.cn/device?code=opaque',
         device_code: 'dc-live',
         expires_in: 120,
       }))
-      .enqueue(okResult({ status: 'ready' }))
+      .enqueue(okResult({ status: 'ready', scope: ALL_SCOPES }))
     const bundle = createFeishuSources({ runtime: () => runtime.asRuntime() })
     const connections = createConnectionsRuntime({ now: () => Date.parse(NOW) })
     try {
@@ -483,6 +613,15 @@ describe('connection adapter: explicit status and two-step authorization', () =>
         lastCheckedAt: NOW,
       })
 
+      const stillUnconfigured = await connections.connect(FEISHU_CONNECTION_ID)
+      expect(stillUnconfigured).toMatchObject({
+        configuration: 'missing',
+        authorization: 'not-authorized',
+        action: 'configure',
+      })
+      expect(stillUnconfigured.prompt).toBeUndefined()
+      expect(runtime.requests).toHaveLength(2)
+
       const connected = await connections.connect(FEISHU_CONNECTION_ID)
       expect(connected.authorization).toBe('authorizing')
       expect(connected.prompt?.verificationUrl).toBe('https://open.feishu.cn/device?code=opaque')
@@ -492,7 +631,9 @@ describe('connection adapter: explicit status and two-step authorization', () =>
       const polled = await connections.poll(FEISHU_CONNECTION_ID)
       expect(polled.authorization).toBe('ready')
       expect(polled.action).toBe('none')
-      expect(polled.capabilities).toEqual(expect.arrayContaining(['docs.read', 'tasks.edit']))
+      expect(polled.capabilities).toEqual([
+        'docs.read', 'docs.search', 'tasks.read', 'tasks.edit',
+      ])
     } finally {
       connections.dispose()
     }
@@ -511,13 +652,15 @@ describe('no periodic or probing auth behaviour', () => {
 
   it('every status/connect/poll argv stays free of --verify, --dry-run and --page-all', async () => {
     const runtime = new FakeRuntime()
-      .enqueue(okResult(statusData({ status: 'ready', tokenStatus: 'valid' })))
+      .enqueue(okResult(statusData({ status: 'ready', tokenStatus: 'valid', scope: ALL_SCOPES })))
+      // Explicit status check inside connect (configuration preflight).
+      .enqueue(okResult(statusData({ status: 'ready', tokenStatus: 'valid', scope: ALL_SCOPES })))
       .enqueue(okResult({
         verification_url: 'https://open.feishu.cn/device',
         device_code: 'dc',
         expires_in: 30,
       }))
-      .enqueue(okResult({ status: 'ready' }))
+      .enqueue(okResult({ status: 'ready', scope: ALL_SCOPES }))
     const bundle = createFeishuSources({ runtime: () => runtime.asRuntime() })
     await bundle.connection.inspect({}, adapterContext([]))
     await bundle.connection.connect!({}, adapterContext([]))

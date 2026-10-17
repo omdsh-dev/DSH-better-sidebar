@@ -20,7 +20,7 @@ import {
   stringOf,
   type FeishuDocLocator,
   type FeishuDocProjection,
-  type FeishuDocxLocator,
+  type FeishuDriveFolderLocator,
   type FeishuTaskLocator,
   type FeishuWikiLocator,
   type FeishuWikiSpaceLocator,
@@ -40,8 +40,15 @@ export interface ParsedWikiText {
   readonly url?: string
 }
 
+/** A Drive folder URL/token recognized in free text (a browsing scope). */
+export interface ParsedDriveFolderText {
+  readonly kind: 'drive-folder'
+  readonly folderToken: string
+  readonly url?: string
+}
+
 /** One recognized document text form. */
-export type ParsedDocText = ParsedDocxText | ParsedWikiText
+export type ParsedDocText = ParsedDocxText | ParsedWikiText | ParsedDriveFolderText
 
 /** One recognized task text form. */
 export type ParsedTaskText =
@@ -54,6 +61,7 @@ const DISPLAY_TASK_ID = /^t\d+$/i
 /** Token-only prefixes we can classify without fetching. */
 const DOCX_TOKEN = /^(?:docx|doccn|doxcn)[A-Za-z0-9_-]{4,}$/i
 const WIKI_TOKEN = /^wik[A-Za-z0-9_-]{4,}$/i
+const FOLDER_TOKEN = /^fld[A-Za-z0-9_-]{4,}$/i
 
 /** Decode one URL path segment without ever throwing. */
 function decodeSegment(segment: string): string {
@@ -92,10 +100,15 @@ export function parseFeishuDocText(text: string): ParsedDocText | undefined {
     if (wikiToken !== undefined && wikiToken !== '') {
       return { kind: 'wiki', wikiToken, url: trimmed }
     }
+    const folderToken = segmentAfter(url, 'folder')
+    if (folderToken !== undefined && folderToken !== '') {
+      return { kind: 'drive-folder', folderToken, url: trimmed }
+    }
     return undefined
   }
   if (DOCX_TOKEN.test(trimmed)) return { kind: 'docx', docToken: trimmed }
   if (WIKI_TOKEN.test(trimmed)) return { kind: 'wiki', wikiToken: trimmed }
+  if (FOLDER_TOKEN.test(trimmed)) return { kind: 'drive-folder', folderToken: trimmed }
   return undefined
 }
 
@@ -181,19 +194,31 @@ export function parseDocLocator(value: Locator): FeishuDocLocator {
       ...(stringOf(value.url) === undefined ? {} : { url: stringOf(value.url) }),
     }
   }
-  throw new ClueError('invalid-request', 'a locator must be a Feishu docx, wiki or wiki-space reference')
-}
-
-/** Parse one locator when present, leaving an absent value undefined. */
-export function parseOptionalDocLocator(value: unknown): FeishuDocLocator | undefined {
-  if (value === undefined) return undefined
-  if (!isRecord(value)) throw new ClueError('invalid-request', 'a Feishu document locator must be a JSON object')
-  return parseDocLocator(value)
+  if (kind === 'drive-folder') {
+    const folderToken = stringOf(value.folderToken)
+    if (folderToken === undefined) {
+      throw new ClueError('invalid-request', 'a Feishu drive-folder locator needs a non-empty "folderToken"')
+    }
+    return {
+      kind: 'drive-folder',
+      folderToken,
+      ...(stringOf(value.url) === undefined ? {} : { url: stringOf(value.url) }),
+    }
+  }
+  throw new ClueError(
+    'invalid-request',
+    'a locator must be a Feishu docx, wiki, wiki-space or drive-folder reference',
+  )
 }
 
 /** Whether a locator denotes a wiki space (a scope picker row, not a document). */
 export function isWikiSpaceLocator(locator: FeishuDocLocator): locator is FeishuWikiSpaceLocator {
   return locator.kind === 'wiki-space'
+}
+
+/** Whether a locator denotes a Drive folder (a browsing scope, not a document). */
+export function isDriveFolderLocator(locator: FeishuDocLocator): locator is FeishuDriveFolderLocator {
+  return locator.kind === 'drive-folder'
 }
 
 /** Canonicalize one document locator (the source owns resource identity). */
@@ -210,18 +235,20 @@ export function docLocatorKey(locator: Locator): string {
     if (parsed.objType === 'docx' && parsed.objToken !== undefined) return `docx:${parsed.objToken}`
     return `wiki:${parsed.wikiToken}`
   }
+  if (parsed.kind === 'drive-folder') return `drive-folder:${parsed.folderToken}`
   return `wiki-space:${parsed.spaceId}`
 }
 
 /** The projection a document read should use. */
 export function docProjectionOf(locator: FeishuDocLocator): FeishuDocProjection {
-  if (locator.kind === 'wiki-space') return 'xml'
+  if (locator.kind === 'wiki-space' || locator.kind === 'drive-folder') return 'xml'
   return locator.projection === 'markdown' ? 'markdown' : 'xml'
 }
 
 /** A stable display title for a locator that has not been read yet. */
 export function docLocatorTitle(locator: FeishuDocLocator): string {
   if (locator.kind === 'docx') return `Feishu document ${locator.docToken.slice(-8)}`
+  if (locator.kind === 'drive-folder') return `Feishu folder ${locator.folderToken.slice(-8)}`
   if (locator.kind === 'wiki') {
     return locator.objType === 'docx' ? `Feishu wiki document ${locator.wikiToken.slice(-8)}` : `Feishu wiki node ${locator.wikiToken.slice(-8)}`
   }
@@ -258,22 +285,6 @@ export function normalizeTaskLocator(locator: Locator): Locator {
 /** Stable equality key of one task locator. */
 export function taskLocatorKey(locator: Locator): string {
   return `task:${parseTaskLocator(locator).guid}`
-}
-
-/** The applink GUID of one task URL, never the display number. */
-export function guidFromApplink(url: string): string | undefined {
-  try {
-    const parsed = new URL(url)
-    const guid = parsed.searchParams.get('guid')?.trim() ?? ''
-    return guid === '' ? undefined : guid
-  } catch {
-    return undefined
-  }
-}
-
-/** Whether a locator is a Docx reference (for the read argument). */
-export function isDocxLocator(locator: FeishuDocLocator): locator is FeishuDocxLocator {
-  return locator.kind === 'docx'
 }
 
 /** A wiki locator (resolved or not). */

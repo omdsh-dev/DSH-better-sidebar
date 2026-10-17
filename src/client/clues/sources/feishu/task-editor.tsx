@@ -91,7 +91,7 @@ function TaskReadOnly(props: {
         </div>
         <div className={css.fieldRow}>
           <dt>{labels.description}</dt>
-          <dd>{task.description === '' ? labels.noTime : task.description}</dd>
+          <dd>{task.description === '' ? labels.emptyDescription : task.description}</dd>
         </div>
       </dl>
     </section>

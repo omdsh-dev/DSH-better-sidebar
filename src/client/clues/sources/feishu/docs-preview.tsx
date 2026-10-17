@@ -75,7 +75,7 @@ export function FeishuDocsPreview(props: FeishuDocsPreviewProps): ReactNode {
       <DocumentMeta data={data} limited={limited} labels={props.labels} />
       {data.title !== '' && <h3 className={css.title}>{data.title}</h3>}
       {data.content === '' ? (
-        <p className={css.hint}>{props.labels.noTime}</p>
+        <p className={css.hint}>{props.labels.emptyContent}</p>
       ) : (
         <pre className={css.pre} data-feishu-docs-content="">
           {content}

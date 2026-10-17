@@ -29,9 +29,7 @@ import type {
   CliRunRequest,
   ClueRuntime,
 } from '../../runtime/types.ts'
-
-/** The S2 dependency id shared by both Feishu sources. */
-export const LARK_CLI_DEPENDENCY_ID = 'lark.cli'
+import { FEISHU_DEPENDENCY_ID } from './format.ts'
 
 /** Process budget of one ordinary command. */
 export const LARK_CLI_TIMEOUT_MS = 60_000
@@ -248,6 +246,25 @@ function categoryOf(failureClass: LarkFailureClass): ClueError['category'] {
 }
 
 /**
+ * The safe scope/console detail of one failure. Only fixed scope names (already
+ * filtered to safe tokens) and an https console URL are interpolated.
+ * @param scopes - missing scope names.
+ * @param consoleUrl - the CLI-provided developer console URL.
+ */
+export function larkScopeDetail(scopes: readonly string[], consoleUrl?: string): string {
+  const parts: string[] = []
+  if (scopes.length > 0) {
+    parts.push(`Missing Feishu scopes: ${scopes.join(', ')}.`)
+  } else {
+    parts.push('A required Feishu scope is missing; authorize it incrementally and retry.')
+  }
+  if (consoleUrl !== undefined) {
+    parts.push(`Developer console: ${consoleUrl}`)
+  }
+  return parts.join(' ')
+}
+
+/**
  * Project one failure to a safe clue error.
  * @param failure - sanitized failure envelope.
  * @throws {never} always returns the error.
@@ -258,9 +275,19 @@ export function larkFailureError(failure: LarkFailure): ClueError {
   if (failure.subtype !== '') meta.subtype = failure.subtype
   if (failure.missingScopes.length > 0) meta.missingScopes = failure.missingScopes.join(',')
   if (failure.consoleUrl !== undefined) meta.consoleUrl = failure.consoleUrl
+  // The wire only carries { code, message }, so the actionable scope names and
+  // console URL must be in the (already sanitized) message as well as the meta.
+  const detail = failureClass === 'missing-scope'
+    ? larkScopeDetail(failure.missingScopes, failure.consoleUrl)
+    : failureClass === 'permission' && failure.consoleUrl !== undefined
+      ? `Developer console: ${failure.consoleUrl}`
+      : undefined
+  const message = detail === undefined
+    ? FAILURE_MESSAGES[failureClass]
+    : `${FAILURE_MESSAGES[failureClass]} (${detail})`
   return new ClueError(
     categoryOf(failureClass),
-    FAILURE_MESSAGES[failureClass],
+    message,
     Object.keys(meta).length === 0 ? undefined : meta,
   )
 }
@@ -274,7 +301,7 @@ export function larkFailureError(failure: LarkFailure): ClueError {
  */
 export async function executeLark(request: LarkRequest): Promise<LarkOutcome> {
   const command: CliRunRequest = {
-    dependencyId: LARK_CLI_DEPENDENCY_ID,
+    dependencyId: FEISHU_DEPENDENCY_ID,
     args: [...request.args],
     cwd: request.cwd,
     timeoutMs: request.timeoutMs ?? LARK_CLI_TIMEOUT_MS,

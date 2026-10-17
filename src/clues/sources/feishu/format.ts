@@ -54,9 +54,15 @@ export const FEISHU_FORMATS = {
 
 /** Why document editing is not offered this round (surfaced to the UI). */
 export const DOCS_EDIT_LIMITATION =
-  'read-only: lark-cli only documents whole-document append/overwrite and whole-block '
-  + 'replace/delete/move commands; it has no lossless local text-block update, so this source '
-  + 'does not offer a degraded write path'
+  'read-only: lark-cli has no lossless local text-block update — `str_replace` is a '
+  + 'whole-document find/replace with no block scope, `block_replace`/`block_delete`/'
+  + '`block_move_after` rebuild or remove blocks, and append/overwrite are forbidden; this '
+  + 'source does not offer a degraded write path'
+
+/** The fixed detail shown when the lark-cli application configuration is missing. */
+export const FEISHU_CONFIGURATION_DETAIL =
+  'The lark-cli application is not configured. Run `lark-cli config init` in a terminal '
+  + '(lark-cli drives its own interactive flow), then check the connection again.'
 
 /** The CLI dependency / shared connection ids fixed by the S4 contract. */
 export const FEISHU_DEPENDENCY_ID = 'lark.cli'
@@ -74,6 +80,9 @@ export const FEISHU_CONNECTION_CAPABILITIES = [
   'tasks.read',
   'tasks.edit',
 ] as const
+
+/** One declared connection capability. */
+export type FeishuConnectionCapability = (typeof FEISHU_CONNECTION_CAPABILITIES)[number]
 
 // ── Locators ───────────────────────────────────────────────────────────────
 
@@ -112,8 +121,23 @@ export type FeishuWikiSpaceLocator = {
   readonly url?: string
 }
 
-/** One document-surface locator (docx, wiki node, or a wiki-space scope row). */
-export type FeishuDocLocator = FeishuDocxLocator | FeishuWikiLocator | FeishuWikiSpaceLocator
+/**
+ * A Drive FOLDER is a browsing scope, not a document. It carries the folder
+ * token needed to list the direct children of one level; the user must choose
+ * the folder explicitly to descend (no recursive scan).
+ */
+export type FeishuDriveFolderLocator = {
+  readonly kind: 'drive-folder'
+  readonly folderToken: string
+  readonly url?: string
+}
+
+/** One document-surface locator (docx, wiki node, wiki space or Drive scope row). */
+export type FeishuDocLocator =
+  | FeishuDocxLocator
+  | FeishuWikiLocator
+  | FeishuWikiSpaceLocator
+  | FeishuDriveFolderLocator
 
 /** One task locator: the OpenAPI GUID, never the display number. */
 export type FeishuTaskLocator = {
