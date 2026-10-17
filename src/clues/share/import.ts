@@ -25,7 +25,7 @@
  *   snapshot;
  * - a duplicate pack name produces a NEW pack (S1 has no overwrite path);
  * - raw asset bytes are preserved exactly by the archive and stored as a
- *   base64 JSON body because S1's snapshot store is JSON-only. `data.bytes`
+ *   base64 JSON body because S1's snapshot store is JSON-only. `data.base64`
  *   decodes to the original bytes; no Markdown/projection rewrite happens.
  */
 import { createHash } from 'node:crypto'
@@ -394,8 +394,11 @@ export async function previewImport(
         installed,
         missingTypeIds: missingTypes,
       })
-    } else if (missingTypes.length > 0 && existing.missingTypeIds.length === 0) {
-      sourceRows.set(source.key, { ...existing, missingTypeIds: missingTypes })
+    } else {
+      const merged = [...new Set([...existing.missingTypeIds, ...missingTypes])]
+      if (merged.length !== existing.missingTypeIds.length) {
+        sourceRows.set(source.key, { ...existing, missingTypeIds: merged })
+      }
     }
     const remapped = remapForImport(params, clue, source)
     const willBeUnresolved = !canResolve(deps, clue, source, remapped.locator)
