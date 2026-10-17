@@ -8,6 +8,7 @@
 - **沿用已发布 alpha 的功能**：上游 alpha.5 → rc.1 完整源码树差异共 355 项，全部为 `package.json`，源码零变化；本次仅同步版本、依赖声明与文档。伴随依赖调整为 Cordis peer `^4.0.5` / dev `4.0.5`、group `1.0.5`、schemastery `~3.18.5`，include 保持 `1.0.10`。
 - **发布渠道切换至 npm `latest`**：插件 v0.28.0 即将接管 `latest`，现有 workflow 按正式版本号自动选择该标签，无需修改。**宿主 npm `latest` 此时仍是 0.2.0-rc.2，不能安装本版**；该宿主必须固定插件 **v0.26.1**。DSH 0.2.1-alpha.5 用户固定 **v0.28.0-alpha.0**；0.2.0-rc.1、0.1.7 及更早支持线保持原指引。用户已明确接受两个包的 `latest` 不对齐风险。
 - **RC 验证独立取证**：结果见 [DSH 0.2.1-rc.1 适配记录](docs/plans/2026-10-17-dsh-0.2.1-rc.1-adaptation.md)；未完成的检查保持待验证，不沿用下方 alpha 发布时的测试数字。
+- **浮动窗拖动改为按帧提交**：标题栏拖拽原本在每个 `pointermove` 上 `setState`（高回报率鼠标下每秒上千次重渲染，即 #315 那类拖拽卡顿，已发布 alpha 同样存在），现与拉伸同一范式走 `createFrameBatcher` 每帧只提交一次，松手 `flushNow()` 补交最后一帧，窗口不会停在落后指针一帧的位置。`tests/floating-window.spec.tsx` 新增「一帧内三次移动只提交一次、松手补交」用例。
 
 ### v0.28.0-alpha.0（预发布）
 

@@ -188,6 +188,41 @@ describe('FloatingWindow gestures', () => {
     unmount()
   })
 
+  it('commits title-bar moves once per frame and flushes the last one on release', () => {
+    // Take over the frame clock: moves inside one frame collapse into ONE
+    // commit, and a release lands the queued move without waiting for a frame
+    // (the cancelled rAF used to lose the final pointer position).
+    const frames: FrameRequestCallback[] = []
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback): number => frames.push(callback))
+    vi.stubGlobal('cancelAnimationFrame', (): void => {})
+    const { unmount } = renderWindow()
+    const handle = frame().querySelector('[data-window-handle]') as HTMLElement
+    const before = box()
+    act(() => {
+      pointer(handle, 'pointerdown', 500, 300)
+      pointer(window, 'pointermove', 510, 310)
+      pointer(window, 'pointermove', 530, 330)
+      pointer(window, 'pointermove', 550, 350)
+    })
+    // Three moves, one pending frame, nothing committed yet.
+    expect(box()).toEqual(before)
+    expect(frames).toHaveLength(1)
+    act(() => { frames.shift()?.(0) })
+    // One frame → one commit, at the LAST pointer position (not the first).
+    expect(box().left).toBe(before.left + 50)
+    expect(box().top).toBe(before.top + 50)
+    act(() => {
+      pointer(window, 'pointermove', 570, 370)
+      pointer(window, 'pointerup', 570, 370)
+    })
+    expect(box().left).toBe(before.left + 70)
+    expect(box().top).toBe(before.top + 70)
+    // The release also dropped the drag's window listeners.
+    act(() => { pointer(window, 'pointermove', 10, 10) })
+    expect(box().left).toBe(before.left + 70)
+    unmount()
+  })
+
   it('resizes from the corner and never shrinks below the floor', () => {
     const { unmount } = renderWindow()
     const corner = frame().querySelector('[data-window-resize="both"]') as HTMLElement

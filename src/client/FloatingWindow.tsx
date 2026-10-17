@@ -21,9 +21,11 @@
  * inventing a third: the MOVE rides window-level pointer listeners (the
  * `AnchoredPopover` drag — capture on the container would retarget the
  * derived click and kill the buttons inside), and the RESIZE rides
- * `setPointerCapture` on the handle plus a `createFrameBatcher` per-frame
- * commit (the `EditorHost` docked-panel resize; a per-event setState on a
- * streamed log is the visible drag lag of #315).
+ * `setPointerCapture` on the handle. BOTH commit through a
+ * `createFrameBatcher` per-frame commit (the `EditorHost` docked-panel
+ * resize): pointer streams fire faster than the display refresh, so a
+ * per-event setState on a streamed log is the visible drag lag of #315 —
+ * which is exactly what the title-bar drag used to do.
  *
  * Skin contract: tokens only (`--dsw-alias-*` / `--dsw-font-*`), the floating
  * layer keeps the app's `--dsw-shadow-lv3`, and the radius matches the Tasks
@@ -211,6 +213,10 @@ export function FloatingWindow(props: FloatingWindowProps): ReactNode {
   }, [])
 
   /** Drag the window by its title bar (buttons inside it keep working). */
+  const dragBatcher = useRef(createFrameBatcher()).current
+  useEffect(() => () => { dragBatcher.dispose() }, [dragBatcher])
+  const pendingDragRef = useRef<WindowBox | null>(null)
+
   const onTitlePointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>): void => {
     if (event.button !== 0) return
     const target = event.target as HTMLElement
@@ -222,13 +228,23 @@ export function FloatingWindow(props: FloatingWindowProps): ReactNode {
     const startX = event.clientX
     const startY = event.clientY
     const onMove = (move: PointerEvent): void => {
-      setBox({
+      // Compose the pending box, commit it once per frame (see the header):
+      // a 1 kHz pointer would otherwise re-render the window per event.
+      pendingDragRef.current = {
         ...start,
         left: clampOrigin(start.left + (move.clientX - startX), start.width, window.innerWidth),
         top: clampOrigin(start.top + (move.clientY - startY), start.height, window.innerHeight),
+      }
+      dragBatcher.schedule(() => {
+        const pending = pendingDragRef.current
+        if (pending !== null) setBox(pending)
       })
     }
     const onUp = (): void => {
+      // Flush the last frame: a release can land with the final move still
+      // queued (the window would otherwise stop a frame short of the pointer).
+      dragBatcher.flushNow()
+      pendingDragRef.current = null
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
       window.removeEventListener('pointercancel', onUp)
@@ -236,7 +252,7 @@ export function FloatingWindow(props: FloatingWindowProps): ReactNode {
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
     window.addEventListener('pointercancel', onUp)
-  }, [])
+  }, [dragBatcher])
 
   /** Resize from one edge handle: `axis` picks which dimension the handle owns. */
   const resizeBatcher = useRef(createFrameBatcher()).current
