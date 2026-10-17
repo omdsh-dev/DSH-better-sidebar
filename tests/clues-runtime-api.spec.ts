@@ -231,6 +231,8 @@ describe('runtime API registration', () => {
       .rejects.toMatchObject({ category: 'permission-denied' })
     await expect(service.invokeApi('clues.dependencies.inspect', { dependencyId: 'missing.dep' }))
       .rejects.toMatchObject({ category: 'not-found' })
+    await expect(service.invokeApi('clues.dependencies.status', { dependencyId: 'missing.dep' }))
+      .rejects.toMatchObject({ category: 'not-found' })
     runtime.dispose()
   })
 

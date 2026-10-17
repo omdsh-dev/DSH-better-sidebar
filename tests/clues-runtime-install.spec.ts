@@ -296,6 +296,35 @@ describe('install execution', () => {
     manager.dispose()
   })
 
+  it('cancels during the post-swap probe and restores the previous copy', async () => {
+    const home = tempHome()
+    const transport = fakeTransport()
+    let releaseProbe!: () => void
+    const probeGate = new Promise<void>(resolve => { releaseProbe = resolve })
+    const { manager, plan, probes } = await setup({
+      home,
+      transport,
+      probe: async () => {
+        await probeGate
+        return { compatible: true, version: '2.40.1' }
+      },
+    })
+    mkdirSync(join(plan.targetDir, 'bin'), { recursive: true })
+    writeFileSync(join(plan.targetDir, EXE), 'old-working-binary')
+    await manager.start(definition(), plan.planId)
+    for (let attempt = 0; attempt < 200 && probes.length === 0; attempt += 1) {
+      await new Promise(resolve => setTimeout(resolve, 5))
+    }
+    expect(probes.length).toBeGreaterThan(0)
+    const cancellation = manager.cancel('github.gh')
+    releaseProbe()
+    const task = await cancellation
+    expect(task.state).toBe('cancelled')
+    expect(readFileSync(join(plan.targetDir, EXE), 'utf8')).toBe('old-working-binary')
+    expect(readdirSync(join(home, 'tools', 'github.gh'))).toEqual(['2.40.1'])
+    manager.dispose()
+  })
+
   it('shares one in-flight task between repeated clicks and views', async () => {
     let release!: () => void
     const gate = new Promise<void>(resolve => { release = resolve })

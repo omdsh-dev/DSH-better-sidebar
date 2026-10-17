@@ -158,6 +158,10 @@ describe('HTTP request boundary', () => {
     await expect(client.request({
       url: 'https://user:pass@api.example.invalid/x',
     })).rejects.toMatchObject({ category: 'invalid-request' })
+    await expect(client.request({
+      url: `${URL_BASE}/x`,
+      credential: { ref: 'TOKEN', header: 'cookie' },
+    })).rejects.toMatchObject({ category: 'invalid-request' })
     expect(fetcher.calls).toHaveLength(0)
   })
 

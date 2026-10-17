@@ -416,7 +416,6 @@ export function createDependenciesRuntime(options: DependenciesRuntimeOptions): 
     let rejected: { outcome: ProbeOutcome; executablePath: string } | undefined
     for (const candidate of pathCommandCandidates(definition.command, platform, env)) {
       if (!(await pathExists(candidate))) continue
-      rejected ??= { outcome: { compatible: false, error: { category: 'failed', message: 'the version probe failed' } }, executablePath: candidate }
       const outcome = await probeExecutable(definition, candidate, signal)
       if (outcome.compatible) return { outcome, executablePath: candidate }
       rejected = { outcome, executablePath: candidate }

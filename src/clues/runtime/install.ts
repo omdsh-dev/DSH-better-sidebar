@@ -385,7 +385,11 @@ export function createInstallManager(options: InstallManagerOptions): InstallMan
     distribution: DependencyDistribution,
     payloadDir: string,
     hadPrevious: boolean,
+    signal: AbortSignal,
   ): Promise<{ readonly ok: true } | { readonly ok: false; readonly error: RuntimeErrorInfo }> => {
+    if (signal.aborted) {
+      return { ok: false, error: { category: 'cancelled', message: 'the installation was cancelled' } }
+    }
     const targetDir = task.targetDir
     const executablePath = confinedPath(targetDir, distribution.executable)
     await mkdir(resolve(targetDir, '..'), { recursive: true })
@@ -404,6 +408,13 @@ export function createInstallManager(options: InstallManagerOptions): InstallMan
       return { ok: false, error: { category: 'failed', message: 'the staged payload could not be moved into place' } }
     }
     const probe = await options.probeExecutable(executablePath, definition)
+    if (signal.aborted) {
+      // Cancellation arrived while the swap was being probed: restore the old
+      // copy rather than reporting a completed upgrade the user cancelled.
+      await removePath(targetDir).catch(() => undefined)
+      if (hadPrevious) await rename(backupDir, targetDir).catch(() => undefined)
+      return { ok: false, error: { category: 'cancelled', message: 'the installation was cancelled' } }
+    }
     if (!probe.compatible) {
       // Never report success for a copy the real probe rejects: restore the old.
       await removePath(targetDir).catch(() => undefined)
@@ -505,7 +516,7 @@ export function createInstallManager(options: InstallManagerOptions): InstallMan
         throw new ClueError('failed', 'the installed payload does not contain the expected executable')
       }
       current = updateProgress(current, { stage: 'probing' })
-      const commit = await commitPayload(current, definition, distribution, payloadDir, hadPrevious)
+      const commit = await commitPayload(current, definition, distribution, payloadDir, hadPrevious, controller.signal)
       if (!commit.ok) {
         const cancelled = controller.signal.aborted
         return settle(current, {

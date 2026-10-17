@@ -57,6 +57,15 @@ const FORBIDDEN_REQUEST_HEADERS: ReadonlySet<string> = new Set([
   'transfer-encoding',
 ])
 
+/** Headers that can never carry a connection credential. */
+const FORBIDDEN_CREDENTIAL_HEADERS: ReadonlySet<string> = new Set([
+  'cookie',
+  'host',
+  'content-length',
+  'connection',
+  'transfer-encoding',
+])
+
 /** Options of {@link createHttpClient}. */
 export interface HttpClientOptions {
   /** Host fetch (tests inject a fake; production passes globalThis.fetch). */
@@ -135,7 +144,6 @@ async function readResponseText(
         continue
       }
       if (remaining > 0) chunks.push(Buffer.from(value.subarray(0, remaining)))
-      total += value.byteLength
       truncated = true
       await reader.cancel().catch(() => undefined)
       break
@@ -217,12 +225,22 @@ export function createHttpClient(options: HttpClientOptions): ClueHttpClient {
       // never appear in a result or error.
       let secret: string | undefined
       if (request.credential !== undefined) {
+        const header = request.credential.header?.toLowerCase() ?? 'authorization'
+        if (FORBIDDEN_CREDENTIAL_HEADERS.has(header)) {
+          throw new ClueError('invalid-request', `the "${header}" header cannot carry a connection credential`)
+        }
+        if (/[\r\n]/.test(request.credential.prefix ?? '') || /[\r\n]/.test(request.credential.header ?? '')) {
+          throw new ClueError('invalid-request', 'the credential header must not contain line breaks')
+        }
         if (options.resolveCredential === undefined) {
           throw new ClueError('auth-required', 'the host credential provider is not available')
         }
         secret = await options.resolveCredential(request.credential.ref)
         if (secret === undefined || secret === '') {
           throw new ClueError('auth-required', 'the required host credential is not configured')
+        }
+        if (/[\r\n]/.test(secret)) {
+          throw new ClueError('auth-required', 'the resolved host credential is not a valid header value')
         }
       }
 

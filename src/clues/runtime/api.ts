@@ -125,6 +125,9 @@ export function cluesRuntimeApiHandlers(runtime: ClueRuntime): Record<CluesRunti
     'clues.dependencies.status': async (payload) => {
       const record = requireRecord(payload)
       const dependencyId = optionalString(record, 'dependencyId')
+      if (dependencyId !== undefined && runtime.dependencies.getDefinition(dependencyId) === undefined) {
+        throw new ClueError('not-found', `dependency "${dependencyId}" is not registered`)
+      }
       const tasks: readonly DependencyInstallTask[] = runtime.dependencies.tasks(dependencyId)
       return { tasks }
     },

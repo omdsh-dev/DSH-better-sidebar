@@ -37,6 +37,34 @@ import { createMcpBridge } from './mcp.ts'
 import { createNodeInstallTransport } from './install.ts'
 import { registerCluesRuntimeApi } from './api.ts'
 
+// The runtime subpath is the S3/S4 integration surface: definitions/types and
+// the injectable factories are exported together so a source plugin imports one
+// module instead of reaching into internal files.
+export * from './types.ts'
+export { createCliRunner, createNodeSpawn } from './cli.ts'
+export {
+  createDependenciesRuntime,
+  parseDependencyVersion,
+  pathCommandCandidates,
+  versionAtLeast,
+  type DependenciesRuntime,
+} from './dependencies.ts'
+export { createConnectionsRuntime, type ConnectionsRuntime } from './connections.ts'
+export { createHttpClient, requireHttpOk } from './http.ts'
+export { createMcpBridge, type McpBridgeOptions } from './mcp.ts'
+export {
+  archiveExtractCommand,
+  confinedPath,
+  createInstallManager,
+  createNodeInstallTransport,
+  managedTargetDir,
+  npmInstallArgs,
+  selectDistribution,
+  sha256File,
+  type InstallManager,
+} from './install.ts'
+export { CLUES_RUNTIME_API_METHODS, registerCluesRuntimeApi } from './api.ts'
+
 /** Options of {@link installCluesRuntime}. Every seam is injectable for tests. */
 export interface InstallCluesRuntimeOptions {
   /** Profile home (`$DSH_HOME`); defaults to `ctx.profileContext.home`. */

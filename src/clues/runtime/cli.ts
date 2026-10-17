@@ -252,7 +252,6 @@ export function createCliRunner(options: CliRunnerOptions): CliRunner {
       let settled = false
       let timedOut = false
       let aborted = false
-      let timer: ReturnType<typeof setTimeout> | undefined
 
       const stdout = createCapture(maxOutputBytes, () => {
         // The cap is explicit: stop the process rather than buffering forever.
@@ -263,7 +262,7 @@ export function createCliRunner(options: CliRunnerOptions): CliRunner {
       })
 
       const cleanup = (): void => {
-        if (timer !== undefined) clearTimeout(timer)
+        clearTimeout(timer)
         request.signal?.removeEventListener('abort', onAbort)
       }
       const fail = (error: ClueError): void => {
@@ -309,7 +308,7 @@ export function createCliRunner(options: CliRunnerOptions): CliRunner {
         return
       }
 
-      timer = setTimeout(() => {
+      const timer = setTimeout(() => {
         timedOut = true
         kill()
       }, timeoutMs)
