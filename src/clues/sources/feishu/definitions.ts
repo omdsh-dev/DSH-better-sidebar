@@ -215,7 +215,7 @@ function inspectionOfStatus(success: LarkSuccess): ConnectionInspection {
           : 'The Feishu account is not authorized yet; connect it.',
     }
   }
-  const scopes = grantedScopesOf(user)
+  const scopes = grantedScopesOf(user) ?? grantedScopesOf(success.data)
   if (scopes === undefined) {
     // The documented status shape carries the granted scopes; without them we
     // cannot honestly claim the tasks capability after a docs-only login.

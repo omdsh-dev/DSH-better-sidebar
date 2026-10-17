@@ -787,10 +787,11 @@ export function createFeishuDocsSource(getRuntime: () => ClueRuntime): ClueSourc
         }
         const fetched = fetchedDocumentOf(success)
         const fragment = fragmentOf(fetched.content, input.offset ?? 0)
-        const contentTitle = projection === 'xml'
-          ? titleOfContent(fetched.content)
-          : titleOfMarkdown(fetched.content)
-        const title = contentTitle ?? fetched.title ?? doc.title ?? docLocatorTitle(locator)
+        // XML has an authoritative <title>; Markdown's first heading is only a
+        // fallback when neither the CLI nor the resolved wiki node reports one.
+        const title = projection === 'xml'
+          ? titleOfContent(fetched.content) ?? fetched.title ?? doc.title ?? docLocatorTitle(locator)
+          : fetched.title ?? doc.title ?? titleOfMarkdown(fetched.content) ?? docLocatorTitle(locator)
         const data: FeishuDocReadData = {
           kind: locator.kind === 'docx' ? 'docx' : 'wiki',
           title,

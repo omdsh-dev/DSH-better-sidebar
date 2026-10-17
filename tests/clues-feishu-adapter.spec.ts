@@ -420,6 +420,18 @@ describe('connection adapter: explicit status and two-step authorization', () =>
     expect(stringInspection.capabilities).toEqual([
       'docs.read', 'docs.search', 'tasks.read', 'tasks.edit',
     ])
+
+    // Some CLI versions put the scope list on `data` rather than the user.
+    const dataScopes = new FakeRuntime().enqueue(okResult({
+      identities: { user: { status: 'ready', tokenStatus: 'valid' } },
+      scope: ALL_SCOPES,
+    }))
+    const dataBundle = createFeishuSources({ runtime: () => dataScopes.asRuntime() })
+    const dataInspection = await dataBundle.connection.inspect({}, adapterContext([]))
+    expect(dataInspection.authorization).toBe('ready')
+    expect(dataInspection.capabilities).toEqual([
+      'docs.read', 'docs.search', 'tasks.read', 'tasks.edit',
+    ])
   })
 
   it('projects a docs-only grant as grant-scope with no declared capabilities', async () => {

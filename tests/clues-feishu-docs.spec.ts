@@ -463,6 +463,23 @@ describe('docs read', () => {
     expect(result.data).toMatchObject({ projection: 'markdown', title: 'Design notes' })
   })
 
+  it('prefers an explicit CLI document title over a Markdown heading fallback', async () => {
+    const runtime = new FakeLarkRuntime().enqueue(okResult({
+      document: {
+        document_id: 'doccnA',
+        revision_id: 14,
+        title: 'Real document title',
+        content: '# A section heading\n\nHello',
+      },
+    }))
+    const { operations } = opsOf(runtime)
+    const result = await operations.read!(
+      { typeId: FEISHU_TYPE_IDS.docx, locator: { kind: 'docx', docToken: 'doccnA', projection: 'markdown' } },
+      context(),
+    )
+    expect(result.data).toMatchObject({ title: 'Real document title' })
+  })
+
   it('reads a resolved wiki document through its underlying docx token, without node-get', async () => {
     const runtime = new FakeLarkRuntime().enqueue(okResult({
       document: { document_id: 'doccnObj', revision_id: 1, content: '<title>W</title>' },
