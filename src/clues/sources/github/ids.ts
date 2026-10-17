@@ -86,6 +86,21 @@ export const GITHUB_LIST_MAX_OUTPUT_BYTES = 512 << 10
 /** Explicit connect attempt lifetime; the login child is killed after this. */
 export const GITHUB_AUTH_TIMEOUT_MS = 10 * 60 * 1000
 
+/** How often an explicit device-flow poll may ask for the result (hint to S8). */
+export const GITHUB_AUTH_POLL_AFTER_MS = 5_000
+
+/** The official device authorization page gh prints during `auth login --web`. */
+export const GITHUB_DEVICE_URL = 'https://github.com/login/device'
+
+/** Explicit `auth status` budget (a human-triggered status read only). */
+export const GITHUB_AUTH_STATUS_TIMEOUT_MS = 15_000
+
+/** `auth status --json hosts` output bound. */
+export const GITHUB_AUTH_STATUS_MAX_OUTPUT_BYTES = 64 << 10
+
+/** `auth login` output bound (the device code + URL are all we may project). */
+export const GITHUB_LOGIN_MAX_OUTPUT_BYTES = 64 << 10
+
 /** Whether a value names a GitHub resource kind. */
 export function isGithubKind(value: unknown): value is GithubKind {
   return value === 'issue' || value === 'pull'
