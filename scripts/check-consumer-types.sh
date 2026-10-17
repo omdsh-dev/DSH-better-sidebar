@@ -136,7 +136,7 @@ const type: ClueTypeDescriptor = {
   typeId: 'x.docs.text',
   sourceId: 'x.docs',
   formats: ['text/plain'],
-  capabilities: { read: true, edit: false },
+  capabilities: { read: true, edit: false, concurrency: 'none' },
 }
 const registration: ClueSourceRegistration = {
   descriptor: {
