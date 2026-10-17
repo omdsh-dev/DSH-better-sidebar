@@ -71,11 +71,12 @@ const MAX_BODY_BYTES = 1 << 20
  * 1 MiB JSON envelope would therefore make files between 1 and 5 MiB
  * loadable but unsaveable. JSON string escaping can expand one byte up to six
  * (`\u0000`-style control escapes), so the transport bound covers that worst
- * case plus envelope overhead. This is a sanity guard, NOT a product limit:
- * the source enforces the editable size on the ENCODED document before it
- * writes anything.
+ * case plus 64 KiB of envelope overhead (format/revision/escaping of the
+ * surrounding JSON, not a second document). This is a sanity guard, NOT a
+ * product limit: the source enforces the editable size on the ENCODED document
+ * before it writes anything.
  */
-export const MAX_CLUE_SAVE_BODY_BYTES = MAX_EDITABLE_BYTES * 6 + (1 << 20)
+export const MAX_CLUE_SAVE_BODY_BYTES = MAX_EDITABLE_BYTES * 6 + (64 << 10)
 
 /** Success envelope of one API method. */
 export interface SidebarOk<T> { ok: true; value: T }

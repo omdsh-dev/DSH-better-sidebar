@@ -1329,9 +1329,14 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
         // but an EDIT document carries the user's text: `clues.saveEdit` gets
         // the editable-size-derived bound so a 1–5 MiB source document can be
         // written back (see MAX_CLUE_SAVE_BODY_BYTES).
+        // The enlarged bound applies only while the clue service actually
+        // claims `clues.saveEdit`; a disposed/absent service must not turn the
+        // method into a 16 MiB body sink (the dispatcher then answers 404).
         const payload = await readJsonBody(
           req,
-          method === 'clues.saveEdit' ? MAX_CLUE_SAVE_BODY_BYTES : undefined,
+          method === 'clues.saveEdit' && clueService?.hasApi(method) === true
+            ? MAX_CLUE_SAVE_BODY_BYTES
+            : undefined,
         )
         // Own properties only. The dispatch table is an object literal, so a
         // bare lookup resolved Object.prototype members as "methods":
@@ -1346,8 +1351,16 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
           // The clue service's API seam: later specs (S2+) register their own
           // methods on it, so this is the only dispatcher fallback they need.
           // Caller is the interactive UI; the abort signal is forwarded.
+          // S6/S2 integrations may serialize only the payload: forward an
+          // optional string `sessionId` exactly like the service's own read
+          // methods do. Non-string values are ignored, never coerced.
+          const payloadRecord = payload !== null && typeof payload === 'object'
+            ? payload as Record<string, unknown>
+            : undefined
+          const payloadSessionId = payloadRecord?.sessionId
           const result = await clueService.invokeApi(method, payload, {
             caller: 'ui',
+            ...(typeof payloadSessionId === 'string' ? { sessionId: payloadSessionId } : {}),
             ...(controller?.signal === undefined ? {} : { signal: controller.signal }),
           })
           if (controller?.signal.aborted !== true) writeOk(res, result)

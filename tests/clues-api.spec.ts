@@ -554,6 +554,15 @@ describe('/sidebar/api clue dispatcher fallback', () => {
       expect(leaked.body).toMatchObject({ ok: false, error: { code: 'failed' } })
       expect(leaked.body.error?.message).not.toContain('top-secret')
 
+      // The dispatcher fallback forwards an optional STRING `sessionId` from
+      // the payload (S6/S2 serialize only the payload); anything else is
+      // ignored instead of being coerced.
+      clueService.registerApi('test.session', (_payload, context) => context.sessionId ?? null)
+      const withSession = await post(route!, 'test.session', { sessionId: 'sess-1' })
+      expect(withSession.body).toMatchObject({ ok: true, value: 'sess-1' })
+      const badSession = await post(route!, 'test.session', { sessionId: 42 })
+      expect(badSession.body).toMatchObject({ ok: true, value: null })
+
       // A method NO service owns is still a 404 — the fallback is not a
       // catch-all.
       const unknown = await post(route!, 'definitely.not.a.method', {})
