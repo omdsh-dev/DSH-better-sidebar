@@ -27,7 +27,7 @@ import {
   type ClueSourceCatalogEntry,
 } from '../src/client/clues/settings/source-catalog.ts'
 import { SourceCatalogBody, type SourceCatalogBodyProps } from '../src/client/clues/settings/source-catalog-modal.tsx'
-import { en } from '../src/client/locales.ts'
+import { en, zh } from '../src/client/locales.ts'
 
 setupReactAct()
 beforeAll(() => {
@@ -82,6 +82,26 @@ describe('source-plugin catalog data', () => {
     const categories = new Set(builtinClueSourcePlugins.map(item => textOf(item.category)))
     expect(categories).toContain('GitHub')
     expect(categories).toContain('Feishu')
+  })
+
+  it('routes its user-visible copy through the locale dictionaries, not hardcoded English', () => {
+    const previous = navigator.language
+    Object.defineProperty(navigator, 'language', { value: 'zh-CN', configurable: true })
+    try {
+      const github = builtinClueSourcePlugins[0]!
+      const feishu = builtinClueSourcePlugins[1]!
+      expect(textOf(github.name)).toBe(zh.clueSourceCatalogGithubName)
+      expect(textOf(github.description)).toBe(zh.clueSourceCatalogGithubDesc)
+      expect(textOf(github.category)).toBe(zh.clueSourceCatalogGithubCategory)
+      expect(textOf(feishu.name)).toBe(zh.clueSourceCatalogFeishuName)
+      expect(textOf(feishu.description)).toBe(zh.clueSourceCatalogFeishuDesc)
+      expect(textOf(feishu.category)).toBe(zh.clueSourceCatalogFeishuCategory)
+      // The zh strings really branch from en (not EN copy rendered verbatim).
+      expect(textOf(github.name)).not.toBe(en.clueSourceCatalogGithubName)
+      expect(textOf(feishu.description)).not.toBe(en.clueSourceCatalogFeishuDesc)
+    } finally {
+      Object.defineProperty(navigator, 'language', { value: previous, configurable: true })
+    }
   })
 })
 

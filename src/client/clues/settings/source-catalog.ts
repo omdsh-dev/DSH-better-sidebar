@@ -26,8 +26,12 @@
  * An external source plugin appends ONE entry here with its own npm/git
  * install command; the data integrity test (`tests/clues-settings-source-
  * catalog.spec.tsx`) pins unique ids, https repository URLs and the
- * `cd ~/.dsh && dsh plugin --profile web add …` install shape.
+ * `cd ~/.dsh && dsh plugin --profile web add …` install shape. Every
+ * user-visible string goes through `t()` (zh/en plus all 19 lazy
+ * dictionaries), exactly like the tab/viewer catalogs: the seed entries below
+ * are product copy, not identifiers.
  */
+import { t } from '../../locales.ts'
 import type { PluginEntry } from '../../plugins-shared.ts'
 
 /** One curated source-plugin entry (same shape as the tab/viewer catalogs). */
@@ -46,18 +50,18 @@ export interface ClueSourceCatalogEntry extends PluginEntry {
 export const builtinClueSourcePlugins: readonly ClueSourceCatalogEntry[] = [
   {
     id: 'builtin.github',
-    name: 'GitHub Issues & PRs',
+    name: () => t('clueSourceCatalogGithubName'),
     url: 'https://github.com/omdsh-dev/DSH-better-sidebar',
-    description: 'Issues and pull requests as clues, read through the shared gh CLI. Ships with dsh-better-sidebar as a built-in source: no separate source plugin is needed and the command installs or updates the core plugin. Installing this plugin does not install the gh CLI.',
-    category: 'GitHub',
+    description: () => t('clueSourceCatalogGithubDesc'),
+    category: () => t('clueSourceCatalogGithubCategory'),
     install: 'cd ~/.dsh && dsh plugin --profile web add dsh-better-sidebar',
   },
   {
     id: 'builtin.feishu',
-    name: 'Feishu Docs & Tasks',
+    name: () => t('clueSourceCatalogFeishuName'),
     url: 'https://github.com/omdsh-dev/DSH-better-sidebar',
-    description: 'Feishu documents, wiki pages and tasks as clues, read through the shared lark-cli connection. Ships with dsh-better-sidebar as a built-in source: no separate source plugin is needed and the command installs or updates the core plugin. Installing this plugin does not install lark-cli or authorize an account.',
-    category: 'Feishu',
+    description: () => t('clueSourceCatalogFeishuDesc'),
+    category: () => t('clueSourceCatalogFeishuCategory'),
     install: 'cd ~/.dsh && dsh plugin --profile web add dsh-better-sidebar',
   },
 ]

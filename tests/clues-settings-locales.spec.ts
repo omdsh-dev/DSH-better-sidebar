@@ -22,6 +22,10 @@ const S8_KEYS = [
   'clueConfigure', 'cluePacksName', 'cluePacksMentionAria', 'cluePacksDesc',
   'clueSourcesEmpty', 'clueSourcesLoadFailed', 'clueSourcesUnavailable',
   'clueAddSource', 'clueAddSourceDesc', 'clueAddSourceNoCatalog',
+  'clueSourceCatalogGithubName', 'clueSourceCatalogGithubDesc',
+  'clueSourceCatalogGithubCategory',
+  'clueSourceCatalogFeishuName', 'clueSourceCatalogFeishuDesc',
+  'clueSourceCatalogFeishuCategory',
   'clueStateUnchecked', 'clueStateMissing', 'clueStateIncompatible',
   'clueStateInstalling', 'clueStateNotConfigured', 'clueStateNotAuthorized',
   'clueStateAuthorizing', 'clueStateAuthExpired', 'clueStateRequestFailed',
@@ -97,7 +101,7 @@ describe('S8 copy across every shipped locale', () => {
   it('keeps the English and Chinese copy distinct where it should branch (no silent key fallback)', () => {
     // A few keys are exercised by the DOM specs in English; zh must actually
     // translate them rather than repeating the key name.
-    for (const key of ['settingsGroupSources', 'clueStateReady', 'clueDependencyRecheck'] as const) {
+    for (const key of ['settingsGroupSources', 'clueStateReady', 'clueDependencyRecheck', 'clueSourceCatalogFeishuName'] as const) {
       expect(zh[key]).not.toBe(en[key])
       expect(en[key]).not.toBe(key)
     }

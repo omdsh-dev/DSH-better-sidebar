@@ -694,6 +694,12 @@ export const zh = {
   clueSourcesUnavailable: '来源插件未加载；已保留原有偏好与引用。',
   clueAddSource: '添加来源插件',
   clueAddSourceDesc: '来源以 DSH 插件形式安装；安装插件与安装它需要的 CLI 是两件事。这里只提供来源插件的发现指引，不会自动安装。',
+  clueSourceCatalogGithubName: 'GitHub Issue 与 PR',
+  clueSourceCatalogGithubDesc: '以线索形式阅读 Issue 与 Pull Request，透过共享的 gh CLI 读取。随 dsh-better-sidebar 作为内置来源提供：无需单独的来源插件，该命令会安装或更新核心插件；安装本插件不会安装 gh CLI。',
+  clueSourceCatalogGithubCategory: 'GitHub',
+  clueSourceCatalogFeishuName: '飞书文档与任务',
+  clueSourceCatalogFeishuDesc: '以线索形式阅读飞书文档、知识库页面与任务，透过共享的 lark-cli 连接读取。随 dsh-better-sidebar 作为内置来源提供：无需单独的来源插件，该命令会安装或更新核心插件；安装本插件不会安装 lark-cli，也不会授权账号。',
+  clueSourceCatalogFeishuCategory: '飞书',
   clueAddSourceNoCatalog: '当前宿主还没有来源类插件目录；请通过下方 GitHub topic 查找来源插件。',
 
   // ── S8: clue source states ──
@@ -1442,6 +1448,12 @@ export const en: Record<keyof typeof zh, string> = {
   clueSourcesUnavailable: 'The source plugin is not loaded; its preferences and references were kept.',
   clueAddSource: 'Add source plugin',
   clueAddSourceDesc: 'Sources ship as DSH plugins; installing the plugin and installing the CLI it needs are separate steps. This entry only points you to source plugins — it does not install anything.',
+  clueSourceCatalogGithubName: 'GitHub Issues & PRs',
+  clueSourceCatalogGithubDesc: 'Issues and pull requests as clues, read through the shared gh CLI. Ships with dsh-better-sidebar as a built-in source: no separate source plugin is needed, and the command installs or updates the core plugin. Installing this plugin does not install the gh CLI.',
+  clueSourceCatalogGithubCategory: 'GitHub',
+  clueSourceCatalogFeishuName: 'Feishu Docs & Tasks',
+  clueSourceCatalogFeishuDesc: 'Feishu documents, wiki pages and tasks as clues, read through the shared lark-cli connection. Ships with dsh-better-sidebar as a built-in source: no separate source plugin is needed, and the command installs or updates the core plugin. Installing this plugin does not install lark-cli or authorize an account.',
+  clueSourceCatalogFeishuCategory: 'Feishu',
   clueAddSourceNoCatalog: 'No source-category plugin catalogue is available in this host yet; browse the GitHub topic below to find source plugins.',
 
   // ── S8: clue source states ──
