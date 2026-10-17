@@ -756,4 +756,10 @@ export const id: Record<string, string> = {
   clueConnectionExpires: 'Berlaku hingga {time}',
   clueConnectionDenied: 'Otorisasi ditolak',
   clueConnectionScope: 'Izin tidak memadai',
+  // ── S9: clue tab ──
+  clueTabTitle: 'Petunjuk',
+  guideDescClues: 'Paket dan beberapa sumber; sisipkan ke draf dengan @',
+  clueFeishuDocsName: 'Dokumen Feishu',
+  clueFeishuTasksName: 'Tugas Feishu',
+  clueTabNoWorkspace: 'Sesi ini belum memiliki ruang kerja. Buka sesi ruang kerja terlebih dahulu, lalu kumpulkan petunjuk.',
 }

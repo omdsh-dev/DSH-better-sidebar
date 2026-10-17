@@ -31,6 +31,12 @@ import { SideCardSection } from './SideCardSection.tsx'
 import { api } from './api.ts'
 import { LOCALE_NS, attachLocale, attachBetterLocale, t, zh, en } from './locales.ts'
 import { loadChunk } from './chunk-loader.ts'
+import { registerGithubSourceClient } from './clues/sources/github/index.tsx'
+import { registerFeishuSourceClient } from './clues/sources/feishu/index.tsx'
+import { appDateTime } from './clues/sources/feishu/time.ts'
+import { installClueInputTriggers } from './clues/mentions.ts'
+import { notifyClue } from './clues/notify.ts'
+import { resolveWorkspaceIdForSession } from './clues/workspace-id.ts'
 import css from './sidebar.module.css'
 import './layout.css'
 
@@ -176,6 +182,40 @@ export function apply(ctx: Context): void {
   // service drops any open window. (Each mounted window's layer registration is
   // released by FloatingWindow's own unmount effect.)
   ctx.effect(() => () => { service.windowHost.dispose() }, 'dsh-better-sidebar: window host')
+  // Clue client surfaces (S3/S4/S5). The host half publishes the catalogue and
+  // the `clues.*` methods; the browser half registers the source glyphs, the
+  // structured format renderers and the two `@` trigger sources through the
+  // ONE face on the service. Every registration owns its effect disposer, so an
+  // HMR reload cannot leave a duplicate display or renderer behind.
+  ctx.effect(
+    () => registerGithubSourceClient(service.clues),
+    'dsh-better-sidebar: github clue client',
+  )
+  ctx.effect(
+    () => registerFeishuSourceClient(service.clues, {
+      // The live getter keeps the source names following the locale without a
+      // re-registration; `subscribe` additionally re-registers the renderers
+      // so an open window re-renders with the new copy.
+      labels: () => ({
+        docsName: t('clueFeishuDocsName'),
+        tasksName: t('clueFeishuTasksName'),
+      }),
+      formatDateTime: value => appDateTime(value),
+      subscribe: listener => ctx.locale.subscribe(listener),
+    }),
+    'dsh-better-sidebar: feishu clue client',
+  )
+  // The composer's `@` sources. Workspace resolution is the authoritative
+  // session → workspace lookup (never a cwd guess); refusals surface as the
+  // plugin's own visible notice instead of a silent no-op.
+  ctx.effect(
+    () => installClueInputTriggers(ctx, {
+      face: service.clues,
+      resolveWorkspaceId: session => resolveWorkspaceIdForSession(ctx, session.sessionId),
+      onNotice: message => { notifyClue(message) },
+    }),
+    'dsh-better-sidebar: clue @ sources',
+  )
   // The native right-Sidebar surface: the plugin's content is registered as
   // DSH tab types (one per descriptor) and every open routes there, so the
   // right column belongs to the host and only the bottom workbench stays

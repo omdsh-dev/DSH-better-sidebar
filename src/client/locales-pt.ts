@@ -741,4 +741,10 @@ export const pt: Record<string, string> = {
   clueConnectionExpires: 'Válido até {time}',
   clueConnectionDenied: 'Autorização recusada',
   clueConnectionScope: 'Permissões insuficientes',
+  // ── S9: clue tab ──
+  clueTabTitle: 'Pistas',
+  guideDescClues: 'Pacotes e várias fontes; insira no rascunho com @',
+  clueFeishuDocsName: 'Documentos Feishu',
+  clueFeishuTasksName: 'Tarefas Feishu',
+  clueTabNoWorkspace: 'Esta sessão ainda não tem uma área de trabalho. Abra primeiro uma sessão de área de trabalho e depois colete pistas.',
 }

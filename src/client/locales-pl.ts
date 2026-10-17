@@ -760,4 +760,10 @@ export const pl: Record<string, string> = {
   clueConnectionExpires: 'Ważne do {time}',
   clueConnectionDenied: 'Autoryzacja odrzucona',
   clueConnectionScope: 'Niewystarczające uprawnienia',
+  // ── S9: clue tab ──
+  clueTabTitle: 'Wskazówki',
+  guideDescClues: 'Pakiety i wiele źródeł; wstaw do szkicu przez @',
+  clueFeishuDocsName: 'Dokumenty Feishu',
+  clueFeishuTasksName: 'Zadania Feishu',
+  clueTabNoWorkspace: 'Ta sesja nie ma jeszcze obszaru roboczego. Najpierw otwórz sesję obszaru roboczego, potem zbieraj wskazówki.',
 }

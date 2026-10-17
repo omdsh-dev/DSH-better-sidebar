@@ -758,4 +758,10 @@ export const ja: Record<string, string> = {
   clueConnectionExpires: '有効期限 {time}',
   clueConnectionDenied: '認可が拒否されました',
   clueConnectionScope: '権限不足',
+  // ── S9: clue tab ──
+  clueTabTitle: '手がかり',
+  guideDescClues: '手がかりパックと複数ソースの閲覧、@ で下書きに挿入',
+  clueFeishuDocsName: 'Feishu ドキュメント',
+  clueFeishuTasksName: 'Feishu タスク',
+  clueTabNoWorkspace: 'このセッションにはまだワークスペースがありません。先にワークスペースのセッションを開いてから手がかりを集めてください。',
 }

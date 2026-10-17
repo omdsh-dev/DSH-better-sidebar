@@ -756,4 +756,10 @@ export const nl: Record<string, string> = {
   clueConnectionExpires: 'Geldig tot {time}',
   clueConnectionDenied: 'Autorisatie geweigerd',
   clueConnectionScope: 'Onvoldoende rechten',
+  // ── S9: clue tab ──
+  clueTabTitle: 'Aanwijzingen',
+  guideDescClues: 'Pakketten en meerdere bronnen; via @ in het concept invoegen',
+  clueFeishuDocsName: 'Feishu-documenten',
+  clueFeishuTasksName: 'Feishu-taken',
+  clueTabNoWorkspace: 'Deze sessie heeft nog geen werkruimte. Open eerst een werkruimtesessie en verzamel daarna aanwijzingen.',
 }

@@ -759,4 +759,10 @@ export const ar: Record<string, string> = {
   clueConnectionExpires: 'صالح حتى {time}',
   clueConnectionDenied: 'رُفض التصريح',
   clueConnectionScope: 'صلاحيات غير كافية',
+  // ── S9: clue tab ──
+  clueTabTitle: 'أدلة',
+  guideDescClues: 'حزم ومصادر متعددة؛ أدرج في المسودة عبر @',
+  clueFeishuDocsName: 'مستندات Feishu',
+  clueFeishuTasksName: 'مهام Feishu',
+  clueTabNoWorkspace: 'لا توجد مساحة عمل مرتبطة بهذه الجلسة بعد. افتح جلسة مساحة عمل ثم اجمع الأدلة.',
 }

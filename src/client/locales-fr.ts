@@ -751,4 +751,10 @@ export const fr: Record<string, string> = {
   clueConnectionExpires: 'Valable jusqu’à {time}',
   clueConnectionDenied: 'Autorisation refusée',
   clueConnectionScope: 'Permissions insuffisantes',
+  // ── S9: clue tab ──
+  clueTabTitle: 'Indices',
+  guideDescClues: 'Packs d’indices et sources multiples ; insertion dans le brouillon',
+  clueFeishuDocsName: 'Documents Feishu',
+  clueFeishuTasksName: 'Tâches Feishu',
+  clueTabNoWorkspace: 'Cette session n’est associée à aucun espace de travail. Ouvrez d’abord une session d’espace de travail, puis collectez des indices.',
 }

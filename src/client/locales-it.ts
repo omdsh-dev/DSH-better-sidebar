@@ -749,4 +749,10 @@ export const it: Record<string, string> = {
   clueConnectionExpires: 'Valido fino a {time}',
   clueConnectionDenied: 'Autorizzazione negata',
   clueConnectionScope: 'Permessi insufficienti',
+  // ── S9: clue tab ──
+  clueTabTitle: 'Indizi',
+  guideDescClues: 'Pacchetti di indizi e più fonti; inserisci nella bozza con @',
+  clueFeishuDocsName: 'Documenti Feishu',
+  clueFeishuTasksName: 'Attività Feishu',
+  clueTabNoWorkspace: 'Questa sessione non ha ancora uno spazio di lavoro. Apri prima una sessione di spazio di lavoro, poi raccogli indizi.',
 }

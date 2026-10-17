@@ -22,10 +22,11 @@ import {
   VscGitCommit,
   VscGlobe,
   VscLayers,
+  VscReferences,
   VscTerminal,
 } from 'react-icons/vsc'
 /** The styled wrapper classes; typed so a renamed rule fails the build. */
-const css = styles as Record<'files' | 'changes' | 'tasks' | 'sidechat' | 'terminal' | 'browser', string>
+const css = styles as Record<'files' | 'changes' | 'tasks' | 'sidechat' | 'terminal' | 'browser' | 'clues', string>
 
 /** One tab type's glyph, sized by the caller's surface (14px in a strip). */
 export type TabIcon = (size: number) => ReactNode
@@ -69,3 +70,11 @@ export const terminalTabIcon: TabIcon = (size) =>
 /** Browser — the same secondary accent as the side chat's sibling surfaces. */
 export const browserTabIcon: TabIcon = (size) =>
   themed(css.browser, <VscGlobe size={size} />)
+
+/**
+ * Clues — a collected reference. The glyph is the brand accent, which is where
+ * the feature's approved #3388BB reaches the UI (through the skin token, never
+ * as a literal).
+ */
+export const cluesTabIcon: TabIcon = (size) =>
+  themed(css.clues, <VscReferences size={size} />)

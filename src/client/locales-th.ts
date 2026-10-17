@@ -758,4 +758,10 @@ export const th: Record<string, string> = {
   clueConnectionExpires: 'ใช้ได้ถึง {time}',
   clueConnectionDenied: 'การอนุญาตถูกปฏิเสธ',
   clueConnectionScope: 'สิทธิ์ไม่เพียงพอ',
+  // ── S9: clue tab ──
+  clueTabTitle: 'เบาะแส',
+  guideDescClues: 'แพ็กและหลายแหล่ง; แทรกลงฉบับร่างด้วย @',
+  clueFeishuDocsName: 'เอกสาร Feishu',
+  clueFeishuTasksName: 'งาน Feishu',
+  clueTabNoWorkspace: 'เซสชันนี้ยังไม่มีพื้นที่ทำงาน เปิดเซสชันพื้นที่ทำงานก่อนแล้วจึงรวบรวมเบาะแส',
 }

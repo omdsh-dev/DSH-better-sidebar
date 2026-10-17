@@ -758,4 +758,10 @@ export const hi: Record<string, string> = {
   clueConnectionExpires: '{time} तक मान्य',
   clueConnectionDenied: 'अधिकृति अस्वीकृत',
   clueConnectionScope: 'अपर्याप्त अनुमतियाँ',
+  // ── S9: clue tab ──
+  clueTabTitle: 'सुराग',
+  guideDescClues: 'पैक और कई स्रोत; @ से ड्राफ़्ट में डालें',
+  clueFeishuDocsName: 'Feishu दस्तावेज़',
+  clueFeishuTasksName: 'Feishu कार्य',
+  clueTabNoWorkspace: 'इस सत्र से अभी कोई कार्यक्षेत्र जुड़ा नहीं है। पहले कार्यक्षेत्र सत्र खोलें, फिर सुराग जमा करें।',
 }

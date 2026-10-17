@@ -741,4 +741,10 @@ export const sv: Record<string, string> = {
   clueConnectionExpires: 'Giltig till {time}',
   clueConnectionDenied: 'Auktorisering nekades',
   clueConnectionScope: 'Otillräckliga behörigheter',
+  // ── S9: clue tab ──
+  clueTabTitle: 'Ledtrådar',
+  guideDescClues: 'Paket och flera källor; infoga i utkastet med @',
+  clueFeishuDocsName: 'Feishu-dokument',
+  clueFeishuTasksName: 'Feishu-uppgifter',
+  clueTabNoWorkspace: 'Den här sessionen har ingen arbetsyta än. Öppna först en arbetsytesession och samla sedan ledtrådar.',
 }

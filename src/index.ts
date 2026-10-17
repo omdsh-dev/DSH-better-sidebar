@@ -70,7 +70,7 @@ import {
 import { FS_TREES_MAX_PATHS } from './fs-batch.ts'
 import { activeWorktreeRootOf } from './active-worktree.ts'
 import { WRITE_BODY_GUARD_BYTES } from './editor-limits.ts'
-import { installClues } from './clues/index.ts'
+import { installClueStack } from './clues/install-stack.ts'
 import { readPage, readText } from './fs-read.ts'
 
 export { Config }
@@ -1157,13 +1157,25 @@ async function importLegacyPrefs(
  */
 export function apply(ctx: Context, config?: SidebarConfig): void {
   const resolved = resolveSidebarConfig(config)
-  // Clue collection (S1): the host service, durable store, built-in local-file
-  // source and `clues.*` API seam. Installed before the routes so the
-  // dispatcher's fallback sees it; installClues owns its effect-based teardown.
-  installClues(ctx)
   // Connection owns both deployment trust and authentication; never infer or
   // bypass its policy from invocation flags or a copied trust list.
   const fence = (req: SidebarHttpRequest): boolean => ctx.connection.requestRejection(req) === undefined
+  // The clue stack's context injection reads the live Side card preferences
+  // (source switches). The settings face is filled by the `ctx.inject` below,
+  // which runs after this body, so every read is lazy and a deployment
+  // without the settings service keeps the schema defaults.
+  let settingsFace: SidebarSettingsFace | undefined
+  const readCluePrefs = (): SidebarPrefs => {
+    const value = settingsFace?.get().value
+    return value !== null && typeof value === 'object' ? value as SidebarPrefs : SIDEBAR_PREFS_DEFAULTS
+  }
+  // Clue collection (S1–S9): the complete stack — durable store, the built-in
+  // file/GitHub/Feishu sources, the one dependency/connection runtime, the
+  // read-only agent tools, first-turn context injection, the share service
+  // with its raw routes, and the client's workspace lookup. Installed before
+  // the routes so the dispatcher's fallback sees it; every registration owns
+  // an effect-based teardown.
+  installClueStack(ctx, { readPrefs: readCluePrefs, fence })
   // The model-facing open-request registry: queues `sidebar_open` requests
   // per session and pushes them to connected sidebar views over the
   // `/sidebar/ws/agent-opens` socket.
@@ -1177,7 +1189,6 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   // ('settings.get'/'settings.update'), which now call `describe`/`update`.
   // Deployments without a settings service simply never fill the face and the
   // client falls back to the schema defaults.
-  let settingsFace: SidebarSettingsFace | undefined
   // The model-facing `sidebar_open` tool is gated on the side-card setting
   // `agentOpenTools` (default off): nothing is injected until the user turns
   // the feature on; turning it off mid-session unregisters the tool.

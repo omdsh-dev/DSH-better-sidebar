@@ -758,4 +758,10 @@ export const tr: Record<string, string> = {
   clueConnectionExpires: '{time} tarihine kadar geçerli',
   clueConnectionDenied: 'Yetkilendirme reddedildi',
   clueConnectionScope: 'Yetersiz izinler',
+  // ── S9: clue tab ──
+  clueTabTitle: 'İpuçları',
+  guideDescClues: 'Paketler ve birden çok kaynak; @ ile taslağa ekle',
+  clueFeishuDocsName: 'Feishu belgeleri',
+  clueFeishuTasksName: 'Feishu görevleri',
+  clueTabNoWorkspace: 'Bu oturumun henüz bir çalışma alanı yok. Önce bir çalışma alanı oturumu açın, sonra ipuçları toplayın.',
 }

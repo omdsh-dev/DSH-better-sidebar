@@ -758,4 +758,10 @@ export const vi: Record<string, string> = {
   clueConnectionExpires: 'Có hiệu lực đến {time}',
   clueConnectionDenied: 'Quyền bị từ chối',
   clueConnectionScope: 'Không đủ quyền',
+  // ── S9: clue tab ──
+  clueTabTitle: 'Gợi ý',
+  guideDescClues: 'Gói và nhiều nguồn; chèn vào bản nháp bằng @',
+  clueFeishuDocsName: 'Tài liệu Feishu',
+  clueFeishuTasksName: 'Tác vụ Feishu',
+  clueTabNoWorkspace: 'Phiên này chưa có không gian làm việc. Hãy mở phiên không gian làm việc trước rồi thu thập gợi ý.',
 }

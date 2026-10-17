@@ -750,4 +750,10 @@ export const ko: Record<string, string> = {
   clueConnectionExpires: '유효 기간 {time}',
   clueConnectionDenied: '인증이 거부되었습니다',
   clueConnectionScope: '권한 부족',
+  // ── S9: clue tab ──
+  clueTabTitle: '단서',
+  guideDescClues: '팩과 여러 소스; @로 초안에 삽입',
+  clueFeishuDocsName: 'Feishu 문서',
+  clueFeishuTasksName: 'Feishu 작업',
+  clueTabNoWorkspace: '이 세션에는 아직 작업 공간이 없습니다. 먼저 작업 공간 세션을 연 뒤 단서를 모으세요.',
 }

@@ -756,4 +756,10 @@ export const ru: Record<string, string> = {
   clueConnectionExpires: 'Действует до {time}',
   clueConnectionDenied: 'Авторизация отклонена',
   clueConnectionScope: 'Недостаточно прав',
+  // ── S9: clue tab ──
+  clueTabTitle: 'Подсказки',
+  guideDescClues: 'Наборы и несколько источников; вставка в черновик через @',
+  clueFeishuDocsName: 'Документы Feishu',
+  clueFeishuTasksName: 'Задачи Feishu',
+  clueTabNoWorkspace: 'У этой сессии ещё нет рабочей области. Сначала откройте сессию рабочей области, затем собирайте подсказки.',
 }

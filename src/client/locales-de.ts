@@ -744,4 +744,10 @@ export const de: Record<string, string> = {
   clueConnectionExpires: 'Gültig bis {time}',
   clueConnectionDenied: 'Autorisierung abgelehnt',
   clueConnectionScope: 'Unzureichende Berechtigungen',
+  // ── S9: clue tab ──
+  clueTabTitle: 'Hinweise',
+  guideDescClues: 'Hinweis-Pakete und mehrere Quellen; per @ in den Entwurf einfügen',
+  clueFeishuDocsName: 'Feishu-Dokumente',
+  clueFeishuTasksName: 'Feishu-Aufgaben',
+  clueTabNoWorkspace: 'Diese Sitzung hat noch keinen Arbeitsbereich. Öffne zuerst eine Arbeitsbereichs-Sitzung und sammle dann Hinweise.',
 }

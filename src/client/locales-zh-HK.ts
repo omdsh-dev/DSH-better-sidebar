@@ -773,4 +773,10 @@ export const zhHK: Record<string, string> = {
   clueConnectionExpires: '有效期至 {time}',
   clueConnectionDenied: '授權被拒絕',
   clueConnectionScope: '權限不足',
+  // ── S9: clue tab ──
+  clueTabTitle: '線索收集',
+  guideDescClues: '線索包與多來源瀏覽，點按或 @ 插入草稿',
+  clueFeishuDocsName: '飛書文件',
+  clueFeishuTasksName: '飛書任務',
+  clueTabNoWorkspace: '目前工作階段還沒有關聯工作區。先開啟一個工作區工作階段，再收集線索。',
 }

@@ -774,6 +774,12 @@ export const zh = {
   clueConnectionExpires: '有效期至 {time}',
   clueConnectionDenied: '授权被拒绝',
   clueConnectionScope: '权限不足',
+  // ── S9: clue tab ──
+  clueTabTitle: '线索收集',
+  guideDescClues: '线索包与多来源浏览，点按或 @ 插入草稿',
+  clueFeishuDocsName: '飞书文档',
+  clueFeishuTasksName: '飞书任务',
+  clueTabNoWorkspace: '当前会话还没有关联工作区。先打开一个工作区会话，再收集线索。',
 }
 
 /** The en dictionary (key-set-equal to zh, enforced by the type annotation). */
@@ -1527,6 +1533,12 @@ export const en: Record<keyof typeof zh, string> = {
   clueConnectionExpires: 'Expires {time}',
   clueConnectionDenied: 'Authorization denied',
   clueConnectionScope: 'Insufficient permissions',
+  // ── S9: clue tab ──
+  clueTabTitle: 'Clues',
+  guideDescClues: 'Clue packs and multi-source browsing; insert into the draft',
+  clueFeishuDocsName: 'Feishu docs',
+  clueFeishuTasksName: 'Feishu tasks',
+  clueTabNoWorkspace: 'This session has no workspace yet. Open a workspace session, then collect clues.',
 }
 
 /**
