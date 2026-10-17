@@ -36,6 +36,7 @@ import type {
 import type { BetterSidebarCluesClientFace } from '../registry.ts'
 import type { BetterSidebarWindowsClientFace, WindowHandle } from '../../windows/types.ts'
 import { clueErrorMessage } from '../copy.ts'
+import { openShareWindow } from './share.tsx'
 import { t } from '../../locales.ts'
 import css from './pack.module.css'
 
@@ -364,6 +365,15 @@ export function PackManagementPage(
             onClick={() => { props.onInsertPack(pack) }}
           >
             {t('cluePackInsert')}
+          </button>
+          <button
+            type="button"
+            className={css.action}
+            onClick={() => {
+              openShareWindow({ windows: props.windows, workspaceId, face, packIds: [pack.id] })
+            }}
+          >
+            {t('clueShareExport')}
           </button>
         </div>
       </div>

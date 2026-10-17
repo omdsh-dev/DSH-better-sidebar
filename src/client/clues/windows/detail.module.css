@@ -62,3 +62,11 @@
   outline: 2px solid var(--dsw-alias-brand-primary);
   outline-offset: 1px;
 }
+
+.footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  justify-content: flex-end;
+}

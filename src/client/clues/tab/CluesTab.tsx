@@ -35,6 +35,7 @@ import { ClueHelpOverlay, clueHelpSeen, markClueHelpSeen } from './help.tsx'
 import { openClueDetailWindow, type ClueDetailTarget } from '../windows/detail.tsx'
 import { openPackManagementWindow } from '../windows/pack.tsx'
 import { openClueSettingsWindow } from '../windows/settings.tsx'
+import { openShareWindow } from '../windows/share.tsx'
 import css from './clues-tab.module.css'
 
 /** The plugin-settings key of the clue tab (one sparse blob). */
@@ -162,8 +163,9 @@ export function CluesTab({ ctx, store, scope, visible }: CluesTabProps): ReactNo
       workspaceId,
       target,
       sessionId: scope.sessionId,
+      onInsertClue: insertClue,
     })
-  }, [service, face, workspaceId, scope.sessionId])
+  }, [service, face, workspaceId, scope.sessionId, insertClue])
 
   const openPack = useCallback((pack: CluePack): void => {
     if (service === undefined || face === undefined || workspaceId === undefined) return
@@ -178,6 +180,11 @@ export function CluesTab({ ctx, store, scope, visible }: CluesTabProps): ReactNo
       onNotice: notifyClue,
     })
   }, [service, face, workspaceId, ctx, insertClue, insertPack])
+
+  const openImport = useCallback((): void => {
+    if (service === undefined || workspaceId === undefined) return
+    openShareWindow({ windows: service.windows, workspaceId, face: service.clues })
+  }, [service, workspaceId])
 
   const openSettings = useCallback((): void => {
     if (service === undefined) return
@@ -245,6 +252,7 @@ export function CluesTab({ ctx, store, scope, visible }: CluesTabProps): ReactNo
             onSettingsChange={persistSettings}
             onInsertPack={insertPack}
             onOpenPack={openPack}
+            onImport={openImport}
             onNotice={notifyClue}
           />
           <div className={css.divider} role="separator" aria-hidden="true" />

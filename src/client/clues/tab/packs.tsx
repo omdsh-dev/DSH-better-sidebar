@@ -43,6 +43,8 @@ export interface CluePacksSectionProps {
   onInsertPack(pack: CluePack): boolean
   /** Open the S6 pack management window. */
   onOpenPack(pack: CluePack): void
+  /** Open the S6 share/import window. */
+  onImport(): void
   onNotice(message: string): void
 }
 
@@ -68,7 +70,7 @@ function orderPacks(packs: readonly CluePack[], recent: readonly string[]): Clue
 
 /** The pack library section. */
 export function CluePacksSection(props: CluePacksSectionProps): ReactNode {
-  const { workspaceId, face, visible, settings, onSettingsChange, onOpenPack, onNotice } = props
+  const { workspaceId, face, visible, settings, onSettingsChange, onOpenPack, onImport, onNotice } = props
   const { onInsertPack } = props
   const [packs, setPacks] = useState<readonly CluePack[]>([])
   const [phase, setPhase] = useState<'loading' | 'ready' | 'error'>('loading')
@@ -158,6 +160,7 @@ export function CluePacksSection(props: CluePacksSectionProps): ReactNode {
             <IconPlusOutlineRegular size={14} />
             <span>{t('cluePacksNew')}</span>
           </button>
+          <button type="button" className={css.toolButton} onClick={onImport}>{t('clueShareImport')}</button>
           <button
             type="button"
             className={css.iconButton}
