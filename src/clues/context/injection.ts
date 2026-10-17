@@ -150,6 +150,17 @@ const DEFAULT_MAX_CONTEXT_CHARS = 4000
 
 /** Bound on the process-local re-entry guard (one entry per session+fingerprint). */
 const REENTRY_GUARD_MAX = 512
+/**
+ * How long one in-process re-entry claim stays valid.
+ *
+ * The host can discard a settled decision (for example when the step aborts
+ * between our return and its own post-waterfall `throwIfAborted`), and the
+ * durable marker is then never committed. A bounded claim lets the same
+ * creation window retry later instead of suppressing the session forever; by
+ * the time it expires, a committed message is visible through the durable
+ * marker and still suppresses a duplicate.
+ */
+const REENTRY_GUARD_TTL_MS = 60_000
 /** Bound on remembered degraded-setup warnings (one entry per failure kind). */
 const WARNED_MAX = 512
 
@@ -353,11 +364,31 @@ export function installClueInjection(
   const maxContextChars = options.maxContextChars ?? DEFAULT_MAX_CONTEXT_CHARS
   // Re-entry guard: the injected message is committed AFTER pre-step settles,
   // so two pre-step passes in the same creation window cannot see the durable
-  // marker yet. Keyed by session+fingerprint; bounded (FIFO eviction).
-  const injected = new Map<string, true>()
+  // marker yet. Keyed by session+fingerprint with a claim time; bounded (FIFO
+  // eviction) and expiring, because a dropped decision must not suppress the
+  // session forever.
+  const injected = new Map<string, number>()
   /** Sessions already warned about a degraded setup (avoid per-turn spam). */
   const warned = new Set<string>()
   let disposed = false
+
+  /** Whether one claim is still inside its validity window (prunes stale entries). */
+  const guardActive = (key: string): boolean => {
+    const claimedAt = injected.get(key)
+    if (claimedAt === undefined) return false
+    if (Date.now() - claimedAt <= REENTRY_GUARD_TTL_MS) return true
+    injected.delete(key)
+    return false
+  }
+
+  /** Claim one session+fingerprint for the current creation window. */
+  const claimGuard = (key: string): void => {
+    injected.delete(key)
+    injected.set(key, Date.now())
+    if (injected.size <= REENTRY_GUARD_MAX) return
+    const oldest = injected.keys().next().value
+    if (oldest !== undefined) injected.delete(oldest)
+  }
 
   const warnOnce = (key: string, message: string): void => {
     if (warned.has(key)) return
@@ -470,7 +501,9 @@ export function installClueInjection(
     if (sessionId === '') return next()
     if (!isFirstOwnTurn(session, payload.turn)) return next()
     const workspaceId = await workspaceOf(session)
-    if (aborted()) return next()
+    // The disposer may have run while the registry resolved; never inject a
+    // decision that outlives the listener registration.
+    if (disposed || aborted()) return next()
     if (workspaceId === undefined) return next()
     const events = session.snapshotEvents?.() ?? []
     // The injected message may be part of the admitted batch already (a retry
@@ -492,7 +525,8 @@ export function installClueInjection(
       )
       return next()
     }
-    if (aborted()) return next()
+    // Disposal while the binding store was read must not add a message either.
+    if (disposed || aborted()) return next()
     if (entries.length === 0) return next()
     const fingerprint = clueBindingsFingerprint(workspaceId, entries.flatMap(entry => [
       entry.token,
@@ -500,48 +534,47 @@ export function installClueInjection(
     ]))
     if (sameMarker(lastMarker(events), workspaceId, fingerprint)) return next()
     const guardKey = `${sessionId}\u0000${fingerprint}`
-    if (injected.has(guardKey)) return next()
+    if (guardActive(guardKey)) return next()
     const text = renderClueBindingContext(entries, { maxBindings, maxMembersPerPack, maxContextChars })
     if (text === '') return next()
     // Claim the guard BEFORE awaiting the waterfall: two concurrent pre-step
     // passes in one creation window must not both inject.
-    injected.set(guardKey, true)
-    if (injected.size > REENTRY_GUARD_MAX) {
-      const oldest = injected.keys().next().value
-      if (oldest !== undefined) injected.delete(oldest)
-    }
+    claimGuard(guardKey)
+    const releaseGuard = (): void => { injected.delete(guardKey) }
     // The host calls `signal.throwIfAborted()` immediately after the waterfall
     // settles, so an abort means this decision is discarded and NO message is
-    // committed. Release the claim instead of permanently suppressing the
-    // session (the guard map only evicts FIFO under pressure).
-    const releaseOnAbort = (): void => { injected.delete(guardKey) }
-    signal?.addEventListener('abort', releaseOnAbort, { once: true })
+    // committed. Keep the listener alive through the post-waterfall checks; the
+    // bounded claim covers the remaining return-to-host-check window.
+    signal?.addEventListener('abort', releaseGuard, { once: true })
     let decision: PreStepDecision
     try {
       decision = await next()
     } catch (error) {
-      injected.delete(guardKey)
+      releaseGuard()
+      signal?.removeEventListener('abort', releaseGuard)
       throw error
-    } finally {
-      signal?.removeEventListener('abort', releaseOnAbort)
     }
-    if (aborted()) {
-      injected.delete(guardKey)
+    if (disposed || aborted()) {
+      releaseGuard()
+      signal?.removeEventListener('abort', releaseGuard)
       return decision
     }
     if (decision.kind === 'reject' || decision.messages.length === 0) {
       // A rejected or empty step is no model execution: adding a context-only
       // user message would manufacture a spurious call.
-      injected.delete(guardKey)
+      releaseGuard()
+      signal?.removeEventListener('abort', releaseGuard)
       return decision
     }
     if (decision.messages.some((message) => {
       const source = (message as { source?: unknown } | null)?.source
       return readClueContextMarker(source) !== undefined
     })) {
-      injected.delete(guardKey)
+      releaseGuard()
+      signal?.removeEventListener('abort', releaseGuard)
       return decision
     }
+    signal?.removeEventListener('abort', releaseGuard)
     const message = createUserMessage({
       content: [{ type: 'text', text } satisfies ContentBlock],
       source: {

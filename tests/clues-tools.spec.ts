@@ -298,6 +298,30 @@ describe('sidebar_clue_list', () => {
     expect((cwd as Error).message).not.toContain('ENOENT')
   })
 
+  it('pages the global source catalogue and keeps the type page consistent', async () => {
+    const mountValue = mount()
+    for (const sourceId of ['test.alpha', 'test.beta', 'test.gamma']) {
+      mountValue.service.registerSource(source(sourceId))
+    }
+    const tool = mountValue.tool(CLUE_LIST_TOOL)
+    const first = await tool.execute({ target: 'sources', limit: 2, offset: 0 }, exec())
+    expectValid(tool, first)
+    expect(first).toMatchObject({ total: 3, offset: 0, limit: 2, nextOffset: 2 })
+    expect((first as { sources: unknown[] }).sources).toHaveLength(2)
+    const firstSourceIds = new Set((first as { sources: Array<{ sourceId: string }> }).sources.map(row => row.sourceId))
+    expect((first as { types: Array<{ sourceId: string }> }).types.every(row => firstSourceIds.has(row.sourceId))).toBe(true)
+    expect(rendered(tool, first)).toContain('3 clue sources')
+    expect(rendered(tool, first)).toContain('showing 2 from offset 0')
+
+    const second = await tool.execute({ target: 'sources', limit: 2, offset: 2 }, exec())
+    expectValid(tool, second)
+    expect(second).toMatchObject({ total: 3, offset: 2, limit: 2 })
+    expect(second).not.toHaveProperty('nextOffset')
+    expect((second as { sources: unknown[] }).sources).toHaveLength(1)
+    const secondSourceId = (second as { sources: Array<{ sourceId: string }> }).sources[0]!.sourceId
+    expect((second as { types: Array<{ sourceId: string }> }).types.every(row => row.sourceId === secondSourceId)).toBe(true)
+  })
+
   it('lists the GLOBAL source catalogue without a resolvable session workspace', async () => {
     const mountValue = mount()
     mountValue.service.registerSource(source('test.alpha'))
@@ -411,7 +435,7 @@ describe('sidebar_clue_read', () => {
       packRevision: 1,
       memberCount: 2,
       members: [
-        { clueId: 'gone-plain', missing: true, snapshots: [] },
+        { clueId: 'gone-plain', missing: true, snapshots: [], snapshotCount: 0 },
         {
           clueId: 'clue-1',
           token: '[[dsh-clue:clue-1]]',
@@ -419,6 +443,7 @@ describe('sidebar_clue_read', () => {
           sourceId: 'test.alpha',
           typeId: 'test.alpha.text',
           snapshots: [],
+          snapshotCount: 0,
         },
       ],
     }
@@ -690,6 +715,195 @@ describe('sidebar_clue_read', () => {
     const value = await tool.execute({ kind: 'clue', id: ensured.clue.id }, exec())
     expect(JSON.stringify(value)).not.toContain('super-secret')
     expect(JSON.stringify(value)).not.toContain('SECRET=')
+  })
+
+  it('forwards the source freshness instead of hard-coding live', async () => {
+    const mountValue = mount()
+    mountValue.service.registerSource(source('test.snapshot-backed', async () => ({
+      format: 'text/plain',
+      data: { text: 'restored body' },
+      text: 'restored body',
+      fetchedAt: NOW,
+      freshness: 'snapshot',
+    })))
+    const ensured = await mountValue.service.ensure({
+      workspaceId: 'ws-1',
+      sourceId: 'test.snapshot-backed',
+      typeId: 'test.snapshot-backed.text',
+      locator: { id: 's' },
+      title: 'Restored',
+    })
+    const tool = mountValue.tool(CLUE_READ_TOOL)
+    const value = await tool.execute({ kind: 'clue', id: ensured.clue.id }, exec())
+    expectValid(tool, value)
+    expect(value).toMatchObject({ status: 'ok', freshness: 'snapshot' })
+    const text = rendered(tool, value)
+    expect(text).toContain('freshness: snapshot')
+    expect(text).toContain('Snapshot-backed clue')
+    expect(text).not.toContain('Live clue')
+  })
+
+  it('pages snapshot metadata with a true total instead of silently truncating', async () => {
+    const mountValue = mount()
+    const service = mountValue.service
+    service.registerSource(source('test.fail', async () => {
+      throw new ClueError('auth-required', 'authorization expired')
+    }))
+    const ensured = await service.ensure({
+      workspaceId: 'ws-1',
+      sourceId: 'test.fail',
+      typeId: 'test.fail.text',
+      locator: { id: 'x' },
+      title: 'Many snapshots',
+    })
+    for (let index = 0; index < 21; index += 1) {
+      await service.putSnapshot('ws-1', {
+        clueId: ensured.clue.id,
+        format: 'text/plain',
+        data: { text: `snapshot ${index}` },
+        text: `snapshot ${index}`,
+        fetchedAt: NOW,
+      })
+    }
+    const tool = mountValue.tool(CLUE_READ_TOOL)
+    const first = await tool.execute({ kind: 'clue', id: ensured.clue.id }, exec())
+    expectValid(tool, first)
+    expect(first).toMatchObject({
+      status: 'error',
+      snapshotOffset: 0,
+      snapshotCount: 21,
+      snapshotsLimited: true,
+      snapshotNextOffset: 20,
+    })
+    expect((first as { snapshots: unknown[] }).snapshots).toHaveLength(20)
+    const firstText = rendered(tool, first)
+    expect(firstText).toContain('showing 20 of 21')
+    expect(firstText).toContain('snapshotOffset=20')
+    expect(firstText).not.toContain('- none')
+
+    const second = await tool.execute({ kind: 'clue', id: ensured.clue.id, snapshotOffset: 20 }, exec())
+    expectValid(tool, second)
+    expect(second).toMatchObject({ status: 'error', snapshotOffset: 20, snapshotCount: 21 })
+    expect(second).not.toHaveProperty('snapshotsLimited')
+    expect((second as { snapshots: unknown[] }).snapshots).toHaveLength(1)
+    expect(rendered(tool, second)).toContain('Available snapshots for this clue (21 total)')
+  })
+
+  it('pages each pack member snapshot list and points at the next offset', async () => {
+    const mountValue = mount()
+    const service = mountValue.service
+    service.registerSource(source('test.alpha'))
+    const member = await service.ensure({
+      workspaceId: 'ws-1',
+      sourceId: 'test.alpha',
+      typeId: 'test.alpha.text',
+      locator: { id: 'a' },
+      title: 'A',
+    })
+    for (let index = 0; index < 21; index += 1) {
+      await service.putSnapshot('ws-1', {
+        clueId: member.clue.id,
+        format: 'text/plain',
+        data: { text: `snapshot ${index}` },
+        text: `snapshot ${index}`,
+        fetchedAt: NOW,
+      })
+    }
+    const pack = await service.createPack({ workspaceId: 'ws-1', name: 'P', members: [member.clue.id] })
+    const tool = mountValue.tool(CLUE_READ_TOOL)
+    const first = await tool.execute({ kind: 'pack', id: pack.pack.id }, exec())
+    expectValid(tool, first)
+    const firstMember = (first as {
+      members: Array<{ snapshots: unknown[]; snapshotCount: number; snapshotsLimited?: boolean; snapshotNextOffset?: number }>
+    }).members[0]!
+    expect(firstMember).toMatchObject({ snapshotCount: 21, snapshotsLimited: true, snapshotNextOffset: 20 })
+    expect(firstMember.snapshots).toHaveLength(20)
+    const firstText = rendered(tool, first)
+    expect(firstText).toContain('showing 20 of 21')
+    expect(firstText).toContain('snapshotOffset=20')
+
+    const second = await tool.execute({ kind: 'pack', id: pack.pack.id, snapshotOffset: 20 }, exec())
+    expectValid(tool, second)
+    const secondMember = (second as {
+      members: Array<{ snapshots: unknown[]; snapshotCount: number; snapshotsLimited?: boolean }>
+    }).members[0]!
+    expect(secondMember.snapshotCount).toBe(21)
+    expect(secondMember.snapshotsLimited).toBeUndefined()
+    expect(secondMember.snapshots).toHaveLength(1)
+  })
+
+  it('reports a snapshot-index failure as unavailable, never as an empty list', async () => {
+    const mountValue = mount()
+    const service = mountValue.service
+    service.registerSource(source('test.ok'))
+    service.registerSource(source('test.fail', async () => {
+      throw new ClueError('auth-required', 'authorization expired')
+    }))
+    const ok = await service.ensure({
+      workspaceId: 'ws-1',
+      sourceId: 'test.ok',
+      typeId: 'test.ok.text',
+      locator: { id: 'ok' },
+      title: 'OK',
+    })
+    const failing = await service.ensure({
+      workspaceId: 'ws-1',
+      sourceId: 'test.fail',
+      typeId: 'test.fail.text',
+      locator: { id: 'bad' },
+      title: 'Bad',
+    })
+    const original = service.listSnapshots
+    service.listSnapshots = async () => {
+      throw new ClueError('failed', 'snapshot index offline')
+    }
+    const tool = mountValue.tool(CLUE_READ_TOOL)
+    try {
+      const liveFailure = await tool.execute({ kind: 'clue', id: failing.clue.id }, exec())
+      expectValid(tool, liveFailure)
+      expect(liveFailure).toMatchObject({
+        status: 'error',
+        snapshotsUnavailable: { category: 'failed', message: 'snapshot index offline' },
+      })
+      const liveFailureText = rendered(tool, liveFailure)
+      expect(liveFailureText).toContain('Snapshot metadata is unavailable')
+      expect(liveFailureText).not.toContain('No available snapshots are recorded')
+      expect(liveFailureText).not.toContain('- none')
+
+      const liveSuccess = await tool.execute({ kind: 'clue', id: ok.clue.id }, exec())
+      expectValid(tool, liveSuccess)
+      expect(liveSuccess).toMatchObject({ status: 'ok', snapshotsUnavailable: { category: 'failed' } })
+      const liveSuccessText = rendered(tool, liveSuccess)
+      expect(liveSuccessText).toContain('Snapshot metadata is unavailable')
+      expect(liveSuccessText).not.toContain('Available snapshots for this clue')
+    } finally {
+      service.listSnapshots = original
+    }
+  })
+
+  it('reads clues and packs by stable id when the session has no resolvable cwd', async () => {
+    const mountValue = mount()
+    const service = mountValue.service
+    service.registerSource(source('test.alpha'))
+    const clueValue = await service.ensure({
+      workspaceId: 'ws-2',
+      sourceId: 'test.alpha',
+      typeId: 'test.alpha.text',
+      locator: { id: 'foreign' },
+      title: 'Foreign',
+    })
+    const pack = await service.createPack({
+      workspaceId: 'ws-2',
+      name: 'Foreign pack',
+      members: [clueValue.clue.id],
+    })
+    const tool = mountValue.tool(CLUE_READ_TOOL)
+    const clueRead = await tool.execute({ kind: 'clue', id: clueValue.clue.id }, exec(null))
+    expectValid(tool, clueRead)
+    expect(clueRead).toMatchObject({ status: 'ok', kind: 'clue', workspaceId: 'ws-2', text: 'live:foreign' })
+    const packRead = await tool.execute({ kind: 'pack', id: pack.pack.id }, exec(null))
+    expectValid(tool, packRead)
+    expect(packRead).toMatchObject({ status: 'ok', kind: 'pack', workspaceId: 'ws-2', memberCount: 1 })
   })
 
   it('validates the read tool schema for pack member rows and live pages', async () => {

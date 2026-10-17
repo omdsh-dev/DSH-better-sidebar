@@ -48,8 +48,8 @@ const DEFAULT_LIST_LIMIT = 20
 const MAX_LIST_LIMIT = 100
 /** Maximum number of workspaces scanned to locate one stable id. */
 const MAX_WORKSPACE_SCAN = 64
-/** Maximum snapshot summaries attached to one read row. */
-const MAX_SNAPSHOT_ROWS = 20
+/** Snapshot metadata rows returned per clue/member page. */
+const SNAPSHOT_PAGE_SIZE = 20
 /** Maximum pack members returned by one read page (S1 allows up to 10k). */
 const MAX_PACK_READ_MEMBERS = 50
 
@@ -92,6 +92,10 @@ interface MemberRow {
   readonly unresolved?: boolean
   readonly missing?: boolean
   readonly snapshots: SnapshotRow[]
+  /** Total snapshots available for this member (not only this page). */
+  readonly snapshotCount: number
+  readonly snapshotsLimited?: boolean
+  readonly snapshotNextOffset?: number
 }
 
 /** Canonical value of `sidebar_clue_read`. */
@@ -114,7 +118,15 @@ interface ReadValue {
   readonly assets?: { readonly kind: 'download' | 'open'; readonly path?: string; readonly mime?: string; readonly size?: number }[]
   readonly limited?: boolean
   readonly nextOffset?: number
+  /** Requested snapshot-metadata offset (clue and pack reads). */
+  readonly snapshotOffset?: number
   readonly snapshots?: SnapshotRow[]
+  /** Total snapshots available for this clue (not only this page). */
+  readonly snapshotCount?: number
+  readonly snapshotsLimited?: boolean
+  readonly snapshotNextOffset?: number
+  /** The local snapshot index could not be read; never reported as "none". */
+  readonly snapshotsUnavailable?: SafeError
   readonly name?: string
   readonly packRevision?: number
   readonly memberCount?: number
@@ -369,7 +381,7 @@ function snapshotRow(meta: ClueSnapshotMeta): SnapshotRow {
   }
 }
 
-/** Group snapshot metadata by clue, newest first and bounded per clue. */
+/** Group snapshot metadata by clue, newest first (the full index per clue). */
 function groupSnapshotRows(metas: readonly ClueSnapshotMeta[]): Map<string, SnapshotRow[]> {
   const grouped = new Map<string, SnapshotRow[]>()
   for (const meta of metas) {
@@ -378,16 +390,42 @@ function groupSnapshotRows(metas: readonly ClueSnapshotMeta[]): Map<string, Snap
     grouped.set(meta.clueId, rows)
   }
   for (const [clueId, rows] of grouped) {
-    grouped.set(clueId, rows
-      .sort((left, right) => right.createdAt.localeCompare(left.createdAt) || right.snapshotId.localeCompare(left.snapshotId))
-      .slice(0, MAX_SNAPSHOT_ROWS))
+    grouped.set(clueId, rows.sort((left, right) =>
+      right.createdAt.localeCompare(left.createdAt) || right.snapshotId.localeCompare(left.snapshotId)))
   }
   return grouped
 }
 
-/** Snapshot rows of one clue in one workspace, newest first, bounded. */
-async function snapshotsOf(clues: CluesService, workspaceId: string, clueId: string): Promise<SnapshotRow[]> {
-  return groupSnapshotRows(await clues.listSnapshots(workspaceId)).get(clueId) ?? []
+/** One explicit page of snapshot metadata plus its true total. */
+interface SnapshotPage {
+  readonly rows: SnapshotRow[]
+  readonly total: number
+  readonly offset: number
+  readonly nextOffset?: number
+}
+
+/** Page one clue/member's snapshot metadata; `offset` is caller-controlled. */
+function snapshotPageOf(rows: readonly SnapshotRow[], offset: number): SnapshotPage {
+  const start = Math.min(offset, rows.length)
+  const page = rows.slice(start, start + SNAPSHOT_PAGE_SIZE)
+  const nextOffset = start + page.length < rows.length ? start + page.length : undefined
+  return {
+    rows: page,
+    total: rows.length,
+    offset,
+    ...(nextOffset === undefined ? {} : { nextOffset }),
+  }
+}
+
+/** Attach one snapshot page to a canonical read value. */
+function withSnapshotPage(value: ReadValue, page: SnapshotPage): ReadValue {
+  return {
+    ...value,
+    snapshotOffset: page.offset,
+    snapshotCount: page.total,
+    ...(page.rows.length === 0 ? {} : { snapshots: page.rows }),
+    ...(page.nextOffset === undefined ? {} : { snapshotsLimited: true, snapshotNextOffset: page.nextOffset }),
+  }
 }
 
 /** The clue row and its owning workspace. */
@@ -452,10 +490,14 @@ function renderList(value: ListValue): string {
       : `workspace ${displayText(value.workspace.path)}`
   if (value.target === 'sources') {
     const sources = value.sources ?? []
+    const total = value.total
     const suffix = where ?? 'global catalogue'
-    if (sources.length === 0) return `No clue sources are registered (${suffix}).`
+    if (total === 0) return `No clue sources are registered (${suffix}).`
+    if (sources.length === 0) {
+      return `No clue sources at offset ${value.offset} (total ${total}; ${suffix}).`
+    }
     return [
-      `${sources.length} clue source${sources.length === 1 ? '' : 's'} (${suffix}):`,
+      `${total} clue source${total === 1 ? '' : 's'} (${suffix}; showing ${sources.length} from offset ${value.offset}):`,
       ...sources.map(source => `- ${displayText(source.sourceId)} — ${displayText(source.name)} (${displayText(source.transport)}); types: ${source.types.map(typeId => displayText(typeId)).join(', ') || 'none'}`),
     ].join('\n')
   }
@@ -489,6 +531,48 @@ function assetsText(assets: NonNullable<ReadValue['assets']>): string {
 }
 
 /**
+ * Model-visible availability of one clue's snapshots.
+ *
+ * A failed snapshot-index read is reported as unavailable — never as "none" —
+ * and a bounded page carries its true total plus the next offset, so an old
+ * snapshot id can still be discovered.
+ */
+function snapshotSection(value: ReadValue): string[] {
+  if (value.snapshotsUnavailable !== undefined) {
+    return [
+      `Snapshot metadata is unavailable (${displayText(value.snapshotsUnavailable.category)}): ${displayText(value.snapshotsUnavailable.message)}`,
+    ]
+  }
+  const total = value.snapshotCount ?? value.snapshots?.length ?? 0
+  if (total === 0) return []
+  const offset = value.snapshotOffset ?? 0
+  const rows = value.snapshots ?? []
+  if (rows.length === 0) {
+    return [`No snapshot metadata at snapshot offset ${offset} (total ${total}).`]
+  }
+  const page = value.snapshotsLimited === true
+    ? ` (showing ${rows.length} of ${total}; pass snapshotOffset=${value.snapshotNextOffset ?? offset + rows.length} for older snapshots)`
+    : ` (${total} total)`
+  return [
+    `Available snapshots for this clue${page}:`,
+    ...rows.map(snapshot => `- ${snapshotForText(snapshot.snapshotId)} fetched ${displayText(snapshot.fetchedAt)} (${displayText(snapshot.format)}, integrity: ${displayText(snapshot.integrity ?? 'unknown')})`),
+  ]
+}
+
+/** One pack member's paged snapshot metadata. */
+function memberSnapshotsText(member: MemberRow, offset: number): string {
+  const total = member.snapshotCount ?? member.snapshots.length
+  if (total === 0) return 'none'
+  if (member.snapshots.length === 0) {
+    return `none at snapshot offset ${offset} (total ${total})`
+  }
+  const ids = member.snapshots.map(item => snapshotForText(item.snapshotId)).join(', ')
+  return member.snapshotsLimited === true
+    ? `${ids} (showing ${member.snapshots.length} of ${total}; next snapshot offset ${member.snapshotNextOffset ?? offset + member.snapshots.length})`
+    : `${ids} (${total} total)`
+}
+
+/**
  * Render the `sidebar_clue_read` result.
  *
  * Binary / non-text content is explicitly MARKED (never rendered as `{}` or
@@ -498,17 +582,17 @@ function assetsText(assets: NonNullable<ReadValue['assets']>): string {
 function renderRead(value: ReadValue): string {
   if (value.status === 'error') {
     const error = value.error ?? { category: 'failed', message: 'the clue operation failed' }
-    const snapshots = value.snapshots ?? []
     const source = value.sourceId === undefined
       ? ''
       : `\nSource: ${displayText(value.sourceId)}${value.typeId === undefined ? '' : ` · ${displayText(value.typeId)}`}${value.title === undefined ? '' : ` — ${JSON.stringify(displayText(value.title))}`}`
     if (value.kind === 'clue') {
+      const snapshots = snapshotSection(value)
       return [
         `${value.kind} read failed (${displayText(error.category)}): ${displayText(error.message)}${source}`,
-        'No fallback content was used. Available snapshots for this clue:',
+        'No fallback content was used.',
         ...(snapshots.length === 0
-          ? ['- none']
-          : snapshots.map(snapshot => `- ${snapshotForText(snapshot.snapshotId)} fetched ${displayText(snapshot.fetchedAt)} (${displayText(snapshot.format)}, integrity: ${displayText(snapshot.integrity ?? 'unknown')})`)),
+          ? ['No available snapshots are recorded for this clue.']
+          : snapshots),
       ].join('\n')
     }
     return `${value.kind} read failed (${displayText(error.category)}): ${displayText(error.message)}${source}`
@@ -517,6 +601,7 @@ function renderRead(value: ReadValue): string {
     const members = value.members ?? []
     const total = value.memberCount ?? members.length
     const shown = members.length < total ? `; showing ${members.length}` : ''
+    const snapshotOffset = value.snapshotOffset ?? 0
     const rows = members.map(member => {
       // A missing member has no resolvable token; rendering one anyway would
       // claim a clue exists. Present members use their structured token, and
@@ -528,21 +613,28 @@ function renderRead(value: ReadValue): string {
         `- ${memberRef}${member.title === undefined ? '' : ` ${JSON.stringify(displayText(member.title))}`}`,
         member.sourceId === undefined ? '' : ` — ${displayText(member.sourceId)} · ${displayText(member.typeId ?? '')}`,
         member.unresolved === true ? ' · unresolved' : '',
-        ` · snapshots: ${member.snapshots.length === 0 ? 'none' : member.snapshots.map(item => snapshotForText(item.snapshotId)).join(', ')}`,
+        ` · snapshots: ${memberSnapshotsText(member, snapshotOffset)}`,
       ].join('')
     })
     const limited = value.nextOffset === undefined
       ? ''
       : `\n\n[limited read; next offset: ${value.nextOffset}]`
+    // Every page of member rows shares one snapshot offset; a member with more
+    // snapshot metadata than this page tells the agent how to fetch the rest.
+    const nextSnapshotOffset = members.find(member => member.snapshotNextOffset !== undefined)?.snapshotNextOffset
+    const snapshotHint = nextSnapshotOffset === undefined
+      ? ''
+      : `\n\n[snapshot metadata is paged; pass snapshotOffset=${nextSnapshotOffset} for older snapshot ids]`
     return [
       `Pack ${tokenForText('pack', value.id)} ${JSON.stringify(displayText(value.name, '?'))} (revision ${value.packRevision ?? 0}, ${total} current member${total === 1 ? '' : 's'}${shown}):`,
       ...rows,
-    ].join('\n') + limited
+    ].join('\n') + limited + snapshotHint
   }
   const clueRef = value.clueId === undefined ? 'unknown clue' : tokenForText('clue', value.clueId)
+  const freshness = value.freshness ?? 'live'
   const header = value.kind === 'snapshot'
     ? `Snapshot ${snapshotForText(value.id)} of clue ${clueRef} — fetched ${displayText(value.fetchedAt, '?')} (${displayText(value.format)}, integrity: ${displayText(value.integrity ?? 'unknown')})`
-    : `Live clue ${tokenForText('clue', value.id)} ${JSON.stringify(displayText(value.title, ''))} — source ${displayText(value.sourceId)} · ${displayText(value.typeId)}; fetched ${displayText(value.fetchedAt, '?')} (${displayText(value.format)})`
+    : `${freshness === 'snapshot' ? 'Snapshot-backed clue' : 'Live clue'} ${tokenForText('clue', value.id)} ${JSON.stringify(displayText(value.title, ''))} — source ${displayText(value.sourceId)} · ${displayText(value.typeId)}; fetched ${displayText(value.fetchedAt, '?')} (freshness: ${displayText(freshness)}, format: ${displayText(value.format)})`
   const assets = value.assets ?? []
   const assetList = assetsText(assets)
   const body = value.text !== undefined
@@ -559,7 +651,8 @@ function renderRead(value: ReadValue): string {
   const limited = value.limited === true
     ? `\n\n[limited read; next offset: ${value.nextOffset ?? 'unknown'}]`
     : ''
-  return `${header}\n\n${body}${limited}`
+  const snapshots = value.kind === 'clue' ? snapshotSection(value) : []
+  return [header, body, limited, snapshots.join('\n')].filter(part => part !== '').join('\n\n')
 }
 
 /**
@@ -728,7 +821,10 @@ export function installClueTools(ctx: Context, clues: CluesService): () => void 
         // the calling session has no resolvable workspace cwd.
         const scope = await optionalScope(ctx, exec, args.workspace)
         exec.signal.throwIfAborted()
-        const sources = clues.getSources().map(source => ({
+        // The catalogue is global metadata, but it is still paged: an
+        // installation can register many sources, and the caller's validated
+        // limit/offset must mean the same thing for every target.
+        const allSources = clues.getSources().map(source => ({
           sourceId: source.sourceId,
           name: source.name,
           transport: source.transport,
@@ -743,19 +839,26 @@ export function installClueTools(ctx: Context, clues: CluesService): () => void 
             portable: source.capabilities.portable,
           },
         }))
-        const types = clues.getTypes().map(type => ({
-          typeId: type.typeId,
-          sourceId: type.sourceId,
-          formats: [...type.formats],
-        }))
+        const page = allSources.slice(offset, offset + limit)
+        const pageSourceIds = new Set(page.map(source => source.sourceId))
+        // Keep the top-level type list consistent with the source page: a
+        // caller that pages sources must not receive every type anyway.
+        const types = clues.getTypes()
+          .filter(type => pageSourceIds.has(type.sourceId))
+          .map(type => ({
+            typeId: type.typeId,
+            sourceId: type.sourceId,
+            formats: [...type.formats],
+          }))
         return {
           target,
           ...(scope === undefined ? {} : { workspace: workspaceValueOf(scope) }),
-          sources,
+          sources: page,
           types,
-          total: sources.length,
-          offset: 0,
-          limit: sources.length,
+          total: allSources.length,
+          offset,
+          limit,
+          ...(offset + page.length < allSources.length ? { nextOffset: offset + page.length } : {}),
         }
       }
       const scope = await resolveScope(ctx, exec, args.workspace)
@@ -834,10 +937,11 @@ export function installClueTools(ctx: Context, clues: CluesService): () => void 
     name: CLUE_READ_TOOL,
     description:
       'Read one clue reference by kind and stable id. '
-      + 'kind="clue" reads the source\'s CURRENT content (live): the token [[dsh-clue:<id>]] always means live content. If the source fails, the result carries the original stable error plus the ids of available snapshots — it never falls back automatically; pick a snapshot explicitly if the user wants history. '
-      + 'kind="pack" returns the pack\'s CURRENT members and each member\'s available snapshot ids, never their bodies. '
+      + 'kind="clue" reads the source\'s CURRENT content: the token [[dsh-clue:<id>]] always means a live read. The result reports the freshness the source actually returned (live or snapshot). If the source fails, the result carries the original stable error plus the available snapshot ids — it never falls back automatically; pick a snapshot explicitly if the user wants history. '
+      + 'kind="pack" returns the pack\'s CURRENT members and each member\'s available snapshot ids (paged), never their bodies. '
       + 'kind="snapshot" reads one explicit local snapshot ([[dsh-clue-snapshot:<id>]]) with its fetch time and integrity, even when the source is unavailable. '
-      + 'By default the calling session\'s workspace is the query scope; `workspace` may name another registered local workspace. '
+      + 'Snapshot id lists are paged; a bounded page reports the true total and the next `snapshotOffset`. '
+      + 'The calling session\'s workspace is searched first, then the other registered local workspaces (so a restored session without a cwd still finds a stable id); `workspace` may name another registered local workspace. '
       + 'Returns only source content, necessary metadata and stable errors — never credentials, environment variables or installation commands.',
     parameters: {
       kind: {
@@ -858,6 +962,10 @@ export function installClueTools(ctx: Context, clues: CluesService): () => void 
       offset: {
         type: 'integer',
         description: 'Explicit byte offset for a pageable live clue read (kind="clue"), or the member offset of a pack page (kind="pack").',
+      },
+      snapshotOffset: {
+        type: 'integer',
+        description: 'Snapshot-metadata page offset (default 0). Applies to the clue snapshot list and to every member snapshot list of a pack page.',
       },
     },
     output: {
@@ -902,7 +1010,19 @@ export function installClueTools(ctx: Context, clues: CluesService): () => void 
           },
           limited: { type: 'boolean' },
           nextOffset: { type: 'integer' },
+          snapshotOffset: { type: 'integer' },
           snapshots: { type: 'array', items: SNAPSHOT_ITEM_SCHEMA },
+          snapshotCount: { type: 'integer' },
+          snapshotsLimited: { type: 'boolean' },
+          snapshotNextOffset: { type: 'integer' },
+          snapshotsUnavailable: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              category: { type: 'string', required: true },
+              message: { type: 'string', required: true },
+            },
+          },
           name: { type: 'string' },
           packRevision: { type: 'integer' },
           memberCount: { type: 'integer' },
@@ -920,6 +1040,9 @@ export function installClueTools(ctx: Context, clues: CluesService): () => void 
                 unresolved: { type: 'boolean' },
                 missing: { type: 'boolean' },
                 snapshots: { type: 'array', items: SNAPSHOT_ITEM_SCHEMA, required: true },
+                snapshotCount: { type: 'integer', required: true },
+                snapshotsLimited: { type: 'boolean' },
+                snapshotNextOffset: { type: 'integer' },
               },
             },
           },
@@ -932,12 +1055,15 @@ export function installClueTools(ctx: Context, clues: CluesService): () => void 
       },
       render: (_args, value) => textRender(renderRead(value as ReadValue)),
     },
-    async execute(args: { kind: 'clue' | 'pack' | 'snapshot'; id: string; workspace?: string; offset?: number }, exec: ToolRunContext): Promise<ReadValue> {
+    async execute(args: { kind: 'clue' | 'pack' | 'snapshot'; id: string; workspace?: string; offset?: number; snapshotOffset?: number }, exec: ToolRunContext): Promise<ReadValue> {
       exec.signal.throwIfAborted()
       const id = args.id.trim()
       if (id === '') throw new ClueError('invalid-request', 'a clue read needs a non-empty stable id')
       if (args.offset !== undefined && (!Number.isInteger(args.offset) || args.offset < 0)) {
         throw new ClueError('invalid-request', 'offset must be a non-negative integer')
+      }
+      if (args.snapshotOffset !== undefined && (!Number.isInteger(args.snapshotOffset) || args.snapshotOffset < 0)) {
+        throw new ClueError('invalid-request', 'snapshotOffset must be a non-negative integer')
       }
       if (args.kind === 'snapshot') {
         // A snapshot is local storage, not a workspace-scoped source read: no
@@ -985,8 +1111,10 @@ export function installClueTools(ctx: Context, clues: CluesService): () => void 
           error: { category: 'not-found', message: `clue snapshot "${id}" does not exist in any local workspace` },
         }
       }
-      const scope = await resolveScope(ctx, exec, args.workspace)
-      const scopes = candidateScopes(ctx, scope)
+      // Reads locate a stable id across the local registrations, so a
+      // restored/no-cwd session works without inventing a workspace; an
+      // explicit workspace is still validated and searched first.
+      const scopes = await scanScopes(ctx, exec, args.workspace)
       exec.signal.throwIfAborted()
       if (args.kind === 'pack') {
         const located = await locatePack(clues, scopes, id)
@@ -1005,9 +1133,10 @@ export function installClueTools(ctx: Context, clues: CluesService): () => void 
           ])
           const clueById = new Map(library.clues.map(clue => [clue.id, clue]))
           const snapshotsByClue = groupSnapshotRows(snapshotMetas)
+          const snapshotOffset = args.snapshotOffset ?? 0
           // One pack may hold 10k members: page the member rows so one tool
           // result cannot flood the model context (each row may carry 20
-          // snapshot ids).
+          // snapshot ids, and snapshot metadata itself is paged).
           const offset = args.offset ?? 0
           const allMembers = located.pack.members
           const pageMembers = allMembers.slice(offset, offset + MAX_PACK_READ_MEMBERS)
@@ -1017,9 +1146,16 @@ export function installClueTools(ctx: Context, clues: CluesService): () => void 
           const members: MemberRow[] = []
           for (const clueId of pageMembers) {
             const clue = clueById.get(clueId)
-            const snapshots = snapshotsByClue.get(clueId) ?? []
+            const page = snapshotPageOf(snapshotsByClue.get(clueId) ?? [], snapshotOffset)
+            const snapshotFields = {
+              snapshots: page.rows,
+              snapshotCount: page.total,
+              ...(page.nextOffset === undefined
+                ? {}
+                : { snapshotsLimited: true, snapshotNextOffset: page.nextOffset }),
+            }
             if (clue === undefined) {
-              members.push({ clueId, missing: true, snapshots })
+              members.push({ clueId, missing: true, ...snapshotFields })
               continue
             }
             const token = clueTokenOrUndefined('clue', clue.id)
@@ -1030,7 +1166,7 @@ export function installClueTools(ctx: Context, clues: CluesService): () => void 
               sourceId: clue.sourceId,
               typeId: clue.typeId,
               ...(clue.unresolved === undefined ? {} : { unresolved: true }),
-              snapshots,
+              ...snapshotFields,
             })
           }
           const token = clueTokenOrUndefined('pack', located.pack.id)
@@ -1043,6 +1179,7 @@ export function installClueTools(ctx: Context, clues: CluesService): () => void 
             name: located.pack.name,
             packRevision: located.pack.revision,
             memberCount: allMembers.length,
+            snapshotOffset,
             members,
             ...(nextOffset === undefined ? {} : { limited: true, nextOffset }),
           }
@@ -1060,12 +1197,24 @@ export function installClueTools(ctx: Context, clues: CluesService): () => void 
         }
       }
       const token = clueTokenOrUndefined('clue', located.clue.id)
-      let snapshots: SnapshotRow[]
+      const snapshotOffset = args.snapshotOffset ?? 0
+      let snapshotPage: SnapshotPage = { rows: [], total: 0, offset: snapshotOffset }
+      let snapshotsUnavailable: SafeError | undefined
       try {
-        snapshots = await snapshotsOf(clues, located.workspace.id, located.clue.id)
-      } catch {
-        snapshots = []
+        snapshotPage = snapshotPageOf(
+          groupSnapshotRows(await clues.listSnapshots(located.workspace.id)).get(located.clue.id) ?? [],
+          snapshotOffset,
+        )
+      } catch (error) {
+        // A broken snapshot index is NOT "no snapshots": keep the failure in
+        // the value and the model-visible render.
+        snapshotsUnavailable = safeErrorOf(error)
       }
+      const withSnapshots = (value: ReadValue): ReadValue => snapshotsUnavailable === undefined
+        // Only a real index contributes counts/pages; a failed index must not
+        // look like a zero-snapshot clue.
+        ? withSnapshotPage(value, snapshotPage)
+        : { ...value, snapshotsUnavailable }
       try {
         const sessionId = callingSessionId(exec)
         const result: ClueReadResult = await clues.read({
@@ -1079,7 +1228,7 @@ export function installClueTools(ctx: Context, clues: CluesService): () => void 
           // session-scoped source retains approval/route context.
           ...(sessionId === undefined ? {} : { sessionId }),
         })
-        return {
+        return withSnapshots({
           status: 'ok',
           kind: 'clue',
           id: located.clue.id,
@@ -1089,7 +1238,9 @@ export function installClueTools(ctx: Context, clues: CluesService): () => void 
           sourceId: located.clue.sourceId,
           typeId: located.clue.typeId,
           format: result.format,
-          freshness: 'live',
+          // The source reports its own freshness; never overwrite a snapshot
+          // answer with a hard-coded "live".
+          freshness: result.freshness ?? 'live',
           fetchedAt: result.fetchedAt,
           ...(result.revision === undefined ? {} : { revision: result.revision }),
           ...(result.text === undefined ? {} : { text: result.text }),
@@ -1105,10 +1256,9 @@ export function installClueTools(ctx: Context, clues: CluesService): () => void 
           ...(result.limited === undefined ? {} : { limited: result.limited }),
           ...(result.nextOffset === undefined ? {} : { nextOffset: result.nextOffset }),
           ...(located.clue.unresolved === undefined ? {} : { unresolved: true }),
-          ...(snapshots.length === 0 ? {} : { snapshots }),
-        }
+        })
       } catch (error) {
-        return {
+        return withSnapshots({
           status: 'error',
           kind: 'clue',
           id: located.clue.id,
@@ -1121,8 +1271,8 @@ export function installClueTools(ctx: Context, clues: CluesService): () => void 
           typeId: located.clue.typeId,
           title: located.clue.title,
           error: safeErrorOf(error),
-          ...(snapshots.length === 0 ? {} : { snapshots }),
-        }
+          ...(located.clue.unresolved === undefined ? {} : { unresolved: true }),
+        })
       }
     },
   })

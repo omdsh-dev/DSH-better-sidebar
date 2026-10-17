@@ -12,11 +12,11 @@
  *   `clues.sources()`;
  * - a non-empty query searches only enabled/mention-enabled sources, with
  *   bounded concurrency, cancellation and per-source failure isolation;
- * - browsing reuses library rows by sourceId + locator and does NOT rewrite
- *   the library for them; only genuinely new rows are ensured;
- * - every row offers an explicit content option; default serialization emits
- *   only the token (no remote read), content mode reads at submit time and
- *   rejects failures/limits so the host restores the draft;
+ * - browsing reuses library rows by sourceId + locator, never writes the
+ *   library, and simply omits lightweight candidates that are not stored yet;
+ * - every readable reference row offers an explicit content option; default
+ *   serialization emits only the token (no remote read), content mode reads at
+ *   submit time and rejects failures/limits so the host restores the draft;
  * - clipboard text is always the stable token, including content mode;
  * - candidate names are display titles (no UUID alias);
  * - onPick uses only host-supported appearances and the injectable
@@ -77,7 +77,7 @@ afterEach(() => {
 })
 
 /** One source descriptor fixture. */
-function sourceDescriptor(sourceId: string, search = true): ClueSourceDescriptor {
+function sourceDescriptor(sourceId: string, search = true, read = true): ClueSourceDescriptor {
   return {
     sourceId,
     name: `Name ${sourceId}`,
@@ -85,7 +85,7 @@ function sourceDescriptor(sourceId: string, search = true): ClueSourceDescriptor
     pluginId: 'test',
     types: [`${sourceId}.text`],
     transport: 'http',
-    capabilities: { resolve: false, list: false, search, read: true, edit: false, portable: false },
+    capabilities: { resolve: false, list: false, search, read, edit: false, portable: false },
   }
 }
 
@@ -123,18 +123,16 @@ interface FaceOptions {
   readonly library?: readonly Clue[]
   readonly packs?: readonly CluePack[]
   readonly search?: (workspaceId: string, sourceId: string, query: string, signal: AbortSignal) => Promise<{ items: ClueCandidate[] }>
-  readonly ensure?: (input: { sourceId: string; typeId: string; title: string }) => Promise<{ id: string; title: string }>
   readonly read?: (workspaceId: string, input: { readonly clueId: string; readonly sessionId?: string }, signal: AbortSignal) => Promise<ClueReadResult>
   readonly enabled?: (sourceId: string) => boolean
   readonly mentionEnabled?: (sourceId: string) => boolean
   readonly packsMention?: boolean
+  readonly canRead?: (sourceId: string, typeId: string) => boolean
 }
 
 /** A fake clue extension face with vi.fn() wires. */
 function makeFace(options: FaceOptions = {}) {
   const sources = options.sources ?? [sourceDescriptor('test.alpha')]
-  const ensureCalls: Array<{ sourceId: string; typeId: string; title: string }> = []
-  let ensureSequence = 0
   const defaultRead = async (input: { readonly clueId: string }): Promise<ClueReadResult> => ({
     format: 'text/plain',
     data: { text: `body:${input.clueId}` },
@@ -150,13 +148,8 @@ function makeFace(options: FaceOptions = {}) {
       }
       return { items: [] }
     }),
-    ensure: vi.fn(async (_workspaceId: string, input: { sourceId: string; typeId: string; title: string }) => {
-      ensureCalls.push(input)
-      const ensured = options.ensure === undefined
-        ? { id: `ensured-${++ensureSequence}`, title: input.title }
-        : await options.ensure(input)
-      return { clue: clue(ensured.id, input.sourceId, ensured.title, input.typeId), created: true }
-    }),
+    // Browsing must never ensure: a call here is a contract violation.
+    ensure: vi.fn(async () => { throw new Error('browsing must not call ensure') }),
     pinsList: vi.fn(async () => ({
       pins: (options.pins ?? []).map(pin => ({ workspaceId: 'ws-1', clueId: pin.clueId, createdAt: NOW })),
       revision: 0,
@@ -173,8 +166,9 @@ function makeFace(options: FaceOptions = {}) {
     isSourceEnabled: options.enabled ?? (() => true),
     isSourceMentionEnabled: options.mentionEnabled ?? (() => true),
     isPacksMentionEnabled: () => options.packsMention ?? true,
+    ...(options.canRead === undefined ? {} : { canRead: options.canRead }),
   }
-  return { face, api, ensureCalls }
+  return { face, api }
 }
 
 /** One candidate request. */
@@ -410,7 +404,10 @@ describe('packs source', () => {
   it('lists local packs on an empty query, newest first, and inserts pack tokens', async () => {
     const first = pack('pack-1', 'Reading list', ['clue-1'])
     const second = { ...pack('pack-2', 'Drafts', ['clue-1', 'clue-2']), updatedAt: '2026-10-18T00:00:00.000Z' }
-    const { face, api } = makeFace({ packs: [first, second] })
+    const { face, api } = makeFace({
+      packs: [first, second],
+      library: [clue('clue-1'), clue('clue-2')],
+    })
     const created = createClueInputTriggers({ face, resolveWorkspaceId: () => 'ws-1' })
     const candidates = await created.sources[1]!.candidates(SESSION, request(''))
     expect(referenceRows(candidates).map(row => row.label)).toEqual(['Drafts', 'Reading list'])
@@ -460,6 +457,10 @@ describe('clues source: non-empty query', () => {
     const healthy = sourceDescriptor('test.healthy')
     const { face, api } = makeFace({
       sources: [broken, disabled, hidden, healthy],
+      library: [{
+        ...clue('clue-healthy', 'test.healthy', 'test.healthy issue'),
+        locator: { id: 'test.healthy:issue' },
+      }],
       enabled: sourceId => sourceId !== 'test.disabled',
       mentionEnabled: sourceId => sourceId !== 'test.hidden',
       search: async (_workspaceId, sourceId, query) => {
@@ -481,38 +482,40 @@ describe('clues source: non-empty query', () => {
       .toEqual(['test.broken', 'test.healthy'])
     expect(referenceRows(candidates)).toHaveLength(1)
     expect(referenceRows(candidates)[0]!.label).toBe('test.healthy issue')
-    expect(contentRow(candidates, valueOf(referenceRows(candidates)[0]!).id)).toBeDefined()
+    expect(contentRow(candidates, 'clue-healthy')).toBeDefined()
+    expect(api.ensure).not.toHaveBeenCalled()
     expect(onError).toHaveBeenCalled()
     expect(JSON.stringify(candidates)).not.toContain('source-outage')
     created.dispose()
   })
 
-  it('reuses a library clue by sourceId + locator and ensures only the new row', async () => {
-    const { face, api, ensureCalls } = makeFace({
+  it('reuses a stored clue and never persists a lightweight search hit', async () => {
+    const { face, api } = makeFace({
       sources: [sourceDescriptor('test.alpha')],
       library: [{ ...clue('clue-known', 'test.alpha', 'Known'), locator: { id: 'a' } }],
       search: async () => ({
         // Production search does NOT add clueId (the real service is covered below).
         items: [
-          { sourceId: 'test.alpha', typeId: 'test.alpha.text', locator: { id: 'a' }, title: 'Known' },
+          { sourceId: 'test.alpha', typeId: 'test.alpha.text', locator: { id: 'a' }, title: 'Search title' },
           { sourceId: 'test.alpha', typeId: 'test.alpha.text', locator: { id: 'b' }, title: 'Fresh' },
         ],
       }),
     })
     const created = createClueInputTriggers({ face, resolveWorkspaceId: () => 'ws-1' })
     const candidates = referenceRows(await created.sources[0]!.candidates(SESSION, request('doc')))
-    expect(ensureCalls).toHaveLength(1)
-    expect(ensureCalls[0]!.title).toBe('Fresh')
-    expect(candidates.map(row => valueOf(row).id)).toEqual(['clue-known', 'ensured-1'])
-    expect(candidates.map(row => row.label)).toEqual(['Known', 'Fresh'])
+    // S1 §3: browsing never creates stable references. Only the stored row is
+    // offered; the not-yet-persisted hit is omitted (not ensured).
+    expect(candidates.map(row => valueOf(row).id)).toEqual(['clue-known'])
+    expect(candidates.map(row => row.label)).toEqual(['Known'])
+    expect(api.ensure).not.toHaveBeenCalled()
     expect(api.read).not.toHaveBeenCalled()
     created.dispose()
   })
 
-  it('drops a row whose ensure fails, keeps the others and asks for a notice', async () => {
+  it('does not mint a reference for a candidate missing from the library', async () => {
     const onError = vi.fn()
     const onNotice = vi.fn()
-    const { face } = makeFace({
+    const { face, api } = makeFace({
       sources: [sourceDescriptor('test.alpha')],
       search: async () => ({
         items: [
@@ -520,23 +523,23 @@ describe('clues source: non-empty query', () => {
           { sourceId: 'test.alpha', typeId: 'test.alpha.text', locator: { id: 'good' }, title: 'Good' },
         ],
       }),
-      ensure: async (input) => {
-        if (input.title === 'Bad') throw new Error('ensure failed for SECRET=abc')
-        return { id: 'ensured-good', title: input.title }
-      },
     })
     const created = createClueInputTriggers({ face, resolveWorkspaceId: () => 'ws-1', onError, onNotice })
-    const candidates = referenceRows(await created.sources[0]!.candidates(SESSION, request('doc')))
-    expect(candidates.map(row => valueOf(row).id)).toEqual(['ensured-good'])
-    expect(onError).toHaveBeenCalled()
-    expect(onNotice).toHaveBeenCalledWith(expect.stringContaining('draft was left unchanged'))
-    expect(JSON.stringify(candidates)).not.toContain('SECRET=abc')
+    expect(await created.sources[0]!.candidates(SESSION, request('doc'))).toEqual([])
+    expect(api.ensure).not.toHaveBeenCalled()
+    expect(onError).not.toHaveBeenCalled()
+    expect(onNotice).not.toHaveBeenCalled()
     created.dispose()
   })
 
   it('caps the logical rows at the configured limit and adds one content option each', async () => {
+    const library = Array.from({ length: 5 }, (_, index) => ({
+      ...clue(`clue-${index}`, 'test.alpha', `Row ${index}`),
+      locator: { id: String(index) },
+    }))
     const { face } = makeFace({
       sources: [sourceDescriptor('test.alpha')],
+      library,
       search: async () => ({
         items: Array.from({ length: 5 }, (_, index) => ({
           sourceId: 'test.alpha',
@@ -585,6 +588,49 @@ describe('clues source: non-empty query', () => {
   })
 })
 
+describe('content option availability', () => {
+  it('hides the content row when the source cannot read content', async () => {
+    const { face } = makeFace({
+      library: [clue('clue-1', 'test.alpha', 'Alpha')],
+      pins: [{ clueId: 'clue-1' }],
+      canRead: () => false,
+    })
+    const created = createClueInputTriggers({ face, resolveWorkspaceId: () => 'ws-1' })
+    const rows = await created.sources[0]!.candidates(SESSION, request(''))
+    expect(referenceRows(rows).map(row => valueOf(row).id)).toEqual(['clue-1'])
+    expect(rows.filter(candidate => valueOf(candidate).mode === 'content')).toEqual([])
+    created.dispose()
+  })
+
+  it('hides a search hit content row when the catalogue marks its source read:false', async () => {
+    const { face } = makeFace({
+      sources: [sourceDescriptor('test.alpha', true, false)],
+      library: [{ ...clue('clue-1', 'test.alpha', 'Alpha'), locator: { id: 'a' } }],
+      search: async () => ({
+        items: [{ sourceId: 'test.alpha', typeId: 'test.alpha.text', locator: { id: 'a' }, title: 'Alpha' }],
+      }),
+    })
+    const created = createClueInputTriggers({ face, resolveWorkspaceId: () => 'ws-1' })
+    const rows = await created.sources[0]!.candidates(SESSION, request('doc'))
+    expect(referenceRows(rows).map(row => valueOf(row).id)).toEqual(['clue-1'])
+    expect(rows.filter(candidate => valueOf(candidate).mode === 'content')).toEqual([])
+    created.dispose()
+  })
+
+  it('hides a pack content row when one member source cannot read content', async () => {
+    const { face } = makeFace({
+      library: [clue('clue-1', 'test.alpha', 'A'), clue('clue-2', 'test.beta', 'B')],
+      packs: [pack('pack-1', 'Mixed', ['clue-1', 'clue-2'])],
+      canRead: sourceId => sourceId !== 'test.beta',
+    })
+    const created = createClueInputTriggers({ face, resolveWorkspaceId: () => 'ws-1' })
+    const rows = await created.sources[1]!.candidates(SESSION, request(''))
+    expect(referenceRows(rows).map(row => valueOf(row).id)).toEqual(['pack-1'])
+    expect(rows.filter(candidate => valueOf(candidate).mode === 'content')).toEqual([])
+    created.dispose()
+  })
+})
+
 describe('localized copy', () => {
   it('uses caller-provided copy for labels, descriptions and refusal notices', async () => {
     const onNotice = vi.fn()
@@ -593,7 +639,6 @@ describe('localized copy', () => {
       clueReferenceDescription: (source: string, type: string) => `来源：${source}／${type}`,
       clueContentDescription: (source: string, type: string) => `发送时：${source}／${type}`,
       packContentDescription: (count: number) => `发送时：${count} 个成员`,
-      ensureFailed: (title: string) => `无法准备「${title}」`,
       clueInsertFailed: '线索插入失败',
       packInsertFailed: '线索包插入失败',
     }
@@ -624,20 +669,120 @@ describe('localized copy', () => {
     created.dispose()
   })
 
-  it('localizes the ensure-failure notice', async () => {
-    const onNotice = vi.fn()
-    const copy = { ensureFailed: (title: string) => `无法准备「${title}」` }
-    const { face } = makeFace({
-      sources: [sourceDescriptor('test.alpha')],
-      search: async () => ({
-        items: [{ sourceId: 'test.alpha', typeId: 'test.alpha.text', locator: { id: 'x' }, title: 'X' }],
-      }),
-      ensure: async () => { throw new Error('offline') },
+  it('localizes content-mode read/reference failures and the preview error', async () => {
+    const copy = {
+      contentFailure: (what: string, _category: string, detail: string) => `本地化读取失败：${what}／${detail}`,
+      contentLimit: (size: number, max: number) => `本地化超限：${size}/${max}`,
+      contentReferenceError: (reason: string) => `本地化引用错误：${reason}`,
+      contentMissing: (kind: string, token: string) => `本地化缺失：${kind}/${token}`,
+      packMemberLimit: (token: string, count: number, max: number) => `本地化成员上限：${token}/${count}/${max}`,
+      partialRead: (token: string, nextOffset: string | number) => `本地化分页：${token}/${nextOffset}`,
+    }
+    let resolvePreview!: (preview: ClueContentPreview) => void
+    const previewSeen = new Promise<ClueContentPreview>((resolve) => { resolvePreview = resolve })
+    const failing = makeFace({
+      library: [clue('clue-1', 'test.alpha', 'Alpha')],
+      pins: [{ clueId: 'clue-1' }],
+      read: async () => { throw Object.assign(new Error('authorization expired'), { code: 'auth-required' }) },
     })
-    const created = createClueInputTriggers({ face, resolveWorkspaceId: () => 'ws-1', onNotice, copy })
-    expect(await created.sources[0]!.candidates(SESSION, request('doc'))).toEqual([])
-    expect(onNotice).toHaveBeenCalledWith('无法准备「X」')
+    const created = createClueInputTriggers({
+      face: failing.face,
+      resolveWorkspaceId: () => 'ws-1',
+      copy,
+      onContentPreview: (preview) => { resolvePreview(preview) },
+    })
+    const rows = await created.sources[0]!.candidates(SESSION, request(''))
+    const outcome = created.sources[0]!.onPick!({
+      candidate: contentRow(rows, 'clue-1'), session: SESSION, position: 'inline', via: 'menu', action: 'pick',
+    }) as { insert: { ref: string } }
+    const send = await created.sources[0]!.codec!.serialize(outcome.insert.ref, new AbortController().signal)
+      .then(() => { throw new Error('expected a localized read failure') }, (reason: unknown) => reason as Error)
+    expect(send.message).toContain('本地化读取失败')
+    expect(send.message).toContain('authorization expired')
+
+    const preview = await previewSeen
+    expect(preview.error?.category).toBe('auth-required')
+    expect(preview.error?.message).toContain('本地化读取失败')
+
+    // A corrupt content ref is a localizable parse failure, not English text.
+    await expect(created.sources[0]!.codec!.serialize('dsh-clue-content:v1:{', new AbortController().signal))
+      .rejects.toMatchObject({ message: '本地化引用错误：malformed' })
     created.dispose()
+
+    // The over-limit message is the copy hook's, not the built-in English one.
+    const long = makeFace({
+      library: [clue('clue-1')],
+      pins: [{ clueId: 'clue-1' }],
+      read: async () => ({
+        format: 'text/plain',
+        data: { text: 'x'.repeat(50) },
+        text: 'x'.repeat(50),
+        fetchedAt: NOW,
+      }),
+    })
+    const limited = createClueInputTriggers({
+      face: long.face,
+      resolveWorkspaceId: () => 'ws-1',
+      includeContentMaxChars: 20,
+      copy,
+    })
+    const limitedRows = await limited.sources[0]!.candidates(SESSION, request(''))
+    const limitedOutcome = limited.sources[0]!.onPick!({
+      candidate: contentRow(limitedRows, 'clue-1'), session: SESSION, position: 'inline', via: 'menu', action: 'pick',
+    }) as { insert: { ref: string } }
+    const limitError = await limited.sources[0]!.codec!.serialize(limitedOutcome.insert.ref, new AbortController().signal)
+      .then(() => { throw new Error('expected a localized over-limit failure') }, (reason: unknown) => reason as Error)
+    expect(limitError.message).toMatch(/^本地化超限：\d+\/20$/)
+    limited.dispose()
+
+    // A stable id that vanished from the library uses the localized missing
+    // message rather than English prose.
+    const missing = createClueInputTriggers({ face: makeFace().face, resolveWorkspaceId: () => 'ws-1', copy })
+    const missingRef = `dsh-clue-content:v1:${JSON.stringify({ kind: 'clue', id: 'clue-1', workspaceId: 'ws-1' })}`
+    await expect(missing.sources[0]!.codec!.serialize(missingRef, new AbortController().signal))
+      .rejects.toMatchObject({ message: '本地化缺失：clue/[[dsh-clue:clue-1]]' })
+    missing.dispose()
+
+    // A pack over the content member boundary fails with the copy hook.
+    const twoMembers = makeFace({
+      packs: [pack('pack-1', 'P', ['clue-1', 'clue-2'])],
+      library: [clue('clue-1'), clue('clue-2')],
+    })
+    const packed = createClueInputTriggers({
+      face: twoMembers.face,
+      resolveWorkspaceId: () => 'ws-1',
+      includeContentMaxMembers: 1,
+      copy,
+    })
+    const packRows = await packed.sources[1]!.candidates(SESSION, request(''))
+    const packOutcome = packed.sources[1]!.onPick!({
+      candidate: contentRow(packRows, 'pack-1'), session: SESSION, position: 'inline', via: 'menu', action: 'pick',
+    }) as { insert: { ref: string } }
+    await expect(packed.sources[1]!.codec!.serialize(packOutcome.insert.ref, new AbortController().signal))
+      .rejects.toMatchObject({ message: '本地化成员上限：[[dsh-cluepack:pack-1]]/2/1' })
+    packed.dispose()
+
+    // A partial source page is refused with the copy hook instead of English.
+    const paged = makeFace({
+      library: [clue('clue-1')],
+      pins: [{ clueId: 'clue-1' }],
+      read: async () => ({
+        format: 'text/plain',
+        data: { text: 'x' },
+        text: 'x',
+        fetchedAt: NOW,
+        limited: true,
+        nextOffset: 7,
+      }),
+    })
+    const pagedCreated = createClueInputTriggers({ face: paged.face, resolveWorkspaceId: () => 'ws-1', copy })
+    const pagedRows = await pagedCreated.sources[0]!.candidates(SESSION, request(''))
+    const pagedOutcome = pagedCreated.sources[0]!.onPick!({
+      candidate: contentRow(pagedRows, 'clue-1'), session: SESSION, position: 'inline', via: 'menu', action: 'pick',
+    }) as { insert: { ref: string } }
+    await expect(pagedCreated.sources[0]!.codec!.serialize(pagedOutcome.insert.ref, new AbortController().signal))
+      .rejects.toMatchObject({ message: '本地化分页：[[dsh-clue:clue-1]]/7' })
+    pagedCreated.dispose()
   })
 })
 
@@ -833,7 +978,7 @@ describe('content mode', () => {
 })
 
 describe('real clue service integration', () => {
-  it('never rewrites the library for rows the real search already has', async () => {
+  it('never writes the library while searching (S1 browse rule)', async () => {
     let next = 0
     const service = createCluesService({
       root: tempRoot(),
@@ -853,25 +998,27 @@ describe('real clue service integration', () => {
       // This is the production shape the fake tests used to hide.
       expect(rawSearch.items.every(item => item.clueId === undefined)).toBe(true)
 
-      const before = (await service.listClues('ws-1')).revision
+      const before = await service.listClues('ws-1')
       const created = createClueInputTriggers({ face: realFace(service), resolveWorkspaceId: () => 'ws-1' })
       const first = referenceRows(await created.sources[0]!.candidates(SESSION, request('doc')))
-      const after = (await service.listClues('ws-1')).revision
-      expect(after - before).toBe(1) // only the genuinely new row is ensured
-      expect(first.map(row => valueOf(row).id)).toContain(existing.clue.id)
-      expect(first).toHaveLength(2)
+      const after = await service.listClues('ws-1')
+      // S1 §3: a browse must not ensure a lightweight candidate. Only the
+      // already-stored row is offered; "Fresh B" is omitted.
+      expect(after.revision).toBe(before.revision)
+      expect(after.clues.map(clue => clue.id)).toEqual([existing.clue.id])
+      expect(first.map(row => valueOf(row).id)).toEqual([existing.clue.id])
 
-      // The second browse matches both rows in the library: no write at all.
+      // A second browse is still read-only.
       const second = referenceRows(await created.sources[0]!.candidates(SESSION, request('doc')))
-      expect(second).toHaveLength(2)
-      expect((await service.listClues('ws-1')).revision).toBe(after)
+      expect(second.map(row => valueOf(row).id)).toEqual([existing.clue.id])
+      expect((await service.listClues('ws-1')).revision).toBe(before.revision)
       created.dispose()
     } finally {
       service.dispose()
     }
   })
 
-  it('re-ensures an imported unresolved row when a search hit matches its locator', async () => {
+  it('offers an imported unresolved row as a stable reference without remapping it on browse', async () => {
     let next = 0
     const service = createCluesService({
       root: tempRoot(),
@@ -888,17 +1035,19 @@ describe('real clue service integration', () => {
         title: 'Imported A',
         reason: 'source offline at import time',
       })
-      expect((await service.listClues('ws-1')).clues.find(clue => clue.id === imported.clue.id)?.unresolved)
-        .toBeDefined()
+      const before = await service.listClues('ws-1')
+      expect(before.clues.find(clue => clue.id === imported.clue.id)?.unresolved).toBeDefined()
 
       const created = createClueInputTriggers({ face: realFace(service), resolveWorkspaceId: () => 'ws-1' })
       const rows = referenceRows(await created.sources[0]!.candidates(SESSION, request('doc')))
-      // Reusing the unresolved id without ensure would leave the row
-      // source-missing forever; the matching hit must flow through ensure.
-      expect(rows.map(row => valueOf(row).id)).toContain(imported.clue.id)
-      const after = (await service.listClues('ws-1')).clues
-      expect(after).toHaveLength(2) // the same id is remapped, never duplicated
-      expect(after.find(clue => clue.id === imported.clue.id)?.unresolved).toBeUndefined()
+      // The stable id already exists (and may carry readable snapshots), so a
+      // matching search hit can be offered without writing. Remapping stays an
+      // explicit durable-use action, never a browse side effect.
+      expect(rows.map(row => valueOf(row).id)).toEqual([imported.clue.id])
+      const after = await service.listClues('ws-1')
+      expect(after.revision).toBe(before.revision)
+      expect(after.clues).toHaveLength(1)
+      expect(after.clues[0]?.unresolved).toBeDefined()
       created.dispose()
     } finally {
       service.dispose()

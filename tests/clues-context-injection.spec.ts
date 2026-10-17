@@ -10,7 +10,7 @@
  * workspace identity comes from the session header cwd through
  * `workspaceRegistry.resolveByPath`, never from the process cwd.
  */
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Context } from '../src/context-types.ts'
 import type { CluesService } from '../src/clues/service.ts'
 import type { Clue, ClueBinding, CluePack } from '../src/clues/types.ts'
@@ -25,6 +25,10 @@ import {
 import { SIDEBAR_PREFS_DEFAULTS, type SidebarPrefs } from '../src/prefs-shared.ts'
 
 const NOW = '2026-10-17T00:00:00.000Z'
+
+afterEach(() => {
+  vi.useRealTimers()
+})
 
 /** Deterministic clue fixtures. */
 function clue(id: string, sourceId = 'test.source', title = `title ${id}`): Clue {
@@ -449,6 +453,57 @@ describe('installClueInjection', () => {
     const retry = payload(sessionValue)
     const retryDecision = await harness.run(retry, nextOf(retry))
     expect(injectedOf(retryDecision)).toBeDefined()
+    harness.dispose()
+  })
+
+  it('does not inject when the listener is disposed while the waterfall is pending', async () => {
+    const harness = mount(FIXTURE)
+    const claimed = payload(session([turnStart(1)]))
+    const decision = await harness.run(claimed, async () => {
+      // Plugin unload/HMR happens mid-waterfall: the listener was removed and
+      // the service/entries may already be torn down.
+      harness.dispose()
+      return { kind: 'enter' as const, messages: [...claimed.messages] }
+    })
+    expect(injectedOf(decision)).toBeUndefined()
+    expect((decision as { messages: readonly unknown[] }).messages).toHaveLength(1)
+  })
+
+  it('does not inject when disposal happens during workspace resolution', async () => {
+    const teardown: { dispose?: () => void } = {}
+    const harness = mount(FIXTURE, {
+      resolveByPath: async () => {
+        teardown.dispose?.()
+        return { id: 'ws-1' }
+      },
+    })
+    teardown.dispose = harness.dispose
+    const claimed = payload(session([turnStart(1)]))
+    const decision = await harness.run(claimed, nextOf(claimed))
+    expect(injectedOf(decision)).toBeUndefined()
+    expect((decision as { messages: readonly unknown[] }).messages).toHaveLength(1)
+  })
+
+  it('expires a stale re-entry claim after the host discards a settled decision', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date(NOW))
+    const harness = mount(FIXTURE)
+    const sessionValue = session([turnStart(1)])
+    const controller = new AbortController()
+    const claimed = payload(sessionValue, 1, 1, [], controller.signal)
+    const decision = await harness.run(claimed, nextOf(claimed))
+    expect(injectedOf(decision)).toBeDefined()
+
+    // The host aborts AFTER our listener returned, so its decision is dropped
+    // and no durable marker is ever committed. The in-process claim must not
+    // suppress the same creation window forever.
+    controller.abort()
+    const retry = payload(sessionValue)
+    expect(injectedOf(await harness.run(retry, nextOf(retry)))).toBeUndefined()
+
+    vi.advanceTimersByTime(60_001)
+    const retryAfterTtl = payload(sessionValue)
+    expect(injectedOf(await harness.run(retryAfterTtl, nextOf(retryAfterTtl)))).toBeDefined()
     harness.dispose()
   })
 

@@ -11,11 +11,14 @@
  * - non-empty query: enabled/mention-enabled sources are searched with bounded
  *   concurrency and per-source failure isolation; the request signal cancels
  *   the in-flight searches, and stale results are dropped;
- * - search rows that are already in the workspace library reuse the stored
- *   clue id (matched by sourceId + locator), so merely browsing never rewrites
- *   the library. Only an actually-new row is ensured before it is offered (the
- *   host opens the menu only after `candidates` resolves, so a pick can never
- *   insert an id that does not exist yet);
+ * - browsing NEVER writes the workspace library. A search hit is offered only
+ *   when it already maps to a stored clue (matched by clueId or by sourceId +
+ *   locator); a lightweight, not-yet-persisted candidate is skipped. S1 §3
+ *   forbids ensuring stable references on browse, and the host's synchronous
+ *   `onPick` leaves no safe place to await `ensure` before an insert. New
+ *   resources enter the library through a durable insertion surface (the
+ *   sidebar action in S9, which can await `ensure`) and become mentionable
+ *   afterwards;
  * - every row also offers an explicit "include content" option. The normal
  *   option inserts a stable token and serializes to that token alone — no
  *   remote body read, no auth probe. The content option encodes its mode in
@@ -36,6 +39,7 @@ import {
   PACK_CODEC_SOURCE,
   CLUE_ERROR_CATEGORIES,
   ClueError,
+  type Clue,
   type ClueAsset,
   type ClueDisplayIcon,
   type ClueErrorCategory,
@@ -183,6 +187,13 @@ export interface ClueMentionsFace {
   isSourceEnabled(sourceId: string): boolean
   isSourceMentionEnabled(sourceId: string): boolean
   isPacksMentionEnabled(): boolean
+  /**
+   * Whether one source/type pair can read content. S9 wires this from the
+   * cached source catalogue; omitted means "unknown" (treated as readable).
+   * It only controls the explicit "include content" rows; plain references
+   * stay available for read-only sources.
+   */
+  canRead?(sourceId: string, typeId: string): boolean
 }
 
 /**
@@ -206,10 +217,14 @@ export interface ClueContentPreview {
  * User-visible copy of the `@` sources.
  *
  * S9 owns the `betterSidebar` locale dictionary; this module stays locale-free
- * and exposes every user-facing string it renders so the wiring layer can pass
- * localized text. Callbacks receive ALREADY ESCAPED display metadata (never a
- * raw source value and never a token), so a localization implementation cannot
- * accidentally mint or leak a reference.
+ * and exposes the user-visible notices plus every content-mode send error it
+ * renders, so the wiring layer can pass localized text. (Model-facing content
+ * projections
+ * keep stable English metadata labels such as `freshness:`; those are content,
+ * not UI copy.) Display metadata is ALREADY ESCAPED (never a raw source value),
+ * and token arguments are stable reference tokens minted here — never
+ * source-controlled text — so localization cannot accidentally mint or leak a
+ * reference.
  */
 export interface ClueMentionsCopy {
   /** Appended to a content-mode candidate title. */
@@ -220,13 +235,42 @@ export interface ClueMentionsCopy {
   readonly clueContentDescription: (source: string, type: string) => string
   /** Description of one content-mode pack row. */
   readonly packContentDescription: (memberCount: number) => string
-  /** Notice when a search hit could not be ensured for insertion. */
-  readonly ensureFailed: (title: string) => string
   /** Notice when a clue pick could not be inserted. */
   readonly clueInsertFailed: string
   /** Notice when a pack pick could not be inserted. */
   readonly packInsertFailed: string
+  /**
+   * Wrap one content read failure. `what` names the clue/pack/member (already
+   * escaped metadata), `category` is the stable S1 error category and `detail`
+   * is a source-owned message or an empty string.
+   */
+  readonly contentFailure: (what: string, category: string, detail: string) => string
+  /** The content projection exceeded the configured character boundary. */
+  readonly contentLimit: (size: number, max: number) => string
+  /** A content-mode reference is malformed or incompatible with its codec. */
+  readonly contentReferenceError: (reason: ClueContentReferenceErrorReason) => string
+  /** A referenced clue/pack disappeared before send. */
+  readonly contentMissing: (kind: 'clue' | 'pack', token: string) => string
+  /** A pack exceeded the content member boundary. */
+  readonly packMemberLimit: (token: string, count: number, max: number) => string
+  /** A pack member disappeared before send; `memberId` is already escaped data. */
+  readonly packMemberMissing: (token: string, memberId: string) => string
+  /** A pack member id cannot be represented as a stable token. */
+  readonly packMemberNotTokenSafe: (token: string) => string
+  /** A source page would truncate included content. */
+  readonly partialRead: (token: string, nextOffset: string | number) => string
 }
+
+/** Why a content-mode reference cannot be encoded or parsed. */
+export type ClueContentReferenceErrorReason =
+  | 'malformed'
+  | 'unknown-kind'
+  | 'unserializable-id'
+  | 'missing-workspace'
+  | 'invalid-session'
+  | 'empty-workspace'
+  | 'empty-session'
+  | 'kind-mismatch'
 
 /** The English defaults (S9 replaces the user-visible ones with `t()` calls). */
 const DEFAULT_COPY: ClueMentionsCopy = {
@@ -234,9 +278,40 @@ const DEFAULT_COPY: ClueMentionsCopy = {
   clueReferenceDescription: (source, type) => `${source} · ${type}`,
   clueContentDescription: (source, type) => `At send: current content from ${source} · ${type}`,
   packContentDescription: count => `At send: current content of ${count} member${count === 1 ? '' : 's'}`,
-  ensureFailed: title => `Could not prepare "${title}" for insertion; the draft was left unchanged.`,
   clueInsertFailed: 'That clue could not be inserted; the draft was left unchanged.',
   packInsertFailed: 'That clue pack could not be inserted; the draft was left unchanged.',
+  contentFailure: (what, _category, detail) =>
+    `${what} could not be read${detail === '' ? '' : `: ${detail}`}; no content was sent and the draft was kept`,
+  contentLimit: (size, max) =>
+    `the included content is ${size} characters, over the ${max}-character limit; nothing was sent and the draft was kept`,
+  contentReferenceError: reason => {
+    switch (reason) {
+      case 'malformed':
+        return 'the content reference is malformed; the draft was kept'
+      case 'unknown-kind':
+        return 'the content reference has an unknown kind; the draft was kept'
+      case 'unserializable-id':
+        return 'the content reference has an unserializable id; the draft was kept'
+      case 'missing-workspace':
+        return 'the content reference has no workspace; the draft was kept'
+      case 'invalid-session':
+        return 'the content reference has an invalid session; the draft was kept'
+      case 'empty-workspace':
+        return 'a content reference needs a workspace id'
+      case 'empty-session':
+        return 'a content reference session id cannot be empty'
+      case 'kind-mismatch':
+        return 'a content reference belongs to a different reference kind and cannot be serialized here; the draft was kept'
+    }
+  },
+  contentMissing: (kind, token) => `${kind} ${token} no longer exists in its workspace; the draft was kept`,
+  packMemberLimit: (token, count, max) =>
+    `pack ${token} has ${count} members, over the ${max}-member content limit; the draft was kept`,
+  packMemberMissing: (token, memberId) => `pack ${token} member ${memberId} no longer exists; the draft was kept`,
+  packMemberNotTokenSafe: token =>
+    `pack ${token} has a member id that cannot be represented as a stable token; the draft was kept`,
+  partialRead: (token, nextOffset) =>
+    `${token} is larger than one read page (next offset: ${nextOffset}); including it would truncate the content, so the draft was kept`,
 }
 
 /** Options of {@link createClueInputTriggers}. */
@@ -259,8 +334,8 @@ export interface CreateClueInputTriggersOptions {
     readonly sessionId: string
   }) => boolean
   /**
-   * Surface a user-visible notice for a refused insert (for example when the
-   * local ensure failed). The draft is never modified by this module.
+   * Surface a user-visible notice for a refused insert (for example a corrupt
+   * stored id). The draft is never modified by this module.
    */
   readonly onNotice?: (message: string) => void
   /**
@@ -300,8 +375,6 @@ const DEFAULT_LIMIT = 20
 const MAX_LIMIT = 50
 const DEFAULT_CONCURRENCY = 4
 const DEFAULT_CATALOGUE_TTL_MS = 30_000
-/** Candidate-level ensure concurrency (the store is local; keep it small). */
-const ENSURE_CONCURRENCY = 4
 /** Default content boundary; a larger projection blocks the send. */
 const DEFAULT_INCLUDE_CONTENT_MAX_CHARS = 12_000
 /** Default pack-member boundary of one content projection. */
@@ -399,24 +472,18 @@ function messageOf(error: unknown): string {
 }
 
 /** Wrap one content read failure with the draft-preservation contract. */
-function contentFailure(what: string, error: unknown): ClueError {
+function contentFailure(what: string, error: unknown, copy: ClueMentionsCopy): ClueError {
   const category = categoryOf(error)
   const detail = error instanceof ClueError || typeof (error as { readonly code?: unknown } | null)?.code === 'string'
     ? messageOf(error)
     : ''
-  return new ClueError(
-    category,
-    `${what} could not be read${detail === '' ? '' : `: ${detail}`}; no content was sent and the draft was kept`,
-  )
+  return new ClueError(category, copy.contentFailure(what, category, detail))
 }
 
 /** The content projection exceeded its configured boundary. */
 class ContentLimitError extends ClueError {
-  constructor(readonly size: number, readonly max: number) {
-    super(
-      'invalid-request',
-      `the included content is ${size} characters, over the ${max}-character limit; nothing was sent and the draft was kept`,
-    )
+  constructor(readonly size: number, readonly max: number, message: string) {
+    super('invalid-request', message)
   }
 }
 
@@ -434,13 +501,13 @@ interface ContentReference {
 }
 
 /** Encode one content-mode ref. */
-function encodeContentReference(reference: ContentReference): string {
+function encodeContentReference(reference: ContentReference, copy: ClueMentionsCopy): string {
   serializeClueToken(reference.kind, reference.id)
   if (reference.workspaceId === '') {
-    throw new ClueError('invalid-request', 'a content reference needs a workspace id')
+    throw new ClueError('invalid-request', copy.contentReferenceError('empty-workspace'))
   }
   if (reference.sessionId === '') {
-    throw new ClueError('invalid-request', 'a content reference session id cannot be empty')
+    throw new ClueError('invalid-request', copy.contentReferenceError('empty-session'))
   }
   return `${CONTENT_REF_PREFIX}${JSON.stringify(reference)}`
 }
@@ -450,29 +517,29 @@ function encodeContentReference(reference: ContentReference): string {
  * a malformed content ref throws so the codec can block the send instead of
  * silently emitting a non-token.
  */
-function parseContentReference(ref: string): ContentReference | undefined {
+function parseContentReference(ref: string, copy: ClueMentionsCopy): ContentReference | undefined {
   if (!ref.startsWith(CONTENT_REF_PREFIX)) return undefined
   let raw: unknown
   try {
     raw = JSON.parse(ref.slice(CONTENT_REF_PREFIX.length))
   } catch {
-    throw new ClueError('invalid-request', 'the content reference is malformed; the draft was kept')
+    throw new ClueError('invalid-request', copy.contentReferenceError('malformed'))
   }
   if (raw === null || typeof raw !== 'object') {
-    throw new ClueError('invalid-request', 'the content reference is malformed; the draft was kept')
+    throw new ClueError('invalid-request', copy.contentReferenceError('malformed'))
   }
   const record = raw as { kind?: unknown; id?: unknown; workspaceId?: unknown; sessionId?: unknown }
   if (record.kind !== 'clue' && record.kind !== 'pack') {
-    throw new ClueError('invalid-request', 'the content reference has an unknown kind; the draft was kept')
+    throw new ClueError('invalid-request', copy.contentReferenceError('unknown-kind'))
   }
   if (typeof record.id !== 'string' || !isValidClueReferenceId(record.id)) {
-    throw new ClueError('invalid-request', 'the content reference has an unserializable id; the draft was kept')
+    throw new ClueError('invalid-request', copy.contentReferenceError('unserializable-id'))
   }
   if (typeof record.workspaceId !== 'string' || record.workspaceId === '') {
-    throw new ClueError('invalid-request', 'the content reference has no workspace; the draft was kept')
+    throw new ClueError('invalid-request', copy.contentReferenceError('missing-workspace'))
   }
   if (record.sessionId !== undefined && (typeof record.sessionId !== 'string' || record.sessionId === '')) {
-    throw new ClueError('invalid-request', 'the content reference has an invalid session; the draft was kept')
+    throw new ClueError('invalid-request', copy.contentReferenceError('invalid-session'))
   }
   return {
     kind: record.kind,
@@ -483,11 +550,11 @@ function parseContentReference(ref: string): ContentReference | undefined {
 }
 
 /** The stable token named by one ref, refusing a corrupt id loudly. */
-function tokenOfReference(kind: 'clue' | 'pack', ref: string): string {
-  const content = parseContentReference(ref)
+function tokenOfReference(kind: 'clue' | 'pack', ref: string, copy: ClueMentionsCopy): string {
+  const content = parseContentReference(ref, copy)
   if (content === undefined) return serializeClueToken(kind, ref)
   if (content.kind !== kind) {
-    throw new ClueError('invalid-request', `a ${content.kind} content reference cannot be serialized by the ${kind} codec`)
+    throw new ClueError('invalid-request', copy.contentReferenceError('kind-mismatch'))
   }
   return serializeClueToken(kind, content.id)
 }
@@ -566,6 +633,8 @@ interface ClueRow {
   readonly title: string
   readonly sourceId: string
   readonly typeId: string
+  /** An imported row whose original locator is unresolved. */
+  readonly unresolved?: boolean
 }
 
 /** The two presentation modes of one logical row. */
@@ -695,16 +764,13 @@ function clueContentHeader(
   const title = escapeClueTitle(clue.title)
   // Source-owned freshness/format are metadata on a model-facing line: escape
   // them like every other third-party value, never interpolate raw.
-  return `${token} live content${title === '' ? '' : ` ${JSON.stringify(title)}`} — source ${displayText(clue.sourceId)} · ${displayText(clue.typeId)}; fetched ${displayText(result.fetchedAt)} (freshness: ${displayText(result.freshness ?? 'live', 'live')}, format: ${displayText(result.format)})`
+  return `${token} ${result.freshness === 'snapshot' ? 'snapshot content' : 'live content'}${title === '' ? '' : ` ${JSON.stringify(title)}`} — source ${displayText(clue.sourceId)} · ${displayText(clue.typeId)}; fetched ${displayText(result.fetchedAt)} (freshness: ${displayText(result.freshness ?? 'live', 'live')}, format: ${displayText(result.format)})`
 }
 
 /** Refuse a partial page instead of silently truncating included content. */
-function refusePartial(token: string, result: ClueReadResult): void {
+function refusePartial(token: string, result: ClueReadResult, copy: ClueMentionsCopy): void {
   if (result.limited !== true) return
-  throw new ClueError(
-    'invalid-request',
-    `${token} is larger than one read page (next offset: ${result.nextOffset ?? 'unknown'}); including it would truncate the content, so the draft was kept`,
-  )
+  throw new ClueError('invalid-request', copy.partialRead(token, result.nextOffset ?? 'unknown'))
 }
 
 /**
@@ -806,15 +872,51 @@ export function createClueInputTriggers(options: CreateClueInputTriggersOptions)
         title: clue.title,
         sourceId: clue.sourceId,
         typeId: clue.typeId,
+        ...(clue.unresolved === undefined ? {} : { unresolved: true }),
       })
     }
     return rows
   }
 
+  /** The workspace library indexed by stable id and by source identity + locator. */
+  const libraryIndexOf = (local: LocalLibrary): { byId: Map<string, Clue>; byLocator: Map<string, Clue> } => {
+    const byId = new Map<string, Clue>()
+    const byLocator = new Map<string, Clue>()
+    for (const clue of local.library.clues) {
+      byId.set(clue.id, clue)
+      byLocator.set(storedLocatorKey(clue.sourceId, clue.locator), clue)
+    }
+    return { byId, byLocator }
+  }
+
   /**
-   * Search one enabled source. Rows already in the workspace library reuse
-   * their stored id (sourceId + locator); only a genuinely new resource is
-   * ensured — and that is the row the user is about to insert.
+   * Content-read capability of one source/type pair.
+   *
+   * `face.canRead` wins when the wiring layer provides it. Otherwise the live
+   * source catalogue is used, but only a POSITIVE "cannot read" answer hides a
+   * row: a source/type missing from a degraded catalogue is treated as unknown
+   * rather than silently losing its content option.
+   */
+  const readableOf = (catalog: CluesSourcesCatalogResult | undefined): ((sourceId: string, typeId: string) => boolean) => {
+    const sourceRead = new Map<string, boolean>()
+    const typeRead = new Map<string, boolean>()
+    for (const source of catalog?.sources ?? []) sourceRead.set(source.sourceId, source.capabilities.read)
+    for (const type of catalog?.types ?? []) typeRead.set(`${type.sourceId}\u0000${type.typeId}`, type.capabilities.read)
+    return (sourceId: string, typeId: string): boolean => {
+      const explicit = face.canRead?.(sourceId, typeId)
+      if (explicit !== undefined) return explicit
+      if (sourceRead.get(sourceId) === false) return false
+      if (typeRead.get(`${sourceId}\u0000${typeId}`) === false) return false
+      return true
+    }
+  }
+
+  /**
+   * Search one enabled source and keep only hits that already have a stable
+   * workspace clue. S1 §3 forbids persisting lightweight candidates on browse,
+   * and the synchronous host `onPick` cannot await `ensure` before inserting,
+   * so a not-yet-stored candidate is deliberately not offered here. It becomes
+   * mentionable after the sidebar's durable insertion path ensures it.
    */
   const searchSource = async (
     workspaceId: string,
@@ -822,7 +924,7 @@ export function createClueInputTriggers(options: CreateClueInputTriggersOptions)
     query: string,
     signal: AbortSignal,
     perSourceLimit: number,
-    knownClues: Map<string, string>,
+    library: { byId: Map<string, Clue>; byLocator: Map<string, Clue> },
   ): Promise<ClueRow[]> => {
     let result: ClueListResult
     try {
@@ -832,41 +934,24 @@ export function createClueInputTriggers(options: CreateClueInputTriggersOptions)
       return []
     }
     if (signal.aborted) return []
-    const candidates = result.items.slice(0, perSourceLimit)
-    const rows = await mapWithLimit(candidates, ENSURE_CONCURRENCY, async (candidate): Promise<ClueRow | undefined> => {
-      try {
-        let clueId = candidate.clueId
-        let title = candidate.title
-        if (clueId === undefined) {
-          clueId = knownClues.get(storedLocatorKey(candidate.sourceId, candidate.locator))
-        }
-        if (clueId === undefined) {
-          const ensured = await face.api.ensure(workspaceId, {
-            sourceId: candidate.sourceId,
-            typeId: candidate.typeId,
-            locator: candidate.locator,
-            title: candidate.title,
-          }, signal)
-          clueId = ensured.clue.id
-          title = ensured.clue.title
-          knownClues.set(storedLocatorKey(candidate.sourceId, ensured.clue.locator), clueId)
-        }
-        if (signal.aborted) return undefined
-        return {
-          id: clueId,
-          title,
-          sourceId: candidate.sourceId,
-          typeId: candidate.typeId,
-        } satisfies ClueRow
-      } catch (error) {
-        if (!signal.aborted) {
-          report(error, sourceId)
-          notify(copy.ensureFailed(escapeClueTitle(candidate.title) || 'this search result'))
-        }
-        return undefined
-      }
-    })
-    return rows.filter((row): row is ClueRow => row !== undefined)
+    const rows: ClueRow[] = []
+    const seen = new Set<string>()
+    for (const candidate of result.items.slice(0, perSourceLimit)) {
+      if (signal.aborted) return []
+      const stored = library.byLocator.get(storedLocatorKey(candidate.sourceId, candidate.locator))
+        ?? (candidate.clueId === undefined ? undefined : library.byId.get(candidate.clueId))
+      // No `ensure`: browsing must never rewrite the library.
+      if (stored === undefined || seen.has(stored.id)) continue
+      seen.add(stored.id)
+      rows.push({
+        id: stored.id,
+        title: stored.title,
+        sourceId: stored.sourceId,
+        typeId: stored.typeId,
+        ...(stored.unresolved === undefined ? {} : { unresolved: true }),
+      })
+    }
+    return rows
   }
 
   /** Build the normal rows plus the explicit content-mode rows of one list. */
@@ -874,6 +959,7 @@ export function createClueInputTriggers(options: CreateClueInputTriggersOptions)
     rows: readonly ClueRow[],
     displays: ReadonlyMap<string, ClueSourceDisplayDescriptor>,
     workspaceId: string,
+    readable: (sourceId: string, typeId: string) => boolean,
   ): ClueInputCandidate[] => {
     const valid = rows.filter(row => {
       if (clueTokenOrUndefined('clue', row.id) !== undefined) return true
@@ -882,7 +968,11 @@ export function createClueInputTriggers(options: CreateClueInputTriggersOptions)
     })
     return [
       ...valid.map(row => clueCandidate(row, displays, workspaceId, 'reference', contentSection, copy)),
-      ...valid.map(row => clueCandidate(row, displays, workspaceId, 'content', contentSection, copy)),
+      // A content option that is guaranteed to fail on send is worse than no
+      // option: hide it for unresolved rows and sources/types without read.
+      ...valid
+        .filter(row => row.unresolved !== true && readable(row.sourceId, row.typeId))
+        .map(row => clueCandidate(row, displays, workspaceId, 'content', contentSection, copy)),
     ]
   }
 
@@ -890,23 +980,32 @@ export function createClueInputTriggers(options: CreateClueInputTriggersOptions)
   const packCandidateRows = (
     packs: readonly { readonly id: string; readonly name: string; readonly members: readonly string[] }[],
     workspaceId: string,
+    memberOf: (clueId: string) => Clue | undefined,
+    readable: (sourceId: string, typeId: string) => boolean,
   ): ClueInputCandidate[] => {
     const valid = packs.filter(pack => {
       if (clueTokenOrUndefined('pack', pack.id) !== undefined) return true
       report(new ClueError('invalid-request', 'a workspace pack id cannot be represented as a stable token; the row was hidden'))
       return false
     })
+    const contentCapable = (pack: { readonly members: readonly string[] }): boolean =>
+      pack.members.length > 0 && pack.members.every(clueId => {
+        const clue = memberOf(clueId)
+        return clue !== undefined && clue.unresolved === undefined && readable(clue.sourceId, clue.typeId)
+      })
     return [
       ...valid.map(pack => packCandidate(pack, workspaceId, 'reference', contentSection, copy)),
       ...valid
-        .filter(pack => pack.members.length > 0)
+        .filter(contentCapable)
         .map(pack => packCandidate(pack, workspaceId, 'content', contentSection, copy)),
     ]
   }
 
   /** Enforce the configured content boundary. */
   const boundedProjection = (text: string): ContentProjection => {
-    if (text.length > includeContentMaxChars) throw new ContentLimitError(text.length, includeContentMaxChars)
+    if (text.length > includeContentMaxChars) {
+      throw new ContentLimitError(text.length, includeContentMaxChars, copy.contentLimit(text.length, includeContentMaxChars))
+    }
     return { text, chars: text.length }
   }
 
@@ -918,21 +1017,21 @@ export function createClueInputTriggers(options: CreateClueInputTriggersOptions)
     try {
       library = await face.api.clues(reference.workspaceId)
     } catch (error) {
-      throw contentFailure(`clue ${token}`, error)
+      throw contentFailure(`clue ${token}`, error, copy)
     }
     const clue = library.clues.find(candidate => candidate.id === reference.id)
     if (clue === undefined) {
-      throw new ClueError('not-found', `clue ${token} no longer exists in its workspace; the draft was kept`)
+      throw new ClueError('not-found', copy.contentMissing('clue', token))
     }
     let result: ClueReadResult
     try {
       result = await face.api.read(reference.workspaceId, contentReadInput(reference, reference.id), signal)
     } catch (error) {
       if (signal.aborted) throwIfAborted(signal)
-      throw contentFailure(`clue ${token} (${displayText(clue.sourceId)})`, error)
+      throw contentFailure(`clue ${token} (${displayText(clue.sourceId)})`, error, copy)
     }
     throwIfAborted(signal)
-    refusePartial(token, result)
+    refusePartial(token, result, copy)
     return boundedProjection(`${clueContentHeader(token, clue, result)}\n\n${bodyOf(result)}`)
   }
 
@@ -948,16 +1047,16 @@ export function createClueInputTriggers(options: CreateClueInputTriggersOptions)
         face.api.packsList(reference.workspaceId),
       ])
     } catch (error) {
-      throw contentFailure(`pack ${token}`, error)
+      throw contentFailure(`pack ${token}`, error, copy)
     }
     const pack = packs.packs.find(candidate => candidate.id === reference.id)
     if (pack === undefined) {
-      throw new ClueError('not-found', `pack ${token} no longer exists in its workspace; the draft was kept`)
+      throw new ClueError('not-found', copy.contentMissing('pack', token))
     }
     if (pack.members.length > includeContentMaxMembers) {
       throw new ClueError(
         'invalid-request',
-        `pack ${token} has ${pack.members.length} members, over the ${includeContentMaxMembers}-member content limit; the draft was kept`,
+        copy.packMemberLimit(token, pack.members.length, includeContentMaxMembers),
       )
     }
     const clueById = new Map(library.clues.map(clue => [clue.id, clue]))
@@ -967,25 +1066,22 @@ export function createClueInputTriggers(options: CreateClueInputTriggersOptions)
       if (clue === undefined) {
         throw new ClueError(
           'not-found',
-          `pack ${token} member ${JSON.stringify(displayText(memberId, 'unknown'))} no longer exists; the draft was kept`,
+          copy.packMemberMissing(token, JSON.stringify(displayText(memberId, 'unknown'))),
         )
       }
       const memberToken = clueTokenOrUndefined('clue', clue.id)
       if (memberToken === undefined) {
-        throw new ClueError(
-          'invalid-request',
-          `pack ${token} has a member id that cannot be represented as a stable token; the draft was kept`,
-        )
+        throw new ClueError('invalid-request', copy.packMemberNotTokenSafe(token))
       }
       let result: ClueReadResult
       try {
         result = await face.api.read(reference.workspaceId, contentReadInput(reference, clue.id), signal)
       } catch (error) {
         if (signal.aborted) throwIfAborted(signal)
-        throw contentFailure(`pack ${token} member ${memberToken} (${displayText(clue.sourceId)})`, error)
+        throw contentFailure(`pack ${token} member ${memberToken} (${displayText(clue.sourceId)})`, error, copy)
       }
       throwIfAborted(signal)
-      refusePartial(memberToken, result)
+      refusePartial(memberToken, result, copy)
       chunks.push(`${clueContentHeader(memberToken, clue, result)}\n\n${bodyOf(result)}`)
     }
     const header = `${token} pack ${JSON.stringify(escapeClueTitle(pack.name))} — ${pack.members.length} current member${pack.members.length === 1 ? '' : 's'}, revision ${pack.revision}; content fetched at send time`
@@ -1050,7 +1146,12 @@ export function createClueInputTriggers(options: CreateClueInputTriggersOptions)
       if (query === '') {
         const local = await localLibraryOf(workspaceId, request.signal)
         if (request.signal.aborted) return []
-        return clueCandidateRows(pinnedRowsOf(local, '').slice(0, limit), displays, workspaceId)
+        return clueCandidateRows(
+          pinnedRowsOf(local, '').slice(0, limit),
+          displays,
+          workspaceId,
+          readableOf(undefined),
+        )
       }
       const [local, catalog] = await Promise.all([
         localLibraryOf(workspaceId, request.signal),
@@ -1058,24 +1159,17 @@ export function createClueInputTriggers(options: CreateClueInputTriggersOptions)
       ])
       if (request.signal.aborted) return []
       const pins = pinnedRowsOf(local, query)
-      const knownClues = new Map<string, string>()
-      for (const clue of local.library.clues) {
-        // An imported-but-unresolved row gets REMAPPED (and its marker cleared)
-        // by `ensure`. Reusing its id here without ensure would keep the row
-        // source-missing forever, so a matching search hit must flow through
-        // ensure like a brand-new row.
-        if (clue.unresolved !== undefined) continue
-        knownClues.set(storedLocatorKey(clue.sourceId, clue.locator), clue.id)
-      }
+      const library = libraryIndexOf(local)
       const sources = (catalog?.sources ?? []).filter(source =>
         source.capabilities.search
         && face.isSourceEnabled(source.sourceId)
         && face.isSourceMentionEnabled(source.sourceId))
       // Distribute the row budget across sources; the merged list is capped
-      // again below, so a broad query cannot ensure an unbounded number of ids.
+      // again below. A broad query cannot persist anything: search only maps
+      // hits to clues that are already stored.
       const perSourceLimit = Math.max(1, Math.ceil(limit / Math.max(1, sources.length)))
       const perSource = await mapWithLimit(sources, concurrency, async source =>
-        searchSource(workspaceId, source.sourceId, request.query.trim(), request.signal, perSourceLimit, knownClues))
+        searchSource(workspaceId, source.sourceId, request.query.trim(), request.signal, perSourceLimit, library))
       if (request.signal.aborted) return []
       const seen = new Set<string>()
       const merged: ClueRow[] = []
@@ -1085,7 +1179,7 @@ export function createClueInputTriggers(options: CreateClueInputTriggersOptions)
         merged.push(row)
         if (merged.length >= limit) break
       }
-      return clueCandidateRows(merged, displays, workspaceId)
+      return clueCandidateRows(merged, displays, workspaceId, readableOf(catalog))
     },
     onPick({ candidate, session }): CluePickOutcome {
       const value = parseCandidateValue(candidate.value)
@@ -1107,7 +1201,7 @@ export function createClueInputTriggers(options: CreateClueInputTriggersOptions)
         return {
           insert: {
             source: CLUE_CODEC_SOURCE,
-            ref: reference === undefined ? value.id : encodeContentReference(reference),
+            ref: reference === undefined ? value.id : encodeContentReference(reference, copy),
             label: candidate.label ?? token,
             appearance: value.appearance ?? 'file',
             clipboardText: token,
@@ -1122,7 +1216,7 @@ export function createClueInputTriggers(options: CreateClueInputTriggersOptions)
     openReference(session, reference): boolean {
       if (options.openReference === undefined) return false
       try {
-        const parsed = parseContentReference(reference.ref)
+        const parsed = parseContentReference(reference.ref, copy)
         return options.openReference({
           kind: 'clue',
           id: parsed?.id ?? reference.ref,
@@ -1134,17 +1228,17 @@ export function createClueInputTriggers(options: CreateClueInputTriggersOptions)
       }
     },
     codec: {
-      clipboardText: (ref: string): string => tokenOfReference('clue', ref),
+      clipboardText: (ref: string): string => tokenOfReference('clue', ref, copy),
       async serialize(ref: string, signal: AbortSignal): Promise<string> {
         throwIfAborted(signal)
-        const content = parseContentReference(ref)
+        const content = parseContentReference(ref, copy)
         if (content === undefined) {
           // Default serialization is the token alone: no remote body read and
           // no authentication probe, so sending never blocks on a source.
           return serializeClueToken('clue', ref)
         }
         if (content.kind !== 'clue') {
-          throw new ClueError('invalid-request', `a ${content.kind} content reference cannot be serialized by the clue codec`)
+          throw new ClueError('invalid-request', copy.contentReferenceError('kind-mismatch'))
         }
         const projection = await projectClueContent(content, signal)
         throwIfAborted(signal)
@@ -1166,14 +1260,25 @@ export function createClueInputTriggers(options: CreateClueInputTriggersOptions)
       if (workspaceId === undefined) return []
       const query = request.query.trim().toLowerCase()
       try {
-        const result = await face.api.packsList(workspaceId)
+        const [result, library] = await Promise.all([
+          face.api.packsList(workspaceId),
+          // The content option needs each member's source/type; an explicit
+          // pack page reads members from the same library.
+          face.api.clues(workspaceId).catch((error: unknown) => {
+            if (!request.signal.aborted) report(error)
+            return { clues: [], revision: 0 } as CluesLibraryResult
+          }),
+        ])
+        if (request.signal.aborted) return []
+        const catalog = query === '' ? undefined : await catalogueOf(request.signal)
         if (request.signal.aborted) return []
         const packs = result.packs
           .filter(pack => query === '' || pack.name.toLowerCase().includes(query))
           .sort((left, right) =>
             right.updatedAt.localeCompare(left.updatedAt) || left.id.localeCompare(right.id))
           .slice(0, limit)
-        return packCandidateRows(packs, workspaceId)
+        const clueById = new Map(library.clues.map(clue => [clue.id, clue]))
+        return packCandidateRows(packs, workspaceId, id => clueById.get(id), readableOf(catalog))
       } catch (error) {
         if (!request.signal.aborted) report(error)
         return []
@@ -1197,7 +1302,7 @@ export function createClueInputTriggers(options: CreateClueInputTriggersOptions)
         return {
           insert: {
             source: PACK_CODEC_SOURCE,
-            ref: reference === undefined ? value.id : encodeContentReference(reference),
+            ref: reference === undefined ? value.id : encodeContentReference(reference, copy),
             label: candidate.label ?? token,
             appearance: 'folder',
             clipboardText: token,
@@ -1212,7 +1317,7 @@ export function createClueInputTriggers(options: CreateClueInputTriggersOptions)
     openReference(session, reference): boolean {
       if (options.openReference === undefined) return false
       try {
-        const parsed = parseContentReference(reference.ref)
+        const parsed = parseContentReference(reference.ref, copy)
         return options.openReference({
           kind: 'pack',
           id: parsed?.id ?? reference.ref,
@@ -1224,13 +1329,13 @@ export function createClueInputTriggers(options: CreateClueInputTriggersOptions)
       }
     },
     codec: {
-      clipboardText: (ref: string): string => tokenOfReference('pack', ref),
+      clipboardText: (ref: string): string => tokenOfReference('pack', ref, copy),
       async serialize(ref: string, signal: AbortSignal): Promise<string> {
         throwIfAborted(signal)
-        const content = parseContentReference(ref)
+        const content = parseContentReference(ref, copy)
         if (content === undefined) return serializeClueToken('pack', ref)
         if (content.kind !== 'pack') {
-          throw new ClueError('invalid-request', `a ${content.kind} content reference cannot be serialized by the pack codec`)
+          throw new ClueError('invalid-request', copy.contentReferenceError('kind-mismatch'))
         }
         const projection = await projectPackContent(content, signal)
         throwIfAborted(signal)
