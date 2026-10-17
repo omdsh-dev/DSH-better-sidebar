@@ -17,7 +17,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import { existsSync, readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { relative, resolve } from 'node:path'
 import { CHUNK_NAMES } from '../src/bundle-route.ts'
 import { fileURLToPath } from 'node:url'
 
@@ -25,6 +25,8 @@ const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)))
 
 /** The build output is present (tsdown emits the whole lib/ in one run). */
 const libBuilt = existsSync(resolve(ROOT, 'lib/client.js'))
+/** The HOST bundle is present (its relative imports are staged-file requirements). */
+const hostBuilt = existsSync(resolve(ROOT, 'lib/index.js'))
 
 if (!libBuilt) {
   console.warn('[manifest-consistency] lib/ build output missing — run `pnpm build` first; skipping this suite')
@@ -106,6 +108,57 @@ function chunkSlot(file: string): string {
   if (match === null) throw new Error(`${file} assigns no globalThis.__dshChunks__ slot — run \`pnpm build\` first`)
   return match[1]!
 }
+
+/**
+ * The staging list of `scripts/package-registry.mjs`, as repo-relative POSIX
+ * paths. Read as source text because the script copies at module scope (it
+ * cannot be imported without performing the staging).
+ */
+function stagedRegistryFiles(): Set<string> {
+  const script = readFileSync(resolve(ROOT, 'scripts/package-registry.mjs'), 'utf8')
+  const start = script.indexOf('const files = [')
+  if (start < 0) throw new Error('scripts/package-registry.mjs declares no `const files = [` list')
+  const block = script.slice(start, script.indexOf(']', start))
+  // Entries are one quoted path per line. Matching line-anchored (instead of
+  // every quote pair in the block) keeps apostrophes inside the explanatory
+  // comments from being parsed as entries.
+  return new Set([...block.matchAll(/^\s*'([^']+)',?\s*$/gm)].map(match => match[1]!))
+}
+
+/**
+ * The staging-list half that does NOT need a build: the host bundle
+ * externalizes the shared ClueError class onto `./clues.js`, so a staging list
+ * without it produces an installed plugin that cannot even be imported. The
+ * build-dependent test below derives the full requirement from lib/index.js;
+ * this one keeps the guard active on a fresh clone (`pnpm test` before the
+ * first build).
+ */
+describe('registry staging list (static)', () => {
+  it('stages the externalized clue error module', () => {
+    expect(stagedRegistryFiles().has('lib/clues.js')).toBe(true)
+  })
+})
+
+describe.skipIf(!hostBuilt)('registry staging covers the host bundle imports', () => {
+  it('stages every relative import of lib/index.js (the installed copy must load)', () => {
+    const source = readFileSync(resolve(ROOT, 'lib/index.js'), 'utf8')
+    // The host bundle is ESM: `import … from "./x.js"`, `export … from`, and
+    // lazy `import("./x.js")` all become runtime module loads of the staged
+    // file. A path left out of the registry list is ERR_MODULE_NOT_FOUND in
+    // the installed plugin — exactly the bug this test was added for.
+    const specs = [...source.matchAll(/(?:from\s*|import\s*\()\s*["'](\.{1,2}\/[^"']+)["']/g)]
+      .map(match => match[1]!)
+    expect(specs, 'lib/index.js has no relative imports?').toContain('./clues.js')
+    const staged = stagedRegistryFiles()
+    for (const spec of new Set(specs)) {
+      const target = relative(ROOT, resolve(ROOT, 'lib', spec)).replaceAll('\\', '/')
+      expect(
+        staged.has(target),
+        `${target} (imported by lib/index.js as ${spec}) is not staged by scripts/package-registry.mjs`,
+      ).toBe(true)
+    }
+  })
+})
 
 describe.skipIf(!libBuilt)('registry manifest consistency (dsh.plugin.json)', () => {
   it('id is a valid two-segment registry id (native form)', () => {

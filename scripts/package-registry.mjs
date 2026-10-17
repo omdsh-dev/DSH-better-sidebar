@@ -26,6 +26,12 @@ const out = join(root, 'registry')
 const files = [
   'dsh.plugin.json',
   'lib/index.js',
+  // The host bundle externalizes the shared ClueError class onto `./clues.js`
+  // (see tsdown.config.ts): `lib/index.js` imports it at load time, so the
+  // registry channel MUST stage it too or the installed plugin dies with
+  // ERR_MODULE_NOT_FOUND. tests/manifest-consistency.spec.ts derives this
+  // requirement from lib/index.js's own relative imports.
+  'lib/clues.js',
   'lib/client-registry.js',
   'lib/client-registry.js.map',
   // Lazy chunks: the client fetches these from the host's /sidebar/bundle
