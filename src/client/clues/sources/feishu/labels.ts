@@ -14,6 +14,8 @@ export interface FeishuClientLabels {
   readonly markdown: string
   readonly revision: string
   readonly contentTruncated: string
+  readonly showFullContent: string
+  readonly showLess: string
   readonly limitedFragment: string
   readonly emptyContent: string
   readonly invalidDocument: string
@@ -52,7 +54,6 @@ export interface FeishuClientLabels {
   /** Task validation / time-editing copy. */
   readonly invalidTask: string
   readonly invalidTime: string
-  readonly clearingTimeUnsupported: string
   readonly genericValidation: string
 }
 
@@ -64,7 +65,9 @@ export const DEFAULT_FEISHU_LABELS: FeishuClientLabels = {
   xml: 'XML',
   markdown: 'Markdown',
   revision: 'Revision',
-  contentTruncated: 'Preview truncated; the full document is available through the source.',
+  contentTruncated: 'Preview limited to keep the window responsive.',
+  showFullContent: 'Show full content',
+  showLess: 'Show less',
   limitedFragment: 'This is one fragment of a longer document.',
   emptyContent: 'This document has no text content.',
   invalidDocument: 'This document payload could not be previewed.',
@@ -104,7 +107,6 @@ export const DEFAULT_FEISHU_LABELS: FeishuClientLabels = {
   markdownReadOnly: 'Markdown is a read-only projection of this document.',
   invalidTask: 'This task payload could not be previewed.',
   invalidTime: 'This time is not a valid instant.',
-  clearingTimeUnsupported: 'Clearing a time is not supported; choose a new time instead.',
   genericValidation: 'This value is not valid.',
 }
 

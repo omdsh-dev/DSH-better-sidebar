@@ -659,7 +659,22 @@ describe('docs editor', () => {
     const huge = 'x'.repeat(50_000)
     const truncated = renderFormat(face, FEISHU_FORMATS.docsXml, rendererProps(docsRead(huge)))
     expect(truncated).toContain(DEFAULT_FEISHU_LABELS.contentTruncated)
+    expect(truncated).toContain(DEFAULT_FEISHU_LABELS.showFullContent)
     expect(truncated.length).toBeLessThan(huge.length)
+  })
+
+  it('expands a performance-limited preview instead of claiming the full document is elsewhere', () => {
+    const face = new FakeFace()
+    registerFeishuSourceClient(face)
+    const huge = 'x'.repeat(50_000)
+    const mounted = mountFormat(face, FEISHU_FORMATS.docsXml, rendererProps(docsRead(huge)))
+    const pre = mounted.container.querySelector<HTMLElement>('[data-feishu-docs-content]')!
+    expect(pre.textContent).toHaveLength(40_000)
+    const button = mounted.container.querySelector<HTMLButtonElement>('[data-feishu-docs-expand]')!
+    act(() => { button.click() })
+    expect(pre.textContent).toHaveLength(50_000)
+    expect(button.textContent).toBe(DEFAULT_FEISHU_LABELS.showLess)
+    mounted.unmount()
   })
 })
 
@@ -843,6 +858,26 @@ describe('task editor interactions and a11y', () => {
     expect(markup).not.toContain('aria-label="Start All day"')
   })
 
+  it('keeps all-day dates date-only even when S9 supplies a date-time formatter', () => {
+    const face = new FakeFace()
+    registerFeishuSourceClient(face, {
+      formatDateTime: value => `formatted(${value})`,
+    })
+    const markup = renderFormat(face, FEISHU_FORMATS.taskDocument, rendererProps(
+      {
+        format: FEISHU_FORMATS.taskDocument,
+        data: taskDocument({
+          start: { timestamp: '1700000000000', isAllDay: true },
+          due: { timestamp: '1700003600000', isAllDay: false },
+        }) as unknown as JsonValue,
+      },
+      { readOnly: true, sourceId: FEISHU_SOURCE_IDS.tasks, typeId: FEISHU_TYPE_IDS.task },
+    ))
+    // All-day semantics win: the start date is not rendered as a date+time.
+    expect(markup).not.toContain('formatted(1700000000000)')
+    expect(markup).toContain('formatted(1700003600000)')
+  })
+
   it('emits the all-day flag instead of silently converting the time', () => {
     const face = new FakeFace()
     registerFeishuSourceClient(face)
@@ -859,7 +894,7 @@ describe('task editor interactions and a11y', () => {
     mounted.unmount()
   })
 
-  it('focuses the time input after Set time and explains a refused clear', () => {
+  it('focuses the time input after Set time and emits null when the user clears it', () => {
     const face = new FakeFace()
     registerFeishuSourceClient(face)
     const changes: JsonValue[] = []
@@ -886,9 +921,11 @@ describe('task editor interactions and a11y', () => {
     expect(input).toBeTruthy()
     expect(document.activeElement).toBe(input)
     act(() => { typeInto(input, '') })
-    expect(mounted.container.querySelector('[data-feishu-task-time-error="start"]')?.textContent)
-      .toBe(DEFAULT_FEISHU_LABELS.clearingTimeUnsupported)
-    expect(changes).toHaveLength(1) // only the Set time emission, not the refused clear
+    // Clearing a time is a real edit: the host names the field in
+    // update_fields and omits it from the native PATCH body.
+    expect((changes[1] as { start: unknown }).start).toBeNull()
+    expect(mounted.container.querySelector('[data-feishu-task-time-error="start"]')).toBeNull()
+    expect(changes).toHaveLength(2)
     mounted.unmount()
   })
 

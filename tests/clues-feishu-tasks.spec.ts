@@ -14,10 +14,12 @@
  *   number (`t104121` / `suite_entity_num`) is rejected for read and update;
  * - read returns title/description/start/due/completed/updatedAt/GUID; the
  *   start-due relation is validated locally BEFORE any write;
- * - edits submit only changed fields through one `task +update`; completion /
- *   reopen is a SEPARATE `+complete` / `+reopen` action; a field save refreshes
- *   the baseline with a best-effort read (the CLI documents no `updated_at` on
- *   `+update`) and omits the revision when no fresh one is confirmed;
+ * - edits submit only changed fields through native `task tasks patch` (the
+ *   returned `task` confirms each field and can express a cleared time);
+ *   completion / reopen is a SEPARATE `+complete` / `+reopen` action whose
+ *   success envelope carries the matching task GUID; a field save refreshes the
+ *   baseline with a best-effort read and omits the revision when no fresh one
+ *   is confirmed;
  * - conflicts are detected by a best-effort fresh read (never claimed as CAS),
  *   a partially applied save is reported as partial and never as success;
  * - portable exports contain the GUID + plain link only.
@@ -167,7 +169,8 @@ describe('task browsing and search', () => {
 
   it('uses task +search with the documented single-page flag and never an auto-paging shortcut', async () => {
     const runtime = new FakeLarkRuntime().enqueue(okResult({
-      tasks: [taskRecord({ summary: 'Release <hb>checklist</hb>' })],
+      // Real `task +search` 1.0.55 output: `{items, page_token, has_more}`.
+      items: [taskRecord({ summary: 'Release <hb>checklist</hb>' })],
       has_more: false,
     }))
     const { operations } = opsOf(runtime)
@@ -195,7 +198,7 @@ describe('task browsing and search', () => {
 
   it('passes the documented search filters and binds them into the cursor', async () => {
     const runtime = new FakeLarkRuntime().enqueue(okResult({
-      tasks: [taskRecord()], has_more: true, page_token: 'filtered-pt',
+      items: [taskRecord()], has_more: true, page_token: 'filtered-pt',
     }))
     const { operations } = opsOf(runtime)
     const page = await operations.search!(
@@ -484,20 +487,17 @@ describe('task save: changed fields, completion and partial success', () => {
     expect(runtime.requests).toHaveLength(0)
   })
 
-  it('submits ONLY the changed fields and refreshes the baseline after the update', async () => {
+  it('submits ONLY the changed fields through the native task PATCH and refreshes the baseline', async () => {
     const runtime = new FakeLarkRuntime()
       .enqueue(taskGet())
-      .enqueue(okResult({
-        updated_fields: ['summary', 'description'],
-        tasks: [{
-          guid: GUID,
-          updated_at: UPDATED_2,
-          confirmed: { summary: 'New title', description: 'New description' },
-        }],
+      // Native `task tasks patch` output: the updated task under data.task.
+      .enqueue(taskGet({
+        summary: 'New title',
+        description: 'New description',
+        updated_at: UPDATED_2,
       }))
-      // `task +update` documents no updated_at; the source re-reads the task so
-      // the NEXT save compares against a fresh baseline instead of a false
-      // conflict.
+      // The native PATCH returns a task but the source still re-reads for the
+      // NEXT save's baseline, so a returned stamp cannot mask a stale one.
       .enqueue(taskGet({ summary: 'New title', description: 'New description', updated_at: UPDATED_2 }))
     const { operations } = opsOf(runtime)
     const result = await operations.saveEdit!(
@@ -508,21 +508,22 @@ describe('task save: changed fields, completion and partial success', () => {
     expect(runtime.requests).toHaveLength(3)
     expect(runtime.requests[0]!.args.slice(0, 2)).toEqual(['task', 'tasks'])
     const updateArgs = runtime.requests[1]!.args
-    expect(updateArgs.slice(0, 4)).toEqual(['task', '+update', '--task-id', GUID])
-    const payload = JSON.parse(updateArgs[5]!) as Record<string, JsonValue>
-    expect(payload).toEqual({ summary: 'New title', description: 'New description' })
+    expect(updateArgs.slice(0, 4)).toEqual(['task', 'tasks', 'patch', '--task-guid'])
+    expect(updateArgs[4]).toBe(GUID)
+    const payload = JSON.parse(updateArgs[6]!) as Record<string, JsonValue>
+    expect(payload).toEqual({
+      task: { summary: 'New title', description: 'New description' },
+      update_fields: ['summary', 'description'],
+    })
     expect(updateArgs).not.toContain('--page-all')
     expect(runtime.requests[2]!.args.slice(0, 3)).toEqual(['task', 'tasks', 'get'])
     expect(result.revision).toBe(UPDATED_2)
   })
 
-  it('gets a fresh revision even when the update confirmation carries no updated_at', async () => {
+  it('gets a fresh revision when the updated task carries no updated_at', async () => {
     const runtime = new FakeLarkRuntime()
       .enqueue(taskGet())
-      .enqueue(okResult({
-        updated_fields: ['summary'],
-        tasks: [{ guid: GUID, confirmed: { summary: 'No stamp' } }],
-      }))
+      .enqueue(okResult({ task: { guid: GUID, summary: 'No stamp' } }))
       .enqueue(taskGet({ summary: 'No stamp', updated_at: '1700002222000' }))
     const { operations } = opsOf(runtime)
     const result = await operations.saveEdit!(
@@ -536,10 +537,7 @@ describe('task save: changed fields, completion and partial success', () => {
   it('omits the revision when neither the update nor a fresh read confirms it', async () => {
     const runtime = new FakeLarkRuntime()
       .enqueue(taskGet())
-      .enqueue(okResult({
-        updated_fields: ['summary'],
-        tasks: [{ guid: GUID, confirmed: { summary: 'No stamp' } }],
-      }))
+      .enqueue(okResult({ task: { guid: GUID, summary: 'No stamp' } }))
     const { operations } = opsOf(runtime)
     const result = await operations.saveEdit!(
       saveInput(editedDocument({ title: 'No stamp' })),
@@ -553,13 +551,10 @@ describe('task save: changed fields, completion and partial success', () => {
   it('submits a changed due time alone, preserving all-day semantics', async () => {
     const runtime = new FakeLarkRuntime()
       .enqueue(taskGet({ start: null }))
-      .enqueue(okResult({
-        updated_fields: ['due'],
-        tasks: [{
-          guid: GUID,
-          updated_at: UPDATED_2,
-          confirmed: { due: { timestamp: '1700007200000', is_all_day: true } },
-        }],
+      .enqueue(taskGet({
+        start: null,
+        due: { timestamp: '1700007200000', is_all_day: true },
+        updated_at: UPDATED_2,
       }))
       .enqueue(taskGet({
         start: null,
@@ -571,8 +566,11 @@ describe('task save: changed fields, completion and partial success', () => {
       saveInput(editedDocument({ start: null, due: { timestamp: '1700007200000', isAllDay: true } })),
       context(),
     )
-    const payload = JSON.parse(runtime.requests[1]!.args[5]!) as Record<string, JsonValue>
-    expect(payload).toEqual({ due: { timestamp: '1700007200000', is_all_day: true } })
+    const payload = JSON.parse(runtime.requests[1]!.args[6]!) as Record<string, JsonValue>
+    expect(payload).toEqual({
+      task: { due: { timestamp: '1700007200000', is_all_day: true } },
+      update_fields: ['due'],
+    })
   })
 
   it('returns conflict when the fresh read no longer matches the loaded baseline', async () => {
@@ -588,7 +586,9 @@ describe('task save: changed fields, completion and partial success', () => {
   it('sends completion as a separate +complete action, with no field PATCH', async () => {
     const runtime = new FakeLarkRuntime()
       .enqueue(taskGet())
-      .enqueue(okResult({ status: 'done', completed_at: '1700009999000', already_completed: false }))
+      // Real 1.0.55 `+complete` write output: resource identifiers only. It
+      // does not echo status/completed_at/already_completed.
+      .enqueue(okResult({ guid: GUID, url: URL }))
       .enqueue(taskGet({ updated_at: UPDATED_2 }))
     const { operations } = opsOf(runtime)
     const result = await operations.saveEdit!(
@@ -599,7 +599,7 @@ describe('task save: changed fields, completion and partial success', () => {
     expect(runtime.requests[1]!.args).toEqual([
       'task', '+complete', '--task-id', GUID, '--as', 'user', '--format', 'json',
     ])
-    // The completion PATCH changes updated_at; the source re-reads it so the
+    // The completion action changes updated_at; the source re-reads it so the
     // NEXT save compares against a fresh baseline instead of a guaranteed conflict.
     expect(result.revision).toBe(UPDATED_2)
   })
@@ -607,20 +607,20 @@ describe('task save: changed fields, completion and partial success', () => {
   it('treats an already-completed idempotent result as success', async () => {
     const runtime = new FakeLarkRuntime()
       .enqueue(taskGet())
-      .enqueue(okResult({ status: 'done', already_completed: true, updated_at: UPDATED_2 }))
+      // `+complete` skips its PATCH when the task is already completed and
+      // still returns the same `{guid,url}` write output.
+      .enqueue(okResult({ guid: GUID, url: URL }))
+      .enqueue(taskGet({ status: 'done', completed_at: '1700009999000', updated_at: UPDATED_2 }))
     const { operations } = opsOf(runtime)
     await expect(operations.saveEdit!(saveInput(editedDocument({ completed: true })), context()))
       .resolves.toMatchObject({ revision: UPDATED_2 })
-    // The completion answer carried updated_at, so no extra read is needed.
-    expect(runtime.requests).toHaveLength(2)
+    expect(runtime.requests).toHaveLength(3)
   })
 
-  it('reopens a completed task with +reopen and trusts a success envelope that echoes the old object', async () => {
+  it('reopens a completed task with +reopen and confirms the task GUID', async () => {
     const runtime = new FakeLarkRuntime()
       .enqueue(taskGet({ status: 'done', completed_at: '1700009999000' }))
-      // The CLI documents only “report success”; it may echo the pre-reopen
-      // object. The envelope + exit 0 is the confirmation, not that echo.
-      .enqueue(okResult({ status: 'done', completed_at: '1700009999000' }))
+      .enqueue(okResult({ guid: GUID, url: URL }))
       .enqueue(taskGet({ status: 'todo', updated_at: UPDATED_2 }))
     const { operations } = opsOf(runtime)
     await operations.saveEdit!(saveInput(editedDocument({ completed: false })), context())
@@ -630,13 +630,20 @@ describe('task save: changed fields, completion and partial success', () => {
     expect(runtime.requests).toHaveLength(3)
   })
 
+  it('rejects a completion answer that does not identify the task', async () => {
+    const runtime = new FakeLarkRuntime()
+      .enqueue(taskGet())
+      .enqueue(okResult({ url: URL }))
+    const { operations } = opsOf(runtime)
+    await expect(operations.saveEdit!(saveInput(editedDocument({ completed: true })), context()))
+      .rejects.toMatchObject({ category: 'failed' })
+    expect(runtime.requests).toHaveLength(2)
+  })
+
   it('reports partial success when fields were saved but completion failed', async () => {
     const runtime = new FakeLarkRuntime()
       .enqueue(taskGet())
-      .enqueue(okResult({
-        updated_fields: ['summary'],
-        tasks: [{ guid: GUID, updated_at: UPDATED_2, confirmed: { summary: 'New title' } }],
-      }))
+      .enqueue(taskGet({ summary: 'New title', updated_at: UPDATED_2 }))
       .enqueue(failResult({ type: 'rate_limit', subtype: 'too_many_requests', code: 429 }))
     const { operations } = opsOf(runtime)
     let failure: unknown
@@ -667,14 +674,32 @@ describe('task save: changed fields, completion and partial success', () => {
     expect(runtime.requests).toHaveLength(2)
   })
 
-  it('refuses to clear a previously set time instead of inventing a deletion', async () => {
-    const runtime = new FakeLarkRuntime().enqueue(taskGet())
+  it('rejects a returned task that does not confirm the changed field', async () => {
+    const runtime = new FakeLarkRuntime()
+      .enqueue(taskGet())
+      .enqueue(taskGet({ summary: 'Some other title' }))
     const { operations } = opsOf(runtime)
-    await expect(operations.saveEdit!(
+    await expect(operations.saveEdit!(saveInput(editedDocument({ title: 'New title' })), context()))
+      .rejects.toMatchObject({ category: 'failed', message: expect.stringMatching(/summary/) })
+    expect(runtime.requests).toHaveLength(2)
+  })
+
+  it('clears a previously set time by naming it in update_fields and omitting it from task', async () => {
+    const runtime = new FakeLarkRuntime()
+      .enqueue(taskGet())
+      // The API clears a field when update_fields names it but task leaves it
+      // out. This is exactly what the `+update` shortcut's --data path cannot
+      // express, which is why the save uses the native PATCH.
+      .enqueue(taskGet({ due: null, updated_at: UPDATED_2 }))
+      .enqueue(taskGet({ due: null, updated_at: UPDATED_2 }))
+    const { operations } = opsOf(runtime)
+    const result = await operations.saveEdit!(
       saveInput(editedDocument({ due: null })),
       context(),
-    )).rejects.toMatchObject({ category: 'invalid-request' })
-    expect(runtime.requests).toHaveLength(1)
+    )
+    const payload = JSON.parse(runtime.requests[1]!.args[6]!) as Record<string, JsonValue>
+    expect(payload).toEqual({ task: {}, update_fields: ['due'] })
+    expect(result.revision).toBe(UPDATED_2)
   })
 
   it('performs no write when nothing changed', async () => {

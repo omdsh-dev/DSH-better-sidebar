@@ -509,13 +509,64 @@ function outerXml(tag: string, attrs: string, inner: string): string {
   return `<${tag}${suffix}>${inner}</${tag}>`
 }
 
-/** Serialize one edited block to the `block_replace --content` payload. */
+/**
+ * Whether every `&` in a text node starts a valid XML entity.
+ *
+ * The block scanner is structural and deliberately does not reject a bare
+ * `&`; a document payload must not, so this is checked separately. Only the
+ * five predefined XML entities and numeric character references are accepted.
+ */
+function hasValidEntities(text: string): boolean {
+  let index = 0
+  while ((index = text.indexOf('&', index)) >= 0) {
+    const match = /^&(?:amp|lt|gt|quot|apos|#\d+|#x[0-9a-fA-F]+);/.exec(text.slice(index))
+    if (match === null) return false
+    index += match[0].length
+  }
+  return true
+}
+
+/**
+ * Whether one block's inner text is already well-formed XML.
+ *
+ * The editor's textarea holds INNER XML so inline styles survive an edit. A
+ * user who types plain text (`A & B`, `a < b`, an unclosed tag) must not send
+ * malformed XML to the CLI. Such input is treated as literal text and escaped
+ * by {@link normalizeDocBlockInner}; only a genuinely well-formed fragment is
+ * preserved as markup.
+ */
+export function isWellFormedXmlFragment(text: string): boolean {
+  if (text.includes('\u0000') || !hasValidEntities(text)) return false
+  const synthetic = `<root>${text}</root>`
+  const element = elementAt(synthetic, 0)
+  return element !== undefined && element.end === synthetic.length
+}
+
+/**
+ * The safe inner XML of one edited block.
+ *
+ * `plain` blocks (title/code) are always escaped. XML blocks keep their inline
+ * markup when the edited text is a well-formed fragment; otherwise the whole
+ * text is escaped, so `A & B` becomes `A &amp; B` instead of invalid markup.
+ */
+export function normalizeDocBlockInner(block: FeishuDocEditBlock, text: string): string {
+  if (block.kind === 'plain') return escapeXmlText(text)
+  return isWellFormedXmlFragment(text) ? text : escapeXmlText(text)
+}
+
+/**
+ * Serialize one edited block to the `block_replace --content` payload.
+ *
+ * A list item is serialized as a bare `<li>` because `block_replace` targets
+ * ONE existing block (the list group is not targetable). The XML skill's
+ * "new list items must be wrapped in `<ul>/<ol>`" rule applies to insertion,
+ * which this source never performs.
+ */
 export function buildDocBlockXml(block: FeishuDocEditBlock, text: string): string {
   if (block.tag === 'pre') {
     return outerXml('pre', block.attrs, `<code>${escapeXmlText(text)}</code>`)
   }
-  const inner = block.kind === 'plain' ? escapeXmlText(text) : text
-  return outerXml(block.tag, block.attrs, inner)
+  return outerXml(block.tag, block.attrs, normalizeDocBlockInner(block, text))
 }
 
 /** Serialize the edited document title. */

@@ -30,11 +30,15 @@
  *   cancel verb, so no CLI command is fabricated; the code expires on the
  *   server and the next connect starts a fresh flow.
  *
- * Configuration caveat: lark-cli's own application setup (`config init`) is an
- * interactive TTY flow that blocks until the user acts. The plugin cannot
- * drive a TTY safely from a request handler, so the "configure" step surfaces
- * that exact instruction instead of collecting an appSecret or spawning an
- * interactive process. Re-running it is always an explicit user choice.
+ * Configuration caveat: lark-cli's own application setup (`config init --new`)
+ * prints a verification URL and then BLOCKS until the browser flow finishes.
+ * The S2 runtime exposes only a buffered run-to-exit call (`runCli` returns
+ * stdout after the child exits), so the adapter cannot stream that URL back to
+ * the settings row, and killing the process at a timeout would abort the
+ * configuration it started. Driving this in-app needs an S2 long-lived-process
+ * seam; until then the "configure" step surfaces the CLI's own instruction
+ * instead of collecting an appSecret or spawning a blind background process.
+ * Re-running it is always an explicit user choice.
  */
 import type { ConnectionConnectStart, ConnectionInspection, ConnectionPollResult } from '../../runtime/types.ts'
 import type {
@@ -524,9 +528,11 @@ export function feishuConnectionDefinition(getRuntime: () => ClueRuntime): ClueC
     async connect(_input, context) {
       // `connect` is also the runtime's "configure" action. Check the
       // configuration with the read-only status verb FIRST: an unconfigured
-      // app must surface the terminal `config init` instruction without
+      // app must surface the CLI's `config init --new` instruction without
       // launching a login it cannot complete. `auth status` is not a probe with
-      // side effects and this runs only for an explicit user action.
+      // side effects and this runs only for an explicit user action. The
+      // blocking config flow itself is an S2 runtime extension (see the module
+      // comment); this adapter does not fake it.
       const status = await executeLark({
         runtime: runtime(),
         bareSuccess: true,
@@ -588,4 +594,3 @@ export function feishuConnectionDefinition(getRuntime: () => ClueRuntime): ClueC
     },
   }
 }
-

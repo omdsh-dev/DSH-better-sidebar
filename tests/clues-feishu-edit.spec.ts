@@ -81,6 +81,32 @@ describe('Docx edit XML parser', () => {
       .toBe('<title align="center">Renamed</title>')
   })
 
+  it('escapes plain user text but keeps a well-formed inline fragment', () => {
+    const parsed = parseDocEditXml(XML)
+    const paragraph = parsed.blocks[0]!
+    // A normal paragraph is kind=xml so inline styles survive. Plain text the
+    // user types must not become malformed XML (`&`, `<`, unclosed tags).
+    expect(buildDocBlockXml(paragraph, 'A & B'))
+      .toBe('<p align="left">A &amp; B</p>')
+    expect(buildDocBlockXml(paragraph, 'a < b'))
+      .toBe('<p align="left">a &lt; b</p>')
+    expect(buildDocBlockXml(paragraph, '<b>bold</b> &amp; more'))
+      .toBe('<p align="left"><b>bold</b> &amp; more</p>')
+    // An unknown named entity is not valid DocxXML; escaping it keeps the
+    // literal text instead of sending an invalid entity.
+    expect(buildDocBlockXml(paragraph, 'a&nbsp;b'))
+      .toBe('<p align="left">a&amp;nbsp;b</p>')
+  })
+
+  it('serializes a changed list item as one bare <li> block_replace payload', () => {
+    const parsed = parseDocEditXml(XML)
+    const item = parsed.blocks[1]!
+    // block_replace targets one existing block; the group is not targetable.
+    // Wrapping the replacement in <ul> would replace the item with a new list.
+    expect(buildDocBlockXml(item, 'Changed & safe'))
+      .toBe('<li seq="auto">Changed &amp; safe</li>')
+  })
+
   it('never mistakes an id-looking attribute value for the block id', () => {
     const xml = [
       '<pre id="blk-real" lang="ts" caption="note id=\'blk-evil\'  keep  spacing"><code>x</code></pre>',

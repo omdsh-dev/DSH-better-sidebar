@@ -58,16 +58,17 @@ export const DOCS_EDIT_SCOPE_NOTE =
   + 'Markdown is a read-only projection and never a save input.'
 
 /**
- * Backwards-compatible name of {@link DOCS_EDIT_SCOPE_NOTE}.
- * @deprecated The docs source is editable; this is no longer a source-level
- * "read-only" limitation, only a per-block scope note.
+ * The fixed detail shown when the lark-cli application configuration is missing.
+ *
+ * The pinned CLI's `config init --new` blocks until the browser flow finishes
+ * and prints a verification URL before blocking. The S2 CLI runtime exposes only
+ * a buffered run-to-exit call, so this adapter cannot stream that URL back to
+ * the settings row; the explicit action stays the CLI's own flow in a terminal
+ * (the user runs `config init --new`, opens the URL, and returns here).
  */
-export const DOCS_EDIT_LIMITATION = DOCS_EDIT_SCOPE_NOTE
-
-/** The fixed detail shown when the lark-cli application configuration is missing. */
 export const FEISHU_CONFIGURATION_DETAIL =
-  'The lark-cli application is not configured. Run `lark-cli config init` in a terminal '
-  + '(lark-cli drives its own interactive flow), then check the connection again.'
+  'The lark-cli application is not configured. Run `lark-cli config init --new` in a terminal '
+  + '(lark-cli blocks on its own browser flow), then check the connection again.'
 
 /** The CLI dependency / shared connection ids fixed by the S4 contract. */
 export const FEISHU_DEPENDENCY_ID = 'lark.cli'
@@ -177,8 +178,6 @@ export type FeishuDocReadData = {
   readonly objType?: string
   readonly sourceUrl?: string
   readonly revisionId?: string
-  /** Structured reference sidecar returned WITH the content by `docs +fetch --detail full`. */
-  readonly referenceMap?: JsonValue
   /**
    * Present when `content` is one window of a longer document: `blocks` means
    * only complete top-level XML blocks were included, `bytes` means the window
@@ -225,8 +224,6 @@ export interface FeishuDocEditData {
   readonly objType?: string
   readonly sourceUrl?: string
   readonly revisionId?: string
-  /** Reference sidecar of the SAME `--detail full` response as the content. */
-  readonly referenceMap?: JsonValue
   readonly title: string
   /** The title exactly as loaded; a save compares against this baseline. */
   readonly baselineTitle: string
@@ -425,7 +422,6 @@ export function parseDocReadData(value: JsonValue): FeishuDocReadData | undefine
     ...(stringOf(value.objType) === undefined ? {} : { objType: stringOf(value.objType) }),
     ...(stringOf(value.sourceUrl) === undefined ? {} : { sourceUrl: stringOf(value.sourceUrl) }),
     ...(value.revisionId === undefined ? {} : { revisionId: String(value.revisionId) }),
-    ...(value.referenceMap === undefined ? {} : { referenceMap: value.referenceMap }),
     ...(fragment === undefined ? {} : { fragment }),
   }
 }
@@ -500,7 +496,6 @@ export function parseDocEditData(value: JsonValue): FeishuDocEditData | undefine
     ...(stringOf(value.objType) === undefined ? {} : { objType: stringOf(value.objType) }),
     ...(stringOf(value.sourceUrl) === undefined ? {} : { sourceUrl: stringOf(value.sourceUrl) }),
     ...(value.revisionId === undefined ? {} : { revisionId: String(value.revisionId) }),
-    ...(value.referenceMap === undefined ? {} : { referenceMap: value.referenceMap }),
     title,
     baselineTitle,
     titleEditable: value.titleEditable === true,
@@ -549,32 +544,24 @@ export function taskTimePayload(time: FeishuTaskTime): Record<string, JsonValue>
   return { timestamp: time.timestamp, is_all_day: time.isAllDay }
 }
 
-/** The fields an update may carry; only changed ones are ever sent. */
+/**
+ * The `task.tasks.patch` body of one update.
+ *
+ * `task` carries only the changed values; `updateFields` lists every changed
+ * name. A time the user CLEARED is listed in `updateFields` but omitted from
+ * `task` — that is the API's documented way to clear a field. It is also why
+ * this cannot use the `task +update` shortcut's `--data`: that shortcut treats
+ * every key in `--data` as an update field and cannot express a field that is
+ * named but absent.
+ */
 export interface FeishuTaskUpdatePayload {
-  readonly summary?: string
-  readonly description?: string
-  readonly start?: Record<string, JsonValue>
-  readonly due?: Record<string, JsonValue>
-}
-
-/** Same JSON value (order-insensitive for plain objects). */
-function sameJson(left: JsonValue | undefined, right: JsonValue | undefined): boolean {
-  if (left === right) return true
-  if (left === undefined || right === undefined) return false
-  if (typeof left !== typeof right) return false
-  if (left === null || right === null) return false
-  if (Array.isArray(left) || Array.isArray(right)) {
-    if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false
-    return left.every((item, index) => sameJson(item, right[index]))
+  readonly task: {
+    readonly summary?: string
+    readonly description?: string
+    readonly start?: Record<string, JsonValue>
+    readonly due?: Record<string, JsonValue>
   }
-  if (typeof left === 'object' && typeof right === 'object') {
-    const leftKeys = Object.keys(left).sort()
-    const rightKeys = Object.keys(right).sort()
-    if (leftKeys.length !== rightKeys.length) return false
-    return leftKeys.every((key, index) =>
-      key === rightKeys[index] && sameJson((left as Record<string, JsonValue>)[key], (right as Record<string, JsonValue>)[key]))
-  }
-  return false
+  readonly updateFields: readonly string[]
 }
 
 /** Time payload equality, including the all-day flag. */
@@ -583,52 +570,80 @@ function sameTime(left: FeishuTaskTime | null, right: FeishuTaskTime | null): bo
   return left.timestamp === right.timestamp && left.isAllDay === right.isAllDay
 }
 
-/**
- * Build the update payload for the fields the user actually changed.
- * @param current - the freshly re-read server task (baseline).
- * @param edited - the submitted document.
- * @throws {Error} when a previously set time is cleared (unsupported here).
- */
+/** Build the update body for the fields the user actually changed. */
 export function taskUpdatePayload(
   current: FeishuTaskDocumentData,
   edited: FeishuTaskDocumentData,
 ): FeishuTaskUpdatePayload {
   const summary = edited.title.trim()
-  const changedSummary = summary !== current.title.trim() ? summary : undefined
-  const changedDescription = edited.description !== current.description ? edited.description : undefined
-  if (current.start !== null && edited.start === null) {
-    throw new Error('clearing a start time is not supported')
+  const fields: string[] = []
+  const task: {
+    summary?: string
+    description?: string
+    start?: Record<string, JsonValue>
+    due?: Record<string, JsonValue>
+  } = {}
+  if (summary !== current.title.trim()) {
+    task.summary = summary
+    fields.push('summary')
   }
-  if (current.due !== null && edited.due === null) {
-    throw new Error('clearing a due time is not supported')
+  if (edited.description !== current.description) {
+    task.description = edited.description
+    fields.push('description')
   }
-  const changedStart = !sameTime(current.start, edited.start) && edited.start !== null
-    ? taskTimePayload(edited.start)
-    : undefined
-  const changedDue = !sameTime(current.due, edited.due) && edited.due !== null
-    ? taskTimePayload(edited.due)
-    : undefined
-  return {
-    ...(changedSummary === undefined ? {} : { summary: changedSummary }),
-    ...(changedDescription === undefined ? {} : { description: changedDescription }),
-    ...(changedStart === undefined ? {} : { start: changedStart }),
-    ...(changedDue === undefined ? {} : { due: changedDue }),
+  if (!sameTime(current.start, edited.start)) {
+    fields.push('start')
+    // A cleared time is named in update_fields but leaves no `task` value.
+    if (edited.start !== null) task.start = taskTimePayload(edited.start)
   }
+  if (!sameTime(current.due, edited.due)) {
+    fields.push('due')
+    if (edited.due !== null) task.due = taskTimePayload(edited.due)
+  }
+  return { task, updateFields: fields }
 }
 
 /** The changed API field names of one update payload (ordered). */
 export function taskUpdateFields(payload: FeishuTaskUpdatePayload): string[] {
-  const fields: string[] = []
-  if (payload.summary !== undefined) fields.push('summary')
-  if (payload.description !== undefined) fields.push('description')
-  if (payload.start !== undefined) fields.push('start')
-  if (payload.due !== undefined) fields.push('due')
-  return fields
+  return [...payload.updateFields]
 }
 
-/** Whether one payload field is confirmed by the CLI's `confirmed` object. */
-export function taskFieldConfirmed(payload: FeishuTaskUpdatePayload, field: string, confirmed: JsonValue): boolean {
-  if (!isRecord(confirmed)) return false
-  const expected = (payload as Record<string, JsonValue | undefined>)[field]
-  return sameJson(expected, confirmed[field])
+/** Read one expected `{timestamp,is_all_day}` payload as a task time. */
+function expectedTimeOf(value: JsonValue | undefined): FeishuTaskTime | null | undefined {
+  if (value === undefined) return null
+  if (!isRecord(value)) return undefined
+  const timestamp = millisOf(value.timestamp)
+  if (timestamp === undefined) return undefined
+  return { timestamp: String(timestamp), isAllDay: value.is_all_day === true }
+}
+
+/**
+ * Check the task object the native PATCH returned against every changed field.
+ * The native command returns `{task}`; that object is the server confirmation,
+ * so a missing/mismatched field is never reported as success.
+ * @returns the first field the answer did not confirm, or undefined when all match.
+ */
+export function taskUpdateUnconfirmedField(
+  payload: FeishuTaskUpdatePayload,
+  returned: FeishuTaskDocumentData,
+): string | undefined {
+  for (const field of payload.updateFields) {
+    if (field === 'summary') {
+      if (returned.title.trim() !== payload.task.summary) return field
+      continue
+    }
+    if (field === 'description') {
+      if (returned.description !== payload.task.description) return field
+      continue
+    }
+    if (field === 'start' || field === 'due') {
+      const expected = expectedTimeOf(payload.task[field])
+      if (expected === undefined || !sameTime(expected, field === 'start' ? returned.start : returned.due)) {
+        return field
+      }
+      continue
+    }
+    return field
+  }
+  return undefined
 }

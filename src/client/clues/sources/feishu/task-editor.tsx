@@ -4,6 +4,9 @@
  * The renderer is a CONTROLLED form: every keystroke emits the source-owned
  * document through `onChange`; saving stays with the host (`onSave`), which
  * routes to the source's `saveEdit`. The form never calls the CLI itself.
+ * When `onSave` is supplied this renderer owns the ONE Save control (the S6
+ * host forwards the callback but renders no action button); S9 must not add a
+ * second save action for the same document.
  *
  * Local rules mirrored from the host save path (`validateTaskDocument`):
  * - a non-empty title;
@@ -77,8 +80,11 @@ function displayTime(
   formatDateTime: ((value: string) => string) | undefined,
 ): string {
   if (time === null) return labels.noTime
+  // All-day semantics win over the generic formatter: an all-day date must not
+  // be rendered as a date+time just because S9 supplied a date-time formatter.
+  if (time.isAllDay) return appDate(time.timestamp)
   if (formatDateTime !== undefined) return formatDateTime(time.timestamp)
-  return time.isAllDay ? appDate(time.timestamp) : appDateTime(time.timestamp)
+  return appDateTime(time.timestamp)
 }
 
 /** The static read-only task view (a preview read is read-only by definition). */
@@ -136,7 +142,7 @@ function TimeField(props: {
   readonly labels: FeishuClientLabels
   readonly error?: string
   readonly disabled: boolean
-  onChange(time: FeishuTaskTime): void
+  onChange(time: FeishuTaskTime | null): void
 }): ReactNode {
   const { id, field, label, time, labels, error, disabled, onChange } = props
   const inputRef = useRef<HTMLInputElement>(null)
@@ -183,9 +189,10 @@ function TimeField(props: {
           aria-describedby={shownError === undefined ? undefined : errorId}
           onChange={(event) => {
             if (event.target.value === '') {
-              // The CLI has no documented “clear time” update; keeping the old
-              // value and explaining why is safer than a silent no-op.
-              setClearError(labels.clearingTimeUnsupported)
+              // Clearing an input emits no time; the host names the field in
+              // `update_fields` and omits it from the native PATCH body.
+              setClearError(undefined)
+              onChange(null)
               return
             }
             setClearError(undefined)

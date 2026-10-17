@@ -13,10 +13,13 @@
  *   search filter, so a tasklist search is rejected instead of silently
  *   widening to the global corpus;
  * - read: `task tasks get` by GUID;
- * - edit: `task +update` with ONLY the changed fields, then completion/reopen
- *   as a SEPARATE `task +complete` / `task +reopen` call. `+update` documents
- *   no `updated_at`, so a field save does a best-effort fresh read for the next
- *   baseline (never a CAS claim).
+ * - edit: native `task tasks patch` with ONLY the changed fields, then
+ *   completion/reopen as a SEPARATE `task +complete` / `task +reopen` call.
+ *   The native PATCH returns the updated task, which confirms each changed
+ *   field and can express clearing a time (`update_fields` names it while
+ *   `task` omits it); the `+update` shortcut cannot express that clear and
+ *   returns only `{guid,url}`. A field save still does a best-effort fresh read
+ *   for the next baseline (never a CAS claim).
  *
  * The auto-paginating shortcuts (`+get-my-tasks` / `+get-related-tasks`) and
  * `--page-all` are never used: they silently loop up to 20–40 pages, which the
@@ -58,20 +61,18 @@ import {
   FEISHU_SOURCE_IDS,
   FEISHU_TYPE_IDS,
   isRecord,
-  millisOf,
   parseTaskDocument,
   stringOf,
   stripHighlight,
-  taskFieldConfirmed,
   taskText,
   taskUpdateFields,
   taskUpdatePayload,
+  taskUpdateUnconfirmedField,
   validateTaskDocument,
   type FeishuTaskDocumentData,
   type FeishuTaskUpdatePayload,
 } from './format.ts'
 import {
-  arrayField,
   larkWorkingDirectory,
   stringField,
   type LarkSuccess,
@@ -230,17 +231,14 @@ function pageOf(success: LarkSuccess, signature: string): { readonly nextCursor?
 /**
  * The rows of one task list/search answer.
  *
- * Native `task tasks list` / `tasklists tasks` return `items`; the `+search`
- * shortcut's exact key is not documented, so search accepts `tasks` or
- * `items` — but one of them must exist. A success envelope without a row
- * array is a malformed answer, never a complete empty page.
- * @param keys - accepted row array keys, in priority order.
+ * lark-cli 1.0.55 returns `items` for native `task tasks list`,
+ * `tasklists tasks` AND `task +search` (the shortcut's Go source builds
+ * `{items, page_token, has_more}`). A success envelope without that array is a
+ * malformed answer, never a complete empty page.
  */
-function taskRows(success: LarkSuccess, keys: readonly string[]): JsonValue[] {
-  for (const key of keys) {
-    const value = success.data[key]
-    if (Array.isArray(value)) return value
-  }
+function taskRows(success: LarkSuccess): JsonValue[] {
+  const value = success.data.items
+  if (Array.isArray(value)) return value
   throw new ClueError('failed', 'lark-cli returned no task list in its success payload')
 }
 
@@ -304,56 +302,59 @@ async function readTask(
   return document
 }
 
-/** The confirmation view of one `task +update` answer. */
+/**
+ * The confirmation view of one native `task.tasks.patch` answer.
+ *
+ * The pinned 1.0.55 native command returns the full updated task under
+ * `data.task`; unlike the `task +update` shortcut it does not return
+ * `updated_fields`/`confirmed` (those fields do not exist in this CLI
+ * version). The returned task is the server confirmation.
+ */
 interface UpdateConfirmation {
-  readonly updatedFields?: readonly JsonValue[]
-  readonly confirmed?: JsonValue
+  readonly task?: FeishuTaskDocumentData
   readonly updatedAt?: string
 }
 
 /** Parse the server confirmation of an update (never assume success from the envelope). */
-function updateConfirmationOf(success: LarkSuccess): UpdateConfirmation {
-  const updatedFields = arrayField(success.data, 'updated_fields')
-  const tasks = arrayField(success.data, 'tasks')
-  const firstTask = tasks === undefined || tasks.length === 0 ? undefined : tasks[0]
-  const taskRecord = isRecord(firstTask) ? firstTask : undefined
-  const confirmed = taskRecord?.confirmed ?? success.data.confirmed
-  return {
-    ...(updatedFields === undefined ? {} : { updatedFields }),
-    ...(confirmed === undefined ? {} : { confirmed }),
-    ...(taskRecord?.updated_at === undefined ? {} : { updatedAt: String(taskRecord.updated_at) }),
+function updateConfirmationOf(success: LarkSuccess, guid: string): UpdateConfirmation {
+  const taskRecord = isRecord(success.data.task) ? success.data.task : undefined
+  if (taskRecord === undefined) {
+    throw new ClueError('failed', 'the task update was not confirmed by the server')
   }
+  const task = parseTaskDocument(taskRecord)
+  if (task === undefined || task.guid !== guid) {
+    throw new ClueError('failed', 'the task update was not confirmed by the server')
+  }
+  return { task, ...(task.updatedAt === undefined ? {} : { updatedAt: task.updatedAt }) }
 }
 
 /**
- * Verify the CLI actually confirmed every changed field.
- * @throws {ClueError} `failed` when the server did not confirm thewrite.
+ * Verify the returned task confirms every changed field.
+ * @throws {ClueError} `failed` when a changed field is missing or different.
  */
 function requireUpdateConfirmation(
   confirmation: UpdateConfirmation,
   payload: FeishuTaskUpdatePayload,
-  fields: readonly string[],
 ): void {
-  if (confirmation.updatedFields === undefined && confirmation.confirmed === undefined) {
+  if (confirmation.task === undefined) {
     throw new ClueError('failed', 'the task update was not confirmed by the server')
   }
-  if (confirmation.updatedFields !== undefined) {
-    for (const field of fields) {
-      if (!confirmation.updatedFields.includes(field)) {
-        throw new ClueError('failed', `the task update did not confirm the changed field "${field}"`)
-      }
-    }
-  }
-  if (confirmation.confirmed !== undefined) {
-    for (const field of fields) {
-      if (!taskFieldConfirmed(payload, field, confirmation.confirmed)) {
-        throw new ClueError('failed', `the task update did not confirm the changed field "${field}"`)
-      }
-    }
+  const field = taskUpdateUnconfirmedField(payload, confirmation.task)
+  if (field !== undefined) {
+    throw new ClueError('failed', `the task update did not confirm the changed field "${field}"`)
   }
 }
 
-/** Submit the completion state as its own action. */
+/**
+ * Submit the completion state as its own `+complete` / `+reopen` action.
+ *
+ * lark-cli 1.0.55 returns only `{guid, url}` for these commands (the completion
+ * state itself is not echoed), so requiring `status`/`completed_at`/
+ * `already_completed` made every successful call throw. A matching GUID in the
+ * success envelope is the confirmation this command actually offers; `+complete`
+ * itself performs a GET first and skips the PATCH when the task is already
+ * completed (the idempotent path).
+ */
 async function submitCompletion(
   runtime: ClueRuntime,
   guid: string,
@@ -369,21 +370,15 @@ async function submitCompletion(
     cwd: cwdOf(context),
     ...(context.signal === undefined ? {} : { signal: context.signal }),
   })
-  const status = stringField(success.data, 'status')
-  if (completed) {
-    const already = success.data.already_completed === true
-    const completedAt = millisOf(success.data.completed_at)
-    if (!(already || status === 'done' || (completedAt !== undefined && completedAt > 0))) {
-      throw new ClueError('failed', 'the server did not confirm the task completion')
-    }
-    const updatedAt = success.data.updated_at
-    return updatedAt === undefined ? {} : { updatedAt: String(updatedAt) }
+  const returnedGuid = stringField(success.data, 'guid')
+  if (returnedGuid === undefined || returnedGuid !== guid) {
+    throw new ClueError(
+      'failed',
+      completed
+        ? 'the server did not confirm the task completion'
+        : 'the server did not confirm the task reopen',
+    )
   }
-  // Reopen: lark-cli documents the success envelope + exit 0 as the result of
-  // `+reopen` and specifies no completion field. Inspecting a possibly-echoed
-  // pre-reopen object was a false-negative trap, so the envelope is the
-  // confirmation here (never a claim that a failed request succeeded — a
-  // non-zero exit still throws upstream).
   const updatedAt = success.data.updated_at
   return updatedAt === undefined ? {} : { updatedAt: String(updatedAt) }
 }
@@ -520,7 +515,7 @@ export function createFeishuTasksSource(getRuntime: () => ClueRuntime): ClueSour
         })
         const items: ClueCandidate[] = []
         // Native `task tasks list` / `tasklists tasks` expose `items`.
-        for (const row of taskRows(success, ['items'])) {
+        for (const row of taskRows(success)) {
           const candidate = taskCandidate(row)
           if (candidate !== undefined) items.push(candidate)
         }
@@ -575,9 +570,8 @@ export function createFeishuTasksSource(getRuntime: () => ClueRuntime): ClueSour
           ...(context.signal === undefined ? {} : { signal: context.signal }),
         })
         const items: ClueCandidate[] = []
-        // The `+search` shortcut's exact row key is not documented; accept the
-        // native `items` or a flattened `tasks`, but require a real array.
-        for (const row of taskRows(success, ['tasks', 'items'])) {
+        // `task +search` also returns `items` (same shape as the native list).
+        for (const row of taskRows(success)) {
           const candidate = taskCandidate(row)
           if (candidate !== undefined) items.push(candidate)
         }
@@ -646,39 +640,35 @@ export function createFeishuTasksSource(getRuntime: () => ClueRuntime): ClueSour
             throw new ClueError('conflict', 'the task changed since it was loaded; re-read it and retry')
           }
         }
-        let update: FeishuTaskUpdatePayload
-        try {
-          update = taskUpdatePayload(current, edited)
-        } catch (error) {
-          throw new ClueError(
-            'invalid-request',
-            error instanceof Error ? error.message : 'the task edit cannot be applied',
-          )
-        }
+        const update = taskUpdatePayload(current, edited)
         const fields = taskUpdateFields(update)
         const completionChanged = edited.completed !== current.completed
         const savedAt = new Date().toISOString()
         let revision = current.updatedAt
 
         if (fields.length > 0) {
-          const json = JSON.stringify(update)
+          // Native PATCH rather than the `+update` shortcut: the native body
+          // can name a cleared field in `update_fields` while omitting it from
+          // `task` (the shortcut treats every `--data` key as both), and its
+          // output carries the updated `task` for field-level confirmation.
+          const json = JSON.stringify({ task: update.task, update_fields: update.updateFields })
           if (new TextEncoder().encode(json).length > MAX_TASK_UPDATE_BYTES) {
             throw new ClueError('invalid-request', 'the task edit payload is too large')
           }
           const success = await runFeishuCommand(runtime(), {
             args: [
-              'task', '+update', '--task-id', locator.guid,
+              'task', 'tasks', 'patch', '--task-guid', locator.guid,
               '--data', json,
               '--as', 'user', '--format', 'json',
             ],
             cwd: cwdOf(context),
             ...(context.signal === undefined ? {} : { signal: context.signal }),
           })
-          const confirmation = updateConfirmationOf(success)
-          requireUpdateConfirmation(confirmation, update, fields)
+          const confirmation = updateConfirmationOf(success, locator.guid)
+          requireUpdateConfirmation(confirmation, update)
           // Once a write happened, the OLD baseline is no longer a valid
-          // revision to return. Prefer the server's stamp, then a fresh read;
-          // if neither is available, omit the revision instead of lying.
+          // revision to return. Prefer the returned task's stamp, then a fresh
+          // read; if neither is available, omit the revision instead of lying.
           revision = confirmation.updatedAt
           if (completionChanged) {
             try {
@@ -694,9 +684,8 @@ export function createFeishuTasksSource(getRuntime: () => ClueRuntime): ClueSour
               )
             }
           } else {
-            // `task +update` documents `updated_fields`/`confirmed` but no
-            // `updated_at`. A best-effort fresh read gives the next save a real
-            // baseline instead of a guaranteed false conflict; it is not CAS.
+            // The native PATCH normally stamps `updated_at`; a best-effort
+            // fresh read keeps the next save from a guaranteed false conflict.
             revision = await refreshRevision(runtime(), locator.guid, context) ?? revision
           }
           return { savedAt, ...(revision === undefined ? {} : { revision }) }

@@ -20,13 +20,14 @@
  * - a wiki node is a separate identity: `/wiki/<token>` is resolved through
  *   `wiki +node-get`, and only `obj_type=docx` becomes a readable document.
  *
- * Reads fetch the whole document with `docs +fetch --api-version v2 --detail
- * full` and window it by byte offset. `--detail full` is required because the
- * lighter `simple` detail omits both block ids and the structured
- * `document.reference_map` sidecar; the read result must keep content,
- * revision and sidecar together (S4 §5). The plugin runner's stdout capture is
- * capped at 8 MiB, so a document above that cap is reported explicitly instead
- * of being silently truncated.
+ * Reads fetch the whole document with the lightweight `--detail simple` detail
+ * (S4 §5's ordinary-reading mode) and window it by byte offset. Content and
+ * `revision_id` come from that one response. The pinned lark-cli 1.0.55 fetch
+ * body has no `reference_map` opt-in and `docs +update` has no reference-map
+ * flag (verified against the v1.0.55 source), so there is no sidecar to carry
+ * or replay; the spec's sidecar clause is not implementable with this CLI
+ * version. The plugin runner's stdout capture is capped at 8 MiB, so a document
+ * above that cap is reported explicitly instead of being silently truncated.
  *
  * lark-cli 1.0.55 DOES support partial reads (`docs +fetch --scope
  * outline|range|keyword|section`), but the S1 read contract only carries a byte
@@ -85,7 +86,15 @@ import {
   type FeishuDocProjection,
   type FeishuDocReadData,
 } from './format.ts'
-import { buildDocBlockXml, buildDocTitleXml, isEditableBlockTag, isSafeBlockId, parseDocEditXml, topLevelSpans } from './edit.ts'
+import {
+  buildDocBlockXml,
+  buildDocTitleXml,
+  decodeXmlEntities,
+  isEditableBlockTag,
+  isSafeBlockId,
+  parseDocEditXml,
+  topLevelSpans,
+} from './edit.ts'
 import {
   larkWorkingDirectory,
   recordField,
@@ -479,18 +488,17 @@ async function resolveWikiNode(
   }
 }
 
-/** Extract the `<title>` of a Docx XML projection. */
+/**
+ * Extract the `<title>` of a Docx XML projection.
+ *
+ * DocxXML may attach attributes to the title (a block id in an id-bearing
+ * export, alignment, …), so accept `<title …>` as well as bare `<title>`.
+ * Matching only the bare form silently fell back to a token-derived title.
+ */
 function titleOfContent(content: string): string | undefined {
-  const match = /<title>([\s\S]*?)<\/title>/i.exec(content)
+  const match = /<title(?:\s[^>]*)?>([\s\S]*?)<\/title>/i.exec(content)
   if (match === null) return undefined
-  const title = match[1]!
-    .replace(/<[^>]*>/g, '')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&apos;/g, "'")
-    .replace(/&amp;/g, '&')
-    .trim()
+  const title = decodeXmlEntities(match[1]!.replace(/<[^>]*>/g, '')).trim()
   return title === '' ? undefined : title
 }
 
@@ -609,7 +617,6 @@ interface FetchedDocument {
   readonly content: string
   readonly title?: string
   readonly revisionId?: string
-  readonly referenceMap?: JsonValue
 }
 
 /** Parse one `docs +fetch` success payload. */
@@ -627,12 +634,10 @@ function fetchedDocumentOf(success: LarkSuccess): FetchedDocument {
   // `docs +fetch` payload has no title field; the XML `<title>` (or the
   // resolved wiki node) is the authoritative source.
   const revision = document.revision_id
-  const referenceMap = document.reference_map
   return {
     content,
     ...(title === undefined ? {} : { title }),
     ...(revision === undefined ? {} : { revisionId: String(revision) }),
-    ...(referenceMap === undefined ? {} : { referenceMap }),
   }
 }
 
@@ -709,7 +714,6 @@ function editDataOf(
       : {}),
     ...(locator.url === undefined ? {} : { sourceUrl: locator.url }),
     ...(fetched.revisionId === undefined ? {} : { revisionId: fetched.revisionId }),
-    ...(fetched.referenceMap === undefined ? {} : { referenceMap: fetched.referenceMap }),
     title,
     baselineTitle: title,
     titleEditable: parsed.titleBlockId !== undefined,
@@ -766,14 +770,23 @@ function assertUpdateResult(success: LarkSuccess, expectedBlocks = 1): void {
       result === 'partial_success'
         ? 'lark-cli reported the document update as a partial success'
         : 'lark-cli reported the document update as failed',
+      result === 'partial_success' ? { partial: 'true' } : undefined,
     )
   }
   const warnings = success.data.warnings
   if (Array.isArray(warnings) && warnings.length > 0) {
-    throw new ClueError('failed', 'lark-cli reported warnings for the document update; the write is not confirmed complete')
+    throw new ClueError(
+      'failed',
+      'lark-cli reported warnings for the document update; the write is not confirmed complete',
+      { partial: 'true' },
+    )
   }
   if (success.data.warnings !== undefined && !Array.isArray(warnings)) {
-    throw new ClueError('failed', 'lark-cli returned an unreadable warning list for the document update')
+    throw new ClueError(
+      'failed',
+      'lark-cli returned an unreadable warning list for the document update',
+      { partial: 'true' },
+    )
   }
   const count = success.data.updated_blocks_count
   if (count !== undefined) {
@@ -782,20 +795,30 @@ function assertUpdateResult(success: LarkSuccess, expectedBlocks = 1): void {
       throw new ClueError(
         'failed',
         'lark-cli did not confirm that every requested document block was updated',
+        { partial: 'true' },
       )
     }
   }
 }
 
-/** The safe partial-success error after at least one block was written. */
+/**
+ * The safe partial-success error after a write was at least attempted.
+ * `written` may be empty when the very first block's business result was
+ * partial: the caller then learns that nothing is confirmed complete instead
+ * of the failure being mislabeled as an outright failure.
+ */
 function partialEditError(error: unknown, written: readonly string[], unwritten: readonly string[]): ClueError {
   const base = error instanceof ClueError
     ? error
     : new ClueError('failed', 'the document block update failed')
+  const message = written.length === 0
+    ? `partial success: the first block update was not confirmed complete (${base.message}); `
+      + 'no block is reported as fully written and the draft is preserved'
+    : `partial success: ${written.length} block(s) were saved, but the remaining block(s) `
+      + `were not written (${base.message}); the draft is preserved`
   return new ClueError(
     base.category,
-    `partial success: ${written.length} block(s) were saved, but the remaining block(s) `
-    + `were not written (${base.message}); the draft is preserved`,
+    message,
     {
       ...(base.meta ?? {}),
       partial: 'true',
@@ -1003,6 +1026,19 @@ export function createFeishuDocsSource(getRuntime: () => ClueRuntime): ClueSourc
               docLocatorTitle(locator),
               locator.url,
             )
+          }
+          if (isWikiLocator(locator) && locator.objType !== undefined && locator.objType !== 'docx') {
+            // A wiki node wrapping a sheet/bitable/... is not a readable text
+            // document. Return a stable-but-unreadable candidate was the old
+            // bug; auto resolution answers "not mine", an explicit source call
+            // reports the unsupported object.
+            if (input.explicit === true) {
+              throw new ClueError(
+                'unsupported',
+                'the wiki locator points at a non-document object; only Docx documents are supported',
+              )
+            }
+            return undefined
           }
           if (isWikiLocator(locator) && (locator.objToken === undefined || locator.objType === undefined)) {
             const resolved = await resolveWikiNode(runtime(), locator.wikiToken, locator.url, context)
@@ -1221,10 +1257,10 @@ export function createFeishuDocsSource(getRuntime: () => ClueRuntime): ClueSourc
             args: [
               'docs', '+fetch', '--api-version', 'v2', '--doc', doc.token,
               '--doc-format', projection,
-              // `simple` omits the reference sidecar and block ids; the read
-              // result promises content + revision + reference_map from ONE
-              // response (S4 §5), so read with the detail that carries it.
-              '--detail', 'full',
+              // S4 §5's ordinary reading mode: lightweight `simple` detail.
+              // The read needs content + revision, both of which simple
+              // carries; block ids/styles belong to `loadEdit` (detail full).
+              '--detail', 'simple',
               '--as', 'user', '--format', 'json',
             ],
             cwd: cwdOf(context),
@@ -1261,7 +1297,6 @@ export function createFeishuDocsSource(getRuntime: () => ClueRuntime): ClueSourc
           ...(locator.kind === 'wiki' ? { wikiToken: locator.wikiToken, objToken: doc.token, objType: 'docx' } : {}),
           ...(locator.url === undefined ? {} : { sourceUrl: locator.url }),
           ...(fetched.revisionId === undefined ? {} : { revisionId: fetched.revisionId }),
-          ...(fetched.referenceMap === undefined ? {} : { referenceMap: fetched.referenceMap }),
           ...(fragment.fragment === undefined ? {} : { fragment: fragment.fragment }),
         }
         return {
@@ -1378,25 +1413,30 @@ export function createFeishuDocsSource(getRuntime: () => ClueRuntime): ClueSourc
         }
         requireCurrentStructure(edited, changedBlocks, titleChanged, current.content)
 
-        const writes: Array<{ readonly blockId: string; readonly xml: string }> = []
+        interface PlannedWrite {
+          readonly blockId: string
+          readonly xml: string
+          readonly title: boolean
+        }
+        const writes: PlannedWrite[] = []
         if (titleChanged) {
           writes.push({
             blockId: edited.titleBlockId!,
             xml: buildDocTitleXml(titleModelOf(current.content).attrs, edited.title),
+            title: true,
           })
         }
         for (const block of changedBlocks) {
-          writes.push({ blockId: block.id, xml: buildDocBlockXml(block, block.text) })
+          writes.push({ blockId: block.id, xml: buildDocBlockXml(block, block.text), title: false })
         }
 
-        // The sidecar is replayed from the FRESH response, never from the
-        // client payload, so a stale/tampered map cannot be written back.
-        const referenceMap = current.referenceMap
-        const referenceJson = referenceMap === undefined ? undefined : JSON.stringify(referenceMap)
         const written: string[] = []
         let resultRevision = current.revisionId ?? document.baseRevision ?? edited.revisionId
         let writeRevision: string | undefined = current.revisionId
-        for (const write of writes) {
+        let remainingBlocks = [...changedBlocks]
+        let remainingTitle = titleChanged
+        for (let index = 0; index < writes.length; index += 1) {
+          const write = writes[index]!
           try {
             const success = await runFeishuCommand(runtimeNow, {
               args: [
@@ -1408,7 +1448,6 @@ export function createFeishuDocsSource(getRuntime: () => ClueRuntime): ClueSourc
                 '--content', write.xml,
                 '--doc-format', 'xml',
                 ...(writeRevision === undefined ? [] : ['--revision-id', writeRevision]),
-                ...(referenceJson === undefined ? [] : ['--reference-map', referenceJson]),
                 '--as', 'user',
                 '--format', 'json',
               ],
@@ -1419,14 +1458,46 @@ export function createFeishuDocsSource(getRuntime: () => ClueRuntime): ClueSourc
             const next = revisionOfUpdate(success)
             if (next !== undefined) resultRevision = next
             // Only a confirmed new revision is a safe baseline for the next
-            // block write; otherwise omit the flag instead of forcing a stale
-            // one and failing a write that follows our own successful write.
+            // block write; otherwise the next write omits the flag until a
+            // fresh read supplies one.
             writeRevision = next
             written.push(write.blockId)
+            if (write.title) remainingTitle = false
+            else remainingBlocks = remainingBlocks.filter(block => block.id !== write.blockId)
+            if (index < writes.length - 1) {
+              // lark-cli's own update guide: a block_replace does not guarantee
+              // the target id survives, so re-fetch before the next block-level
+              // operation and never reuse stale ids/revision. The fresh read
+              // also re-verifies that every remaining target still matches the
+              // loaded baseline before it is written.
+              const fresh = await fetchFullDocument(runtimeNow, doc.token, context)
+              if (fresh.revisionId !== undefined) {
+                resultRevision = fresh.revisionId
+                writeRevision = fresh.revisionId
+              }
+              requireCurrentStructure(edited, remainingBlocks, remainingTitle, fresh.content)
+            }
           } catch (error) {
-            if (written.length === 0) throw error
+            if (written.length === 0) {
+              // A business-level partial on the very first block is still a
+              // partial result, not an outright failure.
+              if (error instanceof ClueError && error.meta?.partial === 'true') {
+                throw partialEditError(error, written, writes.map(entry => entry.blockId))
+              }
+              throw error
+            }
             const unwritten = writes.slice(written.length).map(entry => entry.blockId)
             throw partialEditError(error, written, unwritten)
+          }
+        }
+        if (writeRevision === undefined) {
+          // No update answer carried a revision. A final read gives the client
+          // a real baseline instead of returning the stale loaded revision.
+          try {
+            const fresh = await fetchFullDocument(runtimeNow, doc.token, context)
+            if (fresh.revisionId !== undefined) resultRevision = fresh.revisionId
+          } catch {
+            // Best-effort; omitting the revision is honest.
           }
         }
         return {

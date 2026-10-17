@@ -11,8 +11,11 @@
  *
  * The text is React-escaped, links/commands inside the document remain
  * untrusted source data, and the component never calls the CLI itself.
+ * When `onSave` is supplied this renderer owns the ONE Save control (the S6
+ * host forwards the callback but renders no action button); S9 must not add a
+ * second save action for the same document.
  */
-import { useId, type ReactNode } from 'react'
+import { useId, useState, type ReactNode } from 'react'
 import type { ClueFormatRendererProps, JsonValue } from '../../../../clues/types.ts'
 import {
   DOCS_EDIT_SCOPE_NOTE,
@@ -135,8 +138,12 @@ function ReadPreview(props: {
 }): ReactNode {
   const { read, document, labels, formatDateTime } = props
   const limited = 'limited' in document && document.limited === true
-  const truncated = read.content.length > MAX_PREVIEW_CHARS
-  const content = truncated ? read.content.slice(0, MAX_PREVIEW_CHARS) : read.content
+  // The cap is a rendering bound, not a source read bound. When the source
+  // returned the whole content, the user must be able to expand it; claiming
+  // the full document is only "available through the source" was misleading.
+  const [expanded, setExpanded] = useState(false)
+  const collapsible = read.content.length > MAX_PREVIEW_CHARS
+  const content = collapsible && !expanded ? read.content.slice(0, MAX_PREVIEW_CHARS) : read.content
   const fetchedAt = 'fetchedAt' in document && typeof document.fetchedAt === 'string'
     ? document.fetchedAt
     : undefined
@@ -166,7 +173,19 @@ function ReadPreview(props: {
           {content}
         </pre>
       )}
-      {truncated && <p className={css.hint}>{labels.contentTruncated}</p>}
+      {collapsible && (
+        <p className={css.hint} data-feishu-docs-truncated="">
+          {labels.contentTruncated}{' '}
+          <button
+            type="button"
+            className={css.linkButton}
+            data-feishu-docs-expand=""
+            onClick={() => { setExpanded(current => !current) }}
+          >
+            {expanded ? labels.showLess : labels.showFullContent}
+          </button>
+        </p>
+      )}
       {fragmentNote !== undefined && (
         <p className={css.hint} data-feishu-docs-fragment={read.fragment}>
           {fragmentNote}
