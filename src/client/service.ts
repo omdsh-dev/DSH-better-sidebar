@@ -30,11 +30,18 @@ import { baseName, extOf } from './paths.ts'
 import { hostRouteUrl as resolveHostRoute } from './host-route-url.ts'
 import { builtinFileIcon, builtinFolderIcon } from './file-icons.tsx'
 import { createCluesClientRegistry, type BetterSidebarCluesClientFace } from './clues/registry.ts'
+import { createWindowHost } from './windows/host.ts'
+import type { WindowHostController } from './windows/types.ts'
 import type { SessionScope } from './api.ts'
 import type { SidebarPrefs } from '../prefs-shared.ts'
 
 export type { BetterSidebarCluesClientFace } from './clues/registry.ts'
 export type { CluesClientApi } from './clues/api.ts'
+export type {
+  BetterSidebarWindowsClientFace, WindowBodyLayout, WindowBox, WindowContent,
+  WindowDocumentContent, WindowHandle, WindowHostController, WindowHostSnapshot, WindowNavigation,
+  WindowOpenOptions, WindowPage, WindowPageView, WindowSize, WindowSizePreset, WindowUpdate, WindowView,
+} from './windows/types.ts'
 
 /**
  * Public state vocabulary re-exported for consumers (type-only; the values
@@ -729,6 +736,15 @@ export interface BetterSidebarService {
    * `betterSidebarClues`; this face never imports node modules.
    */
   readonly clues: BetterSidebarCluesClientFace
+  /**
+   * Unified floating-window face (S6): `open()` returns a handle with
+   * update/focus/close, a stable window identity and the S1 format-renderer
+   * seat. This is the plugin's OWN persistent window host — NOT the removed
+   * `floatWindows` free-window system (v0.19.0 deleted that), and it does not
+   * claim compatibility with the old interface. External callers gate on the
+   * `'windowHost'` feature.
+   */
+  readonly windows: WindowHostController
   /** The plugin version this service instance was built from ('0.12.0'). */
   readonly version: string
   /**
@@ -872,6 +888,10 @@ export const SIDEBAR_SERVICE_VERSION = '0.28.1'
  *   string-list row, committed as one string[] value).
  * - 'clues' (S1): the `clues` extension face (source display registry +
  *   enablement semantics + typed `clues.*` wire methods).
+ * - 'windowHost' (S6): `BetterSidebarService.windows` — the unified persistent
+ *   window host (`open/update/focus/close`, size presets, maximize, navigation,
+ *   draft guard, S1 format-renderer content). This is NOT the removed
+ *   `floatWindows` feature.
  *
  * v0.19.0 REMOVED 'floatWindows': the free-window feature is gone (DSH 0.1.5
  * owns the right column, so the plugin keeps only its bottom workbench).
@@ -893,6 +913,7 @@ export const SIDEBAR_FEATURES = [
   'settingPatterns',
   'hostRouteUrl',
   'clues',
+  'windowHost',
 ] as const
 
 /** Run one plugin callback; a throw is logged and never breaks the caller. */
@@ -919,6 +940,9 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
   // The clue extension face is constructed with the registry so its switches
   // read the same live prefs as the tab/viewer switches do.
   const clues = createCluesClientRegistry(() => store.getPrefs())
+  // One window host per service (per client plugin activation): its records
+  // live for the activation, and the plugin mounts its React host once.
+  const windows = createWindowHost()
 
   const notify = (): void => {
     for (const fn of [...listeners]) fn()
@@ -1487,6 +1511,7 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
     activateTab,
     openFile,
     clues,
+    windows,
     hostRouteUrl: (path: string): string => resolveHostRoute(path).href,
     setSurface: (next: SidebarSurface | undefined) => { surface = next },
     nativePathTabs: () => surface?.pathTabs?.() ?? [],
