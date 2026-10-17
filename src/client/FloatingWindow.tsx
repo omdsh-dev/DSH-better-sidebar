@@ -284,6 +284,10 @@ export function FloatingWindow(props: FloatingWindowProps): ReactNode {
     }
   }, [min])
 
+  /** Live drag teardown: a window closed mid-drag must not leave window listeners behind. */
+  const dragCleanupRef = useRef<(() => void) | null>(null)
+  useEffect(() => () => { dragCleanupRef.current?.() }, [])
+
   /** Drag the window by its title bar (buttons inside it keep working). */
   const dragBatcher = useRef(createFrameBatcher()).current
   const pendingDragRef = useRef<WindowBox | null>(null)
@@ -315,8 +319,10 @@ export function FloatingWindow(props: FloatingWindowProps): ReactNode {
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
       window.removeEventListener('pointercancel', onUp)
+      dragCleanupRef.current = null
       dragBatcher.flushNow()
     }
+    dragCleanupRef.current = onUp
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
     window.addEventListener('pointercancel', onUp)

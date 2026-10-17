@@ -73,8 +73,10 @@ afterEach(() => {
   document.body.innerHTML = ''
 })
 
-function mountHost(): WindowHostController {
-  host = createWindowHost({ viewport: () => VIEWPORT })
+function mountHost(viewport = VIEWPORT): WindowHostController {
+  Object.defineProperty(window, 'innerWidth', { configurable: true, value: viewport.width })
+  Object.defineProperty(window, 'innerHeight', { configurable: true, value: viewport.height })
+  host = createWindowHost({ viewport: () => viewport })
   const formats = createCluesClientRegistry(() => SIDEBAR_PREFS_DEFAULTS)
   mounted = renderRoot(createElement(WindowHost, { host, formats }))
   return host
@@ -138,6 +140,20 @@ describe('WindowHost: open / close / focus', () => {
     expect(document.querySelectorAll('[data-floating-window]')).toHaveLength(1)
     expect(frame('A')).toBeDefined()
     expect(controller.getSnapshot().windows).toHaveLength(1)
+  })
+
+  it('uses the near-fullscreen form on a 390px viewport and keeps every control reachable', () => {
+    mounted?.unmount()
+    host?.dispose()
+    const controller = mountHost({ width: 390, height: 844 })
+    act(() => {
+      controller.open({ id: 'phone', title: 'Phone', size: 'document', content: 'x' })
+    })
+    expect(boxOf('Phone')).toEqual({ left: 8, top: 8, width: 374, height: 828 })
+    // Title bar identity/navigation/window controls stay on screen.
+    expect(frame('Phone').querySelector('button[aria-label="关闭"]')).not.toBeNull()
+    expect(frame('Phone').querySelector('button[aria-label="最大化"]')).not.toBeNull()
+    expect(frame('Phone').querySelector('[data-window-handle]')?.textContent).toContain('Phone')
   })
 
   it('re-clamps every window after a viewport shrink', () => {

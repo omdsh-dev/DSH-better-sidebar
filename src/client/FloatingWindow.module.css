@@ -104,6 +104,7 @@
   display: flex;
   align-items: center;
   justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 4px;
   flex: none;
   padding: 4px 8px;
@@ -140,6 +141,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 8px;
   flex: none;
   padding: 8px 12px;

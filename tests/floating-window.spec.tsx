@@ -343,6 +343,14 @@ describe('FloatingWindow controlled shell (S6)', () => {
 })
 
 describe('FloatingWindow unified layer (S6)', () => {
+  it('releases the shared document Escape listener when the last window unmounts', () => {
+    const remove = vi.spyOn(document, 'removeEventListener')
+    const { unmount } = renderWindow()
+    unmount()
+    expect(remove).toHaveBeenCalledWith('keydown', expect.any(Function), true)
+    remove.mockRestore()
+  })
+
   it('closes only the topmost window on Escape and raises the clicked one above its siblings', () => {
     const closes: string[] = []
     const { unmount } = renderRoot(createElement(Fragment, null,
