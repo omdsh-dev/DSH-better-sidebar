@@ -351,7 +351,7 @@ describe('clue detail window', () => {
       windows: windows.windows,
       face,
       workspaceId: 'ws-1',
-      target: { sourceId: 'builtin.files', typeId: 'builtin.files.markdown', clueId: 'c1', title: 'A note' },
+      target: { sourceId: 'builtin.files', typeId: 'builtin.files.markdown', clueId: 'c-edit', title: 'A note' },
       onInsertClue: (clueId) => { inserted.push(clueId); return true },
     })
     await flush()
@@ -378,7 +378,7 @@ describe('clue detail window', () => {
       windows: windows.windows,
       face,
       workspaceId: 'ws-1',
-      target: { sourceId: 'builtin.files', typeId: 'builtin.files.markdown', clueId: 'c1', title: 'A note' },
+      target: { sourceId: 'builtin.files', typeId: 'builtin.files.markdown', clueId: 'c-conflict', title: 'A note' },
     })
     await flush()
     const content = windows.last()?.content as unknown as { onChange?: (data: unknown) => void; onSave?: () => void; document: { data: { text: string } } }
@@ -400,7 +400,7 @@ describe('clue detail window', () => {
       windows: windows.windows,
       face,
       workspaceId: 'ws-1',
-      target: { sourceId: 'builtin.files', typeId: 'builtin.files.markdown', clueId: 'c1', title: 'A note' },
+      target: { sourceId: 'builtin.files', typeId: 'builtin.files.markdown', clueId: 'c-unsaved', title: 'A note' },
     })
     await flush()
     const content = windows.last()?.content as unknown as { onChange?: (data: unknown) => void }
@@ -411,6 +411,58 @@ describe('clue detail window', () => {
     // The refusal does not drop the draft: the window stays open with the
     // explicit discard/save choice offered above.
     expect(refreshed.kind).not.toBe('document')
+  })
+
+  it('allows closing a freshly loaded window that was never edited', async () => {
+    const { face } = faceOf()
+    const windows = recordingWindows()
+    openClueDetailWindow({
+      windows: windows.windows,
+      face,
+      workspaceId: 'ws-1',
+      target: { sourceId: 'builtin.files', typeId: 'builtin.files.markdown', clueId: 'c-clean', title: 'A note' },
+    })
+    await flush()
+    // A load is the saved baseline: dirty means "actual unsaved edit", not
+    // "the editor has not saved yet".
+    expect(windows.last()?.dirty).toBe(false)
+    expect(windows.last()?.onBeforeClose?.()).toBe(true)
+  })
+
+  it('focuses an already-open detail window without replacing its unsaved draft', async () => {
+    const { face, calls } = faceOf()
+    let latest: WindowOpenOptions | undefined
+    const handles = new Map<string, WindowHandle>()
+    const windows = {
+      open(options: WindowOpenOptions): WindowHandle {
+        const existing = handles.get(options.id)
+        if (existing !== undefined) return existing
+        latest = options
+        const handle: WindowHandle = {
+          id: options.id,
+          update(patch) { latest = { ...(latest ?? options), ...patch } as WindowOpenOptions },
+          focus: () => undefined,
+          close: async () => undefined,
+          navigation: { push: () => undefined, pop: () => false, back: () => false, canGoBack: () => false, depth: () => 1 },
+        }
+        handles.set(options.id, handle)
+        return handle
+      },
+    }
+    const target = { sourceId: 'builtin.files', typeId: 'builtin.files.markdown', clueId: 'c-draft', title: 'A note' }
+    openClueDetailWindow({ windows, face, workspaceId: 'ws-1', target })
+    await flush()
+    const content = latest?.content as unknown as { onChange?: (data: unknown) => void }
+    act(() => { content.onChange?.({ text: '# Unsaved draft' }) })
+    await flush()
+
+    openClueDetailWindow({ windows, face, workspaceId: 'ws-1', target })
+    await flush()
+    // The second open focused the live instance: no second loadEdit and the
+    // draft is still in the window.
+    expect(calls.loadEdit).toBe(1)
+    const reopened = latest?.content as unknown as { document: { data: { text: string } } }
+    expect(reopened.document.data.text).toBe('# Unsaved draft')
   })
 
   it('never offers a save for a read-only type', async () => {

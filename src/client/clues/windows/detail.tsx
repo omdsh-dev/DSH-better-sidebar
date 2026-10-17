@@ -90,7 +90,8 @@ interface DetailState {
   readonly baseRevision?: string
   readonly data: JsonValue
   readonly saving: boolean
-  readonly saved: boolean
+  /** The document has actual unsaved edits (a fresh load is NOT dirty). */
+  readonly dirty: boolean
   readonly conflict: boolean
   readonly error: string | null
 }
@@ -148,7 +149,7 @@ function descriptorOf(
     document: { ...state.document, data: state.data } as ClueEditDocument | ClueReadResult,
     readOnly: state.readOnly,
     saving: state.saving,
-    saved: state.saved,
+    saved: !state.dirty,
     ...(state.error === null ? {} : { error: state.error }),
     onChange: handlers.onChange,
     ...(handlers.onSave === undefined ? {} : { onSave: handlers.onSave }),
@@ -159,6 +160,15 @@ function descriptorOf(
 interface DetailGuard {
   dirty: boolean
 }
+
+/**
+ * Detail windows this module has already loaded, keyed by window id. The host
+ * returns the SAME `WindowHandle` for an already-open id (it focuses the live
+ * instance instead of replacing it), so handle identity tells us whether this
+ * call created a window that still needs its first load. Calling `loadInto`
+ * on an existing window would overwrite the reader's unsaved draft.
+ */
+const loadedDetailWindows = new Map<string, WindowHandle>()
 
 /** Load one resource into an already-open window. */
 async function loadInto(
@@ -185,7 +195,7 @@ async function loadInto(
     data: result.data,
     readOnly: true,
     saving: false,
-    saved: false,
+    dirty: false,
     conflict: false,
     error,
   })
@@ -199,7 +209,8 @@ async function loadInto(
         readOnly: false,
         ...(document.baseRevision === undefined ? {} : { baseRevision: document.baseRevision }),
         saving: false,
-        saved: false,
+        // A load is the saved baseline: an untouched window is closable.
+        dirty: false,
         conflict: false,
         error: null,
       }
@@ -258,7 +269,7 @@ async function loadInto(
       state = {
         ...state,
         saving: false,
-        saved: true,
+        dirty: false,
         ...(result.revision === undefined ? {} : { baseRevision: result.revision }),
       }
       render()
@@ -267,7 +278,9 @@ async function loadInto(
       state = {
         ...state,
         saving: false,
-        saved: false,
+        // A failed save keeps the draft (and the dirty marker) exactly as it
+        // was; only a successful write establishes a new baseline.
+        dirty: true,
         conflict,
         // A conflict keeps the draft: the re-read action is the reader's
         // explicit choice, never an automatic overwrite.
@@ -349,16 +362,16 @@ async function loadInto(
 
   function render(): void {
     const current = state
-    guard.dirty = !current.readOnly && current.saved === false
+    guard.dirty = !current.readOnly && current.dirty
     handle.update({
       content: descriptorOf(target, current, {
         onChange: (data) => {
-          state = { ...state, data, saved: false }
+          state = { ...state, data, dirty: true }
           render()
         },
         ...(current.readOnly ? {} : { onSave: () => { void save() } }),
       }),
-      dirty: !current.readOnly && current.saved === false,
+      dirty: !current.readOnly && current.dirty,
       saving: current.saving,
     })
     handle.update({ footer: footerOf(current) })
@@ -374,9 +387,11 @@ async function loadInto(
  */
 export function openClueDetailWindow(options: ClueDetailWindowOptions): WindowHandle {
   const { windows, target } = options
+  const id = clueDetailWindowId(target)
   const guard: DetailGuard = { dirty: false }
+  const previous = loadedDetailWindows.get(id)
   const handle = windows.open({
-    id: clueDetailWindowId(target),
+    id,
     title: target.title,
     size: 'document',
     content: createElement(DetailStatus, { text: t('loading') }),
@@ -387,7 +402,15 @@ export function openClueDetailWindow(options: ClueDetailWindowOptions): WindowHa
       handle.update({ content: createElement(DetailStatus, { text: t('clueDetailUnsaved') }) })
       return false
     },
+    onClose: () => { loadedDetailWindows.delete(id) },
   })
+  if (previous !== undefined && previous === handle) {
+    // `open` returned the EXISTING instance (the host focuses it): touching
+    // its content here would replace an unsaved draft. Focus only.
+    handle.focus()
+    return handle
+  }
+  loadedDetailWindows.set(id, handle)
   void loadInto(handle, options, guard)
   return handle
 }
