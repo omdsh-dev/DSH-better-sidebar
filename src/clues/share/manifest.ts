@@ -333,15 +333,16 @@ export function parseCluepackManifest(value: unknown): CluepackManifest {
     if (entry.target !== 'clue' && entry.target !== 'pack') {
       invalid(`${path}.target must be "clue" or "pack"`)
     }
+    const target: 'clue' | 'pack' = entry.target === 'clue' ? 'clue' : 'pack'
     const key = requireString(entry.key, `${path}.key`)
-    if (entry.target === 'clue' && !clueKeys.has(key)) invalid(`${path}.key "${key}" is an unknown clue`)
-    if (entry.target === 'pack' && !packKeys.has(key)) invalid(`${path}.key "${key}" is an unknown pack`)
+    if (target === 'clue' && !clueKeys.has(key)) invalid(`${path}.key "${key}" is an unknown clue`)
+    if (target === 'pack' && !packKeys.has(key)) invalid(`${path}.key "${key}" is an unknown pack`)
     const reason = requireString(entry.reason, `${path}.reason`)
     if (entry.category !== undefined && !CATEGORIES.has(entry.category as string)) {
       invalid(`${path}.category must be a fixed clue error category`)
     }
     return {
-      target: entry.target,
+      target,
       key,
       reason,
       ...(entry.category === undefined ? {} : { category: entry.category as ClueErrorCategory }),

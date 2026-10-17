@@ -19,7 +19,7 @@ import {
   serializeCluepackManifest,
   type CluepackManifest,
 } from '../src/clues/share/manifest.ts'
-import { ClueError, type JsonValue } from '../src/clues/types.ts'
+import { ClueError } from '../src/clues/types.ts'
 
 /** A valid manifest exercising every documented region. */
 function validManifest(): CluepackManifest {
@@ -76,9 +76,21 @@ function validManifest(): CluepackManifest {
   }
 }
 
-/** Deep-clone one JSON value (test-local, keeps cases independent). */
-function clone<T>(value: T): T {
-  return JSON.parse(JSON.stringify(value)) as T
+/** Mutable view of a manifest for cases that patch untrusted JSON. */
+type DeepMutable<T> = T extends readonly (infer Item)[]
+  ? DeepMutable<Item>[]
+  : T extends object
+    ? { -readonly [Key in keyof T]: DeepMutable<T[Key]> }
+    : T
+
+/** Deep-clone one manifest as mutable JSON (test-local). */
+function clone(): DeepMutable<CluepackManifest> {
+  return JSON.parse(JSON.stringify(validManifest())) as DeepMutable<CluepackManifest>
+}
+
+/** Patch one field with a deliberately ill-typed value. */
+function rawField(value: object): Record<string, unknown> {
+  return value as unknown as Record<string, unknown>
 }
 
 describe('parseCluepackManifest', () => {
@@ -88,20 +100,20 @@ describe('parseCluepackManifest', () => {
   })
 
   it('ignores unknown extension keys at every level', () => {
-    const raw = clone(validManifest()) as unknown as Record<string, JsonValue>
-    raw.futureFeature = { nested: true }
-    ;(raw.sources as JsonValue[])[0]!['unknownSourceField'] = 'x'
-    ;(raw.clues as JsonValue[])[0]!['unknownClueField'] = 1
-    ;((raw.clues as JsonValue[])[0]!['snapshot'] as JsonValue)['unknownSnapshotField'] = true
-    ;(raw.packs as JsonValue[])[0]!['unknownPackField'] = null
-    ;(raw.issues as JsonValue[])[0]!['unknownIssueField'] = 'x'
+    const raw = clone()
+    rawField(raw).futureFeature = { nested: true }
+    rawField(raw.sources[0]!).unknownSourceField = 'x'
+    rawField(raw.clues[0]!).unknownClueField = 1
+    rawField(raw.clues[0]!.snapshot!).unknownSnapshotField = true
+    rawField(raw.packs[0]!).unknownPackField = null
+    rawField(raw.issues[0]!).unknownIssueField = 'x'
     const parsed = parseCluepackManifest(raw)
     expect(parsed).toEqual(validManifest())
   })
 
   it('rejects an unknown formatVersion explicitly instead of guessing', () => {
-    const raw = clone(validManifest()) as unknown as Record<string, JsonValue>
-    raw.formatVersion = 2
+    const raw = clone()
+    rawField(raw).formatVersion = 2
     expect(() => parseCluepackManifest(raw)).toThrowError(/unsupported cluepack format version 2/i)
     try {
       parseCluepackManifest(raw)
@@ -109,53 +121,53 @@ describe('parseCluepackManifest', () => {
       expect(error).toBeInstanceOf(ClueError)
       expect((error as ClueError).category).toBe('unsupported')
     }
-    raw.formatVersion = '1'
+    rawField(raw).formatVersion = '1'
     expect(() => parseCluepackManifest(raw)).toThrowError(/formatVersion/i)
   })
 
   it('rejects a foreign format and an unknown mode', () => {
-    const foreign = clone(validManifest()) as unknown as Record<string, JsonValue>
-    foreign.format = 'someone-else'
+    const foreign = clone()
+    rawField(foreign).format = 'someone-else'
     expect(() => parseCluepackManifest(foreign)).toThrowError(/not a dsh-cluepack manifest/i)
-    const badMode = clone(validManifest()) as unknown as Record<string, JsonValue>
-    badMode.mode = 'live'
+    const badMode = clone()
+    rawField(badMode).mode = 'live'
     expect(() => parseCluepackManifest(badMode)).toThrowError(/mode/i)
   })
 
   it('rejects a malformed exportedAt timestamp', () => {
-    const raw = clone(validManifest()) as unknown as Record<string, JsonValue>
+    const raw = clone()
     raw.exportedAt = 'yesterday'
     expect(() => parseCluepackManifest(raw)).toThrowError(/exportedAt/i)
   })
 
   it('rejects duplicate keys, dangling references and duplicate pack members', () => {
-    const duplicateSource = clone(validManifest())
+    const duplicateSource = clone()
     duplicateSource.sources[1] = { ...duplicateSource.sources[0]! }
     expect(() => parseCluepackManifest(duplicateSource)).toThrowError(/duplicate source key/i)
 
-    const duplicateClue = clone(validManifest())
+    const duplicateClue = clone()
     duplicateClue.clues[1] = { ...duplicateClue.clues[0]! }
     expect(() => parseCluepackManifest(duplicateClue)).toThrowError(/duplicate clue key/i)
 
-    const duplicatePack = clone(validManifest())
+    const duplicatePack = clone()
     duplicatePack.packs.push({ ...duplicatePack.packs[0]! })
     expect(() => parseCluepackManifest(duplicatePack)).toThrowError(/duplicate pack key/i)
 
-    const danglingSource = clone(validManifest())
+    const danglingSource = clone()
     danglingSource.clues[0]!.sourceKey = 'source-missing'
     expect(() => parseCluepackManifest(danglingSource)).toThrowError(/unknown source/i)
 
-    const danglingMember = clone(validManifest())
+    const danglingMember = clone()
     danglingMember.packs[0]!.members.push('clue-missing')
     expect(() => parseCluepackManifest(danglingMember)).toThrowError(/unknown clue/i)
 
-    const duplicateMember = clone(validManifest())
+    const duplicateMember = clone()
     duplicateMember.packs[0]!.members.push('clue-1')
     expect(() => parseCluepackManifest(duplicateMember)).toThrowError(/duplicate pack member/i)
   })
 
   it('rejects unsafe or duplicated snapshot paths and invalid digests', () => {
-    const cases: Array<(raw: CluepackManifest) => void> = [
+    const cases: Array<(raw: DeepMutable<CluepackManifest>) => void> = [
       raw => { raw.clues[0]!.snapshot!.path = '../content/clue-1.json' },
       raw => { raw.clues[0]!.snapshot!.path = '/content/clue-1.json' },
       raw => { raw.clues[0]!.snapshot!.path = 'manifest.json' },
@@ -165,49 +177,49 @@ describe('parseCluepackManifest', () => {
       raw => { raw.clues[0]!.snapshot!.sha256 = 'g'.repeat(64) },
       raw => { raw.clues[0]!.snapshot!.bytes = -1 },
       raw => { raw.clues[0]!.snapshot!.bytes = 1.5 },
-      raw => { raw.clues[0]!.snapshot!.encoding = 'base64' },
+      raw => { rawField(raw.clues[0]!.snapshot!).encoding = 'base64' },
     ]
     for (const mutate of cases) {
-      const raw = clone(validManifest())
+      const raw = clone()
       mutate(raw)
       expect(() => parseCluepackManifest(raw), JSON.stringify(raw.clues[0]!.snapshot)).toThrowError(ClueError)
     }
-    const duplicatePath = clone(validManifest())
+    const duplicatePath = clone()
     duplicatePath.clues[1]!.snapshot = { ...duplicatePath.clues[0]!.snapshot! }
     expect(() => parseCluepackManifest(duplicatePath)).toThrowError(/duplicate snapshot path/i)
   })
 
   it('validates portable references without inventing a locator', () => {
-    const noLocator = clone(validManifest())
+    const noLocator = clone()
     noLocator.clues[0]!.portable = { portable: true }
     expect(() => parseCluepackManifest(noLocator)).toThrowError(/portable.*locator/i)
 
-    const nonObject = clone(validManifest()) as unknown as Record<string, JsonValue>
-    ;((nonObject.clues as JsonValue[])[0]!['portable'] as JsonValue)['locator'] = [1, 2]
+    const nonObject = clone()
+    rawField(nonObject.clues[0]!.portable).locator = [1, 2]
     expect(() => parseCluepackManifest(nonObject)).toThrowError(/portable.*locator/i)
 
-    const nonPortableWithoutReason = clone(validManifest())
+    const nonPortableWithoutReason = clone()
     nonPortableWithoutReason.clues[1]!.portable = { portable: false }
     expect(parseCluepackManifest(nonPortableWithoutReason).clues[1]!.portable.portable).toBe(false)
   })
 
   it('rejects issues that name unknown objects or categories', () => {
-    const dangling = clone(validManifest())
+    const dangling = clone()
     dangling.issues[0]!.key = 'clue-missing'
     expect(() => parseCluepackManifest(dangling)).toThrowError(/unknown clue/i)
-    const badCategory = clone(validManifest()) as unknown as Record<string, JsonValue>
-    ;(badCategory.issues as JsonValue[])[0]!['category'] = 'auth-failure'
+    const badCategory = clone()
+    rawField(badCategory.issues[0]!).category = 'auth-failure'
     expect(() => parseCluepackManifest(badCategory)).toThrowError(/category/i)
-    const danglingPack = clone(validManifest())
+    const danglingPack = clone()
     danglingPack.issues[0] = { target: 'pack', key: 'pack-missing', reason: 'x' }
     expect(() => parseCluepackManifest(danglingPack)).toThrowError(/unknown pack/i)
   })
 
   it('rejects empty titles/type ids and a non-object root', () => {
-    const emptyTitle = clone(validManifest())
+    const emptyTitle = clone()
     emptyTitle.clues[0]!.title = '   '
     expect(() => parseCluepackManifest(emptyTitle)).toThrowError(/title/i)
-    const emptyType = clone(validManifest())
+    const emptyType = clone()
     emptyType.clues[0]!.typeId = ''
     expect(() => parseCluepackManifest(emptyType)).toThrowError(/typeId/i)
     expect(() => parseCluepackManifest(null)).toThrowError(/JSON object/i)
@@ -242,8 +254,8 @@ describe('serializeCluepackManifest', () => {
   })
 
   it('rejects an invalid manifest instead of writing it', () => {
-    const manifest = clone(validManifest())
-    manifest.formatVersion = CLUEPACK_FORMAT_VERSION + 1 as 1
+    const manifest = clone()
+    ;(manifest as { formatVersion: number }).formatVersion = CLUEPACK_FORMAT_VERSION + 1
     expect(() => serializeCluepackManifest(manifest)).toThrowError(ClueError)
   })
 })
