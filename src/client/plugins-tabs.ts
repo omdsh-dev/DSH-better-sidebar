@@ -153,6 +153,17 @@ export const builtinTabPlugins: readonly PluginEntry[] = [
     install: 'cd ~/.dsh && dsh plugin --profile web add "github:lpf20200901/dsh-memory-delta#v1.3.3"',
   },
   {
+    id: 'dsh-pr-inbox',
+    name: () => t('pluginPrInboxName'),
+    url: 'https://github.com/omdsh-dev/dsh-pr-inbox',
+    description: () => t('pluginPrInboxDesc'),
+    // Registers the PR tab through this plugin's service. Requires
+    // better-sidebar as the tab host; the plugin is read-only and uses the
+    // user's existing `gh` login (no token stored). GitHub source with
+    // committed lib/, so the pinned tag installs without a local build.
+    install: 'cd ~/.dsh && dsh plugin --profile web add dsh-better-sidebar && dsh plugin --profile web add "github:omdsh-dev/dsh-pr-inbox#v0.1.0"',
+  },
+  {
     id: 'dsh-sidebar-qa',
     name: () => t('pluginSidebarQaName'),
     url: 'https://github.com/ChenRuoT/dsh-sidebar-qa',
