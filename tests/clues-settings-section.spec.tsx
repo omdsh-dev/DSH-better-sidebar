@@ -686,18 +686,25 @@ describe('SideCardSection clue sources', () => {
       const h = harness()
       const rendered = await mountSources(h)
       const row = (): Element => rendered.container.querySelector('[data-clue-source="acme.docs"]')!
-      // A config window started an install and published the running task.
+      // Open the real S6 configuration window, then publish a running task
+      // exactly as that window's shared poller would.
+      click(rendered.container, 'Configure source: Acme Docs')
       act(() => { publishClueTask(h.runtime, installTask()) })
       expect(row().getAttribute('data-clue-source-status')).toBe('installing')
-      // The window closes and its shared poller stops: NO terminal task
-      // observation will ever arrive to clear the overlay. A later catalogue
-      // read (registry change / Retry / reopen) must show the DTO's real
-      // state instead of "Installing" forever.
-      h.runtime.dependenciesInspect = async () => [dependency({ state })]
+      // Closing the window stops its poller: NO terminal task observation will
+      // ever arrive to clear the overlay. The close itself must re-read and
+      // show the DTO's real state instead of "Installing" forever.
+      let reads = 0
+      h.runtime.dependenciesInspect = async () => {
+        reads += 1
+        return [dependency({ state })]
+      }
       act(() => {
-        h.clues.registerSourceDisplay({ sourceId: 'acme.docs', name: 'Acme Docs' })
+        (h.service as unknown as BetterSidebarServiceHost).windowHost
+          .finishClose('clue-source:acme.docs')
       })
       await flush()
+      expect(reads).toBeGreaterThan(0)
       expect(row().getAttribute('data-clue-source-status')).toBe(state)
       expect(row().textContent).not.toContain('Installing')
       rendered.unmount()

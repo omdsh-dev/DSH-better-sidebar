@@ -905,22 +905,36 @@ export function SideCardSection(props: SideCardSectionProps) {
   const sourcesLoadedRef = useRef(false)
   const sourcesRequestRef = useRef(0)
   const sourcesAbortRef = useRef<AbortController | null>(null)
+  // The S6 configuration window can outlive this settings section (it is
+  // hosted outside the settings dialog). Its close callback must never start a
+  // catalogue read for an unmounted section.
+  const sectionMountedRef = useRef(true)
   // Terminal task ids already used to trigger one post-install re-read.
   const terminalTaskIdsRef = useRef<Set<string>>(new Set())
   const catalogueRef = useRef<CluesSourcesCatalogResult | null>(null)
   useEffect(() => { catalogueRef.current = catalogue }, [catalogue])
   const displaysRef = useRef(displays)
   useEffect(() => { displaysRef.current = displays }, [displays])
-  useEffect(() => () => { sourcesAbortRef.current?.abort() }, [])
+  useEffect(() => {
+    sectionMountedRef.current = true
+    return () => {
+      sectionMountedRef.current = false
+      sourcesAbortRef.current?.abort()
+    }
+  }, [])
 
   /** Read the catalogue, then the S2 status projections it needs. */
   const loadSources = useCallback(async (): Promise<void> => {
+    if (!sectionMountedRef.current) return
     const request = sourcesRequestRef.current + 1
     sourcesRequestRef.current = request
     const controller = new AbortController()
     sourcesAbortRef.current?.abort()
     sourcesAbortRef.current = controller
-    const isCurrent = (): boolean => !controller.signal.aborted && request === sourcesRequestRef.current
+    const isCurrent = (): boolean =>
+      sectionMountedRef.current
+      && !controller.signal.aborted
+      && request === sourcesRequestRef.current
     setSourcesLoading(true)
     setSourcesError(null)
     setDependencyProbeError(null)
@@ -1155,8 +1169,16 @@ export function SideCardSection(props: SideCardSectionProps) {
           runtime={runtime}
         />
       ),
+      // Closing this window is exactly when the shared install poller loses
+      // its last subscriber. Re-read the catalogue + statuses then, so a task
+      // that settled (or vanished) while the window was open cannot leave the
+      // source table on its stale installing overlay — no terminal bus
+      // observation will arrive once the poller is gone.
+      onClose: () => {
+        if (sourcesLoadedRef.current) void loadSources()
+      },
     })
-  }, [windows, runtime])
+  }, [windows, runtime, loadSources])
 
   /** Open by id; remember it until the catalogue is available. */
   const openSourceConfigById = useCallback((sourceId: string): void => {
