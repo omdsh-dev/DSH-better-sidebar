@@ -14,13 +14,13 @@
 | 波次 | Spec | 写入范围（互不重叠） | 依赖 |
 |---|---|---|---|
 | 1 | S1 | `src/clues/**`、`src/client/clues/**`、`src/fs-read.ts`、`src/index.ts`、`src/client/service.ts`、`src/client/index.tsx`、`src/config.ts`、`src/prefs-shared.ts`、`src/client/prefs.ts`、`package.json` exports/files、`tsdown.config.ts`、`tests/clues-*` | — |
-| 2 | S2 | `src/clues/runtime/**`、`src/context-types.ts`、`tests/clues-runtime-*` | S1 |
+| 2 | S2 | `src/clues/runtime/**`、`src/context-types.ts`、`tests/clues-runtime-*`、`tests/fixtures/clues-runtime/**` | S1 |
 | 2 | S5 | `src/clues/context/**`、`src/clues/tools.ts`、`src/client/clues/mentions.ts`、`tests/clues-context-*`、`tests/clues-tools*`、`tests/clues-mentions*` | S1 |
 | 2 | S6 | `src/client/FloatingWindow.tsx`、`src/client/FloatingWindow.module.css`、`src/client/windows/**`、`src/client/TaskWindow.tsx`、`src/client/JobsDrawer.tsx`、`src/client/Sidebar.tsx`、`src/client/service.ts`、`src/client/index.tsx`、窗口相关 locale keys、`tests/floating-window*`、`tests/window-*` | S1 |
 | 2 | S7 | `src/clues/share/**`、`tests/clues-share-*`、`tests/fixtures/cluepack-*` | S1 |
 | 3 | S3 | `src/clues/sources/github/**`、`src/client/clues/sources/github/**`、`tests/clues-github-*` | S1/S2/S6 |
 | 3 | S4 | `src/clues/sources/feishu/**`、`src/client/clues/sources/feishu/**`、`tests/clues-feishu-*` | S1/S2/S6 |
-| 3 | S8 | `src/client/SideCardSection.tsx`、`src/client/SideCardSection.module.css`、`src/client/clues/settings/**`、`src/client/locales*.ts`、`src/client/settings-nav-icon.ts`、`tests/clues-settings-*`、`tests/side-card-section*` | S1/S2/S6 |
+| 3 | S8 | `src/client/SideCardSection.tsx`、`src/client/SideCardSection.module.css`、`src/client/clues/settings/**`、`src/client/clues/runtime-api.ts`、`src/client/locales*.ts`、`src/client/settings-nav-icon.ts`、`tests/clues-settings-*`、`tests/side-card-section*` | S1/S2/S6 |
 | 4 | S9 | 其余总装配：`src/client/clues/tab/**`、`src/client/clues/pages/**`、`src/client/builtins/**`、`src/client/index.tsx`、`src/client/service.ts`、`src/index.ts`、`src/client/locales*.ts`、`src/bundle-route.ts`/chunk 镜像、`docs/external-plugin-guide.md`、`CHANGELOG.md`、`tests/e2e/**`、`tests/clues-integration-*` | S1—S8 |
 
 规则：并行波内**只加新文件/改自己范围**；任何入口文件（`src/index.ts`、`src/client/index.tsx`、`src/client/service.ts`、`package.json`、locale 词典、chunk 镜像、公共指南）的最终接线归 S9。并行节点不要为了“本地能跑”去改入口；用导出的 `install*` 函数 + 直接单测验证，S9 统一接线。
@@ -58,11 +58,11 @@
 ## 3. 各 Spec 的集成出口（S9 装配用）
 
 - S2：`installCluesRuntime(ctx, clues, options)` 返回 `ClueRuntime`（依赖/连接注册、`runCli`、HTTP/MCP 边界）；`src/clues/runtime/index.ts` 导出类型。
-- S5：`installClueTools(ctx, clues)`、`installClueInjection(ctx, clues, options)`、`createClueInputTrigger(...)`（客户端）；token 解析/序列化纯函数从 `src/clues/context/**` 导出。
+- S5：`installClueTools(ctx, clues)`、`installClueInjection(ctx, clues, options)`、`createClueInputTriggers(...)` / `installClueInputTriggers(...)`（客户端）；token 解析/序列化纯函数从 `src/clues/context/**` 导出。
 - S6：客户端 `BetterSidebarService.windows`（`createWindowHost()`），<WindowHost> 由 S6 自己挂到 `Sidebar.tsx` 或 `index.tsx`；公开 `open/update/focus/close`、尺寸预设、导航、脏态关闭保护、format 渲染器承载。
 - S7：`installCluesShare(ctx, clues, options)` 返回 share service；`createCluesShareRoutes(share, fence)` 返回 raw route handlers（S9 用 `ctx.webServer.register` 挂载）。
-- S3/S4：`createGithubSources(runtime)` / `createFeishuSources(runtime)` 返回 `ClueSourceRegistration[]` 与依赖/连接定义；S9 在 `installClues` 的 `builtinSources` 参数中追加，并在 runtime 注册依赖/连接。客户端预览/编辑器注册函数由各自模块导出，S9 调用。
-- S8：`SideCardSection` 内部重排即可，无需新的宿主入口；来源行使用 S2 的客户端 API（`src/client/clues/runtime-api.ts`）。
+- S3/S4：`createGithubSources({ runtime: () => ClueRuntime })` / `createFeishuSources({ runtime: () => ClueRuntime })` 返回 `ClueSourceRegistration[]` 与依赖/连接定义。**runtime 用惰性 getter**，因为服务构造（builtin sources）先于 runtime 安装，直接传实例会形成循环；S9 先建 source registrations（闭包捕获后置 runtime），再 `installClues(ctx, { builtinSources })`，最后 `installCluesRuntime(ctx, clues)` 并注册依赖/连接定义。客户端预览/编辑器注册函数由各自模块导出，S9 调用。
+- S8：`SideCardSection` 内部重排即可，无需新的宿主入口；来源行使用 S1 的 `ctx.betterSidebar.clues` 与**本 Spec 新建的** `src/client/clues/runtime-api.ts`（typed `call('clues.dependencies.*')` / `call('clues.connections.*')`）；S2 不拥有客户端文件。
 
 ## 4. 验证
 
