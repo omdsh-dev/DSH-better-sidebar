@@ -82,7 +82,7 @@ type BrowserState =
       readonly result: ClueListResult
     }
   | { readonly kind: 'resolved'; readonly candidates: readonly ClueCandidate[]; readonly text: string }
-  | { readonly kind: 'needs-scope' }
+  | { readonly kind: 'needs-scope'; readonly reason: 'list' | 'search' }
   | { readonly kind: 'unsupported'; readonly reason: 'no-list' | 'no-search' }
   | { readonly kind: 'error'; readonly message: string }
 
@@ -121,6 +121,35 @@ function scopeRequired(sourceId: string): boolean {
   return sourceId === BUILTIN_SOURCE_IDS.githubIssues
     || sourceId === BUILTIN_SOURCE_IDS.githubPulls
     || sourceId === BUILTIN_SOURCE_IDS.feishuDocs
+}
+
+/** The `kind` of a persisted Feishu docs range, when it has one. */
+function feishuRangeKind(scope: JsonValue | undefined): string | undefined {
+  if (scope === null || typeof scope !== 'object' || Array.isArray(scope)) return undefined
+  const kind = (scope as Record<string, unknown>).kind
+  return typeof kind === 'string' ? kind : undefined
+}
+
+/** Whether a LIST request still lacks an explicitly chosen range. */
+function listNeedsScope(sourceId: string, scope: JsonValue | undefined): boolean {
+  return scopeRequired(sourceId) && scope === undefined
+}
+
+/**
+ * Whether a SEARCH request still lacks a SEARCHABLE range.
+ *
+ * A GitHub range is searchable as soon as it names a repository. The Feishu
+ * drive root and the wiki-space list are BROWSE-only ranges: the source can
+ * list their children but cannot search "everything" without a concrete
+ * folder / wiki node. Sending the browse range to search would fail as an
+ * `invalid-request`, so the UI asks for the narrower range first.
+ */
+function searchNeedsScope(sourceId: string, scope: JsonValue | undefined): boolean {
+  if (!scopeRequired(sourceId)) return false
+  if (scope === undefined) return true
+  if (sourceId !== BUILTIN_SOURCE_IDS.feishuDocs) return false
+  const kind = feishuRangeKind(scope)
+  return kind === 'drive-root' || kind === 'wiki-spaces'
 }
 
 /** Whether one input text is a resource URL/path rather than a keyword. */
@@ -279,9 +308,6 @@ export function ClueBrowser(props: ClueBrowserProps): ReactNode {
   )
   const activeSourceId = active?.sourceId
   const activeScope = activeSourceId === undefined ? undefined : scopes[activeSourceId]
-  const activeNeedsScope = active !== undefined
-    && scopeRequired(active.sourceId)
-    && activeScope === undefined
 
   // ── catalogue + local library/pins ─────────────────────────────────────────
 
@@ -352,6 +378,18 @@ export function ClueBrowser(props: ClueBrowserProps): ReactNode {
 
   const run = useCallback(async (requested: View, cursor: string | undefined): Promise<void> => {
     if (active === undefined) return
+    // A direct resource URL/path resolves WITHOUT any browse range: it names
+    // its own resource, so a source whose range is still unchosen must never
+    // block the independent resolve action.
+    if (requested.kind !== 'resolve') {
+      const blocked = requested.kind === 'list'
+        ? listNeedsScope(active.sourceId, activeScope)
+        : searchNeedsScope(active.sourceId, activeScope)
+      if (blocked) {
+        setState({ kind: 'needs-scope', reason: requested.kind === 'search' ? 'search' : 'list' })
+        return
+      }
+    }
     abortRef.current?.abort()
     const controller = new AbortController()
     abortRef.current = controller
@@ -388,17 +426,14 @@ export function ClueBrowser(props: ClueBrowserProps): ReactNode {
     }
   }, [active, activeScope, face, workspaceId])
 
-  // ONE loader: the current view + cursor decide what is fetched. A range that
-  // is still unchosen never fires a request.
+  // ONE loader: the current view + cursor decide what is fetched. A browse
+  // range that is still unchosen blocks list/search — but never a direct
+  // resource resolve, and a Feishu browse-only root blocks only SEARCH.
   useEffect(() => {
     if (!visible || active === undefined) return
-    if (activeNeedsScope) {
-      setState({ kind: 'needs-scope' })
-      return
-    }
     void run(view, cursorStack[cursorStack.length - 1])
     // `activeScope` changes identity only when the persisted range changes.
-  }, [visible, active, activeNeedsScope, activeScope, view, cursorStack, run])
+  }, [visible, active, activeScope, view, cursorStack, run])
 
   const onScopeApply = useCallback((): void => {
     if (activeSourceId === undefined) return
@@ -727,7 +762,7 @@ export function ClueBrowser(props: ClueBrowserProps): ReactNode {
               {state.kind === 'loading' && <div className={css.stateLine} role="status">{t('loading')}</div>}
               {state.kind === 'needs-scope' && (
                 <div className={css.stateLine}>
-                  <span>{t('clueBrowserScopeNeeded')}</span>
+                  <span>{state.reason === 'search' ? t('clueBrowserSearchScopeNeeded') : t('clueBrowserScopeNeeded')}</span>
                   <button type="button" className={css.stateAction} onClick={() => { setScopeOpen(true) }}>
                     {t('clueBrowserScopeEdit')}
                   </button>

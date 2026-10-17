@@ -408,6 +408,72 @@ describe('clue tab source browser', () => {
     view.unmount()
   })
 
+  it('resolves a complete GitHub URL before any browse range is chosen', async () => {
+    const candidate: ClueCandidate = {
+      sourceId: GITHUB.sourceId,
+      typeId: 'builtin.github.issue',
+      locator: { host: 'github.com', owner: 'acme', repo: 'widgets', kind: 'issue', number: 7 },
+      title: 'Fix the widget',
+    }
+    const fx = fixture({ workspaceId: 'ws-1', enabled: [GITHUB.sourceId], resolveCandidates: [candidate] })
+    const view = mount(fx)
+    await flush()
+    expect(view.container.textContent).toContain('No range chosen yet')
+    expect(fx.calls.list).toBe(0)
+
+    const input = view.container.querySelector<HTMLInputElement>('input[aria-label="Search a keyword, or paste a resource URL / path"]')!
+    typeInto(input, 'https://github.com/acme/widgets/issues/7')
+    press(view.container, 'Search')
+    await flush()
+
+    // The direct resolve is independent of the browse range: it must run even
+    // though this GitHub source still has no explicit repository range.
+    expect(fx.calls.resolve).toBe(1)
+    expect(fx.resolveParams[0]).toMatchObject({ text: 'https://github.com/acme/widgets/issues/7' })
+    expect(fx.calls.list).toBe(0)
+    expect(view.container.textContent).toContain('Fix the widget')
+    expect(view.container.querySelector('[data-clue-browser-state]')?.getAttribute('data-clue-browser-state')).toBe('resolved')
+    view.unmount()
+  })
+
+  it('requires a concrete Feishu folder/wiki before searching a browse-only range', async () => {
+    const item: ClueCandidate = {
+      sourceId: FEISHU_DOCS.sourceId,
+      typeId: 'builtin.feishu.docs',
+      locator: { kind: 'docx', docToken: 'doc-1' },
+      title: 'Design doc',
+    }
+    const fx = fixture({ workspaceId: 'ws-1', enabled: [FEISHU_DOCS.sourceId], listItems: [item] })
+    const scopeFor = (scope: Record<string, unknown>) => ({
+      ...fx.store.getPrefs(),
+      pluginSettings: { clues: { scopes: { 'ws-1': { [FEISHU_DOCS.sourceId]: scope } } } },
+    })
+    fx.store.setPrefs(scopeFor({ kind: 'drive-root' }))
+    const view = mount(fx)
+    await flush()
+    // The browse-only root is a valid LIST range...
+    expect(fx.calls.list).toBeGreaterThan(0)
+
+    const input = view.container.querySelector<HTMLInputElement>('input[aria-label="Search a keyword, or paste a resource URL / path"]')!
+    typeInto(input, 'design')
+    press(view.container, 'Search')
+    await flush()
+    // ...but not a searchable one: no request goes out with the browse range.
+    expect(fx.calls.search).toBe(0)
+    expect(view.container.textContent).toContain('Choose a specific folder or wiki space before searching.')
+
+    // Choosing a concrete folder makes the same search run with that scope.
+    act(() => { fx.store.setPrefs(scopeFor({ kind: 'drive', folderToken: 'fld-1' })) })
+    await flush()
+    expect(fx.calls.search).toBe(1)
+    expect(fx.searchParams[0]).toMatchObject({
+      sourceId: FEISHU_DOCS.sourceId,
+      query: 'design',
+      scope: { kind: 'drive', folderToken: 'fld-1' },
+    })
+    view.unmount()
+  })
+
   it('pins a result through ensure + pins.add and marks the row', async () => {
     const candidate: ClueCandidate = {
       sourceId: FILES.sourceId,

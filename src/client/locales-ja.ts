@@ -790,6 +790,7 @@ export const ja: Record<string, string> = {
   clueBrowserSearchNeeded: 'キーワードを入力して検索するか、リソース URL を貼り付けてください。',
   clueBrowserScopeHeading: '閲覧範囲',
   clueBrowserScopeNeeded: '範囲が未選択です',
+  clueBrowserSearchScopeNeeded: '検索する前に具体的なフォルダーまたは Wiki スペースを選択してください。',
   clueBrowserScopeEdit: '範囲を選択',
   clueBrowserScopeApply: '範囲を保存',
   clueBrowserScopeInvalid: '範囲が無効です。入力を確認してください。',

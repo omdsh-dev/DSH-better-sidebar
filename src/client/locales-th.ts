@@ -790,6 +790,7 @@ export const th: Record<string, string> = {
   clueBrowserSearchNeeded: 'Enter a keyword to search, or paste a resource URL.',
   clueBrowserScopeHeading: 'Browse range',
   clueBrowserScopeNeeded: 'No range chosen yet',
+  clueBrowserSearchScopeNeeded: 'Choose a specific folder or wiki space before searching.',
   clueBrowserScopeEdit: 'Choose range',
   clueBrowserScopeApply: 'Save range',
   clueBrowserScopeInvalid: 'Invalid range; check the value.',
