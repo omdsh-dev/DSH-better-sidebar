@@ -48,6 +48,7 @@
  *   abort is still visible instead of being silently swallowed.
  */
 import { createHash } from 'node:crypto'
+import { localFileLocatorKey, normalizeLocalFileLocator } from '../local-files.ts'
 import { stableLocatorKey, type CluesService } from '../service.ts'
 import {
   BUILTIN_SOURCE_IDS,
@@ -89,6 +90,26 @@ import { readZip, type ZipReadLimits } from './zip.ts'
 const MAX_PACK_NAME = 200
 /** The path dialect of THIS host (local-file locators are dialect-bound). */
 const HOST_DIALECT = process.platform === 'win32' ? 'win32' : 'posix'
+/**
+ * Fixed reason of a remap whose target is already owned by another local row.
+ *
+ * The import must not seed the old unresolved row (it would be orphaned) and
+ * must not silently reuse the occupying row instead.
+ */
+const SAFE_REMAP_CONFLICT_REASON
+  = 'the remapped address already belongs to another local clue; the existing unresolved reference was left untouched'
+/**
+ * Fixed reason when the existing unresolved row could not be adopted (e.g. a
+ * source-specific normalization resolved the address to another row).
+ */
+const SAFE_ADOPTION_FAILED_REASON
+  = 'the existing unresolved reference could not be adopted by this remap; it remains in the library'
+/**
+ * Fixed reason when S1 refused every address form the import could store, so
+ * the clue was kept without that address.
+ */
+const SAFE_DROPPED_LOCATOR_REASON
+  = 'the reference address could not be stored by the installed source; the clue stays unresolved without that address'
 
 /** Everything the importer needs from the host (tests inject the registry). */
 export interface ClueShareImportDeps {
@@ -723,9 +744,55 @@ function canResolve(
     && deps.clues.getTypes(source.sourceId).some(type => type.typeId === clue.typeId)
 }
 
-/** Stable lookup key of one source + locator pair. */
-function addressKey(sourceId: string, locator: Locator): string {
-  return `${sourceId}\u0000${stableLocatorKey(locator)}`
+/**
+ * Stable lookup key of one source + locator pair.
+ *
+ * S1's `ensure` / `importUnresolved` dedupe through the source's own
+ * `normalizeLocator` + `locatorKey` when that source is registered, and
+ * through {@link stableLocatorKey} otherwise. `CluesService` does not expose a
+ * source's operations, so this layer reproduces the exact rule it CAN know:
+ * - the built-in local-file source publishes the very functions its
+ *   operations delegate to, so a `docs/../a.md` hint has the same key as the
+ *   stored `a.md` (a raw-key comparison would rewrite the old row first and
+ *   only then discover the clash);
+ * - a missing source uses the stable JSON key, exactly like S1;
+ * - any other source falls back to the stable JSON key. Equal raw locators
+ *   always mean equal S1 keys, so this can only MISS a normalization-collapsed
+ *   clash, never invent one; the commit verifies the adopted row id and
+ *   reports that residual instead of claiming success.
+ */
+function addressKey(deps: ClueShareImportDeps, sourceId: string, locator: Locator): string {
+  return `${sourceId}\u0000${locatorKeyOfAddress(deps, sourceId, locator)}`
+}
+
+/** The locator half of {@link addressKey}. */
+function locatorKeyOfAddress(
+  deps: ClueShareImportDeps,
+  sourceId: string,
+  locator: Locator,
+): string {
+  if (sourceId === BUILTIN_SOURCE_IDS.files && deps.clues.getSource(sourceId) !== undefined) {
+    try {
+      // Exactly `createLocalFileSource().operations.locatorKey`: normalize
+      // with the locator's own dialect, then fold win32 case.
+      return localFileLocatorKey(normalizeLocalFileLocator(locator))
+    } catch {
+      // An unnormalizable stored/importer value can never equal a normalized
+      // one; fall through to the canonical JSON key (best effort only).
+    }
+  }
+  return stableLocatorKey(locator)
+}
+
+/** Whether one stored row already names the same address as `key`. */
+function rowOwnsKey(
+  deps: ClueShareImportDeps,
+  row: Clue,
+  sourceId: string,
+  key: string,
+): boolean {
+  return [row.locator, row.unresolved?.portable?.locator].some(locator =>
+    locator !== undefined && addressKey(deps, sourceId, locator) === key)
 }
 
 /**
@@ -733,16 +800,16 @@ function addressKey(sourceId: string, locator: Locator): string {
  *
  * `ensure` / `importUnresolved` dedupe by the stored locator (or an unresolved
  * row's portable locator), so the preview builds the same address index once.
- * The archived locator is compared as-is: a source-specific normalization can
- * only be confirmed by the import commit, so the preview's `willBeUnresolved`
- * is explicitly best-effort for those sources.
+ * The index uses the source-aware key above; a source-specific normalization
+ * this layer cannot see is still only confirmed by the import commit, so the
+ * preview's `willBeUnresolved` remains explicitly best-effort for those.
  */
-function indexStoredClues(clues: readonly Clue[]): ReadonlyMap<string, Clue> {
+function indexStoredClues(deps: ClueShareImportDeps, clues: readonly Clue[]): ReadonlyMap<string, Clue> {
   const byAddress = new Map<string, Clue>()
   for (const clue of clues) {
     for (const locator of [clue.locator, clue.unresolved?.portable?.locator]) {
       if (locator === undefined) continue
-      const key = addressKey(clue.sourceId, locator)
+      const key = addressKey(deps, clue.sourceId, locator)
       if (!byAddress.has(key)) byAddress.set(key, clue)
     }
   }
@@ -775,7 +842,7 @@ export async function previewImport(
   throwIfAborted(params.signal)
   const sourceById = sourceMapOf(manifest)
   const manifestClueByKey = new Map(manifest.clues.map(clue => [clue.key, clue]))
-  const storedByAddress = indexStoredClues(library.clues)
+  const storedByAddress = indexStoredClues(deps, library.clues)
   const sourceRows = new Map<string, ClueShareImportSourcePreview>()
   const items: ClueShareImportItemPreview[] = []
   let unresolvedCount = 0
@@ -813,7 +880,7 @@ export async function previewImport(
     const address = remapped.locator ?? clue.portable.locator
     const reused = address === undefined
       ? undefined
-      : storedByAddress.get(addressKey(source.sourceId, address))
+      : storedByAddress.get(addressKey(deps, source.sourceId, address))
     const willBeUnresolved = !live && !(reused !== undefined && reused.unresolved === undefined)
     const unresolvedReason = willBeUnresolved
       ? unresolvedReasonOf(deps, clue, source, remapped)
@@ -930,7 +997,7 @@ export async function importPack(
       for (const existing of (await deps.clues.listClues(workspaceId)).clues) {
         for (const locator of [existing.locator, existing.unresolved?.portable?.locator]) {
           if (locator === undefined || Object.keys(locator).length === 0) continue
-          const key = addressKey(existing.sourceId, locator)
+          const key = addressKey(deps, existing.sourceId, locator)
           if (!byAddress.has(key)) byAddress.set(key, existing)
           if (existing.unresolved !== undefined && !unresolvedByAddress.has(key)) {
             unresolvedByAddress.set(key, existing)
@@ -1036,7 +1103,14 @@ export async function importPack(
     remapped: RemappedLocator,
     reason: string,
     adopt: Clue | undefined,
-  ): Promise<{ clueId: string; title: string; created: boolean; unresolved: boolean }> => {
+  ): Promise<{
+    clueId: string
+    title: string
+    created: boolean
+    unresolved: boolean
+    /** True when S1 refused every address form, so the clue was kept without it. */
+    droppedLocator: boolean
+  }> => {
     const common = {
       workspaceId,
       sourceId: source.sourceId,
@@ -1056,6 +1130,7 @@ export async function importPack(
     }, options)
     const preferred = unresolvedPortableOf(clue, remapped, reason)
     let imported
+    let droppedLocator = false
     try {
       imported = await attempt(preferred)
     } catch (error) {
@@ -1066,6 +1141,10 @@ export async function importPack(
       } catch (retry) {
         if (aborted(params.signal)) throw retry
         if (!isClueError(retry) || retry.category !== 'invalid-request') throw retry
+        // The address itself is unstorable by this source (for example a
+        // foreign workspace root). Keep the clue, but do not silently pretend
+        // the address survived: the caller records an explicit issue.
+        droppedLocator = true
         imported = await attempt({ portable: false, reason })
       }
     }
@@ -1076,6 +1155,7 @@ export async function importPack(
       title: imported.clue.title,
       created: imported.created,
       unresolved: imported.clue.unresolved !== undefined,
+      droppedLocator,
     }
   }
 
@@ -1100,7 +1180,7 @@ export async function importPack(
       const prior = localIndex === undefined
         ? undefined
         : priorAddresses
-          .map(locator => localIndex.unresolvedByAddress.get(addressKey(source.sourceId, locator)))
+          .map(locator => localIndex.unresolvedByAddress.get(addressKey(deps, source.sourceId, locator)))
           .find(candidate => candidate !== undefined)
       active = { target: 'clue', key: clue.key }
       let clueId: string
@@ -1108,55 +1188,82 @@ export async function importPack(
       let created: boolean
       let unresolved = false
       let itemIssue = false
+      /**
+       * The address this import would store on the clue row. An explicit
+       * remap replaces the archived address; otherwise the (receiver-rooted)
+       * archived hint is what `importUnresolved` receives. This is the address
+       * S1 dedupes by, so the conflict pre-check must use the same key.
+       */
+      const targetLocator = live
+        ? remapped.locator
+        : remapped.locator ?? remapped.hint ?? archivedLocator
+      const targetKey = targetLocator === undefined
+        ? undefined
+        : addressKey(deps, source.sourceId, targetLocator)
+      const targetAlreadyOnPrior = targetKey !== undefined
+        && prior !== undefined
+        && rowOwnsKey(deps, prior, source.sourceId, targetKey)
+      if (
+        localIndex !== undefined
+        && prior !== undefined
+        && targetKey !== undefined
+        && !targetAlreadyOnPrior
+      ) {
+        const targetRow = localIndex.byAddress.get(targetKey)
+        if (targetRow !== undefined && targetRow.id !== prior.id) {
+          // The target address already belongs to another local row (live or
+          // unresolved, e.g. the receiver ensured it before this re-import).
+          // Seeding the old unresolved row would only move the orphan; S1 has
+          // no merge/delete API, so nothing is committed for this clue and the
+          // result is explicitly partial. This runs for the unresolved branch
+          // too: a missing source/type must not let S1's dedupe silently adopt
+          // the occupying row and leave the old one behind.
+          itemIssue = true
+          issues.push({
+            target: 'clue',
+            key: clue.key,
+            category: 'conflict',
+            reason: SAFE_REMAP_CONFLICT_REASON,
+          })
+          progress({
+            phase: 'clue',
+            completed: index + 1,
+            total,
+            key: clue.key,
+            status: 'issue',
+            reason: SAFE_REMAP_CONFLICT_REASON,
+          })
+          continue
+        }
+      }
       if (live) {
-        let adoptionConflict = false
-        if (prior !== undefined && remapped.locator !== undefined) {
-          const targetKey = addressKey(source.sourceId, remapped.locator)
-          const already = [prior.locator, prior.unresolved?.portable?.locator].some(locator =>
-            locator !== undefined && addressKey(source.sourceId, locator) === targetKey)
-          const targetRow = localIndex?.byAddress.get(targetKey)
-          if (!already && targetRow !== undefined && targetRow.id !== prior.id) {
-            // The remapped address already belongs to another local row (for
-            // example the receiver ensured it before this re-import). Seeding
-            // the old unresolved row would only move the orphan; S1 has no
-            // merge/delete API, so the import must say so instead of returning
-            // a silent complete:true.
-            adoptionConflict = true
-            itemIssue = true
-            issues.push({
-              target: 'clue',
-              key: clue.key,
-              category: 'conflict',
-              reason: 'the remapped address already belongs to another local clue; the existing unresolved reference was left untouched',
-            })
-          } else if (!already) {
-            try {
-              // Seed the remapped address as the row's portable hint; the
-              // `ensure` below then finds and resolves the SAME row.
-              await deps.clues.importUnresolved({
-                workspaceId,
-                sourceId: source.sourceId,
-                typeId: clue.typeId,
-                // Use the stored hint when available: an archived
-                // foreign-workspace locator cannot be normalized by S1.
-                locator: prior.unresolved?.portable?.locator
-                  ?? (archivedLocator !== undefined && Object.keys(archivedLocator).length > 0 ? archivedLocator : {}),
-                title: clue.title,
-                reason: prior.unresolved?.reason ?? SAFE_ADOPTED_REASON,
-                portable: {
-                  portable: clue.portable.portable === true,
-                  locator: remapped.locator,
-                },
-              }, options)
-              // S1's importUnresolved commits even when it reuses a row, so
-              // this write must be counted: an abort before the ensure below
-              // has already changed the library and cannot be a bare throw.
-              seedCommits += 1
-            } catch (error) {
-              if (aborted(params.signal)) throw error
-              // Let `ensure` decide: if the address is invalid the normal
-              // unresolved fallback below still runs.
-            }
+        if (prior !== undefined && remapped.locator !== undefined && !targetAlreadyOnPrior) {
+          try {
+            // Seed the remapped address as the row's portable hint; the
+            // `ensure` below then finds and resolves the SAME row.
+            await deps.clues.importUnresolved({
+              workspaceId,
+              sourceId: source.sourceId,
+              typeId: clue.typeId,
+              // Use the stored hint when available: an archived
+              // foreign-workspace locator cannot be normalized by S1.
+              locator: prior.unresolved?.portable?.locator
+                ?? (archivedLocator !== undefined && Object.keys(archivedLocator).length > 0 ? archivedLocator : {}),
+              title: clue.title,
+              reason: prior.unresolved?.reason ?? SAFE_ADOPTED_REASON,
+              portable: {
+                portable: clue.portable.portable === true,
+                locator: remapped.locator,
+              },
+            }, options)
+            // S1's importUnresolved commits even when it reuses a row, so
+            // this write must be counted: an abort before the ensure below
+            // has already changed the library and cannot be a bare throw.
+            seedCommits += 1
+          } catch (error) {
+            if (aborted(params.signal)) throw error
+            // Let `ensure` decide: if the address is invalid the normal
+            // unresolved fallback below still runs.
           }
         }
         try {
@@ -1173,7 +1280,6 @@ export async function importPack(
           unresolved = ensured.clue.unresolved !== undefined
           if (
             prior !== undefined
-            && !adoptionConflict
             && (ensured.created || ensured.clue.id !== prior.id)
           ) {
             // The adoption attempt did not reach the old row (e.g. a
@@ -1185,7 +1291,7 @@ export async function importPack(
               target: 'clue',
               key: clue.key,
               category: 'conflict',
-              reason: 'the existing unresolved reference could not be adopted by this remap; it remains in the library',
+              reason: SAFE_ADOPTION_FAILED_REASON,
             })
           }
         } catch (error) {
@@ -1201,6 +1307,22 @@ export async function importPack(
           unresolved = imported.unresolved
           itemIssue = true
           issues.push({ target: 'clue', key: clue.key, category: failure.category, reason: failure.reason })
+          if (prior !== undefined && imported.clueId !== prior.id) {
+            issues.push({
+              target: 'clue',
+              key: clue.key,
+              category: 'conflict',
+              reason: SAFE_ADOPTION_FAILED_REASON,
+            })
+          }
+          if (imported.droppedLocator) {
+            issues.push({
+              target: 'clue',
+              key: clue.key,
+              category: 'unsupported',
+              reason: SAFE_DROPPED_LOCATOR_REASON,
+            })
+          }
         }
       } else {
         const reason = unresolvedReasonOf(deps, clue, source, remapped)
@@ -1209,6 +1331,27 @@ export async function importPack(
         title = imported.title
         created = imported.created
         unresolved = imported.unresolved
+        if (prior !== undefined && imported.clueId !== prior.id) {
+          // S1's dedupe resolved the target address to a DIFFERENT row than the
+          // one this re-import was adopting. Report the clash instead of
+          // letting the old unresolved row look successfully remapped.
+          itemIssue = true
+          issues.push({
+            target: 'clue',
+            key: clue.key,
+            category: 'conflict',
+            reason: SAFE_ADOPTION_FAILED_REASON,
+          })
+        }
+        if (imported.droppedLocator) {
+          itemIssue = true
+          issues.push({
+            target: 'clue',
+            key: clue.key,
+            category: 'unsupported',
+            reason: SAFE_DROPPED_LOCATOR_REASON,
+          })
+        }
       }
       localIdByKey.set(clue.key, clueId)
       // Record the clue IMMEDIATELY after its row is durable. If the abort or

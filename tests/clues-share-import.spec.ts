@@ -26,11 +26,13 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createHash } from 'node:crypto'
 import { createCluesService, type CluesService, type ClueSourceRegistration } from '../src/clues/service.ts'
+import { createLocalFileSource, LOCAL_FILE_TYPE_IDS } from '../src/clues/local-files.ts'
 import {
   ClueError,
   type CluePortableRef,
   type ClueReadResult,
   type JsonValue,
+  type Locator,
 } from '../src/clues/types.ts'
 import {
   importPack,
@@ -40,6 +42,7 @@ import {
 } from '../src/clues/share/import.ts'
 import {
   SAFE_FAILURE_REASONS,
+  SAFE_SOURCE_NOT_INSTALLED,
 } from '../src/clues/share/reasons.ts'
 import {
   CLUEPACK_FORMAT,
@@ -123,7 +126,7 @@ function testSourceRegistration(
 }
 
 /** A service with one registered source and deterministic ids. */
-function fixture(): Fixture {
+function fixture(options: { extraBuiltinSources?: ClueSourceRegistration[] } = {}): Fixture {
   const base = mkdtempSync(join(tmpdir(), 'dsh-clues-share-import-'))
   roots.push(base)
   const workspace = join(base, 'workspace')
@@ -135,7 +138,7 @@ function fixture(): Fixture {
     now: () => NOW,
     newId: kind => `${kind}-${++next}`,
     resolveWorkspacePath: id => (id === 'ws-1' ? workspace : undefined),
-    builtinSources: [testSourceRegistration(source)],
+    builtinSources: [testSourceRegistration(source), ...(options.extraBuiltinSources ?? [])],
   })
   return { base, workspace, service, source }
 }
@@ -973,6 +976,237 @@ describe('explicit receiver remap', () => {
       remap: [{ clueKey: 'clue-gone', locator: { id: 'a' } }],
     })).rejects.toThrowError(/unknown clue/i)
     expect(await libraryIds(f.service)).toEqual([])
+  })
+
+  it('reports a conflict instead of adopting a row that already owns the remap target', async () => {
+    const f = fixture()
+    const pack = buildPack([{
+      key: 'clue-1',
+      sourceId: 'missing.source',
+      typeId: 'missing.source.doc',
+      title: 'First import',
+      portable: { portable: true, locator: { id: 'a' } },
+    }])
+    const first = await importPack({ clues: f.service }, { workspaceId: 'ws-1', bytes: pack.bytes })
+    expect(first.clues[0]).toMatchObject({ created: true, unresolved: true })
+    const priorId = first.clues[0]!.clueId
+    // Another row already owns the address the remap names.
+    const occupied = await f.service.importUnresolved({
+      workspaceId: 'ws-1',
+      sourceId: 'missing.source',
+      typeId: 'missing.source.doc',
+      locator: {},
+      title: 'Occupying row',
+      reason: SAFE_SOURCE_NOT_INSTALLED,
+      portable: { portable: true, locator: { id: 'b' } },
+    })
+    const before = (await f.service.listClues('ws-1')).clues
+    const second = await importPack({ clues: f.service }, {
+      workspaceId: 'ws-1',
+      bytes: pack.bytes,
+      remap: [{ clueKey: 'clue-1', locator: { id: 'b' } }],
+    })
+    // A missing source must not let S1's dedupe silently adopt the occupying
+    // row and leave the old unresolved row behind.
+    expect(second).toMatchObject({
+      complete: false,
+      partial: true,
+      requiresAcceptance: true,
+    })
+    expect(second.clues).toEqual([])
+    expect(second.issues).toContainEqual(expect.objectContaining({
+      target: 'clue',
+      key: 'clue-1',
+      category: 'conflict',
+    }))
+    const after = (await f.service.listClues('ws-1')).clues
+    expect(after.map(clue => clue.id)).toEqual(before.map(clue => clue.id))
+    const priorRow = after.find(clue => clue.id === priorId)!
+    expect(priorRow.title).toBe('First import')
+    expect(priorRow.unresolved?.portable?.locator).toEqual({ id: 'a' })
+    const occupiedRow = after.find(clue => clue.id === occupied.clue.id)!
+    expect(occupiedRow.title).toBe('Occupying row')
+    expect(occupiedRow.unresolved?.portable?.locator).toEqual({ id: 'b' })
+  })
+
+  it('reports a conflict for a type-missing remap onto an occupied address', async () => {
+    const f = fixture()
+    const missingType = 'test.source.not-offered'
+    const pack = buildPack([{
+      key: 'clue-1',
+      sourceId: TEST_SOURCE,
+      typeId: missingType,
+      title: 'Prior row',
+      portable: { portable: true, locator: { id: 'a' } },
+    }])
+    const first = await importPack({ clues: f.service }, { workspaceId: 'ws-1', bytes: pack.bytes })
+    expect(first.clues[0]).toMatchObject({ created: true, unresolved: true })
+    const priorId = first.clues[0]!.clueId
+    const occupied = await f.service.importUnresolved({
+      workspaceId: 'ws-1',
+      sourceId: TEST_SOURCE,
+      typeId: missingType,
+      locator: {},
+      title: 'Occupying row',
+      reason: SAFE_SOURCE_NOT_INSTALLED,
+      portable: { portable: true, locator: { id: 'b' } },
+    })
+    const second = await importPack({ clues: f.service }, {
+      workspaceId: 'ws-1',
+      bytes: pack.bytes,
+      remap: [{ clueKey: 'clue-1', locator: { id: 'b' } }],
+    })
+    expect(second.complete).toBe(false)
+    expect(second.partial).toBe(true)
+    expect(second.issues).toContainEqual(expect.objectContaining({ key: 'clue-1', category: 'conflict' }))
+    const rows = (await f.service.listClues('ws-1')).clues
+    expect(rows).toHaveLength(2)
+    expect(rows.find(clue => clue.id === priorId)!.unresolved?.portable?.locator).toEqual({ id: 'a' })
+    expect(rows.find(clue => clue.id === occupied.clue.id)!.title).toBe('Occupying row')
+  })
+
+  it('does not rewrite the old row when a normalized remap target is occupied', async () => {
+    const f = fixture({ extraBuiltinSources: [createLocalFileSource()] })
+    const files = 'builtin.files'
+    const markdown = LOCAL_FILE_TYPE_IDS.markdown
+    const locatorOf = (path: string): Locator => ({
+      root: { kind: 'workspace', workspaceId: 'ws-1' },
+      path,
+      dialect: 'posix',
+    })
+    const occupied = await f.service.ensure({
+      workspaceId: 'ws-1',
+      sourceId: files,
+      typeId: markdown,
+      locator: locatorOf('a.md'),
+      title: 'Occupying file',
+    })
+    const prior = await f.service.importUnresolved({
+      workspaceId: 'ws-1',
+      sourceId: files,
+      typeId: markdown,
+      locator: {},
+      title: 'Prior note',
+      reason: SAFE_SOURCE_NOT_INSTALLED,
+      portable: { portable: true, locator: locatorOf('notes/a.md') },
+    })
+    // The package's own type is not offered here, so the import takes the
+    // unresolved path; its archived hint finds the prior row.
+    const pack = buildPack([{
+      key: 'clue-1',
+      sourceId: files,
+      typeId: 'builtin.files.not-offered',
+      title: 'Prior note',
+      portable: { portable: true, locator: locatorOf('notes/a.md') },
+    }])
+    const result = await importPack({ clues: f.service }, {
+      workspaceId: 'ws-1',
+      bytes: pack.bytes,
+      remap: [{ clueKey: 'clue-1', locator: locatorOf('docs/../a.md') }],
+    })
+    expect(result.complete).toBe(false)
+    expect(result.issues).toContainEqual(expect.objectContaining({ key: 'clue-1', category: 'conflict' }))
+    const rows = (await f.service.listClues('ws-1')).clues
+    expect(rows).toHaveLength(2)
+    const priorRow = rows.find(clue => clue.id === prior.clue.id)!
+    // A raw-key comparison would have seeded `docs/../a.md` onto this row
+    // first and only then noticed the clash.
+    expect(priorRow.unresolved?.portable?.locator).toEqual(locatorOf('notes/a.md'))
+    expect(priorRow.title).toBe('Prior note')
+    expect(rows.find(clue => clue.id === occupied.clue.id)!.title).toBe('Occupying file')
+  })
+
+  it('does not seed the old row when a normalized remap target belongs to a live row', async () => {
+    const f = fixture({ extraBuiltinSources: [createLocalFileSource()] })
+    const files = 'builtin.files'
+    const markdown = LOCAL_FILE_TYPE_IDS.markdown
+    const locatorOf = (path: string): Locator => ({
+      root: { kind: 'workspace', workspaceId: 'ws-1' },
+      path,
+      dialect: 'posix',
+    })
+    // Create the unresolved row FIRST so a raw-key guard would seed it with the
+    // target hint before `ensure` discovers the live row on that address.
+    const prior = await f.service.importUnresolved({
+      workspaceId: 'ws-1',
+      sourceId: files,
+      typeId: markdown,
+      locator: {},
+      title: 'Prior note',
+      reason: SAFE_SOURCE_NOT_INSTALLED,
+      portable: { portable: true, locator: locatorOf('notes/a.md') },
+    })
+    const occupied = await f.service.ensure({
+      workspaceId: 'ws-1',
+      sourceId: files,
+      typeId: markdown,
+      locator: locatorOf('a.md'),
+      title: 'Occupying file',
+    })
+    const pack = buildPack([{
+      key: 'clue-1',
+      sourceId: files,
+      typeId: markdown,
+      title: 'Prior note',
+      portable: { portable: true, locator: locatorOf('notes/a.md') },
+    }])
+    const result = await importPack({ clues: f.service }, {
+      workspaceId: 'ws-1',
+      bytes: pack.bytes,
+      remap: [{ clueKey: 'clue-1', locator: locatorOf('docs/../a.md') }],
+    })
+    expect(result.complete).toBe(false)
+    expect(result.issues).toContainEqual(expect.objectContaining({ key: 'clue-1', category: 'conflict' }))
+    const rows = (await f.service.listClues('ws-1')).clues
+    expect(rows).toHaveLength(2)
+    const priorRow = rows.find(clue => clue.id === prior.clue.id)!
+    expect(priorRow.unresolved?.portable?.locator).toEqual(locatorOf('notes/a.md'))
+    expect(rows.find(clue => clue.id === occupied.clue.id)!.title).toBe('Occupying file')
+  })
+
+  it('records an issue when the unresolved fallback cannot store the address', async () => {
+    const f = fixture()
+    f.service.registerSource({
+      descriptor: {
+        sourceId: 'reject.source',
+        name: 'Rejecting source',
+        order: 30,
+        pluginId: 'plugin.reject',
+        types: ['reject.source.other'],
+        transport: 'mcp',
+        capabilities: { resolve: false, list: false, search: false, read: false, edit: false, portable: false },
+      },
+      types: [{
+        typeId: 'reject.source.other',
+        sourceId: 'reject.source',
+        formats: ['text/plain'],
+        capabilities: { read: false, edit: false, concurrency: 'none' },
+      }],
+      operations: {
+        normalizeLocator() {
+          throw new ClueError('invalid-request', 'this source rejects that address form')
+        },
+        locatorKey(locator) {
+          return JSON.stringify(locator)
+        },
+      },
+    })
+    const pack = buildPack([{
+      key: 'clue-1',
+      sourceId: 'reject.source',
+      typeId: 'reject.source.not-offered',
+      portable: { portable: true, locator: { id: 'a' } },
+    }])
+    const result = await importPack({ clues: f.service }, { workspaceId: 'ws-1', bytes: pack.bytes })
+    expect(result).toMatchObject({ complete: false, partial: true })
+    expect(result.issues).toContainEqual(expect.objectContaining({
+      key: 'clue-1',
+      category: 'unsupported',
+      reason: expect.stringMatching(/could not be stored/i),
+    }))
+    const row = (await f.service.listClues('ws-1')).clues[0]!
+    expect(row.unresolved).toBeDefined()
+    expect(row.unresolved?.portable?.locator).toBeUndefined()
   })
 })
 
