@@ -703,7 +703,6 @@ export const zhTW: Record<string, string> = {
   clueSourceCatalogFeishuName: '飛書文件與任務',
   clueSourceCatalogFeishuDesc: '以線索形式閱讀飛書文件、知識庫頁面與任務，透過共用的 lark-cli 連線讀取。隨 dsh-better-sidebar 作為內建來源提供：毋須獨立的來源外掛，該指令會安裝或更新核心外掛；安裝此外掛不會安裝 lark-cli，亦不會授權帳號。',
   clueSourceCatalogFeishuCategory: '飛書',
-  clueAddSourceNoCatalog: '目前宿主還沒有來源類外掛目錄；請透過下方 GitHub topic 尋找來源外掛。',
   clueStateUnchecked: '未檢測',
   clueStateMissing: '缺少依賴',
   clueStateIncompatible: '版本不相容',

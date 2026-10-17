@@ -686,7 +686,6 @@ export const id: Record<string, string> = {
   clueSourceCatalogFeishuName: 'Dokumen & Tugas Feishu',
   clueSourceCatalogFeishuDesc: 'Dokumen, halaman wiki, dan tugas Feishu sebagai petunjuk, dibaca melalui koneksi lark-cli bersama. Disertakan dalam dsh-better-sidebar sebagai sumber bawaan: plugin sumber terpisah tidak diperlukan dan perintah ini memasang atau memperbarui plugin inti. Memasang plugin ini tidak memasang lark-cli atau mengotorisasi akun.',
   clueSourceCatalogFeishuCategory: 'Feishu',
-  clueAddSourceNoCatalog: 'Belum ada katalog plugin sumber di host ini. Jelajahi topik GitHub di bawah untuk menemukan plugin sumber.',
   clueStateUnchecked: 'Belum diperiksa',
   clueStateMissing: 'Dependensi tidak ada',
   clueStateIncompatible: 'Versi tidak kompatibel',

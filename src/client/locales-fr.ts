@@ -681,7 +681,6 @@ export const fr: Record<string, string> = {
   clueSourceCatalogFeishuName: 'Docs & tâches Feishu',
   clueSourceCatalogFeishuDesc: 'Les documents, pages wiki et tâches Feishu comme pistes, lus via la connexion lark-cli partagée. Livré avec dsh-better-sidebar comme source intégrée : aucun plugin de source séparé n’est nécessaire, et la commande installe ou met à jour le plugin principal. Installer ce plugin n’installe pas lark-cli et n’autorise aucun compte.',
   clueSourceCatalogFeishuCategory: 'Feishu',
-  clueAddSourceNoCatalog: 'Aucun catalogue de plugins de sources n’est encore disponible sur cet hôte. Parcourez le sujet GitHub ci-dessous pour trouver des plugins de sources.',
   clueStateUnchecked: 'Non vérifié',
   clueStateMissing: 'Dépendance manquante',
   clueStateIncompatible: 'Version incompatible',

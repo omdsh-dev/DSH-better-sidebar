@@ -688,7 +688,6 @@ export const ja: Record<string, string> = {
   clueSourceCatalogFeishuName: 'Feishu ドキュメントとタスク',
   clueSourceCatalogFeishuDesc: 'Feishu のドキュメント・Wiki ページ・タスクをクルーとして共用の lark-cli 接続経由で読み取ります。dsh-better-sidebar に組み込みのソースとして同梱：別途ソースプラグインは不要で、このコマンドはコアプラグインをインストールまたは更新します。このプラグインをインストールしても lark-cli はインストールされず、アカウントの認可も行いません。',
   clueSourceCatalogFeishuCategory: 'Feishu',
-  clueAddSourceNoCatalog: 'このホストにはまだソースプラグインのカタログがありません。下の GitHub トピックからソースプラグインを探してください。',
   clueStateUnchecked: '未確認',
   clueStateMissing: '依存関係なし',
   clueStateIncompatible: 'バージョン非対応',

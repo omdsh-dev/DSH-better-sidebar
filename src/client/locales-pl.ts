@@ -690,7 +690,6 @@ export const pl: Record<string, string> = {
   clueSourceCatalogFeishuName: 'Dokumenty i zadania Feishu',
   clueSourceCatalogFeishuDesc: 'Dokumenty, strony wiki i zadania Feishu jako wskazówki, czytane przez współdzielone połączenie lark-cli. Dostarczane z dsh-better-sidebar jako wbudowane źródło: osobna wtyczka źródła nie jest potrzebna, a polecenie instaluje lub aktualizuje wtyczkę główną. Zainstalowanie tej wtyczki nie instaluje lark-cli ani nie autoryzuje konta.',
   clueSourceCatalogFeishuCategory: 'Feishu',
-  clueAddSourceNoCatalog: 'W tym hoście nie ma jeszcze katalogu wtyczek źródeł. Przejrzyj poniższy temat GitHub, aby znaleźć wtyczki źródeł.',
   clueStateUnchecked: 'Niesprawdzone',
   clueStateMissing: 'Brak zależności',
   clueStateIncompatible: 'Niezgodna wersja',

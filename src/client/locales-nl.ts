@@ -686,7 +686,6 @@ export const nl: Record<string, string> = {
   clueSourceCatalogFeishuName: 'Feishu-documenten & -taken',
   clueSourceCatalogFeishuDesc: 'Feishu-documenten, wikipagina’s en taken als clues, gelezen via de gedeelde lark-cli-verbinding. Wordt meegeleverd met dsh-better-sidebar als ingebouwde bron: een apart bronplugin is niet nodig en de opdracht installeert of werkt de kernplugin bij. Dit plugin installeren installeert lark-cli niet en autoriseert geen account.',
   clueSourceCatalogFeishuCategory: 'Feishu',
-  clueAddSourceNoCatalog: 'Er is nog geen catalogus met bronplugins beschikbaar op deze host. Blader hieronder door het GitHub-topic om bronplugins te vinden.',
   clueStateUnchecked: 'Niet gecontroleerd',
   clueStateMissing: 'Afhankelijkheid ontbreekt',
   clueStateIncompatible: 'Incompatibele versie',

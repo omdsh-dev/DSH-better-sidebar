@@ -671,7 +671,6 @@ export const sv: Record<string, string> = {
   clueSourceCatalogFeishuName: 'Feishu-dokument & uppgifter',
   clueSourceCatalogFeishuDesc: 'Feishu-dokument, wikisidor och uppgifter som ledtrådar, lästa via den delade lark-cli-anslutningen. Levereras med dsh-better-sidebar som en inbyggd källa: ingen separat källplugin behövs och kommandot installerar eller uppdaterar kärnpluginet. Att installera det här pluginet installerar inte lark-cli och auktoriserar inget konto.',
   clueSourceCatalogFeishuCategory: 'Feishu',
-  clueAddSourceNoCatalog: 'Det finns ännu ingen katalog med källplugins på den här värden. Bläddra i GitHub-ämnet nedan för att hitta källplugins.',
   clueStateUnchecked: 'Inte kontrollerad',
   clueStateMissing: 'Beroende saknas',
   clueStateIncompatible: 'Inkompatibel version',

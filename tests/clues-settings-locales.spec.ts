@@ -21,7 +21,7 @@ const S8_KEYS = [
   'clueSourceToggleAria', 'clueSourceMentionAria', 'clueSourceConfigureAria',
   'clueConfigure', 'cluePacksName', 'cluePacksMentionAria', 'cluePacksDesc',
   'clueSourcesEmpty', 'clueSourcesLoadFailed', 'clueSourcesUnavailable',
-  'clueAddSource', 'clueAddSourceDesc', 'clueAddSourceNoCatalog',
+  'clueAddSource', 'clueAddSourceDesc',
   'clueSourceCatalogGithubName', 'clueSourceCatalogGithubDesc',
   'clueSourceCatalogGithubCategory',
   'clueSourceCatalogFeishuName', 'clueSourceCatalogFeishuDesc',

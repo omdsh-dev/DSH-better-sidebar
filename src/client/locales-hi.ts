@@ -688,7 +688,6 @@ export const hi: Record<string, string> = {
   clueSourceCatalogFeishuName: 'Feishu दस्तावेज़ और कार्य',
   clueSourceCatalogFeishuDesc: 'Feishu दस्तावेज़ों, विकी पृष्ठों और कार्यों को साझा lark-cli कनेक्शन के माध्यम से सूत्रों के रूप में पढ़ें। dsh-better-sidebar के साथ अंतर्निहित स्रोत के रूप में आता है: अलग स्रोत प्लगइन की आवश्यकता नहीं है और यह कमांड मुख्य प्लगइन को स्थापित या अपडेट करता है। इस प्लगइन को स्थापित करने से lark-cli स्थापित नहीं होता और न ही कोई खाता अधिकृत होता है।',
   clueSourceCatalogFeishuCategory: 'Feishu',
-  clueAddSourceNoCatalog: 'इस होस्ट पर अभी तक स्रोत प्लगइन सूची उपलब्ध नहीं है। स्रोत प्लगइन खोजने के लिए नीचे GitHub विषय देखें।',
   clueStateUnchecked: 'जाँचा नहीं गया',
   clueStateMissing: 'निर्भरता अनुपलब्ध',
   clueStateIncompatible: 'असंगत संस्करण',

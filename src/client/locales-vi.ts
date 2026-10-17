@@ -688,7 +688,6 @@ export const vi: Record<string, string> = {
   clueSourceCatalogFeishuName: 'Tài liệu & tác vụ Feishu',
   clueSourceCatalogFeishuDesc: 'Tài liệu, trang wiki và tác vụ Feishu dưới dạng manh mối, đọc qua kết nối lark-cli dùng chung. Đi kèm dsh-better-sidebar như một nguồn tích hợp: không cần plugin nguồn riêng và lệnh này cài đặt hoặc cập nhật plugin chính. Cài đặt plugin này không cài đặt lark-cli và không cấp quyền cho tài khoản nào.',
   clueSourceCatalogFeishuCategory: 'Feishu',
-  clueAddSourceNoCatalog: 'Máy chủ này chưa có danh mục plugin nguồn. Duyệt chủ đề GitHub bên dưới để tìm plugin nguồn.',
   clueStateUnchecked: 'Chưa kiểm tra',
   clueStateMissing: 'Thiếu phụ thuộc',
   clueStateIncompatible: 'Phiên bản không tương thích',

@@ -688,7 +688,6 @@ export const tr: Record<string, string> = {
   clueSourceCatalogFeishuName: 'Feishu Belgeleri ve Görevleri',
   clueSourceCatalogFeishuDesc: 'Feishu belgeleri, wiki sayfaları ve görevleri ipucu olarak paylaşılan lark-cli bağlantısı üzerinden okunur. dsh-better-sidebar ile yerleşik kaynak olarak gelir: ayrı bir kaynak eklentisi gerekmez ve komut çekirdek eklentiyi kurar veya günceller. Bu eklentiyi kurmak lark-cli’yi kurmaz veya bir hesabı yetkilendirmez.',
   clueSourceCatalogFeishuCategory: 'Feishu',
-  clueAddSourceNoCatalog: 'Bu ana bilgisayarda henüz kaynak eklentisi kataloğu yok. Kaynak eklentilerini bulmak için aşağıdaki GitHub konusuna göz atın.',
   clueStateUnchecked: 'Denetlenmedi',
   clueStateMissing: 'Bağımlılık eksik',
   clueStateIncompatible: 'Uyumsuz sürüm',

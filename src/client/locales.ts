@@ -700,7 +700,6 @@ export const zh = {
   clueSourceCatalogFeishuName: '飞书文档与任务',
   clueSourceCatalogFeishuDesc: '以线索形式阅读飞书文档、知识库页面与任务，透过共享的 lark-cli 连接读取。随 dsh-better-sidebar 作为内置来源提供：无需单独的来源插件，该命令会安装或更新核心插件；安装本插件不会安装 lark-cli，也不会授权账号。',
   clueSourceCatalogFeishuCategory: '飞书',
-  clueAddSourceNoCatalog: '当前宿主还没有来源类插件目录；请通过下方 GitHub topic 查找来源插件。',
 
   // ── S8: clue source states ──
   clueStateUnchecked: '未检测',
@@ -1454,7 +1453,6 @@ export const en: Record<keyof typeof zh, string> = {
   clueSourceCatalogFeishuName: 'Feishu Docs & Tasks',
   clueSourceCatalogFeishuDesc: 'Feishu documents, wiki pages and tasks as clues, read through the shared lark-cli connection. Ships with dsh-better-sidebar as a built-in source: no separate source plugin is needed, and the command installs or updates the core plugin. Installing this plugin does not install lark-cli or authorize an account.',
   clueSourceCatalogFeishuCategory: 'Feishu',
-  clueAddSourceNoCatalog: 'No source-category plugin catalogue is available in this host yet; browse the GitHub topic below to find source plugins.',
 
   // ── S8: clue source states ──
   clueStateUnchecked: 'Not checked',

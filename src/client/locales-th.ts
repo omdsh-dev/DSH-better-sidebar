@@ -688,7 +688,6 @@ export const th: Record<string, string> = {
   clueSourceCatalogFeishuName: 'เอกสารและงาน Feishu',
   clueSourceCatalogFeishuDesc: 'เอกสาร หน้า Wiki และงานของ Feishu เป็นเบาะแส อ่านผ่านการเชื่อมต่อ lark-cli ที่ใช้ร่วมกัน มาพร้อม dsh-better-sidebar เป็นแหล่งที่มาที่มีมาให้ในตัว: ไม่ต้องมีปลั๊กอินแหล่งที่มาแยก และคำสั่งนี้จะติดตั้งหรืออัปเดตปลั๊กอินหลัก การติดตั้งปลั๊กอินนี้ไม่ได้ติดตั้ง lark-cli หรืออนุญาตบัญชี',
   clueSourceCatalogFeishuCategory: 'Feishu',
-  clueAddSourceNoCatalog: 'ยังไม่มีแคตตาล็อกปลั๊กอินแหล่งข้อมูลบนโฮสต์นี้ เรียกดูหัวข้อ GitHub ด้านล่างเพื่อค้นหาปลั๊กอินแหล่งข้อมูล',
   clueStateUnchecked: 'ยังไม่ได้ตรวจ',
   clueStateMissing: 'ขาด dependency',
   clueStateIncompatible: 'เวอร์ชันไม่เข้ากัน',

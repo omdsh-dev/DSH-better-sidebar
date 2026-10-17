@@ -689,7 +689,6 @@ export const ar: Record<string, string> = {
   clueSourceCatalogFeishuName: 'مستندات Feishu ومهامها',
   clueSourceCatalogFeishuDesc: 'تُقرأ مستندات Feishu وصفحات الويكي والمهام كأدلة عبر اتصال lark-cli المشترك. تأتي مضمّنة في dsh-better-sidebar كمصدر مدمج: لا حاجة إلى إضافة مصدر منفصلة، ويقوم الأمر بتثبيت الإضافة الأساسية أو تحديثها. تثبيت هذه الإضافة لا يثبّت lark-cli ولا يصرّح بحساب.',
   clueSourceCatalogFeishuCategory: 'Feishu',
-  clueAddSourceNoCatalog: 'لا يوجد كتالوج إضافات للمصادر على هذا المضيف بعد. تصفّح موضوع GitHub أدناه للعثور على إضافات المصادر.',
   clueStateUnchecked: 'غير مفحوص',
   clueStateMissing: 'تبعية مفقودة',
   clueStateIncompatible: 'إصدار غير متوافق',

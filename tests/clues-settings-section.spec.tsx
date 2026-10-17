@@ -859,7 +859,12 @@ describe('SideCardSection clue sources', () => {
     for (const entry of builtinTabPlugins) expect(modalBody.textContent).not.toContain(entry.install)
     // Nothing claims the plugin or its CLI was installed.
     expect(document.body.textContent).not.toContain('installed successfully')
-    expect(document.body.textContent).not.toContain(en.clueAddSourceNoCatalog)
+    // The shipped catalog replaced the old "no source catalogue" placeholder:
+    // its localized category headings are what this modal now shows.
+    for (const entry of builtinClueSourcePlugins) {
+      const category = typeof entry.category === 'function' ? entry.category() : entry.category
+      expect(modalBody.textContent).toContain(category)
+    }
     rendered.unmount()
   })
 

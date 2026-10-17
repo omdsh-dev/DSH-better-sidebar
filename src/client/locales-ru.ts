@@ -686,7 +686,6 @@ export const ru: Record<string, string> = {
   clueSourceCatalogFeishuName: 'Документы и задачи Feishu',
   clueSourceCatalogFeishuDesc: 'Документы, вики-страницы и задачи Feishu как подсказки, читаемые через общее подключение lark-cli. Поставляется вместе с dsh-better-sidebar как встроенный источник: отдельный плагин источника не нужен, а команда устанавливает или обновляет основной плагин. Установка этого плагина не устанавливает lark-cli и не авторизует учётную запись.',
   clueSourceCatalogFeishuCategory: 'Feishu',
-  clueAddSourceNoCatalog: 'В этом хосте пока нет каталога плагинов источников. Просмотрите тему GitHub ниже, чтобы найти плагины источников.',
   clueStateUnchecked: 'Не проверено',
   clueStateMissing: 'Нет зависимости',
   clueStateIncompatible: 'Несовместимая версия',
