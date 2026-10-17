@@ -113,6 +113,11 @@ function turnStart(turn: number): { type: string; data: unknown } {
   return { type: 'turn/start', data: { turn } }
 }
 
+/** One entered model step (the "this turn really executed" marker). */
+function stepStart(turn: number, step = 1): { type: string; data: unknown } {
+  return { type: 'step/start', data: { turn, step } }
+}
+
 /** One session with a full log and an own-events slice. */
 function session(
   events: readonly { type: string; data: unknown }[],
@@ -290,8 +295,18 @@ describe('installClueInjection', () => {
     expect(await harness.run(rejected, rejectNext)).toEqual({ kind: 'reject' })
 
     // A resumed / compacted / otherwise old session: turn 2, own turn 1 exists.
-    const resumed = payload(session([turnStart(1), turnStart(2)], { ownFrom: 0 }), 2)
+    const resumed = payload(session([turnStart(1), stepStart(1), turnStart(2)], { ownFrom: 0 }), 2)
     expect(injectedOf(await harness.run(resumed, nextOf(resumed)))).toBeUndefined()
+  })
+
+  it('does not manufacture a context-only step when the continuation admits no message', async () => {
+    const harness = mount(FIXTURE)
+    const sessionValue = session([turnStart(1)])
+    const claimed = payload(sessionValue)
+    const emptyNext = async () => ({ kind: 'enter' as const, messages: [] })
+    const decision = await harness.run(claimed, emptyNext)
+    expect(injectedOf(decision)).toBeUndefined()
+    expect((decision as { messages: readonly unknown[] }).messages).toHaveLength(0)
   })
 
   it('never injects twice in the same creation window (pre-commit re-entry)', async () => {
@@ -313,7 +328,7 @@ describe('installClueInjection', () => {
     const gate = new Promise<void>((resolve) => { release = resolve })
     const next = async () => {
       await gate
-      return { kind: 'enter' as const, messages: [] }
+      return { kind: 'enter' as const, messages: [{ role: 'user', content: [] }] }
     }
     const first = harness.run(payload(sessionValue), next)
     const second = harness.run(payload(sessionValue), next)
@@ -333,7 +348,7 @@ describe('installClueInjection', () => {
     const markerMessage = injectedOf(parentDecision)!
     // The child inherits the parent's marker in its frozen prefix; its own
     // first turn (`turn 2`) is appended after the cut.
-    const inherited = [turnStart(1), { type: 'user/message', data: { source: markerMessage.source } }, turnStart(2)]
+    const inherited = [turnStart(1), stepStart(1), { type: 'user/message', data: { source: markerMessage.source } }, turnStart(2)]
 
     // Same workspace, same effective list: the inherited marker suppresses it.
     const forkSame = session(inherited, { ownFrom: 2, isSeeded: true })

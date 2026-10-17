@@ -273,26 +273,28 @@ function lastMarker(events: readonly SessionEventLike[]): ClueContextMarker | un
 }
 
 /**
- * Whether the open turn is this session's first OWN turn.
+ * Whether the open turn is this session's first OWN model execution.
  *
- * The host appends `turn/start` before `agent/pre-step`, so the current turn is
- * already in the log. A seeded/forked session's inherited prefix is excluded by
- * `ownEvents()`; a resumed or compacted session has smaller own turn numbers.
+ * `turn/start` is logged before `agent/pre-step`, so the current turn is
+ * already present; `step/start` is the precise "a model call entered" marker
+ * (an empty turn never appends one). A seeded/forked session's inherited
+ * prefix is excluded by `ownEvents()`; a resumed or compacted session has
+ * earlier own steps.
  */
 function isFirstOwnTurn(session: SessionLike, turn: number): boolean {
   const own = session.ownEvents?.()
   if (own === undefined) {
     // Degraded hosts/fakes: a seeded session cannot distinguish inherited
-    // turns. The durable marker + in-process guard still prevent duplicates.
-    return session.header?.isSeeded === true ? true : !hasEarlierTurn(session.snapshotEvents?.() ?? [], turn)
+    // steps. The durable marker + in-process guard still prevent duplicates.
+    return session.header?.isSeeded === true ? true : !hasEarlierStep(session.snapshotEvents?.() ?? [], turn)
   }
-  return !hasEarlierTurn(own, turn)
+  return !hasEarlierStep(own, turn)
 }
 
-/** Whether the log already carries a `turn/start` for a smaller turn number. */
-function hasEarlierTurn(events: readonly SessionEventLike[], turn: number): boolean {
+/** Whether the log already carries a `step/start` for a smaller turn number. */
+function hasEarlierStep(events: readonly SessionEventLike[], turn: number): boolean {
   for (const event of events) {
-    if (event.type !== 'turn/start') continue
+    if (event.type !== 'step/start') continue
     const value = (event.data as { turn?: unknown } | undefined)?.turn
     if (typeof value === 'number' && value < turn) return true
   }
@@ -465,7 +467,9 @@ export function installClueInjection(
       injected.delete(guardKey)
       throw error
     }
-    if (decision.kind === 'reject') {
+    if (decision.kind === 'reject' || decision.messages.length === 0) {
+      // A rejected or empty step is no model execution: adding a context-only
+      // user message would manufacture a spurious call.
       injected.delete(guardKey)
       return decision
     }

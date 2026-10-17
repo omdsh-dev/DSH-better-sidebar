@@ -804,10 +804,12 @@ export function installClueTools(ctx: Context, clues: CluesService): () => void 
           try {
             const record = await clues.readSnapshot({ workspaceId: workspace.id, snapshotId: id })
             const meta = record.meta
+            const snapshotToken = tokenOrUndefined('snapshot', id)
             return {
               status: 'ok',
               kind: 'snapshot',
               id,
+              ...(snapshotToken === undefined ? {} : { token: snapshotToken }),
               workspaceId: workspace.id,
               clueId: meta.clueId,
               format: record.content.format,
