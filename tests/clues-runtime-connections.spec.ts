@@ -22,6 +22,7 @@ import {
 } from '../src/clues/runtime/connections.ts'
 import type {
   ClueConnectionDefinition,
+  ConnectionConnectInput,
   ConnectionConnectStart,
   ConnectionInspection,
   ConnectionPollResult,
@@ -45,7 +46,7 @@ interface Harness {
 
 function harness(options: {
   inspect?: () => Promise<ConnectionInspection>
-  connect?: () => Promise<ConnectionConnectStart>
+  connect?: (input: ConnectionConnectInput) => Promise<ConnectionConnectStart>
   poll?: () => Promise<ConnectionPollResult>
   cancel?: () => Promise<void>
   credentials?: (ref: string) => Promise<string | undefined>
@@ -75,7 +76,7 @@ function harness(options: {
         ? { configuration: 'ready', authorization: 'not-authorized' }
         : await options.inspect()
     },
-    async connect(): Promise<ConnectionConnectStart> {
+    async connect(input): Promise<ConnectionConnectStart> {
       calls.connect += 1
       return options.connect === undefined
         ? {
@@ -86,7 +87,7 @@ function harness(options: {
             },
             state: { deviceCode: 'MACHINE-ONLY-SECRET' },
           }
-        : await options.connect()
+        : await options.connect(input)
     },
     async poll(input): Promise<ConnectionPollResult> {
       calls.poll += 1
@@ -146,7 +147,8 @@ describe('two independent connection states', () => {
       configuration: 'ready',
       authorization: 'not-authorized',
       action: 'connect',
-      capabilities: ['docs.read', 'tasks.write'],
+      // Not authorized: the declared capabilities are not available yet.
+      capabilities: [],
     })
     notAuthorized.runtime.dispose()
 
@@ -156,8 +158,20 @@ describe('two independent connection states', () => {
       authorization: 'ready',
       action: 'none',
       account: 'me@example',
+      capabilities: ['docs.read', 'tasks.write'],
     })
     ready.runtime.dispose()
+
+    const readyReported = harness({
+      capabilities: ['docs.read', 'tasks.write'],
+      inspect: async () => ({
+        configuration: 'ready',
+        authorization: 'ready',
+        capabilities: ['docs.read'],
+      }),
+    })
+    expect((await statusOf(readyReported.runtime)).capabilities).toEqual(['docs.read'])
+    readyReported.runtime.dispose()
   })
 
   it('keeps denied, expired and scope-insufficient distinct', async () => {
@@ -204,6 +218,53 @@ describe('explicit authorization lifecycle', () => {
     const again = await runtime.connect('feishu.auth')
     expect(again.authorization).toBe('authorizing')
     expect(calls.connect).toBe(1)
+    runtime.dispose()
+  })
+
+  it('projects only the whitelisted prompt fields and drops adapter extras', async () => {
+    const hostile = {
+      prompt: {
+        verificationUrl: 'https://example.invalid/oauth',
+        userCode: 'ABCD-EFGH',
+        expiresAt: READY_PROMPT_EXPIRY,
+        instructions: 'open the URL',
+        qr: { uri: 'https://example.invalid/oauth', token: 'QR-MACHINE-SECRET' },
+        deviceCode: 'PROMPT-MACHINE-SECRET',
+        token: 'TOKEN-SECRET',
+      },
+      state: { deviceCode: 'HANDLE-SECRET' },
+    } as unknown as ConnectionConnectStart
+    const { runtime } = harness({ connect: async () => hostile })
+    const projection = await runtime.connect('feishu.auth')
+    expect(projection.prompt).toEqual({
+      verificationUrl: 'https://example.invalid/oauth',
+      userCode: 'ABCD-EFGH',
+      expiresAt: READY_PROMPT_EXPIRY,
+      instructions: 'open the URL',
+      qr: { uri: 'https://example.invalid/oauth' },
+    })
+    const serialized = JSON.stringify(projection)
+    expect(serialized).not.toContain('PROMPT-MACHINE-SECRET')
+    expect(serialized).not.toContain('QR-MACHINE-SECRET')
+    expect(serialized).not.toContain('TOKEN-SECRET')
+    expect(serialized).not.toContain('HANDLE-SECRET')
+    runtime.dispose()
+  })
+
+  it('does not enter authorizing when the adapter prompt is already expired', async () => {
+    const { runtime, calls } = harness({
+      now: () => 10_000,
+      connect: pendingConnect(new Date(5_000).toISOString()),
+      inspect: async () => ({ configuration: 'ready', authorization: 'not-authorized' }),
+    })
+    const projection = await runtime.connect('feishu.auth')
+    expect(projection.authorization).toBe('expired')
+    expect(projection.action).toBe('reconnect')
+    expect(projection.prompt).toBeUndefined()
+    expect(calls.connect).toBe(1)
+    await expect(runtime.poll('feishu.auth')).rejects.toMatchObject({ category: 'conflict' })
+    // The next explicit status read may inspect again.
+    expect((await statusOf(runtime)).authorization).toBe('not-authorized')
     runtime.dispose()
   })
 
@@ -352,6 +413,205 @@ describe('explicit authorization lifecycle', () => {
     expect(() => runtime.register(definition)).toThrow(/already registered/)
     await expect(runtime.status('missing.connection')).rejects.toMatchObject({ category: 'not-found' })
     await expect(runtime.connect('missing.connection')).rejects.toMatchObject({ category: 'not-found' })
+    runtime.dispose()
+  })
+})
+
+describe('projection freshness and lastCheckedAt', () => {
+  it('keeps lastCheckedAt at the observation time while authorizing', async () => {
+    let timestamp = 1_000
+    const { runtime } = harness({
+      now: () => timestamp,
+      connect: pendingConnect(),
+      inspect: async () => ({ configuration: 'ready', authorization: 'not-authorized' }),
+    })
+    const checked = await statusOf(runtime)
+    expect(checked.lastCheckedAt).toBe(new Date(1_000).toISOString())
+    timestamp = 2_000
+    // connect returns a prompt but no new observation: no fake fresh check.
+    const connected = await runtime.connect('feishu.auth')
+    expect(connected.authorization).toBe('authorizing')
+    expect(connected.lastCheckedAt).toBe(new Date(1_000).toISOString())
+    timestamp = 3_000
+    const whileAuthorizing = await statusOf(runtime)
+    expect(whileAuthorizing.authorization).toBe('authorizing')
+    expect(whileAuthorizing.lastCheckedAt).toBe(new Date(1_000).toISOString())
+    // Cancellation synthesizes not-authorized without pretending a new check.
+    timestamp = 4_000
+    const cancelled = await runtime.cancel('feishu.auth')
+    expect(cancelled.authorization).toBe('not-authorized')
+    expect(cancelled.lastCheckedAt).toBe(new Date(1_000).toISOString())
+    timestamp = 5_000
+    const rechecked = await statusOf(runtime)
+    expect(rechecked.lastCheckedAt).toBe(new Date(5_000).toISOString())
+    runtime.dispose()
+  })
+
+  it('omits lastCheckedAt until a real observation happened', async () => {
+    const { runtime } = harness({ connect: pendingConnect() })
+    const connected = await runtime.connect('feishu.auth')
+    expect(connected.lastCheckedAt).toBeUndefined()
+    const authorizing = await statusOf(runtime)
+    expect(authorizing.authorization).toBe('authorizing')
+    expect(authorizing.lastCheckedAt).toBeUndefined()
+    runtime.dispose()
+  })
+})
+
+describe('concurrent connect/poll/cancel lifecycle', () => {
+  it('starts a single adapter flow for concurrent connect calls', async () => {
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    let adapterCalls = 0
+    const { runtime } = harness({
+      connect: async () => {
+        adapterCalls += 1
+        await gate
+        return {
+          prompt: {
+            verificationUrl: 'https://example.invalid/single-flight',
+            userCode: 'ABCD-EFGH',
+            expiresAt: READY_PROMPT_EXPIRY,
+          },
+          state: { deviceCode: 'ONE-FLOW' },
+        }
+      },
+    })
+    const first = runtime.connect('feishu.auth')
+    const second = runtime.connect('feishu.auth')
+    release()
+    const [a, b] = await Promise.all([first, second])
+    expect(adapterCalls).toBe(1)
+    expect(a.authorization).toBe('authorizing')
+    expect(b.authorization).toBe('authorizing')
+    expect(b.prompt?.userCode).toBe('ABCD-EFGH')
+    runtime.dispose()
+  })
+
+  it('cancels an in-flight adapter start and converges to not-authorized', async () => {
+    let adapterStarted!: () => void
+    const started = new Promise<void>((resolve) => { adapterStarted = resolve })
+    let adapterCalls = 0
+    const { runtime, calls } = harness({
+      connect: async (input) => {
+        adapterCalls += 1
+        adapterStarted()
+        await new Promise<void>((_resolve, reject) => {
+          const abort = (): void => reject(Object.assign(new Error('aborted'), { name: 'AbortError' }))
+          if (input.signal?.aborted === true) abort()
+          else input.signal?.addEventListener('abort', abort, { once: true })
+        })
+        return {
+          prompt: { verificationUrl: 'https://example.invalid/late', expiresAt: READY_PROMPT_EXPIRY },
+        }
+      },
+      inspect: async () => ({ configuration: 'ready', authorization: 'not-authorized' }),
+    })
+    const pending = runtime.connect('feishu.auth')
+    await started
+    // While the adapter is still starting there is no prompt, but the status
+    // still reports the in-progress authorizing state without an inspect.
+    expect((await statusOf(runtime)).authorization).toBe('authorizing')
+    const cancelled = await runtime.cancel('feishu.auth')
+    expect(cancelled.authorization).toBe('not-authorized')
+    expect(cancelled.prompt).toBeUndefined()
+    await expect(pending).rejects.toMatchObject({ category: 'cancelled' })
+    expect(adapterCalls).toBe(1)
+    expect(calls.inspect).toBe(0)
+    // A subsequent connect starts exactly one fresh flow.
+    const restarted = runtime.connect('feishu.auth')
+    await new Promise(resolve => setTimeout(resolve, 1))
+    expect(adapterCalls).toBe(2)
+    await runtime.cancel('feishu.auth')
+    await expect(restarted).rejects.toMatchObject({ category: 'cancelled' })
+    runtime.dispose()
+  })
+
+  it('drops a poll result that arrives after the attempt was cancelled', async () => {
+    let releasePoll!: () => void
+    const pollGate = new Promise<void>((resolve) => { releasePoll = resolve })
+    const { runtime } = harness({
+      connect: pendingConnect(),
+      poll: async () => {
+        await pollGate
+        return {
+          inspection: { configuration: 'ready', authorization: 'ready', account: 'stale' },
+          complete: true,
+        }
+      },
+    })
+    await runtime.connect('feishu.auth')
+    const polling = runtime.poll('feishu.auth')
+    // Let the poll reach the adapter before cancelling.
+    await new Promise(resolve => setTimeout(resolve, 1))
+    const cancelled = await runtime.cancel('feishu.auth')
+    expect(cancelled.authorization).toBe('not-authorized')
+    releasePoll()
+    const stale = await polling
+    expect(stale.authorization).toBe('not-authorized')
+    expect(stale.account).toBeUndefined()
+    expect(stale.prompt).toBeUndefined()
+    runtime.dispose()
+  })
+
+  it('does not let a slower poll overwrite a completed attempt', async () => {
+    let releaseSlow!: () => void
+    const slowGate = new Promise<void>((resolve) => { releaseSlow = resolve })
+    let pollCalls = 0
+    const { runtime } = harness({
+      connect: pendingConnect(),
+      poll: async () => {
+        pollCalls += 1
+        if (pollCalls === 1) {
+          return {
+            inspection: { configuration: 'ready', authorization: 'ready', account: 'first' },
+            complete: true,
+          }
+        }
+        await slowGate
+        return {
+          inspection: { configuration: 'ready', authorization: 'not-authorized', account: 'stale' },
+        }
+      },
+    })
+    await runtime.connect('feishu.auth')
+    const first = runtime.poll('feishu.auth')
+    const second = runtime.poll('feishu.auth')
+    await expect(first).resolves.toMatchObject({ authorization: 'ready', account: 'first' })
+    releaseSlow()
+    const stale = await second
+    expect(stale.authorization).toBe('ready')
+    expect(stale.account).toBe('first')
+    expect(stale.prompt).toBeUndefined()
+    expect(pollCalls).toBe(2)
+    runtime.dispose()
+  })
+
+  it('does not delete a newer attempt when a slow cancel finishes late', async () => {
+    let releaseCancel!: () => void
+    const cancelGate = new Promise<void>((resolve) => { releaseCancel = resolve })
+    const { runtime, calls } = harness({
+      connect: pendingConnect(),
+      cancel: async () => { await cancelGate },
+    })
+    await runtime.connect('feishu.auth')
+    const cancelling = runtime.cancel('feishu.auth')
+    await new Promise(resolve => setTimeout(resolve, 1))
+    // A terminal resource observation ends the first attempt; a fresh connect
+    // then opens a NEW session before the slow adapter cancellation returns.
+    runtime.report('feishu.auth', {
+      configuration: 'ready',
+      authorization: 'ready',
+      account: 'reported',
+    })
+    const reconnect = runtime.connect('feishu.auth')
+    await new Promise(resolve => setTimeout(resolve, 1))
+    releaseCancel()
+    const after = await cancelling
+    expect(after.authorization).toBe('authorizing')
+    expect(after.prompt?.userCode).toBe('ABCD-EFGH')
+    await expect(reconnect).resolves.toMatchObject({ authorization: 'authorizing' })
+    expect(calls.connect).toBe(2)
     runtime.dispose()
   })
 })

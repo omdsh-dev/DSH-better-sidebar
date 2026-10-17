@@ -681,7 +681,13 @@ export interface ConnectionStatusProjection {
   readonly action: ConnectionAction
   /** Present only while `authorization === 'authorizing'`. */
   readonly prompt?: ConnectionAuthorizationPrompt
-  readonly lastCheckedAt: string
+  /**
+   * When the adapter last actually observed this connection (inspect, a
+   * connect/poll result, or a reported resource-request observation). Absent
+   * until the first real observation: projecting an authorizing attempt or a
+   * synthesized cancellation must not pretend a fresh check happened.
+   */
+  readonly lastCheckedAt?: string
   /** Observation failure (sanitized); the projection still renders. */
   readonly error?: RuntimeErrorInfo
 }
