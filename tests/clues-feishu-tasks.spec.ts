@@ -28,6 +28,7 @@ import { describe, expect, it } from 'vitest'
 import { ClueError } from '../src/clues/types.ts'
 import type { ClueOperationContext, JsonValue } from '../src/clues/types.ts'
 import { createFeishuTasksSource } from '../src/clues/sources/feishu/tasks.ts'
+import { windowsShimCommandLine } from '../src/clues/runtime/cli.ts'
 import {
   FEISHU_CONNECTION_ID,
   FEISHU_FORMATS,
@@ -49,6 +50,14 @@ const UPDATED_2 = '1700001111000'
 
 function context(): ClueOperationContext {
   return operationContext() as unknown as ClueOperationContext
+}
+
+/** No task command may put JSON into argv (the Windows `.cmd` shim refuses quotes). */
+function expectWindowsSafeArgs(runtime: FakeLarkRuntime): void {
+  for (const request of runtime.requests) {
+    expect(request.args.every(arg => !arg.includes('"'))).toBe(true)
+    expect(() => windowsShimCommandLine('C:\\tools\\lark-cli.cmd', request.args)).not.toThrow()
+  }
 }
 
 function opsOf(runtime: FakeLarkRuntime) {
@@ -121,10 +130,12 @@ describe('task browsing and search', () => {
     const first = await operations.list!({ scope: { kind: 'tasks' }, limit: 500 }, context())
     expect(runtime.requests[0]!.args).toEqual([
       'task', 'tasks', 'list',
-      '--params', JSON.stringify({ page_size: 20 }),
+      '--page-size', '20',
       '--as', 'user', '--format', 'json',
     ])
     expect(runtime.requests[0]!.cwd).toBe(CWD)
+    expect(runtime.requests[0]!.stdin).toBeUndefined()
+    expectWindowsSafeArgs(runtime)
     expect(first.items[0]).toMatchObject({
       sourceId: 'builtin.feishu.tasks',
       typeId: FEISHU_TYPE_IDS.task,
@@ -135,9 +146,12 @@ describe('task browsing and search', () => {
 
     runtime.enqueue(okResult({ items: [], has_more: false }))
     await operations.list!({ scope: { kind: 'tasks' }, cursor: first.nextCursor }, context())
-    expect(runtime.requests[1]!.args[4]).toBe(JSON.stringify({
-      page_size: 20, page_token: 'task-pt-2',
-    }))
+    expect(runtime.requests[1]!.args).toEqual([
+      'task', 'tasks', 'list',
+      '--page-size', '20',
+      '--page-token', 'task-pt-2',
+      '--as', 'user', '--format', 'json',
+    ])
   })
 
   it('supports an explicit tasklist range and a completion filter', async () => {
@@ -149,9 +163,12 @@ describe('task browsing and search', () => {
     )
     expect(runtime.requests[0]!.args).toEqual([
       'task', 'tasklists', 'tasks',
-      '--params', JSON.stringify({ page_size: 20, completed: false, tasklist_guid: 'tl-1' }),
+      '--tasklist-guid', 'tl-1',
+      '--page-size', '20',
+      '--completed=false',
       '--as', 'user', '--format', 'json',
     ])
+    expectWindowsSafeArgs(runtime)
   })
 
   it('refuses a cursor from another task range without a provider call', async () => {
@@ -169,8 +186,18 @@ describe('task browsing and search', () => {
 
   it('uses task +search with the documented single-page flag and never an auto-paging shortcut', async () => {
     const runtime = new FakeLarkRuntime().enqueue(okResult({
-      // Real `task +search` 1.0.55 output: `{items, page_token, has_more}`.
-      items: [taskRecord({ summary: 'Release <hb>checklist</hb>' })],
+      // Real `task +search` 1.0.55 output rows are FLAT:
+      // `{guid, summary, url, created_at, completed_at, updated_at, due_at}`.
+      items: [{
+        guid: GUID,
+        summary: 'Release <hb>checklist</hb>',
+        url: URL,
+        // The CLI formats these as local `YYYY-MM-DD HH:mm:ss` (not epoch ms).
+        created_at: '2023-06-13 07:00:00',
+        completed_at: '2023-06-14 08:00:00',
+        updated_at: '2023-06-15 09:00:00',
+        due_at: '2023-06-16 10:00:00',
+      }],
       has_more: false,
     }))
     const { operations } = opsOf(runtime)
@@ -188,17 +215,37 @@ describe('task browsing and search', () => {
     // The CLI has no `--page-size` for +search; the caller's item limit is not
     // a page-size claim, and `--page-limit 1` is the single-page bound.
     expect(runtime.requests[0]!.args).not.toContain('--page-size')
+    expectWindowsSafeArgs(runtime)
+    expect(page.items[0]!.title).toBe('Release checklist')
+    expect(page.items[0]!.subtitle).toBe('Completed')
+    expect(page.items[0]!.meta).toMatchObject({
+      completed: true,
+      // `due_at`/`completed_at` normalize to one epoch-millisecond instant;
+      // the CLI's local wall-clock string is parsed as local time.
+      due: String(new Date(2023, 5, 16, 10, 0, 0).getTime()),
+      completedAt: String(new Date(2023, 5, 14, 8, 0, 0).getTime()),
+      updatedAt: '2023-06-15 09:00:00',
+      createdAt: '2023-06-13 07:00:00',
+    })
     for (const request of runtime.requests) {
       expect(request.args).not.toContain('--page-all')
       expect(request.args).not.toContain('+get-my-tasks')
       expect(request.args).not.toContain('+get-related-tasks')
     }
-    expect(page.items[0]!.title).toBe('Release checklist')
   })
 
   it('passes the documented search filters and binds them into the cursor', async () => {
     const runtime = new FakeLarkRuntime().enqueue(okResult({
-      items: [taskRecord()], has_more: true, page_token: 'filtered-pt',
+      // Real +search rows are flat (no nested start/due/status).
+      items: [{
+        guid: GUID,
+        summary: 'Release checklist',
+        url: URL,
+        created_at: '2023-06-13 07:00:00',
+        updated_at: '2023-06-15 09:00:00',
+      }],
+      has_more: true,
+      page_token: 'filtered-pt',
     }))
     const { operations } = opsOf(runtime)
     const page = await operations.search!(
@@ -353,9 +400,10 @@ describe('task read and edit loading', () => {
     )
     expect(runtime.requests[0]!.args).toEqual([
       'task', 'tasks', 'get',
-      '--params', JSON.stringify({ task_guid: GUID }),
+      '--task-guid', GUID,
       '--as', 'user', '--format', 'json',
     ])
+    expectWindowsSafeArgs(runtime)
     expect(result.format).toBe(FEISHU_FORMATS.taskDocument)
     expect(result.revision).toBe(UPDATED_1)
     expect(result.text).toContain('# Release checklist')
@@ -508,14 +556,23 @@ describe('task save: changed fields, completion and partial success', () => {
     expect(runtime.requests).toHaveLength(3)
     expect(runtime.requests[0]!.args.slice(0, 2)).toEqual(['task', 'tasks'])
     const updateArgs = runtime.requests[1]!.args
-    expect(updateArgs.slice(0, 4)).toEqual(['task', 'tasks', 'patch', '--task-guid'])
-    expect(updateArgs[4]).toBe(GUID)
-    const payload = JSON.parse(updateArgs[6]!) as Record<string, JsonValue>
+    expect(updateArgs).toEqual([
+      'task', 'tasks', 'patch',
+      '--task-guid', GUID,
+      '--data', '-',
+      '--as', 'user', '--format', 'json',
+    ])
+    // The JSON body travels on stdin, never as a quoted argv token.
+    const body = runtime.requests[1]!.stdin
+    expect(typeof body).toBe('string')
+    const payload = JSON.parse(body as string) as Record<string, JsonValue>
     expect(payload).toEqual({
       task: { summary: 'New title', description: 'New description' },
       update_fields: ['summary', 'description'],
     })
+    expect(updateArgs.every(arg => !arg.includes('"'))).toBe(true)
     expect(updateArgs).not.toContain('--page-all')
+    expectWindowsSafeArgs(runtime)
     expect(runtime.requests[2]!.args.slice(0, 3)).toEqual(['task', 'tasks', 'get'])
     expect(result.revision).toBe(UPDATED_2)
   })
@@ -566,7 +623,7 @@ describe('task save: changed fields, completion and partial success', () => {
       saveInput(editedDocument({ start: null, due: { timestamp: '1700007200000', isAllDay: true } })),
       context(),
     )
-    const payload = JSON.parse(runtime.requests[1]!.args[6]!) as Record<string, JsonValue>
+    const payload = JSON.parse(runtime.requests[1]!.stdin as string) as Record<string, JsonValue>
     expect(payload).toEqual({
       task: { due: { timestamp: '1700007200000', is_all_day: true } },
       update_fields: ['due'],
@@ -697,7 +754,7 @@ describe('task save: changed fields, completion and partial success', () => {
       saveInput(editedDocument({ due: null })),
       context(),
     )
-    const payload = JSON.parse(runtime.requests[1]!.args[6]!) as Record<string, JsonValue>
+    const payload = JSON.parse(runtime.requests[1]!.stdin as string) as Record<string, JsonValue>
     expect(payload).toEqual({ task: {}, update_fields: ['due'] })
     expect(result.revision).toBe(UPDATED_2)
   })

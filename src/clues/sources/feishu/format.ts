@@ -310,6 +310,40 @@ export function millisOf(value: unknown): number | undefined {
   return undefined
 }
 
+/**
+ * An instant from either an epoch-millisecond value or an ISO/date string.
+ *
+ * The native task object uses millisecond strings; the `task +search` rows
+ * expose `created_at`/`due_at`/`completed_at` values whose shape is not
+ * guaranteed to be numeric, so both spellings normalize to one millisecond
+ * instant here.
+ */
+export function instantMillisOf(value: unknown): number | undefined {
+  const direct = millisOf(value)
+  if (direct !== undefined) return direct
+  if (typeof value === 'string' && value.trim() !== '') {
+    // `task +search` formats instants as local `YYYY-MM-DD HH:mm:ss` strings
+    // (Go's time.DateTime). Parse the components ourselves: the meaning is the
+    // local wall clock, and `Date.parse` of this spelling is implementation-
+    // defined (notably different between V8 and other runtimes).
+    const local = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})$/.exec(value.trim())
+    if (local !== null) {
+      const millis = new Date(
+        Number(local[1]),
+        Number(local[2]) - 1,
+        Number(local[3]),
+        Number(local[4]),
+        Number(local[5]),
+        Number(local[6]),
+      ).getTime()
+      return Number.isFinite(millis) ? millis : undefined
+    }
+    const parsed = Date.parse(value)
+    if (Number.isFinite(parsed)) return parsed
+  }
+  return undefined
+}
+
 /** Strip the CLI's highlight tags from a search title. */
 export function stripHighlight(value: string): string {
   return value.replace(/<\/?hb?>/gi, '')
@@ -327,17 +361,25 @@ export function fallbackTitle(token: string): string {
 function parseTaskTime(value: unknown): FeishuTaskTime | null | undefined {
   if (value === null || value === undefined) return null
   if (!isRecord(value)) return undefined
-  const timestamp = millisOf(value.timestamp)
+  const timestamp = instantMillisOf(value.timestamp)
   if (timestamp === undefined) return undefined
   const isAllDay = value.is_all_day === true || value.isAllDay === true
   return { timestamp: String(timestamp), isAllDay }
+}
+
+/** Parse a bare instant (`due_at`/`start_at` on a `task +search` row). */
+function parseInstantTime(value: unknown): FeishuTaskTime | null | undefined {
+  if (value === undefined) return undefined
+  if (value === null) return null
+  const timestamp = instantMillisOf(value)
+  return timestamp === undefined ? undefined : { timestamp: String(timestamp), isAllDay: false }
 }
 
 /** Whether a task record says it is completed. */
 function completedOf(record: Record<string, JsonValue>): boolean {
   if (typeof record.completed === 'boolean') return record.completed
   if (record.completed_at !== undefined) {
-    const completedAt = millisOf(record.completed_at)
+    const completedAt = instantMillisOf(record.completed_at)
     return completedAt !== undefined && completedAt > 0
   }
   return record.status === 'done' || record.status === 'completed'
@@ -361,7 +403,12 @@ export function parseTaskDocument(value: JsonValue): FeishuTaskDocumentData | un
   const description = typeof value.description === 'string' ? value.description : ''
   const start = parseTaskTime(value.start)
   const due = parseTaskTime(value.due)
-  const completedAt = millisOf(value.completed_at ?? value.completedAt)
+  // `task +search` rows are flat (`due_at`, `created_at`, …) and have neither
+  // the nested `due` object nor an all-day flag. Only fall back when the
+  // structured field is ABSENT (an explicit null means "cleared").
+  const startFallback = value.start === undefined ? parseInstantTime(value.start_at) : undefined
+  const dueFallback = value.due === undefined ? parseInstantTime(value.due_at) : undefined
+  const completedAt = instantMillisOf(value.completed_at ?? value.completedAt)
   const updatedAtValue = value.updated_at ?? value.updatedAt
   const updatedAt = updatedAtValue === undefined ? undefined : String(updatedAtValue)
   const url = stringOf(value.url) ?? stringOf(value.applink)
@@ -370,8 +417,8 @@ export function parseTaskDocument(value: JsonValue): FeishuTaskDocumentData | un
     guid,
     title,
     description,
-    start: start === undefined ? null : start,
-    due: due === undefined ? null : due,
+    start: start ?? startFallback ?? null,
+    due: due ?? dueFallback ?? null,
     completed: completedOf(value),
     ...(completedAt === undefined || completedAt <= 0 ? {} : { completedAt: String(completedAt) }),
     ...(updatedAt === undefined ? {} : { updatedAt }),

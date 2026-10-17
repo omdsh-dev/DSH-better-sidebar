@@ -153,6 +153,10 @@ function TimeField(props: {
     // so keyboard users are not dropped onto the document body.
     if (wasNull.current && time !== null) inputRef.current?.focus()
     wasNull.current = time === null
+    // A controlled value change (a clear, an external reset or the host
+    // reloading another task) invalidates the local parse error: keeping it
+    // would describe text that is no longer in the input.
+    setClearError(undefined)
   }, [time])
   if (time === null) {
     return (

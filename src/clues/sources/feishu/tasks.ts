@@ -89,7 +89,11 @@ import {
 
 /** One task page from the provider (never an automatic multi-page walk). */
 const TASK_PAGE_SIZE = 20
-/** Bound of the `--data` payload handed to the CLI in argv. */
+/**
+ * Bound of one task PATCH body. The body never travels in argv (it is written
+ * to the CLI's stdin), so this is an edit-size guard, not an OS command-line
+ * limit (Windows cmd.exe rejects a double quote in any argv token).
+ */
 const MAX_TASK_UPDATE_BYTES = 32 * 1024
 
 /** The browsing range of the task source. */
@@ -247,9 +251,14 @@ function taskCandidate(row: JsonValue): ClueCandidate | undefined {
   if (!isRecord(row)) return undefined
   const guid = stringOf(row.guid)
   if (guid === undefined || isDisplayTaskId(guid)) return undefined
+  // `task +search` rows are flat (`guid`/`summary`/`url`/`created_at`/
+  // `completed_at`/`updated_at`/`due_at`); parseTaskDocument normalizes the
+  // bare `due_at`/`completed_at` instants that the nested task object spells as
+  // `due`/`status`.
   const task = parseTaskDocument(row)
   if (task === undefined) return undefined
   const title = task.title.trim() === '' ? `Feishu task ${guid.slice(0, 8)}` : task.title
+  const createdAt = row.created_at === undefined ? undefined : String(row.created_at)
   return {
     sourceId: FEISHU_SOURCE_IDS.tasks,
     typeId: FEISHU_TYPE_IDS.task,
@@ -260,7 +269,9 @@ function taskCandidate(row: JsonValue): ClueCandidate | undefined {
       completed: task.completed,
       ...(task.start === null ? {} : { start: task.start.timestamp }),
       ...(task.due === null ? {} : { due: task.due.timestamp }),
+      ...(task.completedAt === undefined ? {} : { completedAt: task.completedAt }),
       ...(task.updatedAt === undefined ? {} : { updatedAt: task.updatedAt }),
+      ...(createdAt === undefined ? {} : { createdAt }),
     },
   }
 }
@@ -274,7 +285,9 @@ async function readTask(
   const success = await runFeishuCommand(runtime, {
     args: [
       'task', 'tasks', 'get',
-      '--params', JSON.stringify({ task_guid: guid }),
+      // Typed API flag instead of a JSON `--params` argv token: Windows
+      // cmd.exe reinterprets a double quote inside a managed `.cmd` argv.
+      '--task-guid', guid,
       '--as', 'user', '--format', 'json',
     ],
     cwd: cwdOf(context),
@@ -497,17 +510,21 @@ export function createFeishuTasksSource(getRuntime: () => ClueRuntime): ClueSour
         const signature = stableJson(scope as unknown as JsonValue)
         const pageToken = pageTokenOf(signature, input.cursor)
         const limit = pageLimitOf(input.limit)
-        const params: Record<string, JsonValue> = {
-          page_size: limit,
-          ...(pageToken === undefined ? {} : { page_token: pageToken }),
-          ...(scope.completed === undefined ? {} : { completed: scope.completed }),
-        }
+        // Typed API flags only: the page token and completion filter are plain
+        // scalar argv tokens, never a JSON string (Windows cmd.exe rejects a
+        // double quote in a managed `.cmd` argument).
+        const pageArgs = [
+          '--page-size', String(limit),
+          ...(pageToken === undefined ? [] : ['--page-token', pageToken]),
+          ...(scope.completed === undefined ? [] : [`--completed=${scope.completed}`]),
+        ]
         const success = await runFeishuCommand(runtime(), {
           args: scope.tasklistGuid === undefined
-            ? ['task', 'tasks', 'list', '--params', JSON.stringify(params), '--as', 'user', '--format', 'json']
+            ? ['task', 'tasks', 'list', ...pageArgs, '--as', 'user', '--format', 'json']
             : [
                 'task', 'tasklists', 'tasks',
-                '--params', JSON.stringify({ ...params, tasklist_guid: scope.tasklistGuid }),
+                '--tasklist-guid', scope.tasklistGuid,
+                ...pageArgs,
                 '--as', 'user', '--format', 'json',
               ],
           cwd: cwdOf(context),
@@ -658,9 +675,12 @@ export function createFeishuTasksSource(getRuntime: () => ClueRuntime): ClueSour
           const success = await runFeishuCommand(runtime(), {
             args: [
               'task', 'tasks', 'patch', '--task-guid', locator.guid,
-              '--data', json,
+              // `--data -` reads the JSON body from stdin: the body contains
+              // quotes/newlines and must never be an argv token on Windows.
+              '--data', '-',
               '--as', 'user', '--format', 'json',
             ],
+            stdin: json,
             cwd: cwdOf(context),
             ...(context.signal === undefined ? {} : { signal: context.signal }),
           })

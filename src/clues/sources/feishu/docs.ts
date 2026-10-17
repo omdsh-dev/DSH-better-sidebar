@@ -191,7 +191,9 @@ async function resolvedWikiSpaceId(
   const success = await runFeishuCommand(runtime, {
     args: [
       'wiki', 'spaces', 'get',
-      '--params', JSON.stringify({ space_id: 'my_library' }),
+      // Typed API flag: a JSON `--params` argv token cannot cross the Windows
+      // managed `.cmd` shim (cmd.exe would reinterpret the double quotes).
+      '--space-id', spaceId,
       '--as', 'user', '--format', 'json',
     ],
     cwd: cwdOf(context),
@@ -283,6 +285,21 @@ function requiredArrayField(success: LarkSuccess, key: string, what: string): Js
     throw new ClueError('failed', `lark-cli returned no ${what} list in its success payload`)
   }
   return value
+}
+
+/**
+ * The rows of one `drive +search` answer.
+ *
+ * The CLI wrapper emits `results` (the raw Search v2 `res_units` rows);
+ * accepting `res_units` as well keeps the raw API spelling usable, but neither
+ * is ever treated as an empty page when absent.
+ */
+function searchRowsOf(success: LarkSuccess): JsonValue[] {
+  for (const key of ['results', 'res_units']) {
+    const value = success.data[key]
+    if (Array.isArray(value)) return value
+  }
+  throw new ClueError('failed', 'lark-cli returned no document search result list in its success payload')
 }
 
 /**
@@ -411,17 +428,58 @@ function wikiSpaceScopeCandidate(
   }
 }
 
-/** Map one search row to a supported document candidate. */
+/**
+ * The supported document type of one `drive +search` hit.
+ *
+ * lark-cli 1.0.55's Search v2 response carries `res_units[].entity_type` and
+ * `res_units[].result_meta.doc_types` (not the flat `doc_type` some older
+ * fixtures used). A hit may spell the type in either place; both are checked
+ * case-insensitively. Any other entity (sheet, bitable, file, folder, …) is
+ * not a readable Feishu document for this source and is skipped.
+ */
+function searchTypeOf(types: readonly JsonValue[]): 'docx' | 'wiki' | undefined {
+  const normalized: string[] = []
+  for (const value of types) {
+    if (typeof value === 'string') normalized.push(value.trim().toLowerCase())
+    else if (Array.isArray(value)) {
+      for (const entry of value) {
+        if (typeof entry === 'string') normalized.push(entry.trim().toLowerCase())
+      }
+    }
+  }
+  if (normalized.includes('docx')) return 'docx'
+  if (normalized.includes('wiki')) return 'wiki'
+  return undefined
+}
+
+/**
+ * Map one real `drive +search` result row to a supported document candidate.
+ *
+ * Each row of the CLI's `results` array is one Search v2 `res_units` entry:
+ * `{title_highlighted, entity_type, result_meta:{doc_types, token, url,
+ * update_time}}`. The token/url/type live under `result_meta`; reading only
+ * top-level fields silently produced an empty, "successful" search page.
+ */
 function searchCandidate(row: Record<string, JsonValue>): ClueCandidate | undefined {
-  const rawType = (stringOf(row.doc_type) ?? stringOf(row.type) ?? '').toLowerCase()
-  const token = stringOf(row.token) ?? stringOf(row.obj_token)
-  if (token === undefined) return undefined
-  const title = stripHighlight(stringOf(row.title) ?? stringOf(row.title_highlighted) ?? fallbackTitle(token))
-  const url = stringOf(row.url)
-  const editTime = row.edit_time === undefined ? undefined : String(row.edit_time)
-  const docType = rawType === 'docx' ? 'docx' : rawType === 'wiki' ? 'wiki' : undefined
-  if (docType === undefined) return undefined
-  if (docType === 'docx') {
+  const resultMeta = isRecord(row.result_meta) ? row.result_meta : {}
+  const type = searchTypeOf([
+    resultMeta.doc_types ?? null,
+    row.entity_type ?? null,
+    row.doc_type ?? null,
+    row.type ?? null,
+  ])
+  const token = stringOf(resultMeta.token) ?? stringOf(row.token) ?? stringOf(row.obj_token)
+  if (type === undefined || token === undefined) return undefined
+  const title = stripHighlight(
+    stringOf(row.title_highlighted)
+      ?? stringOf(row.title)
+      ?? stringOf(resultMeta.title)
+      ?? fallbackTitle(token),
+  )
+  const url = stringOf(resultMeta.url) ?? stringOf(row.url)
+  const updateTime = resultMeta.update_time ?? row.edit_time
+  const editTime = updateTime === undefined ? undefined : String(updateTime)
+  if (type === 'docx') {
     return {
       sourceId: FEISHU_SOURCE_IDS.docs,
       typeId: FEISHU_TYPE_IDS.docx,
@@ -625,10 +683,13 @@ function fetchedDocumentOf(success: LarkSuccess): FetchedDocument {
   if (document === undefined) {
     throw new ClueError('failed', 'lark-cli returned no document content')
   }
-  const content = stringField(document, 'content')
-  if (content === undefined) {
+  // An EMPTY document is a legitimate document, not a missing payload: the
+  // title may also be the only block. Only a non-string `content` is malformed.
+  const rawContent = document.content
+  if (typeof rawContent !== 'string') {
     throw new ClueError('failed', 'lark-cli returned no document content')
   }
+  const content = rawContent
   const title = stringField(document, 'title')
   // `document.title` is tolerated when present, but the documented
   // `docs +fetch` payload has no title field; the XML `<title>` (or the
@@ -706,6 +767,11 @@ function editDataOf(
   // (and may be uneditable when it has no block id). The read preview is the
   // place that may fall back to a resolved wiki/locator title.
   const title = parsed.title
+  // Validate the title block id BEFORE advertising it as editable: a dash/`-1`
+  // or otherwise unsafe id must never reach `--block-id`.
+  const titleBlockId = parsed.titleBlockId !== undefined && isSafeBlockId(parsed.titleBlockId)
+    ? parsed.titleBlockId
+    : undefined
   return {
     kind: locator.kind === 'docx' ? 'docx' : 'wiki',
     docToken,
@@ -716,8 +782,8 @@ function editDataOf(
     ...(fetched.revisionId === undefined ? {} : { revisionId: fetched.revisionId }),
     title,
     baselineTitle: title,
-    titleEditable: parsed.titleBlockId !== undefined,
-    ...(parsed.titleBlockId === undefined ? {} : { titleBlockId: parsed.titleBlockId }),
+    titleEditable: titleBlockId !== undefined,
+    ...(titleBlockId === undefined ? {} : { titleBlockId }),
     titleAttrs: parsed.titleAttrs,
     blocks: parsed.blocks,
     readOnlyBlocks: parsed.readOnlyBlocks,
@@ -1119,13 +1185,17 @@ export function createFeishuDocsSource(getRuntime: () => ClueRuntime): ClueSourc
           if (scope.kind === 'drive-root' && pageToken !== undefined) {
             throw new ClueError('invalid-request', 'the Drive root page is not paginated; reset the range')
           }
-          const params: Record<string, JsonValue> = {
-            folder_token: scope.kind === 'drive' ? scope.folderToken : '',
-            page_size: limit,
-            ...(pageToken === undefined ? {} : { page_token: pageToken }),
-          }
+          const fileArgs = [
+            // Typed API flags, never a JSON `--params` argv token: a managed
+            // Windows `.cmd` shim would reject the embedded double quotes.
+            // The Drive root is requested by omitting `--folder-token` (the
+            // CLI documents that as the root listing).
+            ...(scope.kind === 'drive' ? ['--folder-token', scope.folderToken] : []),
+            '--page-size', String(limit),
+            ...(pageToken === undefined ? [] : ['--page-token', pageToken]),
+          ]
           const success = await runFeishuCommand(runtime(), {
-            args: ['drive', 'files', 'list', '--params', JSON.stringify(params), '--as', 'user', '--format', 'json'],
+            args: ['drive', 'files', 'list', ...fileArgs, '--as', 'user', '--format', 'json'],
             cwd,
             ...signal,
           })
@@ -1231,7 +1301,12 @@ export function createFeishuDocsSource(getRuntime: () => ClueRuntime): ClueSourc
           cwd: cwdOf(context),
           ...(context.signal === undefined ? {} : { signal: context.signal }),
         })
-        const rows = requiredArrayField(success, 'results', 'document search result')
+        // lark-cli 1.0.55's `drive +search` JSON wrapper exposes the raw
+        // Search v2 `res_units` under `results`; each row keeps its
+        // identifiers in `result_meta` (there is no top-level token/doc_type).
+        // Accept a raw `res_units` payload too, but a missing array is a
+        // malformed answer, never an empty page.
+        const rows = searchRowsOf(success)
         const items: ClueCandidate[] = []
         for (const row of rows) {
           if (!isRecord(row)) continue
@@ -1445,12 +1520,17 @@ export function createFeishuDocsSource(getRuntime: () => ClueRuntime): ClueSourc
                 '--doc', doc.token,
                 '--command', UPDATE_BLOCK_COMMAND,
                 '--block-id', write.blockId,
-                '--content', write.xml,
+                // `--content -` reads the XML from stdin. XML carries quoted
+                // attributes and can exceed the command-line bound; it must
+                // never be spliced into argv (the Windows `.cmd` shim rejects
+                // a double quote in an argument).
+                '--content', '-',
                 '--doc-format', 'xml',
                 ...(writeRevision === undefined ? [] : ['--revision-id', writeRevision]),
                 '--as', 'user',
                 '--format', 'json',
               ],
+              stdin: write.xml,
               cwd: cwdOf(context),
               ...(context.signal === undefined ? {} : { signal: context.signal }),
             })

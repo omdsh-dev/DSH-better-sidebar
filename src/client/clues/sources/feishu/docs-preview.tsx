@@ -137,6 +137,7 @@ function ReadPreview(props: {
   readonly formatDateTime?: (value: string) => string
 }): ReactNode {
   const { read, document, labels, formatDateTime } = props
+  const prefix = useId()
   const limited = 'limited' in document && document.limited === true
   // The cap is a rendering bound, not a source read bound. When the source
   // returned the whole content, the user must be able to expand it; claiming
@@ -169,7 +170,7 @@ function ReadPreview(props: {
       {read.content === '' ? (
         <p className={css.hint}>{labels.emptyContent}</p>
       ) : (
-        <pre className={css.pre} data-feishu-docs-content="">
+        <pre className={css.pre} id={`${prefix}-content`} data-feishu-docs-content="">
           {content}
         </pre>
       )}
@@ -180,6 +181,8 @@ function ReadPreview(props: {
             type="button"
             className={css.linkButton}
             data-feishu-docs-expand=""
+            aria-expanded={expanded}
+            aria-controls={`${prefix}-content`}
             onClick={() => { setExpanded(current => !current) }}
           >
             {expanded ? labels.showLess : labels.showFullContent}
@@ -263,6 +266,7 @@ function ReadOnlyBlockRow(props: {
     <div className={css.hint} data-feishu-docs-read-only-block={block.tag}>
       <span className={css.badge}>{labels.blockReadOnly}</span>{' '}
       {block.text === '' ? `(${block.tag})` : block.text}
+      <span data-feishu-docs-read-only-reason="">{' '}— {block.reason}</span>
       {block.url !== undefined && /^https?:\/\//i.test(block.url) && (
         <>
           {' '}

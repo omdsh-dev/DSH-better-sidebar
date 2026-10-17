@@ -498,6 +498,10 @@ describe('docs editor', () => {
     expect(table).toBeLessThan(pre)
     expect(pre).toBeLessThan(image)
     expect(markup).toContain('https://cdn.example/a.png')
+    // The read-only block explains WHY it cannot be edited instead of only
+    // showing a generic badge.
+    expect(markup).toContain('data-feishu-docs-read-only-reason')
+    expect(markup).toContain('complex container')
   })
 
   it('uses document-specific copy for the title error and an invalid payload', () => {
@@ -671,9 +675,12 @@ describe('docs editor', () => {
     const pre = mounted.container.querySelector<HTMLElement>('[data-feishu-docs-content]')!
     expect(pre.textContent).toHaveLength(40_000)
     const button = mounted.container.querySelector<HTMLButtonElement>('[data-feishu-docs-expand]')!
+    expect(button.getAttribute('aria-expanded')).toBe('false')
+    expect(button.getAttribute('aria-controls')).toBe(pre.id)
     act(() => { button.click() })
     expect(pre.textContent).toHaveLength(50_000)
     expect(button.textContent).toBe(DEFAULT_FEISHU_LABELS.showLess)
+    expect(button.getAttribute('aria-expanded')).toBe('true')
     mounted.unmount()
   })
 })

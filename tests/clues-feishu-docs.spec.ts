@@ -42,6 +42,7 @@ import { createFeishuDocsSource } from '../src/clues/sources/feishu/docs.ts'
 import { createFeishuTasksSource } from '../src/clues/sources/feishu/tasks.ts'
 import { createCluesService } from '../src/clues/service.ts'
 import { CluesStore } from '../src/clues/store.ts'
+import { windowsShimCommandLine } from '../src/clues/runtime/cli.ts'
 import { removeTree } from './temp-tree.ts'
 import {
   DOCS_EDIT_SCOPE_NOTE,
@@ -75,6 +76,18 @@ function opsOf(runtime: FakeLarkRuntime) {
 
 function context(): ClueOperationContext {
   return operationContext() as unknown as ClueOperationContext
+}
+
+/**
+ * Windows managed installs can resolve a `lark-cli.cmd` shim; S2 wraps it in
+ * `cmd.exe /d /s /c`, and `windowsShimCommandLine` refuses a double quote in
+ * any argv token. No Feishu command may put JSON/XML into argv.
+ */
+function expectWindowsSafeArgs(runtime: FakeLarkRuntime): void {
+  for (const request of runtime.requests) {
+    expect(request.args.every(arg => !arg.includes('"'))).toBe(true)
+    expect(() => windowsShimCommandLine('C:\\tools\\lark-cli.cmd', request.args)).not.toThrow()
+  }
 }
 
 /** One full XML edit fixture (block ids + a complex read-only table). */
@@ -117,7 +130,7 @@ describe('docs browsing ranges', () => {
     expect(runtime.requests).toHaveLength(0)
   })
 
-  it('lists one Drive folder page with the native folder_token/page_size/page_token params', async () => {
+  it('lists one Drive folder page with typed flags (no JSON argv)', async () => {
     const runtime = new FakeLarkRuntime().enqueue(okResult({
       files: [
         {
@@ -141,9 +154,12 @@ describe('docs browsing ranges', () => {
 
     expect(runtime.requests[0]!.args).toEqual([
       'drive', 'files', 'list',
-      '--params', JSON.stringify({ folder_token: 'fldRoot', page_size: 200 }),
+      '--folder-token', 'fldRoot',
+      '--page-size', '200',
       '--as', 'user', '--format', 'json',
     ])
+    expect(runtime.requests[0]!.stdin).toBeUndefined()
+    expectWindowsSafeArgs(runtime)
     expect(runtime.requests[0]!.cwd).toBe(CWD)
     expect(first.items).toHaveLength(2)
     expect(first.items[0]).toMatchObject({
@@ -172,9 +188,13 @@ describe('docs browsing ranges', () => {
       { scope: { kind: 'drive', folderToken: 'fldRoot' }, cursor: first.nextCursor },
       context(),
     )
-    expect(runtime.requests[1]!.args[4]).toBe(JSON.stringify({
-      folder_token: 'fldRoot', page_size: 100, page_token: 'pt-2',
-    }))
+    expect(runtime.requests[1]!.args).toEqual([
+      'drive', 'files', 'list',
+      '--folder-token', 'fldRoot',
+      '--page-size', '100',
+      '--page-token', 'pt-2',
+      '--as', 'user', '--format', 'json',
+    ])
   })
 
   it('descends one folder level only when the caller explicitly picks the folder scope row', async () => {
@@ -198,9 +218,12 @@ describe('docs browsing ranges', () => {
       { scope: { kind: 'drive', folderToken: (folder.locator as { folderToken: string }).folderToken } },
       context(),
     )
-    expect(runtime.requests[1]!.args[4]).toBe(JSON.stringify({
-      folder_token: 'fldChild', page_size: 100,
-    }))
+    expect(runtime.requests[1]!.args).toEqual([
+      'drive', 'files', 'list',
+      '--folder-token', 'fldChild',
+      '--page-size', '100',
+      '--as', 'user', '--format', 'json',
+    ])
     expect(child.items[0]).toMatchObject({
       locator: { kind: 'docx', docToken: 'doccnInner' },
       title: 'Inner doc',
@@ -230,7 +253,13 @@ describe('docs browsing ranges', () => {
     }))
     const { operations } = opsOf(runtime)
     const page = await operations.list!({ scope: { kind: 'drive-root' } }, context())
-    expect(runtime.requests[0]!.args[4]).toBe(JSON.stringify({ folder_token: '', page_size: 100 }))
+    // The root is requested by OMITTING --folder-token (the CLI documents an
+    // absent/empty folder token as the root); no JSON `--params` argv token.
+    expect(runtime.requests[0]!.args).toEqual([
+      'drive', 'files', 'list',
+      '--page-size', '100',
+      '--as', 'user', '--format', 'json',
+    ])
     expect(page.limited).toBe(true)
     expect(page.nextCursor).toBeUndefined()
     expect(page.total).toBeUndefined()
@@ -340,24 +369,52 @@ describe('docs search', () => {
     await operations.search!({ query: 'plan', scope: { kind: 'wiki', spaceId: 'my_library' } }, context())
     expect(runtime.requests[0]!.args).toEqual([
       'wiki', 'spaces', 'get',
-      '--params', JSON.stringify({ space_id: 'my_library' }),
+      '--space-id', 'my_library',
       '--as', 'user', '--format', 'json',
     ])
     expect(runtime.requests[1]!.args).toEqual(expect.arrayContaining(['--space-ids', '7123']))
+    expectWindowsSafeArgs(runtime)
   })
 
-  it('uses one official drive +search page, scoped and without --page-all', async () => {
+  it('maps the real drive +search results rows (docx/wiki, other types skipped)', async () => {
+    // Real lark-cli 1.0.55 `drive +search` output: a `results` wrapper over
+    // Search v2 `res_units` rows, each with
+    // `title_highlighted`/`entity_type` and the identifiers under
+    // `result_meta`. The old flat `results[].doc_type/token` fixture never
+    // exercised this, so the mapper returned an empty page while the suite
+    // stayed green.
     const runtime = new FakeLarkRuntime().enqueue(okResult({
       results: [
         {
-          doc_type: 'DOCX',
-          token: 'doccnA',
-          title: 'Quarterly <hb>plan</hb>',
-          url: 'https://acme.feishu.cn/docx/doccnA',
-          edit_time: '1700000000',
+          title_highlighted: 'Quarterly <hb>plan</hb>',
+          entity_type: 'DOCX',
+          result_meta: {
+            doc_types: 'DOCX',
+            token: 'doccnA',
+            url: 'https://acme.feishu.cn/docx/doccnA',
+            update_time: '1700000000',
+          },
         },
-        { doc_type: 'WIKI', token: 'wikcnB', title: 'Wiki page', url: 'https://acme.feishu.cn/wiki/wikcnB' },
-        { doc_type: 'SHEET', token: 'sht1', title: 'Sheet' },
+        {
+          title_highlighted: 'Wiki <hb>page</hb>',
+          entity_type: 'WIKI',
+          result_meta: {
+            doc_types: ['WIKI'],
+            token: 'wikcnB',
+            url: 'https://acme.feishu.cn/wiki/wikcnB',
+            update_time: '1700000001',
+          },
+        },
+        {
+          title_highlighted: 'A spreadsheet',
+          entity_type: 'SHEET',
+          result_meta: { doc_types: ['SHEET'], token: 'sht1' },
+        },
+        {
+          title_highlighted: 'A Base',
+          entity_type: 'BITABLE',
+          result_meta: { doc_types: ['BITABLE'], token: 'bas1' },
+        },
       ],
       has_more: true,
       page_token: 'search-pt',
@@ -374,8 +431,29 @@ describe('docs search', () => {
       '--page-size', '20',
       '--as', 'user', '--format', 'json',
     ])
-    expect(page.items.map(item => item.typeId)).toEqual([FEISHU_TYPE_IDS.docx, FEISHU_TYPE_IDS.wiki])
-    expect(page.items[0]!.title).toBe('Quarterly plan')
+    expect(runtime.requests[0]!.stdin).toBeUndefined()
+    expectWindowsSafeArgs(runtime)
+    expect(page.items).toHaveLength(2)
+    expect(page.items[0]).toMatchObject({
+      typeId: FEISHU_TYPE_IDS.docx,
+      title: 'Quarterly plan',
+      locator: {
+        kind: 'docx',
+        docToken: 'doccnA',
+        url: 'https://acme.feishu.cn/docx/doccnA',
+      },
+      meta: { fileType: 'docx', editTime: '1700000000' },
+    })
+    expect(page.items[1]).toMatchObject({
+      typeId: FEISHU_TYPE_IDS.wiki,
+      title: 'Wiki page',
+      locator: {
+        kind: 'wiki',
+        wikiToken: 'wikcnB',
+        url: 'https://acme.feishu.cn/wiki/wikcnB',
+      },
+      meta: { objType: 'docx', editTime: '1700000001' },
+    })
     expect(page.total).toBeUndefined()
     expect(page.limited).toBe(true)
     expect(page.nextCursor).toBeTruthy()
@@ -389,6 +467,17 @@ describe('docs search', () => {
     await expect(operations.search!({ query: '   ' }, context()))
       .rejects.toMatchObject({ category: 'invalid-request' })
     expect(runtime.requests).toHaveLength(0)
+  })
+
+  it('treats a success envelope without a result array as a failure, not an empty page', async () => {
+    const runtime = new FakeLarkRuntime()
+      .enqueue(okResult({}))
+      .enqueue(okResult({ results: null }))
+    const { operations } = opsOf(runtime)
+    await expect(operations.search!({ query: 'plan' }, context()))
+      .rejects.toMatchObject({ category: 'failed' })
+    await expect(operations.search!({ query: 'plan' }, context()))
+      .rejects.toMatchObject({ category: 'failed' })
   })
 
   it('binds a search cursor to the exact query + range', async () => {
@@ -595,6 +684,26 @@ describe('docs read', () => {
     expect(result.data).not.toHaveProperty('referenceMap')
   })
 
+  it('treats an empty document body as content, not as a missing payload', async () => {
+    const runtime = new FakeLarkRuntime().enqueue(okResult({
+      document: { document_id: 'doccnA', revision_id: 3, content: '' },
+    }))
+    const { operations } = opsOf(runtime)
+    const result = await operations.read!(
+      { typeId: FEISHU_TYPE_IDS.docx, locator: { kind: 'docx', docToken: 'doccnA' } },
+      context(),
+    )
+    expect(result.text).toBe('')
+    expect(result.data).toMatchObject({
+      kind: 'docx',
+      content: '',
+      title: 'Feishu document doccnA',
+      docToken: 'doccnA',
+      revisionId: '3',
+    })
+    expect(result.limited).toBeUndefined()
+  })
+
   it('requests the Markdown projection only when the locator asks for it', async () => {
     const runtime = new FakeLarkRuntime().enqueue(okResult({
       document: { document_id: 'doccnA', revision_id: 13, content: '# Design notes\n\nHello' },
@@ -784,6 +893,22 @@ describe('docs read', () => {
     expect(DOCS_EDIT_SCOPE_NOTE).not.toMatch(/no lossless/i)
   })
 
+  it('never advertises an unsafe title block id as editable', async () => {
+    const runtime = new FakeLarkRuntime().enqueue(editFetch(
+      7,
+      '<title id="-1">Plan</title><p id="blk-p1">Body</p>',
+    ))
+    const { operations } = opsOf(runtime)
+    const loaded = await operations.loadEdit!(
+      { typeId: FEISHU_TYPE_IDS.docx, locator: { kind: 'docx', docToken: 'doccnA' } },
+      context(),
+    )
+    const data = loaded.data as unknown as FeishuDocEditData
+    expect(data.title).toBe('Plan')
+    expect(data.titleEditable).toBe(false)
+    expect(data.titleBlockId).toBeUndefined()
+  })
+
   it('saves only the changed block through block_replace and returns the new revision', async () => {
     const runtime = new FakeLarkRuntime()
       .enqueue(editFetch(7))
@@ -821,11 +946,15 @@ describe('docs read', () => {
       '--doc', 'doccnA',
       '--command', 'block_replace',
       '--block-id', 'blk-p1',
-      '--content', '<p>Hello <b>there</b></p>',
+      // `--content -` keeps the XML out of argv; the runner writes it to
+      // stdin. A JSON/XML argv token is rejected by the Windows `.cmd` shim.
+      '--content', '-',
       '--doc-format', 'xml',
       '--revision-id', '7',
       '--as', 'user', '--format', 'json',
     ])
+    expect(update.stdin).toBe('<p>Hello <b>there</b></p>')
+    expectWindowsSafeArgs(runtime)
     for (const request of runtime.requests) {
       expect(request.args.join(' ')).not.toMatch(/append|overwrite|block_delete|block_move_after|str_replace/)
     }
@@ -848,9 +977,57 @@ describe('docs read', () => {
       },
       context(),
     )
-    expect(runtime.requests[2]!.args).toEqual(expect.arrayContaining([
-      '--content', '<p>A &amp; B</p>',
-    ]))
+    const update = runtime.requests[2]!
+    expect(update.args).toEqual(expect.arrayContaining(['--content', '-']))
+    expect(update.stdin).toBe('<p>A &amp; B</p>')
+  })
+
+  it('writes a large block through stdin instead of argv', async () => {
+    const runtime = new FakeLarkRuntime()
+      .enqueue(editFetch(7))
+      .enqueue(editFetch(7))
+      .enqueue(okResult({ document: { revision_id: 8 }, result: 'success', updated_blocks_count: 1 }))
+    const { operations } = opsOf(runtime)
+    const locator = { kind: 'docx' as const, docToken: 'doccnA' }
+    const loaded = await operations.loadEdit!({ typeId: FEISHU_TYPE_IDS.docx, locator }, context())
+    const large = 'x'.repeat(40_000)
+    const data = withEditBlock(loaded.data as unknown as FeishuDocEditData, 'blk-p1', large)
+    await operations.saveEdit!(
+      {
+        typeId: FEISHU_TYPE_IDS.docx,
+        locator,
+        document: { format: FEISHU_FORMATS.docsXml, data: data as unknown as JsonValue, baseRevision: '7' },
+      },
+      context(),
+    )
+    const update = runtime.requests[2]!
+    expect(update.args).toEqual(expect.arrayContaining(['--content', '-']))
+    expect(update.stdin).toBe(`<p>${large}</p>`)
+    // A >32 KiB payload is exactly what an argv-based call cannot carry safely.
+    expect(update.args.every(arg => arg.length < 32 * 1024)).toBe(true)
+    expectWindowsSafeArgs(runtime)
+  })
+
+  it('refuses malformed inline markup before issuing any write', async () => {
+    const runtime = new FakeLarkRuntime()
+      .enqueue(editFetch(7))
+      .enqueue(editFetch(7))
+    const { operations } = opsOf(runtime)
+    const locator = { kind: 'docx' as const, docToken: 'doccnA' }
+    const loaded = await operations.loadEdit!({ typeId: FEISHU_TYPE_IDS.docx, locator }, context())
+    const data = withEditBlock(loaded.data as unknown as FeishuDocEditData, 'blk-p1', '<b>unclosed')
+    await expect(operations.saveEdit!(
+      {
+        typeId: FEISHU_TYPE_IDS.docx,
+        locator,
+        document: { format: FEISHU_FORMATS.docsXml, data: data as unknown as JsonValue, baseRevision: '7' },
+      },
+      context(),
+    )).rejects.toMatchObject({ category: 'invalid-request' })
+    // loadEdit + the save-time re-read only: the invalid block never reaches
+    // docs +update.
+    expect(runtime.requests).toHaveLength(2)
+    expect(runtime.requests.every(request => request.args[1] !== '+update')).toBe(true)
   })
 
   it('edits the title only through its block id', async () => {
@@ -875,8 +1052,9 @@ describe('docs read', () => {
     )
     expect(runtime.requests[2]!.args).toEqual(expect.arrayContaining([
       '--block-id', 'blk-title',
-      '--content', '<title>Renamed</title>',
+      '--content', '-',
     ]))
+    expect(runtime.requests[2]!.stdin).toBe('<title>Renamed</title>')
   })
 
   it('re-fetches between block writes and advances the revision baseline', async () => {
@@ -958,6 +1136,31 @@ describe('docs read', () => {
     )).rejects.toMatchObject({
       meta: { partial: 'true', written: '', unwritten: 'blk-p1' },
     })
+  })
+
+  it('reports every unwritten block when the first of several is partial', async () => {
+    const runtime = new FakeLarkRuntime()
+      .enqueue(editFetch(7))
+      .enqueue(editFetch(7))
+      .enqueue(okResult({ document: { revision_id: 8 }, result: 'partial_success' }))
+    const { operations } = opsOf(runtime)
+    const locator = { kind: 'docx' as const, docToken: 'doccnA' }
+    const loaded = await operations.loadEdit!({ typeId: FEISHU_TYPE_IDS.docx, locator }, context())
+    let data = withEditBlock(loaded.data as unknown as FeishuDocEditData, 'blk-p1', 'Hello <b>one</b>')
+    data = withEditBlock(data, 'blk-h2', 'Section two')
+    await expect(operations.saveEdit!(
+      {
+        typeId: FEISHU_TYPE_IDS.docx,
+        locator,
+        document: { format: FEISHU_FORMATS.docsXml, data: data as unknown as JsonValue, baseRevision: '7' },
+      },
+      context(),
+    )).rejects.toMatchObject({
+      meta: { partial: 'true', written: '', unwritten: 'blk-p1,blk-h2' },
+    })
+    // The business result was partial before any confirmed write: no retry and
+    // no second block write is issued.
+    expect(runtime.requests).toHaveLength(3)
   })
 
   it('returns conflict before writing when a changed block was already updated', async () => {
@@ -1499,5 +1702,29 @@ describe('docs portable and errors', () => {
     })
     expect(runtime.reports[0]!.inspection.detail).toContain('docx:document:read')
     expect(runtime.reports[0]!.inspection.detail).toContain('https://open.feishu.cn/app/cli_x/auth')
+  })
+
+  it('does not publish a ready authorization from a 403 resource failure', async () => {
+    const runtime = new FakeLarkRuntime().enqueue(failResult({
+      type: 'permission',
+      subtype: 'forbidden',
+      code: 403,
+      console_url: 'https://open.feishu.cn/app/cli_x/auth',
+      message: 'raw permission detail',
+    }))
+    const { operations } = opsOf(runtime)
+    await expect(operations.read!(
+      { typeId: FEISHU_TYPE_IDS.docx, locator: { kind: 'docx', docToken: 'doccnA' } },
+      context(),
+    )).rejects.toMatchObject({ category: 'permission-denied' })
+    expect(runtime.reports).toHaveLength(1)
+    // A failed request is not evidence that the user authorization is ready.
+    expect(runtime.reports[0]!.inspection).toMatchObject({
+      configuration: 'ready',
+      authorization: 'unknown',
+    })
+    expect(runtime.reports[0]!.inspection.authorization).not.toBe('ready')
+    expect(runtime.reports[0]!.inspection.detail).toContain('https://open.feishu.cn/app/cli_x/auth')
+    expect(JSON.stringify(runtime.reports[0])).not.toMatch(/raw permission detail/)
   })
 })

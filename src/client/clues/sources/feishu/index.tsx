@@ -269,8 +269,10 @@ export function registerFeishuSourceClient(
     } catch {
       // Best-effort unsubscribe; disposal below still runs.
     }
+    unsubscribe = undefined
     disposeAll(displayDisposers)
     disposeAll(formatDisposers)
+    currentFormats = new Map()
   }
 }
 
