@@ -17,7 +17,7 @@
 import { join } from 'node:path'
 import type { Context } from '../context-types.ts'
 import { CluesStore } from './store.ts'
-import { createCluesService, type CluesService } from './service.ts'
+import { createCluesService, type ClueSourceRegistration, type CluesService } from './service.ts'
 import { registerCluesApi } from './api.ts'
 import { createLocalFileSource } from './local-files.ts'
 
@@ -54,6 +54,13 @@ interface WorkspaceRegistryLike {
 export interface InstallCluesOptions {
   /** Override the durable store root (defaults to profileHome/better-sidebar-data/clues). */
   readonly root?: string
+  /**
+   * Additional CORE-OWNED built-in sources (GitHub/Feishu, supplied by the
+   * plugin's own total assembly). They are installed through the reserved-id
+   * construction path the same way as `builtin.files`; external plugins can
+   * never register a `builtin.*` id through the public service.
+   */
+  readonly builtinSources?: readonly ClueSourceRegistration[]
   /** Clock injection (tests). */
   readonly now?: () => string
   /** Stable-id generator injection (tests). */
@@ -100,7 +107,9 @@ export function installClues(ctx: Context, options: InstallCluesOptions = {}): C
     // Built-in identities are supplied through the core-only construction
     // path; the public registerSource refuses every reserved id, so a foreign
     // registrant can never claim `builtin.files` (or any other built-in).
-    builtinSources: [createLocalFileSource()],
+    // Later Specs (S3/S4) pass their registrations here through the total
+    // assembly; this keeps the reserved-id rule intact for third parties.
+    builtinSources: [createLocalFileSource(), ...(options.builtinSources ?? [])],
     resolveWorkspacePath,
     ...(options.now === undefined ? {} : { now: options.now }),
     ...(options.newId === undefined ? {} : { newId: options.newId }),

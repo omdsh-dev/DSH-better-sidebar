@@ -17,7 +17,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { apply } from '../src/index.ts'
 import { installClues } from '../src/clues/index.ts'
-import { createCluesService, type CluesService } from '../src/clues/service.ts'
+import { createCluesService, type ClueSourceRegistration, type CluesService } from '../src/clues/service.ts'
 import { createLocalFileSource, LOCAL_FILE_TYPE_IDS } from '../src/clues/local-files.ts'
 import { CLUES_API_METHODS, registerCluesApi } from '../src/clues/api.ts'
 import { ClueError, type ClueCandidate } from '../src/clues/types.ts'
@@ -386,6 +386,49 @@ describe('installClues dependency lifecycle', () => {
 
       const listing = await service.list({ workspaceId: 'ws-1', sourceId: 'builtin.files' })
       expect(listing.items.map(item => item.title)).toEqual(['a.md'])
+    } finally {
+      for (const cleanup of cleanups.reverse()) cleanup()
+    }
+  })
+
+  it('installs core-owned builtin sources supplied by the total assembly, still rejecting public reserved ids', async () => {
+    const base = mkdtempSync(join(tmpdir(), 'dsh-clues-builtin-sources-'))
+    roots.push(base)
+    const home = join(base, 'home')
+    mkdirSync(home, { recursive: true })
+    const cleanups: Array<() => void> = []
+    const ctx = {
+      profileContext: { home },
+      logger: { warn: () => {} },
+      get: () => undefined,
+      effect: (fn: () => void | (() => void)) => {
+        const cleanup = fn()
+        if (typeof cleanup === 'function') cleanups.push(cleanup)
+      },
+    }
+    const builtin: ClueSourceRegistration = {
+      descriptor: {
+        sourceId: 'builtin.github.issues',
+        name: 'GitHub Issues',
+        order: 20,
+        pluginId: 'dsh-better-sidebar',
+        types: ['builtin.github.issue'],
+        transport: 'cli',
+        capabilities: { resolve: false, list: false, search: false, read: false, edit: false, portable: false },
+      },
+      types: [{
+        typeId: 'builtin.github.issue',
+        sourceId: 'builtin.github.issues',
+        formats: ['text/markdown'],
+        capabilities: { read: true, edit: false, concurrency: 'none' },
+      }],
+    }
+    const service = installClues(ctx as never, { builtinSources: [builtin] })
+    try {
+      expect(service.getSources().map(source => source.sourceId))
+        .toContain('builtin.github.issues')
+      // The public registration path still refuses a built-in id.
+      expect(() => service.registerSource(builtin)).toThrow(/reserved/)
     } finally {
       for (const cleanup of cleanups.reverse()) cleanup()
     }
