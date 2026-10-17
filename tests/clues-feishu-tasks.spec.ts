@@ -356,36 +356,43 @@ describe('task save: changed fields, completion and partial success', () => {
     const runtime = new FakeLarkRuntime()
       .enqueue(taskGet())
       .enqueue(okResult({ status: 'done', completed_at: '1700009999000', already_completed: false }))
+      .enqueue(taskGet({ updated_at: UPDATED_2 }))
     const { operations } = opsOf(runtime)
     const result = await operations.saveEdit!(
       saveInput(editedDocument({ completed: true })),
       context(),
     )
-    expect(runtime.requests).toHaveLength(2)
+    expect(runtime.requests).toHaveLength(3)
     expect(runtime.requests[1]!.args).toEqual([
       'task', '+complete', '--task-id', GUID, '--as', 'user', '--format', 'json',
     ])
-    expect(result.revision).toBe(UPDATED_1)
+    // The completion PATCH changes updated_at; the source re-reads it so the
+    // NEXT save compares against a fresh baseline instead of a guaranteed conflict.
+    expect(result.revision).toBe(UPDATED_2)
   })
 
   it('treats an already-completed idempotent result as success', async () => {
     const runtime = new FakeLarkRuntime()
       .enqueue(taskGet())
-      .enqueue(okResult({ status: 'done', already_completed: true }))
+      .enqueue(okResult({ status: 'done', already_completed: true, updated_at: UPDATED_2 }))
     const { operations } = opsOf(runtime)
     await expect(operations.saveEdit!(saveInput(editedDocument({ completed: true })), context()))
-      .resolves.toMatchObject({ revision: UPDATED_1 })
+      .resolves.toMatchObject({ revision: UPDATED_2 })
+    // The completion answer carried updated_at, so no extra read is needed.
+    expect(runtime.requests).toHaveLength(2)
   })
 
   it('reopens a completed task with +reopen', async () => {
     const runtime = new FakeLarkRuntime()
       .enqueue(taskGet({ completed: true, completed_at: '1700009999000' }))
       .enqueue(okResult({ status: 'todo', completed_at: '0' }))
+      .enqueue(taskGet({ completed: false, updated_at: UPDATED_2 }))
     const { operations } = opsOf(runtime)
     await operations.saveEdit!(saveInput(editedDocument({ completed: false })), context())
     expect(runtime.requests[1]!.args).toEqual([
       'task', '+reopen', '--task-id', GUID, '--as', 'user', '--format', 'json',
     ])
+    expect(runtime.requests).toHaveLength(3)
   })
 
   it('reports partial success when fields were saved but completion failed', async () => {

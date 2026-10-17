@@ -20,10 +20,16 @@
  * - portable locators export only resource identifiers + original URL/host,
  *   never an access token.
  */
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { ClueError } from '../src/clues/types.ts'
 import type { ClueCandidate, ClueOperationContext } from '../src/clues/types.ts'
 import { createFeishuDocsSource } from '../src/clues/sources/feishu/docs.ts'
+import { createCluesService } from '../src/clues/service.ts'
+import { CluesStore } from '../src/clues/store.ts'
+import { removeTree } from './temp-tree.ts'
 import { DOCS_EDIT_LIMITATION, FEISHU_FORMATS, FEISHU_TYPE_IDS } from '../src/clues/sources/feishu/format.ts'
 import {
   failResult,
@@ -458,6 +464,52 @@ describe('docs read', () => {
     }
     expect(DOCS_EDIT_LIMITATION).toMatch(/read-only/)
     expect(DOCS_EDIT_LIMITATION).toMatch(/append|overwrite/)
+  })
+})
+
+describe('service integration: stable identity and the read-only path', () => {
+  it('dedupes a resolved wiki node with its underlying docx and rejects edit', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-clues-feishu-docs-'))
+    const service = createCluesService({
+      store: new CluesStore({ root }),
+      builtinSources: [sourceWith(new FakeLarkRuntime())],
+      now: () => '2026-10-17T00:00:00.000Z',
+    })
+    try {
+      const wiki = await service.ensure({
+        workspaceId: 'ws-feishu',
+        sourceId: 'builtin.feishu.docs',
+        typeId: FEISHU_TYPE_IDS.wiki,
+        locator: {
+          kind: 'wiki',
+          wikiToken: 'wikcnN',
+          objToken: 'doccnO',
+          objType: 'docx',
+        },
+        title: 'Same document',
+      })
+      const direct = await service.ensure({
+        workspaceId: 'ws-feishu',
+        sourceId: 'builtin.feishu.docs',
+        typeId: FEISHU_TYPE_IDS.docx,
+        locator: { kind: 'docx', docToken: 'doccnO' },
+        title: 'Same document',
+      })
+      expect(direct.created).toBe(false)
+      expect(direct.clue.id).toBe(wiki.clue.id)
+
+      // The service refuses the edit before the source is even asked.
+      await expect(service.loadEdit({ workspaceId: 'ws-feishu', clueId: wiki.clue.id }))
+        .rejects.toMatchObject({ category: 'unsupported' })
+      await expect(service.saveEdit({
+        workspaceId: 'ws-feishu',
+        clueId: wiki.clue.id,
+        document: { format: FEISHU_FORMATS.docsXml, data: {} },
+      })).rejects.toMatchObject({ category: 'unsupported' })
+    } finally {
+      service.dispose()
+      removeTree(root)
+    }
   })
 })
 

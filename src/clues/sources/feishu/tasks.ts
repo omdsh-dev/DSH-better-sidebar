@@ -242,7 +242,7 @@ async function submitCompletion(
   guid: string,
   completed: boolean,
   context: ClueOperationContext,
-): Promise<void> {
+): Promise<{ readonly updatedAt?: string }> {
   const success = await runLark({
     runtime,
     args: [
@@ -260,7 +260,8 @@ async function submitCompletion(
     if (!(already || status === 'done' || (completedAt !== undefined && completedAt > 0))) {
       throw new ClueError('failed', 'the server did not confirm the task completion')
     }
-    return
+    const updatedAt = success.data.updated_at
+    return updatedAt === undefined ? {} : { updatedAt: String(updatedAt) }
   }
   // Reopen: only a server answer that still says "done" (or a positive
   // completion instant) is a non-confirmation; otherwise the envelope + exit 0
@@ -269,6 +270,21 @@ async function submitCompletion(
   const completedAt = millisOf(success.data.completed_at)
   if (completedAt !== undefined && completedAt > 0) {
     throw new ClueError('failed', 'the server did not confirm the task reopen')
+  }
+  const updatedAt = success.data.updated_at
+  return updatedAt === undefined ? {} : { updatedAt: String(updatedAt) }
+}
+
+/** A best-effort fresh revision after a completion action (never fails the save). */
+async function refreshRevision(
+  runtime: ClueRuntime,
+  guid: string,
+  context: ClueOperationContext,
+): Promise<string | undefined> {
+  try {
+    return (await readTask(runtime, guid, context)).updatedAt
+  } catch {
+    return undefined
   }
 }
 
@@ -475,12 +491,13 @@ export function createFeishuTasksSource(getRuntime: () => ClueRuntime): ClueSour
 
         // Best-effort fresh read: the source has no atomic conditional update.
         const current = await readTask(runtime(), locator.guid, context)
-        if (
-          document.baseRevision !== undefined
-          && current.updatedAt !== undefined
-          && document.baseRevision !== current.updatedAt
-        ) {
-          throw new ClueError('conflict', 'the task changed since it was loaded; re-read it and retry')
+        if (document.baseRevision !== undefined) {
+          if (current.updatedAt === undefined) {
+            throw new ClueError('conflict', 'the task baseline could not be confirmed; re-read it and retry')
+          }
+          if (document.baseRevision !== current.updatedAt) {
+            throw new ClueError('conflict', 'the task changed since it was loaded; re-read it and retry')
+          }
         }
         let update: FeishuTaskUpdatePayload
         try {
@@ -516,7 +533,8 @@ export function createFeishuTasksSource(getRuntime: () => ClueRuntime): ClueSour
           if (confirmation.updatedAt !== undefined) revision = confirmation.updatedAt
           if (completionChanged) {
             try {
-              await submitCompletion(runtime(), locator.guid, edited.completed, context)
+              const completion = await submitCompletion(runtime(), locator.guid, edited.completed, context)
+              revision = completion.updatedAt ?? await refreshRevision(runtime(), locator.guid, context) ?? revision
             } catch (error) {
               const message = error instanceof ClueError ? error.message : 'the completion change failed'
               throw new ClueError(
@@ -531,7 +549,8 @@ export function createFeishuTasksSource(getRuntime: () => ClueRuntime): ClueSour
         }
 
         if (completionChanged) {
-          await submitCompletion(runtime(), locator.guid, edited.completed, context)
+          const completion = await submitCompletion(runtime(), locator.guid, edited.completed, context)
+          revision = completion.updatedAt ?? await refreshRevision(runtime(), locator.guid, context) ?? revision
           return { savedAt, ...(revision === undefined ? {} : { revision }) }
         }
         // Nothing changed: no write is issued and the draft is considered clean.

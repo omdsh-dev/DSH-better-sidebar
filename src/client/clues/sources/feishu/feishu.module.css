@@ -165,11 +165,11 @@
 
 .saveButton {
   padding: 5px 14px;
-  color: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-button-primary-fill);
   font: inherit;
   font-size: 12px;
-  background: var(--dsw-alias-state-business-primary);
-  border: 1px solid var(--dsw-alias-state-business-primary);
+  background: transparent;
+  border: 1px solid var(--dsw-alias-button-primary-fill);
   border-radius: 6px;
   cursor: pointer;
 }
