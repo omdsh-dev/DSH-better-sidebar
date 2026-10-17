@@ -1,0 +1,82 @@
+/**
+ * The content styles of the GitHub title+body editor (S3 client half).
+ *
+ * Tokens only (`--dsw-alias-*` / `--dsw-font-*` / `--ds-*`): the plugin owns
+ * no colors. The body editor fills a `fill`-layout window body so the writing
+ * area grows instead of leaving empty space.
+ */
+.document {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  flex: 1;
+}
+
+.titleInput {
+  box-sizing: border-box;
+  width: 100%;
+  margin: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-sm-14, var(--dsw-font-xxs-12));
+}
+
+.titleInput:focus-visible {
+  outline: none;
+  border-color: var(--dsw-alias-brand-primary);
+}
+
+.bodyInput {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 200px;
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xxs-12);
+  font-family: var(--ds-font-family-code, monospace);
+  flex: 1;
+  resize: vertical;
+}
+
+.bodyInput:focus-visible {
+  outline: none;
+  border-color: var(--dsw-alias-brand-primary);
+}
+
+.readOnlyBadge {
+  align-self: flex-start;
+  padding: 1px 6px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 999px;
+  color: var(--dsw-alias-label-tertiary);
+  font: var(--dsw-font-xxs-12);
+}
+
+.readOnlyTitle {
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-sm-14, var(--dsw-font-xxs-12));
+  overflow-wrap: anywhere;
+}
+
+.readOnlyBody {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xxs-12);
+  font-family: var(--ds-font-family-code, monospace);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  overflow: auto;
+  flex: 1;
+}
