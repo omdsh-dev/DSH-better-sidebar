@@ -52,7 +52,6 @@ import type { SidebarPrefs } from '../prefs-shared.ts'
 import { api } from './api.ts'
 import { parsePrefs } from './prefs.ts'
 import { AddPluginModal, type PluginKind } from './add-plugin-modal.tsx'
-import { PLUGIN_TOPIC_URL } from './plugins-shared.ts'
 import { t } from './locales.ts'
 import type { SidebarStore } from './state.ts'
 import type {
@@ -66,6 +65,7 @@ import type { BetterSidebarCluesClientFace } from './clues/registry.ts'
 import { clueRuntimeApi, type ClueRuntimeApi } from './clues/runtime-api.ts'
 import { SourceConfigPage } from './clues/settings/config.tsx'
 import { ClueSourcesPanel, hasSourceConfiguration, sourceDisplayName } from './clues/settings/sources.tsx'
+import { SourceCatalogBody } from './clues/settings/source-catalog-modal.tsx'
 import { deriveClueSourceStatus, type ClueSourceStatus } from './clues/settings/status.ts'
 import { subscribeClueRuntime } from './clues/settings/runtime-state.ts'
 import {
@@ -2017,11 +2017,13 @@ export function SideCardSection(props: SideCardSectionProps) {
           the extension point of the clicked kind, opens the GitHub topic,
           and lists the matching recommended plugin catalog with per-entry
           install buttons (copying the command; nothing claims a successful
-          install). The clue-source entry is deliberately DIFFERENT: the repo
-          has no source-category catalog, so it must not present the TAB
-          catalog as source recommendations (S8 §5). It shows the explicit
-          "no source catalog" state and the topic page where source plugins
-          actually live.
+          install). The clue-source entry is a SOURCE catalog of its own (S8
+          §5): it must not present the TAB catalog as source recommendations.
+          It mirrors the same body in `source-catalog-modal.tsx` — topic,
+          search, category groups, jump and copy — because the generic
+          AddPluginModal is outside this Spec's write scope. S9 can replace the
+          mirror with one generic AddPluginModal('source') (recorded in
+          `source-catalog.ts`).
           Mounted only while open (Modal runs hooks unconditionally — same
           SSR rule as the settings popup above). */}
       {addPluginsOpen === 'source' ? (
@@ -2038,16 +2040,7 @@ export function SideCardSection(props: SideCardSectionProps) {
             </button>
           )}
         >
-          <div className={css.pluginList} data-clue-add-source="">
-            <div className={css.pluginEmpty}>{t('clueAddSourceNoCatalog')}</div>
-            <button
-              type="button"
-              className={css.pluginTopicBtn}
-              onClick={() => { window.open(PLUGIN_TOPIC_URL, '_blank', 'noopener') }}
-            >
-              {t('addPluginsBrowseMore')}
-            </button>
-          </div>
+          <SourceCatalogBody />
         </Modal>
       ) : addPluginsOpen !== null ? (
         <AddPluginModal

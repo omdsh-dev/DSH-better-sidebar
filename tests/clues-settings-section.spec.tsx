@@ -17,7 +17,9 @@
  *   SAME component;
  * - the deep link from the Tab gear into the Clue sources group (and one
  *   source's configuration window);
- * - the add-source entry reusing the existing plugin modal.
+ * - the add-source entry opening the S8 source-plugin catalog (topic,
+ *   category groups, jump/copy install command) without ever presenting the
+ *   tab-plugin catalog as source recommendations or claiming an install.
  */
 // @vitest-environment jsdom
 import { beforeAll, describe, expect, it } from 'vitest'
@@ -42,6 +44,7 @@ import type { BetterSidebarCluesClientFace } from '../src/client/clues/registry.
 import type { ClueRuntimeApi } from '../src/client/clues/runtime-api.ts'
 import { openClueSettings, peekClueSettingsTarget } from '../src/client/clues/settings/navigation.ts'
 import { publishClueTask } from '../src/client/clues/settings/runtime-state.ts'
+import { builtinClueSourcePlugins } from '../src/client/clues/settings/source-catalog.ts'
 import { builtinTabPlugins } from '../src/client/plugins-tabs.ts'
 import { en } from '../src/client/locales.ts'
 import { SIDEBAR_PREFS_DEFAULTS } from '../src/prefs-shared.ts'
@@ -764,28 +767,41 @@ describe('SideCardSection clue sources', () => {
     expect(signal?.aborted).toBe(true)
   })
 
-  it('offers the explicit no-source-catalog state instead of tab-plugin recommendations', async () => {
+  it('opens the source-plugin catalog instead of tab-plugin recommendations', async () => {
     const h = harness()
     const rendered = await mountSources(h)
     click(rendered.container, 'Add source plugin')
     await flush()
-    const body = document.body.textContent ?? ''
-    // The source modal names the actual intent (sources are DSH plugins) and
-    // admits there is no source-category catalogue. The repo's TAB catalogue
-    // must not be wrapped as source recommendations (S8 spec §5).
-    expect(body).toContain('Add source plugin')
-    expect(body).toContain(en.clueAddSourceNoCatalog)
-    expect(body).toContain('Browse more plugins on GitHub')
-    for (const entry of builtinTabPlugins) expect(body).not.toContain(entry.install)
-    expect(body).not.toContain('Copy')
-    // The copy does not promise a copy control the modal lacks ("下方" is
-    // accurate: the topic button now follows the no-catalogue text).
-    expect(en.clueAddSourceDesc.toLowerCase()).not.toContain('copy')
     const modalBody = document.querySelector('[data-clue-add-source]')!
-    expect(modalBody.textContent!.indexOf(en.clueAddSourceNoCatalog))
-      .toBeLessThan(modalBody.textContent!.indexOf('Browse more plugins on GitHub'))
+    expect(modalBody).not.toBeNull()
+    // The source modal names the actual intent (sources are DSH plugins) and
+    // lists the SOURCE catalog: topic button + search + category-grouped
+    // rows with jump/copy controls, mirroring the generic add-plugin modal.
+    // The title/description live in the Modal chrome, outside the body.
+    expect(document.body.textContent).toContain(en.clueAddSource)
+    expect(document.body.textContent).toContain(en.clueAddSourceDesc)
+    expect(modalBody.textContent).toContain('Browse more plugins on GitHub')
+    expect(modalBody.textContent).toContain(en.addPluginsRecommended)
+    expect(modalBody.querySelector('input[type="search"]')).not.toBeNull()
+    for (const entry of builtinClueSourcePlugins) {
+      const name = typeof entry.name === 'function' ? entry.name() : entry.name
+      expect(modalBody.textContent).toContain(name)
+      expect(modalBody.textContent).toContain(entry.install)
+      expect(modalBody.querySelector(`[data-clue-source-plugin="${entry.id}"]`)).not.toBeNull()
+    }
+    // Same two actions per entry as the generic modal (name + Open button,
+    // one Copy button) — a copy control really exists, so the entry copy is
+    // no longer allowed to promise one it lacks.
+    expect(modalBody.querySelectorAll(`button[aria-label^="${en.openPlugin}:"]`).length)
+      .toBe(builtinClueSourcePlugins.length * 2)
+    expect(modalBody.querySelectorAll(`button[aria-label^="${en.copyInstall}:"]`).length)
+      .toBe(builtinClueSourcePlugins.length)
+    // The repo's TAB catalog must not be wrapped as source recommendations
+    // (S8 spec §5: a normal tab plugin is not a source plugin).
+    for (const entry of builtinTabPlugins) expect(modalBody.textContent).not.toContain(entry.install)
     // Nothing claims the plugin or its CLI was installed.
-    expect(body).not.toContain('installed successfully')
+    expect(document.body.textContent).not.toContain('installed successfully')
+    expect(document.body.textContent).not.toContain(en.clueAddSourceNoCatalog)
     rendered.unmount()
   })
 
