@@ -48,6 +48,8 @@ export interface ClueSourceStatusInput {
   readonly connections?: readonly ConnectionStatusProjection[]
   /** The status request itself failed (network/wire) — never claim ready. */
   readonly requestFailed?: boolean
+  /** Sanitized one-line reason of that failed request (never raw CLI output). */
+  readonly requestFailedDetail?: string
   /**
    * Whether an explicit observation has completed. An un-inspected source is
    * `unchecked`, NOT ready.
@@ -101,7 +103,11 @@ function worstDependency(
  * @returns the derived state and the deciding DTO.
  */
 export function deriveClueSourceStatus(input: ClueSourceStatusInput): ClueSourceStatus {
-  if (input.requestFailed === true) return { kind: 'request-failed' }
+  if (input.requestFailed === true) {
+    return input.requestFailedDetail === undefined
+      ? { kind: 'request-failed' }
+      : { kind: 'request-failed', detail: input.requestFailedDetail }
+  }
   if (input.checked === false) return { kind: 'unchecked' }
 
   const dependencies = input.dependencies ?? []

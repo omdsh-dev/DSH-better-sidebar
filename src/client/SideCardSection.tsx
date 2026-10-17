@@ -752,6 +752,10 @@ export function SideCardSection(props: SideCardSectionProps) {
   const [connectionStatuses, setConnectionStatuses] = useState<readonly ConnectionStatusProjection[]>([])
   const [dependencyProbeFailed, setDependencyProbeFailed] = useState(false)
   const [connectionProbeFailed, setConnectionProbeFailed] = useState(false)
+  // Sanitized one-line reason of a failed status read. It is rendered on the
+  // affected rows (their derived state is request-failed), not as a page
+  // banner pretending the WHOLE list failed.
+  const [statusProbeError, setStatusProbeError] = useState<string | null>(null)
   const [statusChecked, setStatusChecked] = useState(false)
   const sourcesLoadedRef = useRef(false)
   const sourcesRequestRef = useRef(0)
@@ -781,7 +785,7 @@ export function SideCardSection(props: SideCardSectionProps) {
           dependenciesNext = await runtime.dependenciesInspect()
         } catch (caught) {
           dependenciesFailed = true
-          if (request === sourcesRequestRef.current) setSourcesError(errorTextOf(caught))
+          if (request === sourcesRequestRef.current) setStatusProbeError(errorTextOf(caught))
         }
       }
       if (needsConnections) {
@@ -789,7 +793,7 @@ export function SideCardSection(props: SideCardSectionProps) {
           connectionsNext = await runtime.connectionsStatus()
         } catch (caught) {
           connectionsFailed = true
-          if (request === sourcesRequestRef.current) setSourcesError(errorTextOf(caught))
+          if (request === sourcesRequestRef.current) setStatusProbeError(errorTextOf(caught))
         }
       }
       if (request !== sourcesRequestRef.current) return
@@ -832,11 +836,12 @@ export function SideCardSection(props: SideCardSectionProps) {
         connections: connectionStatuses,
         requestFailed: (needsDependencies && dependencyProbeFailed)
           || (source.connectionId !== undefined && connectionProbeFailed),
+        ...(statusProbeError === null ? {} : { requestFailedDetail: statusProbeError }),
         checked: statusChecked,
       }))
     }
     return map
-  }, [catalogue, dependencyStatuses, connectionStatuses, dependencyProbeFailed, connectionProbeFailed, statusChecked])
+  }, [catalogue, dependencyStatuses, connectionStatuses, dependencyProbeFailed, connectionProbeFailed, statusProbeError, statusChecked])
 
   /** Open one source's S6 configuration window (stable identity = focus). */
   const openSourceConfig = useCallback((source: ClueSourceDescriptor): void => {

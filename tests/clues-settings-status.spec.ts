@@ -131,8 +131,13 @@ describe('deriveClueSourceStatus: dependencies', () => {
     }).kind).toBe('missing')
   })
 
-  it('reports request-failed when the status request itself failed', () => {
+  it('reports request-failed when the status request itself failed, keeping the sanitized reason', () => {
     expect(derive({ requestFailed: true, dependencyIds: [] }).kind).toBe('request-failed')
+    expect(derive({
+      requestFailed: true,
+      dependencyIds: [],
+      requestFailedDetail: 'the inspection request timed out',
+    })).toEqual({ kind: 'request-failed', detail: 'the inspection request timed out' })
   })
 })
 

@@ -117,7 +117,7 @@ export function ClueSourcesPanel(props: ClueSourcesPanelProps) {
         <div className={css.loading} role="status">{t('loading')}</div>
       ) : (
         <>
-          <div className={css.batchBar} role="group" aria-label={t('clueSettingsGroupsAria')}>
+          <div className={css.batchBar} role="group" aria-label={t('settingsGroupSources')}>
             <span className={css.batchScope}>{t('clueSourcesBatchScope')}</span>
             <span className={css.batchButtons}>
               <button type="button" className={css.smallButton} onClick={props.onEnableAll}>
