@@ -879,10 +879,12 @@ export function SideCardSection(props: SideCardSectionProps) {
   const [connectionStatuses, setConnectionStatuses] = useState<readonly ConnectionStatusProjection[]>([])
   const [dependencyProbeFailed, setDependencyProbeFailed] = useState(false)
   const [connectionProbeFailed, setConnectionProbeFailed] = useState(false)
-  // Sanitized one-line reason of a failed status read. The affected rows are
-  // request-failed AND the panel offers a retry: a probe failure is a
-  // retryable state, not a dead end.
-  const [statusProbeError, setStatusProbeError] = useState<string | null>(null)
+  // Sanitized one-line reasons of the failed status reads, kept PER KIND so a
+  // connection failure can never be rendered as a dependency's reason (and
+  // vice versa). The affected rows are request-failed AND the panel offers a
+  // retry: a probe failure is a retryable state, not a dead end.
+  const [dependencyProbeError, setDependencyProbeError] = useState<string | null>(null)
+  const [connectionProbeError, setConnectionProbeError] = useState<string | null>(null)
   const [statusChecked, setStatusChecked] = useState(false)
   // Which catalogue snapshot the current projections actually cover, keyed by
   // source id and signed by the needs it declared. A source that appears (or
@@ -921,7 +923,8 @@ export function SideCardSection(props: SideCardSectionProps) {
     const isCurrent = (): boolean => !controller.signal.aborted && request === sourcesRequestRef.current
     setSourcesLoading(true)
     setSourcesError(null)
-    setStatusProbeError(null)
+    setDependencyProbeError(null)
+    setConnectionProbeError(null)
     // NOTE: `statusChecked`, the probe flags and the last projections are NOT
     // reset here. A reload of an already-checked table keeps showing its
     // last-known verdict while the fresh read is in flight; the failure path
@@ -941,7 +944,7 @@ export function SideCardSection(props: SideCardSectionProps) {
           dependenciesNext = await runtime.dependenciesInspect(undefined, controller.signal)
         } catch (caught) {
           dependenciesFailed = true
-          if (isCurrent()) setStatusProbeError(errorTextOf(caught))
+          if (isCurrent()) setDependencyProbeError(errorTextOf(caught))
         }
       }
       if (needsConnections) {
@@ -949,7 +952,7 @@ export function SideCardSection(props: SideCardSectionProps) {
           connectionsNext = await runtime.connectionsStatus(undefined, controller.signal)
         } catch (caught) {
           connectionsFailed = true
-          if (isCurrent()) setStatusProbeError(errorTextOf(caught))
+          if (isCurrent()) setConnectionProbeError(errorTextOf(caught))
         }
       }
       if (!isCurrent()) return
@@ -957,6 +960,30 @@ export function SideCardSection(props: SideCardSectionProps) {
       setConnectionStatuses(connectionsNext)
       setDependencyProbeFailed(dependenciesFailed)
       setConnectionProbeFailed(connectionsFailed)
+      // A completed dependency read is the post-install answer: drop the task
+      // overlay for every dependency it reports as no longer installing.
+      // Without this, closing the source-config window stops the shared
+      // poller, no terminal bus observation ever arrives, and a table opened
+      // later keeps rendering "Installing" forever even though the fresh DTO
+      // says ready/missing. A failed read keeps the overlay (it proved
+      // nothing).
+      if (!dependenciesFailed) {
+        const installingNow = new Set(
+          dependenciesNext
+            .filter(status => status.state === 'installing')
+            .map(status => status.dependencyId),
+        )
+        setInstallingDependencies(current => {
+          if (current.size === 0) return current
+          let changed = false
+          const next = new Set<string>()
+          for (const dependencyId of current) {
+            if (installingNow.has(dependencyId)) next.add(dependencyId)
+            else changed = true
+          }
+          return changed ? next : current
+        })
+      }
       // The completed observation covers EXACTLY this catalogue's declared
       // needs. Anything that changed meanwhile is re-checked next read.
       setStatusCoverage(new Map(catalogueNext.sources.map(source => [source.sourceId, sourceNeedsKey(source)])))
@@ -985,6 +1012,14 @@ export function SideCardSection(props: SideCardSectionProps) {
   // The registry can change while the section stays mounted (a source plugin
   // registers after the group was opened). Re-read the catalogue then, so the
   // new source appears without closing/reopening Settings.
+  //
+  // BOUNDARY (S1): this client bridge has NO host→client push for a source the
+  // HOST half registers (`registerSource`); only a client display registration
+  // (`registerSourceDisplay`, this subscription) or the explicit Retry re-reads
+  // the catalogue. A host-only registration therefore appears on the next
+  // explicit read (reopen / Retry). S9 owns adding a host-side push or
+  // documenting that reopen semantics; S8 must not invent a second polling RPC
+  // just to see it. The source table also never auto-polls statuses (spec §4).
   useEffect(() => clues.subscribe(() => {
     setDisplays(clues.getSourceDisplays())
     if (sourcesLoadedRef.current) void loadSources()
@@ -1074,19 +1109,28 @@ export function SideCardSection(props: SideCardSectionProps) {
         continue
       }
       const needsDependencies = (source.dependencyIds?.length ?? 0) > 0
+      const dependenciesFailedHere = needsDependencies && dependencyProbeFailed
+      const connectionFailedHere = source.connectionId !== undefined && connectionProbeFailed
+      // Attribute the failure to the probe the row actually depends on: a
+      // connection error must never be rendered as a dependency's reason
+      // (and vice versa).
+      const requestFailedDetail = dependenciesFailedHere
+        ? dependencyProbeError
+        : connectionFailedHere
+          ? connectionProbeError
+          : null
       map.set(source.sourceId, deriveClueSourceStatus({
         dependencyIds: source.dependencyIds,
         connectionId: source.connectionId,
         dependencies: dependencyStatuses,
         connections: connectionStatuses,
-        requestFailed: (needsDependencies && dependencyProbeFailed)
-          || (source.connectionId !== undefined && connectionProbeFailed),
-        ...(statusProbeError === null ? {} : { requestFailedDetail: statusProbeError }),
+        requestFailed: dependenciesFailedHere || connectionFailedHere,
+        ...(requestFailedDetail === null ? {} : { requestFailedDetail }),
         checked: statusChecked && statusCoverage.get(source.sourceId) === sourceNeedsKey(source),
       }))
     }
     return map
-  }, [catalogue, dependencyStatuses, connectionStatuses, dependencyProbeFailed, connectionProbeFailed, statusProbeError, statusChecked, statusCoverage, installingDependencies, postInstallDependencies])
+  }, [catalogue, dependencyStatuses, connectionStatuses, dependencyProbeFailed, connectionProbeFailed, dependencyProbeError, connectionProbeError, statusChecked, statusCoverage, installingDependencies, postInstallDependencies])
 
   /** Open one source's S6 configuration window (stable identity = focus). */
   const openSourceConfig = useCallback((source: ClueSourceDescriptor): void => {
@@ -1897,7 +1941,7 @@ export function SideCardSection(props: SideCardSectionProps) {
                 writeErrors={writeErrors}
                 loading={sourcesLoading}
                 error={sourcesError}
-                statusError={statusProbeError}
+                statusError={dependencyProbeError ?? connectionProbeError}
                 catalogueLoaded={catalogue !== null}
                 onToggleSource={onToggleSource}
                 onToggleMention={onToggleSourceMention}

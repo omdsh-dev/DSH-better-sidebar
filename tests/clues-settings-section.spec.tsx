@@ -677,6 +677,55 @@ describe('SideCardSection clue sources', () => {
     rendered.unmount()
   })
 
+  it.each(['ready', 'missing'] as const)(
+    'restores the real %s state after the config window closed while a task was installing',
+    async state => {
+      const h = harness()
+      const rendered = await mountSources(h)
+      const row = (): Element => rendered.container.querySelector('[data-clue-source="acme.docs"]')!
+      // A config window started an install and published the running task.
+      act(() => { publishClueTask(h.runtime, installTask()) })
+      expect(row().getAttribute('data-clue-source-status')).toBe('installing')
+      // The window closes and its shared poller stops: NO terminal task
+      // observation will ever arrive to clear the overlay. A later catalogue
+      // read (registry change / Retry / reopen) must show the DTO's real
+      // state instead of "Installing" forever.
+      h.runtime.dependenciesInspect = async () => [dependency({ state })]
+      act(() => {
+        h.clues.registerSourceDisplay({ sourceId: 'acme.docs', name: 'Acme Docs' })
+      })
+      await flush()
+      expect(row().getAttribute('data-clue-source-status')).toBe(state)
+      expect(row().textContent).not.toContain('Installing')
+      rendered.unmount()
+    },
+  )
+
+  it('attributes dependency and connection probe failures to their own rows', async () => {
+    const h = harness({
+      catalogue: {
+        sources: [
+          source('dep.only', 'Dependency source', { transport: 'cli', dependencyIds: ['dep.cli'] }),
+          source('conn.only', 'Connection source', { transport: 'http', connectionId: 'conn.auth' }),
+        ],
+        types: [],
+      },
+    })
+    h.runtime.dependenciesInspect = async () => { throw new Error('the dependency probe is down') }
+    h.runtime.connectionsStatus = async () => { throw new Error('the connection probe is down') }
+    const rendered = await mountSources(h)
+    const depRow = rendered.container.querySelector('[data-clue-source="dep.only"]')!
+    const connRow = rendered.container.querySelector('[data-clue-source="conn.only"]')!
+    expect(depRow.getAttribute('data-clue-source-status')).toBe('request-failed')
+    expect(connRow.getAttribute('data-clue-source-status')).toBe('request-failed')
+    // Each row explains the probe IT depends on, never the other one's error.
+    expect(depRow.textContent).toContain('the dependency probe is down')
+    expect(depRow.textContent).not.toContain('the connection probe is down')
+    expect(connRow.textContent).toContain('the connection probe is down')
+    expect(connRow.textContent).not.toContain('the dependency probe is down')
+    rendered.unmount()
+  })
+
   it('keeps the old table visible with a busy cue while a reload is probing', async () => {
     const h = harness()
     const rendered = await mountSources(h)

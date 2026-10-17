@@ -74,7 +74,15 @@ export function hasSourceConfiguration(source: ClueSourceDescriptor): boolean {
   return (source.dependencyIds?.length ?? 0) > 0 || source.connectionId !== undefined
 }
 
-/** Resolve a display's icon node (fallback: the generic link glyph). */
+/**
+ * Resolve a display's icon node.
+ *
+ * The descriptor only carries a SERIALIZABLE icon id (`descriptor.icon`); a
+ * client display registration is what turns it into a themed glyph. Without
+ * one the generic link glyph is the honest fallback — never an empty slot —
+ * and the row keeps its accessible name (the visible source name plus the
+ * labeled switches), so the icon is never the only identity.
+ */
 function displayIcon(display: ClueSourceDisplayDescriptor | undefined): ReactNode {
   if (display?.icon === undefined) return <IconLinkOutlineRegular size={16} />
   return typeof display.icon === 'function' ? display.icon(16) : display.icon
@@ -217,7 +225,20 @@ export function ClueSourcesPanel(props: ClueSourcesPanelProps) {
                     data-clue-source-status={status.kind}
                   >
                     <span className={css.sourceIdentity}>
-                      <span className={css.sourceIcon} aria-hidden="true">{displayIcon(display)}</span>
+                      {/* The descriptor's serializable icon id is preserved on
+                          the DOM for a future display registration; without
+                          one the generic glyph renders and the row's text
+                          names the source (the icon stays decorative). */}
+                      <span
+                        className={css.sourceIcon}
+                        aria-hidden="true"
+                        data-clue-source-icon={display?.icon === undefined ? 'fallback' : 'display'}
+                        {...(display?.icon === undefined && source.icon !== undefined
+                          ? { 'data-clue-source-icon-id': source.icon }
+                          : {})}
+                      >
+                        {displayIcon(display)}
+                      </span>
                       <span className={css.sourceText}>
                         <span className={css.sourceName}>{name}</span>
                         <span className={css.sourceId}>{source.sourceId}</span>
@@ -286,7 +307,9 @@ export function ClueSourcesPanel(props: ClueSourcesPanelProps) {
                     data-clue-source-status="unavailable"
                   >
                     <span className={css.sourceIdentity}>
-                      <span className={css.sourceIcon} aria-hidden="true"><IconLinkOutlineRegular size={16} /></span>
+                      <span className={css.sourceIcon} aria-hidden="true" data-clue-source-icon="fallback">
+                        <IconLinkOutlineRegular size={16} />
+                      </span>
                       <span className={css.sourceText}>
                         <span className={css.sourceName}>{sourceId}</span>
                         <span className={css.sourceId}>{sourceId}</span>

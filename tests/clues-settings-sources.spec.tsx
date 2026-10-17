@@ -173,6 +173,23 @@ describe('ClueSourcesPanel rows', () => {
     expect(html).toContain('ACME-ICON')
   })
 
+  it('falls back to the generic glyph when the descriptor icon has no client display', () => {
+    const html = render({
+      sources: [source('acme.docs', 'Acme Docs', { icon: 'acme.brand' })],
+    })
+    // The descriptor only carries a serializable icon id: without a client
+    // display it is kept for a future registration and a generic glyph is
+    // rendered (never an empty slot, never the raw id as the icon).
+    expect(html).toContain('data-clue-source-icon="fallback"')
+    expect(html).toContain('data-clue-source-icon-id="acme.brand"')
+    expect(html).toContain('<svg')
+    expect(html).not.toContain('>acme.brand</span>')
+    // The row still has a full accessible name (the icon is decorative).
+    expect(html).toContain('>Acme Docs<')
+    expect(html).toContain('aria-label="Enable source: Acme Docs"')
+    expect(html).toContain('aria-label="@ candidates: Acme Docs"')
+  })
+
   it('falls back from a blank display name to the descriptor name, then the id', () => {
     const descriptor = source('acme.docs', 'Acme Docs')
     expect(sourceDisplayName(descriptor, { sourceId: 'acme.docs', name: '   ' })).toBe('Acme Docs')
