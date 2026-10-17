@@ -306,6 +306,25 @@ describe('installClueInjection', () => {
     expect(injectedOf(secondDecision)).toBeUndefined()
   })
 
+  it('never injects twice when two pre-step passes race in one creation window', async () => {
+    const harness = mount(FIXTURE)
+    const sessionValue = session([turnStart(1)])
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    const next = async () => {
+      await gate
+      return { kind: 'enter' as const, messages: [] }
+    }
+    const first = harness.run(payload(sessionValue), next)
+    const second = harness.run(payload(sessionValue), next)
+    // Let both passes reach the waterfall, then release them together.
+    await new Promise(resolve => setTimeout(resolve, 0))
+    release()
+    const [firstDecision, secondDecision] = await Promise.all([first, second])
+    expect(injectedOf(firstDecision)).toBeDefined()
+    expect(injectedOf(secondDecision)).toBeUndefined()
+  })
+
   it('skips a fork whose inherited marker matches, and injects when workspace or list differs', async () => {
     const harness = mount(FIXTURE)
     const parent = session([turnStart(1)])

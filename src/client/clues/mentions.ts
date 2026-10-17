@@ -400,16 +400,17 @@ export function createClueInputTriggers(options: CreateClueInputTriggersOptions)
     sourceId: string,
     query: string,
     signal: AbortSignal,
+    perSourceLimit: number,
   ): Promise<ClueRow[]> => {
     let result: ClueListResult
     try {
-      result = await face.api.search(workspaceId, { sourceId, query, limit }, signal)
+      result = await face.api.search(workspaceId, { sourceId, query, limit: perSourceLimit }, signal)
     } catch (error) {
       if (!signal.aborted) report(error, sourceId)
       return []
     }
     if (signal.aborted) return []
-    const candidates = result.items.slice(0, limit)
+    const candidates = result.items.slice(0, perSourceLimit)
     const rows = await mapWithLimit(candidates, ENSURE_CONCURRENCY, async (candidate): Promise<ClueRow | undefined> => {
       try {
         let clueId = candidate.clueId
@@ -465,8 +466,11 @@ export function createClueInputTriggers(options: CreateClueInputTriggersOptions)
         source.capabilities.search
         && face.isSourceEnabled(source.sourceId)
         && face.isSourceMentionEnabled(source.sourceId))
+      // Distribute the row budget across sources; the merged list is capped
+      // again below, so a broad query cannot ensure an unbounded number of ids.
+      const perSourceLimit = Math.max(1, Math.ceil(limit / Math.max(1, sources.length)))
       const perSource = await mapWithLimit(sources, concurrency, async source =>
-        searchSource(workspaceId, source.sourceId, request.query.trim(), request.signal))
+        searchSource(workspaceId, source.sourceId, request.query.trim(), request.signal, perSourceLimit))
       if (request.signal.aborted) return []
       const seen = new Set<string>()
       const merged: ClueRow[] = []

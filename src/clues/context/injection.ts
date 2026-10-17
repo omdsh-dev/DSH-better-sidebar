@@ -451,12 +451,31 @@ export function installClueInjection(
     if (injected.has(guardKey)) return next()
     const text = renderClueBindingContext(entries, { maxBindings, maxMembersPerPack, maxContextChars })
     if (text === '') return next()
-    const decision = await next()
-    if (decision.kind === 'reject') return decision
+    // Claim the guard BEFORE awaiting the waterfall: two concurrent pre-step
+    // passes in one creation window must not both inject.
+    injected.set(guardKey, true)
+    if (injected.size > REENTRY_GUARD_MAX) {
+      const oldest = injected.keys().next().value
+      if (oldest !== undefined) injected.delete(oldest)
+    }
+    let decision: PreStepDecision
+    try {
+      decision = await next()
+    } catch (error) {
+      injected.delete(guardKey)
+      throw error
+    }
+    if (decision.kind === 'reject') {
+      injected.delete(guardKey)
+      return decision
+    }
     if (decision.messages.some((message) => {
       const source = (message as { source?: unknown } | null)?.source
       return readClueContextMarker(source) !== undefined
-    })) return decision
+    })) {
+      injected.delete(guardKey)
+      return decision
+    }
     const message = createUserMessage({
       content: [{ type: 'text', text } satisfies ContentBlock],
       source: {
@@ -465,11 +484,6 @@ export function installClueInjection(
         clueContext: { workspaceId, fingerprint },
       },
     })
-    injected.set(guardKey, true)
-    if (injected.size > REENTRY_GUARD_MAX) {
-      const oldest = injected.keys().next().value
-      if (oldest !== undefined) injected.delete(oldest)
-    }
     return { ...decision, messages: [message, ...decision.messages] }
   }
 

@@ -284,14 +284,25 @@ function snapshotRow(meta: ClueSnapshotMeta): SnapshotRow {
   }
 }
 
+/** Group snapshot metadata by clue, newest first and bounded per clue. */
+function groupSnapshotRows(metas: readonly ClueSnapshotMeta[]): Map<string, SnapshotRow[]> {
+  const grouped = new Map<string, SnapshotRow[]>()
+  for (const meta of metas) {
+    const rows = grouped.get(meta.clueId) ?? []
+    rows.push(snapshotRow(meta))
+    grouped.set(meta.clueId, rows)
+  }
+  for (const [clueId, rows] of grouped) {
+    grouped.set(clueId, rows
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt) || right.snapshotId.localeCompare(left.snapshotId))
+      .slice(0, MAX_SNAPSHOT_ROWS))
+  }
+  return grouped
+}
+
 /** Snapshot rows of one clue in one workspace, newest first, bounded. */
 async function snapshotsOf(clues: CluesService, workspaceId: string, clueId: string): Promise<SnapshotRow[]> {
-  const metas = await clues.listSnapshots(workspaceId)
-  return metas
-    .filter(meta => meta.clueId === clueId)
-    .sort((left, right) => right.createdAt.localeCompare(left.createdAt) || right.snapshotId.localeCompare(left.snapshotId))
-    .slice(0, MAX_SNAPSHOT_ROWS)
-    .map(snapshotRow)
+  return groupSnapshotRows(await clues.listSnapshots(workspaceId)).get(clueId) ?? []
 }
 
 /** The clue row and its owning workspace. */
@@ -839,12 +850,16 @@ export function installClueTools(ctx: Context, clues: CluesService): () => void 
           }
         }
         try {
-          const library = await clues.listClues(located.workspace.id)
+          const [library, snapshotMetas] = await Promise.all([
+            clues.listClues(located.workspace.id),
+            clues.listSnapshots(located.workspace.id),
+          ])
           const clueById = new Map(library.clues.map(clue => [clue.id, clue]))
+          const snapshotsByClue = groupSnapshotRows(snapshotMetas)
           const members: MemberRow[] = []
           for (const clueId of located.pack.members) {
             const clue = clueById.get(clueId)
-            const snapshots = await snapshotsOf(clues, located.workspace.id, clueId)
+            const snapshots = snapshotsByClue.get(clueId) ?? []
             if (clue === undefined) {
               members.push({ clueId, missing: true, snapshots })
               continue
