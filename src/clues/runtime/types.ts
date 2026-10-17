@@ -204,7 +204,7 @@ export interface DependencyInstallProgress {
 
 /** What the plan shows before the user confirms it. */
 export interface DependencyInstallDistributionProjection {
-  readonly kind: 'archive' | 'npm'
+  readonly kind: 'archive' | 'npm' | 'none'
   readonly source: string
   readonly url?: string
   readonly sha256?: string

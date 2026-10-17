@@ -595,6 +595,14 @@ export function createDependenciesRuntime(options: DependenciesRuntimeOptions): 
     }
   }
 
+  /** Hand out copies: a status row is metadata, not live registry state. */
+  const copyStatus = (status: DependencyStatus): DependencyStatus => ({
+    ...status,
+    ...(status.error === undefined ? {} : { error: { ...status.error } }),
+    ...(status.installation === undefined ? {} : { installation: { ...status.installation } }),
+    ...(status.manualInstall === undefined ? {} : { manualInstall: { ...status.manualInstall } }),
+  })
+
   const inspect = async (
     dependencyId?: string,
     inspectOptions: { readonly refresh?: boolean; readonly signal?: AbortSignal } = {},
@@ -605,7 +613,7 @@ export function createDependenciesRuntime(options: DependenciesRuntimeOptions): 
       : [requireDefinition(dependencyId)]
     const rows: DependencyStatus[] = []
     for (const definition of targets) {
-      rows.push(await statusOf(definition, inspectOptions.refresh === true, inspectOptions.signal))
+      rows.push(copyStatus(await statusOf(definition, inspectOptions.refresh === true, inspectOptions.signal)))
     }
     return rows
   }

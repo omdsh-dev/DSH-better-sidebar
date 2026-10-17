@@ -487,7 +487,7 @@ export function createInstallManager(options: InstallManagerOptions): InstallMan
       platform,
       arch,
       distribution: distribution === undefined
-        ? { kind: 'archive', source: 'unavailable' }
+        ? { kind: 'none', source: 'unavailable' }
         : {
             kind: distribution.kind,
             source: distribution.source,
