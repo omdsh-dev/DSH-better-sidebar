@@ -22,8 +22,9 @@
  */
 import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
-import { access, mkdir, open, rename, rm } from 'node:fs/promises'
+import { access, mkdir, open, readFile, rename, rm } from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve } from 'node:path'
+import { gunzipSync } from 'node:zlib'
 import { ClueError, isClueError } from '../error.ts'
 import type {
   ClueDependencyDefinition,
@@ -135,6 +136,166 @@ export function taskSummary(task: DependencyInstallTask): DependencyInstallTaskS
     version: task.version,
     startedAt: task.startedAt,
     ...(task.finishedAt === undefined ? {} : { finishedAt: task.finishedAt }),
+  }
+}
+
+/** Bound of archive entries inspected before extraction (defense in depth). */
+const MAX_ARCHIVE_ENTRIES = 200_000
+/** Bound of a decompressed tar inspected for path safety (official CLI bundles). */
+const MAX_TAR_INSPECT_BYTES = 128 << 20
+
+/** Whether an archive entry name would escape the extraction directory. */
+export function unsafeArchiveName(name: string): boolean {
+  if (typeof name !== 'string' || name === '' || name.includes('\0')) return true
+  const normalized = name.replace(/\\/g, '/')
+  if (normalized.startsWith('/') || /^[A-Za-z]:/.test(normalized)) return true
+  return normalized.split('/').some(part => part === '..')
+}
+
+/** Decode one NUL-terminated tar header field. */
+function tarField(header: Buffer, offset: number, length: number): string {
+  const end = header.indexOf(0, offset)
+  const stop = end === -1 || end > offset + length ? offset + length : end
+  return header.subarray(offset, stop).toString('utf8')
+}
+
+/** Octal size field; a base-256/large variant is refused (unsupported archive). */
+function tarSize(header: Buffer): number {
+  const text = tarField(header, 124, 12).trim()
+  if (text === '') return 0
+  if (!/^[0-7]+$/.test(text)) {
+    throw new ClueError('failed', 'the archive uses an unsupported entry size encoding')
+  }
+  return Number.parseInt(text, 8)
+}
+
+/** Validate a decompressed tar stream: no absolute/`..` paths, no links. */
+function validateTarBytes(raw: Buffer): void {
+  let offset = 0
+  let entries = 0
+  let longName: string | undefined
+  let paxPath: string | undefined
+  while (offset + 512 <= raw.length) {
+    const header = raw.subarray(offset, offset + 512)
+    if (header.every(byte => byte === 0)) return
+    const type = String.fromCharCode(header[156] ?? 0)
+    const size = tarSize(header)
+    const dataStart = offset + 512
+    const dataEnd = dataStart + size
+    if (dataEnd > raw.length) {
+      throw new ClueError('failed', 'the archive is truncated')
+    }
+    entries += 1
+    if (entries > MAX_ARCHIVE_ENTRIES) {
+      throw new ClueError('failed', 'the archive contains too many entries')
+    }
+    const data = raw.subarray(dataStart, dataEnd)
+    if (type === 'L') {
+      longName = tarField(data, 0, data.length)
+    } else if (type === 'x') {
+      const match = /^path=(.*)$/m.exec(data.toString('utf8'))
+      if (match !== null) paxPath = match[1]
+    } else if (type === 'K' || type === '1' || type === '2') {
+      // A link entry can point outside the extraction root and a later entry
+      // could write through it. Official CLI bundles do not need links.
+      throw new ClueError('failed', 'the archive contains a link entry')
+    } else if (type === '0' || type === '\0' || type === '5' || type === '7') {
+      const prefix = tarField(header, 345, 155)
+      const shortName = tarField(header, 0, 100)
+      const name = longName ?? paxPath ?? (prefix === '' ? shortName : `${prefix}/${shortName}`)
+      if (unsafeArchiveName(name)) {
+        throw new ClueError('failed', 'the archive contains an entry outside its target directory')
+      }
+      longName = undefined
+      paxPath = undefined
+    } else {
+      // Other metadata types carry no extractable path.
+      longName = undefined
+      paxPath = undefined
+    }
+    offset = dataStart + Math.ceil(size / 512) * 512
+  }
+  throw new ClueError('failed', 'the archive is truncated')
+}
+
+/** Find the Zip end-of-central-directory record. */
+function findZipEocd(buffer: Buffer): number {
+  const earliest = Math.max(0, buffer.length - 65_557)
+  for (let offset = buffer.length - 22; offset >= earliest; offset -= 1) {
+    if (buffer.readUInt32LE(offset) === 0x06054b50) return offset
+  }
+  return -1
+}
+
+/** Validate a zip central directory (no absolute/`..` names, no encryption). */
+function validateZipBytes(raw: Buffer): void {
+  const eocd = findZipEocd(raw)
+  if (eocd < 0) throw new ClueError('failed', 'the archive is not a valid zip file')
+  const entries = raw.readUInt16LE(eocd + 10)
+  const centralSize = raw.readUInt32LE(eocd + 12)
+  const centralOffset = raw.readUInt32LE(eocd + 16)
+  if (entries === 0xffff || centralOffset === 0xffffffff || centralSize === 0xffffffff) {
+    throw new ClueError('failed', 'the archive uses an unsupported zip64 layout')
+  }
+  if (entries > MAX_ARCHIVE_ENTRIES) {
+    throw new ClueError('failed', 'the archive contains too many entries')
+  }
+  if (centralOffset + centralSize > raw.length) {
+    throw new ClueError('failed', 'the archive has an invalid central directory')
+  }
+  let offset = centralOffset
+  for (let index = 0; index < entries; index += 1) {
+    if (offset + 46 > raw.length || raw.readUInt32LE(offset) !== 0x02014b50) {
+      throw new ClueError('failed', 'the archive has an invalid central directory')
+    }
+    const flags = raw.readUInt16LE(offset + 8)
+    if ((flags & 0x1) !== 0) {
+      throw new ClueError('failed', 'the archive contains an encrypted entry')
+    }
+    const nameLength = raw.readUInt16LE(offset + 28)
+    const extraLength = raw.readUInt16LE(offset + 30)
+    const commentLength = raw.readUInt16LE(offset + 32)
+    const nameStart = offset + 46
+    const nameEnd = nameStart + nameLength
+    if (nameEnd > raw.length) throw new ClueError('failed', 'the archive has an invalid central directory')
+    const name = raw.subarray(nameStart, nameEnd).toString('utf8')
+    if (unsafeArchiveName(name)) {
+      throw new ClueError('failed', 'the archive contains an entry outside its target directory')
+    }
+    // A local header can disagree with the central directory; validate the
+    // local name too so no extractor can be tricked by the mismatch.
+    const localOffset = raw.readUInt32LE(offset + 42)
+    if (localOffset + 30 <= raw.length && raw.readUInt32LE(localOffset) === 0x04034b50) {
+      const localNameLength = raw.readUInt16LE(localOffset + 26)
+      const localNameStart = localOffset + 30
+      if (localNameStart + localNameLength > raw.length) {
+        throw new ClueError('failed', 'the archive has an invalid local header')
+      }
+      const localName = raw.subarray(localNameStart, localNameStart + localNameLength).toString('utf8')
+      if (unsafeArchiveName(localName)) {
+        throw new ClueError('failed', 'the archive contains an entry outside its target directory')
+      }
+    }
+    offset = nameEnd + extraLength + commentLength
+  }
+}
+
+/**
+ * Validate an archive's entry names BEFORE any extractor runs. The core cannot
+ * trust a system `tar`/`unzip` to confine a hostile archive, so absolute paths,
+ * `..` segments, links and encrypted entries are refused here.
+ */
+export function validateArchiveEntries(archive: 'zip' | 'tar.gz', data: Uint8Array): void {
+  try {
+    if (archive === 'zip') {
+      validateZipBytes(Buffer.from(data))
+      return
+    }
+    const raw = gunzipSync(Buffer.from(data), { maxOutputLength: MAX_TAR_INSPECT_BYTES })
+    validateTarBytes(raw)
+  } catch (error) {
+    if (isClueError(error)) throw error
+    throw new ClueError('failed', 'the archive could not be validated')
   }
 }
 
@@ -790,6 +951,13 @@ export function createNodeInstallTransport(options: NodeInstallTransportOptions)
     },
 
     async extract(input): Promise<void> {
+      let archiveBytes: Buffer
+      try {
+        archiveBytes = await readFile(input.archivePath)
+      } catch {
+        throw new ClueError('failed', 'the downloaded archive could not be read')
+      }
+      validateArchiveEntries(input.archive, archiveBytes)
       const command = archiveExtractCommand(
         platform,
         input.archive,

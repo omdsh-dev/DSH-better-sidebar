@@ -17,12 +17,15 @@ import { createHash } from 'node:crypto'
 import { existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { gzipSync } from 'node:zlib'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   archiveExtractCommand,
   createInstallManager,
   managedTargetDir,
   npmInstallArgs,
+  unsafeArchiveName,
+  validateArchiveEntries,
   type InstallManager,
 } from '../src/clues/runtime/install.ts'
 import type {
@@ -385,6 +388,113 @@ describe('install execution', () => {
     expect(input.packageVersion).toBe('2.40.1')
     expect(input.directory).toContain('.staging-')
     manager.dispose()
+  })
+})
+
+function tarHeader(name: string, type: string, size: number): Buffer {
+  const header = Buffer.alloc(512)
+  header.write(name, 0, 100, 'utf8')
+  header.write('0000644\0', 100, 8, 'ascii')
+  header.write('0000000\0', 108, 8, 'ascii')
+  header.write('0000000\0', 116, 8, 'ascii')
+  header.write(`${size.toString(8).padStart(11, '0')}\0`, 124, 12, 'ascii')
+  header.write('00000000000\0', 136, 12, 'ascii')
+  header.write('        ', 148, 8, 'ascii')
+  header.write(type, 156, 1, 'ascii')
+  header.write('ustar\0', 257, 6, 'ascii')
+  header.write('00', 263, 2, 'ascii')
+  let checksum = 0
+  for (const byte of header) checksum += byte
+  header.write(`${checksum.toString(8).padStart(6, '0')}\0 `, 148, 8, 'ascii')
+  return header
+}
+
+function tarGz(entries: ReadonlyArray<{ name: string; type?: string; data?: string }>): Buffer {
+  const blocks: Buffer[] = []
+  for (const entry of entries) {
+    const data = Buffer.from(entry.data ?? '', 'utf8')
+    blocks.push(tarHeader(entry.name, entry.type ?? '0', data.length))
+    if (data.length > 0) {
+      const padded = Buffer.alloc(Math.ceil(data.length / 512) * 512)
+      data.copy(padded)
+      blocks.push(padded)
+    }
+  }
+  blocks.push(Buffer.alloc(1024))
+  return gzipSync(Buffer.concat(blocks))
+}
+
+function zipBytes(names: readonly string[], options: { readonly encrypted?: boolean } = {}): Buffer {
+  const locals: Buffer[] = []
+  const centrals: Buffer[] = []
+  let offset = 0
+  for (const name of names) {
+    const nameBuffer = Buffer.from(name, 'utf8')
+    const local = Buffer.alloc(30)
+    local.writeUInt32LE(0x04034b50, 0)
+    local.writeUInt16LE(20, 4)
+    local.writeUInt16LE(options.encrypted === true ? 1 : 0, 6)
+    local.writeUInt16LE(0, 8)
+    local.writeUInt16LE(nameBuffer.length, 26)
+    locals.push(local, nameBuffer)
+    const central = Buffer.alloc(46)
+    central.writeUInt32LE(0x02014b50, 0)
+    central.writeUInt16LE(20, 4)
+    central.writeUInt16LE(20, 6)
+    central.writeUInt16LE(options.encrypted === true ? 1 : 0, 8)
+    central.writeUInt16LE(0, 10)
+    central.writeUInt16LE(nameBuffer.length, 28)
+    central.writeUInt32LE(offset, 42)
+    centrals.push(central, nameBuffer)
+    offset += local.length + nameBuffer.length
+  }
+  const centralBuffer = Buffer.concat(centrals)
+  const localBuffer = Buffer.concat(locals)
+  const eocd = Buffer.alloc(22)
+  eocd.writeUInt32LE(0x06054b50, 0)
+  eocd.writeUInt16LE(names.length, 8)
+  eocd.writeUInt16LE(names.length, 10)
+  eocd.writeUInt32LE(centralBuffer.length, 12)
+  eocd.writeUInt32LE(localBuffer.length, 16)
+  return Buffer.concat([localBuffer, centralBuffer, eocd])
+}
+
+describe('archive entry validation before extraction', () => {
+  it('accepts safe tar.gz and zip layouts', () => {
+    expect(() => validateArchiveEntries('tar.gz', tarGz([
+      { name: 'bin/gh', data: '#!/bin/sh\n' },
+      { name: 'LICENSE' },
+    ]))).not.toThrow()
+    expect(() => validateArchiveEntries('zip', zipBytes(['bin/gh.exe', 'LICENSE']))).not.toThrow()
+  })
+
+  it('refuses path traversal and absolute entries in tar.gz archives', () => {
+    expect(unsafeArchiveName('../escape')).toBe(true)
+    expect(unsafeArchiveName('/etc/passwd')).toBe(true)
+    expect(unsafeArchiveName('C:\\Windows\\x')).toBe(true)
+    expect(unsafeArchiveName('bin/gh')).toBe(false)
+    expect(() => validateArchiveEntries('tar.gz', tarGz([{ name: '../escape' }])))
+      .toThrow(expect.objectContaining({ category: 'failed' }))
+    expect(() => validateArchiveEntries('tar.gz', tarGz([{ name: '/absolute/file' }])))
+      .toThrow(expect.objectContaining({ category: 'failed' }))
+  })
+
+  it('refuses link entries and corrupt gzip data in tar.gz archives', () => {
+    expect(() => validateArchiveEntries('tar.gz', tarGz([{ name: 'link', type: '2', data: '/etc/passwd' }])))
+      .toThrow(expect.objectContaining({ category: 'failed' }))
+    expect(() => validateArchiveEntries('tar.gz', Buffer.from('not a gzip stream')))
+      .toThrow(expect.objectContaining({ category: 'failed' }))
+  })
+
+  it('refuses traversal names and encrypted entries in zip archives', () => {
+    expect(() => validateArchiveEntries('zip', zipBytes(['../escape'])))
+      .toThrow(expect.objectContaining({ category: 'failed' }))
+    expect(() => validateArchiveEntries('zip', zipBytes(['/absolute'])))
+      .toThrow(expect.objectContaining({ category: 'failed' }))
+    expect(() => validateArchiveEntries('zip', zipBytes(['bin/gh'], { encrypted: true })))
+      .toThrow(expect.objectContaining({ category: 'failed' }))
+    expect(() => validateArchiveEntries('zip', Buffer.from('not a zip file')))
+      .toThrow(expect.objectContaining({ category: 'failed' }))
   })
 })
 
