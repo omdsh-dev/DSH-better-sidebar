@@ -18,6 +18,10 @@
  */
 import type { ReactNode } from 'react'
 
+// The error class lives in its own module so the host bundle and the public
+// `./clues` artifact can share ONE class object (see error.ts / tsdown.config.ts).
+export * from './error.ts'
+
 // ── JSON vocabulary ────────────────────────────────────────────────────────
 
 /** A JSON primitive. */
@@ -63,15 +67,15 @@ export type BuiltinSourceId = (typeof BUILTIN_SOURCE_IDS)[keyof typeof BUILTIN_S
  */
 export const BUILTIN_PACKS_ID = 'builtin.packs'
 
-/** Source ids the core owns; reserved and never available to registrants. */
-export const RESERVED_SOURCE_IDS: readonly string[] = [BUILTIN_PACKS_ID]
-
-/** Reference token prefixes (S5 owns serialization/parsing). */
-export const CLUE_REFERENCE_TOKENS = {
-  clue: '[[dsh-clue:',
-  pack: '[[dsh-cluepack:',
-  snapshot: '[[dsh-clue-snapshot:',
-} as const
+/**
+ * Source ids the core owns. They are reserved and never available through the
+ * public `registerSource`; the core supplies its built-in sources at service
+ * construction time instead (`CluesServiceOptions.builtinSources`).
+ */
+export const RESERVED_SOURCE_IDS: readonly string[] = [
+  BUILTIN_PACKS_ID,
+  ...Object.values(BUILTIN_SOURCE_IDS),
+]
 
 /** Codec source names (S5 owns the codec implementation; S1 fixes the names). */
 export const CLUE_CODEC_SOURCE = 'better-sidebar:clues'
@@ -84,55 +88,6 @@ export const CLUE_PREF_KEYS = {
   sourcesMentionEnabled: 'clueSourcesMentionEnabled',
   packsMentionEnabled: 'cluePacksMentionEnabled',
 } as const
-
-/** Default state of every per-source preference: an absent entry means ON. */
-export const CLUE_PREFERENCE_DEFAULT = true
-
-// ── Error vocabulary ───────────────────────────────────────────────────────
-
-/**
- * Fixed error categories of the clue surface. Transports never leak original
- * stdout/stderr, auth headers, tokens or environment secrets into these.
- */
-export const CLUE_ERROR_CATEGORIES = [
-  'source-missing',
-  'dependency-missing',
-  'dependency-incompatible',
-  'auth-required',
-  'permission-denied',
-  'not-found',
-  'unsupported',
-  'rate-limited',
-  'conflict',
-  'cancelled',
-  'timeout',
-  'failed',
-] as const
-
-/** One fixed error category. */
-export type ClueErrorCategory = (typeof CLUE_ERROR_CATEGORIES)[number]
-
-/** One clue failure with its machine-readable category. */
-export class ClueError extends Error {
-  /**
-   * @param category - the fixed failure category.
-   * @param message - a safe, user-renderable message (never a token/stdout).
-   * @param meta - optional non-secret structured context.
-   */
-  constructor(
-    readonly category: ClueErrorCategory,
-    message: string,
-    readonly meta?: Record<string, string>,
-  ) {
-    super(message)
-    this.name = 'ClueError'
-  }
-}
-
-/** Whether a thrown value is a {@link ClueError}. */
-export function isClueError(value: unknown): value is ClueError {
-  return value instanceof ClueError
-}
 
 // ── Source / type descriptors ──────────────────────────────────────────────
 
@@ -453,13 +408,6 @@ export interface CluesSearchParams extends CluesListParams {
   readonly query: string
 }
 
-/** One direct resource reference (when the caller has no clue id yet). */
-export interface ClueResourceRef {
-  readonly sourceId: string
-  readonly typeId: string
-  readonly locator: Locator
-}
-
 /** `clues.read` params: a stable clue id OR a direct resource ref. */
 export interface CluesReadParams {
   readonly workspaceId: string
@@ -525,7 +473,13 @@ export interface CluesPacksResult {
   readonly revision: number
 }
 
-/** `clues.packs.create` params. */
+/**
+ * `clues.packs.create` params.
+ *
+ * `expectedRevision` here is the WORKSPACE library revision (the same domain
+ * as `clues.clues` / pins / bindings): the pack does not exist yet, so there
+ * is no pack revision to compare against.
+ */
 export interface CluesPackCreateParams {
   readonly workspaceId: string
   readonly name: string
@@ -533,7 +487,7 @@ export interface CluesPackCreateParams {
   readonly expectedRevision?: number
 }
 
-/** `clues.packs.rename` params. */
+/** `clues.packs.rename` params. `expectedRevision` is the PACK revision. */
 export interface CluesPackRenameParams {
   readonly workspaceId: string
   readonly packId: string
@@ -541,7 +495,10 @@ export interface CluesPackRenameParams {
   readonly expectedRevision?: number
 }
 
-/** `clues.packs.addMember` / `removeMember` params. */
+/**
+ * `clues.packs.addMember` / `removeMember` params.
+ * `expectedRevision` is the PACK revision.
+ */
 export interface CluesPackMemberParams {
   readonly workspaceId: string
   readonly packId: string
@@ -549,24 +506,36 @@ export interface CluesPackMemberParams {
   readonly expectedRevision?: number
 }
 
-/** `clues.packs.delete` params. */
+/** `clues.packs.delete` params. `expectedRevision` is the PACK revision. */
 export interface CluesPackDeleteParams {
   readonly workspaceId: string
   readonly packId: string
   readonly expectedRevision?: number
 }
 
-/** `clues.packs.*` mutation result: the committed pack (or list for delete). */
+/**
+ * `clues.packs.*` mutation result: the committed pack.
+ *
+ * The two revisions are DIFFERENT domains: `revision` is the workspace
+ * library revision (what pins/bindings/pack creation expect), while
+ * `packRevision` is the pack-local CAS value a subsequent rename/member
+ * mutation of THIS pack must send as `expectedRevision`. Never feed
+ * `revision` back into a pack mutation guard.
+ */
 export interface CluesPackMutationResult {
   readonly pack: CluePack
   readonly revision: number
+  readonly packRevision: number
 }
 
 /** `clues.packs.delete` result: the pack identity is gone; members remain. */
 export interface CluesPackDeleteResult {
   readonly deleted: true
   readonly packs: readonly CluePack[]
+  /** Workspace library revision after the delete. */
   readonly revision: number
+  /** Pack-local revision the deleted pack had reached. */
+  readonly packRevision: number
 }
 
 /** `clues.snapshot.read` params. */

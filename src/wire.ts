@@ -9,7 +9,12 @@ import type { SidebarHttpRequest, SidebarHttpResponse } from './context-types.ts
 // node builtins, so this introduces no cycle; wire.ts is host-half only and is
 // never reachable from the browser bundle.
 import { GitCommandError } from './git.ts'
-import { ClueError, type ClueErrorCategory } from './clues/types.ts'
+// This is the shared clue-error module, externalized from the host bundle onto
+// the public `./clues` artifact (see tsdown.config.ts): the host and external
+// source plugins must share ONE ClueError class, or `instanceof` loses the
+// category.
+import { ClueError, type ClueErrorCategory } from './clues/error.ts'
+import { MAX_EDITABLE_BYTES } from './editor-limits.ts'
 
 /** Machine-readable error codes of the sidebar API. */
 export type SidebarErrorCode =
@@ -48,8 +53,22 @@ export class SidebarError extends Error {
   }
 }
 
-/** Body size bound of one JSON request (defense against unbounded reads). */
+/** Body size bound of one ordinary JSON request (defense against unbounded reads). */
 const MAX_BODY_BYTES = 1 << 20
+
+/**
+ * JSON body bound of `clues.saveEdit`.
+ *
+ * The clue edit document travels as JSON (`{ format, data, baseRevision }`)
+ * while the editable text itself is allowed up to {@link MAX_EDITABLE_BYTES}
+ * (the S6 source editor's limit, the same one `clues.loadEdit` enforces). A
+ * 1 MiB JSON envelope would therefore make files between 1 and 5 MiB
+ * loadable but unsaveable. JSON string escaping can expand one byte up to six
+ * (`\u0000`-style control escapes), so the transport bound covers that worst
+ * case plus envelope overhead. This is a sanity guard, NOT a product limit:
+ * the source still enforces its own editable size.
+ */
+export const MAX_CLUE_SAVE_BODY_BYTES = MAX_EDITABLE_BYTES * 6 + (1 << 20)
 
 /** Success envelope of one API method. */
 export interface SidebarOk<T> { ok: true; value: T }
@@ -57,8 +76,16 @@ export interface SidebarOk<T> { ok: true; value: T }
 /** Failure envelope of one API method. */
 export interface SidebarErr { ok: false; error: { code: SidebarErrorCode; message: string } }
 
-/** Read and parse the JSON request body (bounded; malformed → bad-request). */
-export async function readJsonBody(req: SidebarHttpRequest): Promise<unknown> {
+/**
+ * Read and parse the JSON request body (bounded; malformed → bad-request).
+ * @param req - the request face (async-iterable body).
+ * @param limit - maximum accepted body size in bytes; the dispatcher raises it
+ *   only for `clues.saveEdit` (see {@link MAX_CLUE_SAVE_BODY_BYTES}).
+ */
+export async function readJsonBody(
+  req: SidebarHttpRequest,
+  limit = MAX_BODY_BYTES,
+): Promise<unknown> {
   const chunks: Buffer[] = []
   let total = 0
   for await (const chunk of req) {
@@ -66,7 +93,7 @@ export async function readJsonBody(req: SidebarHttpRequest): Promise<unknown> {
     // both (and the real runtime chunks are node Buffers anyway).
     const buffer = Buffer.from(chunk)
     total += buffer.length
-    if (total > MAX_BODY_BYTES) {
+    if (total > limit) {
       throw new SidebarError('bad-request', 'request body too large')
     }
     chunks.push(buffer)

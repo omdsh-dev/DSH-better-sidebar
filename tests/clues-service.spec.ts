@@ -60,6 +60,7 @@ interface TestSourceOptions {
   sourceId?: string
   typeId?: string
   capabilities?: Partial<ClueSourceRegistration['descriptor']['capabilities']>
+  typeCapabilities?: Partial<ClueSourceRegistration['types'][number]['capabilities']>
   operations?: ClueSourceRegistration['operations']
 }
 
@@ -142,7 +143,7 @@ function testSource(options: TestSourceOptions = {}): ClueSourceRegistration {
       typeId,
       sourceId,
       formats: ['text/plain'],
-      capabilities: { read: true, edit: true },
+      capabilities: { read: true, edit: true, ...options.typeCapabilities },
     }],
     operations: options.operations ?? defaultOperations,
   }
@@ -193,6 +194,29 @@ describe('clue service registration', () => {
     expect(() => service.registerSource(reserved)).toThrow(/reserved/)
   })
 
+  it('reserves every built-in source id and installs built-ins only through construction', () => {
+    const builtin = testSource({ sourceId: 'builtin.files', typeId: 'builtin.files.text' })
+    const service = createCluesService({
+      root: tempRoot(),
+      now: () => NOW,
+      builtinSources: [builtin],
+    })
+    expect(service.getSource('builtin.files')?.sourceId).toBe('builtin.files')
+    for (const sourceId of [
+      'builtin.packs',
+      'builtin.files',
+      'builtin.github.issues',
+      'builtin.github.pulls',
+      'builtin.feishu.docs',
+      'builtin.feishu.tasks',
+    ]) {
+      expect(
+        () => service.registerSource(testSource({ sourceId })),
+        sourceId,
+      ).toThrow(/reserved/)
+    }
+  })
+
   it('unloads only runtime capability: references survive and re-registration restores reads', async () => {
     const root = tempRoot()
     const service = makeService(root)
@@ -227,13 +251,16 @@ describe('clue service registration', () => {
     })).rejects.toMatchObject({ category: 'unsupported' })
   })
 
-  it('disposes every registration idempotently and refuses late source registration', () => {
+  it('disposes every registration idempotently and refuses late registration', () => {
     const service = makeService()
     service.registerApi('x.y', () => 1)
     service.dispose()
     service.dispose()
     expect(service.hasApi('x.y')).toBe(false)
     expect(() => service.registerSource(testSource())).toThrow(/disposed/)
+    // A late API registration must not survive in the cleared service either.
+    expect(() => service.registerApi('late.method', () => 1)).toThrow(/disposed/)
+    expect(service.hasApi('late.method')).toBe(false)
   })
 })
 
@@ -383,6 +410,125 @@ describe('clue service dispatch', () => {
     })
   })
 
+  it('enforces the TYPE read/edit capabilities before dispatch', async () => {
+    const service = makeService()
+    let editCalls = 0
+    let readCalls = 0
+    const base = testSource()
+    service.registerSource({
+      ...base,
+      types: base.types.map(type => ({ ...type, capabilities: { read: false, edit: false } })),
+      operations: {
+        ...base.operations,
+        read: async () => { readCalls += 1; return { format: 'text/plain', data: {}, fetchedAt: NOW } },
+        loadEdit: async () => {
+          editCalls += 1
+          return { format: 'text/plain', data: { text: 'x' }, baseRevision: 'r1' }
+        },
+        saveEdit: async () => {
+          editCalls += 1
+          return { revision: 'r2', savedAt: NOW }
+        },
+      },
+    })
+    const clueId = await ensureClue(service, 'a')
+
+    await expect(service.read({ workspaceId: 'ws-1', clueId }))
+      .rejects.toMatchObject({ category: 'unsupported' })
+    await expect(service.loadEdit({ workspaceId: 'ws-1', clueId }))
+      .rejects.toMatchObject({ category: 'unsupported' })
+    await expect(service.saveEdit({
+      workspaceId: 'ws-1',
+      clueId,
+      document: { format: 'text/plain', data: { text: 'x' }, baseRevision: 'r1' },
+    })).rejects.toMatchObject({ category: 'unsupported' })
+    expect(readCalls).toBe(0)
+    expect(editCalls).toBe(0)
+  })
+
+  it('enforces the source-level edit/portable capabilities before dispatch', async () => {
+    const service = makeService()
+    let editCalls = 0
+    let portableCalls = 0
+    const base = testSource()
+    service.registerSource({
+      ...base,
+      descriptor: { ...base.descriptor, capabilities: { ...base.descriptor.capabilities, edit: false, portable: false } },
+      operations: {
+        ...base.operations,
+        loadEdit: async () => {
+          editCalls += 1
+          return { format: 'text/plain', data: { text: 'x' }, baseRevision: 'r1' }
+        },
+        portable: async () => {
+          portableCalls += 1
+          return { portable: true, locator: { id: 'p' } }
+        },
+      },
+    })
+    const clueId = await ensureClue(service, 'a')
+    await expect(service.loadEdit({ workspaceId: 'ws-1', clueId }))
+      .rejects.toMatchObject({ category: 'unsupported' })
+    // A declared `portable: false` source keeps the reference unresolved even
+    // when an operation implementation is still present.
+    expect(await service.portable({ workspaceId: 'ws-1', clueId })).toMatchObject({ portable: false })
+    expect(editCalls).toBe(0)
+    expect(portableCalls).toBe(0)
+  })
+
+  it('forwards the payload session id to loadEdit/saveEdit/portable', async () => {
+    const service = makeService()
+    const seen: Array<string | undefined> = []
+    const base = testSource()
+    service.registerSource({
+      ...base,
+      operations: {
+        ...base.operations,
+        loadEdit: async (_input, context) => {
+          seen.push(context.sessionId)
+          return { format: 'text/plain', data: { text: 'x' }, baseRevision: 'r1' }
+        },
+        saveEdit: async (_input, context) => {
+          seen.push(context.sessionId)
+          return { revision: 'r2', savedAt: NOW }
+        },
+        portable: async (_input, context) => {
+          seen.push(context.sessionId)
+          return { portable: true, locator: { id: 'p' } }
+        },
+      },
+    })
+    const clueId = await ensureClue(service, 'a')
+    await service.loadEdit({ workspaceId: 'ws-1', clueId, sessionId: 'session-payload' })
+    await service.saveEdit({
+      workspaceId: 'ws-1',
+      clueId,
+      sessionId: 'session-payload',
+      document: { format: 'text/plain', data: { text: 'x' }, baseRevision: 'r1' },
+    })
+    await service.portable({ workspaceId: 'ws-1', clueId, sessionId: 'session-payload' })
+    expect(seen).toEqual(['session-payload', 'session-payload', 'session-payload'])
+  })
+
+  it('reports cancellation when the signal aborts while a source call is in flight', async () => {
+    const service = makeService()
+    const controller = new AbortController()
+    const base = testSource()
+    service.registerSource({
+      ...base,
+      operations: {
+        ...base.operations,
+        read: async () => {
+          controller.abort()
+          return { format: 'text/plain', data: {}, fetchedAt: NOW }
+        },
+      },
+    })
+    const clueId = await ensureClue(service, 'a')
+    await expect(service.read({ workspaceId: 'ws-1', clueId }, { signal: controller.signal }))
+      .rejects.toMatchObject({ category: 'cancelled' })
+  })
+
   it('normalizes thrown source failures without leaking the original message', async () => {
     const service = makeService()
     service.registerSource(testSource({
@@ -468,6 +614,21 @@ describe('clue stable identity and library', () => {
     expect((await service.listClues('ws-1')).clues).toHaveLength(1)
   })
 
+  it('mints exactly one clue for concurrent ensures of the same resource', async () => {
+    const service = makeService()
+    service.registerSource(testSource())
+    const results = await Promise.all(Array.from({ length: 8 }, () => service.ensure({
+      workspaceId: 'ws-1',
+      sourceId: 'test.source',
+      typeId: 'test.source.text',
+      locator: { id: 'same' },
+      title: 'same',
+    })))
+    expect(results.filter(result => result.created)).toHaveLength(1)
+    expect(new Set(results.map(result => result.clue.id)).size).toBe(1)
+    expect((await service.listClues('ws-1')).clues).toHaveLength(1)
+  })
+
   it('keeps workspaces isolated and survives a restart', async () => {
     const root = tempRoot()
     const service = makeService(root)
@@ -546,6 +707,52 @@ describe('packs, pins and bindings', () => {
     })).rejects.toMatchObject({ category: 'conflict' })
     const persisted = await new CluesStore({ root }).read('ws-1')
     expect(persisted.packs[0]?.name).toBe('Old')
+  })
+
+  it('returns an explicit packRevision: pack CAS and workspace revision are distinct domains', async () => {
+    const service = makeService()
+    service.registerSource(testSource())
+    const a = await ensureClue(service, 'a')
+    const b = await ensureClue(service, 'b')
+    const created = await service.createPack({ workspaceId: 'ws-1', name: 'Pack', members: [a] })
+    // Creation uses the WORKSPACE revision; the returned result still states
+    // the new pack's own revision explicitly.
+    expect(created.packRevision).toBe(created.pack.revision)
+    expect(created.revision).toBeGreaterThanOrEqual(created.packRevision)
+
+    // Feeding the returned packRevision to a pack mutation succeeds…
+    const renamed = await service.renamePack({
+      workspaceId: 'ws-1',
+      packId: created.pack.id,
+      name: 'Renamed',
+      expectedRevision: created.packRevision,
+    })
+    expect(renamed.packRevision).toBe(created.packRevision + 1)
+    expect(renamed.revision).toBeGreaterThan(created.revision)
+
+    // …while the top-level (workspace) revision is NOT a pack CAS value: a
+    // client that fed it back would get a spurious conflict.
+    await expect(service.addPackMember({
+      workspaceId: 'ws-1',
+      packId: created.pack.id,
+      clueId: b,
+      expectedRevision: renamed.revision,
+    })).rejects.toMatchObject({ category: 'conflict' })
+
+    const added = await service.addPackMember({
+      workspaceId: 'ws-1',
+      packId: created.pack.id,
+      clueId: b,
+      expectedRevision: renamed.packRevision,
+    })
+    expect(added.packRevision).toBe(renamed.packRevision + 1)
+    const deleted = await service.deletePack({
+      workspaceId: 'ws-1',
+      packId: created.pack.id,
+      expectedRevision: added.packRevision,
+    })
+    expect(deleted.packRevision).toBe(added.packRevision)
+    expect((await service.listPacks('ws-1')).packs).toEqual([])
   })
 
   it('refuses a stale workspace revision for pin/binding writes and keeps the committed rows', async () => {

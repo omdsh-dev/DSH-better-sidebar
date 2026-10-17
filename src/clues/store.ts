@@ -26,7 +26,7 @@
  *   cache eviction can never touch it).
  */
 import { randomUUID } from 'node:crypto'
-import { mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
+import { access, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import {
   ClueError,
@@ -105,6 +105,88 @@ export function workspaceSnapshotDir(root: string, workspaceId: string): string 
   return join(workspaceStoreDir(root, workspaceId), SNAPSHOT_DIR)
 }
 
+/** A loud corruption failure with the document and row context. */
+function corrupt(workspaceId: string, detail: string): never {
+  throw new ClueError(
+    'failed',
+    `clue library for workspace "${workspaceId}" is corrupt: ${detail}`,
+  )
+}
+
+/** Whether a stored row is a non-empty string field. */
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value !== ''
+}
+
+/** Validate one stored clue row (a malformed element must fail loudly). */
+function parseClueRow(raw: unknown, workspaceId: string, index: number): Clue {
+  if (
+    !isRecord(raw)
+    || !isNonEmptyString(raw.id)
+    || !isNonEmptyString(raw.sourceId)
+    || !isNonEmptyString(raw.typeId)
+    || !isRecord(raw.locator)
+    || typeof raw.title !== 'string'
+    || !isNonEmptyString(raw.workspaceId)
+    || typeof raw.createdAt !== 'string'
+    || typeof raw.updatedAt !== 'string'
+  ) {
+    corrupt(workspaceId, `clues[${index}] is not a valid clue row`)
+  }
+  return raw as unknown as Clue
+}
+
+/** Validate one stored pack row. */
+function parsePackRow(raw: unknown, workspaceId: string, index: number): CluePack {
+  if (
+    !isRecord(raw)
+    || !isNonEmptyString(raw.id)
+    || typeof raw.name !== 'string'
+    || !isNonEmptyString(raw.workspaceId)
+    || !Array.isArray(raw.members)
+    || raw.members.some(member => !isNonEmptyString(member))
+    || typeof raw.revision !== 'number'
+    || !Number.isInteger(raw.revision)
+    || raw.revision < 0
+    || typeof raw.createdAt !== 'string'
+    || typeof raw.updatedAt !== 'string'
+  ) {
+    corrupt(workspaceId, `packs[${index}] is not a valid pack row`)
+  }
+  return raw as unknown as CluePack
+}
+
+/** Validate one stored pin row. */
+function parsePinRow(raw: unknown, workspaceId: string, index: number): CluePin {
+  if (
+    !isRecord(raw)
+    || !isNonEmptyString(raw.workspaceId)
+    || !isNonEmptyString(raw.clueId)
+    || typeof raw.createdAt !== 'string'
+  ) {
+    corrupt(workspaceId, `pins[${index}] is not a valid pin row`)
+  }
+  return raw as unknown as CluePin
+}
+
+/** Validate one stored binding row. */
+function parseBindingRow(raw: unknown, workspaceId: string, index: number): ClueBinding {
+  const target = isRecord(raw) ? raw.target : undefined
+  const validTarget = isRecord(target) && (
+    (target.kind === 'clue' && isNonEmptyString(target.clueId))
+    || (target.kind === 'pack' && isNonEmptyString(target.packId))
+  )
+  if (
+    !isRecord(raw)
+    || !isNonEmptyString(raw.workspaceId)
+    || !validTarget
+    || typeof raw.createdAt !== 'string'
+  ) {
+    corrupt(workspaceId, `bindings[${index}] is not a valid binding row`)
+  }
+  return raw as unknown as ClueBinding
+}
+
 /** Parse one stored state document, rejecting malformed shapes loudly. */
 function parseState(text: string, workspaceId: string): WorkspaceState {
   let raw: unknown
@@ -130,12 +212,32 @@ function parseState(text: string, workspaceId: string): WorkspaceState {
       )
     }
   }
+  const document = raw as {
+    revision: number
+    clues: unknown[]
+    packs: unknown[]
+    pins: unknown[]
+    bindings: unknown[]
+  }
   return {
-    revision: raw.revision,
-    clues: raw.clues as Clue[],
-    packs: raw.packs as CluePack[],
-    pins: raw.pins as CluePin[],
-    bindings: raw.bindings as ClueBinding[],
+    revision: document.revision,
+    // Deep validation: a `clues: [null]` document used to surface later as a
+    // raw TypeError (or as a corrupt row in every consumer). The module's
+    // contract is to fail loudly instead.
+    clues: document.clues.map((row, index) => parseClueRow(row, workspaceId, index)),
+    packs: document.packs.map((row, index) => parsePackRow(row, workspaceId, index)),
+    pins: document.pins.map((row, index) => parsePinRow(row, workspaceId, index)),
+    bindings: document.bindings.map((row, index) => parseBindingRow(row, workspaceId, index)),
+  }
+}
+
+/** Whether a path exists (either half of a snapshot is enough to refuse). */
+async function fileExists(path: string): Promise<boolean> {
+  try {
+    await access(path)
+    return true
+  } catch {
+    return false
   }
 }
 
@@ -320,6 +422,10 @@ export class CluesStore {
   /**
    * Persist one snapshot. Content is written first so a committed metadata
    * row can never point at missing content; both files are atomic.
+   *
+   * Snapshot ids are caller-visible stable identities: an existing id is
+   * refused with `conflict` rather than silently overwriting the earlier
+   * import's content/metadata.
    */
   async putSnapshot(
     workspaceId: string,
@@ -331,8 +437,13 @@ export class CluesStore {
       throw new ClueError('failed', 'clue snapshot meta belongs to another workspace')
     }
     const dir = workspaceSnapshotDir(this.rootOrThrow(), workspaceId)
-    await writeJsonAtomic(join(dir, `${encodeURIComponent(meta.snapshotId)}${CONTENT_SUFFIX}`), content)
-    await writeJsonAtomic(join(dir, `${encodeURIComponent(meta.snapshotId)}${META_SUFFIX}`), meta)
+    const contentPath = join(dir, `${encodeURIComponent(meta.snapshotId)}${CONTENT_SUFFIX}`)
+    const metaPath = join(dir, `${encodeURIComponent(meta.snapshotId)}${META_SUFFIX}`)
+    if (await fileExists(metaPath) || await fileExists(contentPath)) {
+      throw new ClueError('conflict', `clue snapshot "${meta.snapshotId}" already exists`)
+    }
+    await writeJsonAtomic(contentPath, content)
+    await writeJsonAtomic(metaPath, meta)
     return cloneJson(meta)
   }
 

@@ -12,7 +12,7 @@
  *   answers 404.
  */
 import { afterEach, describe, expect, it } from 'vitest'
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { apply } from '../src/index.ts'
@@ -29,6 +29,9 @@ afterEach(() => {
   for (const path of roots.splice(0)) removeTree(path)
 })
 
+/** The host platform's own path dialect (workspace locators are created in it). */
+const HOST_DIALECT = process.platform === 'win32' ? 'win32' : 'posix'
+
 /** A temp base with a workspace + durable store. */
 function fixture(): { base: string; workspace: string; service: CluesService } {
   const base = mkdtempSync(join(tmpdir(), 'dsh-clues-api-'))
@@ -40,9 +43,9 @@ function fixture(): { base: string; workspace: string; service: CluesService } {
     root: join(base, 'store'),
     now: () => '2026-10-17T00:00:00.000Z',
     newId: kind => `${kind}-${++next}`,
+    builtinSources: [createLocalFileSource()],
     resolveWorkspacePath: id => (id === 'ws-1' ? workspace : undefined),
   })
-  service.registerSource(createLocalFileSource())
   return { base, workspace, service }
 }
 
@@ -106,7 +109,7 @@ describe('clue API handlers', () => {
       workspaceId: 'ws-1',
       sourceId: 'builtin.files',
       typeId: LOCAL_FILE_TYPE_IDS.text,
-      locator: { root: { kind: 'workspace', workspaceId: 'ws-1' }, path: 'a.txt', dialect: 'posix' },
+      locator: { root: { kind: 'workspace', workspaceId: 'ws-1' }, path: 'a.txt', dialect: HOST_DIALECT },
       title: 'a.txt',
     }) as { clue: { id: string } }
     const clueId = ensured.clue.id
@@ -266,6 +269,30 @@ describe('clue API handlers', () => {
     expect((failure as ClueError).category).toBe('failed')
     expect((failure as ClueError).message).not.toContain('top-secret')
   })
+
+  it('normalizes registered API handler failures and preserves intentional categories', async () => {
+    const { service } = fixture()
+    service.registerApi('test.leak', () => {
+      throw new Error('Authorization: Bearer top-secret-token; stdout: command failed')
+    })
+    service.registerApi('test.auth', () => {
+      throw new ClueError('auth-required', 'sign in first')
+    })
+
+    const leaked: unknown = await service.invokeApi('test.leak', {})
+      .then(() => undefined, (error: unknown) => error)
+    expect(leaked).toBeInstanceOf(ClueError)
+    expect((leaked as ClueError).category).toBe('failed')
+    expect((leaked as ClueError).message).not.toContain('top-secret')
+    expect((leaked as ClueError).message).not.toContain('stdout')
+
+    // A handler that raises a real ClueError keeps its category (the fixed
+    // categories are the contract external sources express).
+    await expect(service.invokeApi('test.auth', {})).rejects.toMatchObject({
+      category: 'auth-required',
+      message: 'sign in first',
+    })
+  })
 })
 
 /** One structural fake of the host context the `/sidebar/api` dispatcher needs. */
@@ -399,6 +426,54 @@ describe('/sidebar/api clue dispatcher fallback', () => {
       const invalid = await post(route!, 'clues.packs.create', { workspaceId: 'ws-1', members: 'nope' })
       expect(invalid.body).toMatchObject({ ok: false, error: { code: 'failed' } })
 
+      // The clue EDIT document is not bound by the 1 MiB control-payload cap:
+      // a 1.5 MiB source document must load AND save back through this route.
+      const bigText = 'x'.repeat(1_500_000)
+      writeFileSync(join(workspace, 'big.txt'), bigText)
+      const bigEnsure = await post(route!, 'clues.ensure', {
+        workspaceId: 'ws-1',
+        sourceId: 'builtin.files',
+        typeId: LOCAL_FILE_TYPE_IDS.text,
+        locator: { root: { kind: 'workspace', workspaceId: 'ws-1' }, path: 'big.txt', dialect: HOST_DIALECT },
+        title: 'big.txt',
+      })
+      expect(bigEnsure.status).toBe(200)
+      const bigId = (bigEnsure.body.value as { clue: { id: string } }).clue.id
+      const bigEdit = await post(route!, 'clues.loadEdit', { workspaceId: 'ws-1', clueId: bigId })
+      expect(bigEdit.status).toBe(200)
+      const bigDocument = bigEdit.body.value as { format: string; data: { text: string }; baseRevision: string }
+      const replacement = 'y'.repeat(1_500_000)
+      const bigSave = await post(route!, 'clues.saveEdit', {
+        workspaceId: 'ws-1',
+        clueId: bigId,
+        document: {
+          format: bigDocument.format,
+          data: { text: replacement },
+          baseRevision: bigDocument.baseRevision,
+        },
+      })
+      expect(bigSave.status).toBe(200)
+      expect(readFileSync(join(workspace, 'big.txt'), 'utf8')).toBe(replacement)
+
+      // Every OTHER JSON method keeps the tight 1 MiB bound.
+      const oversized = await post(route!, 'clues.resolve', {
+        workspaceId: 'ws-1',
+        text: 'z'.repeat(1_500_000),
+      })
+      expect(oversized.status).toBe(400)
+      expect(oversized.body).toMatchObject({ ok: false, error: { code: 'bad-request' } })
+
+      // A registered API handler's raw failure is normalized before it can
+      // reach the 500 envelope (no transport output / tokens on the wire).
+      const clueService = provided.get('betterSidebarClues') as CluesService
+      clueService.registerApi('test.leak', () => {
+        throw new Error('Authorization: Bearer top-secret-token')
+      })
+      const leaked = await post(route!, 'test.leak', {})
+      expect(leaked.status).toBe(500)
+      expect(leaked.body).toMatchObject({ ok: false, error: { code: 'failed' } })
+      expect(leaked.body.error?.message).not.toContain('top-secret')
+
       // A method NO service owns is still a 404 — the fallback is not a
       // catch-all.
       const unknown = await post(route!, 'definitely.not.a.method', {})
@@ -407,5 +482,10 @@ describe('/sidebar/api clue dispatcher fallback', () => {
     } finally {
       for (const cleanup of effects.reverse()) cleanup()
     }
+
+    // The install effect is what unmounts the clue service: after its cleanup
+    // the API seam is disposed (the fake context models the same lifecycle the
+    // real plugin-mount lane exercises at the deployment layer).
+    expect((provided.get('betterSidebarClues') as CluesService).hasApi('clues.sources')).toBe(false)
   })
 })

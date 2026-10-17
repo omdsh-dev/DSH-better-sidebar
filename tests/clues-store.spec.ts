@@ -136,6 +136,32 @@ describe('clue store', () => {
     await expect(new CluesStore({ root: dir }).read(workspaceId)).rejects.toMatchObject({ category: 'failed' })
   })
 
+  it('rejects malformed ELEMENTS instead of surfacing raw TypeErrors later', async () => {
+    const dir = root()
+    const workspaceId = 'ws-rows'
+    const path = workspaceStatePath(dir, workspaceId)
+    mkdirSync(workspaceStoreDir(dir, workspaceId), { recursive: true })
+    const valid = { revision: 1, clues: [], packs: [], pins: [], bindings: [] }
+    writeFileSync(path, JSON.stringify({ ...valid, clues: [null] }), 'utf8')
+    await expect(new CluesStore({ root: dir }).read(workspaceId))
+      .rejects.toMatchObject({ category: 'failed', message: expect.stringContaining('clues[0]') })
+
+    writeFileSync(path, JSON.stringify({ ...valid, packs: [{ id: 'p' }] }), 'utf8')
+    await expect(new CluesStore({ root: dir }).read(workspaceId))
+      .rejects.toMatchObject({ category: 'failed', message: expect.stringContaining('packs[0]') })
+
+    writeFileSync(path, JSON.stringify({ ...valid, pins: [{ workspaceId: 'ws-rows' }] }), 'utf8')
+    await expect(new CluesStore({ root: dir }).read(workspaceId))
+      .rejects.toMatchObject({ category: 'failed', message: expect.stringContaining('pins[0]') })
+
+    writeFileSync(path, JSON.stringify({
+      ...valid,
+      bindings: [{ workspaceId: 'ws-rows', target: { kind: 'nope' }, createdAt: 'now' }],
+    }), 'utf8')
+    await expect(new CluesStore({ root: dir }).read(workspaceId))
+      .rejects.toMatchObject({ category: 'failed', message: expect.stringContaining('bindings[0]') })
+  })
+
   it('writes atomically: no temp siblings survive a commit', async () => {
     const dir = root()
     const store = new CluesStore({ root: dir })
@@ -194,5 +220,24 @@ describe('clue store', () => {
     mkdirSync(workspaceSnapshotDir(dir, 'ws-1'), { recursive: true })
     writeFileSync(join(workspaceSnapshotDir(dir, 'ws-1'), 'bad.meta.json'), '{"snapshotId": 1}', 'utf8')
     await expect(store.readSnapshotMeta('ws-1', 'bad')).rejects.toMatchObject({ category: 'failed' })
+  })
+
+  it('refuses a duplicate snapshot id instead of silently overwriting the imported snapshot', async () => {
+    const dir = root()
+    const store = new CluesStore({ root: dir })
+    const meta: ClueSnapshotMeta = {
+      snapshotId: 'snap-stable',
+      workspaceId: 'ws-1',
+      clueId: 'clue-1',
+      format: 'text/markdown',
+      fetchedAt: '2026-10-17T00:00:00.000Z',
+      createdAt: '2026-10-17T00:00:01.000Z',
+      integrity: 'verified',
+    }
+    await store.putSnapshot('ws-1', meta, { format: 'text/markdown', data: { text: 'first' } })
+    await expect(store.putSnapshot('ws-1', meta, { format: 'text/markdown', data: { text: 'second' } }))
+      .rejects.toMatchObject({ category: 'conflict' })
+    // The committed snapshot is untouched.
+    expect((await store.readSnapshotContent('ws-1', 'snap-stable')).data).toEqual({ text: 'first' })
   })
 })

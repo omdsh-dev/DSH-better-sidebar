@@ -23,6 +23,16 @@ if [ ! -f lib/types/client/service.d.ts ]; then
   echo "[check-consumer-types] FAIL: lib/types/client/service.d.ts not found — run 'pnpm build' first." >&2
   exit 1
 fi
+# The public host subpath `./clues` has its own declaration entry; it is part
+# of the consumer surface too and must exist and type-check.
+if [ ! -f lib/types/clues/index.d.ts ]; then
+  echo "[check-consumer-types] FAIL: lib/types/clues/index.d.ts not found — run 'pnpm build' first." >&2
+  exit 1
+fi
+if [ ! -f lib/clues.js ]; then
+  echo "[check-consumer-types] FAIL: lib/clues.js not found — run 'pnpm build' first." >&2
+  exit 1
+fi
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -103,6 +113,63 @@ vctx.betterSidebar.registerFileViewer(viewer)
 void vctx.betterSidebar.getSnapshot()
 EOF
 
+# The public HOST subpath. A source plugin imports this package's `clues`
+# entry; the declaration graph must stand on its own (the clue vocabulary is
+# node-free, and `installClues` reuses the Context type). This consumer
+# registers a source and raises a typed category, exactly as S2+ plugins do.
+cat > "$WORK/clues-check.ts" <<'EOF'
+import { ClueError, createCluesService, isClueError } from 'dsh-better-sidebar/clues'
+import type {
+  ClueEditDocument, ClueErrorCategory, ClueListResult, ClueOperationContext,
+  ClueReadResult, ClueSaveEditInput, ClueSourceRegistration, ClueTypeDescriptor,
+  CluesService, Locator,
+} from 'dsh-better-sidebar/clues'
+
+const category: ClueErrorCategory = 'auth-required'
+const error = new ClueError(category, 'sign in to continue')
+if (!isClueError(error)) throw new Error('unreachable')
+
+const type: ClueTypeDescriptor = {
+  typeId: 'x.docs.text',
+  sourceId: 'x.docs',
+  formats: ['text/plain'],
+  capabilities: { read: true, edit: false },
+}
+const registration: ClueSourceRegistration = {
+  descriptor: {
+    sourceId: 'x.docs',
+    name: 'X docs',
+    order: 1,
+    pluginId: 'x-plugin',
+    types: [type.typeId],
+    transport: 'http',
+    capabilities: { resolve: false, list: false, search: false, read: true, edit: false, portable: false },
+  },
+  types: [type],
+  operations: {
+    async read(_input, context: ClueOperationContext): Promise<ClueReadResult> {
+      void context.sessionId
+      return { format: 'text/plain', data: { text: 'body' }, fetchedAt: new Date().toISOString() }
+    },
+    async loadEdit(): Promise<ClueEditDocument> {
+      return { format: 'text/plain', data: { text: 'body' }, baseRevision: 'r1' }
+    },
+    async saveEdit(input): Promise<{ revision: string; savedAt: string }> {
+      const document: ClueSaveEditInput = input.document
+      return { revision: String(document.baseRevision), savedAt: new Date().toISOString() }
+    },
+  },
+}
+const locator: Locator = { url: 'https://example.invalid/doc' }
+void locator
+const service: CluesService = createCluesService({ builtinSources: [registration] })
+service.registerSource(registration)
+async function page(): Promise<ClueListResult> {
+  return service.list({ workspaceId: 'ws-1', sourceId: 'x.docs' })
+}
+void page
+EOF
+
 cat > "$WORK/tsconfig.json" <<'EOF'
 {
   "compilerOptions": {
@@ -110,7 +177,7 @@ cat > "$WORK/tsconfig.json" <<'EOF'
     "strict": true, "noEmit": true, "skipLibCheck": false, "types": [],
     "jsx": "react-jsx", "lib": ["ES2023", "DOM"]
   },
-  "include": ["check.ts"]
+  "include": ["check.ts", "clues-check.ts"]
 }
 EOF
 
@@ -135,5 +202,11 @@ if [ "$STATUS" -ne 0 ]; then
   echo "[check-consumer-types] pass 2 note: strict mode only reports upstream declaration noise:"
   grep -v "dsh-better-sidebar\|lib/types\|check\.ts" "$WORK/strict.log" | head -5 || true
 fi
-echo "[check-consumer-types] OK: the client/service declaration surface is node-free and self-contained."
+echo "[check-consumer-types] OK: the client/service and clues declaration surfaces are node-free and self-contained."
+
+# Built-artifact identity guard (the host bundle and the public ./clues
+# artifact must share ONE ClueError class). It imports lib/index.js and
+# lib/clues.js, so it runs only after the build this script already requires.
+echo "[check-consumer-types] checking the built clue artifacts share one ClueError class..."
+node scripts/check-clue-artifact.mjs
 

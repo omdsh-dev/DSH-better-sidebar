@@ -34,6 +34,7 @@
  */
 import { randomUUID } from 'node:crypto'
 import { rename, rm, stat, writeFile } from 'node:fs/promises'
+import { homedir } from 'node:os'
 import { basename, dirname, extname, join, posix, win32 } from 'node:path'
 import { listDirectory, invalidateDirectoryCache } from '../fs-tree.ts'
 import { searchFiles } from '../fs-search.ts'
@@ -233,8 +234,27 @@ export function dialectOfText(text: string): LocalFileDialect {
   // runs; a rooted slash path is POSIX. A bare relative path means "the
   // platform the user is on" (the host), which is the only sensible default.
   if (/^[A-Za-z]:[\\/]/.test(text) || text.startsWith('\\\\')) return 'win32'
+  // `//server/share` (forward-slash UNC) is the native Windows spelling; on
+  // POSIX the same leading `//` is just a rooted path. Classify it with the
+  // host it was typed on instead of rejecting the form on win32.
+  if (text.startsWith('//')) return HOST_DIALECT === 'win32' ? 'win32' : 'posix'
   if (text.startsWith('/')) return 'posix'
   return HOST_DIALECT
+}
+
+/**
+ * Expand a leading `~` to the host user's home directory.
+ *
+ * A pasted `~/notes/a.md` is an absolute host path, not a workspace-relative
+ * literal: the built-in local source follows the same expansion every host fs
+ * route already applies (`resolveTarget` in path-security.ts), so the same
+ * text resolves to the same file through both surfaces. Only the bare `~` and
+ * `~/` / `~\` spellings expand; `~user` is intentionally not a thing here.
+ */
+function expandHome(text: string): string {
+  if (text === '~') return homedir()
+  if (text.startsWith('~/') || text.startsWith('~\\')) return join(homedir(), text.slice(2))
+  return text
 }
 
 /** Whether `path` is absolute in `dialect` (never the host's own guess). */
@@ -338,13 +358,34 @@ function scopeLocator(scope: JsonValue | undefined, context: ClueOperationContex
 function locatorOfText(text: string, context: ClueOperationContext): LocalFileLocator {
   const trimmed = text.trim()
   if (trimmed === '') throw new ClueError('failed', 'a local file path is required')
-  const dialect = dialectOfText(trimmed)
-  if (isAbsoluteIn(dialect, trimmed)) return externalLocator(normalizePath(trimmed, dialect, 'external'), dialect)
+  const expanded = expandHome(trimmed)
+  const dialect = dialectOfText(expanded)
+  if (isAbsoluteIn(dialect, expanded)) {
+    return externalLocator(normalizePath(expanded, dialect, 'external'), dialect)
+  }
   return workspaceLocator(
     context.workspaceId,
-    normalizePath(trimmed, dialect, 'workspace'),
+    normalizePath(expanded, dialect, 'workspace'),
     dialect,
   )
+}
+
+/**
+ * Reject a workspace locator that belongs to a different workspace.
+ *
+ * A workspace locator stores its resolution root by `workspaceId` (see the
+ * module header). Resolving it against `context.workspacePath` without this
+ * check would read a file in the CALLER's workspace while the locator claims
+ * another one — a copied/foreign locator would silently point at the wrong
+ * file. The reference is refused instead.
+ */
+function requireOwnWorkspace(locator: LocalFileLocator, context: { readonly workspaceId: string }): void {
+  if (locator.root.kind === 'workspace' && locator.root.workspaceId !== context.workspaceId) {
+    throw new ClueError(
+      'failed',
+      `the local file reference belongs to workspace "${locator.root.workspaceId}", not "${context.workspaceId}"`,
+    )
+  }
 }
 
 /** Absolute host path of a locator, resolved against its own root. */
@@ -356,6 +397,7 @@ function absolutePathOf(locator: LocalFileLocator, context: ClueOperationContext
     )
   }
   if (locator.root.kind === 'external') return locator.path
+  requireOwnWorkspace(locator, context)
   if (context.workspacePath === undefined || context.workspacePath === '') {
     throw new ClueError('dependency-missing', 'the workspace directory is unknown to the host registry')
   }
@@ -434,12 +476,48 @@ function childLocator(scope: LocalFileLocator, name: string): LocalFileLocator {
     : externalLocator(flavour.normalize(path), scope.dialect)
 }
 
-/** Map a search match (absolute or scope-relative) onto a locator. */
-function searchedLocator(scope: LocalFileLocator, match: string): LocalFileLocator {
-  if (isAbsoluteIn(scope.dialect, match)) {
-    return externalLocator(normalizePath(match, scope.dialect, 'external'), scope.dialect)
-  }
+/** Whether `candidate` is `root` itself or one of its descendants. */
+function isWithin(flavour: typeof posix, root: string, candidate: string): boolean {
+  const relativePath = flavour.relative(root, candidate)
+  return relativePath === ''
+    || (!flavour.isAbsolute(relativePath)
+      && relativePath !== '..'
+      && !relativePath.startsWith(`..${flavour.sep}`))
+}
+
+/**
+ * Map one search match onto a locator.
+ *
+ * Most queries answer scope-relative '/'-separated paths, but a direct-path
+ * query (`./a.md`, `~/x`, an absolute path) makes `searchFiles` answer the
+ * RESOLVED absolute target. An in-workspace absolute target must become the
+ * SAME workspace locator `resolve('./a.md')` produces — otherwise one file
+ * gets two stable clue ids (dedupe and portability break). A target outside
+ * the declared scope is dropped: a search never reports resources outside
+ * its own range.
+ */
+function searchedLocator(
+  scope: LocalFileLocator,
+  absoluteScope: string,
+  match: string,
+  context: ClueOperationContext,
+): LocalFileLocator | undefined {
   const flavour = dialectPath(scope.dialect)
+  if (isAbsoluteIn(scope.dialect, match)) {
+    const absoluteMatch = flavour.normalize(match)
+    if (!isWithin(flavour, absoluteScope, absoluteMatch)) return undefined
+    if (scope.root.kind === 'external') return externalLocator(absoluteMatch, scope.dialect)
+    const workspacePath = context.workspacePath
+    if (workspacePath === undefined || workspacePath === '') {
+      throw new ClueError('dependency-missing', 'the workspace directory is unknown to the host registry')
+    }
+    if (!isWithin(flavour, workspacePath, absoluteMatch)) return undefined
+    return workspaceLocator(
+      scope.root.workspaceId,
+      normalizePath(flavour.relative(workspacePath, absoluteMatch), scope.dialect, 'workspace'),
+      scope.dialect,
+    )
+  }
   const joined = flavour.join(scope.path === '' ? '.' : scope.path, ...match.split('/'))
   return scope.root.kind === 'workspace'
     ? workspaceLocator(scope.root.workspaceId, normalizePath(joined, scope.dialect, 'workspace'), scope.dialect)
@@ -460,6 +538,35 @@ function assetOf(absolute: string, size: number): ClueAsset {
   return { kind: 'open', path: absolute, mime: mimeOf(absolute), size }
 }
 
+/**
+ * Stat the scope itself before listing/searching it. `listDirectory` and
+ * `searchFiles` turn a missing/file scope into their own route errors (or, for
+ * search, an empty result), which loses the clue categories: a missing
+ * directory is `not-found`, a file is `unsupported`.
+ */
+async function requireDirectoryScope(absolute: string): Promise<void> {
+  const info = await stat(absolute).catch((error: unknown) => {
+    throw normalizeFileError(error, absolute)
+  })
+  if (!info.isDirectory()) {
+    throw new ClueError('unsupported', `"${absolute}" is not a directory`)
+  }
+}
+
+/**
+ * The cursor of the next page, or undefined at the paging bound.
+ *
+ * The source must never emit a cursor it would itself reject:
+ * {@link cursorOffsetOf} refuses offsets above {@link MAX_PAGE_OFFSET}, so a
+ * page that crosses that bound ends the walk (`limited` stays true) instead of
+ * handing the caller an unusable cursor.
+ */
+function nextCursorOf(offset: number, limit: number, hasMore: boolean): string | undefined {
+  if (!hasMore) return undefined
+  const next = offset + limit
+  return next <= MAX_PAGE_OFFSET ? String(next) : undefined
+}
+
 /** List one directory page. */
 async function listDirectoryPage(
   scope: LocalFileLocator,
@@ -468,6 +575,8 @@ async function listDirectoryPage(
 ): Promise<ClueListResult> {
   throwIfAborted(context)
   const absolute = absolutePathOf(scope, context)
+  await requireDirectoryScope(absolute)
+  throwIfAborted(context)
   const offset = cursorOffsetOf(input.cursor)
   const limit = pageLimitOf(input)
   // One extra row proves there is a next page without trusting a total.
@@ -479,9 +588,10 @@ async function listDirectoryPage(
   const page = listing.entries.slice(offset, offset + limit)
   const hasMore = listing.entries.length > offset + limit
   const items = page.map(entry => candidateOf(childLocator(scope, entry.name), entry.isDir))
+  const nextCursor = nextCursorOf(offset, limit, hasMore)
   return {
     items,
-    ...(hasMore ? { nextCursor: String(offset + limit) } : {}),
+    ...(nextCursor === undefined ? {} : { nextCursor }),
     // A capped listing cannot know how many rows the level really holds.
     ...(listing.truncated ? {} : { total: listing.entries.length }),
     ...(hasMore || listing.truncated ? { limited: true } : {}),
@@ -496,6 +606,8 @@ async function searchDirectoryPage(
 ): Promise<ClueListResult> {
   throwIfAborted(context)
   const absolute = absolutePathOf(scope, context)
+  await requireDirectoryScope(absolute)
+  throwIfAborted(context)
   const query = typeof input.query === 'string' ? input.query : ''
   if (query.trim() === '') return { items: [], total: 0 }
   const offset = cursorOffsetOf(input.cursor)
@@ -508,15 +620,23 @@ async function searchDirectoryPage(
   throwIfAborted(context)
   const dirs = new Set(result.dirs)
   const page = result.matches.slice(offset, offset + limit)
-  const items = page.map((match) => {
-    const locator = searchedLocator(scope, match)
-    return candidateOf(locator, dirs.has(match))
-  })
+  const items: ClueCandidate[] = []
+  /** Matches dropped for being outside the declared scope (direct paths). */
+  let offScope = 0
+  for (const match of page) {
+    const locator = searchedLocator(scope, absolute, match, context)
+    if (locator === undefined) {
+      offScope += 1
+      continue
+    }
+    items.push(candidateOf(locator, dirs.has(match)))
+  }
   const hasMore = result.matches.length > offset + limit
+  const nextCursor = nextCursorOf(offset, limit, hasMore)
   return {
     items,
-    ...(hasMore ? { nextCursor: String(offset + limit) } : {}),
-    ...(result.truncated ? {} : { total: result.matches.length }),
+    ...(nextCursor === undefined ? {} : { nextCursor }),
+    ...(result.truncated ? {} : { total: result.matches.length - offScope }),
     ...(hasMore || result.truncated ? { limited: true } : {}),
   }
 }
@@ -655,16 +775,23 @@ async function saveEditDocument(
     throw new ClueError('failed', 'a local file edit must carry { text: string }')
   }
   const absolute = absolutePathOf(locator, context)
-  const before = await stat(absolute).catch((error: unknown) => {
-    throw normalizeFileError(error, absolute)
-  })
-  if (before.isDirectory()) throw new ClueError('unsupported', `"${absolute}" is a directory`)
   // Save-before-check (not an atomic CAS): the source documents it as such.
   // Without a baseline there is nothing to compare, so the save is refused
   // rather than silently clobbering whatever is on disk.
   if (document.baseRevision === undefined || document.baseRevision === '') {
     throw new ClueError('conflict', 'the local file save carries no baseline revision')
   }
+  const before = await stat(absolute).catch((error: unknown) => {
+    // A baseline-bearing document whose file is GONE is an external
+    // modification, exactly like the established editor save path
+    // (fs-operations.ts): `conflict`, not `not-found`. `not-found` would tell
+    // the UI the reference is invalid and throw the draft away.
+    if ((error as { code?: unknown } | null)?.code === 'ENOENT') {
+      throw new ClueError('conflict', `"${absolute}" no longer exists on disk`)
+    }
+    throw normalizeFileError(error, absolute)
+  })
+  if (before.isDirectory()) throw new ClueError('unsupported', `"${absolute}" is a directory`)
   if (document.baseRevision !== revisionOf(before)) {
     throw new ClueError('conflict', `"${absolute}" changed on disk since it was loaded`)
   }
@@ -759,11 +886,18 @@ export function createLocalFileSource(): ClueSourceRegistration {
 
     async portable(input: ClueSourceReadInput, context: ClueOperationContext): Promise<CluePortableRef> {
       throwIfAborted(context)
-      return portableOf(normalizeLocalFileLocator(input.locator))
+      const locator = normalizeLocalFileLocator(input.locator)
+      requireOwnWorkspace(locator, context)
+      return portableOf(locator)
     },
 
-    normalizeLocator(locator: Locator, _context: ClueLocatorContext): Locator {
-      return normalizeLocalFileLocator(locator) as unknown as Locator
+    normalizeLocator(locator: Locator, context: ClueLocatorContext): Locator {
+      const normalized = normalizeLocalFileLocator(locator)
+      // The registry normalizes a locator against the operation's workspace
+      // before it becomes a stable reference: a foreign workspace root can
+      // never be stored as if it addressed this workspace.
+      requireOwnWorkspace(normalized, context)
+      return normalized as unknown as Locator
     },
 
     locatorKey(locator: Locator): string {
@@ -776,4 +910,3 @@ export function createLocalFileSource(): ClueSourceRegistration {
     operations,
   }
 }
-

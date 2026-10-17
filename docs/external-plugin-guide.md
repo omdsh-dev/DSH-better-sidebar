@@ -993,6 +993,69 @@ ctx.effect(() =>
 )
 ```
 
+### 7.1 线索扩展面（S1 开发线：来源 / 线索 / 线索包）
+
+线索收集把「来源（Source）→ 线索（Clue）→ 线索包（Pack）」做成本插件两侧共用的扩展面。
+S1 只交付**来源注册、领域操作、内置本地文件来源与错误/分页契约**，不包含任何 UI；S2+ 才提供
+运输/授权、远程来源与具体页面。
+
+**宿主半**：Cordis 服务 `betterSidebarClues`，公共类型与工厂从包子路径导入：
+
+```ts
+import {
+  ClueError, createLocalFileSource, isClueError,
+  type ClueSourceRegistration, type Locator,
+} from 'dsh-better-sidebar/clues'
+
+ctx.effect(() => {
+  const clues = ctx.get('betterSidebarClues') // 或用 inject 等待服务就绪
+  return clues.registerSource({
+    descriptor: {
+      sourceId: 'my-plugin:docs', name: 'My docs', order: 20, pluginId: 'my-plugin',
+      types: ['my-plugin:docs.page'], transport: 'http',
+      capabilities: { resolve: true, list: false, search: false, read: true, edit: false, portable: false },
+    },
+    types: [{
+      typeId: 'my-plugin:docs.page', sourceId: 'my-plugin:docs', formats: ['text/plain'],
+      capabilities: { read: true, edit: false },
+    }],
+    operations: {
+      async resolve(input, context) { /* 返回 ClueCandidate；context.workspaceId 是归属工作区 */ },
+      async read(input, context) { /* 返回 ClueReadResult { format, data, fetchedAt, … } */ },
+    },
+  })
+})
+```
+
+- **注册**：重复 `sourceId`/`typeId` 明确拒绝，不靠注册顺序覆盖；`builtin.*` 是核心保留身份，
+  外部 `registerSource` 会被拒绝（内置来源由插件自己在构造服务时注册）。返回的 disposer 只移除
+  运行能力，不清除已保存的线索、置顶、包成员与绑定；同标识重新注册即可恢复解析。
+- **分发**：`resolve` / `list` / `search` / `read` / `loadEdit` / `saveEdit` / `portable`。可选操作
+  必须在 descriptor / type 的能力位上如实声明，核心在调用前校验（未声明 = `unsupported`）；
+  每个操作都拿到归属工作区的 `ClueOperationContext`（`workspaceId`、`workspacePath`、`caller`、
+  `signal`、`sessionId`），它不是访问白名单。
+- **稳定引用**：来源负责 `normalizeLocator` 与 `locatorKey`；同一资源必须归一到同一个 key，
+  `clues.ensure` 才复用同一个线索 id。locator 是 JSON 对象，必须自带解析根（例如内置本地来源的
+  `{ root: { kind: 'workspace', workspaceId }, path, dialect }`），不能拿当前 cwd 当解析根。
+- **错误**：统一抛 `ClueError` 的固定类别（`source-missing` / `auth-required` / `not-found` /
+  `unsupported` / `rate-limited` / `conflict` / `cancelled` / `failed` / …）。**必须从
+  `dsh-better-sidebar/clues` 导入 `ClueError`**：宿主 bundle 与该子路径共享同一个类对象（构建期
+  externalize，由 `scripts/check-clue-artifact.mjs` 守护），自建错误类或从别的入口导入会让类别
+  退化成 `failed`。原始 stdout/stderr、Authorization、token、环境变量秘密不得写进 message。
+- **分页**：`cursor` 是来源不透明值；`total` 缺失表示未知，UI 不得编造；来源切换或查询/范围改变时
+  重置 cursor。内置本地文件来源把 cursor 上界与 `nextCursor` 对齐（不会交回自己会拒绝的值）。
+- **内置 `builtin.files`**：工作区浏览 / 搜索 / 路径解析 / 读 / 编辑（Markdown 与文本类型可编辑，
+  二进制只读）。编辑器文档上限沿用 `MAX_EDITABLE_BYTES`（5 MiB），`clues.saveEdit` 的 JSON
+  传输上限按该上限放宽；保存沿用现有编码/EOL 还原与 mtime+size 冲突检测，文件被外部删除同样
+  报 `conflict`。
+- **客户端半**：`ctx.betterSidebar.clues`（`features` 含 `'clues'`）提供来源展示注册
+  （`registerSourceDisplay`）、`isSourceEnabled` / `isSourceMentionEnabled` /
+  `isPacksMentionEnabled`（缺省为开）与类型化 `clues.*` 调用（`api.list/read/saveEdit/...`）。
+  客户端半不 value-import 其他来源插件。
+
+> 线索包目录身份 `builtin.packs` 不是来源，也不能被注册；S5 拥有 codec 名称与引用 token 协议，
+> S6 拥有浮窗与编辑器承载，S7 拥有分享/导入。
+
 ---
 
 ## 8. 声明式设置（v0.4.1+）

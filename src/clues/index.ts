@@ -97,14 +97,15 @@ export function installClues(ctx: Context, options: InstallCluesOptions = {}): C
   }
   const service = createCluesService({
     store,
+    // Built-in identities are supplied through the core-only construction
+    // path; the public registerSource refuses every reserved id, so a foreign
+    // registrant can never claim `builtin.files` (or any other built-in).
+    builtinSources: [createLocalFileSource()],
     resolveWorkspacePath,
     ...(options.now === undefined ? {} : { now: options.now }),
     ...(options.newId === undefined ? {} : { newId: options.newId }),
   })
 
-  // The built-in local-file source is part of the service, not a plugin:
-  // a foreign registrant can never claim `builtin.files`.
-  const disposeSource = service.registerSource(createLocalFileSource())
   const disposeApi = registerCluesApi(service)
   // Cordis' `provide` publishes the face on the current fiber. Test contexts
   // used by the plugin's own route specs are structural fakes that omit it, so
@@ -113,7 +114,6 @@ export function installClues(ctx: Context, options: InstallCluesOptions = {}): C
   if (typeof provide === 'function') provide.call(ctx, 'betterSidebarClues', service)
   ctx.effect(() => () => {
     disposeApi()
-    disposeSource()
     service.dispose()
   }, 'dsh-better-sidebar: clue service')
   return service

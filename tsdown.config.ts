@@ -255,6 +255,33 @@ function mermaidChunkAliases(): BuildPlugin {
   }
 }
 
+/**
+ * Keep exactly ONE ClueError class in the process.
+ *
+ * The public `./clues` artifact is a separate tsdown build (and therefore a
+ * separate module instance at runtime). The host bundle imports clue code from
+ * the source tree too, so without this rewrite it would inline a second copy
+ * of `ClueError` — and every `instanceof` check (the service's error
+ * normalization and wire.ts's writeError) would fail for a ClueError thrown by
+ * an external source plugin, silently degrading auth-required/conflict/… to
+ * "failed" or 500 internal.
+ *
+ * Rewrite the host bundle's clue imports to the published sibling artifact
+ * (`./clues.js`, a relative import resolved inside lib/) and mark it external.
+ * Node then loads the same module instance as `dsh-better-sidebar/clues`.
+ */
+function cluesSharedArtifact(): BuildPlugin {
+  return {
+    name: 'dsh-clues-shared-artifact',
+    resolveId(source: string) {
+      if (source === './clues/index.ts' || source === './clues/error.ts') {
+        return { id: './clues.js', external: true }
+      }
+      return null
+    },
+  }
+}
+
 /** The shared client-bundle purity gate (see the clientBundle doc). */
 function purityGatePlugin(): BuildPlugin {
   return {
@@ -338,6 +365,9 @@ export default [
     // a tsdown clean here would wipe the lib/types declarations tsc just
     // emitted (and `watch` must never touch them).
     clean: false,
+    // Share the clue error class with the published `./clues` artifact
+    // instead of inlining a second copy (see cluesSharedArtifact).
+    plugins: [cluesSharedArtifact()],
   },
   // Public clue entry (package subpath `./clues`): the node-only host vocabulary
   // + service + built-in local source other plugins register against. It is a

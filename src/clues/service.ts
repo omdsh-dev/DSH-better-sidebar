@@ -152,6 +152,14 @@ export interface CluesServiceOptions {
   readonly store?: CluesStore
   /** Plugin user-data directory (used when `store` is omitted). */
   readonly root?: string
+  /**
+   * The core's built-in sources, registered at construction time. This is the
+   * ONLY path for a reserved built-in id (`builtin.files`, …): the public
+   * {@link CluesService.registerSource} rejects every reserved id, so a
+   * third-party registrant can never claim one before (or instead of) the
+   * core's own source.
+   */
+  readonly builtinSources?: readonly ClueSourceRegistration[]
   /** Resolve the host workspace directory for an id (workspaceRegistry.get). */
   readonly resolveWorkspacePath?: (workspaceId: string) => string | undefined
   /** Clock injection (tests). */
@@ -465,6 +473,40 @@ export function createCluesService(options: CluesServiceOptions = {}): CluesServ
     return type
   }
 
+  /**
+   * Context of one read/edit call. The payload's `sessionId` wins over the
+   * method option so S6/S2 integrations that only serialize the payload still
+   * hand the caller session to the source.
+   */
+  const contextFor = (params: CluesReadParams, call: ClueCallOptions): ClueOperationContext =>
+    contextOf(requireWorkspaceId(params.workspaceId), {
+      ...call,
+      ...(params.sessionId === undefined ? {} : { sessionId: params.sessionId }),
+    })
+
+  /** Refuse an operation the source's declared capabilities do not advertise. */
+  const requireSourceCapability = (
+    source: RegisteredSource,
+    capability: keyof ClueSourceCapabilities,
+    what: string,
+  ): void => {
+    if (source.descriptor.capabilities[capability] !== true) {
+      throw new ClueError('unsupported', `clue source "${source.descriptor.sourceId}" does not support ${what}`)
+    }
+  }
+
+  /** Refuse an operation the named type's declared capabilities do not advertise. */
+  const requireTypeCapability = (
+    source: RegisteredSource,
+    typeId: string,
+    capability: keyof ClueTypeDescriptor['capabilities'],
+    what: string,
+  ): void => {
+    if (typeOf(source, typeId).capabilities[capability] !== true) {
+      throw new ClueError('unsupported', `clue type "${typeId}" does not support ${what}`)
+    }
+  }
+
   const normalizeCandidate = (
     candidate: ClueCandidate,
     fallback: { source: RegisteredSource; typeId?: string },
@@ -550,59 +592,68 @@ export function createCluesService(options: CluesServiceOptions = {}): CluesServ
       source.operations!.search!({ ...input, query }, context))
   }
 
+  /**
+   * Register one source. `allowReserved` is set only by the core's own
+   * construction path ({@link CluesServiceOptions.builtinSources}); every
+   * public call rejects the fixed built-in ids.
+   */
+  const registerSourceRecord = (registration: ClueSourceRegistration, allowReserved: boolean): () => void => {
+    if (disposed) {
+      throw new Error('[clues] cannot register a source on a disposed service')
+    }
+    const descriptor = registration.descriptor
+    const sourceId = descriptor?.sourceId
+    if (typeof sourceId !== 'string' || sourceId.trim() === '') {
+      throw new Error('[clues] a source registration needs a non-empty sourceId')
+    }
+    if (!allowReserved && RESERVED_SOURCE_IDS.includes(sourceId)) {
+      throw new Error(`[clues] source id "${sourceId}" is reserved by the core`)
+    }
+    if (sources.has(sourceId)) {
+      throw new Error(`[clues] source "${sourceId}" is already registered`)
+    }
+    const declaredTypes = Array.isArray(descriptor.types) ? descriptor.types : []
+    const seen = new Set<string>()
+    for (const type of registration.types) {
+      if (type.sourceId !== sourceId) {
+        throw new Error(`[clues] type "${type.typeId}" belongs to "${type.sourceId}", not "${sourceId}"`)
+      }
+      if (seen.has(type.typeId)) {
+        throw new Error(`[clues] type "${type.typeId}" declared twice by source "${sourceId}"`)
+      }
+      if (types.has(type.typeId)) {
+        throw new Error(`[clues] type "${type.typeId}" is already registered`)
+      }
+      if (!declaredTypes.includes(type.typeId)) {
+        throw new Error(`[clues] source "${sourceId}" must list type "${type.typeId}" in its descriptor`)
+      }
+      seen.add(type.typeId)
+    }
+    if (declaredTypes.length !== registration.types.length || declaredTypes.some(id => !seen.has(id))) {
+      throw new Error(`[clues] source "${sourceId}" declares types it did not register`)
+    }
+    const registered: RegisteredSource = {
+      descriptor: { ...descriptor, types: [...declaredTypes] },
+      types: [...registration.types],
+      ...(registration.operations === undefined ? {} : { operations: registration.operations }),
+    }
+    sources.set(sourceId, registered)
+    for (const type of registration.types) types.set(type.typeId, type)
+    return () => {
+      if (sources.get(sourceId) !== registered) return
+      sources.delete(sourceId)
+      for (const type of registration.types) {
+        if (types.get(type.typeId) === type) types.delete(type.typeId)
+      }
+    }
+  }
+
   const service: CluesService = {
     codecs: { clues: CLUE_CODEC_SOURCE, packs: PACK_CODEC_SOURCE },
     builtinSourceIds: Object.values(BUILTIN_SOURCE_IDS),
 
     registerSource(registration: ClueSourceRegistration): () => void {
-      if (disposed) {
-        throw new Error('[clues] cannot register a source on a disposed service')
-      }
-      const descriptor = registration.descriptor
-      const sourceId = descriptor?.sourceId
-      if (typeof sourceId !== 'string' || sourceId.trim() === '') {
-        throw new Error('[clues] a source registration needs a non-empty sourceId')
-      }
-      if (RESERVED_SOURCE_IDS.includes(sourceId)) {
-        throw new Error(`[clues] source id "${sourceId}" is reserved by the core`)
-      }
-      if (sources.has(sourceId)) {
-        throw new Error(`[clues] source "${sourceId}" is already registered`)
-      }
-      const declaredTypes = Array.isArray(descriptor.types) ? descriptor.types : []
-      const seen = new Set<string>()
-      for (const type of registration.types) {
-        if (type.sourceId !== sourceId) {
-          throw new Error(`[clues] type "${type.typeId}" belongs to "${type.sourceId}", not "${sourceId}"`)
-        }
-        if (seen.has(type.typeId)) {
-          throw new Error(`[clues] type "${type.typeId}" declared twice by source "${sourceId}"`)
-        }
-        if (types.has(type.typeId)) {
-          throw new Error(`[clues] type "${type.typeId}" is already registered`)
-        }
-        if (!declaredTypes.includes(type.typeId)) {
-          throw new Error(`[clues] source "${sourceId}" must list type "${type.typeId}" in its descriptor`)
-        }
-        seen.add(type.typeId)
-      }
-      if (declaredTypes.length !== registration.types.length || declaredTypes.some(id => !seen.has(id))) {
-        throw new Error(`[clues] source "${sourceId}" declares types it did not register`)
-      }
-      const registered: RegisteredSource = {
-        descriptor: { ...descriptor, types: [...declaredTypes] },
-        types: [...registration.types],
-        ...(registration.operations === undefined ? {} : { operations: registration.operations }),
-      }
-      sources.set(sourceId, registered)
-      for (const type of registration.types) types.set(type.typeId, type)
-      return () => {
-        if (sources.get(sourceId) !== registered) return
-        sources.delete(sourceId)
-        for (const type of registration.types) {
-          if (types.get(type.typeId) === type) types.delete(type.typeId)
-        }
-      }
+      return registerSourceRecord(registration, false)
     },
 
     getSources(): readonly ClueSourceDescriptor[] {
@@ -675,10 +726,12 @@ export function createCluesService(options: CluesServiceOptions = {}): CluesServ
 
     async read(params: CluesReadParams, call: ClueCallOptions = {}): Promise<ClueReadResult> {
       const ref = await resolveRef(params, call)
-      const context = contextOf(requireWorkspaceId(params.workspaceId), { ...call, sessionId: params.sessionId ?? call.sessionId })
-      if (ref.source.descriptor.capabilities.read !== true || ref.source.operations?.read === undefined) {
+      const context = contextFor(params, call)
+      if (ref.source.operations?.read === undefined) {
         throw new ClueError('unsupported', `clue source "${ref.source.descriptor.sourceId}" cannot read content`)
       }
+      requireSourceCapability(ref.source, 'read', 'reads')
+      requireTypeCapability(ref.source, ref.typeId, 'read', 'reads')
       const input: ClueSourceReadInput = {
         typeId: ref.typeId,
         locator: ref.locator,
@@ -690,10 +743,12 @@ export function createCluesService(options: CluesServiceOptions = {}): CluesServ
 
     async loadEdit(params: CluesReadParams, call: ClueCallOptions = {}): Promise<ClueEditDocument> {
       const ref = await resolveRef(params, call)
-      const context = contextOf(requireWorkspaceId(params.workspaceId), call)
-      if (ref.source.descriptor.capabilities.edit !== true || ref.source.operations?.loadEdit === undefined) {
+      const context = contextFor(params, call)
+      if (ref.source.operations?.loadEdit === undefined) {
         throw new ClueError('unsupported', `clue source "${ref.source.descriptor.sourceId}" is not editable`)
       }
+      requireSourceCapability(ref.source, 'edit', 'edits')
+      requireTypeCapability(ref.source, ref.typeId, 'edit', 'edits')
       const input: ClueSourceReadInput = { typeId: ref.typeId, locator: ref.locator }
       return callSource(ref.source, context, async () => ref.source.operations!.loadEdit!(input, context))
     },
@@ -703,10 +758,12 @@ export function createCluesService(options: CluesServiceOptions = {}): CluesServ
       call: ClueCallOptions = {},
     ): Promise<ClueSaveEditResult> {
       const ref = await resolveRef(params, call)
-      const context = contextOf(requireWorkspaceId(params.workspaceId), call)
-      if (ref.source.descriptor.capabilities.edit !== true || ref.source.operations?.saveEdit === undefined) {
+      const context = contextFor(params, call)
+      if (ref.source.operations?.saveEdit === undefined) {
         throw new ClueError('unsupported', `clue source "${ref.source.descriptor.sourceId}" is not editable`)
       }
+      requireSourceCapability(ref.source, 'edit', 'edits')
+      requireTypeCapability(ref.source, ref.typeId, 'edit', 'edits')
       const input: ClueSourceSaveInput = {
         typeId: ref.typeId,
         locator: ref.locator,
@@ -718,8 +775,8 @@ export function createCluesService(options: CluesServiceOptions = {}): CluesServ
 
     async portable(params: CluesReadParams, call: ClueCallOptions = {}): Promise<CluePortableRef> {
       const ref = await resolveRef(params, call)
-      const context = contextOf(requireWorkspaceId(params.workspaceId), call)
-      if (ref.source.operations?.portable === undefined) {
+      const context = contextFor(params, call)
+      if (ref.source.descriptor.capabilities.portable !== true || ref.source.operations?.portable === undefined) {
         return { portable: false, reason: 'the source does not provide portable references' }
       }
       const input: ClueSourceReadInput = { typeId: ref.typeId, locator: ref.locator }
@@ -826,7 +883,11 @@ export function createCluesService(options: CluesServiceOptions = {}): CluesServ
         state.packs.push(pack)
         return { pack }
       })
-      return { pack: transaction.result.pack, revision: transaction.revision }
+      return {
+        pack: transaction.result.pack,
+        revision: transaction.revision,
+        packRevision: transaction.result.pack.revision,
+      }
     },
 
     async renamePack(params: CluesPackRenameParams, call: ClueCallOptions = {}): Promise<CluesPackMutationResult> {
@@ -842,7 +903,11 @@ export function createCluesService(options: CluesServiceOptions = {}): CluesServ
         state.packs[state.packs.indexOf(pack)] = next
         return { pack: next }
       })
-      return { pack: transaction.result.pack, revision: transaction.revision }
+      return {
+        pack: transaction.result.pack,
+        revision: transaction.revision,
+        packRevision: transaction.result.pack.revision,
+      }
     },
 
     async addPackMember(params: CluesPackMemberParams, call: ClueCallOptions = {}): Promise<CluesPackMutationResult> {
@@ -864,7 +929,11 @@ export function createCluesService(options: CluesServiceOptions = {}): CluesServ
         state.packs[state.packs.indexOf(pack)] = next
         return { pack: next }
       })
-      return { pack: transaction.result.pack, revision: transaction.revision }
+      return {
+        pack: transaction.result.pack,
+        revision: transaction.revision,
+        packRevision: transaction.result.pack.revision,
+      }
     },
 
     async removePackMember(params: CluesPackMemberParams, call: ClueCallOptions = {}): Promise<CluesPackMutationResult> {
@@ -883,7 +952,11 @@ export function createCluesService(options: CluesServiceOptions = {}): CluesServ
         state.packs[state.packs.indexOf(pack)] = next
         return { pack: next }
       })
-      return { pack: transaction.result.pack, revision: transaction.revision }
+      return {
+        pack: transaction.result.pack,
+        revision: transaction.revision,
+        packRevision: transaction.result.pack.revision,
+      }
     },
 
     async deletePack(params: CluesPackDeleteParams, call: ClueCallOptions = {}): Promise<CluesPackDeleteResult> {
@@ -895,9 +968,14 @@ export function createCluesService(options: CluesServiceOptions = {}): CluesServ
         state.packs = state.packs.filter(candidate => candidate.id !== params.packId)
         state.bindings = state.bindings.filter(binding =>
           !(binding.target.kind === 'pack' && binding.target.packId === params.packId))
-        return { packs: state.packs }
+        return { packs: state.packs, packRevision: pack.revision }
       })
-      return { deleted: true, packs: transaction.result.packs, revision: transaction.revision }
+      return {
+        deleted: true,
+        packs: transaction.result.packs,
+        revision: transaction.revision,
+        packRevision: transaction.result.packRevision,
+      }
     },
 
     async listBindings(workspaceId: string): Promise<CluesBindingsResult> {
@@ -976,6 +1054,9 @@ export function createCluesService(options: CluesServiceOptions = {}): CluesServ
     },
 
     registerApi(name: string, handler: ClueApiHandler): () => void {
+      if (disposed) {
+        throw new Error('[clues] cannot register an API method on a disposed service')
+      }
       if (typeof name !== 'string' || name.trim() === '') {
         throw new Error('[clues] an API method needs a non-empty name')
       }
@@ -1004,7 +1085,15 @@ export function createCluesService(options: CluesServiceOptions = {}): CluesServ
       if (context.signal?.aborted === true) {
         throw new ClueError('cancelled', 'clue operation was cancelled')
       }
-      return entry.handler(payload, context)
+      try {
+        return await entry.handler(payload, context)
+      } catch (error) {
+        // S2+ handlers run CLI/HTTP integrations; their raw stdout/stderr or
+        // headers must never reach the wire. Normalization is the boundary,
+        // exactly like a source operation (an intentional ClueError keeps its
+        // fixed category and safe message).
+        throw normalizeError(error)
+      }
     },
 
     dispose(): void {
@@ -1014,6 +1103,12 @@ export function createCluesService(options: CluesServiceOptions = {}): CluesServ
       types.clear()
       apis.clear()
     },
+  }
+
+  // The core's own sources use the reserved registration path; a duplicate
+  // id or type fails construction loudly instead of blocking an external one.
+  for (const registration of options.builtinSources ?? []) {
+    registerSourceRecord(registration, true)
   }
 
   return service

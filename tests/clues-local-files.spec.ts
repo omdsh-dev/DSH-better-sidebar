@@ -14,10 +14,11 @@
  * - portable locators exist only for workspace-relative references.
  */
 import { afterEach, describe, expect, it } from 'vitest'
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
+import { join, posix, win32 } from 'node:path'
 import { createCluesService, type CluesService } from '../src/clues/service.ts'
+import { CluesStore } from '../src/clues/store.ts'
 import {
   createLocalFileSource,
   dialectOfText,
@@ -43,6 +44,14 @@ afterEach(() => {
 const NOW = '2026-10-17T00:00:00.000Z'
 const WORKSPACE_ID = 'ws-1'
 
+/**
+ * The host platform's own dialect. Workspace locators produced by the host are
+ * written in it, and a foreign-dialect locator is refused at resolution (so
+ * the same file cannot be reinterpreted by the wrong path module).
+ */
+const HOST_DIALECT = process.platform === 'win32' ? 'win32' : 'posix'
+const HOST_PATH = HOST_DIALECT === 'win32' ? win32 : posix
+
 interface Fixture {
   base: string
   workspace: string
@@ -64,17 +73,17 @@ function fixture(options: { resolveWorkspace?: boolean } = {}): Fixture {
     root: join(base, 'store'),
     now: () => NOW,
     newId: kind => `${kind}-${++next}`,
+    builtinSources: [createLocalFileSource()],
     ...(options.resolveWorkspace === false
       ? {}
       : { resolveWorkspacePath: (id: string) => (id === WORKSPACE_ID ? workspace : undefined) }),
   })
-  service.registerSource(createLocalFileSource())
   return { base, workspace, external, service, root: join(base, 'store') }
 }
 
-/** A workspace-root locator for a relative path (posix dialect). */
-function workspaceLocator(path: string): Locator {
-  return { root: { kind: 'workspace', workspaceId: WORKSPACE_ID }, path, dialect: 'posix' }
+/** A workspace-root locator for a relative path in the HOST dialect. */
+function workspaceLocator(path: string, workspaceId = WORKSPACE_ID): Locator {
+  return { root: { kind: 'workspace', workspaceId }, path, dialect: HOST_DIALECT }
 }
 
 /** Ensure one workspace file as its extension-derived type. */
@@ -82,7 +91,7 @@ async function ensureFile(service: CluesService, path: string): Promise<string> 
   const result = await service.ensure({
     workspaceId: WORKSPACE_ID,
     sourceId: 'builtin.files',
-    typeId: localFileTypeOf(path, 'posix'),
+    typeId: localFileTypeOf(path, HOST_DIALECT),
     locator: workspaceLocator(path),
     title: path,
   })
@@ -162,6 +171,15 @@ describe('builtin.files list', () => {
     const result = await service.list({ workspaceId: WORKSPACE_ID, sourceId: 'builtin.files', scope: {} })
     expect(result.items.map(item => item.title)).toEqual(['a.md'])
   })
+
+  it('maps a missing scope to not-found and a file scope to unsupported', async () => {
+    const { workspace, service } = fixture()
+    writeFileSync(join(workspace, 'a.txt'), 'a\n')
+    await expect(service.list({ workspaceId: WORKSPACE_ID, sourceId: 'builtin.files', scope: 'nope' }))
+      .rejects.toMatchObject({ category: 'not-found' })
+    await expect(service.list({ workspaceId: WORKSPACE_ID, sourceId: 'builtin.files', scope: 'a.txt' }))
+      .rejects.toMatchObject({ category: 'unsupported' })
+  })
 })
 
 describe('builtin.files search', () => {
@@ -198,6 +216,60 @@ describe('builtin.files search', () => {
     const { service } = fixture()
     const result = await service.search({ workspaceId: WORKSPACE_ID, sourceId: 'builtin.files', query: '   ' })
     expect(result).toEqual({ items: [], total: 0 })
+  })
+
+  it('maps a missing search scope to not-found instead of an empty result', async () => {
+    const { service } = fixture()
+    await expect(service.search({ workspaceId: WORKSPACE_ID, sourceId: 'builtin.files', scope: 'nope', query: 'a' }))
+      .rejects.toMatchObject({ category: 'not-found' })
+  })
+
+  it('re-roots an in-workspace direct-path hit as the same workspace locator resolve returns', async () => {
+    const { workspace, external, service } = fixture()
+    writeFileSync(join(workspace, 'a.md'), '# a\n')
+    mkdirSync(join(workspace, 'sub'))
+    const outside = join(external, 'outside.md')
+    writeFileSync(outside, '# outside\n')
+
+    const resolved = await service.resolve({ workspaceId: WORKSPACE_ID, text: 'a.md' })
+    // `./a.md` is a direct-path query: searchFiles answers the RESOLVED
+    // absolute target. Re-rooting it under the workspace keeps ONE locator (and
+    // therefore one stable clue id) for the same file.
+    const searched = await service.search({ workspaceId: WORKSPACE_ID, sourceId: 'builtin.files', query: './a.md' })
+    expect(searched.items).toHaveLength(1)
+    expect(searched.items[0]?.locator).toEqual(resolved[0]?.locator)
+
+    const first = await service.ensure({
+      workspaceId: WORKSPACE_ID,
+      sourceId: 'builtin.files',
+      typeId: LOCAL_FILE_TYPE_IDS.markdown,
+      locator: resolved[0]!.locator,
+      title: 'a.md',
+    })
+    const second = await service.ensure({
+      workspaceId: WORKSPACE_ID,
+      sourceId: 'builtin.files',
+      typeId: searched.items[0]!.typeId,
+      locator: searched.items[0]!.locator,
+      title: 'a.md',
+    })
+    expect(second.created).toBe(false)
+    expect(second.clue.id).toBe(first.clue.id)
+
+    // A direct path that escapes the declared scope is not reported: the
+    // workspace-root scope cannot report a sibling of the workspace.
+    expect((await service.search({
+      workspaceId: WORKSPACE_ID,
+      sourceId: 'builtin.files',
+      query: `../${HOST_PATH.basename(external)}/outside.md`,
+    })).items).toEqual([])
+    // A subdirectory scope cannot report `../a.md` (workspace/a.md).
+    expect((await service.search({
+      workspaceId: WORKSPACE_ID,
+      sourceId: 'builtin.files',
+      scope: 'sub',
+      query: '../a.md',
+    })).items).toEqual([])
   })
 })
 
@@ -354,6 +426,25 @@ describe('builtin.files edits', () => {
     expect(readFileSync(path)).toEqual(encodeText(restoreEol(changed, 'crlf'), 'gbk'))
   })
 
+  it('reports a save whose file was deleted as conflict, not not-found', async () => {
+    const { workspace, service } = fixture()
+    const path = join(workspace, 'gone.txt')
+    writeFileSync(path, 'original\n')
+    const clueId = await ensureFile(service, 'gone.txt')
+    const edit = await service.loadEdit({ workspaceId: WORKSPACE_ID, clueId })
+    // The file disappears while the draft is open. The established editor save
+    // path treats "baseline-bearing file is gone" as an external modification
+    // (`fs-conflict`), so the clue source keeps the draft instead of telling
+    // the UI the reference is invalid.
+    rmSync(path)
+    await expect(service.saveEdit({
+      workspaceId: WORKSPACE_ID,
+      clueId,
+      document: { format: 'text/plain', data: { text: 'draft\n' }, baseRevision: edit.baseRevision },
+    })).rejects.toMatchObject({ category: 'conflict' })
+    expect(() => readFileSync(path, 'utf8')).toThrow()
+  })
+
   it('refuses a stale base revision with conflict and does NOT write', async () => {
     const { workspace, service } = fixture()
     const path = join(workspace, 'a.txt')
@@ -414,11 +505,15 @@ describe('builtin.files resolve / portable / dialects', () => {
     expect(relative[0]?.locator).toMatchObject({
       root: { kind: 'workspace', workspaceId: WORKSPACE_ID },
       path: 'a.md',
-      dialect: 'posix',
+      dialect: HOST_DIALECT,
     })
 
     const absolute = await service.resolve({ workspaceId: WORKSPACE_ID, text: externalFile })
-    expect(absolute[0]?.locator).toMatchObject({ root: { kind: 'external' }, path: externalFile, dialect: 'posix' })
+    expect(absolute[0]?.locator).toMatchObject({
+      root: { kind: 'external' },
+      path: HOST_PATH.normalize(externalFile),
+      dialect: HOST_DIALECT,
+    })
     const ensured = await service.ensure({
       workspaceId: WORKSPACE_ID,
       sourceId: 'builtin.files',
@@ -473,7 +568,7 @@ describe('builtin.files resolve / portable / dialects', () => {
     const portable = await service.portable({ workspaceId: WORKSPACE_ID, clueId })
     expect(portable).toMatchObject({
       portable: true,
-      locator: { root: { kind: 'workspace', workspaceId: WORKSPACE_ID }, path: 'a.md', dialect: 'posix' },
+      locator: { root: { kind: 'workspace', workspaceId: WORKSPACE_ID }, path: 'a.md', dialect: HOST_DIALECT },
     })
   })
 
@@ -506,24 +601,101 @@ describe('builtin.files resolve / portable / dialects', () => {
   it('folds case in win32 locator keys and detects the dialect of raw text', () => {
     const source = createLocalFileSource()
     const key = (locator: Locator): string => source.operations!.locatorKey!(locator)
+    const normalize = (locator: Locator): Locator =>
+      source.operations!.normalizeLocator!(locator, { workspaceId: WORKSPACE_ID })
     expect(key({ root: { kind: 'external' }, path: 'C:\\Notes\\A.md', dialect: 'win32' }))
       .toBe(key({ root: { kind: 'external' }, path: 'c:\\notes\\a.md', dialect: 'win32' }))
     expect(key({ root: { kind: 'workspace', workspaceId: WORKSPACE_ID }, path: 'Docs/A.md', dialect: 'posix' }))
       .not.toBe(key({ root: { kind: 'workspace', workspaceId: WORKSPACE_ID }, path: 'docs/a.md', dialect: 'posix' }))
-    expect(dialectOfText('C:\\notes\\a.md')).toBe('win32')
-    expect(dialectOfText('\\\\server\\share\\a.md')).toBe('win32')
+    // A forward-slash UNC spelling is classified with the host it was typed
+    // on: native win32 UNC on Windows, a rooted POSIX path elsewhere.
+    expect(dialectOfText('//server/share/a.md')).toBe(HOST_DIALECT)
+    expect(dialectOfText('C:/notes/a.md')).toBe('win32')
     expect(dialectOfText('/tmp/a.md')).toBe('posix')
-    expect(dialectOfText('docs/a.md')).toBe(process.platform === 'win32' ? 'win32' : 'posix')
+    expect(dialectOfText('docs/a.md')).toBe(HOST_DIALECT)
+    // UNC normalization keeps the share root and folds separators.
+    expect(normalize({ root: { kind: 'external' }, path: '//server/share/dir/../a.md', dialect: 'win32' }))
+      .toEqual({ root: { kind: 'external' }, path: '\\\\server\\share\\a.md', dialect: 'win32' })
+  })
+
+  it('expands a leading ~ to the host user home directory', async () => {
+    const { service } = fixture()
+    // `~` names the home directory itself (which exists on every runner), so
+    // this exercises the expansion without writing outside the temp tree.
+    const home = await service.resolve({ workspaceId: WORKSPACE_ID, text: '~' })
+    expect(home).toHaveLength(1)
+    expect(home[0]?.locator).toMatchObject({
+      root: { kind: 'external' },
+      path: HOST_PATH.normalize(homedir()),
+      dialect: HOST_DIALECT,
+    })
+    expect(home[0]?.meta).toEqual({ kind: 'directory' })
+
+    const nested = await service.resolve({ workspaceId: WORKSPACE_ID, text: '~/.' })
+    expect(nested[0]?.locator).toMatchObject({
+      root: { kind: 'external' },
+      path: HOST_PATH.normalize(homedir()),
+      dialect: HOST_DIALECT,
+    })
+  })
+
+  it('refuses a workspace locator that belongs to another workspace', async () => {
+    const { workspace, service, root } = fixture()
+    writeFileSync(join(workspace, 'a.md'), '# a\n')
+    const foreign = {
+      root: { kind: 'workspace', workspaceId: 'ws-other' },
+      path: 'a.md',
+      dialect: HOST_DIALECT,
+    }
+
+    // Both the write path (ensure normalizes the locator) and the direct read
+    // path reject the mismatched resolution root.
+    await expect(service.ensure({
+      workspaceId: WORKSPACE_ID,
+      sourceId: 'builtin.files',
+      typeId: LOCAL_FILE_TYPE_IDS.markdown,
+      locator: foreign,
+      title: 'a.md',
+    })).rejects.toMatchObject({ category: 'failed' })
+    await expect(service.read({
+      workspaceId: WORKSPACE_ID,
+      sourceId: 'builtin.files',
+      typeId: LOCAL_FILE_TYPE_IDS.markdown,
+      locator: foreign,
+    })).rejects.toMatchObject({ category: 'failed' })
+
+    // A reference persisted before the guard (or copied between workspaces) is
+    // not silently resolved against ws-1's directory either.
+    await new CluesStore({ root }).transact(WORKSPACE_ID, undefined, (state) => {
+      state.clues.push({
+        id: 'clue-foreign',
+        sourceId: 'builtin.files',
+        typeId: LOCAL_FILE_TYPE_IDS.markdown,
+        locator: foreign,
+        title: 'a.md',
+        workspaceId: WORKSPACE_ID,
+        createdAt: NOW,
+        updatedAt: NOW,
+      })
+    })
+    await expect(service.read({ workspaceId: WORKSPACE_ID, clueId: 'clue-foreign' }))
+      .rejects.toMatchObject({ category: 'failed' })
+    // The file itself was never read; the locator error wins.
+    expect(readFileSync(join(workspace, 'a.md'), 'utf8')).toBe('# a\n')
   })
 
   it('refuses to reinterpret a foreign-dialect locator on this host', async () => {
-    if (process.platform === 'win32') return
     const { service } = fixture()
+    // A workspace locator written in the OTHER platform's dialect: its path
+    // must not be parsed by this host's node:path module.
+    const locator: Locator = HOST_DIALECT === 'win32'
+      ? { root: { kind: 'workspace', workspaceId: WORKSPACE_ID }, path: 'notes/a.md', dialect: 'posix' }
+      : { root: { kind: 'external' }, path: 'C:\\notes\\a.md', dialect: 'win32' }
     await expect(service.read({
       workspaceId: WORKSPACE_ID,
       sourceId: 'builtin.files',
       typeId: LOCAL_FILE_TYPE_IDS.text,
-      locator: { root: { kind: 'external' }, path: 'C:\\notes\\a.md', dialect: 'win32' },
+      locator,
     })).rejects.toMatchObject({ category: 'unsupported' })
   })
 })

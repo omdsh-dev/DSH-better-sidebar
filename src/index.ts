@@ -47,7 +47,7 @@ import { buildTeamsApi, type SidebarTeamsRoutes } from './team-routes.ts'
 import { buildWorkflowsApi, type SidebarWorkflowRoutes } from './workflow-routes.ts'
 import { buildSidechatApi } from './sidechat-routes.ts'
 import { createAssistantLiveBuffer, type AssistantLiveBuffer } from './assistant-live.ts'
-import { readJsonBody, readTextBody, requireString, SidebarError, writeError, writeJson, writeOk } from './wire.ts'
+import { MAX_CLUE_SAVE_BODY_BYTES, readJsonBody, readTextBody, requireString, SidebarError, writeError, writeJson, writeOk } from './wire.ts'
 import { streamFileToResponse } from './file-stream.ts'
 import { readPersistedSession } from './session-store.ts'
 import { createChangesOpsApi } from './changes-ops.ts'
@@ -1322,7 +1322,14 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
       const abort = (): void => { controller?.abort() }
       response?.once('close', abort)
       try {
-        const payload = await readJsonBody(req)
+        // The ordinary JSON bound (1 MiB) is right for every control payload,
+        // but an EDIT document carries the user's text: `clues.saveEdit` gets
+        // the editable-size-derived bound so a 1–5 MiB source document can be
+        // written back (see MAX_CLUE_SAVE_BODY_BYTES).
+        const payload = await readJsonBody(
+          req,
+          method === 'clues.saveEdit' ? MAX_CLUE_SAVE_BODY_BYTES : undefined,
+        )
         // Own properties only. The dispatch table is an object literal, so a
         // bare lookup resolved Object.prototype members as "methods":
         // POST /sidebar/api/constructor answered 200 {}, toString answered

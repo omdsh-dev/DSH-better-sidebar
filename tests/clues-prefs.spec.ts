@@ -8,7 +8,7 @@
  * default and unknown keys never reach the UI.
  */
 import { describe, expect, it } from 'vitest'
-import { PrefsSchema } from '../src/config.ts'
+import { Config, PrefsSchema } from '../src/config.ts'
 import { parsePrefs } from '../src/client/prefs.ts'
 import {
   SIDEBAR_PREFS_DEFAULTS,
@@ -52,6 +52,18 @@ describe('clue preference defaults', () => {
     expect(resolved.clueSourcesEnabled).toEqual({ 'builtin.files': false, 'x.source': true })
     expect(resolved.clueSourcesMentionEnabled).toEqual({ 'x.source': false })
     expect(resolved.cluePacksMentionEnabled).toBe(false)
+  })
+
+  it('joins the volatile preference chain (a switch edit never remounts the plugin)', () => {
+    // The Loader commits preference edits through the `meta.volatile` fields
+    // of the row config. A clue switch that stayed non-volatile would take the
+    // remount path (and be silently dropped from the live-commit walk).
+    const fields = (Config as unknown as {
+      dict: Record<string, { meta?: { volatile?: boolean } }>
+    }).dict
+    for (const key of Object.values(CLUE_PREF_KEYS)) {
+      expect(fields[key]?.meta?.volatile, key).toBe(true)
+    }
   })
 })
 
