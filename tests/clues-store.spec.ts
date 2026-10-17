@@ -70,7 +70,8 @@ describe('clue store', () => {
     const state = await second.read('ws-1')
     expect(state.revision).toBe(1)
     expect(state.clues[0]?.id).toBe('clue-stable')
-    const next = await second.transact('ws-1', 1, (s) => { s.clues[0]!.title = 'renamed' })
+    // Clue is readonly: replace the row rather than mutating the committed shape.
+    const next = await second.transact('ws-1', 1, (s) => { s.clues[0] = { ...s.clues[0]!, title: 'renamed' } })
     expect(next.revision).toBe(2)
     expect((await new CluesStore({ root: dir }).read('ws-1')).clues[0]?.title).toBe('renamed')
   })
