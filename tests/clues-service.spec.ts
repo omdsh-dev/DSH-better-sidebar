@@ -291,6 +291,59 @@ describe('clue service dispatch', () => {
     expect(candidates[0]?.clueId).toBe(clueId)
   })
 
+  it('auto-resolve keeps going past a source that does not own the input', async () => {
+    const service = makeService()
+    // Same order, so the alphabetical id decides: the first source sees the
+    // text and reports "not mine", the second one owns it.
+    service.registerSource(testSource({
+      sourceId: 'a.miss',
+      typeId: 'a.miss.text',
+      operations: {
+        ...testSource().operations,
+        resolve: async () => { throw new ClueError('not-found', 'no such local path') },
+      },
+    }))
+    service.registerSource(testSource({
+      sourceId: 'b.remote',
+      typeId: 'b.remote.text',
+      operations: {
+        ...testSource().operations,
+        resolve: async input => ({
+          sourceId: 'b.remote',
+          typeId: 'b.remote.text',
+          locator: { id: String(input.text) },
+          title: 'remote',
+        }),
+      },
+    }))
+
+    const candidates = await service.resolve({ workspaceId: 'ws-1', text: 'https://example.com/doc' })
+    expect(candidates).toHaveLength(1)
+    expect(candidates[0]).toMatchObject({
+      sourceId: 'b.remote',
+      locator: { id: 'https://example.com/doc' },
+    })
+
+    // An explicit source still reports its own miss instead of silently [].
+    await expect(service.resolve({ workspaceId: 'ws-1', sourceId: 'a.miss', text: 'x' }))
+      .rejects.toMatchObject({ category: 'not-found' })
+  })
+
+  it('auto-resolve propagates authentication and permission failures', async () => {
+    const service = makeService()
+    service.registerSource(testSource({
+      sourceId: 'a.auth',
+      typeId: 'a.auth.text',
+      operations: {
+        ...testSource().operations,
+        resolve: async () => { throw new ClueError('auth-required', 'sign in to continue') },
+      },
+    }))
+    service.registerSource(testSource({ sourceId: 'b.remote', typeId: 'b.remote.text' }))
+    await expect(service.resolve({ workspaceId: 'ws-1', text: 'x' }))
+      .rejects.toMatchObject({ category: 'auth-required' })
+  })
+
   it('passes cursors through unchanged and never invents a total', async () => {
     const service = makeService()
     const cursors: Array<string | undefined> = []

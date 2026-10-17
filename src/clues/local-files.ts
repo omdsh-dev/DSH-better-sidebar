@@ -33,7 +33,8 @@
  *   of pretending the bytes are a string.
  */
 import { randomUUID } from 'node:crypto'
-import { rename, rm, stat, writeFile } from 'node:fs/promises'
+import { constants } from 'node:fs'
+import { access, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, dirname, extname, join, posix, win32 } from 'node:path'
 import { listDirectory, invalidateDirectoryCache } from '../fs-tree.ts'
@@ -240,6 +241,34 @@ export function dialectOfText(text: string): LocalFileDialect {
   if (text.startsWith('//')) return HOST_DIALECT === 'win32' ? 'win32' : 'posix'
   if (text.startsWith('/')) return 'posix'
   return HOST_DIALECT
+}
+
+/**
+ * Whether raw user text is a URL rather than a local filesystem path.
+ *
+ * Auto resolution asks every source about the same text: a pasted
+ * `https://example.com/doc` belongs to a remote source, not to
+ * `<workspace>/https:/example.com/doc`. The local source therefore answers
+ * "no candidate" instead of stat-ing that invented path (which would raise
+ * `not-found` and, before the service learned to continue, hide the remote
+ * source entirely). The scheme needs at least two characters on purpose: a
+ * one-letter prefix (`C://notes/a.md`) is a Windows drive spelling, not a
+ * URL.
+ */
+function isUrlText(text: string): boolean {
+  return /^[A-Za-z][A-Za-z0-9+.-]+:\/\//.test(text)
+}
+
+/**
+ * Whether an untrusted locator is shaped like this source's own address at
+ * all. A locator owned by another source (an HTTP URL record, an issue key)
+ * is "not mine" during auto resolution; a locator that IS local-file-shaped
+ * but malformed still fails loudly below.
+ */
+function isLocalFileLocatorShape(value: unknown): boolean {
+  if (!isRecord(value) || !isRecord(value.root)) return false
+  if (value.root.kind !== 'workspace' && value.root.kind !== 'external') return false
+  return typeof value.path === 'string' && (value.dialect === 'posix' || value.dialect === 'win32')
 }
 
 /**
@@ -538,11 +567,33 @@ function assetOf(absolute: string, size: number): ClueAsset {
   return { kind: 'open', path: absolute, mime: mimeOf(absolute), size }
 }
 
+/** Permission bits a directory needs for a listing / search walk. */
+const DIRECTORY_ACCESS = constants.R_OK | constants.X_OK
+/** Permission bits a file needs for a read / edit load / save preflight. */
+const FILE_ACCESS = constants.R_OK
+
+/**
+ * Preflight the host user's permission on a path.
+ *
+ * The shared filesystem helpers (`listDirectory`, `searchFiles`, `readText`,
+ * `readPage`) wrap every failure as `SidebarError('fs-error')`, which loses the
+ * errno the clue categories need. `stat` succeeds on an entry the user may not
+ * read, so an explicit access probe is the cheap way to answer
+ * `permission-denied` instead of falling back to `failed` — or, for search, to
+ * an empty result that looks like "nothing matched".
+ */
+async function requireAccess(absolute: string, mode: number): Promise<void> {
+  await access(absolute, mode).catch((error: unknown) => {
+    throw normalizeFileError(error, absolute)
+  })
+}
+
 /**
  * Stat the scope itself before listing/searching it. `listDirectory` and
  * `searchFiles` turn a missing/file scope into their own route errors (or, for
  * search, an empty result), which loses the clue categories: a missing
- * directory is `not-found`, a file is `unsupported`.
+ * directory is `not-found`, a file is `unsupported`, an unreadable directory is
+ * `permission-denied`.
  */
 async function requireDirectoryScope(absolute: string): Promise<void> {
   const info = await stat(absolute).catch((error: unknown) => {
@@ -551,6 +602,7 @@ async function requireDirectoryScope(absolute: string): Promise<void> {
   if (!info.isDirectory()) {
     throw new ClueError('unsupported', `"${absolute}" is not a directory`)
   }
+  await requireAccess(absolute, DIRECTORY_ACCESS)
 }
 
 /**
@@ -644,7 +696,12 @@ async function searchDirectoryPage(
 /** Normalize a filesystem failure without echoing raw transport output. */
 function normalizeFileError(error: unknown, path: string): ClueError {
   if (error instanceof ClueError) return error
+  // Shared helpers wrap the real failure (`SidebarError` from fs-tree /
+  // fs-search / fs-read) but keep the original errno as the cause; the
+  // category must come from the OS error, not from the wrapper.
+  const cause = (error as { cause?: unknown } | null)?.cause
   const code = (error as { code?: unknown } | null)?.code
+    ?? (cause as { code?: unknown } | null | undefined)?.code
   if (code === 'ENOENT') return new ClueError('not-found', `"${path}" does not exist`)
   if (code === 'EACCES' || code === 'EPERM') {
     return new ClueError('permission-denied', `"${path}" is not readable by the host user`)
@@ -688,6 +745,9 @@ async function readFileContent(
     throw normalizeFileError(error, absolute)
   })
   if (info.isDirectory()) throw new ClueError('unsupported', `"${absolute}" is a directory`)
+  // `stat` succeeds on an unreadable entry; `readText` would report the
+  // resulting EACCES as a generic fs-error, so probe first.
+  await requireAccess(absolute, FILE_ACCESS)
   if (typeId === LOCAL_FILE_TYPE_IDS.binary) {
     return binaryReadResult(absolute, info, new Date().toISOString())
   }
@@ -740,6 +800,7 @@ async function loadEditDocument(
     throw normalizeFileError(error, absolute)
   })
   if (info.isDirectory()) throw new ClueError('unsupported', `"${absolute}" is a directory`)
+  await requireAccess(absolute, FILE_ACCESS)
   const result = await readText(absolute).catch((error: unknown) => {
     throw normalizeFileError(error, absolute)
   })
@@ -792,6 +853,10 @@ async function saveEditDocument(
     throw normalizeFileError(error, absolute)
   })
   if (before.isDirectory()) throw new ClueError('unsupported', `"${absolute}" is a directory`)
+  // A save reads the current format before writing, so it needs the same
+  // read permission a load would (a mode-0 file must report permission-denied,
+  // not "written" through a directory that happens to be writable).
+  await requireAccess(absolute, FILE_ACCESS)
   if (document.baseRevision !== revisionOf(before)) {
     throw new ClueError('conflict', `"${absolute}" changed on disk since it was loaded`)
   }
@@ -799,9 +864,20 @@ async function saveEditDocument(
   // Re-detect encoding + EOL from the DISK before writing: the editor only
   // ever sends LF, and a GBK/UTF-16/CRLF file must keep its own format.
   const { encoding, eol } = await fileFormatOf(absolute)
+  // The editable bound is a property of the FILE, not of the transport: a
+  // save must not be able to produce bytes that the next `loadEdit` refuses as
+  // too-large. Check the ENCODED document (the exact bytes about to be
+  // written), so UTF-16/GBK and CRLF restoration are accounted for.
+  const encoded = encodeText(restoreEol(document.data.text, eol), encoding)
+  if (encoded.length > MAX_EDITABLE_BYTES) {
+    throw new ClueError(
+      'unsupported',
+      `the local file edit exceeds the editable size limit (${MAX_EDITABLE_BYTES} bytes)`,
+    )
+  }
   const tmp = join(dirname(absolute), `.${basename(absolute)}.dsh-clues-tmp-${randomUUID()}.tmp`)
   try {
-    await writeFile(tmp, encodeText(restoreEol(document.data.text, eol), encoding), { flag: 'wx' })
+    await writeFile(tmp, encoded, { flag: 'wx' })
     await rename(tmp, absolute)
   } catch {
     await rm(tmp, { force: true }).catch(() => undefined)
@@ -833,8 +909,17 @@ export function createLocalFileSource(): ClueSourceRegistration {
       throwIfAborted(context)
       let locator: LocalFileLocator
       if (input.locator !== undefined) {
+        // Auto resolution hands the same locator to every source. A locator
+        // that is not even shaped like a local-file address belongs to
+        // another source: answer "no candidate" instead of failing the whole
+        // resolve. An EXPLICIT builtin.files call still reports the malformed
+        // locator, and a local-file-shaped but invalid one always throws.
+        if (!isLocalFileLocatorShape(input.locator) && input.explicit !== true) return undefined
         locator = normalizeLocalFileLocator(input.locator)
       } else if (input.text !== undefined) {
+        // A URL is another source's resource; stat-ing it as
+        // `<workspace>/https:/…` would produce a misleading not-found.
+        if (isUrlText(input.text.trim())) return undefined
         locator = locatorOfText(input.text, context)
       } else {
         return undefined

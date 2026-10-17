@@ -31,7 +31,7 @@
  * sweep, and plugin teardown (which also kills a build still running).
  */
 import { randomUUID } from 'node:crypto'
-import { open, rm, stat, type FileHandle } from 'node:fs/promises'
+import { open, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { SidebarHttpResponse } from './context-types.ts'
@@ -215,15 +215,6 @@ export function createArchiveTasks(options: ArchiveTaskOptions = {}): ArchiveTas
   const tasks = new Map<string, ArchiveTask>()
   /** Running children, by task id (teardown kills them). */
   const children = new Map<string, { kill(): void }>()
-  /**
-   * In-flight output descriptors, by task id. The descriptor stays open across
-   * the spawn (`stdio[1]` is that fd), so teardown must close it explicitly:
-   * a build whose child never reports back would otherwise leave the fd to the
-   * FileHandle GC finalizer (which Node now treats as an error).
-   */
-  const handles = new Map<string, FileHandle>()
-  /** Teardown flag: an `open()` that resolves after dispose closes at once. */
-  let disposed = false
   const spawner = options.spawn ?? undefined
 
   const tempPathOf = (id: string, ext: string): string =>
@@ -311,7 +302,6 @@ export function createArchiveTasks(options: ArchiveTaskOptions = {}): ArchiveTas
       return tasks.size
     },
     dispose() {
-      disposed = true
       for (const child of children.values()) {
         try {
           child.kill()
@@ -320,8 +310,6 @@ export function createArchiveTasks(options: ArchiveTaskOptions = {}): ArchiveTas
         }
       }
       children.clear()
-      for (const handle of handles.values()) void handle.close().catch(() => undefined)
-      handles.clear()
       for (const task of tasks.values()) {
         if (task.file !== undefined) void rm(task.file.path, { force: true }).catch(() => {})
       }
@@ -352,17 +340,8 @@ export function createArchiveTasks(options: ArchiveTaskOptions = {}): ArchiveTas
     let handle: Awaited<ReturnType<typeof open>> | undefined
     try {
       handle = await open(tempPath, 'w')
-      // `start` returns before this open resolves, so a teardown that lands in
-      // between must not leave the descriptor to the GC finalizer.
-      if (disposed) {
-        await handle.close().catch(() => undefined)
-        await rm(tempPath, { force: true }).catch(() => undefined)
-        return
-      }
-      handles.set(id, handle)
       const result = await runArchiveTool(plan, handle.fd, spawner, child => { children.set(id, child) })
       await handle.close()
-      handles.delete(id)
       handle = undefined
       if (result.code !== 0) {
         settle(result.stderr === '' ? `${plan.spec.bin} exited with code ${result.code}` : result.stderr)
@@ -381,7 +360,6 @@ export function createArchiveTasks(options: ArchiveTaskOptions = {}): ArchiveTas
       // A tool that cannot be started at all, or a disk that refuses the temp
       // file. Either way the task must not stay `building` forever.
       await handle?.close().catch(() => {})
-      handles.delete(id)
       task.bytes = await stat(tempPath).then(info => info.size).catch(() => 0)
       settle(error instanceof Error ? error.message : String(error))
       await rm(tempPath, { force: true }).catch(() => {})

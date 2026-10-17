@@ -42,6 +42,7 @@ import {
   type ClueCaller,
   type ClueCandidate,
   type ClueEditDocument,
+  type ClueErrorCategory,
   type ClueListResult,
   type ClueLocatorContext,
   type ClueOperationContext,
@@ -85,6 +86,13 @@ export interface ClueResolveInput {
   readonly text?: string
   readonly locator?: Locator
   readonly typeId?: string
+  /**
+   * True when the caller named THIS source. Auto resolution gives every source
+   * the same input, so a source that does not recognize a foreign locator
+   * should answer "no candidate"; an explicit call may report the malformed
+   * locator instead of returning an empty list.
+   */
+  readonly explicit?: boolean
 }
 
 /** What a source's `list`/`search` receives. */
@@ -262,6 +270,23 @@ const MAX_PAGE_LIMIT = 500
 const MAX_PACK_NAME = 200
 /** Maximum number of pack members accepted in one create call. */
 const MAX_PACK_MEMBERS = 10_000
+
+/**
+ * Failures that mean a source does not own the input rather than "the
+ * resource failed": auto resolution (no explicit `sourceId`) keeps asking the
+ * later sources. A missing source dependency is the same kind of miss for the
+ * caller — the resource may well belong to another source.
+ *
+ * Everything else (auth-required, permission-denied, rate-limited, failed,
+ * timeout, cancelled, conflict) is about a recognized resource, so it
+ * propagates instead of silently producing "no candidates".
+ */
+const AUTO_RESOLVE_MISS_CATEGORIES: ReadonlySet<ClueErrorCategory> = new Set([
+  'not-found',
+  'unsupported',
+  'dependency-missing',
+  'dependency-incompatible',
+])
 
 /** Whether a thrown value looks like an aborted operation. */
 function isAbortError(error: unknown): boolean {
@@ -680,12 +705,13 @@ export function createCluesService(options: CluesServiceOptions = {}): CluesServ
       const workspaceId = requireWorkspaceId(params.workspaceId)
       const context = contextOf(workspaceId, call)
       let candidates: ClueCandidate[] = []
-      const requested = params.sourceId === undefined
+      const explicitSourceId = params.sourceId
+      const requested = explicitSourceId === undefined
         ? orderedSources()
-        : [sourceFor(params.sourceId)]
+        : [sourceFor(explicitSourceId)]
       for (const source of requested) {
         if (source.descriptor.capabilities.resolve !== true || source.operations?.resolve === undefined) {
-          if (params.sourceId !== undefined) {
+          if (explicitSourceId !== undefined) {
             throw new ClueError('unsupported', `clue source "${source.descriptor.sourceId}" cannot resolve references`)
           }
           continue
@@ -694,8 +720,27 @@ export function createCluesService(options: CluesServiceOptions = {}): CluesServ
           ...(params.text === undefined ? {} : { text: params.text }),
           ...(params.locator === undefined ? {} : { locator: params.locator }),
           ...(params.typeId === undefined ? {} : { typeId: params.typeId }),
+          ...(explicitSourceId === undefined ? {} : { explicit: true }),
         }
-        const raw = await callSource(source, context, async () => source.operations!.resolve!(input, context))
+        let raw: ClueCandidate | readonly ClueCandidate[] | undefined
+        try {
+          raw = await callSource(source, context, async () => source.operations!.resolve!(input, context))
+        } catch (error) {
+          // Auto resolution asks the sources in order. A source that does not
+          // own the input (a URL is not a local path, a path is not a pulled
+          // issue, an unavailable transport) must not stop the later sources
+          // from answering — otherwise the order-0 builtin poisons every
+          // remote URL/issue reference. An explicit sourceId still reports its
+          // own failure, and auth/permission failures always propagate.
+          if (
+            explicitSourceId === undefined
+            && isClueError(error)
+            && AUTO_RESOLVE_MISS_CATEGORIES.has(error.category)
+          ) {
+            continue
+          }
+          throw error
+        }
         const list = raw === undefined ? [] : Array.isArray(raw) ? raw : [raw]
         candidates = list.map(candidate => normalizeCandidate(candidate, {
           source,
@@ -703,6 +748,10 @@ export function createCluesService(options: CluesServiceOptions = {}): CluesServ
         }, context, undefined))
         if (candidates.length > 0) break
       }
+      // No source owned the input: an empty candidate list is the "not found
+      // anywhere" answer of auto resolution (the caller passed no source to
+      // blame). An explicit-source call propagates its failures above; it can
+      // only get here when the source genuinely returned no candidate.
       const state = await stateOrEmpty(workspaceId)
       const seen = new Set<string>()
       const normalized: ClueCandidate[] = []

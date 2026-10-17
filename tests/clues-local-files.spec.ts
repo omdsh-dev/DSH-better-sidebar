@@ -14,10 +14,14 @@
  * - portable locators exist only for workspace-relative references.
  */
 import { afterEach, describe, expect, it } from 'vitest'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join, posix, win32 } from 'node:path'
-import { createCluesService, type CluesService } from '../src/clues/service.ts'
+import {
+  createCluesService,
+  type CluesService,
+  type ClueSourceRegistration,
+} from '../src/clues/service.ts'
 import { CluesStore } from '../src/clues/store.ts'
 import {
   createLocalFileSource,
@@ -32,7 +36,7 @@ import {
   type Locator,
 } from '../src/clues/types.ts'
 import { encodeText, fileFormatOf, restoreEol } from '../src/text-encoding.ts'
-import { PAGE_BYTES } from '../src/editor-limits.ts'
+import { MAX_EDITABLE_BYTES, PAGE_BYTES } from '../src/editor-limits.ts'
 import { removeTree } from './temp-tree.ts'
 
 const roots: string[] = []
@@ -43,6 +47,12 @@ afterEach(() => {
 
 const NOW = '2026-10-17T00:00:00.000Z'
 const WORKSPACE_ID = 'ws-1'
+
+/**
+ * Whether a chmod-based permission case can be exercised: Windows ignores the
+ * mode bits, and root bypasses them on POSIX.
+ */
+const CAN_LOCK_PERMISSIONS = process.platform !== 'win32' && (process.getuid?.() ?? 1) !== 0
 
 /**
  * The host platform's own dialect. Workspace locators produced by the host are
@@ -479,6 +489,53 @@ describe('builtin.files edits', () => {
     expect(readFileSync(join(workspace, 'a.txt'), 'utf8')).toBe('a\n')
   })
 
+  it('refuses a save whose ENCODED document exceeds the editable limit', async () => {
+    const { workspace, service } = fixture()
+    const path = join(workspace, 'small.txt')
+    writeFileSync(path, 'original\n')
+    const clueId = await ensureFile(service, 'small.txt')
+    const edit = await service.loadEdit({ workspaceId: WORKSPACE_ID, clueId })
+
+    // The transport deliberately accepts a 5 MiB-class JSON save body; the
+    // source must still refuse a document it could write but could not load
+    // back (the old hole: a 6 MiB save succeeded, then loadEdit said
+    // "too-large").
+    await expect(service.saveEdit({
+      workspaceId: WORKSPACE_ID,
+      clueId,
+      document: {
+        format: 'text/plain',
+        data: { text: 'x'.repeat(MAX_EDITABLE_BYTES + 1) },
+        baseRevision: edit.baseRevision,
+      },
+    })).rejects.toMatchObject({ category: 'unsupported' })
+
+    // Nothing was written and the file is still editable at its old baseline.
+    expect(readFileSync(path, 'utf8')).toBe('original\n')
+    expect((await service.loadEdit({ workspaceId: WORKSPACE_ID, clueId })).data)
+      .toEqual({ text: 'original\n' })
+  })
+
+  it('counts the encoded bytes (not UTF-16 code units) against the limit', async () => {
+    const { workspace, service } = fixture()
+    const path = join(workspace, 'wide.txt')
+    // A UTF-16 file's on-disk size is what loadEdit measures. 2.7 M chars of
+    // ASCII would fit as UTF-8 but not as UTF-16, so the save must refuse it.
+    writeFileSync(path, encodeText('seed\n', 'utf16le-bom'))
+    const clueId = await ensureFile(service, 'wide.txt')
+    const edit = await service.loadEdit({ workspaceId: WORKSPACE_ID, clueId })
+    await expect(service.saveEdit({
+      workspaceId: WORKSPACE_ID,
+      clueId,
+      document: {
+        format: 'text/plain',
+        data: { text: 'x'.repeat(Math.floor(MAX_EDITABLE_BYTES / 2) + 1) },
+        baseRevision: edit.baseRevision,
+      },
+    })).rejects.toMatchObject({ category: 'unsupported' })
+    expect(await fileFormatOf(path)).toEqual({ encoding: 'utf16le-bom', eol: 'lf' })
+  })
+
   it('keeps binary resources read-only', async () => {
     const { workspace, service } = fixture()
     writeFileSync(join(workspace, 'image.png'), Buffer.from([0, 1, 2, 3]))
@@ -490,6 +547,54 @@ describe('builtin.files edits', () => {
       clueId,
       document: { format: 'application/octet-stream', data: { text: 'x' }, baseRevision: 'r' },
     })).rejects.toMatchObject({ category: 'unsupported' })
+  })
+})
+
+describe('builtin.files permission failures', () => {
+  it.skipIf(!CAN_LOCK_PERMISSIONS)('maps unreadable files and directories to permission-denied', async () => {
+    const { workspace, service } = fixture()
+    const file = join(workspace, 'locked.txt')
+    const dir = join(workspace, 'locked-dir')
+    writeFileSync(file, 'locked\n')
+    mkdirSync(dir)
+    writeFileSync(join(dir, 'inside.txt'), 'inside\n')
+    const clueId = await ensureFile(service, 'locked.txt')
+    const edit = await service.loadEdit({ workspaceId: WORKSPACE_ID, clueId })
+
+    chmodSync(file, 0o000)
+    chmodSync(dir, 0o000)
+    try {
+      // read / loadEdit / save: the shared helpers wrap EACCES as fs-error, so
+      // the source preflights access instead of degrading to `failed`.
+      await expect(service.read({ workspaceId: WORKSPACE_ID, clueId }))
+        .rejects.toMatchObject({ category: 'permission-denied' })
+      await expect(service.loadEdit({ workspaceId: WORKSPACE_ID, clueId }))
+        .rejects.toMatchObject({ category: 'permission-denied' })
+      await expect(service.saveEdit({
+        workspaceId: WORKSPACE_ID,
+        clueId,
+        document: { format: 'text/plain', data: { text: 'draft\n' }, baseRevision: edit.baseRevision },
+      })).rejects.toMatchObject({ category: 'permission-denied' })
+      // list / search: an unreadable scope must report, never answer an empty
+      // page that looks like "the directory holds nothing".
+      await expect(service.list({
+        workspaceId: WORKSPACE_ID,
+        sourceId: 'builtin.files',
+        scope: 'locked-dir',
+      })).rejects.toMatchObject({ category: 'permission-denied' })
+      await expect(service.search({
+        workspaceId: WORKSPACE_ID,
+        sourceId: 'builtin.files',
+        scope: 'locked-dir',
+        query: 'inside',
+      })).rejects.toMatchObject({ category: 'permission-denied' })
+      // resolve stats through the locked directory too.
+      await expect(service.resolve({ workspaceId: WORKSPACE_ID, text: 'locked-dir/inside.txt' }))
+        .rejects.toMatchObject({ category: 'permission-denied' })
+    } finally {
+      chmodSync(file, 0o600)
+      chmodSync(dir, 0o700)
+    }
   })
 })
 
@@ -527,6 +632,77 @@ describe('builtin.files resolve / portable / dialects', () => {
       portable: false,
       reason: expect.any(String),
     })
+  })
+
+  it('auto-resolve reaches a later remote source instead of treating its input as a local path', async () => {
+    const { workspace, service } = fixture()
+    writeFileSync(join(workspace, 'a.md'), '# a\n')
+    const remote: ClueSourceRegistration = {
+      descriptor: {
+        sourceId: 'test.remote',
+        name: 'Remote docs',
+        order: 20,
+        pluginId: 'test-plugin',
+        types: ['test.remote.page'],
+        transport: 'http',
+        capabilities: { resolve: true, list: false, search: false, read: false, edit: false, portable: false },
+      },
+      types: [{
+        typeId: 'test.remote.page',
+        sourceId: 'test.remote',
+        formats: ['text/plain'],
+        capabilities: { read: false, edit: false },
+      }],
+      operations: {
+        async resolve(input) {
+          // Only URLs belong to this source. Everything else is a miss.
+          if (typeof input.text !== 'string' || !input.text.startsWith('https://')) return undefined
+          return {
+            sourceId: 'test.remote',
+            typeId: 'test.remote.page',
+            locator: { url: input.text },
+            title: 'Remote doc',
+          }
+        },
+      },
+    }
+    service.registerSource(remote)
+
+    // `builtin.files` is registered with order 0, so before the fix it tried
+    // to stat `<workspace>/https:/example.com/doc` and threw not-found before
+    // the remote source was ever asked.
+    const url = await service.resolve({ workspaceId: WORKSPACE_ID, text: 'https://example.com/doc' })
+    expect(url).toHaveLength(1)
+    expect(url[0]).toMatchObject({
+      sourceId: 'test.remote',
+      locator: { url: 'https://example.com/doc' },
+    })
+
+    // A path-shaped miss (no such local file) must not poison other sources
+    // either: the local source reports not-found, auto resolution continues.
+    const missing = await service.resolve({ workspaceId: WORKSPACE_ID, text: 'issue/owner/repo#1' })
+    expect(missing).toEqual([])
+
+    // A foreign locator is "not mine" in auto mode (no error, no candidate).
+    expect(await service.resolve({
+      workspaceId: WORKSPACE_ID,
+      locator: { url: 'https://example.com/doc' },
+    })).toEqual([])
+  })
+
+  it('explicit builtin.files resolve still reports a missing path as not-found', async () => {
+    const { service } = fixture()
+    await expect(service.resolve({
+      workspaceId: WORKSPACE_ID,
+      sourceId: 'builtin.files',
+      text: 'missing.md',
+    })).rejects.toMatchObject({ category: 'not-found' })
+    // Explicit mode also keeps reporting a locator that is not local-shaped.
+    await expect(service.resolve({
+      workspaceId: WORKSPACE_ID,
+      sourceId: 'builtin.files',
+      locator: { url: 'https://example.com/doc' },
+    })).rejects.toMatchObject({ category: 'failed' })
   })
 
   it('deduplicates ensure across normalized spellings of the same workspace file', async () => {

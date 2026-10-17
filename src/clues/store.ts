@@ -11,6 +11,9 @@
  * workspaces/<encoded workspaceId>/snapshots/<snapshotId>.content.json
  * ```
  *
+ * The workspace component is percent-encoded with `%2E` standing in for every
+ * dot, so no id (including `.`/`..`) can address the workspaces root itself.
+ *
  * Guarantees this module owns:
  * - **atomic writes** — a uniquely named temp sibling is renamed into place, so
  *   a crash never leaves a truncated state document;
@@ -27,7 +30,7 @@
  */
 import { randomUUID } from 'node:crypto'
 import { access, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { dirname, isAbsolute, join, relative, sep } from 'node:path'
 import {
   ClueError,
   type Clue,
@@ -88,11 +91,29 @@ function cloneJson<T>(value: T): T {
 
 /**
  * The directory owning one workspace's library.
+ *
+ * The id is percent-encoded, but `encodeURIComponent` leaves dots untouched:
+ * the ids `..` and `.` would then name the workspaces root (or its parent)
+ * instead of a child directory, and two workspaces could end up sharing one
+ * state file. Escaping every dot before joining, plus the containment check
+ * below, keeps each id in exactly one directory under `workspaces/`.
  * @param root - plugin user-data directory.
  * @param workspaceId - host-stable workspace id.
  */
 export function workspaceStoreDir(root: string, workspaceId: string): string {
-  return join(root, WORKSPACES_DIR, encodeURIComponent(workspaceId))
+  const workspacesRoot = join(root, WORKSPACES_DIR)
+  const component = encodeURIComponent(workspaceId).replaceAll('.', '%2E')
+  const dir = join(workspacesRoot, component)
+  const relativePath = relative(workspacesRoot, dir)
+  if (
+    relativePath === ''
+    || isAbsolute(relativePath)
+    || relativePath === '..'
+    || relativePath.startsWith(`..${sep}`)
+  ) {
+    throw new ClueError('failed', `the workspace id "${workspaceId}" is not a valid clue storage name`)
+  }
+  return dir
 }
 
 /** The state document path of one workspace (exposed for diagnostics/tests). */
@@ -133,6 +154,11 @@ function parseClueRow(raw: unknown, workspaceId: string, index: number): Clue {
   ) {
     corrupt(workspaceId, `clues[${index}] is not a valid clue row`)
   }
+  // Shape alone is not ownership: a copied/corrupt state file could carry a
+  // row from another workspace, and reading it here would mix two libraries.
+  if (raw.workspaceId !== workspaceId) {
+    corrupt(workspaceId, `clues[${index}] belongs to workspace "${String(raw.workspaceId)}"`)
+  }
   return raw as unknown as Clue
 }
 
@@ -153,6 +179,9 @@ function parsePackRow(raw: unknown, workspaceId: string, index: number): CluePac
   ) {
     corrupt(workspaceId, `packs[${index}] is not a valid pack row`)
   }
+  if (raw.workspaceId !== workspaceId) {
+    corrupt(workspaceId, `packs[${index}] belongs to workspace "${String(raw.workspaceId)}"`)
+  }
   return raw as unknown as CluePack
 }
 
@@ -165,6 +194,9 @@ function parsePinRow(raw: unknown, workspaceId: string, index: number): CluePin 
     || typeof raw.createdAt !== 'string'
   ) {
     corrupt(workspaceId, `pins[${index}] is not a valid pin row`)
+  }
+  if (raw.workspaceId !== workspaceId) {
+    corrupt(workspaceId, `pins[${index}] belongs to workspace "${String(raw.workspaceId)}"`)
   }
   return raw as unknown as CluePin
 }
@@ -184,7 +216,23 @@ function parseBindingRow(raw: unknown, workspaceId: string, index: number): Clue
   ) {
     corrupt(workspaceId, `bindings[${index}] is not a valid binding row`)
   }
+  if (raw.workspaceId !== workspaceId) {
+    corrupt(workspaceId, `bindings[${index}] belongs to workspace "${String(raw.workspaceId)}"`)
+  }
   return raw as unknown as ClueBinding
+}
+
+/**
+ * Reject a repeated stable id inside one state collection. Ids are the
+ * library's durable identity: a duplicated row makes "find by id" ambiguous
+ * and silently hides one of the two records, so the document is corrupt.
+ */
+function requireUniqueIds(rows: readonly { readonly id: string }[], key: string, workspaceId: string): void {
+  const seen = new Set<string>()
+  for (const row of rows) {
+    if (seen.has(row.id)) corrupt(workspaceId, `${key} contains duplicate id "${row.id}"`)
+    seen.add(row.id)
+  }
 }
 
 /** Parse one stored state document, rejecting malformed shapes loudly. */
@@ -219,7 +267,7 @@ function parseState(text: string, workspaceId: string): WorkspaceState {
     pins: unknown[]
     bindings: unknown[]
   }
-  return {
+  const state: WorkspaceState = {
     revision: document.revision,
     // Deep validation: a `clues: [null]` document used to surface later as a
     // raw TypeError (or as a corrupt row in every consumer). The module's
@@ -229,6 +277,9 @@ function parseState(text: string, workspaceId: string): WorkspaceState {
     pins: document.pins.map((row, index) => parsePinRow(row, workspaceId, index)),
     bindings: document.bindings.map((row, index) => parseBindingRow(row, workspaceId, index)),
   }
+  requireUniqueIds(state.clues, 'clues', workspaceId)
+  requireUniqueIds(state.packs, 'packs', workspaceId)
+  return state
 }
 
 /** Whether a path exists (either half of a snapshot is enough to refuse). */
@@ -426,6 +477,12 @@ export class CluesStore {
    * Snapshot ids are caller-visible stable identities: an existing id is
    * refused with `conflict` rather than silently overwriting the earlier
    * import's content/metadata.
+   *
+   * The existence check and both writes run inside the SAME per-workspace
+   * writer queue: two concurrent puts of one id are serialized (otherwise both
+   * could pass the check and the later one would silently win), and a failed
+   * metadata write removes the content that was already committed, so the id
+   * does not become permanently un-retryable.
    */
   async putSnapshot(
     workspaceId: string,
@@ -436,15 +493,26 @@ export class CluesStore {
     if (meta.workspaceId !== workspaceId) {
       throw new ClueError('failed', 'clue snapshot meta belongs to another workspace')
     }
-    const dir = workspaceSnapshotDir(this.rootOrThrow(), workspaceId)
-    const contentPath = join(dir, `${encodeURIComponent(meta.snapshotId)}${CONTENT_SUFFIX}`)
-    const metaPath = join(dir, `${encodeURIComponent(meta.snapshotId)}${META_SUFFIX}`)
-    if (await fileExists(metaPath) || await fileExists(contentPath)) {
-      throw new ClueError('conflict', `clue snapshot "${meta.snapshotId}" already exists`)
-    }
-    await writeJsonAtomic(contentPath, content)
-    await writeJsonAtomic(metaPath, meta)
-    return cloneJson(meta)
+    return this.enqueue(workspaceId, async () => {
+      const dir = workspaceSnapshotDir(this.rootOrThrow(), workspaceId)
+      const contentPath = join(dir, `${encodeURIComponent(meta.snapshotId)}${CONTENT_SUFFIX}`)
+      const metaPath = join(dir, `${encodeURIComponent(meta.snapshotId)}${META_SUFFIX}`)
+      if (await fileExists(metaPath) || await fileExists(contentPath)) {
+        throw new ClueError('conflict', `clue snapshot "${meta.snapshotId}" already exists`)
+      }
+      let contentWritten = false
+      try {
+        await writeJsonAtomic(contentPath, content)
+        contentWritten = true
+        await writeJsonAtomic(metaPath, meta)
+      } catch (error) {
+        // The pair is one unit: a metadata failure must not leave orphan
+        // content that makes this id conflict forever on retry.
+        if (contentWritten) await rm(contentPath, { force: true }).catch(() => undefined)
+        throw error
+      }
+      return cloneJson(meta)
+    })
   }
 
   /** Run one task after every previously queued task of the same workspace. */

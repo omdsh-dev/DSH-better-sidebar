@@ -14,7 +14,7 @@
  * cases below inject fake engines so no machine binary is required.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join, resolve as resolvePath } from 'node:path'
 import { compileExcludePatterns } from '../src/exclude-patterns.ts'
@@ -56,6 +56,9 @@ const canBackslashName = (() => {
     removeTree(dir)
   }
 })()
+
+/** chmod-based permission probes: Windows ignores mode bits; root bypasses them. */
+const canLockPermissions = process.platform !== 'win32' && (process.getuid?.() ?? 1) !== 0
 
 /** A scratch tree: nested matches, a .git dir, and unrelated noise. */
 function makeFixture(): string {
@@ -334,6 +337,21 @@ describe('fs-search', () => {
       const missing = join(dir, 'does-not-exist')
       expect(await searchFilesPlain(missing, 'x')).toEqual({ matches: [], dirs: [], truncated: false })
     } finally {
+      removeTree(dir)
+    }
+  })
+
+  it.skipIf(!canLockPermissions)('reports a permission-denied ROOT instead of an empty result', async () => {
+    const dir = makeFixture()
+    chmodSync(dir, 0o000)
+    try {
+      // The walk cannot even open its root: that is a failed search, not a
+      // directory with no matches. The errno stays reachable as the cause.
+      const failure = await searchFilesPlain(dir, 'readme').catch((error: unknown) => error)
+      expect(failure).toMatchObject({ code: 'fs-error' })
+      expect(['EACCES', 'EPERM']).toContain((failure as { cause?: { code?: string } }).cause?.code)
+    } finally {
+      chmodSync(dir, 0o700)
       removeTree(dir)
     }
   })

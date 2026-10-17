@@ -9,9 +9,9 @@
  * reference).
  */
 import { afterEach, describe, expect, it } from 'vitest'
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { ClueError, type ClueSnapshotContent, type ClueSnapshotMeta } from '../src/clues/types.ts'
 import {
   CluesStore,
@@ -162,6 +162,96 @@ describe('clue store', () => {
       .rejects.toMatchObject({ category: 'failed', message: expect.stringContaining('bindings[0]') })
   })
 
+  it('keeps dot-only workspace ids inside workspaces/ instead of climbing out', async () => {
+    const dir = root()
+    const store = new CluesStore({ root: dir })
+    for (const workspaceId of ['..', '.']) {
+      const storeDir = workspaceStoreDir(dir, workspaceId)
+      // One ordinary child directory; never the workspaces root or its parent.
+      expect(dirname(storeDir)).toBe(join(dir, 'workspaces'))
+      await store.transact(workspaceId, undefined, (state) => {
+        state.clues.push(sampleClue(`clue-${workspaceId === '..' ? 'dots' : 'dot'}`, workspaceId))
+      })
+      const state = await store.read(workspaceId)
+      expect(state.clues[0]?.workspaceId).toBe(workspaceId)
+    }
+    // The traversal used to create <root>/state.json (the clues root).
+    expect(existsSync(join(dir, 'state.json'))).toBe(false)
+    expect(readdirSync(join(dir, 'workspaces')).sort()).toEqual(['%2E', '%2E%2E'])
+  })
+
+  it('rejects state rows owned by another workspace', async () => {
+    const dir = root()
+    const workspaceId = 'ws-owner'
+    const path = workspaceStatePath(dir, workspaceId)
+    mkdirSync(workspaceStoreDir(dir, workspaceId), { recursive: true })
+    const valid = { revision: 1, clues: [], packs: [], pins: [], bindings: [] }
+    const pack = {
+      id: 'pack-1',
+      name: 'P',
+      workspaceId: 'ws-other',
+      members: [],
+      revision: 0,
+      createdAt: '2026-10-17T00:00:00.000Z',
+      updatedAt: '2026-10-17T00:00:00.000Z',
+    }
+
+    writeFileSync(path, JSON.stringify({ ...valid, clues: [sampleClue('clue-1', 'ws-other')] }), 'utf8')
+    await expect(new CluesStore({ root: dir }).read(workspaceId)).rejects.toMatchObject({
+      category: 'failed',
+      message: expect.stringContaining('belongs to workspace "ws-other"'),
+    })
+
+    writeFileSync(path, JSON.stringify({ ...valid, packs: [pack] }), 'utf8')
+    await expect(new CluesStore({ root: dir }).read(workspaceId))
+      .rejects.toMatchObject({ category: 'failed', message: expect.stringContaining('packs[0]') })
+
+    writeFileSync(path, JSON.stringify({
+      ...valid,
+      pins: [{ workspaceId: 'ws-other', clueId: 'clue-1', createdAt: '2026-10-17T00:00:00.000Z' }],
+    }), 'utf8')
+    await expect(new CluesStore({ root: dir }).read(workspaceId))
+      .rejects.toMatchObject({ category: 'failed', message: expect.stringContaining('pins[0]') })
+
+    writeFileSync(path, JSON.stringify({
+      ...valid,
+      bindings: [{ workspaceId: 'ws-other', target: { kind: 'clue', clueId: 'clue-1' }, createdAt: '2026-10-17T00:00:00.000Z' }],
+    }), 'utf8')
+    await expect(new CluesStore({ root: dir }).read(workspaceId))
+      .rejects.toMatchObject({ category: 'failed', message: expect.stringContaining('bindings[0]') })
+  })
+
+  it('rejects duplicate stable ids in one state document', async () => {
+    const dir = root()
+    const workspaceId = 'ws-dupes'
+    const path = workspaceStatePath(dir, workspaceId)
+    mkdirSync(workspaceStoreDir(dir, workspaceId), { recursive: true })
+    const valid = { revision: 1, clues: [], packs: [], pins: [], bindings: [] }
+    writeFileSync(path, JSON.stringify({
+      ...valid,
+      clues: [sampleClue('same', workspaceId), sampleClue('same', workspaceId)],
+    }), 'utf8')
+    await expect(new CluesStore({ root: dir }).read(workspaceId)).rejects.toMatchObject({
+      category: 'failed',
+      message: expect.stringContaining('duplicate id "same"'),
+    })
+
+    const pack = {
+      id: 'same-pack',
+      name: 'P',
+      workspaceId,
+      members: [],
+      revision: 0,
+      createdAt: '2026-10-17T00:00:00.000Z',
+      updatedAt: '2026-10-17T00:00:00.000Z',
+    }
+    writeFileSync(path, JSON.stringify({ ...valid, packs: [pack, pack] }), 'utf8')
+    await expect(new CluesStore({ root: dir }).read(workspaceId)).rejects.toMatchObject({
+      category: 'failed',
+      message: expect.stringContaining('duplicate id "same-pack"'),
+    })
+  })
+
   it('writes atomically: no temp siblings survive a commit', async () => {
     const dir = root()
     const store = new CluesStore({ root: dir })
@@ -239,5 +329,56 @@ describe('clue store', () => {
       .rejects.toMatchObject({ category: 'conflict' })
     // The committed snapshot is untouched.
     expect((await store.readSnapshotContent('ws-1', 'snap-stable')).data).toEqual({ text: 'first' })
+  })
+
+  it('serializes concurrent snapshot puts so exactly one duplicate can win', async () => {
+    const dir = root()
+    const store = new CluesStore({ root: dir })
+    const meta: ClueSnapshotMeta = {
+      snapshotId: 'snap-race',
+      workspaceId: 'ws-1',
+      clueId: 'clue-1',
+      format: 'text/markdown',
+      fetchedAt: '2026-10-17T00:00:00.000Z',
+      createdAt: '2026-10-17T00:00:01.000Z',
+      integrity: 'verified',
+    }
+    const results = await Promise.allSettled([
+      store.putSnapshot('ws-1', meta, { format: 'text/markdown', data: { text: 'first' } }),
+      store.putSnapshot('ws-1', meta, { format: 'text/markdown', data: { text: 'second' } }),
+    ])
+    expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(1)
+    const rejected = results.find(result => result.status === 'rejected')
+    expect(rejected && rejected.status === 'rejected' ? (rejected.reason as ClueError).category : undefined)
+      .toBe('conflict')
+    // The surviving pair is complete and belongs to the one that won.
+    expect((await store.readSnapshotMeta('ws-1', 'snap-race')).snapshotId).toBe('snap-race')
+    expect([{ text: 'first' }, { text: 'second' }])
+      .toContainEqual((await store.readSnapshotContent('ws-1', 'snap-race')).data)
+  })
+
+  it('removes partial content when the metadata half fails, so the id can be retried', async () => {
+    const dir = root()
+    const store = new CluesStore({ root: dir })
+    const meta: ClueSnapshotMeta = {
+      snapshotId: 'snap-retry',
+      workspaceId: 'ws-1',
+      clueId: 'clue-1',
+      format: 'text/markdown',
+      fetchedAt: '2026-10-17T00:00:00.000Z',
+      createdAt: '2026-10-17T00:00:01.000Z',
+    }
+    const content = { format: 'text/markdown', data: { text: 'first' } }
+    // A value JSON.stringify rejects makes only the METADATA write fail, after
+    // the content file has already been committed.
+    const badMeta = { ...meta, sourceVersion: 1n as unknown as string }
+    await expect(store.putSnapshot('ws-1', badMeta, content))
+      .rejects.toMatchObject({ category: 'failed' })
+    // No orphan content: the duplicate check would otherwise conflict forever.
+    expect(readdirSync(workspaceSnapshotDir(dir, 'ws-1'))).not.toContain('snap-retry.content.json')
+    expect(await store.listSnapshots('ws-1')).toEqual([])
+
+    await store.putSnapshot('ws-1', meta, content)
+    expect((await store.readSnapshotContent('ws-1', 'snap-retry')).data).toEqual({ text: 'first' })
   })
 })

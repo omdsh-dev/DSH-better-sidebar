@@ -48,8 +48,14 @@ export class SidebarError extends Error {
     readonly status = 400,
     /** Optional structured context carried alongside the code. */
     readonly meta?: Record<string, string>,
+    /**
+     * The original failure, when this error wraps one. Clue callers read the
+     * same errno from it (a `permission-denied` must not degrade to `failed`
+     * just because a shared helper wrapped the OS error).
+     */
+    cause?: unknown,
   ) {
-    super(message)
+    super(message, cause === undefined ? undefined : { cause })
   }
 }
 
@@ -66,7 +72,8 @@ const MAX_BODY_BYTES = 1 << 20
  * loadable but unsaveable. JSON string escaping can expand one byte up to six
  * (`\u0000`-style control escapes), so the transport bound covers that worst
  * case plus envelope overhead. This is a sanity guard, NOT a product limit:
- * the source still enforces its own editable size.
+ * the source enforces the editable size on the ENCODED document before it
+ * writes anything.
  */
 export const MAX_CLUE_SAVE_BODY_BYTES = MAX_EDITABLE_BYTES * 6 + (1 << 20)
 

@@ -1033,7 +1033,11 @@ ctx.effect(() => {
 - **分发**：`resolve` / `list` / `search` / `read` / `loadEdit` / `saveEdit` / `portable`。可选操作
   必须在 descriptor / type 的能力位上如实声明，核心在调用前校验（未声明 = `unsupported`）；
   每个操作都拿到归属工作区的 `ClueOperationContext`（`workspaceId`、`workspacePath`、`caller`、
-  `signal`、`sessionId`），它不是访问白名单。
+  `signal`、`sessionId`），它不是访问白名单。`resolve` 未传 `sourceId` 时按来源顺序自动询问：
+  某个来源不认这类输入（`not-found` / `unsupported` / 依赖缺失）不会阻断后面的来源，只有
+  `auth-required` / `permission-denied` 等"已识别但不可用"的失败才直接上抛；显式 `sourceId`
+  时来源自己的失败照常返回。来源实现应对"不属于自己"的文本返回 `undefined`（例如本地来源不把
+  URL 当成路径去 stat），而不是抛一个误导性的 `not-found`。
 - **稳定引用**：来源负责 `normalizeLocator` 与 `locatorKey`；同一资源必须归一到同一个 key，
   `clues.ensure` 才复用同一个线索 id。locator 是 JSON 对象，必须自带解析根（例如内置本地来源的
   `{ root: { kind: 'workspace', workspaceId }, path, dialect }`），不能拿当前 cwd 当解析根。
@@ -1046,8 +1050,10 @@ ctx.effect(() => {
   重置 cursor。内置本地文件来源把 cursor 上界与 `nextCursor` 对齐（不会交回自己会拒绝的值）。
 - **内置 `builtin.files`**：工作区浏览 / 搜索 / 路径解析 / 读 / 编辑（Markdown 与文本类型可编辑，
   二进制只读）。编辑器文档上限沿用 `MAX_EDITABLE_BYTES`（5 MiB），`clues.saveEdit` 的 JSON
-  传输上限按该上限放宽；保存沿用现有编码/EOL 还原与 mtime+size 冲突检测，文件被外部删除同样
-  报 `conflict`。
+  传输上限按该上限放宽；保存按**编码后的实际字节**再校验这个上限（UTF-16/GBK/CRLF 也算在内，
+  不会写出下一次 `loadEdit` 会拒绝的文件），并沿用现有编码/EOL 还原与 mtime+size 冲突检测，
+  文件被外部删除同样报 `conflict`。权限不足（EACCES/EPERM）统一映射为 `permission-denied`，
+  不会退化成 `failed`，搜索也不会把不可读的根目录伪装成空结果。
 - **客户端半**：`ctx.betterSidebar.clues`（`features` 含 `'clues'`）提供来源展示注册
   （`registerSourceDisplay`）、`isSourceEnabled` / `isSourceMentionEnabled` /
   `isPacksMentionEnabled`（缺省为开）与类型化 `clues.*` 调用（`api.list/read/saveEdit/...`）。

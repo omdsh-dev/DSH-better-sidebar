@@ -16,6 +16,10 @@
  * only reachable when both artifacts share one class object. A raw handler
  * error is checked too: it must be normalized (no token in the 500 envelope).
  *
+ * It also proves the host and the clue entry share the host's fs module state:
+ * a file created through the host write route must show up in an immediately
+ * following `clues.list` (a separate fs-tree copy would serve a stale cache).
+ *
  * Invoked by `scripts/check-consumer-types.sh`, which already requires a build.
  */
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
@@ -90,11 +94,10 @@ const ctx = {
   logger: { warn() {}, info() {} },
 }
 
-/** POST one JSON payload through a captured route; return {status, body}. */
-async function post(route, method, payload) {
-  const body = JSON.stringify(payload ?? {})
+/** POST one raw body through a captured route; return {status, body}. */
+async function request(route, url, body) {
   const req = {
-    url: `/sidebar/api/${method}`,
+    url,
     method: 'POST',
     headers: {},
     async *[Symbol.asyncIterator]() {
@@ -126,9 +129,14 @@ async function post(route, method, payload) {
   try {
     parsed = JSON.parse(raw)
   } catch {
-    fail(`${method} answered a non-JSON body: ${raw.slice(0, 200)}`)
+    fail(`${url} answered a non-JSON body: ${raw.slice(0, 200)}`)
   }
   return { status, body: parsed }
+}
+
+/** POST one JSON payload through the `/sidebar/api` dispatcher. */
+async function post(route, method, payload) {
+  return request(route, `/sidebar/api/${method}`, JSON.stringify(payload ?? {}))
 }
 
 try {
@@ -161,7 +169,29 @@ try {
     fail('a raw handler error leaked its message into the 500 envelope')
   }
 
-  console.log(`${label} OK: lib/index.js and lib/clues.js share ONE ClueError (categories survive the wire).`)
+  // Module-state identity: only the ERROR class is externalized. If the whole
+  // clue entry were externalized again, lib/clues.js would carry a SECOND copy
+  // of fs-tree, and a host-side write would not invalidate the directory cache
+  // the clue listing reads (the listing would stay stale for its 1.5 s TTL).
+  const writeRoute = routes.find(candidate => candidate.path === '/sidebar/write')
+  if (writeRoute === undefined) fail('apply() did not register /sidebar/write')
+  const warm = await post(route, 'clues.list', { workspaceId: 'ws-1', sourceId: 'builtin.files' })
+  if (warm.status !== 200) fail(`clues.list failed before the cache probe: ${warm.status}`)
+  const params = new URLSearchParams({ sessionId: 'probe', path: 'cache-probe.txt', cwd: workspace })
+  const written = await request(writeRoute, `/sidebar/write?${params.toString()}`, 'probe\n')
+  if (written.status !== 200) {
+    fail(`the host write route failed during the cache probe: ${written.status} ${JSON.stringify(written.body)}`)
+  }
+  const listed = await post(route, 'clues.list', { workspaceId: 'ws-1', sourceId: 'builtin.files' })
+  const items = Array.isArray(listed.body?.value?.items) ? listed.body.value.items : []
+  if (!items.some(item => item.title === 'cache-probe.txt')) {
+    fail(
+      'a host-side write did not invalidate the fs-tree cache the clue list reads '
+      + '(lib/index.js and lib/clues.js do not share module state)',
+    )
+  }
+
+  console.log(`${label} OK: lib/index.js and lib/clues.js share ONE ClueError (categories survive the wire) and the host fs caches.`)
 } finally {
   for (const cleanup of effects.reverse()) {
     try {

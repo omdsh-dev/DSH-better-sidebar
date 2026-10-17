@@ -52,6 +52,7 @@ import type { ExcludeTest } from './exclude-patterns.ts'
 import { resolveTarget } from './path-security.ts'
 import { SKIP_DIR_NAMES, runEngine, usableEngines } from './search-engines.ts'
 import { debugLog } from './search-debug.ts'
+import { SidebarError } from './wire.ts'
 
 /** One search: the paths of the matching entries (root-relative,
  * '/'-separated for tree searches; a direct-path query yields the RESOLVED
@@ -174,8 +175,12 @@ function isDirectPathQuery(query: string): boolean {
  * @param opts - budget overrides (tests).
  * @returns the matching paths RELATIVE to `root` ('/'-separated), sorted,
  *  plus which of them are directories and whether a budget cut the walk
- *  short. An unreadable level is skipped (permission errors never fail the
- *  whole search).
+ *  short. An unreadable SUBDIRECTORY is skipped (a partial search is still
+ *  useful), but a PERMISSION failure on the root itself fails as `fs-error`:
+ *  answering "no matches" for a directory the host user cannot open hides a
+ *  permission problem behind a legitimate-looking empty result. A missing
+ *  root keeps answering an empty result (callers that need `not-found` stat
+ *  it first).
  */
 export async function searchFilesPlain(root: string, query: string, opts: FsSearchOptions = {}): Promise<FsSearchResult> {
   const needle = query.trim().toLowerCase()
@@ -194,7 +199,24 @@ export async function searchFilesPlain(root: string, query: string, opts: FsSear
 
   const walk = async (dir: string, relDir: string): Promise<void> => {
     if (truncated) return
-    const level = await opendir(dir).catch(() => undefined)
+    const level = await opendir(dir).catch((error: unknown) => {
+      // A subdirectory that cannot be opened is skipped; a PERMISSION-denied
+      // ROOT cannot be (see the contract above). Keep the OS error as the
+      // cause so callers can map EACCES/EPERM to their own category. A missing
+      // root stays the historical empty result (fs.read/search callers that
+      // need `not-found` stat the scope first).
+      const code = (error as { code?: unknown } | null)?.code
+      if (dir === root && (code === 'EACCES' || code === 'EPERM')) {
+        throw new SidebarError(
+          'fs-error',
+          `cannot search "${root}": ${error instanceof Error ? error.message : String(error)}`,
+          400,
+          undefined,
+          error,
+        )
+      }
+      return undefined
+    })
     if (level === undefined) return
     for await (const dirent of level) {
       visited += 1
