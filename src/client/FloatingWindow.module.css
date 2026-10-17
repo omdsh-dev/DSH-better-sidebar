@@ -1,7 +1,7 @@
 /**
  * Chrome of the plugin's persistent floating window (FloatingWindow.tsx):
- * a fixed, portaled card with a drag handle title bar, a scrolling body, an
- * optional footer and three resize strips.
+ * a fixed, portaled card with a drag handle title bar, a toolbar row, a
+ * scrolling body, an optional footer and three resize strips.
  *
  * Tokens only (`--dsw-alias-*` / `--dsw-font-*`): the frame wears the same
  * 1px `border-l2` edge and 8px radius as the Tasks page's node cards, and the
@@ -25,13 +25,19 @@
   box-sizing: border-box;
 }
 
-/* The drag handle. It is exactly one control tall, so the close button and the
-   title sit on one optical line whatever the header's actions are. */
+/* A maximized window owns the viewport: square edges, no floating shadow. */
+.window[data-window-maximized='true'] {
+  border-radius: 0;
+  box-shadow: none;
+}
+
+/* The drag handle. It is exactly one control tall, so the window controls and
+   the title sit on one optical line whatever the toolbar contains. */
 .titleBar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: 6px;
   flex: none;
   min-height: 34px;
   padding: 0 6px 0 12px;
@@ -45,7 +51,17 @@
   cursor: grabbing;
 }
 
+/* The navigation (back) seat sits before the identity, outside the title's
+   ellipsis region so a long title never covers it. */
+.titleLeading {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  margin-left: -6px;
+}
+
 .title {
+  flex: 1;
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
@@ -55,6 +71,22 @@
   color: var(--dsw-alias-label-secondary);
 }
 
+/* The dirty marker is a dot, not a growing label: the title keeps its room. */
+.dirty {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--dsw-alias-state-warn-primary);
+}
+
+.saving {
+  flex: none;
+  font-size: 10px;
+  color: var(--dsw-alias-label-tertiary);
+  white-space: nowrap;
+}
+
 .titleActions {
   display: inline-flex;
   align-items: center;
@@ -62,8 +94,21 @@
   flex: none;
 }
 
+.windowControl,
 .close {
   flex: none;
+}
+
+/* Resource actions live HERE, never in the identity bar. */
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  flex: none;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+  background: var(--dsw-alias-bg-layer-1);
 }
 
 /* The body IS the height bound: whatever the caller renders (a long terminal

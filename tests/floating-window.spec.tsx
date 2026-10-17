@@ -11,7 +11,7 @@
  */
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createElement, createRef, type RefObject } from 'react'
+import { createElement, createRef, Fragment, type RefObject } from 'react'
 import { act } from 'react-dom/test-utils'
 import { renderRoot, setupReactAct } from './test-utils.ts'
 import { FloatingWindow } from '../src/client/FloatingWindow.tsx'
@@ -239,6 +239,141 @@ describe('FloatingWindow gestures', () => {
     })
     expect(box().left).toBe(before.left)
     expect(box().top).toBe(before.top)
+    unmount()
+  })
+})
+
+describe('FloatingWindow controlled shell (S6)', () => {
+  /** Render one controlled window and return its root. */
+  function renderControlled(props: Record<string, unknown> = {}) {
+    return renderRoot(createElement(FloatingWindow, {
+      title: 'controlled',
+      onClose: () => { closed += 1 },
+      box: { left: 100, top: 60, width: 500, height: 400 },
+      children: createElement('div', null, 'body'),
+      ...props,
+    }))
+  }
+
+  it('honours a controlled box and reports drag commits instead of moving itself', () => {
+    const changes: Array<{ left: number; top: number; width: number; height: number }> = []
+    const { unmount } = renderControlled({ onBoxChange: (next: typeof changes[number]) => { changes.push(next) } })
+    expect(box()).toEqual({ left: 100, top: 60, width: 500, height: 400 })
+    const handle = frame().querySelector('[data-window-handle]') as HTMLElement
+    act(() => {
+      pointer(handle, 'pointerdown', 300, 100)
+      pointer(window, 'pointermove', 340, 130)
+      pointer(window, 'pointerup', 340, 130)
+    })
+    expect(changes).toHaveLength(1)
+    expect(changes[0]).toEqual({ left: 140, top: 90, width: 500, height: 400 })
+    // The box did NOT move by itself: only the owner's next render can.
+    expect(box()).toEqual({ left: 100, top: 60, width: 500, height: 400 })
+    unmount()
+  })
+
+  it('uses a controlled z-index', () => {
+    const { unmount } = renderControlled({ zIndex: 123 })
+    expect(frame().style.zIndex).toBe('123')
+    unmount()
+  })
+
+  it('reports maximize/restore through the controlled callback and renders the maximized state', () => {
+    const toggles: boolean[] = []
+    const rendered = renderControlled({ onMaximizeChange: (next: boolean) => { toggles.push(next) } })
+    const button = frame().querySelector('[data-window-maximize]') as HTMLButtonElement
+    expect(button.getAttribute('data-window-maximize')).toBe('maximize')
+    act(() => { button.click() })
+    expect(toggles).toEqual([true])
+    // A controlled maximized state hides the resize handles and swaps the glyph.
+    rendered.rerender(createElement(FloatingWindow, {
+      title: 'controlled',
+      onClose: () => {},
+      box: { left: 0, top: 0, width: 1_000, height: 800 },
+      maximized: true,
+      onMaximizeChange: (next: boolean) => { toggles.push(next) },
+      children: createElement('div', null, 'body'),
+    }))
+    expect(frame().getAttribute('data-window-maximized')).toBe('true')
+    expect(frame().querySelector('[data-window-resize]')).toBeNull()
+    const restore = frame().querySelector('[data-window-maximize]') as HTMLButtonElement
+    expect(restore.getAttribute('data-window-maximize')).toBe('restore')
+    act(() => { restore.click() })
+    expect(toggles).toEqual([true, false])
+    rendered.unmount()
+  })
+
+  it('blocks the close button and Escape while onBeforeClose refuses', () => {
+    let allowed = false
+    const { unmount } = renderControlled({ onBeforeClose: () => allowed })
+    const close = frame().querySelector('button[aria-label="关闭"]') as HTMLButtonElement
+    act(() => { close.click() })
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    })
+    // Async guard: flush the microtask before judging the second attempt.
+    return Promise.resolve().then(() => {
+      expect(closed).toBe(0)
+      allowed = true
+      act(() => { close.click() })
+      return Promise.resolve().then(() => {
+        expect(closed).toBe(1)
+        unmount()
+      })
+    })
+  })
+
+  it('renders dirty/saving state and puts resource actions on the toolbar, not the title bar', () => {
+    const { unmount } = renderControlled({
+      dirty: true,
+      saving: true,
+      actions: createElement('button', { type: 'button' }, 'copy'),
+      footer: createElement('button', { type: 'button' }, 'save'),
+    })
+    expect(frame().querySelector('[data-window-dirty]')).not.toBeNull()
+    expect(frame().querySelector('[data-window-saving]')?.textContent).toBe('保存中…')
+    const toolbar = frame().querySelector('[data-window-toolbar]') as HTMLElement
+    expect(toolbar).not.toBeNull()
+    expect(toolbar.textContent).toContain('copy')
+    // The toolbar is a sibling of the title bar, not a child of it.
+    expect(toolbar.closest('[data-window-handle]')).toBeNull()
+    expect(frame().querySelector('[data-window-footer]')?.textContent).toContain('save')
+    unmount()
+  })
+})
+
+describe('FloatingWindow unified layer (S6)', () => {
+  it('closes only the topmost window on Escape and raises the clicked one above its siblings', () => {
+    const closes: string[] = []
+    const { unmount } = renderRoot(createElement(Fragment, null,
+      createElement(FloatingWindow, {
+        title: 'bottom', onClose: () => { closes.push('bottom') },
+        children: createElement('div', null, 'one'),
+      }),
+      createElement(FloatingWindow, {
+        title: 'top', onClose: () => { closes.push('top') },
+        children: createElement('div', null, 'two'),
+      }),
+    ))
+    const frames = [...document.querySelectorAll<HTMLElement>('[data-floating-window]')]
+    expect(frames).toHaveLength(2)
+    const bottomFrame = frames.find(node => node.getAttribute('aria-label') === 'bottom')!
+    const topFrame = frames.find(node => node.getAttribute('aria-label') === 'top')!
+    expect(Number(topFrame.style.zIndex)).toBeGreaterThan(Number(bottomFrame.style.zIndex))
+    // Escape belongs to the TOP window only.
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    })
+    expect(closes).toEqual(['top'])
+    // A pointer on the bottom window raises it; the next Escape closes it.
+    act(() => {
+      pointer(bottomFrame.querySelector('[data-window-handle]')!, 'pointerdown', 100, 100)
+    })
+    expect(Number(bottomFrame.style.zIndex)).toBeGreaterThan(Number(topFrame.style.zIndex))
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    })
+    expect(closes).toEqual(['top', 'bottom'])
     unmount()
   })
 })

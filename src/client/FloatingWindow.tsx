@@ -9,13 +9,21 @@
  * reader WATCHES for minutes: a job's output must survive clicking elsewhere,
  * must not grow past the viewport, and must keep its place while the work
  * runs. This component therefore carries the opposite lifecycle — only the
- * close button and Escape end it — plus the two interactions a watched pane
+ * close control and Escape end it — plus the two interactions a watched pane
  * needs: move it out of the way, and resize it to the log at hand.
  *
- * The body is the window's own scroll container, which is what bounds a long
- * output (the popover it replaces had no height limit at all, so a chatty job
- * simply ran off screen). Callers that follow a live tail pass `bodyRef` and
- * scroll it themselves.
+ * Since S6 it is also the SHELL of the public window host:
+ * - geometry can be controlled (`box` + `onBoxChange`) so the host keeps the
+ *   reader's placement across content updates;
+ * - maximize/restore is built in (controlled through `maximized` +
+ *   `onMaximizeChange`, or owned internally by the legacy callers);
+ * - `onBeforeClose` is the draft guard for the close button AND Escape;
+ * - z-order and Escape are shared with every other mounted window through
+ *   {@link useWindowLayer}: Escape closes only the TOP window, and a pointer
+ *   or focus raise brings a window above its siblings;
+ * - the title bar carries identity/navigation/window controls only; resource
+ *   actions render on a toolbar row below it, and primary actions stay in the
+ *   stable footer.
  *
  * Mechanics reuse the two proven patterns of this codebase rather than
  * inventing a third: the MOVE rides window-level pointer listeners (the
@@ -34,31 +42,23 @@ import {
   type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject,
 } from 'react'
 import { createPortal } from 'react-dom'
-import { Button, IconCloseFillRegular } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconCloseFillRegular, IconFullscreenOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import { createFrameBatcher } from './frame-batcher.ts'
+import { clampNumber, clampWindowBox, maximizedWindowBox, placeWindowBox, type WindowBox } from './windows/geometry.ts'
+import { useWindowLayer } from './windows/layer.ts'
 import { t } from './locales.ts'
 import css from './FloatingWindow.module.css'
 
-/** Default share of the viewport a fresh window takes. */
+/** Default share of the viewport a fresh (legacy, unchecked) window takes. */
 const DEFAULT_WIDTH_RATIO = 0.7
 const DEFAULT_HEIGHT_RATIO = 0.6
 /** Default floor, and the hard floor a resize can never cross. */
 const DEFAULT_MIN_WIDTH = 320
 const DEFAULT_MIN_HEIGHT = 240
-/** How much of the title bar must stay on screen while dragging. */
-const KEEP_ON_SCREEN = 48
 /** Free space kept at the viewport edges. */
 const VIEWPORT_MARGIN = 8
-/** Room a window never takes from the viewport (title bar + margins). */
-const MIN_VIEWPORT_HEIGHT = 160
 
-/** One window box, viewport coordinates. */
-interface WindowBox {
-  left: number
-  top: number
-  width: number
-  height: number
-}
+export type { WindowBox }
 
 export interface FloatingWindowProps {
   /** Title-bar text (also the dialog's accessible name). */
@@ -74,8 +74,14 @@ export interface FloatingWindowProps {
    * row that opened it). Omitted / off-screen anchors centre it.
    */
   anchor?: HTMLElement | null
-  /** Header controls, left of the close button (a job's copy action). */
+  /**
+   * Toolbar actions (resource actions), left of the window controls. The
+   * legacy `actions` prop is the same row — the title bar itself carries only
+   * identity, navigation and window controls.
+   */
   actions?: ReactNode
+  /** Explicit toolbar contents; wins over `actions` when both are given. */
+  toolbar?: ReactNode
   /** Bottom action row (a job's follow switch + stop control). */
   footer?: ReactNode
   /**
@@ -91,68 +97,78 @@ export interface FloatingWindowProps {
    * more room for the content, not more empty space under it.
    */
   bodyLayout?: 'scroll' | 'fill'
+  /** Controlled geometry (the public window host owns the box). */
+  box?: WindowBox
+  /** Controlled geometry commit (drag/resize). */
+  onBoxChange?(box: WindowBox): void
+  /** Controlled maximize state; omitted = this component owns it. */
+  maximized?: boolean
+  /** Controlled maximize toggle. */
+  onMaximizeChange?(maximized: boolean): void
+  /** Hide the maximize control (a compact confirmation surface). */
+  maximizable?: boolean
+  /** Controlled z-index; omitted = the unified layer slot. */
+  zIndex?: number
+  /** Stable layer identity for the window host's `focus()` raise. */
+  layerKey?: string
+  /** Title-bar leading control (the in-surface back button). */
+  titleLeading?: ReactNode
+  /** Unsaved-edit marker in the title bar. */
+  dirty?: boolean
+  /** A source-owned save is in flight (rendered explicitly). */
+  saving?: boolean
+  /** Draft guard for the close control + Escape. False keeps the window open. */
+  onBeforeClose?(): boolean | Promise<boolean>
+  /** Close-button accessible name; defaults to the shared "Close" copy. */
+  closeLabel?: string
   children: ReactNode
 }
 
-/** Clamp one number into `[min, max]` (max first, so an inverted range is safe). */
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(Math.max(min, value), Math.max(min, max))
-}
-
-/**
- * Clamp one axis of a window's origin. The rule is "keep the WHOLE window on
- * screen when it fits, and otherwise keep {@link KEEP_ON_SCREEN}px of it (its
- * title bar / its right edge) reachable": a window that hangs off the bottom
- * edge hides its own resize corner, which is exactly how the first real-host
- * check lost it.
- */
-function clampOrigin(start: number, size: number, viewport: number): number {
-  const fullyInside = viewport - size - VIEWPORT_MARGIN
-  return fullyInside >= VIEWPORT_MARGIN
-    ? clamp(start, VIEWPORT_MARGIN, fullyInside)
-    : clamp(start, KEEP_ON_SCREEN - size, viewport - KEEP_ON_SCREEN)
-}
-
-/** The viewport-clamped initial box of one window. */
+/** Clamp the legacy 70%/60% measurement into the live viewport. */
 function initialBox(
   anchor: HTMLElement | null | undefined,
   size: { width: number; height: number } | undefined,
   min: { width: number; height: number },
   viewport: { width: number; height: number },
 ): WindowBox {
-  const width = clamp(
+  const width = clampNumber(
     size?.width ?? viewport.width * DEFAULT_WIDTH_RATIO,
     min.width,
     Math.max(min.width, viewport.width - VIEWPORT_MARGIN * 2),
   )
-  const height = clamp(
+  const height = clampNumber(
     size?.height ?? viewport.height * DEFAULT_HEIGHT_RATIO,
     min.height,
     Math.max(min.height, viewport.height - VIEWPORT_MARGIN * 2),
   )
-  const rect = anchor?.getBoundingClientRect()
-  const left = rect === undefined
-    ? (viewport.width - width) / 2
-    : clamp(rect.left, VIEWPORT_MARGIN, viewport.width - width - VIEWPORT_MARGIN)
-  const top = rect === undefined
-    ? Math.max(VIEWPORT_MARGIN, (viewport.height - height) / 2)
-    : clamp(rect.bottom + 6, VIEWPORT_MARGIN, viewport.height - height - VIEWPORT_MARGIN)
-  return {
-    left: Math.round(left),
-    top: Math.round(top),
-    width: Math.round(width),
-    height: Math.round(height),
-  }
+  return placeWindowBox({
+    size: { width, height },
+    viewport,
+    ...(anchor === undefined ? {} : { anchor }),
+    min,
+  })
+}
+
+/** The restore glyph (the host set ships only the fullscreen/maximize one). */
+function RestoreIcon({ size = 16 }: { size?: number }): ReactNode {
+  return (
+    <svg width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden="true" focusable="false">
+      <rect x="2.5" y="5.5" width="8" height="8" rx="1.5" stroke="currentColor" strokeWidth="1.2" />
+      <path d="M5.5 5.5V4.5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-1" stroke="currentColor" strokeWidth="1.2" />
+    </svg>
+  )
 }
 
 /**
  * Render a persistent floating window. The caller owns WHAT is shown (body,
- * header actions, footer); this component owns the frame, the geometry, the
- * two drag gestures and the dismissal contract (close button + Escape only).
+ * toolbar, footer); this component owns the frame, the geometry, the two drag
+ * gestures and the dismissal contract (close control + Escape only).
  */
 export function FloatingWindow(props: FloatingWindowProps): ReactNode {
   const {
-    title, onClose, initialSize, minSize, anchor, actions, footer, bodyRef, bodyLayout, children,
+    title, onClose, initialSize, minSize, anchor, actions, toolbar, footer, bodyRef, bodyLayout,
+    box: controlledBox, onBoxChange, maximized: controlledMaximized, onMaximizeChange, maximizable = true,
+    zIndex, layerKey, titleLeading, dirty, saving, onBeforeClose, closeLabel, children,
   } = props
   const min = useMemo(() => ({
     width: minSize?.width ?? DEFAULT_MIN_WIDTH,
@@ -161,17 +177,40 @@ export function FloatingWindow(props: FloatingWindowProps): ReactNode {
   const frameRef = useRef<HTMLDivElement>(null)
   const onCloseRef = useRef(onClose)
   onCloseRef.current = onClose
+  const onBoxChangeRef = useRef(onBoxChange)
+  onBoxChangeRef.current = onBoxChange
+  const onMaximizeChangeRef = useRef(onMaximizeChange)
+  onMaximizeChangeRef.current = onMaximizeChange
+  const beforeCloseRef = useRef(onBeforeClose)
+  beforeCloseRef.current = onBeforeClose
+  const controlledRef = useRef(controlledBox !== undefined)
+  controlledRef.current = controlledBox !== undefined
+  const maximizeControlled = controlledMaximized !== undefined || onMaximizeChange !== undefined
+  const maximizedControlledRef = useRef(maximizeControlled)
+  maximizedControlledRef.current = maximizeControlled
   /**
    * The box is measured ONCE, on mount, from the live viewport: a later
    * re-render (a streamed output frame, a status flip) must never move or
-   * resize a window the reader placed.
+   * resize a window the reader placed. A controlled box skips that entirely.
    */
-  const [box, setBox] = useState<WindowBox | null>(null)
-  const boxRef = useRef(box)
-  boxRef.current = box
+  const [ownedBox, setOwnedBox] = useState<WindowBox | null>(null)
+  const [ownedMaximized, setOwnedMaximized] = useState(false)
+  const restoreBoxRef = useRef<WindowBox | null>(null)
+  const currentBox = controlledBox ?? ownedBox
+  const currentBoxRef = useRef<WindowBox | null>(currentBox)
+  currentBoxRef.current = currentBox
+  const maximized = controlledMaximized ?? ownedMaximized
+  const maximizedRef = useRef(maximized)
+  maximizedRef.current = maximized
+
+  const commitBox = useCallback((next: WindowBox): void => {
+    if (!controlledRef.current) setOwnedBox(next)
+    onBoxChangeRef.current?.(next)
+  }, [])
 
   useEffect(() => {
-    setBox(initialBox(anchor, initialSize, min, {
+    if (controlledRef.current) return
+    setOwnedBox(initialBox(anchor, initialSize, min, {
       width: window.innerWidth,
       height: window.innerHeight,
     }))
@@ -182,61 +221,94 @@ export function FloatingWindow(props: FloatingWindowProps): ReactNode {
   /** Keep the box reachable after a viewport change (a rotation, a split pane). */
   useEffect(() => {
     const onResize = (): void => {
-      const current = boxRef.current
+      if (controlledRef.current) return
+      const current = currentBoxRef.current
       if (current === null) return
-      const width = clamp(current.width, min.width, Math.max(min.width, window.innerWidth - VIEWPORT_MARGIN * 2))
-      const height = clamp(
-        current.height,
-        min.height,
-        Math.max(min.height, window.innerHeight - MIN_VIEWPORT_HEIGHT),
-      )
-      setBox({
-        width,
-        height,
-        left: clampOrigin(current.left, width, window.innerWidth),
-        top: clampOrigin(current.top, height, window.innerHeight),
-      })
+      const viewport = { width: window.innerWidth, height: window.innerHeight }
+      if (maximizedRef.current) {
+        setOwnedBox(maximizedWindowBox(viewport))
+        return
+      }
+      setOwnedBox(clampWindowBox(current, viewport, min))
+      const restore = restoreBoxRef.current
+      if (restore !== null) restoreBoxRef.current = clampWindowBox(restore, viewport, min)
     }
     window.addEventListener('resize', onResize)
     return () => { window.removeEventListener('resize', onResize) }
-  }, [min.width, min.height])
+  }, [min])
 
-  // Escape only: no outside-click, no blur, no anchor observer (see the header).
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') onCloseRef.current()
+  /**
+   * Close path shared by the button and Escape: run the draft guard first.
+   * The layer's Escape handler calls exactly this method, so a dirty window is
+   * never discarded silently.
+   */
+  const closingRef = useRef(false)
+  const requestClose = useCallback(async (): Promise<void> => {
+    if (closingRef.current) return
+    closingRef.current = true
+    try {
+      const guard = beforeCloseRef.current
+      if (guard !== undefined) {
+        const allowed = await guard()
+        if (allowed === false) return
+      }
+      onCloseRef.current()
+    } finally {
+      closingRef.current = false
     }
-    document.addEventListener('keydown', onKeyDown, true)
-    return () => { document.removeEventListener('keydown', onKeyDown, true) }
   }, [])
+  const requestCloseRef = useRef(requestClose)
+  requestCloseRef.current = requestClose
+
+  // Unified layer: z-order + Escape (only the top window closes).
+  const layer = useWindowLayer({
+    ...(layerKey === undefined ? {} : { key: layerKey }),
+    close: () => { void requestCloseRef.current() },
+  })
+
+  const toggleMaximize = useCallback((): void => {
+    const next = !maximizedRef.current
+    if (maximizedControlledRef.current) {
+      onMaximizeChangeRef.current?.(next)
+      return
+    }
+    const current = currentBoxRef.current
+    const viewport = { width: window.innerWidth, height: window.innerHeight }
+    if (next) {
+      restoreBoxRef.current = current
+      setOwnedMaximized(true)
+      setOwnedBox(maximizedWindowBox(viewport))
+    } else {
+      setOwnedMaximized(false)
+      setOwnedBox(clampWindowBox(restoreBoxRef.current ?? current ?? maxBox(viewport), viewport, min))
+    }
+  }, [min])
 
   /** Drag the window by its title bar (buttons inside it keep working). */
   const dragBatcher = useRef(createFrameBatcher()).current
   const pendingDragRef = useRef<WindowBox | null>(null)
   useEffect(() => () => { dragBatcher.dispose() }, [dragBatcher])
   const onTitlePointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>): void => {
-    if (event.button !== 0) return
+    if (event.button !== 0 || maximizedRef.current) return
     const target = event.target as HTMLElement
-    // The header's own controls (copy, close) must not start a drag.
+    // The header's own controls (back, maximize, close) must not start a drag.
     if (target.closest('button, input, textarea, select, a, [data-window-no-drag]') !== null) return
-    const start = boxRef.current
+    const start = currentBoxRef.current
     if (start === null) return
     event.preventDefault()
     const startX = event.clientX
     const startY = event.clientY
     const onMove = (move: PointerEvent): void => {
-      // A pointer stream outruns the display; compose the latest box here and
-      // commit it once per frame, not once per event (see ./frame-batcher.ts).
-      pendingDragRef.current = {
+      pendingDragRef.current = clampWindowBox({
         ...start,
-        left: clampOrigin(start.left + (move.clientX - startX), start.width, window.innerWidth),
-        top: clampOrigin(start.top + (move.clientY - startY), start.height, window.innerHeight),
-      }
+        left: start.left + (move.clientX - startX),
+        top: start.top + (move.clientY - startY),
+      }, { width: window.innerWidth, height: window.innerHeight }, min)
       dragBatcher.schedule(() => {
         const pending = pendingDragRef.current
         if (pending === null) return
         pendingDragRef.current = null
-        setBox(pending)
+        commitBox(pending)
       })
     }
     const onUp = (): void => {
@@ -248,7 +320,7 @@ export function FloatingWindow(props: FloatingWindowProps): ReactNode {
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
     window.addEventListener('pointercancel', onUp)
-  }, [dragBatcher])
+  }, [dragBatcher, commitBox, min])
 
   /** Resize from one edge handle: `axis` picks which dimension the handle owns. */
   const resizeBatcher = useRef(createFrameBatcher()).current
@@ -257,7 +329,7 @@ export function FloatingWindow(props: FloatingWindowProps): ReactNode {
   const pendingBoxRef = useRef<WindowBox | null>(null)
 
   const onResizeStart = useCallback((axis: 'x' | 'y' | 'both') => (event: ReactPointerEvent<HTMLDivElement>): void => {
-    const start = boxRef.current
+    const start = currentBoxRef.current
     if (start === null || event.button !== 0) return
     event.preventDefault()
     event.stopPropagation()
@@ -271,24 +343,16 @@ export function FloatingWindow(props: FloatingWindowProps): ReactNode {
     if (drag === null) return
     const growX = drag.axis === 'y' ? 0 : event.clientX - drag.startX
     const growY = drag.axis === 'x' ? 0 : event.clientY - drag.startY
-    pendingBoxRef.current = {
+    pendingBoxRef.current = clampWindowBox({
       ...drag.box,
-      width: clamp(
-        drag.box.width + growX,
-        min.width,
-        Math.max(min.width, window.innerWidth - drag.box.left - VIEWPORT_MARGIN),
-      ),
-      height: clamp(
-        drag.box.height + growY,
-        min.height,
-        Math.max(min.height, window.innerHeight - drag.box.top - VIEWPORT_MARGIN),
-      ),
-    }
+      width: drag.box.width + growX,
+      height: drag.box.height + growY,
+    }, { width: window.innerWidth, height: window.innerHeight }, min)
     resizeBatcher.schedule(() => {
       const pending = pendingBoxRef.current
-      if (pending !== null) setBox(pending)
+      if (pending !== null) commitBox(pending)
     })
-  }, [min.width, min.height, resizeBatcher])
+  }, [min, resizeBatcher, commitBox])
 
   const onResizeEnd = useCallback((event: ReactPointerEvent<HTMLDivElement>): void => {
     if (resizeRef.current === null) return
@@ -300,32 +364,71 @@ export function FloatingWindow(props: FloatingWindowProps): ReactNode {
     event.currentTarget.releasePointerCapture?.(event.pointerId)
   }, [resizeBatcher])
 
+  const resolvedZ = zIndex ?? layer.zIndex
+  const toolbarRow = toolbar ?? actions
+  const closeText = closeLabel ?? t('close')
+  const style = currentBox === null
+    ? { left: -9999, top: -9999, width: DEFAULT_MIN_WIDTH, height: DEFAULT_MIN_HEIGHT, zIndex: resolvedZ }
+    : { left: currentBox.left, top: currentBox.top, width: currentBox.width, height: currentBox.height, zIndex: resolvedZ }
+
   return createPortal(
     <div
       ref={frameRef}
       role="dialog"
       aria-label={title}
       data-floating-window
+      data-window-maximized={maximized ? 'true' : 'false'}
       className={css.window}
-      style={box === null
-        ? { left: -9999, top: -9999, width: DEFAULT_MIN_WIDTH, height: DEFAULT_MIN_HEIGHT }
-        : { left: box.left, top: box.top, width: box.width, height: box.height }}
+      style={style}
+      onPointerDownCapture={() => { layer.raise() }}
+      onFocusCapture={() => { layer.raise() }}
     >
       <div className={css.titleBar} data-window-handle onPointerDown={onTitlePointerDown}>
+        {titleLeading !== undefined && (
+          <span className={css.titleLeading} data-window-no-drag>{titleLeading}</span>
+        )}
         <span className={css.title} title={title}>{title}</span>
+        {dirty === true && (
+          <span
+            className={css.dirty}
+            data-window-dirty
+            role="status"
+            aria-label={t('unsaved')}
+            title={t('unsaved')}
+          />
+        )}
+        {saving === true && (
+          <span className={css.saving} data-window-saving>{t('windowSaving')}</span>
+        )}
         <span className={css.titleActions} data-window-no-drag>
-          {actions}
+          {maximizable && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className={css.windowControl}
+              icon={maximized
+                ? <RestoreIcon size={14} />
+                : <IconFullscreenOutlineRegular size={14} />}
+              aria-label={maximized ? t('windowRestore') : t('windowMaximize')}
+              title={maximized ? t('windowRestore') : t('windowMaximize')}
+              data-window-maximize={maximized ? 'restore' : 'maximize'}
+              onClick={toggleMaximize}
+            />
+          )}
           <Button
             variant="ghost"
             size="sm"
             className={css.close}
             icon={<IconCloseFillRegular size={14} />}
-            aria-label={t('close')}
-            title={t('close')}
-            onClick={onClose}
+            aria-label={closeText}
+            title={closeText}
+            onClick={() => { void requestCloseRef.current() }}
           />
         </span>
       </div>
+      {toolbarRow !== undefined && (
+        <div className={css.toolbar} data-window-toolbar data-window-no-drag>{toolbarRow}</div>
+      )}
       <div
         ref={bodyRef}
         className={bodyLayout === 'fill' ? `${css.body} ${css.bodyFill}` : css.body}
@@ -335,39 +438,49 @@ export function FloatingWindow(props: FloatingWindowProps): ReactNode {
         {children}
       </div>
       {footer !== undefined && <div className={css.footer} data-window-footer>{footer}</div>}
-      {/*
-        Three handles rather than eight: the window grows from the bottom-right
-        in practice (a log gets longer), and the two edges keep a single-axis
-        resize possible. They sit above the body's scrollbar as thin strips.
-      */}
-      <div
-        className={`${css.handle} ${css.handleRight}`}
-        data-window-resize="x"
-        aria-hidden="true"
-        onPointerDown={onResizeStart('x')}
-        onPointerMove={onResizeMove}
-        onPointerUp={onResizeEnd}
-        onPointerCancel={onResizeEnd}
-      />
-      <div
-        className={`${css.handle} ${css.handleBottom}`}
-        data-window-resize="y"
-        aria-hidden="true"
-        onPointerDown={onResizeStart('y')}
-        onPointerMove={onResizeMove}
-        onPointerUp={onResizeEnd}
-        onPointerCancel={onResizeEnd}
-      />
-      <div
-        className={`${css.handle} ${css.handleCorner}`}
-        data-window-resize="both"
-        aria-hidden="true"
-        onPointerDown={onResizeStart('both')}
-        onPointerMove={onResizeMove}
-        onPointerUp={onResizeEnd}
-        onPointerCancel={onResizeEnd}
-      />
+      {!maximized && (
+        <>
+          {/*
+            Three handles rather than eight: the window grows from the
+            bottom-right in practice (a log gets longer), and the two edges
+            keep a single-axis resize possible. They sit above the body's
+            scrollbar as thin strips.
+          */}
+          <div
+            className={`${css.handle} ${css.handleRight}`}
+            data-window-resize="x"
+            aria-hidden="true"
+            onPointerDown={onResizeStart('x')}
+            onPointerMove={onResizeMove}
+            onPointerUp={onResizeEnd}
+            onPointerCancel={onResizeEnd}
+          />
+          <div
+            className={`${css.handle} ${css.handleBottom}`}
+            data-window-resize="y"
+            aria-hidden="true"
+            onPointerDown={onResizeStart('y')}
+            onPointerMove={onResizeMove}
+            onPointerUp={onResizeEnd}
+            onPointerCancel={onResizeEnd}
+          />
+          <div
+            className={`${css.handle} ${css.handleCorner}`}
+            data-window-resize="both"
+            aria-hidden="true"
+            onPointerDown={onResizeStart('both')}
+            onPointerMove={onResizeMove}
+            onPointerUp={onResizeEnd}
+            onPointerCancel={onResizeEnd}
+          />
+        </>
+      )}
     </div>,
     document.body,
   )
+}
+
+/** A safety fallback for the internal restore path (never shown). */
+function maxBox(viewport: { width: number; height: number }): WindowBox {
+  return maximizedWindowBox(viewport)
 }
