@@ -49,14 +49,14 @@ export const CLUE_TOKEN_SUFFIX = ']]'
  * Anything else would make the token boundary ambiguous (or enable injection
  * of a second token through an id), so it is refused at serialization time.
  */
-const ID_PATTERN = /^[^\s[\]\u0000-\u001f\u007f-\u009f]+$/u
+const ID_PATTERN = /^[^\s[\]\p{Cc}]+$/u
 
 /**
  * One token occurrence. The lookarounds keep a token from being carved out of
  * a longer bracket run (`[[[dsh-clue:x]]]`), which is what makes the boundary
  * rule symmetric with the titles' bracket escaping.
  */
-const TOKEN_PATTERN = /(?<!\[)\[\[(?:dsh-clue-snapshot|dsh-cluepack|dsh-clue):([^\s[\]\u0000-\u001f\u007f-\u009f]+)\]\](?!\])/gu
+const TOKEN_PATTERN = /(?<!\[)\[\[(?:dsh-clue-snapshot|dsh-cluepack|dsh-clue):([^\s[\]\p{Cc}]+)\]\](?!\])/gu
 
 /** The maximum title length carried as display metadata. */
 export const CLUE_TITLE_MAX_CHARS = 200
@@ -155,7 +155,7 @@ export function tokenizeClueText(text: string): ClueTextPart[] {
 export function escapeClueTitle(title: string): string {
   if (typeof title !== 'string') return ''
   return title
-    .replace(/[\u0000-\u001f\u007f-\u009f]+/gu, ' ')
+    .replace(/\p{Cc}+/gu, ' ')
     .replace(/\[/gu, '［')
     .replace(/\]/gu, '］')
     .replace(/\s+/gu, ' ')
