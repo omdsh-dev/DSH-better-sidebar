@@ -110,6 +110,21 @@ const HOST_DIALECT: LocalFileDialect = process.platform === 'win32' ? 'win32' : 
 /** The `node:path` flavour a locator's dialect must be handled with. */
 const dialectPath = (dialect: LocalFileDialect): typeof posix => (dialect === 'win32' ? win32 : posix)
 
+/**
+ * Trim trailing separators while keeping a filesystem root intact (`/`,
+ * `C:\`, a UNC share root). Two spellings of the same directory/file
+ * therefore normalize to ONE locator (and one stable clue), which is the
+ * equality rule the source documents.
+ */
+function withoutTrailingSeparator(value: string, dialect: LocalFileDialect): string {
+  const rootLength = dialectPath(dialect).parse(value).root.length
+  let end = value.length
+  while (end > rootLength && (value[end - 1] === '/' || (dialect === 'win32' && value[end - 1] === '\\'))) {
+    end -= 1
+  }
+  return end === value.length ? value : value.slice(0, end)
+}
+
 /** Extensions rendered through the markdown type (everything else text is plain). */
 const MARKDOWN_EXTENSIONS = new Set(['.md', '.markdown'])
 
@@ -238,10 +253,10 @@ function normalizePath(path: string, dialect: LocalFileDialect, kind: 'workspace
     if (!flavour.isAbsolute(path)) {
       throw new ClueError('failed', 'an external local file locator needs an absolute path')
     }
-    return flavour.normalize(path)
+    return withoutTrailingSeparator(flavour.normalize(path), dialect)
   }
   const normalized = flavour.normalize(path === '' ? '.' : path)
-  const rootless = normalized === '.' ? '' : normalized
+  const rootless = withoutTrailingSeparator(normalized === '.' ? '' : normalized, dialect)
   if (rootless === '' || rootless === '.') return ''
   if (flavour.isAbsolute(rootless) || rootless === '..' || rootless.startsWith(`..${flavour.sep}`)) {
     throw new ClueError('failed', 'a workspace-local file path must stay inside its workspace')

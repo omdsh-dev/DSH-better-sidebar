@@ -454,6 +454,16 @@ describe('builtin.files resolve / portable / dialects', () => {
     expect(first.created).toBe(true)
     expect(second.created).toBe(false)
     expect(second.clue.id).toBe(first.clue.id)
+    // A trailing separator names the same file, not a second clue.
+    const third = await service.ensure({
+      workspaceId: WORKSPACE_ID,
+      sourceId: 'builtin.files',
+      typeId: LOCAL_FILE_TYPE_IDS.markdown,
+      locator: workspaceLocator('a.md/'),
+      title: 'a',
+    })
+    expect(third.created).toBe(false)
+    expect(third.clue.id).toBe(first.clue.id)
   })
 
   it('returns a portable workspace-relative locator', async () => {
@@ -474,6 +484,15 @@ describe('builtin.files resolve / portable / dialects', () => {
       .toEqual({ root: { kind: 'external' }, path: 'C:\\a.md', dialect: 'win32' })
     expect(normalize({ root: { kind: 'external' }, path: '/tmp/./a.md', dialect: 'posix' }))
       .toEqual({ root: { kind: 'external' }, path: '/tmp/a.md', dialect: 'posix' })
+    // Trailing separators are one spelling of the same path, roots stay intact.
+    expect(normalize({ root: { kind: 'external' }, path: '/tmp/a.md/', dialect: 'posix' }))
+      .toEqual({ root: { kind: 'external' }, path: '/tmp/a.md', dialect: 'posix' })
+    expect(normalize({ root: { kind: 'external' }, path: '/', dialect: 'posix' }))
+      .toEqual({ root: { kind: 'external' }, path: '/', dialect: 'posix' })
+    expect(normalize({ root: { kind: 'external' }, path: 'C:\\', dialect: 'win32' }))
+      .toEqual({ root: { kind: 'external' }, path: 'C:\\', dialect: 'win32' })
+    expect(normalize({ root: { kind: 'workspace', workspaceId: WORKSPACE_ID }, path: 'docs/', dialect: 'posix' }))
+      .toEqual({ root: { kind: 'workspace', workspaceId: WORKSPACE_ID }, path: 'docs', dialect: 'posix' })
     expect(normalize({ root: { kind: 'workspace', workspaceId: WORKSPACE_ID }, path: 'docs\\a.md', dialect: 'win32' }))
       .toEqual({ root: { kind: 'workspace', workspaceId: WORKSPACE_ID }, path: 'docs\\a.md', dialect: 'win32' })
     // A workspace-relative path may not climb out of its workspace.
