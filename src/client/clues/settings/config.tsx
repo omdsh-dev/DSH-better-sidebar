@@ -24,6 +24,9 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { t, type CopyKey } from '../../locales.ts'
+// The sidebar's ONE polling loop (see use-polling.ts): this page must not own
+// a second recurring timer, and the loop is gated by the running-task flag.
+import { usePolling } from '../../use-polling.ts'
 import { clueRuntimeApi, type ClueRuntimeApi } from '../runtime-api.ts'
 import type {
   ConnectionStatusProjection,
@@ -231,32 +234,30 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
     }
   }, [runtime])
 
-  // Poll ONLY while a task actually runs; the interval is cleared on settle,
-  // on cancellation and on unmount (no steady-state timer is left behind).
+  // Poll ONLY while a task actually runs, through the shared polling engine:
+  // the loop is gated by `enabled`, and teardown (settle, cancel, close,
+  // unmount) clears the schedule. No second recurring timer lives here.
   const running = Object.values(tasks).find(item => item.state === 'running')
   const runningDependencyId = running?.dependencyId
   const runningTaskId = running?.taskId
-  useEffect(() => {
+  const pollRunningTask = useCallback(async (signal: AbortSignal): Promise<void> => {
     if (runningDependencyId === undefined || runningTaskId === undefined) return
-    let cancelled = false
-    const timer = setInterval(() => {
-      void (async () => {
-        try {
-          const list = await runtime.dependenciesStatus(runningDependencyId)
-          const next = list.find(item => item.taskId === runningTaskId)
-          if (cancelled || next === undefined) return
-          setTasks(current => ({ ...current, [runningDependencyId]: next }))
-          if (next.state !== 'running') await reloadDependency(runningDependencyId)
-        } catch (caught) {
-          if (!cancelled) setError(messageOf(caught))
-        }
-      })()
-    }, INSTALL_POLL_MS)
-    return () => {
-      cancelled = true
-      clearInterval(timer)
+    try {
+      const list = await runtime.dependenciesStatus(runningDependencyId)
+      if (signal.aborted) return
+      const next = list.find(item => item.taskId === runningTaskId)
+      if (next === undefined || !mounted.current) return
+      setTasks(current => ({ ...current, [runningDependencyId]: next }))
+      if (next.state !== 'running') await reloadDependency(runningDependencyId)
+    } catch (caught) {
+      if (!signal.aborted) setError(messageOf(caught))
     }
   }, [runtime, runningDependencyId, runningTaskId, reloadDependency])
+  usePolling(
+    runningDependencyId !== undefined && runningTaskId !== undefined,
+    pollRunningTask,
+    { intervalMs: INSTALL_POLL_MS, mode: 'self-scheduling' },
+  )
 
   const plan = async (dependencyId: string): Promise<void> => {
     setPlanningId(dependencyId)
