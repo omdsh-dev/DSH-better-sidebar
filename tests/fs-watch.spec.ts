@@ -20,8 +20,15 @@ import { listDirectory } from '../src/fs-tree.ts'
 import { createDirectoryWatchers, type DirectoryWatchEvent } from '../src/fs-watch.ts'
 import { removeTree } from './temp-tree.ts'
 
-/** Generous delivery budget: the module debounces at 150 ms, the OS adds its own latency. */
-const DELIVERY_TIMEOUT_MS = 15_000
+/**
+ * Generous delivery budget: the module debounces at 150 ms, the OS adds its
+ * own latency. Kept under the suite-wide 30 s test timeout but above the old
+ * 15 s: the vitest config already raised that clock because a STARVED worker
+ * lost this exact suite at 15000 ms, and this spec's own waitFor budget was
+ * overriding it on local full-suite runs. A genuinely silent watcher still
+ * fails, just with the real (never-delivered) verdict.
+ */
+const DELIVERY_TIMEOUT_MS = 25_000
 /** Long enough for a second (tail) delivery to have surfaced, so "folded" means something. */
 const SETTLE_MS = 1_000
 
@@ -36,6 +43,15 @@ const withScratch = (run: (dir: string) => Promise<void> | void): Promise<void> 
 /** Sleep for a fixed window. */
 const settle = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms))
 
+/**
+ * macOS FSEvents needs a beat after `watch()` before it reports writes that
+ * happen immediately afterwards. Two full-suite runs on a loaded machine lost
+ * a positive-delivery case to a write that landed inside that window; the
+ * settle removes the startup race without weakening any assertion (a watcher
+ * that never reports still times out).
+ */
+const WATCH_SETTLE_MS = 300
+
 describe('directory watchers', () => {
   it('drops the level cache for a changed directory before it pushes', async () => {
     await withScratch(async (dir) => {
@@ -46,6 +62,7 @@ describe('directory watchers', () => {
       const watchers = createDirectoryWatchers(event => events.push(event), () => {})
       try {
         expect(watchers.add(dir)).toBe(true)
+        await settle(WATCH_SETTLE_MS)
         writeFileSync(join(dir, 'new.txt'), 'x')
         await vi.waitFor(() => { expect(events.length).toBeGreaterThan(0) }, { timeout: DELIVERY_TIMEOUT_MS })
         // …then the re-list the client is about to send must NOT be answered
@@ -65,6 +82,7 @@ describe('directory watchers', () => {
       const watchers = createDirectoryWatchers(event => events.push(event), () => {})
       try {
         expect(watchers.add(dir)).toBe(true)
+        await settle(WATCH_SETTLE_MS)
         // One save is several filesystem events; the tree re-lists the whole
         // directory either way, so they must collapse. Twenty writes make the
         // fold unambiguous even if the OS delivers one late tail batch.
@@ -107,6 +125,7 @@ describe('directory watchers', () => {
         // A second add must not install a second watcher — that would double
         // every notice for the same directory.
         expect(watchers.add(dir)).toBe(true)
+        await settle(WATCH_SETTLE_MS)
         writeFileSync(join(dir, 'a.txt'), 'x')
         await vi.waitFor(() => { expect(events.length).toBeGreaterThan(0) }, { timeout: DELIVERY_TIMEOUT_MS })
         await settle(SETTLE_MS)
