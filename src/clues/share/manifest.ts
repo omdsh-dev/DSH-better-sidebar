@@ -55,6 +55,8 @@ export interface CluepackSource {
   /** Human-readable source name (not localizable across machines). */
   readonly name?: string
   readonly transport?: SourceTransport
+  /** Type ids this archive needs from the source. */
+  readonly typeIds?: readonly string[]
 }
 
 /** One snapshot descriptor attached to a clue record. */
@@ -242,12 +244,26 @@ function parseSource(value: unknown, path: string): CluepackSource {
   if (value.transport !== undefined && !TRANSPORTS.has(value.transport as string)) {
     invalid(`${path}.transport must be one of ${[...TRANSPORTS].join(', ')}`)
   }
+  let typeIds: string[] | undefined
+  if (value.typeIds !== undefined) {
+    if (!Array.isArray(value.typeIds)) invalid(`${path}.typeIds must be an array of strings`)
+    const seen = new Set<string>()
+    typeIds = value.typeIds.map((typeId, index) => {
+      if (typeof typeId !== 'string' || typeId.trim() === '') {
+        invalid(`${path}.typeIds[${index}] must be a non-empty string`)
+      }
+      if (seen.has(typeId)) invalid(`duplicate type id "${typeId}" in ${path}`)
+      seen.add(typeId)
+      return typeId
+    })
+  }
   return {
     key,
     sourceId,
     ...(pluginId === undefined ? {} : { pluginId }),
     ...(name === undefined ? {} : { name }),
     ...(value.transport === undefined ? {} : { transport: value.transport as SourceTransport }),
+    ...(typeIds === undefined ? {} : { typeIds }),
   }
 }
 

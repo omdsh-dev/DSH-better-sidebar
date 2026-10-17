@@ -214,6 +214,9 @@ export function createZip(entries: readonly ZipEntryInput[], options: ZipWriteOp
     }
     seen.add(entry.name)
     const data = entry.data instanceof Uint8Array ? entry.data : new Uint8Array(entry.data)
+    if (entry.name.endsWith('/') && data.length > 0) {
+      throw new ClueError('invalid-request', `directory archive entry "${entry.name}" must not carry data`)
+    }
     if (data.length > MAX_UINT32) {
       throw new ClueError('invalid-request', `archive entry "${entry.name}" is too large for a ZIP file`)
     }

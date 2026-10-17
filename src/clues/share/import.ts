@@ -31,11 +31,14 @@
 import { createHash } from 'node:crypto'
 import type { CluesService } from '../service.ts'
 import {
+  BUILTIN_SOURCE_IDS,
   ClueError,
+  isClueError,
   type ClueErrorCategory,
   type CluePack,
   type ClueSnapshotMeta,
   type JsonValue,
+  type Locator,
 } from '../types.ts'
 import {
   CLUEPACK_MANIFEST_PATH,
@@ -67,6 +70,20 @@ export interface ClueShareImportParams {
   readonly signal?: AbortSignal
   /** Per-clue progress (UI feedback). */
   readonly onProgress?: (progress: ClueShareImportProgress) => void
+  /**
+   * Receiver-side locator remapping. A portable locator may name the SENDER's
+   * workspace id or an absolute path from the sender's machine; only a
+   * receiving-side choice can turn that into a local address. Return a
+   * locator to import live, or `undefined` to keep the row unresolved with a
+   * clear reason. The default remaps `builtin.files` workspace-relative
+   * locators to `workspaceId` and refuses external absolute paths.
+   */
+  readonly remapLocator?: (input: {
+    readonly sourceId: string
+    readonly typeId: string
+    readonly locator: Locator
+    readonly workspaceId: string
+  }) => Locator | undefined
 }
 
 /** One progress notification of an import. */
@@ -279,14 +296,61 @@ function requireSource(manifest: CluepackManifest, clue: CluepackClue): Cluepack
   return source
 }
 
+/** The receiving-side locator of one portable reference, or why it cannot be used. */
+interface RemappedLocator {
+  readonly locator?: Locator
+  readonly reason?: string
+}
+
+/**
+ * Default remapping for the core file source: a workspace-relative locator is
+ * re-rooted at the RECEIVING workspace; an external absolute path is not
+ * silently opened on this machine (the user must choose a target explicitly).
+ */
+function defaultRemapLocator(sourceId: string, locator: Locator, workspaceId: string): RemappedLocator {
+  if (sourceId !== BUILTIN_SOURCE_IDS.files) return { locator }
+  const root = isRecord(locator.root) ? locator.root : undefined
+  if (root?.kind === 'workspace') {
+    return { locator: { ...locator, root: { ...root, workspaceId } } }
+  }
+  if (root?.kind === 'external') {
+    return {
+      reason: 'an absolute path outside a workspace needs an explicit receiving-workspace remapping',
+    }
+  }
+  return { locator }
+}
+
+/** Apply the caller's remap seam, or the core default. */
+function remapForImport(
+  params: ClueShareImportParams,
+  clue: CluepackClue,
+  source: CluepackSource,
+): RemappedLocator {
+  const locator = clue.portable.locator
+  if (clue.portable.portable !== true || locator === undefined) return {}
+  if (params.remapLocator !== undefined) {
+    const mapped = params.remapLocator({
+      sourceId: source.sourceId,
+      typeId: clue.typeId,
+      locator,
+      workspaceId: params.workspaceId,
+    })
+    return mapped === undefined
+      ? { reason: 'the reference needs an explicit receiving-workspace remapping' }
+      : { locator: mapped }
+  }
+  return defaultRemapLocator(source.sourceId, locator, params.workspaceId)
+}
+
 /** Whether one clue can be imported live (portable + source + type present). */
 function canResolve(
   deps: ClueShareImportDeps,
   clue: CluepackClue,
   source: CluepackSource,
+  locator: Locator | undefined,
 ): boolean {
-  return clue.portable.portable === true
-    && clue.portable.locator !== undefined
+  return locator !== undefined
     && deps.clues.getSource(source.sourceId) !== undefined
     && deps.clues.getTypes(source.sourceId).some(type => type.typeId === clue.typeId)
 }
@@ -333,7 +397,8 @@ export async function previewImport(
     } else if (missingTypes.length > 0 && existing.missingTypeIds.length === 0) {
       sourceRows.set(source.key, { ...existing, missingTypeIds: missingTypes })
     }
-    const willBeUnresolved = !canResolve(deps, clue, source)
+    const remapped = remapForImport(params, clue, source)
+    const willBeUnresolved = !canResolve(deps, clue, source, remapped.locator)
     if (willBeUnresolved) unresolvedCount += 1
     items.push({
       key: clue.key,
@@ -404,6 +469,39 @@ export async function importPack(
   const total = manifest.clues.length
   progress({ phase: 'validate', completed: 0, total })
 
+  /**
+   * Persist one unresolved row. A registered source may refuse to normalize
+   * the imported portable locator (e.g. a foreign workspace root); in that
+   * case the row is still kept, with the explicit reason and no locator,
+   * rather than failing the whole pack.
+   */
+  const commitUnresolved = async (
+    source: CluepackSource,
+    clue: CluepackClue,
+    reason: string,
+  ): Promise<{ clueId: string; created: boolean }> => {
+    const common = {
+      workspaceId,
+      sourceId: source.sourceId,
+      typeId: clue.typeId,
+      locator: {},
+      title: clue.title,
+      reason,
+    }
+    const options = { caller: 'ui' as const, ...(params.signal === undefined ? {} : { signal: params.signal }) }
+    try {
+      const imported = await deps.clues.importUnresolved({ ...common, portable: clue.portable }, options)
+      return { clueId: imported.clue.id, created: imported.created }
+    } catch (error) {
+      if (!isClueError(error) || error.category !== 'invalid-request') throw error
+      const imported = await deps.clues.importUnresolved({
+        ...common,
+        portable: { portable: false, reason },
+      }, options)
+      return { clueId: imported.clue.id, created: imported.created }
+    }
+  }
+
   for (const [index, clue] of manifest.clues.entries()) {
     throwIfAborted(params.signal)
     const source = requireSource(manifest, clue)
@@ -411,14 +509,15 @@ export async function importPack(
     let created: boolean
     let unresolved = false
     let itemIssue = false
-    const live = canResolve(deps, clue, source)
+    const remapped = remapForImport(params, clue, source)
+    const live = canResolve(deps, clue, source, remapped.locator)
     if (live) {
       try {
         const ensured = await deps.clues.ensure({
           workspaceId,
           sourceId: source.sourceId,
           typeId: clue.typeId,
-          locator: clue.portable.locator!,
+          locator: remapped.locator!,
           title: clue.title,
         }, { caller: 'ui', ...(params.signal === undefined ? {} : { signal: params.signal }) })
         clueId = ensured.clue.id
@@ -429,37 +528,22 @@ export async function importPack(
         // The source is present but could not even normalize/store the
         // reference. Preserve the data as unresolved and surface the failure:
         // hiding it would make a half-imported pack look complete.
-        const imported = await deps.clues.importUnresolved({
-          workspaceId,
-          sourceId: source.sourceId,
-          typeId: clue.typeId,
-          locator: {},
-          title: clue.title,
-          reason: failure.reason,
-          portable: clue.portable,
-        }, { caller: 'ui', ...(params.signal === undefined ? {} : { signal: params.signal }) })
-        clueId = imported.clue.id
+        const imported = await commitUnresolved(source, clue, failure.reason)
+        clueId = imported.clueId
         created = imported.created
         unresolved = true
         itemIssue = true
         issues.push({ target: 'clue', key: clue.key, category: failure.category, reason: failure.reason })
       }
     } else {
-      const reason = deps.clues.getSource(source.sourceId) === undefined
-        ? `the source "${source.sourceId}" is not installed on this machine`
-        : clue.portable.portable === true && clue.portable.locator !== undefined
-          ? `the source "${source.sourceId}" does not offer type "${clue.typeId}" here`
-          : clue.portable.reason ?? 'the clue has no portable reference'
-      const imported = await deps.clues.importUnresolved({
-        workspaceId,
-        sourceId: source.sourceId,
-        typeId: clue.typeId,
-        locator: {},
-        title: clue.title,
-        reason,
-        portable: clue.portable,
-      }, { caller: 'ui', ...(params.signal === undefined ? {} : { signal: params.signal }) })
-      clueId = imported.clue.id
+      const reason = remapped.reason
+        ?? (deps.clues.getSource(source.sourceId) === undefined
+          ? `the source "${source.sourceId}" is not installed on this machine`
+          : clue.portable.portable === true && clue.portable.locator !== undefined
+            ? `the source "${source.sourceId}" does not offer type "${clue.typeId}" here`
+            : clue.portable.reason ?? 'the clue has no portable reference')
+      const imported = await commitUnresolved(source, clue, reason)
+      clueId = imported.clueId
       created = imported.created
       unresolved = true
     }

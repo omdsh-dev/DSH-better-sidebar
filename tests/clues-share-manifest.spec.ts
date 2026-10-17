@@ -35,6 +35,7 @@ function validManifest(): CluepackManifest {
         pluginId: 'dsh-better-sidebar',
         name: 'Local files',
         transport: 'files',
+        typeIds: ['builtin.files.markdown'],
       },
       { key: 'source-2', sourceId: 'third.party:docs' },
     ],
@@ -164,6 +165,15 @@ describe('parseCluepackManifest', () => {
     const duplicateMember = clone()
     duplicateMember.packs[0]!.members.push('clue-1')
     expect(() => parseCluepackManifest(duplicateMember)).toThrowError(/duplicate pack member/i)
+  })
+
+  it('validates the optional source typeIds extension', () => {
+    const duplicate = clone()
+    duplicate.sources[0]!.typeIds = ['builtin.files.markdown', 'builtin.files.markdown']
+    expect(() => parseCluepackManifest(duplicate)).toThrowError(/duplicate type id/i)
+    const notArray = clone()
+    rawField(notArray.sources[0]!).typeIds = 'builtin.files.markdown'
+    expect(() => parseCluepackManifest(notArray)).toThrowError(/typeIds/i)
   })
 
   it('rejects unsafe or duplicated snapshot paths and invalid digests', () => {

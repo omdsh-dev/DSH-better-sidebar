@@ -317,6 +317,9 @@ function collectSources(deps: ClueShareExportDeps, clues: readonly Clue[]): {
           name: descriptor.name,
           transport: descriptor.transport,
         }),
+      typeIds: [...new Set(
+        clues.filter(candidate => candidate.sourceId === clue.sourceId).map(candidate => candidate.typeId),
+      )],
     })
   }
   return { sources, keyBySourceId }
