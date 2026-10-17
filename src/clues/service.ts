@@ -50,6 +50,7 @@ import {
   type CluesBindingsResult,
   type CluesEnsureParams,
   type CluesEnsureResult,
+  type CluesImportUnresolvedParams,
   type CluesLibraryResult,
   type CluesListParams,
   type CluesPackCreateParams,
@@ -77,6 +78,7 @@ import {
   type ClueSourceCapabilities,
   type ClueSourceDescriptor,
   type ClueTypeDescriptor,
+  type ClueUnresolved,
   type JsonValue,
   type Locator,
 } from './types.ts'
@@ -223,6 +225,17 @@ export interface CluesService {
 
   // Stable references and library
   ensure(params: CluesEnsureParams, options?: ClueCallOptions): Promise<CluesEnsureResult>
+  /**
+   * Core-only (S7 import): persist a stable reference whose source is not
+   * available here. Not registered as an HTTP API method. Dedupes by
+   * sourceId + locator key when a usable locator exists; an existing RESOLVED
+   * clue wins (`created: false`), an existing unresolved row is updated in
+   * place so its id stays stable.
+   */
+  importUnresolved(
+    params: CluesImportUnresolvedParams,
+    options?: ClueCallOptions,
+  ): Promise<CluesEnsureResult>
   listClues(workspaceId: string): Promise<CluesLibraryResult>
 
   // Pins
@@ -602,6 +615,16 @@ export function createCluesService(options: CluesServiceOptions = {}): CluesServ
       if (clue === undefined) {
         throw new ClueError('not-found', `clue "${params.clueId}" does not exist in this workspace`)
       }
+      // An imported-but-unresolved reference must not try its source at all:
+      // the source may answer a misleading not-found/permission error, while
+      // the actual state is "the source this clue names is not available
+      // here". `ensure` clears the marker once the source really resolves it.
+      if (clue.unresolved !== undefined) {
+        throw new ClueError(
+          'source-missing',
+          `clue "${clue.id}" is unresolved: ${clue.unresolved.reason}`,
+        )
+      }
       const source = sourceFor(clue.sourceId)
       return { source, typeId: clue.typeId, locator: clue.locator, clue }
     }
@@ -867,7 +890,22 @@ export function createCluesService(options: CluesServiceOptions = {}): CluesServ
         : String(locator.path ?? locator.id ?? locator.url ?? 'clue')
       const transaction = await requireStore().transact(workspaceId, undefined, (state) => {
         const existing = findClueByLocator(state, source, key)
-        if (existing !== undefined) return { clue: existing, created: false }
+        if (existing !== undefined) {
+          if (existing.unresolved === undefined) return { clue: existing, created: false }
+          // REMAP: the same stable reference resolves now. Keep its id (packs,
+          // pins, bindings and snapshots already point at it), adopt the
+          // resolved locator/title, and clear the unresolved marker.
+          const next: Clue = {
+            ...existing,
+            typeId: params.typeId,
+            locator,
+            title,
+            updatedAt: now(),
+            unresolved: undefined,
+          }
+          state.clues[state.clues.indexOf(existing)] = next
+          return { clue: next, created: false }
+        }
         const timestamp = now()
         const clue: Clue = {
           id: newId('clue'),
@@ -878,6 +916,88 @@ export function createCluesService(options: CluesServiceOptions = {}): CluesServ
           workspaceId,
           createdAt: timestamp,
           updatedAt: timestamp,
+        }
+        state.clues.push(clue)
+        return { clue, created: true }
+      })
+      return transaction.result
+    },
+
+    async importUnresolved(
+      params: CluesImportUnresolvedParams,
+      call: ClueCallOptions = {},
+    ): Promise<CluesEnsureResult> {
+      throwIfAborted(call.signal)
+      const workspaceId = requireWorkspaceId(params.workspaceId)
+      const sourceId = typeof params.sourceId === 'string' ? params.sourceId.trim() : ''
+      if (sourceId === '') {
+        throw new ClueError('invalid-request', 'an unresolved clue needs a non-empty sourceId')
+      }
+      const typeId = typeof params.typeId === 'string' ? params.typeId.trim() : ''
+      if (typeId === '') {
+        throw new ClueError('invalid-request', 'an unresolved clue needs a non-empty typeId')
+      }
+      const title = typeof params.title === 'string' ? params.title.trim() : ''
+      if (title === '') {
+        throw new ClueError('invalid-request', 'an unresolved clue needs a non-empty title')
+      }
+      const reason = typeof params.reason === 'string' ? params.reason.trim() : ''
+      if (reason === '') {
+        throw new ClueError('invalid-request', 'an unresolved clue needs a non-empty reason')
+      }
+      const locator = requireLocator(params.locator)
+      const portable = params.portable
+      // The stored locator is exactly what the importer supplied (a portable
+      // locator or `{}`), never a fabricated resolvable address. For DEDUPE
+      // only, a usable locator (the row's own, else the portable one) is
+      // normalized through the source when it is registered, so a later
+      // `ensure` sees the same key.
+      const dedupeLocator = Object.keys(locator).length > 0
+        ? locator
+        : portable?.locator !== undefined && Object.keys(portable.locator).length > 0
+          ? portable.locator
+          : undefined
+      const source = sources.get(sourceId)
+      const context = contextOf(workspaceId, call)
+      const normalizedDedupe = dedupeLocator === undefined
+        ? undefined
+        : source === undefined
+          ? requireLocator(dedupeLocator, 'portable locator')
+          : normalizeSourceLocator(source, dedupeLocator, context)
+      const dedupeKey = normalizedDedupe === undefined
+        ? undefined
+        : source === undefined
+          ? stableLocatorKey(normalizedDedupe)
+          : locatorKeyOf(source, normalizedDedupe)
+      const unresolved: ClueUnresolved = {
+        reason,
+        ...(portable === undefined ? {} : { portable }),
+      }
+      const transaction = await requireStore().transact(workspaceId, undefined, (state) => {
+        if (dedupeKey !== undefined) {
+          const existing = state.clues.find(clue =>
+            clue.sourceId === sourceId
+            && (source === undefined
+              ? stableLocatorKey(clue.locator) === dedupeKey
+              : locatorKeyOf(source, clue.locator) === dedupeKey))
+          if (existing !== undefined) {
+            if (existing.unresolved === undefined) return { clue: existing, created: false }
+            const next: Clue = { ...existing, title, unresolved, updatedAt: now() }
+            state.clues[state.clues.indexOf(existing)] = next
+            return { clue: next, created: false }
+          }
+        }
+        const timestamp = now()
+        const clue: Clue = {
+          id: newId('clue'),
+          sourceId,
+          typeId,
+          locator,
+          title,
+          workspaceId,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          unresolved,
         }
         state.clues.push(clue)
         return { clue, created: true }

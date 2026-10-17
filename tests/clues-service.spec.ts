@@ -267,6 +267,81 @@ describe('clue service registration', () => {
     expect((await service.read({ workspaceId: 'ws-1', clueId })).text).toBe('a')
   })
 
+  it('imports an unresolved reference, keeps it usable, and remaps it when the source resolves', async () => {
+    const service = makeService()
+    const input = {
+      workspaceId: 'ws-1',
+      sourceId: 'test.source',
+      typeId: 'test.source.text',
+      locator: { id: 'lost' },
+      title: 'Lost doc',
+      reason: 'the source plugin is not installed',
+      portable: { portable: true, locator: { id: 'lost' } },
+    } as const
+    const imported = await service.importUnresolved(input)
+    expect(imported.created).toBe(true)
+    expect(imported.clue.unresolved).toMatchObject({ reason: 'the source plugin is not installed' })
+    const clueId = imported.clue.id
+
+    // Dedupe is by sourceId + locator key: importing twice is idempotent and
+    // never mints a second id for the same resource.
+    const again = await service.importUnresolved(input)
+    expect(again.created).toBe(false)
+    expect(again.clue.id).toBe(clueId)
+
+    // S7 can put the unresolved reference in a pack and attach its imported
+    // snapshot — both only require the clue to EXIST, not to resolve.
+    const pack = await service.createPack({ workspaceId: 'ws-1', name: 'imported', members: [clueId] })
+    expect(pack.pack.members).toEqual([clueId])
+    const meta = await service.putSnapshot('ws-1', {
+      clueId,
+      format: 'text/plain',
+      data: { text: 'cached copy' },
+      text: 'cached copy',
+    })
+    const snapshot = await service.readSnapshot({ workspaceId: 'ws-1', snapshotId: meta.snapshotId })
+    expect(snapshot.content.text).toBe('cached copy')
+
+    // Reads/edits/portables never try a source they know is unresolved: the
+    // fixed `source-missing` category carries the import-time reason.
+    const missing = { category: 'source-missing', message: expect.stringContaining('not installed') }
+    await expect(service.read({ workspaceId: 'ws-1', clueId })).rejects.toMatchObject(missing)
+    await expect(service.loadEdit({ workspaceId: 'ws-1', clueId })).rejects.toMatchObject(missing)
+    await expect(service.saveEdit({
+      workspaceId: 'ws-1',
+      clueId,
+      document: { format: 'text/plain', data: { text: 'x' }, baseRevision: 'r1' },
+    })).rejects.toMatchObject(missing)
+    await expect(service.portable({ workspaceId: 'ws-1', clueId })).rejects.toMatchObject(missing)
+    // No source can be consulted before it is registered.
+    await expect(service.ensure({
+      workspaceId: 'ws-1',
+      sourceId: 'test.source',
+      typeId: 'test.source.text',
+      locator: { id: 'lost' },
+      title: 'Lost doc',
+    })).rejects.toMatchObject({ category: 'source-missing' })
+
+    // Once the source is registered, ensure remaps the SAME id and clears the
+    // marker, so every pack/pin/snapshot reference keeps pointing at it.
+    service.registerSource(testSource())
+    const remapped = await service.ensure({
+      workspaceId: 'ws-1',
+      sourceId: 'test.source',
+      typeId: 'test.source.text',
+      locator: { id: 'lost' },
+      title: 'Lost doc',
+    })
+    expect(remapped.created).toBe(false)
+    expect(remapped.clue.id).toBe(clueId)
+    expect(remapped.clue.unresolved).toBeUndefined()
+    expect((await service.listClues('ws-1')).clues.find(clue => clue.id === clueId)?.unresolved)
+      .toBeUndefined()
+    expect((await service.read({ workspaceId: 'ws-1', clueId })).text).toBe('lost')
+    // The pack membership survived the remap.
+    expect((await service.listPacks('ws-1')).packs[0]?.members).toEqual([clueId])
+  })
+
   it('reports unknown sources and unsupported operations with fixed categories', async () => {
     const service = makeService()
     service.registerSource(testSource({ capabilities: { list: false, search: false } }))

@@ -182,6 +182,26 @@ function parseClueRow(raw: unknown, workspaceId: string, index: number): Clue {
   if (raw.workspaceId !== workspaceId) {
     corrupt(workspaceId, `clues[${index}] belongs to workspace "${String(raw.workspaceId)}"`)
   }
+  // The optional unresolved marker is part of the durable shape (S7 imports a
+  // reference before its source exists): a malformed marker must fail loudly
+  // instead of making every subsequent read a raw TypeError.
+  if (raw.unresolved !== undefined) {
+    const unresolved = raw.unresolved
+    if (!isRecord(unresolved) || !isNonEmptyString(unresolved.reason)) {
+      corrupt(workspaceId, `clues[${index}].unresolved is not a valid unresolved marker`)
+    }
+    if (unresolved.portable !== undefined) {
+      const portable = unresolved.portable
+      if (
+        !isRecord(portable)
+        || typeof portable.portable !== 'boolean'
+        || (portable.locator !== undefined && !isRecord(portable.locator))
+        || (portable.reason !== undefined && typeof portable.reason !== 'string')
+      ) {
+        corrupt(workspaceId, `clues[${index}].unresolved.portable is not a valid portable reference`)
+      }
+    }
+  }
   return raw as unknown as Clue
 }
 

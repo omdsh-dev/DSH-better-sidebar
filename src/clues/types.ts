@@ -252,6 +252,19 @@ export interface CluePortableRef {
 
 // ── Persisted domain model ─────────────────────────────────────────────────
 
+/**
+ * Why a stable reference could not be resolved at import time (S7 shares a
+ * clue whose source/plugin was not installed on this machine). The row stays a
+ * first-class clue: it can be put in a pack, receive snapshots and be listed;
+ * read/edit/portable answer `source-missing` with this reason until an
+ * `ensure` against the re-registered source remaps it.
+ */
+export interface ClueUnresolved {
+  readonly reason: string
+  /** A credential-free locator the resolver may retry, when one was known. */
+  readonly portable?: CluePortableRef
+}
+
 /** One stable reference to a resource, owned by one workspace. */
 export interface Clue {
   readonly id: string
@@ -262,6 +275,8 @@ export interface Clue {
   readonly workspaceId: string
   readonly createdAt: string
   readonly updatedAt: string
+  /** Present while the reference is imported but its source cannot resolve it. */
+  readonly unresolved?: ClueUnresolved
 }
 
 /** One local pack: an ordered, de-duplicated set of clue ids. */
@@ -427,6 +442,23 @@ export interface CluesEnsureParams {
   readonly typeId: string
   readonly locator: Locator
   readonly title: string
+}
+
+/**
+ * Core-only input of {@link CluesService.importUnresolved} (S7): persist a
+ * reference even though this machine cannot resolve it yet. `sourceId` and
+ * `typeId` are still required (they name the owner), and `locator` may be an
+ * empty object when only a portable locator is known — it is NEVER filled with
+ * a fabricated path just to look resolvable. Not exposed over HTTP.
+ */
+export interface CluesImportUnresolvedParams {
+  readonly workspaceId: string
+  readonly sourceId: string
+  readonly typeId: string
+  readonly locator: Locator
+  readonly title: string
+  readonly reason: string
+  readonly portable?: CluePortableRef
 }
 
 /** `clues.ensure` result; `created` is false when the stable id was reused. */
