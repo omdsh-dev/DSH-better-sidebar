@@ -738,4 +738,6 @@ export const pl: Record<string, string> = {
   pluginZoteroWorkspaceDesc: 'Bring the Zotero library into the right sidebar: collection tree, item list/detail and server-side search, read the rendered PDF and parsed Markdown in place, and put the citation plus file paths into the current conversation; read-only local API, no MCP',
   pluginDshMemoryDeltaName: 'dsh-memory-delta Pamięć',
   pluginDshMemoryDeltaDesc: 'Pamięć międzysesyjna: wstrzykiwane są tylko zmiany (nic, gdy nic się nie zmieniło), z przypomnieniem o terminie przeglądu, wyszukiwaniem według trafności i kartą w pasku bocznym.',
+  pluginPrInboxName: "dsh-pr-inbox Skrzynka PR",
+  pluginPrInboxDesc: "PR-y GitHub bieżącego obszaru roboczego w trzech grupach — utworzone przeze mnie / czekające na moją recenzję / scalone przeze mnie — z treścią, podsumowaniem komentarzy i listą zmienionych plików w panelu; tylko do odczytu przez lokalne logowanie gh",
 }

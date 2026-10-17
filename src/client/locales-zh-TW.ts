@@ -751,4 +751,6 @@ export const zhTW: Record<string, string> = {
   pluginZoteroWorkspaceDesc: '把 Zotero 文庫搬進右側欄：集合樹 + 條目列表/詳情、服務端檢索，直接讀渲染版 PDF 與解析後的 Markdown，一鍵把文獻引用與文件路徑帶入當前對話；只讀本地 API、不依賴 MCP',
   pluginDshMemoryDeltaName: 'dsh-memory-delta 記憶',
   pluginDshMemoryDeltaDesc: '跨工作階段記憶：只注入有變動的部分（沒有變動則完全不注入），附到期覆核提醒、相關度排序檢索與側邊欄分頁。',
+  pluginPrInboxName: "dsh-pr-inbox PR 收件匣",
+  pluginPrInboxDesc: "用「我提出的 / 待我審查 / 我合併的」三個分類檢視目前工作區的 GitHub PR；可在面板內閱讀正文、評論摘要與變更檔案清單，沿用本機 gh 登入，唯讀",
 }

@@ -736,4 +736,6 @@ export const vi: Record<string, string> = {
   pluginZoteroWorkspaceDesc: 'Bring the Zotero library into the right sidebar: collection tree, item list/detail and server-side search, read the rendered PDF and parsed Markdown in place, and put the citation plus file paths into the current conversation; read-only local API, no MCP',
   pluginDshMemoryDeltaName: 'dsh-memory-delta Bộ nhớ',
   pluginDshMemoryDeltaDesc: 'Bộ nhớ xuyên phiên: chỉ chèn phần đã thay đổi (không chèn gì nếu không có thay đổi), kèm nhắc ngày rà soát, tìm kiếm theo độ liên quan và tab thanh bên.',
+  pluginPrInboxName: "dsh-pr-inbox Hộp thư PR",
+  pluginPrInboxDesc: "PR GitHub của workspace hiện tại theo ba nhóm — do tôi tạo / đang chờ tôi review / do tôi hợp nhất — với nội dung, tóm tắt bình luận và danh sách tệp thay đổi ngay trong bảng; chỉ đọc qua đăng nhập gh cục bộ",
 }

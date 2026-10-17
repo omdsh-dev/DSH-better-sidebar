@@ -736,4 +736,6 @@ export const hi: Record<string, string> = {
   pluginZoteroWorkspaceDesc: 'Bring the Zotero library into the right sidebar: collection tree, item list/detail and server-side search, read the rendered PDF and parsed Markdown in place, and put the citation plus file paths into the current conversation; read-only local API, no MCP',
   pluginDshMemoryDeltaName: 'dsh-memory-delta स्मृति',
   pluginDshMemoryDeltaDesc: 'सत्रों के बीच स्मृति: केवल बदला हुआ भाग इंजेक्ट होता है (कुछ न बदले तो कुछ नहीं), समीक्षा-तिथि अनुस्मारक, प्रासंगिकता-क्रमित खोज और साइडबार टैब के साथ।',
+  pluginPrInboxName: "dsh-pr-inbox PR इनबॉक्स",
+  pluginPrInboxDesc: "वर्तमान वर्कस्पेस के GitHub PR तीन समूहों में — मेरे बनाए / मेरी समीक्षा की प्रतीक्षा में / मेरे द्वारा मर्ज किए गए — पैनल में बॉडी, टिप्पणी सारांश और बदली गई फ़ाइलें; स्थानीय gh लॉगिन से केवल-पढ़ने के लिए",
 }

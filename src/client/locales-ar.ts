@@ -737,4 +737,6 @@ export const ar: Record<string, string> = {
   pluginZoteroWorkspaceDesc: 'Bring the Zotero library into the right sidebar: collection tree, item list/detail and server-side search, read the rendered PDF and parsed Markdown in place, and put the citation plus file paths into the current conversation; read-only local API, no MCP',
   pluginDshMemoryDeltaName: 'dsh-memory-delta الذاكرة',
   pluginDshMemoryDeltaDesc: 'ذاكرة عبر الجلسات: يُحقن ما تغيّر فقط (ولا شيء عند عدم وجود تغيير)، مع تذكير بموعد المراجعة وبحث مرتّب حسب الصلة وتبويب في الشريط الجانبي.',
+  pluginPrInboxName: "dsh-pr-inbox صندوق PR",
+  pluginPrInboxDesc: "طلبات السحب (PR) في مساحة العمل الحالية ضمن ثلاث مجموعات — التي أنشأتها / التي تنتظر مراجعتي / التي دمجتها — مع النص وملخص التعليقات وقائمة الملفات المتغيرة داخل اللوحة؛ للقراءة فقط عبر تسجيل دخول gh المحلي",
 }

@@ -736,4 +736,6 @@ export const th: Record<string, string> = {
   pluginZoteroWorkspaceDesc: 'Bring the Zotero library into the right sidebar: collection tree, item list/detail and server-side search, read the rendered PDF and parsed Markdown in place, and put the citation plus file paths into the current conversation; read-only local API, no MCP',
   pluginDshMemoryDeltaName: 'dsh-memory-delta หน่วยความจำ',
   pluginDshMemoryDeltaDesc: 'หน่วยความจำข้ามเซสชัน: ฉีดเฉพาะส่วนที่เปลี่ยนแปลง (ไม่มีการเปลี่ยนแปลงก็ไม่ฉีดเลย) พร้อมเตือนวันทบทวน ค้นหาตามความเกี่ยวข้อง และแท็บแถบข้าง',
+  pluginPrInboxName: "dsh-pr-inbox กล่อง PR",
+  pluginPrInboxDesc: "PR บน GitHub ของเวิร์กสเปซปัจจุบันในสามกลุ่ม — ที่ฉันสร้าง / ที่รอฉันรีวิว / ที่ฉัน merge — พร้อมเนื้อหา สรุปความคิดเห็น และไฟล์ที่เปลี่ยนแปลงในแผง; อ่านอย่างเดียวผ่านการเข้าสู่ระบบ gh ในเครื่อง",
 }

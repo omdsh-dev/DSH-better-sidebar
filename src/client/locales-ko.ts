@@ -728,4 +728,6 @@ export const ko: Record<string, string> = {
   pluginZoteroWorkspaceDesc: 'Bring the Zotero library into the right sidebar: collection tree, item list/detail and server-side search, read the rendered PDF and parsed Markdown in place, and put the citation plus file paths into the current conversation; read-only local API, no MCP',
   pluginDshMemoryDeltaName: 'dsh-memory-delta 메모리',
   pluginDshMemoryDeltaDesc: '세션 간 기억: 변경된 부분만 주입하고(변경이 없으면 아무것도 주입하지 않음), 검토 시점 알림, 관련도 정렬 검색, 사이드바 탭을 제공합니다.',
+  pluginPrInboxName: "dsh-pr-inbox PR 받은편지함",
+  pluginPrInboxDesc: "현재 워크스페이스의 GitHub PR을 「내가 올린 / 내 리뷰 대기 / 내가 병합한」 세 구역으로 표시합니다. 패널에서 본문·댓글 요약·변경 파일 목록을 읽을 수 있고, 로컬 gh 로그인을 사용하는 읽기 전용 플러그인입니다",
 }

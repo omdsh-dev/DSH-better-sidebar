@@ -736,4 +736,6 @@ export const ja: Record<string, string> = {
   pluginZoteroWorkspaceDesc: 'Zotero ライブラリを右サイドバーに：コレクションツリー、アイテム一覧/詳細、サーバー側検索、レンダリング済み PDF と解析済み Markdown をその場で閲覧し、引用とファイルパスを現在の会話へワンクリックで挿入。ローカル API のみ・読み取り専用・MCP 不要',
   pluginDshMemoryDeltaName: 'dsh-memory-delta メモリ',
   pluginDshMemoryDeltaDesc: 'セッションをまたぐ記憶：変化した部分だけを注入し（変化がなければ何も注入しません）、レビュー期日のリマインド、関連度順の検索、サイドバーのタブを備えます。',
+  pluginPrInboxName: 'dsh-pr-inbox PR 受信箱',
+  pluginPrInboxDesc: '現在のワークスペースの GitHub PR を「自分が出した / レビュー待ち / 自分がマージした」の 3 バケットで表示。本文・コメント概要・変更ファイルをパネル内で読め、ローカルの gh ログインを利用する読み取り専用プラグイン',
 }

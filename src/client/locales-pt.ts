@@ -719,4 +719,6 @@ export const pt: Record<string, string> = {
   pluginZoteroWorkspaceDesc: 'Bring the Zotero library into the right sidebar: collection tree, item list/detail and server-side search, read the rendered PDF and parsed Markdown in place, and put the citation plus file paths into the current conversation; read-only local API, no MCP',
   pluginDshMemoryDeltaName: 'dsh-memory-delta Memória',
   pluginDshMemoryDeltaDesc: 'Memória entre sessões: injeta apenas o que mudou (nada quando nada mudou), com lembrete de revisão, busca por relevância e aba lateral.',
+  pluginPrInboxName: "dsh-pr-inbox Caixa de PRs",
+  pluginPrInboxDesc: "Os PRs do GitHub do workspace atual em três grupos — criados por mim / aguardando minha revisão / mesclados por mim — com corpo, resumo de comentários e arquivos alterados no painel; somente leitura via seu login local do gh",
 }

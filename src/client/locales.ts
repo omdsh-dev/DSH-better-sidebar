@@ -745,6 +745,8 @@ export const zh = {
   pluginZoteroWorkspaceName: 'dsh-zotero-workspace Zotero 文献工作台',
   pluginZoteroWorkspaceDesc: '把 Zotero 文库搬进右侧栏：集合树 + 条目列表/详情、服务端检索，直接读渲染版 PDF 与解析后的 Markdown，一键把文献引用与文件路径带入当前对话；只读本地 API、不依赖 MCP',
   pluginDshMemoryDeltaName: 'dsh-memory-delta 记忆',
+  pluginPrInboxName: 'dsh-pr-inbox PR 收件箱',
+  pluginPrInboxDesc: '按「我提的 / 待我审 / 我合并的」三桶看当前工作区的 GitHub PR；点开可读正文、评论摘要与改动文件清单，复用本机 gh 登录，只读',
 }
 
 /** The en dictionary (key-set-equal to zh, enforced by the type annotation). */
@@ -1469,6 +1471,8 @@ export const en: Record<keyof typeof zh, string> = {
   pluginZoteroWorkspaceName: 'dsh-zotero-workspace Zotero Workspace',
   pluginZoteroWorkspaceDesc: 'Bring the Zotero library into the right sidebar: collection tree, item list/detail and server-side search, read the rendered PDF and parsed Markdown in place, and put the citation plus file paths into the current conversation; read-only local API, no MCP',
   pluginDshMemoryDeltaName: 'dsh-memory-delta Memory',
+  pluginPrInboxName: 'dsh-pr-inbox PR Inbox',
+  pluginPrInboxDesc: 'The current workspace\'s GitHub PRs in three buckets — authored by me / needs my review / merged by me — with in-panel body, comment summaries and changed files; read-only through your local gh login',
 }
 
 /**
