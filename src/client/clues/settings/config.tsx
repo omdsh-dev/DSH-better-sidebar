@@ -387,23 +387,25 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
     const request = loadRequestRef.current + 1
     loadRequestRef.current = request
     const epoch = writeEpochRef.current
+    // Freshness is tracked PER TARGET. A fresh observation of one dependency
+    // must not discard the connection projection (or a sibling dependency's
+    // answer) that the same aggregate read carries: only superseded fields are
+    // dropped, everything else still lands.
     const generation = snapshotGenerations(ids)
     const connectionGeneration = connectionGenerationRef.current
     const controller = new AbortController()
     loadAbortRef.current?.abort()
     loadAbortRef.current = controller
-    const isCurrent = (): boolean =>
+    const requestIsCurrent = (): boolean =>
       mounted.current
       && !controller.signal.aborted
       && request === loadRequestRef.current
       && epoch === writeEpochRef.current
-      && generationsCurrent(generation)
-      && connectionGeneration === connectionGenerationRef.current
     setRefreshing(true)
     setError(null)
     // A fresh explicit read supersedes the previous action failure it retries.
     setConnectionActionError(null)
-    const failures: Record<string, true> = {}
+    const failures: Record<string, string> = {}
     try {
       const nextDependencies = await Promise.all(ids.map(async (dependencyId): Promise<DependencyStatus | undefined> => {
         try {
@@ -413,43 +415,58 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
           )
           return list.find(item => item.dependencyId === dependencyId) ?? list[0]
         } catch (caught) {
-          failures[dependencyId] = true
-          if (isCurrent()) setError(messageOf(caught))
+          failures[dependencyId] = messageOf(caught)
           return undefined
         }
       }))
       const succeededDependencies = nextDependencies.filter((item): item is DependencyStatus => item !== undefined)
       let nextConnection: ConnectionStatusProjection | undefined
       let connectionFailed = false
+      let connectionError: string | undefined
       if (connectionId !== undefined) {
         try {
           const list = await runtime.connectionsStatus(connectionId, controller.signal)
           nextConnection = list.find(item => item.connectionId === connectionId) ?? list[0]
         } catch (caught) {
           connectionFailed = true
-          if (isCurrent()) setError(messageOf(caught))
+          connectionError = messageOf(caught)
         }
       }
-      if (!isCurrent()) return
+      if (!requestIsCurrent()) return
+      const superseded = new Set(ids.filter(dependencyId =>
+        dependencyGeneration(dependencyId) !== (generation.get(dependencyId) ?? 0)))
+      const freshDependencies = succeededDependencies.filter(item => !superseded.has(item.dependencyId))
+      const connectionSuperseded = connectionGeneration !== connectionGenerationRef.current
+      const freshFailures: Record<string, true> = {}
+      let dependencyError: string | undefined
+      for (const [dependencyId, message] of Object.entries(failures)) {
+        if (superseded.has(dependencyId)) continue
+        freshFailures[dependencyId] = true
+        dependencyError = message
+      }
+      if (dependencyError !== undefined) setError(dependencyError)
+      if (!connectionSuperseded && connectionError !== undefined) setError(connectionError)
       // Merge, not replace: a failed probe has no DTO and must not erase the
       // last observed path/version. The row shows request-failed meanwhile.
-      setDependencies(current => mergeDependencies(current, succeededDependencies))
-      setFailedIds(failures)
+      setDependencies(current => mergeDependencies(current, freshDependencies))
+      setFailedIds(freshFailures)
       // An explicit read is the retry path for plan/start/poll failures too.
       setRowErrors({})
       setPollErrors({})
-      if (!connectionFailed) {
-        setConnections(nextConnection === undefined ? [] : [nextConnection])
-        setConnectionReadFailed(false)
-      } else {
-        // Keep the last successful projection; the retryable failure is
-        // reported explicitly instead of pretending "not configured".
-        setConnectionReadFailed(true)
+      if (!connectionSuperseded) {
+        if (!connectionFailed) {
+          setConnections(nextConnection === undefined ? [] : [nextConnection])
+          setConnectionReadFailed(false)
+        } else {
+          // Keep the last successful projection; the retryable failure is
+          // reported explicitly instead of pretending "not configured".
+          setConnectionReadFailed(true)
+        }
       }
       publishClueStatuses(
         runtime,
-        succeededDependencies,
-        nextConnection === undefined ? [] : [nextConnection],
+        freshDependencies,
+        connectionSuperseded || connectionFailed || nextConnection === undefined ? [] : [nextConnection],
       )
       // The publish above is itself a bus notification (this window's own
       // listener bumps the generation), so the task-adoption step captures a
@@ -486,7 +503,7 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
       // this read's own publish, so it must not keep the spinner on forever.
       if (mounted.current && request === loadRequestRef.current) setRefreshing(false)
     }
-  }, [runtime, ids, connectionId, snapshotGenerations, generationsCurrent])
+  }, [runtime, ids, connectionId, snapshotGenerations, dependencyGeneration, generationsCurrent])
 
   useEffect(() => {
     // Track (and clear) the mount status read: a write clicked before it

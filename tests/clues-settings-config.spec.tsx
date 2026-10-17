@@ -1160,6 +1160,38 @@ describe('SourceConfigPage cross-window observation fencing', () => {
     rendered.unmount()
   })
 
+  it('a same-dependency task observation during the mount read does not discard the connection projection', async () => {
+    const runtime = fakeRuntime()
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const originalStatus = runtime.connectionsStatus
+    let gated = false
+    let connectionRequested = false
+    runtime.connectionsStatus = async (...args) => {
+      connectionRequested = true
+      if (gated) await gate
+      return originalStatus(...args)
+    }
+    gated = true
+    const rendered = renderRoot(createElement(SourceConfigPage, { ...BASE_PROPS, runtime }))
+    await flush(6)
+    // The dependency half has answered; the connection read is still waiting.
+    expect(connectionRequested).toBe(true)
+    // The shared poller of another view observes a RUNNING task for the SAME
+    // dependency while this mount read awaits its connection projection.
+    act(() => { publishClueTask(runtime, task()) })
+    release()
+    await flush()
+    const row = rendered.container.querySelector('[data-clue-dependency="acme.cli"]')!
+    // The live task remains the row's freshest state...
+    expect(row.querySelector('[data-kind]')?.getAttribute('data-kind')).toBe('installing')
+    // ...and the connection projection is NOT discarded with the superseded
+    // dependency half of the aggregate read.
+    expect(rendered.container.querySelector('[data-authorization]')?.getAttribute('data-authorization'))
+      .toBe('ready')
+    rendered.unmount()
+  })
+
   it('an unrelated dependency observation does not cancel an in-flight explicit read', async () => {
     const runtime = fakeRuntime()
     const rendered = await mount(runtime)
