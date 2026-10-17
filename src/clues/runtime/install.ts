@@ -610,10 +610,7 @@ export function createInstallManager(options: InstallManagerOptions): InstallMan
     }
     const hadPrevious = await pathExists(task.targetDir)
     let current = task
-    let outcome: Partial<DependencyInstallTask> & { state: DependencyInstallState } = {
-      state: 'failed',
-      error: { category: 'failed', message: 'the installation failed' },
-    }
+    let outcome: (Partial<DependencyInstallTask> & { state: DependencyInstallState }) | undefined
     try {
       if (controller.signal.aborted) throw new ClueError('cancelled', 'the installation was cancelled')
       await mkdir(stagingRoot, { recursive: true })
@@ -709,7 +706,10 @@ export function createInstallManager(options: InstallManagerOptions): InstallMan
     // never see `succeeded` while this task's staging directory still exists.
     await removePath(stagingRoot).catch(() => undefined)
     running.delete(task.dependencyId)
-    return settle(current, outcome)
+    return settle(current, outcome ?? {
+      state: 'failed',
+      error: { category: 'failed', message: 'the installation failed' },
+    })
   }
 
   const plan = async (definition: ClueDependencyDefinition): Promise<DependencyInstallPlan> => {
