@@ -38,14 +38,18 @@
  * page's node cards (8px).
  */
 import {
-  useCallback, useEffect, useMemo, useRef, useState,
+  Fragment, isValidElement, useCallback, useEffect, useMemo, useRef, useState,
   type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject,
 } from 'react'
 import { createPortal } from 'react-dom'
 import { Button, IconCloseFillRegular, IconFullscreenOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import { createFrameBatcher } from './frame-batcher.ts'
 import { isNarrowWidth } from './breakpoints.ts'
-import { clampNumber, clampWindowBox, maximizedWindowBox, placeWindowBox, type WindowBox } from './windows/geometry.ts'
+import {
+  WINDOW_MIN_HEIGHT, WINDOW_MIN_WIDTH, WINDOW_VIEWPORT_MARGIN,
+  clampNumber, clampWindowBox, maximizedWindowBox, placeWindowBox, resizeWindowFromEdge,
+  type WindowBox,
+} from './windows/geometry.ts'
 import { useWindowLayer } from './windows/layer.ts'
 import { t } from './locales.ts'
 import css from './FloatingWindow.module.css'
@@ -53,11 +57,6 @@ import css from './FloatingWindow.module.css'
 /** Default share of the viewport a fresh (legacy, unchecked) window takes. */
 const DEFAULT_WIDTH_RATIO = 0.7
 const DEFAULT_HEIGHT_RATIO = 0.6
-/** Default floor, and the hard floor a resize can never cross. */
-const DEFAULT_MIN_WIDTH = 320
-const DEFAULT_MIN_HEIGHT = 240
-/** Free space kept at the viewport edges. */
-const VIEWPORT_MARGIN = 8
 
 export type { WindowBox }
 
@@ -138,14 +137,14 @@ function initialBox(
   // public host applies to its presets.
   const narrow = size === undefined && isNarrowWidth(viewport.width)
   const width = clampNumber(
-    size?.width ?? (narrow ? viewport.width - VIEWPORT_MARGIN * 2 : viewport.width * DEFAULT_WIDTH_RATIO),
+    size?.width ?? (narrow ? viewport.width - WINDOW_VIEWPORT_MARGIN * 2 : viewport.width * DEFAULT_WIDTH_RATIO),
     min.width,
-    Math.max(min.width, viewport.width - VIEWPORT_MARGIN * 2),
+    Math.max(min.width, viewport.width - WINDOW_VIEWPORT_MARGIN * 2),
   )
   const height = clampNumber(
-    size?.height ?? (narrow ? viewport.height - VIEWPORT_MARGIN * 2 : viewport.height * DEFAULT_HEIGHT_RATIO),
+    size?.height ?? (narrow ? viewport.height - WINDOW_VIEWPORT_MARGIN * 2 : viewport.height * DEFAULT_HEIGHT_RATIO),
     min.height,
-    Math.max(min.height, viewport.height - VIEWPORT_MARGIN * 2),
+    Math.max(min.height, viewport.height - WINDOW_VIEWPORT_MARGIN * 2),
   )
   return placeWindowBox({
     size: { width, height },
@@ -153,6 +152,21 @@ function initialBox(
     ...(anchor === undefined ? {} : { anchor }),
     min,
   })
+}
+
+/**
+ * Whether a React node actually renders something. `null`/`false`/`''` and an
+ * empty array are how callers CLEAR a row; rendering an empty bordered strip
+ * for them is a visible shell bug.
+ */
+function hasNode(value: ReactNode): boolean {
+  if (value === null || value === undefined || value === false || value === true || value === '') return false
+  if (Array.isArray(value)) return value.some(hasNode)
+  // An empty fragment renders nothing either: treat it as a cleared row.
+  if (isValidElement(value) && value.type === Fragment) {
+    return hasNode((value.props as { children?: ReactNode }).children)
+  }
+  return true
 }
 
 /** The restore glyph (the host set ships only the fullscreen/maximize one). */
@@ -177,8 +191,8 @@ export function FloatingWindow(props: FloatingWindowProps): ReactNode {
     zIndex, layerKey, titleLeading, dirty, saving, onBeforeClose, closeLabel, children,
   } = props
   const min = useMemo(() => ({
-    width: minSize?.width ?? DEFAULT_MIN_WIDTH,
-    height: minSize?.height ?? DEFAULT_MIN_HEIGHT,
+    width: minSize?.width ?? WINDOW_MIN_WIDTH,
+    height: minSize?.height ?? WINDOW_MIN_HEIGHT,
   }), [minSize?.width, minSize?.height])
   const frameRef = useRef<HTMLDivElement>(null)
   const onCloseRef = useRef(onClose)
@@ -286,7 +300,11 @@ export function FloatingWindow(props: FloatingWindowProps): ReactNode {
       setOwnedBox(maximizedWindowBox(viewport))
     } else {
       setOwnedMaximized(false)
-      setOwnedBox(clampWindowBox(restoreBoxRef.current ?? current ?? maxBox(viewport), viewport, min))
+      setOwnedBox(clampWindowBox(
+        restoreBoxRef.current ?? current ?? maximizedWindowBox(viewport),
+        viewport,
+        min,
+      ))
     }
   }, [min])
 
@@ -355,11 +373,15 @@ export function FloatingWindow(props: FloatingWindowProps): ReactNode {
     if (drag === null) return
     const growX = drag.axis === 'y' ? 0 : event.clientX - drag.startX
     const growY = drag.axis === 'x' ? 0 : event.clientY - drag.startY
-    pendingBoxRef.current = clampWindowBox({
-      ...drag.box,
-      width: drag.box.width + growX,
-      height: drag.box.height + growY,
-    }, { width: window.innerWidth, height: window.innerHeight }, min)
+    // Origin-preserving resize: growing into the viewport edge caps the size
+    // in place instead of sliding the whole window left/up (the pre-S6
+    // FloatingWindow behaviour, and what a reader dragging a corner expects).
+    pendingBoxRef.current = resizeWindowFromEdge(
+      drag.box,
+      { width: drag.box.width + growX, height: drag.box.height + growY },
+      { width: window.innerWidth, height: window.innerHeight },
+      min,
+    )
     resizeBatcher.schedule(() => {
       const pending = pendingBoxRef.current
       if (pending !== null) commitBox(pending)
@@ -380,7 +402,7 @@ export function FloatingWindow(props: FloatingWindowProps): ReactNode {
   const toolbarRow = toolbar ?? actions
   const closeText = closeLabel ?? t('close')
   const style = currentBox === null
-    ? { left: -9999, top: -9999, width: DEFAULT_MIN_WIDTH, height: DEFAULT_MIN_HEIGHT, zIndex: resolvedZ }
+    ? { left: -9999, top: -9999, width: WINDOW_MIN_WIDTH, height: WINDOW_MIN_HEIGHT, zIndex: resolvedZ }
     : { left: currentBox.left, top: currentBox.top, width: currentBox.width, height: currentBox.height, zIndex: resolvedZ }
 
   return createPortal(
@@ -438,7 +460,7 @@ export function FloatingWindow(props: FloatingWindowProps): ReactNode {
           />
         </span>
       </div>
-      {toolbarRow !== undefined && toolbarRow !== null && (
+      {hasNode(toolbarRow) && (
         <div className={css.toolbar} data-window-toolbar data-window-no-drag>{toolbarRow}</div>
       )}
       <div
@@ -449,7 +471,7 @@ export function FloatingWindow(props: FloatingWindowProps): ReactNode {
       >
         {children}
       </div>
-      {footer !== undefined && <div className={css.footer} data-window-footer>{footer}</div>}
+      {hasNode(footer) && <div className={css.footer} data-window-footer>{footer}</div>}
       {!maximized && (
         <>
           {/*
@@ -490,9 +512,4 @@ export function FloatingWindow(props: FloatingWindowProps): ReactNode {
     </div>,
     document.body,
   )
-}
-
-/** A safety fallback for the internal restore path (never shown). */
-function maxBox(viewport: { width: number; height: number }): WindowBox {
-  return maximizedWindowBox(viewport)
 }

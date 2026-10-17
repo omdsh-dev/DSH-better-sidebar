@@ -2,7 +2,7 @@
  * The React host of the public window face, mounted exactly ONCE by the
  * plugin's activation (see `client/index.tsx`). It subscribes to the host
  * store's immutable snapshot and renders one {@link FloatingWindow} per open
- * window; the store owns identity/geometry/z/dirty/navigation, the shell owns
+ * window; the store owns identity/geometry/dirty/navigation, the shell owns
  * the frame and the dismissal contract.
  *
  * Navigation pages are all MOUNTED: covered pages are hidden with CSS rather
@@ -10,14 +10,19 @@
  * selection or half-typed form exactly as it was left. The React tree is
  * therefore the retention mechanism — no serialized page state, no second
  * state store.
+ *
+ * Every page's content sits inside its own {@link RenderBoundary}: a crashing
+ * third-party renderer blanks ITS page, never the sidebar, the other windows
+ * or even the window's own close control (the plugin's per-surface rule).
  */
 import { useCallback, useEffect, useSyncExternalStore, type ReactNode } from 'react'
 import { Button, IconChevronLeftOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import { useViewportSize } from '../breakpoints.ts'
 import { FloatingWindow } from '../FloatingWindow.tsx'
+import { RenderBoundary } from '../RenderBoundary.tsx'
 import { ClueFormatHost, type FormatRendererRegistry } from './format-content.tsx'
-import { windowHostLayerKey } from './host.ts'
-import type { WindowContent, WindowDocumentContent, WindowHostController, WindowView } from './types.ts'
+import { isWindowDocumentContent, windowHostLayerKey } from './host.ts'
+import type { WindowContent, WindowHostController, WindowView } from './types.ts'
 import { t } from '../locales.ts'
 import css from './windows.module.css'
 
@@ -28,18 +33,12 @@ export interface WindowHostProps {
   formats: FormatRendererRegistry
 }
 
-/** Whether one content value is a structured document descriptor. */
-function isDocumentContent(content: WindowContent): content is WindowDocumentContent {
-  return typeof content === 'object'
-    && content !== null
-    && !Array.isArray(content)
-    && (content as { kind?: unknown }).kind === 'document'
-}
-
 /** Render one page's content (plain nodes as-is; documents through the format host). */
-function pageContent(content: WindowContent, formats: FormatRendererRegistry): ReactNode {
-  if (!isDocumentContent(content)) return <>{content}</>
-  return <ClueFormatHost {...content} registry={formats} />
+function pageContent(content: WindowContent, formats: FormatRendererRegistry, saving: boolean): ReactNode {
+  if (!isWindowDocumentContent(content)) return <>{content}</>
+  // The effective flag wins over the descriptor's own copy: the shell shows
+  // exactly what the renderer receives.
+  return <ClueFormatHost {...content} saving={saving} registry={formats} />
 }
 
 /** One open window: shell + every mounted navigation page. */
@@ -65,6 +64,7 @@ function WindowFrame(props: {
       onBoxChange={changeBox}
       maximized={view.maximized}
       onMaximizeChange={changeMaximized}
+      minSize={view.minSize}
       layerKey={windowHostLayerKey(id)}
       toolbar={view.actions}
       footer={view.footer}
@@ -92,7 +92,9 @@ function WindowFrame(props: {
             data-window-page={index === view.activeIndex ? 'active' : 'hidden'}
             data-window-page-index={index}
           >
-            {pageContent(entry.page.content, formats)}
+            <RenderBoundary className={css.windowBoundary}>
+              {pageContent(entry.page.content, formats, view.saving)}
+            </RenderBoundary>
           </div>
         ))}
       </div>
@@ -113,8 +115,11 @@ export function WindowHost(props: WindowHostProps): ReactNode {
   const { width, height } = useViewportSize()
 
   // A viewport change re-clamps every open window (never moves one off
-  // screen); the maximized window follows the new viewport.
+  // screen); the maximized window follows the new viewport. An INJECTED
+  // viewport (tests / exotic hosts) is authoritative — the mounted host must
+  // not overwrite it with the browser's own metrics.
   useEffect(() => {
+    if (!host.followsLiveViewport) return
     host.setViewport({ width, height })
   }, [host, width, height])
 

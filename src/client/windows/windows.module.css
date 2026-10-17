@@ -35,6 +35,62 @@
   display: none;
 }
 
+/* Per-page containment: a crashing source renderer shows this strip inside ITS
+   page; the window chrome (close/maximize) and every other window stay. */
+.windowBoundary {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  padding: 8px;
+  color: var(--dsw-alias-state-error-primary);
+  font: var(--dsw-font-xxs-12);
+  overflow-wrap: anywhere;
+}
+
+/* The reusable single-text carrier (text/plain, text/markdown): the editor
+   fills the body so a `fill` layout grows the writing area, not empty space. */
+.textContent {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  flex: 1;
+}
+
+.textEditor,
+.textReadOnly {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 200px;
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xxs-12);
+  font-family: var(--ds-font-family-code, monospace);
+}
+
+.textEditor {
+  flex: 1;
+  resize: vertical;
+}
+
+.textEditor:focus-visible {
+  outline: none;
+  border-color: var(--dsw-alias-brand-primary);
+}
+
+.textReadOnly {
+  flex: 1;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--dsw-alias-label-secondary);
+}
+
 /* Source-reported load/save state: explicit, in the same surface. */
 .documentStatus {
   margin: 0 0 8px;

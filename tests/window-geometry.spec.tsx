@@ -13,9 +13,11 @@ import {
   WINDOW_MIN_WIDTH,
   WINDOW_SIZE_PRESETS,
   clampWindowBox,
+  clampWindowOrigin,
   initialWindowBox,
   maximizedWindowBox,
   resizeWindowBox,
+  resizeWindowFromEdge,
   resolveWindowSize,
 } from '../src/client/windows/geometry.ts'
 
@@ -47,7 +49,15 @@ describe('window size presets', () => {
     expect(small).toEqual({ left: 8, top: 8, width: 304, height: 552 })
   })
 
-  it('clamps an oversized preset to the available viewport', () => {
+  it('sizes a desktop preset down to the available area', () => {
+    // 800 ≥ the 768px narrow breakpoint, so this is the DESKTOP branch with a
+    // preset larger than the viewport: the target shrinks to viewport − 16.
+    expect(resolveWindowSize('document', { width: 800, height: 600 })).toEqual({
+      width: 784, height: 584,
+    })
+  })
+
+  it('still uses the near-fullscreen branch just below the breakpoint', () => {
     expect(resolveWindowSize('document', { width: 700, height: 500 })).toEqual({
       width: 684, height: 484,
     })
@@ -69,6 +79,14 @@ describe('window size presets', () => {
   it('keeps the title bar reachable for a window larger than the viewport', () => {
     const box = initialWindowBox({ preset: 'document', viewport: { width: 500, height: 400 } })
     expect(box).toEqual({ left: 8, top: 8, width: 484, height: 384 })
+  })
+
+  it('keeps a KEEP_ON_SCREEN sliver for an origin that cannot fit the window', () => {
+    // 1200px window in a 1000px viewport: the "fully inside" branch is
+    // impossible, so the origin may slide until 48px stays reachable.
+    expect(clampWindowOrigin(100, 1_200, 1_000)).toBe(100)
+    expect(clampWindowOrigin(-5_000, 1_200, 1_000)).toBe(48 - 1_200)
+    expect(clampWindowOrigin(5_000, 1_200, 1_000)).toBe(1_000 - 48)
   })
 })
 
@@ -96,5 +114,21 @@ describe('window clamping and maximize', () => {
   it('resizes to a preset around the current centre', () => {
     expect(resizeWindowBox({ left: 140, top: 120, width: 720, height: 560 }, 'compact', DESKTOP))
       .toEqual({ left: 280, top: 220, width: 440, height: 360 })
+  })
+
+  it('caps an edge resize in place instead of panning the window', () => {
+    const resized = resizeWindowFromEdge(
+      { left: 400, top: 300, width: 500, height: 400 },
+      { width: 800, height: 700 },
+      DESKTOP,
+    )
+    // The right edge can only grow to the viewport minus margin: 1000−400−8.
+    expect(resized).toEqual({ left: 400, top: 300, width: 592, height: 492 })
+    const floored = resizeWindowFromEdge(
+      { left: 100, top: 100, width: 500, height: 400 },
+      { width: 10, height: 10 },
+      DESKTOP,
+    )
+    expect(floored).toMatchObject({ width: WINDOW_MIN_WIDTH, height: WINDOW_MIN_HEIGHT })
   })
 })

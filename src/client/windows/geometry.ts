@@ -168,6 +168,33 @@ export function clampWindowBox(
   }
 }
 
+/**
+ * Resize one box from its own right/bottom edge with the ORIGIN FIXED: a
+ * reader dragging the corner must not see the window slide left/up when the
+ * growing edge reaches the viewport boundary — the size caps in place.
+ * {@link clampWindowBox} is for placement changes (drag, restore, viewport
+ * re-clamp), where moving the box IS the point.
+ */
+export function resizeWindowFromEdge(
+  box: WindowBox,
+  size: WindowSize,
+  viewport: ViewportSize,
+  min: WindowSize = { width: WINDOW_MIN_WIDTH, height: WINDOW_MIN_HEIGHT },
+): WindowBox {
+  const floor = effectiveMin(viewport, min)
+  const width = clampNumber(
+    size.width,
+    floor.width,
+    Math.max(floor.width, viewport.width - box.left - WINDOW_VIEWPORT_MARGIN),
+  )
+  const height = clampNumber(
+    size.height,
+    floor.height,
+    Math.max(floor.height, viewport.height - box.top - WINDOW_VIEWPORT_MARGIN),
+  )
+  return { left: box.left, top: box.top, width: Math.round(width), height: Math.round(height) }
+}
+
 /** The full-viewport box a maximized window occupies. */
 export function maximizedWindowBox(viewport: ViewportSize): WindowBox {
   return {

@@ -22,14 +22,20 @@ import {
   clampWindowBox, initialWindowBox, maximizedWindowBox, placeWindowBox, resizeWindowBox,
   type ViewportSize, type WindowBox, type WindowSize,
 } from './geometry.ts'
-import { WINDOW_LAYER_BASE_Z, raiseWindowLayer, subscribeWindowLayer, windowLayerZ } from './layer.ts'
+import { raiseWindowLayer } from './layer.ts'
 import type {
-  WindowHandle, WindowHostController, WindowHostOptions,
+  WindowContent, WindowDocumentContent, WindowHandle, WindowHostController, WindowHostOptions,
   WindowHostSnapshot, WindowNavigation, WindowOpenOptions, WindowPage, WindowPageView, WindowSizePreset,
   WindowUpdate, WindowView,
 } from './types.ts'
 
-export type { BetterSidebarWindowsClientFace, WindowHandle } from './types.ts'
+/** Whether one content value is a structured document descriptor. */
+export function isWindowDocumentContent(content: WindowContent): content is WindowDocumentContent {
+  return typeof content === 'object'
+    && content !== null
+    && !Array.isArray(content)
+    && (content as { kind?: unknown }).kind === 'document'
+}
 
 /** The layer key prefix the public host uses (legacy windows carry none). */
 const LAYER_PREFIX = 'window-host:'
@@ -38,7 +44,10 @@ const LAYER_PREFIX = 'window-host:'
 export function windowHostLayerKey(id: string): string {
   return `${LAYER_PREFIX}${id}`
 }
-/** Navigation is a bounded in-surface stack, not an unbounded history. */
+/**
+ * Navigation is a bounded in-surface stack, not an unbounded history: at most
+ * 20 pages may stack ABOVE the base page (depth 21).
+ */
 const MAX_WINDOW_PAGES = 20
 /** Guard against pathological hosts that report no viewport at all. */
 const FALLBACK_VIEWPORT: ViewportSize = { width: 1_280, height: 800 }
@@ -73,12 +82,25 @@ interface WindowRecord {
   opener: HTMLElement | undefined
 }
 
+/** One finite, positive viewport dimension (a broken host must not leak NaN into geometry). */
+function dimensionOf(value: number, fallback: number): number {
+  return Number.isFinite(value) && value > 0 ? Math.round(value) : fallback
+}
+
+/** Sanitize an untrusted viewport (window metrics or an injected test seam). */
+function sanitizeViewport(viewport: ViewportSize): ViewportSize {
+  return {
+    width: dimensionOf(viewport.width, FALLBACK_VIEWPORT.width),
+    height: dimensionOf(viewport.height, FALLBACK_VIEWPORT.height),
+  }
+}
+
 function defaultViewport(): ViewportSize {
   if (typeof window === 'undefined') return FALLBACK_VIEWPORT
-  return {
-    width: Math.max(1, window.innerWidth || FALLBACK_VIEWPORT.width),
-    height: Math.max(1, window.innerHeight || FALLBACK_VIEWPORT.height),
-  }
+  return sanitizeViewport({
+    width: window.innerWidth,
+    height: window.innerHeight,
+  })
 }
 
 function sameBox(a: WindowBox, b: WindowBox): boolean {
@@ -102,36 +124,18 @@ export function createWindowHost(options: WindowHostOptions = {}): WindowHostCon
   let cached: WindowHostSnapshot = { windows: [] }
   let lastViewport: ViewportSize | undefined
   let pageSequence = 0
-  let layerUnsubscribe: (() => void) | undefined
   const listeners = new Set<() => void>()
 
-  const viewport = (): ViewportSize => lastViewport ?? viewportOf()
+  const viewport = (): ViewportSize => lastViewport ?? sanitizeViewport(viewportOf())
 
   const currentRecord = (id: string): WindowRecord | undefined =>
     records.find(record => record.id === id)
 
   const layerKey = windowHostLayerKey
 
-  function ensureLayerSubscription(): void {
-    if (layerUnsubscribe !== undefined) return
-    layerUnsubscribe = subscribeWindowLayer(() => {
-      // A window mounting/unmounting/raising changes the unified z slots the
-      // snapshot publishes. Only notify while windows exist (the subscription
-      // itself is released when the last one closes).
-      if (records.length > 0) notify()
-    })
-  }
-
-  function releaseLayerIfEmpty(): void {
-    if (records.length > 0 || layerUnsubscribe === undefined) return
-    layerUnsubscribe()
-    layerUnsubscribe = undefined
-  }
-
   function retire(record: WindowRecord): void {
     if (currentRecord(record.id) !== record) return
     records = records.filter(candidate => candidate !== record)
-    releaseLayerIfEmpty()
     notify()
     const opener = record.opener
     if (opener !== undefined && opener.isConnected && typeof opener.focus === 'function') {
@@ -164,6 +168,12 @@ export function createWindowHost(options: WindowHostOptions = {}): WindowHostCon
     const active = pages[activeIndex]?.page ?? record.base
     const actions = active.actions !== undefined ? active.actions : record.base.actions
     const footer = active.footer !== undefined ? active.footer : record.base.footer
+    // ONE save-in-flight answer for the shell AND the renderer: a window/page
+    // flag and a document descriptor's own `saving` are the same state, not
+    // two channels that can disagree.
+    const saving = record.saving
+      || active.saving === true
+      || (isWindowDocumentContent(active.content) && active.content.saving === true)
     return {
       id: record.id,
       title: active.title ?? record.title,
@@ -175,13 +185,19 @@ export function createWindowHost(options: WindowHostOptions = {}): WindowHostCon
       ...(footer === undefined ? {} : { footer }),
       bodyLayout: active.bodyLayout ?? record.base.bodyLayout ?? 'scroll',
       size: record.size,
+      minSize: record.minSize,
       box: record.box,
       maximized: record.maximized,
       dirty: record.dirty || active.dirty === true,
-      saving: record.saving || active.saving === true,
-      z: windowLayerZ(layerKey(record.id)) ?? WINDOW_LAYER_BASE_Z,
+      saving,
       canGoBack: record.pages.length > 0,
     }
+  }
+
+  /** The page a `update` patch lands on: what the reader currently sees. */
+  function activePageOf(record: WindowRecord): WindowPage {
+    const top = record.pages[record.pages.length - 1]
+    return top === undefined ? record.base : top.page
   }
 
   function confirmClose(record: WindowRecord): Promise<boolean> {
@@ -223,11 +239,18 @@ export function createWindowHost(options: WindowHostOptions = {}): WindowHostCon
   }
 
   function applyUpdate(record: WindowRecord, patch: WindowUpdate): void {
-    if (patch.title !== undefined) record.title = patch.title
-    if ('content' in patch) record.base.content = patch.content
-    if ('actions' in patch) record.base.actions = patch.actions
-    if ('footer' in patch) record.base.footer = patch.footer
-    if (patch.bodyLayout !== undefined) record.base.bodyLayout = patch.bodyLayout
+    // Content patches land on the page the reader sees (base while nothing is
+    // pushed): a pushed page must be refreshable without pop/re-push, which
+    // would throw away its mounted state.
+    const page = activePageOf(record)
+    if (patch.title !== undefined) {
+      if (record.pages.length === 0) record.title = patch.title
+      else page.title = patch.title
+    }
+    if ('content' in patch) page.content = patch.content
+    if ('actions' in patch) page.actions = patch.actions
+    if ('footer' in patch) page.footer = patch.footer
+    if (patch.bodyLayout !== undefined) page.bodyLayout = patch.bodyLayout
     if (patch.dirty !== undefined) record.dirty = patch.dirty
     if (patch.saving !== undefined) record.saving = patch.saving
     if ('onBeforeClose' in patch) record.onBeforeClose = patch.onBeforeClose
@@ -363,7 +386,6 @@ export function createWindowHost(options: WindowHostOptions = {}): WindowHostCon
     }
     record.handle = createHandle(record)
     records = [...records, record]
-    ensureLayerSubscription()
     notify()
     return record.handle
   }
@@ -378,10 +400,7 @@ export function createWindowHost(options: WindowHostOptions = {}): WindowHostCon
       return cached
     },
     setViewport(next: ViewportSize): void {
-      lastViewport = {
-        width: Math.max(1, Math.round(next.width)),
-        height: Math.max(1, Math.round(next.height)),
-      }
+      lastViewport = sanitizeViewport(next)
       let changed = false
       for (const record of records) {
         if (record.maximized) {
@@ -433,10 +452,10 @@ export function createWindowHost(options: WindowHostOptions = {}): WindowHostCon
     },
     dispose(): void {
       records = []
-      releaseLayerIfEmpty()
       cached = { windows: [] }
       for (const listener of [...listeners]) listener()
       listeners.clear()
     },
+    followsLiveViewport: options.viewport === undefined,
   }
 }

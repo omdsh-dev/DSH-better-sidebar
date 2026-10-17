@@ -31,7 +31,7 @@ import { hostRouteUrl as resolveHostRoute } from './host-route-url.ts'
 import { builtinFileIcon, builtinFolderIcon } from './file-icons.tsx'
 import { createCluesClientRegistry, type BetterSidebarCluesClientFace } from './clues/registry.ts'
 import { createWindowHost } from './windows/host.ts'
-import type { WindowHostController } from './windows/types.ts'
+import type { BetterSidebarWindowsClientFace, WindowHostController } from './windows/types.ts'
 import type { SessionScope } from './api.ts'
 import type { SidebarPrefs } from '../prefs-shared.ts'
 
@@ -742,9 +742,11 @@ export interface BetterSidebarService {
    * seat. This is the plugin's OWN persistent window host — NOT the removed
    * `floatWindows` free-window system (v0.19.0 deleted that), and it does not
    * claim compatibility with the old interface. External callers gate on the
-   * `'windowHost'` feature.
+   * `'windowHost'` feature. The public face is open-only: the controller's
+   * internal members (finishClose/dispose) are deliberately NOT exposed to
+   * consumers, which must go through the returned handle.
    */
-  readonly windows: WindowHostController
+  readonly windows: BetterSidebarWindowsClientFace
   /** The plugin version this service instance was built from ('0.12.0'). */
   readonly version: string
   /**
@@ -824,6 +826,17 @@ export interface BetterSidebarService {
    * consumer API.
    */
   nativePathTabs(): NativePathTab[]
+}
+
+/**
+ * The activation-internal view of the service: the client half (index.tsx)
+ * mounts and disposes the single React window host through the controller,
+ * while `ctx.betterSidebar` consumers only ever see the open-only face.
+ * @internal
+ */
+export interface BetterSidebarServiceHost extends BetterSidebarService {
+  /** The same controller as `windows`, with the activation-internal members. */
+  readonly windowHost: WindowHostController
 }
 
 /** The file name of a path (both separators). */
@@ -930,7 +943,7 @@ function safeCall(fn: () => void): void {
  * tab/viewer registries (Map + listener set) and proxies openTab/closeTab
  * to the store's reducer. One instance per client plugin activation.
  */
-export function createBetterSidebarService(store: SidebarStore): BetterSidebarService {
+export function createBetterSidebarService(store: SidebarStore): BetterSidebarServiceHost {
   const tabs = new Map<string, TabDescriptor>()
   const viewers = new Map<string, FileViewerDescriptor>()
   const fileIcons = new Map<string, FileIconDescriptor>()
@@ -1512,6 +1525,7 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
     openFile,
     clues,
     windows,
+    windowHost: windows,
     hostRouteUrl: (path: string): string => resolveHostRoute(path).href,
     setSurface: (next: SidebarSurface | undefined) => { surface = next },
     nativePathTabs: () => surface?.pathTabs?.() ?? [],

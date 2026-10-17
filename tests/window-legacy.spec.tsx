@@ -12,6 +12,10 @@ import { act } from 'react-dom/test-utils'
 import { renderRoot, setupReactAct, type RenderedRoot } from './test-utils.ts'
 import { TaskWindow } from '../src/client/TaskWindow.tsx'
 import { JobOutputWindow } from '../src/client/JobsDrawer.tsx'
+import { WindowHost } from '../src/client/windows/WindowHost.tsx'
+import { createWindowHost } from '../src/client/windows/host.ts'
+import { createCluesClientRegistry } from '../src/client/clues/registry.ts'
+import { SIDEBAR_PREFS_DEFAULTS } from '../src/prefs-shared.ts'
 import type { Context, SidebarTeamTaskView } from '../src/context-types.ts'
 
 setupReactAct()
@@ -89,6 +93,57 @@ describe('legacy windows share the unified layer', () => {
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     })
     expect(taskClosed).toHaveBeenCalledTimes(1)
+  })
+
+  it('shares the z-order and Escape stack with a public window-host window', async () => {
+    const controller = createWindowHost({ viewport: () => ({ width: 1_000, height: 800 }) })
+    const hostRoot = renderRoot(createElement(WindowHost, {
+      host: controller,
+      formats: createCluesClientRegistry(() => SIDEBAR_PREFS_DEFAULTS),
+    }))
+    roots.push(hostRoot)
+    const taskClosed = vi.fn()
+    const jobClosed = vi.fn()
+    const hostClosed = vi.fn()
+    const taskRoot = mountTask(taskClosed)
+    const jobRoot = mountJob(jobClosed)
+    act(() => {
+      controller.open({ id: 'clue:1', title: 'Host clue', content: 'x', onClose: hostClosed })
+    })
+    expect(frames()).toHaveLength(3)
+    const hostFrame = frames().find(node => node.getAttribute('aria-label') === 'Host clue')!
+    const jobFrame = frames().find(node => node.getAttribute('aria-label') === 'bash-1')!
+    const taskFrame = frames().find(node => node !== hostFrame && node !== jobFrame)!
+    const z = (element: HTMLElement): number => Number(element.style.zIndex)
+    // Mount order is the stack order: task → job → host (top).
+    expect(z(hostFrame)).toBeGreaterThan(z(jobFrame))
+    expect(z(jobFrame)).toBeGreaterThan(z(taskFrame))
+
+    // Escape belongs to the host window first, then the job, then the task.
+    // The host close path awaits its async draft guard, so flush microtasks.
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+      await Promise.resolve()
+    })
+    expect(hostClosed).toHaveBeenCalledTimes(1)
+    expect(jobClosed).not.toHaveBeenCalled()
+    expect(taskClosed).not.toHaveBeenCalled()
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    })
+    expect(jobClosed).toHaveBeenCalledTimes(1)
+    expect(taskClosed).not.toHaveBeenCalled()
+    // The legacy callers decide what closing means; unmount the job window so
+    // the next Escape reaches the task window below it.
+    roots.splice(roots.indexOf(jobRoot), 1)
+    jobRoot.unmount()
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    })
+    expect(taskClosed).toHaveBeenCalledTimes(1)
+    roots.splice(roots.indexOf(taskRoot), 1)
+    taskRoot.unmount()
+    controller.dispose()
   })
 
   it('raises the task window when its title bar is pressed', () => {

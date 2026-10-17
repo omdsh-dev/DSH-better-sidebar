@@ -3,18 +3,22 @@
  *
  * `createWindowHost()` returns the store the client service publishes as
  * `ctx.betterSidebar.windows`; `WindowHost` is mounted once by the plugin's
- * client activation. `ClueFormatHost` is the S1-format renderer seat used by
+ * client activation. `ClueFormatHost` / `TextDocumentContent` are the
+ * S1-format renderer seat and the built-in single-text carrier used by
  * structured content.
  */
-export { createWindowHost, windowHostLayerKey } from './host.ts'
+export { createWindowHost, isWindowDocumentContent, windowHostLayerKey } from './host.ts'
 export { WindowHost, type WindowHostProps } from './WindowHost.tsx'
-export { ClueFormatHost, type ClueFormatHostProps, type FormatRendererRegistry } from './format-content.tsx'
+export {
+  ClueFormatHost, TextDocumentContent,
+  type ClueFormatHostProps, type FormatRendererRegistry, type TextDocumentContentProps,
+} from './format-content.tsx'
 export {
   WINDOW_MIN_HEIGHT, WINDOW_MIN_WIDTH, WINDOW_SIZE_PRESETS, WINDOW_VIEWPORT_MARGIN,
   clampWindowBox, clampWindowOrigin, initialWindowBox, maximizedWindowBox, placeWindowBox,
-  resizeWindowBox, resolveWindowSize,
+  resizeWindowBox, resizeWindowFromEdge, resolveWindowSize,
 } from './geometry.ts'
-export { WINDOW_LAYER_BASE_Z, raiseWindowLayer, subscribeWindowLayer, windowLayerZ } from './layer.ts'
+export { WINDOW_LAYER_BASE_Z, raiseWindowLayer, subscribeWindowLayer } from './layer.ts'
 export type {
   BetterSidebarWindowsClientFace, ViewportSize, WindowBodyLayout, WindowBox, WindowContent,
   WindowDocumentContent, WindowHandle, WindowHostController, WindowHostOptions, WindowHostSnapshot,

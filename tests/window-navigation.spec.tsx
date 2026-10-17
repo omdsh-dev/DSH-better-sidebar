@@ -40,6 +40,12 @@ function boxOf(title: string): { left: number; top: number; width: number; heigh
   }
 }
 
+/** Dispatch one pointer event with coordinates (jsdom has no real pointer). */
+function pointer(target: EventTarget, type: string, x: number, y: number): void {
+  const event = new MouseEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y })
+  target.dispatchEvent(event)
+}
+
 /** A stateful stub page: its input proves covered pages are never unmounted. */
 function SearchPage(): ReactNode {
   const [query, setQuery] = useState('')
@@ -127,6 +133,86 @@ describe('WindowHost: open / close / focus', () => {
     expect(Number(frame('A').style.zIndex)).toBeGreaterThan(Number(frame('B').style.zIndex))
   })
 
+  it('wires the title bar gestures and window controls to the host store', () => {
+    const controller = mountHost()
+    let handle!: ReturnType<WindowHostController['open']>
+    act(() => { handle = controller.open({ id: 'gesture', title: 'Gesture', content: 'x' }) })
+    const placed = boxOf('Gesture')
+
+    // Drag by the title bar: the store owns the box, the shell reports the move.
+    act(() => {
+      pointer(frame('Gesture').querySelector('[data-window-handle]')!, 'pointerdown', 300, 100)
+      pointer(window, 'pointermove', 340, 130)
+      pointer(window, 'pointerup', 340, 130)
+    })
+    expect(boxOf('Gesture')).toEqual({
+      left: placed.left + 40, top: placed.top + 30, width: placed.width, height: placed.height,
+    })
+    expect(controller.getSnapshot().windows[0]!.box).toEqual(boxOf('Gesture'))
+
+    // Maximize through the control; restore brings the same box back.
+    const maximize = frame('Gesture').querySelector('[data-window-maximize]') as HTMLButtonElement
+    act(() => { maximize.click() })
+    expect(boxOf('Gesture')).toEqual({ left: 0, top: 0, width: 1_000, height: 800 })
+    expect(controller.getSnapshot().windows[0]!.maximized).toBe(true)
+    const restore = frame('Gesture').querySelector('[data-window-maximize]') as HTMLButtonElement
+    expect(restore.getAttribute('data-window-maximize')).toBe('restore')
+    act(() => { restore.click() })
+    expect(controller.getSnapshot().windows[0]!.maximized).toBe(false)
+    expect(boxOf('Gesture')).toEqual({
+      left: placed.left + 40, top: placed.top + 30, width: placed.width, height: placed.height,
+    })
+    void handle
+  })
+
+  it('honours a caller minSize below the 320×240 legacy floor', () => {
+    const controller = mountHost()
+    act(() => {
+      controller.open({
+        id: 'small-floor', title: 'Small floor', content: 'x', minSize: { width: 280, height: 200 },
+      })
+    })
+    const corner = frame('Small floor').querySelector('[data-window-resize="both"]') as HTMLElement
+    act(() => {
+      pointer(corner, 'pointerdown', 0, 0)
+      pointer(corner, 'pointermove', -5_000, -5_000)
+      pointer(corner, 'pointerup', -5_000, -5_000)
+    })
+    expect(boxOf('Small floor').width).toBe(280)
+    expect(boxOf('Small floor').height).toBe(200)
+  })
+
+  it('restores to the re-clamped box after a maximize + viewport shrink', () => {
+    const controller = mountHost()
+    act(() => { controller.open({ id: 'restore', title: 'Restore', content: 'x' }) })
+    act(() => { (frame('Restore').querySelector('[data-window-maximize]') as HTMLButtonElement).click() })
+    act(() => { controller.setViewport({ width: 500, height: 400 }) })
+    expect(boxOf('Restore')).toEqual({ left: 0, top: 0, width: 500, height: 400 })
+    act(() => { (frame('Restore').querySelector('[data-window-maximize]') as HTMLButtonElement).click() })
+    expect(boxOf('Restore')).toEqual({ left: 8, top: 8, width: 484, height: 384 })
+    expect(controller.getSnapshot().windows[0]!.maximized).toBe(false)
+  })
+
+  it('keeps the window chrome reachable for a long title and a long action row', () => {
+    const controller = mountHost()
+    const title = `clue:${'very-long-identity-'.repeat(24)}`
+    const actions = Array.from({ length: 8 }, (_, index) => createElement('button', {
+      key: index, type: 'button', 'data-long-action': String(index),
+    }, `action ${index}`))
+    act(() => {
+      controller.open({ id: 'long', title, content: 'body', actions: createElement('div', null, ...actions) })
+    })
+    const node = frame(title)
+    const titleNode = [...node.querySelectorAll<HTMLElement>('[data-window-handle] span')]
+      .find(candidate => candidate.getAttribute('title') === title)
+    expect(titleNode?.textContent).toBe(title)
+    expect(node.querySelector('button[aria-label="关闭"]')).not.toBeNull()
+    expect(node.querySelector('button[aria-label="最大化"]')).not.toBeNull()
+    const toolbar = node.querySelector('[data-window-toolbar]') as HTMLElement
+    expect(toolbar.textContent).toContain('action 7')
+    expect([...toolbar.querySelectorAll('[data-long-action]')]).toHaveLength(8)
+  })
+
   it('closes only the top window on Escape (the lower one and its draft survive)', async () => {
     const controller = mountHost()
     act(() => {
@@ -161,6 +247,60 @@ describe('WindowHost: open / close / focus', () => {
     act(() => { controller.open({ id: 'clamp', title: 'Clamp', content: 'x' }) })
     act(() => { controller.setViewport({ width: 500, height: 400 }) })
     expect(boxOf('Clamp')).toEqual({ left: 8, top: 8, width: 484, height: 384 })
+  })
+
+  it('uses the near-fullscreen form on a 320px viewport (host path)', () => {
+    mounted?.unmount()
+    host?.dispose()
+    const controller = mountHost({ width: 320, height: 568 })
+    act(() => { controller.open({ id: 'phone', title: 'Phone 320', content: 'x' }) })
+    expect(boxOf('Phone 320')).toEqual({ left: 8, top: 8, width: 304, height: 552 })
+    expect(frame('Phone 320').querySelector('button[aria-label="关闭"]')).not.toBeNull()
+  })
+
+  it('honours an explicit initialSize on a narrow viewport (clamped, not near-fullscreen)', () => {
+    mounted?.unmount()
+    host?.dispose()
+    const controller = mountHost({ width: 390, height: 844 })
+    act(() => {
+      controller.open({
+        id: 'explicit', title: 'Explicit', content: 'x', initialSize: { width: 700, height: 600 },
+      })
+    })
+    expect(boxOf('Explicit')).toEqual({ left: 8, top: 122, width: 374, height: 600 })
+  })
+
+  it('does not overwrite an injected viewport with the mounted window metrics', () => {
+    // The browser viewport is narrow; the injected one is a desktop seam.
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 })
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 844 })
+    host = createWindowHost({ viewport: () => VIEWPORT })
+    const formats = createCluesClientRegistry(() => SIDEBAR_PREFS_DEFAULTS)
+    mounted = renderRoot(createElement(WindowHost, { host, formats }))
+    act(() => { host!.open({ id: 'injected', title: 'Injected', content: 'x' }) })
+    expect(boxOf('Injected')).toEqual({ left: 140, top: 120, width: 720, height: 560 })
+  })
+
+  it('ignores Escape while an IME composition is active, then closes on a plain Escape', () => {
+    const controller = mountHost()
+    let guard = 0
+    act(() => {
+      controller.open({
+        id: 'ime', title: 'Ime', content: 'x', onBeforeClose: () => { guard += 1; return false },
+      })
+    })
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, isComposing: true }))
+    })
+    // The composition key never reaches the window (and never runs the guard).
+    expect(document.querySelectorAll('[data-floating-window]')).toHaveLength(1)
+    expect(guard).toBe(0)
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    })
+    // A plain Escape DOES run the draft guard (which refuses here).
+    expect(guard).toBe(1)
+    expect(document.querySelectorAll('[data-floating-window]')).toHaveLength(1)
   })
 })
 

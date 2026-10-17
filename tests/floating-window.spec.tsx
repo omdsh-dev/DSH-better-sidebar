@@ -236,18 +236,44 @@ describe('FloatingWindow gestures', () => {
     unmount()
   })
 
-  it('does not start a drag from a header control', () => {
-    const { unmount } = renderWindow({ actions: true })
+  it('does not start a drag from a title-bar control', () => {
+    const { unmount } = renderWindow()
     const before = box()
-    const copy = [...frame().querySelectorAll('button')].find(b => b.textContent === 'copy') as HTMLButtonElement
+    // The close control lives INSIDE the drag handle: pressing it must not
+    // begin a drag (the guard is `target.closest('button, …')`).
+    const close = frame().querySelector('button[aria-label="关闭"]') as HTMLButtonElement
     act(() => {
-      pointer(copy, 'pointerdown', 500, 100)
+      pointer(close, 'pointerdown', 500, 100)
       pointer(window, 'pointermove', 300, 300)
       pointer(window, 'pointerup', 300, 300)
     })
     expect(box().left).toBe(before.left)
     expect(box().top).toBe(before.top)
     unmount()
+  })
+
+  it('renders neither a toolbar nor a footer row when the caller clears them', () => {
+    const { unmount } = renderRoot(createElement(FloatingWindow, {
+      title: 'empty rows',
+      onClose: () => { closed += 1 },
+      toolbar: '',
+      footer: null,
+      children: createElement('div', null, 'body'),
+    }))
+    expect(frame().querySelector('[data-window-toolbar]')).toBeNull()
+    expect(frame().querySelector('[data-window-footer]')).toBeNull()
+    unmount()
+
+    const second = renderRoot(createElement(FloatingWindow, {
+      title: 'empty arrays',
+      onClose: () => { closed += 1 },
+      actions: [],
+      footer: createElement(Fragment, null),
+      children: createElement('div', null, 'body'),
+    }))
+    expect(frame().querySelector('[data-window-toolbar]')).toBeNull()
+    expect(frame().querySelector('[data-window-footer]')).toBeNull()
+    second.unmount()
   })
 })
 
@@ -283,6 +309,24 @@ describe('FloatingWindow controlled shell (S6)', () => {
   it('uses a controlled z-index', () => {
     const { unmount } = renderControlled({ zIndex: 123 })
     expect(frame().style.zIndex).toBe('123')
+    unmount()
+  })
+
+  it('caps a controlled edge resize in place instead of shifting the origin', () => {
+    const changes: Array<{ left: number; top: number; width: number; height: number }> = []
+    const { unmount } = renderControlled({
+      box: { left: 400, top: 300, width: 500, height: 400 },
+      onBoxChange: (next: typeof changes[number]) => { changes.push(next) },
+    })
+    const corner = frame().querySelector('[data-window-resize="both"]') as HTMLElement
+    act(() => {
+      pointer(corner, 'pointerdown', 0, 0)
+      pointer(corner, 'pointermove', 300, 300)
+      pointer(corner, 'pointerup', 300, 300)
+    })
+    expect(changes).toHaveLength(1)
+    // No pan: the origin stays put and the size caps at the viewport edge.
+    expect(changes[0]).toEqual({ left: 400, top: 300, width: 592, height: 492 })
     unmount()
   })
 
@@ -351,11 +395,23 @@ describe('FloatingWindow controlled shell (S6)', () => {
 })
 
 describe('FloatingWindow unified layer (S6)', () => {
-  it('releases the shared document Escape listener when the last window unmounts', () => {
+  it('keeps the shared document listener while one window remains, releases it with the last', () => {
     const remove = vi.spyOn(document, 'removeEventListener')
-    const { unmount } = renderWindow()
-    unmount()
-    expect(remove).toHaveBeenCalledWith('keydown', expect.any(Function), true)
+    const one = createElement(FloatingWindow, {
+      title: 'one', onClose: () => { closed += 1 }, children: createElement('div', null, 'one'),
+    })
+    const two = createElement(FloatingWindow, {
+      title: 'two', onClose: () => { closed += 1 }, children: createElement('div', null, 'two'),
+    })
+    const rendered = renderRoot(createElement(Fragment, null, one, two))
+    const keydownRemovals = (): number =>
+      remove.mock.calls.filter(call => call[0] === 'keydown' && call[2] === true).length
+    // Closing ONE window removes only its own registration: the document
+    // listener is the layer's, not the window's, so it must survive.
+    rendered.rerender(createElement(Fragment, null, one))
+    expect(keydownRemovals()).toBe(0)
+    rendered.unmount()
+    expect(keydownRemovals()).toBe(1)
     remove.mockRestore()
   })
 

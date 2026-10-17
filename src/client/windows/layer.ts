@@ -15,13 +15,13 @@
  * is no growing module-level map — the live entry list IS the set of mounted
  * windows, and it empties on teardown.
  */
-import { useCallback, useEffect, useRef, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { isLikelyImeKey } from '../ime-guard.ts'
 
 /** The base z-index of the floating layer (the value the old window CSS used). */
 export const WINDOW_LAYER_BASE_Z = 90
 
 interface LayerEntry {
-  readonly token: number
   readonly key: string | undefined
   readonly close: () => void
 }
@@ -29,7 +29,6 @@ interface LayerEntry {
 /** Bottom → top. */
 const stack: LayerEntry[] = []
 const listeners = new Set<() => void>()
-let nextToken = 1
 let keyDownInstalled = false
 
 function notify(): void {
@@ -37,6 +36,11 @@ function notify(): void {
 }
 
 function onDocumentKeyDown(event: KeyboardEvent): void {
+  // Escape during an IME composition cancels the candidate list; it must not
+  // close (and draft-guard) a window. `isLikelyImeKey` is the conservative,
+  // pure predicate documented in ime-guard.ts — the right trade here: a false
+  // positive only skips one key, a false negative discards the reader's window.
+  if (isLikelyImeKey(event)) return
   if (event.key !== 'Escape') return
   // The top window owns Escape. Its close path runs the same draft guard as
   // the close button, so a dirty window is never discarded silently.
@@ -76,7 +80,7 @@ export function registerWindowLayer(options: {
   /** How Escape closes THIS window (must run its own draft guard). */
   close(): void
 }): WindowLayerRegistration {
-  const entry: LayerEntry = { token: nextToken++, key: options.key, close: options.close }
+  const entry: LayerEntry = { key: options.key, close: options.close }
   // A stale registration with the same identity (a hot-reloaded host) must
   // never keep a second entry alive.
   if (entry.key !== undefined) {
@@ -114,12 +118,6 @@ export function subscribeWindowLayer(listener: () => void): () => void {
   return () => { listeners.delete(listener) }
 }
 
-/** The current z-index of one keyed window (undefined when it is not mounted). */
-export function windowLayerZ(key: string): number | undefined {
-  const at = stack.findIndex(entry => entry.key === key)
-  return at === -1 ? undefined : WINDOW_LAYER_BASE_Z + at
-}
-
 /** Raise one keyed window (the public handle's `focus()`); false when unknown. */
 export function raiseWindowLayer(key: string): boolean {
   const at = stack.findIndex(entry => entry.key === key)
@@ -144,17 +142,24 @@ export function useWindowLayer(options: {
   const closeRef = useRef(close)
   closeRef.current = close
   const registrationRef = useRef<WindowLayerRegistration | null>(null)
-  const zIndex = useSyncExternalStore(
-    subscribeWindowLayer,
-    useCallback(() => registrationRef.current?.zIndex() ?? WINDOW_LAYER_BASE_Z, []),
-  )
+  // A plain state cell rather than useSyncExternalStore: the registration
+  // NOTIFIES from inside this very effect, and React 18 discards a
+  // useSyncExternalStore update scheduled during the passive-effect phase
+  // (the window would keep the base z until something else re-rendered it).
+  // setState from the effect is guaranteed to commit.
+  const [zIndex, setZIndex] = useState(WINDOW_LAYER_BASE_Z)
   useEffect(() => {
     const registration = registerWindowLayer({
       ...(key === undefined ? {} : { key }),
       close: () => { closeRef.current() },
     })
     registrationRef.current = registration
+    setZIndex(registration.zIndex())
+    const unsubscribe = subscribeWindowLayer(() => {
+      setZIndex(registration.zIndex())
+    })
     return () => {
+      unsubscribe()
       if (registrationRef.current === registration) registrationRef.current = null
       registration.dispose()
     }

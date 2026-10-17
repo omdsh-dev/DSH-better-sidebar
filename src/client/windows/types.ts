@@ -38,8 +38,14 @@ export interface WindowDocumentContent {
   readonly document: ClueEditDocument | ClueReadResult
   /** A preview is read-only by definition; no save affordance is rendered. */
   readonly readOnly?: boolean
-  /** A save owned by the source is in flight (the renderer must not claim success). */
+  /**
+   * A save owned by the source is in flight (the renderer must not claim
+   * success). Merged with the window/page `saving` flags into the ONE state
+   * the shell and the renderer both see.
+   */
   readonly saving?: boolean
+  /** The source reported its last write succeeded (rendered until the next edit). */
+  readonly saved?: boolean
   /** Initial/refresh load in flight: the host renders the shared loading line. */
   readonly loading?: boolean
   /** Source-reported failure/conflict copy: rendered in the same surface, above the content. */
@@ -70,8 +76,9 @@ export interface WindowPage {
   /** Per-page unsaved-edit state (merged with the window's own flag). */
   dirty?: boolean
   /**
-   * Synchronous leave guard for `back`/`pop`/`push` replacement: returning
-   * false keeps the page and the reader's uncommitted state. A caller that
+   * Synchronous leave guard for `back`/`pop`: returning false keeps the page
+   * and the reader's uncommitted state. A `push` does NOT consult it — the
+   * covered page stays mounted, so nothing is left or lost. A caller that
    * needs async work (save/discard/cancel) renders those choices in the same
    * surface and only then calls `pop`.
    */
@@ -107,11 +114,22 @@ export interface WindowOpenOptions {
    * mounted; the caller then renders save/discard/cancel in this same surface.
    */
   onBeforeClose?(): boolean | Promise<boolean>
-  /** Called exactly once when the window actually closes. */
+  /**
+   * Called exactly once when the window actually closes. NOT called when the
+   * plugin activation tears down (`dispose`): teardown is not a user close,
+   * and the source that owns the window is being unloaded with it.
+   */
   onClose?(): void
 }
 
-/** Update fields: omitted fields are untouched, geometry is never reset. */
+/**
+ * Update fields: omitted fields are untouched, geometry is never reset.
+ *
+ * Content fields (`title`/`content`/`actions`/`footer`/`bodyLayout`) patch the
+ * page that is ON TOP at the time of the call — the base page while nothing is
+ * pushed, the pushed page otherwise — so a live page can always be refreshed.
+ * `dirty`/`saving`, geometry and the close callbacks are window-level.
+ */
 export interface WindowUpdate {
   title?: string
   content?: WindowContent
@@ -129,7 +147,10 @@ export interface WindowUpdate {
 
 /** Page-stack operations of one window handle. */
 export interface WindowNavigation {
-  /** Push one page; the covered page stays mounted. Refused past the page cap. */
+  /**
+   * Push one page; the covered page stays mounted. Refused past the page cap
+   * (20 pushed pages above the base page, depth 21).
+   */
   push(page: WindowPage): void
   /** Pop the top pushed page. Returns false at the base page or when its leave guard refused. */
   pop(): boolean
@@ -173,12 +194,16 @@ export interface WindowView {
   readonly footer?: ReactNode
   readonly bodyLayout: WindowBodyLayout
   readonly size: WindowSizePreset
+  /** Resize floor the window was opened with (the shell's gesture floor). */
+  readonly minSize: WindowSize
   readonly box: WindowBox
   readonly maximized: boolean
   readonly dirty: boolean
+  /**
+   * Effective save-in-flight state: the window flag, the active page flag and
+   * the active document descriptor's own `saving` merged into one answer.
+   */
   readonly saving: boolean
-  /** Unified z-order slot (all floating windows, legacy ones included). */
-  readonly z: number
   readonly canGoBack: boolean
 }
 
@@ -219,8 +244,14 @@ export interface WindowHostController extends BetterSidebarWindowsClientFace {
   setMaximized(id: string, maximized: boolean): void
   /** @internal Title-bar back action. */
   popPage(id: string): boolean
-  /** @internal Drop every window and its layer subscription on plugin teardown. */
+  /** @internal Drop every window on plugin teardown (no `onClose` calls). */
   dispose(): void
+  /**
+   * @internal Whether this host follows the live `window.innerWidth/Height`.
+   * False when the caller injected a viewport (tests / exotic hosts), in
+   * which case the mounted React host must not overwrite it on mount.
+   */
+  readonly followsLiveViewport: boolean
 }
 
 /** Options of {@link createWindowHost}. */

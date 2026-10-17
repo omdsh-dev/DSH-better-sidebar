@@ -8,7 +8,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createWindowHost } from '../src/client/windows/host.ts'
-import { WINDOW_LAYER_BASE_Z } from '../src/client/windows/layer.ts'
 import type { WindowHostController } from '../src/client/windows/types.ts'
 
 const VIEWPORT = { width: 1_000, height: 800 }
@@ -37,13 +36,13 @@ describe('window host: open / focus / duplicate identity', () => {
       baseTitle: 'Clue',
       content: 'body',
       size: 'collection',
+      minSize: { width: 320, height: 240 },
       box: { left: 140, top: 120, width: 720, height: 560 },
       maximized: false,
       dirty: false,
       saving: false,
       canGoBack: false,
       activeIndex: 0,
-      z: WINDOW_LAYER_BASE_Z,
     })
   })
 
@@ -114,6 +113,51 @@ describe('window host: update keeps the reader placement', () => {
     host.setViewport({ width: 500, height: 400 })
     expect(host.getSnapshot().windows[0]!.box).toEqual({ left: 8, top: 8, width: 484, height: 384 })
   })
+
+  it('restores the pre-maximize box re-clamped after the viewport shrank', () => {
+    host = makeHost()
+    const handle = host.open({ id: 'restore', title: 'Restore', content: 'x' })
+    handle.update({ maximized: true })
+    host.setViewport({ width: 500, height: 400 })
+    expect(host.getSnapshot().windows[0]).toMatchObject({
+      maximized: true,
+      box: { left: 0, top: 0, width: 500, height: 400 },
+    })
+    handle.update({ maximized: false })
+    // The remembered 720×560 box no longer fits 500×400: it lands clamped,
+    // not off-screen and not at the stale size.
+    expect(host.getSnapshot().windows[0]).toMatchObject({
+      maximized: false,
+      box: { left: 8, top: 8, width: 484, height: 384 },
+    })
+  })
+
+  it('keeps an explicitly smaller minSize in the view (the shell gesture floor)', () => {
+    host = makeHost()
+    host.open({ id: 'tiny', title: 'Tiny', content: 'x', minSize: { width: 280, height: 200 } })
+    expect(host.getSnapshot().windows[0]!.minSize).toEqual({ width: 280, height: 200 })
+  })
+})
+
+describe('window host: viewport safety and injection', () => {
+  it('sanitizes a NaN/Infinity viewport instead of leaking it into geometry', () => {
+    host = createWindowHost({ viewport: () => ({ width: Number.NaN, height: Number.POSITIVE_INFINITY }) })
+    const handle = host.open({ id: 'nan', title: 'NaN', content: 'x' })
+    const box = host.getSnapshot().windows[0]!.box
+    for (const value of Object.values(box)) expect(Number.isFinite(value), String(value)).toBe(true)
+    host.setViewport({ width: Number.NaN, height: Number.NaN })
+    const after = host.getSnapshot().windows[0]!.box
+    for (const value of Object.values(after)) expect(Number.isFinite(value), String(value)).toBe(true)
+    expect(after).toEqual(box)
+    void handle
+  })
+
+  it('advertises whether it follows the live window viewport', () => {
+    expect(createWindowHost({ viewport: () => VIEWPORT }).followsLiveViewport).toBe(false)
+    const live = createWindowHost()
+    expect(live.followsLiveViewport).toBe(true)
+    live.dispose()
+  })
 })
 
 describe('window host: close guard', () => {
@@ -161,6 +205,15 @@ describe('window host: close guard', () => {
     expect(host.getSnapshot().windows).toHaveLength(1)
     spy.mockRestore()
   })
+
+  it('treats dispose as teardown, not a user close (no onClose call)', () => {
+    host = makeHost()
+    const onClose = vi.fn()
+    host.open({ id: 'teardown', title: 'Teardown', content: 'x', onClose })
+    host.dispose()
+    expect(onClose).not.toHaveBeenCalled()
+    expect(host.getSnapshot().windows).toHaveLength(0)
+  })
 })
 
 describe('window host: navigation pages', () => {
@@ -180,6 +233,22 @@ describe('window host: navigation pages', () => {
     expect(handle.navigation.pop()).toBe(true)
     expect(host.getSnapshot().windows[0]).toMatchObject({ title: 'Pack', content: 'manager', canGoBack: false })
     expect(handle.navigation.pop()).toBe(false)
+  })
+
+  it('updates the page that is on top without popping its mounted state', () => {
+    host = makeHost()
+    const handle = host.open({ id: 'live-page', title: 'Base', content: 'base' })
+    handle.navigation.push({ title: 'Pushed', content: 'draft' })
+    handle.update({ content: 'streamed', title: 'Pushed live', actions: 'act' })
+    expect(host.getSnapshot().windows[0]).toMatchObject({
+      title: 'Pushed live',
+      content: 'streamed',
+      actions: 'act',
+      canGoBack: true,
+    })
+    // The covered base page kept its own content and title.
+    handle.navigation.pop()
+    expect(host.getSnapshot().windows[0]).toMatchObject({ title: 'Base', content: 'base' })
   })
 
   it('refuses to pop when the top page leave guard says no', () => {

@@ -16,7 +16,7 @@ import { createBetterSidebarService, matchUrlTarget } from './service.ts'
 import { revalidateChunksOnReactivate, setChunkModuleSystem } from './chunk-loader.ts'
 import { registerBuiltins } from './builtins/index.ts'
 import { Sidebar } from './Sidebar.tsx'
-import { WindowHost } from './windows/WindowHost.tsx'
+import { WindowHost } from './windows/index.ts'
 import { RenderBoundary } from './RenderBoundary.tsx'
 import { createNativeTabRecords } from './native/tab-adapter.tsx'
 import { registerNativeSurface } from './native/index.ts'
@@ -173,8 +173,9 @@ export function apply(ctx: Context): void {
   ctx.provide('betterSidebar', service)
   // The unified window host's records live with the service; the React host is
   // mounted ONCE in the root tree below (never per tab body), and disposing the
-  // service drops any open window and its layer subscription.
-  ctx.effect(() => () => { service.windows.dispose() }, 'dsh-better-sidebar: window host')
+  // service drops any open window. (Each mounted window's layer registration is
+  // released by FloatingWindow's own unmount effect.)
+  ctx.effect(() => () => { service.windowHost.dispose() }, 'dsh-better-sidebar: window host')
   // The native right-Sidebar surface: the plugin's content is registered as
   // DSH tab types (one per descriptor) and every open routes there, so the
   // right column belongs to the host and only the bottom workbench stays
@@ -332,7 +333,7 @@ export function apply(ctx: Context): void {
                 // The public window host is a ROOT-level singleton: every
                 // `ctx.betterSidebar.windows.open()` renders here, so native
                 // tab bodies (which stay mounted forever) never duplicate it.
-                createElement(WindowHost, { host: service.windows, formats: service.clues }),
+                createElement(WindowHost, { host: service.windowHost, formats: service.clues }),
               ),
             ),
           ))
