@@ -487,13 +487,18 @@ describe('locator remapping and path dialects', () => {
       key: 'clue-1',
       category: 'conflict',
     }))
-    expect(remapped.clues[0]!.clueId).toBe(liveId)
+    // Reusing the live row would orphan the old unresolved row, so the clue is
+    // not committed at all: nothing in the library changes.
+    expect(remapped.clues).toEqual([])
     const library = await receiver.service.listClues('ws-2')
     expect(library.clues).toHaveLength(2)
     const old = library.clues.find(clue => clue.id === unresolvedId)!
     expect(old.unresolved).toBeDefined()
     // The old row's portable hint was not rewritten to the live address.
     expect(old.unresolved?.portable?.locator).toEqual(externalLocator)
+    const occupied = library.clues.find(clue => clue.id === liveId)!
+    expect(occupied.unresolved).toBeUndefined()
+    expect(occupied.title).toBe('Already live')
   })
 
   it('preserves a portable:false workspace hint across a cross-workspace re-import', async () => {
