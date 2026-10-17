@@ -53,7 +53,7 @@
 
 - S1：`clues.*`（sources/resolve/list/search/read/loadEdit/saveEdit/portable/ensure/clues/pins/packs/bindings/snapshots）。
 - S2：`clues.dependencies.*`、`clues.connections.*`（inspect/plan/start/status/cancel、status/connect/cancel）。
-- S7：`clues.share.*`（exportPreview/exportInspect/exportProgress/importPreview/importProgress/import）；导出与原始 ZIP 导入走 S7 的 raw route handler（含 `exportId`/`importId` 进度查询），`clues.share.import` 只承载小包 base64 JSON 导入，S9 注册。
+- S7：`clues.share.*`（exportPreview/exportInspect/exportProgress/importPreview/importProgress/import）；导出与原始 ZIP 导入走 S7 的 raw route handler（含 `exportId`/`importId` 进度查询），`clues.share.import` 只承载小包 base64 JSON 导入，S9 注册。S7 导出 `CLUES_SHARE_API_METHODS` 与 `CLUES_SHARE_ROUTE_PATHS`（`src/clues/share/index.ts`，node-only）作为服务端单一拼写来源；S9 客户端只用通用 `call('clues.share.*')` 字符串，不 import 该模块。
 
 ## 3. 各 Spec 的集成出口（S9 装配用）
 
