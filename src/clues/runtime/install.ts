@@ -61,9 +61,56 @@ export function isPinnedVersion(version: string): boolean {
   return /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(version)
 }
 
+/**
+ * Whether a value is ONE plain path segment. Dependency ids, versions, task ids
+ * and platform/arch names end up in `$DSH_HOME/tools/...`; a separator, a drive
+ * letter/ADS colon, a NUL or the `.`/`..` pseudo-segments must never become a
+ * path component (a registry-supplied id may not escape the tools root).
+ */
+export function isSafePathSegment(value: unknown): value is string {
+  return typeof value === 'string' && /^[A-Za-z0-9_][A-Za-z0-9._-]*$/.test(value)
+}
+
+/** Reject a relative/unknown profile home before it is used as an install root. */
+export function assertAbsoluteHome(home: string): void {
+  if (typeof home !== 'string' || home === '' || !isAbsolute(home)) {
+    throw new Error('[clues] the profile home for managed installs must be an absolute path')
+  }
+}
+
+/**
+ * Whether `candidate` is strictly inside `root` (runtime re-check for a plan's
+ * target/staging directory; absolute paths and `..` escapes fail).
+ */
+export function isPathInside(root: string, candidate: string): boolean {
+  const absoluteRoot = resolve(root)
+  const absoluteCandidate = resolve(candidate)
+  const rel = relative(absoluteRoot, absoluteCandidate)
+  return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel)
+}
+
 /** Path of the managed copy for one dependency version. */
 export function managedTargetDir(home: string, dependencyId: string, version: string): string {
-  return join(home, 'tools', dependencyId, version)
+  assertAbsoluteHome(home)
+  if (!isSafePathSegment(dependencyId)) {
+    throw new Error('[clues] a dependency id must be a single safe path segment')
+  }
+  if (!isSafePathSegment(version)) {
+    throw new Error(`[clues] dependency "${dependencyId}" needs a safe path-segment version`)
+  }
+  return confinedPath(join(home, 'tools'), `${dependencyId}/${version}`)
+}
+
+/** Staging directory of exactly one install task, confined under `$HOME/tools`. */
+export function managedStagingDir(home: string, dependencyId: string, taskId: string): string {
+  assertAbsoluteHome(home)
+  if (!isSafePathSegment(dependencyId)) {
+    throw new Error('[clues] a dependency id must be a single safe path segment')
+  }
+  if (!isSafePathSegment(taskId)) {
+    throw new Error('[clues] an install task id must be a single safe path segment')
+  }
+  return confinedPath(join(home, 'tools'), `${dependencyId}/.staging-${taskId}`)
 }
 
 /**
@@ -497,6 +544,8 @@ export interface InstallManagerOptions {
  */
 export function createInstallManager(options: InstallManagerOptions): InstallManager {
   const now = options.now ?? (() => Date.now())
+  if (options.home !== undefined) assertAbsoluteHome(options.home)
+  const toolsRoot = options.home === undefined ? undefined : join(options.home, 'tools')
   let sequence = 0
   const newId = options.newId ?? (() => `${now().toString(36)}-${++sequence}`)
   const planTtlMs = options.planTtlMs ?? DEFAULT_PLAN_TTL_MS
@@ -744,13 +793,27 @@ export function createInstallManager(options: InstallManagerOptions): InstallMan
     distribution: DependencyDistribution,
     controller: AbortController,
   ): Promise<DependencyInstallTask> => {
-    const stagingRoot = options.home === undefined
-      ? undefined
-      : join(options.home, 'tools', definition.dependencyId, `.staging-${task.taskId}`)
+    let stagingRoot: string | undefined
+    try {
+      stagingRoot = options.home === undefined
+        ? undefined
+        : managedStagingDir(options.home, definition.dependencyId, task.taskId)
+    } catch (error) {
+      return settle(task, { state: 'failed', error: installErrorInfo(error) })
+    }
     if (stagingRoot === undefined) {
       return settle(task, {
         state: 'failed',
         error: { category: 'unsupported', message: 'the DSH profile home is unknown' },
+      })
+    }
+    // Runtime re-check: the plan's target must still sit below the managed tools
+    // root even if a caller supplied a crafted plan/target somewhere upstream.
+    if (toolsRoot === undefined || !isPathInside(toolsRoot, task.targetDir)) {
+      await removePath(stagingRoot).catch(() => undefined)
+      return settle(task, {
+        state: 'failed',
+        error: { category: 'failed', message: 'the managed installation target is outside the tools root' },
       })
     }
     const hadPrevious = await pathExists(task.targetDir)
@@ -906,6 +969,9 @@ export function createInstallManager(options: InstallManagerOptions): InstallMan
         'conflict',
         'the installation distribution changed; confirm a new installation plan',
       )
+    }
+    if (toolsRoot === undefined || !isPathInside(toolsRoot, record.plan.targetDir)) {
+      throw new ClueError('failed', 'the installation plan target is outside the managed tools root')
     }
     // Execute the exact distribution snapshot the user confirmed (never a
     // fresh lookup that could have changed its URL/digest since the plan).

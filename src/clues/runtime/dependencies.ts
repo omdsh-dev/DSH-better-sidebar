@@ -40,9 +40,11 @@ import type {
   RuntimeErrorInfo,
 } from './types.ts'
 import {
+  assertAbsoluteHome,
   confinedPath,
   createInstallManager,
   isPinnedVersion,
+  isSafePathSegment,
   managedExecutablePath,
   managedTargetDir,
   selectDistribution,
@@ -219,20 +221,37 @@ function copyDefinition(definition: ClueDependencyDefinition): ClueDependencyDef
 
 /** Programming-error validation of a trusted definition (registration time). */
 function validateDefinition(definition: ClueDependencyDefinition): void {
-  if (typeof definition.dependencyId !== 'string' || definition.dependencyId.trim() === '') {
-    throw new Error('[clues] a dependency registration needs a non-empty dependencyId')
+  // The id/version/platform values become path segments under
+  // `$HOME/tools/<dependencyId>/<version>`: a separator or `..` here would
+  // escape the managed tools root, so they are refused at registration.
+  if (!isSafePathSegment(definition.dependencyId)) {
+    throw new Error('[clues] a dependency registration needs a safe single-segment dependencyId')
   }
   if (typeof definition.name !== 'string' || definition.name.trim() === '') {
     throw new Error(`[clues] dependency "${definition.dependencyId}" needs a non-empty name`)
   }
-  if (typeof definition.command !== 'string' || definition.command.trim() === '') {
-    throw new Error(`[clues] dependency "${definition.dependencyId}" needs a non-empty command`)
+  if (!isSafePathSegment(definition.command)) {
+    throw new Error(`[clues] dependency "${definition.dependencyId}" needs a safe command name`)
   }
   if (!isPinnedVersion(definition.version.minimum) || !isPinnedVersion(definition.version.recommended)) {
     throw new Error(`[clues] dependency "${definition.dependencyId}" needs exact minimum/recommended versions`)
   }
+  if (!isSafePathSegment(definition.version.minimum) || !isSafePathSegment(definition.version.recommended)) {
+    throw new Error(`[clues] dependency "${definition.dependencyId}" needs safe path-segment versions`)
+  }
+  if (!versionAtLeast(definition.version.recommended, definition.version.minimum)) {
+    throw new Error(
+      `[clues] dependency "${definition.dependencyId}" recommends ${definition.version.recommended}, `
+      + `below its verified minimum ${definition.version.minimum}`,
+    )
+  }
   if (!Array.isArray(definition.supportedPlatforms) || definition.supportedPlatforms.length === 0) {
     throw new Error(`[clues] dependency "${definition.dependencyId}" needs a supported platform matrix`)
+  }
+  for (const target of definition.supportedPlatforms) {
+    if (!isSafePathSegment(target.platform) || !isSafePathSegment(target.arch)) {
+      throw new Error(`[clues] dependency "${definition.dependencyId}" has an invalid platform target`)
+    }
   }
   for (const distribution of definition.install?.distributions ?? []) {
     if (distribution.kind === 'archive') {
@@ -253,6 +272,11 @@ function validateDefinition(definition: ClueDependencyDefinition): void {
         || distribution.packageVersion !== definition.version.recommended
       ) {
         throw new Error(`[clues] dependency "${definition.dependencyId}" npm distributions must pin the recommended version`)
+      }
+    }
+    for (const target of distribution.platforms ?? []) {
+      if (!isSafePathSegment(target.platform) || !isSafePathSegment(target.arch)) {
+        throw new Error(`[clues] dependency "${definition.dependencyId}" has an invalid distribution target`)
       }
     }
     // Reject an escaping executable at registration, not only at install time.
@@ -305,6 +329,13 @@ export function createDependenciesRuntime(options: DependenciesRuntimeOptions): 
   const platform = options.platform ?? process.platform
   const arch = options.arch ?? process.arch
   const env = options.env ?? process.env
+  if (options.home !== undefined) assertAbsoluteHome(options.home)
+  if (!isSafePathSegment(platform)) {
+    throw new Error('[clues] the dependency runtime platform must be a safe path segment')
+  }
+  if (!isSafePathSegment(arch)) {
+    throw new Error('[clues] the dependency runtime architecture must be a safe path segment')
+  }
   const probeTtlMs = options.probeTtlMs ?? DEFAULT_PROBE_TTL_MS
   const pathExists = options.pathExists ?? (async path => {
     try {

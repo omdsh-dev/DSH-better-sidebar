@@ -885,3 +885,40 @@ describe('cancellation edge cases', () => {
     manager.dispose()
   })
 })
+
+describe('managed tools-root containment', () => {
+  it('refuses a relative profile home and an escaping dependency id', async () => {
+    expect(() => createInstallManager({
+      home: 'relative/home',
+      platform: process.platform,
+      arch: process.arch,
+      probeExecutable: async () => ({ compatible: true, version: '2.40.1' }),
+      detectSystemInstall: async () => undefined,
+    })).toThrow(/absolute path/)
+
+    const { manager } = await setup()
+    await expect(manager.plan(definition({ dependencyId: '../../../../tmp/evil' })))
+      .rejects.toThrow(/safe path segment/)
+    manager.dispose()
+  })
+
+  it('never edits PATH or writes outside the managed tools root', async () => {
+    const pathBefore = process.env.PATH
+    const home = tempHome()
+    const transport = fakeTransport()
+    const { manager, plan } = await setup({ home, transport })
+    await manager.start(definition(), plan.planId)
+    const task = await settle(manager, 'github.gh')
+    expect(task.state).toBe('succeeded')
+    // Installing is a user-scoped managed copy only: the system PATH and its
+    // binaries are never touched, and the profile home gains just the tools
+    // tree for this dependency.
+    expect(process.env.PATH).toBe(pathBefore)
+    expect(readdirSync(home)).toEqual(['tools'])
+    expect(readdirSync(join(home, 'tools'))).toEqual(['github.gh'])
+    expect(readdirSync(join(home, 'tools', 'github.gh'))).toEqual(['2.40.1'])
+    expect(plan.targetDir).toBe(join(home, 'tools', 'github.gh', '2.40.1'))
+    expect(readFileSync(join(plan.targetDir, EXE), 'utf8')).toBe('installed-binary')
+    manager.dispose()
+  })
+})

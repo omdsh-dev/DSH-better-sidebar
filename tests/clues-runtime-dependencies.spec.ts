@@ -24,7 +24,7 @@ import {
   pathCommandCandidates,
   versionAtLeast,
 } from '../src/clues/runtime/dependencies.ts'
-import { managedTargetDir } from '../src/clues/runtime/install.ts'
+import { isPathInside, managedStagingDir, managedTargetDir } from '../src/clues/runtime/install.ts'
 import type {
   CliCommandRequest,
   CliResult,
@@ -433,5 +433,76 @@ describe('install planning through the dependency runtime', () => {
     dispose()
     expect(runtime.getDefinitions().map(entry => entry.dependencyId)).not.toContain('lark.cli')
     runtime.dispose()
+  })
+})
+
+describe('tools-root confinement', () => {
+  it('refuses dependency ids, commands and platform targets that are not safe segments', () => {
+    const { runtime } = harness()
+    for (const dependencyId of ['../../../../tmp/evil', '/tmp/evil', 'a/b', 'a\\b', '..', '']) {
+      expect(
+        () => runtime.register(definition({ dependencyId })),
+        `dependencyId ${JSON.stringify(dependencyId)}`,
+      ).toThrow(/safe single-segment dependencyId/)
+    }
+    expect(() => runtime.register(definition({ command: '../gh' }))).toThrow(/safe command name/)
+    expect(() => runtime.register(definition({
+      supportedPlatforms: [{ platform: '../evil' as never, arch: process.arch }],
+    }))).toThrow(/invalid platform target/)
+    expect(() => runtime.register(definition({
+      install: {
+        distributions: [{
+          kind: 'archive',
+          source: 'GitHub releases',
+          url: 'https://example.invalid/gh.tar.gz',
+          sha256: 'a'.repeat(64),
+          archive: 'tar.gz',
+          executable: 'bin/gh',
+          platforms: [{ platform: process.platform, arch: '../evil' }],
+        }],
+      },
+    }))).toThrow(/invalid distribution target/)
+    runtime.dispose()
+  })
+
+  it('requires the recommended version to be at least the verified minimum', () => {
+    const { runtime } = harness()
+    expect(() => runtime.register(definition({
+      version: { minimum: '2.40.1', recommended: '2.40.0' },
+    }))).toThrow(/below its verified minimum/)
+    expect(() => runtime.register(definition({
+      dependencyId: 'lark.cli',
+      command: 'lark-cli',
+      version: { minimum: '2.40.1', recommended: '2.40.1' },
+    }))).not.toThrow()
+    runtime.dispose()
+  })
+
+  it('requires an absolute profile home at construction', () => {
+    expect(() => createDependenciesRuntime({
+      home: 'relative/home',
+      platform: process.platform,
+      arch: process.arch,
+      env: ENV,
+      runProcess: fakeRunner(() => ({ stdout: 'gh version 2.40.1' })),
+      probeCwd: HOME,
+      pathExists: fakeExists([]),
+    })).toThrow(/absolute path/)
+  })
+
+  it('confines managed target and staging directories below home/tools', () => {
+    expect(managedTargetDir(HOME, 'github.gh', '2.40.1')).toBe(join(HOME, 'tools', 'github.gh', '2.40.1'))
+    expect(managedStagingDir(HOME, 'github.gh', 'install-abc-1'))
+      .toBe(join(HOME, 'tools', 'github.gh', '.staging-install-abc-1'))
+    expect(() => managedTargetDir(HOME, '../../../../tmp/evil', '2.40.1'))
+      .toThrow(/safe path segment/)
+    expect(() => managedTargetDir(HOME, 'github.gh', '../2.40.1'))
+      .toThrow(/safe path-segment version/)
+    expect(() => managedTargetDir('relative/home', 'github.gh', '2.40.1'))
+      .toThrow(/absolute path/)
+    expect(() => managedStagingDir(HOME, 'github.gh', '../escape'))
+      .toThrow(/safe path segment/)
+    expect(isPathInside(join(HOME, 'tools'), join(HOME, 'tools', 'github.gh', '2.40.1'))).toBe(true)
+    expect(isPathInside(join(HOME, 'tools'), join(HOME, 'elsewhere'))).toBe(false)
   })
 })
