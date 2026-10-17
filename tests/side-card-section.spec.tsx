@@ -68,10 +68,14 @@ function mount(): { store: SidebarStore; service: BetterSidebarService } {
   return { store, service }
 }
 
-function renderSection(store: SidebarStore, service: BetterSidebarService): string {
+function renderSection(
+  store: SidebarStore,
+  service: BetterSidebarService,
+  initialGroup?: 'general' | 'tabs' | 'viewers' | 'sources' | 'appearance',
+): string {
   return renderToString(createElement(
     SideCardSection,
-    { store, service } as unknown as SideCardSectionProps,
+    { store, service, ...(initialGroup === undefined ? {} : { initialGroup }) } as unknown as SideCardSectionProps,
   ))
 }
 
@@ -80,44 +84,62 @@ function pressedCount(html: string, value: string): number {
   return html.match(new RegExp(`aria-pressed="${value}"`, 'g'))?.length ?? 0
 }
 
+describe('SideCardSection grouped navigation', () => {
+  it('renders the five groups (wide nav + narrow select) and opens on General', () => {
+    const { store, service } = mount()
+    const html = renderSection(store, service)
+    for (const label of ['General', 'Tabs', 'File viewers', 'Clue sources', 'Appearance']) {
+      expect(html).toContain(`>${label}</button>`)
+      expect(html).toContain(`<option value=`) // the narrow selector shares the groups
+    }
+    // The wide nav marks exactly the active group; the narrow select is present
+    // with the same accessible name (CSS swaps them at the 768px bracket).
+    expect(html.match(/aria-current="page"/g)?.length).toBe(1)
+    expect(html).toContain('aria-label="Settings groups"')
+    expect(html).toContain('<select')
+  })
+
+  it('renders the section intro and the group content on demand (General default)', () => {
+    const { store, service } = mount()
+    const html = renderSection(store, service)
+    expect(html).toContain('Manage what the side card shows and how it behaves')
+    expect(html).toContain('>General</div>')
+    // Inventory groups are not stacked: their cards render only when selected.
+    expect(html).not.toContain('Subagents')
+    expect(html).toContain('DSH-better-sidebar')
+  })
+})
+
 describe('SideCardSection declarative inventory', () => {
   it('renders one small card per registered tab: icon + title + type id + pressed state', () => {
     const { store, service } = mount()
-    const html = renderSection(store, service)
+    const html = renderSection(store, service, 'tabs')
     expect(html).toContain('data-icon="explorer"')
     expect(html).toContain('>Explorer<')
     // The type id is the card's desc (the declarative "type" surface).
     expect(html).toContain('>explorer<')
     expect(html).toContain('data-icon="subagent"')
     expect(html).toContain('>Subagents<')
-    // Default prefs: the general switch is off (agentOpenTools defaults off),
-    // and both tabs + the image viewer cards are pressed (3 aria-pressed
-    // cards). The mobile switches are NOT cards — they are rows in the 手机
-    // group, and their own defaults (both on) show up as checked checkboxes.
-    // The nested auto-open toggle is NOT an inline card (it lives in the popup).
-    expect(pressedCount(html, 'true')).toBe(3)
+    // The Tabs group holds only tab cards (2 aria-pressed cards); the viewer
+    // belongs to its own group and the general switches are rows there.
+    expect(pressedCount(html, 'true')).toBe(2)
     expect(pressedCount(html, 'false')).toBe(0)
-    // The custom switches are real checkboxes: the two mobile adaptations are
-    // on by default, agentOpenTools is not.
-    // The two mobile adaptations are on by default.
-    expect(html.match(/checked=""/g)?.length ?? 0).toBe(2)
     expect(html).not.toContain('Auto-open Subagents')
   })
 
-  it('renders the section intro and group headings with inventory counts', () => {
+  it('renders the group headings with inventory counts (Tabs: 2, Viewers: 1)', () => {
     const { store, service } = mount()
-    const html = renderSection(store, service)
-    expect(html).toContain('Manage what the side card shows and how it behaves')
-    // Group headings carry the inventory count badge (2 tabs, 1 viewer).
-    expect(html).toContain('>Sidebar content</span><span')
-    expect(html).toContain('>File viewers</span><span')
-    expect(html).toContain('>2</span>')
-    expect(html).toContain('>1</span>')
+    const tabs = renderSection(store, service, 'tabs')
+    expect(tabs).toContain('>Tabs</span><span')
+    expect(tabs).toContain('>2</span>')
+    const viewers = renderSection(store, service, 'viewers')
+    expect(viewers).toContain('>File viewers</span><span')
+    expect(viewers).toContain('>1</span>')
   })
 
-  it('renders the mobile group: heading + both narrow-viewport switches, on by default', () => {
+  it('renders the mobile rows inside General: heading + both narrow-viewport switches, on by default', () => {
     const { store, service } = mount()
-    const html = renderSection(store, service)
+    const html = renderSection(store, service, 'general')
     expect(html).toContain('>Mobile</div>')
     expect(html).toContain('auto-open on narrow screens')
     expect(html).toContain('Default the Tasks page to the tree')
@@ -131,7 +153,7 @@ describe('SideCardSection declarative inventory', () => {
 
   it('renders one small card per registered viewer: icon + title + exts', () => {
     const { store, service } = mount()
-    const html = renderSection(store, service)
+    const html = renderSection(store, service, 'viewers')
     expect(html).toContain('data-icon="image"')
     expect(html).toContain('>Image<')
     // The covered extensions are the card's desc.
@@ -140,7 +162,7 @@ describe('SideCardSection declarative inventory', () => {
 
   it('renders the gear corner button on features that declare related settings', () => {
     const { store, service } = mount()
-    const html = renderSection(store, service)
+    const html = renderSection(store, service, 'tabs')
     // Subagents declares a toggle → its card carries the settings gear
     // (aria-label = "<title> Feature settings"); Explorer and Image declare
     // none → no gear, so the total is 1.
@@ -148,44 +170,45 @@ describe('SideCardSection declarative inventory', () => {
     expect(html).toContain('Subagents Feature settings')
   })
 
-  it('renders the two dashed "add plugin" cards (tab grid + viewer grid)', () => {
+  it('renders the dashed "add plugin" cards inside their own groups', () => {
     const { store, service } = mount()
-    const html = renderSection(store, service)
+    const tabs = renderSection(store, service, 'tabs')
     // The tab grid's dashed card (tab registration).
-    expect(html).toContain('Add tab plugins')
-    expect(html).toContain('Register a new sidebar page')
-    // The viewer grid's dashed card (file-previewer registration).
-    expect(html).toContain('Add preview plugins')
-    expect(html).toContain('Register a file-type preview')
-    // The add cards are plain buttons (open the modals), never switches:
-    // they carry no aria-pressed, so the pressed-card counts stay untouched.
-    expect(pressedCount(html, 'true')).toBe(3)
+    expect(tabs).toContain('Add tab plugins')
+    expect(tabs).toContain('Register a new sidebar page')
+    // The add card is a plain button (opens the modal), never a switch: it
+    // carries no aria-pressed, so the pressed-card count stays at the 2 tabs.
+    expect(pressedCount(tabs, 'true')).toBe(2)
+
+    const viewers = renderSection(store, service, 'viewers')
+    expect(viewers).toContain('Add preview plugins')
+    expect(viewers).toContain('Register a file-type preview')
   })
 
-  it('a disabled feature renders pressed=false', () => {
+  it('a disabled feature renders pressed=false (in its own group)', () => {
     const { store, service } = mount()
     store.setPrefs({ ...store.getPrefs(), tabsEnabled: { subagent: false }, viewersEnabled: { image: false } })
-    const html = renderSection(store, service)
-    expect(html).toContain('>Subagents<')
-    expect(html).toContain('>Image<')
-    expect(pressedCount(html, 'false')).toBe(2)
+    const tabs = renderSection(store, service, 'tabs')
+    expect(tabs).toContain('>Subagents<')
+    expect(pressedCount(tabs, 'false')).toBe(1)
     // The explorer card stays pressed.
-    expect(pressedCount(html, 'true')).toBe(1)
-    // The two mobile adaptations are on by default.
-    expect(html.match(/checked=""/g)?.length ?? 0).toBe(2)
+    expect(pressedCount(tabs, 'true')).toBe(1)
+    const viewers = renderSection(store, service, 'viewers')
+    expect(viewers).toContain('>Image<')
+    expect(pressedCount(viewers, 'false')).toBe(1)
   })
 
   it('hides the gear of a disabled feature (its related settings are dormant)', () => {
     const { store, service } = mount()
     store.setPrefs({ ...store.getPrefs(), tabsEnabled: { subagent: false } })
-    const html = renderSection(store, service)
+    const html = renderSection(store, service, 'tabs')
     // The disabled Subagents card loses its gear — nothing else renders one.
     expect(html).not.toContain('Feature settings')
   })
 
-  it('renders the custom-CSS escape hatch as its own group (no scheme dropdown, no strip row)', () => {
+  it('renders the custom-CSS escape hatch as its own Appearance group (no scheme dropdown, no strip row)', () => {
     const { store, service } = mount()
-    let html = renderSection(store, service)
+    let html = renderSection(store, service, 'appearance')
     // The group heading and the textarea's accessible name are the copy key;
     // the placeholder carries the example (a stable selector + a token, NOT
     // the retired --dsh-title-bar-strip variable).
@@ -193,18 +216,14 @@ describe('SideCardSection declarative inventory', () => {
     expect(html).toContain('aria-label="Custom CSS"')
     expect(html).toContain('data-dsh-bottom-panel')
     expect(html).not.toContain('title-bar')
-    // Three general-row switches remain (agentOpenTools off by default, plus
-    // the two mobile adaptations on) — the removed scheme row was a dropdown.
-    expect(html.match(/type="checkbox"/g)?.length).toBe(3)
-    // The two mobile adaptations are on by default (agentOpenTools is not).
-    expect(html.match(/checked=""/g)?.length ?? 0).toBe(2)
-    // The escape hatch is always reachable: no gear, no scheme gate — the
-    // only gear left on the page is the Subagents card's own.
+    // Appearance holds the textarea only: no switches, no feature gear (the
+    // removed scheme row was a dropdown; it is not resurrected).
+    expect(html.match(/type="checkbox"/g)?.length ?? 0).toBe(0)
     expect(html).not.toContain('Custom CSS Feature settings')
-    expect(html.match(/aria-label="[^"]*Feature settings"/g)?.length).toBe(1)
+    expect(html.match(/aria-label="[^"]*Feature settings"/g)?.length ?? 0).toBe(0)
 
     store.setPrefs({ ...store.getPrefs(), customCss: 'html { --x: 1; }' })
-    html = renderSection(store, service)
+    html = renderSection(store, service, 'appearance')
     expect(html).toContain('html { --x: 1; }')
   })
 })

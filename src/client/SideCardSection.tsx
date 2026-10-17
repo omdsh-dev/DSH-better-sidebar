@@ -2,45 +2,40 @@
  * "Side card" settings section: the user-facing preferences for the sidebar
  * panel, rendered natively in the DSH Settings shell (nav label "Side card").
  *
- * The section is DECLARATIVE — it renders the enable/disable inventory from
- * the sidebar service's registries instead of hardcoding rows:
- *  - 常规: new conversations open the panel by default (a toggle row), the
- *    default panel width as a percent of the window (number input row), and
- *    the open-path interception toggle — the DSH settings-row recipe
- *    (title/desc left + control right, hairline separators).
- *  - 侧边栏内容: one SMALL CARD per REGISTERED tab type (built-ins and
- *    external plugins alike), laid out in a responsive grid that wraps
- *    several cards per row — icon chip + title + type id, clicked to toggle
- *    the switch persisted in `prefs.tabsEnabled[id]`.
- *  - 文件预览: one SMALL CARD per REGISTERED file viewer — icon chip + title
- *    + the extensions it covers, clicked to toggle `prefs.viewersEnabled[id]`.
+ * The section is DECLARATIVE and GROUPED (S8). A wide layout shows the five
+ * spec groups as a side navigation; below the repo's 768px narrow bracket a
+ * native <select> replaces it, so 320/390px viewports never overflow:
+ *  - 常规: the existing general + narrow-viewport ("手机") switches;
+ *  - 标签页: one SMALL CARD per REGISTERED tab type (built-ins and external
+ *    plugins alike), in a responsive grid, clicked to toggle
+ *    `prefs.tabsEnabled[id]`, with the secondary-settings popup;
+ *  - 文件预览: one SMALL CARD per REGISTERED file viewer
+ *    (`prefs.viewersEnabled[id]`);
+ *  - 线索来源: the S8 source table — source/@ switches, the derived
+ *    dependency/connection state, the per-source configuration window, the
+ *    local clue-pack @ switch, the four ONE-COMMIT batch actions and the
+ *    add-source plugin entry;
+ *  - 外观: the existing custom-CSS escape hatch.
  *
- * Every group lives in a container card (the DSH PluginCard recipe: l2
- * hairline, 16px radius, layer-3 fill) with a heading and an inventory count
- * badge (the settings catalogHeading recipe); the section opens with a
- * one-line intro (the DSH section heading+intro recipe).
+ * Every existing preference keeps its key, value and save semantics: writes
+ * ride the plugin's own fenced settings route with the shared revision guard
+ * (the S1 namespace discovered at runtime by the host's `ownEntryId`), the
+ * shared SidebarStore is refreshed on success, and the sidebar's consumption
+ * points re-render immediately. A 409 conflict now KEEPS the user's edit,
+ * re-reads the revision and retries once; a still-failing write shows the
+ * conflict copy and never claims the value was saved. A failed non-conflict
+ * write reverts the optimistic UI, as before.
  *
- * A card's on/off state is its VISUAL STATE: enabled = highlighted (brand
- * border + tinted fill + a compact switch knob at the card's far right),
- * disabled = neutral and dimmed. Features that declare
- * `settings.toggles` carry a labeled settings strip at the card's bottom
- * edge that opens a native Modal (wider than the primitive default) with
- * the related settings as title/desc + custom-switch rows and a Done
- * footer; the popup body scrolls internally when a feature declares many
- * rows (e.g. Terminal's six). The toggles themselves are custom
- * switches: a real checkbox (native semantics and focus) driving a styled
- * track/thumb.
- *
- * Writes ride the plugin's own fenced settings route (the host calls the
- * settings seam in-process — the DSH settings RPC domain does not serve
- * third-party namespaces to configuration clients); the shared SidebarStore
- * is refreshed on success so the very next brand-new session seeds from the
- * new values and the sidebar's consumption points (the + menu, derived
- * flows) re-render immediately. Any failure reverts the optimistic UI and
- * shows the wire error inline — a broken settings surface never crashes the
- * shell.
+ * No second settings store, namespace or RPC exists: both entry points (the
+ * existing Sidebar settings seat and the host's plugin settings seat S9
+ * mounts) use THIS component and the same inject faces. The clue source
+ * catalogue comes from `ctx.betterSidebar.clues`, the source configuration
+ * window from `ctx.betterSidebar.windows`, and dependency/connection calls
+ * from the typed S8 wrapper (`clues.dependencies.*` / `clues.connections.*`).
+ * Settings only ever store preferences and non-secret configuration — clue
+ * bodies, pack members and snapshots never reach this document.
  */
-import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   IconChevronDownOutlineRegular,
   IconPlusOutlineRegular,
@@ -66,23 +61,79 @@ import type {
   SidebarSettingToggle,
   TabDescriptor,
 } from './service.ts'
+import type { BetterSidebarCluesClientFace } from './clues/registry.ts'
+import { clueRuntimeApi, type ClueRuntimeApi } from './clues/runtime-api.ts'
+import { SourceConfigPage } from './clues/settings/config.tsx'
+import { ClueSourcesPanel } from './clues/settings/sources.tsx'
+import { deriveClueSourceStatus, type ClueSourceStatus } from './clues/settings/status.ts'
+import {
+  consumeClueSettingsTarget,
+  peekClueSettingsTarget,
+  subscribeClueSettingsTarget,
+  type ClueSettingsGroup,
+} from './clues/settings/navigation.ts'
+import type { BetterSidebarWindowsClientFace } from './windows/types.ts'
+import type {
+  ClueSourceDescriptor,
+  ClueSourceDisplayDescriptor,
+  CluesSourcesCatalogResult,
+} from '../clues/types.ts'
+import type {
+  ConnectionStatusProjection,
+  DependencyStatus,
+} from '../clues/runtime/types.ts'
 import css from './SideCardSection.module.css'
 
 /** Injected business face: the shared store (prefs cache) + the sidebar service (registries). */
 export interface SideCardSectionInjected {
   store: SidebarStore
   service: BetterSidebarService
+  /**
+   * Settings wire seam. Production omits it (the plugin's own fenced route);
+   * tests/exotic hosts may inject the same two calls. Both entry points share
+   * this ONE route — never a second settings store.
+   */
+  settings?: Pick<typeof api, 'settingsGet' | 'settingsUpdate'>
+  /** Clue extension face (defaults to `service.clues` — `ctx.betterSidebar.clues`). */
+  clues?: BetterSidebarCluesClientFace
+  /** Window face (defaults to `service.windows` — `ctx.betterSidebar.windows`). */
+  windows?: BetterSidebarWindowsClientFace
+  /** S2 runtime wrapper (defaults to the S8 typed `clueRuntimeApi`). */
+  runtime?: ClueRuntimeApi
+  /** Initially visible group (deep-link/tests); defaults to the pending target then 常规. */
+  initialGroup?: ClueSettingsGroup
 }
 
 /** Full section props: the runtime share plus the injected face. */
 export type SideCardSectionProps = PropsRuntime<'settings.section'> & SideCardSectionInjected
 
+/** The five groups, in navigation order (approved S8 spec §2). */
+const SETTINGS_GROUPS: readonly { id: ClueSettingsGroup; label(): string }[] = [
+  { id: 'general', label: () => t('settingsGeneralTitle') },
+  { id: 'tabs', label: () => t('settingsGroupTabs') },
+  { id: 'viewers', label: () => t('settingsViewersTitle') },
+  { id: 'sources', label: () => t('settingsGroupSources') },
+  { id: 'appearance', label: () => t('settingsGroupAppearance') },
+]
+
+/** The one-line wire failure text (no prefix). */
+function errorTextOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+/** Whether one failure is the settings revision conflict (HTTP 409). */
+function isSettingsConflict(error: unknown): boolean {
+  return error instanceof Error
+    && 'code' in error
+    && (error as { code?: unknown }).code === 'settings-conflict'
+}
+
 /** Map one wire failure to the inline message (the conflict gets friendly copy). */
 function messageOf(error: unknown): string {
-  if (error instanceof Error && 'code' in error && (error as { code?: unknown }).code === 'settings-conflict') {
+  if (isSettingsConflict(error)) {
     return `${t('settingsSaveFailed')} ${t('settingsConflict')}`
   }
-  return `${t('settingsSaveFailed')} ${error instanceof Error ? error.message : String(error)}`
+  return `${t('settingsSaveFailed')} ${errorTextOf(error)}`
 }
 
 /** Resolve an i18n-friendly string-or-function value. */
@@ -156,7 +207,7 @@ function SettingsRender(props: {
   } catch (error) {
     content = (
       <div className={css.error} role="alert">
-        {t('settingsSaveFailed')} {error instanceof Error ? error.message : String(error)}
+        {t('settingsSaveFailed')} {errorTextOf(error)}
       </div>
     )
   }
@@ -166,20 +217,24 @@ function SettingsRender(props: {
 /**
  * The custom switch: a real checkbox (hidden, native semantics and focus)
  * driving a styled track/thumb. Used by the general toggle rows and the
- * secondary settings popup rows.
+ * secondary settings popup rows. `disabled`/`title` let a row explain a locked
+ * control (e.g. a feature whose settings are dormant while it is off).
  */
 function Switch(props: {
   checked: boolean
   onChange: (next: boolean) => void
   label: string
+  disabled?: boolean
+  title?: string
 }) {
-  const { checked, onChange, label } = props
+  const { checked, onChange, label, disabled, title } = props
   return (
-    <label className={css.switch}>
+    <label className={css.switch} title={title}>
       <input
         type="checkbox"
         className={css.switchInput}
         checked={checked}
+        disabled={disabled === true}
         aria-label={label}
         onChange={event => { onChange(event.currentTarget.checked) }}
       />
@@ -326,6 +381,7 @@ function TypedRow(props: {
     </div>
   )
 }
+
 /**
  * The multi-line custom-CSS input (the user-space escape hatch): a monospace
  * textarea whose draft is local state, committed on blur or Cmd/Ctrl+Enter
@@ -632,38 +688,215 @@ export function SettingsBody(props: {
   )
 }
 
+/** One settings-write outcome (the conflict outcome keeps the optimistic edit). */
+interface CommitOutcome {
+  readonly ok: boolean
+  readonly prefs: SidebarPrefs
+  /** A 409 happened: the edit stays on screen and the copy says it is unsaved. */
+  readonly keepEdit?: boolean
+}
+
 /**
  * Render the Side card preferences section.
  * @param props - composed slot props (runtime share + injected store/service).
  * @returns the section element tree.
  */
-export function SideCardSection({ store, service }: SideCardSectionProps) {
+export function SideCardSection(props: SideCardSectionProps) {
+  const { store, service } = props
+  const settingsFace = props.settings ?? api
+  const clues = props.clues ?? service.clues
+  const windows = props.windows ?? service.windows
+  const runtime = props.runtime ?? clueRuntimeApi
+
   const [prefs, setPrefs] = useState<SidebarPrefs>(() => store.getPrefs())
   const [error, setError] = useState<string | null>(null)
   // Which feature's secondary settings popup is open (null = closed).
   const [settingsFor, setSettingsFor] = useState<TabDescriptor | FileViewerDescriptor | null>(null)
-  // Whether the "add plugin" modal (a dashed card at the end of the
-  // 侧边栏内容 / 文件预览 grids) is open, and for which extension point
-  // (null = closed).
+  // Whether the "add plugin" modal is open, and for which extension point
+  // (null = closed). The source entry reuses the TAB plugin flow.
   const [addPluginsOpen, setAddPluginsOpen] = useState<PluginKind | null>(null)
   // The LATEST optimistic prefs, kept in sync with the state. Nested-map
-  // merges (tabsEnabled / viewersEnabled / pluginSettings) MUST build from
-  // this ref, not from the render-time `prefs`: two same-tick writes (e.g.
-  // a settings panel updating several plugin keys at once) would otherwise
-  // both spread the stale map and the later patch would drop the earlier
-  // key even though the commits are serialized.
+  // merges (tabsEnabled / viewersEnabled / pluginSettings / clue source maps)
+  // MUST build from this ref, not from the render-time `prefs`: two same-tick
+  // writes (e.g. a settings panel updating several plugin keys at once) would
+  // otherwise both spread the stale map and the later patch would drop the
+  // earlier key even though the commits are serialized.
   const optimisticRef = useRef(prefs)
   useEffect(() => { optimisticRef.current = prefs }, [prefs])
 
+  // The active settings group. A pending deep link (Tab gear → Clue sources)
+  // seeds it; the mount effect consumes it exactly once.
+  const [group, setGroup] = useState<ClueSettingsGroup>(() =>
+    props.initialGroup ?? peekClueSettingsTarget()?.group ?? 'general')
+  const consumedTargetRef = useRef(false)
+  const pendingSourceRef = useRef<string | undefined>(undefined)
+
   // The declarative inventory: the registered tab types and file viewers.
-  // Local state + service.subscribe (registry changes are rare — plugin
-  // load/unload — so a plain effect is enough; no external-store ceremony).
   const [tabs, setTabs] = useState<TabDescriptor[]>(() => [...service.getTabs()].sort(tabOrder))
   const [viewers, setViewers] = useState<FileViewerDescriptor[]>(() => [...service.getFileViewers()].sort(viewerOrder))
   useEffect(() => service.subscribe(() => {
     setTabs([...service.getTabs()].sort(tabOrder))
     setViewers([...service.getFileViewers()].sort(viewerOrder))
   }), [service])
+
+  // Clue source displays (client-registered names/icons) follow the registry.
+  const [displays, setDisplays] = useState<readonly ClueSourceDisplayDescriptor[]>(() => clues.getSourceDisplays())
+  useEffect(() => clues.subscribe(() => { setDisplays(clues.getSourceDisplays()) }), [clues])
+
+  // Clue source catalogue + S2 statuses. Loaded ONLY when the Clue sources
+  // group is opened (an explicit status read — no timer, no auto-login).
+  const [catalogue, setCatalogue] = useState<CluesSourcesCatalogResult | null>(null)
+  const [sourcesLoading, setSourcesLoading] = useState(false)
+  const [sourcesError, setSourcesError] = useState<string | null>(null)
+  const [dependencyStatuses, setDependencyStatuses] = useState<readonly DependencyStatus[]>([])
+  const [connectionStatuses, setConnectionStatuses] = useState<readonly ConnectionStatusProjection[]>([])
+  const [dependencyProbeFailed, setDependencyProbeFailed] = useState(false)
+  const [connectionProbeFailed, setConnectionProbeFailed] = useState(false)
+  const [statusChecked, setStatusChecked] = useState(false)
+  const sourcesLoadedRef = useRef(false)
+  const sourcesRequestRef = useRef(0)
+  const catalogueRef = useRef<CluesSourcesCatalogResult | null>(null)
+  useEffect(() => { catalogueRef.current = catalogue }, [catalogue])
+  const displaysRef = useRef(displays)
+  useEffect(() => { displaysRef.current = displays }, [displays])
+
+  /** Read the catalogue, then the S2 status projections it needs. */
+  const loadSources = useCallback(async (): Promise<void> => {
+    const request = sourcesRequestRef.current + 1
+    sourcesRequestRef.current = request
+    setSourcesLoading(true)
+    setSourcesError(null)
+    try {
+      const catalogueNext = await clues.api.sources()
+      if (request !== sourcesRequestRef.current) return
+      setCatalogue(catalogueNext)
+      const needsDependencies = catalogueNext.sources.some(source => (source.dependencyIds?.length ?? 0) > 0)
+      const needsConnections = catalogueNext.sources.some(source => source.connectionId !== undefined)
+      let dependenciesNext: readonly DependencyStatus[] = []
+      let connectionsNext: readonly ConnectionStatusProjection[] = []
+      let dependenciesFailed = false
+      let connectionsFailed = false
+      if (needsDependencies) {
+        try {
+          dependenciesNext = await runtime.dependenciesInspect()
+        } catch (caught) {
+          dependenciesFailed = true
+          if (request === sourcesRequestRef.current) setSourcesError(errorTextOf(caught))
+        }
+      }
+      if (needsConnections) {
+        try {
+          connectionsNext = await runtime.connectionsStatus()
+        } catch (caught) {
+          connectionsFailed = true
+          if (request === sourcesRequestRef.current) setSourcesError(errorTextOf(caught))
+        }
+      }
+      if (request !== sourcesRequestRef.current) return
+      setDependencyStatuses(dependenciesNext)
+      setConnectionStatuses(connectionsNext)
+      setDependencyProbeFailed(dependenciesFailed)
+      setConnectionProbeFailed(connectionsFailed)
+      setStatusChecked(true)
+    } catch (caught) {
+      if (request === sourcesRequestRef.current) {
+        setSourcesError(errorTextOf(caught))
+        setStatusChecked(true)
+      }
+    } finally {
+      if (request === sourcesRequestRef.current) setSourcesLoading(false)
+    }
+  }, [clues, runtime])
+
+  useEffect(() => {
+    if (group !== 'sources' || sourcesLoadedRef.current) return
+    sourcesLoadedRef.current = true
+    void loadSources()
+  }, [group, loadSources])
+
+  /** Explicit reload of the source list (the panel's Retry action). */
+  const reloadSources = (): void => {
+    sourcesLoadedRef.current = true
+    void loadSources()
+  }
+
+  /** Derived per-source state (never ready before an observation completed). */
+  const statusById = useMemo(() => {
+    const map = new Map<string, ClueSourceStatus>()
+    for (const source of catalogue?.sources ?? []) {
+      const needsDependencies = (source.dependencyIds?.length ?? 0) > 0
+      map.set(source.sourceId, deriveClueSourceStatus({
+        dependencyIds: source.dependencyIds,
+        connectionId: source.connectionId,
+        dependencies: dependencyStatuses,
+        connections: connectionStatuses,
+        requestFailed: (needsDependencies && dependencyProbeFailed)
+          || (source.connectionId !== undefined && connectionProbeFailed),
+        checked: statusChecked,
+      }))
+    }
+    return map
+  }, [catalogue, dependencyStatuses, connectionStatuses, dependencyProbeFailed, connectionProbeFailed, statusChecked])
+
+  /** Open one source's S6 configuration window (stable identity = focus). */
+  const openSourceConfig = useCallback((source: ClueSourceDescriptor): void => {
+    const display = displaysRef.current.find(item => item.sourceId === source.sourceId)
+    const name = display?.name ?? (source.name.trim() === '' ? source.sourceId : source.name)
+    windows.open({
+      id: `clue-source:${source.sourceId}`,
+      title: t('clueConfigTitle', { source: name }),
+      size: 'collection',
+      content: (
+        <SourceConfigPage
+          sourceId={source.sourceId}
+          sourceName={name}
+          dependencyIds={source.dependencyIds ?? []}
+          {...(source.connectionId === undefined ? {} : { connectionId: source.connectionId })}
+          runtime={runtime}
+        />
+      ),
+    })
+  }, [windows, runtime])
+
+  /** Open by id; remember it until the catalogue is available. */
+  const openSourceConfigById = useCallback((sourceId: string): void => {
+    const source = catalogueRef.current?.sources.find(item => item.sourceId === sourceId)
+    if (source === undefined) {
+      pendingSourceRef.current = sourceId
+      return
+    }
+    pendingSourceRef.current = undefined
+    openSourceConfig(source)
+  }, [openSourceConfig])
+
+  // Consume the one-shot deep link and follow later ones while mounted.
+  useEffect(() => {
+    if (!consumedTargetRef.current) {
+      consumedTargetRef.current = true
+      const target = consumeClueSettingsTarget()
+      if (target !== undefined) {
+        setGroup(target.group)
+        if (target.sourceId !== undefined) openSourceConfigById(target.sourceId)
+      }
+    }
+    return subscribeClueSettingsTarget(target => {
+      setGroup(target.group)
+      if (target.sourceId !== undefined) openSourceConfigById(target.sourceId)
+    })
+  }, [openSourceConfigById])
+
+  // A deep-linked source may arrive after the catalogue; open it once known.
+  useEffect(() => {
+    const pending = pendingSourceRef.current
+    if (pending === undefined || catalogue === null) return
+    const source = catalogue.sources.find(item => item.sourceId === pending)
+    if (source === undefined) {
+      pendingSourceRef.current = undefined
+      return
+    }
+    pendingSourceRef.current = undefined
+    openSourceConfig(source)
+  }, [catalogue, openSourceConfig])
 
   // The settings document revision (guards concurrent writes). A ref: commits
   // read the freshest value at execution time, no re-render needed.
@@ -680,23 +913,46 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
   // values (another tab may have changed them since the store hydrated).
   useEffect(() => {
     let cancelled = false
-    void api.settingsGet().then((view) => {
+    void settingsFace.settingsGet().then((view) => {
       if (cancelled) return
       revisionRef.current = view.revision
       if (dirtyRef.current) return
-      setPrefs(parsePrefs(view.value))
+      const next = parsePrefs(view.value)
+      // Refresh the shared store too: both settings entry points render this
+      // ONE component against the same store and revision chain.
+      store.setPrefs(next)
+      setPrefs(next)
     }).catch(() => { /* the store's defaults stay authoritative */ })
     return () => { cancelled = true }
-  }, [])
+  }, [settingsFace, store])
 
-  /** Persist one patch through the settings route (serialized, revision-guarded). */
-  const commit = (patch: Record<string, unknown>): Promise<{ ok: boolean; prefs: SidebarPrefs }> => {
+  // Another surface's save refreshes this mounted surface (same store).
+  useEffect(() => store.subscribe(() => {
+    setPrefs(store.getPrefs())
+  }), [store])
+
+  /**
+   * Persist one patch through the settings route (serialized, revision-guarded).
+   * A 409 is NOT a failure of the user's intent: re-read the revision while
+   * keeping the edit on screen, then retry the same patch once.
+   */
+  const commit = (patch: Record<string, unknown>): Promise<CommitOutcome> => {
     dirtyRef.current = true
+    let conflicted = false
+    const write = async (): Promise<{ value?: unknown; revision?: number }> =>
+      settingsFace.settingsUpdate({ ...patch }, revisionRef.current)
     const run = inFlightRef.current.then(async () => {
-      const view = await api.settingsUpdate(
-        { ...patch },
-        revisionRef.current,
-      )
+      let view: { value?: unknown; revision?: number }
+      try {
+        view = await write()
+      } catch (caught) {
+        if (!isSettingsConflict(caught)) throw caught
+        conflicted = true
+        // Keep the edit; fence the retry on the freshly read revision.
+        const refreshed = await settingsFace.settingsGet()
+        revisionRef.current = refreshed.revision
+        view = await write()
+      }
       const next = parsePrefs(view.value)
       revisionRef.current = view.revision
       store.setPrefs(next)
@@ -708,14 +964,17 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
       (next) => ({ ok: true, prefs: next }),
       (caught) => {
         setError(messageOf(caught))
-        return { ok: false, prefs }
+        return conflicted
+          ? { ok: false, prefs, keepEdit: true }
+          : { ok: false, prefs }
       },
     )
   }
 
-  /** Settle one commit: success adopts the server values, failure reverts. */
-  const applyOutcome = (previous: SidebarPrefs, outcome: { ok: boolean; prefs: SidebarPrefs }): void => {
-    setPrefs(outcome.ok ? outcome.prefs : previous)
+  /** Settle one commit: success adopts the server values; a conflict keeps the edit. */
+  const applyOutcome = (previous: SidebarPrefs, outcome: CommitOutcome): void => {
+    if (outcome.ok) setPrefs(outcome.prefs)
+    else if (outcome.keepEdit !== true) setPrefs(previous)
   }
 
   /** Optimistically apply one pref patch, then commit (revert on failure). */
@@ -808,6 +1067,47 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
     return raw
   }
 
+  /** The currently registered source ids (the batch-action scope). */
+  const registeredSourceIds = (): string[] =>
+    (catalogueRef.current?.sources ?? []).map(source => source.sourceId)
+
+  /** Flip one source enable switch (merged clueSourcesEnabled map). */
+  const onToggleSource = (sourceId: string, next: boolean): void => {
+    applyPref({ clueSourcesEnabled: { ...optimisticRef.current.clueSourcesEnabled, [sourceId]: next } })
+  }
+
+  /** Flip one source @ switch (merged clueSourcesMentionEnabled map). */
+  const onToggleSourceMention = (sourceId: string, next: boolean): void => {
+    applyPref({ clueSourcesMentionEnabled: { ...optimisticRef.current.clueSourcesMentionEnabled, [sourceId]: next } })
+  }
+
+  /** Flip the independent clue-pack @ switch. */
+  const onTogglePacksMention = (next: boolean): void => {
+    applyPref({ cluePacksMentionEnabled: next })
+  }
+
+  /**
+   * Batch-write one source map ONCE. Only the ids registered RIGHT NOW are
+   * named; a source added later stays absent (= ON), so an "all off" can
+   * never become a hidden "never allow future sources" policy.
+   */
+  const setAllSources = (next: boolean): void => {
+    const ids = registeredSourceIds()
+    if (ids.length === 0) return
+    const map = { ...optimisticRef.current.clueSourcesEnabled }
+    for (const id of ids) map[id] = next
+    applyPref({ clueSourcesEnabled: map })
+  }
+
+  /** Batch-write the @ map ONCE, with the same future-source rule. */
+  const setAllSourceMentions = (next: boolean): void => {
+    const ids = registeredSourceIds()
+    if (ids.length === 0) return
+    const map = { ...optimisticRef.current.clueSourcesMentionEnabled }
+    for (const id of ids) map[id] = next
+    applyPref({ clueSourcesMentionEnabled: map })
+  }
+
   /**
    * One SMALL toggle card for the responsive inventory grid: the card's main
    * area is the switch (click to flips, visual state IS the state), the icon
@@ -825,7 +1125,7 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
     /** A feature with declared related settings shows the settings strip. */
     onOpenSettings?: () => void
   }) => {
-    const hasSettings = props.onOpenSettings !== undefined
+    const hasSettingsStrip = props.onOpenSettings !== undefined
     return (
       <div
         className={clsx(css.card, props.enabled && css.cardOn)}
@@ -852,7 +1152,7 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
           </span>
           <span className={css.cardDesc}>{props.desc}</span>
         </button>
-        {hasSettings && (
+        {hasSettingsStrip && (
           <button
             type="button"
             className={css.cardSettings}
@@ -867,6 +1167,94 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
     )
   }
 
+  /**
+   * The tab inventory: one card per registered tab type + the dashed
+   * add-plugin entry (the same cards as before the grouping refactor).
+   */
+  const renderTabsGroup = () => (
+    <div className={css.group}>
+      <div className={css.groupHeading}>
+        <span>{t('settingsGroupTabs')}</span>
+        <span className={css.count}>{tabs.length}</span>
+      </div>
+      <div className={css.grid}>
+        {tabs.map(tab => (
+          <Fragment key={tab.id}>
+            {renderCard({
+              title: textOf(tab.title),
+              desc: tab.id,
+              icon: iconOf(tab.icon, 16),
+              enabled: prefs.tabsEnabled[tab.id] !== false,
+              onToggle: (next) => { onToggleTab(tab.id, next) },
+              // The settings gear only while the feature is enabled: its
+              // related settings are dormant while the feature is off.
+              onOpenSettings: prefs.tabsEnabled[tab.id] !== false && hasSettings(tab)
+                ? () => { setSettingsFor(tab) }
+                : undefined,
+            })}
+          </Fragment>
+        ))}
+        {/* The "add tab plugin" entry: same card size as the inventory,
+            but a dashed border — it opens the TAB-registration plugin
+            modal instead of toggling a feature. */}
+        <button
+          type="button"
+          className={clsx(css.card, css.addCard)}
+          onClick={() => { setAddPluginsOpen('tab') }}
+        >
+          <span className={css.cardTop}>
+            <span className={css.cardIconChip}>
+              <IconPlusOutlineRegular size={16} />
+            </span>
+            <span className={css.cardTitle}>{t('addPluginsTabCard')}</span>
+          </span>
+          <span className={css.cardDesc}>{t('addPluginsTabCardDesc')}</span>
+        </button>
+      </div>
+    </div>
+  )
+
+  /** The file-viewer inventory + the dashed add-previewer entry. */
+  const renderViewersGroup = () => (
+    <div className={css.group}>
+      <div className={css.groupHeading}>
+        <span>{t('settingsViewersTitle')}</span>
+        <span className={css.count}>{viewers.length}</span>
+      </div>
+      <div className={css.grid}>
+        {viewers.map(viewer => (
+          <Fragment key={viewer.id}>
+            {renderCard({
+              title: textOf(viewer.title) || viewer.id,
+              desc: viewer.exts.length === 0 ? t('settingsViewerCatchAll') : viewer.exts.join(' · '),
+              icon: iconOf(viewer.icon, 16),
+              enabled: prefs.viewersEnabled[viewer.id] !== false,
+              onToggle: (next) => { onToggleViewer(viewer.id, next) },
+              onOpenSettings: prefs.viewersEnabled[viewer.id] !== false && hasSettings(viewer)
+                ? () => { setSettingsFor(viewer) }
+                : undefined,
+            })}
+          </Fragment>
+        ))}
+        {/* The "add preview plugin" entry: dashed card opening the
+            FILE-PREVIEWER registration modal. */}
+        <button
+          type="button"
+          className={clsx(css.card, css.addCard)}
+          onClick={() => { setAddPluginsOpen('viewer') }}
+        >
+          <span className={css.cardTop}>
+            <span className={css.cardIconChip}>
+              <IconPlusOutlineRegular size={16} />
+            </span>
+            <span className={css.cardTitle}>{t('addPluginsViewerCard')}</span>
+          </span>
+          <span className={css.cardDesc}>{t('addPluginsViewerCardDesc')}</span>
+        </button>
+      </div>
+    </div>
+  )
+
   return (
     <div className={css.section}>
       <p className={css.intro}>{t('settingsIntro')}</p>
@@ -880,149 +1268,131 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
         <span className={css.versionBadgeTag}>v{service.version}</span>
       </div>
 
-      {/* 常规: the DSH settings-row recipe — title/desc left, control right. */}
-      <div className={css.group}>
-        <div className={css.groupHeading}>{t('settingsGeneralTitle')}</div>
-        <div className={css.row}>
-          <span className={css.rowText}>
-            <span className={css.title}>{t('settingsOpenToolsTitle')}</span>
-            <span className={css.desc}>{t('settingsOpenToolsDesc')}</span>
-          </span>
-          <Switch
-            label={t('settingsOpenToolsTitle')}
-            checked={prefs.agentOpenTools}
-            onChange={(next) => { applyPref({ agentOpenTools: next }) }}
-          />
-        </div>
-      </div>
-
-      {/* 自定义 CSS: the user-space escape hatch. The retired "位置兼容模式"
-          scheme dropdown (auto / web / shell presets / custom) lived on the
-          常规 row and its gear popup held this textarea next to a strip-px
-          number row; the whole strip mechanism was removed, so the textarea
-          is the only thing that row ever really owned and it now has its own
-          group. Applied whenever non-empty (last in the cascade). */}
-      <div className={css.group}>
-        <div className={css.groupHeading}>{t('settingsCustomCssTitle')}</div>
-        <CssDraft
-          key={prefs.customCss}
-          value={prefs.customCss}
-          label={t('settingsCustomCssTitle')}
-          placeholder={t('settingsCustomCssPlaceholder')}
-          onCommit={commitCustomCss}
-        />
-      </div>
-
-      {/* 手机: the narrow-viewport adaptations. Both switches only ever change
-          what happens on a NARROW viewport (the plugin's own 768px bracket),
-          so a desktop reader's behaviour is untouched whatever they pick —
-          and neither one rewrites the wide-viewport switches above. */}
-      <div className={css.group}>
-        <div className={css.groupHeading}>{t('settingsMobileTitle')}</div>
-        <div className={css.row}>
-          <span className={css.rowText}>
-            <span className={css.title}>{t('settingsMobileNoAutoOpenTitle')}</span>
-            <span className={css.desc}>{t('settingsMobileNoAutoOpenDesc')}</span>
-          </span>
-          <Switch
-            label={t('settingsMobileNoAutoOpenTitle')}
-            checked={prefs.mobileNoAutoOpen}
-            onChange={(next) => { applyPref({ mobileNoAutoOpen: next }) }}
-          />
-        </div>
-        <div className={css.row}>
-          <span className={css.rowText}>
-            <span className={css.title}>{t('settingsMobileTreeTitle')}</span>
-            <span className={css.desc}>{t('settingsMobileTreeDesc')}</span>
-          </span>
-          <Switch
-            label={t('settingsMobileTreeTitle')}
-            checked={prefs.mobileDefaultTree}
-            onChange={(next) => { applyPref({ mobileDefaultTree: next }) }}
-          />
-        </div>
-      </div>
-
-      {/* 侧边栏内容: one small card per registered tab type in a responsive
-          grid; features declaring `settings.toggles` open their settings in
-          the popup (gear corner button) instead of nested inline rows. */}
-      <div className={css.group}>
-        <div className={css.groupHeading}>
-          <span>{t('settingsTabsTitle')}</span>
-          <span className={css.count}>{tabs.length}</span>
-        </div>
-        <div className={css.grid}>
-          {tabs.map(tab => (
-            <Fragment key={tab.id}>
-              {renderCard({
-                title: textOf(tab.title),
-                desc: tab.id,
-                icon: iconOf(tab.icon, 16),
-                enabled: prefs.tabsEnabled[tab.id] !== false,
-                onToggle: (next) => { onToggleTab(tab.id, next) },
-                // The settings gear only while the feature is enabled: its
-                // related settings are dormant while the feature is off.
-                onOpenSettings: prefs.tabsEnabled[tab.id] !== false && hasSettings(tab)
-                  ? () => { setSettingsFor(tab) }
-                  : undefined,
-              })}
-            </Fragment>
+      <div className={css.settingsShell}>
+        {/* Wide form: the five groups as a side navigation. */}
+        <nav className={css.groupNav} aria-label={t('clueSettingsGroupsAria')}>
+          {SETTINGS_GROUPS.map(item => (
+            <button
+              key={item.id}
+              type="button"
+              className={css.groupNavItem}
+              aria-current={group === item.id ? 'page' : undefined}
+              onClick={() => { setGroup(item.id) }}
+            >
+              {item.label()}
+            </button>
           ))}
-          {/* The "add tab plugin" entry: same card size as the inventory,
-              but a dashed border — it opens the TAB-registration plugin
-              modal instead of toggling a feature. */}
-          <button
-            type="button"
-            className={clsx(css.card, css.addCard)}
-            onClick={() => { setAddPluginsOpen('tab') }}
-          >
-            <span className={css.cardTop}>
-              <span className={css.cardIconChip}>
-                <IconPlusOutlineRegular size={16} />
-              </span>
-              <span className={css.cardTitle}>{t('addPluginsTabCard')}</span>
-            </span>
-            <span className={css.cardDesc}>{t('addPluginsTabCardDesc')}</span>
-          </button>
-        </div>
-      </div>
+        </nav>
 
-      {/* 文件预览: one small card per registered file viewer. */}
-      <div className={css.group}>
-        <div className={css.groupHeading}>
-          <span>{t('settingsViewersTitle')}</span>
-          <span className={css.count}>{viewers.length}</span>
-        </div>
-        <div className={css.grid}>
-          {viewers.map(viewer => (
-            <Fragment key={viewer.id}>
-              {renderCard({
-                title: textOf(viewer.title) || viewer.id,
-                desc: viewer.exts.length === 0 ? t('settingsViewerCatchAll') : viewer.exts.join(' · '),
-                icon: iconOf(viewer.icon, 16),
-                enabled: prefs.viewersEnabled[viewer.id] !== false,
-                onToggle: (next) => { onToggleViewer(viewer.id, next) },
-                onOpenSettings: prefs.viewersEnabled[viewer.id] !== false && hasSettings(viewer)
-                  ? () => { setSettingsFor(viewer) }
-                  : undefined,
-              })}
-            </Fragment>
-          ))}
-          {/* The "add preview plugin" entry: dashed card opening the
-              FILE-PREVIEWER registration modal. */}
-          <button
-            type="button"
-            className={clsx(css.card, css.addCard)}
-            onClick={() => { setAddPluginsOpen('viewer') }}
+        {/* Narrow form: the same five groups as one native select (no
+            horizontal overflow, keyboard friendly). */}
+        <div className={css.groupSelectWrap}>
+          <select
+            className={css.groupSelect}
+            aria-label={t('clueSettingsGroupsAria')}
+            value={group}
+            onChange={event => { setGroup(event.currentTarget.value as ClueSettingsGroup) }}
           >
-            <span className={css.cardTop}>
-              <span className={css.cardIconChip}>
-                <IconPlusOutlineRegular size={16} />
-              </span>
-              <span className={css.cardTitle}>{t('addPluginsViewerCard')}</span>
-            </span>
-            <span className={css.cardDesc}>{t('addPluginsViewerCardDesc')}</span>
-          </button>
+            {SETTINGS_GROUPS.map(item => (
+              <option key={item.id} value={item.id}>{item.label()}</option>
+            ))}
+          </select>
+        </div>
+
+        <div className={css.groupPane}>
+          {group === 'general' && (
+            <div className={css.group}>
+              <div className={css.groupHeading}>{t('settingsGeneralTitle')}</div>
+              <div className={css.row}>
+                <span className={css.rowText}>
+                  <span className={css.title}>{t('settingsOpenToolsTitle')}</span>
+                  <span className={css.desc}>{t('settingsOpenToolsDesc')}</span>
+                </span>
+                <Switch
+                  label={t('settingsOpenToolsTitle')}
+                  checked={prefs.agentOpenTools}
+                  onChange={(next) => { applyPref({ agentOpenTools: next }) }}
+                />
+              </div>
+
+              {/* 手机: the narrow-viewport adaptations. Both switches only ever
+                  change what happens on a NARROW viewport (the plugin's own
+                  768px bracket), so a desktop reader's behaviour is untouched
+                  whatever they pick — and neither rewrites the wide-viewport
+                  switches above. */}
+              <div className={css.subHeading}>{t('settingsMobileTitle')}</div>
+              <div className={css.row}>
+                <span className={css.rowText}>
+                  <span className={css.title}>{t('settingsMobileNoAutoOpenTitle')}</span>
+                  <span className={css.desc}>{t('settingsMobileNoAutoOpenDesc')}</span>
+                </span>
+                <Switch
+                  label={t('settingsMobileNoAutoOpenTitle')}
+                  checked={prefs.mobileNoAutoOpen}
+                  onChange={(next) => { applyPref({ mobileNoAutoOpen: next }) }}
+                />
+              </div>
+              <div className={css.row}>
+                <span className={css.rowText}>
+                  <span className={css.title}>{t('settingsMobileTreeTitle')}</span>
+                  <span className={css.desc}>{t('settingsMobileTreeDesc')}</span>
+                </span>
+                <Switch
+                  label={t('settingsMobileTreeTitle')}
+                  checked={prefs.mobileDefaultTree}
+                  onChange={(next) => { applyPref({ mobileDefaultTree: next }) }}
+                />
+              </div>
+            </div>
+          )}
+
+          {group === 'tabs' && renderTabsGroup()}
+
+          {group === 'viewers' && renderViewersGroup()}
+
+          {group === 'sources' && (
+            <div className={css.group}>
+              <div className={css.groupHeading}>
+                <span>{t('settingsGroupSources')}</span>
+                <span className={css.count}>{catalogue?.sources.length ?? 0}</span>
+              </div>
+              <ClueSourcesPanel
+                sources={catalogue?.sources ?? []}
+                displays={displays}
+                statuses={statusById}
+                prefs={{
+                  clueSourcesEnabled: prefs.clueSourcesEnabled,
+                  clueSourcesMentionEnabled: prefs.clueSourcesMentionEnabled,
+                  cluePacksMentionEnabled: prefs.cluePacksMentionEnabled,
+                }}
+                loading={sourcesLoading}
+                error={sourcesError}
+                onToggleSource={onToggleSource}
+                onToggleMention={onToggleSourceMention}
+                onTogglePacksMention={onTogglePacksMention}
+                onEnableAll={() => { setAllSources(true) }}
+                onDisableAll={() => { setAllSources(false) }}
+                onMentionAll={() => { setAllSourceMentions(true) }}
+                onMentionNone={() => { setAllSourceMentions(false) }}
+                onConfigure={openSourceConfigById}
+                onAddSource={() => { setAddPluginsOpen('tab') }}
+                onReload={reloadSources}
+              />
+            </div>
+          )}
+
+          {group === 'appearance' && (
+            <div className={css.group}>
+              <div className={css.groupHeading}>{t('settingsCustomCssTitle')}</div>
+              <CssDraft
+                key={prefs.customCss}
+                value={prefs.customCss}
+                label={t('settingsCustomCssTitle')}
+                placeholder={t('settingsCustomCssPlaceholder')}
+                onCommit={commitCustomCss}
+              />
+            </div>
+          )}
         </div>
       </div>
 
@@ -1031,10 +1401,7 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
           Done footer (Modal chrome is the app's own). Mounted only while a
           feature is open — the Modal primitive runs hooks unconditionally,
           so a closed-but-mounted Modal would break SSR (and the
-          renderToString spec) under the test dual-react split.
-          Content: the host-prefs `toggles` rows, the plugin-owned
-          `pluginToggles` rows (their values live in pluginSettings[id]),
-          then the custom `settings.render` panel when declared. */}
+          renderToString spec) under the test dual-react split. */}
       {settingsFor !== null && (
         <Modal
           open
@@ -1071,10 +1438,12 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
       {/* The "add plugin" modal (opened by the dashed cards above): declares
           the extension point of the clicked kind, opens the GitHub topic,
           and lists the matching recommended plugin catalog with per-entry
-          install buttons (the install flow opens a ~/.dsh terminal with
-          the command pre-typed; failures render inline here, in settings
-          only). Mounted only while open (Modal runs hooks unconditionally
-          — same SSR rule as the settings popup above). */}
+          install buttons (copying the command; nothing claims a successful
+          install). The clue-source entry reuses this flow with the tab kind
+          (S8: sources ship as DSH plugins, and installing a plugin is not the
+          same action as installing the CLI it needs).
+          Mounted only while open (Modal runs hooks unconditionally — same
+          SSR rule as the settings popup above). */}
       {addPluginsOpen !== null && (
         <AddPluginModal
           service={service}

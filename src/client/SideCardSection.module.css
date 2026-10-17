@@ -995,3 +995,123 @@
   color: var(--dsw-alias-state-error-primary);
   padding: 0 2px;
 }
+
+/* ── S8: grouped settings shell (wide nav + narrow select) ───────────────── */
+
+.section {
+  min-width: 0;
+}
+
+.settingsShell {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  min-width: 0;
+  width: 100%;
+}
+
+/* Wide form: the five groups as a quiet vertical navigation. */
+.groupNav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: none;
+  width: 152px;
+  min-width: 0;
+}
+
+.groupNavItem {
+  appearance: none;
+  padding: 7px 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: 13px;
+  line-height: 18px;
+  text-align: left;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.groupNavItem:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.groupNavItem[aria-current='page'] {
+  border-color: var(--dsw-alias-border-l2);
+  background: var(--dsw-alias-bg-layer-3);
+  color: var(--dsw-alias-label-primary);
+}
+
+.groupNavItem:focus-visible {
+  outline: 2px solid var(--dsw-alias-border-l4);
+  outline-offset: 1px;
+}
+
+/* Narrow form (shown below the 768px bracket): ONE native select. */
+.groupSelectWrap {
+  display: none;
+  width: 100%;
+  min-width: 0;
+}
+
+.groupSelect {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  padding: 6px 9px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-3);
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.groupSelect:focus-visible {
+  outline: 2px solid var(--dsw-alias-border-l4);
+  outline-offset: 1px;
+}
+
+.groupPane {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.subHeading {
+  padding: 10px 2px 4px;
+  font-size: 12px;
+  line-height: 18px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-secondary);
+}
+
+@media (max-width: 767px) {
+  .settingsShell {
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .groupNav {
+    display: none;
+  }
+
+  .groupSelectWrap {
+    display: flex;
+  }
+
+  .group {
+    padding: 14px;
+  }
+
+  .groupPane {
+    width: 100%;
+  }
+}
