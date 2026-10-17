@@ -54,6 +54,11 @@ export default defineConfig({
       // list is the only thing vitest reads. Left out, `pnpm test` collects
       // those stale copies and reports THEIR failures as ours.
       '**/.delta/**',
+      // A repo-local pnpm store (`.pnpm-store/`, gitignored) keeps whole
+      // project copies under `.pnpm-store/<version>/projects/<hash>/`; one
+      // `pnpm test` from the repo root otherwise collects those copies too
+      // and reports a second, stale test suite as ours.
+      '**/.pnpm-store/**',
       '**/node_modules/**',
       '**/dist/**',
       '**/cypress/**',
