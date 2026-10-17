@@ -1,0 +1,432 @@
+/**
+ * S8 clue settings surfaces: the source table inside the Side card section and
+ * the source configuration window (CLI dependency + connection/authorization).
+ *
+ * Skin contract: every paint rides a --dsw-* / --ds-* token (no literal
+ * colors), and every container is `min-width: 0` + wrapping so the 320 / 390px
+ * narrow viewports never overflow horizontally. The wide form is a compact
+ * flex row (identity left, status middle, controls right); below the repo's
+ * 768px narrow bracket the row stacks and the controls wrap under the text.
+ */
+
+.sources {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  width: 100%;
+}
+
+.sourcesIntro {
+  margin: 0;
+  padding: 0 2px;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-tertiary);
+  overflow-wrap: anywhere;
+}
+
+.error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 10px;
+  background: var(--dsw-alias-bg-layer-2);
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-secondary);
+  overflow-wrap: anywhere;
+}
+
+.loading {
+  padding: 8px 2px;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.empty {
+  padding: 10px 2px;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-tertiary);
+  overflow-wrap: anywhere;
+}
+
+/* Batch controls: a scope line plus the four explicit actions. */
+.batchBar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 0;
+  border-top: 1px solid var(--dsw-alias-border-l1);
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
+
+.batchScope {
+  flex: 1 1 220px;
+  min-width: 0;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--dsw-alias-label-tertiary);
+  overflow-wrap: anywhere;
+}
+
+.batchButtons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.smallButton {
+  appearance: none;
+  flex: none;
+  padding: 4px 9px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: 12px;
+  line-height: 18px;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.smallButton:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  border-color: var(--dsw-alias-label-dimmed);
+}
+
+.smallButton:focus-visible {
+  outline: 2px solid var(--dsw-alias-border-l4);
+  outline-offset: 1px;
+}
+
+.smallButton:disabled {
+  color: var(--dsw-alias-label-dimmed);
+  cursor: default;
+}
+
+.sourceList {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  min-width: 0;
+}
+
+/* One compact settings row: identity, state, controls. */
+.sourceRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  min-width: 0;
+  padding: 10px 2px;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
+
+.sourceIdentity {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 200px;
+  min-width: 0;
+}
+
+.sourceIcon {
+  display: inline-flex;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 7px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-secondary);
+}
+
+.sourceText {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.sourceName {
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-primary);
+  overflow-wrap: anywhere;
+}
+
+.sourceId {
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--dsw-alias-label-tertiary);
+  overflow-wrap: anywhere;
+}
+
+/* Derived state badge: neutral by default, warning tint for actionable faults. */
+.status {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  max-width: 100%;
+  padding: 2px 8px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 999px;
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+  line-height: 16px;
+  overflow-wrap: anywhere;
+}
+
+.status[data-kind='ready'] {
+  border-color: color-mix(in srgb, var(--dsw-alias-button-primary-fill) 35%, transparent);
+  background: color-mix(in srgb, var(--dsw-alias-button-primary-fill) 12%, transparent);
+  color: var(--dsw-alias-label-primary);
+}
+
+.status[data-kind='missing'],
+.status[data-kind='incompatible'],
+.status[data-kind='auth-expired'],
+.status[data-kind='request-failed'],
+.status[data-kind='unavailable'] {
+  border-color: var(--dsw-alias-state-warn-primary);
+  color: var(--dsw-alias-state-warn-primary);
+}
+
+.sourceControls {
+  display: flex;
+  flex-wrap: wrap;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+}
+
+/* The local pack library: same row geometry, no source switch. */
+.packsRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  min-width: 0;
+  padding: 10px 2px;
+  border-top: 1px solid var(--dsw-alias-border-l1);
+}
+
+.addSource {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+.addSourceDesc {
+  flex: 1 1 220px;
+  min-width: 0;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--dsw-alias-label-tertiary);
+  overflow-wrap: anywhere;
+}
+
+/* ── Source configuration window body (S6 window content) ───────────────── */
+
+.config {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+  width: 100%;
+  padding: 12px 14px 16px;
+  box-sizing: border-box;
+}
+
+.configSection {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.configHeading {
+  margin: 0;
+  font-size: 12px;
+  line-height: 18px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.configRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.configLabel {
+  flex: none;
+  min-width: 72px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.configValue {
+  flex: 1 1 180px;
+  min-width: 0;
+  color: var(--dsw-alias-label-primary);
+  overflow-wrap: anywhere;
+}
+
+.configMono {
+  font-family: var(--dsw-font-mono);
+  font-size: 11px;
+  line-height: 16px;
+  overflow-wrap: anywhere;
+}
+
+.configActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.configInputRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.configInput {
+  flex: 1 1 200px;
+  min-width: 0;
+  padding: 5px 8px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-primary);
+  font-family: var(--dsw-font-mono);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.configInput:focus-visible {
+  outline: 2px solid var(--dsw-alias-border-l4);
+  outline-offset: 1px;
+}
+
+.configHint {
+  margin: 0;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--dsw-alias-label-tertiary);
+  overflow-wrap: anywhere;
+}
+
+.configError {
+  margin: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--dsw-alias-state-warn-primary);
+  border-radius: 8px;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--dsw-alias-state-warn-primary);
+  overflow-wrap: anywhere;
+}
+
+.plan {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 10px;
+  background: var(--dsw-alias-bg-layer-2);
+  min-width: 0;
+}
+
+.planActions {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 11px;
+  line-height: 17px;
+  color: var(--dsw-alias-label-secondary);
+  overflow-wrap: anywhere;
+}
+
+.progressTrack {
+  height: 4px;
+  width: 100%;
+  border-radius: 999px;
+  background: var(--dsw-alias-border-l1);
+  overflow: hidden;
+}
+
+.progressFill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--dsw-alias-button-primary-fill);
+}
+
+.authPrompt {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 10px;
+  background: var(--dsw-alias-bg-layer-2);
+  min-width: 0;
+}
+
+.authLink {
+  color: var(--dsw-alias-button-primary-fill);
+  overflow-wrap: anywhere;
+}
+
+.configEmpty {
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* Narrow form: the row stacks; controls wrap under the identity so a 320px
+   viewport never scrolls sideways. */
+@media (max-width: 767px) {
+  .batchBar {
+    align-items: flex-start;
+  }
+
+  .sourceRow {
+    align-items: flex-start;
+  }
+
+  .sourceIdentity {
+    flex-basis: 100%;
+  }
+
+  .sourceControls {
+    width: 100%;
+  }
+
+  .configLabel {
+    min-width: 0;
+  }
+}
