@@ -685,6 +685,40 @@ describe('builtin.files resolve / portable / dialects', () => {
       .rejects.toMatchObject({ category: 'unsupported' })
   })
 
+  it('accepts the directory type explicitly and refuses it for a file', async () => {
+    const { workspace, service } = fixture()
+    mkdirSync(join(workspace, 'docs'))
+    writeFileSync(join(workspace, 'a.md'), '# a\n')
+    // A directory has no content format, so the explicit type must not be
+    // reported as unsupported just because `formats` is empty.
+    const [candidate] = await service.resolve({
+      workspaceId: WORKSPACE_ID,
+      sourceId: 'builtin.files',
+      typeId: LOCAL_FILE_TYPE_IDS.directory,
+      text: 'docs',
+    })
+    expect(candidate?.typeId).toBe(LOCAL_FILE_TYPE_IDS.directory)
+    expect(candidate?.meta).toEqual({ kind: 'directory' })
+    // A file cannot carry the directory type.
+    await expect(service.resolve({
+      workspaceId: WORKSPACE_ID,
+      sourceId: 'builtin.files',
+      typeId: LOCAL_FILE_TYPE_IDS.directory,
+      text: 'a.md',
+    })).rejects.toMatchObject({ category: 'unsupported' })
+  })
+
+  it('advertises no save protocol for the read-only binary type', () => {
+    const { service } = fixture()
+    expect(service.getTypes('builtin.files').find(type => type.typeId === LOCAL_FILE_TYPE_IDS.binary))
+      .toEqual({
+        typeId: LOCAL_FILE_TYPE_IDS.binary,
+        sourceId: 'builtin.files',
+        formats: ['application/octet-stream'],
+        capabilities: { read: true, edit: false, concurrency: 'none' },
+      })
+  })
+
   it('auto-resolve reaches a later remote source instead of treating its input as a local path', async () => {
     const { workspace, service } = fixture()
     writeFileSync(join(workspace, 'a.md'), '# a\n')

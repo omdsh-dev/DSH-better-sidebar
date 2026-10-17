@@ -212,9 +212,8 @@ export function localFileTypeDescriptors(): ClueTypeDescriptor[] {
       typeId: LOCAL_FILE_TYPE_IDS.binary,
       sourceId: LOCAL_FILE_SOURCE_ID,
       formats: ['application/octet-stream'],
-      // Read-only, but the source's save path is still check-before-save: the
-      // capability describes how a save WOULD be guarded, not that edit is on.
-      capabilities: { read: true, edit: false, concurrency: 'check-before-save' },
+      // Read-only: there is no save to guard, so no concurrency protocol.
+      capabilities: { read: true, edit: false, concurrency: 'none' },
     },
     {
       typeId: LOCAL_FILE_TYPE_IDS.directory,
@@ -943,7 +942,10 @@ export function createLocalFileSource(): ClueSourceRegistration {
         return undefined
       }
       const typeId = input.typeId ?? localFileTypeOf(locator.path, locator.dialect)
-      formatOf(typeId)
+      // A directory is a valid explicit type even though it has no content
+      // format (`formats: []`): asking formatOf for it would misreport the
+      // type as unsupported.
+      if (typeId !== LOCAL_FILE_TYPE_IDS.directory) formatOf(typeId)
       const absolute = absolutePathOf(locator, context)
       // resolve is a READ-side gesture (the caller pastes a path): verify the
       // resource exists so a typo is not pinned as a stable reference.
@@ -952,6 +954,12 @@ export function createLocalFileSource(): ClueSourceRegistration {
       })
       throwIfAborted(context)
       if (info.isDirectory()) return candidateOf(locator, true)
+      // A caller that explicitly asked for the directory type named a type
+      // that cannot describe this resource: answer unsupported rather than a
+      // candidate whose type contradicts its `meta.kind`.
+      if (typeId === LOCAL_FILE_TYPE_IDS.directory) {
+        throw new ClueError('unsupported', `"${absolute}" is not a directory`)
+      }
       return {
         sourceId: LOCAL_FILE_SOURCE_ID,
         typeId,
