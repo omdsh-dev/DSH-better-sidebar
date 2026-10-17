@@ -40,6 +40,31 @@ export const CLUEPACK_CONTENT_PREFIX = 'content/'
 export const CLUEPACK_EXTENSION = '.cluepack'
 /** Upper bound of the manifest document itself (defense against a huge JSON entry). */
 export const MAX_MANIFEST_BYTES = 4 * 1024 * 1024
+/**
+ * Cardinality bounds of the manifest arrays.
+ *
+ * A manifest is also an import request: every clue becomes one S1 write, and
+ * `parseCluepackManifestBytes` only bounds BYTES. A 4 MiB document can hold
+ * ~47,000 tiny clue records, which would turn one confirmed import into tens of
+ * thousands of full-library transactions. Each array is therefore bounded by
+ * S1's own largest object count (a pack holds at most 10,000 members).
+ */
+export const MAX_MANIFEST_SOURCES = 10_000
+/** Maximum clue records in one manifest. */
+export const MAX_MANIFEST_CLUES = 10_000
+/** Maximum pack records in one manifest. */
+export const MAX_MANIFEST_PACKS = 10_000
+/** Maximum issue records in one manifest. */
+export const MAX_MANIFEST_ISSUES = 10_000
+/**
+ * Maximum nesting depth of a portable locator.
+ *
+ * Locators are opaque JSON owned by sources, but they are still walked
+ * recursively by this validator (and by S1's stable locator key). A deeply
+ * nested document would otherwise raise an uncaught `RangeError` (a 500 on the
+ * route) instead of the `invalid-request` an untrusted archive deserves.
+ */
+export const MAX_LOCATOR_DEPTH = 64
 
 /** Whether one export carries live references only or fetched content too. */
 export type CluepackMode = 'references' | 'snapshot'
@@ -162,8 +187,17 @@ function requireByteCount(value: unknown, path: string): number {
   return value
 }
 
-/** Recursively refuse values JSON cannot represent (functions, BigInt, cycles, NaN). */
-function assertJsonValue(value: unknown, path: string, seen = new Set<object>()): asserts value is JsonValue {
+/**
+ * Recursively refuse values JSON cannot represent (functions, BigInt, cycles,
+ * NaN) and values nested deeply enough to exhaust the stack.
+ */
+function assertJsonValue(
+  value: unknown,
+  path: string,
+  seen = new Set<object>(),
+  depth = 0,
+): asserts value is JsonValue {
+  if (depth > MAX_LOCATOR_DEPTH) invalid(`${path} is nested too deeply (limit ${MAX_LOCATOR_DEPTH})`)
   if (value === null || typeof value === 'string' || typeof value === 'boolean') return
   if (typeof value === 'number') {
     if (!Number.isFinite(value)) invalid(`${path} must be a finite JSON number`)
@@ -173,14 +207,26 @@ function assertJsonValue(value: unknown, path: string, seen = new Set<object>())
     if (seen.has(value)) invalid(`${path} must not contain cycles`)
     seen.add(value)
     if (Array.isArray(value)) {
-      value.forEach((item, index) => assertJsonValue(item, `${path}[${index}]`, seen))
+      value.forEach((item, index) => assertJsonValue(item, `${path}[${index}]`, seen, depth + 1))
     } else {
-      for (const [key, item] of Object.entries(value)) assertJsonValue(item, `${path}.${key}`, seen)
+      for (const [key, item] of Object.entries(value)) assertJsonValue(item, `${path}.${key}`, seen, depth + 1)
     }
     seen.delete(value)
     return
   }
   invalid(`${path} must be a JSON value`)
+}
+
+/**
+ * Validate one caller-supplied locator (also used for receiver remaps, which
+ * never pass through the manifest reader before reaching S1).
+ * @param value - untrusted locator value.
+ * @param path - field path for the error message.
+ */
+export function assertLocatorValue(value: unknown, path: string): Locator {
+  if (!isRecord(value)) invalid(`${path} must be a JSON object`)
+  assertJsonValue(value, path)
+  return value as Locator
 }
 
 /** Validate one portable reference (the only address a clue carries). */
@@ -194,6 +240,9 @@ function parsePortable(value: unknown, path: string): CluePortableRef {
   }
   if (!isRecord(value.locator)) invalid(`${path}.locator must be a JSON object`)
   assertJsonValue(value.locator, `${path}.locator`)
+  if (value.portable && Object.keys(value.locator).length === 0) {
+    invalid(`${path}.locator must not be empty when portable is true`)
+  }
   const locator = value.locator as Locator
   return {
     portable: value.portable,
@@ -289,6 +338,9 @@ export function parseCluepackManifest(value: unknown): CluepackManifest {
   const mode = value.mode as CluepackMode
 
   if (!Array.isArray(value.sources)) invalid('manifest sources must be an array')
+  if (value.sources.length > MAX_MANIFEST_SOURCES) {
+    invalid(`manifest sources exceed the limit (${value.sources.length}; limit ${MAX_MANIFEST_SOURCES})`)
+  }
   const sourceKeys = new Set<string>()
   const sources = value.sources.map((entry, index) => {
     const source = parseSource(entry, `sources[${index}]`)
@@ -298,6 +350,9 @@ export function parseCluepackManifest(value: unknown): CluepackManifest {
   })
 
   if (!Array.isArray(value.clues)) invalid('manifest clues must be an array')
+  if (value.clues.length > MAX_MANIFEST_CLUES) {
+    invalid(`manifest clues exceed the limit (${value.clues.length}; limit ${MAX_MANIFEST_CLUES})`)
+  }
   const clueKeys = new Set<string>()
   const snapshotPaths = new Set<string>()
   const clues = value.clues.map((entry, index) => {
@@ -327,6 +382,9 @@ export function parseCluepackManifest(value: unknown): CluepackManifest {
   }
 
   if (!Array.isArray(value.packs)) invalid('manifest packs must be an array')
+  if (value.packs.length > MAX_MANIFEST_PACKS) {
+    invalid(`manifest packs exceed the limit (${value.packs.length}; limit ${MAX_MANIFEST_PACKS})`)
+  }
   const packKeys = new Set<string>()
   const packs = value.packs.map((entry, index) => {
     const path = `packs[${index}]`
@@ -350,6 +408,9 @@ export function parseCluepackManifest(value: unknown): CluepackManifest {
   })
 
   if (!Array.isArray(value.issues)) invalid('manifest issues must be an array')
+  if (value.issues.length > MAX_MANIFEST_ISSUES) {
+    invalid(`manifest issues exceed the limit (${value.issues.length}; limit ${MAX_MANIFEST_ISSUES})`)
+  }
   const issues = value.issues.map((entry, index) => {
     const path = `issues[${index}]`
     if (!isRecord(entry)) invalid(`${path} must be an object`)
@@ -395,7 +456,15 @@ export function parseCluepackManifestJson(json: string): CluepackManifest {
   } catch {
     invalid('the cluepack manifest is not valid JSON')
   }
-  return parseCluepackManifest(value)
+  try {
+    return parseCluepackManifest(value)
+  } catch (error) {
+    // The validator enforces its own depth bound, so a RangeError here can
+    // only come from a JSON shape it does not understand (or a future
+    // regression). An untrusted archive must get invalid-request, not 500.
+    if (error instanceof RangeError) invalid('the cluepack manifest is nested too deeply')
+    throw error
+  }
 }
 
 /**

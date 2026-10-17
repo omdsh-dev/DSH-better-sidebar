@@ -384,6 +384,7 @@ describe('locator remapping and path dialects', () => {
       bytes: exported.bytes,
     })
     expect(unresolved.clues[0]!.unresolved).toBe(true)
+    const unresolvedId = unresolved.clues[0]!.clueId
 
     const receiverLocator = {
       root: { kind: 'workspace', workspaceId: 'ws-2' },
@@ -396,34 +397,62 @@ describe('locator remapping and path dialects', () => {
       remap: [{ clueKey: 'clue-1', locator: receiverLocator }],
     })
     expect(remapped.clues[0]!.unresolved).toBe(false)
-    const clue = (await receiver.service.listClues('ws-2')).clues.find(row => row.id === remapped.clues[0]!.clueId)!
+    // The second import ADOPTS the existing unresolved row: a new clue here
+    // would leave the first row permanently orphaned (spec §3/§5).
+    expect(remapped.clues[0]!.clueId).toBe(unresolvedId)
+    const library = await receiver.service.listClues('ws-2')
+    expect(library.clues).toHaveLength(1)
+    const clue = library.clues.find(row => row.id === remapped.clues[0]!.clueId)!
     expect(clue.locator).toMatchObject(receiverLocator)
+    expect(clue.unresolved).toBeUndefined()
     const live = await receiver.service.read({ workspaceId: 'ws-2', clueId: clue.id })
     expect(live.text).toBe('# receiver external\n')
   })
 
-  it('preserves a win32 workspace locator through the receiver remap', async () => {
+  it('keeps a cross-dialect locator unresolved until the receiver remaps it', async () => {
     const receiver = makeWorkspace({ workspaceId: 'ws-2' })
-    writeWorkspaceFile(receiver.workspace, 'docs/a.md', '# win path\n')
+    writeWorkspaceFile(receiver.workspace, 'docs/a.md', '# path\n')
+    // Deliberately the OTHER platform's dialect, so this assertion is stable
+    // on both Windows and POSIX runners.
+    const otherDialect = HOST_DIALECT === 'win32' ? 'posix' : 'win32'
     const pack = buildLocatorPack({
       locator: {
         root: { kind: 'workspace', workspaceId: 'sender-workspace' },
-        path: 'docs\\a.md',
-        dialect: 'win32',
+        path: otherDialect === 'win32' ? 'docs\\a.md' : 'docs/a.md',
+        dialect: otherDialect,
       },
-      title: 'Win locator',
+      title: 'Cross dialect',
     })
+    const preview = await previewImport({ clues: receiver.service }, {
+      workspaceId: 'ws-2',
+      bytes: pack,
+    })
+    expect(preview.items[0]!.willBeUnresolved).toBe(true)
+    expect(preview.items[0]!.unresolvedReason).toMatch(new RegExp(`${otherDialect}.*${HOST_DIALECT}`))
     const imported = await importPack({ clues: receiver.service }, {
       workspaceId: 'ws-2',
       bytes: pack,
     })
-    expect(imported.clues[0]!.unresolved).toBe(false)
-    const clue = (await receiver.service.listClues('ws-2')).clues[0]!
-    expect(clue.locator).toMatchObject({
+    expect(imported.clues[0]!.unresolved).toBe(true)
+    const unresolved = (await receiver.service.listClues('ws-2')).clues[0]!
+    expect(unresolved.unresolved?.reason).toMatch(/path dialect/i)
+    await expect(receiver.service.read({ workspaceId: 'ws-2', clueId: unresolved.id }))
+      .rejects.toMatchObject({ category: 'source-missing' })
+
+    const receiverLocator = {
       root: { kind: 'workspace', workspaceId: 'ws-2' },
-      path: 'docs\\a.md',
-      dialect: 'win32',
+      path: join('docs', 'a.md'),
+      dialect: HOST_DIALECT,
+    }
+    const remapped = await importPack({ clues: receiver.service }, {
+      workspaceId: 'ws-2',
+      bytes: pack,
+      remap: [{ clueKey: 'clue-1', locator: receiverLocator }],
     })
+    expect(remapped.clues[0]!.unresolved).toBe(false)
+    expect(remapped.clues[0]!.clueId).toBe(unresolved.id)
+    const live = await receiver.service.read({ workspaceId: 'ws-2', clueId: unresolved.id })
+    expect(live.text).toBe('# path\n')
   })
 })
 
@@ -498,9 +527,12 @@ describe('empty and partial packs', () => {
       workspaceId: 'ws-2',
       bytes: exported.bytes,
     })
-    expect(imported).toMatchObject({ complete: false, partial: true })
+    // The sender's failure is preserved as a manifest issue; every LOCAL
+    // commit succeeded, so the import itself is complete.
+    expect(imported).toMatchObject({ complete: true, partial: false, requiresAcceptance: false })
     expect(imported.clues[0]!.unresolved).toBe(true)
     expect(imported.snapshots).toEqual([])
+    expect(imported.issues).toEqual([])
     expect(imported.manifestIssues[0]).toMatchObject({ category: 'auth-required' })
     const library = await receiver.service.listClues('ws-2')
     expect(library.clues[0]!.title).toBe('失败文档')

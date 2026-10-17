@@ -4,9 +4,10 @@
  *
  * Two layers:
  * - {@link installCluesShare} wires the export/import business service into
- *   one Cordis mount, registers the JSON-safe `clues.share.*` methods on the
- *   S1 service seam (`exportPreview`, `exportInspect`, `exportProgress`,
- *   `importPreview`), and releases everything through `ctx.effect`.
+ *   one Cordis mount and registers the JSON-safe `clues.share.*` methods
+ *   (`exportPreview`, `exportInspect`, `exportProgress`, `importPreview`,
+ *   `importProgress`, `import`). {@link CluesShareService.dispose} releases
+ *   the methods whether the mount effect runs or the caller disposes directly.
  * - {@link createCluesShareRoutes} returns the four raw HTTP handlers. They
  *   carry archive bytes (never JSON-encoded bodies), enforce the fence and a
  *   request-size cap, and forward a cancellation signal derived from the
@@ -27,19 +28,23 @@
  * - `import-preview` / `import`: the archive is the RAW request body; the
  *   target workspace cannot also be JSON, so it travels as
  *   `?workspaceId=<id>`. An explicit receiver remap list travels as
- *   `?remap=<encodeURIComponent(JSON.stringify(ClueShareLocatorRemap[]))>`.
- *   Both routes share this shape.
+ *   `?remap=<encodeURIComponent(JSON.stringify(ClueShareLocatorRemap[]))>`,
+ *   and an optional progress id as `?importId=<id>`. Both routes share the
+ *   workspace/remap shape; only `import` records progress.
  *
  * The export route accepts an optional `exportId` in its JSON body. When one is
  * present, per-item progress and the terminal outcome (including a
- * `complete:false` partial issue list) are readable from
- * `clues.share.exportProgress`, and the ZIP response carries the same
- * complete/issue counters as `x-cluepack-*` headers — a ZIP body alone cannot
- * tell the client that the pack it is downloading is incomplete.
+ * `complete:false` partial issue list, e.g. a stale stored snapshot after a
+ * failed live read) are readable from `clues.share.exportProgress`, and the ZIP
+ * response carries the same complete/issue counters as `x-cluepack-*` headers —
+ * a ZIP body alone cannot tell the client that the pack it is downloading is
+ * incomplete. The raw import route mirrors this with `importId` and
+ * `clues.share.importProgress`.
  *
- * The export/import transfer operations are deliberately NOT JSON API
- * methods: a clue pack is a file, and base64-in-JSON would inflate it and
- * force the whole archive through the generic 1 MiB body parser.
+ * The `clues.share.import` API method accepts a moderate archive as base64 plus
+ * the remap list in the JSON body (no URL-length cap) and is meant for small
+ * packs and automation; the raw routes remain the transfer path for real
+ * archives (the generic JSON dispatcher caps bodies at 1 MiB).
  */
 import type { Context, SidebarHttpRequest, SidebarHttpResponse, SidebarWebRoute } from '../../context-types.ts'
 import type { CluesService } from '../service.ts'
@@ -64,6 +69,7 @@ import {
   type ClueShareImportDeps,
   type ClueShareImportParams,
   type ClueShareImportPreview,
+  type ClueShareImportProgress,
   type ClueShareImportResult,
   type ClueShareLocatorRemap,
 } from './import.ts'
@@ -144,6 +150,46 @@ export interface ClueShareExportStatus {
   }
 }
 
+/** One tracked import as the S9 UI polls it (symmetric with the export status). */
+export interface ClueShareImportStatus {
+  readonly importId: string
+  readonly updatedAt: string
+  readonly phase: ClueShareImportProgress['phase']
+  readonly completed: number
+  readonly total: number
+  readonly key?: string
+  readonly status?: 'ok' | 'issue'
+  readonly reason?: string
+  readonly done: boolean
+  /** Present when the import settled; `partial:true` requires explicit acceptance. */
+  readonly outcome?: {
+    readonly complete: boolean
+    readonly partial: boolean
+    readonly cancelled: boolean
+    readonly requiresAcceptance: boolean
+    readonly clues: number
+    readonly packs: number
+    readonly snapshots: number
+    readonly issues: readonly CluepackIssue[]
+    readonly manifestIssues: readonly CluepackIssue[]
+    readonly reasons: readonly string[]
+  }
+  /** Present when the import failed or was cancelled before the first write. */
+  readonly failure?: {
+    readonly category: ClueErrorCategory
+    readonly message: string
+  }
+}
+
+/** Bounded, in-memory import progress channel shared by the routes and the API. */
+export interface CluesShareImportProgressStore {
+  record(importId: string, progress: ClueShareImportProgress): void
+  finish(importId: string, result: ClueShareImportResult): void
+  fail(importId: string, error: unknown): void
+  read(importId: string): ClueShareImportStatus | undefined
+  dispose(): void
+}
+
 /** Bounded, in-memory export progress channel shared by the routes and the API. */
 export interface CluesShareExportProgressStore {
   /** Record one progress event of an in-flight export. */
@@ -157,21 +203,20 @@ export interface CluesShareExportProgressStore {
   dispose(): void
 }
 
-/**
- * Create one bounded progress store. Entries expire after a TTL and the map
- * never grows past `maxEntries` (oldest first), so a client that forgets to
- * poll cannot leak memory.
- * @param options - clock/TTL/bound seams (tests).
- */
-export function createCluesShareExportProgressStore(options: {
+/** Inner bounded map shared by both progress channels (TTL + LRU eviction). */
+function createBoundedStatusStore<T>(options: {
   readonly now?: () => number
   readonly ttlMs?: number
   readonly maxEntries?: number
-} = {}): CluesShareExportProgressStore {
+} = {}): {
+  put(id: string, status: T): void
+  read(id: string): T | undefined
+  dispose(): void
+} {
   const now = options.now ?? (() => Date.now())
   const ttlMs = options.ttlMs ?? EXPORT_PROGRESS_TTL_MS
   const maxEntries = options.maxEntries ?? MAX_TRACKED_EXPORTS
-  const entries = new Map<string, { status: ClueShareExportStatus; at: number }>()
+  const entries = new Map<string, { status: T; at: number }>()
   let disposed = false
   const prune = (): void => {
     const cutoff = now() - ttlMs
@@ -184,17 +229,43 @@ export function createCluesShareExportProgressStore(options: {
       entries.delete(oldest)
     }
   }
-  const put = (status: ClueShareExportStatus): void => {
-    if (disposed) return
-    prune()
-    // Re-insert so Map iteration order really is "least recently written".
-    entries.delete(status.exportId)
-    entries.set(status.exportId, { status, at: now() })
+  return {
+    put(id, status) {
+      if (disposed) return
+      prune()
+      // Re-insert so Map iteration order really is "least recently written".
+      entries.delete(id)
+      entries.set(id, { status, at: now() })
+    },
+    read(id) {
+      if (disposed) return undefined
+      prune()
+      return entries.get(id)?.status
+    },
+    dispose() {
+      disposed = true
+      entries.clear()
+    },
   }
+}
+
+/**
+ * Create one bounded export progress store. Entries expire after a TTL and the
+ * map never grows past `maxEntries` (oldest first), so a client that forgets
+ * to poll cannot leak memory.
+ * @param options - clock/TTL/bound seams (tests).
+ */
+export function createCluesShareExportProgressStore(options: {
+  readonly now?: () => number
+  readonly ttlMs?: number
+  readonly maxEntries?: number
+} = {}): CluesShareExportProgressStore {
+  const now = options.now ?? (() => Date.now())
+  const store = createBoundedStatusStore<ClueShareExportStatus>(options)
   const timestamp = (): string => new Date(now()).toISOString()
   return {
     record(exportId, progress) {
-      put({
+      store.put(exportId, {
         exportId,
         updatedAt: timestamp(),
         phase: progress.phase,
@@ -207,8 +278,8 @@ export function createCluesShareExportProgressStore(options: {
       })
     },
     finish(exportId, result) {
-      const previous = entries.get(exportId)?.status
-      put({
+      const previous = store.read(exportId)
+      store.put(exportId, {
         exportId,
         updatedAt: timestamp(),
         phase: 'done',
@@ -224,8 +295,8 @@ export function createCluesShareExportProgressStore(options: {
       })
     },
     fail(exportId, error) {
-      const previous = entries.get(exportId)?.status
-      put({
+      const previous = store.read(exportId)
+      store.put(exportId, {
         exportId,
         updatedAt: timestamp(),
         phase: previous?.phase ?? 'collect',
@@ -238,13 +309,82 @@ export function createCluesShareExportProgressStore(options: {
       })
     },
     read(exportId) {
-      if (disposed) return undefined
-      prune()
-      return entries.get(exportId)?.status
+      return store.read(exportId)
     },
     dispose() {
-      disposed = true
-      entries.clear()
+      store.dispose()
+    },
+  }
+}
+
+/**
+ * Create one bounded import progress store (same eviction/TTL policy as export).
+ * @param options - clock/TTL/bound seams (tests).
+ */
+export function createCluesShareImportProgressStore(options: {
+  readonly now?: () => number
+  readonly ttlMs?: number
+  readonly maxEntries?: number
+} = {}): CluesShareImportProgressStore {
+  const now = options.now ?? (() => Date.now())
+  const store = createBoundedStatusStore<ClueShareImportStatus>(options)
+  const timestamp = (): string => new Date(now()).toISOString()
+  return {
+    record(importId, progress) {
+      store.put(importId, {
+        importId,
+        updatedAt: timestamp(),
+        phase: progress.phase,
+        completed: progress.completed,
+        total: progress.total,
+        ...(progress.key === undefined ? {} : { key: progress.key }),
+        ...(progress.status === undefined ? {} : { status: progress.status }),
+        ...(progress.reason === undefined ? {} : { reason: progress.reason }),
+        done: progress.phase === 'done',
+      })
+    },
+    finish(importId, result) {
+      const previous = store.read(importId)
+      store.put(importId, {
+        importId,
+        updatedAt: timestamp(),
+        phase: 'done',
+        completed: previous?.completed ?? 0,
+        total: previous?.total ?? 0,
+        done: true,
+        outcome: {
+          complete: result.complete,
+          partial: result.partial,
+          cancelled: result.cancelled,
+          requiresAcceptance: result.requiresAcceptance,
+          clues: result.clues.length,
+          packs: result.packs.length,
+          snapshots: result.snapshots.length,
+          issues: result.issues,
+          manifestIssues: result.manifestIssues,
+          reasons: result.reasons,
+        },
+      })
+    },
+    fail(importId, error) {
+      const previous = store.read(importId)
+      store.put(importId, {
+        importId,
+        updatedAt: timestamp(),
+        phase: previous?.phase ?? 'validate',
+        completed: previous?.completed ?? 0,
+        total: previous?.total ?? 0,
+        done: true,
+        failure: isClueError(error)
+          ? { category: error.category, message: error.message }
+          : { category: 'failed', message: 'the clue pack import failed' },
+      })
+    },
+    read(importId) {
+      return store.read(importId)
+    },
+    dispose() {
+      store.dispose()
     },
   }
 }
@@ -259,7 +399,9 @@ export interface CluesShareService {
   importPack(params: ClueShareImportParams): Promise<ClueShareImportResult>
   /** Progress channel of the raw export route (bounded, in-memory). */
   readonly progress: CluesShareExportProgressStore
-  /** Releases registered API methods; persisted clue data is untouched. */
+  /** Progress channel of the raw import route (bounded, in-memory). */
+  readonly importProgress: CluesShareImportProgressStore
+  /** Releases registered API methods and progress; persisted clue data is untouched. */
   dispose(): void
 }
 
@@ -303,11 +445,21 @@ export interface CluesShareRouteHandlers {
 /** The browser-trust fence every /sidebar route uses. */
 export type CluesShareFence = (req: SidebarHttpRequest) => boolean
 
+/** Optional lifecycle hook of {@link createCluesShareService} (API disposers). */
+export interface CreateCluesShareServiceOptions {
+  /** Runs once when the service is disposed (releases registered API methods). */
+  readonly onDispose?: () => void
+}
+
 /** Create the business service without installing it (tests/S9 seams). */
-export function createCluesShareService(deps: ClueShareServiceDeps): CluesShareService {
+export function createCluesShareService(
+  deps: ClueShareServiceDeps,
+  options: CreateCluesShareServiceOptions = {},
+): CluesShareService {
   const exportDeps: ClueShareExportDeps = { clues: deps.clues, ...deps.export }
   const importDeps: ClueShareImportDeps = { clues: deps.clues, ...deps.import }
   const progress = createCluesShareExportProgressStore()
+  const importProgress = createCluesShareImportProgressStore()
   let disposed = false
   const ensureLive = (): void => {
     if (disposed) throw new ClueError('failed', 'the clue share service is no longer mounted')
@@ -334,9 +486,13 @@ export function createCluesShareService(deps: ClueShareServiceDeps): CluesShareS
       return runImportPack(importDeps, params)
     },
     progress,
+    importProgress,
     dispose() {
+      if (disposed) return
       disposed = true
+      options.onDispose?.()
       progress.dispose()
+      importProgress.dispose()
     },
   }
 }
@@ -418,10 +574,10 @@ function importParamsOf(
 /**
  * Install the share service into one mount.
  *
- * Registers `clues.share.exportPreview` and `clues.share.importPreview` on the
- * S1 API seam (both JSON-only). The byte-carrying export/import operations
- * stay on the raw routes from {@link createCluesShareRoutes}, per the S7
- * integration contract.
+ * Registers the JSON-safe `clues.share.*` methods on the S1 API seam:
+ * previews/inspection/progress plus the moderate-archive JSON import. The
+ * byte-carrying export and raw ZIP import stay on the routes from
+ * {@link createCluesShareRoutes}, per the S7 integration contract.
  * @param ctx - plugin context (used for lifecycle only).
  * @param clues - the live clue service.
  * @param options - test seams and limits.
@@ -431,6 +587,7 @@ export function installCluesShare(
   clues: CluesService,
   options: InstallCluesShareOptions = {},
 ): CluesShareService {
+  const registeredDisposers: Array<() => void> = []
   const service = createCluesShareService({
     clues,
     export: {
@@ -446,9 +603,26 @@ export function installCluesShare(
     import: {
       ...(options.zipLimits === undefined ? {} : { zipLimits: options.zipLimits }),
     },
-  })
+  }, { onDispose: () => { for (const dispose of registeredDisposers.splice(0)) dispose() } })
   const maxApiImportBytes = options.maxApiImportBytes ?? DEFAULT_MAX_API_IMPORT_BYTES
-  const disposers = [
+  /** Record an import's progress/outcome under the caller's JSON-safe id. */
+  const trackImport = (
+    importId: string | undefined,
+    run: (onProgress?: (progress: ClueShareImportProgress) => void) => Promise<ClueShareImportResult>,
+  ): Promise<ClueShareImportResult> => {
+    if (importId === undefined) return run()
+    return run(progress => service.importProgress.record(importId, progress)).then(
+      (result) => {
+        service.importProgress.finish(importId, result)
+        return result
+      },
+      (error: unknown) => {
+        service.importProgress.fail(importId, error)
+        throw error
+      },
+    )
+  }
+  registeredDisposers.push(
     clues.registerApi('clues.share.exportPreview', (payload, context) =>
       service.previewExport(exportParamsOf(payload, context.signal))),
     // The confirmation screen's "what exactly will be shared?" step. It calls
@@ -466,11 +640,27 @@ export function installCluesShare(
     }),
     clues.registerApi('clues.share.importPreview', (payload, context) =>
       service.previewImport(importParamsOf(payload, context, maxApiImportBytes))),
-  ]
-  ctx.effect(() => () => {
-    for (const dispose of disposers) dispose()
-    service.dispose()
-  }, 'dsh-better-sidebar: clue share service')
+    // JSON import for a moderate archive: unlike the raw route, the receiver
+    // remap list travels in the BODY, so it is not capped by the URL length.
+    clues.registerApi('clues.share.import', async (payload, context) => {
+      const params = importParamsOf(payload, context, maxApiImportBytes)
+      const importId = importIdOf(isRecord(payload) ? payload.importId : undefined)
+      return trackImport(importId, onProgress => service.importPack({
+        ...params,
+        ...(onProgress === undefined ? {} : { onProgress }),
+      }))
+    }),
+    // Progress/outcome polling for the raw import route (symmetric with
+    // exportProgress): a long import must be observable and cancellable.
+    clues.registerApi('clues.share.importProgress', (payload) => {
+      const importId = importIdOf(isRecord(payload) ? payload.importId : undefined)
+      if (importId === undefined) {
+        throw new ClueError('invalid-request', '"importId" must be a non-empty string')
+      }
+      return service.importProgress.read(importId) ?? null
+    }),
+  )
+  ctx.effect(() => () => service.dispose(), 'dsh-better-sidebar: clue share service')
   return service
 }
 
@@ -566,6 +756,18 @@ function exportIdOf(payload: unknown): string | undefined {
     throw new ClueError('invalid-request', '"exportId" must be 1..128 characters of [A-Za-z0-9._-]')
   }
   return exportId
+}
+
+/**
+ * The caller's optional import progress id (JSON body field or raw-route query).
+ * Same bounded alphabet as `exportId`, for the same reason.
+ */
+function importIdOf(value: unknown): string | undefined {
+  if (value === undefined) return undefined
+  if (typeof value !== 'string' || !/^[A-Za-z0-9._-]{1,128}$/.test(value)) {
+    throw new ClueError('invalid-request', '"importId" must be 1..128 characters of [A-Za-z0-9._-]')
+  }
+  return value
 }
 
 /** Common guard of one POST-only, fenced route. */
@@ -694,15 +896,22 @@ export function createCluesShareRoutes(
   const importRoute = route(CLUES_SHARE_ROUTE_PATHS.import, async (req, res) => {
     const workspaceId = workspaceIdOf(req)
     const remap = remapOf(req)
+    const importId = importIdOf(new URL(req.url ?? '/', 'http://dsh.internal').searchParams.get('importId') ?? undefined)
     const bytes = await readBinaryBody(req, maxImportBytes)
     const { signal, release } = cancellationOf(res)
     try {
-      writeOk(res, await share.importPack({
+      const result = await share.importPack({
         workspaceId,
         bytes,
         signal,
         ...(remap === undefined ? {} : { remap }),
-      }))
+        ...(importId === undefined ? {} : { onProgress: progress => share.importProgress.record(importId, progress) }),
+      })
+      if (importId !== undefined) share.importProgress.finish(importId, result)
+      writeOk(res, result)
+    } catch (error) {
+      if (importId !== undefined) share.importProgress.fail(importId, error)
+      throw error
     } finally {
       release()
     }

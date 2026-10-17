@@ -69,9 +69,14 @@ function eocdOffset(zip: Buffer): number {
 
 /** Mark the first central-directory entry as a unix symlink. */
 function markSymlink(zip: Buffer): Buffer {
+  return markMode(zip, 0o120777)
+}
+
+/** Set the first entry's unix mode in the central directory. */
+function markMode(zip: Buffer, mode: number): Buffer {
   const copy = Buffer.from(zip)
   const offset = centralOffset(copy)
-  copy.writeUInt32LE(((0o120777 << 16) >>> 0), offset + 38)
+  copy.writeUInt32LE(((mode << 16) >>> 0), offset + 38)
   return copy
 }
 
@@ -200,6 +205,11 @@ describe('readZip security boundary', () => {
     expect(() => readZip(markSymlink(sampleArchive()))).toThrowError(/symbolic link/i)
   })
 
+  it('rejects FIFO and other non-regular unix modes', () => {
+    expect(() => readZip(markMode(sampleArchive(), 0o010777))).toThrowError(/not a regular file/i)
+    expect(() => readZip(markMode(sampleArchive(), 0o140777))).toThrowError(/not a regular file/i)
+  })
+
   it('rejects encrypted entries', () => {
     expect(() => readZip(setFlags(sampleArchive(), 0x1))).toThrowError(/encrypted/i)
   })
@@ -307,5 +317,16 @@ describe('createZip limits (writer/reader parity)', () => {
   it('applies the shared name-byte bound on the writer side too', () => {
     expect(() => createZip([tinyEntry('x'.repeat(200))], { limits: { maxNameBytes: 16 } }))
       .toThrowError(/exceeds 16 bytes/i)
+    // A limit wider than the 16-bit ZIP field must be refused explicitly
+    // instead of surfacing a raw RangeError from writeUInt16LE.
+    expect(() => createZip([tinyEntry('a.json')], { limits: { maxNameBytes: 70_000 } }))
+      .toThrowError(/maxNameBytes/i)
+  })
+
+  it('refuses canonically equivalent entry names', () => {
+    expect(() => createZip([
+      { name: 'café.txt', data: new TextEncoder().encode('a') },
+      { name: 'cafe\u0301.txt', data: new TextEncoder().encode('b') },
+    ])).toThrowError(/duplicate archive entry/i)
   })
 })

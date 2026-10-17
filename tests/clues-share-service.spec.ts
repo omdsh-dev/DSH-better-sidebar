@@ -19,6 +19,7 @@ import {
   DEFAULT_MAX_API_IMPORT_BYTES,
   cluepackDisposition,
   createCluesShareExportProgressStore,
+  createCluesShareImportProgressStore,
   createCluesShareRoutes,
   installCluesShare,
   type CluesShareService,
@@ -48,10 +49,15 @@ interface FakeResponse extends SidebarHttpResponse {
   chunks: Buffer[]
   ended: boolean
   destroyed: boolean
+  once(event: string, listener: () => void): void
+  off(event: string, listener: () => void): void
+  /** Test-only: fire one response event (e.g. `close`). */
+  emit(event: string): void
 }
 
 /** A minimal ServerResponse face. */
 function fakeResponse(): FakeResponse {
+  const events = new Map<string, Set<() => void>>()
   const res: FakeResponse = {
     statusCode: 0,
     headersSent: false,
@@ -74,6 +80,17 @@ function fakeResponse(): FakeResponse {
     },
     destroy() {
       res.destroyed = true
+    },
+    once(event, listener) {
+      const listeners = events.get(event) ?? new Set()
+      listeners.add(listener)
+      events.set(event, listeners)
+    },
+    off(event, listener) {
+      events.get(event)?.delete(listener)
+    },
+    emit(event) {
+      for (const listener of [...(events.get(event) ?? [])]) listener()
     },
   }
   return res
@@ -207,6 +224,8 @@ describe('installCluesShare', () => {
     expect(f.service.hasApi('clues.share.exportInspect')).toBe(true)
     expect(f.service.hasApi('clues.share.exportProgress')).toBe(true)
     expect(f.service.hasApi('clues.share.importPreview')).toBe(true)
+    expect(f.service.hasApi('clues.share.import')).toBe(true)
+    expect(f.service.hasApi('clues.share.importProgress')).toBe(true)
     const preview = await f.service.invokeApi('clues.share.exportPreview', {
       workspaceId: 'ws-1',
       mode: 'references',
@@ -235,13 +254,45 @@ describe('installCluesShare', () => {
     expect(importPreview.items).toHaveLength(1)
     expect(importPreview.unresolvedCount).toBe(0)
 
+    // JSON import: the remap list travels in the body, so it is not capped by
+    // the raw route's query-string length.
+    const imported = await f.service.invokeApi('clues.share.import', {
+      workspaceId: 'ws-1',
+      archiveBase64: exported.bytes.toString('base64'),
+      remap: [{ clueKey: 'clue-1', locator: { id: 'a' } }],
+      importId: 'api-import-1',
+    }) as { complete: boolean; clues: Array<{ created: boolean }> }
+    expect(imported.complete).toBe(true)
+    expect(imported.clues[0]!.created).toBe(false)
+    const importStatus = await f.service.invokeApi('clues.share.importProgress', {
+      importId: 'api-import-1',
+    }) as { done: boolean; outcome: { complete: boolean; clues: number } }
+    expect(importStatus).toMatchObject({ done: true, outcome: { complete: true, clues: 1 } })
+
     for (const cleanup of f.cleanups.splice(0)) cleanup()
     expect(f.service.hasApi('clues.share.exportPreview')).toBe(false)
     expect(f.service.hasApi('clues.share.exportInspect')).toBe(false)
     expect(f.service.hasApi('clues.share.exportProgress')).toBe(false)
     expect(f.service.hasApi('clues.share.importPreview')).toBe(false)
+    expect(f.service.hasApi('clues.share.import')).toBe(false)
+    expect(f.service.hasApi('clues.share.importProgress')).toBe(false)
     // Persisted data survives the unmount.
     expect((await f.service.listClues('ws-1')).clues).toHaveLength(1)
+  })
+
+  it('releases the registered APIs when the service itself is disposed', async () => {
+    const f = await fixture()
+    const share = installCluesShare(fakeContext(f.cleanups), f.service, { now: () => NOW })
+    expect(f.service.hasApi('clues.share.exportPreview')).toBe(true)
+    // Direct disposal (not only the mount effect) must release every method;
+    // leaving them registered made them throw "no longer mounted" instead.
+    share.dispose()
+    expect(f.service.hasApi('clues.share.exportPreview')).toBe(false)
+    expect(f.service.hasApi('clues.share.importPreview')).toBe(false)
+    expect(f.service.hasApi('clues.share.import')).toBe(false)
+    // A later effect cleanup is idempotent.
+    for (const cleanup of f.cleanups.splice(0)) cleanup()
+    expect(f.service.hasApi('clues.share.exportPreview')).toBe(false)
   })
 
   it('refuses an oversized base64 archive in the API preview', async () => {
@@ -344,6 +395,37 @@ describe('export progress store', () => {
   })
 })
 
+describe('import progress store', () => {
+  it('records progress, the partial outcome and terminal failures', () => {
+    let clock = 0
+    const store = createCluesShareImportProgressStore({ now: () => clock, ttlMs: 1_000, maxEntries: 2 })
+    store.record('imp-1', { phase: 'clue', completed: 0, total: 2, key: 'clue-1', status: 'ok' })
+    expect(store.read('imp-1')).toMatchObject({ phase: 'clue', key: 'clue-1', done: false })
+    store.finish('imp-1', {
+      workspaceId: 'ws-1',
+      mode: 'references',
+      clues: [{ clueKey: 'clue-1', clueId: 'clue-1', title: 'X', created: true, unresolved: false }],
+      packs: [],
+      snapshots: [],
+      issues: [{ target: 'clue', key: 'clue-1', category: 'failed', reason: 'snapshot failed' }],
+      manifestIssues: [],
+      complete: false,
+      partial: true,
+      cancelled: false,
+      requiresAcceptance: true,
+      reasons: ['snapshot failed'],
+    })
+    expect(store.read('imp-1')).toMatchObject({
+      done: true,
+      outcome: { complete: false, partial: true, requiresAcceptance: true, clues: 1 },
+    })
+    store.fail('imp-2', new ClueError('cancelled', 'the clue pack import was cancelled'))
+    expect(store.read('imp-2')).toMatchObject({ done: true, failure: { category: 'cancelled' } })
+    clock += 1_000
+    expect(store.read('imp-1')).toBeUndefined()
+  })
+})
+
 describe('createCluesShareRoutes', () => {
   it('returns the four exact paths for S9 registration', async () => {
     const f = await fixture()
@@ -427,6 +509,53 @@ describe('createCluesShareRoutes', () => {
     expect(importBody.ok).toBe(true)
     expect(importBody.value.complete).toBe(true)
     expect(importBody.value.clues[0]!.created).toBe(false)
+  })
+
+  it('tracks a raw import with an importId and reports its terminal outcome', async () => {
+    const f = await fixture()
+    const share = installCluesShare(fakeContext(f.cleanups), f.service, { now: () => NOW })
+    const routes = createCluesShareRoutes(share, () => true)
+    const exported = await share.exportPack({ workspaceId: 'ws-1', mode: 'references', clueIds: [f.clueId] })
+    const imported = await call(routes.import, {
+      url: `${CLUES_SHARE_ROUTE_PATHS.import}?workspaceId=ws-1&importId=import-route-1`,
+      body: exported.bytes,
+    })
+    expect(imported.statusCode).toBe(200)
+    const status = await f.service.invokeApi('clues.share.importProgress', {
+      importId: 'import-route-1',
+    }) as { done: boolean; outcome: { complete: boolean; clues: number; snapshots: number } }
+    expect(status).toMatchObject({ done: true, outcome: { complete: true, clues: 1, snapshots: 0 } })
+
+    const badId = await call(routes.import, {
+      url: `${CLUES_SHARE_ROUTE_PATHS.import}?workspaceId=ws-1&importId=not%20allowed!`,
+      body: exported.bytes,
+    })
+    expect(badId.statusCode).toBe(400)
+    expect(jsonBody(badId)).toMatchObject({ ok: false, error: { code: 'invalid-request' } })
+  })
+
+  it('forwards a response close to the import abort signal', async () => {
+    const f = await fixture()
+    const share = installCluesShare(fakeContext(f.cleanups), f.service, { now: () => NOW })
+    const exported = await share.exportPack({ workspaceId: 'ws-1', mode: 'references', clueIds: [f.clueId] })
+    const res = fakeResponse()
+    const wrapped: CluesShareService = {
+      ...share,
+      importPack: async (params) => {
+        res.emit('close')
+        return share.importPack(params)
+      },
+    }
+    const routes = createCluesShareRoutes(wrapped, () => true)
+    await routes.import.handler(fakeRequest({
+      url: `${CLUES_SHARE_ROUTE_PATHS.import}?workspaceId=ws-1`,
+      body: exported.bytes,
+    }), res)
+    // A canceled import before the first write keeps its typed envelope; the
+    // body must not be reported as a successful import after a disconnect.
+    expect(res.statusCode).toBe(499)
+    expect(jsonBody(res)).toMatchObject({ ok: false, error: { code: 'cancelled' } })
+    expect((await f.service.listClues('ws-1')).clues).toHaveLength(1)
   })
 
   it('forwards an explicit JSON remap through the raw import route and the JSON preview API', async () => {
@@ -551,6 +680,37 @@ describe('createCluesShareRoutes', () => {
       done: true,
       outcome: { complete: false, issues: [{ category: 'auth-required' }] },
     })
+
+    // A stale stored snapshot is a PARTIAL export too: the live read failed,
+    // so the download header must not claim completeness just because bytes
+    // were produced from the old snapshot.
+    await f.service.putSnapshot('ws-1', {
+      clueId: f.clueId,
+      format: 'text/plain',
+      fetchedAt: NOW,
+      data: { text: 'old body' },
+      text: 'old body',
+    })
+    const stale = await call(routes.export, {
+      url: CLUES_SHARE_ROUTE_PATHS.export,
+      body: JSON.stringify({
+        workspaceId: 'ws-1',
+        mode: 'snapshot',
+        clueIds: [f.clueId],
+        exportId: 'export-stale',
+      }),
+    })
+    expect(stale.statusCode).toBe(200)
+    expect(stale.headers['x-cluepack-complete']).toBe('false')
+    expect(stale.headers['x-cluepack-issues']).toBe('1')
+    const staleStatus = await f.service.invokeApi('clues.share.exportProgress', {
+      exportId: 'export-stale',
+    }) as { done: boolean; outcome: { complete: boolean; issues: Array<{ category: string; reason: string }> } }
+    expect(staleStatus).toMatchObject({
+      done: true,
+      outcome: { complete: false, issues: [{ category: 'auth-required' }] },
+    })
+    expect(staleStatus.outcome.issues[0]!.reason).toContain(NOW)
 
     // A failed export records a readable failure for the poller.
     await call(routes.export, {

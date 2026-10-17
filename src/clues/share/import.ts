@@ -63,6 +63,7 @@ import {
 } from '../types.ts'
 import {
   CLUEPACK_MANIFEST_PATH,
+  assertLocatorValue,
   parseCluepackManifestBytes,
   type CluepackClue,
   type CluepackIssue,
@@ -72,8 +73,10 @@ import {
 } from './manifest.ts'
 import { readZip, type ZipReadLimits } from './zip.ts'
 
-/** Maximum pack name S1 accepts (mirrors the service's own bound). */
+/** Maximum pack name S1 accepts (mirrors the service's own UTF-16 bound). */
 const MAX_PACK_NAME = 200
+/** The path dialect of THIS host (local-file locators are dialect-bound). */
+const HOST_DIALECT = process.platform === 'win32' ? 'win32' : 'posix'
 
 /** Everything the importer needs from the host (tests inject the registry). */
 export interface ClueShareImportDeps {
@@ -129,13 +132,17 @@ export function parseClueShareRemap(value: unknown): ClueShareLocatorRemap[] | u
     if (!isRecord(entry.locator)) {
       throw new ClueError('invalid-request', `"remap[${index}].locator" must be a JSON object`)
     }
+    const locator = assertLocatorValue(entry.locator, `"remap[${index}].locator"`)
+    if (Object.keys(locator).length === 0) {
+      throw new ClueError('invalid-request', `"remap[${index}].locator" must name a receiving-side address`)
+    }
     if (entry.connectionId !== undefined
       && (typeof entry.connectionId !== 'string' || entry.connectionId.trim() === '')) {
       throw new ClueError('invalid-request', `"remap[${index}].connectionId" must be a non-empty string`)
     }
     return {
       clueKey,
-      locator: entry.locator as Locator,
+      locator,
       ...(entry.connectionId === undefined ? {} : { connectionId: entry.connectionId as string }),
     }
   })
@@ -210,6 +217,8 @@ export interface ClueShareImportItemPreview {
    */
   readonly locator?: Locator
   readonly snapshot: boolean
+  /** Real acquisition time shown next to "imported snapshot" (spec §5). */
+  readonly snapshotFetchedAt?: string
   /**
    * True when this import is expected to keep the row unresolved. Best-effort:
    * the preview compares the archived locator with the local library without
@@ -217,6 +226,8 @@ export interface ClueShareImportItemPreview {
    * differently-shaped address is only confirmed by the actual commit.
    */
   readonly willBeUnresolved: boolean
+  /** Why this row is expected to stay unresolved (never a raw source error). */
+  readonly unresolvedReason?: string
 }
 
 /** Result of `previewImport` (no side effects). */
@@ -277,13 +288,13 @@ export interface ClueShareImportResult {
   readonly clues: readonly ClueShareImportedClue[]
   readonly packs: readonly ClueShareImportedPack[]
   readonly snapshots: readonly ClueShareImportedSnapshot[]
-  /** Import failures + the exporter's own issues. */
+  /** Local commit failures only (never the sender's export issues). */
   readonly issues: readonly CluepackIssue[]
   /** The exporter's issues, kept separately for the summary UI. */
   readonly manifestIssues: readonly CluepackIssue[]
-  /** True only when the archive and every commit step succeeded. */
+  /** True only when every local commit step succeeded; sender issues do not make the import partial. */
   readonly complete: boolean
-  /** True when at least one object could not be committed or was incomplete. */
+  /** True when at least one LOCAL archive object could not be committed. */
   readonly partial: boolean
   /**
    * True when the caller aborted after at least one write. A cancellation
@@ -340,6 +351,40 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function failureOf(error: unknown): { category: ClueErrorCategory; reason: string } {
   if (error instanceof ClueError) return { category: error.category, reason: error.message }
   return { category: 'failed', reason: 'the clue pack operation failed' }
+}
+
+/**
+ * Truncate one pack name to S1's UTF-16 bound without splitting a surrogate
+ * pair (or keeping a lone surrogate the archive smuggled in via a JSON escape).
+ */
+function packNameForImport(name: string): { readonly name: string; readonly shortened: boolean } {
+  let result = ''
+  let units = 0
+  let index = 0
+  let shortened = false
+  while (index < name.length) {
+    const code = name.charCodeAt(index)
+    let length = 1
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = name.charCodeAt(index + 1)
+      if (next < 0xdc00 || next > 0xdfff) {
+        // Drop the ill-formed code unit but keep scanning the rest.
+        index += 1
+        shortened = true
+        continue
+      }
+      length = 2
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      index += 1
+      shortened = true
+      continue
+    }
+    if (units + length > MAX_PACK_NAME) return { name: result, shortened: true }
+    result += name.slice(index, index + length)
+    units += length
+    index += length
+  }
+  return { name: result, shortened }
 }
 
 /** Verify one JSON snapshot payload matches its manifest descriptor. */
@@ -408,13 +453,17 @@ function loadArchive(deps: ClueShareImportDeps, bytes: Uint8Array): ParsedArchiv
   return { manifest, contents }
 }
 
-/** Resolve the package clue's source record (validated during parse). */
-function requireSource(manifest: CluepackManifest, clue: CluepackClue): CluepackSource {
-  const source = manifest.sources.find(candidate => candidate.key === clue.sourceKey)
+/** Index the manifest's source records once (never an O(clues×sources) scan). */
+function sourceMapOf(manifest: CluepackManifest): ReadonlyMap<string, CluepackSource> {
+  return new Map(manifest.sources.map(source => [source.key, source]))
+}
+
+/** The source record of one clue; the manifest validator guarantees it exists. */
+function requireSource(sources: ReadonlyMap<string, CluepackSource>, clue: CluepackClue): CluepackSource {
+  const source = sources.get(clue.sourceKey)
   if (source === undefined) {
-    // The manifest validator guarantees this cannot happen; keep a typed
-    // failure so a future validator change cannot silently import a
-    // half-known clue.
+    // Keep a typed failure so a future validator change cannot silently
+    // import a half-known clue.
     throw new ClueError('invalid-request', `clue "${clue.key}" references an unknown source`)
   }
   return source
@@ -422,8 +471,41 @@ function requireSource(manifest: CluepackManifest, clue: CluepackClue): Cluepack
 
 /** The receiving-side locator of one portable reference, or why it cannot be used. */
 interface RemappedLocator {
+  /** Usable address for this host (absent when the reference stays unresolved). */
   readonly locator?: Locator
+  /**
+   * A storeable, explicitly NON-portable hint for a later remap (e.g. a
+   * receiver-rooted but foreign-dialect workspace path). S1 cannot store a
+   * locator that names another workspace, so this is the advertised hint only.
+   */
+  readonly hint?: Locator
   readonly reason?: string
+}
+
+/**
+ * Why a core-file locator cannot be used on THIS host, if its dialect differs.
+ *
+ * S1 keeps a locator's POSIX/Windows path dialect and refuses to reinterpret a
+ * foreign one. A win32 `docs\a.md` imported on POSIX is therefore NOT live just
+ * because the source is installed: it must stay unresolved until the receiver
+ * chooses a local address explicitly, instead of minting a clue whose read
+ * always fails.
+ */
+function crossDialectReason(sourceId: string, locator: Locator): string | undefined {
+  if (sourceId !== BUILTIN_SOURCE_IDS.files) return undefined
+  const dialect = (locator as Record<string, JsonValue>).dialect
+  if (dialect !== 'posix' && dialect !== 'win32') return undefined
+  if (dialect === HOST_DIALECT) return undefined
+  return `the reference uses the ${dialect} path dialect and cannot be opened on this ${HOST_DIALECT} host; choose a receiving-side file explicitly`
+}
+
+/** Reject a mapped locator that this host could never read (keeps it unresolved). */
+function settleLocator(sourceId: string, remapped: RemappedLocator): RemappedLocator {
+  if (remapped.locator === undefined) return remapped
+  const reason = crossDialectReason(sourceId, remapped.locator)
+  // Keep the (unusable but storeable) address as a labelled hint so a later
+  // re-import can still find and adopt this row instead of orphaning it.
+  return reason === undefined ? remapped : { hint: remapped.locator, reason }
 }
 
 /**
@@ -467,7 +549,7 @@ function remapForImport(
         }
       }
     }
-    return { locator: explicit.locator }
+    return settleLocator(source.sourceId, { locator: explicit.locator })
   }
   const locator = clue.portable.locator
   if (locator === undefined) {
@@ -484,7 +566,7 @@ function remapForImport(
     })
     return mapped === undefined
       ? { reason: 'the reference needs an explicit receiving-workspace remapping' }
-      : { locator: mapped }
+      : settleLocator(source.sourceId, { locator: mapped })
   }
   if (clue.portable.portable !== true) {
     return {
@@ -492,7 +574,27 @@ function remapForImport(
         ?? 'the archived non-portable locator needs an explicit receiving-side remapping',
     }
   }
-  return defaultRemapLocator(source.sourceId, locator, params.workspaceId)
+  return settleLocator(source.sourceId, defaultRemapLocator(source.sourceId, locator, params.workspaceId))
+}
+
+/**
+ * Why one clue will stay unresolved, in the same words the importer uses for
+ * the persisted row. The preview shows it instead of a bare boolean.
+ */
+function unresolvedReasonOf(
+  deps: ClueShareImportDeps,
+  clue: CluepackClue,
+  source: CluepackSource,
+  remapped: RemappedLocator,
+): string {
+  if (remapped.reason !== undefined) return remapped.reason
+  if (deps.clues.getSource(source.sourceId) === undefined) {
+    return `the source "${source.sourceId}" is not installed on this machine`
+  }
+  if (!deps.clues.getTypes(source.sourceId).some(type => type.typeId === clue.typeId)) {
+    return `the source "${source.sourceId}" does not offer type "${clue.typeId}" here`
+  }
+  return clue.portable.reason ?? 'the clue has no portable reference'
 }
 
 /**
@@ -578,7 +680,7 @@ export async function previewImport(
   // route forwards the response-close signal, so the final answer must not be
   // a 200 preview after that abort.
   throwIfAborted(params.signal)
-  const sourceById = new Map(manifest.sources.map(source => [source.key, source]))
+  const sourceById = sourceMapOf(manifest)
   const manifestClueByKey = new Map(manifest.clues.map(clue => [clue.key, clue]))
   const storedByAddress = indexStoredClues(library.clues)
   const sourceRows = new Map<string, ClueShareImportSourcePreview>()
@@ -586,7 +688,7 @@ export async function previewImport(
   let unresolvedCount = 0
   for (const clue of manifest.clues) {
     throwIfAborted(params.signal)
-    const source = sourceById.get(clue.sourceKey)!
+    const source = requireSource(sourceById, clue)
     const descriptor = deps.clues.getSource(source.sourceId)
     const installed = descriptor !== undefined
     const missingTypes = installed
@@ -620,6 +722,9 @@ export async function previewImport(
       ? undefined
       : storedByAddress.get(addressKey(source.sourceId, address))
     const willBeUnresolved = !live && !(reused !== undefined && reused.unresolved === undefined)
+    const unresolvedReason = willBeUnresolved
+      ? unresolvedReasonOf(deps, clue, source, remapped)
+      : undefined
     if (willBeUnresolved) unresolvedCount += 1
     items.push({
       key: clue.key,
@@ -629,7 +734,9 @@ export async function previewImport(
       portable: clue.portable.portable === true && clue.portable.locator !== undefined,
       ...(clue.portable.locator === undefined ? {} : { locator: clue.portable.locator }),
       snapshot: clue.snapshot !== undefined,
+      ...(clue.snapshot === undefined ? {} : { snapshotFetchedAt: clue.snapshot.fetchedAt }),
       willBeUnresolved,
+      ...(unresolvedReason === undefined ? {} : { unresolvedReason }),
     })
   }
   const sources = [...sourceRows.values()]
@@ -689,7 +796,10 @@ export async function importPack(
   const { manifest, contents } = archive
   const remapByKey = remapMapOf(manifest, params.remap)
   const workspaceId = params.workspaceId
-  const issues: CluepackIssue[] = [...manifest.issues]
+  const manifestIssues: readonly CluepackIssue[] = [...manifest.issues]
+  /** Local commit failures; sender issues are reported separately and never make the import partial. */
+  const issues: CluepackIssue[] = []
+  const sourcesByKey = sourceMapOf(manifest)
   /** Mutable until its snapshot (if any) is attached. */
   interface PendingClue {
     clueKey: string
@@ -709,6 +819,31 @@ export async function importPack(
   const packTotal = manifest.packs.length
   progress({ phase: 'validate', completed: 0, total })
   const options = { caller: 'ui' as const, ...(params.signal === undefined ? {} : { signal: params.signal }) }
+  /**
+   * Existing UNRESOLVED rows indexed by the address their archived hint names.
+   *
+   * A receiver who imported an external path (or a package whose source was
+   * missing) got an unresolved row. Re-importing the SAME package with an
+   * explicit remap must adopt that row, not mint a second clue and leave the
+   * first one orphaned: S1 has no "remap existing" API, but `importUnresolved`
+   * updates an unresolved row in place and `ensure` then resolves it by the
+   * remapped portable locator. Only built when a remap seam is in play.
+   */
+  const unresolvedByArchivedAddress = remapByKey === undefined && params.remapLocator === undefined
+    ? undefined
+    : await (async () => {
+      const byAddress = new Map<string, Clue>()
+      for (const existing of (await deps.clues.listClues(workspaceId)).clues) {
+        if (existing.unresolved === undefined) continue
+        for (const locator of [existing.locator, existing.unresolved.portable?.locator]) {
+          if (locator === undefined || Object.keys(locator).length === 0) continue
+          const key = addressKey(existing.sourceId, locator)
+          if (!byAddress.has(key)) byAddress.set(key, existing)
+        }
+      }
+      return byAddress
+    })()
+  throwIfAborted(params.signal)
   /** The item currently being committed (for a post-commit failure reason). */
   let active: { readonly target: 'clue' | 'pack'; readonly key: string } | undefined
 
@@ -748,7 +883,7 @@ export async function importPack(
       packs,
       snapshots,
       issues,
-      manifestIssues: manifest.issues,
+      manifestIssues,
       complete: false,
       partial: true,
       cancelled,
@@ -772,13 +907,16 @@ export async function importPack(
     remapped: RemappedLocator,
     reason: string,
   ): CluePortableRef => {
-    const locator = remapped.locator ?? clue.portable.locator
-    const portable = clue.portable.portable === true
-    if (locator === undefined) return { portable: false, reason: clue.portable.reason ?? reason }
+    const locator = remapped.locator ?? remapped.hint ?? clue.portable.locator
+    // A locator that this host cannot use (foreign dialect, external absolute
+    // path, ambiguous connection) is a HINT, never a portable address.
+    const portable = remapped.reason === undefined && clue.portable.portable === true
+    const portableReason = remapped.reason ?? clue.portable.reason ?? (portable ? undefined : reason)
+    if (locator === undefined) return { portable: false, reason: portableReason ?? reason }
     return {
       portable,
       locator,
-      ...(clue.portable.reason === undefined ? {} : { reason: clue.portable.reason }),
+      ...(portableReason === undefined ? {} : { reason: portableReason }),
     }
   }
 
@@ -796,12 +934,18 @@ export async function importPack(
     clue: CluepackClue,
     remapped: RemappedLocator,
     reason: string,
+    adopt: Clue | undefined,
   ): Promise<{ clueId: string; title: string; created: boolean; unresolved: boolean }> => {
     const common = {
       workspaceId,
       sourceId: source.sourceId,
       typeId: clue.typeId,
-      locator: {},
+      // An existing unresolved row is addressed by a locator S1 can store
+      // (its own portable hint, which for a foreign-workspace path is the
+      // receiver-rooted hint), so importUnresolved updates it in place.
+      locator: adopt === undefined
+        ? {}
+        : adopt.unresolved?.portable?.locator ?? (Object.keys(adopt.locator).length === 0 ? {} : adopt.locator),
       title: clue.title,
       reason,
     }
@@ -837,9 +981,25 @@ export async function importPack(
   try {
     for (const [index, clue] of manifest.clues.entries()) {
       throwIfAborted(params.signal)
-      const source = requireSource(manifest, clue)
+      const source = requireSource(sourcesByKey, clue)
       const remapped = remapForImport(deps, params, clue, source, remapByKey)
       const live = canResolve(deps, clue, source, remapped.locator)
+      const archivedLocator = clue.portable.locator
+      // The stored hint for a workspace path is receiver-rooted (S1 refuses a
+      // foreign workspace id), so look up both the archived and the
+      // receiver-rooted/defaulted form, plus an explicitly remapped address.
+      const priorAddresses: Locator[] = []
+      if (archivedLocator !== undefined) {
+        priorAddresses.push(archivedLocator)
+        const defaulted = defaultRemapLocator(source.sourceId, archivedLocator, params.workspaceId).locator
+        if (defaulted !== undefined) priorAddresses.push(defaulted)
+      }
+      if (remapped.locator !== undefined) priorAddresses.push(remapped.locator)
+      const prior = unresolvedByArchivedAddress === undefined
+        ? undefined
+        : priorAddresses
+          .map(locator => unresolvedByArchivedAddress.get(addressKey(source.sourceId, locator)))
+          .find(candidate => candidate !== undefined)
       active = { target: 'clue', key: clue.key }
       let clueId: string
       let title: string
@@ -847,6 +1007,36 @@ export async function importPack(
       let unresolved = false
       let itemIssue = false
       if (live) {
+        if (prior !== undefined && remapped.locator !== undefined) {
+          const targetKey = addressKey(source.sourceId, remapped.locator)
+          const already = [prior.locator, prior.unresolved?.portable?.locator].some(locator =>
+            locator !== undefined && addressKey(source.sourceId, locator) === targetKey)
+          if (!already) {
+            try {
+              // Seed the remapped address as the row's portable hint; the
+              // `ensure` below then finds and resolves the SAME row.
+              await deps.clues.importUnresolved({
+                workspaceId,
+                sourceId: source.sourceId,
+                typeId: clue.typeId,
+                // Use the stored hint when available: an archived
+                // foreign-workspace locator cannot be normalized by S1.
+                locator: prior.unresolved?.portable?.locator
+                  ?? (archivedLocator !== undefined && Object.keys(archivedLocator).length > 0 ? archivedLocator : {}),
+                title: clue.title,
+                reason: prior.unresolved?.reason ?? 'the receiver selected this address explicitly',
+                portable: {
+                  portable: clue.portable.portable === true,
+                  locator: remapped.locator,
+                },
+              }, options)
+            } catch (error) {
+              if (aborted(params.signal)) throw error
+              // Let `ensure` decide: if the address is invalid the normal
+              // unresolved fallback below still runs.
+            }
+          }
+        }
         try {
           const ensured = await deps.clues.ensure({
             workspaceId,
@@ -859,13 +1049,25 @@ export async function importPack(
           title = ensured.clue.title
           created = ensured.created
           unresolved = ensured.clue.unresolved !== undefined
+          if (prior !== undefined && ensured.created) {
+            // The adoption attempt did not reach the old row (e.g. a
+            // source-specific normalization rejected the seeded hint). Keep
+            // the import honest instead of pretending the remap applied.
+            itemIssue = true
+            issues.push({
+              target: 'clue',
+              key: clue.key,
+              category: 'conflict',
+              reason: 'the existing unresolved reference could not be adopted by this remap; it remains in the library',
+            })
+          }
         } catch (error) {
           if (aborted(params.signal)) throw error
           const failure = failureOf(error)
           // The source is present but could not even normalize/store the
           // reference. Preserve the data as unresolved and surface the
           // failure: hiding it would make a half-imported pack look complete.
-          const imported = await commitUnresolved(source, clue, remapped, failure.reason)
+          const imported = await commitUnresolved(source, clue, remapped, failure.reason, prior)
           clueId = imported.clueId
           title = imported.title
           created = imported.created
@@ -874,13 +1076,8 @@ export async function importPack(
           issues.push({ target: 'clue', key: clue.key, category: failure.category, reason: failure.reason })
         }
       } else {
-        const reason = remapped.reason
-          ?? (deps.clues.getSource(source.sourceId) === undefined
-            ? `the source "${source.sourceId}" is not installed on this machine`
-            : clue.portable.portable === true && clue.portable.locator !== undefined
-              ? `the source "${source.sourceId}" does not offer type "${clue.typeId}" here`
-              : clue.portable.reason ?? 'the clue has no portable reference')
-        const imported = await commitUnresolved(source, clue, remapped, reason)
+        const reason = unresolvedReasonOf(deps, clue, source, remapped)
+        const imported = await commitUnresolved(source, clue, remapped, reason, prior)
         clueId = imported.clueId
         title = imported.title
         created = imported.created
@@ -978,16 +1175,32 @@ export async function importPack(
           reason: `pack "${pack.name}" has members that were not imported`,
         })
       }
+      const localName = packNameForImport(pack.name)
+      if (localName.shortened) {
+        issues.push({
+          target: 'pack',
+          key: pack.key,
+          category: 'unsupported',
+          reason: `the pack name was shortened to the local ${MAX_PACK_NAME}-character limit`,
+        })
+      }
       try {
         const created: CluePack = (await deps.clues.createPack({
           workspaceId,
-          name: pack.name.slice(0, MAX_PACK_NAME),
+          name: localName.name,
           members,
         }, options)).pack
         // Report the ACTUAL stored name (S1 trims/validates it), not the
         // archive's pre-normalization string.
         packs.push({ key: pack.key, name: created.name, packId: created.id, members: created.members.length })
-        progress({ phase: 'pack', completed: index + 1, total: packTotal, key: pack.key, status: 'ok' })
+        progress({
+          phase: 'pack',
+          completed: index + 1,
+          total: packTotal,
+          key: pack.key,
+          status: localName.shortened ? 'issue' : 'ok',
+          ...(localName.shortened ? { reason: `the pack name was shortened to the local ${MAX_PACK_NAME}-character limit` } : {}),
+        })
       } catch (error) {
         if (aborted(params.signal)) throw error
         const failure = failureOf(error)
@@ -1020,6 +1233,9 @@ export async function importPack(
   if (cancelledAtEnd) {
     reasons.push('the clue pack import completed before the cancellation was observed')
   }
+  // The sender's export issues are a property of the ARCHIVE (kept in
+  // `manifestIssues`), not a local commit failure: a confirmed partial export
+  // imports completely, with its missing items still listed.
   const complete = issues.length === 0
   progress({ phase: 'done', completed: total, total, status: complete ? 'ok' : 'issue' })
   return {
@@ -1029,7 +1245,7 @@ export async function importPack(
     packs,
     snapshots,
     issues,
-    manifestIssues: manifest.issues,
+    manifestIssues,
     complete,
     partial: !complete,
     cancelled: cancelledAtEnd,

@@ -13,6 +13,10 @@ import {
   CLUEPACK_FORMAT,
   CLUEPACK_FORMAT_VERSION,
   MAX_MANIFEST_BYTES,
+  MAX_MANIFEST_CLUES,
+  MAX_MANIFEST_ISSUES,
+  MAX_MANIFEST_PACKS,
+  MAX_MANIFEST_SOURCES,
   parseCluepackManifest,
   parseCluepackManifestBytes,
   parseCluepackManifestJson,
@@ -214,6 +218,10 @@ describe('parseCluepackManifest', () => {
     rawField(nonObject.clues[0]!.portable).locator = [1, 2]
     expect(() => parseCluepackManifest(nonObject)).toThrowError(/portable.*locator/i)
 
+    const emptyLocator = clone()
+    emptyLocator.clues[0]!.portable = { portable: true, locator: {} }
+    expect(() => parseCluepackManifest(emptyLocator)).toThrowError(/locator must not be empty/i)
+
     const nonPortableWithoutReason = clone()
     nonPortableWithoutReason.clues[1]!.portable = { portable: false }
     expect(parseCluepackManifest(nonPortableWithoutReason).clues[1]!.portable.portable).toBe(false)
@@ -240,6 +248,67 @@ describe('parseCluepackManifest', () => {
     expect(() => parseCluepackManifest(emptyType)).toThrowError(/typeId/i)
     expect(() => parseCluepackManifest(null)).toThrowError(/JSON object/i)
     expect(() => parseCluepackManifest([])).toThrowError(/JSON object/i)
+  })
+
+  it('bounds every manifest array before importing its records', () => {
+    const sources = clone()
+    sources.sources = Array.from({ length: MAX_MANIFEST_SOURCES + 1 }, (_, index) => ({
+      key: `source-${index}`,
+      sourceId: `third.party:${index}`,
+    }))
+    expect(() => parseCluepackManifest(sources)).toThrowError(/sources exceed the limit/i)
+
+    const clues = clone()
+    clues.clues = Array.from({ length: MAX_MANIFEST_CLUES + 1 }, (_, index) => ({
+      key: `clue-${index}`,
+      sourceKey: 'source-1',
+      typeId: 'builtin.files.markdown',
+      title: `t${index}`,
+      portable: { portable: false, reason: 'none' },
+    }))
+    expect(() => parseCluepackManifest(clues)).toThrowError(/clues exceed the limit/i)
+
+    const packs = clone()
+    packs.packs = Array.from({ length: MAX_MANIFEST_PACKS + 1 }, (_, index) => ({
+      key: `pack-${index}`,
+      name: `p${index}`,
+      members: [],
+    }))
+    expect(() => parseCluepackManifest(packs)).toThrowError(/packs exceed the limit/i)
+
+    const issues = clone()
+    issues.issues = Array.from({ length: MAX_MANIFEST_ISSUES + 1 }, () => ({
+      target: 'clue' as const,
+      key: 'clue-1',
+      reason: 'x',
+    }))
+    expect(() => parseCluepackManifest(issues)).toThrowError(/issues exceed the limit/i)
+  })
+
+  it('turns a deeply nested locator into invalid-request instead of RangeError', () => {
+    let locator: Record<string, unknown> = { value: 1 }
+    for (let depth = 0; depth < 5_000; depth += 1) locator = { nested: locator }
+    const raw = clone()
+    rawField(raw.clues[0]!.portable).locator = locator
+    expect(() => parseCluepackManifest(raw)).toThrowError(/nested too deeply/i)
+    try {
+      parseCluepackManifest(raw)
+    } catch (error) {
+      expect(error).toBeInstanceOf(ClueError)
+      expect((error as ClueError).category).toBe('invalid-request')
+    }
+
+    // The JSON text path must also produce a typed error (never an uncaught
+    // RangeError that the route would turn into a 500).
+    const deepJson = '{"a":'.repeat(5_000) + '1' + '}'.repeat(5_000)
+    const json = `{"formatVersion":1,"format":"${CLUEPACK_FORMAT}","exportedAt":"2026-10-17T00:00:00.000Z","mode":"snapshot","sources":[{"key":"s","sourceId":"builtin.files"}],"clues":[{"key":"c","sourceKey":"s","typeId":"t","title":"x","portable":{"portable":true,"locator":${deepJson}}}],"packs":[],"issues":[]}`
+    try {
+      parseCluepackManifestJson(json)
+      throw new Error('expected the deeply nested locator to be refused')
+    } catch (error) {
+      expect(error).toBeInstanceOf(ClueError)
+      expect((error as ClueError).category).toBe('invalid-request')
+    }
   })
 
   it('rejects invalid UTF-8 and oversized manifest bytes', () => {

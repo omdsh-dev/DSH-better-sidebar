@@ -338,6 +338,7 @@ describe('previewImport', () => {
     expect(preview.missingSources).toEqual(['missing.source'])
     expect(preview.unresolvedCount).toBe(1)
     expect(preview.items[0]!.willBeUnresolved).toBe(true)
+    expect(preview.items[0]!.unresolvedReason).toMatch(/not installed/i)
     expect(preview.warnings.join('\n')).toMatch(/not installed/i)
     expect(f.source.calls).toEqual({ read: 0, portable: 0 })
   })
@@ -372,6 +373,20 @@ describe('importPack references mode', () => {
     const packsAfter = await f.service.listPacks('ws-1')
     expect(packsAfter.packs).toHaveLength(2)
     expect(packsAfter.packs.every(pack => pack.name === 'Imported pack')).toBe(true)
+  })
+
+  it('does not disturb existing pins or bindings when re-importing the same resource', async () => {
+    const f = fixture()
+    const liveId = await ensureClue(f.service, 'a', 'Live')
+    await f.service.addPin({ workspaceId: 'ws-1', clueId: liveId })
+    await f.service.addBinding({ workspaceId: 'ws-1', target: { kind: 'clue', clueId: liveId } })
+    const pack = buildPack([{ key: 'clue-1', portable: { portable: true, locator: { id: 'a' } } }])
+    const result = await importPack({ clues: f.service }, { workspaceId: 'ws-1', bytes: pack.bytes })
+    expect(result.clues[0]).toMatchObject({ clueId: liveId, created: false })
+    expect((await f.service.listPins('ws-1')).pins).toEqual([expect.objectContaining({ clueId: liveId })])
+    expect((await f.service.listBindings('ws-1')).bindings).toEqual([
+      expect.objectContaining({ target: { kind: 'clue', clueId: liveId } }),
+    ])
   })
 
   it('imports the static v1 fixture without changes', async () => {
@@ -433,6 +448,56 @@ describe('importPack with missing sources and snapshots', () => {
     })
     expect(remapped.clue.id).toBe(clue.id)
     expect(remapped.clue.unresolved).toBeUndefined()
+  })
+
+  it('adopts the same unresolved row on a remap even while the source is still missing', async () => {
+    const f = fixture()
+    const pack = buildPack([{
+      key: 'clue-1',
+      sourceId: 'missing.source',
+      title: 'Later source',
+      portable: { portable: true, locator: { id: 'a' } },
+    }])
+    const first = await importPack({ clues: f.service }, { workspaceId: 'ws-1', bytes: pack.bytes })
+    const rowId = first.clues[0]!.clueId
+    const second = await importPack({ clues: f.service }, {
+      workspaceId: 'ws-1',
+      bytes: pack.bytes,
+      remap: [{ clueKey: 'clue-1', locator: { id: 'a' } }],
+    })
+    expect(second.clues[0]!.clueId).toBe(rowId)
+    expect((await f.service.listClues('ws-1')).clues).toHaveLength(1)
+    const row = (await f.service.listClues('ws-1')).clues[0]!
+    expect(row.unresolved?.portable?.locator).toEqual({ id: 'a' })
+
+    // Installing the source later uses the persisted receiver hint and keeps
+    // the same clue id (spec §5: install/configure a source and remap it).
+    f.service.registerSource({
+      descriptor: {
+        sourceId: 'missing.source',
+        name: 'Late source',
+        order: 30,
+        pluginId: 'plugin.late',
+        types: ['missing.source.doc'],
+        transport: 'mcp',
+        capabilities: { resolve: false, list: false, search: false, read: false, edit: false, portable: false },
+      },
+      types: [{
+        typeId: 'missing.source.doc',
+        sourceId: 'missing.source',
+        formats: ['text/plain'],
+        capabilities: { read: false, edit: false, concurrency: 'none' },
+      }],
+    })
+    const resolved = await f.service.ensure({
+      workspaceId: 'ws-1',
+      sourceId: 'missing.source',
+      typeId: 'missing.source.doc',
+      locator: { id: 'a' },
+      title: 'Later source',
+    })
+    expect(resolved.clue.id).toBe(rowId)
+    expect(resolved.clue.unresolved).toBeUndefined()
   })
 
   it('stores an offline JSON snapshot that stays readable without the source', async () => {
@@ -518,6 +583,27 @@ describe('importPack with missing sources and snapshots', () => {
     expect(record.meta.clueId).toBe(liveId)
     expect(record.content.text).toBe('old archived body')
   })
+
+  it('creates an independent snapshot for every import of the same pack', async () => {
+    const f = fixture()
+    const pack = buildPack([{
+      key: 'clue-1',
+      portable: { portable: true, locator: { id: 'a' } },
+      snapshot: { content: jsonContent({ text: 'same body' }, 'same body') },
+    }], { mode: 'snapshot' })
+    const first = await importPack({ clues: f.service }, { workspaceId: 'ws-1', bytes: pack.bytes })
+    const second = await importPack({ clues: f.service }, { workspaceId: 'ws-1', bytes: pack.bytes })
+    expect(second.clues[0]!.clueId).toBe(first.clues[0]!.clueId)
+    expect(second.snapshots[0]!.snapshotId).not.toBe(first.snapshots[0]!.snapshotId)
+    for (const imported of [first, second]) {
+      const record = await f.service.readSnapshot({
+        workspaceId: 'ws-1',
+        snapshotId: imported.snapshots[0]!.snapshotId,
+      })
+      expect(record.content.text).toBe('same body')
+      expect(record.meta.clueId).toBe(first.clues[0]!.clueId)
+    }
+  })
 })
 
 describe('importPack safety boundary', () => {
@@ -529,6 +615,42 @@ describe('importPack safety boundary', () => {
       .rejects.toThrowError(/unsafe archive entry name/i)
     expect(await libraryIds(f.service)).toEqual([])
     expect((await f.service.listPacks('ws-1')).packs).toEqual([])
+  })
+
+  it('rejects a traversing snapshot path declared by the manifest', async () => {
+    const f = fixture()
+    const rawManifest = {
+      formatVersion: 1,
+      format: CLUEPACK_FORMAT,
+      exportedAt: NOW,
+      mode: 'snapshot',
+      sources: [{ key: 'source-1', sourceId: TEST_SOURCE }],
+      clues: [{
+        key: 'clue-1',
+        sourceKey: 'source-1',
+        typeId: TEST_TYPE,
+        title: 'Escape',
+        portable: { portable: true, locator: { id: 'a' } },
+        snapshot: {
+          path: 'content/../escape.json',
+          encoding: 'json',
+          mediaType: 'application/json',
+          format: 'text/plain',
+          bytes: 2,
+          sha256: 'a'.repeat(64),
+          fetchedAt: NOW,
+        },
+      }],
+      packs: [],
+      issues: [],
+    }
+    const bytes = createZip([{
+      name: 'manifest.json',
+      data: Buffer.from(JSON.stringify(rawManifest), 'utf8'),
+    }])
+    await expect(importPack({ clues: f.service }, { workspaceId: 'ws-1', bytes }))
+      .rejects.toThrowError(/unsafe archive entry name/i)
+    expect(await libraryIds(f.service)).toEqual([])
   })
 
   it('rejects a checksum mismatch before writing anything', async () => {
@@ -575,13 +697,20 @@ describe('importPack safety boundary', () => {
     expect(await libraryIds(f.service)).toEqual([])
   })
 
-  it('enforces injected ZIP limits before writing anything', async () => {
+  it('enforces injected ZIP limits on a content entry before writing anything', async () => {
     const f = fixture()
-    const pack = buildPack([{ key: 'clue-1' }])
-    await expect(importPack({ clues: f.service, zipLimits: { maxEntryBytes: 16 } }, {
+    const content = new Uint8Array(4_096)
+    const pack = buildPack([{
+      key: 'clue-1',
+      snapshot: { content, encoding: 'raw' },
+    }], { mode: 'snapshot' })
+    // Above the manifest but below the content entry, so this limit is
+    // actually exercised by a snapshot payload (the old 16-byte limit hit the
+    // manifest first and proved nothing about content bounds).
+    await expect(importPack({ clues: f.service, zipLimits: { maxEntryBytes: 2_048 } }, {
       workspaceId: 'ws-1',
       bytes: pack.bytes,
-    })).rejects.toThrowError(/size limit/i)
+    })).rejects.toThrowError(/content\/clue-1\.bin.*size limit/i)
     expect(await libraryIds(f.service)).toEqual([])
   })
 
@@ -600,16 +729,19 @@ describe('importPack safety boundary', () => {
 })
 
 describe('importPack partial results', () => {
-  it('reports the exporter issues of a partial pack and never claims completeness', async () => {
+  it('imports a confirmed partial export completely and keeps the sender issues separate', async () => {
     const f = fixture()
     const pack = buildPack([{ key: 'clue-1' }], {
       packs: [{ name: 'Partial pack', members: ['clue-1'] }],
       issues: [{ target: 'clue', key: 'clue-1', category: 'unsupported', reason: 'content was not fetched' }],
     })
     const result = await importPack({ clues: f.service }, { workspaceId: 'ws-1', bytes: pack.bytes })
-    expect(result).toMatchObject({ complete: false, partial: true, requiresAcceptance: true })
+    // The SENDER's missing content is a property of the archive, not a local
+    // commit failure: the receiver committed everything the pack promised.
+    expect(result).toMatchObject({ complete: true, partial: false, requiresAcceptance: false })
     expect(result.manifestIssues).toHaveLength(1)
-    expect(result.reasons).toEqual(['content was not fetched'])
+    expect(result.issues).toEqual([])
+    expect(result.reasons).toEqual([])
     expect(await libraryIds(f.service)).toHaveLength(1)
     expect((await f.service.listPacks('ws-1')).packs).toHaveLength(1)
   })
@@ -651,6 +783,27 @@ describe('importPack partial results', () => {
     expect(result.clues[0]).toMatchObject({ unresolved: false })
     expect(result.snapshots).toEqual([])
     expect(result.reasons).toContain('the snapshot store is unavailable')
+  })
+  it('keeps an auth-required commit failure as an unresolved row and a partial import', async () => {
+    const f = fixture()
+    const pack = buildPack([{ key: 'clue-1', portable: { portable: true, locator: { id: 'a' } } }])
+    const failing = {
+      ...f.service,
+      ensure: async () => {
+        throw new ClueError('auth-required', 'the source requires authorization')
+      },
+    } as CluesService
+    const result = await importPack({ clues: failing }, { workspaceId: 'ws-1', bytes: pack.bytes })
+    expect(result).toMatchObject({ complete: false, partial: true, requiresAcceptance: true })
+    expect(result.clues[0]).toMatchObject({ created: true, unresolved: true })
+    expect(result.issues).toContainEqual(expect.objectContaining({
+      target: 'clue',
+      key: 'clue-1',
+      category: 'auth-required',
+    }))
+    const row = (await f.service.listClues('ws-1')).clues[0]!
+    expect(row.unresolved).toBeDefined()
+    expect(row.unresolved?.reason).toMatch(/authorization/)
   })
 })
 
@@ -702,6 +855,19 @@ describe('explicit receiver remap', () => {
     expect(matched.clues[0]!.unresolved).toBe(false)
   })
 
+  it('refuses a deeply nested remap locator as invalid-request, not a 500', async () => {
+    const f = fixture()
+    const pack = buildPack([{ key: 'clue-1' }])
+    let locator: Record<string, unknown> = { value: 1 }
+    for (let depth = 0; depth < 100; depth += 1) locator = { nested: locator }
+    await expect(importPack({ clues: f.service }, {
+      workspaceId: 'ws-1',
+      bytes: pack.bytes,
+      remap: [{ clueKey: 'clue-1', locator: locator as never }],
+    })).rejects.toMatchObject({ category: 'invalid-request' })
+    expect(await libraryIds(f.service)).toEqual([])
+  })
+
   it('refuses a stale remap key instead of silently ignoring it', async () => {
     const f = fixture()
     const pack = buildPack([{ key: 'clue-1' }])
@@ -750,6 +916,26 @@ describe('importPack progress and edge shapes', () => {
     expect((await f.service.listClues('ws-1')).clues[0]!.title).toBe(longTitle)
     expect((await f.service.listPacks('ws-1')).packs[0]!.name).toBe(longPack.slice(0, 200))
     expect(result.packs[0]!.name).toBe(longPack.slice(0, 200))
+  })
+
+  it('shortens an over-long emoji pack name without splitting a surrogate pair', async () => {
+    const f = fixture()
+    // 199 ASCII units + one emoji (2 units) = 201 units; a code-unit slice
+    // would leave a lone high surrogate. 200 code points is also over S1's
+    // UTF-16 bound, so the stored name must be shortened and reported.
+    const name = 'a'.repeat(199) + '😀'
+    const pack = buildPack([{ key: 'clue-1' }], { packs: [{ name, members: ['clue-1'] }] })
+    const result = await importPack({ clues: f.service }, { workspaceId: 'ws-1', bytes: pack.bytes })
+    expect(result.complete).toBe(false)
+    expect(result.partial).toBe(true)
+    expect(result.issues).toContainEqual(expect.objectContaining({
+      target: 'pack',
+      key: 'pack-1',
+      category: 'unsupported',
+    }))
+    const stored = (await f.service.listPacks('ws-1')).packs[0]!.name
+    expect(stored).toBe('a'.repeat(199))
+    expect(stored).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/)
   })
 })
 

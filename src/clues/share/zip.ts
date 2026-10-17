@@ -199,6 +199,11 @@ function resolveLimits(overrides: Partial<ZipReadLimits> | undefined): ZipReadLi
       throw new ClueError('invalid-request', `archive limit "${key}" must be a positive integer`)
     }
   }
+  // The ZIP name-length field is 16 bits; a larger limit can only end in a
+  // raw RangeError from writeUInt16LE.
+  if (limits.maxNameBytes > MAX_UINT16) {
+    throw new ClueError('invalid-request', `archive limit "maxNameBytes" must be at most ${MAX_UINT16}`)
+  }
   return limits
 }
 
@@ -240,10 +245,14 @@ export function createZip(entries: readonly ZipEntryInput[], options: ZipWriteOp
   let totalBytes = 0
   for (const entry of entries) {
     assertZipEntryName(entry.name, limits.maxNameBytes)
-    if (seen.has(entry.name)) {
+    // Unicode-equivalent spellings would resolve to the same path on a
+    // normalizing filesystem; refuse them even though this reader never
+    // extracts. Case-sensitive names stay distinct (ZIP defines them so).
+    const canonical = entry.name.normalize('NFC')
+    if (seen.has(canonical)) {
       throw new ClueError('invalid-request', `duplicate archive entry "${entry.name}"`)
     }
-    seen.add(entry.name)
+    seen.add(canonical)
     const data = entry.data instanceof Uint8Array ? entry.data : new Uint8Array(entry.data)
     if (entry.name.endsWith('/') && data.length > 0) {
       throw new ClueError('invalid-request', `directory archive entry "${entry.name}" must not carry data`)
@@ -270,6 +279,9 @@ export function createZip(entries: readonly ZipEntryInput[], options: ZipWriteOp
     const compressed = deflated !== undefined && deflated.length < data.length ? deflated : data
     const method = compressed === data ? METHOD_STORED : METHOD_DEFLATE
     const nameBytes = Buffer.from(UTF8_ENCODER.encode(entry.name))
+    if (nameBytes.length > MAX_UINT16) {
+      throw new ClueError('invalid-request', `archive entry "${entry.name}" has a name too long for a ZIP file`)
+    }
     prepared.push({ nameBytes, data, method, crc: crc32(data), compressed, offset })
     offset += LOCAL_HEADER_SIZE + nameBytes.length + compressed.length
     // Checked per entry, i.e. while the archive is being prepared: the output
@@ -443,8 +455,14 @@ export function readZip(input: Uint8Array, overrides?: Partial<ZipReadLimits>): 
     const nameBytes = buffer.subarray(nameStart, nameEnd)
     const name = decodeEntryName(nameBytes)
     cursor = nameEnd + extraLength + commentLength
-    if ((externalAttributes >>> 16 & 0o170000) === UNIX_SYMLINK_MODE) {
+    const unixMode = (externalAttributes >>> 16) & 0o170000
+    if (unixMode === UNIX_SYMLINK_MODE) {
       throw new ClueError('invalid-request', `archive entry "${name}" is a symbolic link`)
+    }
+    // Accept only a regular file or a directory; a FIFO/socket/device would
+    // make any future extractor hang or create a special file.
+    if (unixMode !== 0 && unixMode !== 0o100000 && unixMode !== 0o040000) {
+      throw new ClueError('invalid-request', `archive entry "${name}" is not a regular file`)
     }
     if ((flags & ENCRYPTED_FLAG) !== 0) {
       throw new ClueError('unsupported', `archive entry "${name}" is encrypted`)
@@ -455,11 +473,12 @@ export function readZip(input: Uint8Array, overrides?: Partial<ZipReadLimits>): 
     if (entryDisk !== 0) {
       throw new ClueError('unsupported', 'multi-disk zip archives are not supported')
     }
-    if (seen.has(name)) {
+    const canonical = name.normalize('NFC')
+    if (seen.has(canonical)) {
       throw new ClueError('invalid-request', `duplicate archive entry "${name}"`)
     }
     assertZipEntryName(name, limits.maxNameBytes)
-    seen.add(name)
+    seen.add(canonical)
     const directory = name.endsWith('/')
     if (directory) {
       if (compressedSize !== 0 || uncompressedSize !== 0) {

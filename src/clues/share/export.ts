@@ -24,6 +24,7 @@
  * before the user confirms.
  */
 import { createHash } from 'node:crypto'
+import { constants } from 'node:fs'
 import { open, stat } from 'node:fs/promises'
 import type { CluesService } from '../service.ts'
 import {
@@ -46,6 +47,9 @@ import {
   CLUEPACK_FORMAT_VERSION,
   CLUEPACK_MANIFEST_PATH,
   MAX_MANIFEST_BYTES,
+  MAX_MANIFEST_CLUES,
+  MAX_MANIFEST_ISSUES,
+  MAX_MANIFEST_PACKS,
   serializeCluepackManifest,
   type CluepackClue,
   type CluepackIssue,
@@ -235,13 +239,38 @@ function throwIfAborted(signal: AbortSignal | undefined): void {
   }
 }
 
+/**
+ * Safe, fixed reason of each clue failure category.
+ *
+ * A source error message can contain a credential-free but SENDER-LOCAL
+ * address (e.g. builtin.files echoes the absolute path it failed to open) or a
+ * private URL. The reason is written into `manifest.issues`, which travels to
+ * the receiver and is shown by the import preview, so the exporter never
+ * copies a raw error message: it reports the fixed category meaning instead.
+ */
+const SAFE_FAILURE_REASONS: Record<ClueErrorCategory, string> = {
+  'source-missing': 'the source is not installed on the sender machine',
+  'dependency-missing': 'a source dependency is missing on the sender machine',
+  'dependency-incompatible': 'a source dependency is incompatible on the sender machine',
+  'auth-required': 'the source requires authorization on the sender machine',
+  'permission-denied': 'the source denied access on the sender machine',
+  'not-found': 'the resource was not found by the source',
+  unsupported: 'the source cannot export this content',
+  'rate-limited': 'the source rate limited the export',
+  conflict: 'the source reported a conflict',
+  cancelled: 'the source operation was cancelled',
+  timeout: 'the source operation timed out',
+  'invalid-request': 'the source rejected the export request',
+  failed: 'the source operation failed',
+}
+
 /** The fixed category/message of one source failure (never a raw payload). */
 function failureOf(error: unknown): { category: ClueErrorCategory; reason: string } {
-  if (isClueError(error)) return { category: error.category, reason: error.message }
+  if (isClueError(error)) return { category: error.category, reason: SAFE_FAILURE_REASONS[error.category] }
   if (error instanceof Error && (error.name === 'AbortError' || error.name === 'TimeoutError')) {
     return { category: 'cancelled', reason: 'the clue pack export was cancelled' }
   }
-  return { category: 'failed', reason: 'the source operation failed' }
+  return { category: 'failed', reason: SAFE_FAILURE_REASONS.failed }
 }
 
 /** Whether a value is a plain JSON object (locator shape). */
@@ -423,14 +452,20 @@ function collectSources(deps: ClueShareExportDeps, clues: readonly Clue[]): {
 } {
   const sources: CluepackSource[] = []
   const keyBySourceId = new Map<string, string>()
+  /** Type ids per source, accumulated once (never a per-source rescan). */
+  const typeIdsBySource = new Map<string, Set<string>>()
   for (const clue of clues) {
-    if (keyBySourceId.has(clue.sourceId)) continue
+    const typeIds = typeIdsBySource.get(clue.sourceId)
+    if (typeIds === undefined) typeIdsBySource.set(clue.sourceId, new Set([clue.typeId]))
+    else typeIds.add(clue.typeId)
+  }
+  for (const [sourceId, typeIds] of typeIdsBySource) {
     const key = `source-${sources.length + 1}`
-    keyBySourceId.set(clue.sourceId, key)
-    const descriptor = deps.clues.getSource(clue.sourceId)
+    keyBySourceId.set(sourceId, key)
+    const descriptor = deps.clues.getSource(sourceId)
     sources.push({
       key,
-      sourceId: clue.sourceId,
+      sourceId,
       ...(descriptor === undefined
         ? {}
         : {
@@ -438,9 +473,7 @@ function collectSources(deps: ClueShareExportDeps, clues: readonly Clue[]): {
           name: descriptor.name,
           transport: descriptor.transport,
         }),
-      typeIds: [...new Set(
-        clues.filter(candidate => candidate.sourceId === clue.sourceId).map(candidate => candidate.typeId),
-      )],
+      typeIds: [...typeIds],
     })
   }
   return { sources, keyBySourceId }
@@ -489,8 +522,15 @@ async function readAssetBytes(
     throwIfAborted(signal)
     return bytes
   }
-  const handle = await open(path, 'r')
+  // O_NONBLOCK keeps a FIFO that replaced the file between `stat` and this
+  // open from blocking the whole host (a read-only open of a FIFO waits for a
+  // writer otherwise). The fstat below re-checks the REAL opened object, so a
+  // regular-file promise from the earlier stat is not trusted.
+  const handle = await open(path, constants.O_RDONLY | (process.platform === 'win32' ? 0 : constants.O_NONBLOCK))
   try {
+    if (!(await handle.stat()).isFile()) {
+      throw new ClueError('unsupported', 'the local asset is not a regular file')
+    }
     const chunks: Buffer[] = []
     let total = 0
     // One byte past the limit is enough to prove the file is too large; the
@@ -577,7 +617,7 @@ async function captureSnapshot(
             target: 'clue',
             key: clue.id,
             category: error.category,
-            reason: error.message,
+            reason: SAFE_FAILURE_REASONS[error.category],
           },
         }
       }
@@ -694,9 +734,17 @@ interface StoredSnapshotIndex {
   readonly failure?: { readonly category: ClueErrorCategory; readonly reason: string }
 }
 
-/** Whether `left` is newer than `right` (fetchedAt, then snapshot id). */
+/**
+ * Whether `left` is newer than `right` (fetchedAt instant, then snapshot id).
+ *
+ * `fetchedAt` is an ISO timestamp that may carry different timezone offsets
+ * (`...Z` vs `...+08:00`), so the STRING order is not the time order; compare
+ * the parsed instants instead. The id is the deterministic tie-break.
+ */
 function isNewerSnapshot(left: ClueSnapshotMeta, right: ClueSnapshotMeta): boolean {
-  const byTime = left.fetchedAt.localeCompare(right.fetchedAt)
+  const leftTime = Date.parse(left.fetchedAt)
+  const rightTime = Date.parse(right.fetchedAt)
+  const byTime = leftTime === rightTime ? 0 : leftTime > rightTime ? 1 : -1
   return byTime > 0 || (byTime === 0 && left.snapshotId.localeCompare(right.snapshotId) > 0)
 }
 
@@ -980,9 +1028,10 @@ export async function previewExport(
  * size). Entry count is pre-checked from the selection; the expanded total is
  * accumulated as each snapshot is captured, so a selection that exceeds it
  * stops BEFORE the next source read instead of holding every payload in
- * memory and only failing after the loop. The finished archive size is still
- * checked by the writer (compression decides it), and a lower bound is checked
- * before assembly.
+ * memory and only failing after the loop. The finished archive size is left to
+ * the writer's exact check: a ZIP can be far smaller than its expanded
+ * payloads (deflate text), so comparing expanded bytes with the archive limit
+ * would refuse a pack that compresses under the limit.
  *
  * Cancellation and limit overflow throw (there is no bytes result to mistake
  * for a finished pack); per-item failures are reported through `issues` and
@@ -1004,12 +1053,26 @@ export async function exportPack(
   const maxManifestBytes = deps.maxManifestBytes ?? DEFAULT_MAX_MANIFEST_BYTES
   const selection = await collectSelection(deps, params)
   throwIfAborted(params.signal)
-  // The manifest is one entry; every captured snapshot is at most one more.
-  // Refusing here means an impossible selection never starts a source read.
-  if (selection.clues.length + 1 > maxEntries) {
+  // References mode writes the manifest alone; snapshot mode writes at most
+  // one content entry per clue, so this is the exact upper bound. Refusing here
+  // means an impossible selection never starts a source read.
+  const plannedEntries = mode === 'snapshot' ? selection.clues.length + 1 : 1
+  if (plannedEntries > maxEntries) {
     throw new ClueError(
       'invalid-request',
-      `the selection exceeds the clue pack entry limit (${selection.clues.length + 1} entries; limit ${maxEntries})`,
+      `the selection exceeds the clue pack entry limit (${plannedEntries} entries; limit ${maxEntries})`,
+    )
+  }
+  if (selection.clues.length > MAX_MANIFEST_CLUES) {
+    throw new ClueError(
+      'invalid-request',
+      `the selection exceeds the clue pack manifest limit (${selection.clues.length} clues; limit ${MAX_MANIFEST_CLUES})`,
+    )
+  }
+  if (selection.packs.length > MAX_MANIFEST_PACKS) {
+    throw new ClueError(
+      'invalid-request',
+      `the selection exceeds the clue pack manifest limit (${selection.packs.length} packs; limit ${MAX_MANIFEST_PACKS})`,
     )
   }
   const issues: CluepackIssue[] = [...selection.issues]
@@ -1031,27 +1094,15 @@ export async function exportPack(
   const capture = (key: string, captured: CapturedSnapshot): void => {
     capturedBytes += captured.bytes.byteLength
     content.set(key, captured)
-    // These are exactly the importer's bounds. Checking them HERE means a
+    // This is the importer's expanded-size bound. Checking it HERE means a
     // 10,000-snapshot selection stops at the 128 MiB boundary, not after
-    // ~312 GiB of payloads have been retained.
-    if (content.size + 1 > maxEntries) {
-      throw new ClueError(
-        'invalid-request',
-        `the selection exceeds the clue pack entry limit (${content.size + 1} entries; limit ${maxEntries})`,
-      )
-    }
+    // ~312 GiB of payloads have been retained. The archive-size bound is NOT
+    // checked here: an expanded-byte lower bound is not a valid archive lower
+    // bound once deflate is allowed (the writer checks the exact size).
     if (capturedBytes > maxTotalBytes) {
       throw new ClueError(
         'invalid-request',
         `the clue pack exceeds the expanded size limit (${capturedBytes} bytes captured; limit ${maxTotalBytes})`,
-      )
-    }
-    // A ZIP is never smaller than its stored payloads, so exceeding this
-    // bound cannot be rescued by compression; stop before reading more.
-    if (capturedBytes > maxArchiveBytes) {
-      throw new ClueError(
-        'invalid-request',
-        `the clue pack exceeds the archive size limit (${capturedBytes} bytes captured; limit ${maxArchiveBytes})`,
       )
     }
   }
@@ -1132,6 +1183,15 @@ export async function exportPack(
               path: `content/${key}.${stored.extension}`,
             }
             capture(key, stored)
+            // Never turn a failed live read into a silent success: the
+            // receiver must be able to see that this content is an OLD
+            // snapshot (with its real fetchedAt), not fresh source content.
+            itemIssues.push({
+              target: 'clue',
+              key,
+              category: readFailure.category,
+              reason: `${readFailure.reason}; the archive carries the earlier snapshot fetched at ${stored.descriptor.fetchedAt} instead of fresh content`,
+            })
           } else if (stored !== undefined && 'issue' in stored) {
             itemIssues.push({ ...stored.issue, key })
           } else {
@@ -1221,15 +1281,9 @@ export async function exportPack(
       compress: captured.descriptor.encoding === 'json',
     })
   }
-  // Pre-assembly parity checks: these are exactly the limits `readZip` and
-  // `parseCluepackManifestBytes` enforce on the importing side, so no archive
-  // this function returns can be rejected by this plugin's own importer.
-  if (entries.length > maxEntries) {
-    throw new ClueError(
-      'invalid-request',
-      `the selection exceeds the clue pack entry limit (${entries.length} entries; limit ${maxEntries})`,
-    )
-  }
+  // The entry count was pre-checked from the selection and `createZip`
+  // re-checks it; this assembly step only needs the expanded-size parity
+  // check that the per-capture bound could not make for the manifest bytes.
   const expandedBytes = capturedBytes + manifestBytes.byteLength
   if (expandedBytes > maxTotalBytes) {
     throw new ClueError(
@@ -1237,12 +1291,10 @@ export async function exportPack(
       `the clue pack exceeds the expanded size limit (${expandedBytes} bytes; limit ${maxTotalBytes})`,
     )
   }
-  // A ZIP entry is never smaller than the payload it stores, so this lower
-  // bound proves the archive limit is already broken before assembly.
-  if (expandedBytes > maxArchiveBytes) {
+  if (issues.length > MAX_MANIFEST_ISSUES) {
     throw new ClueError(
       'invalid-request',
-      `the clue pack exceeds the archive size limit (${expandedBytes} bytes; limit ${maxArchiveBytes})`,
+      `the clue pack manifest exceeds the issue limit (${issues.length} issues; limit ${MAX_MANIFEST_ISSUES})`,
     )
   }
   const bytes = createZip(entries, {

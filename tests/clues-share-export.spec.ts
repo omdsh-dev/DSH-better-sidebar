@@ -39,6 +39,7 @@ import {
   type ClueShareExportProgress,
 } from '../src/clues/share/export.ts'
 import { CLUEPACK_MANIFEST_PATH, MAX_MANIFEST_BYTES } from '../src/clues/share/manifest.ts'
+import { previewImport } from '../src/clues/share/import.ts'
 import { DEFAULT_ZIP_LIMITS, readZip } from '../src/clues/share/zip.ts'
 import { removeTree } from './temp-tree.ts'
 
@@ -234,8 +235,10 @@ describe('exportPack references mode', () => {
       portable: { portable: true, locator: { id: 'a', note: 'ordinary usage' } },
     })
     expect(manifest.clues[0]!.snapshot).toBeUndefined()
-    expect(new TextDecoder().decode(result.bytes)).not.toContain('hello world')
+    // The live body was deliberately set to a secret-shaped value; neither the
+    // archive bytes nor the manifest may carry it.
     expect(new TextDecoder().decode(result.bytes)).not.toContain('SECRET-TOKEN')
+    expect(JSON.stringify(manifest)).not.toContain('SECRET-TOKEN')
   })
 
   it('represents an unresolved clue as a non-portable reference with a reason', async () => {
@@ -275,6 +278,25 @@ describe('exportPack references mode', () => {
     expect(result.issues[0]).toMatchObject({ target: 'clue', category: 'auth-required' })
     const manifest = manifestOf(result.bytes) as unknown as { clues: Array<{ portable: CluePortableRef }> }
     expect(manifest.clues[0]!.portable.portable).toBe(false)
+  })
+
+  it('never copies a sender-local path from a source error into the manifest', async () => {
+    const f = fixture()
+    const clueId = await ensureClue(f, 'a')
+    f.source.read = async () => {
+      throw new ClueError('not-found', '"/var/folders/sender/private/missing.md" does not exist')
+    }
+    const result = await exportPack(deps(f), {
+      workspaceId: 'ws-1',
+      mode: 'snapshot',
+      clueIds: [clueId],
+    })
+    expect(result.complete).toBe(false)
+    expect(result.issues[0]).toMatchObject({ category: 'not-found' })
+    expect(result.issues[0]!.reason).not.toContain('/var/folders')
+    const manifest = manifestOf(result.bytes) as unknown as { issues: Array<{ reason: string }> }
+    expect(JSON.stringify(manifest)).not.toContain('/var/folders')
+    expect(manifest.issues[0]!.reason).toMatch(/not found/i)
   })
 })
 
@@ -495,28 +517,105 @@ describe('exportPack snapshot mode', () => {
     f.source.read = async () => {
       throw new ClueError('source-missing', 'the source is no longer installed')
     }
+    const progress: ClueShareExportProgress[] = []
     const result = await exportPack(deps(f), {
       workspaceId: 'ws-1',
       mode: 'snapshot',
       clueIds: [clueId],
+      onProgress: event => progress.push(event),
     })
-    expect(result.complete).toBe(true)
-    expect(result.issues).toEqual([])
+    // A failed live read that falls back to an OLD snapshot is a partial
+    // export, never a silent complete one: the receiver must see the failure
+    // category and the snapshot's real (old) fetchedAt.
+    expect(result.complete).toBe(false)
+    expect(result.issues).toHaveLength(1)
+    expect(result.issues[0]).toMatchObject({ target: 'clue', category: 'source-missing' })
+    expect(result.issues[0]!.reason).toContain(FETCHED_AT)
+    expect(result.issues[0]!.reason).toMatch(/earlier snapshot/i)
     expect(result.stats.snapshots).toBe(1)
+    expect(progress.find(event => event.key === 'clue-1')?.status).toBe('issue')
     const manifest = manifestOf(result.bytes) as unknown as {
       clues: Array<{ snapshot: { fetchedAt: string; encoding: string } }>
+      issues: Array<{ category: string }>
     }
     expect(manifest.clues[0]!.snapshot).toMatchObject({ fetchedAt: FETCHED_AT, encoding: 'json' })
+    expect(manifest.issues).toEqual([expect.objectContaining({ category: 'source-missing' })])
+
+    // The import confirmation sees BOTH the failure and the old acquisition
+    // time, so "this is a stale snapshot" is visible before committing.
+    const preview = await previewImport({ clues: f.service }, {
+      workspaceId: 'ws-1',
+      bytes: result.bytes,
+    })
+    expect(preview.items[0]!.snapshotFetchedAt).toBe(FETCHED_AT)
+    expect(preview.warnings.join('\n')).toContain(FETCHED_AT)
+    expect(preview.warnings.join('\n')).toMatch(/earlier snapshot/i)
   })
 
-  it('fails loudly when the assembled archive exceeds the export limit', async () => {
+  it('lets the ZIP writer reject an archive over the exact limit', async () => {
     const f = fixture()
     const clueId = await ensureClue(f, 'a')
     await expect(exportPack(deps(f, { maxArchiveBytes: 32 }), {
       workspaceId: 'ws-1',
       mode: 'snapshot',
       clueIds: [clueId],
-    })).rejects.toMatchObject({ category: 'invalid-request' })
+    })).rejects.toThrowError(/zip archive exceeds the size limit/i)
+  })
+
+  it('accepts a compressible snapshot whose expanded bytes exceed the archive limit', async () => {
+    const f = fixture()
+    const clueId = await ensureClue(f, 'a')
+    const text = 'a'.repeat(200_000)
+    f.source.read = async () => ({
+      format: 'text/plain',
+      data: { text },
+      text,
+      fetchedAt: FETCHED_AT,
+    })
+    // 200 KiB expands far past this 4 KiB archive bound, but deflate shrinks
+    // the JSON payload well under it. Comparing expanded bytes with the
+    // archive limit refused this legal pack in the old implementation.
+    const result = await exportPack(deps(f, { maxArchiveBytes: 4_096 }), {
+      workspaceId: 'ws-1',
+      mode: 'snapshot',
+      clueIds: [clueId],
+    })
+    expect(result.complete).toBe(true)
+    expect(result.bytes.byteLength).toBeLessThanOrEqual(4_096)
+    expect(readZip(result.bytes, {
+      maxArchiveBytes: 4_096,
+      maxEntryBytes: DEFAULT_MAX_SNAPSHOT_BYTES,
+    }).map(entry => entry.name)).toEqual([CLUEPACK_MANIFEST_PATH, 'content/clue-1.json'])
+  })
+
+  it('lets the writer reject an incompressible asset over the archive limit', async () => {
+    const f = fixture()
+    const clueId = await ensureClue(f, 'a')
+    const bytes = new Uint8Array(8_192)
+    for (let index = 0; index < bytes.length; index += 1) bytes[index] = (index * 131 + 17) % 256
+    let assetReads = 0
+    f.source.read = async () => ({
+      format: 'application/octet-stream',
+      data: { kind: 'binary', path: '/virtual/asset.bin', size: bytes.length },
+      fetchedAt: FETCHED_AT,
+      assets: [{ kind: 'download', path: '/virtual/asset.bin', mime: 'application/octet-stream', size: bytes.length }],
+    })
+    // The expanded check would have rejected this too, but it must be the
+    // WRITER's exact check that decides: no expanded-vs-archive precheck may
+    // stand in for the real archive size.
+    await expect(exportPack(deps(f, {
+      maxArchiveBytes: 4_096,
+      statFile: async () => ({ size: bytes.length, isFile: true }),
+      readFileBytes: async () => {
+        assetReads += 1
+        return bytes
+      },
+    }), {
+      workspaceId: 'ws-1',
+      mode: 'snapshot',
+      clueIds: [clueId],
+    })).rejects.toThrowError(/zip archive exceeds the size limit/i)
+    expect(assetReads).toBe(1)
   })
 })
 
@@ -668,10 +767,51 @@ describe('inspectExport (share confirmation)', () => {
     })
     expect(inspection.items[0]!.portable).toMatchObject({
       portable: false,
-      reason: 'the source requires authorization',
+      reason: 'the source requires authorization on the sender machine',
     })
     expect(inspection.warnings.join('\n')).toMatch(/authorization/i)
     expect(f.source.calls.read).toBe(0)
+  })
+})
+
+describe('stored snapshot selection', () => {
+  it('picks the newest snapshot by timestamp instant, not by string order', async () => {
+    const f = fixture()
+    const imported = await f.service.importUnresolved({
+      workspaceId: 'ws-1',
+      sourceId: 'missing.source',
+      typeId: 'missing.source.doc',
+      locator: {},
+      title: 'Offline',
+      reason: 'source is not installed',
+    })
+    // 23:00+08:00 is 15:00Z; 16:00Z is LATER as an instant, but the
+    // lexicographically larger string would win under a string compare.
+    await f.service.putSnapshot('ws-1', {
+      clueId: imported.clue.id,
+      format: 'text/plain',
+      fetchedAt: '2026-10-16T23:00:00+08:00',
+      data: { text: 'older content' },
+      text: 'older content',
+    })
+    await f.service.putSnapshot('ws-1', {
+      clueId: imported.clue.id,
+      format: 'text/plain',
+      fetchedAt: '2026-10-16T16:00:00Z',
+      data: { text: 'newer content' },
+      text: 'newer content',
+    })
+    const result = await exportPack(deps(f), {
+      workspaceId: 'ws-1',
+      mode: 'snapshot',
+      clueIds: [imported.clue.id],
+    })
+    const manifest = manifestOf(result.bytes) as unknown as {
+      clues: Array<{ snapshot: { fetchedAt: string; path: string } }>
+    }
+    expect(manifest.clues[0]!.snapshot.fetchedAt).toBe('2026-10-16T16:00:00Z')
+    const content = readZip(result.bytes).find(entry => entry.name === manifest.clues[0]!.snapshot.path)!
+    expect(JSON.parse(new TextDecoder().decode(content.data))).toMatchObject({ text: 'newer content' })
   })
 })
 
@@ -706,6 +846,25 @@ describe('export limits match the importer', () => {
       mode: 'references',
       clueIds: [first, second, third],
     })).rejects.toThrowError(/expanded size limit/i)
+  })
+
+  it('counts one manifest entry in references mode, not one per clue', async () => {
+    const f = fixture()
+    const first = await ensureClue(f, 'a')
+    const second = await ensureClue(f, 'b')
+    // A references pack has exactly one ZIP entry; the old pre-check counted
+    // clues+1 and refused this legal custom limit.
+    const references = await exportPack(deps(f, { maxEntries: 2 }), {
+      workspaceId: 'ws-1',
+      mode: 'references',
+      clueIds: [first, second],
+    })
+    expect(references.complete).toBe(true)
+    await expect(exportPack(deps(f, { maxEntries: 2 }), {
+      workspaceId: 'ws-1',
+      mode: 'snapshot',
+      clueIds: [first, second],
+    })).rejects.toThrowError(/entry limit/i)
   })
 
   it('produces an archive readZip accepts at the same default limits', async () => {
