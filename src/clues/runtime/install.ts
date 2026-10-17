@@ -609,10 +609,15 @@ export function createInstallManager(options: InstallManagerOptions): InstallMan
       })
     }
     const hadPrevious = await pathExists(task.targetDir)
+    let current = task
+    let outcome: Partial<DependencyInstallTask> & { state: DependencyInstallState } = {
+      state: 'failed',
+      error: { category: 'failed', message: 'the installation failed' },
+    }
     try {
       if (controller.signal.aborted) throw new ClueError('cancelled', 'the installation was cancelled')
       await mkdir(stagingRoot, { recursive: true })
-      let current = updateProgress(task, { stage: 'queued' })
+      current = updateProgress(task, { stage: 'queued' })
       const throwIfAborted = (): void => {
         if (controller.signal.aborted) throw new ClueError('cancelled', 'the installation was cancelled')
       }
@@ -680,29 +685,31 @@ export function createInstallManager(options: InstallManagerOptions): InstallMan
       const commit = await commitPayload(current, definition, distribution, payloadDir, hadPrevious, controller.signal)
       if (!commit.ok) {
         const cancelled = controller.signal.aborted
-        return settle(current, {
+        outcome = {
           state: cancelled ? 'cancelled' : 'failed',
           error: cancelled
             ? { category: 'cancelled', message: 'the installation was cancelled' }
             : commit.error,
           ...(hadPrevious ? { preservedPrevious: true } : {}),
-        })
+        }
+      } else {
+        outcome = { state: 'succeeded', progress: { stage: 'completed' } }
       }
-      return settle(current, { state: 'succeeded', progress: { stage: 'completed' } })
     } catch (error) {
       const cancelled = controller.signal.aborted
-      return settle(task, {
+      outcome = {
         state: cancelled ? 'cancelled' : 'failed',
         error: cancelled
           ? { category: 'cancelled', message: 'the installation was cancelled' }
           : installErrorInfo(error),
         ...(hadPrevious ? { preservedPrevious: true } : {}),
-      })
-    } finally {
-      // Only THIS task's staging directory is cleaned up.
-      await removePath(stagingRoot).catch(() => undefined)
-      running.delete(task.dependencyId)
+      }
     }
+    // Cleanup happens BEFORE the settled state is published: an observer must
+    // never see `succeeded` while this task's staging directory still exists.
+    await removePath(stagingRoot).catch(() => undefined)
+    running.delete(task.dependencyId)
+    return settle(current, outcome)
   }
 
   const plan = async (definition: ClueDependencyDefinition): Promise<DependencyInstallPlan> => {
