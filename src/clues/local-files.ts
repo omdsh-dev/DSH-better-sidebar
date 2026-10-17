@@ -212,7 +212,9 @@ export function localFileTypeDescriptors(): ClueTypeDescriptor[] {
       typeId: LOCAL_FILE_TYPE_IDS.binary,
       sourceId: LOCAL_FILE_SOURCE_ID,
       formats: ['application/octet-stream'],
-      capabilities: { read: true, edit: false, concurrency: 'none' },
+      // Read-only, but the source's save path is still check-before-save: the
+      // capability describes how a save WOULD be guarded, not that edit is on.
+      capabilities: { read: true, edit: false, concurrency: 'check-before-save' },
     },
     {
       typeId: LOCAL_FILE_TYPE_IDS.directory,
