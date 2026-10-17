@@ -249,7 +249,12 @@ async function readEnvelope<T>(response: Response): Promise<T> {
   return parsed.value as T
 }
 
-async function call<T>(method: string, payload: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
+/**
+ * POST one method to the plugin's own `/sidebar/api` route and unwrap the
+ * envelope. Exported for sibling client modules (the clue face) so they reuse
+ * ONE transport instead of re-implementing error/envelope handling.
+ */
+export async function call<T>(method: string, payload: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
   let response: Response
   try {
     response = await fetch(hostRouteUrl(`sidebar/api/${method}`).href, {

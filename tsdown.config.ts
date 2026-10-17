@@ -339,6 +339,19 @@ export default [
     // emitted (and `watch` must never touch them).
     clean: false,
   },
+  // Public clue entry (package subpath `./clues`): the node-only host vocabulary
+  // + service + built-in local source other plugins register against. It is a
+  // separate artifact so a consumer never has to load the whole sidebar host.
+  {
+    entry: { clues: 'src/clues/index.ts' },
+    outDir: 'lib',
+    format: ['esm'],
+    platform: 'node',
+    target: 'es2024',
+    fixedExtension: false,
+    dts: false,
+    clean: false,
+  },
   // Official profile channel: bundle id = package name (package.json `name`).
   clientBundle('dsh-better-sidebar', 'client.js'),
   // Third-party registry channel: bundle id = the market manifest's id

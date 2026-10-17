@@ -117,6 +117,30 @@ export interface SidebarPrefs {
    */
   htmlViewerDefaultUnsafe: boolean
   /**
+   * Clue source enable switches, keyed by source id (`'builtin.files'`,
+   * `'my-plugin:docs'`). An ABSENT key means ENABLED — only an explicit
+   * `false` turns a source off (its browse and @ entries hide, it is not
+   * auto-listed/searched, and S5 stops auto-injecting it). Already stored
+   * references stay readable: a disabled source is a presentation switch, not
+   * an access or deletion operation. Re-enabling restores the previous pins
+   * and bindings.
+   */
+  clueSourcesEnabled: Record<string, boolean>
+  /**
+   * Per-source @-mention switches, keyed by source id. An ABSENT key means
+   * enabled. This only controls the composer's @ candidate list; it never
+   * hides a Tab or refuses an explicit read. When a source is disabled the
+   * effective mention state is off regardless of this map, whose stored value
+   * is preserved for when the source is re-enabled.
+   */
+  clueSourcesMentionEnabled: Record<string, boolean>
+  /**
+   * The global @ switch for the local clue-pack library. ON by default (an
+   * absent value means true); it controls only the composer candidates, not
+   * pack browsing or explicit references.
+   */
+  cluePacksMentionEnabled: boolean
+  /**
    * Per-tab enable switches, keyed by tab descriptor id (`'explorer'`,
    * `'my-plugin:db'`). An ABSENT key means enabled — only an explicit
    * `false` disables a tab type (hidden from the + menu, `openTab` refuses,
@@ -167,7 +191,32 @@ export const SIDEBAR_PREFS_DEFAULTS: SidebarPrefs = {
   customCss: '',
   htmlViewerNoSandbox: false,
   htmlViewerDefaultUnsafe: false,
+  clueSourcesEnabled: {},
+  clueSourcesMentionEnabled: {},
+  cluePacksMentionEnabled: true,
   tabsEnabled: {},
   viewersEnabled: {},
   pluginSettings: {},
+}
+
+// ── Clue preference semantics (absent = ON) ────────────────────────────────
+//
+// The three clue switches live in the shared prefs object but are read from
+// BOTH halves (host-side S5/S8 and the client's clue face), so their "missing
+// entry means ON" rule is stated once here instead of being re-derived at each
+// call site.
+
+/** Whether one clue source is enabled (an absent entry means ON). */
+export function isClueSourceEnabled(prefs: SidebarPrefs, sourceId: string): boolean {
+  return prefs.clueSourcesEnabled[sourceId] !== false
+}
+
+/** Whether one clue source contributes @ candidates (absent = ON). */
+export function isClueSourceMentionEnabled(prefs: SidebarPrefs, sourceId: string): boolean {
+  return prefs.clueSourcesMentionEnabled[sourceId] !== false
+}
+
+/** Whether the local pack library contributes @ candidates (absent = ON). */
+export function isCluePacksMentionEnabled(prefs: SidebarPrefs): boolean {
+  return prefs.cluePacksMentionEnabled !== false
 }

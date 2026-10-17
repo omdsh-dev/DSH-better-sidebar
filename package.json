@@ -25,6 +25,10 @@
       "types": "./lib/types/client/service.d.ts",
       "default": "./lib/client.js"
     },
+    "./clues": {
+      "types": "./lib/types/clues/index.d.ts",
+      "default": "./lib/clues.js"
+    },
     "./client/api": {
       "types": "./lib/types/client/service.d.ts",
       "default": "./lib/client.js"
@@ -56,6 +60,7 @@
   },
   "files": [
     "lib/index.js",
+    "lib/clues.js",
     "lib/client.js",
     "lib/client-registry.js",
     "lib/client-editor.js",

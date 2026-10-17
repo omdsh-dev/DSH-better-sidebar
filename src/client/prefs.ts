@@ -12,12 +12,18 @@ import type { api } from './api.ts'
 import {
   EXPLORER_EXCLUDE_DEFAULTS,
   SIDEBAR_PREFS_DEFAULTS,
+  isCluePacksMentionEnabled,
+  isClueSourceEnabled,
+  isClueSourceMentionEnabled,
   type SidebarPrefs,
 } from '../prefs-shared.ts'
 
 export {
   EXPLORER_EXCLUDE_DEFAULTS,
   SIDEBAR_PREFS_DEFAULTS,
+  isCluePacksMentionEnabled,
+  isClueSourceEnabled,
+  isClueSourceMentionEnabled,
 }
 export type { SidebarPrefs }
 
@@ -86,6 +92,11 @@ export function parsePrefs(value: unknown): SidebarPrefs {
     htmlViewerDefaultUnsafe: typeof record.htmlViewerDefaultUnsafe === 'boolean'
       ? record.htmlViewerDefaultUnsafe
       : SIDEBAR_PREFS_DEFAULTS.htmlViewerDefaultUnsafe,
+    clueSourcesEnabled: booleanMapOf(record.clueSourcesEnabled),
+    clueSourcesMentionEnabled: booleanMapOf(record.clueSourcesMentionEnabled),
+    cluePacksMentionEnabled: typeof record.cluePacksMentionEnabled === 'boolean'
+      ? record.cluePacksMentionEnabled
+      : SIDEBAR_PREFS_DEFAULTS.cluePacksMentionEnabled,
     tabsEnabled: booleanMapOf(record.tabsEnabled),
     viewersEnabled: booleanMapOf(record.viewersEnabled),
     pluginSettings: pluginSettingsMapOf(record.pluginSettings),

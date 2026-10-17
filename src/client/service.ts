@@ -29,8 +29,12 @@ import {
 import { baseName, extOf } from './paths.ts'
 import { hostRouteUrl as resolveHostRoute } from './host-route-url.ts'
 import { builtinFileIcon, builtinFolderIcon } from './file-icons.tsx'
+import { createCluesClientRegistry, type BetterSidebarCluesClientFace } from './clues/registry.ts'
 import type { SessionScope } from './api.ts'
 import type { SidebarPrefs } from '../prefs-shared.ts'
+
+export type { BetterSidebarCluesClientFace } from './clues/registry.ts'
+export type { CluesClientApi } from './clues/api.ts'
 
 /**
  * Public state vocabulary re-exported for consumers (type-only; the values
@@ -718,6 +722,13 @@ export interface BetterSidebarService {
   closeTab(tabId: string, scope?: SessionScope): void
   /** Subscribe to registry changes (register/dispose). */
   subscribe(listener: () => void): () => void
+  /**
+   * Clue collection extension face (S1): client renderers for clue sources,
+   * the source enable / @ preference semantics, and the typed `clues.*`
+   * wire methods. The host-side counterpart is the Cordis service
+   * `betterSidebarClues`; this face never imports node modules.
+   */
+  readonly clues: BetterSidebarCluesClientFace
   /** The plugin version this service instance was built from ('0.12.0'). */
   readonly version: string
   /**
@@ -859,6 +870,8 @@ export const SIDEBAR_SERVICE_VERSION = '0.28.1'
  *   right-aligned action area rendered at the tab strip's right end.
  * - 'settingPatterns': SidebarSettingToggle type 'patterns' (editable
  *   string-list row, committed as one string[] value).
+ * - 'clues' (S1): the `clues` extension face (source display registry +
+ *   enablement semantics + typed `clues.*` wire methods).
  *
  * v0.19.0 REMOVED 'floatWindows': the free-window feature is gone (DSH 0.1.5
  * owns the right column, so the plugin keeps only its bottom workbench).
@@ -879,6 +892,7 @@ export const SIDEBAR_FEATURES = [
   'rightActions',
   'settingPatterns',
   'hostRouteUrl',
+  'clues',
 ] as const
 
 /** Run one plugin callback; a throw is logged and never breaks the caller. */
@@ -902,6 +916,9 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
   const listeners = new Set<() => void>()
   /** The native right-Sidebar write face, installed by the client half. */
   let surface: SidebarSurface | undefined
+  // The clue extension face is constructed with the registry so its switches
+  // read the same live prefs as the tab/viewer switches do.
+  const clues = createCluesClientRegistry(() => store.getPrefs())
 
   const notify = (): void => {
     for (const fn of [...listeners]) fn()
@@ -1469,6 +1486,7 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
     updateTab,
     activateTab,
     openFile,
+    clues,
     hostRouteUrl: (path: string): string => resolveHostRoute(path).href,
     setSurface: (next: SidebarSurface | undefined) => { surface = next },
     nativePathTabs: () => surface?.pathTabs?.() ?? [],

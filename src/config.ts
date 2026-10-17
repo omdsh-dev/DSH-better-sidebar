@@ -103,6 +103,11 @@ export const PrefsSchema: z<SidebarPrefs> = z.object({
   // Per-feature enable switches are OPEN maps (any tab/viewer id, built-in or
   // external): an absent key means enabled, so old documents resolve to {}
   // (everything on) with no migration. Non-boolean values fail validation.
+  // Clue collection switches (S1): source enable / @ maps where an absent
+  // key means ON, and the local pack library's global @ switch (default ON).
+  clueSourcesEnabled: z.dict(z.boolean()).default({}),
+  clueSourcesMentionEnabled: z.dict(z.boolean()).default({}),
+  cluePacksMentionEnabled: z.boolean().default(true),
   tabsEnabled: z.dict(z.boolean()).default({}),
   viewersEnabled: z.dict(z.boolean()).default({}),
   // Plugin-owned settings blobs (v0.12.0+) are an OPEN nested map: any
