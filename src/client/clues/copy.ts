@@ -8,7 +8,7 @@
  * maps the categories that have a concrete next step to localized copy and
  * leaves the rest to the caller's fallback.
  */
-import { ClueError } from '../../clues/error.ts'
+import { CLUE_ERROR_CATEGORIES, ClueError } from '../../clues/error.ts'
 import type { ClueErrorCategory } from '../../clues/types.ts'
 import { t } from '../locales.ts'
 
@@ -17,9 +17,23 @@ export function isClueError(error: unknown): error is ClueError {
   return error instanceof ClueError
 }
 
-/** The category of a rejected clue call, or `failed` for anything else. */
+/**
+ * The category of a rejected clue call, or `failed` for anything else.
+ *
+ * The client normally receives a {@link ClueError} only in tests: over the
+ * wire the host writes the SAME category as the envelope's `code` (see
+ * `writeError`), which the typed transport surfaces as `SidebarApiError`.
+ * Reading only `instanceof ClueError` therefore classified every real
+ * conflict/auth/dependency failure as a generic failure and hid the
+ * actionable copy. Accept both shapes.
+ */
 export function categoryOf(error: unknown): ClueErrorCategory {
-  return isClueError(error) ? error.category : 'failed'
+  if (isClueError(error)) return error.category
+  const code = (error as { readonly code?: unknown } | null | undefined)?.code
+  if (typeof code === 'string' && (CLUE_ERROR_CATEGORIES as readonly string[]).includes(code)) {
+    return code as ClueErrorCategory
+  }
+  return 'failed'
 }
 
 /**

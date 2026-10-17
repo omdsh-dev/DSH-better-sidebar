@@ -34,7 +34,7 @@ import type { PackDraftGuard } from '../src/client/clues/windows/pack.tsx'
 import type { BetterSidebarCluesClientFace } from '../src/client/clues/registry.ts'
 import type { WindowOpenOptions, WindowHandle } from '../src/client/windows/types.ts'
 import type { CluePack } from '../src/clues/types.ts'
-import { ClueError } from '../src/clues/error.ts'
+import { SidebarApiError } from '../src/client/api.ts'
 
 // ── fixtures ────────────────────────────────────────────────────────────────
 
@@ -371,7 +371,7 @@ describe('clue detail window', () => {
   })
 
   it('keeps the draft and offers a re-read after a save conflict', async () => {
-    const conflict = new ClueError('conflict', 'stale revision')
+    const conflict = new SidebarApiError('conflict', 'stale revision')
     const { face } = faceOf({ saveError: () => conflict })
     const windows = recordingWindows()
     openClueDetailWindow({
