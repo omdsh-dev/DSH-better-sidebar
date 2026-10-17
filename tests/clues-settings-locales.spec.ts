@@ -33,6 +33,12 @@ const S8_KEYS = [
   'clueDependencyRecheck', 'clueDependencyApplyPath', 'clueDependencyInstall',
   'clueDependencyNotInstalled', 'clueDependencyPlanTitle',
   'clueDependencyPlanTarget', 'clueDependencyPlanConfirm',
+  'clueDependencyPlanPlatform', 'clueDependencyPlanDistribution',
+  'clueDistributionArchive', 'clueDistributionNpm', 'clueDistributionNone',
+  'clueDependencyPlanSystemInstall', 'clueDependencyPlanSystemInstallNone',
+  'clueDependencyPlanSystemInstallCompatible',
+  'clueDependencyPlanSystemInstallIncompatible',
+  'clueDependencyPlanExpires',
   'clueDependencyInstallCancel', 'clueDependencyInstallUnavailable',
   'clueDependencyManualInstall', 'clueDependencyInstallFailed',
   'clueDependencyInstallCancelled',
@@ -45,6 +51,7 @@ const S8_KEYS = [
   'clueConnectionGrantScope', 'clueConnectionCancel', 'clueConnectionCheck',
   'clueConnectionUrl', 'clueConnectionCode', 'clueConnectionQrPayload',
   'clueConnectionExpires', 'clueConnectionDenied', 'clueConnectionScope',
+  'clueConnectionQrAria', 'clueConnectionLastKnown',
 ] as const satisfies readonly CopyKey[]
 
 /** Placeholder names each interpolated S8 key must keep. */
@@ -57,6 +64,7 @@ const PLACEHOLDERS: Partial<Record<(typeof S8_KEYS)[number], readonly string[]>>
   clueDependencyPlanTitle: ['name', 'version'],
   clueDependencyPlanTarget: ['path'],
   clueConnectionExpires: ['time'],
+  clueDependencyPlanExpires: ['time'],
 }
 
 /** Every shipped dictionary, zh/en included. */

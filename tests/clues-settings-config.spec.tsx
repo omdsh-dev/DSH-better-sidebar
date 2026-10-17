@@ -78,6 +78,7 @@ function plan(overrides: Partial<DependencyInstallPlan> = {}): DependencyInstall
     distribution: { kind: 'archive', source: 'GitHub releases', url: 'https://example.test/acme.zip' },
     targetDir: '/home/u/.dsh/tools/acme.cli/1.4.0',
     executablePath: '/home/u/.dsh/tools/acme.cli/1.4.0/bin/acme',
+    systemInstall: { executablePath: '/usr/bin/acme', version: '1.2.0', compatible: false },
     installable: true,
     actions: ['download the official archive', 'verify sha256'],
     actionIds: ['download-archive', 'verify-sha256'],
@@ -123,6 +124,7 @@ interface FakeRuntime extends ClueRuntimeApi {
   startRejects?: Error
   setPathRejects?: Error
   connectRejects?: Error
+  cancelRejects?: Error
   statusRejects?: Error
 }
 
@@ -163,6 +165,7 @@ function fakeRuntime(overrides: Partial<FakeRuntime> = {}): FakeRuntime {
     },
     dependenciesCancel: async (dependencyId, taskId) => {
       calls.push(`cancel:${dependencyId}:${taskId ?? '*'}`)
+      if (runtime.cancelRejects !== undefined) throw runtime.cancelRejects
       return task({ taskId: taskId ?? 'task-1', state: 'cancelled' })
     },
     dependenciesSetPath: async (dependencyId, path) => {
@@ -359,12 +362,42 @@ describe('SourceConfigPage install plan, progress and cancellation', () => {
     expect(rendered.container.textContent).toContain('Install to /home/u/.dsh/tools/acme.cli/1.4.0')
     expect(rendered.container.textContent).toContain('Download the official archive')
     expect(rendered.container.textContent).toContain('Verify SHA-256')
+    // S2 §6.1: the human confirms the exact asset, platform and context.
+    expect(rendered.container.textContent).toContain('Platform / architecture')
+    expect(rendered.container.textContent).toContain('darwin / arm64')
+    expect(rendered.container.textContent).toContain('Distribution')
+    expect(rendered.container.textContent).toContain('GitHub releases · Official archive')
+    expect(rendered.container.textContent).toContain('Existing system install')
+    expect(rendered.container.textContent).toContain('/usr/bin/acme')
+    expect(rendered.container.textContent).toContain('1.2.0 · incompatible')
+    expect(rendered.container.textContent).toContain('Plan expires')
+    expect(rendered.container.textContent).toContain(new Date('2026-10-17T00:10:00.000Z').toLocaleString())
+    expect(rendered.container.textContent).not.toContain('{time}')
 
     click(rendered.container, 'Confirm and install')
     await act(async () => { await Promise.resolve() })
     expect(runtime.calls).toContain('start:acme.cli:plan-1')
     expect(rendered.container.textContent).toContain('Downloading')
     expect(rendered.container.querySelector('[role="progressbar"]')).not.toBeNull()
+    rendered.unmount()
+  })
+
+  it('shows why a plan cannot install and whether a PATH copy was detected', async () => {
+    const runtime = fakeRuntime({
+      planResult: plan({
+        installable: false,
+        unavailableReason: 'no archive for linux-arm64',
+        systemInstall: undefined,
+      }),
+    })
+    const rendered = await mount(runtime)
+    click(rendered.container, 'One-click install')
+    await act(async () => { await Promise.resolve() })
+    expect(rendered.container.textContent).toContain('Automatic install is not available on this platform.')
+    expect(rendered.container.textContent).toContain('no archive for linux-arm64')
+    expect(rendered.container.textContent).toContain('None detected')
+    // Nothing can be confirmed: only the cancel action remains.
+    expect(rendered.container.textContent).not.toContain('Confirm and install')
     rendered.unmount()
   })
 
@@ -391,7 +424,7 @@ describe('SourceConfigPage install plan, progress and cancellation', () => {
       runtime.calls.length = 0
       runtime.pollTask = task({ state: 'succeeded', progress: { stage: 'completed' }, finishedAt: '2026-10-17T00:01:00.000Z' })
       await act(async () => { await vi.advanceTimersByTimeAsync(1000) })
-      expect(runtime.calls).toContain('status:acme.cli')
+      expect(runtime.calls).toContain('status:*')
       expect(rendered.container.textContent).toContain('Done')
       // A settled install re-probes the dependency state (the row is not stale).
       expect(runtime.calls).toContain('inspect:acme.cli:cached')
@@ -438,6 +471,13 @@ describe('SourceConfigPage connection and authorization', () => {
     expect(rendered.container.textContent).toContain('ABCD-1234')
     expect(rendered.container.textContent).toContain('acme://device?code=ABCD-1234')
     expect(rendered.container.textContent).toContain('Open the URL and enter the code.')
+    // S4 §31: the SAME opaque URL is encoded as a QR, not just printed.
+    const qr = rendered.container.querySelector('[data-clue-qr] svg[role="img"]')
+    expect(qr).not.toBeNull()
+    expect(qr!.getAttribute('aria-label')).toBe('Authorization QR code')
+    expect(qr!.querySelector('path')?.getAttribute('d')?.length ?? 0).toBeGreaterThan(0)
+    expect(rendered.container.querySelector('[data-clue-qr]')?.textContent)
+      .toContain('acme://device?code=ABCD-1234')
     // The expiry copy carries its {time} parameter at the RENDER site (the
     // dictionary token alone is not enough).
     expect(rendered.container.textContent).not.toContain('{time}')
@@ -510,6 +550,11 @@ describe('SourceConfigPage connection and authorization', () => {
     // The old "Ready" is not presented as the current authorization answer.
     expect(section.querySelector('[data-authorization]')).toBeNull()
     expect(section.textContent).toContain('Request failed')
+    // The configuration row is stale too: it keeps the old value only as
+    // explicitly labelled last-known context, never as the current answer.
+    expect(section.querySelector('[data-configuration]')).toBeNull()
+    expect(section.querySelectorAll('[data-stale="true"]')).toHaveLength(2)
+    expect(section.textContent).toContain('Last known: Ready')
     rendered.unmount()
   })
 
@@ -656,13 +701,13 @@ describe('SourceConfigPage install task polling', () => {
       runtime.calls.length = 0
       // dependenciesStatus answers [] (the task vanished).
       await act(async () => { await vi.advanceTimersByTimeAsync(1000) })
-      expect(runtime.calls).toContain('status:acme.cli')
+      expect(runtime.calls).toContain('status:*')
       expect(rendered.container.querySelector('[role="progressbar"]')).toBeNull()
       // The loop settled instead of asking every second forever.
-      const settled = runtime.calls.filter(call => call.startsWith('status:acme.cli')).length
+      const settled = runtime.calls.filter(call => call === 'status:*').length
       expect(settled).toBe(1)
       await act(async () => { await vi.advanceTimersByTimeAsync(3000) })
-      expect(runtime.calls.filter(call => call.startsWith('status:acme.cli'))).toHaveLength(settled)
+      expect(runtime.calls.filter(call => call === 'status:*')).toHaveLength(settled)
       rendered.unmount()
     } finally {
       vi.useRealTimers()
@@ -683,10 +728,10 @@ describe('SourceConfigPage install task polling', () => {
         await act(async () => { await vi.advanceTimersByTimeAsync(1000) })
       }
       expect(rendered.container.textContent).toContain('the status route is down')
-      expect(runtime.calls.filter(call => call.startsWith('status:acme.cli'))).toHaveLength(3)
+      expect(runtime.calls.filter(call => call === 'status:*')).toHaveLength(3)
       expect(rendered.container.querySelector('[role="progressbar"]')).toBeNull()
       await act(async () => { await vi.advanceTimersByTimeAsync(3000) })
-      expect(runtime.calls.filter(call => call.startsWith('status:acme.cli'))).toHaveLength(3)
+      expect(runtime.calls.filter(call => call === 'status:*')).toHaveLength(3)
       rendered.unmount()
     } finally {
       vi.useRealTimers()
@@ -707,7 +752,7 @@ describe('SourceConfigPage install task polling', () => {
       expect(rendered.container.textContent).toContain('the status route is temporarily down')
       // The failure is on the dependency row (the page-level banner is only
       // for read failures), so it is visible next to the progress row.
-      expect(rendered.container.querySelector('[data-clue-dependency-action-error="acme.cli"]')?.textContent)
+      expect(rendered.container.querySelector('[data-clue-poll-error="acme.cli"]')?.textContent)
         .toContain('the status route is temporarily down')
       // The next poll recovers: the row's error must go away (the old page
       // banner never did, and could outlive the failure).
@@ -719,7 +764,7 @@ describe('SourceConfigPage install task polling', () => {
       })
       await act(async () => { await vi.advanceTimersByTimeAsync(1000) })
       expect(rendered.container.textContent).not.toContain('the status route is temporarily down')
-      expect(rendered.container.querySelector('[data-clue-dependency-action-error]')).toBeNull()
+      expect(rendered.container.querySelector('[data-clue-poll-error]')).toBeNull()
       expect(rendered.container.querySelector('[role="progressbar"]')).toBeNull()
       rendered.unmount()
     } finally {
@@ -760,12 +805,104 @@ describe('SourceConfigPage install task polling', () => {
       runtime.latestTasks = [task(), task({ taskId: 'task-2', dependencyId: 'other.cli', planId: 'plan-2' })]
       runtime.calls.length = 0
       await act(async () => { await vi.advanceTimersByTimeAsync(1000) })
-      expect(runtime.calls).toContain('status:acme.cli')
-      expect(runtime.calls).toContain('status:other.cli')
+      // One shared poller asks for the whole task list once, not once per
+      // dependency or per window.
+      expect(runtime.calls.filter(call => call === 'status:*')).toHaveLength(1)
       rendered.unmount()
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('two configuration windows share ONE status poll per tick', async () => {
+    vi.useFakeTimers()
+    try {
+      const runtime = fakeRuntime()
+      const first = await mount(runtime)
+      click(first.container, 'One-click install')
+      await act(async () => { await Promise.resolve() })
+      click(first.container, 'Confirm and install')
+      await act(async () => { await Promise.resolve() })
+      runtime.latestTasks = [task()]
+      const second = await mount(runtime)
+      expect(second.container.querySelector('[role="progressbar"]')).not.toBeNull()
+      runtime.calls.length = 0
+      runtime.latestTasks = [task({
+        state: 'succeeded',
+        progress: { stage: 'completed' },
+        finishedAt: '2026-10-17T00:01:00.000Z',
+      })]
+      await act(async () => { await vi.advanceTimersByTimeAsync(1000) })
+      // One timer for the shared runtime face, one request for both windows.
+      expect(runtime.calls.filter(call => call === 'status:*')).toHaveLength(1)
+      expect(first.container.textContent).toContain('Done')
+      expect(second.container.textContent).toContain('Done')
+      first.unmount()
+      second.unmount()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('a recovered poll clears only the poll error, never a cancel failure', async () => {
+    vi.useFakeTimers()
+    try {
+      const runtime = fakeRuntime()
+      const rendered = await mount(runtime)
+      click(rendered.container, 'One-click install')
+      await act(async () => { await Promise.resolve() })
+      click(rendered.container, 'Confirm and install')
+      await act(async () => { await Promise.resolve() })
+      runtime.pollTask = task()
+      runtime.cancelRejects = new Error('the cancel route is down')
+      click(rendered.container, 'Cancel install')
+      await act(async () => { await Promise.resolve() })
+      const row = rendered.container.querySelector('[data-clue-dependency="acme.cli"]')!
+      expect(row.querySelector('[data-clue-dependency-action-error="acme.cli"]')?.textContent)
+        .toContain('the cancel route is down')
+      // The next poll succeeds (the task is still running elsewhere): it may
+      // clear its own transient error, but the cancel failure is a different
+      // answer and must stay on the row.
+      await act(async () => { await vi.advanceTimersByTimeAsync(1000) })
+      expect(row.querySelector('[data-clue-poll-error]')).toBeNull()
+      expect(row.querySelector('[data-clue-dependency-action-error="acme.cli"]')?.textContent)
+        .toContain('the cancel route is down')
+      rendered.unmount()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('an in-flight Recheck cannot overwrite a successful manual path write', async () => {
+    const runtime = fakeRuntime()
+    const rendered = await mount(runtime)
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const originalInspect = runtime.dependenciesInspect
+    let gated = false
+    runtime.dependenciesInspect = async (input) => {
+      if (gated) await gate
+      return originalInspect(input)
+    }
+    gated = true
+    click(rendered.container, 'Recheck')
+    await act(async () => { await Promise.resolve() })
+    // The old read is still waiting; the user's explicit write settles first.
+    const input = rendered.container.querySelector<HTMLInputElement>(
+      'input[placeholder="Absolute path to the executable"]',
+    )!
+    type(input, '/opt/acme')
+    click(rendered.container, 'Use path')
+    await act(async () => { await Promise.resolve() })
+    expect(runtime.calls).toContain('setPath:acme.cli:/opt/acme')
+    expect(rendered.container.textContent).toContain('/opt/acme')
+    release()
+    await flush()
+    // The stale projection (the original PATH copy, no manual path) lost.
+    expect(rendered.container.textContent).toContain('/opt/acme')
+    const row = rendered.container.querySelector('[data-clue-dependency="acme.cli"]')!
+    expect(row.textContent).toContain('/opt/acme')
+    rendered.unmount()
   })
 
   it('adopts a task started elsewhere (multi-view shared install state)', async () => {

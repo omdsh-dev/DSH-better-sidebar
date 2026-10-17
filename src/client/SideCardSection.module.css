@@ -318,9 +318,10 @@
    control right, hairline separators (stripped on the last row). */
 .row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
+  gap: 8px 16px;
   padding: 12px 2px;
   border-bottom: 1px solid var(--dsw-alias-border-l2);
 }
@@ -556,9 +557,10 @@
 .popupRow {
   flex: none;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
+  gap: 8px 16px;
   min-width: 0;
   padding: 12px 14px;
   border: 1px solid var(--dsw-alias-border-l2);
@@ -660,6 +662,27 @@
   font-size: 12px;
   line-height: 17px;
   color: var(--dsw-alias-state-error-primary);
+}
+
+/* A row-addressed save failure: full-width under the control that wrote it. */
+.rowError {
+  flex: 1 1 100%;
+  margin: 0;
+  padding: 0 2px;
+  font-size: 12px;
+  line-height: 17px;
+  color: var(--dsw-alias-state-error-primary);
+  overflow-wrap: anywhere;
+}
+
+/* The same failure inside an inventory card (the card is a column). */
+.cardError {
+  margin: 0;
+  padding: 0 12px 10px;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--dsw-alias-state-error-primary);
+  overflow-wrap: anywhere;
 }
 
 /* ── "Add plugin" modal ──────────────────────────────────────────────── */

@@ -40,6 +40,8 @@ export interface ClueSourcesPanelProps {
    * re-deriving `!== false` locally, so a future default change is one edit.
    */
   readonly prefs: SidebarPrefs
+  /** Row-addressed save failures (`source:<id>`, `packs`, `batch`). */
+  readonly writeErrors?: Readonly<Record<string, string>>
   readonly loading: boolean
   /** The catalogue request failed; Retry is offered. */
   readonly error: string | null
@@ -103,7 +105,7 @@ function StatusBadge(props: { status: ClueSourceStatus }) {
  * @param props - inventory, preferences, derived statuses and handlers.
  */
 export function ClueSourcesPanel(props: ClueSourcesPanelProps) {
-  const { sources, displays, statuses, prefs, loading, error, statusError, catalogueLoaded } = props
+  const { sources, displays, statuses, prefs, writeErrors = {}, loading, error, statusError, catalogueLoaded } = props
   const displayById = new Map(displays.map(display => [display.sourceId, display]))
   const registered = new Set(sources.map(source => source.sourceId))
   // Only a READ catalogue proves a source is unloaded. Before that (initial
@@ -166,6 +168,11 @@ export function ClueSourcesPanel(props: ClueSourcesPanelProps) {
                 {t('clueSourcesMentionNone')}
               </button>
             </span>
+            {writeErrors.batch !== undefined && (
+              <p className={css.rowError} role="alert" data-settings-error="batch">
+                {writeErrors.batch}
+              </p>
+            )}
           </div>
           )}
 
@@ -222,6 +229,14 @@ export function ClueSourcesPanel(props: ClueSourcesPanelProps) {
                         </button>
                       )}
                     </span>
+                    {(['source', 'sourceMention'] as const).map(kind => {
+                      const rowKey = `${kind}:${source.sourceId}`
+                      return writeErrors[rowKey] === undefined ? null : (
+                        <p key={rowKey} className={css.rowError} role="alert" data-settings-error={rowKey}>
+                          {writeErrors[rowKey]}
+                        </p>
+                      )
+                    })}
                   </li>
                 )
               })}
@@ -293,6 +308,11 @@ export function ClueSourcesPanel(props: ClueSourcesPanelProps) {
             onChange={next => { props.onTogglePacksMention(next) }}
           />
         </span>
+        {writeErrors.packs !== undefined && (
+          <p className={css.rowError} role="alert" data-settings-error="packs">
+            {writeErrors.packs}
+          </p>
+        )}
       </div>
 
       {/* The add-source entry reuses the repository's plugin discovery /

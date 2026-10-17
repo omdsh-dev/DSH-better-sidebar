@@ -351,6 +351,14 @@
   overflow-wrap: anywhere;
 }
 
+.dependencyBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding: 4px 0;
+}
+
 .plan {
   display: flex;
   flex-direction: column;
@@ -383,6 +391,41 @@
   height: 100%;
   border-radius: 999px;
   background: var(--dsw-alias-button-primary-fill);
+}
+
+.qrBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* The QR is painted through the current theme tokens; in the host's dark
+   theme the same SVG is inverted so a scanner still sees dark modules on a
+   light surface (a scanned QR must not be light-on-dark). */
+.qrImage {
+  width: 160px;
+  height: 160px;
+  padding: 8px;
+  box-sizing: border-box;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-base);
+  color: var(--dsw-alias-label-primary);
+}
+
+:global(body[data-ds-dark-theme]) .qrImage {
+  filter: invert(1);
+}
+
+.rowError {
+  flex: 1 1 100%;
+  margin: 0;
+  padding: 0 2px;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--dsw-alias-state-error-primary);
+  overflow-wrap: anywhere;
 }
 
 .authPrompt {

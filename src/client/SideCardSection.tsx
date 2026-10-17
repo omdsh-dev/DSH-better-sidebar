@@ -172,6 +172,31 @@ function messageOf(error: unknown): string {
   return `${t('settingsSaveFailed')} ${errorTextOf(error)}`
 }
 
+/** Whether a wire value is a plain record (the maps the host deep-merges). */
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+/**
+ * Merge two wire patches the way the host's settings.update merges a plain
+ * object: nested plain objects merge recursively, arrays and scalars replace.
+ * Used for both the kept-409 patch chain and the local rollback, so a sparse
+ * nested-map edit never drops a sibling key.
+ */
+function mergeWirePatch(
+  target: Record<string, unknown>,
+  patch: Record<string, unknown>,
+): Record<string, unknown> {
+  const next = { ...target }
+  for (const [key, value] of Object.entries(patch)) {
+    const current = next[key]
+    next[key] = isPlainRecord(current) && isPlainRecord(value)
+      ? mergeWirePatch(current, value)
+      : value
+  }
+  return next
+}
+
 /** Resolve an i18n-friendly string-or-function value. */
 function textOf(value: string | (() => string) | undefined): string {
   if (value === undefined) return ''
@@ -254,24 +279,20 @@ function SettingsRender(props: {
 /**
  * The custom switch: a real checkbox (hidden, native semantics and focus)
  * driving a styled track/thumb. Used by the general toggle rows and the
- * secondary settings popup rows. `disabled`/`title` let a row explain a locked
- * control (e.g. a feature whose settings are dormant while it is off).
+ * secondary settings popup rows.
  */
 function Switch(props: {
   checked: boolean
   onChange: (next: boolean) => void
   label: string
-  disabled?: boolean
-  title?: string
 }) {
-  const { checked, onChange, label, disabled, title } = props
+  const { checked, onChange, label } = props
   return (
-    <label className={css.switch} title={title}>
+    <label className={css.switch}>
       <input
         type="checkbox"
         className={css.switchInput}
         checked={checked}
-        disabled={disabled === true}
         aria-label={label}
         onChange={event => { onChange(event.currentTarget.checked) }}
       />
@@ -310,8 +331,12 @@ export function FeatureSettingsRows(props: {
    *  a host pref of the same name. (Named `valueSource`, not `valueOf`:
    *  the latter collides with the inherited Object.prototype.valueOf.) */
   valueSource?: (key: string) => unknown
+  /** The save failure of one row (S8 §7: the error sits on its own row). */
+  errorFor?: (key: string) => string | undefined
+  /** Row-key prefix for the error's data attribute (`pref:` / `plugin:<id>:`) */
+  rowKeyPrefix?: string
 }) {
-  const { toggles, prefs, onToggle, onCommit, onSelectValue, onPatterns, valueSource } = props
+  const { toggles, prefs, onToggle, onCommit, onSelectValue, onPatterns, valueSource, errorFor, rowKeyPrefix = '' } = props
   const read = valueSource ?? ((key: string): unknown => (prefs as unknown as Record<string, unknown>)[key])
   return (
     <div className={css.popupRows}>
@@ -324,6 +349,8 @@ export function FeatureSettingsRows(props: {
               toggle={toggle}
               title={title}
               value={read(toggle.key)}
+              error={errorFor?.(toggle.key)}
+              errorKey={`${rowKeyPrefix}${toggle.key}`}
               onPatterns={onPatterns}
             />
           )
@@ -335,6 +362,8 @@ export function FeatureSettingsRows(props: {
               toggle={toggle}
               title={title}
               value={read(toggle.key)}
+              error={errorFor?.(toggle.key)}
+              errorKey={`${rowKeyPrefix}${toggle.key}`}
               onSelectValue={onSelectValue}
             />
           )
@@ -351,6 +380,11 @@ export function FeatureSettingsRows(props: {
                 checked={read(toggle.key) === true}
                 onChange={(next) => { onToggle(toggle, next) }}
               />
+              {errorFor?.(toggle.key) !== undefined && (
+                <p className={css.rowError} role="alert" data-settings-error={`${rowKeyPrefix}${toggle.key}`}>
+                  {errorFor(toggle.key)}
+                </p>
+              )}
             </div>
           )
         }
@@ -364,6 +398,8 @@ export function FeatureSettingsRows(props: {
             toggle={toggle}
             title={title}
             value={value}
+            error={errorFor?.(toggle.key)}
+            errorKey={`${rowKeyPrefix}${toggle.key}`}
             onCommit={onCommit}
           />
         )
@@ -382,9 +418,11 @@ function TypedRow(props: {
   toggle: SidebarSettingToggle
   title: string
   value: string
+  error?: string
+  errorKey?: string
   onCommit?: (toggle: SidebarSettingToggle, raw: string) => string
 }) {
-  const { toggle, title, value, onCommit } = props
+  const { toggle, title, value, error, errorKey, onCommit } = props
   const [draft, setDraft] = useState(value)
   const commit = (): void => {
     const canonical = onCommit?.(toggle, draft) ?? draft
@@ -415,6 +453,9 @@ function TypedRow(props: {
         />
         {toggle.unit !== undefined && <span className={css.suffix}>{toggle.unit}</span>}
       </span>
+      {error !== undefined && (
+        <p className={css.rowError} role="alert" data-settings-error={errorKey}>{error}</p>
+      )}
     </div>
   )
 }
@@ -553,9 +594,11 @@ function SelectRow(props: {
   toggle: SidebarSettingToggle
   title: string
   value: unknown
+  error?: string
+  errorKey?: string
   onSelectValue?: (toggle: SidebarSettingToggle, next: unknown) => void
 }) {
-  const { toggle, title, value, onSelectValue } = props
+  const { toggle, title, value, error, errorKey, onSelectValue } = props
   return (
     <div className={css.popupRow}>
       <span className={css.rowText}>
@@ -571,6 +614,9 @@ function SelectRow(props: {
           onSelect={(next) => { onSelectValue?.(toggle, next) }}
         />
       </span>
+      {error !== undefined && (
+        <p className={css.rowError} role="alert" data-settings-error={errorKey}>{error}</p>
+      )}
     </div>
   )
 }
@@ -586,9 +632,11 @@ function PatternsRow(props: {
   toggle: SidebarSettingToggle
   title: string
   value: unknown
+  error?: string
+  errorKey?: string
   onPatterns?: (toggle: SidebarSettingToggle, next: string[]) => void
 }) {
-  const { toggle, title, value, onPatterns } = props
+  const { toggle, title, value, error, errorKey, onPatterns } = props
   const patterns = Array.isArray(value) ? value.filter(item => typeof item === 'string') as string[] : []
   const [draft, setDraft] = useState('')
   const commitAdd = (): void => {
@@ -641,6 +689,9 @@ function PatternsRow(props: {
           {t('explorerExcludeAdd')}
         </button>
       </div>
+      {error !== undefined && (
+        <p className={css.rowError} role="alert" data-settings-error={errorKey}>{error}</p>
+      )}
     </div>
   )
 }
@@ -660,6 +711,8 @@ export function SettingsBody(props: {
   prefs: SidebarPrefs
   store: SidebarStore
   service: BetterSidebarService
+  /** Row-addressed save failures (the error renders on the row that wrote). */
+  writeErrors?: Readonly<Record<string, string>>
   onToggle: (toggle: SidebarSettingToggle, next: boolean) => void
   onCommit: (toggle: SidebarSettingToggle, raw: string) => string
   onSelectValue: (toggle: SidebarSettingToggle, next: unknown) => void
@@ -671,7 +724,7 @@ export function SettingsBody(props: {
   onPluginWrite: (key: string, value: unknown) => void
   onClose: () => void
 }) {
-  const { feature, prefs, store, service, onToggle, onCommit, onSelectValue, onPatterns, onPluginToggle, onPluginCommit, onPluginSelectValue, onPluginPatterns, onPluginWrite, onClose } = props
+  const { feature, prefs, store, service, writeErrors = {}, onToggle, onCommit, onSelectValue, onPatterns, onPluginToggle, onPluginCommit, onPluginSelectValue, onPluginPatterns, onPluginWrite, onClose } = props
   const render = feature.settings?.render
   // General is the ONE home for the auto-open preferences (S8 §2); the
   // Subagents card still declares them for history, but the popup must not
@@ -697,6 +750,8 @@ export function SettingsBody(props: {
               onCommit={onCommit}
               onSelectValue={onSelectValue}
               onPatterns={onPatterns}
+              errorFor={(key) => writeErrors[`pref:${key}`]}
+              rowKeyPrefix="pref:"
             />
           )}
           {pluginToggles.length > 0 && (
@@ -708,22 +763,35 @@ export function SettingsBody(props: {
               onSelectValue={onPluginSelectValue}
               onPatterns={onPluginPatterns}
               valueSource={(key) => pluginBlob[key]}
+              errorFor={(key) => writeErrors[`plugin:${feature.id}:${key}`]}
+              rowKeyPrefix={`plugin:${feature.id}:`}
             />
           )}
         </div>
       )}
       {render !== undefined && (
-        <SettingsRender
-          render={render}
-          renderProps={{
-            store,
-            service,
-            prefs,
-            pluginSettings: prefs.pluginSettings[feature.id] ?? {},
-            updatePluginSetting: onPluginWrite,
-            close: onClose,
-          }}
-        />
+        <>
+          <SettingsRender
+            render={render}
+            renderProps={{
+              store,
+              service,
+              prefs,
+              pluginSettings: prefs.pluginSettings[feature.id] ?? {},
+              updatePluginSetting: onPluginWrite,
+              close: onClose,
+            }}
+          />
+          {/* A custom panel's write failure has no declarative row to attach
+              to; it still belongs to the panel that made the write, so it
+              renders right below it (declared plugin rows above own theirs). */}
+          {Object.entries(writeErrors)
+            .filter(([key]) => key.startsWith(`plugin:${feature.id}:`))
+            .filter(([key]) => !pluginToggles.some(toggle => toggle.key === key.slice(`plugin:${feature.id}:`.length)))
+            .map(([key, message]) => (
+              <p key={key} className={css.rowError} role="alert" data-settings-error={key}>{message}</p>
+            ))}
+        </>
       )}
     </div>
   )
@@ -735,6 +803,15 @@ interface CommitOutcome {
   readonly prefs: SidebarPrefs
   /** A 409 happened: the edit stays on screen and the copy says it is unsaved. */
   readonly keepEdit?: boolean
+  /** Friendly inline failure copy (row-addressed by the caller). */
+  readonly message?: string
+  /** Rows whose kept 409 edits this successful write finally saved. */
+  readonly savedRows?: readonly string[]
+}
+
+/** The declared needs of one source, as a stable coverage signature. */
+function sourceNeedsKey(source: ClueSourceDescriptor): string {
+  return JSON.stringify([source.dependencyIds ?? [], source.connectionId ?? null])
 }
 
 /**
@@ -750,7 +827,9 @@ export function SideCardSection(props: SideCardSectionProps) {
   const runtime = props.runtime ?? clueRuntimeApi
 
   const [prefs, setPrefs] = useState<SidebarPrefs>(() => store.getPrefs())
-  const [error, setError] = useState<string | null>(null)
+  // Save failures are addressed by ROW (S8 §7): the control that made the
+  // write renders its own error, not a single banner far above it.
+  const [writeErrors, setWriteErrors] = useState<Record<string, string>>({})
   // Which feature's secondary settings popup is open (null = closed).
   const [settingsFor, setSettingsFor] = useState<TabDescriptor | FileViewerDescriptor | null>(null)
   // Whether the "add plugin" modal is open, and for which extension point
@@ -805,6 +884,13 @@ export function SideCardSection(props: SideCardSectionProps) {
   // retryable state, not a dead end.
   const [statusProbeError, setStatusProbeError] = useState<string | null>(null)
   const [statusChecked, setStatusChecked] = useState(false)
+  // Which catalogue snapshot the current projections actually cover, keyed by
+  // source id and signed by the needs it declared. A source that appears (or
+  // changes its declared dependency/connection set) while a probe is in
+  // flight is NOT covered by those projections yet: it stays `unchecked`
+  // instead of fabricating a terminal missing / not-configured verdict from
+  // the previous table read.
+  const [statusCoverage, setStatusCoverage] = useState<ReadonlyMap<string, string>>(() => new Map())
   const sourcesLoadedRef = useRef(false)
   const sourcesRequestRef = useRef(0)
   const catalogueRef = useRef<CluesSourcesCatalogResult | null>(null)
@@ -854,6 +940,9 @@ export function SideCardSection(props: SideCardSectionProps) {
       setConnectionStatuses(connectionsNext)
       setDependencyProbeFailed(dependenciesFailed)
       setConnectionProbeFailed(connectionsFailed)
+      // The completed observation covers EXACTLY this catalogue's declared
+      // needs. Anything that changed meanwhile is re-checked next read.
+      setStatusCoverage(new Map(catalogueNext.sources.map(source => [source.sourceId, sourceNeedsKey(source)])))
       setStatusChecked(true)
     } catch (caught) {
       if (request === sourcesRequestRef.current) {
@@ -907,11 +996,11 @@ export function SideCardSection(props: SideCardSectionProps) {
         requestFailed: (needsDependencies && dependencyProbeFailed)
           || (source.connectionId !== undefined && connectionProbeFailed),
         ...(statusProbeError === null ? {} : { requestFailedDetail: statusProbeError }),
-        checked: statusChecked,
+        checked: statusChecked && statusCoverage.get(source.sourceId) === sourceNeedsKey(source),
       }))
     }
     return map
-  }, [catalogue, dependencyStatuses, connectionStatuses, dependencyProbeFailed, connectionProbeFailed, statusProbeError, statusChecked])
+  }, [catalogue, dependencyStatuses, connectionStatuses, dependencyProbeFailed, connectionProbeFailed, statusProbeError, statusChecked, statusCoverage])
 
   /** Open one source's S6 configuration window (stable identity = focus). */
   const openSourceConfig = useCallback((source: ClueSourceDescriptor): void => {
@@ -996,8 +1085,10 @@ export function SideCardSection(props: SideCardSectionProps) {
   const inFlightWritesRef = useRef(0)
   // A 409 whose retry also failed keeps its edit locally. The patch rides the
   // NEXT write (so the kept value eventually saves instead of vanishing) and
-  // store notifications are ignored until it settles.
+  // store notifications are ignored until it settles. The rows are tracked
+  // separately so the eventual save can clear exactly their inline errors.
   const unsavedPatchRef = useRef<Record<string, unknown> | null>(null)
+  const unsavedRowsRef = useRef<Set<string>>(new Set())
   // Serialize commits: a queued write must observe the previous write's
   // revision; a failed write must not poison the queue for later ones.
   const inFlightRef = useRef<Promise<unknown>>(Promise.resolve())
@@ -1045,12 +1136,14 @@ export function SideCardSection(props: SideCardSectionProps) {
 
   /**
    * Persist one patch through the settings route (serialized, revision-guarded).
-   * A 409 is NOT a failure of the user's intent: re-read the revision while
-   * keeping the edit on screen, then retry the same patch once. A kept 409
+   * Nested maps are sent SPARSE: the host deep-merges plain objects, so a
+   * concurrent entry's sibling key (e.g. `tabsEnabled.other`) survives even
+   * when this entry's local map is older. A 409 re-reads the revision while
+   * keeping the edit on screen, then retries the same patch once. A kept 409
    * edit is retried together with the next write, so it is never silently
    * dropped from the UI while missing on the server.
    */
-  const commit = (patch: Record<string, unknown>): Promise<CommitOutcome> => {
+  const commit = (patch: Record<string, unknown>, rowKey: string): Promise<CommitOutcome> => {
     dirtyRef.current = true
     let conflicted = false
     const currentRevision = async (): Promise<number> => {
@@ -1086,10 +1179,12 @@ export function SideCardSection(props: SideCardSectionProps) {
     let attempted: Record<string, unknown> = patch
     const run = inFlightRef.current.then(async () => {
       const unsaved = unsavedPatchRef.current
-      const combined = unsaved === null ? patch : { ...unsaved, ...patch }
+      // Deep-merge the sparse wire patches: two edits to different keys of
+      // the same nested map must not drop each other while queued.
+      const combined = unsaved === null ? patch : mergeWirePatch(unsaved, patch)
       attempted = combined
       const write = async (): Promise<{ value?: unknown; revision?: number }> =>
-        settingsFace.settingsUpdate({ ...combined }, await currentRevision())
+        settingsFace.settingsUpdate(combined, await currentRevision())
       let view: { value?: unknown; revision?: number }
       try {
         view = await write()
@@ -1110,84 +1205,127 @@ export function SideCardSection(props: SideCardSectionProps) {
         revisionRef.current = Math.max(revisionRef.current ?? view.revision, view.revision)
         noteSettingsRevision(settingsFace, view.revision)
       }
+      const savedRows = [...unsavedRowsRef.current]
+      unsavedRowsRef.current.clear()
       unsavedPatchRef.current = null
       confirmedRef.current = next
       store.setPrefs(next)
-      return next
+      return { next, savedRows }
     })
     inFlightWritesRef.current += 1
     // A failed commit must not poison the queue: later writes still run.
     inFlightRef.current = run.then(() => undefined, () => undefined)
     return run.then(
-      (next) => {
+      ({ next, savedRows }) => {
         inFlightWritesRef.current -= 1
-        return { ok: true, prefs: next }
+        return { ok: true, prefs: next, savedRows }
       },
       (caught) => {
         inFlightWritesRef.current -= 1
-        if (conflicted) unsavedPatchRef.current = attempted
-        setError(messageOf(caught))
+        if (conflicted) {
+          unsavedPatchRef.current = attempted
+          unsavedRowsRef.current.add(rowKey)
+        }
         return conflicted
-          ? { ok: false, prefs, keepEdit: true }
-          : { ok: false, prefs }
+          ? { ok: false, prefs, keepEdit: true, message: messageOf(caught) }
+          : { ok: false, prefs, message: messageOf(caught) }
       },
     )
   }
 
+  /** Record one row's save failure (S8 §7: the error belongs to that row). */
+  const setWriteError = (rowKey: string, message: string): void => {
+    setWriteErrors(current => ({ ...current, [rowKey]: message }))
+  }
+
+  /** Clear one row's save failure. */
+  const clearWriteError = (rowKey: string): void => {
+    setWriteErrors(current => {
+      if (current[rowKey] === undefined) return current
+      const next = { ...current }
+      delete next[rowKey]
+      return next
+    })
+  }
+
   /**
-   * Settle one commit. Success adopts the server values. A non-conflict
+   * Settle one commit. Success adopts the server values (and clears the errors
+   * of rows whose kept 409 edits this write finally saved). A non-conflict
    * failure rolls back to the last SERVER-CONFIRMED values (plus any edit the
    * 409 path is still keeping for the next write) — not to this write's own
    * pre-write snapshot, which may already contain an earlier failed edit.
    */
-  const applyOutcome = (outcome: CommitOutcome): void => {
+  const applyOutcome = (outcome: CommitOutcome, rowKey: string): void => {
     if (outcome.ok) {
       setPrefs(outcome.prefs)
+      clearWriteError(rowKey)
+      for (const savedRow of outcome.savedRows ?? []) clearWriteError(savedRow)
       return
     }
-    if (outcome.keepEdit === true) return
-    const kept = unsavedPatchRef.current
-    const rollback = (kept === null
-      ? confirmedRef.current
-      : { ...confirmedRef.current, ...kept }) as SidebarPrefs
-    optimisticRef.current = rollback
-    setPrefs(rollback)
+    if (outcome.keepEdit !== true) {
+      const kept = unsavedPatchRef.current
+      const rollback = (kept === null
+        ? confirmedRef.current
+        : mergeWirePatch(confirmedRef.current as unknown as Record<string, unknown>, kept)) as SidebarPrefs
+      optimisticRef.current = rollback
+      setPrefs(rollback)
+    }
+    setWriteError(rowKey, outcome.message ?? t('settingsSaveFailed'))
   }
 
-  /** Optimistically apply one pref patch, then commit (revert on failure). */
-  const applyPref = (patch: Record<string, unknown>): void => {
+  /**
+   * Optimistically apply one pref patch, then commit.
+   * @param patch - the full local value (the UI reads this shape).
+   * @param rowKey - the row that owns the write (its inline error home).
+   * @param wirePatch - the sparse patch to send (defaults to `patch`); nested
+   *   maps send only the touched key so the host's deep merge preserves the
+   *   other entry's edits.
+   */
+  const applyPref = (
+    patch: Record<string, unknown>,
+    rowKey: string,
+    wirePatch: Record<string, unknown> = patch,
+  ): void => {
     const previous = optimisticRef.current
     const next = { ...previous, ...patch } as SidebarPrefs
     optimisticRef.current = next
     setPrefs(next)
-    setError(null)
-    void commit(patch).then(outcome => applyOutcome(outcome))
+    clearWriteError(rowKey)
+    void commit(wirePatch, rowKey).then(outcome => applyOutcome(outcome, rowKey))
   }
 
-  /** Flip one per-tab enable switch (merge into the tabsEnabled map). */
+  /** Flip one per-tab enable switch (send ONLY that key; the host deep-merges). */
   const onToggleTab = (id: string, next: boolean): void => {
-    applyPref({ tabsEnabled: { ...optimisticRef.current.tabsEnabled, [id]: next } })
+    applyPref(
+      { tabsEnabled: { ...optimisticRef.current.tabsEnabled, [id]: next } },
+      `tab:${id}`,
+      { tabsEnabled: { [id]: next } },
+    )
   }
 
-  /** Flip one per-viewer enable switch (merge into the viewersEnabled map). */
+  /** Flip one per-viewer enable switch (sparse map, same reason). */
   const onToggleViewer = (id: string, next: boolean): void => {
-    applyPref({ viewersEnabled: { ...optimisticRef.current.viewersEnabled, [id]: next } })
+    applyPref(
+      { viewersEnabled: { ...optimisticRef.current.viewersEnabled, [id]: next } },
+      `viewer:${id}`,
+      { viewersEnabled: { [id]: next } },
+    )
   }
 
   /** Flip one declaratively-declared toggle (a SidebarPrefs boolean field). */
   const onToggleSetting = (toggle: SidebarSettingToggle, next: boolean): void => {
-    applyPref({ [toggle.key]: next })
+    applyPref({ [toggle.key]: next }, `pref:${toggle.key}`)
   }
 
   /** Commit one declaratively-declared select row (the option's value, or an
    *  array of values under `multi`). */
   const onSelectSetting = (toggle: SidebarSettingToggle, next: unknown): void => {
-    applyPref({ [toggle.key]: next })
+    applyPref({ [toggle.key]: next }, `pref:${toggle.key}`)
   }
 
   /** Commit one declaratively-declared patterns row (the whole string list). */
   const onPatternsSetting = (toggle: SidebarSettingToggle, next: string[]): void => {
-    applyPref({ [toggle.key]: next })
+    applyPref({ [toggle.key]: next }, `pref:${toggle.key}`)
   }
 
   /**
@@ -1205,21 +1343,25 @@ export function SideCardSection(props: SideCardSectionProps) {
       let clamped = Math.round(parsed)
       if (toggle.min !== undefined) clamped = Math.max(toggle.min, clamped)
       if (toggle.max !== undefined) clamped = Math.min(toggle.max, clamped)
-      applyPref({ [toggle.key]: clamped })
+      applyPref({ [toggle.key]: clamped }, `pref:${toggle.key}`)
       return String(clamped)
     }
-    applyPref({ [toggle.key]: raw })
+    applyPref({ [toggle.key]: raw }, `pref:${toggle.key}`)
     return raw
   }
 
   /** Commit the free-form custom CSS (the user-space escape hatch). */
   const commitCustomCss = (raw: string): void => {
-    applyPref({ customCss: raw })
+    applyPref({ customCss: raw }, 'pref:customCss')
   }
 
-  /** Persist one plugin-owned setting of one descriptor (merged into the pluginSettings blob). */
+  /** Persist one plugin-owned setting of one descriptor (sparse pluginSettings map). */
   const applyPluginSetting = (descriptorId: string, key: string, value: unknown): void => {
-    applyPref({ pluginSettings: mergePluginSetting(optimisticRef.current.pluginSettings, descriptorId, key, value) })
+    applyPref(
+      { pluginSettings: mergePluginSetting(optimisticRef.current.pluginSettings, descriptorId, key, value) },
+      `plugin:${descriptorId}:${key}`,
+      { pluginSettings: { [descriptorId]: { [key]: value } } },
+    )
   }
 
   /** Flip one plugin-owned switch row (same row shape, plugin-scoped key). */
@@ -1248,19 +1390,27 @@ export function SideCardSection(props: SideCardSectionProps) {
   const registeredSourceIds = (): string[] =>
     (catalogueRef.current?.sources ?? []).map(source => source.sourceId)
 
-  /** Flip one source enable switch (merged clueSourcesEnabled map). */
+  /** Flip one source enable switch (sparse clueSourcesEnabled map). */
   const onToggleSource = (sourceId: string, next: boolean): void => {
-    applyPref({ clueSourcesEnabled: { ...optimisticRef.current.clueSourcesEnabled, [sourceId]: next } })
+    applyPref(
+      { clueSourcesEnabled: { ...optimisticRef.current.clueSourcesEnabled, [sourceId]: next } },
+      `source:${sourceId}`,
+      { clueSourcesEnabled: { [sourceId]: next } },
+    )
   }
 
-  /** Flip one source @ switch (merged clueSourcesMentionEnabled map). */
+  /** Flip one source @ switch (sparse clueSourcesMentionEnabled map). */
   const onToggleSourceMention = (sourceId: string, next: boolean): void => {
-    applyPref({ clueSourcesMentionEnabled: { ...optimisticRef.current.clueSourcesMentionEnabled, [sourceId]: next } })
+    applyPref(
+      { clueSourcesMentionEnabled: { ...optimisticRef.current.clueSourcesMentionEnabled, [sourceId]: next } },
+      `sourceMention:${sourceId}`,
+      { clueSourcesMentionEnabled: { [sourceId]: next } },
+    )
   }
 
   /** Flip the independent clue-pack @ switch. */
   const onTogglePacksMention = (next: boolean): void => {
-    applyPref({ cluePacksMentionEnabled: next })
+    applyPref({ cluePacksMentionEnabled: next }, 'packs')
   }
 
   /**
@@ -1272,8 +1422,12 @@ export function SideCardSection(props: SideCardSectionProps) {
     const ids = registeredSourceIds()
     if (ids.length === 0) return
     const map = { ...optimisticRef.current.clueSourcesEnabled }
-    for (const id of ids) map[id] = next
-    applyPref({ clueSourcesEnabled: map })
+    const wire = {} as Record<string, boolean>
+    for (const id of ids) {
+      map[id] = next
+      wire[id] = next
+    }
+    applyPref({ clueSourcesEnabled: map }, 'batch', { clueSourcesEnabled: wire })
   }
 
   /** Batch-write the @ map ONCE, with the same future-source rule. */
@@ -1281,8 +1435,12 @@ export function SideCardSection(props: SideCardSectionProps) {
     const ids = registeredSourceIds()
     if (ids.length === 0) return
     const map = { ...optimisticRef.current.clueSourcesMentionEnabled }
-    for (const id of ids) map[id] = next
-    applyPref({ clueSourcesMentionEnabled: map })
+    const wire = {} as Record<string, boolean>
+    for (const id of ids) {
+      map[id] = next
+      wire[id] = next
+    }
+    applyPref({ clueSourcesMentionEnabled: map }, 'batch', { clueSourcesMentionEnabled: wire })
   }
 
   /**
@@ -1298,6 +1456,8 @@ export function SideCardSection(props: SideCardSectionProps) {
     desc: string
     icon?: ReactNode
     enabled: boolean
+    rowKey: string
+    error?: string
     onToggle: (next: boolean) => void
     /** A feature with declared related settings shows the settings strip. */
     onOpenSettings?: () => void
@@ -1306,6 +1466,7 @@ export function SideCardSection(props: SideCardSectionProps) {
     return (
       <div
         className={clsx(css.card, props.enabled && css.cardOn)}
+        data-settings-row={props.rowKey}
       >
         <button
           type="button"
@@ -1340,6 +1501,11 @@ export function SideCardSection(props: SideCardSectionProps) {
             <span>{t('settingsPopup')}</span>
           </button>
         )}
+        {props.error !== undefined && (
+          <p className={css.cardError} role="alert" data-settings-error={props.rowKey}>
+            {props.error}
+          </p>
+        )}
       </div>
     )
   }
@@ -1362,6 +1528,8 @@ export function SideCardSection(props: SideCardSectionProps) {
               desc: tab.id,
               icon: iconOf(tab.icon, 16),
               enabled: prefs.tabsEnabled[tab.id] !== false,
+              rowKey: `tab:${tab.id}`,
+              error: writeErrors[`tab:${tab.id}`],
               onToggle: (next) => { onToggleTab(tab.id, next) },
               // The settings gear only while the feature is enabled: its
               // related settings are dormant while the feature is off.
@@ -1406,6 +1574,8 @@ export function SideCardSection(props: SideCardSectionProps) {
               desc: viewer.exts.length === 0 ? t('settingsViewerCatchAll') : viewer.exts.join(' · '),
               icon: iconOf(viewer.icon, 16),
               enabled: prefs.viewersEnabled[viewer.id] !== false,
+              rowKey: `viewer:${viewer.id}`,
+              error: writeErrors[`viewer:${viewer.id}`],
               onToggle: (next) => { onToggleViewer(viewer.id, next) },
               onOpenSettings: prefs.viewersEnabled[viewer.id] !== false && hasSettings(viewer)
                 ? () => { setSettingsFor(viewer) }
@@ -1432,18 +1602,18 @@ export function SideCardSection(props: SideCardSectionProps) {
     </div>
   )
 
+  /** One row-addressed save failure (the row renders its own message). */
+  const renderWriteError = (rowKey: string) => writeErrors[rowKey] === undefined
+    ? null
+    : (
+      <p className={css.rowError} role="alert" data-settings-error={rowKey}>
+        {writeErrors[rowKey]}
+      </p>
+    )
+
   return (
     <div className={css.section}>
       <p className={css.intro}>{t('settingsIntro')}</p>
-
-      {/* A failed settings save belongs to the surface that made the write.
-          It stays at the TOP of the section (not after the long groups at the
-          bottom, where it is easy to miss) and role=alert announces it. */}
-      {error !== null && (
-        <div className={css.error} role="alert">
-          {error}
-        </div>
-      )}
 
       {/* The managing plugin's own identity: name + version badge, so the
           section is attributable at a glance (the version is the service
@@ -1497,8 +1667,9 @@ export function SideCardSection(props: SideCardSectionProps) {
                 <Switch
                   label={t('settingsOpenToolsTitle')}
                   checked={prefs.agentOpenTools}
-                  onChange={(next) => { applyPref({ agentOpenTools: next }) }}
+                  onChange={(next) => { applyPref({ agentOpenTools: next }, 'pref:agentOpenTools') }}
                 />
+                {renderWriteError('pref:agentOpenTools')}
               </div>
 
               {/* 自动打开: the two task-page activation preferences live in
@@ -1512,8 +1683,9 @@ export function SideCardSection(props: SideCardSectionProps) {
                 <Switch
                   label={t('settingsSubagentTitle')}
                   checked={prefs.autoOpenSubagent}
-                  onChange={(next) => { applyPref({ autoOpenSubagent: next }) }}
+                  onChange={(next) => { applyPref({ autoOpenSubagent: next }, 'pref:autoOpenSubagent') }}
                 />
+                {renderWriteError('pref:autoOpenSubagent')}
               </div>
               <div className={css.row}>
                 <span className={css.rowText}>
@@ -1523,8 +1695,9 @@ export function SideCardSection(props: SideCardSectionProps) {
                 <Switch
                   label={t('settingsJobsTitle')}
                   checked={prefs.autoOpenJobs}
-                  onChange={(next) => { applyPref({ autoOpenJobs: next }) }}
+                  onChange={(next) => { applyPref({ autoOpenJobs: next }, 'pref:autoOpenJobs') }}
                 />
+                {renderWriteError('pref:autoOpenJobs')}
               </div>
 
               {/* 手机: the narrow-viewport adaptations. Both switches only ever
@@ -1541,8 +1714,9 @@ export function SideCardSection(props: SideCardSectionProps) {
                 <Switch
                   label={t('settingsMobileNoAutoOpenTitle')}
                   checked={prefs.mobileNoAutoOpen}
-                  onChange={(next) => { applyPref({ mobileNoAutoOpen: next }) }}
+                  onChange={(next) => { applyPref({ mobileNoAutoOpen: next }, 'pref:mobileNoAutoOpen') }}
                 />
+                {renderWriteError('pref:mobileNoAutoOpen')}
               </div>
               <div className={css.row}>
                 <span className={css.rowText}>
@@ -1552,8 +1726,9 @@ export function SideCardSection(props: SideCardSectionProps) {
                 <Switch
                   label={t('settingsMobileTreeTitle')}
                   checked={prefs.mobileDefaultTree}
-                  onChange={(next) => { applyPref({ mobileDefaultTree: next }) }}
+                  onChange={(next) => { applyPref({ mobileDefaultTree: next }, 'pref:mobileDefaultTree') }}
                 />
+                {renderWriteError('pref:mobileDefaultTree')}
               </div>
             </div>
           )}
@@ -1573,6 +1748,7 @@ export function SideCardSection(props: SideCardSectionProps) {
                 displays={displays}
                 statuses={statusById}
                 prefs={prefs}
+                writeErrors={writeErrors}
                 loading={sourcesLoading && catalogue === null}
                 error={sourcesError}
                 statusError={statusProbeError}
@@ -1601,6 +1777,7 @@ export function SideCardSection(props: SideCardSectionProps) {
                 placeholder={t('settingsCustomCssPlaceholder')}
                 onCommit={commitCustomCss}
               />
+              {renderWriteError('pref:customCss')}
             </div>
           )}
         </div>
@@ -1629,6 +1806,7 @@ export function SideCardSection(props: SideCardSectionProps) {
           <SettingsBody
             feature={settingsFor}
             prefs={prefs}
+            writeErrors={writeErrors}
             onToggle={onToggleSetting}
             onCommit={onCommitSetting}
             onSelectValue={onSelectSetting}
@@ -1671,6 +1849,7 @@ export function SideCardSection(props: SideCardSectionProps) {
           )}
         >
           <div className={css.pluginList} data-clue-add-source="">
+            <div className={css.pluginEmpty}>{t('clueAddSourceNoCatalog')}</div>
             <button
               type="button"
               className={css.pluginTopicBtn}
@@ -1678,7 +1857,6 @@ export function SideCardSection(props: SideCardSectionProps) {
             >
               {t('addPluginsBrowseMore')}
             </button>
-            <div className={css.pluginEmpty}>{t('clueAddSourceNoCatalog')}</div>
           </div>
         </Modal>
       ) : addPluginsOpen !== null ? (

@@ -100,6 +100,21 @@ function connection(): ConnectionStatusProjection {
   }
 }
 
+/** Deep-merge plain objects exactly like the host's `settings.update`. */
+function mergeSettings(
+  target: Record<string, unknown>,
+  patch: Record<string, unknown>,
+): Record<string, unknown> {
+  const next = { ...target }
+  for (const [key, value] of Object.entries(patch)) {
+    const current = next[key]
+    const plain = (item: unknown): item is Record<string, unknown> =>
+      item !== null && typeof item === 'object' && !Array.isArray(item)
+    next[key] = plain(current) && plain(value) ? mergeSettings(current, value) : value
+  }
+  return next
+}
+
 /** A fake settings document matching the host's merge + revision semantics. */
 class FakeSettings {
   value: Record<string, unknown> = {}
@@ -120,7 +135,7 @@ class FakeSettings {
     this.updates.push({ patch, expectedRevision })
     if (this.conflicts > 0) {
       this.conflicts -= 1
-      this.value = { ...this.value, ...(this.externalChange ?? {}) }
+      this.value = mergeSettings(this.value, this.externalChange ?? {})
       this.externalChange = undefined
       this.revision += 1
       const error = new Error('the settings document moved on') as Error & { code: string }
@@ -132,7 +147,7 @@ class FakeSettings {
       error.code = 'settings-conflict'
       throw error
     }
-    this.value = { ...this.value, ...patch }
+    this.value = mergeSettings(this.value, patch)
     this.revision += 1
     return { value: { ...this.value }, revision: this.revision }
   }
@@ -351,6 +366,19 @@ describe('SideCardSection existing preferences', () => {
     rendered.unmount()
   })
 
+  it('shows a tab-card save failure inside that card', async () => {
+    const h = harness()
+    const rendered = await mount(h)
+    openGroup(rendered.container, 'Tabs')
+    h.settings.settingsUpdate = async () => { throw new Error('the settings route is down') }
+    click(rendered.container, 'Subagents')
+    await flush()
+    const card = rendered.container.querySelector('[data-settings-row="tab:subagent"]')
+    expect(card?.querySelector('[data-settings-error="tab:subagent"]')?.textContent)
+      .toContain('the settings route is down')
+    rendered.unmount()
+  })
+
   it('keeps the tab and viewer enable switches writing tabsEnabled / viewersEnabled (values unchanged)', async () => {
     const h = harness()
     const rendered = await mount(h)
@@ -394,6 +422,52 @@ describe('SideCardSection existing preferences', () => {
     expect(h.settings.updates.at(-1)?.patch).toEqual({ customCss: 'html { --x: 1; }' })
     rendered.unmount()
   })
+
+  it('sends a sparse tabsEnabled patch and preserves a sibling key saved elsewhere', async () => {
+    const h = harness()
+    h.settings.value = { tabsEnabled: { explorer: true, subagent: true } }
+    const rendered = await mount(h)
+    openGroup(rendered.container, 'Tabs')
+    click(rendered.container, 'Subagents')
+    await flush()
+    // Only the touched key crosses the wire; the host's deep merge keeps the
+    // sibling entry another settings view already stored.
+    expect(h.settings.updates.at(-1)?.patch).toEqual({ tabsEnabled: { subagent: false } })
+    expect(h.settings.value.tabsEnabled).toEqual({ explorer: true, subagent: false })
+    expect(h.store.getPrefs().tabsEnabled).toEqual({ explorer: true, subagent: false })
+    rendered.unmount()
+  })
+
+  it('two entry points toggling the same nested map keep BOTH edits', async () => {
+    const h = harness()
+    const first = await mount(h)
+    const second = await mount(h)
+    openGroup(first.container, 'Tabs')
+    openGroup(second.container, 'Tabs')
+    click(first.container, 'Subagents')
+    await flush()
+    click(second.container, 'Explorer')
+    await flush()
+    expect(h.settings.value.tabsEnabled).toEqual({ explorer: false, subagent: false })
+    expect(h.store.getPrefs().tabsEnabled).toEqual({ explorer: false, subagent: false })
+    first.unmount()
+    second.unmount()
+  })
+
+  it('a save failure renders on the control that wrote, not as a section banner', async () => {
+    const h = harness()
+    const rendered = await mount(h)
+    h.settings.settingsUpdate = async () => { throw new Error('the settings route is down') }
+    click(rendered.container, 'Inject the sidebar-open tool for the model')
+    await flush()
+    const rowError = rendered.container.querySelector('[data-settings-error="pref:agentOpenTools"]')
+    expect(rowError?.textContent).toContain('the settings route is down')
+    // It sits with the row (the checkbox's row), not at the top of the section.
+    expect(rowError?.parentElement?.querySelector(
+      'input[type="checkbox"][aria-label="Inject the sidebar-open tool for the model"]',
+    )).not.toBeNull()
+    rendered.unmount()
+  })
 })
 
 // ── Clue sources: switches, batches, packs, configure ──────────────────────
@@ -425,6 +499,18 @@ describe('SideCardSection clue sources', () => {
     await flush()
     expect(h.settings.updates).toHaveLength(1)
     expect(h.settings.updates[0]!.patch).toEqual({ clueSourcesEnabled: { 'builtin.files': false } })
+    rendered.unmount()
+  })
+
+  it('shows a source-switch save failure on that source row', async () => {
+    const h = harness()
+    const rendered = await mountSources(h)
+    h.settings.settingsUpdate = async () => { throw new Error('the settings route is down') }
+    toggle(rendered.container, 'Enable source: Local files')
+    await flush()
+    const row = rendered.container.querySelector('[data-clue-source="builtin.files"]')
+    expect(row?.querySelector('[data-settings-error="source:builtin.files"]')?.textContent)
+      .toContain('the settings route is down')
     rendered.unmount()
   })
 
@@ -537,6 +623,12 @@ describe('SideCardSection clue sources', () => {
     expect(body).toContain('Browse more plugins on GitHub')
     for (const entry of builtinTabPlugins) expect(body).not.toContain(entry.install)
     expect(body).not.toContain('Copy')
+    // The copy does not promise a copy control the modal lacks ("下方" is
+    // accurate: the topic button now follows the no-catalogue text).
+    expect(en.clueAddSourceDesc.toLowerCase()).not.toContain('copy')
+    const modalBody = document.querySelector('[data-clue-add-source]')!
+    expect(modalBody.textContent!.indexOf(en.clueAddSourceNoCatalog))
+      .toBeLessThan(modalBody.textContent!.indexOf('Browse more plugins on GitHub'))
     // Nothing claims the plugin or its CLI was installed.
     expect(body).not.toContain('installed successfully')
     rendered.unmount()
@@ -615,6 +707,45 @@ describe('SideCardSection clue sources', () => {
     rendered.unmount()
   })
 
+  it('keeps a source registered during the probe window unchecked until the probe covers it', async () => {
+    const h = harness()
+    const rendered = await mountSources(h)
+    // The next catalogue read sees a NEW dependency-bearing source; its probe
+    // is held so the row is observed while the old projections are still the
+    // only ones available. It must not inherit the previous table's `checked`.
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const originalInspect = h.runtime.dependenciesInspect
+    h.runtime.dependenciesInspect = async () => {
+      await gate
+      return [dependency(), dependency({ dependencyId: 'later.cli', name: 'Later CLI' })]
+    }
+    h.clues.api.sources = async () => ({
+      ...CATALOGUE,
+      sources: [
+        ...CATALOGUE.sources,
+        source('later.source', 'Later source', { transport: 'cli', dependencyIds: ['later.cli'] }),
+      ],
+    })
+    act(() => {
+      h.clues.registerSourceDisplay({ sourceId: 'later.source', name: 'Later source' })
+    })
+    await flush()
+    const pending = rendered.container.querySelector('[data-clue-source="later.source"]')
+    expect(pending).not.toBeNull()
+    expect(pending!.getAttribute('data-clue-source-status')).toBe('unchecked')
+    expect(pending!.textContent).toContain('Not checked')
+    release()
+    await flush()
+    expect(rendered.container.querySelector('[data-clue-source="later.source"]')!
+      .getAttribute('data-clue-source-status')).toBe('ready')
+    // The older source was already covered by the same completed read.
+    expect(rendered.container.querySelector('[data-clue-source="acme.docs"]')!
+      .getAttribute('data-clue-source-status')).toBe('ready')
+    h.runtime.dependenciesInspect = originalInspect
+    rendered.unmount()
+  })
+
   it('keeps configured-but-unloaded sources visible without resurrecting them as ready', async () => {
     const h = harness()
     const prefs = {
@@ -666,6 +797,46 @@ describe('SideCardSection conflict handling', () => {
     expect(checkboxState(rendered.container, 'Inject the sidebar-open tool for the model')).toBe(true)
     // The store keeps the last SAVED document, not the optimistic edit.
     expect(h.store.getPrefs().agentOpenTools).toBe(false)
+    rendered.unmount()
+  })
+
+  it('merges a same-map conflict instead of overwriting the other entry edit', async () => {
+    const h = harness()
+    h.settings.value = { tabsEnabled: { explorer: true, subagent: true } }
+    h.settings.conflicts = 1
+    h.settings.externalChange = { tabsEnabled: { explorer: false } }
+    const rendered = await mount(h)
+    openGroup(rendered.container, 'Tabs')
+    click(rendered.container, 'Subagents')
+    await flush()
+    expect(h.settings.updates).toHaveLength(2)
+    expect(h.settings.updates[0]!.patch).toEqual({ tabsEnabled: { subagent: false } })
+    expect(h.settings.updates[1]!.patch).toEqual({ tabsEnabled: { subagent: false } })
+    // Both sides survive the retry: the external key and this user's edit.
+    expect(h.settings.value.tabsEnabled).toEqual({ explorer: false, subagent: false })
+    expect(h.store.getPrefs().tabsEnabled).toEqual({ explorer: false, subagent: false })
+    expect(rendered.container.textContent).not.toContain('The setting changed in another window')
+    rendered.unmount()
+  })
+
+  it('queues two kept same-map 409 edits into the next sparse write without dropping either', async () => {
+    const h = harness()
+    h.settings.value = { tabsEnabled: { explorer: true, subagent: true } }
+    h.settings.conflicts = 2
+    const rendered = await mount(h)
+    openGroup(rendered.container, 'Tabs')
+    // Both attempts of the first edit conflict, so it stays kept on screen.
+    click(rendered.container, 'Subagents')
+    await flush()
+    expect(rendered.container.textContent).toContain('The setting changed in another window')
+    click(rendered.container, 'Explorer')
+    await flush()
+    // The next write carries BOTH sparse keys (deep-merged queue).
+    expect(h.settings.updates.at(-1)?.patch).toEqual({
+      tabsEnabled: { subagent: false, explorer: false },
+    })
+    expect(h.settings.value.tabsEnabled).toEqual({ explorer: false, subagent: false })
+    expect(h.store.getPrefs().tabsEnabled).toEqual({ explorer: false, subagent: false })
     rendered.unmount()
   })
 
