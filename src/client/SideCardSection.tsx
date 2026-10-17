@@ -68,6 +68,7 @@ import { ClueSourcesPanel, hasSourceConfiguration, sourceDisplayName } from './c
 import { SourceCatalogBody } from './clues/settings/source-catalog-modal.tsx'
 import { deriveClueSourceStatus, type ClueSourceStatus } from './clues/settings/status.ts'
 import { subscribeClueRuntime } from './clues/settings/runtime-state.ts'
+import { subscribeInstallPolling } from './clues/settings/install-polling.ts'
 import {
   CLUE_SETTINGS_GROUPS,
   consumeClueSettingsTarget,
@@ -911,6 +912,10 @@ export function SideCardSection(props: SideCardSectionProps) {
   const sectionMountedRef = useRef(true)
   // Terminal task ids already used to trigger one post-install re-read.
   const terminalTaskIdsRef = useRef<Set<string>>(new Set())
+  // The latest installing overlay, readable from the shared-poller listener
+  // without re-subscribing on every state identity change.
+  const installingDependenciesRef = useRef<ReadonlySet<string>>(installingDependencies)
+  useEffect(() => { installingDependenciesRef.current = installingDependencies }, [installingDependencies])
   const catalogueRef = useRef<CluesSourcesCatalogResult | null>(null)
   useEffect(() => { catalogueRef.current = catalogue }, [catalogue])
   const displaysRef = useRef(displays)
@@ -1097,6 +1102,45 @@ export function SideCardSection(props: SideCardSectionProps) {
     }
     void loadSources()
   }), [runtime, loadSources])
+
+  // The table can outlive the configuration window that started an install.
+  // Closing that window stops ITS subscription, but no terminal bus
+  // observation would follow and the row would stay "Installing" forever.
+  // While any row shows the installing overlay, the table itself keeps the ONE
+  // shared poller observing; the terminal task then clears the overlay and the
+  // re-read shows the real DTO state (ready / missing / request-failed).
+  const hasInstallingOverlay = installingDependencies.size > 0
+  useEffect(() => {
+    if (!hasInstallingOverlay) return
+    return subscribeInstallPolling(runtime, observation => {
+      // Transient failures are the poller's own retry loop; only its final
+      // gave-up notification means no observation will ever arrive again.
+      if (observation.error !== undefined) return
+      if (observation.gaveUp === true) {
+        // Do not claim live progress we can no longer observe: drop the
+        // overlay and re-read the DTO (a still-installing DTO is then the
+        // honest last-known answer, not a frozen task badge).
+        setInstallingDependencies(current => (current.size === 0 ? current : new Set()))
+        void loadSources()
+        return
+      }
+      // The bus carries tasks, not their absence: a task the runtime stopped
+      // reporting would otherwise leave this overlay polling forever.
+      const reported = new Set(observation.tasks.map(task => task.dependencyId))
+      if (![...installingDependenciesRef.current].some(id => !reported.has(id))) return
+      setInstallingDependencies(current => {
+        if (current.size === 0) return current
+        let changed = false
+        const next = new Set<string>()
+        for (const dependencyId of current) {
+          if (reported.has(dependencyId)) next.add(dependencyId)
+          else changed = true
+        }
+        return changed ? next : current
+      })
+      void loadSources()
+    })
+  }, [runtime, hasInstallingOverlay, loadSources])
 
   /** Explicit reload of the source list (the panel's Retry action). */
   const reloadSources = (): void => {

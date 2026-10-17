@@ -22,8 +22,8 @@
  *   tab-plugin catalog as source recommendations or claiming an install.
  */
 // @vitest-environment jsdom
-import { beforeAll, describe, expect, it } from 'vitest'
-import { createElement } from 'react'
+import { beforeAll, describe, expect, it, vi } from 'vitest'
+import { createElement, type ReactNode } from 'react'
 import { act } from 'react-dom/test-utils'
 import { renderRoot, setupReactAct, type RenderedRoot } from './test-utils.ts'
 
@@ -708,6 +708,57 @@ describe('SideCardSection clue sources', () => {
       expect(row().getAttribute('data-clue-source-status')).toBe(state)
       expect(row().textContent).not.toContain('Installing')
       rendered.unmount()
+    },
+  )
+
+  it.each(['ready', 'missing'] as const)(
+    'keeps observing a running install after the config window closed (settles on %s)',
+    async state => {
+      vi.useFakeTimers()
+      try {
+        const h = harness()
+        // The table's read AND the close-time re-read still see the dependency
+        // as installing; only the runtime task settles later.
+        h.runtime.dependenciesInspect = async () => [dependency({ state: 'installing' })]
+        h.runtime.dependenciesStatus = async () => [installTask()]
+        const rendered = await mountSources(h)
+        const row = (): Element => rendered.container.querySelector('[data-clue-source="acme.docs"]')!
+        expect(row().getAttribute('data-clue-source-status')).toBe('installing')
+
+        // Open the REAL configuration window content, so its own shared-poller
+        // subscription exists exactly like production.
+        click(rendered.container, 'Configure source: Acme Docs')
+        const windowHost = (h.service as unknown as BetterSidebarServiceHost).windowHost
+        const content = windowHost.getSnapshot().windows[0]!.content as ReactNode
+        const page = renderRoot(content)
+        await flush()
+        expect(row().getAttribute('data-clue-source-status')).toBe('installing')
+
+        // The user closes the window while the task is still running: the
+        // content unmounts (its subscription goes away) and the close callback
+        // re-reads a DTO that still says installing.
+        page.unmount()
+        act(() => { windowHost.finishClose('clue-source:acme.docs') })
+        await flush()
+        expect(row().getAttribute('data-clue-source-status')).toBe('installing')
+
+        // The install settles AFTER the last configuration window is gone. No
+        // terminal observation exists unless the source TABLE keeps the shared
+        // poller alive; otherwise the row says Installing forever.
+        h.runtime.dependenciesStatus = async () => [installTask({
+          state: 'succeeded',
+          progress: { stage: 'completed' },
+          finishedAt: '2026-10-17T00:01:00.000Z',
+        })]
+        h.runtime.dependenciesInspect = async () => [dependency({ state })]
+        await act(async () => { await vi.advanceTimersByTimeAsync(1500) })
+        await flush()
+        expect(row().getAttribute('data-clue-source-status')).toBe(state)
+        expect(row().textContent).not.toContain('Installing')
+        rendered.unmount()
+      } finally {
+        vi.useRealTimers()
+      }
     },
   )
 
