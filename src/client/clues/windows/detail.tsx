@@ -21,17 +21,19 @@
  * candidate uses a deterministic hash of source/type/locator, so clicking the
  * same row twice focuses the same window instead of stacking previews.
  */
-import { createElement } from 'react'
+import { createElement, useCallback, useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { WindowDocumentContent, WindowHandle } from '../../windows/types.ts'
 import type { BetterSidebarWindowsClientFace } from '../../windows/types.ts'
 import type {
+  ClueBinding,
   ClueEditDocument,
   ClueReadResult,
   ClueTypeDescriptor,
   JsonValue,
   Locator,
 } from '../../../clues/types.ts'
+import type { ClueWorkspaceChoice } from '../workspace-id.ts'
 import type { BetterSidebarCluesClientFace } from '../registry.ts'
 import { categoryOf, clueErrorMessage, clueErrorHint } from '../copy.ts'
 import { t } from '../../locales.ts'
@@ -54,6 +56,8 @@ export interface ClueDetailWindowOptions {
   readonly workspaceId: string
   readonly target: ClueDetailTarget
   readonly sessionId?: string
+  /** Explicit workspaces the binding panel can offer (never guessed). */
+  readonly workspaces?: readonly ClueWorkspaceChoice[]
   /** Insert one stable clue id into the draft (the footer's insert action). */
   onInsertClue?(clueId: string, title: string): boolean
 }
@@ -154,6 +158,121 @@ function descriptorOf(
     onChange: handlers.onChange,
     ...(handlers.onSave === undefined ? {} : { onSave: handlers.onSave }),
   }
+}
+
+/** Props of the single-clue workspace binding panel. */
+interface ClueBindingPanelProps {
+  readonly face: BetterSidebarCluesClientFace
+  readonly clueId: string
+  readonly workspaces: readonly ClueWorkspaceChoice[]
+  readonly initialWorkspaceId: string
+}
+
+/**
+ * The binding panel of ONE persisted clue.
+ *
+ * It reuses the pack panel's copy and mutation contract with the clue target
+ * (`{kind:'clue', clueId}`): a binding only auto-provides a reference to NEW
+ * sessions and never grants access, and unbinding deletes neither the clue
+ * nor the references old sessions already carry. A not-yet-ensured candidate
+ * has no stable binding identity, so the caller renders no panel for it.
+ */
+function ClueBindingPanel(props: ClueBindingPanelProps): ReactNode {
+  const { face, clueId, workspaces, initialWorkspaceId } = props
+  const [workspaceId, setWorkspaceId] = useState(initialWorkspaceId)
+  const [bindings, setBindings] = useState<readonly ClueBinding[]>([])
+  const [busy, setBusy] = useState(false)
+  const [failure, setFailure] = useState<string | null>(null)
+  const revisionRef = useRef<number | undefined>(undefined)
+
+  const apply = useCallback((result: {
+    readonly bindings: readonly ClueBinding[]
+    readonly revision: number
+  }): void => {
+    revisionRef.current = result.revision
+    setBindings(result.bindings.filter(binding =>
+      binding.target.kind === 'clue' && binding.target.clueId === clueId))
+  }, [clueId])
+
+  useEffect(() => {
+    let active = true
+    setFailure(null)
+    void face.api.bindingsList(workspaceId).then((result) => {
+      if (!active) return
+      apply(result)
+    }).catch((error: unknown) => {
+      if (!active) return
+      setFailure(clueErrorMessage(error, t('cluePackSaveFailed')))
+    })
+    return () => { active = false }
+  }, [apply, face, workspaceId])
+
+  const mutate = async (change: 'add' | 'remove'): Promise<void> => {
+    setBusy(true)
+    setFailure(null)
+    try {
+      const input = {
+        target: { kind: 'clue' as const, clueId },
+        ...(revisionRef.current === undefined ? {} : { expectedRevision: revisionRef.current }),
+      }
+      const result = change === 'add'
+        ? await face.api.bindingsAdd(workspaceId, input)
+        : await face.api.bindingsRemove(workspaceId, input)
+      apply(result)
+    } catch (error) {
+      setFailure(clueErrorMessage(error, t('cluePackSaveFailed')))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const bound = bindings.length > 0
+  return createElement(
+    'section',
+    { className: css.binding, 'data-clue-binding-panel': 'clue' },
+    createElement('h3', { className: css.bindingHeading }, t('cluePackBindingHeading')),
+    createElement('p', { className: css.bindingHint }, t('cluePackBindingHint')),
+    createElement('p', { className: css.bindingHint }, t('cluePackBindingUnbindHint')),
+    bound
+      ? createElement(
+          'div',
+          { className: css.bindingRow },
+          createElement('span', { className: css.bindingState }, t('cluePackBound')),
+          createElement('button', {
+            type: 'button',
+            className: css.action,
+            disabled: busy,
+            onClick: () => { void mutate('remove') },
+          }, t('cluePackUnbind')),
+        )
+      : createElement(
+          'div',
+          { className: css.bindingRow },
+          createElement(
+            'select',
+            {
+              className: css.select,
+              'aria-label': t('cluePackBindingChoose'),
+              value: workspaceId,
+              onChange: (event: { target: { value: string } }) => { setWorkspaceId(event.target.value) },
+            },
+            workspaces.map(workspace => createElement(
+              'option',
+              { key: workspace.workspaceId, value: workspace.workspaceId },
+              workspace.title,
+            )),
+          ),
+          createElement('button', {
+            type: 'button',
+            className: css.action,
+            disabled: busy || workspaces.length === 0,
+            onClick: () => { void mutate('add') },
+          }, t('cluePackBind')),
+        ),
+    failure === null
+      ? null
+      : createElement('div', { className: css.bindingFailure, role: 'alert' }, failure),
+  )
 }
 
 /** Mutable draft flag shared with the window's close guard. */
@@ -290,74 +409,92 @@ async function loadInto(
     }
   }
 
+  const detailWorkspaces: readonly ClueWorkspaceChoice[] =
+    options.workspaces !== undefined && options.workspaces.length > 0
+      ? options.workspaces
+      : [{ workspaceId, title: workspaceId }]
+
   const footerOf = (current: DetailState): ReactNode =>
     createElement(
       'div',
       { className: css.footer },
-      options.onInsertClue === undefined
+      target.clueId === undefined
         ? null
-        : createElement(
-            'button',
-            {
-              type: 'button',
-              className: css.action,
-              onClick: () => {
-                void (async () => {
-                  try {
-                    const clueId = target.clueId ?? (await face.api.ensure(workspaceId, {
-                      sourceId: target.sourceId,
-                      typeId: target.typeId,
-                      locator: target.locator ?? {},
-                      title: target.title,
-                    })).clue.id
-                    if (options.onInsertClue?.(clueId, target.title) !== true) {
-                      state = { ...state, error: t('clueInsertFailed') }
+        : createElement(ClueBindingPanel, {
+            key: `clue-binding:${target.clueId}`,
+            face,
+            clueId: target.clueId,
+            workspaces: detailWorkspaces,
+            initialWorkspaceId: workspaceId,
+          }),
+      createElement(
+        'div',
+        { className: css.footerActions },
+        options.onInsertClue === undefined
+          ? null
+          : createElement(
+              'button',
+              {
+                type: 'button',
+                className: css.action,
+                onClick: () => {
+                  void (async () => {
+                    try {
+                      const clueId = target.clueId ?? (await face.api.ensure(workspaceId, {
+                        sourceId: target.sourceId,
+                        typeId: target.typeId,
+                        locator: target.locator ?? {},
+                        title: target.title,
+                      })).clue.id
+                      if (options.onInsertClue?.(clueId, target.title) !== true) {
+                        state = { ...state, error: t('clueInsertFailed') }
+                        render()
+                      }
+                    } catch (failure) {
+                      state = { ...state, error: clueErrorMessage(failure, t('clueInsertFailed')) }
                       render()
                     }
-                  } catch (failure) {
-                    state = { ...state, error: clueErrorMessage(failure, t('clueInsertFailed')) }
-                    render()
-                  }
-                })()
+                  })()
+                },
               },
-            },
-            t('clueBrowserInsert'),
-          ),
-      current.readOnly
-        ? null
-        : createElement(
-            'button',
-            {
-              type: 'button',
-              className: css.action,
-              disabled: current.saving,
-              onClick: () => { void save() },
-            },
-            current.saving ? t('loading') : t('save'),
-          ),
-      current.conflict
-        ? createElement(
-            'button',
-            { type: 'button', className: css.action, onClick: reload },
-            t('clueDetailReload'),
-          )
-        : null,
-      current.readOnly || !guard.dirty
-        ? null
-        : createElement(
-            'button',
-            {
-              type: 'button',
-              className: css.action,
-              onClick: () => {
-                // Explicit discard: the ONLY path that drops the draft.
-                guard.dirty = false
-                handle.update({ dirty: false })
-                void handle.close()
+              t('clueBrowserInsert'),
+            ),
+        current.readOnly
+          ? null
+          : createElement(
+              'button',
+              {
+                type: 'button',
+                className: css.action,
+                disabled: current.saving,
+                onClick: () => { void save() },
               },
-            },
-            t('clueDetailDiscard'),
-          ),
+              current.saving ? t('loading') : t('save'),
+            ),
+        current.conflict
+          ? createElement(
+              'button',
+              { type: 'button', className: css.action, onClick: reload },
+              t('clueDetailReload'),
+            )
+          : null,
+        current.readOnly || !guard.dirty
+          ? null
+          : createElement(
+              'button',
+              {
+                type: 'button',
+                className: css.action,
+                onClick: () => {
+                  // Explicit discard: the ONLY path that drops the draft.
+                  guard.dirty = false
+                  handle.update({ dirty: false })
+                  void handle.close()
+                },
+              },
+              t('clueDetailDiscard'),
+            ),
+      ),
     )
 
   function render(): void {

@@ -170,6 +170,7 @@ export function CluesTab({ ctx, store, scope, visible }: CluesTabProps): ReactNo
       workspaceId: browseWorkspaceId,
       target,
       sessionId: scope.sessionId,
+      workspaces: listClueWorkspaces(ctx),
       onInsertClue: insertClue,
     })
   }, [service, face, browseWorkspaceId, scope.sessionId, insertClue])

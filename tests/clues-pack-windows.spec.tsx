@@ -19,7 +19,7 @@
 // @vitest-environment jsdom
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act } from 'react-dom/test-utils'
-import { createElement } from 'react'
+import { createElement, Fragment } from 'react'
 import { renderRoot, setupReactAct } from './test-utils.ts'
 
 setupReactAct()
@@ -33,7 +33,7 @@ import { SharePage } from '../src/client/clues/windows/share.tsx'
 import type { PackDraftGuard } from '../src/client/clues/windows/pack.tsx'
 import type { BetterSidebarCluesClientFace } from '../src/client/clues/registry.ts'
 import type { WindowOpenOptions, WindowHandle } from '../src/client/windows/types.ts'
-import type { CluePack } from '../src/clues/types.ts'
+import type { ClueBinding, ClueBindingTarget, CluePack } from '../src/clues/types.ts'
 import { SidebarApiError } from '../src/client/api.ts'
 
 // ── fixtures ────────────────────────────────────────────────────────────────
@@ -54,6 +54,8 @@ interface FaceCalls {
   addMember: number
   bindingAdd: string[]
   bindingRemove: string[]
+  bindingAddTargets: { workspaceId: string; target: ClueBindingTarget }[]
+  bindingRemoveTargets: { workspaceId: string; target: ClueBindingTarget }[]
   loadEdit: number
   saveEdit: number
 }
@@ -63,12 +65,15 @@ function faceOf(overrides: {
   renameError?: () => unknown
   editable?: boolean
 } = {}): { face: BetterSidebarCluesClientFace; calls: FaceCalls } {
+  const bound: ClueBinding[] = []
   const calls: FaceCalls = {
     rename: 0,
     removeMember: 0,
     addMember: 0,
     bindingAdd: [],
     bindingRemove: [],
+    bindingAddTargets: [],
+    bindingRemoveTargets: [],
     loadEdit: 0,
     saveEdit: 0,
   }
@@ -115,14 +120,31 @@ function faceOf(overrides: {
       ],
       revision: 2,
     }),
-    bindingsList: async () => ({ bindings: [], revision: 1 }),
-    bindingsAdd: async (workspaceId: string) => {
+    bindingsList: async (workspaceId: string) => ({
+      bindings: bound.filter(binding => binding.workspaceId === workspaceId),
+      revision: bound.length + 1,
+    }),
+    bindingsAdd: async (workspaceId: string, input: { target: ClueBindingTarget }) => {
       calls.bindingAdd.push(workspaceId)
-      return { bindings: [{ workspaceId, target: { kind: 'pack' as const, packId: 'p1' }, createdAt: '' }], revision: 2 }
+      calls.bindingAddTargets.push({ workspaceId, target: input.target })
+      bound.push({ workspaceId, target: input.target, createdAt: '' })
+      return {
+        bindings: bound.filter(binding => binding.workspaceId === workspaceId),
+        revision: bound.length + 1,
+      }
     },
-    bindingsRemove: async (workspaceId: string) => {
+    bindingsRemove: async (workspaceId: string, input: { target: ClueBindingTarget }) => {
       calls.bindingRemove.push(workspaceId)
-      return { bindings: [], revision: 3 }
+      calls.bindingRemoveTargets.push({ workspaceId, target: input.target })
+      const index = bound.findIndex(binding =>
+        binding.workspaceId === workspaceId
+        && binding.target.kind === input.target.kind
+        && JSON.stringify(binding.target) === JSON.stringify(input.target))
+      if (index !== -1) bound.splice(index, 1)
+      return {
+        bindings: bound.filter(binding => binding.workspaceId === workspaceId),
+        revision: bound.length + 1,
+      }
     },
     list: async () => ({ items: [{ sourceId: 'builtin.files', typeId: 'builtin.files.markdown', locator: { path: 'c.md' }, title: 'C note' }] }),
     search: async () => ({ items: [{ sourceId: 'builtin.files', typeId: 'builtin.files.markdown', locator: { path: 'd.md' }, title: 'D note' }] }),
@@ -585,6 +607,49 @@ describe('clue detail window', () => {
     expect(calls.loadEdit).toBe(1)
     const reopened = latest?.content as unknown as { document: { data: { text: string } } }
     expect(reopened.document.data.text).toBe('# Unsaved draft')
+  })
+
+  it('binds a single clue to a workspace and unbinds without deleting it', async () => {
+    const { face, calls } = faceOf()
+    const windows = recordingWindows()
+    openClueDetailWindow({
+      windows: windows.windows,
+      face,
+      workspaceId: 'ws-1',
+      target: { sourceId: 'builtin.files', typeId: 'builtin.files.markdown', clueId: 'c-bind', title: 'A note' },
+      workspaces: [
+        { workspaceId: 'ws-1', title: '/repo' },
+        { workspaceId: 'ws-2', title: '/other' },
+      ],
+    })
+    await flush()
+    const view = renderRoot(createElement(Fragment, null, windows.last()?.footer))
+    await flush()
+
+    expect(view.container.textContent).toContain('Workspace binding')
+    expect(view.container.textContent).toContain('New sessions in this workspace receive these references automatically')
+    expect(view.container.textContent).toContain('Unbinding deletes neither the clues')
+    const select = view.container.querySelector<HTMLSelectElement>('select[aria-label="Choose a workspace"]')!
+    act(() => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!
+      setter.call(select, 'ws-2')
+      select.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+    await flush()
+    click(view.container, 'Bind')
+    await flush()
+    expect(calls.bindingAddTargets).toEqual([
+      { workspaceId: 'ws-2', target: { kind: 'clue', clueId: 'c-bind' } },
+    ])
+    expect(view.container.textContent).toContain('Bound')
+
+    click(view.container, 'Unbind')
+    await flush()
+    expect(calls.bindingRemoveTargets).toEqual([
+      { workspaceId: 'ws-2', target: { kind: 'clue', clueId: 'c-bind' } },
+    ])
+    expect(view.container.querySelector('select[aria-label="Choose a workspace"]')).not.toBeNull()
+    view.unmount()
   })
 
   it('never offers a save for a read-only type', async () => {
