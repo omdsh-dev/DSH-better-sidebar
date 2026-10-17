@@ -143,7 +143,7 @@ function testSource(options: TestSourceOptions = {}): ClueSourceRegistration {
       typeId,
       sourceId,
       formats: ['text/plain'],
-      capabilities: { read: true, edit: true, ...options.typeCapabilities },
+      capabilities: { read: true, edit: true, concurrency: 'check-before-save', ...options.typeCapabilities },
     }],
     operations: options.operations ?? defaultOperations,
   }
@@ -512,7 +512,7 @@ describe('clue service dispatch', () => {
         typeId: 'test.struct.doc',
         sourceId: 'test.struct',
         formats: ['application/vnd.test.structure+json'],
-        capabilities: { read: true, edit: true },
+        capabilities: { read: true, edit: true, concurrency: 'check-before-save' },
       }],
       operations: {
         async read() {
@@ -578,7 +578,7 @@ describe('clue service dispatch', () => {
     const base = testSource()
     service.registerSource({
       ...base,
-      types: base.types.map(type => ({ ...type, capabilities: { read: false, edit: false } })),
+      types: base.types.map(type => ({ ...type, capabilities: { read: false, edit: false, concurrency: 'none' } })),
       operations: {
         ...base.operations,
         read: async () => { readCalls += 1; return { format: 'text/plain', data: {}, fetchedAt: NOW } },

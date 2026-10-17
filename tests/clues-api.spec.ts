@@ -218,7 +218,7 @@ describe('clue API handlers', () => {
         typeId: 'test.caller.text',
         sourceId: 'test.caller',
         formats: ['text/plain'],
-        capabilities: { read: true, edit: false },
+        capabilities: { read: true, edit: false, concurrency: 'none' },
       }],
       operations: {
         async read(_input, context) {
@@ -254,7 +254,7 @@ describe('clue API handlers', () => {
         typeId: 'test.fail.text',
         sourceId: 'test.fail',
         formats: ['text/plain'],
-        capabilities: { read: true, edit: false },
+        capabilities: { read: true, edit: false, concurrency: 'none' },
       }],
       operations: {
         async read() {

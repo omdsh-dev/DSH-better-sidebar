@@ -672,7 +672,7 @@ describe('builtin.files resolve / portable / dialects', () => {
         typeId: 'test.remote.page',
         sourceId: 'test.remote',
         formats: ['text/plain'],
-        capabilities: { read: false, edit: false },
+        capabilities: { read: false, edit: false, concurrency: 'none' },
       }],
       operations: {
         async resolve(input) {

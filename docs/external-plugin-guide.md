@@ -1016,7 +1016,7 @@ ctx.effect(() => {
     },
     types: [{
       typeId: 'my-plugin:docs.page', sourceId: 'my-plugin:docs', formats: ['text/plain'],
-      capabilities: { read: true, edit: false },
+      capabilities: { read: true, edit: false, concurrency: 'none' },
     }],
     operations: {
       async resolve(input, context) { /* 返回 ClueCandidate；context.workspaceId 是归属工作区 */ },
@@ -1033,6 +1033,9 @@ ctx.effect(() => {
   运行能力，不清除已保存的线索、置顶、包成员与绑定；同标识重新注册即可恢复解析。
 - **分发**：`resolve` / `list` / `search` / `read` / `loadEdit` / `saveEdit` / `portable`。可选操作
   必须在 descriptor / type 的能力位上如实声明，核心在调用前校验（未声明 = `unsupported`）；
+  类型的 `capabilities.concurrency` 是必填项：`native-cas`（来源原生原子条件更新）、
+  `check-before-save`（保存前重读基线，不是原子 CAS）或 `none`（只读/无并发保证），S6 据此展示
+  并发语义，不得把「保存前重读」宣传成原子 CAS。
   每个操作都拿到归属工作区的 `ClueOperationContext`（`workspaceId`、`workspacePath`、`caller`、
   `signal`、`sessionId`），它不是访问白名单。`resolve` 未传 `sourceId` 时按来源顺序自动询问：
   某个来源不认这类输入（`not-found` / `unsupported` / 依赖缺失）不会阻断后面的来源，只有

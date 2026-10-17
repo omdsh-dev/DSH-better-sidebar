@@ -192,19 +192,19 @@ export function localFileTypeDescriptors(): ClueTypeDescriptor[] {
       typeId: LOCAL_FILE_TYPE_IDS.markdown,
       sourceId: LOCAL_FILE_SOURCE_ID,
       formats: ['text/markdown'],
-      capabilities: { read: true, edit: true },
+      capabilities: { read: true, edit: true, concurrency: 'check-before-save' },
     },
     {
       typeId: LOCAL_FILE_TYPE_IDS.text,
       sourceId: LOCAL_FILE_SOURCE_ID,
       formats: ['text/plain'],
-      capabilities: { read: true, edit: true },
+      capabilities: { read: true, edit: true, concurrency: 'check-before-save' },
     },
     {
       typeId: LOCAL_FILE_TYPE_IDS.binary,
       sourceId: LOCAL_FILE_SOURCE_ID,
       formats: ['application/octet-stream'],
-      capabilities: { read: true, edit: false },
+      capabilities: { read: true, edit: false, concurrency: 'none' },
     },
   ]
 }

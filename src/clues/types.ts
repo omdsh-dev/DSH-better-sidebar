@@ -136,11 +136,26 @@ export interface ClueSourceDescriptor {
   readonly connectionId?: string
 }
 
+/**
+ * How a source's save protects against concurrent external edits.
+ *
+ * - `native-cas`: the source performs an atomic conditional update on its
+ *   `baseRevision` (an optimistic check alone is not this);
+ * - `check-before-save`: the source re-reads the baseline before writing but
+ *   cannot make the check and the write atomic;
+ * - `none`: no concurrency guarantee (read-only types use this).
+ *
+ * S6 must not advertise `check-before-save` as an atomic CAS.
+ */
+export type ClueSaveConcurrency = 'native-cas' | 'check-before-save' | 'none'
+
 /** What a type's content can do. */
 export interface ClueTypeCapabilities {
   readonly read: boolean
   /** Editable through loadEdit/saveEdit. A read-only preview type is false. */
   readonly edit: boolean
+  /** The save concurrency guarantee the source actually provides. */
+  readonly concurrency: ClueSaveConcurrency
 }
 
 /**
