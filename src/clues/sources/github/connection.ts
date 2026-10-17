@@ -3,6 +3,11 @@
  *
  * gh owns the credentials (keyring/config), so this adapter never stores or
  * returns a token: it only projects the account and what the token can do.
+ * This is the ACCOUNT-level row (login + token scopes); per-repository write
+ * permission is not part of S2's `inspect` contract (it has no repository
+ * input) and is carried by each read instead (`viewerPermission` in the
+ * resource data, enforced by loadEdit/saveEdit). S9 can therefore show a
+ * per-resource permission from the document/read data.
  *
  * Lifecycle rules:
  * - `inspect` runs `gh auth status --hostname github.com --json hosts` and is
@@ -12,12 +17,18 @@
  *   sign-in, then starts `gh auth login --web` in the background (with
  *   `--clipboard`) and returns a prompt with the official device URL. The
  *   login child is polled by the UI through `poll`, and `cancel` aborts it;
+ * - KNOWN RUNNER BOUNDARY: S2's CLI runner is request/response, so gh's
+ *   one-time code (written to stderr while the login child is still waiting)
+ *   cannot be read before the child exits. The prompt therefore relies on
+ *   gh's `--clipboard` copy and states the terminal fallback when the
+ *   clipboard is unavailable. {@link projectLoginPrompt} is the tested
+ *   whitelist projector a future streaming runner can wire without changing
+ *   the prompt shape;
  * - the human prompt is a fixed whitelist (URL, code, expiry, poll hint,
- *   instructions). Machine handles, the process, stdout and any token stay
- *   host-side; {@link projectLoginPrompt} is the only code that reads gh's
- *   login output, and it keeps exactly the human fields;
+ *   instructions). Machine handles, the process, stdout/stderr and any token
+ *   stay host-side;
  * - there is no periodic auth probe and no automatic login on a resource
- *   failure.
+ *   failure (a real resource 401 is reported by the gh adapter instead).
  */
 import { tmpdir } from 'node:os'
 import { ClueError, isClueError } from '../../types.ts'
@@ -60,8 +71,9 @@ const CONNECTION_NAME = 'GitHub account'
 
 /** Fixed, user-renderable instruction (host-side copy, not a secret). */
 const LOGIN_INSTRUCTIONS =
-  'Open the URL and enter the one-time code the GitHub CLI copied to your clipboard. '
-  + 'The connection completes after the browser sign-in finishes.'
+  'Open the GitHub device URL and enter the one-time code the GitHub CLI copied to your clipboard. '
+  + 'If the code was not copied (for example on a headless system), cancel and run '
+  + '"gh auth login" in a terminal, then retry. The connection completes after the browser sign-in finishes.'
 
 /** Options of {@link createGithubAuthAdapter}. */
 export interface GithubAuthOptions {
@@ -92,10 +104,8 @@ interface LoginAttempt {
   readonly id: string
   readonly controller: AbortController
   readonly prompt: ConnectionAuthorizationPrompt
-  task: Promise<void>
   settled: boolean
   succeeded: boolean
-  output: string
   error?: ClueError
 }
 
@@ -172,14 +182,16 @@ export function parseGithubAuthStatus(payload: unknown): ConnectionInspection {
 /**
  * Whitelist-project the human fields of gh's login output.
  *
- * gh prints the one-time code and the device URL while the flow runs; this
- * function keeps those two fields (and the fixed instruction/expiry) and
- * drops everything else. The blocked S2 runner is request/response, so the
- * connect prompt uses the official URL and gh's own `--clipboard` copy of the
- * code; this projector is the single place that turns captured output into a
- * prompt when a streaming runner makes it available.
+ * gh prints the one-time code and the device URL while the flow runs (its
+ * fallback wording is `First copy your one-time code: CODE`; the clipboard
+ * variant is `One-time code (CODE)`). This function keeps those two fields
+ * (and the fixed instruction/expiry) and drops everything else. The blocked
+ * S2 runner is request/response, so the connect prompt uses the official URL
+ * and gh's own `--clipboard` copy of the code; this projector is the single
+ * place that turns captured output into a prompt when a streaming runner
+ * makes it available.
  *
- * @param output - captured stdout of `gh auth login --web`.
+ * @param output - captured stdout/stderr of `gh auth login --web`.
  * @param options - clock/ttl seams (tests).
  */
 export function projectLoginPrompt(
@@ -187,7 +199,7 @@ export function projectLoginPrompt(
   options: { readonly now?: () => number; readonly ttlMs?: number } = {},
 ): ConnectionAuthorizationPrompt | undefined {
   if (typeof output !== 'string' || output === '') return undefined
-  const code = /one-time code\s*\(([A-Za-z0-9-]{4,})\)/i.exec(output)?.[1]
+  const code = /one-time code[^\n]*?[(:]\s*([A-Za-z0-9-]{4,})/i.exec(output)?.[1]
   const url = /(https:\/\/github\.com\/login\/device\S*)/i.exec(output)?.[1]
   if (code === undefined && url === undefined) return undefined
   const now = options.now ?? (() => Date.now())
@@ -257,13 +269,13 @@ export function createGithubAuthAdapter(options: GithubAuthOptions): GithubAuthA
       id: newId(),
       controller,
       prompt,
-      task: Promise.resolve(),
       settled: false,
       succeeded: false,
-      output: '',
     }
     attempts.set(attempt.id, attempt)
-    attempt.task = (async () => {
+    // The login child is intentionally fire-and-forget: `poll` reads the
+    // settled flags, and `cancel`/`dispose` abort it through the controller.
+    void (async () => {
       try {
         const result = await runGithubCli(options.runtime(), loginArgs(), {
           cwd,
@@ -271,7 +283,6 @@ export function createGithubAuthAdapter(options: GithubAuthOptions): GithubAuthA
           maxOutputBytes: GITHUB_LOGIN_MAX_OUTPUT_BYTES,
           signal: controller.signal,
         })
-        attempt.output = result.stdout
         if (result.stdoutTruncated) {
           attempt.error = new ClueError('failed', 'the GitHub CLI output exceeded the capture limit and was not parsed')
         } else if (result.exitCode !== 0) {
@@ -376,11 +387,15 @@ export function createGithubAuthAdapter(options: GithubAuthOptions): GithubAuthA
         }
       }
       if (!attempt.settled) return { prompt: attempt.prompt }
-      attempts.delete(attempt.id)
       if (attempt.succeeded) {
+        // Keep the succeeded attempt until the confirming status read returns:
+        // a transient `auth status` failure must be retryable by the next poll
+        // instead of being presented as "no sign-in in progress".
         const inspection = await inspect(context.signal)
+        attempts.delete(attempt.id)
         return { inspection, complete: true }
       }
+      attempts.delete(attempt.id)
       return { inspection: failedInspection(attempt.error?.category), complete: true }
     },
     async cancel(input: ConnectionCancelInput, _context: ConnectionAdapterContext): Promise<void> {

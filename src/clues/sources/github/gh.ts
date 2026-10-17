@@ -16,12 +16,17 @@
  * The adapter never touches credentials itself: it runs through S2's
  * `ClueRuntime.runCli` (the shared `github.gh` dependency), and every failure
  * is classified by {@link mapGithubCliFailure} without echoing provider text.
+ * When a real list/read/write comes back `auth-required`, the shared
+ * connection observation is updated through `runtime.connections.report`
+ * (best-effort), so the settings row does not stay `ready` until a manual
+ * refresh.
  */
 import { tmpdir } from 'node:os'
 import { ClueError, isClueError } from '../../types.ts'
 import type { CliResult, ClueRuntime } from '../../runtime/types.ts'
 import { graphqlErrorsOf, mapGithubCliFailure } from './errors.ts'
 import {
+  GITHUB_CONNECTION_ID,
   GITHUB_DEPENDENCY_ID,
   GITHUB_HOST,
   GITHUB_LIST_MAX_OUTPUT_BYTES,
@@ -556,7 +561,7 @@ export function createGithubGhClient(options: GithubGhOptions): GithubGhClient {
     return { repository, node: rawNode }
   }
 
-  const readResource = async (
+  const readResourceOnce = async (
     resource: GithubResource,
     signal?: AbortSignal,
   ): Promise<GithubResourceSnapshot> => {
@@ -593,98 +598,132 @@ export function createGithubGhClient(options: GithubGhOptions): GithubGhClient {
     }
   }
 
+  /**
+   * Publish the shared "sign-in needed" observation of one real resource
+   * failure. This is best-effort: an unregistered/disposed connection must not
+   * replace the source's own error with a second one.
+   */
+  const reportAuthRequired = (error: unknown): void => {
+    if (!isClueError(error) || error.category !== 'auth-required') return
+    try {
+      runtime().connections.report(GITHUB_CONNECTION_ID, {
+        configuration: 'not-required',
+        authorization: 'expired',
+        detail: 'the stored GitHub sign-in is no longer valid',
+      })
+    } catch {
+      // Best-effort observation only.
+    }
+  }
+
+  /** Run one public resource operation and report an observed auth failure. */
+  const withAuthReport = async <T>(operation: () => Promise<T>): Promise<T> => {
+    try {
+      return await operation()
+    } catch (error) {
+      reportAuthRequired(error)
+      throw error
+    }
+  }
+
   return {
     async listPage(query: GithubPageQuery, signal?: AbortSignal): Promise<GithubListPage> {
-      const common = {
-        cwd,
-        timeoutMs: GITHUB_LIST_TIMEOUT_MS,
-        maxOutputBytes: GITHUB_LIST_MAX_OUTPUT_BYTES,
-        ...(signal === undefined ? {} : { signal }),
-      }
-      if (query.query !== undefined) {
-        const data = await runGithubGraphql<unknown>(runtime(), searchArgs({
+      return await withAuthReport(async () => {
+        const common = {
+          cwd,
+          timeoutMs: GITHUB_LIST_TIMEOUT_MS,
+          maxOutputBytes: GITHUB_LIST_MAX_OUTPUT_BYTES,
+          ...(signal === undefined ? {} : { signal }),
+        }
+        if (query.query !== undefined) {
+          const data = await runGithubGraphql<unknown>(runtime(), searchArgs({
+            kind: query.kind,
+            repo: query.repo,
+            state: query.state,
+            query: query.query,
+            limit: query.limit,
+            ...(query.after === undefined ? {} : { after: query.after }),
+          }), common)
+          if (!isRecord(data) || !isRecord(data.search)) {
+            throw new ClueError('failed', 'the GitHub CLI returned a malformed search response')
+          }
+          const page = pageOf(query.kind, data.search)
+          const capped = page.total !== undefined && page.total > GITHUB_SEARCH_RESULT_CAP
+          return { ...page, ...(capped ? { limited: true } : {}) }
+        }
+        const data = await runGithubGraphql<unknown>(runtime(), listArgs({
           kind: query.kind,
           repo: query.repo,
           state: query.state,
-          query: query.query,
           limit: query.limit,
           ...(query.after === undefined ? {} : { after: query.after }),
         }), common)
-        if (!isRecord(data) || !isRecord(data.search)) {
-          throw new ClueError('failed', 'the GitHub CLI returned a malformed search response')
-        }
-        const page = pageOf(query.kind, data.search)
-        const capped = page.total !== undefined && page.total > GITHUB_SEARCH_RESULT_CAP
-        return { ...page, ...(capped ? { limited: true } : {}) }
-      }
-      const data = await runGithubGraphql<unknown>(runtime(), listArgs({
-        kind: query.kind,
-        repo: query.repo,
-        state: query.state,
-        limit: query.limit,
-        ...(query.after === undefined ? {} : { after: query.after }),
-      }), common)
-      const repository = repositoryOf(data)
-      const connection = query.kind === 'issue' ? repository.issues : repository.pullRequests
-      return pageOf(query.kind, connection)
+        const repository = repositoryOf(data)
+        const connection = query.kind === 'issue' ? repository.issues : repository.pullRequests
+        return pageOf(query.kind, connection)
+      })
     },
 
-    readResource,
+    async readResource(resource: GithubResource, signal?: AbortSignal): Promise<GithubResourceSnapshot> {
+      return await withAuthReport(async () => await readResourceOnce(resource, signal))
+    },
 
     async saveEdits(input: GithubSaveInput, signal?: AbortSignal): Promise<GithubSaveOutcome> {
-      const baseRevision = input.baseRevision
-      if (typeof baseRevision !== 'string' || baseRevision === '') {
-        throw new ClueError('invalid-request', 'saving GitHub content needs the base revision from the editor load')
-      }
-      const title = input.title.trim()
-      if (title === '') {
-        throw new ClueError('invalid-request', 'a GitHub issue or pull request title cannot be empty')
-      }
-      // Best-effort check-before-save: re-read the CURRENT resource and compare
-      // the opaque revision. This is not atomic; a concurrent edit can still
-      // land between this read and the write.
-      const fresh = await readResource(input.resource, signal)
-      if (fresh.revision !== baseRevision) {
-        throw new ClueError(
-          'conflict',
-          'the GitHub resource changed since it was loaded; re-read it before saving',
-        )
-      }
-      if (fresh.isArchived) {
-        throw new ClueError('permission-denied', 'the GitHub repository is archived and read-only')
-      }
-      if (fresh.viewerPermission !== undefined && READ_ONLY_PERMISSIONS.has(fresh.viewerPermission)) {
-        throw new ClueError(
-          'permission-denied',
-          'the GitHub account has read-only permission for this repository',
-        )
-      }
-      const titleChanged = title !== fresh.title
-      const bodyChanged = input.body !== fresh.body
-      const savedAt = now()
-      if (!titleChanged && !bodyChanged) return { revision: fresh.revision, savedAt }
-      const result = await runGithubCli(runtime(), editArgs(input.resource, {
-        ...(titleChanged ? { title } : {}),
-        ...(bodyChanged ? { body: input.body } : {}),
-      }), {
-        cwd,
-        timeoutMs: GITHUB_WRITE_TIMEOUT_MS,
-        maxOutputBytes: GITHUB_READ_MAX_OUTPUT_BYTES,
-        ...(bodyChanged ? { stdin: input.body } : {}),
-        ...(signal === undefined ? {} : { signal }),
+      return await withAuthReport(async () => {
+        const baseRevision = input.baseRevision
+        if (typeof baseRevision !== 'string' || baseRevision === '') {
+          throw new ClueError('invalid-request', 'saving GitHub content needs the base revision from the editor load')
+        }
+        const title = input.title.trim()
+        if (title === '') {
+          throw new ClueError('invalid-request', 'a GitHub issue or pull request title cannot be empty')
+        }
+        // Best-effort check-before-save: re-read the CURRENT resource and compare
+        // the opaque revision. This is not atomic; a concurrent edit can still
+        // land between this read and the write.
+        const fresh = await readResourceOnce(input.resource, signal)
+        if (fresh.revision !== baseRevision) {
+          throw new ClueError(
+            'conflict',
+            'the GitHub resource changed since it was loaded; re-read it before saving',
+          )
+        }
+        if (fresh.isArchived) {
+          throw new ClueError('permission-denied', 'the GitHub repository is archived and read-only')
+        }
+        if (fresh.viewerPermission !== undefined && READ_ONLY_PERMISSIONS.has(fresh.viewerPermission)) {
+          throw new ClueError(
+            'permission-denied',
+            'the GitHub account has read-only permission for this repository',
+          )
+        }
+        const titleChanged = title !== fresh.title
+        const bodyChanged = input.body !== fresh.body
+        const savedAt = now()
+        if (!titleChanged && !bodyChanged) return { revision: fresh.revision, savedAt }
+        const result = await runGithubCli(runtime(), editArgs(input.resource, {
+          ...(titleChanged ? { title } : {}),
+          ...(bodyChanged ? { body: input.body } : {}),
+        }), {
+          cwd,
+          timeoutMs: GITHUB_WRITE_TIMEOUT_MS,
+          maxOutputBytes: GITHUB_READ_MAX_OUTPUT_BYTES,
+          ...(bodyChanged ? { stdin: input.body } : {}),
+          ...(signal === undefined ? {} : { signal }),
+        })
+        if (result.exitCode !== 0 || result.stdoutTruncated) {
+          throw mapGithubCliFailure(result)
+        }
+        // Success is exit 0. The new baseline is re-read best-effort: if that
+        // read fails the write is still confirmed, but no revision is fabricated.
+        let revision: string | undefined
+        try {
+          revision = (await readResourceOnce(input.resource, signal)).revision
+        } catch {
+          revision = undefined
+        }
+        return { ...(revision === undefined ? {} : { revision }), savedAt }
       })
-      if (result.exitCode !== 0 || result.stdoutTruncated) {
-        throw mapGithubCliFailure(result)
-      }
-      // Success is exit 0. The new baseline is re-read best-effort: if that
-      // read fails the write is still confirmed, but no revision is fabricated.
-      let revision: string | undefined
-      try {
-        revision = (await readResource(input.resource, signal)).revision
-      } catch {
-        revision = undefined
-      }
-      return { ...(revision === undefined ? {} : { revision }), savedAt }
     },
   }
 }

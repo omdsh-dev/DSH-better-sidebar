@@ -10,17 +10,26 @@
  * The format registry is keyed by MIME, so this renderer is also the one a
  * local-file `text/markdown` document resolves to. Non-GitHub documents are
  * therefore delegated to S6's reusable single-text carrier
- * (`TextDocumentContent`) with the built-in `{ text }` payload — registering
- * this renderer never changes local-file editing.
+ * (`TextDocumentContent`) INSIDE the same wrapper/data carrier the built-in
+ * S6 path renders (`data-window-text-content` / `data-window-text-format` and
+ * its `textContent` flex layout), so registering this renderer does not
+ * change local-file markdown layout or selectors.
  *
  * Read-only states:
- * - the HOST says read-only (a preview): render the content, no editors;
+ * - the HOST says read-only (a preview): render the content, no editors (S6
+ *   already shows the shared read-only badge);
  * - the SOURCE marks the document read-only (`data.readOnly`, e.g. archived
  *   repository, read-only permission, oversized body): same read-only surface
- *   and the source's reason code in `data-github-read-only-reason`, which the
- *   integrating surface (S9) localizes.
+ *   with the source's reason code in `data-github-read-only-reason` AND as a
+ *   visible reason line (S9 can replace that line with localized copy using
+ *   the attribute).
+ *
+ * Save state: while S6 reports `saving`, the controlled inputs are disabled so
+ * a late edit cannot be silently dropped when the save completes; the
+ * renderer never saves by itself (`onSave`, when wired, is exposed on
+ * Ctrl/Cmd+Enter and remains the caller's source-owned write path).
  */
-import { createElement, type ReactNode } from 'react'
+import { createElement, type KeyboardEvent, type ReactNode } from 'react'
 import type {
   ClueFormatRenderer,
   ClueFormatRendererProps,
@@ -28,6 +37,7 @@ import type {
 } from '../../../../clues/types.ts'
 import { kindOfSourceId } from '../../../../clues/sources/github/ids.ts'
 import { TextDocumentContent } from '../../../windows/format-content.tsx'
+import windowsCss from '../../../windows/windows.module.css'
 import { t } from '../../../locales.ts'
 import css from './github.module.css'
 
@@ -80,6 +90,7 @@ function readOnlySurface(
   title: string,
   body: string,
   reason: string | undefined,
+  hostReadOnly: boolean,
 ): ReactNode {
   return (
     <div
@@ -88,7 +99,11 @@ function readOnlySurface(
       data-github-read-only
       data-github-read-only-reason={reason ?? 'read-only'}
     >
-      <div className={css.readOnlyBadge}>{t('windowReadOnly')}</div>
+      {/* S6 renders the shared badge for a host preview; the source-locked
+          document needs its own. The reason code stays visible until S9
+          localizes it from the data attribute. */}
+      {!hostReadOnly && <div className={css.readOnlyBadge}>{t('windowReadOnly')}</div>}
+      {reason !== undefined && <div className={css.readOnlyReason}>{reason}</div>}
       <div className={css.readOnlyTitle}>{title}</div>
       <pre className={css.readOnlyBody}>{body}</pre>
     </div>
@@ -101,15 +116,25 @@ function editableSurface(
   body: string,
   onChange: ClueFormatRendererProps['onChange'],
   data: JsonValue,
+  saving: boolean,
+  onSave: (() => void) | undefined,
 ): ReactNode {
+  const saveOnKey = (event: KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>): void => {
+    if (event.key !== 'Enter' || (!event.metaKey && !event.ctrlKey)) return
+    if (saving || onSave === undefined) return
+    event.preventDefault()
+    onSave()
+  }
   return (
-    <div className={css.document} data-github-document>
+    <div className={css.document} data-github-document data-github-saving={saving ? 'true' : undefined}>
       <input
         className={css.titleInput}
         data-github-title
         aria-label={t('rename')}
         spellCheck={false}
+        disabled={saving}
         value={title}
+        onKeyDown={saveOnKey}
         onChange={(event) => { onChange(withFields(data, { title: event.target.value })) }}
       />
       <textarea
@@ -117,7 +142,9 @@ function editableSurface(
         data-github-body
         aria-label={t('editor')}
         spellCheck={false}
+        disabled={saving}
         value={body}
+        onKeyDown={saveOnKey}
         onChange={(event) => { onChange(withFields(data, { body: event.target.value })) }}
       />
     </div>
@@ -129,14 +156,18 @@ function editableSurface(
  * carrier. Never saves by itself.
  */
 export const githubMarkdownRenderer: ClueFormatRenderer = (props: ClueFormatRendererProps): ReactNode => {
-  const { sourceId, document, readOnly, onChange } = props
+  const { sourceId, format, document, readOnly, saving, onChange, onSave } = props
   const data = document.data
   if (!isGithubSource(sourceId)) {
-    return createElement(TextDocumentContent, {
-      text: textOf(data) ?? '',
-      readOnly,
-      onChange: (next: string) => { onChange(withText(data, next)) },
-    })
+    return (
+      <div className={windowsCss.textContent} data-window-text-content data-window-text-format={format}>
+        {createElement(TextDocumentContent, {
+          text: textOf(data) ?? '',
+          readOnly,
+          onChange: (next: string) => { onChange(withText(data, next)) },
+        })}
+      </div>
+    )
   }
   const fields = titleBodyOf(data)
   if (fields === undefined) {
@@ -150,7 +181,7 @@ export const githubMarkdownRenderer: ClueFormatRenderer = (props: ClueFormatRend
   }
   const locked = sourceReadOnly(data)
   if (readOnly || locked !== undefined) {
-    return readOnlySurface(fields.title, fields.body, locked?.reason)
+    return readOnlySurface(fields.title, fields.body, locked?.reason, readOnly)
   }
-  return editableSurface(fields.title, fields.body, onChange, data)
+  return editableSurface(fields.title, fields.body, onChange, data, saving, onSave)
 }

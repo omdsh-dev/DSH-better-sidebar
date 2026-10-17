@@ -83,11 +83,6 @@ export function parseGithubScope(scope: JsonValue | undefined): GithubListScope 
   )
 }
 
-/** Stable, case-insensitive key of one range (cursor binding + tests). */
-export function githubScopeKey(scope: GithubListScope): string {
-  return `${scope.repo.owner.toLowerCase()}/${scope.repo.repo.toLowerCase()}:${scope.state}`
-}
-
 /**
  * Bound one requested page size to the source ceiling.
  *

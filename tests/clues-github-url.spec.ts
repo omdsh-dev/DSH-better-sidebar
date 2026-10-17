@@ -39,17 +39,14 @@ import {
 import {
   githubLocatorKey,
   githubLocatorOf,
-  githubResourceUrl,
   normalizeGithubLocator,
   parseGithubText,
   parseGithubUrl,
   portableGithubLocator,
-  GITHUB_LOCATOR_KEYS,
 } from '../src/clues/sources/github/url.ts'
 import {
   decodeGithubCursor,
   encodeGithubCursor,
-  githubScopeKey,
   pageLimitOf,
   parseGithubScope,
 } from '../src/clues/sources/github/scope.ts'
@@ -194,7 +191,7 @@ describe('locator normalization and identity', () => {
   it('keeps only the closed credential-free field set', () => {
     const normalized = normalizeGithubLocator(raw)
     expect(normalized).toEqual({ host: 'github.com', owner: 'Cli', repo: 'CLI', kind: 'issue', number: 12 })
-    expect(Object.keys(normalized).sort()).toEqual([...GITHUB_LOCATOR_KEYS].sort())
+    expect(Object.keys(normalized).sort()).toEqual(['host', 'owner', 'repo', 'kind', 'number'].sort())
     expect(JSON.stringify(normalized)).not.toContain('gho_secret')
   })
 
@@ -230,10 +227,6 @@ describe('locator normalization and identity', () => {
     }
   })
 
-  it('builds the canonical web URL', () => {
-    expect(githubResourceUrl({ host: 'github.com', owner: 'cli', repo: 'cli', kind: 'pull', number: 9 }))
-      .toBe('https://github.com/cli/cli/pull/9')
-  })
 })
 
 describe('portable locator', () => {
@@ -273,10 +266,9 @@ describe('explicit single-repository scope', () => {
     expect(categoryOf(() => parseGithubScope({ repo: 'cli/cli', state: 'merged' }))).toBe('invalid-request')
   })
 
-  it('keys a scope stably and case-insensitively', () => {
-    expect(githubScopeKey(parseGithubScope('CLI/CLI'))).toBe(githubScopeKey(parseGithubScope('cli/cli')))
-    expect(githubScopeKey(parseGithubScope({ repo: 'cli/cli', state: 'closed' })))
-      .not.toBe(githubScopeKey(parseGithubScope({ repo: 'cli/cli', state: 'open' })))
+  it('keeps the state an explicit part of the range', () => {
+    expect(parseGithubScope({ repo: 'cli/cli', state: 'closed' }))
+      .not.toEqual(parseGithubScope({ repo: 'cli/cli', state: 'open' }))
   })
 
   it('clamps the page size to the source bound and refuses invalid limits', () => {

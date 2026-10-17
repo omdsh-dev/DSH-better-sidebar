@@ -19,7 +19,9 @@
  * - saveEdit re-reads first, refuses a stale baseline with `conflict`, sends
  *   ONLY the changed title/body (body through stdin), maps 403/404/rate
  *   limit/archived/cancel/timeout to the S1 categories and never echoes raw
- *   stderr or tokens.
+ *   stderr or tokens;
+ * - a real list/read/write 401 reports an `expired` observation to the shared
+ *   connection (best-effort; a report failure never masks the source error).
  */
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
@@ -33,7 +35,7 @@ import {
   type GithubPageQuery,
 } from '../src/clues/sources/github/gh.ts'
 import { mapGithubCliFailure } from '../src/clues/sources/github/errors.ts'
-import { GITHUB_DEPENDENCY_ID } from '../src/clues/sources/github/ids.ts'
+import { GITHUB_CONNECTION_ID, GITHUB_DEPENDENCY_ID } from '../src/clues/sources/github/ids.ts'
 import { githubRevisionOf } from '../src/clues/sources/github/revision.ts'
 import type { GithubResource } from '../src/clues/sources/github/ids.ts'
 
@@ -56,14 +58,21 @@ function cliResult(overrides: Partial<CliResult> = {}): CliResult {
   }
 }
 
+interface ReportedInspection {
+  readonly connectionId: string
+  readonly authorization?: string
+}
+
 interface FakeRuntime {
   readonly runtime: ClueRuntime
   readonly runs: CliRunRequest[]
+  readonly reports: ReportedInspection[]
 }
 
 /** A runtime whose only real verb is `runCli`; everything else is inert. */
 function fakeRuntime(handler: (request: CliRunRequest) => CliResult | Promise<CliResult>): FakeRuntime {
   const runs: CliRunRequest[] = []
+  const reports: ReportedInspection[] = []
   const unused = async (): Promise<never> => { throw new Error('not used by the GitHub adapter') }
   const runtime = {
     dependencies: {
@@ -89,7 +98,9 @@ function fakeRuntime(handler: (request: CliRunRequest) => CliResult | Promise<Cl
       connect: unused,
       poll: unused,
       cancel: unused,
-      report: () => undefined,
+      report: (connectionId: string, inspection: { authorization?: string }) => {
+        reports.push({ connectionId, ...(inspection.authorization === undefined ? {} : { authorization: inspection.authorization }) })
+      },
       dispose: () => undefined,
     },
     http: { request: unused },
@@ -101,7 +112,7 @@ function fakeRuntime(handler: (request: CliRunRequest) => CliResult | Promise<Cl
     runCliJson: unused,
     dispose: () => undefined,
   } as unknown as ClueRuntime
-  return { runtime, runs }
+  return { runtime, runs, reports }
 }
 
 function clientOf(fake: FakeRuntime): GithubGhClient {
@@ -439,6 +450,27 @@ describe('failed gh runs', () => {
     expect(archived.message).toContain('archived')
   })
 
+  it('reports a real resource auth failure to the shared connection (best-effort)', async () => {
+    const fake = fakeRuntime(() => cliResult({
+      exitCode: 1,
+      stderr: 'gh: Bad credentials (HTTP 401)',
+    }))
+    await expect(clientOf(fake).readResource(ISSUE)).rejects.toMatchObject({ category: 'auth-required' })
+    expect(fake.reports).toEqual([{ connectionId: GITHUB_CONNECTION_ID, authorization: 'expired' }])
+
+    // A non-auth failure is not a connection observation.
+    const notFound = fakeRuntime(() => cliResult({ exitCode: 1, stderr: 'gh: Not Found (HTTP 404)' }))
+    await expect(clientOf(notFound).readResource(ISSUE)).rejects.toMatchObject({ category: 'not-found' })
+    expect(notFound.reports).toEqual([])
+
+    // A report failure must never replace the source's own error.
+    const broken = fakeRuntime(() => cliResult({ exitCode: 1, stderr: 'gh: Bad credentials (HTTP 401)' }))
+    ;(broken.runtime.connections as unknown as { report: () => never }).report = () => {
+      throw new Error('the connection is not registered')
+    }
+    await expect(clientOf(broken).readResource(ISSUE)).rejects.toMatchObject({ category: 'auth-required' })
+  })
+
   it('never echoes raw stderr, tokens or response bodies', async () => {
     const error = await failureCategory({
       exitCode: 1,
@@ -481,6 +513,11 @@ describe('failed gh runs', () => {
     const error = mapGithubCliFailure(cliResult({ exitCode: 1, stderr: 'gh: something odd' }))
     expect(error.category).toBe('failed')
     expect(error.message).not.toContain('something odd')
+    // A CLI too old for a required flag is an incompatible dependency, not a
+    // generic failure (the version probe normally catches this first).
+    const old = mapGithubCliFailure(cliResult({ exitCode: 1, stderr: 'unknown flag: --json' }))
+    expect(old.category).toBe('dependency-incompatible')
+    expect(old.message).not.toContain('--json')
   })
 })
 
@@ -673,6 +710,18 @@ describe('save', () => {
       resource: ISSUE, title: 'new', body: 'new', baseRevision: baseRevisionOf(state),
     })).rejects.toMatchObject({ category: 'permission-denied' })
     expect(fake.runs).toHaveLength(2)
+    expect(fake.reports).toEqual([])
+  })
+
+  it('reports a write 401 to the shared connection as an expired sign-in', async () => {
+    const fake = saveFake({
+      state,
+      write: cliResult({ exitCode: 1, stderr: 'gh: Bad credentials (HTTP 401)' }),
+    })
+    await expect(clientOf(fake).saveEdits({
+      resource: ISSUE, title: 'new', body: 'new', baseRevision: baseRevisionOf(state),
+    })).rejects.toMatchObject({ category: 'auth-required' })
+    expect(fake.reports).toEqual([{ connectionId: GITHUB_CONNECTION_ID, authorization: 'expired' }])
   })
 
   it('keeps the successful save when the post-save re-read fails (no fabricated revision)', async () => {

@@ -26,6 +26,12 @@ const AUTH_PATTERN = /(?:to get started with github cli|gh auth login|not logged
 const NOT_FOUND_PATTERN = /(?:not found|http 404|could not resolve|does not exist)/i
 /** Permission / policy failures. */
 const FORBIDDEN_PATTERN = /(?:forbidden|http 403|not accessible|must have .* rights|insufficient scopes?)/i
+/**
+ * A CLI that is too old for a required flag/command. S2's version probe
+ * normally rejects those before a call, but a misreporting/forked binary must
+ * still surface as an incompatible dependency instead of a generic failure.
+ */
+const UNKNOWN_FLAG_PATTERN = /(?:unknown (?:flag|option|command)|invalid option|unrecognized (?:flag|option|arguments?))/i
 
 /** Parse a JSON payload, returning undefined instead of throwing. */
 function parseJson(text: string): unknown {
@@ -91,6 +97,12 @@ export function mapGithubCliFailure(result: CliResult): ClueError {
     ...graphErrors.map(entry => entry.message ?? ''),
   ].join('\n')
 
+  if (UNKNOWN_FLAG_PATTERN.test(text)) {
+    return failureOf(
+      'dependency-incompatible',
+      'the installed GitHub CLI does not support a required option; update gh and retry',
+    )
+  }
   if (RATE_LIMIT_PATTERN.test(text) || errorTypes.has('RATE_LIMITED') || status === 429) {
     return failureOf('rate-limited', 'GitHub rate limit reached; wait a few minutes and retry')
   }

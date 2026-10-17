@@ -19,14 +19,10 @@ import { escapeClueTitle } from '../../context/tokens.ts'
 import {
   GITHUB_HOST,
   isGithubKind,
-  type GithubKind,
   type GithubLocator,
   type GithubRepoRef,
   type GithubResource,
 } from './ids.ts'
-
-/** The exact keys a normalized locator may carry. */
-export const GITHUB_LOCATOR_KEYS = ['host', 'owner', 'repo', 'kind', 'number'] as const
 
 /** GitHub account names: alphanumeric + hyphens, starting alphanumeric. */
 const OWNER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/
@@ -249,12 +245,6 @@ export function githubLocatorKey(locator: unknown): string {
   ].join('/')
 }
 
-/** The canonical web URL of one resource. */
-export function githubResourceUrl(resource: GithubResource): string {
-  const segment = resource.kind === 'issue' ? 'issues' : 'pull'
-  return `https://${GITHUB_HOST}/${resource.owner}/${resource.repo}/${segment}/${resource.number}`
-}
-
 /**
  * The credential-free portable form: exactly the normalized locator.
  * @param locator - a GitHub locator.
@@ -276,20 +266,4 @@ export function githubLocatorTitle(locator: unknown): string | undefined {
 /** The display title used before the resource body has been read. */
 export function githubReferenceTitle(resource: GithubResource): string {
   return `${resource.owner}/${resource.repo}#${resource.number}`
-}
-
-/** The type id addressed by one parsed locator's kind. */
-export function kindOfLocator(locator: unknown): GithubKind {
-  return normalizeGithubLocator(locator).kind
-}
-
-/** Whether a value is shaped like a GitHub locator (auto-resolution probe). */
-export function isGithubLocatorShape(value: unknown): boolean {
-  if (!isRecord(value)) return false
-  return typeof value.host === 'string'
-    && value.host.toLowerCase() === GITHUB_HOST
-    && typeof value.owner === 'string'
-    && typeof value.repo === 'string'
-    && isGithubKind(value.kind)
-    && typeof value.number === 'number'
 }

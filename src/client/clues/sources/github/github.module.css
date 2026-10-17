@@ -22,7 +22,7 @@
   border-radius: 6px;
   background: var(--dsw-alias-bg-layer-2);
   color: var(--dsw-alias-label-primary);
-  font: var(--dsw-font-sm-14, var(--dsw-font-xxs-12));
+  font: var(--dsw-font-s-14, var(--dsw-font-xxs-12));
 }
 
 .titleInput:focus-visible {
@@ -60,9 +60,15 @@
   font: var(--dsw-font-xxs-12);
 }
 
+.readOnlyReason {
+  color: var(--dsw-alias-label-tertiary);
+  font: var(--dsw-font-xxs-12);
+  overflow-wrap: anywhere;
+}
+
 .readOnlyTitle {
   color: var(--dsw-alias-label-primary);
-  font: var(--dsw-font-sm-14, var(--dsw-font-xxs-12));
+  font: var(--dsw-font-s-14, var(--dsw-font-xxs-12));
   overflow-wrap: anywhere;
 }
 

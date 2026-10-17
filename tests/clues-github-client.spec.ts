@@ -7,10 +7,13 @@
  *
  * Because the format registry is keyed by MIME only, the `text/markdown`
  * renderer also serves non-GitHub documents by delegating to S6's reusable
- * single-text carrier — registering it never breaks local-file editing.
+ * single-text carrier inside S6's own carrier wrapper/data attributes, so
+ * registering it never breaks local-file editing or layout.
  * New visible copy is avoided on purpose (the locale dictionaries are owned by
- * S8/S9): the editor uses existing keys only and the source-owned read-only
- * reason travels as a data attribute for the integrating surface to localize.
+ * S8/S9): the editor uses existing keys only, the source-owned read-only
+ * reason is visible as its code AND as a data attribute for S9 to localize,
+ * saving locks the inputs, and Ctrl/Cmd+Enter forwards the source-owned
+ * `onSave` (the renderer never writes by itself).
  */
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -182,7 +185,13 @@ describe('title + body editor', () => {
       onChange,
     })
     const window = frame('Readme')
-    const editor = window.querySelector<HTMLTextAreaElement>('[data-window-text-editor]')
+    // The renderer keeps S6's built-in carrier contract (wrapper, data
+    // attributes and flex layout), not just the textarea.
+    const carrier = window.querySelector<HTMLElement>(
+      '[data-window-text-content][data-window-text-format="text/markdown"]',
+    )
+    expect(carrier).not.toBeNull()
+    const editor = carrier?.querySelector<HTMLTextAreaElement>('[data-window-text-editor]')
     expect(editor?.value).toBe('# hello')
     act(() => { typeInto(editor!, '# bye') })
     expect(onChange).toHaveBeenLastCalledWith({ text: '# bye', path: 'README.md' })
@@ -202,6 +211,9 @@ describe('title + body editor', () => {
     expect(readOnly).not.toBeNull()
     expect(window.textContent).toContain('Read me only')
     expect(window.textContent).toContain('Source body')
+    // S6 already renders the shared badge for a host preview; the renderer
+    // must not duplicate it.
+    expect((window.textContent?.match(/只读/g) ?? []).length).toBe(1)
   })
 
   it('honours a source-marked read-only document (archived / no write permission / too large)', () => {
@@ -219,20 +231,56 @@ describe('title + body editor', () => {
     expect(window.querySelector('[data-github-title]')).toBeNull()
     const readOnly = window.querySelector('[data-github-read-only]')
     expect(readOnly?.getAttribute('data-github-read-only-reason')).toBe('archived')
-    // Existing localized copy only: the host's read-only badge key.
+    // Existing localized copy only: the host's read-only badge key. The
+    // source reason is visible as well until S9 localizes the data attribute.
     expect(window.textContent).toContain('只读')
+    expect(window.textContent).toContain('archived')
   })
 
-  it('shows the save-in-flight state without claiming success', () => {
+  it('shows the save-in-flight state without claiming success and locks the inputs', () => {
+    const onSave = vi.fn()
     openDocument({
       id: 'saving-1',
       title: 'Saving issue',
       data: { title: 'T', body: 'B' },
       saving: true,
+      onSave,
     })
     const window = frame('Saving issue')
     // S6 owns the saving indicator; the renderer must not fake a "saved" state.
     expect(window.querySelector('[data-github-saved]')).toBeNull()
     expect(window.querySelector('[data-window-saving]')).not.toBeNull()
+    // No edit can be typed into a save that will soon clear the dirty state.
+    expect(window.querySelector<HTMLInputElement>('[data-github-title]')?.disabled).toBe(true)
+    const body = window.querySelector<HTMLTextAreaElement>('[data-github-body]')
+    expect(body?.disabled).toBe(true)
+    act(() => {
+      body?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true }))
+    })
+    expect(onSave).not.toHaveBeenCalled()
+  })
+
+  it('exposes the source-owned onSave on Ctrl/Cmd+Enter, never saving by itself', () => {
+    const onSave = vi.fn()
+    openDocument({
+      id: 'save-key-1',
+      title: 'Save key issue',
+      data: { title: 'T', body: 'B' },
+      onSave,
+    })
+    const window = frame('Save key issue')
+    const body = window.querySelector<HTMLTextAreaElement>('[data-github-body]')
+    act(() => {
+      body?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    })
+    expect(onSave).not.toHaveBeenCalled()
+    act(() => {
+      body?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true }))
+    })
+    expect(onSave).toHaveBeenCalledTimes(1)
+    act(() => {
+      body?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', metaKey: true, bubbles: true }))
+    })
+    expect(onSave).toHaveBeenCalledTimes(2)
   })
 })

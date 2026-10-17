@@ -4,17 +4,20 @@
  *
  * Pins the approved S3/S2 integration:
  * - one `github.gh` dependency pinned to the executed version (2.102.0), a
- *   verified platform matrix with official checksums and manual guidance for
- *   everything else — nothing invented;
+ *   2.81.0 minimum (first release with `auth status --json`) and a verified
+ *   platform matrix with Node's `x64`/`arm64` vocabulary, official checksums
+ *   and manual guidance for everything else — nothing invented;
  * - one shared `github.gh.auth` connection with gh-owned credentials and no
  *   token projection;
  * - `inspect`/`auth status` runs ONLY for an explicit status/connect/poll;
  *   registering sources, listing or reading never probes auth;
  * - `connect` is the only path that starts `gh auth login --web`, returns the
- *   fixed human prompt (official URL, expiry, poll hint) and never leaks the
- *   process handle or stdout;
- * - a completed login polls into `ready`, cancellation is reachable and
- *   disposal aborts every in-flight login.
+ *   fixed human prompt (official URL, expiry, poll hint, clipboard/terminal
+ *   fallback) and never leaks the process handle or stdout; a second click
+ *   while the login child is still pending shares the one attempt;
+ * - a completed login polls into `ready` (a transient confirming-status
+ *   failure stays retryable), cancellation is reachable and disposal aborts
+ *   every in-flight login.
  */
 import { chmodSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -131,18 +134,21 @@ describe('github.gh dependency definition', () => {
     expect(dependency.dependencyId).toBe(GITHUB_DEPENDENCY_ID)
     expect(dependency.command).toBe('gh')
     expect(dependency.pluginId).toBe('dsh-better-sidebar')
-    expect(dependency.version).toEqual({ minimum: '2.40.0', recommended: '2.102.0' })
+    expect(dependency.version).toEqual({ minimum: '2.81.0', recommended: '2.102.0' })
     expect(install.dependencyIds).toEqual([GITHUB_DEPENDENCY_ID])
     expect(install.connectionId).toBe(GITHUB_CONNECTION_ID)
     expect(dependency.manualInstall?.url).toBe('https://github.com/cli/cli/releases/tag/v2.102.0')
+    // The clipboard helper needs the desktop session; S2's fixed allowlist
+    // does not include these names, so the gh definition adds them explicitly.
+    expect(dependency.envAllowlist).toEqual(['DISPLAY', 'WAYLAND_DISPLAY', 'XAUTHORITY', 'XDG_RUNTIME_DIR'])
 
     const targets = dependency.supportedPlatforms
     expect(targets).toEqual([
       { platform: 'darwin', arch: 'arm64' },
-      { platform: 'darwin', arch: 'amd64' },
-      { platform: 'linux', arch: 'amd64' },
+      { platform: 'darwin', arch: 'x64' },
+      { platform: 'linux', arch: 'x64' },
       { platform: 'linux', arch: 'arm64' },
-      { platform: 'win32', arch: 'amd64' },
+      { platform: 'win32', arch: 'x64' },
     ])
     const distributions = dependency.install?.distributions ?? []
     expect(distributions).toHaveLength(targets.length)
@@ -154,6 +160,11 @@ describe('github.gh dependency definition', () => {
       expect(distribution.executable).toBe(targets[index]?.platform === 'win32' ? 'bin/gh.exe' : 'bin/gh')
       expect(distribution.stripComponents).toBe(targets[index]?.platform === 'win32' ? 0 : 1)
     }
+    // The asset filenames keep the release's `amd64` spelling even though the
+    // target vocabulary is Node's `x64`.
+    expect(distributions[1]?.url).toContain('macOS_amd64.zip')
+    expect(distributions[2]?.url).toContain('linux_amd64.tar.gz')
+    expect(distributions[4]?.url).toContain('windows_amd64.zip')
     // Building the sources must not probe, log in or install anything.
     expect(fake.runs).toHaveLength(0)
   })
@@ -210,6 +221,48 @@ describe('github.gh dependency definition', () => {
     dispose()
   })
 
+  it('resolves and plans every x64 target with Node arch vocabulary', async () => {
+    for (const target of [
+      { platform: 'darwin', arch: 'x64', asset: 'macOS_amd64.zip' },
+      { platform: 'linux', arch: 'x64', asset: 'linux_amd64.tar.gz' },
+      { platform: 'win32', arch: 'x64', asset: 'windows_amd64.zip' },
+    ] as const) {
+      const home = tempRoot()
+      const executable = join(home, 'gh')
+      writeFileSync(executable, '#!/bin/sh\nexit 0\n')
+      chmodSync(executable, 0o755)
+      const runner: CliRunner = {
+        async run() { return cliResult({ stdout: 'gh version 2.102.0 (2026-09-30)' }) },
+        async runJson() { throw new Error('not used') },
+      }
+      const dependencies = createDependenciesRuntime({
+        home,
+        platform: target.platform,
+        arch: target.arch,
+        env: { PATH: '/nonexistent' },
+        runProcess: runner,
+        manualPaths: { [GITHUB_DEPENDENCY_ID]: executable },
+        now: () => NOW_MS,
+      })
+      const install = createGithubSources({ runtime: () => fakeRuntime(() => cliResult()).runtime, now: () => NOW_MS })
+      const dispose = dependencies.register(install.dependency)
+      const [status] = await dependencies.inspect(GITHUB_DEPENDENCY_ID)
+      expect(status, target.platform).toMatchObject({
+        platform: target.platform,
+        arch: 'x64',
+        supported: true,
+        installable: true,
+        state: 'ready',
+      })
+      const plan = await dependencies.plan(GITHUB_DEPENDENCY_ID)
+      expect(plan.installable, target.platform).toBe(true)
+      expect(plan.distribution?.url).toContain(target.asset)
+      expect(plan.arch).toBe('x64')
+      expect(plan.executablePath.endsWith(target.platform === 'win32' ? 'gh.exe' : 'gh')).toBe(true)
+      dispose()
+    }
+  })
+
   it('reports an older gh as incompatible and a non-matrix host as manual-only', async () => {
     const home = tempRoot()
     const executable = join(home, 'gh')
@@ -250,6 +303,37 @@ describe('github.gh dependency definition', () => {
     const other = (await otherDeps.inspect(GITHUB_DEPENDENCY_ID))[0]!
     expect(other).toMatchObject({ supported: false, installable: false, state: 'ready' })
     expect(other.manualInstall?.url).toContain('github.com/cli/cli/releases')
+  })
+
+  it('draws the incompatible line at 2.81.0 (the first `auth status --json` release)', async () => {
+    for (const [version, state] of [
+      ['2.40.0', 'incompatible'],
+      ['2.80.0', 'incompatible'],
+      ['2.81.0', 'ready'],
+    ] as const) {
+      const home = tempRoot()
+      const executable = join(home, 'gh')
+      writeFileSync(executable, '#!/bin/sh\nexit 0\n')
+      chmodSync(executable, 0o755)
+      const runner: CliRunner = {
+        async run() { return cliResult({ stdout: `gh version ${version} (2025-10-01)` }) },
+        async runJson() { throw new Error('not used') },
+      }
+      const dependencies = createDependenciesRuntime({
+        home,
+        platform: 'darwin',
+        arch: 'arm64',
+        env: { PATH: '/nonexistent' },
+        runProcess: runner,
+        manualPaths: { [GITHUB_DEPENDENCY_ID]: executable },
+        now: () => NOW_MS,
+      })
+      const install = createGithubSources({ runtime: () => fakeRuntime(() => cliResult()).runtime, now: () => NOW_MS })
+      const dispose = dependencies.register(install.dependency)
+      const [status] = await dependencies.inspect(GITHUB_DEPENDENCY_ID)
+      expect(status, version).toMatchObject({ state, version, supported: true })
+      dispose()
+    }
   })
 })
 
@@ -323,27 +407,40 @@ describe('github.gh.auth connection', () => {
     // S2 projects the dependency layer's own fixed message; the adapter never
     // appends CLI output to it.
     expect(broken?.error?.message).toBe('the GitHub CLI is not installed')
+
+    // If a too-old/misreporting binary reaches the adapter anyway, an unknown
+    // required flag is an incompatible dependency, not a generic failure.
+    const outdated = connectionSetup(() => cliResult({ exitCode: 1, stderr: 'unknown flag: --json' }))
+    const [incompatible] = await outdated.connections.status(GITHUB_CONNECTION_ID)
+    expect(incompatible?.error?.category).toBe('dependency-incompatible')
   })
 
-  it('starts gh auth login only from an explicit connect and completes through a poll', async () => {
+  it('starts gh auth login only from an explicit connect and shares the in-flight attempt', async () => {
     let loginStarted = false
+    let loginFinished = false
+    let resolveLogin: (result: CliResult) => void = () => undefined
+    const loginResult = new Promise<CliResult>((resolve) => { resolveLogin = resolve })
     const { fake, install, connections } = connectionSetup((request) => {
       if (isLogin(request)) {
         loginStarted = true
-        return cliResult({ stdout: fixture('login-output.txt') })
+        return loginResult
       }
-      return cliResult({ stdout: loginStarted ? fixture('auth-status.json') : '{"hosts":{}}' })
+      return cliResult({ stdout: loginFinished ? fixture('auth-status.json') : '{"hosts":{}}' })
     })
     void install
     expect(fake.runs).toHaveLength(0)
 
     const started = await connections.connect(GITHUB_CONNECTION_ID)
+    expect(loginStarted).toBe(true)
     expect(started.authorization).toBe('authorizing')
     expect(started.prompt?.verificationUrl).toBe(GITHUB_DEVICE_URL)
     expect(started.prompt?.expiresAt).toBe(new Date(NOW_MS + 10 * 60 * 1000).toISOString())
     expect(started.prompt?.pollAfterMs).toBe(5_000)
+    // The prompt is honest about the request/response runner boundary and the
+    // clipboard fallback; it is a fixed whitelist (no token/process/handle).
     expect(started.prompt?.instructions).toContain('clipboard')
-    // The prompt is a fixed whitelist: no attempt handle, token or process.
+    expect(started.prompt?.instructions).toContain('terminal')
+    expect(started.prompt?.userCode).toBeUndefined()
     for (const key of Object.keys(started.prompt ?? {})) {
       expect(['verificationUrl', 'userCode', 'expiresAt', 'pollAfterMs', 'instructions', 'qr']).toContain(key)
     }
@@ -355,12 +452,47 @@ describe('github.gh.auth connection', () => {
       'auth', 'login', '--web', '--hostname', 'github.com', '--git-protocol', 'https', '--clipboard',
     ])
     expect(login.cwd).toBe('/tmp/clues-github-connection')
-    // A second click while the attempt is active shares it: one login only.
-    await connections.connect(GITHUB_CONNECTION_ID)
-    expect(fake.runs.filter(isLogin)).toHaveLength(1)
+    // While the login child is still running, a poll just returns the same
+    // prompt (no auth probe).
+    const pending = await connections.poll(GITHUB_CONNECTION_ID)
+    expect(pending.authorization).toBe('authorizing')
+    expect(pending.prompt?.verificationUrl).toBe(GITHUB_DEVICE_URL)
 
+    // A second click while the first attempt is STILL pending shares it: one
+    // login child, one auth-status probe, no second device flow.
+    const shared = await connections.connect(GITHUB_CONNECTION_ID)
+    expect(shared.authorization).toBe('authorizing')
+    expect(fake.runs.filter(isLogin)).toHaveLength(1)
+    expect(fake.runs.filter(isAuthStatus)).toHaveLength(1)
+
+    loginFinished = true
+    resolveLogin(cliResult({ stdout: fixture('login-output.txt') }))
+    await new Promise<void>((resolve) => { setTimeout(resolve, 0) })
     const done = await connections.poll(GITHUB_CONNECTION_ID)
     expect(done).toMatchObject({ authorization: 'ready', account: 'octocat', action: 'none' })
+  })
+
+  it('keeps a succeeded login retryable when the confirming status read fails', async () => {
+    let loginDone = false
+    let statusAfterLogin = 0
+    const { connections } = connectionSetup((request) => {
+      if (isLogin(request)) {
+        loginDone = true
+        return cliResult({ stdout: fixture('login-output.txt') })
+      }
+      if (!loginDone) return cliResult({ stdout: '{"hosts":{}}' })
+      statusAfterLogin += 1
+      // The first post-login probe is a transient generic failure; the next
+      // poll must be able to confirm the SAME succeeded attempt.
+      if (statusAfterLogin === 1) return cliResult({ exitCode: 1, stderr: 'gh: something odd' })
+      return cliResult({ stdout: fixture('auth-status.json') })
+    })
+    await connections.connect(GITHUB_CONNECTION_ID)
+    await new Promise<void>((resolve) => { setTimeout(resolve, 0) })
+    await expect(connections.poll(GITHUB_CONNECTION_ID)).rejects.toMatchObject({ category: 'failed' })
+    const done = await connections.poll(GITHUB_CONNECTION_ID)
+    expect(done).toMatchObject({ authorization: 'ready', account: 'octocat' })
+    expect(statusAfterLogin).toBe(2)
   })
 
   it('does not start a device flow when the account is already signed in', async () => {
@@ -424,6 +556,13 @@ describe('github.gh.auth connection', () => {
     )
     expect(hostile?.userCode).toBe('ZZ99-ZZ99')
     expect(JSON.stringify(hostile)).not.toContain('gho_supersecret')
+    // gh's non-clipboard fallback wording must project the same code.
+    const fallback = projectLoginPrompt(
+      '! First copy your one-time code: WXYZ-1234\n'
+      + 'Open this URL to continue in your web browser: https://github.com/login/device\n',
+      { now: () => NOW_MS },
+    )
+    expect(fallback?.userCode).toBe('WXYZ-1234')
     expect(projectLoginPrompt('nothing to project here')).toBeUndefined()
   })
 })
