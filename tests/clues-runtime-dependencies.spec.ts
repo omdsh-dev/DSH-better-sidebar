@@ -436,6 +436,43 @@ describe('install planning through the dependency runtime', () => {
   })
 })
 
+describe('install plan cancellation', () => {
+  it('propagates plan cancellation to the system-install probe', async () => {
+    let probeStarted!: () => void
+    const started = new Promise<void>((resolve) => { probeStarted = resolve })
+    const runner: CliRunner = {
+      async run(request): Promise<CliResult> {
+        probeStarted()
+        await new Promise<void>((_resolve, reject) => {
+          const abort = (): void => reject(new ClueError('cancelled', 'the dependency probe was cancelled'))
+          if (request.signal?.aborted === true) abort()
+          else request.signal?.addEventListener('abort', abort, { once: true })
+        })
+        throw new ClueError('cancelled', 'the dependency probe was cancelled')
+      },
+      async runJson(): Promise<never> {
+        throw new Error('the dependency probe must never parse JSON')
+      },
+    }
+    const runtime = createDependenciesRuntime({
+      home: HOME,
+      platform: process.platform,
+      arch: process.arch,
+      env: ENV,
+      runProcess: runner,
+      probeCwd: HOME,
+      pathExists: fakeExists([PATH_GH]),
+    })
+    runtime.register(definition())
+    const controller = new AbortController()
+    const planning = runtime.plan('github.gh', { signal: controller.signal })
+    await started
+    controller.abort()
+    await expect(planning).rejects.toMatchObject({ category: 'cancelled' })
+    runtime.dispose()
+  })
+})
+
 describe('tools-root confinement', () => {
   it('refuses dependency ids, commands and platform targets that are not safe segments', () => {
     const { runtime } = harness()

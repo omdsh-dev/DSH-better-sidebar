@@ -55,6 +55,8 @@ function isAborted(signal: AbortSignal | undefined): boolean {
 export const DEFAULT_PLAN_TTL_MS = 10 * 60 * 1000
 /** Bound of retained plans (a settings page may re-open a few, not unbounded). */
 const MAX_RETAINED_PLANS = 64
+/** Bound of retained latest-task rows (one per dependency, newest first). */
+const MAX_RETAINED_TASKS = 64
 
 /** Whether a string is an exact release version (never a tag or a range). */
 export function isPinnedVersion(version: string): boolean {
@@ -500,7 +502,7 @@ interface RunningTask {
 
 /** The install manager seam consumed by the dependency runtime. */
 export interface InstallManager {
-  plan(definition: ClueDependencyDefinition): Promise<DependencyInstallPlan>
+  plan(definition: ClueDependencyDefinition, signal?: AbortSignal): Promise<DependencyInstallPlan>
   start(definition: ClueDependencyDefinition, planId: string, signal?: AbortSignal): Promise<DependencyInstallTask>
   /** Latest task of one dependency (running or settled). */
   latest(dependencyId: string): DependencyInstallTask | undefined
@@ -533,9 +535,14 @@ export interface InstallManagerOptions {
   /** Detect an unrelated PATH/system copy for the plan's context row. */
   readonly detectSystemInstall: (
     definition: ClueDependencyDefinition,
+    signal?: AbortSignal,
   ) => Promise<DependencySystemInstall | undefined>
   /** Called after a successful swap so the probe cache is invalidated. */
   readonly onInstalled?: (dependencyId: string) => void
+  /** Recursive removal seam (tests inject failures for cleanup diagnostics). */
+  readonly removePath?: (path: string) => Promise<void>
+  /** Non-fatal cleanup diagnostics; defaults to `console.warn`. */
+  readonly logger?: (message: string) => void
 }
 
 /**
@@ -555,6 +562,8 @@ export function createInstallManager(options: InstallManagerOptions): InstallMan
   const tasks = new Map<string, DependencyInstallTask>()
   const running = new Map<string, RunningTask>()
   const latestTask = new Map<string, string>()
+  const remove = options.removePath ?? removePath
+  const log = options.logger ?? ((message: string): void => { console.warn(message) })
   let disposed = false
 
   const prunePlans = (): void => {
@@ -569,7 +578,36 @@ export function createInstallManager(options: InstallManagerOptions): InstallMan
     }
   }
 
-  const buildPlan = async (definition: ClueDependencyDefinition): Promise<DependencyInstallPlan> => {
+  /** Forget the settled oldest task rows once the retention bound is exceeded. */
+  const pruneTasks = (): void => {
+    if (latestTask.size <= MAX_RETAINED_TASKS) return
+    const evictable = [...latestTask.entries()]
+      .flatMap(([dependencyId, taskId]) => {
+        const task = tasks.get(taskId)
+        return task === undefined || task.state === 'running' ? [] : [{ dependencyId, task }]
+      })
+      .sort((a, b) => a.task.startedAt.localeCompare(b.task.startedAt))
+    for (const entry of evictable) {
+      if (latestTask.size <= MAX_RETAINED_TASKS) break
+      latestTask.delete(entry.dependencyId)
+      tasks.delete(entry.task.taskId)
+    }
+  }
+
+  /** Retain ONE latest task per dependency, never a full history. */
+  const rememberTask = (task: DependencyInstallTask): void => {
+    const previous = latestTask.get(task.dependencyId)
+    tasks.set(task.taskId, task)
+    latestTask.set(task.dependencyId, task.taskId)
+    if (previous !== undefined && previous !== task.taskId) tasks.delete(previous)
+    pruneTasks()
+  }
+
+  const buildPlan = async (
+    definition: ClueDependencyDefinition,
+    signal: AbortSignal | undefined,
+  ): Promise<DependencyInstallPlan> => {
+    if (isAborted(signal)) throw new ClueError('cancelled', 'the installation plan was cancelled')
     const version = definition.version.recommended
     const platform = options.platform
     const arch = options.arch
@@ -578,7 +616,8 @@ export function createInstallManager(options: InstallManagerOptions): InstallMan
       : managedTargetDir(options.home, definition.dependencyId, version)
     const distribution = selectDistribution(definition, platform, arch)
     const supported = targetSupported(definition, platform, arch)
-    const systemInstall = await options.detectSystemInstall(definition)
+    const systemInstall = await options.detectSystemInstall(definition, signal)
+    if (isAborted(signal)) throw new ClueError('cancelled', 'the installation plan was cancelled')
     let installable = true
     let unavailableReason: string | undefined
     if (options.home === undefined) {
@@ -623,21 +662,25 @@ export function createInstallManager(options: InstallManagerOptions): InstallMan
     }
     const actions: string[] = []
     const actionIds: DependencyInstallActionId[] = []
-    if (distribution?.kind === 'archive') {
-      actions.push(`download the official ${distribution.archive} archive`)
-      actionIds.push('download-archive')
-      actions.push('verify its sha256 integrity')
-      actionIds.push('verify-sha256')
-      actions.push('extract it into a staging directory')
-      actionIds.push('extract-archive')
-    } else if (distribution?.kind === 'npm') {
-      actions.push(`install ${distribution.packageName}@${distribution.packageVersion} locally (no lifecycle scripts)`)
-      actionIds.push('install-npm-local')
+    // A non-installable plan performs nothing: listing download/extract/replace
+    // steps would describe actions that can never run.
+    if (installable) {
+      if (distribution?.kind === 'archive') {
+        actions.push(`download the official ${distribution.archive} archive`)
+        actionIds.push('download-archive')
+        actions.push('verify its sha256 integrity')
+        actionIds.push('verify-sha256')
+        actions.push('extract it into a staging directory')
+        actionIds.push('extract-archive')
+      } else if (distribution?.kind === 'npm') {
+        actions.push(`install ${distribution.packageName}@${distribution.packageVersion} locally (no lifecycle scripts)`)
+        actionIds.push('install-npm-local')
+      }
+      actions.push('probe the new executable with --version')
+      actionIds.push('probe-version')
+      actions.push(`atomically replace ${targetDir === '' ? 'the managed copy' : targetDir}`)
+      actionIds.push('replace-managed-copy')
     }
-    actions.push('probe the new executable with --version')
-    actionIds.push('probe-version')
-    actions.push(`atomically replace ${targetDir === '' ? 'the managed copy' : targetDir}`)
-    actionIds.push('replace-managed-copy')
     const createdAt = now()
     const plan: DependencyInstallPlan = {
       planId: `plan-${newId()}`,
@@ -685,7 +728,7 @@ export function createInstallManager(options: InstallManagerOptions): InstallMan
     progress: DependencyInstallProgress,
   ): DependencyInstallTask => {
     const next: DependencyInstallTask = { ...task, progress }
-    tasks.set(task.taskId, next)
+    rememberTask(next)
     return next
   }
 
@@ -698,7 +741,7 @@ export function createInstallManager(options: InstallManagerOptions): InstallMan
       ...patch,
       finishedAt: new Date(now()).toISOString(),
     }
-    tasks.set(task.taskId, next)
+    rememberTask(next)
     if (patch.state === 'succeeded') options.onInstalled?.(task.dependencyId)
     return next
   }
@@ -736,7 +779,7 @@ export function createInstallManager(options: InstallManagerOptions): InstallMan
       return { ok: false, error: { category: 'failed', message: 'the staged payload could not be moved into place' } }
     }
     const rollback = async (): Promise<void> => {
-      await removePath(targetDir).catch(() => undefined)
+      await remove(targetDir).catch(() => undefined)
       if (hadPrevious) await rename(backupDir, targetDir).catch(() => undefined)
     }
     let probe: Awaited<ReturnType<typeof options.probeExecutable>>
@@ -782,7 +825,15 @@ export function createInstallManager(options: InstallManagerOptions): InstallMan
         },
       }
     }
-    if (hadPrevious) await removePath(backupDir).catch(() => undefined)
+    if (hadPrevious) {
+      try {
+        await remove(backupDir)
+      } catch {
+        // The install itself already succeeded; keep the failure visible
+        // instead of silently leaking a `.previous-*` directory.
+        log(`[clues] could not remove the previous managed copy at ${backupDir}`)
+      }
+    }
     return { ok: true }
   }
 
@@ -810,7 +861,7 @@ export function createInstallManager(options: InstallManagerOptions): InstallMan
     // Runtime re-check: the plan's target must still sit below the managed tools
     // root even if a caller supplied a crafted plan/target somewhere upstream.
     if (toolsRoot === undefined || !isPathInside(toolsRoot, task.targetDir)) {
-      await removePath(stagingRoot).catch(() => undefined)
+      await remove(stagingRoot).catch(() => undefined)
       return settle(task, {
         state: 'failed',
         error: { category: 'failed', message: 'the managed installation target is outside the tools root' },
@@ -912,7 +963,7 @@ export function createInstallManager(options: InstallManagerOptions): InstallMan
     }
     // Cleanup happens BEFORE the settled state is published: an observer must
     // never see `succeeded` while this task's staging directory still exists.
-    await removePath(stagingRoot).catch(() => undefined)
+    await remove(stagingRoot).catch(() => undefined)
     running.delete(task.dependencyId)
     return settle(current, outcome ?? {
       state: 'failed',
@@ -920,9 +971,12 @@ export function createInstallManager(options: InstallManagerOptions): InstallMan
     })
   }
 
-  const plan = async (definition: ClueDependencyDefinition): Promise<DependencyInstallPlan> => {
+  const plan = async (
+    definition: ClueDependencyDefinition,
+    signal?: AbortSignal,
+  ): Promise<DependencyInstallPlan> => {
     if (disposed) throw new ClueError('failed', 'the clue runtime has been disposed')
-    return await buildPlan(definition)
+    return await buildPlan(definition, signal)
   }
 
   const start = async (
@@ -934,11 +988,23 @@ export function createInstallManager(options: InstallManagerOptions): InstallMan
     prunePlans()
     const existing = running.get(definition.dependencyId)
     if (existing !== undefined) {
+      // A repeated click shares the in-flight task ONLY for the same plan
+      // ownership (dependency + pinned version); another dependency's plan can
+      // never borrow this task.
+      const requested = plans.get(planId)
+      if (requested === undefined) {
+        throw new ClueError('conflict', 'the installation plan expired or does not exist; create a new plan')
+      }
+      if (requested.plan.dependencyId !== definition.dependencyId) {
+        throw new ClueError('conflict', 'the installation plan belongs to another dependency')
+      }
+      if (requested.version !== definition.version.recommended) {
+        throw new ClueError('conflict', 'the dependency version changed; confirm a new installation plan')
+      }
       const taskId = latestTask.get(definition.dependencyId)
       const task = taskId === undefined ? undefined : tasks.get(taskId)
       if (task === undefined) return snapshotTask(await existing.promise)
-      const requested = plans.get(planId)
-      if (requested !== undefined && requested.version !== task.version) {
+      if (requested.version !== task.version) {
         throw new ClueError(
           'conflict',
           `dependency "${definition.dependencyId}" is already installing version ${task.version}`,

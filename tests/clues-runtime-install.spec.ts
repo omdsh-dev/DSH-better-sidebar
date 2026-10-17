@@ -15,6 +15,7 @@
  */
 import { createHash } from 'node:crypto'
 import { existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync, mkdirSync } from 'node:fs'
+import { rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, win32 } from 'node:path'
 import { gzipSync } from 'node:zlib'
@@ -919,6 +920,88 @@ describe('managed tools-root containment', () => {
     expect(readdirSync(join(home, 'tools', 'github.gh'))).toEqual(['2.40.1'])
     expect(plan.targetDir).toBe(join(home, 'tools', 'github.gh', '2.40.1'))
     expect(readFileSync(join(plan.targetDir, EXE), 'utf8')).toBe('installed-binary')
+    manager.dispose()
+  })
+})
+
+describe('install manager state bounds and ownership', () => {
+  it('lists no executable actions when the plan is not installable', async () => {
+    const unsupported = definition({ supportedPlatforms: [{ platform: 'aix', arch: 'ppc64' }] })
+    const { manager, plan } = await setup({ definition: unsupported })
+    expect(plan.installable).toBe(false)
+    expect(plan.actions).toEqual([])
+    expect(plan.actionIds).toEqual([])
+    expect(plan.manualInstall).toBeDefined()
+    manager.dispose()
+  })
+
+  it('refuses to share a running task with a plan for another dependency', async () => {
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    const transport = fakeTransport({ gate })
+    const { manager, plan } = await setup({ transport })
+    await manager.start(definition(), plan.planId)
+    const otherDefinition = definition({ dependencyId: 'lark.cli', command: 'lark-cli' })
+    const otherPlan = await manager.plan(otherDefinition)
+    await expect(manager.start(definition(), otherPlan.planId)).rejects.toMatchObject({
+      category: 'conflict',
+      message: expect.stringMatching(/another dependency/),
+    })
+    release()
+    await settle(manager, 'github.gh')
+    manager.dispose()
+  })
+
+  it('refuses a running-task share after the recommended version changed', async () => {
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    const { manager, plan } = await setup({ transport: fakeTransport({ gate }) })
+    await manager.start(definition(), plan.planId)
+    const upgraded = definition({ version: { minimum: '2.40.0', recommended: '2.41.0' } })
+    await expect(manager.start(upgraded, plan.planId)).rejects.toMatchObject({ category: 'conflict' })
+    release()
+    await settle(manager, 'github.gh')
+    manager.dispose()
+  })
+
+  it('retains a bounded number of latest tasks', async () => {
+    const { manager } = await setup({ transport: fakeTransport() })
+    for (let index = 0; index < 66; index += 1) {
+      const dependencyId = `dep.${index}`
+      const current = definition({ dependencyId, command: `gh${index}` })
+      const plan = await manager.plan(current)
+      await manager.start(current, plan.planId)
+      await settle(manager, dependencyId)
+    }
+    expect(manager.list().length).toBeLessThanOrEqual(64)
+    expect(manager.latest('dep.0')).toBeUndefined()
+    expect(manager.latest('dep.65')).toMatchObject({ state: 'succeeded' })
+    manager.dispose()
+  })
+
+  it('logs a failed previous-copy cleanup without failing the install', async () => {
+    const home = tempHome()
+    const messages: string[] = []
+    const manager = createInstallManager({
+      home,
+      platform: process.platform,
+      arch: process.arch,
+      transport: fakeTransport(),
+      probeExecutable: async () => ({ compatible: true, version: '2.40.1' }),
+      detectSystemInstall: async () => undefined,
+      removePath: async (path) => {
+        if (path.includes('.previous-')) throw new Error('directory is in use')
+        await rm(path, { recursive: true, force: true })
+      },
+      logger: message => messages.push(message),
+    })
+    const plan = await manager.plan(definition())
+    mkdirSync(join(plan.targetDir, 'bin'), { recursive: true })
+    writeFileSync(join(plan.targetDir, EXE), 'old-working-binary')
+    await manager.start(definition(), plan.planId)
+    const task = await settle(manager, 'github.gh')
+    expect(task.state).toBe('succeeded')
+    expect(messages.some(message => message.includes('.previous-'))).toBe(true)
     manager.dispose()
   })
 })

@@ -639,8 +639,10 @@ export function createDependenciesRuntime(options: DependenciesRuntimeOptions): 
         ...(outcome.error === undefined ? {} : { error: outcome.error }),
       }
     },
-    detectSystemInstall: async (definition): Promise<DependencySystemInstall | undefined> => {
-      const pathProbe = await probePath(definition, undefined)
+    detectSystemInstall: async (definition, signal): Promise<DependencySystemInstall | undefined> => {
+      // The plan's caller signal reaches the PATH probe; a cancelled plan must
+      // not keep a `--version` process running in the background.
+      const pathProbe = await probePath(definition, signal)
       if (pathProbe.outcome === undefined || pathProbe.executablePath === undefined) return undefined
       return {
         executablePath: pathProbe.executablePath,
@@ -730,7 +732,7 @@ export function createDependenciesRuntime(options: DependenciesRuntimeOptions): 
   ): Promise<DependencyInstallPlan> => {
     if (disposed) throw new ClueError('failed', 'the clue runtime has been disposed')
     if (isAborted(planOptions.signal)) throw new ClueError('cancelled', 'the installation plan was cancelled')
-    return await install.plan(requireDefinition(dependencyId))
+    return await install.plan(requireDefinition(dependencyId), planOptions.signal)
   }
 
   const start = async (
