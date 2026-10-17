@@ -26,11 +26,13 @@
  * that dialect's own `node:path` module, so a win32 reference is never
  * reinterpreted by the POSIX host functions (or vice versa).
  *
- * Three types, no pretense:
+ * Four types, no pretense:
  * - `builtin.files.markdown` — `.md` / `.markdown`, `text/markdown`, editable;
  * - `builtin.files.text` — any other text, `text/plain`, editable;
  * - `builtin.files.binary` — read-only; a read answers an asset entry instead
- *   of pretending the bytes are a string.
+ *   of pretending the bytes are a string;
+ * - `builtin.files.directory` — read-only, no formats; a resolved directory is
+ *   NEVER classified as binary (there is nothing to decode).
  */
 import { randomUUID } from 'node:crypto'
 import { constants } from 'node:fs'
@@ -78,6 +80,7 @@ export const LOCAL_FILE_TYPE_IDS = {
   markdown: 'builtin.files.markdown',
   text: 'builtin.files.text',
   binary: 'builtin.files.binary',
+  directory: 'builtin.files.directory',
 } as const
 
 /** One local-file type id. */
@@ -172,7 +175,12 @@ export function localFileSourceDescriptor(): ClueSourceDescriptor {
     icon: 'files',
     order: 0,
     pluginId: 'dsh-better-sidebar',
-    types: [LOCAL_FILE_TYPE_IDS.markdown, LOCAL_FILE_TYPE_IDS.text, LOCAL_FILE_TYPE_IDS.binary],
+    types: [
+      LOCAL_FILE_TYPE_IDS.markdown,
+      LOCAL_FILE_TYPE_IDS.text,
+      LOCAL_FILE_TYPE_IDS.binary,
+      LOCAL_FILE_TYPE_IDS.directory,
+    ],
     transport: 'files',
     capabilities: {
       resolve: true,
@@ -205,6 +213,14 @@ export function localFileTypeDescriptors(): ClueTypeDescriptor[] {
       sourceId: LOCAL_FILE_SOURCE_ID,
       formats: ['application/octet-stream'],
       capabilities: { read: true, edit: false, concurrency: 'none' },
+    },
+    {
+      typeId: LOCAL_FILE_TYPE_IDS.directory,
+      sourceId: LOCAL_FILE_SOURCE_ID,
+      // A directory has no content format: its candidates exist so browsing
+      // and scope selection can carry one, never so read can decode it.
+      formats: [],
+      capabilities: { read: false, edit: false, concurrency: 'none' },
     },
   ]
 }
@@ -484,7 +500,7 @@ function candidateOf(
   isDir: boolean,
   relativeTitle?: string,
 ): ClueCandidate {
-  const typeId = isDir ? LOCAL_FILE_TYPE_IDS.binary : localFileTypeOf(locator.path, locator.dialect)
+  const typeId = isDir ? LOCAL_FILE_TYPE_IDS.directory : localFileTypeOf(locator.path, locator.dialect)
   const meta: JsonObject = isDir ? { kind: 'directory' } : { kind: 'file' }
   return {
     sourceId: LOCAL_FILE_SOURCE_ID,

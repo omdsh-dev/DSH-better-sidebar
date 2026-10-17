@@ -475,7 +475,16 @@ export class CluesStore {
       if (!name.endsWith(META_SUFFIX)) continue
       const parsed = await readJsonFile(join(dir, name))
       if (parsed === undefined) continue
-      metas.push(parseSnapshotMeta(parsed, workspaceId, name))
+      // The filename IS the snapshot id (percent-encoded): a meta document
+      // naming a different snapshot is corrupt, not a second row.
+      const idPart = name.slice(0, -META_SUFFIX.length)
+      let expectedId: string
+      try {
+        expectedId = decodeURIComponent(idPart)
+      } catch {
+        throw new ClueError('failed', `clue snapshot metadata "${name}" is corrupt: unreadable snapshot id`)
+      }
+      metas.push(parseSnapshotMeta(parsed, workspaceId, name, expectedId))
     }
     return metas.sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.snapshotId.localeCompare(b.snapshotId))
   }
@@ -492,7 +501,7 @@ export class CluesStore {
     if (parsed === undefined) {
       throw new ClueError('not-found', `clue snapshot "${snapshotId}" does not exist`)
     }
-    return parseSnapshotMeta(parsed, workspaceId, path)
+    return parseSnapshotMeta(parsed, workspaceId, path, snapshotId)
   }
 
   /** Read one snapshot's content file only (independent of any source). */
@@ -575,11 +584,24 @@ export class CluesStore {
   }
 }
 
-/** Validate one stored snapshot metadata document. */
-function parseSnapshotMeta(raw: unknown, workspaceId: string, source: string): ClueSnapshotMeta {
+/**
+ * Validate one stored snapshot metadata document.
+ *
+ * `expectedSnapshotId` is the id the caller requested or the one encoded in
+ * the file name: a metadata document that names another snapshot would let a
+ * corrupted/copied file masquerade as a different import, so it is refused
+ * loudly instead of being attributed to the requested id.
+ */
+function parseSnapshotMeta(
+  raw: unknown,
+  workspaceId: string,
+  source: string,
+  expectedSnapshotId: string,
+): ClueSnapshotMeta {
   if (
     !isRecord(raw)
-    || typeof raw.snapshotId !== 'string'
+    || !isNonEmptyString(raw.snapshotId)
+    || raw.snapshotId !== expectedSnapshotId
     || typeof raw.clueId !== 'string'
     || typeof raw.format !== 'string'
     || typeof raw.fetchedAt !== 'string'

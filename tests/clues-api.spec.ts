@@ -67,10 +67,10 @@ describe('clue API handlers', () => {
       sources: [{
         sourceId: 'builtin.files',
         transport: 'files',
-        types: ['builtin.files.markdown', 'builtin.files.text', 'builtin.files.binary'],
+        types: ['builtin.files.markdown', 'builtin.files.text', 'builtin.files.binary', 'builtin.files.directory'],
       }],
     })
-    expect((result as { types: unknown[] }).types).toHaveLength(3)
+    expect((result as { types: unknown[] }).types).toHaveLength(4)
   })
 
   it('dispatches list/ensure/read/clues through the wire payloads', async () => {

@@ -342,6 +342,25 @@ describe('clue service registration', () => {
     expect((await service.listPacks('ws-1')).packs[0]?.members).toEqual([clueId])
   })
 
+  it('preserves namespaced descriptor extensions in registry copies', async () => {
+    const service = makeService()
+    const registration = testSource()
+    const sourceExtensions = { 'my.plugin': { color: 'green' } }
+    const typeExtensions = { 'my.plugin': { viewer: 'rich' } }
+    service.registerSource({
+      ...registration,
+      descriptor: { ...registration.descriptor, extensions: sourceExtensions },
+      types: registration.types.map(type => ({ ...type, extensions: typeExtensions })),
+    })
+    expect(service.getSource('test.source')?.extensions).toEqual(sourceExtensions)
+    expect(service.getTypes('test.source')[0]?.extensions).toEqual(typeExtensions)
+    // The registry shallow-copies the extension object: replacing a key on a
+    // returned copy cannot rewrite the published metadata.
+    const returned = service.getSource('test.source')?.extensions as { [key: string]: unknown }
+    returned['my.plugin'] = { color: 'red' }
+    expect(service.getSource('test.source')?.extensions).toEqual(sourceExtensions)
+  })
+
   it('reports unknown sources and unsupported operations with fixed categories', async () => {
     const service = makeService()
     service.registerSource(testSource({ capabilities: { list: false, search: false } }))

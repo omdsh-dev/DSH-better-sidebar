@@ -137,6 +137,7 @@ describe('builtin.files list', () => {
     expect(byTitle.get('a.md')?.typeId).toBe(LOCAL_FILE_TYPE_IDS.markdown)
     expect(byTitle.get('b.txt')?.typeId).toBe(LOCAL_FILE_TYPE_IDS.text)
     expect(byTitle.get('image.png')?.typeId).toBe(LOCAL_FILE_TYPE_IDS.binary)
+    expect(byTitle.get('sub')?.typeId).toBe(LOCAL_FILE_TYPE_IDS.directory)
     expect(byTitle.get('sub')?.meta).toEqual({ kind: 'directory' })
     expect(result.total).toBe(4)
     expect(result.limited).toBeUndefined()
@@ -239,6 +240,7 @@ describe('builtin.files search', () => {
     })
     expect(second.items.map(item => item.title)).toEqual(['sub', 'c.bin'])
     const dir = second.items.find(item => item.title === 'sub')
+    expect(dir?.typeId).toBe(LOCAL_FILE_TYPE_IDS.directory)
     expect(dir?.meta).toEqual({ kind: 'directory' })
     expect(second.total).toBe(3)
   })
@@ -655,6 +657,34 @@ describe('builtin.files resolve / portable / dialects', () => {
     })
   })
 
+  it('resolves a directory as the read-only directory type, never binary', async () => {
+    const { workspace, service } = fixture()
+    mkdirSync(join(workspace, 'docs'))
+    const [candidate] = await service.resolve({ workspaceId: WORKSPACE_ID, sourceId: 'builtin.files', text: 'docs' })
+    expect(candidate?.typeId).toBe(LOCAL_FILE_TYPE_IDS.directory)
+    expect(candidate?.meta).toEqual({ kind: 'directory' })
+    // The catalogue advertises it explicitly: no formats, not readable, not
+    // editable — a directory is a browse/scope handle, not a binary asset.
+    expect(service.getTypes('builtin.files').find(type => type.typeId === LOCAL_FILE_TYPE_IDS.directory))
+      .toEqual({
+        typeId: LOCAL_FILE_TYPE_IDS.directory,
+        sourceId: 'builtin.files',
+        formats: [],
+        capabilities: { read: false, edit: false, concurrency: 'none' },
+      })
+    const ensured = await service.ensure({
+      workspaceId: WORKSPACE_ID,
+      sourceId: 'builtin.files',
+      typeId: candidate!.typeId,
+      locator: candidate!.locator,
+      title: 'docs',
+    })
+    await expect(service.read({ workspaceId: WORKSPACE_ID, clueId: ensured.clue.id }))
+      .rejects.toMatchObject({ category: 'unsupported' })
+    await expect(service.loadEdit({ workspaceId: WORKSPACE_ID, clueId: ensured.clue.id }))
+      .rejects.toMatchObject({ category: 'unsupported' })
+  })
+
   it('auto-resolve reaches a later remote source instead of treating its input as a local path', async () => {
     const { workspace, service } = fixture()
     writeFileSync(join(workspace, 'a.md'), '# a\n')
@@ -826,6 +856,7 @@ describe('builtin.files resolve / portable / dialects', () => {
       path: HOST_PATH.normalize(homedir()),
       dialect: HOST_DIALECT,
     })
+    expect(home[0]?.typeId).toBe(LOCAL_FILE_TYPE_IDS.directory)
     expect(home[0]?.meta).toEqual({ kind: 'directory' })
 
     const nested = await service.resolve({ workspaceId: WORKSPACE_ID, text: '~/.' })

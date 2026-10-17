@@ -372,6 +372,7 @@ function copySourceDescriptor(descriptor: ClueSourceDescriptor): ClueSourceDescr
     types: [...descriptor.types],
     capabilities: { ...descriptor.capabilities },
     ...(descriptor.dependencyIds === undefined ? {} : { dependencyIds: [...descriptor.dependencyIds] }),
+    ...(descriptor.extensions === undefined ? {} : { extensions: { ...descriptor.extensions } }),
   }
 }
 
@@ -381,6 +382,7 @@ function copyTypeDescriptor(type: ClueTypeDescriptor): ClueTypeDescriptor {
     ...type,
     formats: [...type.formats],
     capabilities: { ...type.capabilities },
+    ...(type.extensions === undefined ? {} : { extensions: { ...type.extensions } }),
   }
 }
 

@@ -1004,10 +1004,10 @@ S1 只交付**来源注册、领域操作、内置本地文件来源与错误/�
 ```ts
 import type { ClueSourceRegistration } from 'dsh-better-sidebar/clues'
 
-ctx.effect(() => {
-  // 服务已在 `./clues` 的声明里合并进 Cordis Context，`ctx.get` 拿到的是
-  // 类型化的 `CluesService`（也可用 `ctx.inject(['betterSidebarClues'], …)` 等待就绪）。
-  const clues = ctx.get('betterSidebarClues')
+// 外部来源插件完全可能先于本插件加载：直接 `ctx.get('betterSidebarClues')`
+// 会拿到 undefined。用 `ctx.inject` 等待服务就绪（服务已在 `./clues` 的声明里
+// 合并进 Cordis Context），注册随本插件 fiber 卸载。
+ctx.inject(['betterSidebarClues'], (sctx) => {
   const registration: ClueSourceRegistration = {
     descriptor: {
       sourceId: 'my-plugin:docs', name: 'My docs', order: 20, pluginId: 'my-plugin',
@@ -1023,7 +1023,7 @@ ctx.effect(() => {
       async read(input, context) { /* 返回 ClueReadResult { format, data, fetchedAt, … } */ },
     },
   }
-  return clues.registerSource(registration)
+  sctx.effect(() => sctx.betterSidebarClues.registerSource(registration))
 })
 ```
 

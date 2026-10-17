@@ -22,13 +22,14 @@ import { removeTree } from './temp-tree.ts'
 
 /**
  * Generous delivery budget: the module debounces at 150 ms, the OS adds its
- * own latency. Kept under the suite-wide 30 s test timeout but above the old
- * 15 s: the vitest config already raised that clock because a STARVED worker
- * lost this exact suite at 15000 ms, and this spec's own waitFor budget was
- * overriding it on local full-suite runs. A genuinely silent watcher still
- * fails, just with the real (never-delivered) verdict.
+ * own latency. Kept under the suite-wide 30 s test timeout (22 s leaves room
+ * for the wait itself plus cleanup) but above the old 15 s: the vitest config
+ * already raised that clock because a STARVED worker lost this exact suite at
+ * 15000 ms, and this spec's own waitFor budget was overriding it on local
+ * full-suite runs. A genuinely silent watcher still fails, just with the real
+ * (never-delivered) verdict.
  */
-const DELIVERY_TIMEOUT_MS = 25_000
+const DELIVERY_TIMEOUT_MS = 22_000
 /** Long enough for a second (tail) delivery to have surfaced, so "folded" means something. */
 const SETTLE_MS = 1_000
 

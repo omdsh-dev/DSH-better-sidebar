@@ -339,6 +339,30 @@ describe('clue store', () => {
     await expect(store.readSnapshotMeta('ws-1', 'bad')).rejects.toMatchObject({ category: 'failed' })
   })
 
+  it('rejects metadata whose snapshotId does not match the request/filename', async () => {
+    const dir = root()
+    const store = new CluesStore({ root: dir })
+    const snapshotDir = workspaceSnapshotDir(dir, 'ws-1')
+    mkdirSync(snapshotDir, { recursive: true })
+    // A valid-looking metadata document that names a DIFFERENT snapshot: if it
+    // were attributed to `snap-a`, the imported content would legally be read
+    // through an id its metadata never described.
+    const meta = {
+      snapshotId: 'snap-b',
+      workspaceId: 'ws-1',
+      clueId: 'clue-1',
+      format: 'text/plain',
+      fetchedAt: '2026-10-17T00:00:00.000Z',
+      createdAt: '2026-10-17T00:00:01.000Z',
+    }
+    writeFileSync(join(snapshotDir, 'snap-a.meta.json'), JSON.stringify(meta), 'utf8')
+    await expect(store.readSnapshotMeta('ws-1', 'snap-a'))
+      .rejects.toMatchObject({ category: 'failed', message: expect.stringContaining('corrupt') })
+    // Listing reads the same document: it must refuse it instead of reporting
+    // a `snap-b` row that has no `snap-b` metadata file.
+    await expect(store.listSnapshots('ws-1')).rejects.toMatchObject({ category: 'failed' })
+  })
+
   it('refuses a duplicate snapshot id instead of silently overwriting the imported snapshot', async () => {
     const dir = root()
     const store = new CluesStore({ root: dir })

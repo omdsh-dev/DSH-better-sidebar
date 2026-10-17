@@ -134,6 +134,8 @@ export interface ClueSourceDescriptor {
   readonly dependencyIds?: readonly string[]
   /** Shared connection identity, when the source rides one (S2 owns it). */
   readonly connectionId?: string
+  /** Namespaced extension metadata; the core copies it but never interprets it. */
+  readonly extensions?: JsonObject
 }
 
 /**
@@ -168,6 +170,8 @@ export interface ClueTypeDescriptor {
   /** Content formats this type can produce (`text/markdown`, `text/plain`, …). */
   readonly formats: readonly string[]
   readonly capabilities: ClueTypeCapabilities
+  /** Namespaced extension metadata; the core copies it but never interprets it. */
+  readonly extensions?: JsonObject
 }
 
 // ── Candidates, pagination and reads ───────────────────────────────────────
