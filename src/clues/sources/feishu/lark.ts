@@ -22,9 +22,11 @@
  *   Raw messages, hints, stdout/stderr text, tokens, device codes and app
  *   secrets never enter a `ClueError`.
  *
- * lark-cli is NOT installed on this host: these argv shapes and envelope
- * fields are taken from the local lark skill documentation and are exercised
- * only against fake runtimes.
+ * lark-cli is NOT bundled with the plugin and the test suite never runs a
+ * real account: these argv shapes, envelopes, exit codes and payloads were
+ * checked against the pinned lark-cli 1.0.55 binary/source (including the
+ * device-flow stdout events) and are exercised in CI against fake runtimes.
+ * A real-account verification remains a separate, explicitly agreed step.
  */
 import { isAbsolute } from 'node:path'
 import { ClueError } from '../../types.ts'
@@ -86,7 +88,7 @@ export interface LarkSuccess {
 
 /** The safe, classified projection of one failure envelope. */
 export interface LarkFailure {
-  /** Upstream error category (`authorization`, `permission`, …). */
+  /** Upstream error category (`authorization`, `authentication`, …). */
   readonly type: string
   /** Upstream subtype (`missing_scope`, `token_expired`, …). */
   readonly subtype: string
@@ -95,6 +97,30 @@ export interface LarkFailure {
   /** Missing scope names (already filtered to safe tokens). */
   readonly missingScopes: readonly string[]
   /** Opaque console URL from the error, only when it is an https URL. */
+  readonly consoleUrl?: string
+  /**
+   * Fixed, safe classification derived from the raw error message (never the
+   * message itself). lark-cli reports device-flow denial/expiry as
+   * `type:"authentication" subtype:"unknown"` with the real code only inside
+   * `message`, so the adapter needs one sanitized enum to distinguish them.
+   */
+  readonly marker?: 'denied' | 'expired' | 'pending' | 'scope' | 'config'
+}
+
+/**
+ * The terminal `authorization_complete` projection of a device-flow poll.
+ *
+ * lark-cli 1.0.55 writes this object to stdout with **exit 3** when the user
+ * completed the browser flow but the requested scopes were not granted (the
+ * stderr stream may be empty). Reading only stderr made `scope-insufficient`
+ * unreachable.
+ */
+export interface LarkCompletion {
+  /** Raw `authorization_complete.status` / `warning` (safe token). */
+  readonly status: string
+  /** Scopes the CLI reported as not granted (safe tokens). */
+  readonly missingScopes: readonly string[]
+  /** Opaque console URL from the completion payload, when https. */
   readonly consoleUrl?: string
 }
 
@@ -116,6 +142,8 @@ export interface LarkOutcome {
   readonly result: CliResult
   readonly success?: LarkSuccess
   readonly failure?: LarkFailure
+  /** Device-flow completion printed to stdout (with a non-zero exit). */
+  readonly completion?: LarkCompletion
 }
 
 /** A safe token-shaped string (type/subtype/scope names). */
@@ -148,45 +176,189 @@ function recordOf(value: unknown): Record<string, JsonValue> | undefined {
 }
 
 /**
+ * Parse one CLI payload tolerantly.
+ *
+ * lark-cli can print an update/`_notice` prefix or a JSON notice object before
+ * the envelope when a user-level config forces notices on. Only the outermost
+ * candidate JSON object is used; raw text is never echoed.
+ */
+function parseJsonPayload(text: string): unknown {
+  const trimmed = typeof text === 'string' ? text.trim() : ''
+  if (trimmed === '') return undefined
+  try {
+    return JSON.parse(trimmed)
+  } catch {
+    // Keep looking for a complete suffix object; the notice prefix is not data.
+  }
+  const last = trimmed.lastIndexOf('}')
+  if (last < 0) return undefined
+  for (let start = trimmed.indexOf('{'); start >= 0 && start < last; start = trimmed.indexOf('{', start + 1)) {
+    for (const candidate of [trimmed.slice(start), trimmed.slice(start, last + 1)]) {
+      try {
+        return JSON.parse(candidate)
+      } catch {
+        // Try the next start.
+      }
+    }
+  }
+  return undefined
+}
+
+/** The classified failure of an already-parsed envelope value. */
+function failureOfValue(value: unknown): LarkFailure | undefined {
+  const envelope = recordOf(value)
+  if (envelope === undefined) return undefined
+  // Device-flow JSON failure (exit 3, bare stdout):
+  // `{event:"authorization_failed", error:"authorization failed: access_denied"}`.
+  // `error` is a raw message here, not the usual error object.
+  if (envelope.event === 'authorization_failed' || (envelope.ok === undefined && typeof envelope.error === 'string')) {
+    const marker = failureMarker(envelope)
+    if (marker !== undefined || envelope.event === 'authorization_failed') {
+      return {
+        type: 'authentication',
+        subtype: 'unknown',
+        missingScopes: [],
+        ...(marker === undefined ? {} : { marker }),
+      }
+    }
+  }
+  if (envelope.ok !== false && envelope.error === undefined) return undefined
+  const error = recordOf(envelope.error)
+  if (error === undefined) return undefined
+  const code = typeof error.code === 'number' && Number.isFinite(error.code) ? error.code : undefined
+  // Missing scopes can be reported by the device-flow completion shape as well.
+  const data = recordOf(envelope.data)
+  const missingScopes = safeScopes(
+    error.missing_scopes
+      ?? error.missing
+      ?? data?.missing_scopes
+      ?? data?.missing
+      ?? envelope.missing_scopes,
+  )
+  const consoleUrlValue = error.console_url ?? data?.console_url ?? envelope.console_url
+  const consoleUrl = typeof consoleUrlValue === 'string' && SAFE_HTTPS_URL.test(consoleUrlValue)
+    ? consoleUrlValue
+    : undefined
+  const type = safeToken(error.type) ?? ''
+  const subtype = safeToken(error.subtype) ?? ''
+  const marker = failureMarker(error)
+  return {
+    type,
+    subtype,
+    ...(code === undefined ? {} : { code }),
+    missingScopes,
+    ...(consoleUrl === undefined ? {} : { consoleUrl }),
+    ...(marker === undefined ? {} : { marker }),
+  }
+}
+
+/**
+ * Classify the raw failure message into one fixed, safe enum.
+ *
+ * The message itself is NEVER stored or projected. lark-cli's device-flow
+ * denial/expiry arrives as `type:"authentication" subtype:"unknown"`; the only
+ * discriminator is the OAuth code embedded in the message (`access_denied`,
+ * `expiration`, …), so this is the one place that reads it.
+ */
+function failureMarker(error: Record<string, JsonValue>): LarkFailure['marker'] {
+  const message = [
+    stringOfValue(error.message),
+    stringOfValue(error.hint),
+    stringOfValue(error.error),
+    stringOfValue(error.reason),
+    stringOfValue(error.description),
+  ].filter((entry): entry is string => entry !== undefined).join(' ').toLowerCase()
+  if (message === '') return undefined
+  if (/access[_ ]denied|\bdenied\b|\brevoked\b/.test(message)) return 'denied'
+  if (/expired_token|token[_ ]expired|expiration|\bexpired\b|timed out|\btimeout\b|device_code is invalid|invalid device/.test(message)) {
+    return 'expired'
+  }
+  if (/authorization_pending|slow_down|waiting/.test(message)) return 'pending'
+  if (/missing[_ ]scope|scope[_ ]insufficient|not granted|missing scopes/.test(message)) return 'scope'
+  if (/not[_ ]configured|not configured|missing app config/.test(message)) return 'config'
+  return undefined
+}
+
+/** A non-empty string field of a parsed error record. */
+function stringOfValue(value: JsonValue | undefined): string | undefined {
+  return typeof value === 'string' && value.trim() !== '' ? value : undefined
+}
+
+/**
  * Parse the stderr failure envelope. Returns undefined when stderr is not a
  * failure envelope — the caller then answers a generic (still sanitized)
  * failure instead of pretending success.
  * @param text - the runner's sanitized stderr.
  */
 export function parseLarkFailure(text: string): LarkFailure | undefined {
-  const trimmed = typeof text === 'string' ? text.trim() : ''
-  if (trimmed === '') return undefined
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(trimmed)
-  } catch {
-    // A CLI may print a progress/notice prefix before the envelope; keep only
-    // the outermost JSON object. Raw text is still never echoed.
-    const start = trimmed.indexOf('{')
-    const end = trimmed.lastIndexOf('}')
-    if (start < 0 || end <= start) return undefined
-    try {
-      parsed = JSON.parse(trimmed.slice(start, end + 1))
-    } catch {
-      return undefined
+  return failureOfValue(parseJsonPayload(text))
+}
+
+/**
+ * Parse the device-flow completion payload from stdout.
+ *
+ * Real 1.0.55 shapes this tolerates:
+ * - `{event:"authorization_complete", user_name, scope, missing, warning?}`
+ *   (exit 0 on success, exit 3 when requested scopes were not granted);
+ * - `{event:"authorization_failed", error:"…"}` (see {@link parseLarkFailure});
+ * - nested `{ok:false, data:{authorization_complete:{status:'warning',
+ *   missing:[…]}}}` and `{authorization_complete:{warning, missing}}`.
+ */
+export function parseLarkCompletion(text: string): LarkCompletion | undefined {
+  return completionOfValue(parseJsonPayload(text))
+}
+
+/** The completion projection of one parsed stdout value. */
+function completionOfValue(value: unknown): LarkCompletion | undefined {
+  const envelope = recordOf(value)
+  if (envelope === undefined) return undefined
+  const data = recordOf(envelope.data)
+  // Real 1.0.55 login JSON is a BARE object identified by `event`:
+  // `{event:"authorization_complete", user_name, scope, missing, warning?}`
+  // (exit 0 on full success, exit 3 when requested scopes were not granted).
+  const event = safeToken(data?.event) ?? safeToken(envelope.event)
+  const raw = data?.authorization_complete ?? envelope.authorization_complete
+  if (raw === undefined && event !== 'authorization_complete') return undefined
+  let status: string
+  let missingScopes = safeScopes(
+    data?.missing
+      ?? data?.missing_scopes
+      ?? envelope.missing
+      ?? envelope.missing_scopes,
+  )
+  let consoleUrl: string | undefined
+  const outerConsoleUrl = data?.console_url ?? envelope.console_url
+  if (typeof outerConsoleUrl === 'string' && SAFE_HTTPS_URL.test(outerConsoleUrl)) {
+    consoleUrl = outerConsoleUrl
+  }
+  if (raw === undefined) {
+    // A bare authorization_complete event: `warning` marks the partial grant.
+    status = (data?.warning ?? envelope.warning) === undefined ? 'complete' : 'warning'
+  } else if (typeof raw === 'string') {
+    status = safeToken(raw) ?? ''
+  } else if (raw === true) {
+    status = 'complete'
+  } else {
+    const completion = recordOf(raw)
+    if (completion === undefined) return undefined
+    status = safeToken(completion.status)
+      ?? (completion.warning !== undefined ? 'warning' : 'complete')
+    missingScopes = safeScopes(
+      completion.missing
+        ?? completion.missing_scopes
+        ?? data?.missing
+        ?? data?.missing_scopes
+        ?? envelope.missing
+        ?? envelope.missing_scopes,
+    )
+    const consoleUrlValue = completion.console_url ?? data?.console_url ?? envelope.console_url
+    if (typeof consoleUrlValue === 'string' && SAFE_HTTPS_URL.test(consoleUrlValue)) {
+      consoleUrl = consoleUrlValue
     }
   }
-  const envelope = recordOf(parsed)
-  if (envelope === undefined) return undefined
-  if (envelope.ok !== false && envelope.error === undefined) return undefined
-  const error = recordOf(envelope.error)
-  if (error === undefined) return undefined
-  const code = typeof error.code === 'number' && Number.isFinite(error.code) ? error.code : undefined
-  const missingScopes = safeScopes(error.missing_scopes)
-  const consoleUrl = typeof error.console_url === 'string' && SAFE_HTTPS_URL.test(error.console_url)
-    ? error.console_url
-    : undefined
-  const type = safeToken(error.type) ?? ''
-  const subtype = safeToken(error.subtype) ?? ''
+  if (status === '' && missingScopes.length === 0) return undefined
   return {
-    type,
-    subtype,
-    ...(code === undefined ? {} : { code }),
+    status: status === '' ? 'warning' : status,
     missingScopes,
     ...(consoleUrl === undefined ? {} : { consoleUrl }),
   }
@@ -204,10 +376,12 @@ function hasMarker(failure: LarkFailure, markers: readonly string[]): boolean {
  * @param failure - the sanitized failure envelope.
  */
 export function classifyLarkFailure(failure: LarkFailure): LarkFailureClass {
-  if (failure.missingScopes.length > 0 || hasMarker(failure, ['missing_scope', 'scope_insufficient'])) {
+  if (failure.marker === 'scope' || failure.missingScopes.length > 0 || hasMarker(failure, ['missing_scope', 'scope_insufficient'])) {
     return 'missing-scope'
   }
-  if (hasMarker(failure, ['config', 'not_configured', 'no_app', 'app_missing'])) return 'config-missing'
+  if (failure.marker === 'config' || hasMarker(failure, ['config', 'not_configured', 'no_app', 'app_missing'])) {
+    return 'config-missing'
+  }
   if (hasMarker(failure, ['permission', 'forbidden', 'access_denied', 'no_permission'])) return 'permission'
   if (hasMarker(failure, ['not_found', 'notfound', 'resource_missing'])) return 'not-found'
   if (hasMarker(failure, ['rate_limit', 'too_many', 'throttl'])) return 'rate-limited'
@@ -218,7 +392,17 @@ export function classifyLarkFailure(failure: LarkFailure): LarkFailureClass {
   if (hasMarker(failure, ['invalid_parameter', 'invalid_request', 'validation', 'bad_request'])) {
     return 'invalid-request'
   }
-  if (hasMarker(failure, ['authorization', 'token_expired', 'token_invalid', 'not_logged', 'login_required', 'unauthorized'])) {
+  // lark-cli 1.0.55 reports device-flow failures as `type:"authentication"`
+  // (not `authorization`); `needs_refresh` is also an authorization signal.
+  if (
+    failure.type === 'authentication'
+    || failure.marker === 'denied'
+    || failure.marker === 'expired'
+    || hasMarker(failure, [
+      'authorization', 'authentication', 'token_expired', 'token_invalid', 'not_logged',
+      'login_required', 'unauthorized', 'needs_refresh',
+    ])
+  ) {
     return 'authorization'
   }
   return 'failed'
@@ -290,6 +474,7 @@ export function larkFailureError(failure: LarkFailure): ClueError {
   const failureClass = classifyLarkFailure(failure)
   const meta: Record<string, string> = {}
   if (failure.subtype !== '') meta.subtype = failure.subtype
+  if (failure.marker !== undefined) meta.reason = failure.marker
   if (failure.missingScopes.length > 0) meta.missingScopes = failure.missingScopes.join(',')
   if (failure.consoleUrl !== undefined) meta.consoleUrl = failure.consoleUrl
   // The wire only carries { code, message }, so the actionable scope names and
@@ -310,10 +495,45 @@ export function larkFailureError(failure: LarkFailure): ClueError {
 }
 
 /**
+ * Project one device-flow completion into a typed clue error.
+ *
+ * Only the fixed status enum and whitelisted scope names/console URL are used;
+ * the completion payload's warning text is never projected.
+ * @param completion - the sanitized stdout completion.
+ */
+export function larkCompletionError(completion: LarkCompletion): ClueError {
+  const status = completion.status.toLowerCase()
+  const meta: Record<string, string> = { reason: 'scope' }
+  if (completion.missingScopes.length > 0) meta.missingScopes = completion.missingScopes.join(',')
+  if (completion.consoleUrl !== undefined) meta.consoleUrl = completion.consoleUrl
+  if (completion.missingScopes.length > 0 || status.includes('warning') || status.includes('partial')) {
+    return new ClueError(
+      'auth-required',
+      `${FAILURE_MESSAGES['missing-scope']} (${larkScopeDetail(completion.missingScopes, completion.consoleUrl)})`,
+      meta,
+    )
+  }
+  if (status.includes('denied')) {
+    meta.reason = 'denied'
+    return new ClueError('auth-required', 'the Feishu authorization was denied; connect the account again', meta)
+  }
+  if (status.includes('expired')) {
+    meta.reason = 'expired'
+    return new ClueError('auth-required', 'the Feishu authorization expired; connect the account again', meta)
+  }
+  return new ClueError('failed', 'lark-cli reported that the authorization did not complete', meta)
+}
+
+/**
  * Execute one lark-cli invocation and parse both streams.
  *
  * Runner failures (dependency missing/incompatible, timeout, cancellation)
  * propagate unchanged: they are host facts, not CLI envelopes.
+ *
+ * The auth family is special: on exit 3 lark-cli 1.0.55 may print the device
+ * completion object to STDOUT (with an empty/non-envelope stderr). Resource
+ * commands still parse failures only from stderr and never accept stdout as a
+ * failure signal.
  * @param request - command, cwd and budgets.
  */
 export async function executeLark(request: LarkRequest): Promise<LarkOutcome> {
@@ -328,18 +548,21 @@ export async function executeLark(request: LarkRequest): Promise<LarkOutcome> {
     ...(request.stdin === undefined ? {} : { stdin: request.stdin }),
   }
   const result = await request.runtime.runCli(command)
-  if (result.exitCode !== 0) {
-    const failure = parseLarkFailure(result.stderr)
-    return failure === undefined ? { result } : { result, failure }
-  }
   if (result.stdoutTruncated) return { result }
-  const text = result.stdout.trim()
-  if (text === '') return { result }
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(text)
-  } catch {
-    return { result }
+  const parsed = parseJsonPayload(result.stdout)
+  const completion = completionOfValue(parsed)
+  if (result.exitCode !== 0) {
+    // Failure envelopes are read from stderr; the auth family additionally
+    // tolerates a stdout error/completion envelope because the device flow
+    // writes its terminal result there.
+    let failure = parseLarkFailure(result.stderr)
+    if (failure === undefined && request.bareSuccess === true) failure = failureOfValue(parsed)
+    if (failure === undefined && completion === undefined) return { result }
+    return {
+      result,
+      ...(failure === undefined ? {} : { failure }),
+      ...(completion === undefined ? {} : { completion }),
+    }
   }
   const envelope = recordOf(parsed)
   if (envelope === undefined) return { result }
@@ -361,7 +584,18 @@ export async function executeLark(request: LarkRequest): Promise<LarkOutcome> {
   ) {
     // A bare status/device-flow payload: the object itself is the data. The
     // envelope stays available for callers that read `identity`/`meta`.
+    if (
+      completion !== undefined
+      && (completion.missingScopes.length > 0 || !/^(?:complete|completed|success|successful|ready|authorized|approved)$/.test(completion.status.toLowerCase()))
+    ) {
+      // A completion warning/denial is terminal, not a successful bare status.
+      return { result, completion }
+    }
     return { result, success: { data: envelope, envelope } }
+  }
+  if (request.bareSuccess === true) {
+    const failure = failureOfValue(envelope)
+    if (failure !== undefined) return { result, failure }
   }
   return { result }
 }
@@ -373,6 +607,7 @@ export async function executeLark(request: LarkRequest): Promise<LarkOutcome> {
 export async function runLark(request: LarkRequest): Promise<LarkSuccess> {
   const outcome = await executeLark(request)
   if (outcome.success !== undefined) return outcome.success
+  if (outcome.completion !== undefined) throw larkCompletionError(outcome.completion)
   if (outcome.failure !== undefined) throw larkFailureError(outcome.failure)
   if (outcome.result.stdoutTruncated) {
     throw new ClueError('failed', 'the lark-cli output exceeded the capture limit and was not parsed')

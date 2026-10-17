@@ -25,7 +25,10 @@
  *   (the docs/drive domains do not include the `wiki:*` scopes), and the docs
  *   source calls the wiki shortcuts, so it is part of the requested union;
  * - `poll` runs `lark-cli auth login --device-code <host-side code> --json` on
- *   explicit request only;
+ *   explicit request only. lark-cli 1.0.55 writes the terminal
+ *   `authorization_complete` object to STDOUT with exit 3 when the user
+ *   approved only some scopes (stderr may be empty), so the poll projects that
+ *   completion before falling back to the stderr failure envelope;
  * - `cancel` drops the host-side handle. lark-cli documents no device-code
  *   cancel verb, so no CLI command is fabricated; the code expires on the
  *   server and the next connect starts a fresh flow.
@@ -40,12 +43,17 @@
  * instead of collecting an appSecret or spawning a blind background process.
  * Re-running it is always an explicit user choice.
  */
-import type { ConnectionConnectStart, ConnectionInspection, ConnectionPollResult } from '../../runtime/types.ts'
+import type {
+  ConnectionConnectStart,
+  ConnectionInspection,
+  ConnectionPollResult,
+} from '../../runtime/types.ts'
 import type {
   ClueConnectionDefinition,
   ClueDependencyDefinition,
   ClueRuntime,
   ConnectionAdapterContext,
+  DependencyDistribution,
   DependencyTarget,
   ConnectionCancelInput,
 } from '../../runtime/types.ts'
@@ -75,6 +83,7 @@ import {
   larkScopeDetail,
   LARK_AUTH_POLL_TIMEOUT_MS,
   LARK_CLI_ENV,
+  type LarkCompletion,
   type LarkFailure,
   type LarkSuccess,
 } from './lark.ts'
@@ -112,29 +121,98 @@ const MANUAL_INSTALL = {
   url: `https://www.npmjs.com/package/${LARK_CLI_PACKAGE}`,
 } as const
 
-/** The three platform families the pinned npm package is declared for. */
-function supportedTargets(): DependencyTarget[] {
-  return [
-    { platform: 'darwin', arch: 'arm64' },
-    { platform: 'darwin', arch: 'x64' },
-    { platform: 'linux', arch: 'x64' },
-    { platform: 'linux', arch: 'arm64' },
-    { platform: 'win32', arch: 'x64' },
-    { platform: 'win32', arch: 'arm64' },
-  ]
+/** One official native archive of the pinned CLI release. */
+interface LarkArchive {
+  readonly platform: 'darwin' | 'linux' | 'win32'
+  readonly arch: 'x64' | 'arm64'
+  /** GitHub release asset platform segment. */
+  readonly releasePlatform: 'darwin' | 'linux' | 'windows'
+  /** GitHub release asset architecture segment. */
+  readonly releaseArch: 'amd64' | 'arm64'
+  readonly archive: 'zip' | 'tar.gz'
+  /** `lark-cli` on POSIX, `lark-cli.exe` in the Windows zip. */
+  readonly executable: string
+  /** Official sha256 (the `checksums.txt` shipped inside @larksuite/cli@1.0.55). */
+  readonly sha256: string
 }
 
 /**
- * The shared lark-cli dependency. The npm distribution pins the exact official
- * package version; the managed installer never runs lifecycle scripts.
+ * The official native archives of lark-cli 1.0.55.
  *
- * NOT verified on this host: lark-cli is not installed and neither the package
- * version nor a real install was executed. The pin and command name come from
- * the task contract/local lark skill documentation.
+ * The npm package itself is only an installer shim: its `postinstall` downloads
+ * one of these archives, so an `--ignore-scripts` npm install (S2 never runs
+ * lifecycle scripts) produces no executable. Installing the archive directly is
+ * the reliable one-click path.
+ *
+ * NOT verified end-to-end inside the plugin: all six official GitHub-release
+ * archives were downloaded and hashed against the `checksums.txt` shipped in
+ * @larksuite/cli@1.0.55 (the digests below match), but the S2
+ * download→extract→swap→probe pipeline was not run against a real download in
+ * this worktree. If the download fails, the settings row keeps the
+ * manual-install guidance (`npm install -g @larksuite/cli@1.0.55`, which runs
+ * the CLI's own official postinstall) and the explicit-path option.
+ */
+const LARK_ARCHIVES: readonly LarkArchive[] = [
+  {
+    platform: 'darwin', arch: 'arm64', releasePlatform: 'darwin', releaseArch: 'arm64',
+    archive: 'tar.gz', executable: 'lark-cli',
+    sha256: 'd2e3d8cf0b055144606904b503ae1379e3d50a6dac90b0643912fd2e9072c1f2',
+  },
+  {
+    platform: 'darwin', arch: 'x64', releasePlatform: 'darwin', releaseArch: 'amd64',
+    archive: 'tar.gz', executable: 'lark-cli',
+    sha256: '575be44bf803a94f81b5fb30bb8653841e4a4c9b1931a5d62adf4807dbac06aa',
+  },
+  {
+    platform: 'linux', arch: 'x64', releasePlatform: 'linux', releaseArch: 'amd64',
+    archive: 'tar.gz', executable: 'lark-cli',
+    sha256: 'd345e54527b37575d33e0b860550d4e49034c97a193a5b4810fb684d247677f9',
+  },
+  {
+    platform: 'linux', arch: 'arm64', releasePlatform: 'linux', releaseArch: 'arm64',
+    archive: 'tar.gz', executable: 'lark-cli',
+    sha256: 'b5ca0b25d6e87744c38280b837a6473d01fb063c3598ec5beaf6051a803c3dfb',
+  },
+  {
+    platform: 'win32', arch: 'x64', releasePlatform: 'windows', releaseArch: 'amd64',
+    archive: 'zip', executable: 'lark-cli.exe',
+    sha256: 'afd8114bf53e6b150dc22358d347502c55a347b29a00212351225e52151ab9ef',
+  },
+  {
+    platform: 'win32', arch: 'arm64', releasePlatform: 'windows', releaseArch: 'arm64',
+    archive: 'zip', executable: 'lark-cli.exe',
+    sha256: '0cdd542687c4d520c48bc3aef1fd691e800298af01a0401b2b268f7dc184fe34',
+  },
+]
+
+/** The official GitHub release URL of one archive. */
+function larkArchiveUrl(entry: LarkArchive): string {
+  const extension = entry.archive === 'zip' ? 'zip' : 'tar.gz'
+  return `https://github.com/larksuite/cli/releases/download/v${LARK_CLI_VERSION}/`
+    + `lark-cli-${LARK_CLI_VERSION}-${entry.releasePlatform}-${entry.releaseArch}.${extension}`
+}
+
+/** The three platform families the pinned package declares. */
+function supportedTargets(): DependencyTarget[] {
+  return LARK_ARCHIVES.map(entry => ({ platform: entry.platform, arch: entry.arch }))
+}
+
+/**
+ * The shared lark-cli dependency: the exact official 1.0.55 native archive per
+ * target. The npm shim is NOT installed (S2 never runs postinstall scripts and
+ * the shim has no binary to probe); the manual guidance keeps the official
+ * global-npm route as a fallback.
  */
 export function feishuDependencyDefinition(): ClueDependencyDefinition {
-  const posixTargets = supportedTargets().filter(target => target.platform !== 'win32')
-  const windowsTargets = supportedTargets().filter(target => target.platform === 'win32')
+  const distributions: DependencyDistribution[] = LARK_ARCHIVES.map(entry => ({
+    kind: 'archive',
+    source: 'GitHub releases',
+    platforms: [{ platform: entry.platform, arch: entry.arch }],
+    url: larkArchiveUrl(entry),
+    sha256: entry.sha256,
+    archive: entry.archive,
+    executable: entry.executable,
+  }))
   return {
     dependencyId: FEISHU_DEPENDENCY_ID,
     name: 'Lark CLI',
@@ -146,28 +224,7 @@ export function feishuDependencyDefinition(): ClueDependencyDefinition {
     // Reuse the exact same names the adapter passes to every CLI call, so the
     // dependency allowlist and the invocation can never drift apart.
     envAllowlist: Object.keys(LARK_CLI_ENV),
-    install: {
-      distributions: [
-        {
-          kind: 'npm',
-          source: 'npm',
-          platforms: posixTargets,
-          executable: 'node_modules/.bin/lark-cli',
-          packageName: LARK_CLI_PACKAGE,
-          packageVersion: LARK_CLI_VERSION,
-          runScripts: false,
-        },
-        {
-          kind: 'npm',
-          source: 'npm',
-          platforms: windowsTargets,
-          executable: 'node_modules/.bin/lark-cli.cmd',
-          packageName: LARK_CLI_PACKAGE,
-          packageVersion: LARK_CLI_VERSION,
-          runScripts: false,
-        },
-      ],
-    },
+    install: { distributions },
     manualInstall: MANUAL_INSTALL,
   }
 }
@@ -230,9 +287,11 @@ function inspectionOfStatus(success: LarkSuccess): ConnectionInspection {
   const tokenStatus = (stringOf(user.tokenStatus) ?? '').toLowerCase()
   const expired = status === 'expired' || tokenStatus === 'expired'
   const denied = status === 'denied' || status === 'revoked' || tokenStatus === 'revoked'
+  // `needs_refresh` is lark-cli's own "the token is valid and will be refreshed
+  // on the next call" state, not an expired authorization.
   const ready = !expired && !denied && (
-    status === 'ready' || status === 'active' || status === 'valid'
-    || tokenStatus === 'valid' || tokenStatus === 'active'
+    status === 'ready' || status === 'active' || status === 'valid' || status === 'needs_refresh'
+    || tokenStatus === 'valid' || tokenStatus === 'active' || tokenStatus === 'needs_refresh'
   )
   if (!ready) {
     return {
@@ -353,7 +412,9 @@ function deviceCodeOf(state: unknown): string {
 function readyInspectionOf(success: LarkSuccess): ConnectionInspection {
   const user = userIdentityOf(success)
   const account = user === undefined
-    ? stringOf(success.data.userName)
+    // The real login JSON is a bare `authorization_complete` event with
+    // snake_case `user_name`.
+    ? stringOf(success.data.userName) ?? stringOf(success.data.user_name)
     : stringOf(user.userName) ?? stringOf(user.openId)
   const scopes = grantedScopesOf(user) ?? grantedScopesOf(success.data)
   if (scopes === undefined) {
@@ -390,6 +451,24 @@ function readyInspectionOf(success: LarkSuccess): ConnectionInspection {
  * pending/denied/expired answer must stay in that state.
  */
 function pollResultOf(success: LarkSuccess): ConnectionPollResult {
+  // Real successful `auth login --device-code --json` is a bare
+  // `authorization_complete` event. A non-empty `missing` there means the
+  // grant is partial even though the exit code was 0.
+  if (success.data.event === 'authorization_complete') {
+    const missing = Array.isArray(success.data.missing)
+      ? success.data.missing.filter((scope): scope is string => typeof scope === 'string' && scope.trim() !== '')
+      : []
+    if (missing.length > 0) {
+      return {
+        complete: true,
+        inspection: {
+          configuration: 'ready',
+          authorization: 'scope-insufficient',
+          detail: larkScopeDetail(missing),
+        },
+      }
+    }
+  }
   const status = (
     stringOf(success.data.status)
     ?? stringOf(success.data.authorization_status)
@@ -419,7 +498,11 @@ function pollResultOf(success: LarkSuccess): ConnectionPollResult {
         inspection: { configuration: 'ready', authorization: 'not-authorized' },
       }
     }
-    const readyStatus = ['ready', 'authorized', 'active', 'valid', 'done', 'success', 'complete', 'completed']
+    const readyStatus = [
+      'ready', 'authorized', 'active', 'valid', 'done', 'success', 'complete', 'completed',
+      // A token that must be refreshed on the next call is still authorized.
+      'needs_refresh',
+    ]
     if (!readyStatus.includes(status)) {
       // Unknown non-terminal status: never claim ready; keep the explicit
       // authorization attempt open for the next poll.
@@ -436,6 +519,50 @@ function pollResultOf(success: LarkSuccess): ConnectionPollResult {
     }
   }
   return { complete: true, inspection: readyInspectionOf(success) }
+}
+
+/**
+ * Project the terminal `authorization_complete` object lark-cli writes to
+ * STDOUT (exit 3) when the device flow finished with warnings or a denial.
+ */
+function pollCompletionOf(completion: LarkCompletion): ConnectionPollResult {
+  const status = completion.status.toLowerCase()
+  if (completion.missingScopes.length > 0 || status.includes('warning') || status.includes('partial')) {
+    return {
+      complete: true,
+      inspection: {
+        configuration: 'ready',
+        authorization: 'scope-insufficient',
+        detail: larkScopeDetail(completion.missingScopes, completion.consoleUrl),
+      },
+    }
+  }
+  if (status.includes('denied') || status.includes('access_denied')) {
+    return { complete: true, inspection: { configuration: 'ready', authorization: 'denied' } }
+  }
+  if (status.includes('expired') || status.includes('expiration')) {
+    return { complete: true, inspection: { configuration: 'ready', authorization: 'expired' } }
+  }
+  if (status.includes('pending') || status.includes('waiting') || status.includes('authorizing')) {
+    return {
+      complete: false,
+      inspection: { configuration: 'ready', authorization: 'authorizing' },
+    }
+  }
+  if (status.includes('complete') || status.includes('success') || status.includes('ready')) {
+    return {
+      complete: true,
+      inspection: { configuration: 'ready', authorization: 'ready', capabilities: [...FEISHU_CONNECTION_CAPABILITIES] },
+    }
+  }
+  return {
+    complete: true,
+    inspection: {
+      configuration: 'ready',
+      authorization: 'not-authorized',
+      detail: 'lark-cli reported that the authorization did not complete',
+    },
+  }
 }
 
 /** Project one failed device-code poll into a terminal state or a still-pending one. */
@@ -456,16 +583,28 @@ function pollFailureOf(failure: LarkFailure): ConnectionPollResult | undefined {
     }
   }
   if (failureClass === 'authorization') {
-    if (subtype.includes('pending') || subtype.includes('slow_down') || subtype.includes('authorization_waiting')) {
+    // lark-cli 1.0.55 reports denial/expiry as type "authentication" with
+    // subtype "unknown"; the fixed `marker` is the sanitized discriminator.
+    if (
+      failure.marker === 'pending'
+      || subtype.includes('pending')
+      || subtype.includes('slow_down')
+      || subtype.includes('authorization_waiting')
+    ) {
       return {
         complete: false,
         inspection: { configuration: 'ready', authorization: 'authorizing' },
       }
     }
-    if (subtype.includes('denied') || subtype.includes('access_denied')) {
+    if (failure.marker === 'denied' || subtype.includes('denied') || subtype.includes('access_denied')) {
       return { complete: true, inspection: { configuration: 'ready', authorization: 'denied' } }
     }
-    if (subtype.includes('expired') || subtype.includes('timeout')) {
+    if (
+      failure.marker === 'expired'
+      || subtype.includes('expired')
+      || subtype.includes('expiration')
+      || subtype.includes('timeout')
+    ) {
       return { complete: true, inspection: { configuration: 'ready', authorization: 'expired' } }
     }
     return { complete: true, inspection: { configuration: 'ready', authorization: 'not-authorized' } }
@@ -578,6 +717,10 @@ export function feishuConnectionDefinition(getRuntime: () => ClueRuntime): ClueC
         timeoutMs: LARK_AUTH_POLL_TIMEOUT_MS,
       })
       if (outcome.success !== undefined) return pollResultOf(outcome.success)
+      // The device-flow terminal result is written to STDOUT with exit 3 when
+      // the user completed the flow without granting every scope. It must be
+      // projected before the generic failure path (which reads stderr).
+      if (outcome.completion !== undefined) return pollCompletionOf(outcome.completion)
       if (outcome.failure === undefined) {
         throw new ClueError('failed', 'lark-cli device authorization returned no usable envelope')
       }

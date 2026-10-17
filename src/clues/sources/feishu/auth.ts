@@ -195,12 +195,14 @@ function publish(runtime: ClueRuntime, inspection: ConnectionInspection): void {
  */
 export function reportAuthorizationFailure(runtime: ClueRuntime, error: ClueError): void {
   if (error.category === 'permission-denied') {
-    // A resource-level 403 keeps the account authorized; only the console
-    // entry (when the CLI supplied one) is useful in the settings detail.
+    // A resource-level 403 keeps the account authorized, but this observation
+    // does NOT prove the authorization is still usable. Publishing
+    // `authorization:'ready'` here claimed a fresh ready state from a failed
+    // request; an unknown state keeps the next explicit status check honest.
     if (error.meta?.consoleUrl !== undefined) {
       publish(runtime, {
         configuration: 'ready',
-        authorization: 'ready',
+        authorization: 'unknown',
         detail: `The Feishu account cannot access this resource. Developer console: ${error.meta.consoleUrl}`,
       })
     }
@@ -209,8 +211,10 @@ export function reportAuthorizationFailure(runtime: ClueRuntime, error: ClueErro
   if (error.category !== 'auth-required') return
   const meta = error.meta ?? {}
   const subtype = (meta.subtype ?? '').toLowerCase()
+  const reason = (meta.reason ?? '').toLowerCase()
   if (
-    subtype.includes('config')
+    reason === 'config'
+    || subtype.includes('config')
     || subtype.includes('not_configured')
     || subtype.includes('no_app')
     || subtype.includes('app_missing')
@@ -219,11 +223,16 @@ export function reportAuthorizationFailure(runtime: ClueRuntime, error: ClueErro
     return
   }
   const missingScopes = (meta.missingScopes ?? '').split(',').filter(scope => scope !== '')
-  const authorization = missingScopes.length > 0 || subtype.includes('scope')
+  const authorization = missingScopes.length > 0 || reason === 'scope' || subtype.includes('scope')
     ? 'scope-insufficient'
-    : subtype.includes('expired') || subtype.includes('token')
-      ? 'expired'
-      : 'not-authorized'
+    : reason === 'denied'
+      ? 'denied'
+      : reason === 'expired'
+        || subtype.includes('expired')
+        || subtype.includes('expiration')
+        || subtype.includes('token')
+        ? 'expired'
+        : 'not-authorized'
   const detail = missingScopes.length > 0 || meta.consoleUrl !== undefined
     ? larkScopeDetail(missingScopes, meta.consoleUrl)
     : undefined

@@ -31,6 +31,7 @@
  * - missing scopes and `console_url` survive as a safe projection, while raw
  *   messages, hints, device codes and token-shaped values never do.
  */
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import type {
   ConnectionAdapterContext,
@@ -49,7 +50,6 @@ import {
   parseDocsSearchScope,
   parseFeishuTaskSearchScope,
   parseFeishuTasksScope,
-  LARK_CLI_PACKAGE,
   LARK_CLI_VERSION,
   larkAuthLoginArgs,
   larkAuthPollArgs,
@@ -138,7 +138,7 @@ describe('createFeishuSources: lazy runtime and shared definitions', () => {
     expect(JSON.stringify(docsType.extensions)).not.toMatch(/no lossless/i)
   })
 
-  it('declares the pinned official npm dependency and a manual-install fallback', () => {
+  it('installs the official native archive per target (no npm postinstall shim)', async () => {
     const bundle = createFeishuSources({ runtime: () => { throw new Error('lazy') } })
     const dependency = bundle.dependency
 
@@ -147,14 +147,34 @@ describe('createFeishuSources: lazy runtime and shared definitions', () => {
     expect(dependency.version).toEqual({ minimum: LARK_CLI_VERSION, recommended: LARK_CLI_VERSION })
     expect(dependency.supportedPlatforms.length).toBeGreaterThan(0)
     expect(dependency.manualInstall?.instructions).toBeTruthy()
-    const npm = dependency.install?.distributions.find(distribution => distribution.kind === 'npm')
-    if (npm === undefined) throw new Error('the lark dependency needs an npm distribution')
-    expect(npm.packageName).toBe(LARK_CLI_PACKAGE)
-    expect(npm.packageVersion).toBe(LARK_CLI_VERSION)
-    expect(npm.runScripts).toBe(false)
-    expect(npm.executable).toMatch(/^node_modules\/\.bin\/lark-cli/)
+    const distributions = dependency.install?.distributions ?? []
+    expect(distributions.length).toBe(dependency.supportedPlatforms.length)
+    for (const distribution of distributions) {
+      // @larksuite/cli is a downloader shim: its postinstall fetches the native
+      // binary, so an --ignore-scripts npm install has nothing to probe. The
+      // managed install uses the official archive + its official sha256.
+      expect(distribution.kind).toBe('archive')
+      expect(distribution.source).toBe('GitHub releases')
+      expect(distribution.url).toMatch(/^https:\/\/github\.com\/larksuite\/cli\/releases\/download\/v1\.0\.55\//)
+      expect(distribution.sha256).toMatch(/^[a-f0-9]{64}$/)
+      expect(distribution.archive).toMatch(/^(zip|tar\.gz)$/)
+      expect(distribution.executable).toMatch(/^lark-cli(?:\.exe)?$/)
+      expect(distribution.runScripts).toBeUndefined()
+      expect(distribution.platforms).toHaveLength(1)
+    }
+    const windows = distributions.find(distribution =>
+      distribution.platforms?.some(target => target.platform === 'win32'))
+    expect(windows).toMatchObject({ archive: 'zip', executable: 'lark-cli.exe' })
+    const darwinArm = distributions.find(distribution =>
+      distribution.platforms?.some(target => target.platform === 'darwin' && target.arch === 'arm64'))
+    expect(darwinArm).toMatchObject({
+      archive: 'tar.gz',
+      executable: 'lark-cli',
+      sha256: 'd2e3d8cf0b055144606904b503ae1379e3d50a6dac90b0643912fd2e9072c1f2',
+    })
 
-    // The real S2 dependency registry accepts the definition as-is.
+    // The real S2 dependency registry accepts the definition as-is and plans
+    // the archive download/extract/probe pipeline.
     const runtime = createDependenciesRuntime({
       home: CWD,
       platform: 'darwin',
@@ -169,6 +189,27 @@ describe('createFeishuSources: lazy runtime and shared definitions', () => {
     try {
       const dispose = runtime.register(dependency)
       expect(runtime.getDefinition(FEISHU_DEPENDENCY_ID)?.command).toBe('lark-cli')
+      const plan = await runtime.plan(FEISHU_DEPENDENCY_ID)
+      expect(plan).toMatchObject({
+        dependencyId: FEISHU_DEPENDENCY_ID,
+        version: LARK_CLI_VERSION,
+        platform: 'darwin',
+        arch: 'arm64',
+        installable: true,
+        distribution: {
+          kind: 'archive',
+          archive: 'tar.gz',
+          sha256: 'd2e3d8cf0b055144606904b503ae1379e3d50a6dac90b0643912fd2e9072c1f2',
+        },
+        executablePath: join(CWD, 'tools', FEISHU_DEPENDENCY_ID, LARK_CLI_VERSION, 'lark-cli'),
+      })
+      expect(plan.actionIds).toEqual([
+        'download-archive',
+        'verify-sha256',
+        'extract-archive',
+        'probe-version',
+        'replace-managed-copy',
+      ])
       dispose()
     } finally {
       runtime.dispose()
@@ -268,6 +309,21 @@ describe('lark envelope adapter', () => {
     }))
     const kept = await runLark({ runtime: success.asRuntime(), args: ['x'], cwd: CWD })
     expect(kept.data).toEqual({ value: 'kept' })
+  })
+
+  it('tolerates a notice/prefix line before the JSON envelope', async () => {
+    const runtime = new FakeLarkRuntime().enqueue(cliResult({
+      stdout: '_notice: a newer lark-cli exists\n{"ok":true,"identity":"user","data":{"value":"kept"}}',
+    }))
+    const kept = await runLark({ runtime: runtime.asRuntime(), args: ['x'], cwd: CWD })
+    expect(kept.data).toEqual({ value: 'kept' })
+
+    // A JSON notice object followed by the envelope is tolerated too.
+    const withNotice = new FakeLarkRuntime().enqueue(cliResult({
+      stdout: '{"_notice":{"update":{"message":"new"}}}\n{"ok":true,"data":{"value":"also kept"}}',
+    }))
+    const also = await runLark({ runtime: withNotice.asRuntime(), args: ['x'], cwd: CWD })
+    expect(also.data).toEqual({ value: 'also kept' })
   })
 
   it('maps failure classes and keeps raw messages/hints out of the error', () => {
@@ -423,6 +479,19 @@ describe('connection adapter: explicit status and two-step authorization', () =>
     expect(allTaskInspection.authorization).toBe('scope-insufficient')
     expect(allTaskInspection.detail).toMatch(/docs\.read/)
     expect(allTaskInspection.detail).not.toMatch(/tasks\.read/)
+  })
+
+  it('treats lark-cli needs_refresh as authorized (not expired)', async () => {
+    const runtime = new FakeLarkRuntime().enqueue(statusData({
+      status: 'needs_refresh',
+      tokenStatus: 'needs_refresh',
+      userName: 'Ada',
+      scope: ALL_SCOPES,
+    }))
+    const bundle = createFeishuSources({ runtime: () => runtime.asRuntime() })
+    const inspection = await bundle.connection.inspect({}, adapterContext([]))
+    expect(inspection.authorization).toBe('ready')
+    expect(inspection.account).toBe('Ada')
   })
 
   it('derives capabilities from identities.user.scope instead of a ready token alone', async () => {
@@ -631,6 +700,111 @@ describe('connection adapter: explicit status and two-step authorization', () =>
     )
     expect(deniedResult.complete).toBe(true)
     expect(deniedResult.inspection?.authorization).toBe('denied')
+  })
+
+  it('reads the exit-3 stdout completion and reports scope-insufficient', async () => {
+    // Real 1.0.55 shape when the browser flow completed but some scopes were
+    // not granted (`auth login --device-code … --json`): a BARE
+    // `authorization_complete` event on STDOUT with a warning/missing list,
+    // exit 3 and no stderr envelope.
+    const runtime = new FakeLarkRuntime().enqueue(cliResult({
+      exitCode: 3,
+      stdout: JSON.stringify({
+        event: 'authorization_complete',
+        user_open_id: 'ou_user',
+        user_name: 'Ada',
+        scope: 'docx:document:readonly',
+        requested: ['docx:document:read', 'task:task:read'],
+        newly_granted: ['docx:document:readonly'],
+        already_granted: [],
+        missing: ['docx:document:read', 'task:task:read'],
+        granted: ['docx:document:readonly'],
+        warning: { type: 'missing_scope', hint: 'raw hint that must not leak' },
+      }),
+    }))
+    const bundle = createFeishuSources({ runtime: () => runtime.asRuntime() })
+    const result = await bundle.connection.poll!(
+      { authorizationId: 'a-scope', state: { deviceCode: 'dc-scope' } },
+      adapterContext([]),
+    )
+    expect(result.complete).toBe(true)
+    expect(result.inspection).toMatchObject({
+      configuration: 'ready',
+      authorization: 'scope-insufficient',
+    })
+    expect(result.inspection?.detail).toContain('docx:document:read')
+    expect(result.inspection?.detail).toContain('task:task:read')
+    expect(JSON.stringify(result)).not.toMatch(/raw hint/)
+
+    // The nested `{authorization_complete:{warning,missing}}` spelling is
+    // tolerated too (older/proxied shapes), but is not the tested real wire.
+    const bare = new FakeLarkRuntime().enqueue(cliResult({
+      exitCode: 3,
+      stdout: JSON.stringify({
+        authorization_complete: {
+          warning: 'some scopes were not granted',
+          missing: ['drive:drive:readonly'],
+        },
+      }),
+    }))
+    const bareBundle = createFeishuSources({ runtime: () => bare.asRuntime() })
+    const bareResult = await bareBundle.connection.poll!(
+      { authorizationId: 'a-bare-scope', state: { deviceCode: 'dc-bare-scope' } },
+      adapterContext([]),
+    )
+    expect(bareResult.inspection?.authorization).toBe('scope-insufficient')
+    expect(bareResult.inspection?.detail).toContain('drive:drive:readonly')
+  })
+
+  it('maps authorization_failed denial/expiry to denied/expired', async () => {
+    // Real 1.0.55 device-flow denial (JSON mode): a bare
+    // `{event:"authorization_failed", error:"…access_denied"}` on stdout with
+    // exit 3; the OAuth code lives only in the raw error string.
+    const denied = new FakeLarkRuntime().enqueue(cliResult({
+      exitCode: 3,
+      stdout: JSON.stringify({
+        event: 'authorization_failed',
+        error: 'authorization failed: access_denied',
+      }),
+    }))
+    const deniedBundle = createFeishuSources({ runtime: () => denied.asRuntime() })
+    const deniedResult = await deniedBundle.connection.poll!(
+      { authorizationId: 'a-denied', state: { deviceCode: 'dc-denied' } },
+      adapterContext([]),
+    )
+    expect(deniedResult.complete).toBe(true)
+    expect(deniedResult.inspection?.authorization).toBe('denied')
+
+    const expired = new FakeLarkRuntime().enqueue(cliResult({
+      exitCode: 3,
+      stdout: JSON.stringify({
+        event: 'authorization_failed',
+        error: 'authorization failed: expired_token',
+      }),
+    }))
+    const expiredBundle = createFeishuSources({ runtime: () => expired.asRuntime() })
+    const expiredResult = await expiredBundle.connection.poll!(
+      { authorizationId: 'a-expired', state: { deviceCode: 'dc-expired' } },
+      adapterContext([]),
+    )
+    expect(expiredResult.complete).toBe(true)
+    expect(expiredResult.inspection?.authorization).toBe('expired')
+
+    // The non-JSON/text path reports the same facts as an authentication/unknown
+    // stderr envelope; an invalid/unknown device code is a terminal expiry.
+    const invalid = new FakeLarkRuntime().enqueue(failResult({
+      type: 'authentication',
+      subtype: 'unknown',
+      message: 'authorization failed: The device_code is invalid. Please restart the device authorization flow.',
+    }, 3))
+    const invalidBundle = createFeishuSources({ runtime: () => invalid.asRuntime() })
+    const invalidResult = await invalidBundle.connection.poll!(
+      { authorizationId: 'a-invalid', state: { deviceCode: 'dc-invalid' } },
+      adapterContext([]),
+    )
+    expect(invalidResult.complete).toBe(true)
+    expect(invalidResult.inspection?.authorization).toBe('expired')
+    expect(JSON.stringify(invalidResult)).not.toMatch(/device_code is invalid/)
   })
 
   it('accepts bare login/poll payloads from the same auth family', async () => {
