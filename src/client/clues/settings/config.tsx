@@ -136,14 +136,12 @@ function Action(props: {
   label: string
   onClick: () => void
   disabled?: boolean
-  primary?: boolean
 }) {
   return (
     <button
       type="button"
       className={css.smallButton}
       disabled={props.disabled === true}
-      data-primary={props.primary === true ? '' : undefined}
       onClick={props.onClick}
     >
       {props.label}
@@ -538,7 +536,6 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
                       {currentPlan.installable && (
                         <Action
                           label={t('clueDependencyPlanConfirm')}
-                          primary
                           onClick={() => { void startPlan(dependencyId) }}
                         />
                       )}
@@ -566,6 +563,7 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
                     <div
                       className={css.progressTrack}
                       role="progressbar"
+                      aria-label={t('clueDependencyInstall')}
                       aria-valuemin={0}
                       aria-valuemax={100}
                       aria-valuenow={currentTask.progress.fraction === undefined

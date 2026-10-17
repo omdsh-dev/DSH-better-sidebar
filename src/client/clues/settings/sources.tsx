@@ -138,7 +138,7 @@ export function ClueSourcesPanel(props: ClueSourcesPanelProps) {
           {sources.length === 0 && configuredOnly.length === 0 ? (
             <div className={css.empty}>{t('clueSourcesEmpty')}</div>
           ) : (
-            <ul className={css.sourceList}>
+            <ul className={css.sourceList} aria-label={t('settingsGroupSources')}>
               {sources.map(source => {
                 const display = displayById.get(source.sourceId)
                 const name = displayName(source, display)
