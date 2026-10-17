@@ -488,6 +488,24 @@ describe('/sidebar/api clue dispatcher fallback', () => {
       expect(invalidLimit.status).toBe(400)
       expect(invalidLimit.body).toMatchObject({ ok: false, error: { code: 'invalid-request' } })
 
+      // A malformed cursor / scope is the caller's input error too: the
+      // source maps it to `invalid-request` (400), never to `failed` (500).
+      const invalidCursor = await post(route!, 'clues.list', {
+        workspaceId: 'ws-1',
+        sourceId: 'builtin.files',
+        cursor: 'not-a-cursor',
+      })
+      expect(invalidCursor.status).toBe(400)
+      expect(invalidCursor.body).toMatchObject({ ok: false, error: { code: 'invalid-request' } })
+
+      const invalidScope = await post(route!, 'clues.list', {
+        workspaceId: 'ws-1',
+        sourceId: 'builtin.files',
+        scope: 42,
+      })
+      expect(invalidScope.status).toBe(400)
+      expect(invalidScope.body).toMatchObject({ ok: false, error: { code: 'invalid-request' } })
+
       // The clue EDIT document is not bound by the 1 MiB control-payload cap:
       // a 1.5 MiB source document must load AND save back through this route.
       const bigText = 'x'.repeat(1_500_000)

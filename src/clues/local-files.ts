@@ -224,7 +224,7 @@ function throwIfAborted(context: ClueOperationContext): void {
 /** A non-empty string field of an untrusted object. */
 function requireString(value: unknown, what: string): string {
   if (typeof value !== 'string' || value.trim() === '') {
-    throw new ClueError('failed', `local file ${what} must be a non-empty string`)
+    throw new ClueError('invalid-request', `local file ${what} must be a non-empty string`)
   }
   return value
 }
@@ -300,7 +300,7 @@ function normalizePath(path: string, dialect: LocalFileDialect, kind: 'workspace
   const flavour = dialectPath(dialect)
   if (kind === 'external') {
     if (!flavour.isAbsolute(path)) {
-      throw new ClueError('failed', 'an external local file locator needs an absolute path')
+      throw new ClueError('invalid-request', 'an external local file locator needs an absolute path')
     }
     return withoutTrailingSeparator(flavour.normalize(path), dialect)
   }
@@ -308,7 +308,7 @@ function normalizePath(path: string, dialect: LocalFileDialect, kind: 'workspace
   const rootless = withoutTrailingSeparator(normalized === '.' ? '' : normalized, dialect)
   if (rootless === '' || rootless === '.') return ''
   if (flavour.isAbsolute(rootless) || rootless === '..' || rootless.startsWith(`..${flavour.sep}`)) {
-    throw new ClueError('failed', 'a workspace-local file path must stay inside its workspace')
+    throw new ClueError('invalid-request', 'a workspace-local file path must stay inside its workspace')
   }
   return rootless
 }
@@ -321,13 +321,13 @@ function normalizePath(path: string, dialect: LocalFileDialect, kind: 'workspace
 export function normalizeLocalFileLocator(locator: Locator): LocalFileLocator {
   const raw = locator as unknown
   if (!isRecord(raw) || !isRecord(raw.root)) {
-    throw new ClueError('failed', 'a local file locator needs a root, a path and a dialect')
+    throw new ClueError('invalid-request', 'a local file locator needs a root, a path and a dialect')
   }
   const dialect = raw.dialect === 'win32' || raw.dialect === 'posix'
     ? raw.dialect
-    : (() => { throw new ClueError('failed', 'a local file locator needs a posix or win32 dialect') })()
+    : (() => { throw new ClueError('invalid-request', 'a local file locator needs a posix or win32 dialect') })()
   if (typeof raw.path !== 'string') {
-    throw new ClueError('failed', 'a local file locator needs a path')
+    throw new ClueError('invalid-request', 'a local file locator needs a path')
   }
   const rawPath = raw.path
   const root = raw.root
@@ -340,10 +340,10 @@ export function normalizeLocalFileLocator(locator: Locator): LocalFileLocator {
     }
   }
   if (root.kind === 'external') {
-    if (rawPath === '') throw new ClueError('failed', 'an external local file locator needs a path')
+    if (rawPath === '') throw new ClueError('invalid-request', 'an external local file locator needs a path')
     return { root: { kind: 'external' }, path: normalizePath(rawPath, dialect, 'external'), dialect }
   }
-  throw new ClueError('failed', 'a local file locator root must be a workspace or external root')
+  throw new ClueError('invalid-request', 'a local file locator root must be a workspace or external root')
 }
 
 /** Stable equality key of a normalized locator (win32 paths fold case). */
@@ -380,13 +380,13 @@ function scopeLocator(scope: JsonValue | undefined, context: ClueOperationContex
     // scope and spread nothing onto it).
     if (Object.keys(scope).length === 0) return workspaceLocator(context.workspaceId, '', HOST_DIALECT)
   }
-  throw new ClueError('failed', 'a local file scope must be a path, a locator or an object carrying one')
+  throw new ClueError('invalid-request', 'a local file scope must be a path, a locator or an object carrying one')
 }
 
 /** Parse user text into a locator (absolute = external, relative = workspace). */
 function locatorOfText(text: string, context: ClueOperationContext): LocalFileLocator {
   const trimmed = text.trim()
-  if (trimmed === '') throw new ClueError('failed', 'a local file path is required')
+  if (trimmed === '') throw new ClueError('invalid-request', 'a local file path is required')
   const expanded = expandHome(trimmed)
   const dialect = dialectOfText(expanded)
   if (isAbsoluteIn(dialect, expanded)) {
@@ -411,7 +411,7 @@ function locatorOfText(text: string, context: ClueOperationContext): LocalFileLo
 function requireOwnWorkspace(locator: LocalFileLocator, context: { readonly workspaceId: string }): void {
   if (locator.root.kind === 'workspace' && locator.root.workspaceId !== context.workspaceId) {
     throw new ClueError(
-      'failed',
+      'invalid-request',
       `the local file reference belongs to workspace "${locator.root.workspaceId}", not "${context.workspaceId}"`,
     )
   }
@@ -462,7 +462,7 @@ function revisionOf(info: { mtimeMs: number; size: number }): string {
 function pageLimitOf(input: { limit?: number }): number {
   const limit = input.limit ?? 100
   if (!Number.isInteger(limit) || limit < 1 || limit > 500) {
-    throw new ClueError('failed', 'a local file page limit must be between 1 and 500')
+    throw new ClueError('invalid-request', 'a local file page limit must be between 1 and 500')
   }
   return limit
 }
@@ -470,10 +470,10 @@ function pageLimitOf(input: { limit?: number }): number {
 /** The opaque offset a cursor carries (absent = 0). */
 function cursorOffsetOf(cursor: string | undefined): number {
   if (cursor === undefined || cursor === '') return 0
-  if (!/^\d+$/.test(cursor)) throw new ClueError('failed', 'the local file cursor is not valid')
+  if (!/^\d+$/.test(cursor)) throw new ClueError('invalid-request', 'the local file cursor is not valid')
   const offset = Number(cursor)
   if (!Number.isSafeInteger(offset) || offset > MAX_PAGE_OFFSET) {
-    throw new ClueError('failed', 'the local file cursor is out of range')
+    throw new ClueError('invalid-request', 'the local file cursor is out of range')
   }
   return offset
 }
@@ -830,10 +830,10 @@ async function saveEditDocument(
     throw new ClueError('unsupported', 'a binary local file is read-only')
   }
   if (document.format !== expectedFormat) {
-    throw new ClueError('failed', `the edit format "${document.format}" does not match "${expectedFormat}"`)
+    throw new ClueError('invalid-request', `the edit format "${document.format}" does not match "${expectedFormat}"`)
   }
   if (!isRecord(document.data) || typeof document.data.text !== 'string') {
-    throw new ClueError('failed', 'a local file edit must carry { text: string }')
+    throw new ClueError('invalid-request', 'a local file edit must carry { text: string }')
   }
   const absolute = absolutePathOf(locator, context)
   // Save-before-check (not an atomic CAS): the source documents it as such.

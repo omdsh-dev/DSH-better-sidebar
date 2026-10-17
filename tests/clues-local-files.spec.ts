@@ -164,6 +164,27 @@ describe('builtin.files list', () => {
     expect(second.total).toBe(4)
   })
 
+  it('reports malformed pagination/scope inputs as invalid-request, not failed', async () => {
+    const { workspace, service } = fixture()
+    writeFileSync(join(workspace, 'a.txt'), 'a\n')
+    // A bad cursor / limit / scope is a malformed REQUEST (HTTP 400), not a
+    // filesystem failure: it used to surface as `failed` (HTTP 500).
+    await expect(service.list({ workspaceId: WORKSPACE_ID, sourceId: 'builtin.files', cursor: 'not-a-cursor' }))
+      .rejects.toMatchObject({ category: 'invalid-request' })
+    await expect(service.list({ workspaceId: WORKSPACE_ID, sourceId: 'builtin.files', limit: 0 }))
+      .rejects.toMatchObject({ category: 'invalid-request' })
+    await expect(service.list({ workspaceId: WORKSPACE_ID, sourceId: 'builtin.files', scope: 42 as JsonValue }))
+      .rejects.toMatchObject({ category: 'invalid-request' })
+    // A malformed locator shape is caller input too; only a real fs failure
+    // (ENOENT/EACCES/...) keeps `not-found` / `permission-denied` / `failed`.
+    await expect(service.read({
+      workspaceId: WORKSPACE_ID,
+      sourceId: 'builtin.files',
+      typeId: LOCAL_FILE_TYPE_IDS.text,
+      locator: { root: { kind: 'nope' }, path: 'a.txt', dialect: HOST_DIALECT } as Locator,
+    })).rejects.toMatchObject({ category: 'invalid-request' })
+  })
+
   it('lists inside a scope carried as a string path or a locator', async () => {
     const { workspace, service } = fixture()
     mkdirSync(join(workspace, 'sub'))
@@ -485,7 +506,7 @@ describe('builtin.files edits', () => {
       workspaceId: WORKSPACE_ID,
       clueId,
       document: { format: 'text/markdown', data: { text: 'b' }, baseRevision: edit.baseRevision },
-    })).rejects.toMatchObject({ category: 'failed' })
+    })).rejects.toMatchObject({ category: 'invalid-request' })
     expect(readFileSync(join(workspace, 'a.txt'), 'utf8')).toBe('a\n')
   })
 
@@ -702,7 +723,7 @@ describe('builtin.files resolve / portable / dialects', () => {
       workspaceId: WORKSPACE_ID,
       sourceId: 'builtin.files',
       locator: { url: 'https://example.com/doc' },
-    })).rejects.toMatchObject({ category: 'failed' })
+    })).rejects.toMatchObject({ category: 'invalid-request' })
   })
 
   it('deduplicates ensure across normalized spellings of the same workspace file', async () => {
@@ -832,13 +853,13 @@ describe('builtin.files resolve / portable / dialects', () => {
       typeId: LOCAL_FILE_TYPE_IDS.markdown,
       locator: foreign,
       title: 'a.md',
-    })).rejects.toMatchObject({ category: 'failed' })
+    })).rejects.toMatchObject({ category: 'invalid-request' })
     await expect(service.read({
       workspaceId: WORKSPACE_ID,
       sourceId: 'builtin.files',
       typeId: LOCAL_FILE_TYPE_IDS.markdown,
       locator: foreign,
-    })).rejects.toMatchObject({ category: 'failed' })
+    })).rejects.toMatchObject({ category: 'invalid-request' })
 
     // A reference persisted before the guard (or copied between workspaces) is
     // not silently resolved against ws-1's directory either.
@@ -855,7 +876,7 @@ describe('builtin.files resolve / portable / dialects', () => {
       })
     })
     await expect(service.read({ workspaceId: WORKSPACE_ID, clueId: 'clue-foreign' }))
-      .rejects.toMatchObject({ category: 'failed' })
+      .rejects.toMatchObject({ category: 'invalid-request' })
     // The file itself was never read; the locator error wins.
     expect(readFileSync(join(workspace, 'a.md'), 'utf8')).toBe('# a\n')
   })
