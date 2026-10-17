@@ -438,7 +438,7 @@ export function FloatingWindow(props: FloatingWindowProps): ReactNode {
           />
         </span>
       </div>
-      {toolbarRow !== undefined && (
+      {toolbarRow !== undefined && toolbarRow !== null && (
         <div className={css.toolbar} data-window-toolbar data-window-no-drag>{toolbarRow}</div>
       )}
       <div
