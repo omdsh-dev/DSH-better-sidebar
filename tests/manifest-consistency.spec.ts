@@ -142,11 +142,12 @@ describe('registry staging list (static)', () => {
 describe.skipIf(!hostBuilt)('registry staging covers the host bundle imports', () => {
   it('stages every relative import of lib/index.js (the installed copy must load)', () => {
     const source = readFileSync(resolve(ROOT, 'lib/index.js'), 'utf8')
-    // The host bundle is ESM: `import … from "./x.js"`, `export … from`, and
-    // lazy `import("./x.js")` all become runtime module loads of the staged
-    // file. A path left out of the registry list is ERR_MODULE_NOT_FOUND in
-    // the installed plugin — exactly the bug this test was added for.
-    const specs = [...source.matchAll(/(?:from\s*|import\s*\()\s*["'](\.{1,2}\/[^"']+)["']/g)]
+    // The host bundle is ESM: `import … from "./x.js"`, `export … from`, the
+    // side-effect form `import "./x.js"`, and lazy `import("./x.js")` all
+    // become runtime module loads of the staged file. A path left out of the
+    // registry list is ERR_MODULE_NOT_FOUND in the installed plugin — exactly
+    // the bug this test was added for.
+    const specs = [...source.matchAll(/(?:from\s*|import\s*\(?\s*)["'](\.{1,2}\/[^"']+)["']/g)]
       .map(match => match[1]!)
     expect(specs, 'lib/index.js has no relative imports?').toContain('./clues.js')
     const staged = stagedRegistryFiles()
