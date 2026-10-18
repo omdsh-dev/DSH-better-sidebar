@@ -231,10 +231,10 @@ describe('title + body editor', () => {
     expect(window.querySelector('[data-github-title]')).toBeNull()
     const readOnly = window.querySelector('[data-github-read-only]')
     expect(readOnly?.getAttribute('data-github-read-only-reason')).toBe('archived')
-    // Existing localized copy only: the host's read-only badge key. The
-    // source reason is visible as well until S9 localizes the data attribute.
+    // The host badge plus the S9-localized reason copy (the raw code stays on
+    // the data attribute for tests/diagnostics).
     expect(window.textContent).toContain('只读')
-    expect(window.textContent).toContain('archived')
+    expect(window.textContent).toContain('仓库已归档')
   })
 
   it('shows the save-in-flight state without claiming success and locks the inputs', () => {

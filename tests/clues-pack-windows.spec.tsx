@@ -20,6 +20,7 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act } from 'react-dom/test-utils'
 import { createElement, Fragment } from 'react'
+import type { ReactNode } from 'react'
 import { renderRoot, setupReactAct } from './test-utils.ts'
 
 setupReactAct()
@@ -75,6 +76,8 @@ interface FaceOverrides {
   listFor?: (sourceId: string) => readonly ClueCandidate[]
   searchFor?: (sourceId: string) => readonly ClueCandidate[]
   resolveCandidates?: readonly ClueCandidate[]
+  readError?: () => unknown
+  loadEditDocument?: () => unknown
 }
 
 const FILES_SOURCE: ClueSourceDescriptor = {
@@ -202,13 +205,18 @@ function faceOf(overrides: FaceOverrides = {}): { face: BetterSidebarCluesClient
       return { candidates: overrides.resolveCandidates ?? [] }
     },
     ensure: async () => ({ clue: { id: 'c9' }, created: true }),
-    read: async () => ({
-      format: 'text/markdown',
-      data: { text: '# Read only' },
-      fetchedAt: '2026-10-17T00:00:00.000Z',
-    }),
+    read: async () => {
+      const rejected = overrides.readError?.()
+      if (rejected !== undefined) throw rejected
+      return {
+        format: 'text/markdown',
+        data: { text: '# Read only' },
+        fetchedAt: '2026-10-17T00:00:00.000Z',
+      }
+    },
     loadEdit: async () => {
       calls.loadEdit += 1
+      if (overrides.loadEditDocument !== undefined) return overrides.loadEditDocument()
       return { format: 'text/markdown', data: { text: '# Draft' }, baseRevision: 'r1' }
     },
     saveEdit: async () => {
@@ -870,18 +878,88 @@ describe('clue detail window', () => {
     view.unmount()
   })
 
-  it('never offers a save for a read-only type', async () => {
+  it('never offers a save for a read-only type and explains why', async () => {
     const { face } = faceOf({ editable: false })
     const windows = recordingWindows()
     openClueDetailWindow({
       windows: windows.windows,
       face,
       workspaceId: 'ws-1',
-      target: { sourceId: 'builtin.files', typeId: 'builtin.files.binary', locator: { path: 'a.png' }, title: 'a.png' },
+      target: {
+        sourceId: GITHUB_SOURCE.sourceId,
+        typeId: 'builtin.github.issue',
+        locator: { host: 'github.com', owner: 'acme', repo: 'widgets', kind: 'issue', number: 7 },
+        title: '#7',
+      },
     })
+    await flush()
+    const content = windows.last()?.content as unknown as { readOnly?: boolean; error?: string }
+    expect(content.readOnly).toBe(true)
+    expect(content.error).toContain('read-only')
+    const footer = renderRoot(createElement(Fragment, null, windows.last()?.footer))
+    await flush()
+    expect(footer.container.textContent).toContain('Open the original resource')
+    expect(footer.container.querySelector('a[href="https://github.com/acme/widgets/issues/7"]')).not.toBeNull()
+    footer.unmount()
+  })
+
+  it('treats a source-locked edit document (archived) as read-only with the reason', async () => {
+    const { face, calls } = faceOf({
+      sources: [GITHUB_SOURCE],
+      loadEditDocument: () => ({
+        format: 'text/markdown',
+        data: { text: '# Locked', readOnly: true, readOnlyReason: 'archived' },
+        baseRevision: 'r1',
+      }),
+    })
+    const windows = recordingWindows()
+    openClueDetailWindow({
+      windows: windows.windows,
+      face,
+      workspaceId: 'ws-1',
+      target: { sourceId: GITHUB_SOURCE.sourceId, typeId: 'builtin.github.issue', clueId: 'c-archived', title: '#7' },
+    })
+    await flush()
+    const content = windows.last()?.content as unknown as { readOnly?: boolean; error?: string; onSave?: unknown }
+    expect(content.readOnly).toBe(true)
+    expect(content.onSave).toBeUndefined()
+    expect(content.error).toContain('archived')
+  })
+
+  it('offers Retry and the original source on a permission failure', async () => {
+    let fail = true
+    const { face } = faceOf({
+      editable: false,
+      readError: () => {
+        if (fail) return new SidebarApiError('permission-denied', 'no access')
+        return undefined
+      },
+    })
+    const windows = recordingWindows()
+    openClueDetailWindow({
+      windows: windows.windows,
+      face,
+      workspaceId: 'ws-1',
+      target: {
+        sourceId: GITHUB_SOURCE.sourceId,
+        typeId: 'builtin.github.issue',
+        locator: { host: 'github.com', owner: 'acme', repo: 'widgets', kind: 'pull', number: 9 },
+        title: '#9',
+      },
+    })
+    await flush()
+    const failure = renderRoot(createElement(Fragment, null, windows.last()?.content as ReactNode))
+    await flush()
+    expect(failure.container.textContent).toContain('Insufficient permissions')
+    expect(failure.container.textContent).toContain('Retry')
+    expect(failure.container.querySelector('a[href="https://github.com/acme/widgets/pull/9"]')).not.toBeNull()
+
+    fail = false
+    click(failure.container, 'Retry')
     await flush()
     const content = windows.last()?.content as unknown as { readOnly?: boolean }
     expect(content.readOnly).toBe(true)
+    failure.unmount()
   })
 })
 

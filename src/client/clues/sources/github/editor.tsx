@@ -85,6 +85,20 @@ function sourceReadOnly(data: JsonValue): { reason?: string } | undefined {
   return typeof record.readOnlyReason === 'string' ? { reason: record.readOnlyReason } : {}
 }
 
+/** Localized explanation of a source-owned read-only reason code. */
+function readOnlyReasonLabel(reason: string | undefined): string | undefined {
+  switch (reason) {
+    case 'archived':
+      return t('clueDetailReadOnlyArchived')
+    case 'permission-denied':
+      return t('clueDetailReadOnlyPermission')
+    case 'size':
+      return t('clueDetailReadOnlySize')
+    default:
+      return reason
+  }
+}
+
 /** The read-only content surface shared by previews and source-locked docs. */
 function readOnlySurface(
   title: string,
@@ -103,7 +117,7 @@ function readOnlySurface(
           document needs its own. The reason code stays visible until S9
           localizes it from the data attribute. */}
       {!hostReadOnly && <div className={css.readOnlyBadge}>{t('windowReadOnly')}</div>}
-      {reason !== undefined && <div className={css.readOnlyReason}>{reason}</div>}
+      {reason !== undefined && <div className={css.readOnlyReason}>{readOnlyReasonLabel(reason)}</div>}
       <div className={css.readOnlyTitle}>{title}</div>
       <pre className={css.readOnlyBody}>{body}</pre>
     </div>

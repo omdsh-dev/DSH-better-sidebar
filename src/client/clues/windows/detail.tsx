@@ -79,11 +79,53 @@ export function clueDetailWindowId(target: ClueDetailTarget): string {
     : `clue-preview:${target.sourceId}:${target.typeId}:${locatorHash(target.locator)}`
 }
 
-/** A credential-free original-resource URL carried by a locator, if any. */
-function originalUrl(locator: JsonValue | undefined): string | undefined {
+/**
+ * A credential-free original-resource URL for one locator.
+ *
+ * Feishu locators carry the public web URL; GitHub locators carry only the
+ * structured identity, so the canonical issue/PR URL is rebuilt from
+ * host/owner/repo/kind/number (never from a title or a token). URLs with
+ * embedded credentials are refused.
+ */
+export function sourceUrlOf(locator: JsonValue | undefined): string | undefined {
   if (locator === null || typeof locator !== 'object' || Array.isArray(locator)) return undefined
-  const url = (locator as { url?: unknown }).url
-  return typeof url === 'string' && /^https?:\/\//i.test(url) ? url : undefined
+  const record = locator as Record<string, unknown>
+  const raw = record.url
+  if (typeof raw === 'string') {
+    try {
+      const parsed = new URL(raw)
+      if ((parsed.protocol === 'http:' || parsed.protocol === 'https:')
+        && parsed.username === ''
+        && parsed.password === '') {
+        return parsed.href
+      }
+    } catch {
+      // Fall through to the structured GitHub shape.
+    }
+  }
+  const { host, owner, repo, kind, number } = record
+  if (host === 'github.com'
+    && typeof owner === 'string' && /^[A-Za-z0-9][A-Za-z0-9-]*$/.test(owner)
+    && typeof repo === 'string' && /^[A-Za-z0-9._-]+$/.test(repo)
+    && (kind === 'issue' || kind === 'pull')
+    && typeof number === 'number' && Number.isSafeInteger(number) && number > 0) {
+    return `https://github.com/${owner}/${repo}/${kind === 'pull' ? 'pull' : 'issues'}/${number}`
+  }
+  return undefined
+}
+
+/** The localized explanation of a source-owned read-only marker. */
+export function readOnlyReasonCopy(reason: string | undefined): string {
+  switch (reason) {
+    case 'archived':
+      return t('clueDetailReadOnlyArchived')
+    case 'permission-denied':
+      return t('clueDetailReadOnlyPermission')
+    case 'size':
+      return t('clueDetailReadOnlySize')
+    default:
+      return t('clueDetailReadOnly')
+  }
 }
 
 /** The live state of one detail window. */
@@ -106,28 +148,47 @@ function DetailStatus(props: { readonly text: string }): ReactNode {
 }
 
 /** One explicit failure that could not even produce a preview. */
-function DetailFailure(props: { readonly message: string; readonly url: string | undefined }): ReactNode {
+function DetailFailure(props: {
+  readonly message: string
+  readonly url: string | undefined
+  onRetry?(): void
+}): ReactNode {
   return createElement(
     'div',
     { className: css.failure, role: 'alert' },
     createElement('div', { className: css.failureTitle }, t('clueDetailFailed')),
     createElement('div', { className: css.failureBody }, props.message),
-    props.url === undefined
-      ? null
-      : createElement('a', {
-          className: css.action,
-          href: props.url,
-          target: '_blank',
-          rel: 'noreferrer',
-        }, t('clueDetailOpenSource')),
+    createElement(
+      'div',
+      { className: css.failureActions },
+      props.onRetry === undefined
+        ? null
+        : createElement('button', {
+            type: 'button',
+            className: css.action,
+            onClick: props.onRetry,
+          }, t('retry')),
+      props.url === undefined
+        ? null
+        : createElement('a', {
+            className: css.action,
+            href: props.url,
+            target: '_blank',
+            rel: 'noreferrer',
+          }, t('clueDetailOpenSource')),
+    ),
   )
 }
 
-/** Whether the catalogue marks this source/type editable. */
+/**
+ * Whether the catalogue marks this source/type editable.
+ * `undefined` means the catalogue could not be read: the caller still tries
+ * the edit document and falls back to a preview if the source refuses.
+ */
 async function editableOf(
   face: BetterSidebarCluesClientFace,
   target: ClueDetailTarget,
-): Promise<boolean> {
+): Promise<boolean | undefined> {
   try {
     const catalogue = await face.api.sources()
     const source = catalogue.sources.find(candidate => candidate.sourceId === target.sourceId)
@@ -135,8 +196,17 @@ async function editableOf(
       catalogue.types.find(candidate => candidate.typeId === target.typeId)
     return source?.capabilities.edit === true && type?.capabilities.edit === true
   } catch {
-    return false
+    return undefined
   }
+}
+
+/** The source-owned read-only marker in one edit document, when present. */
+function lockedReasonOf(document: ClueEditDocument): string | undefined {
+  const data = document.data
+  if (data === null || typeof data !== 'object' || Array.isArray(data)) return undefined
+  const record = data as Record<string, unknown>
+  if (record.readOnly !== true) return undefined
+  return typeof record.readOnlyReason === 'string' ? record.readOnlyReason : ''
 }
 
 /** Render the document descriptor of one state (shared by every refresh). */
@@ -304,8 +374,12 @@ async function loadInto(
         locator: target.locator ?? {},
         ...(options.sessionId === undefined ? {} : { sessionId: options.sessionId }),
       }
-  const url = originalUrl(target.locator)
+  const url = sourceUrlOf(target.locator)
   const editable = await editableOf(face, target)
+  const retry = (): void => {
+    handle.update({ content: createElement(DetailStatus, { text: t('loading') }) })
+    void loadInto(handle, options, guard)
+  }
 
   let state: DetailState
   const readOnlyState = (result: ClueReadResult, error: string | null): DetailState => ({
@@ -318,20 +392,24 @@ async function loadInto(
     conflict: false,
     error,
   })
-  if (editable) {
+  if (editable !== false) {
     try {
       const document = await face.api.loadEdit(workspaceId, resource)
+      const locked = lockedReasonOf(document)
       state = {
         format: document.format,
         document,
         data: document.data,
-        readOnly: false,
+        readOnly: locked !== undefined,
         ...(document.baseRevision === undefined ? {} : { baseRevision: document.baseRevision }),
         saving: false,
         // A load is the saved baseline: an untouched window is closable.
         dirty: false,
         conflict: false,
-        error: null,
+        // A source may hand back an editable TYPE whose concrete resource is
+        // locked (archived repository, read-only permission, oversized body):
+        // say why instead of offering a save the source will refuse.
+        error: locked === undefined ? null : readOnlyReasonCopy(locked),
       }
     } catch (failure) {
       // Editing is unavailable for a reason the reader can act on (permission,
@@ -348,6 +426,7 @@ async function loadInto(
           content: createElement(DetailFailure, {
             message: clueErrorHint(categoryOf(readFailure)) ?? clueErrorMessage(readFailure, t('clueDetailFailed')),
             url,
+            onRetry: retry,
           }),
         })
         return
@@ -355,12 +434,13 @@ async function loadInto(
     }
   } else {
     try {
-      state = readOnlyState(await face.api.read(workspaceId, resource), null)
+      state = readOnlyState(await face.api.read(workspaceId, resource), t('clueDetailReadOnlyType'))
     } catch (failure) {
       handle.update({
         content: createElement(DetailFailure, {
           message: clueErrorHint(categoryOf(failure)) ?? clueErrorMessage(failure, t('clueDetailFailed')),
           url,
+          onRetry: retry,
         }),
       })
       return
@@ -478,6 +558,14 @@ async function loadInto(
               t('clueDetailReload'),
             )
           : null,
+        url === undefined
+          ? null
+          : createElement('a', {
+              className: css.action,
+              href: url,
+              target: '_blank',
+              rel: 'noreferrer',
+            }, t('clueDetailOpenSource')),
         current.readOnly || !guard.dirty
           ? null
           : createElement(
