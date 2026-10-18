@@ -1408,10 +1408,12 @@ describe('native records: path enumeration and the navigation gate', () => {
     records.ensure({ sessionId: 's3', id: 'tab9', kind: 'browser', title: 'site', params: { url: 'https://example.test/x' }, scope: { sessionId: 's3' } })
 
     expect(records.pathTabs().sort((left, right) => left.id.localeCompare(right.id))).toEqual([
-      { sessionId: 's1', scopeSessionId: 's1', cwd: undefined, id: 'tab1', path: '/w/a.ts' },
-      { sessionId: 's2', scopeSessionId: 's2', cwd: '/w', id: 'tab1', path: 'b.ts' },
+      // The chip's title rides along: the rename reconciliation retitles a
+      // page only when that title is the file name it wrote itself.
+      { sessionId: 's1', scopeSessionId: 's1', cwd: undefined, id: 'tab1', path: '/w/a.ts', title: 'a.ts' },
+      { sessionId: 's2', scopeSessionId: 's2', cwd: '/w', id: 'tab1', path: 'b.ts', title: 'b.ts' },
       // A browser seed lands on `path` too (the address bar reads it there).
-      { sessionId: 's3', scopeSessionId: 's3', cwd: undefined, id: 'tab9', path: 'https://example.test/x' },
+      { sessionId: 's3', scopeSessionId: 's3', cwd: undefined, id: 'tab9', path: 'https://example.test/x', title: 'site' },
     ])
   })
 

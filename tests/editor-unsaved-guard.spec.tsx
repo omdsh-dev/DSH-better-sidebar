@@ -298,19 +298,20 @@ describe('tree rename/delete reconciliation', () => {
     return { store, service, records, close, context }
   }
 
-  /** One editor record bound to a file, as a native open would mint it. */
+  /** One editor record bound to a file, as a native open would mint it. The
+   *  title defaults to the file name, i.e. what an open derives on its own. */
   const openNativeFile = (
     records: ReturnType<typeof createNativeTabRecords>,
     id: string,
     path: string,
-    seat: { sessionId?: string; cwd?: string } = {},
+    seat: { sessionId?: string; cwd?: string; title?: string } = {},
   ): void => {
     const sessionId = seat.sessionId ?? 'native-scope'
     records.ensure({
       sessionId,
       id,
       kind: 'editor',
-      title: 'a.ts',
+      title: seat.title ?? path.slice(path.lastIndexOf('/') + 1),
       params: { path },
       scope: seat.cwd === undefined ? { sessionId } : { sessionId, cwd: seat.cwd },
     })
@@ -345,6 +346,28 @@ describe('tree rename/delete reconciliation', () => {
     expect(consumeRetargetedPath(key, '/ws/dir/a.ts', '/ws/dir/b.ts')).toBe(true)
     expect(consumeRetargetedPath(key, '/ws/dir/a.ts', '/ws/dir/b.ts')).toBe(false)
     expect(consumeRetargetedPath(key, '/ws/dir/a.ts', '/ws/elsewhere.ts')).toBe(false)
+  })
+
+  it('follows the new name in the title only when the title CAME from the name', () => {
+    // The host's agent-opens push carries a title of its own (the model asked
+    // for that file by a label it chose: `use-host-feeds` → `openFile(scope,
+    // path, title)`), and a consumer plugin may label a page itself. A rename
+    // carries along the title the opener DERIVED from the file name — the
+    // basename — and leaves a chosen one as it is. Both tab spaces obey it.
+    const { store, service, records, context } = mountNativeSession()
+    openNativeFile(records, 'tab1', '/ws/a.ts')
+    openNativeFile(records, 'tab2', '/ws/a.ts', { title: 'Plan draft' })
+    service.openTab({ type: 'editor', title: 'Plan draft', path: '/ws/a.ts', target: 'bottom' })
+
+    retargetPathTabs(context, store, '/ws/a.ts', '/ws/b.ts')
+
+    // Derived: the chip follows the file…
+    expect(records.get('native-scope', 'tab1')?.tab).toMatchObject({ path: '/ws/b.ts', title: 'b.ts' })
+    // …authored: the path moves, the label stays.
+    expect(records.get('native-scope', 'tab2')?.tab).toMatchObject({ path: '/ws/b.ts', title: 'Plan draft' })
+    const bottom = allLeaves(store.getSnapshot().state!.bottomSplits)
+      .flatMap(leaf => leaf.tabs).find(tab => tab.path !== undefined)
+    expect(bottom).toMatchObject({ path: '/ws/b.ts', title: 'Plan draft' })
   })
 
   it('retargets a tab opened from a CHAT LINK (its address stores a workspace-relative path)', () => {
@@ -463,6 +486,62 @@ describe('tree rename/delete reconciliation', () => {
 
     expect(records.has('native-scope', 'tab4')).toBe(false)
     expect(records.has('native-scope', 'tab5')).toBe(true)
+  })
+
+  /** The file paths one session's bottom workbench has open (tree order). */
+  const bottomPaths = (store: SidebarStore, sessionId: string): string[] => {
+    const state = store.getSessionStates().get(sessionId)
+    if (state === undefined) return []
+    return allLeaves(state.bottomSplits)
+      .flatMap(leaf => leaf.tabs)
+      .flatMap(tab => (tab.path === undefined ? [] : [tab.path]))
+  }
+
+  it('retargets a BACKGROUND session\'s bottom-workbench page (every cached session is walked)', () => {
+    // The bottom workbench is per session, and a file can live there on purpose
+    // (`target: 'bottom'`) or in a layout persisted back when files landed in
+    // the workbench. The reconciliation used to read the ACTIVE session's state
+    // alone, so a background conversation's page kept the old path and its next
+    // save recreated the renamed-away file — the same data problem, one
+    // conversation over.
+    const { store, service, context } = mountNativeSession()
+    service.openTab(
+      { type: 'editor', title: 'a.ts', path: '/ws/a.ts', target: 'bottom' },
+      { sessionId: 'other-scope' },
+    )
+    expect(bottomPaths(store, 'other-scope')).toEqual(['/ws/a.ts'])
+    expect(store.getSnapshot().sessionId).toBe('native-scope')
+
+    retargetPathTabs(context, store, '/ws/a.ts', '/ws/b.ts')
+
+    // The page follows the file in ITS session…
+    expect(bottomPaths(store, 'other-scope')).toEqual(['/ws/b.ts'])
+    // …while the session on screen is neither written to nor re-published: a
+    // targeted write never touches the snapshot the shell renders from.
+    expect(store.getSnapshot().sessionId).toBe('native-scope')
+    expect(bottomPaths(store, 'native-scope')).toEqual([])
+  })
+
+  it('closes a BACKGROUND session\'s page on delete, asking about ITS draft', () => {
+    const confirmSpy = vi.fn().mockReturnValue(true)
+    vi.stubGlobal('confirm', confirmSpy)
+    const { store, service, context } = mountNativeSession()
+    service.openTab(
+      { type: 'editor', title: 'a.ts', path: '/ws/a.ts', target: 'bottom' },
+      { sessionId: 'other-scope' },
+    )
+    const row = allLeaves(store.getSessionStates().get('other-scope')!.bottomSplits)
+      .flatMap(leaf => leaf.tabs).find(tab => tab.path === '/ws/a.ts')!
+    // The editor behind that page registered its draft in ITS session, so the
+    // question has to be asked there — read against the active session the
+    // record would not be found and the tab would close unprompted.
+    setEditorDirty(row.id, true, 'other-scope', '/ws/a.ts')
+
+    closePathTabs(context, store, '/ws/a.ts', 'discard?')
+
+    expect(confirmSpy).toHaveBeenCalledWith('discard?')
+    expect(bottomPaths(store, 'other-scope')).toEqual([])
+    expect(store.getSnapshot().sessionId).toBe('native-scope')
   })
 })
 
