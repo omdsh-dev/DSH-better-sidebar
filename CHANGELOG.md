@@ -2,6 +2,10 @@
 
 > 本文档收录 dsh-better-sidebar 的完整发布历史（最新版摘要见 [README](README_ZH.md)；同步发布于 [GitHub Releases](https://github.com/omdsh-dev/DSH-better-sidebar/releases)）。
 
+### Unreleased
+
+- 🧭 **文件树根目录可以自己选了**（[#1003](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1003)）：根行上的目录名现在是一个下拉，列出**当前会话仓库的全部 checkout**（分支 · 目录名 · 变更数，与 Git 页同一份 `git.worktrees` 数据），选中即固定，另有「自动（跟随 agent）」一项把控制权交回推断。此前根完全由推断决定（宿主提交的 `working_directory` + 最新 tool call 里出现的 linked worktree），唯一的纠正手段是重启宿主并设置进程级 `DSH_SIDEBAR_WORKTREE_ROOT`——#952（嵌套仓库的 worktree 抢根）、#960（已删除的 checkout 把侧栏钉死）报告的正是这条推断出错、而用户无从干预的场景。固定值由**宿主**保存并按会话生效（客户端只发一次写入），因此 `/sidebar/file`、`/sidebar/html` 与 fs-watch 这些**无法携带客户端参数**的路由一并跟随；写入走 `git.resolveWorktree` 校验，只接受该会话仓库自己的 checkout，且**目录消失即自动作废**（返回自动根，不再出现 #960 那种死路）。固定是**视图根**：它决定 explorer 列出谁、watch 订阅谁，**不改变相对路径与写路径的解析基准**（那条口径见 #956 / #963）。宿主重启后回到自动根。
+
 ### v0.28.0
 
 - **正式版支持线前移到 DSH 0.2.1-rc.1+**：13 条 DSH peer 下限统一为 `^0.2.1-rc.1`，开发依赖、CI 与安装脚本使用精确 RC 基线。不新增运行时兼容层、不改功能实现。
