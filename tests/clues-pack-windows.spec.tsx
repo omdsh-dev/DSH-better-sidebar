@@ -817,7 +817,7 @@ describe('clue detail window', () => {
 
   it('keeps the draft and offers a re-read after a save conflict', async () => {
     const conflict = new SidebarApiError('conflict', 'stale revision')
-    const { face } = faceOf({ saveError: () => conflict })
+    const { face, calls } = faceOf({ saveError: () => conflict })
     const windows = recordingWindows()
     openClueDetailWindow({
       windows: windows.windows,
@@ -835,7 +835,13 @@ describe('clue detail window', () => {
     const failed = windows.last()?.content as unknown as { error?: string; document: { data: { text: string } } }
     expect(failed.error).toContain('changed elsewhere')
     expect(failed.document.data.text).toBe('# Kept draft')
-    expect(String(windows.last()?.footer)).toBeTruthy()
+    const footer = renderRoot(createElement(Fragment, null, windows.last()?.footer))
+    await flush()
+    expect(footer.container.textContent).toContain('Re-read')
+    click(footer.container, 'Re-read')
+    await flush()
+    expect(calls.loadEdit).toBe(2)
+    footer.unmount()
   })
 
   it('refuses to close with an unsaved edit and keeps the draft', async () => {
