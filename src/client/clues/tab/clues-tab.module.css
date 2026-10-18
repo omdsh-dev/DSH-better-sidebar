@@ -4,12 +4,17 @@
  * Two independent regions — the pack library above, the multi-source browser
  * below — with no decorative connector between them. Paints ride the plugin's
  * skin tokens only; the design accent (#3388BB) reaches the page through
- * `--dsw-alias-brand-primary`, never as a literal. Narrow viewports stack, and
- * no rule reduces font sizes to fit.
+ * `--dsw-alias-brand-primary`, never as a literal. The layout responds to the
+ * TAB's own width (a container query on `.root`), not the browser viewport:
+ * the native right sidebar can be 390px wide on a 1920px desktop, and the
+ * side rail must follow the column the user actually sees. No rule reduces
+ * font sizes to fit.
  */
 
 .root {
   position: relative;
+  container-type: inline-size;
+  container-name: clue-tab;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -774,7 +779,9 @@
 
 /* ── wide layout: the source nav becomes a side rail ────────────────────── */
 
-@media (min-width: 768px) {
+/* Container width, not viewport: a desktop window with a narrow sidebar keeps
+   the stacked (scrollable) source nav, which is the readable form there. */
+@container clue-tab (min-width: 520px) {
   .browserBody {
     flex-direction: row;
     align-items: flex-start;
