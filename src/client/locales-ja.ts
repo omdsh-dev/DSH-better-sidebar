@@ -876,6 +876,8 @@ export const ja: Record<string, string> = {
   cluePackBindingHint: 'このワークスペースの新しいセッションで参照が自動提供され、読み取り時に最新の内容を取得します。',
   cluePackBindingUnbindHint: 'バインド解除しても手がかりや過去のセッションの参照は削除されません。',
   cluePackBindingChoose: 'ワークスペースを選択',
+  clueBindingFailed: 'ワークスペースのバインド操作に失敗しました。',
+  clueBindingNotInWorkspace: 'この手がかりは選択したワークスペースにありません。先にそのワークスペースへ追加してからバインドしてください。',
   cluePackBind: 'バインド',
   cluePackUnbind: 'バインド解除',
   cluePackBound: 'バインド済み',

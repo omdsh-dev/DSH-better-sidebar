@@ -874,6 +874,8 @@ export const nl: Record<string, string> = {
   cluePackBindingHint: 'New sessions in this workspace receive these references automatically; content is read live.',
   cluePackBindingUnbindHint: 'Unbinding deletes neither the clues nor references in old sessions.',
   cluePackBindingChoose: 'Choose a workspace',
+  clueBindingFailed: 'The workspace binding operation failed.',
+  clueBindingNotInWorkspace: 'This clue is not in the selected workspace; add it there before binding.',
   cluePackBind: 'Bind',
   cluePackUnbind: 'Unbind',
   cluePackBound: 'Bound',

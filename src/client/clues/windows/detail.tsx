@@ -272,7 +272,9 @@ function ClueBindingPanel(props: ClueBindingPanelProps): ReactNode {
       apply(result)
     }).catch((error: unknown) => {
       if (!active) return
-      setFailure(clueErrorMessage(error, t('cluePackSaveFailed')))
+      // Reading the bindings is part of the binding surface, not a pack save:
+      // say so instead of borrowing the pack's failure copy.
+      setFailure(clueErrorMessage(error, t('clueBindingFailed')))
     })
     return () => { active = false }
   }, [apply, face, workspaceId])
@@ -290,7 +292,12 @@ function ClueBindingPanel(props: ClueBindingPanelProps): ReactNode {
         : await face.api.bindingsRemove(workspaceId, input)
       apply(result)
     } catch (error) {
-      setFailure(clueErrorMessage(error, t('cluePackSaveFailed')))
+      // Bindings are workspace-scoped: a clue stored in workspace A cannot be
+      // bound in workspace B until it exists there. Name that next step
+      // instead of surfacing a generic (and misleading) save failure.
+      setFailure(change === 'add' && categoryOf(error) === 'not-found'
+        ? t('clueBindingNotInWorkspace')
+        : clueErrorMessage(error, t('clueBindingFailed')))
     } finally {
       setBusy(false)
     }

@@ -83,6 +83,8 @@ interface FaceOverrides {
   readError?: () => unknown
   loadEditDocument?: () => unknown
   packsListError?: () => unknown
+  bindingsListError?: () => unknown
+  bindingAddError?: () => unknown
 }
 
 const FILES_SOURCE: ClueSourceDescriptor = {
@@ -168,11 +170,17 @@ function faceOf(overrides: FaceOverrides = {}): { face: BetterSidebarCluesClient
       ],
       revision: 2,
     }),
-    bindingsList: async (workspaceId: string) => ({
-      bindings: bound.filter(binding => binding.workspaceId === workspaceId),
-      revision: bound.length + 1,
-    }),
+    bindingsList: async (workspaceId: string) => {
+      const rejected = overrides.bindingsListError?.()
+      if (rejected !== undefined) throw rejected
+      return {
+        bindings: bound.filter(binding => binding.workspaceId === workspaceId),
+        revision: bound.length + 1,
+      }
+    },
     bindingsAdd: async (workspaceId: string, input: { target: ClueBindingTarget }) => {
+      const rejected = overrides.bindingAddError?.()
+      if (rejected !== undefined) throw rejected
       calls.bindingAdd.push(workspaceId)
       calls.bindingAddTargets.push({ workspaceId, target: input.target })
       bound.push({ workspaceId, target: input.target, createdAt: '' })
@@ -960,6 +968,87 @@ describe('clue detail window', () => {
       { workspaceId: 'ws-2', target: { kind: 'clue', clueId: 'c-bind' } },
     ])
     expect(view.container.querySelector('select[aria-label="Choose a workspace"]')).not.toBeNull()
+    view.unmount()
+  })
+
+  it('uses the binding copy instead of the pack-save copy when binding fails', async () => {
+    const { face } = faceOf({ bindingAddError: () => new SidebarApiError('network', 'offline') })
+    const windows = recordingWindows()
+    openClueDetailWindow({
+      windows: windows.windows,
+      face,
+      workspaceId: 'ws-1',
+      target: { sourceId: 'builtin.files', typeId: 'builtin.files.markdown', clueId: 'c-bind-fail', title: 'A note' },
+      workspaces: [
+        { workspaceId: 'ws-1', title: '/repo' },
+        { workspaceId: 'ws-2', title: '/other' },
+      ],
+    })
+    await flush()
+    const view = renderRoot(createElement(Fragment, null, windows.last()?.footer))
+    await flush()
+    const select = view.container.querySelector<HTMLSelectElement>('select[aria-label="Choose a workspace"]')!
+    act(() => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!
+      setter.call(select, 'ws-2')
+      select.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+    click(view.container, 'Bind')
+    await flush()
+    const alert = view.container.querySelector('[role="alert"]')
+    expect(alert?.textContent).toContain('The workspace binding operation failed.')
+    expect(alert?.textContent).not.toContain('Saving the pack failed.')
+    view.unmount()
+  })
+
+  it('explains that a cross-workspace clue must be added there before binding', async () => {
+    const { face } = faceOf({
+      bindingAddError: () => new SidebarApiError('not-found', 'clue "c-cross" does not exist in this workspace'),
+    })
+    const windows = recordingWindows()
+    openClueDetailWindow({
+      windows: windows.windows,
+      face,
+      workspaceId: 'ws-1',
+      target: { sourceId: 'builtin.files', typeId: 'builtin.files.markdown', clueId: 'c-cross', title: 'A note' },
+      workspaces: [
+        { workspaceId: 'ws-1', title: '/repo' },
+        { workspaceId: 'ws-2', title: '/other' },
+      ],
+    })
+    await flush()
+    const view = renderRoot(createElement(Fragment, null, windows.last()?.footer))
+    await flush()
+    const select = view.container.querySelector<HTMLSelectElement>('select[aria-label="Choose a workspace"]')!
+    act(() => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!
+      setter.call(select, 'ws-2')
+      select.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+    click(view.container, 'Bind')
+    await flush()
+    const alert = view.container.querySelector('[role="alert"]')
+    expect(alert?.textContent).toContain('not in the selected workspace')
+    expect(alert?.textContent).toContain('before binding')
+    view.unmount()
+  })
+
+  it('uses the binding copy when the binding list read fails', async () => {
+    const { face } = faceOf({ bindingsListError: () => new SidebarApiError('network', 'offline') })
+    const windows = recordingWindows()
+    openClueDetailWindow({
+      windows: windows.windows,
+      face,
+      workspaceId: 'ws-1',
+      target: { sourceId: 'builtin.files', typeId: 'builtin.files.markdown', clueId: 'c-bind-read', title: 'A note' },
+      workspaces: [{ workspaceId: 'ws-1', title: '/repo' }],
+    })
+    await flush()
+    const view = renderRoot(createElement(Fragment, null, windows.last()?.footer))
+    await flush()
+    const alert = view.container.querySelector('[role="alert"]')
+    expect(alert?.textContent).toContain('The workspace binding operation failed.')
+    expect(alert?.textContent).not.toContain('Saving the pack failed.')
     view.unmount()
   })
 
