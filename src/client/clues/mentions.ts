@@ -226,19 +226,21 @@ export interface ClueContentPreview {
  * source-controlled text — so localization cannot accidentally mint or leak a
  * reference.
  */
+export type LocalizedText = string | (() => string)
+
 export interface ClueMentionsCopy {
-  /** Appended to a content-mode candidate title. */
-  readonly includeContentSuffix: string
+  /** Appended to a content-mode candidate title (a getter is re-read per row). */
+  readonly includeContentSuffix: LocalizedText
   /** Description of one default clue row. */
   readonly clueReferenceDescription: (source: string, type: string) => string
   /** Description of one content-mode clue row. */
   readonly clueContentDescription: (source: string, type: string) => string
   /** Description of one content-mode pack row. */
   readonly packContentDescription: (memberCount: number) => string
-  /** Notice when a clue pick could not be inserted. */
-  readonly clueInsertFailed: string
-  /** Notice when a pack pick could not be inserted. */
-  readonly packInsertFailed: string
+  /** Notice when a clue pick could not be inserted (a getter follows the live locale). */
+  readonly clueInsertFailed: LocalizedText
+  /** Notice when a pack pick could not be inserted (a getter follows the live locale). */
+  readonly packInsertFailed: LocalizedText
   /**
    * Wrap one content read failure. `what` names the clue/pack/member (already
    * escaped metadata), `category` is the stable S1 error category and `detail`
@@ -314,6 +316,11 @@ const DEFAULT_COPY: ClueMentionsCopy = {
     `${token} is larger than one read page (next offset: ${nextOffset}); including it would truncate the content, so the draft was kept`,
 }
 
+/** Resolve one localized string that may be a getter. */
+function textOf(value: LocalizedText | undefined): string {
+  return typeof value === 'function' ? value() : value ?? ''
+}
+
 /** Options of {@link createClueInputTriggers}. */
 export interface CreateClueInputTriggersOptions {
   /** The clue extension face (`ctx.betterSidebar.clues`). */
@@ -343,8 +350,8 @@ export interface CreateClueInputTriggersOptions {
    * so the UI can show the volume before the user submits.
    */
   readonly onContentPreview?: (preview: ClueContentPreview) => void
-  /** Section heading of the content-mode candidate rows. */
-  readonly contentSection?: string
+  /** Section heading of the content-mode candidate rows (a getter follows the live locale). */
+  readonly contentSection?: LocalizedText
   /**
    * Localized user-visible copy. Omitted fields keep the English defaults;
    * callbacks receive escaped display metadata only.
@@ -661,7 +668,7 @@ function clueCandidate(
   const appearance = appearanceOf(row.typeId)
   const icon = wrapDisplayIcon(display?.icon, appearance)
   if (mode === 'content') {
-    const label = `${title}${copy.includeContentSuffix}`
+    const label = `${title}${textOf(copy.includeContentSuffix)}`
     return {
       name: label,
       label,
@@ -690,7 +697,7 @@ function packCandidate(
 ): ClueInputCandidate {
   const name = escapeClueTitle(pack.name) || displayText(pack.id, 'clue pack')
   if (mode === 'content') {
-    const label = `${name}${copy.includeContentSuffix}`
+    const label = `${name}${textOf(copy.includeContentSuffix)}`
     return {
       name: label,
       label,
@@ -783,9 +790,12 @@ export function createClueInputTriggers(options: CreateClueInputTriggersOptions)
   const limit = limitOf(options.limit)
   const concurrency = Math.max(1, Math.floor(options.concurrency ?? DEFAULT_CONCURRENCY))
   const catalogueTtlMs = Math.max(0, options.catalogueTtlMs ?? DEFAULT_CATALOGUE_TTL_MS)
-  const contentSection = options.contentSection === ''
-    ? undefined
-    : options.contentSection ?? DEFAULT_CONTENT_SECTION
+  const contentSectionOf = (): string | undefined => {
+    const value = options.contentSection === undefined
+      ? DEFAULT_CONTENT_SECTION
+      : textOf(options.contentSection)
+    return value === '' ? undefined : value
+  }
   const copy: ClueMentionsCopy = { ...DEFAULT_COPY, ...options.copy }
   const includeContentMaxChars = positiveOf(options.includeContentMaxChars, DEFAULT_INCLUDE_CONTENT_MAX_CHARS)
   const includeContentMaxMembers = positiveOf(options.includeContentMaxMembers, DEFAULT_INCLUDE_CONTENT_MAX_MEMBERS)
@@ -966,6 +976,7 @@ export function createClueInputTriggers(options: CreateClueInputTriggersOptions)
       report(new ClueError('invalid-request', 'a workspace clue id cannot be represented as a stable token; the row was hidden'))
       return false
     })
+    const contentSection = contentSectionOf()
     return [
       ...valid.map(row => clueCandidate(row, displays, workspaceId, 'reference', contentSection, copy)),
       // A content option that is guaranteed to fail on send is worse than no
@@ -993,6 +1004,7 @@ export function createClueInputTriggers(options: CreateClueInputTriggersOptions)
         const clue = memberOf(clueId)
         return clue !== undefined && clue.unresolved === undefined && readable(clue.sourceId, clue.typeId)
       })
+    const contentSection = contentSectionOf()
     return [
       ...valid.map(pack => packCandidate(pack, workspaceId, 'reference', contentSection, copy)),
       ...valid
@@ -1209,7 +1221,7 @@ export function createClueInputTriggers(options: CreateClueInputTriggersOptions)
         }
       } catch (error) {
         report(error)
-        notify(copy.clueInsertFailed)
+        notify(textOf(copy.clueInsertFailed))
         return undefined
       }
     },
@@ -1310,7 +1322,7 @@ export function createClueInputTriggers(options: CreateClueInputTriggersOptions)
         }
       } catch (error) {
         report(error)
-        notify(copy.packInsertFailed)
+        notify(textOf(copy.packInsertFailed))
         return undefined
       }
     },

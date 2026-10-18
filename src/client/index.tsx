@@ -222,8 +222,11 @@ export function apply(ctx: Context): void {
       onNotice: message => { notifyClue(message) },
       openReference: reference => openClueReference(ctx, reference),
       // Every user-visible refusal/description follows the active locale.
-      // (The model-facing projection labels minted inside the codec stay
-      // stable English metadata; these callbacks only wrap UI copy.)
+      // The copy is created ONCE here but its stale-prone strings are lazy
+      // getters (`includeContentSuffix`, insert notices, section heading), so
+      // a locale switch reaches the next candidate round without re-installing
+      // the trigger sources. (Model-facing projection labels minted inside the
+      // codec stay stable English metadata; these callbacks only wrap UI copy.)
       copy: clueMentionsCopy(),
       contentSection: clueMentionsContentSection(),
     }),

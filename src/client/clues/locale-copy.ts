@@ -90,12 +90,14 @@ export function feishuClientLabels(): FeishuClientLabels {
  */
 export function clueMentionsCopy(): Partial<ClueMentionsCopy> {
   return {
-    includeContentSuffix: t('clueMentionsIncludeContentSuffix'),
+    // Getters: the trigger sources live for the lifecycle of the plugin, so
+    // they re-read these labels at use time and follow a live locale switch.
+    includeContentSuffix: () => t('clueMentionsIncludeContentSuffix'),
     clueReferenceDescription: (source, type) => t('clueMentionsReferenceDescription', { source, type }),
     clueContentDescription: (source, type) => t('clueMentionsContentDescription', { source, type }),
     packContentDescription: count => t('clueMentionsPackContentDescription', { n: count }),
-    clueInsertFailed: t('clueInsertFailed'),
-    packInsertFailed: t('cluePackInsertFailed'),
+    clueInsertFailed: () => t('clueInsertFailed'),
+    packInsertFailed: () => t('cluePackInsertFailed'),
     contentFailure: (what, _category, detail) =>
       t('clueMentionsContentFailure', { what, detail: detail === '' ? '' : `: ${detail}` }),
     contentLimit: (size, max) => t('clueMentionsContentLimit', { size, max }),
@@ -111,7 +113,11 @@ export function clueMentionsCopy(): Partial<ClueMentionsCopy> {
   }
 }
 
-/** The localized heading of the explicit "include content" candidate rows. */
-export function clueMentionsContentSection(): string {
-  return t('clueMentionsContentSection')
+/**
+ * The localized heading of the explicit "include content" candidate rows.
+ * Returned as a getter: the sources are created once and a later locale
+ * switch must reach the NEXT round of candidate rows.
+ */
+export function clueMentionsContentSection(): () => string {
+  return () => t('clueMentionsContentSection')
 }

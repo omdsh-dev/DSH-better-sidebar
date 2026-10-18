@@ -39,6 +39,11 @@ const CRITICAL_KEYS = [
   'clueFeishuSourceLink', 'clueFeishuDocsEditScopeNote',
 ] as const
 
+/** Resolve one localized label that may be lazy. */
+function text(value: string | (() => string) | undefined): string {
+  return typeof value === 'function' ? value() : value ?? ''
+}
+
 class FakeLocale {
   active = 'en'
   getSnapshot(): { active: string } { return { active: this.active } }
@@ -89,12 +94,32 @@ describe('S9 locale copy wiring', () => {
     expect(t('clueFeishuShowFullContent')).toBe('显示完整内容')
   })
 
+  it('re-reads the live-locale @ strings without recreating the copy', () => {
+    const locale = new FakeLocale()
+    locale.active = 'zh'
+    attachLocale(locale)
+    // The wiring creates these ONCE at plugin activation; they must still
+    // follow a locale switch (the sources never reinstall themselves).
+    const copy = clueMentionsCopy()
+    const section = clueMentionsContentSection()
+    expect(text(copy.includeContentSuffix)).toBe('（包含内容）')
+    expect(text(copy.clueInsertFailed)).toBe('插入失败，草稿已保留。')
+    expect(text(copy.packInsertFailed)).toContain('线索包')
+    expect(text(section)).toBe('包含当前内容')
+
+    locale.active = 'en'
+    expect(text(copy.includeContentSuffix)).toBe(' (include content)')
+    expect(text(copy.clueInsertFailed)).toBe('Insert failed; the draft was left unchanged.')
+    expect(text(copy.packInsertFailed)).toBe('That clue pack could not be inserted; the draft was left unchanged.')
+    expect(text(section)).toBe('Include current content')
+  })
+
   it('passes localized @ copy, content notices and section heading', () => {
     const locale = new FakeLocale()
     locale.active = 'zh'
     attachLocale(locale)
     const copy = clueMentionsCopy()
-    expect(copy.includeContentSuffix).toBe('（包含内容）')
+    expect(text(copy.includeContentSuffix)).toBe('（包含内容）')
     expect(copy.clueContentDescription?.('GitHub', 'Issue')).toContain('GitHub')
     expect(copy.packContentDescription?.(2)).toContain('2')
     expect(copy.packContentDescription?.(2)).toContain('成员')
@@ -105,7 +130,7 @@ describe('S9 locale copy wiring', () => {
     expect(copy.contentMissing?.('pack', '[[dsh-cluepack:p1]]')).toContain('[[dsh-cluepack:p1]]')
     expect(copy.packMemberMissing?.('[[dsh-cluepack:p1]]', 'c1')).toContain('c1')
     expect(copy.partialRead?.('[[dsh-clue:x]]', 9)).toContain('9')
-    expect(clueMentionsContentSection()).toBe('包含当前内容')
+    expect(text(clueMentionsContentSection())).toBe('包含当前内容')
     expect(t('cluePackMembersAdded', { name: '发布线索' })).toContain('发布线索')
     expect(t('clueBrowserSelectRow', { title: 'A note' })).toContain('A note')
   })
