@@ -860,6 +860,7 @@ export const ja: Record<string, string> = {
   cluePackName: 'パック名',
   cluePackInsert: 'パック参照を挿入',
   cluePackConflict: 'このパックは別の場所で変更されました。再読み込みしてから保存してください。',
+  cluePackUnsaved: '保存されていないパック名',
   cluePackMembers: 'メンバー（{n}）',
   cluePackNoMembers: 'メンバーはまだありません。「メンバーを追加」で手がかりを集めましょう。',
   cluePackAddMembers: 'メンバーを追加',

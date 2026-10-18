@@ -65,6 +65,8 @@ export interface PackWorkspaceChoice {
 /** The mutable guard the window's close handler reads. */
 export interface PackDraftGuard {
   dirty: boolean
+  /** Called by the page whenever the draft dirtiness changes. */
+  notify?(dirty: boolean): void
 }
 
 /** Options of {@link openPackManagementWindow}. */
@@ -111,13 +113,27 @@ export function packWindowId(packId: string): string {
  */
 export function openPackManagementWindow(options: PackManagementOptions): WindowHandle {
   const guard: PackDraftGuard = { dirty: false }
-  return options.windows.open({
+  let handle: WindowHandle
+  const titleFor = (dirty: boolean): string =>
+    dirty ? `${options.pack.name} · ${t('cluePackUnsaved')}` : options.pack.name
+  handle = options.windows.open({
     id: packWindowId(options.pack.id),
-    title: options.pack.name,
+    title: titleFor(false),
     size: 'collection',
     content: <PackManagementPage {...options} guard={guard} />,
-    onBeforeClose: () => !guard.dirty,
+    onBeforeClose: () => {
+      if (!guard.dirty) return Promise.resolve(true)
+      // Never refuse silently: the title bar carries the dirty marker and the
+      // localized "unsaved name" suffix, so the reader sees what blocks the
+      // close and can save or Cancel in the surface below.
+      handle.update({ dirty: true, title: titleFor(true) })
+      return Promise.resolve(false)
+    },
   })
+  guard.notify = (dirty: boolean): void => {
+    handle.update({ dirty, title: titleFor(dirty) })
+  }
+  return handle
 }
 
 /** The interactive pack management surface. */
@@ -164,6 +180,7 @@ export function PackManagementPage(
 
   useEffect(() => {
     guard.dirty = pendingName
+    guard.notify?.(pendingName)
   }, [guard, pendingName])
 
   const load = useCallback(async (signal?: AbortSignal): Promise<void> => {

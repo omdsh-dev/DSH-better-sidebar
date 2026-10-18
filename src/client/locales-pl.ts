@@ -862,6 +862,7 @@ export const pl: Record<string, string> = {
   cluePackName: 'Pack name',
   cluePackInsert: 'Insert pack reference',
   cluePackConflict: 'This pack changed elsewhere; reload before saving again.',
+  cluePackUnsaved: 'Unsaved pack name',
   cluePackMembers: 'Members ({n})',
   cluePackNoMembers: 'No members yet. Use "Add members" to collect clues.',
   cluePackAddMembers: 'Add members',

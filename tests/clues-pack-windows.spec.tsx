@@ -693,7 +693,7 @@ describe('clue pack management window', () => {
     view.unmount()
   })
 
-  it('guards a dirty name draft on close', async () => {
+  it('guards a dirty name draft on close with a visible unsaved marker', async () => {
     const { face } = faceOf()
     const windows = recordingWindows()
     const handle = openPackManagementWindow({
@@ -707,11 +707,28 @@ describe('clue pack management window', () => {
       onNotice: () => undefined,
     })
     await flush()
-    // The guard starts clean; the page marks it dirty after an edit (covered
-    // by the rename test), so the window-level default allows closing.
+    const view = renderRoot(createElement(Fragment, null, windows.last()?.content as ReactNode))
+    await flush()
     expect(handle.id).toBe('pack:p1')
-    expect(windows.last()?.onBeforeClose?.()).toBe(true)
-    handle.update({ title: 'focused' })
+    await expect(windows.last()?.onBeforeClose?.()).resolves.toBe(true)
+
+    const input = view.container.querySelector<HTMLInputElement>('input[aria-label="Pack name"]')!
+    act(() => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+      setter.call(input, 'Unsaved draft')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await flush()
+    await expect(windows.last()?.onBeforeClose?.()).resolves.toBe(false)
+    expect(windows.last()?.dirty).toBe(true)
+    expect(windows.last()?.title).toContain('Unsaved pack name')
+
+    // Cancel discards the name draft and restores the clean title.
+    click(view.container, 'Cancel')
+    await flush()
+    await expect(windows.last()?.onBeforeClose?.()).resolves.toBe(true)
+    expect(windows.last()?.title).toBe('Release clues')
+    view.unmount()
   })
 })
 
