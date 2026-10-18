@@ -114,13 +114,24 @@ export function CluesTab({ ctx, store, scope, visible }: CluesTabProps): ReactNo
     return store.subscribe(sync)
   }, [store])
 
+  /**
+   * Sequence of this tab's settings writes. The route is last-write-wins and
+   * the response carries the whole resolved document, so only the NEWEST
+   * write may adopt it: an older response landing late would otherwise restore
+   * a range another writer (the pack window, a second tab) already replaced.
+   */
+  const settingsWrite = useRef(0)
+
   const persistSettings = useCallback((next: Record<string, unknown>): void => {
     setSettings(next)
     // Optimistic shared-document update, then the authoritative revision.
     const prefs = store.getPrefs()
     store.setPrefs({ ...prefs, pluginSettings: { ...prefs.pluginSettings, [CLUE_TAB_SETTINGS_KEY]: next } })
+    const write = ++settingsWrite.current
     void api.settingsUpdate({ pluginSettings: { [CLUE_TAB_SETTINGS_KEY]: next } }).then((result) => {
-      if (result.value !== undefined) store.setPrefs(parsePrefs(result.value))
+      if (result.value !== undefined && write === settingsWrite.current) {
+        store.setPrefs(parsePrefs(result.value))
+      }
     }).catch(() => {
       notifyClue(t('clueSettingsSaveFailed'))
     })
@@ -139,16 +150,26 @@ export function CluesTab({ ctx, store, scope, visible }: CluesTabProps): ReactNo
       : {}
   }, [settings, browseWorkspaceId])
 
+  /**
+   * Persist one explicitly chosen range.
+   *
+   * The pack window holds this callback for its whole lifetime, so the
+   * `settings` render snapshot it captured can be older than a range the tab
+   * (or another surface) wrote in the meantime. Merge into the LIVE document
+   * at call time — never into the snapshot — so one writer cannot roll the
+   * other's range back.
+   */
   const onScopeChange = useCallback((sourceId: string, range: JsonValue | undefined): void => {
     if (browseWorkspaceId === undefined) return
-    const all = (settings.scopes !== null && typeof settings.scopes === 'object'
-      ? settings.scopes as Record<string, Record<string, JsonValue | undefined>>
+    const current = blobOf(store.getPrefs())
+    const all = (current.scopes !== null && typeof current.scopes === 'object'
+      ? current.scopes as Record<string, Record<string, JsonValue | undefined>>
       : {})
     const forWorkspace = { ...(all[browseWorkspaceId] ?? {}) }
     if (range === undefined) delete forWorkspace[sourceId]
     else forWorkspace[sourceId] = range
-    persistSettings({ ...settings, scopes: { ...all, [browseWorkspaceId]: forWorkspace } })
-  }, [settings, browseWorkspaceId, persistSettings])
+    persistSettings({ ...current, scopes: { ...all, [browseWorkspaceId]: forWorkspace } })
+  }, [browseWorkspaceId, persistSettings, store])
 
   const insertClue = useCallback((clueId: string, title: string): boolean => {
     const inserted = insertClueReference(ctx, scope.sessionId, { kind: 'clue', id: clueId, title })

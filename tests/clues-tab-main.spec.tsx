@@ -16,7 +16,7 @@
 // @vitest-environment jsdom
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act } from 'react-dom/test-utils'
-import { createElement } from 'react'
+import { createElement, Fragment } from 'react'
 import { renderRoot, setupReactAct, type RenderedRoot } from './test-utils.ts'
 
 setupReactAct()
@@ -28,6 +28,7 @@ import { CluesTab } from '../src/client/clues/tab/CluesTab.tsx'
 import { CLUE_HELP_SEEN_KEY } from '../src/client/clues/tab/help.tsx'
 import { createSidebarStore } from '../src/client/state.ts'
 import type { SidebarStore } from '../src/client/state.ts'
+import type { WindowOpenOptions } from '../src/client/windows/types.ts'
 import { SIDEBAR_PREFS_DEFAULTS } from '../src/prefs-shared.ts'
 import { BUILTIN_SOURCE_IDS } from '../src/clues/types.ts'
 import type {
@@ -87,6 +88,8 @@ interface Fixture {
   resolveParams: Record<string, unknown>[]
   inserted: unknown[]
   pinned: string[]
+  /** Every window the tab opened (the pack/detail/share surfaces). */
+  opened: WindowOpenOptions[]
 }
 
 function fixture(options: {
@@ -104,6 +107,7 @@ function fixture(options: {
   const resolveParams: Record<string, unknown>[] = []
   const inserted: unknown[] = []
   const pinned: string[] = []
+  const opened: WindowOpenOptions[] = []
   const enabled = new Set(options.enabled ?? [FILES.sourceId, GITHUB.sourceId])
   const packs = [pack('p1', 'Release clues', ['c1', 'c2']), pack('p2', 'Design notes', [])]
   const store = createSidebarStore()
@@ -162,7 +166,21 @@ function fixture(options: {
     isSourceMentionEnabled: (id: string) => enabled.has(id),
     isPacksMentionEnabled: () => true,
   }
-  const service = { clues: face, windows: { open: () => ({ update: () => {}, focus: () => {}, close: async () => {}, navigation: {} }) } }
+  const service = {
+    clues: face,
+    windows: {
+      open: (options: WindowOpenOptions) => {
+        opened.push(options)
+        return {
+          id: options.id,
+          update: () => undefined,
+          focus: () => undefined,
+          close: async () => undefined,
+          navigation: { push: () => undefined, pop: () => false, back: () => false, canGoBack: () => false, depth: () => 1 },
+        }
+      },
+    },
+  }
   const workspaces = {
     list: {
       getSnapshot: () => ({
@@ -213,6 +231,7 @@ function fixture(options: {
     resolveParams,
     inserted,
     pinned,
+    opened,
   }
 }
 
@@ -345,6 +364,14 @@ describe('clue tab main page', () => {
 
 // ── browser interactions ────────────────────────────────────────────────────
 
+/** Click one button by its trimmed text or accessible name. */
+function click(container: ParentNode, label: string): void {
+  const button = [...container.querySelectorAll('button')]
+    .find(candidate => (candidate.textContent ?? '').trim() === label || candidate.getAttribute('aria-label') === label)
+  if (button === undefined) throw new Error(`button "${label}" not found`)
+  act(() => { button.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
+}
+
 /** Set one controlled input's value through React's change pipeline. */
 function typeInto(input: HTMLInputElement, value: string): void {
   const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
@@ -384,6 +411,57 @@ describe('clue tab source browser', () => {
       sourceId: GITHUB.sourceId,
       scope: { repo: 'acme/widgets', state: 'open' },
     })
+    view.unmount()
+  })
+
+  it('merges a later pack-window range with the newer range the tab just chose', async () => {
+    const fx = fixture({ workspaceId: 'ws-1', enabled: [FILES.sourceId, GITHUB.sourceId] })
+    fx.store.setPrefs({
+      ...fx.store.getPrefs(),
+      pluginSettings: { clues: { scopes: { 'ws-1': { [FILES.sourceId]: { path: 'old' } } } } },
+    })
+    const view = mount(fx)
+    await flush()
+
+    // The pack window opens with the settings snapshot of THIS render; its
+    // callback stays alive for the whole lifetime of the window.
+    press(view.container, 'Manage pack: Release clues')
+    await flush()
+    const packWindow = fx.opened.find(options => options.id === 'pack:p1')
+    expect(packWindow).toBeDefined()
+    const packView = renderRoot(createElement(Fragment, null, packWindow!.content as never))
+    await flush()
+
+    // The tab then writes a NEW files path through the same document.
+    press(view.container, 'Choose range')
+    await flush()
+    const pathInput = view.container.querySelector<HTMLInputElement>('input[placeholder="e.g. docs/"]')!
+    typeInto(pathInput, 'new')
+    press(view.container, 'Save range')
+    await flush()
+    const afterTab = fx.store.getPrefs().pluginSettings.clues as {
+      scopes?: Record<string, Record<string, unknown>>
+    }
+    expect(afterTab.scopes?.['ws-1']?.[FILES.sourceId]).toEqual({ path: 'new' })
+
+    // The still-open pack window saves a DIFFERENT source's range through
+    // its own add page. Its older snapshot must not roll the files path back.
+    click(packView.container, 'Add members')
+    await flush()
+    click(packView.container, 'GitHub Issues')
+    await flush()
+    click(packView.container, 'Choose range')
+    await flush()
+    const repoInput = packView.container.querySelector<HTMLInputElement>('input[placeholder="owner/repo or repository URL"]')!
+    typeInto(repoInput, 'acme/widgets')
+    click(packView.container, 'Save range')
+    await flush()
+    const merged = fx.store.getPrefs().pluginSettings.clues as {
+      scopes?: Record<string, Record<string, unknown>>
+    }
+    expect(merged.scopes?.['ws-1']?.[FILES.sourceId]).toEqual({ path: 'new' })
+    expect(merged.scopes?.['ws-1']?.[GITHUB.sourceId]).toEqual({ repo: 'acme/widgets', state: 'open' })
+    packView.unmount()
     view.unmount()
   })
 
