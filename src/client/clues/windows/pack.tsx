@@ -553,7 +553,7 @@ export function PackManagementPage(
       setAddSelected(new Map())
       setAddOpen(false)
       await load()
-      props.onNotice(t('cluePackMembersAdded'))
+      props.onNotice(t('cluePackMembersAdded', { name: latest.name }))
     } catch (failure) {
       props.onNotice(clueErrorMessage(failure, t('cluePackSaveFailed')))
     } finally {
