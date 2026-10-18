@@ -33,7 +33,7 @@ import { SharePage } from '../src/client/clues/windows/share.tsx'
 import type { PackDraftGuard } from '../src/client/clues/windows/pack.tsx'
 import type { BetterSidebarCluesClientFace } from '../src/client/clues/registry.ts'
 import type { WindowOpenOptions, WindowHandle } from '../src/client/windows/types.ts'
-import type { ClueBinding, ClueBindingTarget, CluePack } from '../src/clues/types.ts'
+import type { ClueBinding, ClueBindingTarget, ClueCandidate, CluePack, ClueSourceDescriptor } from '../src/clues/types.ts'
 import { SidebarApiError } from '../src/client/api.ts'
 
 // ── fixtures ────────────────────────────────────────────────────────────────
@@ -58,13 +58,46 @@ interface FaceCalls {
   bindingRemoveTargets: { workspaceId: string; target: ClueBindingTarget }[]
   loadEdit: number
   saveEdit: number
+  list: number
+  search: number
+  resolve: number
+  listParams: Record<string, unknown>[]
+  searchParams: Record<string, unknown>[]
+  resolveParams: Record<string, unknown>[]
 }
 
-function faceOf(overrides: {
+interface FaceOverrides {
   saveError?: () => unknown
   renameError?: () => unknown
   editable?: boolean
-} = {}): { face: BetterSidebarCluesClientFace; calls: FaceCalls } {
+  sources?: ClueSourceDescriptor[]
+  enabled?: (sourceId: string) => boolean
+  listFor?: (sourceId: string) => readonly ClueCandidate[]
+  searchFor?: (sourceId: string) => readonly ClueCandidate[]
+  resolveCandidates?: readonly ClueCandidate[]
+}
+
+const FILES_SOURCE: ClueSourceDescriptor = {
+  sourceId: 'builtin.files',
+  name: 'Local files',
+  order: 0,
+  pluginId: 'dsh-better-sidebar',
+  types: ['builtin.files.markdown'],
+  transport: 'files',
+  capabilities: { resolve: true, list: true, search: true, read: true, edit: true, portable: true },
+}
+
+const GITHUB_SOURCE: ClueSourceDescriptor = {
+  sourceId: 'builtin.github.issues',
+  name: 'GitHub Issues',
+  order: 10,
+  pluginId: 'dsh-better-sidebar',
+  types: ['builtin.github.issue'],
+  transport: 'cli',
+  capabilities: { resolve: true, list: true, search: true, read: true, edit: true, portable: true },
+}
+
+function faceOf(overrides: FaceOverrides = {}): { face: BetterSidebarCluesClientFace; calls: FaceCalls } {
   const bound: ClueBinding[] = []
   const calls: FaceCalls = {
     rename: 0,
@@ -76,24 +109,25 @@ function faceOf(overrides: {
     bindingRemoveTargets: [],
     loadEdit: 0,
     saveEdit: 0,
+    list: 0,
+    search: 0,
+    resolve: 0,
+    listParams: [],
+    searchParams: [],
+    resolveParams: [],
   }
   const api = {
     sources: async () => ({
-      sources: [{
-        sourceId: 'builtin.files',
-        name: 'Local files',
-        order: 0,
-        pluginId: 'dsh-better-sidebar',
-        types: ['builtin.files.markdown'],
-        transport: 'files' as const,
-        capabilities: { resolve: true, list: true, search: true, read: true, edit: overrides.editable !== false, portable: true },
-      }],
-      types: [{
-        typeId: 'builtin.files.markdown',
-        sourceId: 'builtin.files',
+      sources: (overrides.sources ?? [FILES_SOURCE]).map(source => ({
+        ...source,
+        capabilities: { ...source.capabilities, edit: overrides.editable !== false && source.capabilities.edit },
+      })),
+      types: (overrides.sources ?? [FILES_SOURCE]).flatMap(source => source.types.map(typeId => ({
+        typeId,
+        sourceId: source.sourceId,
         formats: ['text/markdown'],
         capabilities: { read: true, edit: overrides.editable !== false, concurrency: 'check-before-save' as const },
-      }],
+      }))),
     }),
     packsList: async () => ({ packs: [PACK], revision: 4 }),
     packsRename: async (_workspaceId: string, input: { name: string }) => {
@@ -146,8 +180,27 @@ function faceOf(overrides: {
         revision: bound.length + 1,
       }
     },
-    list: async () => ({ items: [{ sourceId: 'builtin.files', typeId: 'builtin.files.markdown', locator: { path: 'c.md' }, title: 'C note' }] }),
-    search: async () => ({ items: [{ sourceId: 'builtin.files', typeId: 'builtin.files.markdown', locator: { path: 'd.md' }, title: 'D note' }] }),
+    list: async (_workspaceId: string, input: Record<string, unknown>) => {
+      calls.list += 1
+      calls.listParams.push(input)
+      return {
+        items: overrides.listFor?.(String(input.sourceId))
+          ?? [{ sourceId: 'builtin.files', typeId: 'builtin.files.markdown', locator: { path: 'c.md' }, title: 'C note' }],
+      }
+    },
+    search: async (_workspaceId: string, input: Record<string, unknown>) => {
+      calls.search += 1
+      calls.searchParams.push(input)
+      return {
+        items: overrides.searchFor?.(String(input.sourceId))
+          ?? [{ sourceId: 'builtin.files', typeId: 'builtin.files.markdown', locator: { path: 'd.md' }, title: 'D note' }],
+      }
+    },
+    resolve: async (_workspaceId: string, input: Record<string, unknown>) => {
+      calls.resolve += 1
+      calls.resolveParams.push(input)
+      return { candidates: overrides.resolveCandidates ?? [] }
+    },
     ensure: async () => ({ clue: { id: 'c9' }, created: true }),
     read: async () => ({
       format: 'text/markdown',
@@ -172,7 +225,7 @@ function faceOf(overrides: {
     getFormatRenderer: () => undefined,
     getFormatRenderers: () => new Map(),
     subscribe: () => () => {},
-    isSourceEnabled: () => true,
+    isSourceEnabled: (sourceId: string) => overrides.enabled?.(sourceId) ?? true,
     isSourceMentionEnabled: () => true,
     isPacksMentionEnabled: () => true,
   } as unknown as BetterSidebarCluesClientFace
@@ -459,6 +512,171 @@ describe('clue pack management window', () => {
     click(view.container, 'Add selected')
     await flush()
     expect(calls.addMember).toBe(1)
+    view.unmount()
+  })
+
+  it('keeps the cross-source selection while switching sources and pages', async () => {
+    const filesCandidate: ClueCandidate = {
+      sourceId: 'builtin.files',
+      typeId: 'builtin.files.markdown',
+      locator: { path: 'a.md' },
+      title: 'A note',
+    }
+    const githubCandidate: ClueCandidate = {
+      sourceId: 'builtin.github.issues',
+      typeId: 'builtin.github.issue',
+      locator: { host: 'github.com', owner: 'acme', repo: 'widgets', kind: 'issue', number: 7 },
+      title: 'Fix the widget',
+    }
+    const { face } = faceOf({
+      sources: [FILES_SOURCE, GITHUB_SOURCE],
+      listFor: sourceId => sourceId === GITHUB_SOURCE.sourceId ? [githubCandidate] : [filesCandidate],
+    })
+    const view = renderRoot(createElement(PackManagementPage, {
+      windows: recordingWindows().windows,
+      workspaceId: 'ws-1',
+      face,
+      workspaces: [{ workspaceId: 'ws-1', title: '/repo' }],
+      pack: PACK,
+      guard: { dirty: false },
+      scopes: { [GITHUB_SOURCE.sourceId]: { repo: 'acme/widgets', state: 'open' } },
+      onInsertClue: () => true,
+      onInsertPack: () => true,
+      onNotice: () => undefined,
+    }))
+    await flush()
+    click(view.container, 'Add members')
+    await flush()
+    click(view.container, 'Local files')
+    await flush()
+    const filesBox = view.container.querySelector<HTMLInputElement>('[data-clue-add-member] ul input[type="checkbox"]')!
+    act(() => { filesBox.click() })
+    await flush()
+    expect(view.container.textContent).toContain('1 selected')
+
+    // Switching source rebuilds the page but must NOT drop the selection.
+    click(view.container, 'GitHub Issues')
+    await flush()
+    expect(view.container.textContent).toContain('1 selected')
+    expect(view.container.textContent).toContain('Fix the widget')
+
+    click(view.container, 'Local files')
+    await flush()
+    const filesAgain = view.container.querySelector<HTMLInputElement>('[data-clue-add-member] ul input[type="checkbox"]')!
+    expect(filesAgain.checked).toBe(true)
+    view.unmount()
+  })
+
+  it('asks for a range before listing GitHub members instead of surfacing invalid-request', async () => {
+    const { face, calls } = faceOf({ sources: [GITHUB_SOURCE] })
+    const view = renderRoot(createElement(PackManagementPage, {
+      windows: recordingWindows().windows,
+      workspaceId: 'ws-1',
+      face,
+      workspaces: [{ workspaceId: 'ws-1', title: '/repo' }],
+      pack: PACK,
+      guard: { dirty: false },
+      onInsertClue: () => true,
+      onInsertPack: () => true,
+      onNotice: () => undefined,
+    }))
+    await flush()
+    click(view.container, 'Add members')
+    await flush()
+    click(view.container, 'GitHub Issues')
+    await flush()
+    expect(calls.list).toBe(0)
+    expect(view.container.textContent).toContain('No range chosen yet')
+    expect(view.container.textContent).not.toContain('Failed to load')
+
+    click(view.container, 'Choose range')
+    await flush()
+    const repoInput = view.container.querySelector<HTMLInputElement>('input[placeholder="owner/repo or repository URL"]')!
+    act(() => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+      setter.call(repoInput, 'acme/widgets')
+      repoInput.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    click(view.container, 'Save range')
+    await flush()
+    expect(calls.list).toBe(1)
+    expect(calls.listParams[0]).toMatchObject({
+      sourceId: GITHUB_SOURCE.sourceId,
+      scope: { repo: 'acme/widgets', state: 'open' },
+    })
+    view.unmount()
+  })
+
+  it('adds a member from a pasted complete URL without a browse range', async () => {
+    const githubCandidate: ClueCandidate = {
+      sourceId: 'builtin.github.issues',
+      typeId: 'builtin.github.issue',
+      locator: { host: 'github.com', owner: 'acme', repo: 'widgets', kind: 'issue', number: 7 },
+      title: 'Fix the widget',
+    }
+    const { face, calls } = faceOf({
+      sources: [GITHUB_SOURCE],
+      resolveCandidates: [githubCandidate],
+    })
+    const view = renderRoot(createElement(PackManagementPage, {
+      windows: recordingWindows().windows,
+      workspaceId: 'ws-1',
+      face,
+      workspaces: [{ workspaceId: 'ws-1', title: '/repo' }],
+      pack: PACK,
+      guard: { dirty: false },
+      onInsertClue: () => true,
+      onInsertPack: () => true,
+      onNotice: () => undefined,
+    }))
+    await flush()
+    click(view.container, 'Add members')
+    await flush()
+    click(view.container, 'GitHub Issues')
+    await flush()
+    const input = view.container.querySelector<HTMLInputElement>('input[aria-label="Search a keyword, or paste a resource URL / path"]')!
+    act(() => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+      setter.call(input, 'https://github.com/acme/widgets/issues/7')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    click(view.container, 'Search')
+    await flush()
+    expect(calls.list).toBe(0)
+    expect(calls.resolve).toBe(1)
+    expect(calls.resolveParams[0]).toMatchObject({ text: 'https://github.com/acme/widgets/issues/7' })
+    expect(view.container.textContent).toContain('Fix the widget')
+
+    const box = view.container.querySelector<HTMLInputElement>('[data-clue-add-member] ul input[type="checkbox"]')!
+    act(() => { box.click() })
+    await flush()
+    click(view.container, 'Add selected')
+    await flush(6)
+    expect(calls.addMember).toBe(1)
+    view.unmount()
+  })
+
+  it('hides a source that is switched off from the add page', async () => {
+    const { face } = faceOf({
+      sources: [FILES_SOURCE, GITHUB_SOURCE],
+      enabled: sourceId => sourceId !== GITHUB_SOURCE.sourceId,
+    })
+    const view = renderRoot(createElement(PackManagementPage, {
+      windows: recordingWindows().windows,
+      workspaceId: 'ws-1',
+      face,
+      workspaces: [{ workspaceId: 'ws-1', title: '/repo' }],
+      pack: PACK,
+      guard: { dirty: false },
+      onInsertClue: () => true,
+      onInsertPack: () => true,
+      onNotice: () => undefined,
+    }))
+    await flush()
+    click(view.container, 'Add members')
+    await flush()
+    expect(view.container.textContent).toContain('Local files')
+    expect(view.container.textContent).not.toContain('GitHub Issues')
     view.unmount()
   })
 

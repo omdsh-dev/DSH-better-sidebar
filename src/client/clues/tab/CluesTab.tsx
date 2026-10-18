@@ -173,7 +173,7 @@ export function CluesTab({ ctx, store, scope, visible }: CluesTabProps): ReactNo
       workspaces: listClueWorkspaces(ctx),
       onInsertClue: insertClue,
     })
-  }, [service, face, browseWorkspaceId, scope.sessionId, insertClue])
+  }, [service, face, browseWorkspaceId, scope.sessionId, insertClue, ctx])
 
   const openPack = useCallback((pack: CluePack): void => {
     if (service === undefined || face === undefined || browseWorkspaceId === undefined) return
@@ -186,8 +186,10 @@ export function CluesTab({ ctx, store, scope, visible }: CluesTabProps): ReactNo
       onInsertClue: insertClue,
       onInsertPack: insertPack,
       onNotice: notifyClue,
+      scopes,
+      onScopeChange,
     })
-  }, [service, face, browseWorkspaceId, ctx, insertClue, insertPack])
+  }, [service, face, browseWorkspaceId, ctx, insertClue, insertPack, scopes, onScopeChange])
 
   const openImport = useCallback((): void => {
     if (service === undefined || browseWorkspaceId === undefined) return

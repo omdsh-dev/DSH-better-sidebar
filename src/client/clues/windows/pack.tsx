@@ -20,7 +20,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import {
-  IconCheckOutlineRegular,
+  IconPinFillRegular,
+  IconPinOutlineRegular,
   IconSearchOutlineRegular,
   IconTrashOutlineRegular,
 } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -32,7 +33,22 @@ import type {
   CluePack,
   ClueSourceDescriptor,
   ClueSourceDisplayDescriptor,
+  JsonValue,
 } from '../../../clues/types.ts'
+import { BUILTIN_SOURCE_IDS } from '../../../clues/types.ts'
+import {
+  EMPTY_FORM,
+  ScopeFields,
+  type ScopeForm,
+  candidateKey,
+  formOf,
+  listNeedsScope,
+  looksLikeResource,
+  scopeOfForm,
+  scopeSummary,
+  searchNeedsScope,
+  sourceIcon,
+} from '../tab/browser-shared.tsx'
 import type { BetterSidebarCluesClientFace } from '../registry.ts'
 import type { BetterSidebarWindowsClientFace, WindowHandle } from '../../windows/types.ts'
 import { categoryOf, clueErrorMessage } from '../copy.ts'
@@ -61,6 +77,10 @@ export interface PackManagementOptions {
   onInsertClue(clueId: string, title: string): boolean
   onInsertPack(pack: CluePack): boolean
   onNotice(message: string): void
+  /** Persisted per-source ranges (same document the tab browser writes). */
+  readonly scopes?: Readonly<Record<string, JsonValue | undefined>>
+  /** Persist one explicitly chosen range (same shape as the tab browser). */
+  onScopeChange?(sourceId: string, scope: JsonValue | undefined): void
 }
 
 /** One member row as the panel renders it. */
@@ -69,17 +89,16 @@ interface MemberRow {
   readonly readable: boolean
 }
 
-/** One add-member page request. */
+/** One add-member page request (same three jobs as the tab browser). */
 type AddView =
   | { readonly kind: 'list' }
   | { readonly kind: 'search'; readonly query: string }
+  | { readonly kind: 'resolve'; readonly text: string }
+
+/** One pinned clue as the add page renders it. */
+type PinnedCandidate = ClueCandidate & { readonly clueId: string }
 
 const ADD_PAGE_LIMIT = 20
-
-/** Stable key of one candidate. */
-function candidateKey(candidate: ClueCandidate): string {
-  return `${candidate.sourceId}\u0000${candidate.typeId}\u0000${JSON.stringify(candidate.locator)}`
-}
 
 /** The window id of one pack (a second open focuses the same surface). */
 export function packWindowId(packId: string): string {
@@ -124,10 +143,21 @@ export function PackManagementPage(
   const [addQuery, setAddQuery] = useState('')
   const [addCandidates, setAddCandidates] = useState<readonly ClueCandidate[]>([])
   const [addNext, setAddNext] = useState<string | undefined>(undefined)
+  const [addCursorStack, setAddCursorStack] = useState<string[]>([])
   const [addLoading, setAddLoading] = useState(false)
   const [addError, setAddError] = useState<string | null>(null)
+  const [addNeedsScope, setAddNeedsScope] = useState<'list' | 'search' | null>(null)
   const [addView, setAddView] = useState<AddView>({ kind: 'list' })
   const [addSelected, setAddSelected] = useState<ReadonlyMap<string, ClueCandidate>>(new Map())
+  const [addScopes, setAddScopes] = useState<Readonly<Record<string, JsonValue | undefined>>>(
+    () => props.scopes ?? {},
+  )
+  const [addScopeOpen, setAddScopeOpen] = useState(false)
+  const [addScopeForm, setAddScopeForm] = useState<ScopeForm>(EMPTY_FORM)
+  const [addScopeError, setAddScopeError] = useState<string | null>(null)
+  const [addPins, setAddPins] = useState<readonly PinnedCandidate[]>([])
+  const [addPinBusy, setAddPinBusy] = useState(false)
+  const addPinsRevision = useRef<number | undefined>(undefined)
   const addAbort = useRef<AbortController | undefined>(undefined)
 
   const pendingName = name !== pack.name
@@ -275,39 +305,212 @@ export function PackManagementPage(
 
   // ── add-member page ────────────────────────────────────────────────────────
 
-  const loadAdd = useCallback(async (sourceId: string, view: AddView, cursor?: string): Promise<void> => {
+  const enabledSources = sources.filter(source => face.isSourceEnabled(source.sourceId))
+  const addScope = addSourceId === null ? undefined : addScopes[addSourceId]
+  const addSummary = addSourceId === null ? undefined : scopeSummary(addSourceId, addScope)
+
+  const refreshAddPins = useCallback(async (): Promise<void> => {
+    try {
+      const [pinResult, library] = await Promise.all([
+        face.api.pinsList(workspaceId),
+        face.api.clues(workspaceId),
+      ])
+      addPinsRevision.current = pinResult.revision
+      const byId = new Map(library.clues.map(clue => [clue.id, clue]))
+      setAddPins(pinResult.pins.flatMap((pin): PinnedCandidate[] => {
+        const clue = byId.get(pin.clueId)
+        if (clue === undefined) return []
+        return [{
+          clueId: clue.id,
+          sourceId: clue.sourceId,
+          typeId: clue.typeId,
+          locator: clue.locator,
+          title: clue.title,
+        }]
+      }))
+    } catch {
+      // Pins are a convenience strip; a failed read leaves browsing usable.
+    }
+  }, [face, workspaceId])
+
+  useEffect(() => {
+    if (!addOpen) return
+    const unsubscribe = face.subscribe(() => { setDisplays(face.getSourceDisplays()) })
+    void refreshAddPins()
+    return () => { unsubscribe() }
+  }, [addOpen, face, refreshAddPins])
+
+  useEffect(() => {
+    if (addSourceId === null) return
+    setAddScopeForm(formOf(addSourceId, addScopes[addSourceId]))
+    setAddScopeError(null)
+  }, [addSourceId, addScopes])
+
+  // A range chosen elsewhere (the tab's own browser) reaches this open window
+  // through the same persisted document.
+  useEffect(() => {
+    setAddScopes(props.scopes ?? {})
+  }, [props.scopes])
+
+  const loadAdd = useCallback(async (
+    sourceId: string,
+    requested: AddView,
+    cursor?: string,
+    scopesOverride?: Readonly<Record<string, JsonValue | undefined>>,
+  ): Promise<void> => {
+    const source = sources.find(candidate =>
+      candidate.sourceId === sourceId && face.isSourceEnabled(candidate.sourceId))
+    if (source === undefined) return
     addAbort.current?.abort()
     const controller = new AbortController()
     addAbort.current = controller
+    const scope = (scopesOverride ?? addScopes)[sourceId]
+    // Resolving a complete resource URL/path names its own resource and never
+    // depends on the browse range; list/search keep the tab browser's rules.
+    if (requested.kind !== 'resolve') {
+      const blocked = requested.kind === 'list'
+        ? listNeedsScope(sourceId, scope)
+        : searchNeedsScope(sourceId, scope)
+      if (blocked) {
+        setAddView(requested)
+        setAddCandidates([])
+        setAddNext(undefined)
+        setAddError(null)
+        setAddLoading(false)
+        setAddNeedsScope(requested.kind === 'search' ? 'search' : 'list')
+        return
+      }
+    }
     setAddLoading(true)
     setAddError(null)
+    setAddNeedsScope(null)
     try {
+      if (requested.kind === 'resolve') {
+        const resolved = await face.api.resolve(workspaceId, { text: requested.text }, controller.signal)
+        if (controller.signal.aborted) return
+        setAddCandidates(resolved.candidates)
+        setAddNext(undefined)
+        setAddView(requested)
+        setAddLoading(false)
+        return
+      }
+      if (requested.kind === 'list' && !source.capabilities.list) {
+        setAddCandidates([])
+        setAddNext(undefined)
+        setAddError(t('clueBrowserUnsupported'))
+        setAddLoading(false)
+        return
+      }
+      if (requested.kind === 'search' && !source.capabilities.search) {
+        setAddCandidates([])
+        setAddNext(undefined)
+        setAddError(t('clueBrowserSearchUnsupported'))
+        setAddLoading(false)
+        return
+      }
       const params = {
         sourceId,
-        limit: ADD_PAGE_LIMIT,
+        ...(scope === undefined ? {} : { scope }),
         ...(cursor === undefined ? {} : { cursor }),
+        limit: ADD_PAGE_LIMIT,
       }
-      const result = view.kind === 'list'
+      const result = requested.kind === 'list'
         ? await face.api.list(workspaceId, params, controller.signal)
-        : await face.api.search(workspaceId, { ...params, query: view.query }, controller.signal)
+        : await face.api.search(workspaceId, { ...params, query: requested.query }, controller.signal)
       if (controller.signal.aborted) return
       setAddCandidates(result.items)
       setAddNext(result.nextCursor)
-      setAddView(view)
+      setAddView(requested)
       setAddLoading(false)
     } catch (failure) {
       if (controller.signal.aborted) return
       setAddError(clueErrorMessage(failure, t('error')))
       setAddLoading(false)
     }
-  }, [face, workspaceId])
+  }, [addScopes, face, sources, workspaceId])
 
   const pickSource = useCallback((sourceId: string): void => {
+    // The cross-source selection is intentionally NOT cleared: it is the
+    // whole point of the add page.
     setAddSourceId(sourceId)
     setAddQuery('')
-    setAddSelected(new Map())
+    setAddCursorStack([])
+    setAddScopeOpen(false)
     void loadAdd(sourceId, { kind: 'list' })
   }, [loadAdd])
+
+  const applyAddScope = useCallback((): void => {
+    if (addSourceId === null) return
+    const built = scopeOfForm(addSourceId, addScopeForm)
+    if (built.error !== undefined) {
+      setAddScopeError(built.error)
+      return
+    }
+    const nextScopes = { ...addScopes, [addSourceId]: built.scope }
+    setAddScopes(nextScopes)
+    props.onScopeChange?.(addSourceId, built.scope)
+    setAddScopeError(null)
+    setAddScopeOpen(false)
+    setAddCursorStack([])
+    void loadAdd(addSourceId, addView, undefined, nextScopes)
+  }, [addSourceId, addScopeForm, addScopes, addView, loadAdd, props])
+
+  const submitAddQuery = useCallback((): void => {
+    if (addSourceId === null) return
+    const text = addQuery.trim()
+    setAddCursorStack([])
+    void loadAdd(
+      addSourceId,
+      text === ''
+        ? { kind: 'list' }
+        : looksLikeResource(text) ? { kind: 'resolve', text } : { kind: 'search', query: text },
+    )
+  }, [addQuery, addSourceId, loadAdd])
+
+  const addPage = useCallback((delta: 1 | -1): void => {
+    if (addSourceId === null) return
+    if (delta === 1) {
+      if (addNext === undefined) return
+      setAddCursorStack(current => [...current, addNext])
+      void loadAdd(addSourceId, addView, addNext)
+      return
+    }
+    if (addCursorStack.length === 0) return
+    const nextStack = addCursorStack.slice(0, -1)
+    setAddCursorStack(nextStack)
+    void loadAdd(addSourceId, addView, nextStack[nextStack.length - 1])
+  }, [addCursorStack, addNext, addSourceId, addView, loadAdd])
+
+  const toggleAddSelection = useCallback((candidate: ClueCandidate): void => {
+    const key = candidateKey(candidate)
+    setAddSelected((current) => {
+      const next = new Map(current)
+      if (next.has(key)) next.delete(key)
+      else next.set(key, candidate)
+      return next
+    })
+  }, [])
+
+  const toggleAddPin = useCallback(async (candidate: ClueCandidate): Promise<void> => {
+    setAddPinBusy(true)
+    try {
+      const ensured = candidate.clueId ?? (await face.api.ensure(workspaceId, {
+        sourceId: candidate.sourceId,
+        typeId: candidate.typeId,
+        locator: candidate.locator,
+        title: candidate.title,
+      })).clue.id
+      const expectedRevision = addPinsRevision.current
+      const mutation = { clueId: ensured, ...(expectedRevision === undefined ? {} : { expectedRevision }) }
+      if (addPins.some(row => row.clueId === ensured)) await face.api.pinsRemove(workspaceId, mutation)
+      else await face.api.pinsAdd(workspaceId, mutation)
+      await refreshAddPins()
+    } catch (failure) {
+      props.onNotice(clueErrorMessage(failure, t('cluePinFailed')))
+    } finally {
+      setAddPinBusy(false)
+    }
+  }, [addPins, face, props, refreshAddPins, workspaceId])
 
   const addMembers = useCallback(async (): Promise<void> => {
     if (addSelected.size === 0) return
@@ -413,7 +616,7 @@ export function PackManagementPage(
       {addOpen ? (
         <div className={css.addPage} data-clue-add-member>
           <nav className={css.addNav} aria-label={t('cluePackAddMembers')}>
-            {sources.map(source => (
+            {enabledSources.map(source => (
               <button
                 key={source.sourceId}
                 type="button"
@@ -421,16 +624,59 @@ export function PackManagementPage(
                 data-active={source.sourceId === addSourceId ? 'true' : 'false'}
                 onClick={() => { pickSource(source.sourceId) }}
               >
-                {source.sourceId === addSourceId ? <IconCheckOutlineRegular size={14} /> : null}
+                <span className={css.sourceGlyph} aria-hidden="true">{sourceIcon(source.sourceId, displays)}</span>
                 <span>{displayName(source.sourceId)}</span>
               </button>
             ))}
           </nav>
+          {enabledSources.length === 0 && <div className={css.status}>{t('clueBrowserAllDisabled')}</div>}
 
           {addSourceId === null ? (
             <div className={css.status}>{t('cluePackPickSource')}</div>
           ) : (
             <>
+              <div className={css.scopeBar}>
+                <span className={css.scopeLabel}>
+                  {`${t('clueBrowserScopeHeading')}: ${addSummary ?? t('clueBrowserScopeNeeded')}`}
+                </span>
+                {addSourceId === BUILTIN_SOURCE_IDS.feishuTasks
+                  ? <span className={css.scopeHint}>{t('clueBrowserScopeTasksHint')}</span>
+                  : (
+                    <button
+                      type="button"
+                      className={css.action}
+                      aria-expanded={addScopeOpen}
+                      onClick={() => { setAddScopeOpen(value => !value) }}
+                    >
+                      {t('clueBrowserScopeEdit')}
+                    </button>
+                  )}
+              </div>
+
+              {addScopeOpen && addSourceId !== BUILTIN_SOURCE_IDS.feishuTasks && (
+                <form
+                  className={css.scopeEditor}
+                  onSubmit={(event) => { event.preventDefault(); applyAddScope() }}
+                >
+                  <ScopeFields
+                    sourceId={addSourceId}
+                    form={addScopeForm}
+                    onChange={(next) => { setAddScopeForm(next) }}
+                  />
+                  {addScopeError !== null && <span className={css.fieldError} role="alert">{addScopeError}</span>}
+                  <div className={css.scopeActions}>
+                    <button type="submit" className={css.primary}>{t('clueBrowserScopeApply')}</button>
+                    <button
+                      type="button"
+                      className={css.action}
+                      onClick={() => { setAddScopeOpen(false); setAddScopeError(null) }}
+                    >
+                      {t('cancel')}
+                    </button>
+                  </div>
+                </form>
+              )}
+
               <div className={css.queryRow}>
                 <label className={css.searchBox}>
                   <IconSearchOutlineRegular size={14} />
@@ -443,26 +689,65 @@ export function PackManagementPage(
                     onChange={(event) => { setAddQuery(event.target.value) }}
                     onKeyDown={(event) => {
                       if (event.key !== 'Enter') return
-                      const text = addQuery.trim()
-                      void loadAdd(addSourceId, text === '' ? { kind: 'list' } : { kind: 'search', query: text })
+                      event.preventDefault()
+                      submitAddQuery()
                     }}
                   />
                 </label>
-                <button
-                  type="button"
-                  className={css.primary}
-                  onClick={() => {
-                    const text = addQuery.trim()
-                    void loadAdd(addSourceId, text === '' ? { kind: 'list' } : { kind: 'search', query: text })
-                  }}
-                >
+                <button type="button" className={css.primary} onClick={submitAddQuery}>
                   {t('clueBrowserSearchAction')}
                 </button>
               </div>
+
+              <div className={css.pins} data-clue-add-pins>
+                <span className={css.pinsHeading}>{t('clueBrowserPinsHeading')}</span>
+                {addPins.length === 0
+                  ? <span className={css.status}>{t('clueBrowserNoPins')}</span>
+                  : (
+                    <ul className={css.pinList}>
+                      {addPins.map(row => {
+                        const key = candidateKey(row)
+                        return (
+                          <li key={row.clueId} className={css.addRow}>
+                            <label className={css.addLabel}>
+                              <input
+                                type="checkbox"
+                                checked={addSelected.has(key)}
+                                aria-label={t('clueBrowserSelect', { title: row.title })}
+                                onChange={() => { toggleAddSelection(row) }}
+                              />
+                              <span className={css.addTitle}>{row.title}</span>
+                              <span className={css.memberSource}>{displayName(row.sourceId)}</span>
+                            </label>
+                          </li>
+                        )
+                      })}
+                    </ul>
+                  )}
+              </div>
+
+              {addNeedsScope !== null && (
+                <div className={css.stateLine} data-add-state="needs-scope">
+                  <span>
+                    {addNeedsScope === 'search'
+                      ? t('clueBrowserSearchScopeNeeded')
+                      : t('clueBrowserScopeNeeded')}
+                  </span>
+                  <button
+                    type="button"
+                    className={css.action}
+                    onClick={() => { setAddScopeOpen(true) }}
+                  >
+                    {t('clueBrowserScopeEdit')}
+                  </button>
+                </div>
+              )}
               {addLoading && <div className={css.status} role="status">{t('loading')}</div>}
               {addError !== null && <div className={css.error} role="alert">{addError}</div>}
-              {!addLoading && addError === null && addCandidates.length === 0 && (
-                <div className={css.status}>{t('clueBrowserEmpty')}</div>
+              {!addLoading && addError === null && addNeedsScope === null && addCandidates.length === 0 && (
+                <div className={css.status}>
+                  {addView.kind === 'search' ? t('clueBrowserNoResults') : t('clueBrowserEmpty')}
+                </div>
               )}
               <ul className={css.addList}>
                 {addCandidates.map((candidate) => {
@@ -473,37 +758,57 @@ export function PackManagementPage(
                         <input
                           type="checkbox"
                           checked={addSelected.has(key)}
-                          onChange={() => {
-                            setAddSelected((current) => {
-                              const next = new Map(current)
-                              if (next.has(key)) next.delete(key)
-                              else next.set(key, candidate)
-                              return next
-                            })
-                          }}
+                          aria-label={t('clueBrowserSelect', { title: candidate.title })}
+                          onChange={() => { toggleAddSelection(candidate) }}
                         />
                         <span className={css.addTitle}>{candidate.title}</span>
                         {candidate.subtitle !== undefined && candidate.subtitle !== '' && (
                           <span className={css.memberSource}>{candidate.subtitle}</span>
                         )}
                       </label>
+                      <button
+                        type="button"
+                        className={css.iconButton}
+                        disabled={addPinBusy}
+                        aria-label={addPins.some(row => row.clueId === candidate.clueId)
+                          ? t('clueBrowserUnpin', { title: candidate.title })
+                          : t('clueBrowserPin', { title: candidate.title })}
+                        title={addPins.some(row => row.clueId === candidate.clueId)
+                          ? t('clueBrowserUnpin')
+                          : t('clueBrowserPin')}
+                        onClick={() => { void toggleAddPin(candidate) }}
+                      >
+                        {addPins.some(row => row.clueId === candidate.clueId)
+                          ? <IconPinFillRegular size={14} />
+                          : <IconPinOutlineRegular size={14} />}
+                      </button>
                     </li>
                   )
                 })}
               </ul>
-              <div className={css.foot}>
-                <span className={css.status}>
-                  {t('clueBrowserSelected', { n: addSelected.size })}
-                  {addView.kind === 'search' ? ` · ${t('clueBrowserResolveHeading')}` : ''}
-                </span>
+              <div className={css.pageBar}>
+                <button
+                  type="button"
+                  className={css.action}
+                  disabled={addCursorStack.length === 0 || addLoading}
+                  onClick={() => { addPage(-1) }}
+                >
+                  {t('cluePagePrev')}
+                </button>
+                <span className={css.pageLabel}>{t('cluePageOf', { n: addCursorStack.length + 1 })}</span>
                 <button
                   type="button"
                   className={css.action}
                   disabled={addNext === undefined || addLoading}
-                  onClick={() => { void loadAdd(addSourceId, addView, addNext) }}
+                  onClick={() => { addPage(1) }}
                 >
                   {t('cluePageNext')}
                 </button>
+              </div>
+              <div className={css.foot}>
+                <span className={css.status}>
+                  {t('clueBrowserSelected', { n: addSelected.size })}
+                </span>
                 <button
                   type="button"
                   className={css.action}

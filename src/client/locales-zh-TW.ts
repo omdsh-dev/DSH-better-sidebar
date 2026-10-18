@@ -837,6 +837,7 @@ export const zhTW: Record<string, string> = {
   clueBrowserResolveHint: 'Review it, then choose to insert or pin.',
   clueBrowserResolveEmpty: 'Nothing recognized. Paste a full resource URL or path.',
   clueBrowserUnsupported: 'This source does not support browsing; search or paste a resource URL.',
+  clueBrowserSearchUnsupported: 'This source does not support search; browse the list or paste a resource URL.',
   clueBrowserTotal: '{n} total',
   clueBrowserLimited: 'The source capped the result.',
   clueBrowserAllDisabled: 'All sources are switched off.',
