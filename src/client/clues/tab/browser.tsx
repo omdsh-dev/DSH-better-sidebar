@@ -158,7 +158,8 @@ export function ClueBrowser(props: ClueBrowserProps): ReactNode {
     [enabled, activeId],
   )
   const activeSourceId = active?.sourceId
-  const activeScope = activeSourceId === undefined ? undefined : scopes[activeSourceId]
+  // `null` is the settings tombstone of a cleared range, never a scope value.
+  const activeScope = activeSourceId === undefined ? undefined : scopes[activeSourceId] ?? undefined
 
   // ── catalogue + local library/pins ─────────────────────────────────────────
 

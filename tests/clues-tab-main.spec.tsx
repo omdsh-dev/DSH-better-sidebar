@@ -465,6 +465,36 @@ describe('clue tab source browser', () => {
     view.unmount()
   })
 
+  it('persists a cleared files range as an explicit tombstone and reads it as no range', async () => {
+    const fx = fixture({ workspaceId: 'ws-1', enabled: [FILES.sourceId] })
+    fx.store.setPrefs({
+      ...fx.store.getPrefs(),
+      pluginSettings: { clues: { scopes: { 'ws-1': { [FILES.sourceId]: { path: 'docs' } } } } },
+    })
+    const view = mount(fx)
+    await flush()
+    expect(fx.listParams[0]).toMatchObject({ sourceId: FILES.sourceId, scope: { path: 'docs' } })
+
+    press(view.container, 'Choose range')
+    await flush()
+    const pathInput = view.container.querySelector<HTMLInputElement>('input[placeholder="e.g. docs/"]')!
+    expect(pathInput.value).toBe('docs')
+    typeInto(pathInput, '')
+    press(view.container, 'Save range')
+    await flush()
+
+    const saved = fx.store.getPrefs().pluginSettings.clues as {
+      scopes?: Record<string, Record<string, unknown>>
+    }
+    // Explicit tombstone: omitting the key would let the host's deep settings
+    // merge keep the old `docs` path alive.
+    expect(saved.scopes?.['ws-1']?.[FILES.sourceId]).toBeNull()
+    // Readers still see "no range": the list request omits scope entirely.
+    expect(fx.listParams.at(-1)).not.toHaveProperty('scope')
+    expect(view.container.textContent).toContain('No range chosen yet')
+    view.unmount()
+  })
+
   it('searches the active source with the typed keyword', async () => {
     const fx = fixture({ workspaceId: 'ws-1', enabled: [FILES.sourceId] })
     const view = mount(fx)

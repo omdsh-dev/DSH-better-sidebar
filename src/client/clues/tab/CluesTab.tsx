@@ -145,9 +145,16 @@ export function CluesTab({ ctx, store, scope, visible }: CluesTabProps): ReactNo
     const value = settings.scopes
     if (value === null || typeof value !== 'object' || browseWorkspaceId === undefined) return {}
     const forWorkspace = (value as Record<string, unknown>)[browseWorkspaceId]
-    return forWorkspace !== null && typeof forWorkspace === 'object'
-      ? forWorkspace as Record<string, JsonValue | undefined>
-      : {}
+    if (forWorkspace === null || typeof forWorkspace !== 'object') return {}
+    // `null` is the persisted TOMBSTONE of a cleared range: the host's settings
+    // merge is a deep patch, so deleting the key would leave the old range in
+    // place. Normalize it away at this boundary so every consumer still sees
+    // "no range chosen" instead of a null scope.
+    const visible: Record<string, JsonValue | undefined> = {}
+    for (const [sourceId, scope] of Object.entries(forWorkspace)) {
+      if (scope !== null) visible[sourceId] = scope as JsonValue
+    }
+    return visible
   }, [settings, browseWorkspaceId])
 
   /**
@@ -166,7 +173,7 @@ export function CluesTab({ ctx, store, scope, visible }: CluesTabProps): ReactNo
       ? current.scopes as Record<string, Record<string, JsonValue | undefined>>
       : {})
     const forWorkspace = { ...(all[browseWorkspaceId] ?? {}) }
-    if (range === undefined) delete forWorkspace[sourceId]
+    if (range === undefined || range === null) forWorkspace[sourceId] = null
     else forWorkspace[sourceId] = range
     persistSettings({ ...current, scopes: { ...all, [browseWorkspaceId]: forWorkspace } })
   }, [browseWorkspaceId, persistSettings, store])

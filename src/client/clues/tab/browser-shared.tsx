@@ -158,7 +158,12 @@ export function scopeOfForm(sourceId: string, form: ScopeForm): { scope?: JsonVa
   }
   if (sourceId === BUILTIN_SOURCE_IDS.files) {
     const path = form.filesPath.trim()
-    return { scope: path === '' ? undefined : { path } }
+    // An emptied path CLEARS the range. `null` is an explicit tombstone: the
+    // host's settings merge is a deep patch, so omitting the key (or sending
+    // `undefined`, which its clone strips) would keep the previously saved
+    // path alive. The container persists it and normalizes it back to
+    // "no range" for readers.
+    return { scope: path === '' ? null : { path } }
   }
   return { scope: undefined }
 }
@@ -277,4 +282,3 @@ export function ScopeFields(props: {
     </label>
   )
 }
-

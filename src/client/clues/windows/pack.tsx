@@ -323,7 +323,8 @@ export function PackManagementPage(
 
   const enabledSources = sources.filter(source => face.isSourceEnabled(source.sourceId))
   const enabledSourceKey = enabledSources.map(source => source.sourceId).join('\u0000')
-  const addScope = addSourceId === null ? undefined : addScopes[addSourceId]
+  // `null` is the settings tombstone of a cleared range, never a scope value.
+  const addScope = addSourceId === null ? undefined : addScopes[addSourceId] ?? undefined
   const addSummary = addSourceId === null ? undefined : scopeSummary(addSourceId, addScope)
 
   const refreshAddPins = useCallback(async (): Promise<void> => {
@@ -394,7 +395,9 @@ export function PackManagementPage(
     addAbort.current?.abort()
     const controller = new AbortController()
     addAbort.current = controller
-    const scope = (scopesOverride ?? addScopes)[sourceId]
+    const rawScope = (scopesOverride ?? addScopes)[sourceId]
+    // A tombstone (`null`) means "no range chosen", not an explicit null scope.
+    const scope = rawScope === null ? undefined : rawScope
     // Resolving a complete resource URL/path names its own resource and never
     // depends on the browse range; list/search keep the tab browser's rules.
     if (requested.kind !== 'resolve') {
