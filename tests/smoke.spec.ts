@@ -665,25 +665,46 @@ describe('session cwd resolution over the API route', () => {
       run(unrelated, ['commit', '-q', '--allow-empty', '-m', 'other'])
       const route = mount({ sessions: { get: () => ({ header: { cwd: repo } }) } })
       const base = { sessionId: 'root-pin', cwd: repo }
+      /**
+       * Git answers in ITS OWN spelling (forward slashes on Windows, where the
+       * temp directory joins with `\`), so a pinned root comes back as
+       * `C:/Users/…/repo-linked`. Every path comparison below therefore goes
+       * through the identity key the neighbouring multi-repo case uses too —
+       * what is under test is WHICH checkout was selected, not how it is
+       * spelled.
+       */
+      const pathKey = (path: string): string => {
+        const slashed = path.replaceAll('\\', '/').replace(/\/+$/, '')
+        return process.platform === 'win32' ? slashed.toLowerCase() : slashed
+      }
+      type Invoked = Awaited<ReturnType<typeof invoke>>
+      const fieldOf = (result: Invoked, key: string): string =>
+        pathKey(String((result.value as unknown as Record<string, unknown>)[key]))
       // Nothing pinned yet: the automatic answer is the root, and the picker's
-      // read reports both so it can show what it would fall back to.
-      expect(await invoke(route, 'session.root', base)).toMatchObject({
-        ok: true, value: { pinned: false, root: repo, automatic: repo, base: repo },
-      })
-      expect(await invoke(route, 'session.root', { ...base, root: linked })).toMatchObject({
-        ok: true, value: { pinned: true, root: linked },
-      })
+      // read reports all three so it can show what it would fall back to.
+      const read = await invoke(route, 'session.root', base)
+      expect(read).toMatchObject({ ok: true, value: { pinned: false } })
+      expect(fieldOf(read, 'root')).toBe(pathKey(repo))
+      expect(fieldOf(read, 'automatic')).toBe(pathKey(repo))
+      expect(fieldOf(read, 'base')).toBe(pathKey(repo))
+      const pinned = await invoke(route, 'session.root', { ...base, root: linked })
+      expect(pinned).toMatchObject({ ok: true, value: { pinned: true } })
+      expect(fieldOf(pinned, 'root')).toBe(pathKey(linked))
       // Every route that funnels through `cwdOf()` now answers with the pin.
-      expect(await invoke(route, 'session.cwd', base)).toMatchObject({ ok: true, value: { cwd: linked, pinned: true } })
+      const followed = await invoke(route, 'session.cwd', base)
+      expect(followed).toMatchObject({ ok: true, value: { pinned: true } })
+      expect(fieldOf(followed, 'cwd')).toBe(pathKey(linked))
       expect(await invoke(route, 'fs.tree', { ...base, path: linked })).toMatchObject({ ok: true })
       // A checkout of ANOTHER repository is refused, and the pin stays put.
       expect(await invoke(route, 'session.root', { ...base, root: unrelated })).toMatchObject({ ok: false, status: 400 })
-      expect(await invoke(route, 'session.cwd', base)).toMatchObject({ ok: true, value: { cwd: linked } })
+      expect(fieldOf(await invoke(route, 'session.cwd', base), 'cwd')).toBe(pathKey(linked))
       // `null` clears it: the session falls straight back to the automatic root.
-      expect(await invoke(route, 'session.root', { ...base, root: null })).toMatchObject({
-        ok: true, value: { pinned: false, root: repo },
-      })
-      expect(await invoke(route, 'session.cwd', base)).toMatchObject({ ok: true, value: { cwd: repo, pinned: false } })
+      const cleared = await invoke(route, 'session.root', { ...base, root: null })
+      expect(cleared).toMatchObject({ ok: true, value: { pinned: false } })
+      expect(fieldOf(cleared, 'root')).toBe(pathKey(repo))
+      const afterClear = await invoke(route, 'session.cwd', base)
+      expect(afterClear).toMatchObject({ ok: true, value: { pinned: false } })
+      expect(fieldOf(afterClear, 'cwd')).toBe(pathKey(repo))
     } finally {
       removeTree(scratch)
     }
