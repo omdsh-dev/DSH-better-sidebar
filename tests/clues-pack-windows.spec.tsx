@@ -85,6 +85,7 @@ interface FaceOverrides {
   packsListError?: () => unknown
   bindingsListError?: () => unknown
   bindingAddError?: () => unknown
+  pinsListError?: () => unknown
 }
 
 const FILES_SOURCE: ClueSourceDescriptor = {
@@ -145,6 +146,11 @@ function faceOf(overrides: FaceOverrides = {}): { face: BetterSidebarCluesClient
       const rejected = overrides.packsListError?.()
       if (rejected !== undefined) throw rejected
       return { packs: overrides.packs ?? [PACK], revision: 4 }
+    },
+    pinsList: async () => {
+      const rejected = overrides.pinsListError?.()
+      if (rejected !== undefined) throw rejected
+      return { pins: [], revision: 0 }
     },
     packsRename: async (_workspaceId: string, input: { name: string }) => {
       calls.rename += 1
@@ -511,6 +517,70 @@ describe('clue pack management window', () => {
     click(view.container, 'Bind')
     await flush()
     expect(calls.bindingAdd).toEqual(['ws-2'])
+    view.unmount()
+  })
+
+  it('shows a request-failed state with Retry when the binding read fails', async () => {
+    let fail = true
+    const { face } = faceOf({
+      bindingsListError: () => (fail ? new SidebarApiError('network', 'offline') : undefined),
+    })
+    const view = renderRoot(createElement(PackManagementPage, {
+      windows: recordingWindows().windows,
+      workspaceId: 'ws-1',
+      face,
+      workspaces: [{ workspaceId: 'ws-1', title: '/repo' }],
+      pack: PACK,
+      guard: { dirty: false },
+      onInsertClue: () => true,
+      onInsertPack: () => true,
+      onNotice: () => undefined,
+    }))
+    await flush()
+    const panel = view.container.querySelector('[data-clue-binding-panel]')!
+    // A failed read must not look "unbound": the panel says request-failed
+    // and offers Retry instead of the Bind control.
+    expect(panel.querySelector('[role="alert"]')?.textContent).toContain('Request failed')
+    expect(panel.querySelector('select[aria-label="Choose a workspace"]')).toBeNull()
+
+    fail = false
+    click(panel, 'Retry')
+    await flush()
+    expect(panel.querySelector('[role="alert"]')).toBeNull()
+    expect(panel.querySelector('select[aria-label="Choose a workspace"]')).not.toBeNull()
+    view.unmount()
+  })
+
+  it('shows a request-failed state with Retry when the pin read fails instead of "no pins"', async () => {
+    let fail = true
+    const { face } = faceOf({
+      pinsListError: () => (fail ? new SidebarApiError('network', 'offline') : undefined),
+    })
+    const view = renderRoot(createElement(PackManagementPage, {
+      windows: recordingWindows().windows,
+      workspaceId: 'ws-1',
+      face,
+      workspaces: [{ workspaceId: 'ws-1', title: '/repo' }],
+      pack: PACK,
+      guard: { dirty: false },
+      onInsertClue: () => true,
+      onInsertPack: () => true,
+      onNotice: () => undefined,
+    }))
+    await flush()
+    click(view.container, 'Add members')
+    await flush()
+    click(view.container, 'Local files')
+    await flush()
+    const pins = view.container.querySelector('[data-clue-add-pins]')!
+    expect(pins.querySelector('[role="alert"]')?.textContent).toContain('Request failed')
+    expect(pins.textContent).not.toContain('No pinned clues yet.')
+
+    fail = false
+    click(pins, 'Retry')
+    await flush()
+    expect(pins.querySelector('[role="alert"]')).toBeNull()
+    expect(pins.textContent).toContain('No pinned clues yet.')
     view.unmount()
   })
 

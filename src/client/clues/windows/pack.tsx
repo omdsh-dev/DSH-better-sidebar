@@ -146,6 +146,8 @@ export function PackManagementPage(
   const [bindings, setBindings] = useState<readonly ClueBinding[]>([])
   const [bindingTarget, setBindingTarget] = useState<string>(workspaces[0]?.workspaceId ?? '')
   const [bindingBusy, setBindingBusy] = useState(false)
+  const [bindingsError, setBindingsError] = useState(false)
+  const [bindingsAttempt, setBindingsAttempt] = useState(0)
   const [sources, setSources] = useState<readonly ClueSourceDescriptor[]>([])
   const [displays, setDisplays] = useState<readonly ClueSourceDisplayDescriptor[]>([])
   const [loading, setLoading] = useState(true)
@@ -171,6 +173,7 @@ export function PackManagementPage(
   const [addScopeForm, setAddScopeForm] = useState<ScopeForm>(EMPTY_FORM)
   const [addScopeError, setAddScopeError] = useState<string | null>(null)
   const [addPins, setAddPins] = useState<readonly PinnedCandidate[]>([])
+  const [addPinsError, setAddPinsError] = useState(false)
   const [addPinBusy, setAddPinBusy] = useState(false)
   const addPinsRevision = useRef<number | undefined>(undefined)
   const addAbort = useRef<AbortController | undefined>(undefined)
@@ -233,13 +236,19 @@ export function PackManagementPage(
   useEffect(() => {
     if (bindingTarget === '') return
     const controller = new AbortController()
+    setBindingsError(false)
     void face.api.bindingsList(bindingTarget).then((result) => {
       if (controller.signal.aborted) return
       setBindings(result.bindings.filter(binding =>
         binding.target.kind === 'pack' && binding.target.packId === props.pack.id))
-    }).catch(() => { /* a failed read just leaves the panel unbound-looking */ })
+    }).catch(() => {
+      if (controller.signal.aborted) return
+      // A failed read is NOT "unbound": say that the request failed and keep
+      // Retry reachable instead of silently offering Bind.
+      setBindingsError(true)
+    })
     return () => { controller.abort() }
-  }, [face, bindingTarget, props.pack.id])
+  }, [face, bindingTarget, props.pack.id, bindingsAttempt])
 
   const displayName = (sourceId: string): string =>
     displays.find(display => display.sourceId === sourceId)?.name
@@ -346,8 +355,11 @@ export function PackManagementPage(
           title: clue.title,
         }]
       }))
+      setAddPinsError(false)
     } catch {
-      // Pins are a convenience strip; a failed read leaves browsing usable.
+      // Pins are a convenience strip, but a failed read is not "no pins":
+      // show the request failure with Retry while browsing stays usable.
+      setAddPinsError(true)
     }
   }, [face, workspaceId])
 
@@ -734,7 +746,20 @@ export function PackManagementPage(
 
               <div className={css.pins} data-clue-add-pins>
                 <span className={css.pinsHeading}>{t('clueBrowserPinsHeading')}</span>
-                {addPins.length === 0
+                {addPinsError
+                  ? (
+                    <div className={css.error} role="alert">
+                      <span>{t('clueStateRequestFailed')}</span>
+                      <button
+                        type="button"
+                        className={css.action}
+                        onClick={() => { void refreshAddPins() }}
+                      >
+                        {t('retry')}
+                      </button>
+                    </div>
+                  )
+                  : addPins.length === 0
                   ? <span className={css.status}>{t('clueBrowserNoPins')}</span>
                   : (
                     <ul className={css.pinList}>
@@ -900,7 +925,20 @@ export function PackManagementPage(
             <h3 className={css.sectionTitle}>{t('cluePackBindingHeading')}</h3>
             <p className={css.bindingHint}>{t('cluePackBindingHint')}</p>
             <p className={css.bindingHint}>{t('cluePackBindingUnbindHint')}</p>
-            {bound
+            {bindingsError
+              ? (
+                <div className={css.error} role="alert">
+                  <span>{t('clueStateRequestFailed')}</span>
+                  <button
+                    type="button"
+                    className={css.action}
+                    onClick={() => { setBindingsAttempt(value => value + 1) }}
+                  >
+                    {t('retry')}
+                  </button>
+                </div>
+              )
+              : bound
               ? (
                 <div className={css.bindingRow}>
                   <span className={css.bindingState}>{t('cluePackBound')}</span>
