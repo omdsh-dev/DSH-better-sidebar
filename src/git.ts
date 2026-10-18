@@ -435,12 +435,29 @@ function spawnGit(
     let outBytes = 0
     let outFields = 0
     let stderr = ''
+    let errBytes = 0
     // Set when the caller's row cap stopped production: the partial answer is
     // then the answer, and the killed child's non-zero exit must not be
     // reported as a git failure of its own.
     let fieldCapped = false
-    const timer = setTimeout(() => {
+    // Set when a byte cap refused the call: every later chunk is dropped, not
+    // accumulated. Without the latch the killed child's pipe remainder (on
+    // Windows the cmd shim's orphaned grandchild survives kill() and keeps
+    // streaming) keeps growing the retained strings — first-hand: a
+    // junction-forest workspace drove 'git status -uall' past the V8 string
+    // limit and crashed the whole host with RangeError after the cap had
+    // already rejected.
+    let byteCapped = false
+    // Kill the whole pipe, not just the wrapper: destroying the streams
+    // EPIPE-terminates the orphaned grandchild that plain kill() leaves
+    // feeding a dead accumulator on Windows.
+    const killTree = (): void => {
+      try { child.stdout.destroy() } catch { /* already closed */ }
+      try { child.stderr.destroy() } catch { /* already closed */ }
       child.kill('SIGKILL')
+    }
+    const timer = setTimeout(() => {
+      killTree()
       reject(new GitCommandError(`git ${args[0] ?? ''} timed out after ${timeoutMs}ms`, 'git-error', args.join(' ')))
     }, timeoutMs)
     child.stdout.on('data', (chunk: Buffer) => {
@@ -450,11 +467,12 @@ function spawnGit(
       // pipe, so "capped" was only a claim about the kill and not a bound on
       // what the caller receives (CI: a 125 KB answer plus a fast child made
       // the capped call return all 2,500 rows).
-      if (fieldCapped) return
+      if (fieldCapped || byteCapped) return
       stdout += chunk.toString('utf8')
       outBytes += chunk.length
       if (outBytes > maxBytes) {
-        child.kill('SIGKILL')
+        byteCapped = true
+        killTree()
         reject(new GitCommandError(
           `git ${args[0] ?? ''} output exceeded ${maxBytes} bytes`,
           'git-error',
@@ -466,11 +484,27 @@ function spawnGit(
         outFields += countNulFields(chunk)
         if (outFields >= maxNulFields) {
           fieldCapped = true
-          child.kill('SIGKILL')
+          killTree()
         }
       }
     })
-    child.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString('utf8') })
+    child.stderr.on('data', (chunk: Buffer) => {
+      if (byteCapped) return
+      stderr += chunk.toString('utf8')
+      errBytes += chunk.length
+      // stderr shares the byte budget: a command whose DIAGNOSTICS stream
+      // past the cap is as able to kill the host via string length as one
+      // whose answer does.
+      if (errBytes > maxBytes) {
+        byteCapped = true
+        killTree()
+        reject(new GitCommandError(
+          `git ${args[0] ?? ''} stderr exceeded ${maxBytes} bytes`,
+          'git-error',
+          args.join(' '),
+        ))
+      }
+    })
     child.on('error', (error) => {
       clearTimeout(timer)
       reject(new GitCommandError(`cannot run git: ${error.message}`, 'git-error', args.join(' ')))
