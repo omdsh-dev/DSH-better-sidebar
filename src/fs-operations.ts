@@ -56,12 +56,73 @@ export interface WorkspaceUploadInput {
 }
 
 /**
+ * Windows refuses a rename with one of these codes when another rename is
+ * landing on the same destination at that instant. The refusal says nothing
+ * about the destination — it is contention, not a verdict — and it is
+ * transient: every refused rename in the measurements below landed on the very
+ * next attempt.
+ */
+const RENAME_CONTENTION = new Set(['EPERM', 'EACCES', 'EBUSY'])
+
+/**
+ * How many refusals ONE upload absorbs before the failure is reported.
+ *
+ * The losers of one instant retry into each other, so this has to be a budget
+ * rather than a single retry. Measured on Windows with barrier-started renames
+ * onto a single destination (UV_THREADPOOL_SIZE=64, so they really run in
+ * parallel):
+ *
+ *   simultaneous renames   losers per round
+ *   2                      at most 1
+ *   8                      1–5, never 0
+ *   32                     19–31, never 0
+ *
+ * At 8 parties 5 attempts already sufficed (500/500 rounds clean); at 32
+ * parties 5 was NOT enough (197/200 rounds still reported a failure) while 10
+ * was (200/200 rounds clean, the worst single upload absorbing 8 refusals in a
+ * row). 10 is sized for far more contention than this seam can meet in
+ * practice — the client uploads through `uploadToDir` one file at a time, so
+ * same-target contention comes from separate clients and stays in the low
+ * single digits.
+ */
+const RENAME_ATTEMPT_LIMIT = 10
+
+/**
+ * Rename `from` onto `to`, retrying ONLY the contention refusals above.
+ *
+ * A unique temp name keeps concurrent uploads from crossing each other, but it
+ * does not make their renames independent: renames naming the same destination
+ * at the same instant are mutually exclusive on Windows, and every rename that
+ * does not win is refused rather than queued. Retrying here is what keeps the
+ * seam's promise ("the last rename wins") for the caller. Every other errno —
+ * ENOENT, EXDEV, EROFS… — is a real answer and propagates on the first throw.
+ *
+ * The retry is bounded, so a destination that is genuinely held (rather than
+ * contended for a moment) still fails the upload instead of hanging it.
+ */
+async function renameIntoPlace(from: string, to: string): Promise<void> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      await rename(from, to)
+      return
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code
+      if (attempt >= RENAME_ATTEMPT_LIMIT || code === undefined || !RENAME_CONTENTION.has(code)) throw error
+      // Yield to the loop: the competing renames are already in flight and
+      // only need to finish landing.
+      await new Promise<void>((resolve) => { setImmediate(resolve) })
+    }
+  }
+}
+
+/**
  * Stream `chunks` into `dir/relativePath` atomically: a uniquely named temp
  * sibling receives the bytes, then is renamed over the target. The parent
  * directory is created on demand (recursive), so folder uploads work before
  * any level exists. The unique temp name keeps concurrent uploads to the same
- * target independent (each writes and renames its own file; the last rename
- * wins) and never blocks later uploads after a crashed process.
+ * target from crossing each other — each writes its own file, the last rename
+ * to land wins — and never blocks later uploads after a crashed process. The
+ * renames themselves are not independent (see {@link renameIntoPlace}).
  *
  * There is NO size cap: the bytes flow through a bounded write stream, so a
  * 100 GB upload costs the host the same memory as a 1 KB one. A failed or
@@ -104,7 +165,7 @@ export async function writeWorkspaceUpload(input: WorkspaceUploadInput): Promise
       stream.end((error?: Error | null) => (error === undefined || error === null ? resolve() : reject(error)))
     })
     if (streamError !== undefined) throw streamError
-    await rename(tmp, safeTarget)
+    await renameIntoPlace(tmp, safeTarget)
     const info = await stat(safeTarget)
     // The target's level (and, for a new folder, its parent) is now stale.
     invalidateDirectoryCache(dirname(safeTarget))
