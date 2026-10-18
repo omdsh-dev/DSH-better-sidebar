@@ -40,7 +40,7 @@ import type { SidebarStore, SidebarTab, TabType } from '../state.ts'
 import css from '../sidebar.module.css'
 
 /** The chip glyph's size: the tab strip's own icon scale. */
-const CHIP_ICON_SIZE = 14
+const CHIP_ICON_SIZE = 16
 
 /** The editor kind: a chip for a file row shows the file's own glyph. */
 const EDITOR_KIND = 'editor'
