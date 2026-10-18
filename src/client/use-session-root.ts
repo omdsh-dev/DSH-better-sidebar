@@ -154,6 +154,25 @@ function release(slot: Slot): void {
   if (slot.visible === 0) stopTimer(slot)
 }
 
+/**
+ * Adopt a root the user just pinned, or cleared (`null` → the automatic answer
+ * the host returned): the host accepted the write, so the store reflects it
+ * immediately instead of waiting up to one poll interval for the same answer.
+ *
+ * The generation bump drops a poll answer already in flight for the OLDER root
+ * — without it a request fired a moment before the write could land after this
+ * call and drag the tree back. A session with no slot yet (no subscriber) needs
+ * nothing: its first fetch asks the host, which now answers with the pin.
+ */
+export function applyPinnedRoot(sessionId: string, root: string): void {
+  const slot = slots.get(sessionId)
+  if (slot === undefined) return
+  slot.generation += 1
+  if (slot.cwd === root) return
+  slot.cwd = root
+  notify(slot)
+}
+
 /** What the caller hands the hook. */
 export interface SessionRootOptions {
   /**

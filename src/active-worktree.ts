@@ -30,6 +30,7 @@ import { dirname, isAbsolute, join, sep } from 'node:path'
 import type { Context, SidebarSessionEvent } from './context-types.ts'
 import { requireAbsolute } from './fs-tree.ts'
 import { runGit } from './git.ts'
+import { livePinnedRootOf } from './session-root.ts'
 import { readPersistedSessionOf } from './session-store.ts'
 
 /**
@@ -365,13 +366,29 @@ async function sessionEventsOf(ctx: Context, sessionId: string): Promise<readonl
  * (session, base) share ONE in-flight resolution: twelve route handlers funnel
  * through `cwdOf()`, so a burst of parallel `/sidebar/*` calls used to spawn a
  * `git rev-parse` process per call.
+ * An EXPLICIT pin (the explorer's root picker, `session-root.ts`) outranks every
+ * inference below, and the environment override, unless the caller asks for the
+ * automatic answer alone (`ignorePin`) — the picker reads both so it can show
+ * what "automatic" currently resolves to.
  * @param ctx - host plugin context.
  * @param sessionId - session whose tool calls are inspected.
  * @param base - the authoritative session cwd (already resolved by the caller).
- * @returns the active linked worktree, the repository top level, or `base`.
+ * @param options - `ignorePin: true` answers as if no pin existed.
+ * @returns the pinned root, the active linked worktree, the repository top level, or `base`.
  */
-export async function activeWorktreeRootOf(ctx: Context, sessionId: string, base: string): Promise<string> {
+export async function activeWorktreeRootOf(
+  ctx: Context,
+  sessionId: string,
+  base: string,
+  options: { ignorePin?: boolean } = {},
+): Promise<string> {
   if (base === '') return base
+  if (options.ignorePin !== true) {
+    // The user's own answer for THIS session; dropped as soon as its directory
+    // is gone, so a removed checkout can never pin the sidebar to a dead path.
+    const pinned = await livePinnedRootOf(sessionId)
+    if (pinned !== undefined) return pinned
+  }
   const override = (process.env[ACTIVE_ROOT_OVERRIDE_ENV] ?? '').trim()
   if (override !== '' && isAbsolute(override)) return requireAbsolute(override)
   // The comparison is on the raw base, so a session whose caller switched base

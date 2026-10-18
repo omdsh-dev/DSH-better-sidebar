@@ -109,6 +109,23 @@ export interface GitWorktree {
   changes: number
 }
 
+/**
+ * What the explorer's root picker reads (and gets back after a write):
+ * the session's own root, the AUTOMATIC answer beside it (what the picker shows
+ * as "自动"), the base a pin is validated against, and whether the current root
+ * came from an explicit pin.
+ */
+export interface SessionRootView {
+  sessionId: string
+  /** The session's committed directory — the base of a pin's validation. */
+  base: string
+  /** What the sidebar would show with no pin (the inference's own answer). */
+  automatic: string
+  /** The root in force right now: the pin when there is one, else `automatic`. */
+  root: string
+  pinned: boolean
+}
+
 /** One model a provider advertises (the pinned commit-message dropdown). */
 export interface GitModelInfo {
   /** Provider-side model id (dispatched verbatim). */
@@ -428,7 +445,19 @@ function openExternal(payload: OpenExternalPayload): Promise<OpenExternalResult>
 /** The sidebar API surface (session scope threaded through every call). */
 export const api = {
   sessionCwd: (scope: SessionScope, signal?: AbortSignal) =>
-    call<{ sessionId: string; cwd: string; root: string; parent: string | null }>('session.cwd', scopePayload(scope, {}), signal),
+    call<{ sessionId: string; cwd: string; root: string; parent: string | null; pinned: boolean }>('session.cwd', scopePayload(scope, {}), signal),
+  /**
+   * The explorer's root picker: `sessionRoot` READS the current root beside the
+   * automatic answer, `pinSessionRoot` WRITES one explicit checkout (`null`
+   * clears it and returns the session to the automatic root). The host validates
+   * a pin against the session repository's own worktree list, exactly like the
+   * Git panel's `worktree` argument, and answers `git-error` (400) when the path
+   * is not one of its checkouts.
+   */
+  sessionRoot: (scope: SessionScope, signal?: AbortSignal) =>
+    call<SessionRootView>('session.root', scopePayload(scope, {}), signal),
+  pinSessionRoot: (scope: SessionScope, root: string | null, signal?: AbortSignal) =>
+    call<SessionRootView>('session.root', scopePayload(scope, { root }), signal),
   fsTree: (scope: SessionScope, path: string, exclude?: readonly string[], signal?: AbortSignal) =>
     call<{ path: string; entries: FsEntry[]; truncated: boolean }>('fs.tree', scopePayload(scope, { path, exclude }), signal),
   /**

@@ -46,14 +46,14 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState, type DragEvent
 import { createPortal } from 'react-dom'
 import clsx from 'clsx'
 import {
-  IconArchiveOutlineRegular, IconChevronRightOutlineRegular, IconCloseFillRegular, IconCodeOutlineRegular, IconCopyOutlineRegular,
+  IconArchiveOutlineRegular, IconChevronDownOutlineRegular, IconChevronRightOutlineRegular, IconCloseFillRegular, IconCodeOutlineRegular, IconCopyOutlineRegular,
   IconDownloadOutlineRegular,
   IconEditOutlineRegular, IconFolderOpenRegular, IconLinkOutlineRegular, IconPlusOutlineRegular, IconTrashOutlineRegular,
   Menu, type MenuEntry, type MenuItem, writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { SiCursor, SiZedindustries } from 'react-icons/si'
 import { VscFolderOpened, VscLinkExternal, VscPin, VscPinned } from 'react-icons/vsc'
-import { api, archiveBuild, archiveDownloadUrl, archiveStatus, downloadUrl, SidebarApiError, type FsEntry, type FsLevel } from './api.ts'
+import { api, archiveBuild, archiveDownloadUrl, archiveStatus, downloadUrl, SidebarApiError, type FsEntry, type FsLevel, type GitWorktree } from './api.ts'
 import { compactChain, compactLoadTargets } from './file-tree-compact.ts'
 import { DEFAULT_FILE_TREE_SORT, sortEntries, type FileTreeSort } from './file-tree-sort.ts'
 import { FS_TREES_MAX_PATHS } from '../fs-batch.ts'
@@ -73,6 +73,7 @@ import {
 import { uploadItemsFromDrop, uploadItemsFromFiles, type UploadItem } from './upload.ts'
 import { useDirectoryWatch } from './use-dir-watch.ts'
 import { usePolling } from './use-polling.ts'
+import { applyPinnedRoot } from './use-session-root.ts'
 import css from './sidebar.module.css'
 
 interface LevelData {
@@ -408,6 +409,7 @@ const DirRow = memo(function DirRow(props: DirRowProps): ReactNode {
  */
 interface RootRowProps {
   path: string
+  sessionId: string
   iconsVersion: number
   service: BetterSidebarService | undefined
   /** A drag hovers the workspace root (drop target). */
@@ -415,13 +417,82 @@ interface RootRowProps {
   /** A change exists at or below the root (tinted). */
   gitChanged: boolean
   copied: boolean
+  /** Report a failed root switch in the tree's own error strip. */
+  onError: (message: string) => void
   actions: RowActions
 }
 
 const RootRow = memo(function RootRow(props: RootRowProps): ReactNode {
-  const { path, iconsVersion, service, dropTarget, gitChanged, copied, actions } = props
+  const { path, sessionId, iconsVersion, service, dropTarget, gitChanged, copied, onError, actions } = props
   void iconsVersion
   const icon = service !== undefined ? service.folderIcon(path, true, 14) : builtinFolderIcon(true, 14)
+
+  /**
+   * The root picker — the tree's only CONTROL besides the row menus.
+   *
+   * The root is INFERRED (the host's committed working directory, then the
+   * newest linked worktree the session's own tool calls mention) and that
+   * inference can be wrong or simply not what the reader wants: #952 is a
+   * nested repository's worktree hijacking the explorer, #960 a checkout that
+   * was removed while the host kept running. Until now the only escape was
+   * restarting the host with `DSH_SIDEBAR_WORKTREE_ROOT`.
+   *
+   * The checkout list is read when the menu OPENS, never on mount: the
+   * workbench keeps every visited body mounted, so a per-mount request would
+   * multiply with the number of visited tabs. The choice itself is written to
+   * the host, which validates it against the session repository's own
+   * checkouts (`git.resolveWorktree`), and adopted here through the shared
+   * session-root store so the tree re-roots on the same tick.
+   */
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [choices, setChoices] = useState<GitWorktree[]>([])
+  const [pinned, setPinned] = useState<boolean | undefined>(undefined)
+  const [loading, setLoading] = useState(false)
+  /** Whether a list has been answered for THIS root (an empty one is a state). */
+  const [listed, setListed] = useState(false)
+  /** The row's own path, so an answer for a root we already left is dropped. */
+  const pathRef = useRef(path)
+  pathRef.current = path
+
+  const loadChoices = useCallback((): void => {
+    const asked = pathRef.current
+    setLoading(true)
+    Promise.all([
+      api.sessionRoot({ sessionId, cwd: asked }),
+      // A workspace that is not a repository has no checkout list at all; that
+      // is a state (the menu says so), not a failure the reader must act on.
+      api.gitWorktrees({ sessionId, cwd: asked }).catch(() => [] as GitWorktree[]),
+    ]).then(([view, worktrees]) => {
+      if (pathRef.current !== asked) return
+      setPinned(view.pinned)
+      setChoices(worktrees)
+    }).catch((reason: unknown) => {
+      if (pathRef.current !== asked) return
+      onError(reason instanceof Error ? reason.message : String(reason))
+    }).finally(() => {
+      setLoading(false)
+      // An EMPTY list is only meaningful once an answer arrived: while the
+      // request is in flight the menu must not claim "not a repository".
+      setListed(true)
+    })
+  }, [sessionId, onError])
+
+  /** Pin one checkout, or clear the pin (`null`) back to the automatic root. */
+  const chooseRoot = useCallback((root: string | null): void => {
+    setMenuOpen(false)
+    const asked = pathRef.current
+    api.pinSessionRoot({ sessionId, cwd: asked }, root)
+      .then((view) => {
+        setPinned(view.pinned)
+        // The host accepted it, so the shared store shows it immediately
+        // (the tree re-roots because its caller renders from that store).
+        applyPinnedRoot(sessionId, view.root)
+      })
+      .catch((reason: unknown) => {
+        onError(reason instanceof Error ? reason.message : String(reason))
+      })
+  }, [sessionId, onError])
+
   return (
     <div
       className={clsx(css.explorerRow, dropTarget && css.explorerRowDropTarget)}
@@ -434,7 +505,53 @@ const RootRow = memo(function RootRow(props: RootRowProps): ReactNode {
       onContextMenu={(event) => { actions.contextMenu(event, path, true) }}
     >
       {icon}
-      <span className={clsx(css.explorerName, gitChanged && css.explorerDirChanged)}>{baseName(path)}</span>
+      <Menu
+        open={menuOpen}
+        onClose={() => { setMenuOpen(false) }}
+        onSelect={(id) => { chooseRoot(id === 'root:auto' ? null : id.slice('root:'.length)) }}
+        items={[
+          { type: 'label', id: 'root-label', text: t('treeRoot') },
+          ...choices.map(entry => ({
+            id: `root:${entry.path}`,
+            label: `${entry.branch} · ${baseName(entry.path)}${entry.changes > 0 ? ` (${entry.changes})` : ''}`,
+          })),
+          ...(listed && choices.length === 0 ? [{ type: 'label' as const, id: 'root-none', text: t('notRepo') }] : []),
+          { type: 'separator', id: 'root-sep' },
+          { id: 'root:auto', label: t('treeRootAuto'), disabled: loading },
+          { type: 'label', id: 'root-hint', text: t('treeRootHint') },
+        ]}
+        // The pin is the current row; with no pin the automatic entry is.
+        selectedId={pinned === undefined ? undefined : pinned ? `root:${path}` : 'root:auto'}
+        align="start"
+        compact
+        portal
+        anchor={(
+          <button
+            type="button"
+            className={clsx(css.explorerRootName, pinned === true && css.explorerRootNamePinned)}
+            aria-label={t('treeRoot')}
+            title={`${path} — ${t('treeRoot')}`}
+            onClick={(event) => {
+              event.stopPropagation()
+              setMenuOpen((open) => {
+                // The previous root's list must not stand in for this one: drop
+                // it (and the "answered" mark) before asking again.
+                if (!open) {
+                  setChoices([])
+                  setListed(false)
+                  loadChoices()
+                }
+                return !open
+              })
+            }}
+          >
+            <span className={clsx(css.explorerName, gitChanged && css.explorerDirChanged)}>{baseName(path)}</span>
+            {pinned === true
+              ? <VscPinned size={12} aria-hidden />
+              : <IconChevronDownOutlineRegular size={14} />}
+          </button>
+        )}
+      />
       {copied
         ? <span className={css.explorerCopied}>{t('copied')}</span>
         : (
@@ -2207,11 +2324,13 @@ export function FileTree(props: {
           )}
           <RootRow
             path={root}
+            sessionId={sessionId}
             iconsVersion={iconsVersion}
             service={service}
             dropTarget={dropTarget === root}
             gitChanged={gitStatus.dirHasChanges(root)}
             copied={copiedPath === root}
+            onError={setActionError}
             actions={actions}
           />
           {renderLevel(root, 1)}

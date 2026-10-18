@@ -69,6 +69,7 @@ import {
 // row bound, so it lives in a dependency-free module both can import.
 import { FS_TREES_MAX_PATHS } from './fs-batch.ts'
 import { activeWorktreeRootOf } from './active-worktree.ts'
+import { livePinnedRootOf, pinSessionRoot, pinnedRootOf, unpinSessionRoot } from './session-root.ts'
 import { decodeTextAs, decodeTextBytes, isWideEncoding, lastLineBreakEnd, type TextEncoding } from './text-encoding.ts'
 import { MAX_EDITABLE_BYTES, PAGE_BYTES, WRITE_BODY_GUARD_BYTES } from './editor-limits.ts'
 
@@ -685,7 +686,41 @@ function buildApi(
     },
     'session.cwd': async (payload) => {
       const { sessionId, cwd } = await cwdOf(payload)
-      return { sessionId, cwd, root: rootLabel(cwd), parent: parentOf(cwd) ?? null }
+      return {
+        sessionId, cwd, root: rootLabel(cwd), parent: parentOf(cwd) ?? null,
+        // Whether the reader pinned this session's explorer root (the picker).
+        pinned: pinnedRootOf(sessionId) !== undefined,
+      }
+    },
+    /**
+     * The explorer's root picker (see `session-root.ts`).
+     *
+     * READ: the current root beside the AUTOMATIC answer and the base the pin is
+     * validated against; the client renders the checkout list from
+     * `git.worktrees`. WRITE: `root` pins one absolute checkout — validated with
+     * `git.resolveWorktree`, the same rule the Git panel's own `worktree`
+     * argument uses, so a client can never point the explorer at an unrelated
+     * repository — while `null`/`''` clears the pin and returns the session to
+     * the automatic root.
+     *
+     * The pin lives host-side on purpose: `/sidebar/file` and `/sidebar/html`
+     * carry no payload (their path is encoded into the URL) and fs-watch frames
+     * carry only a path, so a client-side-only choice would be invisible to
+     * them — and the client's 5 s `session.cwd` poll would overwrite it.
+     */
+    'session.root': async (payload) => {
+      const sessionId = requireString(payload, 'sessionId')
+      const record = payload as { cwd?: unknown; root?: unknown } | null
+      const clientCwd = typeof record?.cwd === 'string' && record.cwd !== '' ? record.cwd : undefined
+      const base = await sessionCwdOf(ctx, sessionId, clientCwd)
+      if (record?.root === null || record?.root === '') unpinSessionRoot(sessionId)
+      else if (record?.root !== undefined) {
+        const requested = requireAbsolute(requireString(payload, 'root'))
+        pinSessionRoot(sessionId, await git.resolveWorktree(base, requested))
+      }
+      const automatic = await activeWorktreeRootOf(ctx, sessionId, base, { ignorePin: true })
+      const pinned = await livePinnedRootOf(sessionId)
+      return { sessionId, base, automatic, root: pinned ?? automatic, pinned: pinned !== undefined }
     },
     'fs.tree': async (payload) => {
       const { cwd } = await cwdOf(payload)
