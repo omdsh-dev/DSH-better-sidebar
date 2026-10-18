@@ -8,11 +8,19 @@
  * The identity guard: the hook derives its wanted set from the CONTENT of
  * `dirs` (a NUL-joined key), so a caller re-rendering with a fresh array of
  * the same directories reconciles nothing.
+ *
+ * The visibility gate: the host keeps every visited tab body mounted, so a
+ * parked tree (visible: false) must hold no socket at all — that is what
+ * releases the host's own `fs.watch` handles — and must ignore a frame that
+ * arrives from the socket it just dropped (that re-list is an `fs.trees`
+ * request for a tree nobody can see). Coming back reconnects and re-lists
+ * every watched directory once, because the parked window was noticed by
+ * nobody.
  */
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createElement, type ReactNode } from 'react'
-import { createRoot, type Root } from 'react-dom/client'
+import { createRoot } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
 import { useDirectoryWatch } from '../src/client/use-dir-watch.ts'
 
@@ -49,31 +57,46 @@ class FakeSocket {
   }
 }
 
-function Probe(props: { dirs: string[]; onStale: (dir: string) => void }): ReactNode {
-  useDirectoryWatch({ sessionId: 's1', root: '/tmp', dirs: props.dirs, onStale: props.onStale })
+function Probe(props: { dirs: string[]; root: string | undefined; visible: boolean; onStale: (dir: string) => void }): ReactNode {
+  useDirectoryWatch({
+    sessionId: 's1',
+    root: props.root,
+    dirs: props.dirs,
+    visible: props.visible,
+    onStale: props.onStale,
+  })
   return null
 }
 
 interface Harness {
-  rerender: (dirs: string[]) => void
+  /** Re-render with a new expanded set (and, optionally, a new visibility). */
+  rerender: (dirs: string[], visible?: boolean) => void
   socket: () => FakeSocket
   unmount: () => void
 }
 
-function mountProbe(onStale: (dir: string) => void): Harness {
+function mountProbe(
+  onStale: (dir: string) => void,
+  options: { visible?: boolean; dirs?: string[]; root?: string | undefined } = {},
+): Harness {
+  const { visible = true, dirs = ['/tmp/a'] } = options
+  // `'root' in options` distinguishes "no root yet" from "the default root".
+  const root: string | undefined = 'root' in options ? options.root : '/tmp'
   const container = document.createElement('div')
   document.body.append(container)
-  const root: Root = createRoot(container)
-  const render = (dirs: string[]): void => { root.render(createElement(Probe, { dirs, onStale })) }
-  act(() => { render(['/tmp/a']) })
+  const reactRoot = createRoot(container)
+  const render = (nextDirs: string[], shown: boolean): void => {
+    reactRoot.render(createElement(Probe, { dirs: nextDirs, root, visible: shown, onStale }))
+  }
+  act(() => { render(dirs, visible) })
   return {
-    rerender: (dirs: string[]) => { act(() => { render(dirs) }) },
+    rerender: (nextDirs: string[], shown = visible) => { act(() => { render(nextDirs, shown) }) },
     socket: () => {
       const socket = FakeSocket.instances[0]
       if (socket === undefined) throw new Error('no socket opened')
       return socket
     },
-    unmount: () => { act(() => { root.unmount() }); container.remove() },
+    unmount: () => { act(() => { reactRoot.unmount() }); container.remove() },
   }
 }
 
@@ -174,5 +197,64 @@ describe('useDirectoryWatch', () => {
     act(() => { socket.open() })
     harness.unmount()
     expect(socket.closed).toBe(true)
+  })
+
+  it('opens no socket while parked, and a frame from the dropped one re-lists nothing', () => {
+    const onStale = vi.fn()
+    // Parked from the start: no connection, so the host holds no `fs.watch`
+    // handle for this tree either.
+    const parked = mountProbe(onStale, { visible: false })
+    expect(FakeSocket.instances).toHaveLength(0)
+    parked.unmount()
+
+    // Parked after being visible: the socket is dropped outright...
+    const harness = mountProbe(onStale)
+    const socket = harness.socket()
+    act(() => { socket.open() })
+    harness.rerender(['/tmp/a'], false)
+    expect(socket.closed).toBe(true)
+    expect(FakeSocket.instances).toHaveLength(1)
+    // ...and a stale notice that still reaches it must not re-list a parked
+    // tree (that would be an `fs.trees` request for nobody).
+    act(() => { socket.frame({ dir: '/tmp/a' }) })
+    act(() => { socket.frame({ dir: '/tmp', ok: true }) })
+    expect(onStale).not.toHaveBeenCalled()
+    harness.unmount()
+  })
+
+  it('opens no socket when there is nothing to watch (no root, nothing expanded)', () => {
+    const harness = mountProbe(() => {}, { dirs: [], root: undefined })
+    expect(FakeSocket.instances).toHaveLength(0)
+    harness.unmount()
+  })
+
+  it('reconnects and force-refreshes every watched directory once when it comes back', () => {
+    const onStale = vi.fn()
+    const harness = mountProbe(onStale, { visible: false })
+    expect(FakeSocket.instances).toHaveLength(0)
+
+    // Un-parked: a fresh socket announces the whole watched set...
+    harness.rerender(['/tmp/a', '/tmp/a/b'], true)
+    const socket = harness.socket()
+    act(() => { socket.open() })
+    expect(socket.frames()).toEqual([
+      { op: 'watch', path: '/tmp' },
+      { op: 'watch', path: '/tmp/a' },
+      { op: 'watch', path: '/tmp/a/b' },
+    ])
+    // ...and every level is re-listed once: whatever changed while parked was
+    // seen by nobody, so the parked listing may be minutes old.
+    expect(onStale.mock.calls.map(([dir]) => dir)).toEqual(['/tmp', '/tmp/a', '/tmp/a/b'])
+
+    // Re-rendering the same inputs refreshes nothing again.
+    harness.rerender(['/tmp/a', '/tmp/a/b'], true)
+    expect(onStale).toHaveBeenCalledTimes(3)
+
+    // A parked-unparked cycle repeats exactly once more.
+    harness.rerender(['/tmp/a', '/tmp/a/b'], false)
+    harness.rerender(['/tmp/a', '/tmp/a/b'], true)
+    expect(onStale).toHaveBeenCalledTimes(6)
+    expect(FakeSocket.instances).toHaveLength(2)
+    harness.unmount()
   })
 })

@@ -25,12 +25,36 @@ export interface DecodedText {
   encoding: TextEncoding
 }
 
+/**
+ * Line-ending style a save must round-trip. Only CRLF is recognized: a lone
+ * `\r` (classic Mac) is neither counted by {@link detectEol} nor rewritten by
+ * {@link restoreEol}, which mirrors the host filesystem backend
+ * (`@deepseek-ai/dsh-fs-local`). Its `edit` tool is the reference behaviour
+ * here — it restores the style detected at read time instead of normalizing the
+ * file, so a model edit does not rewrite every line. The host's `write` tool
+ * does NOT do this (it writes the model's LF text verbatim), which is why the
+ * editor's own save has to carry the guarantee itself.
+ */
+export type TextEol = 'lf' | 'crlf'
+
+/** The on-disk format of a file: how its bytes are encoded and how its lines
+ *  end. Both are re-detected from disk before every save. */
+export interface FileFormat {
+  encoding: TextEncoding
+  eol: TextEol
+}
+
 const UTF8_BOM = Buffer.from([0xef, 0xbb, 0xbf])
 const UTF16LE_BOM = Buffer.from([0xff, 0xfe])
 const UTF16BE_BOM = Buffer.from([0xfe, 0xff])
 const UTF32LE_BOM = Buffer.from([0xff, 0xfe, 0x00, 0x00])
 const UTF32BE_BOM = Buffer.from([0x00, 0x00, 0xfe, 0xff])
 const ENCODING_SNIFF_LIMIT = 64 * 1024
+
+/** Sample the line-ending vote reads (characters, not bytes). Same window as
+ *  the host backend's `detectLineEndings`, so the plugin and the host reach the
+ *  same verdict about the same file. */
+const EOL_SNIFF_LIMIT = 4096
 
 const UTF8_DECODER = new TextDecoder('utf-8', { fatal: true })
 const GBK_DECODER = new TextDecoder('gbk', { fatal: true })
@@ -81,7 +105,52 @@ function encodeUtf32(text: string, littleEndian: boolean): Buffer {
   return body
 }
 
-/** Detect BOM-less UTF-16 from the NUL-byte lane typical of scripts/config. */
+/**
+ * Whether one UTF-16 code unit is plausible as TEXT: tab / LF / CR, printable
+ * ASCII, or anything from U+00A0 up (letters, CJK, full-width punctuation)
+ * outside the surrogate range and the U+FFFE/FFFF tail. C0 controls other than
+ * whitespace, DEL and the whole C1 block never appear in text, while a 16-bit
+ * number stream spends a large share of its units exactly there.
+ */
+function isUtf16TextUnit(unit: number): boolean {
+  if (unit === 0x09 || unit === 0x0a || unit === 0x0d) return true
+  if (unit >= 0x20 && unit <= 0x7e) return true
+  if (unit >= 0xa0 && unit <= 0xd7ff) return true
+  return unit >= 0xe000 && unit <= 0xfffd
+}
+
+/**
+ * Whether the lane sample reads as text in the given byte order: at least 90%
+ * of its code units must be text units ({@link isUtf16TextUnit}). A low
+ * amplitude 16-bit table sits far below that, real script/config text at or
+ * near 100%.
+ * @param bytes - the buffer (only the lane sample is read).
+ * @param pairs - how many code units to judge (the caller's lane window).
+ * @param littleEndian - the byte order of the candidate lane.
+ */
+function looksLikeUtf16Text(bytes: Uint8Array, pairs: number, littleEndian: boolean): boolean {
+  if (pairs === 0) return false
+  let text = 0
+  for (let index = 0; index < pairs; index += 1) {
+    const unit = littleEndian
+      ? bytes[index * 2]! | (bytes[index * 2 + 1]! << 8)
+      : (bytes[index * 2]! << 8) | bytes[index * 2 + 1]!
+    if (isUtf16TextUnit(unit)) text += 1
+  }
+  return text * 10 >= pairs * 9
+}
+
+/**
+ * Detect BOM-less UTF-16 from the NUL-byte lane typical of scripts/config.
+ *
+ * The lane alone is NOT enough: a raw 16-bit little-endian stream (a sample
+ * table, an audio buffer) leaves the high byte 0 for every value below 256 and
+ * matches it exactly. Its code units then land all over the C0/C1 control
+ * blocks instead of text, so the candidate must also read as text
+ * ({@link looksLikeUtf16Text}) — otherwise a binary file opened as an editable
+ * buffer, and a save rewrote it as UTF-16 (dropping the trailing byte of an
+ * odd-length file, which `decodeUtf16` truncates in the same way).
+ */
 function bomlessUtf16(bytes: Uint8Array): 'utf16le' | 'utf16be' | undefined {
   if (bytes.length < 4) return undefined
   const pairs = Math.min(Math.floor(bytes.length / 2), 1024)
@@ -92,8 +161,10 @@ function bomlessUtf16(bytes: Uint8Array): 'utf16le' | 'utf16be' | undefined {
     if (bytes[i * 2 + 1] === 0) oddZeros += 1
   }
   const minimumZeros = Math.max(2, Math.floor(pairs * 0.2))
-  if (oddZeros >= minimumZeros && oddZeros >= evenZeros * 4) return 'utf16le'
-  if (evenZeros >= minimumZeros && evenZeros >= oddZeros * 4) return 'utf16be'
+  if (oddZeros >= minimumZeros && oddZeros >= evenZeros * 4
+    && looksLikeUtf16Text(bytes, pairs, true)) return 'utf16le'
+  if (evenZeros >= minimumZeros && evenZeros >= oddZeros * 4
+    && looksLikeUtf16Text(bytes, pairs, false)) return 'utf16be'
   return undefined
 }
 
@@ -215,8 +286,122 @@ export function decodeTextBytes(bytes: Buffer, truncated = false): DecodedText |
   return { content: bytes.toString('utf8'), encoding: 'utf8' }
 }
 
-let gbkEncodeMap: Map<string, number> | undefined
+/**
+ * Whether an encoding stores one character as a fixed-width code unit, and
+ * whether that unit is little-endian. `1` covers every byte-oriented encoding
+ * (UTF-8, GBK, GB18030), where a `\n` byte is unambiguous.
+ */
+export function unitWidth(encoding: TextEncoding): 1 | 2 | 4 {
+  if (encoding === 'utf16le' || encoding === 'utf16le-bom' || encoding === 'utf16be' || encoding === 'utf16be-bom') return 2
+  if (encoding === 'utf32le-bom' || encoding === 'utf32be-bom') return 4
+  return 1
+}
 
+/**
+ * Whether one byte is a whole character or part of one.
+ *
+ * The paged reader needs exactly this distinction and nothing finer: a
+ * byte-oriented encoding can be re-sniffed per window safely (a pure-ASCII
+ * window of a GBK document decodes identically either way), while a wide
+ * encoding is a property of the FILE and must not be re-litigated by a window
+ * that happens to contain no NUL bytes.
+ *
+ * @param encoding - an encoding a window detected.
+ * @returns true for UTF-16 / UTF-32 in either byte order.
+ */
+export function isWideEncoding(encoding: TextEncoding): boolean {
+  return unitWidth(encoding) !== 1
+}
+
+/** Whether a fixed-width encoding is little-endian. */
+function unitLittleEndian(encoding: TextEncoding): boolean {
+  return encoding === 'utf16le' || encoding === 'utf16le-bom' || encoding === 'utf32le-bom'
+}
+
+/**
+ * The byte offset just past the LAST complete line break in `bytes`, or `-1`
+ * when the window holds none.
+ *
+ * A byte-oriented search would be wrong for the wide encodings: in UTF-16LE the
+ * low byte of U+0A41 is `0x0A`, so a naive `lastIndexOf(0x0A)` cuts a character
+ * in half. The search therefore only accepts a `0x0A` sitting in the unit
+ * position a U+000A code point would occupy — the first byte of a little-endian
+ * unit, the last byte of a big-endian one — and reports the end of that unit.
+ *
+ * @param bytes - the window just read.
+ * @param encoding - the encoding {@link decodeTextAs} will use for it.
+ * @returns an offset into `bytes`, or `-1` when the window has no line break.
+ */
+export function lastLineBreakEnd(bytes: Buffer, encoding: TextEncoding): number {
+  const width = unitWidth(encoding)
+  const littleEndian = unitLittleEndian(encoding)
+  for (let index = bytes.length - 1; index >= 0; index -= 1) {
+    if (bytes[index] !== 0x0A) continue
+    if (width === 1) return index + 1
+    const within = littleEndian ? index % width : width - 1 - (index % width)
+    if (within !== 0) continue
+    return littleEndian ? index + width : index + 1
+  }
+  return -1
+}
+
+/**
+ * Decode a buffer UNDER A KNOWN ENCODING, without sniffing.
+ *
+ * {@link decodeTextBytes} answers "what is this file?" from the bytes alone,
+ * which is the wrong question for the second page of a paged read: a page that
+ * happens to be pure ASCII sniffs as UTF-8 while a GBK page of the same
+ * document sniffs as GBK, and concatenating the two yields mojibake. The paged
+ * reader sniffs once and decodes every later window with this.
+ *
+ * BOM handling stays with the caller: `*-bom` encodings describe the file's
+ * first bytes, so a caller reading from a non-zero offset should pass the
+ * BOM-less spelling (see `bomlessEncoding`).
+ *
+ * @param bytes - the window to decode (already known to be text).
+ * @param encoding - the encoding the first window established.
+ * @returns the decoded text; undecodable bytes fall back to UTF-8, matching
+ *  {@link decodeTextBytes}'s replacement-character behavior.
+ */
+export function decodeTextAs(bytes: Buffer, encoding: TextEncoding): string {
+  switch (encoding) {
+    case 'utf8':
+    case 'utf8-bom':
+      return tryDecode(UTF8_DECODER, bytes) ?? bytes.toString('utf8')
+    case 'utf16le':
+    case 'utf16le-bom':
+      return decodeUtf16(bytes, true)
+    case 'utf16be':
+    case 'utf16be-bom':
+      return decodeUtf16(bytes, false)
+    case 'utf32le-bom':
+      return decodeUtf32(bytes, true)
+    case 'utf32be-bom':
+      return decodeUtf32(bytes, false)
+    case 'gbk':
+      return tryDecode(GBK_DECODER, bytes) ?? bytes.toString('utf8')
+    case 'gb18030':
+      return tryDecode(GB18030_DECODER, bytes) ?? bytes.toString('utf8')
+  }
+}
+
+/**
+ * The same encoding minus its BOM marker, for windows that do not start at the
+ * beginning of the file (only offset 0 can carry a BOM).
+ *
+ * @param encoding - an encoding an earlier window detected.
+ * @returns the BOM-less spelling (unchanged for encodings that have none).
+ */
+export function bomlessEncoding(encoding: TextEncoding): TextEncoding {
+  switch (encoding) {
+    case 'utf8-bom': return 'utf8'
+    case 'utf16le-bom': return 'utf16le'
+    case 'utf16be-bom': return 'utf16be'
+    default: return encoding
+  }
+}
+
+let gbkEncodeMap: Map<string, number> | undefined
 function getGbkEncodeMap(): Map<string, number> {
   if (gbkEncodeMap !== undefined) return gbkEncodeMap
   const map = new Map<string, number>()
@@ -315,12 +500,50 @@ export function encodeText(text: string, encoding: TextEncoding): Buffer {
   }
 }
 
-export async function encodingOfFile(path: string): Promise<TextEncoding> {
+/**
+ * Majority vote over the leading {@link EOL_SNIFF_LIMIT} characters: CRLF wins
+ * only when the CRLF pairs outnumber the bare LFs. A file with a single trailing
+ * CRLF among many LF lines therefore reads as LF, and a `\r`-only (classic Mac)
+ * file reads as LF without its bytes being touched — both the same verdict the
+ * host backend reaches, so a plugin save and a model `edit` agree.
+ */
+export function detectEol(text: string): TextEol {
+  const sample = text.slice(0, EOL_SNIFF_LIMIT)
+  const crlf = sample.split('\r\n').length - 1
+  const lines = sample.split('\n').length - 1
+  return crlf > lines - crlf ? 'crlf' : 'lf'
+}
+
+/**
+ * Convert the editor's LF document back to the file's own style before
+ * encoding. CRLF content is normalized first (unlike a naive `split('\n').join`
+ * this can never turn an existing pair into `\r\r\n`) — the same guard the host
+ * backend's `restoreLineEndings` documents. Everything else, including a lone
+ * `\r`, is passed through untouched.
+ */
+export function restoreEol(text: string, eol: TextEol): string {
+  if (eol === 'lf') return text
+  return text.replaceAll('\r\n', '\n').split('\n').join('\r\n')
+}
+
+/**
+ * Detect the on-disk format a save has to round-trip: byte encoding AND line
+ * endings, from one sniff read. Called before the temp write on every save, so
+ * the editor never silently converts GBK / UTF-16 / BOM'd UTF-8 bytes — nor a
+ * CRLF file to LF, which for a one-line edit would land as a whole-file diff
+ * (#871). A missing file yields UTF-8 + LF (see the comment below).
+ */
+export async function fileFormatOf(path: string): Promise<FileFormat> {
   let handle
   try {
     handle = await open(path, 'r')
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return 'utf8'
+    // A file that does not exist yet has no format to preserve. New files are
+    // written as UTF-8 + LF; deriving a project-wide convention (a sibling
+    // majority, a `.gitattributes` read, a preference) is a separate decision,
+    // deliberately not taken here — this batch only stops CHANGING a format a
+    // file already has.
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { encoding: 'utf8', eol: 'lf' }
     throw error
   }
   try {
@@ -329,7 +552,13 @@ export async function encodingOfFile(path: string): Promise<TextEncoding> {
     const truncated = info.size > ENCODING_SNIFF_LIMIT
     const bytes = Buffer.alloc(Math.min(info.size, ENCODING_SNIFF_LIMIT))
     const { bytesRead } = await handle.read(bytes, 0, bytes.length, 0)
-    return decodeTextBytes(bytes.subarray(0, bytesRead), truncated)?.encoding ?? 'utf8'
+    const decoded = decodeTextBytes(bytes.subarray(0, bytesRead), truncated)
+    return {
+      encoding: decoded?.encoding ?? 'utf8',
+      // A binary read has no line structure to preserve; the editor cannot be
+      // showing one anyway (it falls back to the download pane).
+      eol: decoded === null ? 'lf' : detectEol(decoded.content),
+    }
   } finally {
     await handle.close()
   }

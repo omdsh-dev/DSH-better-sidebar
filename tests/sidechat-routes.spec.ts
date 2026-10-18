@@ -8,14 +8,33 @@
  * afterSeq deltas, tail cap, live/persisted sources).
  */
 import { describe, expect, it, vi } from 'vitest'
+import { resolve } from 'node:path'
+import WorkingDirectoryService from '@deepseek-ai/dsh-working-directory'
+import { Session, SessionLogOffset, SESSION_FORMAT_VERSION } from '@deepseek-ai/dsh-session'
+import type { SessionEvent, SessionHeader, SessionId } from '@deepseek-ai/dsh-session'
 import { SUBAGENT_DESCRIPTOR_VERSION } from '@deepseek-ai/dsh-subagent'
 import { buildSidechatApi } from '../src/sidechat-routes.ts'
 import { SidebarError } from '../src/wire.ts'
-import { SIDE_BOUNDARY_PROMPT, SIDE_INJECTION_SOURCE_KIND, SIDE_NEW_THREAD_TITLE, sideLabel } from '../src/sidechat-core.ts'
+import { buildSidechatInheritance, SIDE_BOUNDARY_PROMPT, SIDE_INJECTION_SOURCE_KIND, SIDE_NEW_THREAD_TITLE, sideLabel } from '../src/sidechat-core.ts'
 import type { Context } from '../src/context-types.ts'
 
-/** A fake live agent (inject/followup/cancel/inbox.clear spied). */
-function agent(id: string, over: { events?: unknown[]; header?: Record<string, unknown>; provider?: string; model?: string; reasoningEffort?: string } = {}) {
+/** A fake live agent (inject/followup/cancel/inbox spied). */
+function agent(id: string, over: {
+  events?: unknown[]
+  header?: Record<string, unknown>
+  provider?: string
+  model?: string
+  reasoningEffort?: string
+  inheritedEventCount?: number
+  nextTurn?: unknown[]
+  nextStep?: unknown[]
+} = {}) {
+  const inbox = {
+    nextTurn: over.nextTurn ?? [] as unknown[],
+    nextStep: over.nextStep ?? [] as unknown[],
+    clear: vi.fn(),
+    remove: vi.fn((_id: string) => true),
+  }
   return {
     id,
     status: 'idle' as const,
@@ -24,15 +43,20 @@ function agent(id: string, over: { events?: unknown[]; header?: Record<string, u
       model: over.model ?? 'model-x',
       ...(over.reasoningEffort !== undefined ? { reasoningEffort: over.reasoningEffort } : {}),
     },
+    // The agent-scoped context `installModelSelection` binds its prompt /
+    // request waterfalls to; the fake records the listeners' existence only.
+    ctx: { on: vi.fn((_event: string, _listener: unknown) => () => {}) },
     session: {
       id,
       header: { cwd: '/p', delegationDepth: 0, agentPreset: 'preset-a', ...over.header },
+      inheritedEventCount: over.inheritedEventCount ?? 0,
       snapshotEvents: () => over.events ?? [],
+      append: vi.fn((_type: string, _data: unknown) => ({ type: _type, seq: 0, time: 0, data: _data })),
     },
     inject: vi.fn(),
     followup: vi.fn(),
     cancel: vi.fn(),
-    inbox: { clear: vi.fn() },
+    inbox,
   }
 }
 
@@ -85,12 +109,18 @@ function ctxWith(services: {
   agentPresets?: unknown
   sessionTitle?: unknown
   sessionPersistence?: unknown
+  llm?: unknown
+  sessionController?: unknown
+  workingDirectory?: unknown
 }): Context {
   const table: Record<string, unknown> = {
+    ...(services.workingDirectory === undefined ? {} : { workingDirectory: services.workingDirectory }),
     ...(services.agents === undefined ? {} : { agents: services.agents }),
     ...(services.agentPresets === undefined ? {} : { agentPresets: services.agentPresets }),
     ...(services.sessionTitle === undefined ? {} : { sessionTitle: services.sessionTitle }),
     ...(services.sessionPersistence === undefined ? {} : { sessionPersistence: services.sessionPersistence }),
+    ...(services.llm === undefined ? {} : { llm: services.llm }),
+    ...(services.sessionController === undefined ? {} : { sessionController: services.sessionController }),
   }
   return {
     get: (key: string) => table[key],
@@ -106,6 +136,75 @@ function ev(type: string, seq: number, data: Record<string, unknown> = {}): { ty
 }
 
 describe('sidechat.start', () => {
+  it('creates a sidechat in the current execution directory, not the original header cwd', async () => {
+    const parent = agent('parent')
+    const services = happyServices(parent, agent('child'))
+    const get = vi.fn((session: unknown) => {
+      expect(session).toBe(parent.session)
+      return '/current-execution-directory'
+    })
+    const api = buildSidechatApi(ctxWith({ ...services, workingDirectory: { get } }))
+    await api['sidechat.start']({ sessionId: 'parent', question: 'current project' })
+    expect(services.create.mock.calls[0]![0]).toMatchObject({ meta: { cwd: '/current-execution-directory' } })
+    expect(get).toHaveBeenCalledOnce()
+  })
+
+  it('stamps current cwd after a truncated seed so the real working-directory projection cannot restore an older cwd', async () => {
+    const original = resolve('/original-project')
+    const previous = resolve('/previous-execution')
+    const current = resolve('/current-execution')
+    const parent = agent('parent', {
+      header: { cwd: original },
+      events: [
+        ev('working-directory/change', 0, { cwd: previous }),
+        ev('turn/start', 1, { turn: 1 }),
+        ev('step/start', 2, { turn: 1, step: 1 }),
+        ev('working-directory/change', 3, { cwd: current }),
+        ev('tool/call', 4, { turn: 1, step: 1, callId: 'pending', name: 'bash', arguments: '{}' }),
+      ],
+    })
+    type DirectoryProjection = {
+      init(header: { cwd?: string }): string | null
+      apply(state: string | null, event: SessionEvent): string | null
+    }
+    let registered: DirectoryProjection | undefined
+    // Capture the REAL alpha.5 unit contributed by the host service. These
+    // context seams do not run system-prompt assembly, fs checks, or notices.
+    const workingDirectory = new WorkingDirectoryService({
+      reflect: { provide: () => {} },
+      sessionProjections: {
+        register: (definition: DirectoryProjection) => { registered = definition },
+        stateOf: (session: { header: { cwd?: string }; snapshotEvents(): SessionEvent[] }) => {
+          if (registered === undefined) throw new Error('working-directory unit not registered')
+          return session.snapshotEvents().reduce((cwd, event) => registered!.apply(cwd, event), registered.init(session.header))
+        },
+      },
+      systemPrompt: { context: () => {}, getContextOrder: () => 0 },
+      on: () => {},
+      effect: () => {},
+    } as never, {})
+    expect(workingDirectory.get(parent.session as never)).toBe(current)
+    const services = happyServices(parent, agent('child'))
+    await buildSidechatApi(ctxWith({ ...services, workingDirectory }))['sidechat.start']({ sessionId: 'parent' })
+    const options = services.create.mock.calls[0]![0] as {
+      sessionId: SessionId; meta: Partial<SessionHeader>; seed: readonly SessionEvent[]; inheritedEventCount: number
+    }
+    const projection = registered!
+    // Control proves that merely changing meta.cwd is insufficient: the
+    // dangling-call cut dropped current but retained previous in the seed.
+    const unstamped = buildSidechatInheritance(parent.session.snapshotEvents() as never).seed
+    expect(unstamped.map(event => event.type)).toEqual(['working-directory/change'])
+    expect(unstamped.reduce((cwd, event) => projection.apply(cwd, event as SessionEvent), projection.init({ cwd: current }))).toBe(previous)
+    const child = Session.create(options.sessionId, options.seed, {
+      ...options.meta, id: options.sessionId, version: SESSION_FORMAT_VERSION, createdAt: Date.now(), isSeeded: true,
+    }, SessionLogOffset(options.inheritedEventCount))
+    expect(child.header.cwd).toBe(current)
+    expect(options.seed.every((event, index) => event.seq === index)).toBe(true)
+    expect(child.ownEvents()[0]?.type).toBe('session/end-seed')
+    expect(workingDirectory.get(child)).toBe(current)
+    expect(options.seed.at(-2)).toMatchObject({ type: 'working-directory/change', data: { cwd: current } })
+  })
+
   it('creates a seeded subagent-origin child and admits the boundary + question', async () => {
     const parent = agent('parent', {
       events: [
@@ -593,6 +692,96 @@ describe('sidechat.events', () => {
     expect(services.open).toHaveBeenCalledWith('child', 'read')
   })
 
+  /**
+   * A cold thread is re-read on EVERY poll, and each read decodes the whole
+   * persisted log and scans it back to `session/end-seed`. The memo keys on the
+   * stored artifact's identity (the host's change token + physical size), so a
+   * repeat poll costs one `stat` while a changed artifact re-reads — and the
+   * handle is still opened and closed.
+   */
+  it('reads a cold thread once per stored-artifact identity', async () => {
+    const child = agent('child')
+    const services = happyServices(undefined, child)
+    services.agents.get = vi.fn((_id: unknown) => undefined)
+    const read = vi.fn(async () => ({ events: threadLog() }))
+    const close = vi.fn(async () => {})
+    services.open.mockImplementation(async () => ({
+      header: { agentPreset: 'preset-a' },
+      inheritedEventCount: 0,
+      read,
+      close,
+    }))
+    let revision = 'mtime-1:size-4096'
+    const stat = vi.fn(async () => ({ revision, sizeBytes: 4_096 }))
+    // `stat` is read structurally at runtime (the plugin's mirror of the host
+    // service models the handle API only), so the fake attaches it here.
+    const persistence = services.sessionPersistence as { stat?: unknown }
+    persistence.stat = stat
+    const api = buildSidechatApi(ctxWith(services))
+
+    const first = await api['sidechat.events']({ childId: 'cold-memo' })
+    expect(first.events.map(event => event.seq)).toEqual([3, 4, 5, 6, 7])
+    const second = await api['sidechat.events']({ childId: 'cold-memo' })
+    expect(second.events.map(event => event.seq)).toEqual([3, 4, 5, 6, 7])
+    // Same identity: ONE handle, ONE read, and the handle was closed.
+    expect(stat).toHaveBeenCalledTimes(2)
+    expect(services.open).toHaveBeenCalledTimes(1)
+    expect(read).toHaveBeenCalledTimes(1)
+    expect(close).toHaveBeenCalledTimes(1)
+
+    // A new mtime is a new identity: the memo must not serve the stale log.
+    revision = 'mtime-2:size-8192'
+    await api['sidechat.events']({ childId: 'cold-memo' })
+    expect(services.open).toHaveBeenCalledTimes(2)
+    expect(read).toHaveBeenCalledTimes(2)
+    expect(close).toHaveBeenCalledTimes(2)
+  })
+
+  /** The memo is bounded: a thread past the cap is re-read, not remembered. */
+  it('bounds the cold-log memo', async () => {
+    const services = happyServices(undefined, agent('child'))
+    services.agents.get = vi.fn((_id: unknown) => undefined)
+    const read = vi.fn(async () => ({ events: threadLog() }))
+    services.open.mockImplementation(async () => ({
+      header: { agentPreset: 'preset-a' },
+      inheritedEventCount: 0,
+      read,
+      close: async () => {},
+    }))
+    const persistence = services.sessionPersistence as { stat?: unknown }
+    persistence.stat = vi.fn(async (id: string) => ({ revision: `rev-${id}`, sizeBytes: 1 }))
+    const api = buildSidechatApi(ctxWith(services))
+
+    const cap = 16
+    for (let index = 0; index <= cap; index += 1) {
+      await api['sidechat.events']({ childId: `cold-lru-${index}` })
+    }
+    expect(services.open).toHaveBeenCalledTimes(cap + 1)
+
+    // The newest thread still hits; the oldest was evicted and re-reads.
+    await api['sidechat.events']({ childId: `cold-lru-${cap}` })
+    expect(services.open).toHaveBeenCalledTimes(cap + 1)
+    await api['sidechat.events']({ childId: 'cold-lru-0' })
+    expect(services.open).toHaveBeenCalledTimes(cap + 2)
+  })
+
+  it('falls back to an uncached read when the host exposes no stat', async () => {
+    const child = agent('child')
+    const services = happyServices(undefined, child)
+    services.agents.get = vi.fn((_id: unknown) => undefined)
+    const read = vi.fn(async () => ({ events: threadLog() }))
+    services.open.mockImplementation(async () => ({
+      header: { agentPreset: 'preset-a' },
+      inheritedEventCount: 0,
+      read,
+      close: async () => {},
+    }))
+    const api = buildSidechatApi(ctxWith(services))
+    await api['sidechat.events']({ childId: 'cold-no-stat' })
+    await api['sidechat.events']({ childId: 'cold-no-stat' })
+    expect(services.open).toHaveBeenCalledTimes(2)
+  })
+
   it('returns a marker-less legacy log whole', async () => {
     const child = agent('child', {
       events: [
@@ -639,5 +828,276 @@ describe('sidechat.events', () => {
     }))
     await expect(api['sidechat.events']({ childId: 'child' }))
       .rejects.toMatchObject({ code: 'sidechat-error', status: 503 })
+  })
+})
+
+/** An inbox message as the durable log/splice shape carries it. */
+function inboxMessage(id: string, text: string): { id: string; content: { type: string; text: string }[] } {
+  return { id, content: [{ type: 'text', text }] }
+}
+
+describe('sidechat resume fences the inherited inbox by identity', () => {
+  it('drops only the ghosts the inherited prefix folds to, never the user\'s own queue', async () => {
+    // The seed prefix inserts a message the parent had ALREADY claimed (its
+    // claim splice lives inside the open turn the seed truncates away), plus
+    // a message this thread's user queued itself (inserted after the marker).
+    const child = agent('child', {
+      inheritedEventCount: 2,
+      events: [
+        ev('agent/inbox/spliced', 0, { target: 'next-turn', start: 0, inserted: [inboxMessage('ghost', 'parent task')] }),
+        ev('session/end-seed', 1, { inherited: true }),
+        ev('agent/inbox/spliced', 2, { target: 'next-turn', start: 0, inserted: [inboxMessage('mine', 'my own follow-up')] }),
+      ],
+      nextTurn: [inboxMessage('ghost', 'parent task'), inboxMessage('mine', 'my own follow-up')],
+    })
+    const services = happyServices(undefined, child)
+    services.agents.get = vi.fn((_id: unknown) => undefined)
+    const api = buildSidechatApi(ctxWith(services))
+    await api['sidechat.prompt']({ childId: 'child', text: 'next' })
+
+    expect(child.inbox.remove).toHaveBeenCalledTimes(1)
+    expect(child.inbox.remove).toHaveBeenCalledWith('ghost')
+    // The blanket clear would kill the user's legitimate queued input.
+    expect(child.inbox.clear).not.toHaveBeenCalled()
+    expect(child.followup).toHaveBeenCalledTimes(1)
+  })
+
+  it('never sweeps on the create path (nothing of the thread\'s own can be queued yet)', async () => {
+    const parent = agent('parent', { events: [] })
+    const child = agent('child', {
+      inheritedEventCount: 2,
+      events: [
+        ev('agent/inbox/spliced', 0, { target: 'next-turn', start: 0, inserted: [inboxMessage('ghost', 'parent task')] }),
+        ev('session/end-seed', 1, { inherited: true }),
+      ],
+      nextTurn: [inboxMessage('ghost', 'parent task')],
+    })
+    const services = happyServices(parent, child)
+    services.agents.get = vi.fn((id: unknown) => (id === 'child' ? child : parent))
+    const api = buildSidechatApi(ctxWith(services))
+    await api['sidechat.start']({ sessionId: 'parent', question: 'q' })
+    expect(child.inbox.clear).toHaveBeenCalledTimes(1)
+    expect(child.inbox.remove).not.toHaveBeenCalled()
+  })
+
+  it('does not deliver a second boundary when the first is still unclaimed', async () => {
+    const child = agent('child', {
+      events: [],
+      nextStep: [inboxMessage('b1', `${SIDE_BOUNDARY_PROMPT}\n\nsnapshot`)],
+      nextTurn: [inboxMessage('q1', 'first question')],
+    })
+    const services = happyServices(undefined, child)
+    const api = buildSidechatApi(ctxWith(services))
+    await api['sidechat.prompt']({ childId: 'child', text: 'second question' })
+    // Exactly one follow-up (the new question); no second boundary injection.
+    expect(child.inject).not.toHaveBeenCalled()
+    expect(child.followup).toHaveBeenCalledTimes(1)
+    const message = child.followup.mock.calls[0]![0] as { content: { text: string }[] }
+    expect(message.content[0]!.text).toBe('second question')
+  })
+})
+
+describe('sidechat.events pending queue', () => {
+  it('projects the live inbox in claim order (next-step before next-turn)', async () => {
+    const child = agent('child', {
+      events: threadLog(),
+      nextStep: [inboxMessage('s1', 'steering')],
+      nextTurn: [inboxMessage('t1', 'queued turn')],
+    })
+    const services = happyServices(undefined, child)
+    const api = buildSidechatApi(ctxWith(services))
+    const result = await api['sidechat.events']({ childId: 'child' })
+    expect(result.pending).toEqual([
+      { id: 's1', target: 'next-step', text: 'steering' },
+      { id: 't1', target: 'next-turn', text: 'queued turn' },
+    ])
+  })
+
+  it('reports nothing pending for a cold thread', async () => {
+    const child = agent('child', { events: threadLog(), nextTurn: [inboxMessage('t1', 'queued')] })
+    const services = happyServices(undefined, child)
+    services.agents.get = vi.fn((_id: unknown) => undefined)
+    const api = buildSidechatApi(ctxWith(services))
+    const result = await api['sidechat.events']({ childId: 'child' })
+    expect(result.pending).toEqual([])
+  })
+
+  it('degrades to nothing pending when the inbox is not readable', async () => {
+    const child = agent('child', { events: threadLog() })
+    Object.defineProperty(child.inbox, 'nextTurn', {
+      get: () => { throw new Error('no inbox projection') },
+    })
+    const services = happyServices(undefined, child)
+    const api = buildSidechatApi(ctxWith(services))
+    const result = await api['sidechat.events']({ childId: 'child' })
+    expect(result.pending).toEqual([])
+  })
+})
+
+describe('sidechat.dequeue', () => {
+  it('removes one pending message by id', async () => {
+    const child = agent('child', { events: threadLog() })
+    const services = happyServices(undefined, child)
+    const api = buildSidechatApi(ctxWith(services))
+    await expect(api['sidechat.dequeue']({ childId: 'child', messageId: 'm1' }))
+      .resolves.toEqual({ accepted: true, removed: 1 })
+    expect(child.inbox.remove).toHaveBeenCalledWith('m1')
+    expect(child.inbox.clear).not.toHaveBeenCalled()
+  })
+
+  it('clears the whole queue and reports how many rows it held', async () => {
+    const child = agent('child', {
+      events: threadLog(),
+      nextStep: [inboxMessage('s1', 'steering')],
+      nextTurn: [inboxMessage('t1', 'queued')],
+    })
+    const services = happyServices(undefined, child)
+    const api = buildSidechatApi(ctxWith(services))
+    await expect(api['sidechat.dequeue']({ childId: 'child' }))
+      .resolves.toEqual({ accepted: true, removed: 2 })
+    expect(child.inbox.clear).toHaveBeenCalledTimes(1)
+  })
+
+  it('reports nothing removed for a cold thread and rejects a blank id', async () => {
+    const child = agent('child', { events: threadLog() })
+    const services = happyServices(undefined, child)
+    services.agents.get = vi.fn((_id: unknown) => undefined)
+    const api = buildSidechatApi(ctxWith(services))
+    await expect(api['sidechat.dequeue']({ childId: 'child', messageId: 'm1' }))
+      .resolves.toEqual({ accepted: true, removed: 0 })
+    await expect(api['sidechat.dequeue']({ childId: 'child', messageId: '' }))
+      .rejects.toMatchObject({ code: 'bad-request' })
+  })
+})
+
+describe('sidechat.models and sidechat.model', () => {
+  it('passes the host catalog through and degrades when the service is absent', async () => {
+    const services = happyServices(undefined, agent('child'))
+    const catalog = {
+      default: { provider: 'p1', model: 'm1' },
+      groups: [{ id: 'p1', name: 'Provider 1', models: [{ id: 'm1', name: 'Model 1' }] }],
+      failures: [{ id: 'p2', message: 'no key' }],
+    }
+    const api = buildSidechatApi(ctxWith({
+      ...services,
+      sessionController: { modelCatalog: vi.fn(async () => catalog) },
+    }))
+    await expect(api['sidechat.models']({})).resolves.toEqual({
+      available: true,
+      default: catalog.default,
+      groups: catalog.groups,
+      failures: catalog.failures,
+    })
+
+    const bare = buildSidechatApi(ctxWith(services))
+    await expect(bare['sidechat.models']({})).resolves.toEqual({ available: false, groups: [], failures: [] })
+  })
+
+  it('reports an unreadable catalog as unavailable instead of failing', async () => {
+    const services = happyServices(undefined, agent('child'))
+    const api = buildSidechatApi(ctxWith({
+      ...services,
+      sessionController: { modelCatalog: vi.fn(async () => { throw new Error('boom') }) },
+    }))
+    const result = await api['sidechat.models']({})
+    expect(result.available).toBe(false)
+    expect(result.failures).toEqual([{ id: 'host', message: 'boom' }])
+  })
+
+  it('normalizes, logs and installs a selection for the live thread', async () => {
+    const child = agent('child-model', { events: threadLog() })
+    const services = happyServices(undefined, child)
+    const resolveCallConfig = vi.fn(async () => ({ provider: 'p2', model: 'm2', reasoningEffort: 'high' }))
+    const api = buildSidechatApi(ctxWith({ ...services, llm: { resolveCallConfig } }))
+    await expect(api['sidechat.model']({ childId: 'child-model', provider: 'p2', model: 'm2', reasoningEffort: 'high' }))
+      .resolves.toEqual({
+        accepted: true,
+        selection: { provider: 'p2', model: 'm2', reasoningEffort: 'high' },
+      })
+    expect(resolveCallConfig).toHaveBeenCalledTimes(1)
+    expect(child.session.append).toHaveBeenCalledWith('model/selection', {
+      provider: 'p2',
+      model: 'm2',
+      reasoningEffort: 'high',
+    })
+    // The selection seam is installed ONCE per agent: the second switch of the
+    // same thread only mutates the ref.
+    const listeners = child.ctx.on.mock.calls.length
+    expect(listeners).toBeGreaterThan(0)
+    await api['sidechat.model']({ childId: 'child-model', provider: 'p2', model: 'm2' })
+    expect(child.session.append).toHaveBeenCalledTimes(2)
+    expect(child.ctx.on.mock.calls.length).toBe(listeners)
+  })
+
+  it('rejects an unavailable model with a bad-request', async () => {
+    const child = agent('child', { events: threadLog() })
+    const services = happyServices(undefined, child)
+    const api = buildSidechatApi(ctxWith({
+      ...services,
+      llm: { resolveCallConfig: vi.fn(async () => { throw new Error('provider "p9" is not registered') }) },
+    }))
+    await expect(api['sidechat.model']({ childId: 'child', provider: 'p9', model: 'm9' }))
+      .rejects.toMatchObject({ code: 'bad-request', status: 400 })
+    expect(child.session.append).not.toHaveBeenCalled()
+  })
+
+  it('cold-resumes the thread before installing a selection', async () => {
+    const child = agent('child', { events: threadLog() })
+    const services = happyServices(undefined, child)
+    services.agents.get = vi.fn((_id: unknown) => undefined)
+    const api = buildSidechatApi(ctxWith(services))
+    await api['sidechat.model']({ childId: 'child', provider: 'p3', model: 'm3' })
+    expect(services.resume).toHaveBeenCalledTimes(1)
+    expect(child.session.append).toHaveBeenCalledWith('model/selection', { provider: 'p3', model: 'm3' })
+  })
+})
+
+describe('sidechat.info reports the effective route', () => {
+  it('reads the live agent\'s logged selection, not its frozen options', async () => {
+    const child = agent('child', {
+      provider: 'stale',
+      model: 'stale-model',
+      events: [
+        ev('request/header', 0, { header: { config: { provider: 'live', model: 'live-model', reasoningEffort: 'high' } } }),
+      ],
+    })
+    const services = happyServices(undefined, child)
+    const api = buildSidechatApi(ctxWith(services))
+    await expect(api['sidechat.info']({ childId: 'child' })).resolves.toEqual({
+      live: true,
+      status: 'idle',
+      provider: 'live',
+      model: 'live-model',
+      reasoningEffort: 'high',
+      preset: 'preset-a',
+    })
+  })
+
+  it('falls back to the frozen options when the log records no selection', async () => {
+    const child = agent('child', { events: threadLog() })
+    const services = happyServices(undefined, child)
+    const api = buildSidechatApi(ctxWith(services))
+    const info = await api['sidechat.info']({ childId: 'child' })
+    expect(info).toMatchObject({ live: true, provider: 'test', model: 'model-x' })
+  })
+
+  it('reads a cold thread\'s selection from its persisted log', async () => {
+    const services = happyServices(undefined, agent('child'))
+    services.agents.get = vi.fn((_id: unknown) => undefined)
+    services.open.mockImplementation(async () => ({
+      header: { agentPreset: 'preset-a' },
+      inheritedEventCount: 0,
+      read: async () => ({
+        events: [ev('model/selection', 0, { provider: 'cold', model: 'cold-model' })],
+      }),
+      close: async () => {},
+    }))
+    const api = buildSidechatApi(ctxWith(services))
+    await expect(api['sidechat.info']({ childId: 'child' })).resolves.toEqual({
+      live: false,
+      preset: 'preset-a',
+      provider: 'cold',
+      model: 'cold-model',
+    })
   })
 })

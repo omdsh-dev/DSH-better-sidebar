@@ -119,6 +119,7 @@ describe('changes tab HTML render preview sandbox', () => {
         op: { callId: 'c1', kind: 'read' as const, path, time: 0, running: false, isError: false, read: '<content>1: <html><body>hi</body></html></content>' },
       },
       scope: { sessionId: 's1', cwd: '/p' },
+      ctx: CTX,
       height: 300,
       onHeightCommit: () => {},
       onClose: () => {},

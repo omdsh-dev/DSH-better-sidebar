@@ -1,6 +1,6 @@
 /**
  * The built-in tab descriptors: the plugin registers its own pages
- * (editor / git — the unified changes tab / subagent / sidechat / browser /
+ * (editor / git — the unified changes tab / subagent / sidechat / terminal-bottom /
  * diff) through
  * the same {@link BetterSidebarService} external plugins use — eating its
  * own dogfood. The editor IS the files window (the old standalone explorer
@@ -11,10 +11,16 @@
  * interactive shells outright, and the host's `browser` kind (delegated to
  * from the chat's http(s) links) owns embedded pages. See
  * docs/plans/2026-09-21-dsh-0.1.6-alpha.2-adaptation.md.
+ *
+ * `terminal-bottom` (#774) is the one type that is NOT a host tab: it is the
+ * plugin's own bottom workbench terminal, driving the host's session-scoped
+ * terminal service through a self-drawn xterm. It declares `bottomOnly` so it
+ * can never become a second right-Sidebar terminal capsule beside the host's
+ * own. See docs/plans/2026-10-05-bottom-terminal-tab.md.
  */
 import { IconCodeOutlineRegular, IconPanelLeftOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import {
-  changesTabIcon, filesTabIcon, sidechatTabIcon, tasksTabIcon,
+  changesTabIcon, filesTabIcon, sidechatTabIcon, tasksTabIcon, terminalTabIcon,
 } from './tab-icons.tsx'
 import { t } from '../locales.ts'
 import { openSidebarFile } from '../sidebar-file.ts'
@@ -25,11 +31,14 @@ import { ChangesTab, opCountOf } from '../changes/ChangesTab.tsx'
 import { DiffTab } from '../DiffTab.tsx'
 import { SubagentView } from '../SubagentView.tsx'
 import { consumeSidechatSeed, SideChatView, sidechatThreadIdOf } from '../SideChatView.tsx'
+import { LazyTerminalBottom } from '../terminal-lazy.tsx'
+import { INSTANCE_FIELD, closeBottomTerminal, webTerminals } from '../terminal-client.ts'
 import { api } from '../api.ts'
+import type { Context } from '../../context-types.ts'
 import type { TabDescriptor } from '../service.ts'
 
-/** The 5 built-in tab descriptors (the host owns terminal and browser). */
-export function builtinTabs(): readonly TabDescriptor[] {
+/** The 6 built-in tab descriptors (the host owns the right-Sidebar terminal and browser). */
+export function builtinTabs(ctx: Context): readonly TabDescriptor[] {
   return [
     {
       id: 'editor',
@@ -229,6 +238,60 @@ export function builtinTabs(): readonly TabDescriptor[] {
       component: ({ ctx, scope, tab, visible }) => (
         <SideChatView ctx={ctx} scope={scope} tab={tab} visible={visible} />
       ),
+    },
+    {
+      // The bottom workbench's terminal (#774). NOT the host's right-Sidebar
+      // terminal: the plugin owns no PTY, this page is a self-drawn xterm
+      // driven by the host's session-scoped terminal service
+      // (src/client/terminal-client.ts), and the two terminals are separate
+      // processes on purpose. `bottomOnly` is what keeps this type out of the
+      // host's guide — a second "Terminal" capsule there would be the
+      // shadowing the mount lane pins as absent.
+      id: 'terminal-bottom',
+      title: () => t('terminal'),
+      description: () => t('guideDescTerminal'),
+      icon: terminalTabIcon,
+      // Below the four host-facing pages (10..35) and above the hidden diff
+      // tab: the terminal is a secondary tool, but a visible menu row.
+      order: 40,
+      bottomOnly: true,
+      // Multiple bottom terminals per session workbench (#774 follow-up).
+      // Dropping the old `single: true` is the whole point: each open now
+      // MINTS its own tab (unique id + `meta.terminalInstance`), so the +
+      // menu stacks as many live shells as the host grants slots for, and
+      // two tabs never share one host process (terminal-client.ts keys the
+      // host binding by instance+run).
+      createTab: () => ({
+        tab: {
+          id: `terminal-bottom:${crypto.randomUUID()}`,
+          type: 'terminal-bottom',
+          title: t('terminal'),
+          meta: { [INSTANCE_FIELD]: crypto.randomUUID() },
+        },
+      }),
+      // The service is probed, never injected (it is absent on deployments
+      // without the host terminal controller): a missing service shows a
+      // disabled menu row instead of a terminal that cannot start.
+      available: (ctx) => webTerminals(ctx) !== undefined,
+      // The bottom terminal never declares a title override: the tab strip
+      // reads the descriptor's own title.
+      component: LazyTerminalBottom,
+      // Unmounting the view deliberately leaves the shell running (the host's
+      // "a view survives DOM unmount" contract, and what makes a reload
+      // reattach), so closing the TAB is the only thing that ends the process
+      // — without it every closed bottom terminal would hold one of the host's
+      // per-session terminal slots forever.
+      onClose: (tab, scope) => {
+        // Every close path resolves a scope (the type makes it required), so
+        // this guard should be unreachable. It returns instead of substituting
+        // `''` for a missing one because an empty session id is the ONE option
+        // that is worse than doing nothing: the host would look the terminal up
+        // in a session that does not exist, no-op, and leave the shell running
+        // — invisibly holding a per-session terminal slot for the page's life.
+        const sessionId: string | undefined = scope?.sessionId
+        if (sessionId === undefined || sessionId === '') return
+        closeBottomTerminal(ctx, tab, sessionId)
+      },
     },
     {
       id: 'diff',

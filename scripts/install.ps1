@@ -28,7 +28,7 @@
 # 环境变量（均可省略）：
 #   DSH_HOME    默认 %USERPROFILE%\.dsh
 #   REGISTRY    默认 https://registry.npmjs.org
-#   DSH_CMD     默认优先 PATH 上的 dsh，缺省回退 npx -y --package @deepseek-ai/dsh
+#   DSH_CMD     默认优先 PATH 上的 dsh，缺省回退 npx -y --package @deepseek-ai/dsh@0.2.1-rc.1
 #
 # 说明：
 # - pnpm 11 的 minimumReleaseAge 会拒绝发布 <24h 的新版本。脚本会预写
@@ -173,7 +173,7 @@ Ensure-WorkspaceSettings
 if ($CLI -eq 'dsh') {
   $cliArgs = @('plugin', '--profile', $Profile, 'add', "$PKG@$SPEC")
 } else {
-  $cliArgs = @('-y', '--package', '@deepseek-ai/dsh', 'dsh', 'plugin', '--profile', $Profile, 'add', "$PKG@$SPEC")
+  $cliArgs = @('-y', '--package', '@deepseek-ai/dsh@0.2.1-rc.1', 'dsh', 'plugin', '--profile', $Profile, 'add', "$PKG@$SPEC")
 }
 Say "执行 $CLI plugin --profile $Profile add $PKG@$SPEC ..."
 $addOut = & $CLI @cliArgs 2>&1

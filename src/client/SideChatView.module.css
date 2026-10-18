@@ -6,7 +6,9 @@
  * collapsible-line chrome (no cards); shimmer is reserved for generating
  * states (running status line, streaming rows, the creating hero). Motion
  * is crossfade-only (≤200ms entrances, no springs); reduced-motion disables
- * every loop. All values consume DSW tokens (fallbacks point at older alias
+ * every loop. The queue tail (pending / local-echo bubbles, the failure row)
+ * and the header's model-picker capsule reuse the same surfaces and tokens.
+ * All values consume DSW tokens (fallbacks point at older alias
  * tokens for rc-era hosts). */
 .sidechat {
   flex: 1;
@@ -15,39 +17,8 @@
   flex-direction: column;
 }
 
-/* ── thread header (status dot · agent badge · threads menu · save) ─── */
-.sidechatDetailHeader {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  min-height: 36px;
-  padding: 4px 8px 4px 12px;
-  border-bottom: 1px solid var(--dsw-alias-hairline);
-}
-
-.sidechatHeaderDot {
-  flex: none;
-}
-
-.sidechatHeaderSpacer {
-  flex: 1;
-  min-width: 0;
-}
-
-.sidechatAgentBadge {
-  flex: none;
-  max-width: 55%;
-  padding: 1px 8px;
-  border: 1px solid var(--dsw-alias-hairline);
-  border-radius: 999px;
-  font: var(--dsw-font-xxs-12);
-  color: var(--dsw-alias-label-tertiary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
+/* ── composer-bar controls (model picker · thread menu · save · archive):
+ * every thread function sits next to the input, where the reader looks ──── */
 .sidechatIconBtn {
   flex: none;
   display: inline-flex;
@@ -72,6 +43,37 @@
 .sidechatIconBtn:disabled {
   opacity: 0.4;
   cursor: default;
+}
+
+/* Model picker trigger (the host disables its own picker for subagent
+ * sessions, so the thread's route is chosen here): a quiet capsule showing
+ * the model in use, never a color of its own. It sits at the RIGHT end of the
+ * composer bar next to send (the main composer's arrangement) and shows the
+ * model in full — it yields width only when the panel is genuinely too
+ * narrow, and even then its label ellipsizes instead of the bar overflowing. */
+.sidechatModelBtn {
+  flex: 0 1 auto;
+  min-width: 0;
+  padding: 1px 8px;
+  border: 1px solid var(--dsw-alias-hairline);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xxs-12);
+  cursor: pointer;
+  transition: background-color 100ms ease-out, color 100ms ease-out;
+}
+
+.sidechatModelBtn:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.sidechatModelName {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ── hero (unbound tab: the one brand moment) ───────────────────────── */
@@ -138,6 +140,20 @@
   color: var(--dsw-alias-danger);
 }
 
+/* A provider/agent failure INSIDE the transcript (a failed attempt or a
+ * turn/end error): unlike the header banner above, this is a transcript row,
+ * so it takes the transcript's own width and never markdown. */
+.sidechatErrorRow {
+  align-self: stretch;
+  padding: 6px 10px;
+  border: 1px solid var(--dsw-alias-danger);
+  border-radius: 8px;
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-danger);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 /* ── transcript ─────────────────────────────────────────────────────── */
 .sidechatScroll {
   flex: 1;
@@ -172,6 +188,59 @@
   font: var(--dsw-font-s-14);
   color: var(--dsw-alias-label-primary);
   overflow-wrap: anywhere;
+}
+
+/* Pending / local-echo bubbles: the user surface plus the queue chrome
+ * (spinner · state word · dequeue). They sit AFTER the durable rows, so the
+ * reader sees the message they just sent instead of a silent composer. */
+.sidechatPending {
+  align-self: flex-end;
+  max-width: 88%;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px 6px 14px;
+  border-radius: 18px;
+  background: var(--dsw-specific-bubble, var(--dsw-alias-bg-base));
+  font: var(--dsw-font-s-14);
+  color: var(--dsw-alias-label-primary);
+  overflow-wrap: anywhere;
+}
+
+.sidechatPendingText {
+  min-width: 0;
+  white-space: pre-wrap;
+}
+
+.sidechatPendingMeta {
+  align-self: flex-end;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-tertiary);
+  user-select: none;
+}
+
+.sidechatDequeueBtn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  cursor: pointer;
+  transition: background-color 100ms ease-out, color 100ms ease-out;
+}
+
+.sidechatDequeueBtn:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
 }
 
 /* ── collapsible context rows (tool / thinking / injection, Codex-style) ──
@@ -385,18 +454,41 @@
   flex: none;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
   min-height: 28px;
 }
 
-.sidechatComposerMeta {
+/* The function row: fixed width (three icon buttons), never squeezed away by
+ * the model selector — the selector is the element that yields space. */
+.sidechatComposerTools {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+
+/* Pushes the model selector + send action to the right edge, exactly like the
+ * main conversation's composer bar. */
+.sidechatComposerSpacer {
   flex: 1;
   min-width: 0;
-  font: var(--dsw-font-xxs-12);
-  color: var(--dsw-alias-label-tertiary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+}
+
+/* Hover-bubble anchor of one composer-bar control. An ENABLED box is required:
+ * a disabled button fires no pointer events, so the bubble must anchor here to
+ * still explain WHY save/archive are disabled. The default `min-width: auto`
+ * keeps an icon anchor at its button's size; only the model capsule opts into
+ * shrinking (see .sidechatTipShrink), so the slack absorber is the capsule and
+ * never an icon. */
+.sidechatTipAnchor {
+  display: inline-flex;
+  align-items: center;
+}
+
+.sidechatTipShrink {
+  flex: 0 1 auto;
+  min-width: 0;
 }
 
 .sidechatSendBtn {
@@ -451,8 +543,11 @@
   .sidechatScroll > *,
   .sidechatHero,
   .sidechatStatus,
-  .sidechatSendBtn {
+  .sidechatSendBtn,
+  .sidechatModelBtn,
+  .sidechatDequeueBtn {
     animation: none;
+    transition: none;
   }
   .sidechatStatusText,
   .sidechatShimmerText {

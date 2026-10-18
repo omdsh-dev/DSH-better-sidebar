@@ -14,12 +14,12 @@
  * Determinism: the workspace is seeded wide enough that the tree overflows;
  * every wait is on a DOM/poll marker; the suite is serial.
  */
-import { appendFileSync, existsSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { test, expect, type APIRequestContext, type Page } from '@playwright/test'
-import { PAGE_URL, createHostApi, hostRpc, sendFirstMessage } from './host'
+import { PAGE_URL, createHostApi, dismissOnboarding, hostRpc, sendFirstMessage } from './host'
 
 /** Git must not pick up the developer's identity/config inside the lane. */
 const GIT_ENV = {
@@ -28,8 +28,8 @@ const GIT_ENV = {
   GIT_CONFIG_SYSTEM: '/dev/null',
 }
 
-/** This lane's own workspace (lanes run serially against one server). */
-const WORKSPACE_PATH = process.env.DSH_E2E_SCROLL_WORKSPACE ?? join(tmpdir(), 'dsh-e2e-scroll-workspace')
+/** Isolate each run from stale fixtures and other concurrent mount lanes. */
+const WORKSPACE_PATH = process.env.DSH_E2E_SCROLL_WORKSPACE ?? mkdtempSync(join(tmpdir(), 'dsh-e2e-scroll-'))
 
 /** Rows seeded into the root, plus real directories to expand. */
 const ROOT_FILES = 80
@@ -74,9 +74,8 @@ async function seedSessions(): Promise<void> {
   }
   // A git repo with ONE staged change: the changes tab needs somewhere to put
   // an unsaved commit message, and staging is what enables its commit button.
-  // Idempotent: the lane's workspace persists between local runs, so an
-  // existing repo is reset rather than re-initialised (and `rm -rf .git` would
-  // be the only way to make a fresh `git init` + first commit work again).
+  // An explicitly supplied debug workspace may persist across runs; keep its
+  // repository and history instead of deleting or resetting its .git directory.
   const git = (...args: string[]): void => { execFileSync('git', args, { cwd: WORKSPACE_PATH, env: GIT_ENV }) }
   if (!existsSync(join(WORKSPACE_PATH, '.git'))) git('init', '-q')
   git('config', 'user.email', 'lane@example.test')
@@ -111,31 +110,6 @@ test.afterAll(async () => {
   await api?.dispose()
 })
 
-/** Dismiss whatever onboarding takeover is present (the other lanes' dance). */
-async function dismissOnboarding(page: Page): Promise<void> {
-  try {
-    await expect
-      .poll(() => page.getByRole('button', { name: /^(Continue|Configure later)$/ }).count(), { timeout: 60_000 })
-      .toBeGreaterThan(0)
-  } catch {
-    console.warn('[e2e-scroll] no onboarding takeover appeared; proceeding')
-  }
-  for (let round = 0; round < 8; round++) {
-    let dismissed = false
-    for (const name of ['Continue', 'Configure later']) {
-      const button = page.getByRole('button', { name, exact: true }).first()
-      if ((await button.count()) === 0) continue
-      try {
-        await button.click({ timeout: 4_000 })
-        dismissed = true
-        await page.waitForTimeout(1_000)
-      } catch {
-        // Masked by the takeover stacked above; retry in the next round.
-      }
-    }
-    if (!dismissed) break
-  }
-}
 
 /** Open the native Sidebar, then the plugin's Files page inside it. */
 async function openFiles(page: Page): Promise<void> {
@@ -344,27 +318,27 @@ test('the explorer keeps its state across a tab switch and a conversation round 
   await expect(page.locator(GUIDE)).toBeVisible({ timeout: 30_000 })
   await page.locator('[data-sidebar-right-panel]:visible [data-sidebar-right-guide-entry="git"]').click()
   const commitBox = page.locator('[data-sidebar-right-panel]:visible')
-    .getByRole('textbox', { name: /Commit message/i }).first()
+    .locator('[data-message-box] textarea').first()
   await expect(commitBox, 'the changes tab must render its commit box').toBeVisible({ timeout: 30_000 })
   await commitBox.fill(COMMIT_MSG)
   await expect(commitBox).toHaveValue(COMMIT_MSG)
 
   // ── A CHOSEN WORKTREE (the third painted-state loss #712 covered) ─────────
   // The lane's linked checkout is the non-auto choice: picking it must survive
-  // the round trip, not be re-derived from the inventory. Paths are compared
-  // through `realpathSync` because macOS /var is a symlink to /private/var and
-  // git reports the resolved form.
+  // the round trip, not be re-derived from the inventory. Match the menu's
+  // branch/path-leaf label; `realpathSync` follows Git's canonical path.
   const linkedPath = realpathSync(join(WORKSPACE_PATH, 'linked-checkout'))
-  const worktreeSelect = page.locator('[data-sidebar-right-panel]:visible select')
-    .filter({ has: page.locator('option') }).first()
-  await expect(worktreeSelect, 'the changes tab must offer its worktree selector').toBeVisible({ timeout: 30_000 })
-  const linkedOption = await worktreeSelect.locator('option').evaluateAll(
-    (options, path) => options.some(option => (option as HTMLOptionElement).value === path),
-    linkedPath,
-  )
-  expect(linkedOption, 'the linked worktree must appear in the selector').toBe(true)
-  await worktreeSelect.selectOption(linkedPath)
-  await expect(worktreeSelect).toHaveValue(linkedPath)
+  await page.locator('[data-sidebar-right-panel]:visible').getByRole('button', { name: 'More Actions', exact: true }).click()
+  await page.getByRole('menuitem', { name: 'Worktree', exact: true }).click()
+  const linkedOption = page.getByRole('menuitem', { name: `lane-linked · ${basename(linkedPath)}` })
+  await expect(linkedOption, 'the linked worktree must appear in the menu').toBeVisible({ timeout: 30_000 })
+  await linkedOption.click()
+  await expect(page.locator('[data-sidebar-right-panel]:visible [data-git-footer]'), 'the linked checkout must be selected')
+    .toContainText('lane-linked', { timeout: 30_000 })
+  // Drafts are checkout-scoped: the primary draft must not leak into linked.
+  await expect(commitBox).toHaveValue('')
+  await commitBox.fill(COMMIT_MSG)
+  await expect(commitBox).toHaveValue(COMMIT_MSG)
 
   // Back to the Files window and RE-BUILD the scroll offset: opening the file
   // swapped this tab's content, so the tree remounted at the top (by design,
@@ -409,21 +383,24 @@ test('the explorer keeps its state across a tab switch and a conversation round 
   // changes window) — asserted by the strip below, since the ACTIVE tab is
   // whichever the lane last showed.
   // The changes tab is where the unsaved message lives: it is the other claim
-  // `keepMounted` makes on #712's behalf.
-  const changesTab = page.locator('[data-sidebar-right-panel]:visible [role="tab"]').filter({ hasText: /Changes|文件变动/ })
+  // `keepMounted` makes on #712's behalf. Matched through the host's tab STRIP,
+  // not by text alone: the title is a language-neutral "Git" and the tab's own
+  // lens switcher carries that same word, so an unscoped text filter would
+  // count two elements.
+  const changesTab = page.locator('[data-sidebar-right-panel]:visible [data-dockkit-strip] [role="tab"]').filter({ hasText: /Git/ })
   await expect(changesTab, 'the changes tab survives the round trip').toHaveCount(1, { timeout: 30_000 })
   await changesTab.first().click()
   const backCommitBox = page.locator('[data-sidebar-right-panel]:visible')
-    .getByRole('textbox', { name: /Commit message/i }).first()
+    .locator('[data-message-box] textarea').first()
   await expect(backCommitBox, 'the changes tab still renders its commit box').toBeVisible({ timeout: 30_000 })
   await expect(
     backCommitBox,
     'an unsaved commit message survives the conversation round trip',
   ).toHaveValue(COMMIT_MSG)
   await expect(
-    page.locator('[data-sidebar-right-panel]:visible select').first(),
+    page.locator('[data-sidebar-right-panel]:visible [data-git-footer]'),
     'the chosen worktree survives the conversation round trip',
-  ).toHaveValue(linkedPath)
+  ).toContainText('lane-linked', { timeout: 30_000 })
   // And the tree's own tab is still there too.
   await expect(
     page.locator('[data-sidebar-right-panel]:visible [role="tab"]').filter({ hasText: /Files|文件/ }),

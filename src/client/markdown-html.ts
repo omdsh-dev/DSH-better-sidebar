@@ -231,7 +231,12 @@ export function splitHtmlBlocks(text: string): MdHtmlSegment[] {
     inHtmlRun = false
     inComment = false
   }
-  const isBlank = (line: string): boolean => /^[ \t]*$/.test(line)
+  // A blank line is blank whichever terminator it carries: `\r` is the first
+  // half of a CRLF pair, not content (a Windows checkout reaches this splitter
+  // with `\r\n` intact). Reading it as content used to keep an HTML run open
+  // across the blank line that ends it, so the markdown after a `<div>` run was
+  // swallowed as raw HTML and rendered as text.
+  const isBlank = (line: string): boolean => /^[ \t\r]*$/.test(line)
 
   for (const line of lines) {
     if (openFence !== null) {

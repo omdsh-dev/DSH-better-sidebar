@@ -15,11 +15,13 @@
 
 import { describe, expect, it } from 'vitest'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { apply } from '../src/index.ts'
 import type { SidebarWebRoute, SidebarWebUpgradeRoute } from '../src/context-types.ts'
+import type { GitStatusResult } from '../src/git.ts'
+import { removeTree } from './temp-tree.ts'
 
 /** Fixture commit identity, confined to this process: no git config is touched. */
 const FIXTURE_IDENTITY = {
@@ -90,7 +92,7 @@ function makeRemoteFixture(): RemoteFixture {
 function mount(): { route: SidebarWebRoute } {
   const routes: SidebarWebRoute[] = []
   const ctx = {
-    webRuntime: { trustedHosts: [] },
+    connection: { requestRejection: () => undefined },
     webServer: {
       register: (route: SidebarWebRoute) => { routes.push(route); return () => {} },
       registerUpgrade: (_route: SidebarWebUpgradeRoute) => () => {},
@@ -142,13 +144,20 @@ describe('git remote routes (real repository + bare origin)', () => {
       const local = gitRun(fixture.work, ['rev-parse', 'main']).trim()
 
       const { route } = mount()
-      const result = await invoke(route, 'git.push', { sessionId: 's-push', cwd: fixture.work })
+      const scope = { sessionId: 's-push', cwd: fixture.work }
+      expect(await invoke<GitStatusResult>(route, 'git.status', scope)).toMatchObject({
+        ok: true, value: { branch: 'main', upstream: 'origin/main', ahead: 1, behind: 0, detached: false, entries: [] },
+      })
+      const result = await invoke(route, 'git.push', scope)
 
       expect(result).toMatchObject({ ok: true, value: { ok: true } })
       // The remote actually moved — the route ran a real `git push`.
       expect(gitRun(fixture.origin, ['rev-parse', 'main']).trim()).toBe(local)
+      expect(await invoke<GitStatusResult>(route, 'git.status', scope)).toMatchObject({
+        ok: true, value: { upstream: 'origin/main', ahead: 0, behind: 0 },
+      })
     } finally {
-      rmSync(fixture.scratch, { recursive: true, force: true })
+      removeTree(fixture.scratch)
     }
   })
 
@@ -156,7 +165,13 @@ describe('git remote routes (real repository + bare origin)', () => {
     const dir = makeRepo()
     try {
       const { route } = mount()
-      const result = await invoke(route, 'git.push', { sessionId: 's-noup', cwd: dir })
+      const scope = { sessionId: 's-noup', cwd: dir }
+      const snapshot = await invoke<GitStatusResult>(route, 'git.status', scope)
+      expect(snapshot).toMatchObject({ ok: true, value: { branch: 'main', detached: false } })
+      expect(snapshot.value?.upstream).toBeUndefined()
+      expect(snapshot.value?.ahead).toBeUndefined()
+      expect(snapshot.value?.behind).toBeUndefined()
+      const result = await invoke(route, 'git.push', scope)
 
       // git-error, never a silent success: the panel shows the message and the
       // user sets the tracking in a terminal.
@@ -164,7 +179,7 @@ describe('git remote routes (real repository + bare origin)', () => {
       expect(result.error?.code).toBe('git-error')
       expect(result.error?.message ?? '').not.toBe('')
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 
@@ -176,13 +191,21 @@ describe('git remote routes (real repository + bare origin)', () => {
       gitRun(fixture.peer, ['commit', '-q', '-m', 'peer work'])
       gitRun(fixture.peer, ['push', '-q', 'origin', 'main'])
 
+      gitRun(fixture.work, ['fetch', '-q', 'origin'])
       const { route } = mount()
-      const pulled = await invoke(route, 'git.pull', { sessionId: 's-pull', cwd: fixture.work })
+      const scope = { sessionId: 's-pull', cwd: fixture.work }
+      expect(await invoke<GitStatusResult>(route, 'git.status', scope)).toMatchObject({
+        ok: true, value: { upstream: 'origin/main', ahead: 0, behind: 1 },
+      })
+      const pulled = await invoke(route, 'git.pull', scope)
 
       expect(pulled).toMatchObject({ ok: true, value: { ok: true } })
       expect(readFileSync(join(fixture.work, 'b.txt'), 'utf8')).toBe('from peer\n')
+      expect(await invoke<GitStatusResult>(route, 'git.status', scope)).toMatchObject({
+        ok: true, value: { upstream: 'origin/main', ahead: 0, behind: 0 },
+      })
     } finally {
-      rmSync(fixture.scratch, { recursive: true, force: true })
+      removeTree(fixture.scratch)
     }
   })
 
@@ -198,8 +221,17 @@ describe('git remote routes (real repository + bare origin)', () => {
       gitRun(fixture.peer, ['push', '-q', 'origin', 'main'])
       const headBefore = gitRun(fixture.work, ['rev-parse', 'HEAD']).trim()
 
+      // Track a non-default remote branch: the snapshot must report the real
+      // upstream, not a guessed origin/<local-branch>.
+      gitRun(fixture.peer, ['push', '-q', 'origin', 'main:review/topic'])
+      gitRun(fixture.work, ['fetch', '-q', 'origin'])
+      gitRun(fixture.work, ['branch', '--set-upstream-to=origin/review/topic', 'main'])
       const { route } = mount()
-      const diverged = await invoke(route, 'git.pull', { sessionId: 's-pull', cwd: fixture.work })
+      const scope = { sessionId: 's-pull', cwd: fixture.work }
+      expect(await invoke<GitStatusResult>(route, 'git.status', scope)).toMatchObject({
+        ok: true, value: { branch: 'main', upstream: 'origin/review/topic', ahead: 1, behind: 1, entries: [] },
+      })
+      const diverged = await invoke(route, 'git.pull', scope)
 
       // --ff-only: the failure is the point. A merge here would strand a
       // headless panel inside an editor nobody can answer.
@@ -208,8 +240,11 @@ describe('git remote routes (real repository + bare origin)', () => {
       expect(gitRun(fixture.work, ['rev-parse', 'HEAD']).trim()).toBe(headBefore)
       expect(gitRun(fixture.work, ['status', '--porcelain'])).toBe('')
       expect(() => readFileSync(join(fixture.work, '.git', 'MERGE_HEAD'), 'utf8')).toThrow()
+      const after = await invoke<GitStatusResult>(route, 'git.status', scope)
+      expect(after).toMatchObject({ ok: true, value: { upstream: 'origin/review/topic', ahead: 1, behind: 1 } })
+      expect(after.value?.operation).toBeUndefined()
     } finally {
-      rmSync(fixture.scratch, { recursive: true, force: true })
+      removeTree(fixture.scratch)
     }
   })
 })

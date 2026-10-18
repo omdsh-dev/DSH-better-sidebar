@@ -5,8 +5,9 @@
  * background-jobs DRAWER — rows pushed by the HOST's client jobs service
  * (`ctx.jobs`, structurally faked here), output streamed for the one OPEN row
  * through `observe` (never the model's consuming cursor), the kill button
- * needing a two-click confirm and going through the service, and the watch
- * released while the page is hidden.
+ * needing a two-click confirm and going through the service, the watch
+ * released while the page is hidden, and the elapsed clock that ticks the text
+ * it prints WITHOUT rebuilding the row list (and not at all while parked).
  */
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -14,6 +15,12 @@ import { createElement } from 'react'
 import { act } from 'react-dom/test-utils'
 import { renderRoot } from './test-utils.ts'
 import { SubagentView } from '../src/client/SubagentView.tsx'
+import { ContextDiagnosticsHost } from '../src/client/context-diagnostics-ui.tsx'
+import type {
+  ContextDiagnosticTarget,
+  ContextDiagnostics,
+  ContextDiagnosticsSnapshot,
+} from '../src/client/context-diagnostics.ts'
 import type {
   Context,
   SidebarClientJobsService,
@@ -22,6 +29,19 @@ import type {
   SidebarSubagentAddress,
   SidebarSubagentCatalogEntry,
 } from '../src/context-types.ts'
+
+/**
+ * Counts JOBS-DRAWER renders. The real hook only attaches FLIP motion (inert
+ * under jsdom: there is no Web Animations API), and in the page's default graph
+ * mode the drawer is the ONLY caller — so a call is exactly one render of the
+ * component whose body maps the rows. "The row list was rebuilt" is therefore
+ * observable without a production test seam.
+ */
+const { drawerRenders } = vi.hoisted(() => ({ drawerRenders: vi.fn() }))
+
+vi.mock('../src/client/use-auto-animate.ts', () => ({
+  useAutoAnimateRef: () => { drawerRenders() },
+}))
 
 /**
  * A structurally faithful double of the host's client jobs service: a
@@ -171,6 +191,36 @@ afterEach(() => {
   vi.useRealTimers()
   for (const el of document.querySelectorAll('body > div')) el.remove()
 })
+
+/**
+ * Rendering the page WITH a diagnostics controller: the output window carries
+ * the owner conversation's Context entry, and adding it must not disturb the
+ * job plumbing this file pins (watch/observe/release/kill go through the host
+ * client service exactly as before).
+ */
+function diagnosticsFixture(snapshot: ContextDiagnosticsSnapshot = { available: true, busy: false }) {
+  const opens: ContextDiagnosticTarget[] = []
+  let current = snapshot
+  const listeners = new Set<() => void>()
+  const controller: ContextDiagnostics = {
+    getSnapshot: () => current,
+    subscribe: (listener: () => void) => {
+      listeners.add(listener)
+      return () => { listeners.delete(listener) }
+    },
+    open: (target: ContextDiagnosticTarget) => { opens.push(target) },
+    dismissError: () => {},
+    dispose: () => {},
+  }
+  return {
+    opens,
+    controller,
+    publish: (next: ContextDiagnosticsSnapshot): void => {
+      current = next
+      for (const listener of [...listeners]) listener()
+    },
+  }
+}
 
 /** Flush the mount-time requests (routes + the service snapshot). */
 async function flushJobs(): Promise<void> {
@@ -335,6 +385,66 @@ describe('SubagentView background jobs', () => {
     unmount()
   })
 
+  it('ticks the elapsed text without rebuilding the row list', async () => {
+    vi.useFakeTimers()
+    // Job times are absolute: put the clock just past `sleep 300`'s start.
+    vi.setSystemTime(5_000)
+    const store = makeStore(baseSnapshot())
+    const { container, unmount } = await renderPage(store)
+    /** The live row's rendered duration (the row keeps its own clock). */
+    const liveSeconds = (): number => {
+      const row = container.querySelector('[data-settled="false"]')
+      return Number(/(\d+)\s*秒/.exec(row?.textContent ?? '')?.[1] ?? Number.NaN)
+    }
+    expect(liveSeconds()).toBe(4)
+    const drawerRendersBefore = drawerRenders.mock.calls.length
+
+    // One second later the clock ticks…
+    await act(async () => { await vi.advanceTimersByTimeAsync(1_000) })
+    expect(liveSeconds()).toBe(5)
+    // …but only the text it prints re-render: the drawer's own render count is
+    // untouched, so the rows' map (and every other row with it) was never
+    // rebuilt. Rebuilding it once per second is what the 1 s `setNow` did.
+    expect(drawerRenders.mock.calls.length).toBe(drawerRendersBefore)
+
+    // A settled row carries a FINAL duration and no clock of its own: its text
+    // is the same before and after a tick.
+    const settledText = (): string =>
+      container.querySelector('[data-settled="true"]')?.textContent ?? ''
+    const settled = settledText()
+    await act(async () => { await vi.advanceTimersByTimeAsync(1_000) })
+    expect(settledText()).toBe(settled)
+    unmount()
+  })
+
+  it('runs no elapsed clock while the Tasks page is parked', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(5_000)
+    const store = makeStore(baseSnapshot())
+    // `active: false` is the parked tab: its body stays mounted (the native tab
+    // is `keepMounted`), so the rows are on screen in the DOM but nobody is
+    // looking — no clock may run.
+    const { container, rerender } = await renderPage(store, false)
+    expect(container.textContent).toContain('sleep 300')
+    const parked = container.textContent ?? ''
+    const drawerRendersBefore = drawerRenders.mock.calls.length
+    await act(async () => { await vi.advanceTimersByTimeAsync(20_000) })
+    expect(container.textContent).toBe(parked)
+    expect(drawerRenders.mock.calls.length).toBe(drawerRendersBefore)
+
+    // Coming back on screen catches the text up at once (the clock is read
+    // before the first tick, not a second later). 20 s of parked time on a job
+    // started at 1 s with the clock at 5 s: 4 s + 20 s.
+    rerender(createElement(SubagentView, {
+      sessionId: 'root',
+      active: true,
+      ctx: makeCtx(store, undefined, jobsFake),
+    }))
+    await flushJobs()
+    const row = container.querySelector('[data-settled="false"]')
+    expect(Number(/(\d+)\s*秒/.exec(row?.textContent ?? '')?.[1] ?? Number.NaN)).toBe(24)
+  })
+
   it('survives the roster emptying while mounted (hook-order regression #300)', async () => {
     const store = makeStore(baseSnapshot())
     const { container, unmount } = await renderPage(store)
@@ -390,6 +500,46 @@ describe('SubagentView background jobs', () => {
     expect(document.querySelectorAll('[role="dialog"]')).toHaveLength(0)
     expect(jobsFake.released).toContain('bash-2')
     unmount()
+  })
+
+  it('adds the owner\'s Context entry to the window WITHOUT touching the job plumbing', async () => {
+    const store = makeStore(baseSnapshot())
+    const diagnostics = diagnosticsFixture()
+    const rendered = renderRoot(createElement(
+      ContextDiagnosticsHost,
+      { controller: diagnostics.controller },
+      createElement(SubagentView, { sessionId: 'root', active: true, ctx: makeCtx(store, undefined, jobsFake) }),
+    ))
+    const { container } = rendered
+    await flushJobs()
+    // The tree's jobs keep the host-client-service path: both sessions watched.
+    expect([...jobsFake.watches].sort()).toEqual(['child', 'root'])
+    const row = container.querySelector('button[aria-label*="echo hi"]') as HTMLButtonElement
+    await act(async () => { row.click() })
+    // The observation still rides the roster's WATCHED session for this job.
+    expect(jobsFake.observations).toEqual([{ sessionId: 'child', jobId: 'bash-2' }])
+
+    const entry = document.querySelector('[data-dsh-ctx-entry="job"]') as HTMLButtonElement
+    expect(entry).not.toBeNull()
+    // The kill control is untouched beside it, and the entry opens the OWNING
+    // conversation (the row's own roster key IS the owner in this fixture).
+    expect(document.querySelectorAll('[data-floating-window] button[aria-label="终止"]')).toHaveLength(0)
+    await act(async () => { entry.click() })
+    expect(diagnostics.opens).toEqual([{
+      sessionId: 'child',
+      label: '子代理',
+      address: { parentSessionId: 'root', childSessionId: 'child', mode: 'continuable' },
+    }])
+
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    })
+    expect(jobsFake.released).toContain('bash-2')
+    await act(async () => { rendered.unmount() })
+    // One row was open, so ONE observation was ever taken: the watchers ride
+    // the page's lifetime, the observation rides the open row's.
+    expect(jobsFake.observations).toEqual([{ sessionId: 'child', jobId: 'bash-2' }])
+    expect([...jobsFake.releases].sort()).toEqual(['child', 'root'])
   })
 
   it('flags a gap and a producer error in the observed stream', async () => {

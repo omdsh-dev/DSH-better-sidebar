@@ -35,6 +35,19 @@
 :global([data-dsh-panel-host]) {
   position: fixed;
   inset: 0;
+  /* Explicit viewport height — NOT a containing-block derivation (issue
+     #616). `inset: 0` alone sizes a fixed box from its containing block, and
+     a page-level `filter` / `backdrop-filter` / `transform` — exactly what a
+     glass skin puts on the shell wrapper or on <body> itself — REPLACES that
+     containing block with the ancestor's own padding box. The shell's content
+     is itself fixed/viewport-sized, so that box is zero-height: the host
+     collapses to 0px and the whole native right sidebar goes invisible while
+     its DOM (and every panel in it) is fully present. `vh` is measured
+     against the viewport instead, so the height survives any ancestor's
+     containing-block games; the over-constrained triple (top: 0 + height +
+     bottom: 0) resolves by ignoring `bottom`, keeping this a top-anchored
+     viewport-height layer. */
+  height: 100vh;
   z-index: 25;
   pointer-events: none;
   /* Clip at the viewport edge: collapsed panels slide off-screen with
@@ -42,7 +55,8 @@
      contributes to its ancestors' scrollable overflow — without this the
      hidden panels extended the document's scrollable area, making the whole
      page draggable left-right and up-down while any panel was collapsed.
-     The host is exactly viewport-sized (inset: 0), so the clip is invisible
+     The host is exactly viewport-sized (inset: 0 + the explicit 100vh
+     height above), so the clip is invisible
      until a panel slides in from the edge; internal scroll containers and
      the app's fixed overlay stack are unaffected. `clip`, not `hidden`: a
      hidden box stays a PROGRAMMATICALLY scrollable container, and a
@@ -275,15 +289,6 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   -webkit-app-region: no-drag;
 }
 
-/* ── Position compatibility mode (Windows native title bar) ────────────── */
-
-/* Windows frameless / hidden-title-bar windows draw the native caption
-   strip (minimize / maximize / close) at the window's top-right corner,
-   OVER the web content. When the user enables the "position compatibility"
-   pref, the Sidebar shell publishes the strip height as
-   `--dsh-title-bar-strip` plus `body[data-dsh-title-bar-compat]` for the
-   user's own CSS; the plugin's remaining chrome (the bottom workbench) sits
-   at the window's bottom and is never under the top strip. */
 /* Icon button: the app's own icon-button pattern (ui-workspace) — a 28px
    circle, secondary label, hover fill; no border so the icon alone is the
    affordance. */
@@ -471,6 +476,30 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   align-items: center;
   margin-right: 6px;
   flex: none;
+}
+
+/* "This page has something you have not looked at": a small solid dot on the
+   tab, drawn on the native chip and on the bottom workbench strip alike. Static
+   by design — a pulsing marker on every new subagent is noise, and the two
+   carriers must read as the same thing. The chip is inline text (its content
+   IS the host's tab label), so the mark is an inline-block sitting on the text
+   baseline; the strip's own mark centres in its flex row instead. */
+.chipUnread {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-left: 6px;
+  border-radius: 50%;
+  background: var(--dsw-alias-danger);
+  vertical-align: middle;
+}
+
+.tabUnreadDot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--dsw-alias-danger);
 }
 
 /* One tab's mounted content; inactive tabs stay mounted but hidden so
@@ -1508,6 +1537,54 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   cursor: pointer;
 }
 
+/* ── Uncommitted-change gutter (issue #212) ─────────────────────────────────
+   VS Code's restraint: the line NUMBER takes the tone of its change, and a
+   2px bar sits at the far left of the numbers. The classes are handed to
+   CodeMirror as gutter-marker class names (see editor-git-gutter.ts), which
+   is why they are referenced from TS as well as styled here. The tones are
+   the file tree's own mapping (added/untracked green, modified amber,
+   deleted red). Deliberately nothing else: no end-of-line widget, no badge,
+   no animation, no gradient. */
+.editorGitAdd { color: var(--dsw-alias-state-success-primary); }
+.editorGitMod { color: var(--dsw-alias-state-warn-primary); }
+.editorGitDel { color: var(--dsw-alias-state-error-primary); }
+
+/* The bar column: 2px of ink, plus the hidden spacer that keeps the width
+   reserved while the file is clean (the numbers never shift sideways). */
+.editorGitBarGutter {
+  width: 2px;
+  min-width: 2px;
+}
+
+.editorGitBar,
+.editorGitBarSpacer {
+  width: 2px;
+  height: 100%;
+}
+
+.editorGitBarAdd { background: var(--dsw-alias-state-success-primary); }
+.editorGitBarMod { background: var(--dsw-alias-state-warn-primary); }
+.editorGitBarDel { background: var(--dsw-alias-state-error-primary); }
+
+/* Hover blame: plain text, two rows (author · when, then the summary). */
+.editorBlame {
+  max-width: 420px;
+  padding: 4px 8px;
+  font: var(--dsw-font-xxxs-11);
+  color: var(--dsw-alias-label-primary);
+}
+
+.editorBlameHead {
+  color: var(--dsw-alias-label-secondary);
+}
+
+.editorBlameSummary {
+  margin-top: 2px;
+  color: var(--dsw-alias-label-primary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 /* Live sandbox status row (HTML preview / browser tab): GREEN while the
    sandbox is on (with the one-tap temporary unlock), RED while it is off
    (global setting or temporary unlock) — the red state is the persistent
@@ -2412,4 +2489,180 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 .tocFlash {
   animation: dsh-toc-flash 1.2s ease-out;
   border-radius: 4px;
+}
+
+/* ── Read-only paged preview (files above the editable threshold) ────────
+   The editor answers "too big to edit" with a windowed reader rather than a
+   refusal. Two row shapes share the chrome: the JSONL record list (one
+   expandable record per row) and the log-style line list (monospace, no
+   wrapping, horizontal scroll). Every ink is a theme token. */
+.largeFile {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.largeFileNotice {
+  flex: none;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 8px;
+  font: var(--dsw-font-xxxs-11);
+  color: var(--dsw-alias-state-warn-label);
+  background: var(--dsw-alias-state-warn-tertiary);
+}
+
+.largeFileDownload {
+  color: inherit;
+  text-decoration: underline;
+}
+
+/* The notice's own "load all" action. It rides the notice's warn ink (the bar
+   is a warning surface, not a toolbar) and sits flush right, with the download
+   link beside it. `margin-left: auto` is what pins the PAIR to the far edge. */
+.largeFileNoticeAction {
+  margin-left: auto;
+  padding: 0 6px;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  background: none;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.largeFileNoticeAction:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.largeFileBody {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.largeFileRecords {
+  padding: 4px 0;
+}
+
+/* The record list is an <ol> whose `start` attribute is the first record's
+   absolute number: the marker itself is suppressed, since the number column
+   is rendered explicitly and must stay aligned with the summary row. */
+.largeFileList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.largeFileRecord {
+  display: flex;
+  gap: 8px;
+  padding: 2px 8px;
+}
+
+.largeFileRecordExpanded {
+  background: var(--dsw-alias-bg-layer-1);
+}
+
+.largeFileRecordInvalid {
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.largeFileRecordNo {
+  flex: none;
+  min-width: 4ch;
+  text-align: right;
+  font: var(--dsw-font-xxxs-11);
+  color: var(--dsw-alias-label-tertiary);
+  user-select: none;
+}
+
+.largeFileRecordBody {
+  flex: 1;
+  min-width: 0;
+}
+
+.largeFileRecordSummary {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  text-align: left;
+  font: var(--ds-font-family-code);
+  font-size: 12px;
+  color: var(--dsw-alias-label-primary);
+  white-space: pre;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.largeFileRecordSummary:disabled {
+  cursor: default;
+}
+
+.largeFileRecordRaw {
+  margin: 2px 0 0;
+  font: var(--ds-font-family-code);
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  overflow-wrap: anywhere;
+}
+
+.largeFileRecordTree {
+  margin-top: 2px;
+  font: var(--ds-font-family-code);
+  font-size: 12px;
+}
+
+.largeFileLines {
+  padding: 4px 0;
+  font: var(--ds-font-family-code);
+  font-size: 12px;
+  white-space: pre;
+}
+
+.largeFileLine {
+  display: flex;
+  gap: 8px;
+  padding: 0 8px;
+}
+
+.largeFileLineNo {
+  flex: none;
+  min-width: 5ch;
+  text-align: right;
+  color: var(--dsw-alias-label-tertiary);
+  user-select: none;
+}
+
+.largeFileLineText {
+  flex: none;
+  color: var(--dsw-alias-label-primary);
+}
+
+.largeFilePager {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-top: 1px solid var(--dsw-alias-border-l2);
+  background: var(--dsw-alias-bg-layer-2);
+}
+
+.largeFilePageLabel {
+  flex: 1;
+  min-width: 0;
+  text-align: center;
+  font: var(--dsw-font-xxxs-11);
+  color: var(--dsw-alias-label-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }

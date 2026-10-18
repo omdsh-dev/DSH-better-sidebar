@@ -17,7 +17,10 @@
  *   the lead's roster row lands on the root node;
  * - fold: per parent, settled agent LEAVES (state done/error, never the
  *   current session, never a workflow member's run node) collapse into one
- *   trailing `fold` node carrying the member ids and label previews.
+ *   trailing `fold` node per GROUP (finished work / waiting members) carrying
+ *   the member ids and label previews; a group the reader opened
+ *   ({@link TasksModelInput.expandedGroups}) keeps its members visible while
+ *   its sibling group stays folded.
  */
 import type {
   SidebarSessionSummary,
@@ -30,6 +33,7 @@ import type { SidebarChildLiveView } from '../context-types.ts'
 import type { WorkflowRunView } from '../workflow-runs.ts'
 import { isSideThreadSummary } from './subagent-detect.ts'
 import { childLive, isKnownLeaf, type SubagentCatalogView } from './subagent-catalog.ts'
+import type { SessionMetrics } from './session-metrics.ts'
 import type { TeamMemberRow } from './team-projection.ts'
 
 /** Display state of one agent node (drives the dot + fold candidacy). */
@@ -62,6 +66,8 @@ export interface TasksAgentNode {
   current: boolean
   /** Live tail of a running child (the merged activity + newest text). */
   live?: SidebarChildLiveView
+  /** Token usage + turn timing of the node's own session (see ./session-metrics.ts). */
+  metrics?: SessionMetrics
   /** Team enrichment (roster row matched by session id). */
   team?: {
     role: 'lead' | 'teammate'
@@ -139,6 +145,13 @@ export interface TasksModelInput {
   rootId: string
   currentSessionId: string
   live: Readonly<Record<string, SidebarChildLiveView | undefined>>
+  /**
+   * Per-session token usage and turn timing, keyed by session id (the same
+   * shape as {@link TasksModelInput.live}). Both are host projections, so a
+   * session the snapshot does not carry simply has no metrics and the popover
+   * hides the row.
+   */
+  metrics?: Readonly<Record<string, SessionMetrics | undefined>>
   runs: readonly WorkflowRunView[]
   teamMembers: readonly TeamMemberRow[]
   /** The team's shared tasks; each lands on its OWNER's node. */
@@ -154,6 +167,16 @@ export interface TasksModelInput {
    * trigger that cannot fire is a dead control.
    */
   foldedIds?: ReadonlySet<string>
+  /**
+   * The fold GROUPS the reader expanded by clicking their aggregate card
+   * ({@link foldGroupId}). A group listed here shows its members while every
+   * other group stays folded — expanding one aggregate must never unfold the
+   * page. It is consulted only where a member would otherwise be folded, and it
+   * yields to {@link foldedIds}: folding one node back by hand is the reader's
+   * newest explicit intent, and a group that ignored it would leave that card's
+   * own chevron dead.
+   */
+  expandedGroups?: ReadonlySet<string>
 }
 
 /** Human label of one catalog child (the classic rule). */
@@ -230,6 +253,19 @@ function tally(folded: readonly TasksAgentNode[]): FoldTally {
 }
 
 /**
+ * The id of one fold GROUP (the aggregate card a set of folded members
+ * collapses into). Derived from the parent and the group kind only, so the id
+ * is stable while membership changes underneath it — the page keys the
+ * reader's per-group expansions by exactly this string.
+ *
+ * @param foldKind - which group (`done` = finished/failed, `idle` = waiting).
+ * @param parentId - the parent whose children were folded.
+ */
+export function foldGroupId(foldKind: TasksFoldKind, parentId: string): string {
+  return foldKind === 'idle' ? `fold:${parentId}:idle` : `fold:${parentId}`
+}
+
+/**
  * Build one aggregate row for the given group of children.
  *
  * `foldKind` decides which members the row owns: the `done` group takes the
@@ -241,20 +277,18 @@ function tally(folded: readonly TasksAgentNode[]): FoldTally {
  * @param parentId - the row's parent (its tree position).
  * @param depth - the row's tree depth.
  * @param members - the children this group swallowed, in page order.
- * @param idSuffix - disambiguates the two rows of one parent (`''` / `':idle'`).
  */
 function foldNode(
   foldKind: TasksFoldKind,
   parentId: string,
   depth: number,
   members: readonly TasksAgentNode[],
-  idSuffix: string,
 ): TasksFoldNode {
   const counts = tally(members)
   return {
     kind: 'fold',
     foldKind,
-    id: `fold:${parentId}${idSuffix}`,
+    id: foldGroupId(foldKind, parentId),
     parentId,
     depth,
     count: members.length,
@@ -300,6 +334,8 @@ export function buildTasksModel(input: TasksModelInput): TasksNode[] {
   const {
     byId, catalogs, rootId, currentSessionId, live, runs, teamMembers, folded, foldedIds,
   } = input
+  const expandedGroups = input.expandedGroups
+  const metrics = input.metrics
   const teamTasks = input.teamTasks ?? []
   const teamById = new Map(teamMembers.map(member => [member.id, member]))
   /** Owner display name → node id (the board assigns by member name). */
@@ -394,6 +430,7 @@ export function buildTasksModel(input: TasksModelInput): TasksNode[] {
         activity,
         current: entry.id === currentSessionId,
         ...(view !== undefined ? { live: view } : {}),
+        ...(metrics?.[entry.id] !== undefined ? { metrics: metrics[entry.id] } : {}),
         ...(team !== undefined ? { team } : {}),
         ...(tasksByNode.get(entry.id) !== undefined ? { tasks: tasksByNode.get(entry.id) } : {}),
         hasChildren: !isKnownLeaf(catalogs, entry.id),
@@ -443,6 +480,8 @@ export function buildTasksModel(input: TasksModelInput): TasksNode[] {
               activity: member.outcome === undefined ? 'running' : 'inactive',
               current: member.childId !== '' && member.childId === currentSessionId,
               synthesized: true,
+              ...(childKnown && metrics?.[member.childId] !== undefined
+                ? { metrics: metrics[member.childId] } : {}),
               ...(childKnown && tasksByNode.get(member.childId) !== undefined
                 ? { tasks: tasksByNode.get(member.childId) } : {}),
               ...(childKnown
@@ -459,10 +498,11 @@ export function buildTasksModel(input: TasksModelInput): TasksNode[] {
     // Fold: this parent's non-executing children collapse into one aggregate
     // PER GROUP — finished/failed work in one row, waiting members in another,
     // so the badge can say what it holds and a reader can sweep one without
-    // the other. Two triggers, two guard sets: the page-level `folded` rule
-    // also spares branching nodes and (below the idle head count) teammates; a
-    // manual `foldedIds` fold is the reader asking for THAT node, so it only
-    // spares running/current work.
+    // the other. Three triggers, one precedence per member: a manual
+    // `foldedIds` fold always wins (the reader pointed at THAT node), the
+    // page-level `folded` rule decides next (sparing branching nodes and, below
+    // the idle head count, teammates), and `expandedGroups` only relaxes that
+    // rule for the one group the reader opened.
     const idleMembers = visibleAgentChildren
       .filter(child => child.state === 'idle' && child.team !== undefined).length
     const foldIdleMembers = idleMembers >= FOLD_IDLE_MIN
@@ -473,12 +513,15 @@ export function buildTasksModel(input: TasksModelInput): TasksNode[] {
       const foldable = nodeFoldable(child, currentSessionId)
       const auto = folded && foldable && isAutoFoldable(child, runsByOrigin, foldIdleMembers)
       const manual = foldedIds?.has(child.id) === true && foldable
-      if (!auto && !manual) {
-        kept.push(child)
-      } else if (child.state === 'idle') {
-        idleFold.push(child)
+      // The group a member belongs to decides which aggregate claims it — and
+      // therefore which expansion could have revealed it.
+      const group: TasksFoldKind = child.state === 'idle' ? 'idle' : 'done'
+      const expanded = expandedGroups?.has(foldGroupId(group, parentId)) === true
+      if (manual || (auto && !expanded)) {
+        if (group === 'idle') idleFold.push(child)
+        else doneFold.push(child)
       } else {
-        doneFold.push(child)
+        kept.push(child)
       }
     }
 
@@ -486,21 +529,23 @@ export function buildTasksModel(input: TasksModelInput): TasksNode[] {
       out.push(child)
       appendChildren(child.id, child.depth)
     }
-    if (doneFold.length > 0) out.push(foldNode('done', parentId, depth + 1, doneFold, ''))
-    if (idleFold.length > 0) out.push(foldNode('idle', parentId, depth + 1, idleFold, ':idle'))
+    if (doneFold.length > 0) out.push(foldNode('done', parentId, depth + 1, doneFold))
+    if (idleFold.length > 0) out.push(foldNode('idle', parentId, depth + 1, idleFold))
     for (let index = 0; index < runNodes.length; index += 1) {
       const runNode = runNodes[index]
       if (runNode === undefined) continue
       out.push(runNode)
       const members = memberNodes[index] ?? []
-      // The run's own members fold under the same two triggers and the same two
-      // groups. The AUTOMATIC trigger applies the same STRUCTURAL guards as the
-      // parent's children — a member is often a RE-PARENTED catalog node (a real
-      // directory with `hasChildren`, team enrichment and its own run), not the
-      // synthetic leaf this loop used to assume, and folding one hid its whole
-      // branch (issue #784). The roster guard does not apply here: the member is
-      // not a roster row of this parent, and the idle head count is a
-      // roster-scanning rule — run members keep their own container's rule.
+      // The run's own members fold under the same triggers, the same two groups
+      // and the same precedence (manual fold, then the page-level rule, then
+      // the group expansion). The AUTOMATIC trigger applies the same STRUCTURAL
+      // guards as the parent's children — a member is often a RE-PARENTED
+      // catalog node (a real directory with `hasChildren`, team enrichment and
+      // its own run), not the synthetic leaf this loop used to assume, and
+      // folding one hid its whole branch (issue #784). The roster guard does
+      // not apply here: the member is not a roster row of this parent, and the
+      // idle head count is a roster-scanning rule — run members keep their own
+      // container's rule.
       const keptMembers: TasksAgentNode[] = []
       const runDone: TasksAgentNode[] = []
       const runIdle: TasksAgentNode[] = []
@@ -508,18 +553,30 @@ export function buildTasksModel(input: TasksModelInput): TasksNode[] {
         const foldable = nodeFoldable(member, currentSessionId)
         const auto = folded && foldable && isAutoFoldable(member, runsByOrigin, true)
         const manual = foldedIds?.has(member.id) === true && foldable
-        if (!auto && !manual) keptMembers.push(member)
-        else if (member.state === 'idle') runIdle.push(member)
-        else runDone.push(member)
+        const group: TasksFoldKind = member.state === 'idle' ? 'idle' : 'done'
+        const expanded = expandedGroups?.has(foldGroupId(group, runNode.id)) === true
+        if (manual || (auto && !expanded)) {
+          if (group === 'idle') runIdle.push(member)
+          else runDone.push(member)
+        } else {
+          keptMembers.push(member)
+        }
       }
       out.push(...keptMembers)
-      if (runDone.length > 0) out.push(foldNode('done', runNode.id, runNode.depth + 1, runDone, ''))
-      if (runIdle.length > 0) out.push(foldNode('idle', runNode.id, runNode.depth + 1, runIdle, ':idle'))
+      if (runDone.length > 0) out.push(foldNode('done', runNode.id, runNode.depth + 1, runDone))
+      if (runIdle.length > 0) out.push(foldNode('idle', runNode.id, runNode.depth + 1, runIdle))
     }
   }
 
   const rootSummary = byId[rootId]
   const rootTeam = teamOf(rootId)
+  // The topology root carries its live view like every child: the live route
+  // folds the root's own range into the same map (the `subagents` service
+  // cannot classify an agent it did not spawn, so its `running` flag is absent
+  // there — the summary and text are not). Without it the main agent's card and
+  // tree row fell back to the hardcoded thinking wording no matter what the
+  // session was actually doing.
+  const rootLive = childLive(live, rootId)
   out.push({
     kind: 'agent',
     id: rootId,
@@ -530,6 +587,8 @@ export function buildTasksModel(input: TasksModelInput): TasksNode[] {
     state: rootSummary?.running === true ? 'running' : 'done',
     activity: rootSummary?.running === true ? 'running' : 'inactive',
     current: rootId === currentSessionId,
+    ...(rootLive !== undefined ? { live: rootLive } : {}),
+    ...(metrics?.[rootId] !== undefined ? { metrics: metrics[rootId] } : {}),
     ...(rootTeam !== undefined ? { team: rootTeam } : {}),
     ...(tasksByNode.get(rootId) !== undefined ? { tasks: tasksByNode.get(rootId) } : {}),
   })

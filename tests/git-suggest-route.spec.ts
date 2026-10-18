@@ -21,12 +21,13 @@
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { spawnSync, type SpawnOptions } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { apply } from '../src/index.ts'
 import { SUGGEST_DIFF_LIMIT, truncateDiff } from '../src/commit-message.ts'
 import type { SidebarWebRoute, SidebarWebUpgradeRoute } from '../src/context-types.ts'
+import { removeTree } from './temp-tree.ts'
 
 /** Every git process the plugin spawned, in call order (argv without the
  *  binary). The safety invariant is asserted at the PROCESS BOUNDARY, so it
@@ -207,7 +208,7 @@ function mount(setup: {
     },
     logger: { info: () => {}, warn: () => {} },
     profileContext: undefined,
-    webRuntime: { trustedHosts: [] },
+    connection: { requestRejection: () => undefined },
     webServer: {
       register: (route: SidebarWebRoute) => { routes.push(route); return () => {} },
       registerUpgrade: (_route: SidebarWebUpgradeRoute) => () => {},
@@ -301,7 +302,7 @@ describe('git.suggest-message: model route fallback chain', () => {
       expect(harness.calls).toHaveLength(1)
       expect(harness.calls[0]).toMatchObject({ provider: 'pinned-prov', model: 'model-x' })
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 
@@ -318,7 +319,7 @@ describe('git.suggest-message: model route fallback chain', () => {
       expect(result.ok).toBe(true)
       expect(result.value).toMatchObject({ provider: 'conversation-prov', model: 'conversation-model' })
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 
@@ -342,7 +343,7 @@ describe('git.suggest-message: model route fallback chain', () => {
       expect(result.ok).toBe(true)
       expect(result.value).toMatchObject({ provider: 'newest-prov', model: 'newest-model' })
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 
@@ -362,7 +363,7 @@ describe('git.suggest-message: model route fallback chain', () => {
       expect(result.ok).toBe(true)
       expect(result.value).toMatchObject({ provider: 'harness-prov', model: 'harness-model' })
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 
@@ -382,7 +383,7 @@ describe('git.suggest-message: model route fallback chain', () => {
       // Nothing was generated and, above all, nothing was committed.
       expect(harness.calls).toHaveLength(0)
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 })
@@ -422,7 +423,7 @@ describe('git.suggest-message: prompt and generation bounds', () => {
       expect(call?.signal?.aborted).toBe(false)
     } finally {
       vi.restoreAllMocks()
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 
@@ -443,7 +444,7 @@ describe('git.suggest-message: prompt and generation bounds', () => {
       expect(call).toBeDefined()
       expect(Object.hasOwn(call ?? {}, 'reasoningEffort')).toBe(false)
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 
@@ -469,7 +470,7 @@ describe('git.suggest-message: prompt and generation bounds', () => {
       // …and never the whole patch, which is what flooding the model means.
       expect(user).not.toContain(realDiff)
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 
@@ -486,7 +487,7 @@ describe('git.suggest-message: prompt and generation bounds', () => {
       expect(harness.calls[1]?.system).toContain('You are a git commit message assistant')
       expect(userTextOf(harness.calls[1])).toContain('Changed files')
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 })
@@ -536,7 +537,7 @@ describe('git.suggest-message: answer shape and error mapping', () => {
       expect(padded.ok).toBe(true)
       expect((padded.value as { message: string }).message).toBe('fix: pad the edges')
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 
@@ -565,7 +566,7 @@ describe('git.suggest-message: answer shape and error mapping', () => {
       expect(failed.status).not.toBe(noRoute.status)
       expect(failed.error?.code).not.toBe(noRoute.error?.code)
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 
@@ -582,7 +583,7 @@ describe('git.suggest-message: answer shape and error mapping', () => {
       expect(result.error?.code).toBe('git-suggest-error')
       expect(result.error?.message).toContain('30s')
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 
@@ -605,7 +606,7 @@ describe('git.suggest-message: answer shape and error mapping', () => {
       expect(result.error?.message).toContain('empty message')
       expect(result.error?.message).toContain('finish=stop')
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 
@@ -622,7 +623,7 @@ describe('git.suggest-message: answer shape and error mapping', () => {
       expect(result.error?.message).toContain('no pending changes')
       expect(harness.calls).toHaveLength(0)
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 })
@@ -645,7 +646,7 @@ describe('git.suggest-message: repository safety', () => {
       expect(user).toContain('+STAGED-EDIT')
       expect(user).not.toContain('UNSTAGED-EDIT')
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 
@@ -676,7 +677,7 @@ describe('git.suggest-message: repository safety', () => {
       expect(gitRun(dir, ['rev-parse', 'HEAD'])).toBe(before.head)
       expect(readFileSync(join(dir, 'a.txt'), 'utf8')).toBe(before.content)
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 })

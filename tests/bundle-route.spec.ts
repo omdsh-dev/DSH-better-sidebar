@@ -6,11 +6,12 @@
  * re-downloading.
  */
 import { describe, expect, it } from 'vitest'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { CHUNK_NAMES, createBundleRouteHandler } from '../src/bundle-route.ts'
+import { removeTree } from './temp-tree.ts'
 
 interface FakeRes {
   status: number
@@ -44,7 +45,7 @@ function setup(): { handler: (req: IncomingMessage, res: ServerResponse) => Prom
   const dir = mkdtempSync(join(tmpdir(), 'bundle-route-'))
   writeFileSync(join(dir, 'client-editor.js'), 'window.__ModuleLoader__ && 0;')
   const handler = createBundleRouteHandler(() => true, dir)
-  return { handler, dir, cleanup: () => { rmSync(dir, { recursive: true, force: true }) } }
+  return { handler, dir, cleanup: () => { removeTree(dir) } }
 }
 
 describe('/sidebar/bundle route', () => {
@@ -145,11 +146,11 @@ describe('/sidebar/bundle route', () => {
       await handler(req('GET', '/sidebar/bundle/editor.js'), res as unknown as ServerResponse)
       expect(res.status).toBe(403)
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 
   it('exports the chunk allowlist (mirror of src/client/chunk-loader.ts)', () => {
-    expect([...CHUNK_NAMES]).toEqual(['editor', 'mermaid', 'locale'])
+    expect([...CHUNK_NAMES]).toEqual(['editor', 'mermaid', 'locale', 'terminal'])
   })
 })

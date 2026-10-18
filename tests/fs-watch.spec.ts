@@ -13,11 +13,12 @@
  * debounce.
  */
 import { describe, expect, it, vi } from 'vitest'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { listDirectory } from '../src/fs-tree.ts'
 import { createDirectoryWatchers, type DirectoryWatchEvent } from '../src/fs-watch.ts'
+import { removeTree } from './temp-tree.ts'
 
 /** Generous delivery budget: the module debounces at 150 ms, the OS adds its own latency. */
 const DELIVERY_TIMEOUT_MS = 15_000
@@ -29,7 +30,7 @@ const withScratch = (run: (dir: string) => Promise<void> | void): Promise<void> 
   const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-watch-'))
   const dir = join(root, 'watched')
   mkdirSync(dir)
-  return Promise.resolve(run(dir)).finally(() => { rmSync(root, { recursive: true, force: true }) })
+  return Promise.resolve(run(dir)).finally(() => { removeTree(root) })
 }
 
 /** Sleep for a fixed window. */

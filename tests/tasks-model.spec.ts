@@ -3,7 +3,8 @@
  * catalog walking, workflow run attachment + member re-parenting, team
  * enrichment, and the per-parent settled-leaf fold.
  */
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { attachLocale } from '../src/client/locales.ts'
 import {
   buildTasksModel,
   tasksEdges,
@@ -358,6 +359,93 @@ describe('buildTasksModel', () => {
     })
     expect(buildTasksModel(base).map(node => node.id)).toEqual(['root', 'done-1'])
   })
+
+  it('expands ONE group per reader click, leaving the sibling aggregate folded', () => {
+    // Two groups of one parent at once: finished work (`done-1` / `failed-1`)
+    // and three waiting teammates. Opening the finished group must reveal those
+    // two nodes and NOTHING else — the page used to clear every fold it had.
+    const base = input({
+      catalogs: {
+        root: catalog([child('m1'), child('m2'), child('m3'), child('done-1'), child('failed-1')]),
+        ...Object.fromEntries(
+          ['m1', 'm2', 'm3', 'done-1', 'failed-1'].map(id => [id, catalog([])]),
+        ),
+      },
+      byId: Object.fromEntries(
+        [['root', summary('root')], ...['m1', 'm2', 'm3', 'done-1', 'failed-1'].map(id => [id, summary(id)])],
+      ),
+      teamMembers: [
+        ...['m1', 'm2', 'm3'].map(id => member({ id, name: id, status: 'idle' })),
+        member({ id: 'failed-1', name: 'failed-1', phase: 'failed', status: 'failed' }),
+      ],
+    })
+    expect(buildTasksModel({ ...base, expandedGroups: new Set(['fold:root']) })
+      .map(node => node.id)).toEqual(['root', 'done-1', 'failed-1', 'fold:root:idle'])
+    // …and the idle group's own opening leaves the finished one folded. Kept
+    // children keep the catalog order; the aggregates trail whatever stays
+    // folded (the model's one ordering rule).
+    expect(buildTasksModel({ ...base, expandedGroups: new Set(['fold:root:idle']) })
+      .map(node => node.id)).toEqual(['root', 'm1', 'm2', 'm3', 'fold:root'])
+    // The group ids are the aggregate row ids the page hands back.
+    expect(buildTasksModel(base).filter(node => node.kind === 'fold').map(node => node.id))
+      .toEqual(['fold:root', 'fold:root:idle'])
+  })
+
+  it('lets a hand-folded member fold back INSIDE an open group', () => {
+    // The card's own chevron is the newest explicit intent: with the group open
+    // it must still fold that one node back (the reader's "cannot collapse it
+    // again" report), and the aggregate then reappears holding it.
+    const base = input({
+      catalogs: { root: catalog([child('done-1'), child('done-2')]) },
+      byId: { root: summary('root'), 'done-1': summary('done-1'), 'done-2': summary('done-2') },
+      expandedGroups: new Set(['fold:root']),
+    })
+    expect(buildTasksModel(base).map(node => node.id)).toEqual(['root', 'done-1', 'done-2'])
+    expect(buildTasksModel({ ...base, foldedIds: new Set(['done-1']) }).map(node => node.id))
+      .toEqual(['root', 'done-2', 'fold:root'])
+    expect(buildTasksModel({ ...base, foldedIds: new Set(['done-1']) })
+      .find(node => node.kind === 'fold'))
+      .toMatchObject({ id: 'fold:root', memberIds: ['done-1'] })
+  })
+
+  it('expands a RUN member group by its own aggregate id', () => {
+    const audit = run({
+      originSessionId: 'root',
+      phases: [{
+        title: '侦察',
+        members: [
+          { seq: 1, label: 'existing', phase: '侦察', childId: 'm1', outcome: 'completed' },
+          { seq: 2, label: 'synthesized', phase: '侦察', childId: 'm2', outcome: 'completed' },
+        ],
+      }],
+    })
+    const base = input({
+      catalogs: { root: catalog([child('m1')]), m1: catalog([]) },
+      byId: { root: summary('root'), m1: summary('m1') },
+      runs: [audit],
+    })
+    // Folded by default: both settled members collapse under the run node.
+    expect(buildTasksModel(base).map(node => node.id)).toEqual(['root', 'run:run-1', 'fold:run:run-1'])
+    // Opening that aggregate reveals the run's own members, in phase order.
+    expect(buildTasksModel({ ...base, expandedGroups: new Set(['fold:run:run-1']) })
+      .map(node => node.id)).toEqual(['root', 'run:run-1', 'm1', 'm2'])
+  })
+
+  it('carries the topology ROOT\'s own live view (the card and the row read it)', () => {
+    const live: Record<string, SidebarChildLiveView> = {
+      root: {
+        summary: {
+          counts: [{ kind: 'commands', count: 1 }], running: 'commands', runningDetail: 'npm run build',
+        },
+      },
+    }
+    const node = agents(buildTasksModel(input({ live }))).find(candidate => candidate.id === 'root')
+    expect(node?.live?.summary?.running).toBe('commands')
+    // A root the live channel reported nothing for keeps the field absent — the
+    // bar then falls back to the state word instead of inventing copy.
+    expect(agents(buildTasksModel(input({ live: {} }))).find(candidate => candidate.id === 'root')?.live)
+      .toBeUndefined()
+  })
 })
 
 describe('tasksEdges', () => {
@@ -423,6 +511,10 @@ describe('buildTasksModel: duplicate workflow members', () => {
 })
 
 describe('shared task status rule (taskBlocked / taskStatusLabel / taskTone)', () => {
+  // These assertions use English, regardless of the runner's browser/OS locale.
+  beforeEach(() => { attachLocale({ getSnapshot: () => ({ active: 'en' }) }) })
+  afterEach(() => { attachLocale(undefined) })
+
   const facts = (status: 'pending' | 'in_progress' | 'completed', ready: boolean) => ({ status, ready })
 
   it('calls a queued task with an open blocker blocked', () => {

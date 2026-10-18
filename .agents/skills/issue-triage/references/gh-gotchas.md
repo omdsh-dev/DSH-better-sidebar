@@ -16,6 +16,7 @@
 ## 字段与选项
 
 - **`updateProjectV2Field(singleSelectOptions: [...])` 是整体替换**：被替换掉的选项 id 失效、`Status` 值会掉；想改选项就把**全部**目标选项一次列全（name/color/description 三个字段都是必填），改完**重新给条目写一遍值**。
+- **清空某个单选字段的值：传 `value:{singleSelectOptionId:null}`**，不要传 `value:null`——`UpdateProjectV2ItemFieldValueInput.value` 的类型是 `ProjectV2FieldValue!`（非空），传 null 会被 schema 拒（`argumentLiteralsIncompatible`）。`board-sync.mjs` 依赖这条来清掉「继承来源已关闭」的 PR 优先级：只在有新值时才写的实现会让 `verify()` 永远报 `mismatched`（2026-10-11 实测 23 条）。
 - option id 会随替换变化 → 脚本每次运行都按**名字**重新解析 id，不要硬编码。
 - `ProjectV2SingleSelectFieldOptionInput` 三个字段全 `NON_NULL`：`name` / `color`（枚举 `GRAY BLUE GREEN YELLOW ORANGE RED PINK PURPLE`）/ `description`（可空串）。
 

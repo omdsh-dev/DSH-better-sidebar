@@ -143,8 +143,7 @@
 }
 
 .cardMain:focus-visible,
-.cardSettings:focus-visible,
-.rowGear:focus-visible {
+.cardSettings:focus-visible {
   outline: 2px solid var(--dsw-alias-border-l4);
   outline-offset: 2px;
 }
@@ -310,31 +309,6 @@
 }
 
 .cardSettings:hover {
-  background: var(--dsw-alias-interactive-bg-hover-accent);
-  color: var(--dsw-alias-brand-primary);
-}
-
-/* The gear icon button on a general settings ROW (the position-compat
-   row's "customize the strip height" entry): a bordered chip (not a ghost)
-   so it reads as a control at rest; hover answers with the accent tint. */
-.rowGear {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  padding: 0;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 6px;
-  background: transparent;
-  color: var(--dsw-alias-label-secondary);
-  cursor: pointer;
-  flex: none;
-  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
-}
-
-.rowGear:hover {
-  border-color: var(--dsw-alias-interactive-bg-hover-accent);
   background: var(--dsw-alias-interactive-bg-hover-accent);
   color: var(--dsw-alias-brand-primary);
 }
@@ -869,7 +843,6 @@
   .cardSettings,
   .cardSwitchTrack,
   .cardSwitchThumb,
-  .rowGear,
   .popupRow,
   .switchTrack,
   .switchThumb {

@@ -35,6 +35,14 @@
 - tab 枚举覆盖 `state.splits` / `state.bottomSplits` / `state.floats`（浮动窗口的 tab 同样算打开）。走 service 路径（而非直改 state）使注册的生命周期回调照常触发。
 - FileTree/TreePanel 透传 `onPathRenamed?` / `onPathDeleted?`（可选，测试可不接线）；EditorHost 两处 `<TreePanel>` 接线。
 
+### 实施偏差与修正（2026-10-09）
+
+- **枚举面收窄成一处**：`state.splits` / `state.floats` 随自由窗口机制一起消失（指南 §11），`bottomSplits` 成了插件自己唯一的 tab 空间；而文件默认开在 **DSH 原生右侧栏**，那些 tab **不在 store 里**（`service.openTab` 有原生承载面时直接走 native，从不写 store）。于是改名/删除的调解**整体漏掉了右侧栏**：改名后页签仍绑旧路径，下一次保存把旧名字写回来（`mkdir -p` 连同被删的目录一起重建）；删除后连「有未保存改动，确定关吗」都不弹，Ctrl+S 直接复活文件。修正：`NativeTabRecords.pathTabs()` 枚举原生记录，`retargetPathTabs` / `closePathTabs` 走两个空间。
+- **改名不再重载文档**：`path` 变化原本会触发编辑器重载，重载会换掉文档并丢掉只存在于编辑器实例里的草稿（改名并没有改字节）。现在改名通过 `consumeRetargetedPath` 认领，编辑器保留文档与草稿，下一次保存落到新名字；没有这个标记的 `path` 变化（真实切换文件）照旧加载。
+- **改名也走子树**：原实现只精确匹配 `tab.path === old`，删除那条却用 `isWithinWorkspace` 覆盖子树——目录改名时子树里的页签（含底部工作台）都不改道。现两条路径统一按子树匹配。
+- **两种路径拼写**：聊天文件链接打开的页签，其 `path` 来自地址，而 `fileAddressFor` 在工作区内一律写**相对**拼写（`src/a.ts`）；文件树改名给的却是**绝对**路径。按原样比较时，这类页签（也就是默认打开方式）会整条判成「无关」，仍绑在刚被改名掉的旧名字上。现在比较统一在「按会话 cwd 解析后的绝对拼写」上进行，写回记录时用调用方给的新名；`movedPath` 的相等判断也交给 `relativeTo` 的 `.`（原先的字符串相等在 `E:/a` 与 `E:\a` 混拼时会漏出 `新名/.`）。
+- 客户端用例：`tests/editor-unsaved-guard.spec.tsx` 的 `tree rename/delete reconciliation`（含聊天链接的相对拼写、两个 seat 同号 id 的标记隔离）；`tests/native-surface.spec.ts` 的 `path enumeration and the navigation gate`。
+
 ## 二级菜单视觉关系（layout.css，同批）
 
 针对「二级菜单没有视觉关系」的反馈，两条纯 CSS 规则（仍以 `data-dsh-sidebar-submenu` body 属性限定作用域，宿主默认不受影响）：

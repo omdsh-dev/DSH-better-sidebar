@@ -122,9 +122,13 @@ export function openClaimedNativeFile(ctx: Context, sessionId: string, cwd: stri
  * @param ctx - client context carrying `betterSidebar`.
  * @param sessionId - the session whose cwd resolves a relative path.
  * @param path - absolute or session-relative file path.
+ * @param line - the 1-based line a file reference named (`a.c#L131`, #826).
+ * Omitted on an ordinary open. It rides the open as a transient navigation:
+ * the editor lands on it once (leaving preview, which renders no source
+ * lines) and the record forgets it afterwards.
  * @returns nothing.
  */
-export function openSidebarFile(ctx: Context, sessionId: string, path: string): void {
+export function openSidebarFile(ctx: Context, sessionId: string, path: string, line?: number): void {
   const summary = ctx.sessions.list.getSnapshot().byId[sessionId]
   const absolute = resolveSidebarPath(summary?.cwd, path)
   // A type that explicitly claims this file owns it: hand the address to the
@@ -133,5 +137,11 @@ export function openSidebarFile(ctx: Context, sessionId: string, path: string): 
   if (openClaimedNativeFile(ctx, sessionId, summary?.cwd, absolute)) return
   const at = Math.max(absolute.lastIndexOf('/'), absolute.lastIndexOf('\\'))
   const title = at === -1 ? absolute : absolute.slice(at + 1)
-  ctx.get('betterSidebar')?.openTab({ type: 'editor', title, path: absolute, id: `editor:${absolute}` })
+  ctx.get('betterSidebar')?.openTab({
+    type: 'editor',
+    title,
+    path: absolute,
+    id: `editor:${absolute}`,
+    ...(line === undefined ? {} : { line }),
+  })
 }

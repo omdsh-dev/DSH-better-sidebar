@@ -114,6 +114,20 @@ describe('openSidebarFile', () => {
     expect(harness.opened).toEqual([])
   })
 
+  it('carries a reference\'s landing line into the open, and omits it otherwise (#826)', () => {
+    // The line is a transient navigation seed, not part of the file identity:
+    // present only when the open came from `#L42` / `a.c:42`.
+    const harness = makeCtx({ candidates: () => [{ kind: 'editor' }] })
+
+    openSidebarFile(harness.ctx, 'session-1', 'out/notes.md', 42)
+
+    expect(harness.opened).toEqual([
+      { type: 'editor', title: 'notes.md', path: '/ws/out/notes.md', id: 'editor:/ws/out/notes.md', line: 42 },
+    ])
+    openSidebarFile(harness.ctx, 'session-1', 'out/other.md')
+    expect('line' in harness.opened[1]!).toBe(false)
+  })
+
   it('ranks by the registry order: the editor keeps files no other type claims', () => {
     // `editor` first is the normal case (our type registers
     // `dsh-resource://file/**` in the extension band, so it beats the

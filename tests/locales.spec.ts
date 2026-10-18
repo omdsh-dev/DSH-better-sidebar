@@ -62,13 +62,13 @@ describe('locales (DSH i18n following)', () => {
     attachLocale(locale)
 
     locale.switchTo('zh')
-    expect(t('changes')).toBe('文件变动')
+    expect(t('explorer')).toBe('资源管理器')
     expect(isZh()).toBe(true)
 
     // Live switch: the service's active locale wins even though the
     // browser still asks for en-US.
     locale.switchTo('en')
-    expect(t('changes')).toBe('Changes')
+    expect(t('explorer')).toBe('Explorer')
     expect(isZh()).toBe(false)
   })
 
@@ -103,6 +103,14 @@ describe('locales (DSH i18n following)', () => {
 
   it('registers a namespace distinct from DSH ui-sidebar\'s own \'sidebar\'', () => {
     expect(LOCALE_NS).toBe('betterSidebar')
+  })
+
+  it('names the existing changes entry Git in every shipped locale', () => {
+    // Keep the translation key (and the git tab id) stable: this is display
+    // copy only. Check raw dictionaries so English fallback cannot hide a miss.
+    for (const [lang, dict] of Object.entries({ zh, en, ...localeDicts })) {
+      expect(dict.changes, lang).toBe('Git')
+    }
   })
 
   it('keeps the zh and en dictionaries key-set-equal', () => {
@@ -219,7 +227,7 @@ describe('locales (better-locale override)', () => {
     attachBetterLocale(betterLocale)
 
     // 'changes' has no ja entry in this fake; should fall back to the en text.
-    expect(t('changes')).toBe('Changes')
+    expect(t('changes')).toBe('Git')
   })
 
   it('falls back to the zh/en chain when no override is active', () => {

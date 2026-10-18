@@ -1,6 +1,6 @@
 /**
- * The 3 built-in file viewer descriptors (markdown / html / code), exactly
- * like external plugins register theirs.
+ * The 4 built-in file viewer descriptors (markdown / html / jsonl / code),
+ * exactly like external plugins register theirs.
  *
  * DSH 0.1.7 ships `ui-sidebar-documentpreview`, its own code / spreadsheet /
  * office / pdf / image / html / markdown / text previews with zoom and
@@ -10,6 +10,9 @@
  *    sanitation, floating TOC), which the user prefers to the host's;
  *  - `html` — the sandboxed iframe preview plus the host-less
  *    `htmlViewerNoSandbox` / `htmlViewerDefaultUnsafe` escape hatches;
+ *  - `jsonl` — a record-per-row preview (the host maps `.jsonl` to its JSON
+ *    highlighter but renders it as one long text document) with the JSONL
+ *    editor behind the mode toggle;
  *  - `code` — the catch-all (`exts: []`, lowest priority) that claims any
  *    file no other viewer did, and it is an EDITABLE CodeMirror with save —
  *    the host's equivalents are read-only previews.
@@ -48,7 +51,7 @@ import { t } from '../locales.ts'
  */
 const LazyTextEditor = lazyChunkComponent<FileViewerProps>('editor', (mod) => mod.TextEditor as ComponentType<FileViewerProps> | undefined)
 
-/** The 3 built-in file viewer descriptors. */
+/** The 4 built-in file viewer descriptors. */
 export function builtinViewers(): readonly FileViewerDescriptor[] {
   return [
     {
@@ -82,12 +85,43 @@ export function builtinViewers(): readonly FileViewerDescriptor[] {
       component: (props) => <LazyTextEditor {...props} />,
     },
     {
+      id: 'jsonl',
+      title: () => t('viewerJsonl'),
+      icon: (size: number) => <IconCodeOutlineRegular size={size} />,
+      // Newline-delimited JSON. It gets its own descriptor rather than riding
+      // the `code` catch-all so an external plugin can shadow exactly this
+      // format, and so the settings page can switch it off on its own.
+      exts: ['jsonl', 'ndjson'],
+      priority: 0,
+      fetchStrategy: 'fsRead',
+      // Same single gutter switch as the code viewer: the editor mode of a
+      // JSONL file is still an editable text surface.
+      settings: {
+        toggles: [{
+          key: 'editorGitGutter',
+          title: () => t('settingsEditorGitGutterTitle'),
+          desc: () => t('settingsEditorGitGutterDesc'),
+        }],
+      },
+      component: (props) => <LazyTextEditor {...props} />,
+    },
+    {
       id: 'code',
       title: () => t('viewerCode'),
       icon: (size: number) => <IconCodeOutlineRegular size={size} />,
       exts: [],
       priority: -100,
       fetchStrategy: 'fsRead',
+      // Declarative settings: ONE switch for the whole uncommitted-change
+      // gutter (line tint + left bar + hover blame). Deliberately no
+      // per-part switches.
+      settings: {
+        toggles: [{
+          key: 'editorGitGutter',
+          title: () => t('settingsEditorGitGutterTitle'),
+          desc: () => t('settingsEditorGitGutterDesc'),
+        }],
+      },
       component: (props) => <LazyTextEditor {...props} />,
     },
   ]

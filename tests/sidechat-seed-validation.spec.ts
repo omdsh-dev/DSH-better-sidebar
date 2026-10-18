@@ -316,9 +316,13 @@ describe('sidechat seed vs the REAL projection registry (the runtime inbox path)
    * (seq !== 0). The seed's `agent/inbox/spliced` events therefore replay as
    * the child's live pending input.
    *
-   * The definition below is a verbatim transcription of
-   * `inboxProjectionDefinition` from `@deepseek-ai/dsh-agent-loop` (not
-   * re-exported from the package root), pinned against DSH 0.1.5-rc.2.
+   * The definition below mirrors the OBSERVABLE fold of
+   * `inboxProjectionDefinition` from `@deepseek-ai/dsh-agent-loop` (the real
+   * symbol is not re-exported from the package root): same key, same schema
+   * shape, same splice application. DSH 0.2.0-rc.2 additionally validates the
+   * splice range and rejects duplicate pending ids; those guards only reject
+   * malformed history, which is not what this spec pins, so the copy stays
+   * minimal — the assertions below only read `next-turn` / `next-step`.
    */
   const inboxDefinition = {
     key: 'inbox',

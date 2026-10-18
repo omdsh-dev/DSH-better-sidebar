@@ -38,13 +38,23 @@ import type { TasksAgentNode, TasksFoldNode, TasksNode, TasksWorkflowNode } from
 import { tasksEdges } from './tasks-model.ts'
 import {
   GRAPH_FIT_MIN_SCALE, GRAPH_NODE_H, GRAPH_NODE_W, GRAPH_PAD, layoutTasksGraphForWidth,
-  type GraphBox,
+  textTailLines, type GraphBox,
 } from './tasks-graph-layout.ts'
+import { useTweenedLayout } from './tasks-layout-tween.ts'
+import { easeOut as glideEase } from './tasks-layout-tween.ts'
+import { fitTransform, GLIDE_MS, lerpTransform, type ViewTransform } from './tasks-view-glide.ts'
+
+/** Whether the reader asked the platform for less motion. */
+function prefersReducedMotion(): boolean {
+  return typeof window !== 'undefined'
+    && typeof window.matchMedia === 'function'
+    && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+}
 import {
-  agentIdentity, agentMeta, foldPreviews, foldTally, TaskLine, WorkflowGlyph, workflowMeta,
+  activityLine, agentChip, agentMeta, flatten, foldErrorTally, foldPreviews, FoldGlyph,
+  foldTally, TaskLine, WorkflowGlyph, workflowMeta,
 } from './tasks-shared.tsx'
 import { CardBar, CardTop, phaseClass, type CardKind } from './tasks-card.tsx'
-import { doneActivityTitle, liveActivityLabel } from './process-labels.ts'
 import { t } from './locales.ts'
 import css from './tasks-graph.module.css'
 import canvasCss from './tasks-canvas.module.css'
@@ -75,18 +85,6 @@ const CLICK_TOLERANCE_PX = 4
 function agentCardKind(node: TasksAgentNode): CardKind {
   if (node.team?.role === 'teammate') return 'teammate'
   return node.parentId === undefined ? 'main' : 'subagent'
-}
-
-/**
- * The bar's activity line. A running node shows the LIVE merged activity; a
- * settled one shows the same merged wording in its completed form (the host's
- * own `done.*` phrasing) — a settled card whose bar read only "已完成" would
- * throw away the one thing the fold is for.
- */
-function barActivity(node: TasksAgentNode): string | undefined {
-  const summary = node.live?.summary
-  if (node.state === 'running') return liveActivityLabel(summary)
-  return summary === undefined ? undefined : doneActivityTitle(summary)
 }
 
 /** Members of one run that already reported an outcome. */
@@ -129,8 +127,8 @@ export interface TasksGraphProps {
   onOpenTask(taskId: string, anchor: HTMLElement): void
   /** The control cluster's global fold switch (settled leaves). */
   onToggleFold(): void
-  /** The fold AGGREGATE's click: expand everything (global + manual folds). */
-  onExpandFold(): void
+  /** The fold AGGREGATE's click: reveal THIS group's members only. */
+  onExpandGroup(node: TasksFoldNode): void
   /** Fold ONE settled node into its parent's aggregate (the bar's chevron). */
   onFoldNode(node: TasksAgentNode): void
   mode: 'graph' | 'tree'
@@ -193,10 +191,21 @@ export function FoldToggleButton(props: { folded: boolean; onToggleFold(): void 
 
 export function TasksGraph(props: TasksGraphProps): ReactNode {
   const {
-    nodes, folded, rootId, onNodeInfo, onWorkflowInfo, onOpenTask, onToggleFold, onExpandFold,
+    nodes, folded, rootId, onNodeInfo, onWorkflowInfo, onOpenTask, onToggleFold, onExpandGroup,
     onFoldNode, mode, onModeChange, loading,
   } = props
   const containerRef = useRef<HTMLDivElement>(null)
+  /*
+   * The canvas deliberately runs NO FLIP library: auto-animate pins a leaving
+   * card with absolute `left/top` measured from `getBoundingClientRect()` and
+   * translates the movers in UNSCALED units, while this layer carries the
+   * fit's `transform: scale(k)`. Inside that layer the leaving card's pinned
+   * box cannot even be expressed (its position jumps) and every mover travels
+   * k× its true distance — reproduced live as "折叠展开的动效都特别怪".
+   * Cards therefore arrive with the CSS entrance in tasks-graph.module.css
+   * (mount-only, no geometry math) and leave instantly; the edges they hang
+   * from are not animated either, so nothing disagrees with them.
+   */
   const [tf, setTf] = useState({ x: 0, y: 0, k: 1 })
   const [dragging, setDragging] = useState(false)
   /** Pointer travel of the in-flight gesture (click suppression). */
@@ -212,37 +221,79 @@ export function TasksGraph(props: TasksGraphProps): ReactNode {
     () => layoutTasksGraphForWidth(nodes, width, GRAPH_FIT_MIN_SCALE),
     [nodes, width],
   )
+  /**
+   * What is actually drawn: the layout tweened towards, frame by frame, in the
+   * canvas's OWN coordinates (see tasks-layout-tween.ts — a screen-space FLIP
+   * library cannot work under the fit's scale). Cards, connectors and phase
+   * frames all read it, so the lines travel WITH the cards instead of snapping
+   * to the new geometry.
+   */
+  const drawn = useTweenedLayout(layout)
   const edges = useMemo(() => tasksEdges(nodes), [nodes])
   const nodeById = useMemo(() => new Map(nodes.map(node => [node.id, node])), [nodes])
 
+  /** A running view glide (see fit): cancelled by any reader gesture. */
+  const glideRef = useRef(0)
+
+  /** Stop a glide where it is (the reader took the wheel). */
+  const stopGlide = useCallback((): void => {
+    if (glideRef.current !== 0) {
+      cancelAnimationFrame(glideRef.current)
+      glideRef.current = 0
+    }
+  }, [])
+
   /**
-   * Center the canvas and scale it to fill. The fit measures the CONTENT box
-   * (the layout's padding is breathing room, not content): centering the padded
-   * box leaves the graph visibly off-center in a narrow panel, which is exactly
-   * how "the graph looks small and sits in a corner" happens.
+   * The frame the auto-fit wants right now, or undefined before the container
+   * has been measured (the sidebar mounts hidden at zero size). The arithmetic
+   * lives in tasks-view-glide.ts, where a test can reach it.
    */
-  const fit = useCallback((): void => {
+  const fitTarget = useCallback((): ViewTransform | undefined => {
     const container = containerRef.current
-    if (container === null) return
-    const cw = container.clientWidth
-    const ch = container.clientHeight
-    if (cw === 0 || ch === 0) return
-    const contentW = Math.max(GRAPH_NODE_W, layout.width - GRAPH_PAD * 2)
-    const contentH = Math.max(GRAPH_NODE_H, layout.height - GRAPH_PAD * 2)
-    const k = Math.max(
-      GRAPH_FIT_MIN_SCALE,
-      Math.min(
-        (cw - FIT_MARGIN * 2) / contentW,
-        (ch - FIT_MARGIN * 2) / contentH,
-        FIT_MAX_SCALE,
-      ),
-    )
-    setTf({
-      x: (cw - contentW * k) / 2 - GRAPH_PAD * k,
-      y: Math.max(FIT_MARGIN / 2, (ch - contentH * k) / 2) - GRAPH_PAD * k,
-      k,
+    if (container === null) return undefined
+    return fitTransform({
+      containerW: container.clientWidth,
+      containerH: container.clientHeight,
+      layoutW: layout.width,
+      layoutH: layout.height,
+      pad: GRAPH_PAD,
+      minContentW: GRAPH_NODE_W,
+      minContentH: GRAPH_NODE_H,
+      margin: FIT_MARGIN,
+      minScale: GRAPH_FIT_MIN_SCALE,
+      maxScale: FIT_MAX_SCALE,
     })
   }, [layout.width, layout.height])
+
+  /**
+   * Put the frame where the fit wants it, either at once (a resize while the
+   * reader drags the panel edge, a fresh session) or as a GLIDE — the layout
+   * tween moves the cards, and the frame has to travel with them instead of
+   * jumping to the new framing a frame later. That glide is what makes "stay
+   * auto-fitted" and "never yank the view" the same behavior.
+   *
+   * @param animate - glide instead of snapping.
+   */
+  const applyFit = useCallback((animate: boolean): void => {
+    const target = fitTarget()
+    if (target === undefined) return
+    stopGlide()
+    if (!animate || prefersReducedMotion()) {
+      setTf(target)
+      return
+    }
+    const from = tfRef.current
+    const started = performance.now()
+    const step = (): void => {
+      const progress = glideEase((performance.now() - started) / GLIDE_MS)
+      setTf(lerpTransform(from, target, progress))
+      glideRef.current = progress < 1 ? requestAnimationFrame(step) : 0
+    }
+    glideRef.current = requestAnimationFrame(step)
+  }, [fitTarget, stopGlide])
+
+  /** The reader's own re-fit (the ⌂ button and a background double-click). */
+  const fit = useCallback((): void => { applyFit(true) }, [applyFit])
 
   /**
    * Keep the canvas reachable: a pan or a zoom-out may never push the whole
@@ -273,11 +324,25 @@ export function TasksGraph(props: TasksGraphProps): ReactNode {
     fit()
   }, [fit])
 
-  // Auto-fit on mount, on layout growth and on container resize — but never
-  // over a view the reader has panned/zoomed themselves.
+  /** The newest `applyFit`, so the effects below can depend on WHAT changed. */
+  const fitRef = useRef(applyFit)
+  fitRef.current = applyFit
+
+  // A different tree is a different canvas: re-fit AND hand the view back to the
+  // auto-fit, whatever the reader did to the previous one. Snapped, because the
+  // content changes wholesale.
   useEffect(() => {
-    if (!touchedRef.current) fit()
-  }, [fit, rootId])
+    touchedRef.current = false
+    fitRef.current(false)
+  }, [rootId])
+
+  // Layout growth while the reader has left the view alone: glide to the new
+  // framing, so expanding a group KEEPS the graph centred and inside the panel
+  // without the frame jumping out from under the cards travelling to it. A
+  // reader who panned or zoomed owns the view, and nothing moves it.
+  useEffect(() => {
+    if (!touchedRef.current) fitRef.current(true)
+  }, [layout.width, layout.height])
 
   useEffect(() => {
     const container = containerRef.current
@@ -308,6 +373,7 @@ export function TasksGraph(props: TasksGraphProps): ReactNode {
       const next = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, k * Math.exp(-event.deltaY * unit * 0.0014)))
       if (next === k) return
       touchedRef.current = true
+      stopGlide()
       setTf(clampTf({
         x: mx - (mx - x) * (next / k),
         y: my - (my - y) * (next / k),
@@ -316,7 +382,7 @@ export function TasksGraph(props: TasksGraphProps): ReactNode {
     }
     container.addEventListener('wheel', onWheel, { passive: false })
     return () => { container.removeEventListener('wheel', onWheel) }
-  }, [clampTf])
+  }, [clampTf, stopGlide])
 
   const zoomBy = useCallback((factor: number): void => {
     const container = containerRef.current
@@ -324,10 +390,11 @@ export function TasksGraph(props: TasksGraphProps): ReactNode {
     const next = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, k * factor))
     if (next === k || container === null) return
     touchedRef.current = true
+    stopGlide()
     const mx = container.clientWidth / 2
     const my = container.clientHeight / 2
     setTf(clampTf({ x: mx - (mx - x) * (next / k), y: my - (my - y) * (next / k), k: next }))
-  }, [clampTf])
+  }, [clampTf, stopGlide])
 
   /**
    * Drag-pan. The gesture only ever starts on the BACKGROUND: a pointerdown
@@ -350,6 +417,7 @@ export function TasksGraph(props: TasksGraphProps): ReactNode {
 
   const onPointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>): void => {
     if (event.button !== 0) return
+    stopGlide()
     const target = event.target as HTMLElement
     if (target.closest('[data-graph-node]') !== null) return
     if (target.closest('[data-graph-controls]') !== null) return
@@ -375,10 +443,17 @@ export function TasksGraph(props: TasksGraphProps): ReactNode {
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
     window.addEventListener('pointercancel', onUp)
-  }, [clampTf])
+  }, [clampTf, stopGlide])
 
   /** Suppress node clicks that ended a drag gesture. */
   const clickAllowed = useCallback((): boolean => travelRef.current <= CLICK_TOLERANCE_PX, [])
+
+  /*
+   * Folding does NOT claim the view. The frame stays auto-fitted for as long as
+   * the reader has not panned or zoomed, and the fit GLIDES (applyFit), so a
+   * group that expands larger than the panel stays centred and inside it
+   * without the jump that claiming the view used to trade for.
+   */
 
   // Phase frames: group each run's members by phase and box them.
   const phaseFrames = useMemo((): PhaseFrame[] => {
@@ -390,7 +465,7 @@ export function TasksGraph(props: TasksGraphProps): ReactNode {
         const boxes: GraphBox[] = []
         for (const member of phase.members) {
           const id = member.childId !== '' ? member.childId : `wfmember:${runNode.run.runId}:${member.seq}`
-          const box = layout.boxes.get(id)
+          const box = drawn.boxes.get(id)
           if (box !== undefined) boxes.push(box)
         }
         if (boxes.length === 0) return
@@ -410,7 +485,7 @@ export function TasksGraph(props: TasksGraphProps): ReactNode {
       })
     }
     return frames
-  }, [nodes, layout])
+  }, [nodes, drawn])
 
   /**
    * The connector between two boxes: a straight PERPENDICULAR stub out of the
@@ -462,8 +537,8 @@ export function TasksGraph(props: TasksGraphProps): ReactNode {
         >
           <svg className={css.edges} width={layout.width} height={layout.height} aria-hidden="true">
             {edges.map((edge) => {
-              const from = layout.boxes.get(edge.from)
-              const to = layout.boxes.get(edge.to)
+              const from = drawn.boxes.get(edge.from)
+              const to = drawn.boxes.get(edge.to)
               if (from === undefined || to === undefined) return null
               const target = nodeById.get(edge.to)
               return (
@@ -498,11 +573,24 @@ export function TasksGraph(props: TasksGraphProps): ReactNode {
               activatable), and tree mode provides the full Arrow/Home/End/Enter
               navigation over the same nodes (see TasksTree). Do NOT "fix" the
               nodes' tabIndex without fixing the tab-stop flood. */}
-          {nodes.map((node) => {
-            const box = layout.boxes.get(node.id)
+          {nodes.map((node, index) => {
+            const box = drawn.boxes.get(node.id)
             if (box === undefined) return null
-            const style = { left: box.x, top: box.y, width: GRAPH_NODE_W, minHeight: box.h }
-            if (node.kind === 'fold') return renderFoldNode(node, style, onExpandFold, clickAllowed)
+            const style = {
+              left: box.x,
+              top: box.y,
+              width: GRAPH_NODE_W,
+              minHeight: box.h,
+              /*
+               * The entrance is STAGGERED by the node's page order: a group that
+               * reveals several cards at once (or a page that loads a tree)
+               * cascades instead of popping in one frame. Capped, so a big tree
+               * settles quickly, and inert for cards that were already mounted
+               * (their entrance ran when they arrived).
+               */
+              animationDelay: `${Math.min(index, 9) * 26}ms`,
+            }
+            if (node.kind === 'fold') return renderFoldNode(node, style, onExpandGroup, clickAllowed)
             if (node.kind === 'workflow') {
               return renderWorkflowNode(node, style, onWorkflowInfo, clickAllowed)
             }
@@ -572,6 +660,17 @@ function renderAgentNode(
    * and only there.
    */
   const foldable = (settled || node.state === 'idle') && node.parentId !== undefined
+  /** The merged process line the bar shows in place of the state word. */
+  const activity = activityLine(node)
+  /** The identity word beside the kind badge (one badge row, no meta line). */
+  const chip = agentChip(node)
+  /**
+   * The newest assistant text, under the name: what the node is SAYING (a
+   * running child) or said last (a settled one). The bar keeps the merged
+   * activity — the two answer different questions — and the line count comes
+   * from the layout so the card never renders taller than its box.
+   */
+  const tail = node.live?.text === undefined ? undefined : flatten(node.live.text)
   return (
     <div
       key={node.id}
@@ -598,15 +697,16 @@ function renderAgentNode(
         kind={agentCardKind(node)}
         depth={node.depth}
         {...(node.phase === undefined ? {} : { phase: node.phase })}
+        {...(chip === undefined ? {} : { chip })}
+        {...(tail === undefined ? {} : { text: { value: tail, lines: textTailLines(tail) } })}
         name={node.label}
-        meta={agentIdentity(node)}
       >
         <TaskLine tasks={node.tasks} onOpenTask={onOpenTask} />
       </CardTop>
       <CardBar
         state={node.state}
         running={node.state === 'running'}
-        {...(barActivity(node) === undefined ? {} : { activity: barActivity(node) })}
+        {...(activity === undefined ? {} : { activity })}
         {...(foldable && !node.current && onFold !== undefined
           ? { onFold: () => { onFold(node) } }
           : {})}
@@ -655,15 +755,25 @@ function renderWorkflowNode(
 }
 
 /**
- * One fold aggregate node: the completed leaves of one parent, collapsed. Its
- * bar is the action row (expand), so the whole card stays one click target.
+ * One fold aggregate node: the finished or the waiting members of one parent,
+ * collapsed. Its bar is the action row — the group's own glyph, the word that
+ * names what a click does, and the expand chevron — so the whole card stays one
+ * click target.
+ *
+ * The count is printed ONCE: the badge above names it, so the bar carries the
+ * ACTION instead (a bare chevron in an otherwise empty strip read as a broken
+ * card), plus the one fact the badge cannot say — a stray failure ("出错 N"
+ * would otherwise hide inside the ✓). The full tally stays the card's
+ * accessible name and tooltip, which a screen reader reads instead of the
+ * badge's inner text.
  */
 function renderFoldNode(
   node: TasksFoldNode,
   style: { left: number; top: number; width: number; minHeight: number },
-  onToggleFold: () => void,
+  onExpandGroup: (node: TasksFoldNode) => void,
   clickAllowed: () => boolean,
 ): ReactNode {
+  const errors = foldErrorTally(node)
   return (
     <div
       key={node.id}
@@ -676,7 +786,7 @@ function renderFoldNode(
       style={style}
       onClick={() => {
         if (!clickAllowed()) return
-        onToggleFold()
+        onExpandGroup(node)
       }}
     >
       <CardTop
@@ -688,11 +798,11 @@ function renderFoldNode(
         extraClass={css.cardNamePlain}
       />
       <CardBar state={node.foldKind === 'idle' ? 'idle' : 'done'} stateWord={false}>
-        {/* The bar SAYS what the row holds — "✓ N 已完成 · 出错 N" for finished
-            work (a stray failure would otherwise hide inside the ✓) and
-            "N 待命" for the waiting members. No action word: the tally needs
-            the room and the chevron already points at 展开. */}
-        <span className={css.barActivity} title={foldTally(node)}>{foldTally(node)}</span>
+        <span className={css.barFoldGlyph} aria-hidden="true"><FoldGlyph size={10} /></span>
+        <span className={css.barAction} title={foldTally(node)}>{t('tasksFoldExpandShort')}</span>
+        {errors !== undefined && (
+          <span className={css.barError}>{errors}</span>
+        )}
         <span className={css.barFold} aria-hidden="true">
           <IconChevronDownOutlineRegular size={12} />
         </span>

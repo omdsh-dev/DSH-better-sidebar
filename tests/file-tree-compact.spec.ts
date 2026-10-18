@@ -128,7 +128,7 @@ describe('compactLoadTargets', () => {
       '/root/a/b': {},
     }
     // Only marked, not-yet-loaded dirs qualify: files and plain dirs never do.
-    expect(compactLoadTargets(levels)).toEqual(['/root/a/c'])
+    expect(compactLoadTargets(levels, ['/root'])).toEqual(['/root/a/c'])
   })
 
   it('skips already-loaded paths and dedupes repeat appearances', () => {
@@ -138,6 +138,32 @@ describe('compactLoadTargets', () => {
       '/alt': { entries: [row] },
       '/root/a': { entries: [] },
     }
-    expect(compactLoadTargets(levels)).toEqual([])
+    expect(compactLoadTargets(levels, ['/root'])).toEqual([])
+  })
+
+  it('only walks from the rendered roots', () => {
+    // `/elsewhere` is loaded but no chain reaches it from what the tree
+    // renders, so its singleton child needs no preload.
+    const levels: Record<string, CompactLevel> = {
+      '/root': { entries: [dir('/root/plain')] },
+      '/elsewhere': { entries: [dir('/elsewhere/x', true)] },
+    }
+    expect(compactLoadTargets(levels, ['/root'])).toEqual([])
+  })
+
+  it('stops at the render cap instead of pulling deeper links', () => {
+    // MAX_COMPACT_DEPTH + 1 loaded links, each one a singleton: the row's
+    // breadcrumb already stops folding at the cap, so the link PAST it — the
+    // one the deepest loaded level names — must not be preloaded. The
+    // every-loaded-level scan this replaced collected exactly that link, and
+    // with it link 34, 35, … (one serial POST and one whole-tree render each).
+    const levels: Record<string, CompactLevel> = {}
+    for (let index = 1; index <= MAX_COMPACT_DEPTH + 1; index += 1) {
+      levels[`/${'x'.repeat(index)}`] = { entries: [dir(`/${'x'.repeat(index + 1)}`, true)] }
+    }
+    // The fixture is cap-limited, not data-limited: the head's chain IS full…
+    expect(compactChain(dir('/x', true), path => levels[path])).toHaveLength(MAX_COMPACT_DEPTH)
+    // …so nothing past the cap is requested.
+    expect(compactLoadTargets(levels, ['/x'])).toEqual([])
   })
 })

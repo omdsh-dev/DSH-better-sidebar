@@ -215,7 +215,8 @@ export function escapeGlob(query: string): string {
 }
 
 /** Directory names that are never useful filename-search results (VCS
- *  internals, dependency forests, package-manager stores, build caches).
+ *  internals, dependency forests, package-manager stores, build caches,
+ *  worktree forests, language environments).
  *  The plain walk in fs-search.ts builds its case-insensitive skip set
  *  from this list, and BOTH engine argvs exclude every name — with
  *  --no-ignore active an rg/fd run would otherwise re-enter node_modules
@@ -238,6 +239,16 @@ export const SKIP_DIR_NAMES: readonly string[] = [
   'dist',
   'build',
   'out',
+  // #879: git-worktree forests (both spellings; `.worktrees/` is the
+  // layout DeepSeek Harness itself uses) burned the whole 100k visit budget
+  // on real projects before the walk reached project files. Language
+  // environments and their bytecode caches are noise of the same class.
+  '.worktrees',
+  '.worktree',
+  'target',
+  'venv',
+  '.venv',
+  '__pycache__',
   '.umi',
   '.umi-production',
   '.dumi',
@@ -270,7 +281,16 @@ function streamLines(
     }
     const timer = setTimeout(() => { finish(new EngineTimeoutError('search engine timed out')) }, ENGINE_TIMEOUT_MS)
     child.once('error', (error) => { finish(error) })
-    child.once('exit', (code) => {
+    // `close`, not `exit` (#883): `exit` fires the moment the process dies,
+    // while the stdout pipe may still hold undrained data — under host load
+    // the exit event can win the race and resolve this promise with a still
+    // EMPTY `lines` array (fd's second `--type d` run was the common victim:
+    // matches intact, dirs silently empty). `close` fires only after every
+    // stdio stream has ended, so every readline `line` event has fired
+    // before the settlement. The truncation kill and the timeout/error
+    // finishes above are unaffected: whichever finish ran first sets
+    // `closed`, and this handler is idempotent.
+    child.once('close', (code) => {
       if (truncated) {
         finish(undefined)
       } else if (code !== 0 && code !== 1) {
@@ -449,19 +469,22 @@ function runChild(
 ): Promise<EngineResult> {
   const cap = maxMatches + 1
   if (probe.engine === 'rg') {
-    const child = spawn(probe.binary, rgArgv(query), { cwd: root, stdio: ['ignore', 'pipe', 'ignore'] })
+    const child = spawner(probe.binary, rgArgv(query), { cwd: root, stdio: ['ignore', 'pipe', 'ignore'] })
     return streamLines(child, cap).then(({ lines, truncated }) => {
       const derived = deriveRgMatches(normalizeEnginePaths(lines), query, maxMatches)
       return { paths: derived.paths, dirs: derived.dirs, truncated: truncated || derived.truncated }
     })
   }
-  const child = spawn(probe.binary, fdArgv(cap, query), { cwd: root, stdio: ['ignore', 'pipe', 'ignore'] })
-  const dirChild = spawn(probe.binary, fdArgv(cap, query, 'd'), { cwd: root, stdio: ['ignore', 'pipe', 'ignore'] })
+  const child = spawner(probe.binary, fdArgv(cap, query), { cwd: root, stdio: ['ignore', 'pipe', 'ignore'] })
+  const dirChild = spawner(probe.binary, fdArgv(cap, query, 'd'), { cwd: root, stdio: ['ignore', 'pipe', 'ignore'] })
   return Promise.all([
     streamLines(child, cap),
-    // Only the directory subset is kept: fd already labels it, and its
-    // truncation must not affect the match list's own sentinel.
-    streamLines(dirChild, cap).catch(() => ({ lines: [], truncated: false })),
+    // The directory run's failure is NOT swallowed (#883): a rejected dirs
+    // stream rejects the whole engine call, so runEngine marks the engine
+    // broken and this one search falls back to the plain walk — exactly
+    // the main run's failure handling. The old swallow-catch degraded the
+    // failure into "zero directories", invisible in every environment.
+    streamLines(dirChild, cap),
   ]).then(([matches, dirs]) => {
     const paths = normalizeEnginePaths(matches.lines)
     const dirSet = new Set(normalizeEnginePaths(dirs.lines))
@@ -475,6 +498,19 @@ function runChild(
 
 let prober = (): Promise<readonly EngineProbe[]> => probeOnce()
 let runner = runChild
+/**
+ * The spawn signature runChild uses, narrowed from `typeof spawn` so a test
+ * spawner returning a scripted `ChildProcess` satisfies the hook without
+ * matching spawn's full overload surface.
+ */
+export type EngineSpawner = (
+  binary: string,
+  argv: readonly string[],
+  options: { cwd: string; stdio: ['ignore', 'pipe', 'ignore'] },
+) => ChildProcess
+/** Child spawn behind runChild — injectable so tests can drive the real
+ *  orchestration with scripted children (event order, stream timing). */
+let spawner: EngineSpawner = spawn
 /** Engines failed at runtime: skipped for the rest of this process. */
 const broken = new Set<Engine>()
 let probePromise: Promise<readonly EngineProbe[]> | null = null
@@ -532,10 +568,11 @@ export async function usableEngines(): Promise<readonly EngineProbe[]> {
   return probes.filter((probe) => !broken.has(probe.engine))
 }
 
-/** Test seam: replace the probe / child-runner implementations. */
-export function setEngineHooks(next: { prober?: typeof prober; runner?: typeof runner }): void {
+/** Test seam: replace the probe / child-runner / spawn implementations. */
+export function setEngineHooks(next: { prober?: typeof prober; runner?: typeof runner; spawner?: typeof spawner }): void {
   if (next.prober !== undefined) prober = next.prober
   if (next.runner !== undefined) runner = next.runner
+  if (next.spawner !== undefined) spawner = next.spawner
 }
 
 /** Reset probe cache, broken-set and hooks (test isolation). */
@@ -544,4 +581,5 @@ export function resetEngines(): void {
   broken.clear()
   prober = (): Promise<readonly EngineProbe[]> => probeOnce()
   runner = runChild
+  spawner = spawn
 }

@@ -5,7 +5,7 @@
  * schema-valid canonical output, target-tab gating). The registry is real;
  * no WebSocket or browser is needed — the sender callbacks are captured.
  */
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -13,6 +13,7 @@ import { validateJsonSchemaValue, type ToolDefinition, type ToolRunContext } fro
 import { AgentOpenRegistry, registerOpenTool } from '../src/agent-opens.ts'
 import type { Context } from '../src/context-types.ts'
 import { SIDEBAR_PREFS_DEFAULTS, type SidebarPrefs } from '../src/prefs-shared.ts'
+import { removeTree } from './temp-tree.ts'
 
 /** One registration captured by the fake tools service. */
 interface CapturedTool {
@@ -107,6 +108,32 @@ describe('AgentOpenRegistry', () => {
     detach2()
   })
 
+  /**
+   * The queue is bounded per session: a thread whose sidebar is never shown
+   * must not accumulate opens for the lifetime of the host process.
+   */
+  it('caps the per-session queue, dropping the OLDEST queued opens', () => {
+    const registry = new AgentOpenRegistry()
+    const ids: string[] = []
+    for (let index = 0; index < 70; index += 1) {
+      ids.push(registry.enqueue('s1', 'file', `/f${index}.txt`, `f${index}.txt`).id)
+    }
+    // Another session's queue is untouched by the cap.
+    registry.enqueue('s2', 'file', '/other.txt', 'other.txt')
+
+    const received: Array<{ id: string }> = []
+    const detach = registry.attach('s1', (request) => { received.push(request) })
+    expect(received).toHaveLength(64)
+    // FIFO among the survivors, and the survivors are the NEWEST 64.
+    expect(received.map(request => request.id)).toEqual(ids.slice(6))
+    detach()
+
+    const other: unknown[] = []
+    const detachOther = registry.attach('s2', (request) => { other.push(request) })
+    expect(other).toHaveLength(1)
+    detachOther()
+  })
+
   it('drainAll drops the queue and dispose drops subscribers', () => {
     const registry = new AgentOpenRegistry()
     registry.enqueue('s1', 'file', '/a.txt', 'a.txt')
@@ -145,7 +172,7 @@ describe('sidebar_open tool', () => {
       expect(received).toHaveLength(1)
       detach()
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 
@@ -163,7 +190,7 @@ describe('sidebar_open tool', () => {
       expect(received).toHaveLength(1)
       detach()
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 
@@ -178,7 +205,7 @@ describe('sidebar_open tool', () => {
       expect(value).toEqual({ kind: 'folder', target: sub, title: 'Sources', delivered: false })
       expect(validateJsonSchemaValue(tool.output.schema, value, 'value')).toEqual([])
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 
@@ -219,7 +246,7 @@ describe('sidebar_open tool', () => {
       await expect(fileTool.execute({ target: 'https://example.com/' }, exec('s1'))).resolves.toMatchObject({ kind: 'url' })
       await expect(fileTool.execute({ target: 'f.txt' }, exec('s1'))).rejects.toThrow(/editor tab is disabled/)
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 

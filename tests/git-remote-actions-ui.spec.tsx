@@ -1,11 +1,10 @@
 /**
- * The commit bar's Push / Pull affordances (the AI commit-message suggestion
- * that landed in the same upstream PR is pinned by `git-suggest.spec.tsx`,
- * which keeps the implementation merged from `port/pr-642`).
+ * The More Actions menu's Push / Pull affordances (the AI commit-message
+ * suggestion is pinned by `git-suggest.spec.tsx`).
  *
  * These pin the WIRING the host routes cannot see — which args each action
- * sends (scope, selected checkout) and that its failure lands on the bar's ONE
- * status line, the same channel commit / stage failures use
+ * sends (scope, selected checkout) and that its failure lands on the footer's
+ * ONE status line, the same channel commit / stage failures use
  * (`changes-tab.spec.tsx` pins that placement).
  *
  * The copy assertions go through `t()`, so they follow the active locale
@@ -33,7 +32,10 @@ function mockGit(entries: Array<{ path: string; xy: string }>): void {
   ] as GitWorktree[])
   vi.spyOn(api, 'gitStatus').mockResolvedValue({ isRepo: true, branch: 'main', entries } as GitStatusResult)
   vi.spyOn(api, 'gitBranch').mockResolvedValue({ current: 'main', names: ['main'] })
-  vi.spyOn(api, 'gitLog').mockResolvedValue([])
+  // The lens's history surface is the Graph section (#969): a quiet page.
+  vi.spyOn(api, 'gitGraph').mockResolvedValue({
+    isRepo: true, root: MAIN, entries: [], branches: [], hasMore: false, snapshot: 'one',
+  })
 }
 
 function mountGit(root: Root): void {
@@ -45,7 +47,6 @@ function mountGit(root: Root): void {
       onPreview: () => {},
       selectedRef: null,
       visible: true,
-      refreshTick: 0,
     }))
   })
 }
@@ -62,15 +63,20 @@ function makeRoot(): { container: HTMLDivElement; root: Root } {
   return { container, root: createRoot(container) }
 }
 
-/** One text button of the commit bar, by its label. */
-function textButton(container: HTMLElement, label: string): HTMLButtonElement {
-  const button = [...container.querySelectorAll<HTMLButtonElement>('button')]
+/** Push/Pull live in the native, portaled More Actions menu. */
+async function selectRemoteAction(container: HTMLElement, label: string): Promise<void> {
+  const trigger = container.querySelector<HTMLButtonElement>(`button[aria-label="${t('gitMoreActions')}"]`)
+  if (trigger === null) throw new Error('More Actions button not found')
+  act(() => { trigger.click() })
+  const item = [...document.querySelectorAll<HTMLButtonElement>('button[role="menuitem"]')]
     .find(candidate => candidate.textContent === label)
-  if (button === undefined) throw new Error(`no commit-bar button labelled "${label}"`)
-  return button
+  if (item === undefined) throw new Error(`remote menu action not found: ${label}`)
+  expect(container.contains(item)).toBe(false)
+  await act(async () => { item.click() })
+  await flushEffects()
 }
 
-/** One rendered error line of the commit bar. */
+/** One rendered error line of the footer. */
 function errorLine(container: HTMLElement, text: string): HTMLElement | undefined {
   return [...container.querySelectorAll<HTMLElement>('[role="alert"]')]
     .find(node => (node.textContent ?? '').includes(text))
@@ -85,7 +91,7 @@ afterEach(() => {
   document.body.innerHTML = ''
 })
 
-describe('GitLens commit bar: remote actions', () => {
+describe('GitLens More Actions menu: remote actions', () => {
   it('pushes and pulls the selected checkout, reporting failures on the same status line', async () => {
     mockGit([{ path: 'src/a.ts', xy: ' M' }])
     const push = vi.spyOn(api, 'gitPush').mockResolvedValue({ ok: true })
@@ -96,14 +102,22 @@ describe('GitLens commit bar: remote actions', () => {
       mountGit(root)
       await flushEffects()
 
-      await act(async () => { textButton(container, t('push')).click() })
-      await flushEffects()
+      await selectRemoteAction(container, t('push'))
       expect(push).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'session' }), MAIN)
 
-      await act(async () => { textButton(container, t('pull')).click() })
-      await flushEffects()
+      await selectRemoteAction(container, t('pull'))
       expect(pull).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'session' }), MAIN)
-      expect(errorLine(container, `${t('pullError')}: Not possible to fast-forward`)).toBeDefined()
+      const error = errorLine(container, `${t('pullError')}: Not possible to fast-forward`)
+      expect(error).toBeDefined()
+      expect(container.querySelectorAll('[role="alert"]')).toHaveLength(1)
+      expect(container.querySelector('[data-git-footer]')!.contains(error!)).toBe(true)
+
+      // A screenful of git stderr keeps its height but must be dismissible
+      // instead of squatting in the docked footer.
+      const dismiss = error!.querySelector<HTMLButtonElement>(`button[aria-label="${t('dismiss')}"]`)
+      expect(dismiss).not.toBeNull()
+      act(() => { dismiss!.click() })
+      expect(container.querySelectorAll('[role="alert"]')).toHaveLength(0)
     } finally {
       act(() => { root.unmount() })
       container.remove()

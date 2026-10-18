@@ -11,7 +11,7 @@
  */
 import { execFileSync, spawn } from 'node:child_process'
 import { readFileSync } from 'node:fs'
-import { parentOf, requireAbsolute } from './fs-tree.ts'
+import { messageOf, parentOf, requireAbsolute } from './fs-tree.ts'
 import { SidebarError } from './wire.ts'
 
 /** The two external open actions the route accepts. */
@@ -30,12 +30,31 @@ export interface WslCommandOptions {
   windowsExecutable?: (path: string) => string
 }
 
+/**
+ * Injectable Windows opener NAMES — a test-only seam, never set in production.
+ *
+ * Pointing them at executables that cannot exist lets the REAL `spawn` drive
+ * the whole fallback chain and its failure reporting on a real Windows runtime
+ * (see tests/open-external-windows.spec.ts) without launching an application:
+ * a binary that does not exist cannot start a browser, an editor or a console
+ * window on the runner.
+ */
+export interface WindowsOpenerOptions {
+  /** The `cmd.exe` that runs the `start` branch. */
+  cmdExecutable?: string
+  /** The `rundll32.exe` that runs the `url.dll,FileProtocolHandler` branch. */
+  rundll32Executable?: string
+}
+
+/** Every command-builder seam: WSL path/executable projection + Windows opener names. */
+export type OpenerCommandOptions = WslCommandOptions & WindowsOpenerOptions
+
 /** Runtime seams used only to make launch/error behavior testable off-host. */
 export interface LaunchExternalOptions {
   platform?: NodeJS.Platform
   wsl?: boolean
   distroName?: string
-  commandOptions?: Omit<WslCommandOptions, 'wsl'>
+  commandOptions?: Omit<OpenerCommandOptions, 'wsl'>
   spawn?: typeof spawn
 }
 
@@ -105,33 +124,75 @@ export function revealCommand(
   }
 }
 
-/** Hand a custom-scheme URL to the OS protocol handler. WSL must dispatch to
- * Windows because the registered desktop handlers live on that side. */
-export function urlCommand(
+/**
+ * Characters `cmd.exe` interprets after Node has quoted each argv element for
+ * CreateProcess: `cmd /c` parses the command line AGAIN, so `%VAR%` expands,
+ * `&`/`|` split the command, `<`/`>` redirect, `^` escapes the next character,
+ * `!` triggers delayed expansion and `"` re-balances the quoting. A URL
+ * carrying any of them never reaches the `start` branch — it goes straight to
+ * rundll32, which receives the URL as one argv element and interprets nothing.
+ */
+const CMD_METACHARACTERS = /[&%^!|<>"]/
+
+/** C0/C1 control characters count as metacharacters too: `cmd.exe` treats a
+ *  raw CR/LF as a command separator, and `validateExternalUrl` returns the
+ *  RAW string (`new URL` strips those characters, so validation passes). */
+const CMD_CONTROL_CHARACTERS = /\p{Cc}/u
+
+/** Whether `cmd.exe` would reinterpret any part of this URL — i.e. the `start`
+ *  branch must be skipped and rundll32 used directly. */
+function cmdUnsafe(url: string): boolean {
+  return CMD_METACHARACTERS.test(url) || CMD_CONTROL_CHARACTERS.test(url)
+}
+
+/**
+ * The URL openers to try, best first — the Windows chain exists because the
+ * `start` route and the rundll32 route fail in disjoint situations (#412:
+ * rundll32 alone reported `{ started: true }` while nothing opened).
+ *
+ * Every entry is an argv array (never a shell string). macOS/Linux keep their
+ * single opener and WSL keeps its single absolute-path Windows dispatcher (the
+ * registered handlers live on the Windows side of the interop boundary): this
+ * chain is a Windows fix, so their behavior is unchanged.
+ */
+export function urlCommands(
   url: string,
   platform: NodeJS.Platform = process.platform,
-  options: WslCommandOptions = {},
-): ExternalCommand {
+  options: OpenerCommandOptions = {},
+): ExternalCommand[] {
   switch (platform) {
     case 'darwin':
-      return { command: 'open', args: [url] }
-    // url.dll,FileProtocolHandler launches the registered protocol handler;
-    // `cmd /c start "" <url>` is the fallback if rundll32 misbehaves.
-    case 'win32':
-      return { command: 'rundll32.exe', args: ['url.dll,FileProtocolHandler', url] }
+      return [{ command: 'open', args: [url] }]
+    case 'win32': {
+      const chain: ExternalCommand[] = []
+      if (!cmdUnsafe(url)) {
+        // `start "" <url>`: the empty argument is the window TITLE. Without it
+        // `start` treats the quoted URL as the title and opens a bare console
+        // window instead of the registered handler.
+        chain.push({ command: options.cmdExecutable ?? 'cmd.exe', args: ['/d', '/c', 'start', '', url] })
+      }
+      // url.dll,FileProtocolHandler launches the registered protocol handler
+      // through ShellExecute (the route that historically worked for schemes
+      // `start` refused, and vice versa).
+      chain.push({
+        command: options.rundll32Executable ?? 'rundll32.exe',
+        args: ['url.dll,FileProtocolHandler', url],
+      })
+      return chain
+    }
     // Termux: `termux-open-url` is the Android intent dispatcher for URLs
     // (termux-open would route through the content chooser first).
     case 'android':
-      return { command: 'termux-open-url', args: [url] }
+      return [{ command: 'termux-open-url', args: [url] }]
     default:
       if (options.wsl) {
         const windowsExecutable = options.windowsExecutable ?? windowsExecutableOf
-        return {
+        return [{
           command: windowsExecutable('C:\\Windows\\System32\\rundll32.exe'),
           args: ['url.dll,FileProtocolHandler', url],
-        }
+        }]
       }
-      return { command: 'xdg-open', args: [url] }
+      return [{ command: 'xdg-open', args: [url] }]
   }
 }
 
@@ -170,18 +231,78 @@ export function validateExternalUrl(raw: string): string {
   return raw
 }
 
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
+/** One attempted launch that failed; kept for the aggregated error message. */
+interface LaunchAttemptFailure {
+  command: string
+  error: unknown
 }
 
-function launchFailure(command: string, error: unknown): SidebarError {
-  return new SidebarError('internal', `failed to launch external opener "${command}": ${messageOf(error)}`, 500)
+/** The structured failure of an action whose EVERY opener candidate died:
+ * `internal` on the wire, with each command and its underlying message named
+ * so the UI (and a bug report) can carry the real cause. */
+function launchFailure(action: OpenExternalAction, failures: readonly LaunchAttemptFailure[]): SidebarError {
+  const subject = action === 'url' ? 'url' : 'path'
+  const attempts = failures.map(f => `"${f.command}" (${messageOf(f.error)})`).join('; ')
+  return new SidebarError('internal', `failed to launch external opener for the ${subject}: ${attempts}`, 500)
 }
 
 /**
- * Launch one external open action detached from the host. Success is reported
- * only after Node emits `spawn`; an ENOENT/permission failure now rejects the
- * route instead of being swallowed after `{ started: true }` was returned.
+ * Launch the first candidate that actually starts, in order.
+ *
+ * Success is reported only after Node emits `spawn`; a synchronous throw or an
+ * `error` event (ENOENT, EACCES, …) advances to the next candidate. When every
+ * candidate fails the promise rejects with a structured `SidebarError` naming
+ * them all — the route must never answer `{ started: true }` for an open that
+ * launched nothing (#412: that silent success is why the menu "did nothing").
+ *
+ * Note what this can and cannot see: a detached candidate that starts but
+ * whose handler ignores the URL exits 0 (`start` and rundll32 both do), so the
+ * chain reports everything it can observe — the launch itself.
+ */
+function launchChain(
+  action: OpenExternalAction,
+  chain: readonly ExternalCommand[],
+  spawnExternal: typeof spawn,
+): Promise<{ started: true }> {
+  const failures: LaunchAttemptFailure[] = []
+  return new Promise((resolve, reject) => {
+    const attempt = (index: number): void => {
+      const spec = chain[index]
+      if (spec === undefined) {
+        reject(launchFailure(action, failures))
+        return
+      }
+      let child: ReturnType<typeof spawn>
+      try {
+        child = spawnExternal(spec.command, spec.args, { detached: true, stdio: 'ignore' })
+      } catch (error) {
+        failures.push({ command: spec.command, error })
+        attempt(index + 1)
+        return
+      }
+      let settled = false
+      child.once('spawn', () => {
+        if (settled) return
+        settled = true
+        resolve({ started: true })
+      })
+      child.once('error', (error) => {
+        if (settled) return
+        settled = true
+        failures.push({ command: spec.command, error })
+        attempt(index + 1)
+      })
+      child.unref()
+    }
+    attempt(0)
+  })
+}
+
+/**
+ * Launch one external open action detached from the host. Both actions fan out
+ * through an ordered candidate chain (one entry on macOS/Linux/Android/WSL, the
+ * two Windows URL routes on win32) and reject with the aggregated failure when
+ * none of them starts.
  */
 export function launchExternal(
   action: OpenExternalAction,
@@ -190,28 +311,18 @@ export function launchExternal(
 ): Promise<{ started: true }> {
   const platform = options.platform ?? process.platform
   const wsl = options.wsl ?? (platform === 'linux' && isWslRuntime())
-  const commandOptions: WslCommandOptions = { ...options.commandOptions, wsl }
+  const commandOptions: OpenerCommandOptions = { ...options.commandOptions, wsl }
 
-  let spec: ExternalCommand
+  // Validation stays synchronous and ahead of every spawn: a relative path or
+  // a non-scheme URL throws here, so nothing is launched for a bad request.
+  let chain: ExternalCommand[]
   if (action === 'reveal') {
-    spec = revealCommand(requireAbsolute(value), platform, commandOptions)
+    chain = [revealCommand(requireAbsolute(value), platform, commandOptions)]
   } else {
     let url = validateExternalUrl(value)
     if (wsl) url = wslRemoteEditorUrl(url, options.distroName ?? process.env.WSL_DISTRO_NAME ?? '')
-    spec = urlCommand(url, platform, commandOptions)
+    chain = urlCommands(url, platform, commandOptions)
   }
 
-  const spawnExternal = options.spawn ?? spawn
-  let child: ReturnType<typeof spawn>
-  try {
-    child = spawnExternal(spec.command, spec.args, { detached: true, stdio: 'ignore' })
-  } catch (error) {
-    return Promise.reject(launchFailure(spec.command, error))
-  }
-
-  return new Promise((resolve, reject) => {
-    child.once('spawn', () => { resolve({ started: true }) })
-    child.once('error', (error) => { reject(launchFailure(spec.command, error)) })
-    child.unref()
-  })
+  return launchChain(action, chain, options.spawn ?? spawn)
 }

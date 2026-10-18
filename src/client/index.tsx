@@ -20,6 +20,7 @@ import { RenderBoundary } from './RenderBoundary.tsx'
 import { createNativeTabRecords } from './native/tab-adapter.tsx'
 import { registerNativeSurface } from './native/index.ts'
 import { registerBottomToggle } from './sidebar/bottom-toggle.tsx'
+import { ContextDiagnosticsHost, createContextDiagnosticsHost, registerContextDiagnosticsUI } from './context-diagnostics-ui.tsx'
 import { createNativeSurface } from './native/surface.ts'
 import { createDiagnosticStrips } from './diagnostic-strip.ts'
 import { isTargetAvailable, openInterceptedLink, registerLinkInterception, shouldTakeOverLink } from './link-intercept.ts'
@@ -172,9 +173,17 @@ export function apply(ctx: Context): void {
   const nativeRecords = createNativeTabRecords()
   const nativeSurface = createNativeSurface(ctx, nativeRecords)
   service.setSurface(nativeSurface)
+  // The optional dsh-context diagnostics: ONE controller per activation. It
+  // re-proves the optional runtime faces itself, so the plugin needs no new
+  // inject entry; it is threaded explicitly into the three consumers (the two
+  // host slots by closure, the plugin's own React tree through the provider,
+  // and the native tab bodies through the native surface's deps). On a
+  // deployment without dsh-context it reports `available: false` and every
+  // entry point stays absent.
+  const contextDiagnostics = createContextDiagnosticsHost(ctx)
   ctx.effect(
     () => registerNativeSurface({
-      ctx, store: sidebarStore, service, records: nativeRecords,
+      ctx, store: sidebarStore, service, records: nativeRecords, diagnostics: contextDiagnostics,
       reportFailure: (phase, error) => { fail(`native ${phase}`, error) },
     }),
     'dsh-better-sidebar: native right-Sidebar registrations',
@@ -189,6 +198,14 @@ export function apply(ctx: Context): void {
     () => () => { nativeSurface.dispose(); service.setSurface(undefined) },
     'dsh-better-sidebar: native right-Sidebar surface',
   )
+  ctx.effect(
+    () => registerContextDiagnosticsUI(ctx, contextDiagnostics),
+    'dsh-better-sidebar: context diagnostics surfaces',
+  )
+  // The controller holds a child fiber (its runtime-face integration) and a
+  // pending-open timer; releasing both is what keeps a disabled plugin — and a
+  // hot reload that activates a fresh one — from leaving the old one behind.
+  ctx.effect(() => () => { contextDiagnostics.dispose() }, 'dsh-better-sidebar: context diagnostics controller')
   // Register the plugin's own built-in tabs and viewers through the same
   // service (eating our own dogfood). The disposer unregisters them on
   // fiber disposal (HMR-safe).
@@ -293,7 +310,15 @@ export function apply(ctx: Context): void {
           host.setAttribute('data-dsh-better-sidebar', '')
           document.body.appendChild(host)
           root = createRoot(host)
-          root.render(createElement(RenderBoundary, { className: css.boundaryError }, createElement(Sidebar, { ctx, store: sidebarStore })))
+          root.render(createElement(
+            RenderBoundary,
+            { className: css.boundaryError },
+            createElement(
+              ContextDiagnosticsHost,
+              { controller: contextDiagnostics },
+              createElement(Sidebar, { ctx, store: sidebarStore }),
+            ),
+          ))
           mounted = true
           guardAnchor()
           scheduleHostCheck()

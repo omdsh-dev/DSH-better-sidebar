@@ -16,6 +16,17 @@
  *      bottom strip (the layout-push hot path), plus the width-leak guard
  *      from the drag lane (this shell pushes no width at all: the right
  *      column belongs to DSH's native Sidebar).
+ *   5. steady-state recurring work — with visited native tabs left parked,
+ *      how much work does the plugin keep alive while nobody interacts: live
+ *      intervals by delay, forced-layout reads (getBoundingClientRect /
+ *      getComputedStyle / elementsFromPoint) and `/sidebar/api/*` requests
+ *      grouped by route. This is the only place the "an invisible tab keeps
+ *      polling" class of regression is observable end to end, so it carries
+ *      the lane's two hard assertions: `elementsFromPoint` must stay at 0
+ *      while the blank-session fallback entry is not rendered, and
+ *      `session.cwd` must be polled once per SESSION rather than once per
+ *      mounted native tab body (four visited tabs would otherwise keep four
+ *      pollers, each landing on the host's git-probing cwd resolver).
  *
  * Results print as single-line `PERF_JSON` records (plus a `PERF_SUMMARY`
  * aggregate) so a shell run can `tee` the log and grep them out; the
@@ -26,8 +37,8 @@
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { test, expect, type APIRequestContext, type Page } from '@playwright/test'
-import { PAGE_URL, createHostApi, hostRpc, sendFirstMessage } from './host'
+import { test, expect, type APIRequestContext } from '@playwright/test'
+import { PAGE_URL, createHostApi, dismissOnboarding, hostRpc, sendFirstMessage } from './host'
 
 /** This lane's own workspace (lanes run serially against one server — never
  *  share seed paths with mount/drag). */
@@ -93,32 +104,6 @@ interface ResourceStat {
   duration: number
 }
 
-/** Dismiss whatever onboarding takeover is present (same dance as the other
- *  lanes) so the pointer can reach the sidebar's controls. */
-async function dismissOnboarding(page: Page): Promise<void> {
-  try {
-    await expect
-      .poll(() => page.getByRole('button', { name: /^(Continue|Configure later)$/ }).count(), { timeout: 60_000 })
-      .toBeGreaterThan(0)
-  } catch {
-    console.warn('[e2e-perf] no onboarding takeover appeared; proceeding')
-  }
-  for (let round = 0; round < 8; round++) {
-    let dismissed = false
-    for (const name of ['Continue', 'Configure later']) {
-      const button = page.getByRole('button', { name, exact: true }).first()
-      if ((await button.count()) === 0) continue
-      try {
-        await button.click({ timeout: 4_000 })
-        dismissed = true
-        await page.waitForTimeout(1_000)
-      } catch {
-        // Masked by a takeover stacked above; retry in the next round.
-      }
-    }
-    if (!dismissed) break
-  }
-}
 
 test('measure: mount latency, longtasks and bundle cost through a full tab sweep', async ({ page }) => {
   await page.addInitScript(PERF_PROBE)
@@ -293,3 +278,160 @@ test('measure: bottom-strip drag frame pacing', async ({ page }) => {
   )
   expect(record.pushWidthLeakMax, 'the plugin must never push a width during the bottom drag').toBe(0)
 })
+
+/**
+ * Steady-state probe (installed before ANY page script, so every later
+ * `setInterval` is accounted for).
+ *
+ * Timers are tracked live (id → delay) instead of merely counted at creation,
+ * and the three forced-layout entry points are wrapped so a poller that reads
+ * layout on a timer cannot hide. Attribution is deliberately by DELAY +
+ * behaviour rather than by script URL: plugins on this host may be served from
+ * an aggregated bundle, so a stack test would be a false negative waiting to
+ * happen. `elementsFromPoint` is the fingerprinted call — only the blank-session
+ * dock fallback's retreat walk uses it.
+ */
+const STEADY_PROBE = `(() => {
+  const live = new Map()
+  const createdByDelay = {}
+  const nativeSet = window.setInterval
+  window.setInterval = function (handler, delay) {
+    const id = nativeSet.apply(this, arguments)
+    const key = Number(delay) || 0
+    live.set(id, key)
+    createdByDelay[key] = (createdByDelay[key] ?? 0) + 1
+    return id
+  }
+  const nativeClear = window.clearInterval
+  window.clearInterval = function (id) {
+    live.delete(id)
+    return nativeClear.apply(this, arguments)
+  }
+  const counts = { rect: 0, style: 0, hit: 0 }
+  const nativeRect = Element.prototype.getBoundingClientRect
+  Element.prototype.getBoundingClientRect = function () {
+    counts.rect += 1
+    return nativeRect.apply(this, arguments)
+  }
+  const nativeStyle = window.getComputedStyle
+  window.getComputedStyle = function () {
+    counts.style += 1
+    return nativeStyle.apply(this, arguments)
+  }
+  if (typeof document.elementsFromPoint === 'function') {
+    const nativeHit = document.elementsFromPoint
+    document.elementsFromPoint = function () {
+      counts.hit += 1
+      return nativeHit.apply(this, arguments)
+    }
+  }
+  window.__steady = {
+    counts,
+    createdByDelay,
+    snapshot: () => {
+      const liveByDelay = {}
+      for (const delay of live.values()) liveByDelay[delay] = (liveByDelay[delay] ?? 0) + 1
+      return { counts: { ...counts }, createdByDelay: { ...createdByDelay }, liveByDelay, liveTotal: live.size }
+    },
+    reset: () => { counts.rect = 0; counts.style = 0; counts.hit = 0 },
+  }
+})()`
+
+test('measure: steady-state recurring work while the visited session is parked', async ({ page }) => {
+  await page.addInitScript(PERF_PROBE)
+  await page.addInitScript(STEADY_PROBE)
+
+  // Requests by route for the whole test, so the idle window can be compared
+  // against the mount/sweep phase.
+  const routeCounts = new Map<string, number>()
+  let idleStart = 0
+  const idleRouteCounts = new Map<string, number>()
+  page.on('request', (request) => {
+    const url = request.url()
+    if (!url.includes('/sidebar/api/')) return
+    const route = url.split('/sidebar/api/')[1]?.split('?')[0] ?? 'unknown'
+    routeCounts.set(route, (routeCounts.get(route) ?? 0) + 1)
+    if (idleStart !== 0) idleRouteCounts.set(route, (idleRouteCounts.get(route) ?? 0) + 1)
+  })
+
+  await page.goto(PAGE_URL, { waitUntil: 'domcontentloaded' })
+  await expect(page.locator('#root > *')).not.toHaveCount(0, { timeout: 90_000 })
+  await expect(page.locator('[data-dsh-better-sidebar]')).toBeAttached({ timeout: 90_000 })
+  await dismissOnboarding(page)
+  await sendFirstMessage(page)
+
+  // Visit every plugin tab type so their bodies are mounted and then left
+  // parked — the shape `keepMounted` turns into permanent work under the
+  // pre-fix code (one `session.cwd` poller per body, forever).
+  await page.locator('[data-sidebar-right-expand]').first().click()
+  await expect(page.locator('[data-sidebar-right-panel]')).toBeVisible({ timeout: 90_000 })
+  const addTab = page.locator('[data-dockkit-add-tab]').first()
+  for (const kind of NATIVE_TABS) {
+    if (kind === 'terminal') continue // the host's own tab, not part of this measurement
+    if (await page.locator('[data-sidebar-right-guide]').count() === 0) await addTab.click()
+    const entry = page.locator(`[data-sidebar-right-guide-entry="${kind}"]`)
+    await expect(entry, `native tab type "${kind}" must be offered by the guide`).toHaveCount(1)
+    await entry.click()
+    await page.waitForTimeout(1_500)
+  }
+  await page.waitForTimeout(2_000)
+
+  // Park it: close the host's right Sidebar so nothing of the plugin is on
+  // screen except the shell, then measure the idle window.
+  await page.locator('[data-sidebar-right-toggle]').first().click().catch(() => {})
+  await page.waitForTimeout(1_000)
+  await page.evaluate(() => (window as unknown as { __steady: { reset: () => void } }).__steady.reset())
+  idleStart = Date.now()
+  await page.waitForTimeout(15_000)
+
+  const steady = await page.evaluate(() =>
+    (window as unknown as { __steady: { snapshot: () => unknown } }).__steady.snapshot(),
+  ) as { counts: { rect: number; style: number; hit: number }; createdByDelay: Record<string, number>; liveByDelay: Record<string, number>; liveTotal: number }
+  const idleRoutes = Object.fromEntries(idleRouteCounts)
+  const sessionCwdIdle = idleRouteCounts.get('session.cwd') ?? 0
+
+  const record = {
+    metric: 'steady-state',
+    windowMs: 15_000,
+    liveByDelay: steady.liveByDelay,
+    createdByDelay: steady.createdByDelay,
+    liveTotal: steady.liveTotal,
+    forcedLayout: steady.counts,
+    routesAll: Object.fromEntries(routeCounts),
+    routesIdle: idleRoutes,
+    sessionCwdIdle,
+    visitedTabs: NATIVE_TABS.filter(kind => kind !== 'terminal').length,
+  }
+  console.log(`PERF_JSON ${JSON.stringify(record)}`)
+  console.log(
+    `PERF_SUMMARY steady-state 15s: live500=${steady.liveByDelay[500] ?? 0} `
+    + `rect=${steady.counts.rect} style=${steady.counts.style} hitTest=${steady.counts.hit} `
+    + `session.cwd=${sessionCwdIdle}`,
+  )
+
+  // Fingerprint call of the blank-session fallback's retreat walk. In a
+  // session with content that entry is not rendered, so the plugin must not
+  // hit-test at all; the budget is not 0 only because the HOST also uses
+  // `elementsFromPoint` (its chat and PDF-preview bundles) and a stray
+  // event-driven call must not fail this lane. Pre-fix the fallback's own
+  // 2 Hz walk alone lands ~150 hits in this window.
+  expect(
+    steady.counts.hit,
+    'the dock fallback must not measure (elementsFromPoint) while it renders nothing',
+  ).toBeLessThan(40)
+  // One poller per SESSION, not per mounted tab body: four visited tabs on an
+  // unshared 5 s poller would report ~12 here, a shared one reports ~3.
+  const visited = record.visitedTabs
+  expect(
+    sessionCwdIdle,
+    `session.cwd must be polled once per session, not per visited tab (${visited} tabs; `
+    + 'the pre-fix code reported one poller per mounted body AND one for the shell)',
+    // Budget, not an exact count: the window is 15 s against a 5 s cadence, so
+    // ONE poller already reports 3–4, and whether the host sidebar really ended
+    // up collapsed decides between one and two pollers (the plugin shell adds
+    // one while its workbench is on screen). Pre-fix this was 15 for four
+    // visited tabs — `visited * 2` still separates "one per session" from "one
+    // per tab" without depending on that visual state.
+  ).toBeLessThan(visited * 2)
+})
+

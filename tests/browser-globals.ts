@@ -28,9 +28,10 @@ const elementStub = (): Record<string, unknown> => ({
 
 if (g.document === undefined) {
   g.document = {
-    // desktop-env.ts's hostTransportBase() falls back to `document.baseURI`
-    // when the shell injected no __DSH_TRANSPORT__; the plugin's /sidebar/*
-    // URLs resolve against it, so specs pin one stable page base.
+    // host-route-url.ts resolves the plugin's /sidebar/* URLs against the
+    // transport base, whose fallback is `document.baseURI` when the shell
+    // injected no __DSH_TRANSPORT__ (see desktop-env.ts); specs pin one
+    // stable page base.
     baseURI: 'http://localhost/',
     createElement: () => elementStub(),
     createDocumentFragment: () => elementStub(),
@@ -66,8 +67,8 @@ if (g.window === undefined) {
     removeEventListener: () => {},
     dispatchEvent: () => true,
     matchMedia: () => ({ matches: false, addEventListener: () => {}, removeEventListener: () => {} }),
-    // desktop-env.ts reads the shell's URL stamps from location.search
-    // (Sidebar renders with parseDesktopEnv even in specs).
+    // The store's reset-param probe reads window.location.search
+    // (state.ts); nothing else in the plugin reads the URL any more.
     location: { search: '' },
   }
 }

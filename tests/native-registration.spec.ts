@@ -41,12 +41,16 @@ import { createSidebarStore } from '../src/client/state.ts'
 function createRegistry() {
   const registered = new Map<string, () => void>()
   const events: string[] = []
+  /** Every definition the plugin handed the host, guide rows included. */
+  const definitions: Array<{ id: string; kind: string; guide?: Array<{ id?: unknown }> }> = []
   let failReleaseOf: string | undefined
   return {
     registered,
     events,
+    definitions,
     failRelease(id: string): void { failReleaseOf = id },
-    register(definition: { id: string }): () => void {
+    register(definition: { id: string; kind: string; guide?: Array<{ id?: unknown }> }): () => void {
+      definitions.push(definition)
       if (registered.has(definition.id)) {
         throw new Error(`sidebarRight: tab type id "${definition.id}" is already registered`)
       }
@@ -237,5 +241,57 @@ describe('native tab registration lifecycle', () => {
     } finally {
       log.restore()
     }
+  })
+})
+
+/**
+ * `bottomOnly` (#774): the type lives in the plugin's own workbench only.
+ *
+ * The mount lane pins the OUTCOME (the host's guide still lists exactly one
+ * `terminal` capsule), but until this case existed the MECHANISM had no unit
+ * guard at all: the #774 verification measured 14 related specs / 158
+ * assertions staying green with the `bottomOnly` skip in `sync()` deleted, so
+ * only a full deployment could catch it. This is the unit half, written on what
+ * actually reached the host rather than on what the plugin intended to send.
+ */
+describe('a bottomOnly descriptor never reaches the native surface', () => {
+  it('registers no tab type, no slot and no guide row for it', () => {
+    const host = createHost()
+    const { store, service, records } = createPlugins()
+    // The sixth built-in (#774), declared through the same public API an
+    // external plugin uses.
+    service.registerTab({
+      id: 'terminal-bottom',
+      title: () => 'Terminal',
+      description: () => 'Bottom shell',
+      bottomOnly: true,
+      single: true,
+      component: () => null,
+    })
+    const dispose = registerNativeSurface({ ctx: host.ctx as never, store, service, records })
+
+    // Positive control FIRST: the other descriptors did reach the host, and the
+    // visible one did contribute its guide row — so the absences below cannot
+    // be satisfied by a surface that registers nothing at all. (The `files`
+    // takeover follows the descriptor loop, hence its place at the end.)
+    expect(host.registry.events).toEqual([
+      'register dsh-better-sidebar:editor',
+      'register dsh-better-sidebar:git',
+      'register dsh-better-sidebar:files',
+    ])
+    const guideIds = host.registry.definitions
+      .flatMap(definition => (definition.guide ?? []).map(entry => entry.id))
+    expect(guideIds.sort()).toEqual(['files', 'git'])
+
+    // The absence rides the EVENT LOG, not the live key set: a type registered
+    // and then orphaned leaves a key set that looks exactly like this one.
+    expect(host.registry.registered.has('dsh-better-sidebar:terminal-bottom')).toBe(false)
+    expect(host.registry.events.filter(event => event.includes('terminal-bottom'))).toEqual([])
+    expect(host.slotEvents.filter(event => event.includes('terminal-bottom'))).toEqual([])
+
+    // A notification re-runs `sync()`; the skip must survive it.
+    store.setPrefs(store.getPrefs())
+    expect(host.registry.events.filter(event => event.includes('terminal-bottom'))).toEqual([])
+    dispose()
   })
 })

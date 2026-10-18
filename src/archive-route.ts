@@ -1,49 +1,90 @@
 /**
- * Helpers for the `/sidebar/archive` route (the file tree's "zip and
- * download" action): the download-name sanitizer and the recursive entry
- * walk. Kept apart from index.ts so both are directly unit-testable — the
- * walk's bounds live inside the collector, and the route module is a
- * cordis plugin whose setup needs a whole fake context.
+ * The `/sidebar/archive` flow: the file tree's "zip and download" action.
  *
- * The walk is the security-relevant half: every row comes from an already
- * fenced path (index.ts resolves each selection through
- * `ensureWorkspacePath` first), and a symlink is skipped rather than followed,
- * so it can neither escape the workspace nor cycle.
+ * Three steps, unchanged from before: `archive.build` fences every `path` and
+ * answers with an id immediately; `archive.status` reports
+ * `building → ready | error`; `GET /sidebar/archive` serves the finished bytes
+ * once. What changed is what happens in between.
+ *
+ * The archive is no longer BUILT BY US. The system's `zip` (or `tar` — see
+ * archive-tools.ts) writes it, straight into a temp file in the OS temp
+ * directory, and that file is what gets streamed out. Consequences worth
+ * stating plainly:
+ *
+ * - **No memory ceiling.** The old path concatenated every member into one
+ *   `Buffer`, held it on the task table, and `res.end()`-ed it; a selection
+ *   large enough to matter took the host down. Now only the OS's disk usage
+ *   grows.
+ * - **No per-entry progress.** The old build reported `done / total` because
+ *   our own writer visited each entry. A child process tells us nothing per
+ *   entry, so the status reports BYTES written so far (the temp file's size)
+ *   and the UI shows a plain "packing" line. Inventing an entry count would
+ *   mean walking the tree a second time just to have a number to display.
+ * - **Failures still arrive before the download starts.** The tool runs to
+ *   completion in the background; a non-zero exit settles the task as `error`
+ *   with the tool's own stderr, which the client renders. That ordering is the
+ *   whole reason the temp file exists rather than piping the tool directly
+ *   into the response — a mid-stream tool failure would otherwise be a 200
+ *   response carrying half an archive.
+ *
+ * A temp archive is removed on every exit path: a completed download, the TTL
+ * sweep, and plugin teardown (which also kills a build still running).
  */
 import { randomUUID } from 'node:crypto'
-import { lstat, readdir } from 'node:fs/promises'
-import { basename, dirname, join } from 'node:path'
+import { open, rm, stat } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import type { SidebarHttpResponse } from './context-types.ts'
+import { streamFileToResponse } from './file-stream.ts'
+import {
+  archiveFileName,
+  archiveTempName,
+  planArchive,
+  resolveArchiveTool,
+  runArchiveTool,
+  type ArchivePlan,
+  type ArchiveSpawn,
+  type ArchiveToolSpec,
+} from './archive-tools.ts'
 import { SidebarError } from './wire.ts'
-import { buildZip, ZIP_MAX_ENTRIES, type ZipEntry } from './zip.ts'
 
-/** Maximum archive-name length (keeps the Content-Disposition header sane). */
-export const ARCHIVE_NAME_MAX = 120
+/** How many archives one host may build at the same time. */
+export const ARCHIVE_MAX_BUILDING = 4
+/** How long a finished (or failed) archive stays downloadable. */
+export const ARCHIVE_TTL_MS = 5 * 60 * 1000
 
-/**
- * Sanitize the archive's download name: one flat file name, never a path.
- * Separators, control characters, quotes and leading dots are stripped (a
- * name cannot look like a traversal or hide as a dotfile); an empty result
- * falls back to `archive.zip`, and a `.zip` suffix is applied once.
- */
-export function archiveNameOf(raw: string | null): string {
-  // A bare `.zip` (or nothing at all) is the caller asking for the default:
-  // check BEFORE the leading-dot strip below, which would turn it into `zip`.
-  const trimmed = (raw ?? '').trim()
-  if (trimmed === '' || trimmed === '.zip') return 'archive.zip'
-  // Character filter (not a character-class regex): separators, quotes and
-  // C0/DEL control characters cannot survive into the header.
-  const cleaned = [...trimmed]
-    .filter((char) => {
-      const code = char.codePointAt(0)!
-      return char !== '\\' && char !== '/' && char !== '"' && char !== '\'' && code >= 0x20 && code !== 0x7F
-    })
-    .join('')
-    .trim()
-    .replace(/^\.+/, '')
-    .slice(0, ARCHIVE_NAME_MAX)
-  if (cleaned === '') return 'archive.zip'
-  return cleaned.toLowerCase().endsWith('.zip') ? cleaned : `${cleaned}.zip`
+/** The finished archive on disk. */
+interface ArchiveFile {
+  path: string
+  size: number
 }
+
+/** One archive build: the state the client polls, plus the finished file. */
+interface ArchiveTask {
+  id: string
+  sessionId: string
+  /** The final download name (the tool's extension already applied). */
+  name: string
+  state: 'building' | 'ready' | 'error'
+  /** Bytes written so far (the temp file's size while building). */
+  bytes: number
+  error?: string
+  file?: ArchiveFile
+  /** When the task stops being downloadable (set when it settles). */
+  expiresAt: number
+}
+
+/** The status shape the client reads (never carries the bytes). */
+export interface ArchiveStatus {
+  state: 'building' | 'ready' | 'error'
+  bytes: number
+  error?: string
+}
+
+/** Why a download/status read could not be served. */
+export type ArchiveLookup =
+  | { ok: true; task: ArchiveTask }
+  | { ok: false; reason: 'missing' | 'forbidden' | 'building' | 'expired' | 'error'; message: string }
 
 /**
  * The `content-disposition` value for one archive download.
@@ -74,161 +115,9 @@ function asciiFallbackOf(name: string): string {
       return code >= 0x20 && code <= 0x7E && char !== '"' && char !== '\\'
     })
     .join('')
-  const stem = ascii.replace(/\.zip$/i, '')
+  const stem = ascii.replace(/\.(?:zip|tar\.gz)$/i, '')
   if (stem === '' || /^\.+$/.test(stem)) return 'download.zip'
   return ascii
-}
-
-/**
- * The in-archive name of every selection, disambiguated.
- *
- * The common case keeps the intuition "one selection is named by its own
- * basename" — archive `/ws/src` and the entries live under `src/`. Two
- * selections that would collide (multi-select `/ws/a/index.ts` and
- * `/ws/b/index.ts` both wanting `index.ts`) are extended with parent
- * segments until every name is unique, so an extractor cannot silently
- * overwrite one member with another. A path that runs out of ancestors
- * (selecting the filesystem root, or `/a` twice) falls back to the full
- * '/'-joined path, which is unique by construction.
- *
- * @param selections - absolute (already fenced) paths, in selection order.
- * @returns one '/'-separated archive name per selection, same order.
- */
-export function disambiguateArchiveNames(selections: readonly string[]): string[] {
-  const segmentsOf = (absolute: string, depth: number): string => {
-    const parts: string[] = []
-    let current = absolute
-    for (let level = 0; level < depth; level += 1) {
-      const part = basename(current)
-      const parent = dirname(current)
-      if (part === '' || parent === current) break
-      parts.unshift(part)
-      current = parent
-    }
-    return parts.join('/')
-  }
-  const deepEnough = (absolute: string, name: string): string => {
-    const full = segmentsOf(absolute, Number.MAX_SAFE_INTEGER)
-    // Still colliding after every segment is in play (two identical paths, or
-    // a root-level duplicate): the full path is the best available identity.
-    return full === name ? absolute.replace(/^\/+/, '') : name
-  }
-  const depth = new Map<string, number>(selections.map(path => [path, 1]))
-  for (let round = 0; round < 64; round += 1) {
-    const names = selections.map(path => segmentsOf(path, depth.get(path)!))
-    const counts = new Map<string, number>()
-    for (const name of names) counts.set(name, (counts.get(name) ?? 0) + 1)
-    if ([...counts.values()].every(count => count === 1)) return names
-    const grown = new Set<string>()
-    for (const [index, path] of selections.entries()) {
-      if ((counts.get(names[index]!) ?? 0) <= 1) continue
-      depth.set(path, depth.get(path)! + 1)
-      grown.add(path)
-    }
-    if (grown.size === 0) break
-  }
-  return selections.map(path => deepEnough(path, segmentsOf(path, depth.get(path)!)))
-}
-
-/**
- * Collect one selected path into the archive: a file becomes one entry, a
- * directory is walked depth-first and each level contributes its own entry
- * (a trailing '/' name), files keep their layout under the directory's own
- * name. Symlinks are skipped, never followed. Iterative (an explicit stack)
- * because a deep tree must not blow the JS stack, and the count bound is
- * enforced HERE so a runaway directory fails before its rows pile up.
- *
- * @param absolute - the (already fenced) absolute path of the selection.
- * @param name - the in-archive name of that selection (its basename).
- * @param out - the entry list appended to, in archive order.
- * @param maxEntries - entry-count bound.
- * @throws {SidebarError} fs-error when a row cannot be read or the bound is hit.
- */
-export async function collectZipEntries(
-  absolute: string,
-  name: string,
-  out: ZipEntry[],
-  maxEntries = ZIP_MAX_ENTRIES,
-): Promise<void> {
-  const stack: Array<{ path: string; name: string }> = [{ path: absolute, name }]
-  while (stack.length > 0) {
-    const item = stack.pop()!
-    if (out.length >= maxEntries) {
-      throw new SidebarError('fs-error', `too many entries for one archive (> ${maxEntries})`, 400)
-    }
-    const info = await lstat(item.path).catch((error: unknown) => {
-      throw new SidebarError('fs-error', `cannot read "${item.path}": ${error instanceof Error ? error.message : String(error)}`, 400)
-    })
-    if (info.isSymbolicLink()) {
-      // A link row is not a file to read and not a directory to walk: it is
-      // skipped (an archive of a dangling link has nothing to store). Never
-      // followed — no escape and no cycle.
-      continue
-    }
-    if (!info.isDirectory()) {
-      out.push({ path: item.path, name: item.name })
-      continue
-    }
-    out.push({ path: item.path, name: item.name, isDir: true })
-    let level
-    try {
-      level = await readdir(item.path, { withFileTypes: true })
-    } catch (error) {
-      throw new SidebarError('fs-error', `cannot list "${item.path}": ${error instanceof Error ? error.message : String(error)}`, 400)
-    }
-    // Reverse order: the stack pops the first child next, so the archive reads
-    // top-down in directory order.
-    for (let index = level.length - 1; index >= 0; index -= 1) {
-      const child = level[index]!
-      stack.push({ path: join(item.path, child.name), name: `${item.name}/${child.name}` })
-    }
-  }
-}
-
-/** How many archives one host may build at the same time. */
-export const ARCHIVE_MAX_BUILDING = 4
-/** How long a finished (or failed) archive stays downloadable. */
-export const ARCHIVE_TTL_MS = 5 * 60 * 1000
-
-/** One archive build: the state the client polls, plus the finished bytes. */
-interface ArchiveTask {
-  id: string
-  sessionId: string
-  name: string
-  state: 'building' | 'ready' | 'error'
-  done: number
-  total: number
-  bytes: number
-  error?: string
-  zip?: Buffer
-  /** When the task stops being downloadable (set when it settles). */
-  expiresAt: number
-}
-
-/** The status shape the client reads (never carries the bytes). */
-export interface ArchiveStatus {
-  state: 'building' | 'ready' | 'error'
-  done: number
-  total: number
-  bytes: number
-  error?: string
-}
-
-/** Why a download/status read could not be served. */
-export type ArchiveLookup =
-  | { ok: true; task: ArchiveTask }
-  | { ok: false; reason: 'missing' | 'forbidden' | 'building' | 'expired' | 'error'; message: string }
-
-/** A resolved download: the bytes plus the sanitized name they were built for. */
-export interface ArchiveDownload {
-  name: string
-  zip: Buffer
-}
-
-/** The response face {@link respondArchiveDownload} writes through. */
-export interface ArchiveDownloadResponse {
-  writeHead(status: number, headers?: Record<string, string>): void
-  end(chunk?: Buffer | string): void
 }
 
 /**
@@ -239,75 +128,104 @@ export interface ArchiveDownloadResponse {
  * for a failed build, 404 for unknown/expired/already-downloaded, 200 with the
  * RFC 5987 disposition otherwise. Kept here so all six branches are testable
  * without a live cordis mount.
+ *
+ * The bytes are STREAMED from the temp file and the task is released only once
+ * the stream settles: releasing first (as the buffered version could) would
+ * unlink the file the response is still reading from.
+ *
  * @param tasks - the plugin's task table.
  * @param query - the request's `sessionId` / `id` values (null = absent).
- * @param res - a minimal response face.
+ * @param res - the response face.
  * @throws {SidebarError} for every non-200 branch (callers turn it into the
- *  JSON error envelope they already use).
+ *  JSON error envelope they already use). Thrown BEFORE any header commits, so
+ *  the envelope is still deliverable.
  */
-export function respondArchiveDownload(
+export async function respondArchiveDownload(
   tasks: ArchiveTasks,
   query: { sessionId: string | null; id: string | null },
-  res: ArchiveDownloadResponse,
-): void {
+  res: SidebarHttpResponse,
+): Promise<void> {
   if (query.sessionId === null || query.id === null || query.id === '') {
     throw new SidebarError('bad-request', 'sessionId and id are required')
   }
   const found = tasks.lookup(query.id, query.sessionId)
-  if (!found.ok || found.task.state !== 'ready' || found.task.zip === undefined) {
+  if (!found.ok || found.task.state !== 'ready' || found.task.file === undefined) {
     if (found.ok) throw new SidebarError('not-found', 'archive is gone', 404)
     if (found.reason === 'building') throw new SidebarError('bad-request', found.message, 409)
     if (found.reason === 'forbidden') throw new SidebarError('forbidden', found.message, 403)
     if (found.reason === 'error') throw new SidebarError('fs-error', found.message, 410)
     throw new SidebarError('not-found', found.message, 404)
   }
-  const { name, zip } = found.task
-  // A download consumes the task: the bytes are not kept for a second fetch
-  // (the task table is a queue, not a store).
-  tasks.release(found.task.id)
-  res.writeHead(200, {
-    'content-type': 'application/zip',
-    // Never the raw name: a non-latin1 value (中文目录 → 报告.zip) makes Node's
-    // writeHead throw and turns the download into a 500.
-    'content-disposition': contentDispositionOf(name),
-    'content-length': String(zip.byteLength),
-    'cache-control': 'no-cache',
-  })
-  res.end(zip)
+  const { name, file } = found.task
+  const id = found.task.id
+  try {
+    await streamFileToResponse(file.path, file.size, res, {
+      // The extension follows the TOOL, not the client's guess: a host with
+      // only `tar` sends a real .tar.gz rather than a mislabelled .zip.
+      'content-type': name.endsWith('.tar.gz') ? 'application/gzip' : 'application/zip',
+      // Never the raw name: a non-latin1 value (中文目录 → 报告.zip) makes Node's
+      // writeHead throw and turns the download into a 500.
+      'content-disposition': contentDispositionOf(name),
+      'cache-control': 'no-cache',
+    })
+  } finally {
+    // A download consumes the task: the bytes are not kept for a second fetch
+    // (the task table is a queue, not a store).
+    tasks.release(id)
+  }
 }
 
 /**
  * The host-side archive task table.
  *
- * A selection is collected up front (cheap: names + sizes) and then zipped in
- * the BACKGROUND, so the client can show progress instead of staring at a
- * spinner: `start` returns an id immediately, `status` reports
- * `building → ready | error`, and `download` hands over the bytes exactly once.
- * The table is bounded twice — {@link ARCHIVE_MAX_BUILDING} concurrent builds
- * and {@link ARCHIVE_TTL_MS} since a finished one — and every read is
+ * A selection is planned up front (cheap: one probe + a couple of path joins)
+ * and then packed in the BACKGROUND, so the client gets an id immediately and
+ * the download only starts once the bytes actually exist. The table is bounded
+ * twice — {@link ARCHIVE_MAX_BUILDING} concurrent builds and
+ * {@link ARCHIVE_TTL_MS} since a finished one — and every read is
  * session-scoped, so one session can never fetch another's archive.
  */
 export interface ArchiveTasks {
-  /** Start a build; rejects with bad-request when the concurrency cap is hit. */
-  start(input: { sessionId: string; name: string; entries: readonly ZipEntry[] }): { id: string; entries: number }
+  /** Start a build; rejects when the tool is missing or the cap is hit. */
+  start(input: { sessionId: string; name: string; paths: readonly string[] }): Promise<{ id: string; name: string; entries: number }>
   /** Poll one task (a settled task past its TTL reads as missing). */
   status(id: string, sessionId: string): ArchiveStatus
   /** Look one task up for a download; `sessionId` must match the builder's. */
   lookup(id: string, sessionId: string): ArchiveLookup
-  /** Release a task (called after its bytes were served). */
+  /** Release a task (called after its bytes were served): deletes the temp file. */
   release(id: string): void
   /** Number of live tasks (tests / diagnostics). */
   size(): number
+  /** Kill every running build and delete every temp file (plugin teardown). */
+  dispose(): void
+}
+
+/** Options of {@link createArchiveTasks} (tests inject the spawn + temp dir). */
+export interface ArchiveTaskOptions {
+  spawn?: ArchiveSpawn
+  /** Directory the temp archives live in (defaults to the OS temp directory). */
+  tempDir?: string
+  /** Resolve the archive tool (defaults to the real probe). `spawner` is
+   *  undefined when the table was built without an injected spawn. */
+  resolveTool?: (spawner: ArchiveSpawn | undefined) => Promise<ArchiveToolSpec | undefined>
 }
 
 /** Create one archive task table (one per plugin mount). */
-export function createArchiveTasks(): ArchiveTasks {
+export function createArchiveTasks(options: ArchiveTaskOptions = {}): ArchiveTasks {
   const tasks = new Map<string, ArchiveTask>()
+  /** Running children, by task id (teardown kills them). */
+  const children = new Map<string, { kill(): void }>()
+  const spawner = options.spawn ?? undefined
 
-  /** Drop settled tasks past their TTL (called on every access). */
+  const tempPathOf = (id: string, ext: string): string =>
+    join(options.tempDir ?? tmpdir(), archiveTempName(id, ext))
+
+  /** Drop settled tasks past their TTL, deleting the temp files they held. */
   const sweep = (now: number): void => {
     for (const [id, task] of tasks) {
-      if (task.state !== 'building' && task.expiresAt <= now) tasks.delete(id)
+      if (task.state === 'building' || task.expiresAt > now) continue
+      tasks.delete(id)
+      if (task.file !== undefined) void rm(task.file.path, { force: true }).catch(() => {})
     }
   }
 
@@ -323,42 +241,44 @@ export function createArchiveTasks(): ArchiveTasks {
   }
 
   return {
-    start({ sessionId, name, entries }) {
+    async start({ sessionId, name, paths }) {
       sweep(Date.now())
       let building = 0
       for (const task of tasks.values()) if (task.state === 'building') building += 1
       if (building >= ARCHIVE_MAX_BUILDING) {
         throw new SidebarError('bad-request', `too many archives are being built (max ${ARCHIVE_MAX_BUILDING})`, 409)
       }
+      const resolve = options.resolveTool ?? resolveArchiveTool
+      // One call either way: `spawn` has a default, so passing `undefined`
+      // selects the real implementation without a second code path.
+      const spec = await resolve(spawner)
+      if (spec === undefined) {
+        // A NEW wire code, and deliberately its own: "this machine has no zip
+        // and no tar" is not a failure of the selection, and the client shows
+        // it as an actionable sentence rather than a raw English message.
+        throw new SidebarError(
+          'unavailable',
+          'no archive tool is available: neither zip nor tar could be run',
+          501,
+        )
+      }
+      const plan = planArchive(paths, spec)
+      const id = `ar-${randomUUID()}`
+      const finalName = archiveFileName(name, spec.ext)
+      const tempPath = tempPathOf(id, spec.ext)
       const task: ArchiveTask = {
-        id: `ar-${randomUUID()}`,
+        id,
         sessionId,
-        name,
+        name: finalName,
         state: 'building',
-        done: 0,
-        total: entries.length,
         bytes: 0,
         expiresAt: Number.POSITIVE_INFINITY,
       }
-      tasks.set(task.id, task)
+      tasks.set(id, task)
       // Detached on purpose: the POST answers as soon as the id exists, and the
       // task table (not the request) owns the error from here on.
-      void buildZip([...entries], {
-        onProgress: (progress) => {
-          task.done = progress.done
-          task.bytes = progress.bytes
-        },
-      }).then((zip) => {
-        task.zip = zip
-        task.state = 'ready'
-        task.done = task.total
-        task.expiresAt = Date.now() + ARCHIVE_TTL_MS
-      }, (error: unknown) => {
-        task.state = 'error'
-        task.error = error instanceof Error ? error.message : String(error)
-        task.expiresAt = Date.now() + ARCHIVE_TTL_MS
-      })
-      return { id: task.id, entries: entries.length }
+      void pack(id, task, plan, tempPath, spawner)
+      return { id, name: finalName, entries: paths.length }
     },
     status(id, sessionId) {
       sweep(Date.now())
@@ -367,19 +287,82 @@ export function createArchiveTasks(): ArchiveTasks {
       if (task.sessionId !== sessionId) throw new SidebarError('forbidden', 'archive belongs to another session', 403)
       return {
         state: task.state,
-        done: task.done,
-        total: task.total,
         bytes: task.bytes,
         ...(task.error === undefined ? {} : { error: task.error }),
       }
     },
     lookup,
     release(id) {
+      const task = tasks.get(id)
       tasks.delete(id)
+      if (task?.file !== undefined) void rm(task.file.path, { force: true }).catch(() => {})
     },
     size() {
       sweep(Date.now())
       return tasks.size
     },
+    dispose() {
+      for (const child of children.values()) {
+        try {
+          child.kill()
+        } catch {
+          // A child that already exited cannot be killed; nothing to do.
+        }
+      }
+      children.clear()
+      for (const task of tasks.values()) {
+        if (task.file !== undefined) void rm(task.file.path, { force: true }).catch(() => {})
+      }
+      tasks.clear()
+    },
+  }
+
+  /**
+   * Pack one task: open the temp file, hand its descriptor to the tool, and
+   * settle the task from the exit code.
+   *
+   * The descriptor stays open across the spawn and is closed only after the
+   * child exits — closing it earlier would truncate output still being written.
+   */
+  async function pack(
+    id: string,
+    task: ArchiveTask,
+    plan: ArchivePlan,
+    tempPath: string,
+    spawner: ArchiveSpawn | undefined,
+  ): Promise<void> {
+    const settle = (error: string | undefined): void => {
+      task.state = error === undefined ? 'ready' : 'error'
+      if (error !== undefined) task.error = error
+      task.expiresAt = Date.now() + ARCHIVE_TTL_MS
+      children.delete(id)
+    }
+    let handle: Awaited<ReturnType<typeof open>> | undefined
+    try {
+      handle = await open(tempPath, 'w')
+      const result = await runArchiveTool(plan, handle.fd, spawner, child => { children.set(id, child) })
+      await handle.close()
+      handle = undefined
+      if (result.code !== 0) {
+        settle(result.stderr === '' ? `${plan.spec.bin} exited with code ${result.code}` : result.stderr)
+        await rm(tempPath, { force: true }).catch(() => {})
+        return
+      }
+      const info = await stat(tempPath).catch(() => undefined)
+      if (info === undefined) {
+        settle(`${plan.spec.bin} produced no archive`)
+        return
+      }
+      task.bytes = info.size
+      task.file = { path: tempPath, size: info.size }
+      settle(undefined)
+    } catch (error: unknown) {
+      // A tool that cannot be started at all, or a disk that refuses the temp
+      // file. Either way the task must not stay `building` forever.
+      await handle?.close().catch(() => {})
+      task.bytes = await stat(tempPath).then(info => info.size).catch(() => 0)
+      settle(error instanceof Error ? error.message : String(error))
+      await rm(tempPath, { force: true }).catch(() => {})
+    }
   }
 }

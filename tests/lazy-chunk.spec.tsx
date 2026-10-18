@@ -18,6 +18,7 @@ import { builtinViewers } from '../src/client/builtins/viewers.tsx'
 import { registerChunkForTests, resetChunks } from '../src/client/chunk-loader.ts'
 import { lazyChunkComponent } from '../src/client/lazy-chunk.tsx'
 import type { FileViewerProps, TabComponentProps } from '../src/client/service.ts'
+import type { Context } from '../src/context-types.ts'
 import css from '../src/client/sidebar.module.css'
 
 const Marker = (): ReactNode => createElement('div', { 'data-testid': 'chunk-rendered' }, 'loaded')
@@ -93,7 +94,7 @@ describe('built-in descriptor contract (render-prop functions)', () => {
   })
 
   it('a built-in tab component keeps the same contract', () => {
-    const tabs = builtinTabs()
+    const tabs = builtinTabs({} as Context)
     const editor = tabs.find(tab => tab.id === 'editor')
     expect(editor).toBeDefined()
     // The descriptor renders from props; a real tab is part of the contract —

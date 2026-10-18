@@ -124,12 +124,13 @@ export function invalidateDirectoryCache(path?: string): void {
 const DIRECTORY_CACHE_MAX = 512
 
 /** Read one level through the cache when it is fresh. */
-async function listDirectoryCached(path: string, maxEntries: number, exclude?: ExcludeMatcher): Promise<SidebarFsListing> {
+async function listDirectoryCached(path: string, maxEntries: number, exclude?: ExcludeMatcher, gate?: ProbeGate): Promise<SidebarFsListing> {
   const key = cacheKey(path, maxEntries, exclude)
   const now = Date.now()
   const hit = directoryCache.get(key)
+  // A cached level runs no filesystem probe at all, so it never spends budget.
   if (hit !== undefined && now - hit.at < DIRECTORY_CACHE_TTL_MS) return hit.listing
-  const listing = await readDirectory(path, maxEntries, exclude)
+  const listing = await readDirectory(path, maxEntries, exclude, gate)
   // Bounded: a deep walk of many directories must not grow this map without
   // limit (entries are tiny, but an unbounded map in a long-lived host is a
   // leak). Map iteration order is insertion order, so the first key is oldest.
@@ -148,15 +149,18 @@ async function listDirectoryCached(path: string, maxEntries: number, exclude?: E
  * @param exclude - compiled exclude-pattern probe (the explorerExclude pref):
  *  matched entries are dropped from the listing AND the singleton fold probe,
  *  so they never render nor block a breadcrumb fold.
+ * @param gate - optional shared probe budget; a batch listing many levels
+ *  passes ONE gate ({@link createProbeGate}) so the per-level probe bounds do
+ *  not multiply. Cache hits never touch it.
  * @returns the sorted listing.
  * @throws {SidebarError} fs-error when the level is unreadable or not a directory.
  */
-export async function listDirectory(path: string, maxEntries = 1000, exclude?: ExcludeMatcher): Promise<SidebarFsListing> {
-  return await listDirectoryCached(path, maxEntries, exclude)
+export async function listDirectory(path: string, maxEntries = 1000, exclude?: ExcludeMatcher, gate?: ProbeGate): Promise<SidebarFsListing> {
+  return await listDirectoryCached(path, maxEntries, exclude, gate)
 }
 
 /** Read one level straight from the filesystem (the cache's slow path). */
-async function readDirectory(path: string, maxEntries: number, exclude?: ExcludeMatcher): Promise<SidebarFsListing> {
+async function readDirectory(path: string, maxEntries: number, exclude?: ExcludeMatcher, gate?: ProbeGate): Promise<SidebarFsListing> {
   let dirents
   try {
     // One syscall batch instead of an `opendir` stream: `readdir` with types is
@@ -197,37 +201,129 @@ async function readDirectory(path: string, maxEntries: number, exclude?: Exclude
   // symlink-heavy level (UNC/network targets) would otherwise serialize up to
   // maxEntries stat calls and stall the explorer. Non-symlink rows are skipped,
   // so levels without links stay as cheap as before.
-  await probeSymlinkTargets(rows)
+  await probeSymlinkTargets(rows, gate)
   // Mark singleton-directory rows AFTER the symlink probe (it finalizes
   // isDir/broken), so the client can fold compact chains without an extra
-  // round trip per collapsed level.
-  await probeCompactRows(rows, exclude)
+  // round trip per collapsed level. A TRUNCATED level is skipped entirely: the
+  // rows on screen are a slice of a level too wide to be worth folding, and
+  // the fold mark would be decided by the cap rather than by the directory.
+  if (!truncated) await probeCompactRows(rows, exclude, gate)
   rows.sort(compareEntries)
   return { path, entries: rows, truncated }
 }
 
-/** Probe each symlink row's target once (bounded concurrency, order-preserving). */
-async function probeSymlinkTargets(rows: SidebarFsEntry[], concurrency = SYMLINK_PROBE_CONCURRENCY): Promise<void> {
+/**
+ * In-flight filesystem probes ONE listing request may run across ALL of its
+ * levels. The per-level bounds below are exactly that — per level — while a
+ * batch request lists up to `FS_TREES_MAX_PATHS` levels concurrently
+ * (`fs.trees`), so without a shared budget a cold mount of a wide tree could
+ * hold levels × per-level probes open at once (64 × 32). Equal to the
+ * per-level constant on purpose: a single-level listing behaves as before.
+ */
+export const PROBE_BUDGET = 32
+
+/** A FIFO gate bounding how many probe operations run at the same time. */
+export interface ProbeGate {
+  /**
+   * Run one probe operation under the gate.
+   * @param task - the probe; it must not acquire the gate itself.
+   * @returns the task's own result.
+   */
+  run<T>(task: () => Promise<T>): Promise<T>
+}
+
+/**
+ * Create the probe gate one listing request shares across its levels.
+ * @param limit - maximum probes in flight; below 1 is clamped to 1.
+ * @returns the gate.
+ */
+export function createProbeGate(limit = PROBE_BUDGET): ProbeGate {
+  const max = Math.max(1, Math.floor(limit))
+  let active = 0
+  const waiting: (() => void)[] = []
+  const acquire = (): Promise<void> => new Promise((resolve) => {
+    if (active < max) {
+      active += 1
+      resolve()
+      return
+    }
+    waiting.push(() => { active += 1; resolve() })
+  })
+  const release = (): void => {
+    active -= 1
+    // Hand the freed slot straight to the next waiter (it re-increments), so
+    // `active` never reports fewer probes than are actually running.
+    waiting.shift()?.()
+  }
+  return {
+    async run<T>(task: () => Promise<T>): Promise<T> {
+      await acquire()
+      try {
+        return await task()
+      } finally {
+        release()
+      }
+    },
+  }
+}
+
+/**
+ * Visit every row with at most `concurrency` visitors in flight, in row order.
+ * Both probes below spend one await per row (a network stat, an opendir) on a
+ * level that can hold thousands of rows, so the bound has to exist — and be
+ * shared, or the two probes drift into two different ones.
+ */
+async function forEachRow(rows: readonly SidebarFsEntry[], concurrency: number, visit: (row: SidebarFsEntry) => Promise<void>): Promise<void> {
   let next = 0
   const workers = Array.from({ length: Math.min(concurrency, rows.length) }, async () => {
     for (;;) {
       const index = next
       next += 1
       if (index >= rows.length) return
-      const row = rows[index]!
-      if (!row.isSymlink) continue
-      // stat follows the chain; any failure (missing target, ELOOP, permission)
-      // leaves the row as a broken file-shaped link the editor refuses to read.
-      const info = await stat(row.path).catch(() => undefined)
-      row.isDir = info !== undefined ? info.isDirectory() : row.isDir
-      row.broken = info === undefined
+      await visit(rows[index]!)
     }
   })
   await Promise.all(workers)
 }
 
+/**
+ * Run one FILESYSTEM probe under the request's budget.
+ *
+ * The slot is taken here, around the syscall, not around the row visit: a row
+ * the visitor skips without touching the filesystem must not spend budget.
+ * @param gate - the request's gate, or absent for an unbounded probe.
+ * @param task - the probe operation.
+ * @returns the probe's own result.
+ */
+function runProbe<T>(gate: ProbeGate | undefined, task: () => Promise<T>): Promise<T> {
+  return gate === undefined ? task() : gate.run(task)
+}
+
+/** Probe each symlink row's target once (bounded concurrency, order-preserving). */
+async function probeSymlinkTargets(rows: SidebarFsEntry[], gate?: ProbeGate, concurrency = SYMLINK_PROBE_CONCURRENCY): Promise<void> {
+  await forEachRow(rows, concurrency, async (row) => {
+    if (!row.isSymlink) return
+    // stat follows the chain; any failure (missing target, ELOOP, permission)
+    // leaves the row as a broken file-shaped link the editor refuses to read.
+    const info = await runProbe(gate, () => stat(row.path)).catch(() => undefined)
+    row.isDir = info !== undefined ? info.isDirectory() : row.isDir
+    row.broken = info === undefined
+  })
+}
+
 /** How many compact probes run in flight during one level listing. */
 const COMPACT_PROBE_CONCURRENCY = 32
+
+/**
+ * How many children of ONE level are probed for the singleton fold mark.
+ *
+ * Folding is decorative — it decides whether a row renders as `a/b/c` instead
+ * of three rows — so a wide level must not pay one `opendir` per directory row:
+ * a cold listing of a 100-directory level issued 100 syscalls to decorate rows
+ * the user may never look at. Past this many ELIGIBLE directory rows the
+ * remaining rows are simply left unmarked (an un-folded listing), in row order.
+ */
+const COMPACT_PROBE_MAX = 32
 
 /**
  * Mark each directory row whose contents are EXACTLY one non-symlink child
@@ -235,23 +331,23 @@ const COMPACT_PROBE_CONCURRENCY = 32
  * row. The terminal link (sole FILE child) is marked too: the client
  * preloads marked levels to stabilize the fold label before expansion.
  * Bounded concurrency like the symlink probe: each probe is one opendir + up
- * to two dirent reads, so a directory-heavy level stays responsive. Probe
- * failures (unreadable child level) leave the row unmarked — it simply does
- * not fold.
+ * to two dirent reads, so a directory-heavy level stays responsive. A shared
+ * {@link ProbeGate} also keeps a whole batch's levels within one probe budget,
+ * and at most {@link COMPACT_PROBE_MAX} rows of one level are probed at all.
+ * Probe failures (unreadable child level) leave the row unmarked — it simply
+ * does not fold.
  */
-async function probeCompactRows(rows: SidebarFsEntry[], exclude?: ExcludeMatcher, concurrency = COMPACT_PROBE_CONCURRENCY): Promise<void> {
-  let next = 0
-  const workers = Array.from({ length: Math.min(concurrency, rows.length) }, async () => {
-    for (;;) {
-      const index = next
-      next += 1
-      if (index >= rows.length) return
-      const row = rows[index]!
-      if (!row.isDir || row.broken) continue
-      if (await hasSingletonChild(row.path, exclude)) row.compact = true
-    }
+async function probeCompactRows(rows: SidebarFsEntry[], exclude?: ExcludeMatcher, gate?: ProbeGate, concurrency = COMPACT_PROBE_CONCURRENCY): Promise<void> {
+  let probed = 0
+  await forEachRow(rows, concurrency, async (row) => {
+    if (!row.isDir || row.broken) return
+    // The cap counts PROBES, not rows visited: rows the visitor skips (files,
+    // broken links) cost nothing, and the increment happens before the await
+    // so concurrent workers cannot overshoot it.
+    if (probed >= COMPACT_PROBE_MAX) return
+    probed += 1
+    if (await runProbe(gate, () => hasSingletonChild(row.path, exclude))) row.compact = true
   })
-  await Promise.all(workers)
 }
 
 /**

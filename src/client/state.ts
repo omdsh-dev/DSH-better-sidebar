@@ -32,6 +32,13 @@ export interface SidebarTab {
   type: TabType
   title: string
   path?: string
+  /** The 1-based line a file reference named (`a/b.c#L131`, `a/b.c:131`).
+   *  Transient by design: `sanitizePersistedTab` copies a whitelist of known
+   *  fields, and this one is deliberately left out — a link's landing line is
+   *  a one-shot navigation target, and a reload that yanked the reader back
+   *  to a line they scrolled away from days ago would be worse than starting
+   *  at the top. Same spirit as `revealed`. */
+  line?: number
   diff?: SidebarDiffRef
   /** Plugin-owned state (v0.12.0+): MUST be JSON-serializable — it is
    *  persisted with the layout and restored verbatim on reload. */
@@ -71,6 +78,15 @@ export interface SidebarState {
    * unhighlighted.
    */
   revealed: string[]
+  /**
+   * Tab types whose page the reader has not looked at yet: written when a
+   * background activation opens its page WITHOUT taking the column over
+   * (src/client/sidebar/use-host-feeds.ts) and cleared the moment that page
+   * becomes the one on screen. Deliberately NOT transient — it survives the
+   * tab body's unmount, a session switch and a reload, because an unread page
+   * stays unread until it is read.
+   */
+  unread: TabType[]
   /** Whether the bottom panel (the plugin's one workbench) is open. */
   bottomOpen: boolean
   /** The bottom panel's height (clamped to the contract range). */
@@ -148,6 +164,7 @@ export function makeDefaultState(): SidebarState {
     nextBrowser: 1,
     expanded: [],
     revealed: [],
+    unread: [],
     bottomOpen: false,
     bottomHeight: BOTTOM_DEFAULT,
     bottomSplits: bottomLeaf,
@@ -343,11 +360,37 @@ export function activateTab(state: SidebarState, paneId: string, tabId: string):
   }
 }
 
+/**
+ * Mark one tab TYPE as having a page the reader has not looked at yet (the
+ * dot drawn on its tab). Identity-preserving when it is already marked, so a
+ * repeat activation does not churn the store (and therefore localStorage).
+ */
+export function markUnread(state: SidebarState, type: TabType): SidebarState {
+  return state.unread.includes(type) ? state : { ...state, unread: [...state.unread, type] }
+}
+
+/** Clear one tab type's unread mark (the reader just looked at its page). */
+export function clearUnread(state: SidebarState, type: TabType): SidebarState {
+  if (!state.unread.includes(type)) return state
+  return { ...state, unread: state.unread.filter(entry => entry !== type) }
+}
+
+/** Whether one tab type is currently marked unread. */
+export function isUnread(state: SidebarState | undefined, type: TabType): boolean {
+  return state !== undefined && state.unread.includes(type)
+}
+
 /** Update the display fields of one open tab (title / path / meta) without
  *  re-opening it. The browser tab persists its current URL and hostname
  *  title through this reducer so a reload restores the visited page. A
  *  missing tab id is a no-op. The tab may live in either tree or a free
- *  window. */
+ *  window.
+ *
+ *  A PATH CHANGE is a new open: the transient landing line (#826) is dropped
+ *  with it. `line` belongs to the navigation that delivered the file, not to
+ *  the tab — an in-place switch or a rename that kept it would send the next
+ *  file to the previous file's line (and force a markdown file into the
+ *  editor, which is how the reader gets stuck). */
 export function patchTab(
   state: SidebarState,
   tabId: string,
@@ -361,6 +404,12 @@ export function patchTab(
       ...(patch.title !== undefined ? { title: patch.title } : {}),
       ...(patch.path !== undefined ? { path: patch.path } : {}),
       ...(patch.meta !== undefined ? { meta: patch.meta } : {}),
+      // Cleared (not merely left alone) so the reader's next file does not
+      // inherit this one's line. Compared against the current value to keep
+      // the object identity when nothing moved.
+      ...(patch.path !== undefined && patch.path !== tab.path && tab.line !== undefined
+        ? { line: undefined }
+        : {}),
     }
   }
   const walk = (node: SplitNode): SplitNode => {
@@ -679,6 +728,12 @@ export function sanitizeState(parsed: unknown): SidebarState | undefined {
     : 1
   if (typeof record.activePane !== 'string' && record.activePane !== null) return undefined
   if (!Array.isArray(record.expanded) || record.expanded.some(item => typeof item !== 'string')) return undefined
+  // Unread marks arrived in a later build: like the workbench fields below, a
+  // missing or malformed value on an OLDER persisted state defaults to "none
+  // unread" rather than rejecting the whole layout.
+  const unread = Array.isArray(record.unread)
+    ? (record.unread as unknown[]).filter((item): item is string => typeof item === 'string')
+    : []
   // Pane/split ids must be globally unique (the runtime uid counter is
   // shared), so a duplicate id gets a fresh one.
   const seen = new Set<string>()
@@ -715,6 +770,9 @@ export function sanitizeState(parsed: unknown): SidebarState | undefined {
     nextBrowser,
     expanded: record.expanded as string[],
     revealed: [],
+    // Restored, unlike `revealed`: an unread page is still unread after a
+    // reload, and this list is what draws its dot.
+    unread: unread,
     bottomOpen,
     bottomHeight,
     bottomSplits,
@@ -835,6 +893,17 @@ function sanitizeNode(node: unknown, seen: Set<string>, reid: Map<string, string
   return undefined
 }
 
+/**
+ * How many session states stay in memory at once. `bySession` used to grow for
+ * the life of the page — nothing deleted an entry — which under the host's
+ * `keepMounted` tab bodies means one permanent entry per conversation ever
+ * visited. The CURRENT session is always kept; everything else is an LRU of
+ * the most recently touched sessions. Eviction is transparent: the state also
+ * lives in localStorage (a pending debounced write is flushed first), so
+ * switching back to an evicted session reloads exactly what was there.
+ */
+const SESSION_STATE_CAP = 32
+
 /** The session-scoped store: one state per conversation, localStorage-backed. */
 export class SidebarStore {
   private readonly bySession = new Map<string, SidebarState>()
@@ -847,6 +916,12 @@ export class SidebarStore {
   /** Per-session persist debounce timers (v0.12.0+: one per session, so a
    *  targeted open never cancels another session's pending write). */
   private readonly persistTimers = new Map<string, number>()
+  /**
+   * The `getSessionStates()` answer, rebuilt on the next read after a write.
+   * Callers use the map as a memo input / `useSyncExternalStore` value, so a
+   * fresh copy per call invalidated every downstream memo on each render.
+   */
+  private sessionStatesCache: ReadonlyMap<string, SidebarState> | undefined
   /** User-facing side card prefs seeding brand-new session states (defaults until the settings RPC resolves). */
   private prefs: SidebarPrefs = { ...SIDEBAR_PREFS_DEFAULTS }
   /**
@@ -893,17 +968,18 @@ export class SidebarStore {
     if (sessionId === undefined) {
       this.snapshot = { sessionId: undefined, state: undefined, prefs: this.prefs }
     } else {
-      let state = this.bySession.get(sessionId)
-      if (state === undefined) {
-        state = loadState(sessionId)
-        this.bySession.set(sessionId, state)
-      } else {
+      const cached = this.bySession.get(sessionId)
+      const state = cached ?? loadState(sessionId)
+      if (cached !== undefined) {
         // Cache hit: another session's load/ops may have left the uid
         // counter below THIS session's persisted ids — re-seed so fresh
         // pane/split ids can never collide with its tree.
         nextIdCounter = maxCounterId(state)
       }
+      // Publish before recording the entry: eviction must never drop the
+      // session that is now current.
       this.snapshot = { sessionId, state, prefs: this.prefs }
+      this.putSession(sessionId, state)
     }
     this.notify()
   }
@@ -911,6 +987,53 @@ export class SidebarStore {
   subscribe(listener: () => void): () => void {
     this.listeners.add(listener)
     return () => { this.listeners.delete(listener) }
+  }
+
+  /**
+   * Mark one tab type as unread in the CURRENT session (the dot on its tab).
+   *
+   * Reached from the background-activation path alone, so it refuses to
+   * notify when there is nothing to draw: a repeat mark keeps the state
+   * reference AND skips the listener fan-out, which is what lets a test (and
+   * the render path) treat a notification as "the marker really changed".
+   * Returns whether the marker was set.
+   */
+  markUnread(type: TabType): boolean {
+    const state = this.snapshot.state
+    if (state === undefined || state.unread.includes(type)) return false
+    this.reduce(current => markUnread(current, type))
+    return true
+  }
+
+  /**
+   * Clear one tab type's unread mark in a NAMED session — the reader switched
+   * to that page. The current session goes through the publishing path (the
+   * dot has to disappear from the shell AND from the native chip, both of
+   * which read the published snapshot); a session that is not on screen takes
+   * the targeted path, which publishes nothing: its stored state is updated so
+   * the mark is already gone when the reader switches to it.
+   *
+   * `reduceFor` is deliberately not used for the current session: it never
+   * touches the published snapshot, so reading the mark back (or rendering
+   * from it) would keep seeing the old value.
+   *
+   * A type that is not marked is a strict no-op in both paths — no notify, no
+   * persist — so a carrier can call this on every visibility change.
+   * Returns whether a mark was cleared.
+   */
+  clearUnread(type: TabType, sessionId?: string): boolean {
+    const state = this.snapshot.state
+    const target = sessionId ?? this.snapshot.sessionId
+    if (target === undefined) return false
+    if (target === this.snapshot.sessionId) {
+      if (state === undefined || !state.unread.includes(type)) return false
+      this.reduce(current => clearUnread(current, type))
+      return true
+    }
+    const stored = this.bySession.get(target)
+    if (stored === undefined || !stored.unread.includes(type)) return false
+    this.putSession(target, clearUnread(stored, type))
+    return true
   }
 
   getSnapshot(): SidebarSnapshot {
@@ -924,8 +1047,8 @@ export class SidebarStore {
     if (sessionId === undefined || state === undefined) return
     const draft = structuredClone(state)
     mutator(draft)
-    this.bySession.set(sessionId, draft)
     this.snapshot = { sessionId, state: draft, prefs: this.prefs }
+    this.putSession(sessionId, draft)
     this.schedulePersist(sessionId, draft)
     this.notify()
   }
@@ -946,16 +1069,32 @@ export class SidebarStore {
   }
 
   /**
-   * Read-only view of EVERY cached session's state (v0.17.0+). The
-   * PinnedRail uses this to collect pinned terminals across sessions
-   * without each render reading private fields. The map is the live
-   * `bySession` reference — callers MUST treat it as read-only (mutations
-   * go through {@link reduce} / {@link reduceFor}). A session that has
-   * never been visited in this run is absent (its pinned tabs are not
-   * visible until first load — accepted as YAGNI by the design).
+   * One session's cached state, or `undefined` when it has never been loaded
+   * in this run (see {@link getSessionStates} for the whole map). The
+   * reference is STABLE while nothing writes that session — the store's state
+   * objects are immutable and replaced wholesale — so a hot reader may use it
+   * as a memo input instead of copying the whole map per render.
+   */
+  getSessionState(sessionId: string): SidebarState | undefined {
+    return this.bySession.get(sessionId)
+  }
+
+  /**
+   * Read-only view of EVERY cached session's state (v0.17.0+): the whole-map
+   * read, for a caller that needs several sessions at once (a per-session
+   * question should use {@link getSessionState} — it does not allocate).
+   * Callers MUST treat the returned map as read-only (mutations go through
+   * {@link reduce} / {@link reduceFor}); it is a cached SNAPSHOT, invalidated
+   * by the next write, so two reads with no write between them return the same
+   * object — a fresh copy per call invalidated every consumer's memo on every
+   * render. A session that has never been visited in this run is absent (its
+   * pinned tabs are not visible until first load — accepted as YAGNI by the
+   * design), and the same is true of a session evicted by the retention cap
+   * ({@link SESSION_STATE_CAP}) until it is loaded again.
    */
   getSessionStates(): ReadonlyMap<string, SidebarState> {
-    return new Map(this.bySession)
+    if (this.sessionStatesCache === undefined) this.sessionStatesCache = new Map(this.bySession)
+    return this.sessionStatesCache
   }
 
   /** Apply a pure reducer (returns the next state). */
@@ -969,8 +1108,8 @@ export class SidebarStore {
     // patchTab on a missing tab) must not churn the state or rewrite
     // localStorage.
     if (next === state) return
-    this.bySession.set(sessionId, next)
     this.snapshot = { sessionId, state: next, prefs: this.prefs }
+    this.putSession(sessionId, next)
     this.schedulePersist(sessionId, next)
     this.notify()
   }
@@ -990,11 +1129,9 @@ export class SidebarStore {
     // active session's next mint collision-free — ids minted for the target
     // only need to exceed the target's own max, which the seed guaranteed.
     const counterBefore = nextIdCounter
-    let state = this.bySession.get(sessionId)
-    if (state === undefined) {
-      state = loadState(sessionId)
-      this.bySession.set(sessionId, state)
-    } else {
+    const cached = this.bySession.get(sessionId)
+    const state = cached ?? loadState(sessionId)
+    if (cached !== undefined) {
       // Re-seed the uid counter past THIS session's persisted ids, exactly
       // like setSession's cache-hit path.
       nextIdCounter = maxCounterId(state)
@@ -1003,9 +1140,64 @@ export class SidebarStore {
     // Same-reference result = no change: keep the counter restore (it may
     // have been seeded down) but skip the write.
     nextIdCounter = Math.max(nextIdCounter, counterBefore)
+    if (next === state && cached !== undefined) return
+    // (A freshly loaded target is recorded even when the reducer changed
+    // nothing, exactly like the old `bySession.set` on the load path.)
+    this.putSession(sessionId, next)
     if (next === state) return
-    this.bySession.set(sessionId, next)
     this.schedulePersist(sessionId, next)
+  }
+
+  /**
+   * Record one session's state: refresh its recency and bound the map.
+   * Every write to `bySession` goes through here, so the LRU order and the
+   * `getSessionStates()` snapshot stay in step with the entries.
+   */
+  private putSession(sessionId: string, state: SidebarState): void {
+    // delete + set: an existing key keeps its insertion position otherwise,
+    // and the eviction below drops from the FRONT.
+    this.bySession.delete(sessionId)
+    this.bySession.set(sessionId, state)
+    this.sessionStatesCache = undefined
+    this.evictSessions()
+  }
+
+  /**
+   * Drop the least recently touched sessions beyond {@link SESSION_STATE_CAP}.
+   * The current session is never dropped, and an evicted session's state is
+   * not lost: it lives in localStorage, so the next `setSession` reloads it.
+   */
+  private evictSessions(): void {
+    if (this.bySession.size <= SESSION_STATE_CAP) return
+    for (const id of [...this.bySession.keys()]) {
+      if (this.bySession.size <= SESSION_STATE_CAP) return
+      if (id === this.snapshot.sessionId) continue
+      this.flushPersist(id)
+      this.bySession.delete(id)
+    }
+  }
+
+  /**
+   * Write one session's state NOW instead of waiting for its debounce timer.
+   * Eviction flushes before dropping an entry: the in-memory copy is what the
+   * reader sees until they switch back, and a pending write that landed after
+   * a switch-back would leave the reloaded state behind the storage one.
+   */
+  private flushPersist(sessionId: string): void {
+    const timer = this.persistTimers.get(sessionId)
+    if (timer === undefined) return
+    window.clearTimeout(timer)
+    this.persistTimers.delete(sessionId)
+    const state = this.bySession.get(sessionId)
+    if (state !== undefined) this.writePersisted(sessionId, state)
+  }
+
+  private writePersisted(sessionId: string, state: SidebarState): void {
+    try {
+      localStorage.setItem(`${STORAGE_PREFIX}:${sessionId}`, JSON.stringify(state))
+    } catch {
+      // Storage full or unavailable: layout memory is best-effort.
+    }
   }
 
   private schedulePersist(sessionId: string, state: SidebarState): void {
@@ -1018,11 +1210,7 @@ export class SidebarStore {
     if (existing !== undefined) window.clearTimeout(existing)
     const timer = window.setTimeout(() => {
       this.persistTimers.delete(sessionId)
-      try {
-        localStorage.setItem(`${STORAGE_PREFIX}:${sessionId}`, JSON.stringify(state))
-      } catch {
-        // Storage full or unavailable: layout memory is best-effort.
-      }
+      this.writePersisted(sessionId, state)
     }, 200)
     this.persistTimers.set(sessionId, timer)
   }

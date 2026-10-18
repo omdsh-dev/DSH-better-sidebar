@@ -2,24 +2,21 @@
  * dsh-better-sidebar host half: the /sidebar JSON API (explorer listing, file
  * read/write, git), the /sidebar/file media route (images), the /sidebar/html
  * preview route, the /sidebar/bundle lazy-chunk route (client code splits),
- * and the two WebSocket upgrades (sidebar_open pushes). Every route passes the same
- * browser-trust fence as the /api gateway — Host-header loopback or the
- * web runtime's `trustedHosts` (LAN IP literals sampled at boot plus
- * `--trusted-host` authorities), read per request from the live service
- * value so the fence tracks the same trust source the /api gateway derives
- * its list from.
+ * and the WebSocket upgrades. Every route delegates admission to the same
+ * public Connection service as the /api gateway (Host/Origin and browser
+ * authentication), read per request.
  *
  * All operations are conversation-scoped: requests carry a sessionId and the
  * session's authoritative cwd comes from the session store.
  */
-import { randomUUID } from 'node:crypto'
-import { mkdir, open, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
-import { basename, dirname, extname, isAbsolute, join, sep } from 'node:path'
-import type { IncomingMessage } from 'node:http'
+import { open, readFile, stat } from 'node:fs/promises'
+import { basename, extname, isAbsolute, join, sep } from 'node:path'
+import type { Stats } from 'node:fs'
+import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Duplex } from 'node:stream'
 import { WebSocket, WebSocketServer } from 'ws'
 import { parse as parseYaml } from 'yaml'
-import type { Context, SidebarHttpRequest, SidebarSessionEvent, SidebarSettingsService } from './context-types.ts'
+import type { Context, SidebarHttpRequest, SidebarSettingsService } from './context-types.ts'
 import {
   Config,
   resolveSidebarConfig,
@@ -29,20 +26,20 @@ import {
   type SidebarConfig,
   type SidebarPrefs,
 } from './config.ts'
-import { invalidateDirectoryCache, listDirectory, messageOf, parentOf, requireAbsolute, rootLabel, type SidebarFsEntry } from './fs-tree.ts'
+import { createProbeGate, listDirectory, messageOf, parentOf, requireAbsolute, rootLabel, type SidebarFsEntry } from './fs-tree.ts'
 import { resolveSessionPath } from './session-path.ts'
-import { mkdirWorkspaceEntry, renameWorkspaceEntry, removeWorkspaceEntry, writeWorkspaceUpload } from './fs-operations.ts'
-import { ensureWorkspacePath, ensureWorkspaceWritePath } from './path-security.ts'
+import { createWorkspaceFile, mkdirWorkspaceEntry, renameWorkspaceEntry, removeWorkspaceEntry, writeWorkspaceText, writeWorkspaceUpload } from './fs-operations.ts'
+import { ensureWorkspacePath } from './path-security.ts'
 import { searchFiles } from './fs-search.ts'
 import { compileExcludePatterns } from './exclude-patterns.ts'
 import { decodeHtmlUrl } from './html-route.ts'
-import { isTrustedApiRequest } from './trust-fence.ts'
 import { registerBundleRoute } from './bundle-route.ts'
 import { createDirectoryWatchers, type DirectoryWatchers } from './fs-watch.ts'
+import { createSidechatPushHub } from './sidechat-push.ts'
 import { launchExternal } from './open-external.ts'
-import { archiveNameOf, collectZipEntries, createArchiveTasks, disambiguateArchiveNames, respondArchiveDownload, type ArchiveTasks } from './archive-route.ts'
-import type { ZipEntry } from './zip.ts'
+import { createArchiveTasks, respondArchiveDownload, type ArchiveTasks } from './archive-route.ts'
 import * as git from './git.ts'
+import { gitGraph, type GitGraphOptions } from './git-graph.ts'
 import { SettingsConflictError } from '@deepseek-ai/dsh-settings'
 import { AgentOpenRegistry, registerOpenTool, type AgentOpenRequest } from './agent-opens.ts'
 import { buildSubagentLiveApi, type SidebarSubagentLiveRoutes } from './subagent-live-route.ts'
@@ -50,8 +47,10 @@ import { buildTeamsApi, type SidebarTeamsRoutes } from './team-routes.ts'
 import { buildWorkflowsApi, type SidebarWorkflowRoutes } from './workflow-routes.ts'
 import { buildSidechatApi } from './sidechat-routes.ts'
 import { createAssistantLiveBuffer, type AssistantLiveBuffer } from './assistant-live.ts'
-import { readJsonBody, requireString, SidebarError, writeError, writeJson, writeOk } from './wire.ts'
+import { readJsonBody, readTextBody, requireString, SidebarError, writeError, writeJson, writeOk } from './wire.ts'
+import { streamFileToResponse } from './file-stream.ts'
 import { readPersistedSession } from './session-store.ts'
+import { createChangesOpsApi } from './changes-ops.ts'
 import { BlockAssembler, createUserMessage, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import {
   buildCommitPrompt,
@@ -70,7 +69,8 @@ import {
 // row bound, so it lives in a dependency-free module both can import.
 import { FS_TREES_MAX_PATHS } from './fs-batch.ts'
 import { activeWorktreeRootOf } from './active-worktree.ts'
-import { decodeTextBytes, encodeText, encodingOfFile } from './text-encoding.ts'
+import { decodeTextAs, decodeTextBytes, isWideEncoding, lastLineBreakEnd, type TextEncoding } from './text-encoding.ts'
+import { MAX_EDITABLE_BYTES, PAGE_BYTES, WRITE_BODY_GUARD_BYTES } from './editor-limits.ts'
 
 export { Config }
 export type { SidebarConfig, ResolvedSidebarConfig }
@@ -89,10 +89,9 @@ export type {
   FileViewerProps,
   FileFetchStrategy,
 } from './client/service.ts'
-// The archive walk + name helpers are exercised directly by tests/zip.spec.ts:
-// their bounds live inside the collector, so the suite needs them observable
-// without creating 10 000 rows first.
-export { archiveNameOf, collectZipEntries, contentDispositionOf, disambiguateArchiveNames } from './archive-route.ts'
+// The archive disposition helper is exercised directly by the archive specs:
+// the RFC 5987 header shape is its own contract, testable without a mount.
+export { contentDispositionOf } from './archive-route.ts'
 /** Plugin identity for cordis.yml rows. */
 export const name = 'dsh-better-sidebar'
 
@@ -109,8 +108,8 @@ export interface SidebarFsLevel {
   error?: string
 }
 
-/** Services required before mounting: the webserver routes, the session store, the web runtime's trusted hosts, and the tool registry. */
-export const inject = ['webServer', 'sessions', 'webRuntime', 'tools']
+/** Services required before mounting: routes, sessions, native request admission, and tools. */
+export const inject = ['webServer', 'sessions', 'connection', 'tools']
 
 /** Content types for the media route, by extension. */
 const MEDIA_TYPES: Record<string, string> = {
@@ -134,24 +133,31 @@ export function mediaTypeForPath(path: string): string {
 }
 
 /**
- * Resolve a session's authoritative working directory. The attached session
- * header wins; while the session is still hydrating from persistence (the
- * web client attaches the current conversation a moment after page load, so
- * the very first sidebar requests can arrive detached) the caller's own
- * list-summary cwd is used; the session-persistence index is queried as a
- * last resort for cold (not-yet-attached) sessions so a detached first
- * request still resolves the correct project instead of the host process
- * cwd (which on Windows is the DSH source root after `dsh.cmd`'s `pushd`,
- * causing every user-project path to be misclassified as "outside
- * workspace"). The host process cwd is the FINAL fallback for deployments
- * without persistence (tests / stripped-down hosts); production always
- * provides persistence, so the bug-fix path (header → client → persistence)
- * always resolves the real session cwd before reaching it.
+ * Resolve the committed execution directory before client or original-header
+ * hints. Live reads are synchronous; detached reads use the host observation
+ * lease and its revision-keyed projection cache, never a plugin-owned log fold
+ * or TTL that could hide a working_directory change.
  */
 async function sessionCwdOf(ctx: Context, sessionId: string, clientCwd?: string): Promise<string> {
   const session = ctx.sessions.get(sessionId)
-  const headerCwd = session?.header.cwd
-  if (headerCwd !== undefined && headerCwd !== '') return headerCwd
+  // The immutable header is the original project, not the current execution
+  // directory. Read the host's committed value on every request (no TTL).
+  if (session !== undefined) {
+    const cwd = ctx.get('workingDirectory')?.get(session) ?? session.header.cwd
+    if (cwd !== undefined && cwd !== '') return cwd
+  }
+  const query = ctx.get('sessionQuery')
+  if (query !== undefined) {
+    const observation = await query.observeSession(sessionId, { projectionMode: 'all' })
+    try {
+      const cwd = observation.projections?.values.workingDirectory
+        ?? observation.header.cwd
+        ?? ctx.get('workingDirectory')?.defaultDirectory
+      if (cwd !== undefined && cwd !== '') return requireAbsolute(cwd)
+    } finally {
+      observation[Symbol.dispose]()
+    }
+  }
   if (clientCwd !== undefined && clientCwd !== '') {
     try {
       return requireAbsolute(clientCwd)
@@ -179,6 +185,15 @@ function selectedRepoOf(payload: unknown): string | undefined {
   const record = payload as { repoRoot?: unknown }
   if (record.repoRoot === undefined) return undefined
   return requireAbsolute(requireString(payload, 'repoRoot'))
+}
+
+/** One required 1-based line number of a `git blame -L` request. */
+function requireLineNumber(payload: unknown, key: string): number {
+  const value = (payload as Record<string, unknown> | null)?.[key]
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 1) {
+    throw new SidebarError('bad-request', `"${key}" must be a positive integer line number`)
+  }
+  return value
 }
 
 /**
@@ -243,19 +258,9 @@ function conversationModelRoute(ctx: Context, sessionId: string): CommitModelRou
     return { provider: options.provider, model: options.model }
   }
   const events = ctx.sessions.get(sessionId)?.snapshotEvents()
-  if (events === undefined) return undefined
-  for (let index = events.length - 1; index >= 0; index--) {
-    const event = events[index]
-    if (event === undefined || event.type !== 'request/header') continue
-    const config = (event.data as { header?: { config?: unknown } } | undefined)?.header?.config
-    if (config === null || typeof config !== 'object') continue
-    const provider = (config as { provider?: unknown }).provider
-    const model = (config as { model?: unknown }).model
-    if (typeof provider === 'string' && provider !== '' && typeof model === 'string' && model !== '') {
-      return { provider, model }
-    }
-  }
-  return undefined
+  // The newest route, through the same `request/header` reader the picker's
+  // candidate list uses — the shape is parsed in exactly one place.
+  return events === undefined ? undefined : collectModelRoutes(events, 1)[0]
 }
 
 /**
@@ -388,19 +393,53 @@ async function resolveStatusPath(cwd: string, raw: string, selected?: string): P
 /** How many leading bytes a binary read returns for client-side detect sniffing. */
 const READ_HEAD_LIMIT = 4096
 
-/** Text read of a file with the size cap; text encoding is detected before
- *  the NUL-based binary fallback so UTF-16/UTF-32 text remains editable.
- *  Binary reads also return the first {@link READ_HEAD_LIMIT} bytes (base64)
- *  so the client can re-match viewers by content (`detect`). */
-async function readText(path: string, readLimit: number): Promise<{
-  content: string
-  truncated: boolean
-  binary: boolean
-  size: number
-  /** Last-modified time (ms) — the save route's conflict baseline. */
-  mtimeMs: number
-  head?: string
-}> {
+/**
+ * `stat` one path for a raw byte route, turning an unreadable path into the
+ * route's own error shape.
+ *
+ * A bare `stat` rejection escaped as a 500 "internal", which reads as a plugin
+ * fault; a file the user asked for that does not exist (or cannot be read) is
+ * a 400 with a usable message. The streaming helper opens the file BEFORE
+ * committing the response for the same reason — the error has to stay
+ * deliverable.
+ */
+async function statFileForRoute(path: string): Promise<Stats> {
+  return await stat(path).catch((error: unknown) => {
+    throw new SidebarError(
+      'fs-error',
+      `cannot read "${path}": ${error instanceof Error ? error.message : String(error)}`,
+      400,
+    )
+  })
+}
+
+/** One file read, in the shape the client's viewer dispatch consumes. */
+export type SidebarReadResult =
+  | { kind: 'text'; content: string; size: number; mtimeMs: number }
+  | { kind: 'binary'; size: number; mtimeMs: number; head: string }
+  | { kind: 'too-large'; size: number; mtimeMs: number; head: string }
+
+/**
+ * Read one file for the editor host.
+ *
+ * Three outcomes, and the size policy is deliberately about EDITING rather
+ * than about transfer:
+ *
+ * - at or below {@link MAX_EDITABLE_BYTES}: the whole document (or the binary
+ *   verdict + a 4 KiB sniff head);
+ * - above it: `too-large`, carrying only the 4 KiB head. The client answers it
+ *   with the read-only paged preview, and the head still lets a `detect`-based
+ *   third-party viewer claim the file — which is also what keeps the binary
+ *   path (images, office documents) intact for a file of any size.
+ *
+ * There is no truncation outcome any more. The old capped read handed the
+ * editor a partial document it could neither trust nor save (issue #732);
+ * "too big to edit" is now its own state instead of a quietly damaged one.
+ *
+ * Text encoding is detected before the NUL-based binary verdict, so UTF-16 /
+ * UTF-32 / GBK text stays text.
+ */
+async function readText(path: string): Promise<SidebarReadResult> {
   const info = await stat(path).catch((error: unknown) => {
     throw new SidebarError('fs-error', `cannot read "${path}": ${error instanceof Error ? error.message : String(error)}`, 400)
   })
@@ -408,26 +447,156 @@ async function readText(path: string, readLimit: number): Promise<{
     throw new SidebarError('fs-error', `"${path}" is a directory`, 400)
   }
   const size = info.size
-  const truncated = size > readLimit
+  const oversized = size > MAX_EDITABLE_BYTES
   const handle = await open(path, 'r').catch((error: unknown) => {
     throw new SidebarError('fs-error', `cannot read "${path}": ${error instanceof Error ? error.message : String(error)}`, 400)
   })
   try {
-    const buffer = Buffer.alloc(Math.min(size, readLimit))
+    // An over-limit file still yields its first bytes: that is what decides
+    // text-vs-binary and what feeds the client's content sniffer.
+    const window = oversized ? READ_HEAD_LIMIT : size
+    const buffer = Buffer.alloc(window)
     const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0)
     const slice = buffer.subarray(0, bytesRead)
-    const decoded = decodeTextBytes(slice, truncated)
-    const binary = decoded === null
-    const head = binary
-      ? slice.subarray(0, Math.min(slice.length, READ_HEAD_LIMIT)).toString('base64')
-      : undefined
+    const decoded = decodeTextBytes(slice, oversized)
+    if (decoded === null) {
+      return {
+        kind: 'binary',
+        size,
+        mtimeMs: info.mtimeMs,
+        head: slice.subarray(0, Math.min(slice.length, READ_HEAD_LIMIT)).toString('base64'),
+      }
+    }
+    if (oversized) {
+      return {
+        kind: 'too-large',
+        size,
+        mtimeMs: info.mtimeMs,
+        head: slice.toString('base64'),
+      }
+    }
+    return { kind: 'text', content: decoded.content, size, mtimeMs: info.mtimeMs }
+  } finally {
+    await handle.close()
+  }
+}
+
+/**
+ * The WIDE encoding a file was found to use, per (path, size, mtime) triple.
+ *
+ * Only wide encodings (UTF-16/UTF-32) are memoized, and that is the whole
+ * point: a page window that happens to contain no NUL bytes cannot tell wide
+ * text from byte-oriented text, so a later window of a UTF-16 document must
+ * not be allowed to re-decide. Byte-oriented encodings (UTF-8 / GBK / GB18030)
+ * are deliberately NOT memoized — a long ASCII prefix sniffs as UTF-8 while a
+ * later GBK window sniffs as GBK, and decoding each window on its own terms is
+ * what recovers the right text for both. (That is safe because pages are
+ * line-aligned: 0x0A can be neither a UTF-8 continuation byte nor a GBK trail
+ * byte, so a window boundary never splits a character.)
+ *
+ * The size+mtime in the key drops the entry the moment the file changes.
+ */
+const wideEncodingCache = new Map<string, TextEncoding>()
+/** Bound on {@link wideEncodingCache} (a paged read is a handful of entries). */
+const PAGE_ENCODING_CACHE_MAX = 64
+
+/** One page of a large text file: whole lines, plus where to continue. */
+interface ReadPageResult {
+  kind: 'text'
+  text: string
+  offset: number
+  nextOffset: number
+  eof: boolean
+  size: number
+  mtimeMs: number
+  encoding: TextEncoding
+}
+
+/**
+ * Read one byte window of a text file, trimmed back to the last newline so a
+ * page is a whole number of lines — and, for a JSONL file, a whole number of
+ * records.
+ *
+ * A window with no newline at all (one line longer than {@link PAGE_BYTES}) is
+ * returned untrimmed: the client stitches consecutive pages back together and
+ * gives up on a single record past its own bound.
+ *
+ * @param path - absolute, already resolved path.
+ * @param offset - byte offset to start at (`0` for the first page).
+ * @throws {SidebarError} fs-error for an unreadable path or a bad offset.
+ */
+async function readPage(path: string, offset: number): Promise<ReadPageResult> {
+  const info = await stat(path).catch((error: unknown) => {
+    throw new SidebarError('fs-error', `cannot read "${path}": ${error instanceof Error ? error.message : String(error)}`, 400)
+  })
+  if (info.isDirectory()) {
+    throw new SidebarError('fs-error', `"${path}" is a directory`, 400)
+  }
+  const size = info.size
+  if (offset >= size) {
     return {
-      content: decoded?.content ?? '',
-      truncated,
-      binary,
+      kind: 'text',
+      text: '',
+      offset,
+      nextOffset: size,
+      eof: true,
       size,
       mtimeMs: info.mtimeMs,
-      head,
+      encoding: 'utf8',
+    }
+  }
+  const handle = await open(path, 'r').catch((error: unknown) => {
+    throw new SidebarError('fs-error', `cannot read "${path}": ${error instanceof Error ? error.message : String(error)}`, 400)
+  })
+  try {
+    const length = Math.min(PAGE_BYTES, size - offset)
+    const buffer = Buffer.alloc(length)
+    const { bytesRead } = await handle.read(buffer, 0, length, offset)
+    let slice = buffer.subarray(0, bytesRead)
+    let nextOffset = offset + bytesRead
+    const cacheKey = `${path}\u0000${size}\u0000${info.mtimeMs}`
+    const locked = wideEncodingCache.get(cacheKey)
+    if (nextOffset < size) {
+      // Trim back to a line break so a page is a whole number of lines — and,
+      // for JSONL, a whole number of records. Judged in the encoding's own
+      // character width, because a naive byte search for 0x0A cuts UTF-16
+      // characters in half (see lastLineBreakEnd). A window with no break at
+      // all is returned untrimmed and stitched by the client.
+      const lastBreak = lastLineBreakEnd(slice, locked ?? 'utf8')
+      if (lastBreak >= 0) {
+        slice = slice.subarray(0, lastBreak)
+        nextOffset = offset + lastBreak
+      }
+    }
+    const decoded = decodeTextBytes(slice, true)
+    let encoding: TextEncoding
+    let text: string
+    if (locked !== undefined) {
+      // A wide encoding the file already proved. Only offset 0 can carry a
+      // BOM, and decodeTextBytes is the one that strips it, so page 0 keeps its
+      // result while every later page decodes BOM-less under the locked verdict.
+      encoding = locked
+      text = offset === 0 && decoded !== null ? decoded.content : decodeTextAs(slice, locked)
+    } else {
+      encoding = decoded?.encoding ?? 'utf8'
+      text = decoded?.content ?? decodeTextAs(slice, 'utf8')
+      if (decoded !== null && isWideEncoding(decoded.encoding)) {
+        if (wideEncodingCache.size >= PAGE_ENCODING_CACHE_MAX) {
+          const oldest = wideEncodingCache.keys().next()
+          if (!oldest.done) wideEncodingCache.delete(oldest.value)
+        }
+        wideEncodingCache.set(cacheKey, decoded.encoding)
+      }
+    }
+    return {
+      kind: 'text',
+      text,
+      offset,
+      nextOffset,
+      eof: nextOffset >= size,
+      size,
+      mtimeMs: info.mtimeMs,
+      encoding,
     }
   } finally {
     await handle.close()
@@ -435,7 +604,7 @@ async function readText(path: string, readLimit: number): Promise<{
 }
 
 /** One API method dispatch table entry. */
-type ApiMethod = (payload: unknown) => Promise<unknown> | unknown
+type ApiMethod = (payload: unknown, signal?: AbortSignal) => Promise<unknown> | unknown
 
 /**
  * The live face of the side card settings namespace, bound to the settings
@@ -489,6 +658,7 @@ function buildApi(
   // `subagents.history` calls. The route degrades to a 503 when the host
   // subagent runtime is absent (the page has no topology to show anyway).
   const subagentLiveApi: SidebarSubagentLiveRoutes = buildSubagentLiveApi(ctx)
+  const changesOps = createChangesOpsApi(ctx)
   // Workflow runs: no service registry exists in DSH (runs are
   // holder-owned), so the route folds the `tool-workflow/*` session events
   // the tool's recorder appends — the same four types the official panel
@@ -524,7 +694,12 @@ function buildApi(
       // The client's explorerExclude pref rides the request (compiled here so
       // the listing and the singleton fold probe share one matcher).
       const exclude = compileExcludePatterns(record.exclude, cwd)
-      return listDirectory(target, resolved.listLimit, exclude)
+      // One request-wide probe gate, exactly like the batch route below: a
+      // single-level listing bounds its own probe pools anyway (the shared
+      // budget equals them on purpose — see PROBE_BUDGET), but building one
+      // here keeps the two listing routes the same shape, so neither can ever
+      // fan out per row without a budget.
+      return listDirectory(target, resolved.listLimit, exclude, createProbeGate())
     },
     // Batch listing: one request for every level the tree has expanded, so a
     // mount/refresh costs one round trip instead of N. Each path rides the
@@ -545,6 +720,11 @@ function buildApi(
       // explorerExclude pref has to be compiled here too, or the exclude list
       // would simply not reach the only surface the explorer reads.
       const exclude = compileExcludePatterns(record?.exclude, cwd)
+      // ONE probe budget for the whole request: every level keeps its own
+      // per-level probe bound, but a batch of up to FS_TREES_MAX_PATHS levels
+      // shares one gate, so the bounds do not multiply (64 × 32 opendirs on a
+      // cold mount of a wide tree). Cache hits never touch the gate.
+      const gate = createProbeGate()
       const levels = await Promise.all(paths.map(async (raw): Promise<SidebarFsLevel> => {
         // A session-relative path is accepted here (the tree already carries
         // cwd-relative paths); `fs.tree` itself keeps requiring absolute
@@ -554,7 +734,7 @@ function buildApi(
         const homeRelative = raw === '~' || raw.startsWith('~/') || raw.startsWith('~\\')
         const requested = isAbsolute(raw) || homeRelative ? raw : `${cwd}${sep}${raw}`
         try {
-          return await listDirectory(await ensureWorkspacePath(cwd, requested), resolved.listLimit, exclude)
+          return await listDirectory(await ensureWorkspacePath(cwd, requested), resolved.listLimit, exclude, gate)
         } catch (error) {
           // Per-level failure: the batch itself stays a success (one unreadable
           // directory must not blank the whole tree).
@@ -564,9 +744,13 @@ function buildApi(
       return { levels }
     },
     'fs.search': async (payload) => {
-      // The editor side panel's global name search: rooted at the session
-      // cwd (not caller-targetable — the walk is unbounded by design and
-      // must never escape the workspace), budgeted inside searchFiles.
+      // The editor side panel's global search. Name queries stay rooted at
+      // the session cwd (not caller-targetable — the walk is unbounded by
+      // design), budgeted inside searchFiles. A query carrying a path
+      // separator can never match a NAME, so searchFiles routes it
+      // differently: an absolute query stats its target (the same
+      // any-host-path reach fs.read has had since the workspace fence came
+      // off) and a relative fragment matches by path.
       const { cwd } = await cwdOf(payload)
       const record = payload as { exclude?: unknown }
       const query = requireString(payload, 'query')
@@ -580,52 +764,21 @@ function buildApi(
       // cwd; thread it so the path resolves inside the authorized workspace.
       const selected = selectedRepoOf(payload)
       const path = await ensureWorkspacePath(cwd, await resolveGitPath(cwd, requireString(payload, 'path'), selected))
-      const { content, truncated, binary, size, mtimeMs, head } = await readText(path, resolved.readLimit)
-      if (binary) return { kind: 'binary', size, truncated, mtimeMs, head }
-      return { kind: 'text', content, truncated, mtimeMs }
+      return await readText(path)
     },
-    'fs.write': async (payload) => {
+    // One byte window of a large text file, for the read-only paged preview.
+    // The window is line-aligned by the host, so the client can treat each
+    // response as whole lines (and, for a `.jsonl`, whole records) without
+    // having to re-split anything.
+    'fs.readPage': async (payload) => {
       const { cwd } = await cwdOf(payload)
-      const path = await ensureWorkspaceWritePath(cwd, requireString(payload, 'path'))
-      const content = requireString(payload, 'content')
-      // Detect the encoding BEFORE the temp write so the save round-trips the
-      // bytes the file already used (GBK / UTF-16 / BOM'd UTF-8 stay put).
-      const encoding = await encodingOfFile(path)
-      // Optimistic concurrency: the client sends the mtime its draft was based
-      // on; a file that changed on disk since (the model wrote it, another tab
-      // saved, an external editor touched it) refuses the write instead of
-      // silently clobbering those bytes. Omitted (older callers) = no gate.
-      const record = payload as { expectedMtimeMs?: unknown } | null
-      const expected = typeof record?.expectedMtimeMs === 'number' && Number.isFinite(record.expectedMtimeMs)
-        ? record.expectedMtimeMs
-        : undefined
-      if (expected !== undefined) {
-        const current = await stat(path).then(info => info.mtimeMs).catch(() => undefined)
-        if (current !== undefined && current !== expected) {
-          throw new SidebarError(
-            'fs-conflict',
-            `"${path}" changed on disk since it was loaded (expected mtime ${expected}, found ${current})`,
-            409,
-          )
-        }
-      }
-      // Per-request temp name (same pattern as writeWorkspaceUpload): a
-      // pid-suffixed name is shared by every concurrent save to the same
-      // path, letting two writers interleave into one temp file — and the
-      // failure-path rm could delete the other writer's in-flight temp.
-      const tmp = join(dirname(path), `.${basename(path)}.dsh-sidebar-tmp-${randomUUID()}.tmp`)
-      try {
-        await mkdir(dirname(path), { recursive: true })
-        await writeFile(tmp, encodeText(content, encoding), { flag: 'wx' })
-        await rename(tmp, path)
-      } catch (error) {
-        await rm(tmp, { force: true }).catch(() => {})
-        throw new SidebarError('fs-error', `cannot write "${path}": ${error instanceof Error ? error.message : String(error)}`, 400)
-      }
-      invalidateDirectoryCache(dirname(path))
-      // The fresh baseline the client adopts after a successful save.
-      const mtimeMs = await stat(path).then(info => info.mtimeMs).catch(() => undefined)
-      return { ok: true, ...(mtimeMs !== undefined ? { mtimeMs } : {}) }
+      const selected = selectedRepoOf(payload)
+      const path = await ensureWorkspacePath(cwd, await resolveGitPath(cwd, requireString(payload, 'path'), selected))
+      const record = payload as { offset?: unknown } | null
+      const offset = typeof record?.offset === 'number' && Number.isFinite(record.offset) && record.offset >= 0
+        ? Math.floor(record.offset)
+        : 0
+      return await readPage(path, offset)
     },
     // The tree row's rename: single-segment name, destination-existence and
     // workspace-root refusals, link-aware (renames the row, not its target).
@@ -643,6 +796,18 @@ function buildApi(
     'fs.mkdir': async (payload) => {
       const { cwd } = await cwdOf(payload)
       return mkdirWorkspaceEntry({
+        cwd,
+        path: requireString(payload, 'path'),
+        name: requireString(payload, 'name'),
+      })
+    },
+    // The tree's "new file": one EMPTY file inside an existing row. Same
+    // single-segment/existence rules as mkdir, plus the Windows-illegal and
+    // reserved-device-name refusals a file name has to survive (fs-operations.ts
+    // owns both), and a destination that is never truncated.
+    'fs.createFile': async (payload) => {
+      const { cwd } = await cwdOf(payload)
+      return createWorkspaceFile({
         cwd,
         path: requireString(payload, 'path'),
         name: requireString(payload, 'name'),
@@ -676,6 +841,16 @@ function buildApi(
       const repoRoot = selectedRepoOf(payload)
       const path = record.path === undefined ? undefined : await resolveStatusPath(cwd, requireString(payload, 'path'), repoRoot)
       return { diff: await git.diff(cwd, path, record.staged === true, repoRoot) }
+    },
+    // The editor's change gutter asks for the WHOLE uncommitted change of one
+    // file (worktree against HEAD, staged and unstaged together) — the two
+    // existing `git.diff` sides would each report only half of a partly
+    // staged file, and the gutter's line numbers are the worktree's.
+    'git.diff-head': async (payload) => {
+      const { cwd } = await gitCwdOf(payload)
+      const repoRoot = selectedRepoOf(payload)
+      const path = await ensureWorkspacePath(cwd, await resolveGitPath(cwd, requireString(payload, 'path'), repoRoot))
+      return { diff: await git.diffHead(cwd, path, repoRoot) }
     },
     'git.stage': async (payload) => {
       const { cwd } = await gitCwdOf(payload)
@@ -720,6 +895,19 @@ function buildApi(
       await git.checkout(cwd, requireString(payload, 'branch'), selectedRepoOf(payload))
       return { ok: true }
     },
+    'git.graph': async (payload) => {
+      const { cwd } = await gitCwdOf(payload)
+      try {
+        return await gitGraph(cwd, payload as GitGraphOptions, selectedRepoOf(payload))
+      } catch (error) {
+        // The shared Git mapper collapses legacy command codes. Preserve the
+        // graph cursor's refresh signal rather than reporting a generic error.
+        if (error instanceof git.GitCommandError && (error.code === 'graph-stale' || error.code === 'graph-limit' || error.code === 'bad-request')) {
+          throw new SidebarError(error.code, error.message, error.code === 'graph-stale' ? 409 : 400)
+        }
+        throw error
+      }
+    },
     'git.log': async (payload) => {
       const { cwd } = await gitCwdOf(payload)
       const record = payload as { count?: unknown; skip?: unknown }
@@ -763,6 +951,17 @@ function buildApi(
       const path = requireString(payload, 'path')
       const rev = requireString(payload, 'rev')
       return { content: await git.show(cwd, rev, path, repoRoot) }
+    },
+    // The editor's hover blame: ONE line range per request (the tooltip never
+    // prefetches a file) and an empty list for every failure — see git.blame.
+    'git.blame': async (payload) => {
+      const { cwd } = await gitCwdOf(payload)
+      const repoRoot = selectedRepoOf(payload)
+      const path = await ensureWorkspacePath(cwd, await resolveGitPath(cwd, requireString(payload, 'path'), repoRoot))
+      const startLine = requireLineNumber(payload, 'startLine')
+      const endLine = requireLineNumber(payload, 'endLine')
+      if (endLine < startLine) throw new SidebarError('bad-request', '"endLine" must not precede "startLine"')
+      return { lines: await git.blame(cwd, path, startLine, endLine, repoRoot) }
     },
     // Commit-message suggestion: build a prompt from the pending changes and
     // stream it through the harness LLM service (`ctx.llm`) — no agent is
@@ -867,41 +1066,13 @@ function buildApi(
     // The session's file-tool events for the changes tab's session lens
     // (and its badge): the CLIENT runtime's sessions face has no event-log
     // access, so the events cross the wire here — live session log first,
-    // the persisted logical log for not-yet-hydrated sessions. Only the
-    // two event types the lens folds are sent, narrowed to `seq > afterSeq`
-    // so polling is a small delta, with the same recent-window cap the
-    // client accumulator applies.
-    'changes.ops': async (payload) => {
-      const sessionId = requireString(payload, 'sessionId')
-      const rawAfter = (payload as { afterSeq?: unknown } | null)?.afterSeq
-      if (rawAfter !== undefined
-        && (typeof rawAfter !== 'number' || !Number.isSafeInteger(rawAfter) || rawAfter < 0)) {
-        throw new SidebarError('bad-request', 'afterSeq must be a non-negative integer')
-      }
-      // An absent cursor means "from the very first event" — a session whose
-      // log opens on a tool event (subagent seeds do) carries seq 0, which a
-      // literal `> 0` comparison would drop, so the absent case floors at -1.
-      const afterSeq = rawAfter ?? -1
-      let events: readonly SidebarSessionEvent[] | undefined = ctx.sessions.get(sessionId)?.snapshotEvents()
-      if (events === undefined) {
-        const persistence = ctx.get('sessionPersistence')
-        if (persistence !== undefined) {
-          try {
-            events = (await readPersistedSession(persistence, sessionId)).events
-          } catch {
-            // Cold read unavailable (session never persisted): an empty
-            // window is the honest answer, not a wire error.
-          }
-        }
-      }
-      if (events === undefined) return { events: [], lastSeq: Math.max(afterSeq, 0) }
-      const CHANGES_EVENTS_CAP = 4000
-      const filtered = events.filter(
-        event => (event.type === 'tool/call' || event.type === 'tool/result') && event.seq > afterSeq,
-      )
-      const window = filtered.length > CHANGES_EVENTS_CAP ? filtered.slice(filtered.length - CHANGES_EVENTS_CAP) : filtered
-      return { events: window, lastSeq: window.at(-1)?.seq ?? afterSeq }
-    },
+    // the persisted logical log for not-yet-hydrated sessions. Only the event
+    // types the lens folds are sent (a plain `tool/call` + `tool/result` pair,
+    // or a PTC `tool/ptc-dispatch-start` / `tool/ptc-dispatch` pair), narrowed
+    // to `seq > afterSeq` so polling is a small delta. A primed client asks the
+    // host to WAIT for the next tool event instead of re-reading an unchanged
+    // window (see `src/changes-ops.ts`).
+    'changes.ops': changesOps,
     // Subagent live previews: one batch request per refresh; the route folds
     // the newest text/tool activity of every running child in the tree.
     'subagents.live': (payload) => subagentLiveApi.live(payload),
@@ -957,10 +1128,15 @@ function buildApi(
       if (action === 'url') return launchExternal('url', requireString(payload, 'url'))
       throw new SidebarError('bad-request', 'action must be "reveal" or "url"')
     },
-    // Archive builds: collect the selection (fenced + disambiguated) and hand
-    // the zipping to the background task table, so the tree can show progress
-    // through `archive.status` and download the finished bytes from
-    // GET /sidebar/archive?id=.
+    // Archive builds: fence the selection and hand the packing to the
+    // background task table, which runs the system's zip/tar into a temp file.
+    // The tree watches it through `archive.status` and downloads the finished
+    // bytes from GET /sidebar/archive?id=.
+    //
+    // The selection arrives as absolute paths and is passed to the tool as
+    // paths relative to the selections' common ancestor — the tool decides the
+    // in-archive layout from the real directory structure, so there is no walk
+    // and no name disambiguation here any more.
     'archive.build': async (payload) => {
       const { sessionId, cwd } = await cwdOf(payload)
       const record = payload as { paths?: unknown; name?: unknown } | null
@@ -968,17 +1144,10 @@ function buildApi(
         ? record.paths.filter((value): value is string => typeof value === 'string' && value !== '')
         : []
       if (paths.length === 0) throw new SidebarError('bad-request', 'paths must be a non-empty array')
-      const name = archiveNameOf(typeof record?.name === 'string' ? record.name : null)
+      const name = typeof record?.name === 'string' ? record.name : ''
       const selected: string[] = []
       for (const raw of paths) selected.push(await ensureWorkspacePath(cwd, raw))
-      // Same-basename selections (a/index.ts + b/index.ts) get parent segments
-      // prepended, so no two archive members collide.
-      const entries: ZipEntry[] = []
-      const names = disambiguateArchiveNames(selected)
-      for (const [index, absolute] of selected.entries()) {
-        await collectZipEntries(absolute, names[index]!, entries)
-      }
-      return archiveTasks.start({ sessionId, name, entries })
+      return await archiveTasks.start({ sessionId, name, paths: selected })
     },
     'archive.status': (payload) =>
       archiveTasks.status(requireString(payload, 'id'), requireString(payload, 'sessionId')),
@@ -1135,18 +1304,16 @@ async function importLegacyPrefs(
 
 /**
  * Plugin body: mount the fenced routes and the sidebar_open push socket.
- * @param ctx - host plugin context (webServer, sessions, webRuntime).
+ * @param ctx - host plugin context (webServer, sessions, connection).
  * @param config - deployment-provided limits; the Loader validates against
  * {@link Config} and fills defaults, direct callers get them from
  * {@link resolveSidebarConfig}.
  */
 export function apply(ctx: Context, config?: SidebarConfig): void {
   const resolved = resolveSidebarConfig(config)
-  // The web runtime's bind-derived trust list (boot-sampled LAN literals
-  // plus --trusted-host authorities) — the authoritative source the /api
-  // gateway fence derives its list from. Read per request from the live
-  // service value; a replaced list takes effect without a plugin restart.
-  const fence = (req: SidebarHttpRequest): boolean => isTrustedApiRequest(req, ctx.webRuntime.trustedHosts)
+  // Connection owns both deployment trust and authentication; never infer or
+  // bypass its policy from invocation flags or a copied trust list.
+  const fence = (req: SidebarHttpRequest): boolean => ctx.connection.requestRejection(req) === undefined
   // The model-facing open-request registry: queues `sidebar_open` requests
   // per session and pushes them to connected sidebar views over the
   // `/sidebar/ws/agent-opens` socket.
@@ -1271,8 +1438,11 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   const assistantLive = createAssistantLiveBuffer(ctx)
   ctx.effect(() => () => { assistantLive.dispose() }, 'dsh-better-sidebar: live assistant stream buffer')
   // One archive task table per mount: the `archive.build` / `archive.status`
-  // API methods write it, the GET /sidebar/archive route reads it.
+  // API methods write it, the GET /sidebar/archive route reads it. Teardown
+  // kills a build still running and deletes the temp files it was holding —
+  // an unmounted plugin must not leave orphan archives in the OS temp dir.
   const archiveTasks = createArchiveTasks()
+  ctx.effect(() => () => { archiveTasks.dispose() }, 'dsh-better-sidebar: archive task table')
   const api = buildApi(ctx, resolved, () => settingsFace, assistantLive, archiveTasks)
   ctx.effect(() => ctx.webServer.register({
     kind: 'prefix',
@@ -1292,6 +1462,10 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
         writeError(res, new SidebarError('not-found', 'unknown sidebar API method', 404))
         return
       }
+      const controller = method === 'changes.ops' ? new AbortController() : undefined
+      const response = controller === undefined ? undefined : res as ServerResponse
+      const abort = (): void => { controller?.abort() }
+      response?.once('close', abort)
       try {
         const payload = await readJsonBody(req)
         // Own properties only. The dispatch table is an object literal, so a
@@ -1303,9 +1477,12 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
         if (typeof handler !== 'function') {
           throw new SidebarError('not-found', `unknown sidebar API method "${method}"`, 404)
         }
-        writeOk(res, await handler(payload))
+        const result = await handler(payload, controller?.signal)
+        if (controller?.signal.aborted !== true) writeOk(res, result)
       } catch (error) {
-        writeError(res, error)
+        if (controller?.signal.aborted !== true) writeError(res, error)
+      } finally {
+        response?.off('close', abort)
       }
     },
   }), 'dsh-better-sidebar: /sidebar/api routes')
@@ -1342,7 +1519,6 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
           dir,
           relativePath,
           chunks: req,
-          limit: resolved.uploadLimit,
         })
         writeOk(res, { path, size })
       } catch (error) {
@@ -1350,6 +1526,49 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
       }
     },
   }), 'dsh-better-sidebar: /sidebar/upload route')
+
+  // ── Editor save route ──────────────────────────────────────────────────
+  // The document IS the body: no JSON string-escaping, so the 1 MiB JSON
+  // envelope no longer caps what an editor can write back. The encoding and
+  // line-ending round-trip lives in writeWorkspaceText, unchanged.
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'exact',
+    path: '/sidebar/write',
+    handler: async (req, res) => {
+      if (!fence(req)) {
+        writeJson(res, 403, { ok: false, error: { code: 'forbidden', message: 'forbidden' } })
+        return
+      }
+      if (req.method !== 'POST') {
+        writeJson(res, 405, { ok: false, error: { code: 'method-error', message: 'method not allowed' } })
+        return
+      }
+      try {
+        const url = new URL(req.url ?? '/', 'http://dsh.internal')
+        const sessionId = url.searchParams.get('sessionId')
+        const path = url.searchParams.get('path')
+        if (sessionId === null || path === null || path === '') {
+          throw new SidebarError('bad-request', 'sessionId and path are required')
+        }
+        const cwd = await activeWorktreeRootOf(ctx, sessionId, await sessionCwdOf(ctx, sessionId, url.searchParams.get('cwd') ?? undefined))
+        // Optimistic concurrency: the client sends the mtime its draft was
+        // based on. Absent = no gate (a brand-new file has no baseline).
+        const raw = url.searchParams.get('expectedMtimeMs')
+        const parsed = raw === null ? Number.NaN : Number(raw)
+        const expectedMtimeMs = Number.isFinite(parsed) ? parsed : undefined
+        const content = await readTextBody(req, WRITE_BODY_GUARD_BYTES)
+        const result = await writeWorkspaceText({
+          cwd,
+          path,
+          content,
+          ...(expectedMtimeMs === undefined ? {} : { expectedMtimeMs }),
+        })
+        writeOk(res, { ok: true, ...result })
+      } catch (error) {
+        writeError(res, error)
+      }
+    },
+  }), 'dsh-better-sidebar: /sidebar/write route')
 
   // ── Lazy chunk route (client bundle splits) ─────────────────────────────
   // Serves the client half's split bundles (lib/client-<name>.js) so the
@@ -1360,11 +1579,11 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   // ── Archive routes (zip one selection, watch it build, download it) ─────
   // The file tree's "zip and download" action is a three-step flow: POST
   // `archive.build` fences every `path` through the SAME workspace fence as
-  // fs.tree / /sidebar/file, walks the directories (a symlink is skipped, never
-  // followed — no escape and no cycle) and returns an id IMMEDIATELY; the
-  // background build reports progress through `archive.status`; and
-  // GET /sidebar/archive serves the finished bytes once, with the RFC 5987
-  // disposition. `archiveTasks` owns the concurrency cap and the TTL.
+  // fs.tree / /sidebar/file and returns an id IMMEDIATELY; the system's zip
+  // (or tar) packs the selection into a temp file in the background, reported
+  // through `archive.status`; and GET /sidebar/archive STREAMS the finished
+  // file once, with the RFC 5987 disposition. `archiveTasks` owns the
+  // concurrency cap, the TTL, and deleting the temp file.
   ctx.effect(() => ctx.webServer.register({
     kind: 'exact',
     path: '/sidebar/archive',
@@ -1379,7 +1598,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
       }
       try {
         const url = new URL(req.url ?? '/', 'http://dsh.internal')
-        respondArchiveDownload(archiveTasks, {
+        await respondArchiveDownload(archiveTasks, {
           sessionId: url.searchParams.get('sessionId'),
           id: url.searchParams.get('id'),
         }, res)
@@ -1419,12 +1638,11 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
         // remote-mirror namespaces project. Pre-joining here would paste a
         // `~` target after the cwd and hide it from the resolver.
         const path = await ensureWorkspacePath(cwd, raw)
-        const info = await stat(path)
-        if (!info.isFile() || info.size > resolved.mediaLimit) {
-          throw new SidebarError('fs-error', 'not a file or too large', 400)
+        const info = await statFileForRoute(path)
+        if (!info.isFile()) {
+          throw new SidebarError('fs-error', 'not a file', 400)
         }
         const type = mediaTypeForPath(path)
-        const body = await readFile(path)
         // Raw bytes either way (binary-safe); ?download=1 switches the
         // disposition so the browser saves the file instead of showing it.
         const headers: Record<string, string> = { 'content-type': type, 'cache-control': 'no-cache' }
@@ -1441,8 +1659,9 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
         if (url.searchParams.get('download') === '1') {
           headers['content-disposition'] = `attachment; filename*=UTF-8''${encodeURIComponent(basename(path))}`
         }
-        res.writeHead(200, headers)
-        res.end(body)
+        // Streamed, not buffered: there is no size gate left, and the host's
+        // memory stays flat whatever the file weighs (see file-stream.ts).
+        await streamFileToResponse(path, info.size, res, headers)
       } catch (error) {
         writeError(res, error)
       }
@@ -1489,13 +1708,14 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
         // fallback.
         const cwd = await activeWorktreeRootOf(ctx, sessionId, await sessionCwdOf(ctx, sessionId))
         const absolute = await ensureWorkspacePath(cwd, path)
-        const info = await stat(absolute)
-        if (!info.isFile() || info.size > resolved.mediaLimit) {
-          throw new SidebarError('fs-error', 'not a file or too large', 400)
+        const info = await statFileForRoute(absolute)
+        if (!info.isFile()) {
+          throw new SidebarError('fs-error', 'not a file', 400)
         }
         const type = mediaTypeForPath(absolute)
-        const body = await readFile(absolute)
-        res.writeHead(200, {
+        // Streamed for the same reason as the media route: the previewed page
+        // and every relative asset it pulls through here are unbounded now.
+        await streamFileToResponse(absolute, info.size, res, {
           'content-type': type === 'text/html' ? 'text/html; charset=utf-8' : type,
           'cache-control': 'no-cache',
           'x-content-type-options': 'nosniff',
@@ -1505,7 +1725,6 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
           // object-src 'none' blocks plugin embeds.
           'content-security-policy': "sandbox allow-scripts allow-popups allow-downloads allow-modals; object-src 'none'",
         })
-        res.end(body)
       } catch (error) {
         writeError(res, error)
       }
@@ -1553,11 +1772,43 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
     },
   }), 'dsh-better-sidebar: file-tree watch WebSocket')
 
+  // ── Side-chat live push WebSocket ──────────────────────────────────────
+  // The side-chat transcript polls `sidechat.events`; this socket tells it
+  // WHEN to pull instead, so a streaming answer, a just-claimed message and a
+  // finished tool call appear immediately rather than on the next 2s tick.
+  // Frames carry only the stale thread id (never event bodies), so the
+  // transcript transport, its afterSeq deltas and its tail cap are unchanged.
+  const sidechatWss = new WebSocketServer({ noServer: true })
+  const sidechatPush = createSidechatPushHub(ctx)
+  ctx.effect(() => () => { sidechatPush.dispose() }, 'dsh-better-sidebar: side-chat push hub')
+  ctx.effect(() => ctx.webServer.registerUpgrade({
+    path: '/sidebar/ws/sidechat',
+    handler: (req, socket, head) => {
+      if (!fence(req)) {
+        socket.destroy()
+        return
+      }
+      sidechatWss.handleUpgrade(req as unknown as IncomingMessage, socket as unknown as Duplex, head as Buffer, (ws) => {
+        sidechatPush.attach(ws)
+      })
+    },
+  }), 'dsh-better-sidebar: side-chat push WebSocket')
+
   ctx.effect(() => () => {
     openToolsDisposers?.()
     agentOpenRegistry.dispose()
-    agentOpenWss.close()
-    fsWatchWss.close()
+    // `WebSocketServer.close()` on a `noServer` server only stops accepting
+    // upgrades: with ws@8 an already-upgraded socket is NOT terminated (the
+    // server just waits for it), so the accepted sockets must be closed
+    // explicitly or every fs-watch `fs.watch` handle and the agent-opens
+    // subscriber set survives the plugin unmount until the browser disconnects.
+    // The sockets' own `close` handlers stay the ones releasing those
+    // resources (they are idempotent, and a socket already closing ignores a
+    // second close).
+    for (const wss of [agentOpenWss, fsWatchWss, sidechatWss]) {
+      for (const client of wss.clients) client.close()
+      wss.close()
+    }
   }, 'dsh-better-sidebar: teardown')
 }
 

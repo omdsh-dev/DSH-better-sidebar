@@ -22,7 +22,7 @@
  */
 import type { Context } from '../../context-types.ts'
 import { fileAddressFor } from '../resource-address.ts'
-import type { NativeTabParams, SidebarSurface } from '../service.ts'
+import type { NativePathTab, NativeTabParams, SidebarSurface } from '../service.ts'
 import type { NativeTabRecords } from './tab-adapter.tsx'
 
 /** One open the surface could not place yet. */
@@ -67,6 +67,8 @@ export interface NativeSurface extends SidebarSurface {
   flushPending(): void
   /** Stop observing the session list and the mounted-seat feed. */
   dispose(): void
+  /** Every native tab bound to a path (see {@link SidebarSurface.pathTabs}). */
+  pathTabs(): NativePathTab[]
 }
 
 /** The native controller, probed at call time (the service can arrive late). */
@@ -257,6 +259,12 @@ export function createNativeSurface(ctx: Context, records: NativeTabRecords): Na
     fileAddress(sessionId, cwd, path) {
       return fileAddressFor(sessionId, cwd, path)
     },
+    tabTypeOf(sessionId, tabId) {
+      // Read through the SESSION, like `close` above: one native id names a
+      // tab in every session, so a bare read can hand back another session's
+      // record and clear the wrong session's unread mark.
+      return records.get(sessionId, tabId)?.tab.type
+    },
     close(sessionId, tabId) {
       // Read through the SESSION: the same native id names a tab in every
       // session, so a bare read can hand back another session's record.
@@ -289,6 +297,7 @@ export function createNativeSurface(ctx: Context, records: NativeTabRecords): Na
       return true
     },
     has: (tabId, sessionId) => sessionOf(tabId, sessionId) !== undefined,
+    pathTabs: () => records.pathTabs(),
     flushPending,
     dispose: () => {
       unsubscribeList()

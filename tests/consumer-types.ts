@@ -97,8 +97,8 @@ const viewer: FileViewerDescriptor = {
   },
   settings: { pluginToggles: [{ key: 'delimiter', title: 'Delimiter', type: 'text', placeholder: ',' }] },
   component: (props: FileViewerProps) => {
-    const { customData, content, truncated, mediaUrl, viewerId, path, title } = props
-    void customData; void content; void truncated; void mediaUrl; void viewerId; void path; void title
+    const { customData, content, size, largeFile, mediaUrl, viewerId, path, title } = props
+    void customData; void content; void size; void largeFile; void mediaUrl; void viewerId; void path; void title
     return null
   },
 }
@@ -119,6 +119,8 @@ service.subscribe(() => {})
 const seed: OpenTabSeed = { type: 'my-plugin:db', title: 'DB', path: '/p', id: 'x', meta: { a: 1 } }
 service.openTab(seed)
 service.openTab(seed, { sessionId: 's1', cwd: '/p' })
+// `reveal: false` places the tab without focusing it (a background open).
+service.openTab({ ...seed, reveal: false })
 const _version: string = service.version
 service.features.includes('badge')
 const snapshot: SidebarSnapshot | undefined = service.getSnapshot()
@@ -126,6 +128,8 @@ void snapshot
 service.subscribeState(() => {})
 service.updateTab('tab:1', { title: 'T', path: '/p', meta: 1 })
 service.activateTab('tab:1')
+// Retiring the "new page" dot for one session's tab type.
+service.clearUnread('my-plugin:db', 's1')
 service.openFile({ sessionId: 's1', cwd: '/p' }, '/p/a.csv', 'Data')
 
 /** File-icon registration surface (feature `fileIcons`). */

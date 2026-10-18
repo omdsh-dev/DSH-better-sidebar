@@ -35,14 +35,18 @@ function typeAndBlur(input: HTMLInputElement, value: string): void {
 }
 
 const prefs = { ...SIDEBAR_PREFS_DEFAULTS }
+/** The row renderer reads `prefs[toggle.key]`, so a plugin-shaped fixture key
+ *  needs a widened copy (a fresh literal with an undeclared key fails
+ *  excess-property checking). */
+const withPluginKey = (key: string, value: unknown): typeof prefs => ({ ...prefs, [key]: value })
 
 describe('FeatureSettingsRows typed rows (interactive)', () => {
   it('commits the raw text on blur and adopts the canonical return', () => {
     const commits: Array<[string, string]> = []
     const toggle: SidebarSettingToggle = {
-      key: 'titleBarPresetId',
+      key: 'myPluginFontFamily',
       type: 'text',
-      title: () => 'Preset id',
+      title: () => 'Font family',
     }
     const { container, unmount } = renderRoot(createElement(FeatureSettingsRows, {
       toggles: [toggle],
@@ -55,7 +59,7 @@ describe('FeatureSettingsRows typed rows (interactive)', () => {
     }))
     const input = container.querySelector('input')!
     typeAndBlur(input, 'Monaco')
-    expect(commits).toEqual([['titleBarPresetId', 'Monaco']])
+    expect(commits).toEqual([['myPluginFontFamily', 'Monaco']])
     // The canonical return is adopted into the draft.
     expect(input.value).toBe('Monaco')
     unmount()
@@ -64,15 +68,15 @@ describe('FeatureSettingsRows typed rows (interactive)', () => {
   it('clamps numbers into the declared bounds on commit', () => {
     const commits: Array<[string, number]> = []
     const toggle: SidebarSettingToggle = {
-      key: 'titleBarStripPx',
+      key: 'myPluginRowPx',
       type: 'number',
-      title: () => 'Shift distance',
+      title: () => 'Row height',
       min: 0,
       max: 120,
     }
     const { container, unmount } = renderRoot(createElement(FeatureSettingsRows, {
       toggles: [toggle],
-      prefs: { ...prefs, titleBarStripPx: 40 },
+      prefs: withPluginKey('myPluginRowPx', 40),
       onToggle: () => {},
       onCommit: (t, raw) => {
         const parsed = Number(raw)
@@ -84,7 +88,7 @@ describe('FeatureSettingsRows typed rows (interactive)', () => {
     const input = container.querySelector('input')!
     // Above the declared max: the commit clamps to 120.
     typeAndBlur(input, '130')
-    expect(commits).toEqual([['titleBarStripPx', 120]])
+    expect(commits).toEqual([['myPluginRowPx', 120]])
     expect(input.value).toBe('120')
     unmount()
   })
@@ -92,15 +96,15 @@ describe('FeatureSettingsRows typed rows (interactive)', () => {
   it('clamps an emptied number input to the lower bound on commit (width-row precedent)', () => {
     const commits: Array<[string, number]> = []
     const toggle: SidebarSettingToggle = {
-      key: 'titleBarStripPx',
+      key: 'myPluginRowPx',
       type: 'number',
-      title: () => 'Shift distance',
+      title: () => 'Row height',
       min: 0,
       max: 120,
     }
     const { container, unmount } = renderRoot(createElement(FeatureSettingsRows, {
       toggles: [toggle],
-      prefs: { ...prefs, titleBarStripPx: 40 },
+      prefs: withPluginKey('myPluginRowPx', 40),
       onToggle: () => {},
       // The parent mirrors the real handler: an emptied number parses to 0
       // and clamps into the bounds (a browser number input never holds a
@@ -113,7 +117,7 @@ describe('FeatureSettingsRows typed rows (interactive)', () => {
     }))
     const input = container.querySelector('input')!
     typeAndBlur(input, '')
-    expect(commits).toEqual([['titleBarStripPx', 0]])
+    expect(commits).toEqual([['myPluginRowPx', 0]])
     expect(input.value).toBe('0')
     unmount()
   })

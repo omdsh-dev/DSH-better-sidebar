@@ -17,7 +17,7 @@ describe('dsh-better-sidebar plugin export shape', () => {
     const unwrapped = loader.unwrapExports(sidebar) as Record<string, unknown>
     expect(unwrapped).toBe(sidebar)
     expect(unwrapped.name).toBe('dsh-better-sidebar')
-    expect(unwrapped.inject).toEqual(['webServer', 'sessions', 'webRuntime', 'tools'])
+    expect(unwrapped.inject).toEqual(['webServer', 'sessions', 'connection', 'tools'])
     expect(unwrapped.Config).toBeDefined()
     expect(typeof unwrapped.apply).toBe('function')
   })
@@ -29,13 +29,25 @@ describe('dsh-better-sidebar plugin export shape', () => {
     const resolved = (schema as unknown as {
       (input: Record<string, unknown> | undefined): Record<string, unknown>
     })(undefined)
-    expect(resolved.readLimit).toBe(512 * 1024)
-    expect(resolved.mediaLimit).toBe(20 * 1024 * 1024)
     expect(resolved.listLimit).toBe(1000)
+    // The three transfer/read caps are GONE: upload, every download and the
+    // html preview route all stream now, so there is nothing left for a byte
+    // cap to protect. `readLimit`'s replacement is MAX_EDITABLE_BYTES, which
+    // is a client-visible editing threshold rather than a deployment knob.
+    expect(resolved.readLimit).toBeUndefined()
+    expect(resolved.mediaLimit).toBeUndefined()
+    expect(resolved.uploadLimit).toBeUndefined()
     const configured = (schema as unknown as {
       (input: Record<string, unknown> | undefined): Record<string, unknown>
-    })({ readLimit: 1024 })
-    expect(configured.readLimit).toBe(1024)
+    })({ listLimit: 42 })
+    expect(configured.listLimit).toBe(42)
+    // A profile still carrying a retired key is tolerated, not fatal: the
+    // schema strips it and the plugin boots with defaults (the same property
+    // that keeps a legacy `workspaceFence` harmless).
+    const legacy = (schema as unknown as {
+      (input: Record<string, unknown> | undefined): Record<string, unknown>
+    })({ readLimit: 1024, mediaLimit: 5, uploadLimit: 6 })
+    expect(legacy.listLimit).toBe(1000)
   })
 
   it('registers the side card preferences schema with the documented defaults', async () => {
@@ -53,17 +65,17 @@ describe('dsh-better-sidebar plugin export shape', () => {
     // The sidebar-open tool defaults OFF (dormant until the user enables it
     // in the side card settings).
     expect(resolved.agentOpenTools).toBe(false)
-    // The position-compat scheme is declared WITHOUT a schema default so a
-    // stored document that predates it resolves without the field — the
-    // CLIENT parsePrefs then applies the conservative `auto` default (or
-    // migrates the legacy boolean), which is exactly what makes old
-    // documents migrate instead of silently flipping to a scheme. The
-    // legacy strip keeps its schema default of 40px.
+    // customCss (the user-space escape hatch) is declared WITHOUT a schema
+    // default — the client's parsePrefs supplies '' — so a document that
+    // never stored it resolves without the field.
+    expect(resolved.customCss).toBeUndefined()
+    // The title-bar compatibility keys are GONE (the whole strip mechanism
+    // was removed): a resolved document no longer declares them, so the
+    // settings form stops offering them.
     expect(resolved.titleBarScheme).toBeUndefined()
     expect(resolved.titleBarPresetId).toBeUndefined()
-    expect(resolved.customCss).toBeUndefined()
-    expect(resolved.titleBarCompat).toBe(false)
-    expect(resolved.titleBarStripPx).toBe(40)
+    expect(resolved.titleBarCompat).toBeUndefined()
+    expect(resolved.titleBarStripPx).toBeUndefined()
     // The enable-switch maps resolve to {} (everything on) for old documents.
     expect(resolved.tabsEnabled).toEqual({})
     expect(resolved.viewersEnabled).toEqual({})
@@ -78,6 +90,24 @@ describe('dsh-better-sidebar plugin export shape', () => {
       (input: Record<string, unknown> | undefined): Record<string, unknown>
     })({ workspaceFence: true })
     expect(legacy.workspaceFence).toBe(true)
+    // Same contract for the retired title-bar keys: a settings document
+    // written before the removal still carries them, and resolving it must
+    // neither throw nor drop the rest of the document — the values pass
+    // through untouched and are inert (the client's parsePrefs drops them;
+    // tests/prefs.spec.ts). This is the "old preference data is ignored
+    // safely" nail for the removal.
+    const retired = {
+      titleBarScheme: 'preset',
+      titleBarPresetId: 'dsh-desktop',
+      titleBarCompat: true,
+      titleBarStripPx: 56,
+    }
+    const withRetired = (PrefsSchema as unknown as {
+      (input: Record<string, unknown> | undefined): Record<string, unknown>
+    })({ ...retired, agentOpenTools: true })
+    expect(withRetired).toMatchObject({ ...retired, agentOpenTools: true })
+    expect(withRetired.autoOpenSubagent).toBe(true)
+    expect(withRetired.explorerExclude).toEqual(['.DS_Store', 'Thumbs.db'])
     // A stored overridden value resolves through (the range contract is
     // enforced by the settings service on write); the new pref keeps its
     // default when the stored document predates it.
@@ -89,11 +119,11 @@ describe('dsh-better-sidebar plugin export shape', () => {
     // verbatim. They are inert — the typed value the client consumes
     // (parsePrefs) drops them (tests/prefs.spec.ts) — and the defaults no
     // longer declare them.
-    // titleBarScheme / titleBarPresetId / customCss are declared WITHOUT a
-    // schema default (the client's parsePrefs supplies them), so they are
-    // absent from a resolved document that never stored them.
-    const { titleBarScheme, titleBarPresetId, customCss, ...schemaDefaults } = SIDEBAR_PREFS_DEFAULTS
-    void titleBarScheme; void titleBarPresetId; void customCss
+    // customCss is declared WITHOUT a schema default (the client's parsePrefs
+    // supplies it), so it is absent from a resolved document that never
+    // stored it.
+    const { customCss, ...schemaDefaults } = SIDEBAR_PREFS_DEFAULTS
+    void customCss
     expect(overridden).toEqual({ ...schemaDefaults, openByDefault: false, defaultWidthPercent: 45, changesDiffFloat: true })
   })
 })

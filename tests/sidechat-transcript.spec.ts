@@ -223,6 +223,99 @@ describe('transcriptRows', () => {
   })
 })
 
+describe('failure rows', () => {
+  it('renders a turn/end error through the reason message', () => {
+    const entries = [
+      entry(ev('session/end-seed', 0)),
+      entry(ev('turn/start', 1, { turn: 1 })),
+      entry(ev('turn/end', 2, { turn: 1, reason: { kind: 'error', error: { message: 'provider exploded', code: 'X' } } })),
+    ]
+    const rows = transcriptRows(entries)
+    // The visible failure comes first, the turn's duration tail after it.
+    expect(rows[0]).toEqual({ kind: 'error', seq: 2, text: 'provider exploded' })
+    expect(rows[1]).toMatchObject({ kind: 'turnSummary', seq: 2 })
+  })
+
+  it('falls back to a string rendering when the reason carries no message', () => {
+    const entries = [
+      entry(ev('session/end-seed', 0)),
+      entry(ev('turn/end', 1, { turn: 1, reason: { kind: 'error' } })),
+    ]
+    // Never blank, never a thrown mapping.
+    expect(transcriptRows(entries)[0]).toEqual({ kind: 'error', seq: 1, text: '[object Object]' })
+  })
+
+  it('renders a failed assistant/attempt from its terminal finish chunk', () => {
+    const entries = [
+      entry(ev('session/end-seed', 0)),
+      entry(ev('turn/start', 1, { turn: 1 })),
+      entry(ev('assistant/attempt', 2, {
+        turn: 1,
+        step: 1,
+        stream: [
+          { type: 'text-chunks', time0: 0, index: 0, dt: [], texts: ['partial'] },
+          // The adapter-failure shape dsh-llm's `adapterFailureChunk` writes.
+          { type: 'chunk', time: 1, chunk: { type: 'finish', reason: { kind: 'error', failure: { message: 'quota exceeded', code: 'QUOTA' } } } },
+        ],
+      })),
+    ]
+    expect(transcriptRows(entries)[0]).toEqual({ kind: 'error', seq: 2, text: 'quota exceeded' })
+  })
+
+  it('renders ONE error row when the failed attempt is followed by its turn/end', () => {
+    const entries = [
+      entry(ev('session/end-seed', 0)),
+      entry(ev('turn/start', 1, { turn: 1 })),
+      entry(ev('assistant/attempt', 2, {
+        turn: 1,
+        step: 1,
+        stream: [{ type: 'chunk', time: 1, chunk: { type: 'finish', reason: { kind: 'error', failure: { message: 'quota exceeded', code: 'QUOTA' } } } }],
+      })),
+      // The agent loop repeats the same failure as the turn's own reason: the
+      // attempt's row already covers it.
+      entry(ev('turn/end', 3, { turn: 1, reason: { kind: 'error', error: { message: 'quota exceeded', code: 'QUOTA' } } })),
+    ]
+    const errors = transcriptRows(entries).filter(row => row.kind === 'error')
+    expect(errors).toEqual([{ kind: 'error', seq: 2, text: 'quota exceeded' }])
+  })
+
+  it('renders nothing for an attempt that finished without an error', () => {
+    const entries = [
+      entry(ev('session/end-seed', 0)),
+      entry(ev('assistant/attempt', 1, {
+        turn: 1,
+        step: 1,
+        stream: [{ type: 'chunk', time: 1, chunk: { type: 'finish', reason: { kind: 'stop' } } }],
+      })),
+    ]
+    expect(transcriptRows(entries)).toEqual([])
+  })
+
+  it('keeps an error row\'s identity across pulls (reuse pass)', () => {
+    const entries = [
+      entry(ev('session/end-seed', 0)),
+      entry(ev('turn/end', 1, { turn: 1, reason: { kind: 'error', error: { message: 'boom' } } })),
+    ]
+    const first = transcriptRows(entries)
+    const second = transcriptRows(entries, first)
+    expect(second[0]).toBe(first[0])
+  })
+})
+
+describe('user row identity', () => {
+  it('carries the durable message id and leaves older logs without one', () => {
+    const entries = [
+      entry(ev('session/end-seed', 0)),
+      entry(ev('user/message', 1, { id: 'msg-1', content: textBlocks('the question'), source: { kind: 'user' } })),
+      entry(ev('user/message', 2, { content: textBlocks('a legacy row'), source: { kind: 'user' } })),
+    ]
+    expect(transcriptRows(entries)).toEqual([
+      { kind: 'user', seq: 1, text: 'the question', messageId: 'msg-1' },
+      { kind: 'user', seq: 2, text: 'a legacy row' },
+    ])
+  })
+})
+
 describe('turnSummary rows', () => {
   it('emits one tail row per turn: envelope-time duration + last-input/summed-output usage', () => {
     const entries = [

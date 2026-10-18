@@ -17,6 +17,10 @@
  * text and reasoning deltas (DSH 0.1.5 publishes them outside the session
  * log — see assistant-live.ts). The mapping accumulates both per block and
  * supersedes them with the assembled message once it lands (settled rows).
+ *
+ * Failures: a provider/agent error used to end a turn with nothing on screen.
+ * The terminal `turn/end` reason and a failed attempt's embedded finish chunk
+ * both map onto one visible `error` row per turn.
  */
 import type { DiffHunk, ReadBlockLine } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SidebarHistoryEntry } from '../context-types.ts'
@@ -46,11 +50,20 @@ export type SidechatToolCard =
  *  polls (streaming caches ride the key, so window slides must not re-key
  *  rows). */
 export type SidechatTranscriptRow =
-  | { kind: 'user'; seq: number; text: string }
+  /** `messageId` is the durable message identity the log records on the event
+   *  (`data.id`); the view uses it to dedupe a still-pending inbox row against
+   *  the durable row the claim eventually writes. Older logs may lack it. */
+  | { kind: 'user'; seq: number; text: string; messageId?: string }
   /** A context injection (the side boundary prompt + the parked in-progress
    *  snapshot, or any plugin-sourced context): rendered as one collapsible
    *  row, never as a user bubble. */
   | { kind: 'injection'; seq: number; text: string }
+  /** A provider/agent FAILURE, which used to end a turn silently: either a
+   *  `turn/end` carrying `reason.kind === 'error'` or a failed
+   *  `assistant/attempt` (its stream's terminal `finish` chunk). One row per
+   *  turn — the attempt error and the turn/end that follows it are the same
+   *  failure. */
+  | { kind: 'error'; seq: number; text: string }
   /** `settled` distinguishes an assembled message from a still-streaming
    *  chunk accumulation (streaming rows are superseded by the settle). */
   | { kind: 'assistant'; seq: number; text: string; settled: boolean }
@@ -310,13 +323,56 @@ function resultCard(
 }
 
 /**
+ * The human-readable text of one FAILURE reason, or undefined when the reason
+ * is not an error. `turn/end` records the failure as `reason.error.message`
+ * (the agent loop's own shape); an attempt's terminal `finish` chunk carries
+ * the adapter-failure shape `reason.failure.message` (dsh-llm's
+ * `adapterFailureChunk`). Neither present falls back to a plain string
+ * rendering of the reason, so the row is never blank.
+ */
+function failureText(reason: unknown): string | undefined {
+  if (reason === null || typeof reason !== 'object' || Array.isArray(reason)) return undefined
+  const record = reason as Record<string, unknown>
+  if (record.kind !== 'error') return undefined
+  for (const candidate of [record.error, record.failure]) {
+    if (candidate === null || typeof candidate !== 'object') continue
+    const message = (candidate as { message?: unknown }).message
+    if (typeof message === 'string' && message !== '') return message
+  }
+  return String(reason)
+}
+
+/**
+ * The failure that an `assistant/attempt` carries in its durable stream: the
+ * terminal `finish` chunk's `reason`. The record walk mirrors sidechat-core's
+ * `streamTexts` (the same compact `AssistantStreamRecord[]` shape), only
+ * reading the finish reason instead of the text chunks. Undefined when the
+ * attempt ended any other way (`stop`, `max-tokens`, `aborted`, …).
+ */
+function attemptFailure(stream: unknown): string | undefined {
+  if (!Array.isArray(stream)) return undefined
+  for (const record of stream) {
+    if (record === null || typeof record !== 'object') continue
+    const entry = record as { type?: unknown; chunk?: unknown }
+    if (entry.type !== 'chunk') continue
+    const chunk = entry.chunk as { type?: unknown; reason?: unknown } | undefined
+    if (chunk === null || typeof chunk !== 'object' || chunk.type !== 'finish') continue
+    const text = failureText(chunk.reason)
+    if (text !== undefined) return text
+  }
+  return undefined
+}
+
+/**
  * Map a thread child's history rows onto compact transcript rows: the
  * inherited fork seed is cut at the last `session/end-seed`, context
  * injections map onto a collapsible injection row, `assistant/live-chunk`
  * deltas accumulate into streaming rows per (turn, step, block) and are
  * superseded by the assembled `assistant/message`, and tool invocations
  * render one expandable line each (arguments, paired result text, failure
- * marker; a still-executing call is marked until its result lands).
+ * marker; a still-executing call is marked until its result lands). A failed
+ * turn renders exactly one `error` row — the attempt's stream error and the
+ * `turn/end` reason are the same failure.
  * @param entries - history rows (event + host-computed view) in seq order,
  *   the live deltas of the in-flight attempt appended after the durable tail.
  * @returns display rows in log order.
@@ -331,6 +387,9 @@ export function transcriptRows(entries: readonly SidebarHistoryEntry[], prev?: r
   const callRows = new Map<string, number>()
   /** turn → envelope time of its `turn/start` (turn-tail duration basis). */
   const turnStarts = new Map<number, number>()
+  /** Turns that already rendered a failure row (an attempt error and the
+   *  `turn/end` that follows it are the SAME failure — one row per turn). */
+  const errorTurns = new Set<number>()
   /** turn → usage aggregate: output accumulates across steps, input takes the
    *  last request's prompt size (earlier steps' input is mostly the same
    *  context re-sent, so summing would double-count). */
@@ -349,6 +408,11 @@ export function transcriptRows(entries: readonly SidebarHistoryEntry[], prev?: r
       case 'turn/end': {
         const turn = data.turn
         if (typeof turn !== 'number' || !Number.isInteger(turn)) break
+        const failure = failureText(data.reason)
+        if (failure !== undefined && !errorTurns.has(turn)) {
+          errorTurns.add(turn)
+          rows.push({ kind: 'error', seq: event.seq, text: failure })
+        }
         const start = turnStarts.get(turn)
         turnStarts.delete(turn)
         const usage = turnUsage.get(turn)
@@ -363,8 +427,23 @@ export function transcriptRows(entries: readonly SidebarHistoryEntry[], prev?: r
         })
         break
       }
+      case 'assistant/attempt': {
+        // A failed attempt settles durably WITHOUT a message: the visible
+        // error row is the finish chunk's reason (the turn/end that follows
+        // repeats the same failure and must not render it twice).
+        const turn = data.turn
+        if (typeof turn !== 'number' || !Number.isInteger(turn) || errorTurns.has(turn)) break
+        const failure = attemptFailure(data.stream)
+        if (failure === undefined) break
+        errorTurns.add(turn)
+        rows.push({ kind: 'error', seq: event.seq, text: failure })
+        break
+      }
       case 'user/message': {
         const text = blockText(Array.isArray(data.content) ? data.content : [])
+        // The durable identity the pending-row dedupe keys on (absent on logs
+        // written before the field existed, and on the loose fixtures).
+        const messageId = typeof data.id === 'string' && data.id !== '' ? data.id : undefined
         // Context injections (the boundary prompt + snapshot, plugin-sourced
         // context) collapse into an injection row; genuine user messages —
         // including the FIRST one, which the host now delivers as its own
@@ -379,13 +458,13 @@ export function transcriptRows(entries: readonly SidebarHistoryEntry[], prev?: r
           if (source?.kind === 'user' && text.startsWith(`${SIDE_BOUNDARY_PROMPT}\n\n`)) {
             rows.push({ kind: 'injection', seq: event.seq, text: SIDE_BOUNDARY_PROMPT })
             const body = text.slice(SIDE_BOUNDARY_PROMPT.length + 2)
-            if (body !== '') rows.push({ kind: 'user', seq: event.seq, text: body })
+            if (body !== '') rows.push({ kind: 'user', seq: event.seq, text: body, ...(messageId !== undefined ? { messageId } : {}) })
             break
           }
           rows.push({ kind: 'injection', seq: event.seq, text })
           break
         }
-        rows.push({ kind: 'user', seq: event.seq, text })
+        rows.push({ kind: 'user', seq: event.seq, text, ...(messageId !== undefined ? { messageId } : {}) })
         break
       }
       case 'assistant/live-chunk': {
@@ -506,8 +585,12 @@ export function transcriptRows(entries: readonly SidebarHistoryEntry[], prev?: r
 function rowsEqual(a: SidechatTranscriptRow, b: SidechatTranscriptRow): boolean {
   if (a.kind !== b.kind || a.seq !== b.seq) return false
   switch (a.kind) {
-    case 'user':
-    case 'injection': {
+    case 'user': {
+      const other = b as typeof a
+      return a.text === other.text && a.messageId === other.messageId
+    }
+    case 'injection':
+    case 'error': {
       const other = b as typeof a
       return a.text === other.text
     }
@@ -537,7 +620,7 @@ function rowsEqual(a: SidechatTranscriptRow, b: SidechatTranscriptRow): boolean 
 
 /** Re-adopt the PREVIOUS poll's row objects wherever the content is
  *  unchanged (position-aligned, append-mostly): settled rows keep their
- *  object identity across the 2s polls, so React's reconciler and the
+ *  object identity across the transcript pulls, so React's reconciler and the
  *  markdown/DOMPurify caches downstream skip them instead of re-rendering
  *  the whole transcript every poll. Comparing the strings is far cheaper
  *  than what a fresh reference costs the row below. Rows past the first

@@ -14,11 +14,12 @@
  * present on disk but not listed, both look fine in the source tree).
  */
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, readdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
+import { removeTree } from './temp-tree.ts'
 
 const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)))
 
@@ -126,7 +127,7 @@ describe('DSH plugin presentation metadata', () => {
         expect(files, `${LOCALE_DIR}/${name} must be published`).toContain(`package/${LOCALE_DIR}/${name}`)
       }
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   }, 120_000)
 })

@@ -36,6 +36,11 @@ const OPTIONS = {
 };
 const COLORS = ['BLUE', 'GREEN', 'YELLOW', 'ORANGE', 'RED', 'PINK', 'PURPLE', 'GRAY'];
 const promoted = JSON.parse(fs.readFileSync(path.join(HERE, '..', 'references', 'promoted.json'), 'utf8')).R1 ?? [];
+// Issues whose fix is already on `dev` but not in a release: no development is
+// left, so their Status is pinned to Done (the queue state for everything else
+// is derived from labels + open PRs). Kept in a file so the value survives a
+// re-run — a manual `Status=Done` would be recomputed away by this very script.
+const fixedPendingRelease = JSON.parse(fs.readFileSync(path.join(HERE, '..', 'references', 'fixed-pending-release.json'), 'utf8')).done ?? [];
 
 const gql = (query) => {
   const out = execFileSync('gh', ['api', 'graphql', '-f', 'query=' + query], { encoding: 'utf8', maxBuffer: 1 << 28 });
@@ -127,7 +132,9 @@ for (const i of openIssues) {
   desired.set(`issue:${i.number}`, {
     prio,
     batch,
-    status: !prio ? STATUS.todo : hasOpenPR.has(i.number) ? STATUS.review : STATUS.dev,
+    status: fixedPendingRelease.includes(i.number)
+      ? STATUS.done
+      : !prio ? STATUS.todo : hasOpenPR.has(i.number) ? STATUS.review : STATUS.dev,
   });
 }
 for (const p of openPRs) {
@@ -174,7 +181,13 @@ for (const [key, want] of desired) {
   }
   const wantValues = { '优先级': want.prio, '批次': want.batch, 'Status': want.status };
   for (const [name, value] of Object.entries(wantValues)) {
-    if (!value || item.current[name] === value) continue;
+    if ((item.current[name] ?? undefined) === (value ?? undefined)) continue;
+    // A value that is no longer desired must be CLEARED, not left behind: a PR
+    // inherits its priority from the issues it cites, so when the last of those
+    // issues closes the inherited value has to go (otherwise verify() fails on
+    // exactly this mismatch). `value: null` is rejected — ProjectV2FieldValue!
+    // is non-null; the null option id is what clears a single-select.
+    if (!value) { mutations.push({ itemId: item.id, fieldId: fieldId[name], clear: true }); continue; }
     const oid = optionId[`${name}:${value}`];
     if (!oid) { console.log(`! ${key} no option ${name}:${value}`); continue; }
     mutations.push({ itemId: item.id, fieldId: fieldId[name], optionId: oid });
@@ -182,7 +195,7 @@ for (const [key, want] of desired) {
 }
 for (let i = 0; i < mutations.length; i += 16) {
   const chunk = mutations.slice(i, i + 16);
-  gql('mutation{' + chunk.map((m, k) => `m${k}:updateProjectV2ItemFieldValue(input:{projectId:"${PROJECT}",itemId:"${m.itemId}",fieldId:"${m.fieldId}",value:{singleSelectOptionId:"${m.optionId}"}}){projectV2Item{id}}`).join(' ') + '}');
+  gql('mutation{' + chunk.map((m, k) => `m${k}:updateProjectV2ItemFieldValue(input:{projectId:"${PROJECT}",itemId:"${m.itemId}",fieldId:"${m.fieldId}",value:${m.clear ? '{singleSelectOptionId:null}' : `{singleSelectOptionId:"${m.optionId}"}`}}){projectV2Item{id}}`).join(' ') + '}');
 }
 console.log(`items: ${items.size} on board | field writes: ${mutations.length}`);
 verify();

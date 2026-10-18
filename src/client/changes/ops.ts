@@ -1,22 +1,18 @@
 /**
- * File-operation extraction for the changes tab's session lens: folds the
- * session's append-only event log (`tool/call` + `tool/result` pairs) into
- * one op per file-touching call — the same semantics as the standalone
- * dsh-file-trace plugin's Chat-view extraction, reading the authoritative
- * event log instead (the repo's stated preference for cross-feature session
- * data). Pure — no React, no DOM.
+ * 将会话日志中的直接调用与 PTC 子调用整理为文件操作，供本轮文件视角使用。
  */
 import type { SidebarSessionEvent } from '../../context-types.ts'
+import { resolveSidebarPath } from '../paths.ts'
 
 /** The file-touching operation kinds the tracer distinguishes. */
 export type FileOpKind = 'read' | 'write' | 'edit'
 
 /** One extracted file operation. */
 export interface FileOp {
-  /** Stable identity: the originating tool-call id. */
+  /** 直接调用使用 callId，PTC 子调用使用 subCallId。 */
   readonly callId: string
   readonly kind: FileOpKind
-  /** Workspace-relative or absolute path exactly as the model spelled it. */
+  /** Path resolved against the session cwd when available. */
   readonly path: string
   /** Unix epoch ms of the call; the result time when only that is known. */
   readonly time: number
@@ -59,6 +55,12 @@ function parseArgs(argsRaw: string): Record<string, unknown> {
   } catch {
     return {}
   }
+}
+
+/** PTC sub-call arguments arrive already parsed (an object, never a string). */
+function ptcArgs(value: unknown): Record<string, unknown> {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return {}
+  return value as Record<string, unknown>
 }
 
 /** Extract the path field common to every file tool's arguments. */
@@ -131,46 +133,58 @@ function resultIsError(message: ToolResultMessageLike): boolean {
  * Fold a session event log into the file operations it contains, newest
  * first. A `tool/call` seeds a running op (payload from the model's
  * arguments); its `tool/result` settles it (read content, error text).
- * Calls dispatched through a host tool such as run_code appear as their own
- * `tool/call` rows in the log, so nested file calls fold in naturally.
+ *
+ * A `<code>` block's file tools never surface as `tool/call`: they arrive as
+ * a PTC pair — `tool/ptc-dispatch-start` (arguments as a parsed OBJECT, keyed
+ * by `subCallId`) and `tool/ptc-dispatch` (the same payload plus the result).
+ * The dispatch row is self-contained, so a missing start still yields a row,
+ * and the pair inherits the start's time to order as ONE operation.
  * @param events - the session's append-only event log (oldest → newest).
+ * @param cwd - the session working directory used to resolve relative paths.
  * @returns the ordered operation list.
  */
-export function extractFileOps(events: readonly SidebarSessionEvent[]): FileOp[] {
+export function extractFileOps(events: readonly SidebarSessionEvent[], cwd?: string): FileOp[] {
   const byCall = new Map<string, FileOp>()
   for (const event of events) {
-    if (event.type === 'tool/call') {
-      const data = event.data as { name?: unknown; callId?: unknown; arguments?: unknown }
-      if (typeof data.name !== 'string' || typeof data.callId !== 'string') continue
+    if (event.type === 'tool/call' || event.type === 'tool/ptc-dispatch-start' || event.type === 'tool/ptc-dispatch') {
+      const data = event.data as { name?: unknown; callId?: unknown; subCallId?: unknown; arguments?: unknown }
+      const isPtc = event.type !== 'tool/call'
+      const callId = isPtc ? data.subCallId : data.callId
+      if (typeof data.name !== 'string' || typeof callId !== 'string') continue
       const kind = kindOf(data.name)
       if (kind === undefined) continue
-      const args = parseArgs(typeof data.arguments === 'string' ? data.arguments : '')
-      const path = pathOf(args)
-      if (path === undefined) continue
-      const base: FileOp = { callId: data.callId, kind, path, time: event.time, running: true, isError: false }
+      // A PTC dispatch ships its arguments already parsed, the plain tool call
+      // ships the model's JSON string.
+      const args = isPtc ? ptcArgs(data.arguments) : parseArgs(typeof data.arguments === 'string' ? data.arguments : '')
+      const rawPath = pathOf(args)
+      if (rawPath === undefined) continue
+      const path = resolveSidebarPath(cwd, rawPath)
+      const time = event.type === 'tool/ptc-dispatch' ? byCall.get(callId)?.time ?? event.time : event.time
+      const base: FileOp = { callId, kind, path, time, running: true, isError: false }
+      let op = base
       if (kind === 'edit') {
         const oldString = args.old_string
         const newString = args.new_string
-        byCall.set(data.callId, typeof oldString === 'string' && typeof newString === 'string'
+        op = typeof oldString === 'string' && typeof newString === 'string'
           ? { ...base, edit: { oldString, newString } }
-          : base)
-        continue
-      }
-      if (kind === 'write') {
+          : base
+      } else if (kind === 'write') {
         const content = args.content
-        byCall.set(data.callId, typeof content === 'string' && content.length > 0 ? { ...base, content } : base)
-        continue
+        op = typeof content === 'string' && content.length > 0 ? { ...base, content } : base
       }
-      byCall.set(data.callId, base)
-    } else if (event.type === 'tool/result') {
-      const message = (event.data as { message?: unknown }).message as ToolResultMessageLike | undefined
+      byCall.set(callId, op)
+    }
+    if (event.type === 'tool/result' || event.type === 'tool/ptc-dispatch') {
+      const message = event.type === 'tool/result'
+        ? (event.data as { message?: unknown }).message as ToolResultMessageLike | undefined
+        : event.data as ToolResultMessageLike
       if (message === undefined) continue
-      const callId = message.source?.callId
+      const callId = event.type === 'tool/result' ? message.source?.callId : event.data.subCallId
       if (typeof callId !== 'string') continue
       const op = byCall.get(callId)
       if (op === undefined) continue
       const text = resultText(message)
-      const isError = resultIsError(message)
+      const isError = event.type === 'tool/ptc-dispatch' ? event.data.isError === true : resultIsError(message)
       const patch: { running: boolean; isError: boolean; errorText?: string; read?: string; content?: string } = { running: false, isError }
       if (text !== undefined && text.length > 0) {
         if (isError) patch.errorText = text
@@ -181,21 +195,6 @@ export function extractFileOps(events: readonly SidebarSessionEvent[]): FileOp[]
     }
   }
   return [...byCall.values()].sort((a, b) => b.time - a.time)
-}
-
-/**
- * Group operations by path, newest op first per file, files ordered by their
- * most recent operation.
- */
-export function groupByFile(ops: readonly FileOp[]): Map<string, FileOp[]> {
-  const groups = new Map<string, FileOp[]>()
-  for (const op of ops) {
-    const list = groups.get(op.path) ?? []
-    list.push(op)
-    groups.set(op.path, list)
-  }
-  const ordered = [...groups.entries()].sort((a, b) => b[1][0]!.time - a[1][0]!.time)
-  return new Map(ordered)
 }
 
 /**

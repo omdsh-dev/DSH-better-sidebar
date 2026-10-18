@@ -21,6 +21,7 @@ import DOMPurify from 'dompurify'
 import { MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
 import { markdownTextProps, type MarkdownCopyLabels } from './markdown-labels.tsx'
 import { resolveLocalMediaDest, rewriteLocalImageUrls } from './markdown-images.ts'
+import { rewriteLocalMarkdownLinks } from './markdown-navigation.ts'
 import {
   analyzeHtmlSegment,
   type AnalyzedMarkdownHtml,
@@ -299,7 +300,14 @@ export function MarkdownDocument({ info, media, codeLabels }: MarkdownDocumentPr
       // stance), so rewrite local ones into /sidebar/file media URLs first —
       // the same trust fence the sanitized HTML leaves below go through.
       // Idempotent: already-absolute media URLs pass through untouched.
-      const text = rewriteLocalImageUrls(raw, media.scope, media.path, media.baseUrl)
+      // The link pass follows (it must see the media URLs already in place):
+      // it carries a heading fragment past the host parser and keeps every
+      // local destination the plugin does not claim inert.
+      const text = rewriteLocalMarkdownLinks(
+        rewriteLocalImageUrls(raw, media.scope, media.path, media.baseUrl),
+        media.path,
+        media.scope.cwd,
+      )
       return {
         kind: 'markdown',
         text,

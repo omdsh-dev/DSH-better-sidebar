@@ -117,6 +117,41 @@ export async function gotoPage(page: Page, extra: Record<string, string> = {}): 
   await page.goto(pageUrl(extra), { waitUntil: 'domcontentloaded' })
 }
 
+/** Dismiss keyless onboarding before interacting with the shell. */
+export async function dismissOnboarding(page: Page): Promise<void> {
+  // alpha.5's Close belongs to Get started, not to another panel or dialog.
+  const getStarted = page.getByRole('dialog', { name: 'Get started', exact: true })
+  const buttons = [
+    getStarted.getByRole('button', { name: 'Close', exact: true }),
+    page.getByRole('button', { name: 'Continue', exact: true }),
+    page.getByRole('button', { name: 'Configure later', exact: true }),
+  ]
+  try {
+    await expect.poll(async () => {
+      const counts = await Promise.all(buttons.map(button => button.count()))
+      return counts.reduce((total, count) => total + count, 0)
+    }, { timeout: 60_000 }).toBeGreaterThan(0)
+  } catch {
+    // A previously acknowledged onboarding may not appear again.
+    return
+  }
+  for (let round = 0; round < 8; round++) {
+    let dismissed = false
+    for (const button of buttons) {
+      if (await button.count() === 0) continue
+      try {
+        await button.click({ timeout: 4_000 })
+        dismissed = true
+        await page.waitForTimeout(1_000)
+      } catch {
+        // A stacked welcome notice can mask another onboarding step.
+      }
+    }
+    if (!dismissed) break
+  }
+  await expect(getStarted).not.toBeVisible()
+}
+
 /** Authenticated request context for host RPC seeding (cookie attached). */
 export async function createHostApi(): Promise<APIRequestContext> {
   return request.newContext({

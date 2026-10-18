@@ -31,14 +31,17 @@ const FAILURE_LIMIT = 3
 const AUTO_OPEN_DEBOUNCE_MS = 500
 
 /**
- * The native column's public face, as this module reaches it. Both actions
- * act on the session whose surface is MOUNTED (the controller reads its
- * binding), which is why the park below is gated on the target session being
- * the on-screen one.
+ * The native column's public face, as this module reaches it. Every reader
+ * acts on the session whose surface is MOUNTED (the controller reads its
+ * binding), which is why both gates below are gated on the target session
+ * being the on-screen one.
  */
 interface NativeColumnFace {
   isExpanded?: () => boolean
   toggleExpanded?: () => void
+  /** The active tab of the active pane (`ISidebarRight.active`): which page the
+   *  reader is looking at. Absent on a host older than the reader gate. */
+  active?: () => { kind?: string } | undefined
 }
 
 /**
@@ -59,22 +62,67 @@ interface NativeColumnFace {
  * when the activation FIRES (the debounced subagent trigger included), so a
  * resize while arming is honoured.
  *
+ * A background activation must not replace the page the reader is on either,
+ * on ANY viewport: the host's open focuses what it opens, so "activate" means
+ * "take the column over", and doing that while the reader is in a document
+ * (a file, a diff, a side chat) throws their page out of view on every new
+ * subagent / background job — the one thing a DELAYED trigger may never do.
+ * The gate is the wide-viewport twin of the park below and asks the same
+ * question — is the column in use? — of the same session: a COLLAPSED column
+ * shows nothing, so its tabs may be re-pointed freely (that is where the two
+ * switches still land, and where the narrow park keeps them), while an
+ * EXPANDED one showing a page other than the Tasks page is in use and is left
+ * alone. A column already on the Tasks page is re-focused in place as before
+ * (single-instance semantics make it a no-op).
+ *
+ * Leaving it at that would DROP the event: the page the background work
+ * belongs to must still be created, it just may not take the column over.
+ * So a gated activation opens the same page with `reveal: false` — the host
+ * places the tab without focusing it (`openContent`'s `revealIfOpened: false`
+ * suppresses exactly the focus op; the page kind has no focus path of its own,
+ * and re-opening a page that IS already there is a focus either way, which is
+ * precisely what the gate refuses) — and marks the tab type unread, which is
+ * the dot the reader follows to it later. The two halves are one change:
+ * without the dot the tab would be created invisibly, and without the open
+ * there would be nothing for the dot to point at.
+ *
  * @param ctx - the client context (`ctx.sidebarRight` + `ctx.betterSidebar`).
+ * @param store - the plugin store (the unread dot lives in the session state).
  * @param sessionId - the session the feed reports the activity for.
- * @param options.background - `true` for background activity (parks on narrow
- *   viewports); `false` for the explicit topology jump-back, which is a user
- *   gesture and always leaves the column as the host expanded it.
+ * @param options.background - `true` for background activity (refuses a
+ *   column the reader is using, parks on narrow viewports); `false` for the
+ *   explicit topology jump-back, which is a user gesture and always leaves the
+ *   column as the host expanded it.
  */
-function activateTasksPage(ctx: Context, sessionId: string, options: { background: boolean }): void {
+function activateTasksPage(
+  ctx: Context,
+  store: SidebarStore,
+  sessionId: string,
+  options: { background: boolean },
+): void {
   const column = ctx.get('sidebarRight') as unknown as NativeColumnFace | undefined
+  // The face acts on the MOUNTED session: both gates below are only meaningful
+  // (and only safe) when the activation targets the one on screen. "On screen"
+  // is the native surface's own mounted seat — the session list has no
+  // current-session field — and an absent seat (a global panel, or a host
+  // without the feed) reads as "not this session": the plugin then leaves the
+  // column alone rather than reading or toggling one it is not drawing.
+  const onScreen = mountedSessionId(ctx) === sessionId
+  // Do not take over the page the reader is looking at (see the docblock).
+  if (options.background && onScreen && column?.isExpanded?.() === true) {
+    const shown = column.active?.()
+    if (shown !== undefined && shown.kind !== 'subagent') {
+      // The page is still created — the event is never dropped — but it lands
+      // in the background and raises the dot instead of the column.
+      ctx.get('betterSidebar')?.openTab({ type: 'subagent', title: t('subagent'), reveal: false })
+      // The dot belongs to the session the work is in, which is the current
+      // one (the gate above proved this seat is the mounted session).
+      store.markUnread('subagent')
+      return
+    }
+  }
   const park = options.background
-    // The face acts on the MOUNTED session: parking is only meaningful (and
-    // only safe) when the activation targets the one on screen. "On screen"
-    // is the native surface's own mounted seat — the session list has no
-    // current-session field — and an absent seat (a global panel, or a host
-    // without the feed) reads as "not this session": the plugin then leaves
-    // the column alone rather than toggling one it is not drawing.
-    && mountedSessionId(ctx) === sessionId
+    && onScreen
     && isNarrowWidth(window.innerWidth)
     // Only a column the user had COLLAPSED is put back: an expanded one is in
     // use, and closing it under the user would be worse than the takeover.
@@ -177,7 +225,8 @@ export function useHostFeeds(feeds: {
    * focus an existing tab in place; a new tab lands in that column and is
    * never duplicated. Landing it EXPANDS the column on wide viewports, while
    * a narrow viewport (where the host draws that column fullscreen) parks the
-   * tab instead of taking the screen over — see {@link activateTasksPage}.
+   * tab instead of taking the screen over — see {@link activateTasksPage},
+   * which also refuses a column the reader has expanded onto another page.
    * Switching to a session that already has subagents never triggers — its
    * baseline starts at the current count — so a deliberate layout is never
    * fought.
@@ -209,7 +258,7 @@ export function useHostFeeds(feeds: {
       if (!store.getPrefs().autoOpenSubagent) return
       if (store.getPrefs().mobileNoAutoOpen && isNarrowWidth(window.innerWidth)) return
       if (ctx.get('betterSidebar')?.isTabEnabled('subagent') === false) return
-      activateTasksPage(ctx, sessionId, { background: true })
+      activateTasksPage(ctx, store, sessionId, { background: true })
     }, AUTO_OPEN_DEBOUNCE_MS)
     autoOpenPendingRef.current = { baseline, timer }
   }, [sessionList, sessionId, store, ctx])
@@ -227,7 +276,8 @@ export function useHostFeeds(feeds: {
    * auto-open pref is on, and the Tasks tab type is enabled, activate the Tasks
    * page that contains the background-jobs section — in DSH's native right
    * Sidebar, expanded on wide viewports and parked on narrow ones exactly like
-   * the subagent trigger ({@link activateTasksPage}). Unlike that trigger
+   * the subagent trigger ({@link activateTasksPage}, which leaves a column the
+   * reader has expanded onto another page untouched). Unlike that trigger
    * (0 → N only), ANY new job id triggers: the agent may start several jobs in
    * one session, and each should surface.
    *
@@ -272,7 +322,7 @@ export function useHostFeeds(feeds: {
     if (!store.getPrefs().autoOpenJobs) return
     if (store.getPrefs().mobileNoAutoOpen && isNarrowWidth(window.innerWidth)) return
     if (ctx.get('betterSidebar')?.isTabEnabled('subagent') === false) return
-    activateTasksPage(ctx, sessionId, { background: true })
+    activateTasksPage(ctx, store, sessionId, { background: true })
   }, [jobsService, jobsSnapshot, sessionId, store, ctx])
 
   /**
@@ -292,7 +342,7 @@ export function useHostFeeds(feeds: {
     const pending = subagentJumpRef.current
     if (pending === undefined || sessionId !== pending) return
     subagentJumpRef.current = undefined
-    activateTasksPage(ctx, sessionId, { background: false })
+    activateTasksPage(ctx, store, sessionId, { background: false })
   }, [sessionId, store, ctx])
 
   return { subagentJumpRef }

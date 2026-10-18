@@ -36,8 +36,12 @@ export interface MermaidMarkdownProps {
 /** CommonMark opening fence: 0-3 spaces indent + a run of 3+ backticks or tildes. */
 export const OPEN_FENCE_RE = /^ {0,3}(`{3,}|~{3,})/
 
-/** A closing-fence line: 0-3 spaces indent + 3+ backticks/tildes + trailing spaces only. */
-export const CLOSE_FENCE_RE = /^ {0,3}(`{3,}|~{3,})[ \t]*$/
+/** A closing-fence line: 0-3 spaces indent + 3+ backticks/tildes + trailing
+ *  spaces only. The optional `\r` is a CRLF line's terminator, not content: a
+ *  CRLF document reaches this regex with its line endings intact, and without
+ *  the `\r` no fence would ever close (the block would swallow the rest of the
+ *  file). */
+export const CLOSE_FENCE_RE = /^ {0,3}(`{3,}|~{3,})[ \t]*\r?$/
 
 /** Parse the info string from the line tail after the fence run; null when invalid. */
 export function fenceInfo(rest: string, fence: string): string | null {

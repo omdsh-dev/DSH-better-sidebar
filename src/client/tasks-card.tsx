@@ -1,8 +1,15 @@
 /**
  * The two-segment node card of the Tasks graph: a TOP segment that says WHAT
  * the node is (kind badge, name, mono meta, optional task line) and a BOTTOM
- * bar that says WHAT IT IS DOING (state dot + state word + the merged process
- * activity, plus the fold chevron once the node has settled).
+ * bar that says WHAT IT IS DOING (state dot + the merged process activity —
+ * or, when there is no activity to show, the state word — plus the fold
+ * chevron once the node has settled).
+ *
+ * The state word YIELDS to the activity line: "运行中 · 正在读取文件" and
+ * "已完成 · 已读取文件" both printed the state twice inside one 22px strip,
+ * and the dot beside them already carries it. `idle` and `error` keep their
+ * word — neither "waiting for a turn" nor "failed" is implied by any activity
+ * wording, so dropping them would hide the one thing that bar has to say.
  *
  * Both modes share the model but NOT the card: the TREE keeps its compact
  * indent row (its own disclosure, its own keyboard recipe), so this module is
@@ -35,9 +42,13 @@ export type CardFoldKind = 'done' | 'idle'
  * header already calls the root "主代理"), so no sixth word is invented for it.
  *
  * The two aggregates say different things, because they hold different work:
- * `done` keeps "✓ N 已完成" (finished and failed rows alike) while `idle` says
- * "N 个待命". One mixed row could only have hedged ("✓ 2 已完成 · 3 待命"),
- * which is exactly what splitting them removed.
+ * `done` keeps "✓ N 已完成" (finished and failed rows alike) while `idle`
+ * counts its waiting members. One mixed row could only have hedged
+ * ("✓ 2 已完成 · 3 待命"), which is exactly what splitting them removed.
+ *
+ * The badge is where an aggregate's COUNT lives, so it interpolates the real
+ * number: the idle branch used to print the literal copy 'N 个待命', which
+ * read as an unfilled placeholder on every idle aggregate.
  * @param kind - card kind.
  * @param count - folded member count (the fold aggregate's badge only).
  * @param foldKind - which aggregate (`done` unless stated).
@@ -49,7 +60,7 @@ export function cardKindLabel(kind: CardKind, count = 0, foldKind: CardFoldKind 
     case 'teammate': return t('tasksKindTeammate')
     case 'workflow': return t('tasksKindWorkflow')
     case 'fold': return foldKind === 'idle'
-      ? t('tasksFoldIdleGroup')
+      ? t('tasksFoldIdleGroup', { count })
       : t('tasksFoldCompleted', { count })
   }
 }
@@ -85,16 +96,31 @@ export function CardTop(props: {
   depth: number
   /** Workflow phase (a member's badge). */
   phase?: { index: number; title?: string }
+  /**
+   * The identity CHIP beside the kind badge — the node's own mode word
+   * (一次性 / 可持续) or the one team state the badge cannot express. It shares
+   * the badge row on purpose: as a mono line of its own it repeated the same
+   * word on every card and spent a 16px row saying it.
+   */
+  chip?: string
   /** The node's name (already resolved by the model). */
   name: string
   /** The mono meta line under the name. */
   meta?: string
+  /**
+   * The newest assistant text of the node's own session, set as a small tail
+   * under the name — the one thing a card could not say before (it lived in the
+   * detail window only). `lines` is the count the LAYOUT reserved for it, so the
+   * card clamps to exactly what its box was sized for and never overflows the
+   * row gutter (see textTailLines).
+   */
+  text?: { value: string; lines: number }
   /** Extra class for the name (the aggregate recedes one rung). */
   extraClass?: string
   /** Extra rows the caller appends (the team task line). */
   children?: ReactNode
 }): ReactNode {
-  const { kind, count, foldKind, depth, phase } = props
+  const { kind, count, foldKind, depth, phase, chip, text } = props
   return (
     <span className={clsx(css.cardTop, depthClass(depth))}>
       <span className={css.cardBadges}>
@@ -109,17 +135,27 @@ export function CardTop(props: {
             {phase.title ?? t('workflowPhaseUnnamed')}
           </span>
         )}
+        {chip !== undefined && chip !== '' && <span className={css.kindChip}>{chip}</span>}
       </span>
       <span className={clsx(css.cardName, props.extraClass)} title={props.name}>{props.name}</span>
       {props.meta !== undefined && props.meta !== '' && (
         <span className={css.cardMeta} title={props.meta}>{props.meta}</span>
+      )}
+      {text !== undefined && (
+        <span
+          className={css.cardText}
+          style={{ WebkitLineClamp: text.lines }}
+          title={text.value}
+        >
+          {text.value}
+        </span>
       )}
       {props.children}
     </span>
   )
 }
 
-/** The bottom bar: the node's state, its merged activity, and its fold chevron. */
+/** The bottom bar: the node's activity (or its state word), dot and chevron. */
 export function CardBar(props: {
   state: TasksNodeState
   /** The merged process activity line (running nodes and settled summaries). */
@@ -136,6 +172,19 @@ export function CardBar(props: {
   children?: ReactNode
 }): ReactNode {
   const { state, activity, running } = props
+  // An empty string is not an activity line: it would print a gap where the
+  // state word used to be.
+  const line = activity === undefined || activity === '' ? undefined : activity
+  /**
+   * Which states still print their word. The activity line REPLACES it for
+   * work that the line already describes — a running node's own native status
+   * and a settled node's completed summary. `idle` and `error` keep the word:
+   * a teammate between turns and a failed node both read as "finished
+   * something" from their summary alone, which is exactly the misreading the
+   * two states must not allow.
+   */
+  const showStateWord = props.stateWord !== false
+    && (line === undefined || state === 'idle' || state === 'error')
   return (
     <span
       className={css.cardBar}
@@ -145,9 +194,9 @@ export function CardBar(props: {
       {props.children ?? (
         <>
           <StateDot state={nodeDotState(state)} size={6} className={css.barDot} />
-          {props.stateWord !== false && <span className={css.barState}>{stateLabel(state)}</span>}
-          {activity !== undefined && activity !== '' && (
-            <span className={css.barActivity} title={activity}>{activity}</span>
+          {showStateWord && <span className={css.barState}>{stateLabel(state)}</span>}
+          {line !== undefined && (
+            <span className={css.barActivity} title={line}>{line}</span>
           )}
           {props.onFold !== undefined && (
             <button

@@ -24,7 +24,7 @@
 # 环境（均可省略，脚本会自动探测）：
 #   DSH_HOME    默认 ~/.dsh（Windows Git Bash 下回退 $USERPROFILE/.dsh）
 #   REGISTRY    默认 https://registry.npmjs.org（发布源；装依赖仍走 pnpm 配置）
-#   DSH_CMD     默认优先用 PATH 上的 `dsh`，缺省回退 npx -y --package @deepseek-ai/dsh
+#   DSH_CMD     默认优先用 PATH 上的 `dsh`，缺省回退 npx -y --package @deepseek-ai/dsh@0.2.1-rc.1
 #
 # 说明：
 # - pnpm 11 的 minimumReleaseAge 会拒绝发布 <24h 的新版本。脚本会预写
@@ -140,7 +140,7 @@ dsh_cli() {
   if command -v "$DSH_CMD" >/dev/null 2>&1; then
     printf '%s' "$DSH_CMD"
   elif command -v npx >/dev/null 2>&1; then
-    printf 'npx -y --package @deepseek-ai/dsh@0.1.7-alpha.1 dsh'
+    printf 'npx -y --package @deepseek-ai/dsh@0.2.1-rc.1 dsh'
   else
     die "未找到 dsh 或 npx。请先安装 DSH（并确保 Node/npm 可用），或用 DSH_CMD 指定 dsh 路径。"
   fi

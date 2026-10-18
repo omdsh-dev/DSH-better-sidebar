@@ -17,9 +17,6 @@
 import z from '@deepseek-ai/schemastery'
 import {
   EXPLORER_EXCLUDE_DEFAULTS,
-  TITLE_BAR_STRIP_DEFAULT,
-  TITLE_BAR_STRIP_MAX,
-  TITLE_BAR_STRIP_MIN,
   type SidebarPrefs,
 } from './prefs-shared.ts'
 
@@ -27,37 +24,36 @@ export {
   EXPLORER_EXCLUDE_DEFAULTS,
   SIDEBAR_PREFS_DEFAULTS,
   SIDEBAR_PREFS_NS,
-  TITLE_BAR_STRIP_DEFAULT,
-  TITLE_BAR_STRIP_MAX,
-  TITLE_BAR_STRIP_MIN,
   type SidebarPrefs,
 } from './prefs-shared.ts'
 
 /** Tunable sidebar host limits (every field optional; defaults fill in). */
 export interface SidebarConfig {
-  /** Read cap of one text file (bytes); larger files return truncated. */
-  readLimit?: number
-  /** Media route cap (bytes); larger binaries are refused. */
-  mediaLimit?: number
-  /** Upload route cap (bytes); larger files are refused without touching disk. */
-  uploadLimit?: number
   /** Explorer row bound of one level. */
   listLimit?: number
 }
 
-/** Schemastery schema for the deployment-provided host limits. */
+/**
+ * Schemastery schema for the deployment-provided host limits.
+ *
+ * The three transfer/read caps this schema used to carry (`readLimit` /
+ * `mediaLimit` / `uploadLimit`) are gone: upload, download and the HTML
+ * preview route all stream now, so there is nothing left for a byte cap to
+ * protect and a large file is simply a large file. What replaced `readLimit`
+ * is {@link MAX_EDITABLE_BYTES} — not a transfer cap but the size above which
+ * a text file gets a read-only paged preview instead of an editor, because
+ * CodeMirror has to hold the whole document in the browser.
+ *
+ * Old profiles that still write the retired keys are harmless: schemastery
+ * tolerates unknown keys (the same property that keeps a legacy
+ * `workspaceFence` field in an old profile from being fatal).
+ */
 const LimitsSchema = z.object({
-  readLimit: z.number().step(1).min(1).default(512 * 1024),
-  mediaLimit: z.number().step(1).min(1).default(20 * 1024 * 1024),
-  uploadLimit: z.number().step(1).min(1).default(128 * 1024 * 1024),
   listLimit: z.number().step(1).min(1).default(1000),
 })
 
 /** Fully defaulted sidebar host settings. */
 export interface ResolvedSidebarConfig {
-  readLimit: number
-  mediaLimit: number
-  uploadLimit: number
   listLimit: number
 }
 
@@ -69,9 +65,6 @@ export interface ResolvedSidebarConfig {
  */
 export function resolveSidebarConfig(config: SidebarConfig | undefined): ResolvedSidebarConfig {
   return {
-    readLimit: config?.readLimit ?? 512 * 1024,
-    mediaLimit: config?.mediaLimit ?? 20 * 1024 * 1024,
-    uploadLimit: config?.uploadLimit ?? 128 * 1024 * 1024,
     listLimit: config?.listLimit ?? 1000,
   }
 }
@@ -85,7 +78,10 @@ export function resolveSidebarConfig(config: SidebarConfig | undefined): Resolve
  * Asserted as `z<SidebarPrefs>` (the interface lives in `prefs-shared.ts`; the
  * explicit annotation is also what keeps the emitted declaration portable).
  * Unknown keys are TOLERATED by this schema and pass through untouched, which
- * is what keeps a legacy `workspaceFence: true` in an old profile harmless.
+ * is what keeps a legacy `workspaceFence: true` — or the retired title-bar
+ * compatibility keys (`titleBarScheme` / `titleBarPresetId` /
+ * `titleBarCompat` / `titleBarStripPx`, removed with the whole strip
+ * mechanism) — in an old profile harmless instead of fatal.
  */
 export const PrefsSchema: z<SidebarPrefs> = z.object({
   autoOpenSubagent: z.boolean().default(true),
@@ -95,12 +91,9 @@ export const PrefsSchema: z<SidebarPrefs> = z.object({
   mobileDefaultTree: z.boolean().default(true),
   agentOpenTools: z.boolean().default(false),
   editorExplorer: z.boolean().default(false),
+  editorGitGutter: z.boolean().default(true),
   explorerExclude: z.array(z.string()).default([...EXPLORER_EXCLUDE_DEFAULTS]),
-  titleBarScheme: z.union([z.const('auto'), z.const('web'), z.const('preset'), z.const('custom')]),
-  titleBarPresetId: z.string(),
   customCss: z.string(),
-  titleBarCompat: z.boolean().default(false),
-  titleBarStripPx: z.number().step(1).min(TITLE_BAR_STRIP_MIN).max(TITLE_BAR_STRIP_MAX).default(TITLE_BAR_STRIP_DEFAULT),
   htmlViewerNoSandbox: z.boolean().default(false),
   htmlViewerDefaultUnsafe: z.boolean().default(false),
   // Per-feature enable switches are OPEN maps (any tab/viewer id, built-in or

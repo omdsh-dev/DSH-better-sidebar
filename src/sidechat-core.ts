@@ -4,20 +4,25 @@
  * node test environment can import it.
  *
  * A side thread is a child session the plugin creates ITSELF with a custom
- * seed — the parent session's FULL event log up to the click moment
- * (completed turns, the unanswered user message, and — when the parent is
- * mid-turn — the in-progress assistant output and tool activity). The log
- * model forbids open-turn seeds, so an in-flight parent turn is copied
- * verbatim and CLOSED with synthetic `step/end` + `turn/end{reason:
- * 'interrupted'}` events: the child sees the partial turn as honestly
- * frozen ("cut off"), never as a completed answer. The one case that cannot
- * be closed honestly — a tool call still executing (no `tool/result` yet;
- * providers reject dangling assistant calls) — falls back to cutting before
- * the open turn and carrying the partial content as a structured text
- * snapshot inside the boundary prompt.
+ * seed — the parent's model-visible history up to the click moment. When the
+ * parent has summarized (its last compaction checkpoint replaces the
+ * shadowed span on the surface), the seed is REBASED onto that checkpoint:
+ * surviving pre-cut surface nodes, the checkpoint, and the post-compaction
+ * tail — proven equivalent to a full-log fork by folding both (compactionTail)
+ * — instead of physically duplicating the whole log. Without a compaction,
+ * or whenever the rebasing cannot be proven, the seed is the parent's FULL
+ * event log verbatim. The log model forbids open-turn seeds, so an
+ * in-flight parent turn is copied verbatim and CLOSED with synthetic
+ * `step/end` + `turn/end{reason: 'interrupted'}` events: the child sees the
+ * partial turn as honestly frozen ("cut off"), never as a completed answer.
+ * The one case that cannot be closed honestly — a tool call still executing
+ * (no `tool/result` yet; providers reject dangling assistant calls) — falls
+ * back to cutting before the open turn and carrying the partial content as
+ * a structured text snapshot inside the boundary prompt.
  */
 import type { SidebarHistoryEntry, SidebarSessionSummary } from './context-types.ts'
 import type { AssistantLiveChunk } from './assistant-live.ts'
+import { foldSurface, isSurfaceEligibleType } from '@deepseek-ai/dsh-session/surface'
 
 /** The durable thread-label prefix (also the row filter in the client list). */
 export const SIDE_LABEL_PREFIX = 'Side: '
@@ -274,8 +279,637 @@ const SNAPSHOT_RESULT_CAP = 2000
 const SNAPSHOT_TOTAL_CAP = 8000
 
 /**
+ * Rebase the parent's log onto its last summarizing compaction: the
+ * checkpoint `user/message` already REPLACES the shadowed span on the
+ * model-visible surface, so a child needs only the surviving head skeleton
+ * (with its turn/step scaffolding — the session relational invariants demand
+ * it), the checkpoint itself, and the keep-window + post-compaction tail
+ * VERBATIM — the forgotten span never has to be physically copied again,
+ * while every kept event keeps its enclosing structure. The result is
+ * verified with the real fold before it is used: the rebased sequence must
+ * produce the SAME visible nodes as the parent, which keeps the child's
+ * model context (and provider context-cache prefix) identical to a
+ * full-log fork.
+ *
+ * Returns a seq-contiguous event array, or undefined to fall back to the
+ * verbatim full copy — no compaction in the log, a reference the rebase
+ * cannot resolve, or any fold the construction cannot prove equivalent.
+ * Failures degrade to today's behavior, never to a wrong child.
+ * @param events - the parent's log (live or persisted).
+ * @returns the rebased log, or undefined when the full copy is required.
+ */
+function compactionTail(events: readonly SidechatLogEvent[]): SidechatLogEvent[] | undefined {
+  const cut = lastCheckpointIndex(events)
+  if (cut === undefined) return undefined
+  const checkpoint = events[cut]
+  if (checkpoint === undefined) return undefined
+  let parentNodes: readonly number[]
+  try {
+    const fold = foldSurface(events as unknown as Parameters<typeof foldSurface>[0])
+    parentNodes = fold.nodes
+  } catch {
+    return undefined
+  }
+  const surfaceIndex = parentNodes.indexOf(checkpoint.seq)
+  // The checkpoint must sit on the surface, and every node before its
+  // surface slot must predate the cut (a post-cut node reordered ahead of
+  // the checkpoint would need the very shadowing we are removing).
+  if (surfaceIndex === -1) return undefined
+  const head: number[] = []
+  let keepFirst: number | undefined
+  let sawTailNode = false
+  for (let index = 0; index < parentNodes.length; index++) {
+    if (index === surfaceIndex) continue
+    const seq = parentNodes[index] as number
+    if (seq >= cut) {
+      if (index < surfaceIndex) return undefined
+      sawTailNode = true
+      continue
+    }
+    // Surface order is [head nodes][checkpoint][keep-window nodes][tail in
+    // log order]; anything else cannot be reproduced and degrades to the
+    // full copy.
+    if (sawTailNode) return undefined
+    if (index < surfaceIndex) head.push(seq)
+    else if (keepFirst === undefined) keepFirst = seq
+  }
+  const headEvents = headSkeleton(events, head)
+  if (headEvents === undefined) return undefined
+  let keepStart = enclosingTurnStart(events, keepFirst)
+  // The loop writes a turn's inbox INSERT before its turn/start and the
+  // CLAIM right after it; starting the keep window at the turn/start would
+  // keep the claim while dropping its insert, and the host's positional
+  // inbox fold would reject the seed. Swallow the contiguous splices that
+  // precede the skeleton root — they replay cleanly from an empty inbox.
+  while (keepStart > 0 && events[keepStart - 1]?.type === 'agent/inbox/spliced') keepStart -= 1
+  const groupId = dataOf(events[cut - 1]!).compactionId
+  // The keep interval is a LOG range; the region may have ended mid-turn,
+  // so the interval can re-carry surface nodes the checkpoint already
+  // shadowed (they precede the surviving ones inside the same turn). Skip
+  // exactly those, plus tool/calls whose result did not survive — an
+  // orphaned call fails the relational invariants just like a bare one.
+  const surviving = new Set(parentNodes as readonly number[])
+  const survivingCallIds = new Set<string>()
+  for (const seq of parentNodes as readonly number[]) {
+    const node = events[seq]
+    if (node === undefined || node.type !== 'tool/result') continue
+    const callId = toolResultCallIdOf(node)
+    if (callId !== undefined) survivingCallIds.add(callId)
+  }
+  // Surface nodes a KEPT replacement still targets are not skippable: the
+  // replacement's fold transition (node appears, then is replaced) must
+  // replay — skipping its target would degrade the replacement to an
+  // append stranded after the step closed, which the relational rules
+  // reject. (The pruner's tool/result rewrites are exactly this shape.)
+  const replaceCovered = new Set<number>()
+  for (const [from, to] of [[keepStart, cut], [cut + 1, events.length]] as const) {
+    for (let index = from; index < to; index++) {
+      const event = events[index]
+      if (event === undefined || isCompactionGroupEvent(event, groupId)) continue
+      const op = (event as { surfaceOp?: unknown }).surfaceOp
+      if (op === null || typeof op !== 'object' || (op as { op?: unknown }).op !== 'replace') continue
+      const start = (op as { startSeq?: unknown }).startSeq
+      const end = (op as { endSeq?: unknown }).endSeq
+      if (typeof start !== 'number' || typeof end !== 'number' || start > end) continue
+      for (let seq = Math.max(0, start); seq <= Math.min(end, events.length - 1); seq++) replaceCovered.add(seq)
+    }
+  }
+  // The set of parent seqs the seed will carry, decided BEFORE emission: a
+  // grouped record whose citations cannot remap drops ATOMICALLY — its
+  // compaction bracket (start/summary/end) or its command pair goes
+  // together, never a lone partner that the host's invariant companions
+  // reject. Real multi-compaction sessions hit this on every mid-keep group
+  // (its summary cites nodes later groups re-shadowed), so record-level
+  // dropping would strand brackets on every real parent.
+  const emittedSeqs = new Set<number>()
+  for (const event of headEvents) emittedSeqs.add(event.seq)
+  emittedSeqs.add(checkpoint.seq)
+  const keepSkip = (event: SidechatLogEvent): boolean =>
+    (isSurfaceEligibleType(event.type) && !surviving.has(event.seq) && !replaceCovered.has(event.seq))
+    || (event.type === 'tool/call' && !survivingCallIds.has(String(dataOf(event).callId)))
+  for (const [from, to] of [[keepStart, cut], [cut + 1, events.length]] as const) {
+    for (let index = from; index < to; index++) {
+      const event = events[index]
+      if (event === undefined) continue
+      if (isCompactionGroupEvent(event, groupId)) continue
+      if (index < cut && keepSkip(event)) continue
+      emittedSeqs.add(event.seq)
+    }
+  }
+  const droppedGroups = new Set<string>()
+  const keptRunIds = new Set<string>()
+  for (const seq of emittedSeqs) {
+    const event = events[seq]
+    if (event === undefined || event.type !== 'command/run') continue
+    const id = dataOf(event).commandId
+    if (typeof id === 'string') keptRunIds.add(id)
+  }
+  const droppedDones = new Set<number>()
+  for (const seq of emittedSeqs) {
+    const event = events[seq]
+    if (event === undefined) continue
+    const data = dataOf(event)
+    if (event.type === 'compaction/summary' || event.type === 'compaction/prune') {
+      const range = data.shadowedRange as { start?: unknown; end?: unknown } | undefined
+      const cited = data.shadowedSeqs
+      if (range === null || typeof range !== 'object' || !Array.isArray(cited)) continue
+      const start = typeof range.start === 'number' ? emittedSeqs.has(range.start) : true
+      const end = typeof range.end === 'number' ? emittedSeqs.has(range.end) : true
+      const citedAll = cited.every(item => typeof item !== 'number' || emittedSeqs.has(item))
+      if (!start || !end || !citedAll) {
+        const id = data.compactionId
+        if (typeof id === 'string') droppedGroups.add(id)
+      }
+    } else if (event.type === 'command/done') {
+      const id = data.commandId
+      const sourceSeq = data.sourceEventSeq
+      // The host contract: sourceEventSeq cites an earlier NON-command
+      // event, and the commands invariant rejects a stale or out-of-range
+      // citation. A done whose run or whose cited source falls in the
+      // dropped span drops ATOMICALLY with it.
+      const runKept = typeof id === 'string' && keptRunIds.has(id)
+      const sourceKept = typeof sourceSeq !== 'number' || emittedSeqs.has(sourceSeq)
+      if (!runKept || !sourceKept) droppedDones.add(event.seq)
+    }
+  }
+  // Turn renumbering: the host's turn counter must run 1, 2, 3… over the
+  // seed, but the dropped span leaves a gap between the head skeleton's
+  // turn and the keep window's first turn/start. Every kept event carrying
+  // a turn number at or past that first kept turn shifts down by the gap;
+  // head-side numbers (below it) stay untouched. `step` numbers restart per
+  // turn, so verbatim scaffolding inside a kept turn stays correct.
+  const headOwnsTurn1 = headEvents.some(event => event.type === 'turn/start')
+  const expectedFirstKeptTurn = headOwnsTurn1 ? 2 : 1
+  let firstKeptTurn: number | undefined
+  // The first kept turn/start can sit in the keep interval OR — when every
+  // pre-cut survivor is the protected head — only in the tail after the
+  // consumed group; scan both ranges.
+  for (const [from, to] of [[keepStart, cut], [cut + 1, events.length]] as const) {
+    for (let index = from; index < to; index++) {
+      const event = events[index]
+      if (event === undefined || event.type !== 'turn/start') continue
+      const turn = dataOf(event).turn
+      if (typeof turn === 'number') firstKeptTurn = turn
+      break
+    }
+    if (firstKeptTurn !== undefined) break
+  }
+  const turnOffset = firstKeptTurn === undefined ? 0 : Math.max(0, firstKeptTurn - expectedFirstKeptTurn)
+  // Positional renumbering over the kept set; every emitted event passes the
+  // same rebase: seq references remap when the map can serve them, and a
+  // reference into the dropped span degrades honestly (replace → append,
+  // dropped citations) — except `developer/message.headerSeq`, whose
+  // referent cannot be degraded: that aborts the whole tail.
+  const rebase = new Map<number, number>()
+  const seed: SeedEvent[] = []
+  let aborted = false
+  const emit = (event: SidechatLogEvent | undefined): void => {
+    if (aborted || event === undefined) return
+    const rebased: RebasedEvent = rebaseEvent(event, seed.length, rebase, turnOffset, firstKeptTurn)
+    if (rebased === DROPPED) return
+    if (rebased === undefined) {
+      aborted = true
+      return
+    }
+    rebase.set(event.seq, seed.length)
+    seed.push(rebased)
+  }
+  for (const event of headEvents) emit(event)
+  emit(checkpoint)
+  for (let index = keepStart; index < cut; index++) {
+    const event = events[index]
+    if (event === undefined || isCompactionGroupEvent(event, groupId)) continue
+    if (keepSkip(event)) continue
+    if (droppedGroups.has(String(dataOf(event).compactionId))) continue
+    if (droppedDones.has(event.seq)) continue
+    emit(event)
+  }
+  for (let index = cut + 1; index < events.length; index++) {
+    const event = events[index]
+    if (event === undefined || isCompactionGroupEvent(event, groupId)) continue
+    if (droppedGroups.has(String(dataOf(event).compactionId))) continue
+    if (droppedDones.has(event.seq)) continue
+    emit(event)
+  }
+  if (aborted) return undefined
+  // Prove equivalence before the caller relies on it: the rebased sequence
+  // must fold without error and to the same visible nodes as the parent,
+  // and its turn/step skeleton must satisfy the host's relational counter
+  // rules (turn/start runs 1, 2, …; steps open and close inside their turn;
+  // a trailing open turn is the caller's to close).
+  try {
+    const child = foldSurface(seed as unknown as Parameters<typeof foldSurface>[0])
+    if (!sameVisibleSequence(events, parentNodes, child.nodes, seed)) return undefined
+  } catch {
+    return undefined
+  }
+  if (!turnSequenceValid(seed)) return undefined
+  if (!inboxSplicesValid(seed)) return undefined
+  if (!bracketsValid(seed)) return undefined
+  return seed
+}
+
+/**
+ * Relational pre-check mirroring the host's grouped-record rules: a
+ * successful `compaction/end` requires a `compaction/summary` of the same
+ * compactionId earlier in the log, and a `command/done` requires its
+ * `command/run` (same commandId) before it. Dropping a summary or a run
+ * with the forgotten span while keeping its partner would ship a seed the
+ * host's invariant companions reject, so any unmatched partner falls back
+ * to the full copy.
+ */
+function bracketsValid(seed: readonly SeedEvent[]): boolean {
+  const summarized = new Set<string>()
+  const ranCommands = new Set<string>()
+  for (const event of seed) {
+    const data = dataOf(event)
+    if (event.type === 'compaction/summary') {
+      const id = data.compactionId
+      if (typeof id === 'string') summarized.add(id)
+    } else if (event.type === 'compaction/end') {
+      const id = data.compactionId
+      if (data.error === undefined && (typeof id !== 'string' || !summarized.has(id))) return false
+    } else if (event.type === 'command/run') {
+      const id = data.commandId
+      if (typeof id === 'string') ranCommands.add(id)
+    } else if (event.type === 'command/done') {
+      const id = data.commandId
+      if (typeof id !== 'string' || !ranCommands.has(id)) return false
+    }
+  }
+  return true
+}
+
+/**
+ * Relational pre-check mirroring the host's durable-inbox fold: every kept
+ * `agent/inbox/spliced` event replays POSITIONALLY over the pending inbox
+ * (splice.start/removedCount must stay in range, message ids unique). A
+ * seed whose splice history cannot replay from an empty inbox falls back
+ * to the full copy.
+ */
+function inboxSplicesValid(seed: readonly SeedEvent[]): boolean {
+  const nextTurn: Array<Record<string, unknown>> = []
+  const nextStep: Array<Record<string, unknown>> = []
+  for (const event of seed) {
+    if (event.type !== 'agent/inbox/spliced') continue
+    const data = dataOf(event)
+    // Host strictness: only the two known targets, a numeric start and
+    // removedCount, and an array of messages with string ids.
+    if (data.target !== 'next-turn' && data.target !== 'next-step') return false
+    const inbox = data.target === 'next-step' ? nextStep : nextTurn
+    const rawStart = data.start
+    // The host contract makes removedCount optional and defaults it to 0
+    // (its own writer omits it for pure inserts — 54% of real splices).
+    const removedCount = typeof data.removedCount === 'number' ? data.removedCount : 0
+    const inserted = Array.isArray(data.inserted) ? data.inserted as Array<Record<string, unknown>> : undefined
+    const start = typeof rawStart === 'number' ? rawStart : Number.NaN
+    if (inserted === undefined
+      || !Number.isSafeInteger(start) || start < 0 || start > inbox.length
+      || !Number.isSafeInteger(removedCount) || removedCount < 0
+      || start + removedCount > inbox.length) return false
+    inbox.splice(start, removedCount, ...inserted)
+    const ids = new Set<string>()
+    for (const message of [...nextTurn, ...nextStep]) {
+      const id = message.id
+      if (typeof id !== 'string') return false
+      if (ids.has(id)) return false
+      ids.add(id)
+    }
+  }
+  return true
+}
+
+/**
+ * Relational pre-check mirroring the CORE of the session invariant's
+ * counters and tool pairing: turn numbers run 1, 2, … with no nested open
+ * turn; steps run 1, 2, … inside the open turn and close before their turn;
+ * in-turn message and tool/call events name the open turn/step when they
+ * carry numbers — except a NON-append tool/result, which the host exempts
+ * from step naming (pruner replacements carry their original step); a
+ * tool/result must consume a pending call of its step, and a step cannot
+ * close with calls pending. A trailing open turn or step is legal — the
+ * caller closes it. This is a core mirror, not the full host contract;
+ * anything it cannot prove falls back to the full copy.
+ */
+function turnSequenceValid(seed: readonly SeedEvent[]): boolean {
+  let nextTurn = 1
+  let nextStep = 1
+  let openTurn: number | undefined
+  let openStep: number | undefined
+  let pendingCalls = new Set<string>()
+  for (const event of seed) {
+    const data = dataOf(event)
+    if (event.type === 'turn/start') {
+      if (openTurn !== undefined || data.turn !== nextTurn) return false
+      openTurn = nextTurn
+      nextTurn += 1
+      nextStep = 1
+      openStep = undefined
+      pendingCalls = new Set()
+    } else if (event.type === 'turn/end') {
+      if (openTurn === undefined || data.turn !== openTurn || openStep !== undefined) return false
+      openTurn = undefined
+    } else if (event.type === 'step/start') {
+      if (openTurn === undefined || data.turn !== openTurn || openStep !== undefined) return false
+      if (data.step !== nextStep) return false
+      openStep = nextStep
+      nextStep += 1
+      pendingCalls = new Set()
+    } else if (event.type === 'step/end') {
+      if (openTurn === undefined || openStep === undefined || data.turn !== openTurn || data.step !== openStep) return false
+      if (pendingCalls.size > 0) return false
+      openStep = undefined
+    } else if (event.type === 'tool/call') {
+      if (typeof data.turn === 'number' && data.turn !== openTurn) return false
+      if (typeof data.step === 'number' && data.step !== openStep) return false
+      const callId = data.callId
+      if (typeof callId === 'string' && callId !== '') pendingCalls.add(callId)
+    } else if (event.type === 'tool/result') {
+      const op = (event as { surfaceOp?: unknown }).surfaceOp
+      if (op !== 'append') {
+        // The host exempts a replacing tool/result from step naming and
+        // pairing: it shadows the original call's slot, not a new one.
+        if (openTurn === undefined) return false
+        continue
+      }
+      if (typeof data.turn === 'number' && data.turn !== openTurn) return false
+      if (typeof data.step === 'number' && data.step !== openStep) return false
+      const callId = toolResultCallIdOf(event)
+      if (callId !== undefined && !pendingCalls.delete(callId)) return false
+    } else if (isSurfaceEligibleType(event.type)) {
+      if (typeof data.turn === 'number' && data.turn !== openTurn) return false
+      if (typeof data.step === 'number' && data.step !== openStep) return false
+    }
+  }
+  return true
+}
+
+/** The callId a tool/result event's message cites, when it carries one. */
+function toolResultCallIdOf(event: SidechatLogEvent): string | undefined {
+  if (event.type !== 'tool/result') return undefined
+  const message = dataOf(event).message as { source?: { callId?: unknown } } | undefined
+  const callId = message?.source?.callId
+  return typeof callId === 'string' && callId !== '' ? callId : undefined
+}
+
+/**
+ * The surviving pre-cut head as a state-machine-complete event list: the
+ * head nodes (surface order == log order for surviving appends) wrapped in
+ * a turn/step skeleton NORMALIZED to turn 1 step 1 — the seed is a fresh
+ * log, the host's turn/step counters must start there, and the head node's
+ * original numbers are envelope metadata the rebase is free to rewrite
+ * (the protected system head can be a mid-session rewrite living in a later
+ * turn/step). Closers are recovered from the log when the skeleton's own
+ * closers were dropped with the span. A head wider than one step/turn (or
+ * numbers that disagree) is not a shape this builder represents and falls
+ * back to the full copy.
+ * @param events - the parent's log.
+ * @param head - seqs of the surviving pre-cut surface nodes before the
+ *  checkpoint's surface slot.
+ * @returns the head segment's events, or undefined when the shape is not
+ *  representable.
+ */
+function headSkeleton(events: readonly SidechatLogEvent[], head: readonly number[]): SidechatLogEvent[] | undefined {
+  if (head.length === 0) return []
+  const first = events[head[0] as number]
+  const last = events[head[head.length - 1] as number]
+  if (first === undefined || last === undefined) return undefined
+  let turnStart: SidechatLogEvent | undefined
+  let stepStart: SidechatLogEvent | undefined
+  for (let index = head[0]! - 1; index >= 0; index--) {
+    const event = events[index]
+    if (event === undefined) break
+    if (event.type === 'turn/end') break
+    // The NEAREST step/start below the node is the one that encloses it.
+    if (event.type === 'step/start' && stepStart === undefined) stepStart = event
+    if (event.type === 'turn/start') {
+      turnStart = event
+      break
+    }
+  }
+  // Rewrite envelope turn/step in place of the originals — only where the
+  // event already carries numbers (a user/message never does, and its whole
+  // data object IS the model-visible message, so injecting fields there
+  // would change the child's context) — keeping the data losslessly
+  // JSON-serializable (never writing explicit undefined).
+  const normalized = (event: SidechatLogEvent, over: { turn?: number; step?: number }): SidechatLogEvent => {
+    const data = { ...dataOf(event) }
+    if (over.turn !== undefined && typeof data.turn === 'number') data.turn = over.turn
+    if (over.step !== undefined && typeof data.step === 'number') data.step = over.step
+    return { ...event, data } as SidechatLogEvent
+  }
+  const parts: SidechatLogEvent[] = []
+  if (turnStart !== undefined) {
+    const turn = dataOf(turnStart).turn
+    if (typeof turn !== 'number') return undefined
+    const step = stepStart !== undefined ? dataOf(stepStart).step : undefined
+    if (stepStart !== undefined && typeof step !== 'number') return undefined
+    // Nodes must all sit in this ONE step/turn (by their ORIGINAL numbers);
+    // a wider head is not a shape this builder represents.
+    for (const seq of head) {
+      const node = events[seq]
+      if (node === undefined) return undefined
+      const nodeData = dataOf(node)
+      if (nodeData.turn !== turn && nodeData.turn !== undefined) return undefined
+      if (stepStart !== undefined && nodeData.step !== step && nodeData.step !== undefined) return undefined
+    }
+    parts.push(normalized(turnStart, { turn: 1 }))
+    if (stepStart !== undefined) parts.push(normalized(stepStart, { turn: 1, step: 1 }))
+    for (const seq of head) parts.push(normalized(events[seq]!, { turn: 1, ...(stepStart !== undefined ? { step: 1 } : {}) }))
+    // Close the skeleton when its closers are dropped with the span: the
+    // first step/end / turn/end of this step/turn after the last node.
+    let closedStep = false
+    for (let index = head[head.length - 1]! + 1; index < events.length; index++) {
+      const event = events[index]
+      if (event === undefined) break
+      if (!closedStep && event.type === 'step/end' && typeof step === 'number'
+        && dataOf(event).step === step && dataOf(event).turn === turn) {
+        parts.push(normalized(event, { turn: 1, step: 1 }))
+        closedStep = true
+        continue
+      }
+      if (event.type === 'turn/end' && dataOf(event).turn === turn) {
+        parts.push(normalized(event, { turn: 1 }))
+        break
+      }
+      if (event.type === 'turn/start') break
+    }
+    return closedStep || step === undefined ? parts : undefined
+  }
+  // No enclosing turn: out-of-turn events are legal as-is.
+  for (const seq of head) {
+    const node = events[seq]
+    if (node === undefined) return undefined
+    parts.push(node)
+  }
+  return parts
+}
+
+/** Log index of the turn/start enclosing one seq, the seq itself when the
+ *  node sits between turns (the keep window then starts verbatim at its own
+ *  skeleton root), or the log length when there is no keep window at all. */
+function enclosingTurnStart(events: readonly SidechatLogEvent[], seq: number | undefined): number {
+  if (seq === undefined) return events.length
+  for (let index = seq - 1; index >= 0; index--) {
+    const event = events[index]
+    if (event === undefined) return seq
+    if (event.type === 'turn/start') return index
+    if (event.type === 'turn/end') return seq
+  }
+  return seq
+}
+
+/** Whether one event belongs to the compaction group being consumed (its
+ *  log-only start/summary/end records leave with the span they priced).
+ *  Other groups' records stay — they meter history the child keeps. A
+ *  summary without a `compactionId` is malformed; nothing is excluded for
+ *  it and the equivalence check decides. */
+function isCompactionGroupEvent(event: SidechatLogEvent, groupId: unknown): boolean {
+  if (!event.type.startsWith('compaction/')) return false
+  if (typeof groupId !== 'string') return false
+  return dataOf(event).compactionId === groupId
+}
+
+/** Index of the checkpoint user/message of the last summarizing compaction:
+ *  the event right after a `compaction/summary` — that adjacency is the
+ *  shadow-price contract. An orphaned summary (its replacement never
+ *  landed) is skipped in favor of the previous complete one. */
+function lastCheckpointIndex(events: readonly SidechatLogEvent[]): number | undefined {
+  for (let index = events.length - 1; index >= 0; index--) {
+    if (events[index]?.type !== 'compaction/summary') continue
+    if (events[index + 1]?.type === 'user/message') return index + 1
+  }
+  return undefined
+}
+
+/** One `type` + model-visible-content token per visible node, mirroring the
+ *  renderer's projection: a user/message IS its whole data object, every
+ *  other surface event projects `data.message` (its envelope turn/step and
+ *  headerSeq are rewritten by the rebase and never reach the model). */
+function visibleToken(event: SidechatLogEvent | undefined): string {
+  if (event === undefined) return 'missing'
+  if (event.type === 'user/message') return `${event.type}:${JSON.stringify(dataOf(event))}`
+  const message = dataOf(event).message
+  return `${event.type}:${JSON.stringify(message ?? null)}`
+}
+
+/** Compare the parent's visible nodes with the rebased child's by content. */
+function sameVisibleSequence(
+  parent: readonly SidechatLogEvent[],
+  parentNodes: readonly number[],
+  childNodes: readonly number[],
+  child: readonly SidechatLogEvent[],
+): boolean {
+  if (parentNodes.length !== childNodes.length) return false
+  for (let index = 0; index < parentNodes.length; index++) {
+    if (visibleToken(parent[parentNodes[index] as number]) !== visibleToken(child[childNodes[index] as number])) {
+      return false
+    }
+  }
+  return true
+}
+
+/**
+ * Copy one kept event into the rebased sequence: envelope seq references
+ * are remapped through the rebase map, `data.turn` numbers at or past the
+ * first kept turn shift down by the gap the dropped span left (the host's
+ * turn counter must stay contiguous), and a seq reference the map cannot
+ * serve (it points into the dropped span) degrades the event honestly — a
+ * replace whose shadowed nodes are gone becomes an append, dropped
+ * citations vanish — except `developer/message.headerSeq`, whose referent
+ * cannot be degraded: that aborts the whole tail.
+ * @param event - the kept event to copy.
+ * @param seq - the event's position in the rebased sequence.
+ * @param rebase - old seq → rebased position over the kept set.
+ * @param turnOffset - turns removed before the keep window (0 = no shift).
+ * @param firstKeptTurn - the first kept turn number; smaller numbers are
+ *  head-side and never shift.
+ * @returns the rebased event, or undefined when the tail is not provable.
+ */
+/** Sentinel: the event is log-only metering whose referenced span did not
+ *  survive the rebase — drop it instead of aborting the whole tail. */
+const DROPPED: unique symbol = Symbol('dropped')
+
+type RebasedEvent = SeedEvent | undefined | typeof DROPPED
+
+function rebaseEvent(
+  event: SidechatLogEvent,
+  seq: number,
+  rebase: Map<number, number>,
+  turnOffset: number,
+  firstKeptTurn: number | undefined,
+): RebasedEvent {
+  const source = event as SidechatLogEvent & { ignorable?: true }
+  const seed: SeedEvent = { type: source.type, seq, time: source.time, data: dataOf(source) }
+  if (source.ignorable === true) seed.ignorable = true
+  const sourceData = dataOf(event)
+  if (turnOffset > 0 && typeof sourceData.turn === 'number'
+    && firstKeptTurn !== undefined && sourceData.turn >= firstKeptTurn) {
+    seed.data = { ...seed.data, turn: sourceData.turn - turnOffset }
+  }
+  // A settled command cites an earlier non-command event by seq; remap it
+  // alongside, and drop the done when the cited event did not survive — a
+  // stale citation is something the host's commands invariant rejects.
+  if (event.type === 'command/done' && typeof sourceData.sourceEventSeq === 'number') {
+    const mapped = rebase.get(sourceData.sourceEventSeq)
+    if (mapped === undefined) return DROPPED
+    seed.data = { ...seed.data, sourceEventSeq: mapped }
+  }
+  // Compaction metering records cite the surface span they priced. When the
+  // span survived the rebase, remap the citations; when it did not (the
+  // record predates the consumed compaction and its span lies in the
+  // dropped region), the record meters nothing that exists in the child —
+  // drop it rather than shipping stale seq references.
+  if (event.type === 'compaction/summary' || event.type === 'compaction/prune') {
+    const range = sourceData.shadowedRange as { start?: unknown; end?: unknown } | undefined
+    const cited = sourceData.shadowedSeqs
+    if (range === null || typeof range !== 'object' || !Array.isArray(cited)) return seed
+    const start = typeof range.start === 'number' ? rebase.get(range.start) : undefined
+    const end = typeof range.end === 'number' ? rebase.get(range.end) : undefined
+    const mapped = cited.map(item => typeof item === 'number' ? rebase.get(item) : undefined)
+    if (start === undefined || end === undefined || mapped.includes(undefined)) return DROPPED
+    seed.data = {
+      ...seed.data,
+      shadowedRange: { start, end },
+      shadowedSeqs: mapped as number[],
+    }
+  }
+  const headerSeq = sourceData.headerSeq
+  if (event.type === 'developer/message' && typeof headerSeq === 'number') {
+    const mapped = rebase.get(headerSeq)
+    if (mapped === undefined) return undefined
+    seed.data = { ...seed.data, headerSeq: mapped }
+  }
+  const op = (event as { surfaceOp?: unknown }).surfaceOp
+  if (op === 'append') {
+    seed.surfaceOp = 'append'
+  } else if (op !== null && typeof op === 'object' && 'op' in op && (op as { op: unknown }).op === 'replace') {
+    const replace = op as { startSeq?: unknown; endSeq?: unknown }
+    const start = typeof replace.startSeq === 'number' ? rebase.get(replace.startSeq) : undefined
+    const end = typeof replace.endSeq === 'number' ? rebase.get(replace.endSeq) : undefined
+    // A range the rebase cannot resolve lost its shadowed nodes with the
+    // dropped span; appending the replacement is exactly what remains
+    // visible (the equivalence check still has to confirm it).
+    seed.surfaceOp = start !== undefined && end !== undefined && start <= end
+      ? { op: 'replace', startSeq: start, endSeq: end }
+      : 'append'
+  }
+  const cited = (event as { sourceEventSeqs?: unknown }).sourceEventSeqs
+  if (Array.isArray(cited)) {
+    const mapped = cited.map(item => typeof item === 'number' ? rebase.get(item) : undefined)
+    // Citations the rebase cannot serve referenced the dropped span; the
+    // field is optional and only has to cover a live replace range.
+    if (!mapped.includes(undefined)) seed.sourceEventSeqs = mapped as number[]
+  }
+  return seed
+}
+
+/**
  * Build the side-thread inheritance for one parent log: the full event log
  * up to the click moment, honestly closed when it ends inside an open turn.
+ * When the parent has compacted, the log is first rebased onto its last
+ * summarizing compaction (`compactionTail`) — same model-visible surface, a
+ * fraction of the durable copy.
  * @param events - the parent's log (live or persisted).
  * @param live - the parent's in-flight stream chunks (DSH 0.1.5+ publishes
  *   them outside the log); used only by the snapshot fallback.
@@ -285,26 +919,28 @@ export function buildSidechatInheritance(
   live: readonly AssistantLiveChunk[] = [],
 ): SidechatInheritance {
   if (events.length === 0) return { seed: [], snapshot: null }
-  const boundary = lastTurnBoundary(events)
-  if (boundary < 0 || events[boundary]?.type === 'turn/end') {
+  const trimmed = compactionTail(events)
+  const log = trimmed ?? events
+  const boundary = lastTurnBoundary(log)
+  if (boundary < 0 || log[boundary]?.type === 'turn/end') {
     // Ends outside any turn (or has no turns at all): the whole log is a
     // valid, balanced seed — possibly ending with a pending user message.
-    return { seed: copyEvents(events), snapshot: null }
+    return { seed: copyEvents(log), snapshot: null }
   }
   // Ends inside the open turn starting at `boundary`.
-  if (hasDanglingToolCall(events, boundary)) {
+  if (hasDanglingToolCall(log, boundary)) {
     // Cannot close honestly: cut before the open turn; the caller attaches
     // the structured snapshot to the boundary prompt instead.
     return {
-      seed: copyEvents(events.slice(0, boundary)),
-      snapshot: buildOpenTurnSnapshot(events, live),
+      seed: copyEvents(log.slice(0, boundary)),
+      snapshot: buildOpenTurnSnapshot(log, live),
     }
   }
-  const seed = copyEvents(events)
-  const last = events[events.length - 1]
-  const turn = numberAt(dataOf(events[boundary]!), 'turn')
+  const seed = copyEvents(log)
+  const last = log[log.length - 1]
+  const turn = numberAt(dataOf(log[boundary]!), 'turn')
   const now = last?.time ?? 0
-  const openStep = openStepInTurn(events, boundary)
+  const openStep = openStepInTurn(log, boundary)
   if (openStep !== undefined) {
     seed.push({ type: 'step/end', seq: seed.length, time: now, data: { turn, step: openStep } })
   }
@@ -546,12 +1182,175 @@ export interface SidechatThreadInfo {
   live: boolean
   /** Live lifecycle state; absent on cold threads. */
   status?: 'idle' | 'running'
-  /** Provider route of the live agent. */
+  /** Provider route the thread actually requests with (see
+   *  {@link parentModelSelection} — NOT the frozen creation-time default). */
   provider?: string
-  /** Model id of the live agent. */
+  /** Model id the thread actually requests with. */
   model?: string
+  /** Reasoning effort of the effective selection, when the log records one. */
+  reasoningEffort?: string
   /** The recorded agent preset (live header, or persisted on cold reads). */
   preset?: string
+}
+
+/**
+ * One UNCLAIMED inbox message of a live side thread — the queue the next step
+ * or turn will claim. The transcript renders these as pending user bubbles
+ * (with a spinner and a dequeue affordance) instead of leaving accepted input
+ * invisible until a claim logs it as a durable `user/message`.
+ */
+export interface SidechatPendingInput {
+  /** Durable message identity — the `sidechat.dequeue` key. */
+  id: string
+  /** Which boundary will claim it; `next-step` entries are claimed first. */
+  target: 'next-turn' | 'next-step'
+  /** Flattened text of the message content ('' when it carries no text). */
+  text: string
+}
+
+/** One routable model in the host model catalog (a structural slice of the
+ *  session controller's own `modelCatalog` rows). */
+export interface SidechatModelInfo {
+  id: string
+  name?: string
+  description?: string
+  /** Provider-declared reasoning efforts, when the model has any. */
+  reasoning?: {
+    efforts: readonly { id: string; name?: string; description?: string }[]
+    defaultEffort?: string
+  }
+}
+
+/** One provider group of the host model catalog. */
+export interface SidechatModelGroup {
+  id: string
+  name?: string
+  models: readonly SidechatModelInfo[]
+}
+
+/**
+ * The host model catalog as the side-chat model picker consumes it. Sourced
+ * from the host's own `sessionController.modelCatalog()` (the exact catalog
+ * the main composer lists), degraded to `available: false` when that service
+ * is absent — the picker then offers only "inherit the parent".
+ */
+export interface SidechatModelCatalog {
+  /** Whether a host catalog was readable at all. */
+  available: boolean
+  /** The deployment default selection, when readable. */
+  default?: SidechatModelSelection
+  /** Provider groups with at least one routable model. */
+  groups: readonly SidechatModelGroup[]
+  /** Providers whose catalog read failed (kept so the picker can say so). */
+  failures: readonly { id: string; name?: string; message: string }[]
+}
+
+/** Flatten one pending message's content into the text the bubble shows. */
+function pendingText(message: unknown): string {
+  const content = (message as { content?: unknown } | undefined)?.content
+  if (typeof content === 'string') return content
+  if (!Array.isArray(content)) return ''
+  const parts: string[] = []
+  for (const block of content) {
+    if (block === null || typeof block !== 'object') continue
+    const item = block as { type?: unknown; text?: unknown }
+    if (item.type === 'text' && typeof item.text === 'string') parts.push(item.text)
+  }
+  return parts.join('\n')
+}
+
+/** The identity one inbox message carries (`MessageId`, a branded string). */
+export function pendingInputId(message: unknown): string | undefined {
+  const id = (message as { id?: unknown } | undefined)?.id
+  return typeof id === 'string' && id !== '' ? id : undefined
+}
+
+/**
+ * Project one agent's inbox into wire rows, in CLAIM order: every `next-step`
+ * entry first, then the queued turns (the host's `Inbox.claim` drains exactly
+ * that way). Messages without an identity are skipped — they could not be
+ * dequeued, so showing them as pending would offer a dead button.
+ */
+export function pendingInputs(
+  nextStep: readonly unknown[],
+  nextTurn: readonly unknown[],
+): SidechatPendingInput[] {
+  const rows: SidechatPendingInput[] = []
+  const add = (message: unknown, target: SidechatPendingInput['target']): void => {
+    const id = pendingInputId(message)
+    if (id === undefined) return
+    rows.push({ id, target, text: pendingText(message) })
+  }
+  for (const message of nextStep) add(message, 'next-step')
+  for (const message of nextTurn) add(message, 'next-turn')
+  return rows
+}
+
+/**
+ * Fold a log's `agent/inbox/spliced` events into the message ids STILL pending
+ * after it — the durable record of the inbox (the host's own
+ * `inboxProjectionDefinition` semantics: apply every splice in order).
+ *
+ * This is the reading the ghost sweep needs: a seeded thread's inherited
+ * prefix can leave messages "pending" that the parent had already claimed
+ * (the claim splice sits inside the parent's open turn, which the seed
+ * truncation cuts away), and those must never be delivered as the child's
+ * own input.
+ * @param events - the log (or any prefix of it), contiguous from seq 0.
+ * @param limit - exclusive upper bound of event count to fold (the inherited
+ *   prefix length, or the whole log).
+ * @returns the ids of messages still pending after the folded events.
+ */
+export function pendingIdsInLog(events: readonly SidechatLogEvent[], limit?: number): string[] {
+  const nextTurn: unknown[] = []
+  const nextStep: unknown[] = []
+  const end = limit === undefined ? events.length : Math.min(limit, events.length)
+  for (let index = 0; index < end; index++) {
+    const event = events[index]
+    if (event === undefined || event.type !== 'agent/inbox/spliced') continue
+    const data = dataOf(event)
+    const target = data.target === 'next-step' ? nextStep : data.target === 'next-turn' ? nextTurn : undefined
+    if (target === undefined) continue
+    const start = typeof data.start === 'number' && Number.isSafeInteger(data.start) ? data.start : 0
+    const removed = typeof data.removedCount === 'number' && Number.isSafeInteger(data.removedCount) ? data.removedCount : 0
+    const inserted = Array.isArray(data.inserted) ? data.inserted : []
+    target.splice(Math.max(0, Math.min(start, target.length)), Math.max(0, removed), ...inserted)
+  }
+  const ids: string[] = []
+  for (const message of [...nextStep, ...nextTurn]) {
+    const id = pendingInputId(message)
+    if (id !== undefined) ids.push(id)
+  }
+  return ids
+}
+
+/**
+ * The message ids a seeded thread INHERITED as still-pending but never
+ * actually owned: fold only the inherited prefix (`[0, inheritedEventCount)`),
+ * which is exactly the region the parent's own claim splices may have been
+ * cut out of. The caller removes precisely these from the live inbox, so a
+ * user's genuinely queued side-thread input is never touched.
+ * @param events - the thread's log.
+ * @param inheritedEventCount - the thread's inherited prefix length.
+ * @returns the ghost message ids present in the prefix fold.
+ */
+export function inheritedPendingIds(
+  events: readonly SidechatLogEvent[],
+  inheritedEventCount: number,
+): string[] {
+  return pendingIdsInLog(events, Math.max(0, Math.trunc(inheritedEventCount)))
+}
+
+/**
+ * The thread's effective model selection: `pending ?? lastUsed` of its own
+ * `model/selection` / `request/header` fold (see {@link parentModelSelection},
+ * which this is the same projection as). Used by the routes to report what the
+ * thread will actually request with.
+ */
+export function effectiveModelSelection(
+  events: readonly SidechatLogEvent[],
+): SidechatModelSelection | undefined {
+  return parentModelSelection(events)
 }
 
 /** The events a thread produced itself: everything after the LAST

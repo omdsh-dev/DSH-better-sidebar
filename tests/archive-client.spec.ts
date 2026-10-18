@@ -5,10 +5,16 @@
  * `archiveStatus` posted a bare `{ id }` while the host requires
  * `requireString(payload, 'id')` AND `requireString(payload, 'sessionId')` —
  * a 400 on every poll, so the download never happened. The unit specs for the
- * tree mock this module wholesale, and `tests/zip.spec.ts` drives the HOST side
- * with hand-built payloads, so nothing covered what the client actually sends.
- * These cases run the real module against a stubbed `fetch` and assert the
- * request bodies, including the session scope on every archive call.
+ * tree mock this module wholesale, and `tests/archive.spec.ts` drives the HOST
+ * side with hand-built payloads, so nothing covered what the client actually
+ * sends. These cases run the real module against a stubbed `fetch` and assert
+ * the request bodies, including the session scope on every archive call.
+ *
+ * The shapes come from the host: `archive.build` answers `{id, name, entries}`
+ * — `name` is the FINAL name, because the host appends the extension of the
+ * tool it actually has — and the client therefore posts a STEM. `archive.status`
+ * answers `{state, bytes}` only: the system `zip`/`tar` reports no per-entry
+ * progress, so there is no `done`/`total` left to carry.
  */
 import './browser-globals.ts'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -41,17 +47,22 @@ afterEach(() => {
 
 describe('archive client payloads', () => {
   it('posts the session scope on archive.status (the host requires BOTH keys)', async () => {
-    const posted = stubFetch({ state: 'ready', done: 1, total: 1, bytes: 8 })
-    await expect(archiveStatus(scope, 'job-1')).resolves.toEqual({ state: 'ready', done: 1, total: 1, bytes: 8 })
+    // The exact new shape: a module still answering `done`/`total` fails here.
+    const posted = stubFetch({ state: 'ready', bytes: 8 })
+    await expect(archiveStatus(scope, 'job-1')).resolves.toEqual({ state: 'ready', bytes: 8 })
     expect(posted).toEqual([{ url: 'http://localhost/sidebar/api/archive.status', body: { sessionId: 's1', cwd: '/w', id: 'job-1' } }])
   })
 
-  it('carries the scope on archive.build, plus the selection and the name', async () => {
-    const posted = stubFetch({ id: 'job-2', entries: 2 })
-    await expect(archiveBuild(scope, ['/w/a.ts', '/w/b.ts'], 'archive.zip')).resolves.toEqual({ id: 'job-2', entries: 2 })
+  it('carries the scope on archive.build, plus the selection and the STEM', async () => {
+    // The caller names a STEM and the host answers with the final name (it has
+    // only `tar`, so the extension is `.tar.gz`). The client posts the stem
+    // VERBATIM — appending a guessed suffix here would be a lie.
+    const posted = stubFetch({ id: 'job-2', name: 'selection.tar.gz', entries: 2 })
+    await expect(archiveBuild(scope, ['/w/a.ts', '/w/b.ts'], 'selection'))
+      .resolves.toEqual({ id: 'job-2', name: 'selection.tar.gz', entries: 2 })
     expect(posted).toEqual([{
       url: 'http://localhost/sidebar/api/archive.build',
-      body: { sessionId: 's1', cwd: '/w', paths: ['/w/a.ts', '/w/b.ts'], name: 'archive.zip' },
+      body: { sessionId: 's1', cwd: '/w', paths: ['/w/a.ts', '/w/b.ts'], name: 'selection' },
     }])
   })
 
@@ -61,7 +72,7 @@ describe('archive client payloads', () => {
   })
 
   it('omits an empty cwd but never the sessionId', async () => {
-    const posted = stubFetch({ state: 'building', done: 0, total: 1, bytes: 0 })
+    const posted = stubFetch({ state: 'building', bytes: 0 })
     await archiveStatus({ sessionId: 's2', cwd: '' }, 'job-3')
     expect(posted[0]?.body).toEqual({ sessionId: 's2', id: 'job-3' })
   })

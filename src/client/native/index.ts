@@ -27,6 +27,7 @@ import { t } from '../locales.ts'
 import { splitTrailingLineSpec } from '../path-line.ts'
 import { baseName } from '../paths.ts'
 import { parseFileAddress } from '../resource-address.ts'
+import type { ContextDiagnostics } from '../context-diagnostics.ts'
 import type { BetterSidebarService, TabDescriptor } from '../service.ts'
 import type { SidebarStore } from '../state.ts'
 import {
@@ -171,6 +172,13 @@ interface Registration {
  * file called `b.c:131` and the editor reports it missing (#826). The tab
  * TITLE is seeded from the same spec, because the host derives it from the same
  * string and would otherwise label the tab `b.c:131`.
+ *
+ * The LINE rides along in the same seed. DSH's own `#L131` form already
+ * arrives as `navigation.params.line` (the host parses it and sends it down),
+ * so seeding it here is what makes both spellings land on the same row — see
+ * {@link NativeTabParams.line}. The range end and the column are deliberately
+ * dropped: {@link splitTrailingLineSpec} parses them, and a start line is all
+ * the editor has anywhere to put a cursor.
  * @param info - the native tab record the body is drawing.
  * @returns the seed, or `undefined` when the tab is not a file address.
  */
@@ -179,7 +187,7 @@ export function fileParamsOf(info: NativeTabInfo): NativeTabParams | undefined {
   if (address === undefined) return undefined
   const spec = splitTrailingLineSpec(address.path)
   if (spec === undefined) return { path: address.path }
-  return { path: spec.path, title: baseName(spec.path) }
+  return { path: spec.path, title: baseName(spec.path), line: spec.line }
 }
 
 /**
@@ -212,6 +220,14 @@ export interface NativeSurfaceDeps {
   /** The shared native tab record registry (the surface writes it too). */
   readonly records: NativeTabRecords
   /**
+   * The activation's optional dsh-context diagnostics controller (see
+   * ../context-diagnostics.ts). Forwarded into the tab bodies' injected bag,
+   * because a native body renders in the HOST's React tree and cannot read the
+   * plugin shell's provider. Omitted = the bodies render without the
+   * diagnostics entry points.
+   */
+  readonly diagnostics?: ContextDiagnostics
+  /**
    * Report a tab-type registration failure (phase label + cause).
    *
    * `ctx.inject`'s callback body and the registry's own subscriber callbacks
@@ -232,7 +248,7 @@ export interface NativeSurfaceDeps {
  * @returns a disposer unregistering everything.
  */
 export function registerNativeSurface(deps: NativeSurfaceDeps): () => void {
-  const { ctx, store, service, records, reportFailure } = deps
+  const { ctx, store, service, records, reportFailure, diagnostics } = deps
   // Bind the store BEFORE any body can render: the per-session state is the
   // authority for the explorer's expansion set, so the native surface and the
   // workbench share one set per session and a closed tab cannot drop it.
@@ -286,7 +302,11 @@ export function registerNativeSurface(deps: NativeSurfaceDeps): () => void {
         disposers.push(ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register({
           name: 'sidebar.right.pane.tab',
           key: id,
-          inject: (sessionId: string) => ({ ...injected, ...params, sessionId }),
+          // The diagnostics controller rides the SAME injected bag every body
+          // already receives (a native body renders in the host's tree, so the
+          // plugin shell's provider is out of reach); the adapter turns it into
+          // the provider around the body it draws.
+          inject: (sessionId: string) => ({ ...injected, ...params, sessionId, ...(diagnostics === undefined ? {} : { diagnostics }) }),
         }, NativeTabBody)))
         disposers.push(ctx.slots.inject('sidebar.right.pane.tab.title', () => ctx.slots.register({
           name: 'sidebar.right.pane.tab.title',
@@ -427,6 +447,11 @@ export function registerNativeSurface(deps: NativeSurfaceDeps): () => void {
       const wanted = new Map<string, () => () => void>()
       for (const descriptor of service.getTabs()) {
         if (!service.isTabEnabled(descriptor.id)) continue
+        // A `bottomOnly` type lives in the plugin's own workbench and has no
+        // native tab: registering one would put a second capsule in the
+        // host's guide for a page it cannot draw (the bottom terminal is the
+        // case — the host owns the right-Sidebar `terminal` kind outright).
+        if (descriptor.bottomOnly === true) continue
         wanted.set(descriptor.id, () => registerDescriptor(descriptor))
       }
       for (const [descriptorId, registration] of live) {

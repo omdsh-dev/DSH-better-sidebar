@@ -17,9 +17,12 @@ export type SidebarErrorCode =
   | 'forbidden'
   | 'method-error'
   | 'too-large'
+  | 'unavailable'
   | 'fs-error'
   | 'fs-conflict'
   | 'git-error'
+  | 'graph-stale'
+  | 'graph-limit'
   | 'git-suggest-empty'
   | 'git-suggest-error'
   | 'job-error'
@@ -76,8 +79,53 @@ export async function readJsonBody(req: SidebarHttpRequest): Promise<unknown> {
   }
 }
 
-/** Write a JSON response with the given status. */
-export function writeJson(res: SidebarHttpResponse, status: number, body: unknown): void {
+/**
+ * Read a raw text request body (the editor save route).
+ *
+ * JSON framing was what capped a save at {@link MAX_BODY_BYTES}: the whole
+ * document had to be string-escaped into one JSON payload, so a file the
+ * editor could legitimately open could not be written back. The save route
+ * therefore takes the document as the raw body.
+ *
+ * `limit` is a server-side sanity guard rather than a product limit — the UI
+ * cannot produce more than the editable size — because the encoding transform
+ * the caller runs afterwards needs the document as one string.
+ *
+ * @param req - the request face (async-iterable body).
+ * @param limit - maximum accepted body size in bytes.
+ * @returns the body decoded as UTF-8.
+ * @throws {SidebarError} too-large beyond the limit, bad-request on invalid UTF-8.
+ */
+export async function readTextBody(req: SidebarHttpRequest, limit: number): Promise<string> {
+  const chunks: Buffer[] = []
+  let total = 0
+  for await (const chunk of req) {
+    const buffer = Buffer.from(chunk)
+    total += buffer.length
+    if (total > limit) {
+      throw new SidebarError('too-large', `request body exceeds the ${limit} byte limit`, 413)
+    }
+    chunks.push(buffer)
+  }
+  // `fatal` so a body that is not valid UTF-8 is refused instead of silently
+  // becoming replacement characters in the saved file.
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks))
+  } catch {
+    throw new SidebarError('bad-request', 'request body is not valid UTF-8')
+  }
+}
+
+/** Write a JSON response with the given status. */export function writeJson(res: SidebarHttpResponse, status: number, body: unknown): void {
+  // The response may already be committed by one of the raw byte routes (a
+  // file stream that failed mid-flight): `writeHead` would then throw
+  // ERR_HTTP_HEADERS_SENT, and the route's catch block would turn a merely
+  // truncated download into a crashed request. There is nothing left to say to
+  // the client once the status line is out — tear the socket down instead.
+  if (res.headersSent === true) {
+    res.destroy?.()
+    return
+  }
   const payload = JSON.stringify(body)
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' })
   res.end(payload)

@@ -1,8 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { resolveSessionPath } from '../src/session-path.ts'
+import { removeTree } from './temp-tree.ts'
 
 const WSL_CWD = '\\\\wsl.localhost\\archlinux\\home\\zdaar\\project'
 
@@ -83,7 +84,7 @@ describe('resolveSessionPath (dsh-remote mirror)', () => {
   })
 
   afterAll(() => {
-    rmSync(dshHome, { recursive: true, force: true })
+    removeTree(dshHome)
   })
 
   fsBackedIt('maps a remote workspace file onto the local mirror', () => {

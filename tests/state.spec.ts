@@ -733,6 +733,45 @@ describe('v0.12.0 store additions', () => {
   })
 })
 
+describe('unread mark persistence (v0.25.0)', () => {
+  // "A page the reader has not looked at" must outlive the mount that raised
+  // it (the mark is drawn by a chip that unmounts on every session switch and
+  // every page reload), so the mark rides the session's persisted state — and
+  // sanitizeState's `unread` branch is the ONLY thing that carries it back.
+  it('survives a reload: a fresh store reads the mark back from localStorage', () => {
+    const g = globalThis as Record<string, unknown>
+    const storage = new Map<string, string>()
+    const timers: Array<() => void> = []
+    g.window = {
+      clearTimeout: () => {},
+      setTimeout: (fn: () => void) => { timers.push(fn); return timers.length },
+      innerWidth: 1024,
+      innerHeight: 800,
+    }
+    g.localStorage = {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => { storage.set(key, value) },
+      removeItem: (key: string) => { storage.delete(key) },
+    }
+    try {
+      const first = createSidebarStore()
+      first.setSession('s1')
+      expect(first.markUnread('subagent')).toBe(true)
+      // The write is debounced; fire the pending timer the page would hit
+      // after the delay, then read the persisted layout back.
+      for (const fn of timers.splice(0)) fn()
+      expect(JSON.parse(storage.get('dsh-sidebar:v1:s1')!).unread).toEqual(['subagent'])
+      // A reload is a brand-new store over the SAME storage.
+      const reloaded = createSidebarStore()
+      reloaded.setSession('s1')
+      expect(reloaded.getSnapshot().state!.unread).toEqual(['subagent'])
+    } finally {
+      delete g.window
+      delete g.localStorage
+    }
+  })
+})
+
 describe('revealPaths (show in folder)', () => {
   it('expands ancestors with their ABSOLUTE path (leading separator preserved)', () => {
     // POSIX: the root (/w/src) is not itself expanded, but the subdirs
@@ -904,5 +943,121 @@ describe('store listener isolation', () => {
     store.reduce(toggleBottomPanel)
     expect(healthyCalls).toBe(afterFirst + 1)
     errorSpy.mockRestore()
+  })
+})
+
+/**
+ * Session-state retention (v0.26.x). The host keeps every visited native tab
+ * body mounted, so a per-session map that never deletes an entry is memory
+ * that only grows — and `getSessionStates()` used to allocate a fresh copy of
+ * that whole map per call (once per store notify in the native records'
+ * `syncExpanded`, plus once per native body render). Three contracts:
+ *
+ *  - BOUNDED: at most 32 entries, the least recently touched evicted, the
+ *    CURRENT session never among them.
+ *  - STABLE: a per-session read returns the same object while that session is
+ *    untouched, and the whole-map view is a cached snapshot, so a notify that
+ *    changed nothing invalidates no downstream memo.
+ *  - LOSSLESS: eviction drops only the in-memory copy — the pending debounced
+ *    write is flushed first, so switching back reloads what was there.
+ */
+describe('session-state retention (v0.26.x)', () => {
+  const g = globalThis as Record<string, unknown>
+  let storage: Map<string, string>
+  let timers: Map<number, () => void>
+  let seq: number
+
+  beforeEach(() => {
+    storage = new Map()
+    timers = new Map()
+    seq = 0
+    g.window = {
+      clearTimeout: (id: number) => { timers.delete(id) },
+      setTimeout: (fn: () => void) => { const id = ++seq; timers.set(id, fn); return id },
+      innerWidth: 1024,
+      innerHeight: 800,
+      location: { search: '' },
+    }
+    g.localStorage = {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => { storage.set(key, value) },
+      removeItem: (key: string) => { storage.delete(key) },
+    }
+  })
+  afterEach(() => {
+    delete g.window
+    delete g.localStorage
+  })
+
+  it('keeps the 32 most recently touched sessions and drops the oldest', () => {
+    const store = createSidebarStore()
+    for (let i = 0; i < 40; i += 1) store.setSession(`s${i}`)
+    expect(store.getSessionStates().size).toBe(32)
+    // The newest are all here; the 8 oldest are gone.
+    expect(store.getSessionState('s39')).toBeDefined()
+    expect(store.getSessionState('s8')).toBeDefined()
+    expect(store.getSessionState('s7')).toBeUndefined()
+    expect(store.getSessionState('s0')).toBeUndefined()
+    // Revisiting a session moves it back to the front of the window.
+    store.setSession('s8')
+    store.setSession('s40')
+    expect(store.getSessionState('s8')).toBeDefined()
+    expect(store.getSessionState('s9')).toBeUndefined()
+  })
+
+  it('never evicts the current session, even when it is the oldest entry', () => {
+    const store = createSidebarStore()
+    store.setSession('keep')
+    // Targeted writes touch OTHER sessions only: 'keep' stays the oldest entry
+    // and would be the first casualty of a plain LRU.
+    for (let i = 0; i < 40; i += 1) {
+      store.reduceFor(`t${i}`, state => ({ ...state, expanded: [`/${i}`] }))
+    }
+    expect(store.getSessionState('keep')).toBeDefined()
+    expect(store.getSessionState('t39')).toBeDefined()
+    expect(store.getSessionState('t0')).toBeUndefined()
+    expect(store.getSessionStates().size).toBe(32)
+  })
+
+  it('flushes a pending write before eviction, so the session reloads intact', () => {
+    const store = createSidebarStore()
+    store.setSession('old')
+    store.reduce(state => ({ ...state, expanded: ['/old'] }))
+    // The debounced write has not landed yet (the timers never fire here).
+    expect(storage.has('dsh-sidebar:v1:old')).toBe(false)
+    for (let i = 0; i < 40; i += 1) store.setSession(`n${i}`)
+    // Evicted from memory — but not lost: the write was flushed on the way out.
+    expect(store.getSessionState('old')).toBeUndefined()
+    expect(JSON.parse(storage.get('dsh-sidebar:v1:old')!).expanded).toEqual(['/old'])
+    store.setSession('old')
+    expect(store.getSnapshot().state?.expanded).toEqual(['/old'])
+  })
+
+  it('keeps per-session references and the whole-map snapshot stable across a no-op notify', () => {
+    const store = createSidebarStore()
+    store.setSession('s1')
+    const one = store.getSessionState('s1')
+    expect(one).toBeDefined()
+    const all = store.getSessionStates()
+    // Two reads with no write between them are the SAME map (no fresh copy).
+    expect(store.getSessionStates()).toBe(all)
+
+    let notified = 0
+    store.subscribe(() => { notified += 1 })
+    // A store notify that writes no session state (prefs only): consumers are
+    // told, but nothing they memoize on was replaced.
+    store.setPrefs(store.getPrefs())
+    expect(notified).toBe(1)
+    expect(store.getSessionState('s1')).toBe(one)
+    expect(store.getSessionStates()).toBe(all)
+
+    // A real write to another session replaces the snapshot, and only that
+    // session's state object.
+    store.reduceFor('s2', state => ({ ...state, expanded: ['/x'] }))
+    expect(store.getSessionState('s1')).toBe(one)
+    expect(store.getSessionStates()).not.toBe(all)
+    const after = store.getSessionStates()
+    expect(store.getSessionStates()).toBe(after)
+    expect(after.get('s2')?.expanded).toEqual(['/x'])
   })
 })

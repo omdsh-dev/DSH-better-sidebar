@@ -3,12 +3,13 @@
  * exercises the real integrations — route registration, git against the
  * actual repository, and a real directory listing. Runs with `pnpm test`.
  */
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir, homedir } from 'node:os'
 import { dirname, join, resolve as resolvePath } from 'node:path'
 import { SettingsConflictError, type SettingsNamespace } from '@deepseek-ai/dsh-settings'
+import { WebSocket } from 'ws'
 import { apply, FS_TREES_MAX_PATHS, mediaTypeForPath } from '../src/index.ts'
 import { SIDEBAR_PREFS_DEFAULTS } from '../src/prefs-shared.ts'
 import { encodeHtmlUrl } from '../src/html-route.ts'
@@ -17,6 +18,26 @@ import { downloadUrl, htmlUrl } from '../src/client/api.ts'
 import * as git from '../src/git.ts'
 import { listDirectory } from '../src/fs-tree.ts'
 import type { SidebarWebRoute, SidebarWebUpgradeRoute } from '../src/context-types.ts'
+import { removeTree } from './temp-tree.ts'
+
+/**
+ * The probe-budget factory is spied on so a batch's gate SHARING is asserted
+ * rather than assumed: `fs.trees` lists many levels at once and must build ONE
+ * gate per request, or the per-level probe bounds multiply. Everything else
+ * about the module stays real, so this file's own `listDirectory` calls (and
+ * every other route) behave exactly as before.
+ */
+const probeGateCalls = vi.hoisted(() => [] as unknown[][])
+vi.mock('../src/fs-tree.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/fs-tree.ts')>()
+  return {
+    ...actual,
+    createProbeGate: (...args: Parameters<typeof actual.createProbeGate>) => {
+      probeGateCalls.push(args)
+      return actual.createProbeGate(...args)
+    },
+  }
+})
 
 /** Symlink creation may require elevated privileges on Windows. */
 const canCreateSymlink = (() => {
@@ -28,12 +49,12 @@ const canCreateSymlink = (() => {
   } catch {
     return false
   } finally {
-    rmSync(dir, { recursive: true, force: true })
+    removeTree(dir)
   }
 })()
 
 interface FakeContext {
-  webRuntime: { trustedHosts: readonly string[] }
+  connection: { requestRejection: () => undefined }
   webServer: {
     register: (route: SidebarWebRoute) => () => void
     registerUpgrade: (route: SidebarWebUpgradeRoute) => () => void
@@ -50,6 +71,19 @@ interface FakeContext {
   get: (key: string) => undefined
 }
 
+/**
+ * The routes the MOST RECENT mount registered, whichever helper produced them.
+ *
+ * The editor save moved from a JSON method on `/sidebar/api` to its own raw
+ * route (`/sidebar/write`, with the document as the request body). Every call
+ * site here still says `invoke(route, 'fs.write', ...)`, so the dispatcher
+ * needs a way back to the mount that produced `route` — recording the last one
+ * is far less noise than threading a second route reference through every
+ * case, and BOTH mount helpers write it so neither can leave a stale entry
+ * behind the other.
+ */
+let lastMountedRoutes: SidebarWebRoute[] = []
+
 describe('host plugin smoke', () => {
   it('serves PDF with the browser-native content type', () => {
     expect(mediaTypeForPath('/work/report.PDF')).toBe('application/pdf')
@@ -61,7 +95,7 @@ describe('host plugin smoke', () => {
     const upgrades: SidebarWebUpgradeRoute[] = []
     const effects: Array<() => void | (() => void)> = []
     const ctx: FakeContext = {
-      webRuntime: { trustedHosts: [] },
+      connection: { requestRejection: () => undefined },
       webServer: {
         register: (route) => { routes.push(route); return () => {} },
         registerUpgrade: (route) => { upgrades.push(route); return () => {} },
@@ -85,25 +119,85 @@ describe('host plugin smoke', () => {
     expect(routes.map(route => route.path)).toEqual([
       '/sidebar/api',
       '/sidebar/upload',
+      '/sidebar/write',
       '/sidebar/bundle',
       '/sidebar/archive',
       '/sidebar/file',
       '/sidebar/html',
     ])
-    expect(upgrades.map(route => route.path)).toEqual(['/sidebar/ws/agent-opens', '/sidebar/ws/fs-watch'])
+    expect(upgrades.map(route => route.path)).toEqual([
+      '/sidebar/ws/agent-opens',
+      '/sidebar/ws/fs-watch',
+      '/sidebar/ws/sidechat',
+    ])
     // Teardown runs without throwing.
     for (const cleanup of effects) cleanup()
   })
 
-  it('serves HTML previews as UTF-8 without changing the file bytes', async () => {
-    const directory = mkdtempSync(join(tmpdir(), 'dsh-sidebar-html-utf8-'))
+  /**
+   * Teardown must release the ACCEPTED sockets, not merely stop accepting new
+   * ones: `WebSocketServer.close()` on a `noServer` server does not terminate
+   * an already-upgraded socket under ws@8 (it sets `_shouldEmitClose` and
+   * waits), so without the explicit `wss.clients` close every fs-watch
+   * `fs.watch` handle and the agent-opens subscriber set survives the plugin
+   * unmount until the browser disconnects. The client here is a REAL ws
+   * connection through the registered upgrade handler.
+   */
+  it('closes the accepted push sockets on teardown', async () => {
+    const upgrades: SidebarWebUpgradeRoute[] = []
+    const effects: Array<() => void | (() => void)> = []
+    const ctx: FakeContext = {
+      connection: { requestRejection: () => undefined },
+      webServer: {
+        register: () => () => {},
+        registerUpgrade: (route) => { upgrades.push(route); return () => {} },
+      },
+      sessions: { get: () => undefined },
+      tools: { register: () => () => {} },
+      effect: (fn) => {
+        const cleanup = fn()
+        if (typeof cleanup === 'function') effects.push(cleanup)
+      },
+      inject: () => () => {},
+      on: () => () => {},
+      get: () => undefined,
+    }
+    apply(ctx as never)
+    const upgrade = upgrades.find(route => route.path === '/sidebar/ws/agent-opens')!
+    const { createServer } = await import('node:http')
+    const server = createServer()
+    server.on('upgrade', (req, socket, head) => {
+      upgrade.handler(req as never, socket as never, head as never)
+    })
+    await new Promise<void>((resolve) => { server.listen(0, '127.0.0.1', () => { resolve() }) })
+    const address = server.address()
+    if (address === null || typeof address === 'string') throw new Error('test setup: no server port')
+    const client = new WebSocket(`ws://127.0.0.1:${address.port}/sidebar/ws/agent-opens?sessionId=s-teardown`)
+    try {
+      await new Promise<void>((resolve, reject) => {
+        client.once('open', () => { resolve() })
+        client.once('error', reject)
+      })
+      const closed = new Promise<boolean>((resolve) => {
+        const timer = setTimeout(() => { resolve(false) }, 3_000)
+        client.once('close', () => { clearTimeout(timer); resolve(true) })
+      })
+      for (const cleanup of effects) cleanup()
+      expect(await closed).toBe(true)
+    } finally {
+      client.terminate()
+      await new Promise<void>((resolve) => { server.close(() => { resolve() }) })
+    }
+  })
+
+  it('serves HTML previews as UTF-8 without changing the file bytes', async () => {    const directory = mkdtempSync(join(tmpdir(), 'dsh-sidebar-html-utf8-'))
     const path = join(directory, 'fragment.html')
     const source = Buffer.from('<div>排序算法可视化</div>', 'utf8')
     writeFileSync(path, source)
     const routes: SidebarWebRoute[] = []
     const effects: Array<() => void | (() => void)> = []
     const ctx: FakeContext = {
-      webRuntime: { trustedHosts: [] },
+      connection: { requestRejection: () => undefined },
       webServer: {
         register: (route) => { routes.push(route); return () => {} },
         registerUpgrade: () => () => {},
@@ -121,30 +215,30 @@ describe('host plugin smoke', () => {
     try {
       apply(ctx as never)
       const route = routes.find(candidate => candidate.path === '/sidebar/html')!
-      const req = {
-        method: 'GET',
-        url: encodeHtmlUrl('s-html', path),
-        headers: { host: '127.0.0.1:3080' },
-      } as never
-      const response: { status?: number; headers?: Record<string, string>; chunks: Buffer[] } = { chunks: [] }
-      const res = {
-        writeHead: (status: number, headers?: Record<string, string>) => {
-          response.status = status
-          response.headers = headers
-        },
-        end: (chunk?: string | Buffer) => {
-          if (chunk !== undefined) response.chunks.push(Buffer.from(chunk))
-        },
-      } as never
-
-      await route.handler(req, res)
+      // Over a real socket: the route STREAMS its bytes now
+      // (`createReadStream` → `pipeline` into the response), which a
+      // plain-object response stub cannot accept as a Writable.
+      const { createServer } = await import('node:http')
+      const server = createServer((req, res) => { void route.handler(req as never, res as never) })
+      await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+      const address = server.address()
+      if (address === null || typeof address === 'string') throw new Error('test setup: no server port')
+      let response: Response
+      try {
+        response = await fetch(`http://127.0.0.1:${address.port}${encodeHtmlUrl('s-html', path)}`)
+      } finally {
+        await new Promise<void>(resolve => {
+          server.close(() => resolve())
+          server.closeAllConnections()
+        })
+      }
 
       expect(response.status).toBe(200)
-      expect(Buffer.concat(response.chunks)).toEqual(source)
-      expect(response.headers?.['content-type']).toBe('text/html; charset=utf-8')
+      expect(Buffer.from(await response.arrayBuffer())).toEqual(source)
+      expect(response.headers.get('content-type')).toBe('text/html; charset=utf-8')
     } finally {
       for (const cleanup of effects) cleanup()
-      rmSync(directory, { recursive: true, force: true })
+      removeTree(directory)
     }
   })
 
@@ -152,13 +246,21 @@ describe('host plugin smoke', () => {
     const cwd = process.cwd()
     const status = await git.status(cwd)
     expect(status.isRepo).toBe(true)
-    expect(typeof status.branch).toBe('string')
+    // PR checkouts have a detached HEAD; compare the native ref rather than
+    // invent a branch. The status read answers branch identity itself now
+    // (porcelain v2 `--branch`), so detached is an explicit flag.
+    const head = spawnSync('git', ['-C', cwd, 'rev-parse', '--symbolic-full-name', 'HEAD'], { encoding: 'utf8' }).stdout.trim()
+    const branch = head === 'HEAD' ? undefined : head.replace(/^refs\/heads\//, '')
+    expect(status.detached).toBe(head === 'HEAD')
+    expect(status.branch).toBe(branch)
     expect(Array.isArray(status.entries)).toBe(true)
     const log = await git.log(cwd)
     expect(log.length).toBeGreaterThan(0)
     expect(log[0]!.hash).toMatch(/^[0-9a-f]{7,}$/)
     const branches = await git.branches(cwd)
-    expect(branches.names).toContain(branches.current)
+    expect(branches.current).toBe(branch ?? '')
+    expect(Array.isArray(branches.names)).toBe(true)
+    if (branch !== undefined) expect(branches.names).toContain(branch)
   })
 
   it('enriches the log (full hash + refs) and renders commit diffs', async () => {
@@ -283,7 +385,7 @@ describe('git destructive operations (scratch repository)', () => {
       expect(staged).toContain('-two')
       expect(staged).toContain('+CHANGED')
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 
@@ -307,7 +409,7 @@ describe('git destructive operations (scratch repository)', () => {
       expect(readFileSync(join(dir, 'pkg', 'README.md'), 'utf8')).toBe('pkg-DIRTY\n')
       expect(gitRun(dir, ['status', '--porcelain'])).toBe(' M pkg/README.md\n')
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 
@@ -322,7 +424,7 @@ describe('git destructive operations (scratch repository)', () => {
       expect(readFileSync(join(dir, 'a.txt'), 'utf8')).toBe('one\ntwo\nthree\n')
       expect((await git.log(dir))[0]!.subject).toBe('Revert "change"')
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 
@@ -339,7 +441,7 @@ describe('git destructive operations (scratch repository)', () => {
       expect(readFileSync(join(dir, 'b.txt'), 'utf8')).toBe('feature work\n')
       expect((await git.log(dir))[0]!.subject).toBe('feature work')
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 
@@ -350,7 +452,7 @@ describe('git destructive operations (scratch repository)', () => {
       await expect(git.revert(dir, 'deadbeef00000000000000000000000000000000')).rejects.toThrow()
       await expect(git.cherryPick(dir, 'deadbeef00000000000000000000000000000000')).rejects.toThrow()
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 
@@ -373,7 +475,7 @@ describe('git destructive operations (scratch repository)', () => {
       await expect(git.revert(dir, '--abort')).rejects.toThrow()
       await expect(git.cherryPick(dir, '--abort')).rejects.toThrow()
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 
@@ -386,21 +488,24 @@ describe('git destructive operations (scratch repository)', () => {
       gitRun(dir, ['add', 'a.txt'])
       await expect(git.show(dir, ':0', 'a.txt')).resolves.toContain('staged-change')
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 })
 
 describe('session cwd resolution over the API route', () => {
   interface CtxOverrides {
+    workingDirectory?: { readonly defaultDirectory?: string; get: (session: { header: { cwd?: string } }) => string }
+    sessionQuery?: { observeSession: (id: string, options: { projectionMode: 'all' }) => Promise<{ header: { cwd?: string }; projections?: { values: { workingDirectory?: string | null } }; [Symbol.dispose](): void }> }
     sessions?: { get: (id: string) => { header: { cwd?: string } } | undefined }
     sessionPersistence?: { open: (id: string, access: 'read' | 'write') => Promise<{ header: { cwd?: string }; read: () => Promise<{ events: never[] }>; close: () => Promise<void> }> }
   }
 
   const mountAll = (overrides: CtxOverrides = {}): SidebarWebRoute[] => {
     const routes: SidebarWebRoute[] = []
+    lastMountedRoutes = routes
     const ctx = {
-      webRuntime: { trustedHosts: [] },
+      connection: { requestRejection: () => undefined },
       webServer: {
         register: (route: SidebarWebRoute) => { routes.push(route); return () => {} },
         registerUpgrade: (route: SidebarWebUpgradeRoute) => { void route; return () => {} },
@@ -414,7 +519,7 @@ describe('session cwd resolution over the API route', () => {
       // The session/agent event feeds: nothing emits in these tests.
       on: () => () => {},
       // No jobs/agents services in the smoke context: the routes degrade.
-      get: (key: string) => key === 'sessionPersistence' ? overrides.sessionPersistence : undefined,
+      get: (key: string) => overrides[key as keyof CtxOverrides],
     }
     apply(ctx as never)
     return routes
@@ -422,11 +527,17 @@ describe('session cwd resolution over the API route', () => {
 
   const mount = (overrides: CtxOverrides = {}): SidebarWebRoute => mountAll(overrides).find(route => route.path === '/sidebar/api')!
 
+  /** One save through the raw route (see the module-level `invokeRawWrite`). */
+  const invokeWrite = invokeRawWrite
+
   const invoke = async (
     route: SidebarWebRoute,
     method: string,
     payload: unknown,
   ): Promise<{ ok: boolean; status: number; value?: { cwd: string }; error?: { code?: string; message: string } }> => {
+    if (method === 'fs.write') {
+      return await invokeWrite(payload) as unknown as { ok: boolean; status: number; value?: { cwd: string } }
+    }
     const body = Buffer.from(JSON.stringify(payload))
     const req = {
       method: 'POST',
@@ -447,19 +558,41 @@ describe('session cwd resolution over the API route', () => {
     return (await invokeGetFull(route, url))
   }
 
-  /** invokeGet plus the response headers (for header contracts). */
+  /**
+   * invokeGet plus the response headers (for header contracts).
+   *
+   * Served over a REAL node:http server rather than a plain-object stub: the
+   * media and html routes STREAM now (`createReadStream` → `pipeline` into the
+   * response), and a fake response object with only `writeHead`/`end` cannot
+   * be a Writable. Going through a real socket also means the header
+   * assertions exercise node's own header validation, which is what caught the
+   * non-latin1 `Content-Disposition` case in the first place.
+   */
   const invokeGetFull = async (route: SidebarWebRoute, url: string): Promise<{ status: number; body: string; headers: Record<string, string> }> => {
-    const out: { status: number; body: string; headers: Record<string, string> } = { status: 200, body: '', headers: {} }
-    const req = { method: 'GET', url, headers: { host: '127.0.0.1:3080' } } as never
-    const res = {
-      writeHead: (status: number, headers?: Record<string, string>) => {
-        out.status = status
-        if (headers !== undefined) out.headers = headers
-      },
-      end: (chunk: unknown) => { out.body += String(chunk ?? '') },
-    } as never
-    await route.handler(req, res)
-    return out
+    const { createServer } = await import('node:http')
+    const server = createServer((req, res) => { void route.handler(req as never, res as never) })
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+    try {
+      const address = server.address()
+      if (address === null || typeof address === 'string') throw new Error('test setup: no server port')
+      // The callers spell their URLs two ways (a bare path, and an absolute
+      // `http://dsh.internal/...` from the route helpers); only the path and
+      // query are meaningful against this ephemeral port.
+      const target = new URL(url, 'http://dsh.internal')
+      const response = await fetch(`http://127.0.0.1:${address.port}${target.pathname}${target.search}`, { redirect: 'manual' })
+      const headers: Record<string, string> = {}
+      response.headers.forEach((value, key) => { headers[key] = value })
+      return { status: response.status, body: await response.text(), headers }
+    } finally {
+      // undici keeps the connection alive, and a plain `close()` waits for it:
+      // without dropping the sockets first, each call would block until the
+      // client's keep-alive timeout and the whole case would crawl past the
+      // suite's test timeout.
+      await new Promise<void>(resolve => {
+        server.close(() => resolve())
+        server.closeAllConnections()
+      })
+    }
   }
 
   it('loads branches and history when switching child repositories and their linked checkouts', async () => {
@@ -504,8 +637,217 @@ describe('session cwd resolution over the API route', () => {
         expect(await invoke(route, 'git.log', { ...base, repoRoot: b, worktree })).toMatchObject({ ok: false })
       }
     } finally {
+      removeTree(scratch)
+    }
+  })
+
+  it('git.graph routes selected repositories and worktrees and maps stale cursors', async () => {
+    const scratch = realpathSync.native(mkdtempSync(join(tmpdir(), 'sidebar-graph-route-')))
+    const cwd = join(scratch, 'workspace')
+    mkdirSync(cwd)
+    const run = (dir: string, args: string[]): void => {
+      const result = spawnSync('git', ['-C', dir, '-c', 'user.name=Test', '-c', 'user.email=test@dsh.invalid', '-c', 'commit.gpgsign=false', ...args], { encoding: 'utf8' })
+      if (result.status !== 0) throw new Error(result.stderr)
+    }
+    const a = join(cwd, 'a')
+    const b = join(cwd, 'b')
+    const linked = join(scratch, 'linked')
+    try {
+      for (const path of [a, b]) {
+        run(scratch, ['init', '-q', '-b', 'main', path])
+        run(path, ['commit', '-q', '--allow-empty', '-m', path === a ? 'a-root' : 'b-root'])
+      }
+      run(b, ['worktree', 'add', '-q', '--detach', linked])
+      run(linked, ['commit', '-q', '--allow-empty', '-m', 'detached-linked'])
+      const route = mount({ sessions: { get: () => ({ header: { cwd } }) } })
+      const base = { sessionId: 'graph-route', cwd }
+      // `git rev-parse --show-toplevel` answers in git's own spelling — the
+      // resolved path joined by '/' — while `join()` produced the host
+      // separator and (on Windows) Windows' case-insensitive drive/comparison
+      // rules apply. Compare path identity, then the rows that selection
+      // produced, so the assertion stays about WHICH checkout was selected.
+      const pathKey = (path: string): string => {
+        const slashed = path.replaceAll('\\', '/').replace(/\/+$/, '')
+        return process.platform === 'win32' ? slashed.toLowerCase() : slashed
+      }
+      const reportedRoot = (result: { value?: { cwd: string } }): string =>
+        pathKey((result.value as unknown as { root: string }).root)
+      const basePage = await invoke(route, 'git.graph', base)
+      expect(basePage).toMatchObject({ ok: true, value: { entries: [{ subject: 'a-root' }] } })
+      expect(reportedRoot(basePage)).toBe(pathKey(a))
+      const childPage = await invoke(route, 'git.graph', { ...base, repoRoot: b })
+      expect(childPage).toMatchObject({ ok: true, value: { entries: [{ subject: 'b-root' }] } })
+      expect(reportedRoot(childPage)).toBe(pathKey(b))
+      const payload = { ...base, repoRoot: b, worktree: linked, count: 1 }
+      const first = await invoke(route, 'git.graph', payload)
+      expect(first).toMatchObject({ ok: true, value: { entries: [{ subject: 'detached-linked' }], hasMore: true } })
+      expect(reportedRoot(first)).toBe(pathKey(linked))
+      const cursor = (first.value as unknown as { nextCursor: string }).nextCursor
+      expect(typeof cursor).toBe('string')
+      expect(await invoke(route, 'git.graph', { ...payload, cursor })).toMatchObject({ ok: true, value: { entries: [{ subject: 'b-root' }], hasMore: false } })
+      run(linked, ['commit', '-q', '--allow-empty', '-m', 'HEAD moved'])
+      expect(await invoke(route, 'git.graph', { ...payload, cursor })).toMatchObject({ ok: false, status: 409, error: { code: 'graph-stale' } })
+      expect(await invoke(route, 'git.graph', { ...payload, branch: '--all' })).toMatchObject({ ok: false, status: 400, error: { code: 'bad-request' } })
+      expect(await invoke(route, 'git.graph', { ...payload, worktree: a })).toMatchObject({ ok: false })
+    } finally {
+      // scratch is the canonical mkdtemp directory allocated by this test.
       rmSync(scratch, { recursive: true, force: true })
     }
+  })
+
+  it('follows committed working-directory changes immediately, without reusing the old active-root cache', async () => {
+    const first = resolvePath('/working-directory-first')
+    const second = resolvePath('/working-directory-second')
+    let current = first
+    const session = { header: { cwd: resolvePath('/original-project') } }
+    const route = mount({
+      sessions: { get: () => session },
+      workingDirectory: { get: (received) => { expect(received).toBe(session); return current } },
+    })
+    expect(await invoke(route, 'session.cwd', { sessionId: 'wd-switch', cwd: '/stale-client' })).toMatchObject({ ok: true, value: { cwd: first } })
+    current = second
+    expect(await invoke(route, 'session.cwd', { sessionId: 'wd-switch', cwd: '/stale-client' })).toMatchObject({ ok: true, value: { cwd: second } })
+  })
+
+  it('routes file and Git reads to the new execution directory immediately after a switch', async () => {
+    const scratch = realpathSync.native(mkdtempSync(join(tmpdir(), 'sidebar-wd-switch-')))
+    const first = join(scratch, 'first')
+    const second = join(scratch, 'second')
+    let current = first
+    try {
+      for (const [directory, branch] of [[first, 'first-project'], [second, 'second-project']]) {
+        mkdirSync(directory!)
+        writeFileSync(join(directory!, 'directory.txt'), branch!)
+        const result = spawnSync('git', ['init', '-q', '-b', branch!, directory!], { encoding: 'utf8' })
+        if (result.status !== 0) throw new Error(result.stderr)
+      }
+      const route = mount({
+        sessions: { get: () => ({ header: { cwd: first } }) },
+        workingDirectory: { get: () => current },
+      })
+      const payload = { sessionId: 'wd-files-git', cwd: first }
+      expect(await invoke(route, 'fs.read', { ...payload, path: 'directory.txt' })).toMatchObject({ ok: true, value: { content: 'first-project' } })
+      expect(await invoke(route, 'git.status', payload)).toMatchObject({ ok: true, value: { branch: 'first-project' } })
+      current = second
+      expect(await invoke(route, 'fs.read', { ...payload, path: 'directory.txt' })).toMatchObject({ ok: true, value: { content: 'second-project' } })
+      expect(await invoke(route, 'git.status', payload)).toMatchObject({ ok: true, value: { branch: 'second-project' } })
+    } finally {
+      removeTree(scratch)
+    }
+  })
+
+  it('does not let historical linked-worktree tool evidence override a committed directory change back to the main checkout', async () => {
+    const scratch = realpathSync.native(mkdtempSync(join(tmpdir(), 'sidebar-wd-linked-')))
+    const main = join(scratch, 'main')
+    const linked = join(scratch, 'linked')
+    const run = (cwd: string, args: string[]): void => {
+      const result = spawnSync('git', ['-C', cwd, '-c', 'user.name=Test', '-c', 'user.email=test@dsh.invalid', ...args], { encoding: 'utf8' })
+      if (result.status !== 0) throw new Error(result.stderr)
+    }
+    try {
+      run(scratch, ['init', '-q', '-b', 'main', main])
+      run(main, ['commit', '-q', '--allow-empty', '-m', 'initial'])
+      run(main, ['worktree', 'add', '-q', '-b', 'linked', linked])
+      let current = linked
+      const events = [{ type: 'tool/call', seq: 0, time: 0, data: { cwd: linked } }] as Array<{ type: string; seq: number; time: number; data: { cwd: string } }>
+      const route = mount({
+        sessions: { get: () => ({ header: { cwd: main }, snapshotEvents: () => events }) },
+        workingDirectory: { get: () => current },
+      })
+      expect(await invoke(route, 'session.cwd', { sessionId: 'wd-linked' })).toMatchObject({ ok: true, value: { cwd: linked } })
+      events.push({ type: 'working-directory/change', seq: 1, time: 1, data: { cwd: main } })
+      current = main
+      expect(await invoke(route, 'session.cwd', { sessionId: 'wd-linked' })).toMatchObject({ ok: true, value: { cwd: main } })
+      expect(await invoke(route, 'git.status', { sessionId: 'wd-linked', cwd: linked })).toMatchObject({ ok: true, value: { branch: 'main' } })
+      // Same base: old tool evidence selected linked while the host cwd was
+      // still main. Explicit cd to main must invalidate that cached override.
+      const sameBaseEvents = events.slice(0, 1)
+      const snapshotEvents = vi.fn(() => sameBaseEvents)
+      const eventAt = vi.fn((seq: number) => sameBaseEvents[seq])
+      const session = { header: { cwd: main }, get seq() { return sameBaseEvents.length }, eventAt, snapshotEvents }
+      const sameBaseRoute = mount({
+        sessions: { get: () => session }, workingDirectory: { get: () => main },
+      })
+      const payload = { sessionId: 'wd-same-base' }
+      expect(await invoke(sameBaseRoute, 'session.cwd', payload)).toMatchObject({ ok: true, value: { cwd: linked } })
+      expect(await invoke(sameBaseRoute, 'session.cwd', payload)).toMatchObject({ ok: true, value: { cwd: linked } })
+      sameBaseEvents.push({ type: 'turn/start', seq: 1, time: 1, data: { cwd: main } })
+      expect(await invoke(sameBaseRoute, 'session.cwd', payload)).toMatchObject({ ok: true, value: { cwd: linked } })
+      expect(snapshotEvents).toHaveBeenCalledTimes(1)
+      sameBaseEvents.push({ type: 'working-directory/change', seq: 2, time: 2, data: { cwd: main } })
+      expect(await invoke(sameBaseRoute, 'session.cwd', payload)).toMatchObject({ ok: true, value: { cwd: main } })
+      expect(await invoke(sameBaseRoute, 'session.cwd', payload)).toMatchObject({ ok: true, value: { cwd: main } })
+      expect(snapshotEvents).toHaveBeenCalledTimes(2)
+      expect(eventAt).toHaveBeenCalledTimes(3)
+
+    } finally {
+      removeTree(scratch)
+    }
+  })
+
+  it('uses cold observation working-directory projections before stale client/header hints and releases every lease', async () => {
+    let current = resolvePath('/cold-execution-first')
+    let releases = 0
+    const route = mount({ sessionQuery: {
+      observeSession: async (id, options) => {
+        expect(id).toBe('wd-cold')
+        expect(options).toEqual({ projectionMode: 'all' })
+        return {
+          header: { cwd: resolvePath('/original-project') },
+          projections: { values: { workingDirectory: current } },
+          [Symbol.dispose]: () => { releases += 1 },
+        }
+      },
+    } })
+    expect(await invoke(route, 'session.cwd', { sessionId: 'wd-cold', cwd: '/stale-client' })).toMatchObject({ ok: true, value: { cwd: current } })
+    current = resolvePath('/cold-execution-second')
+    expect(await invoke(route, 'session.cwd', { sessionId: 'wd-cold', cwd: '/stale-client' })).toMatchObject({ ok: true, value: { cwd: current } })
+    expect(releases).toBe(2)
+  })
+
+  it('uses the host custom default for a null cold working-directory projection before a stale client hint', async () => {
+    const defaultDirectory = resolvePath('/configured-execution-default')
+    let releases = 0
+    const route = mount({
+      workingDirectory: { defaultDirectory, get: () => { throw new Error('cold reads must not call get without a live session') } },
+      sessionQuery: { observeSession: async () => ({
+        header: {}, projections: { values: { workingDirectory: null } },
+        [Symbol.dispose]: () => { releases += 1 },
+      }) },
+    })
+    expect(await invoke(route, 'session.cwd', { sessionId: 'wd-cold-default', cwd: '/stale-client' })).toMatchObject({ ok: true, value: { cwd: defaultDirectory } })
+    expect(releases).toBe(1)
+  })
+
+  it('releases the cold observation lease when the working-directory projection cannot be read', async () => {
+    let releases = 0
+    const route = mount({ sessionQuery: {
+      observeSession: async () => ({
+        header: { cwd: resolvePath('/original-project') },
+        get projections(): never { throw new Error('working-directory projection failed') },
+        [Symbol.dispose]: () => { releases += 1 },
+      }),
+    } })
+    expect(await invoke(route, 'session.cwd', { sessionId: 'wd-projection-failure', cwd: '/stale-client' })).toMatchObject({
+      ok: false, error: { message: 'working-directory projection failed' },
+    })
+    expect(releases).toBe(1)
+  })
+
+  it('does not mask failed authoritative working-directory reads with stale header or client hints', async () => {
+    const live = mount({
+      sessions: { get: () => ({ header: { cwd: resolvePath('/original-project') } }) },
+      workingDirectory: { get: () => { throw new Error('working-directory service failed') } },
+    })
+    expect(await invoke(live, 'session.cwd', { sessionId: 'wd-live-error', cwd: '/stale-client' })).toMatchObject({
+      ok: false, error: { message: 'working-directory service failed' },
+    })
+    const cold = mount({ sessionQuery: {
+      observeSession: async () => { throw new Error('working-directory observation failed') },
+    } })
+    expect(await invoke(cold, 'session.cwd', { sessionId: 'wd-cold-error', cwd: '/stale-client' })).toMatchObject({
+      ok: false, error: { message: 'working-directory observation failed' },
+    })
   })
 
   it('uses the client summary cwd while the session is detached', async () => {
@@ -551,7 +893,7 @@ describe('session cwd resolution over the API route', () => {
       expect(notRepo).toMatchObject({ ok: false, status: 409, error: { code: 'not-repo' } })
       expect(notRepo.error?.message).not.toContain('internal')
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 
@@ -654,7 +996,7 @@ describe('session cwd resolution over the API route', () => {
       expect(diff).toContain('+root-DIRTY')
       expect(diff).not.toContain('pkg-DIRTY')
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 
@@ -700,7 +1042,7 @@ describe('session cwd resolution over the API route', () => {
       expect(value.path).toBe(outside)
       expect(value.entries.map(entry => entry.name)).toEqual(['secret.txt'])
     } finally {
-      rmSync(root, { recursive: true, force: true })
+      removeTree(root)
     }
   })
 
@@ -718,7 +1060,7 @@ describe('session cwd resolution over the API route', () => {
       expect(read.ok).toBe(true)
       expect((read.value as unknown as { kind: string; content: string }).content).toBe('secret')
     } finally {
-      rmSync(root, { recursive: true, force: true })
+      removeTree(root)
     }
   })
 
@@ -735,7 +1077,7 @@ describe('session cwd resolution over the API route', () => {
       expect(write.ok).toBe(true)
       expect(readFileSync(written, 'utf8')).toBe('hack')
     } finally {
-      rmSync(root, { recursive: true, force: true })
+      removeTree(root)
     }
   })
 
@@ -772,10 +1114,14 @@ describe('session cwd resolution over the API route', () => {
       expect(await invokeGet(file, downloadUrl(scope, external)))
         .toMatchObject({ status: 200, body: '<p>external</p>' })
       rmSync(external)
-      expect((await invokeGet(html, htmlUrl(scope, external))).status).toBe(500)
-      expect((await invokeGet(file, downloadUrl(scope, external))).status).toBe(500)
+      // A path that cannot be opened is the route's own 4xx now, not a bare
+      // stat() rejection escaping as an internal 500: the stream helper opens
+      // the file BEFORE committing the response precisely so this stays a
+      // usable error envelope.
+      expect((await invokeGet(html, htmlUrl(scope, external))).status).toBe(400)
+      expect((await invokeGet(file, downloadUrl(scope, external))).status).toBe(400)
     } finally {
-      rmSync(root, { recursive: true, force: true })
+      removeTree(root)
     }
   })
 
@@ -800,7 +1146,7 @@ describe('session cwd resolution over the API route', () => {
       const written = readFileSync(target, 'utf8')
       expect([draftA, draftB]).toContain(written)
     } finally {
-      rmSync(root, { recursive: true, force: true })
+      removeTree(root)
     }
   })
 
@@ -823,32 +1169,41 @@ describe('session cwd resolution over the API route', () => {
       expect(write.ok).toBe(true)
       expect(readFileSync(target).equals(encodeText(text, 'gbk'))).toBe(true)
     } finally {
-      rmSync(root, { recursive: true, force: true })
+      removeTree(root)
     }
   })
 
-  it('fs.read keeps a capped CJK UTF-8 file UTF-8 (the cap cuts a character, #523)', async () => {
+  it('fs.read answers a CJK UTF-8 file past the editable threshold as too-large (#523)', async () => {
     const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-fs-readcap-'))
     const workspace = join(root, 'workspace')
     mkdirSync(workspace)
     try {
       const route = mount({ sessions: { get: () => ({ header: { cwd: workspace } }) } })
       const target = join(workspace, 'big.txt')
-      // The default 512 KiB readLimit lands two bytes into a three-byte
-      // character; the GBK probe accepts that partial tail, so the read used
-      // to come back as 涓枃-style mojibake.
-      writeFileSync(target, Buffer.from('中'.repeat(174_763), 'utf8'))
+      // This file used to be read with a 512 KiB cap that landed two bytes
+      // into a three-byte character; the GBK probe accepted that partial tail,
+      // so the read came back as 涓枃-style mojibake. There is no capped read
+      // any more — an over-limit document is refused as a document and served
+      // through the paged preview instead, which is what removes the whole
+      // class of bug: no truncated buffer ever reaches a decoder.
+      // Past the 5 MiB editable threshold (3 bytes per character, so a little
+      // over 1.75 M characters), which is what routes it to the paged preview.
+      const content = '中'.repeat(1_800_000)
+      expect(Buffer.byteLength(content, 'utf8')).toBeGreaterThan(5 * 1024 * 1024)
+      writeFileSync(target, Buffer.from(content, 'utf8'))
       const result = await invoke(route, 'fs.read', { sessionId: 'readcap', path: target })
-      const value = result.value as { kind?: string; content?: string; truncated?: boolean } | undefined
-      expect(value?.kind).toBe('text')
-      expect(value?.truncated).toBe(true)
-      // The known-good prefix reads as 中, with the usual replacement
-      // character for the cut tail — never as 涓枃 mojibake.
-      expect(value?.content?.startsWith('中中')).toBe(true)
-      expect(value?.content).not.toContain('涓')
-      expect(value?.content?.endsWith('\ufffd')).toBe(true)
+      const value = result.value as { kind?: string; size?: number; content?: string; head?: string } | undefined
+      expect(value?.kind).toBe('too-large')
+      expect(value?.size).toBe(Buffer.byteLength(content, 'utf8'))
+      // No document rides along — that is the point.
+      expect(value?.content).toBeUndefined()
+      // The 4 KiB sniff head still does, and it is valid UTF-8 including a
+      // whole number of characters (the reader takes a byte prefix, and the
+      // paged route is what reassembles text).
+      expect(typeof value?.head).toBe('string')
+      expect(Buffer.from(value!.head!, 'base64').length).toBe(4096)
     } finally {
-      rmSync(root, { recursive: true, force: true })
+      removeTree(root)
     }
   })
 
@@ -866,7 +1221,7 @@ describe('session cwd resolution over the API route', () => {
       expect(await invokeGet(file, downloadUrl({ sessionId: 'home' }, `~/${dirName}/note.txt`)))
         .toMatchObject({ status: 200, body: 'home sweet home' })
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 
@@ -897,7 +1252,7 @@ describe('session cwd resolution over the API route', () => {
       expect(htmlResult).toMatchObject({ status: 200 })
       expect(htmlResult.body).toContain('outside')
     } finally {
-      rmSync(root, { recursive: true, force: true })
+      removeTree(root)
     }
   })
 
@@ -920,7 +1275,7 @@ describe('session cwd resolution over the API route', () => {
       expect(res.headers['content-security-policy']).toContain('sandbox')
       expect(res.headers['x-content-type-options']).toBe('nosniff')
     } finally {
-      rmSync(root, { recursive: true, force: true })
+      removeTree(root)
     }
   })
 
@@ -941,7 +1296,7 @@ describe('session cwd resolution over the API route', () => {
       expect(res.headers['content-type']).toBe('image/png')
       expect(res.headers['content-security-policy']).toBeUndefined()
     } finally {
-      rmSync(root, { recursive: true, force: true })
+      removeTree(root)
     }
   })
 
@@ -954,7 +1309,7 @@ describe('session cwd resolution over the API route', () => {
       const tree = await invoke(route, 'fs.tree', { sessionId: 'security', path: join(workspace, 'missing') })
       expect(tree).toMatchObject({ ok: false, status: 400, error: { code: 'fs-error' } })
     } finally {
-      rmSync(root, { recursive: true, force: true })
+      removeTree(root)
     }
   })
 
@@ -984,7 +1339,7 @@ describe('session cwd resolution over the API route', () => {
       expect(levels[2]!.truncated).toBe(false)
       expect(levels[2]!.error).toMatch(/missing/)
     } finally {
-      rmSync(root, { recursive: true, force: true })
+      removeTree(root)
     }
   })
 
@@ -1005,7 +1360,7 @@ describe('session cwd resolution over the API route', () => {
       expect((single.value as unknown as { entries: Array<{ name: string }> }).entries.map(entry => entry.name))
         .toEqual(level.entries.map(entry => entry.name))
     } finally {
-      rmSync(root, { recursive: true, force: true })
+      removeTree(root)
     }
   })
 
@@ -1042,7 +1397,36 @@ describe('session cwd resolution over the API route', () => {
       const plainLevels = (plain.value as unknown as { levels: Array<{ entries: Array<{ name: string }> }> }).levels
       expect(plainLevels[0]!.entries.map(entry => entry.name)).toEqual(['src', 'third_party', '.DS_Store'])
     } finally {
-      rmSync(root, { recursive: true, force: true })
+      removeTree(root)
+    }
+  })
+
+  // #879: a pasted absolute path is an open-this-file gesture, not a name
+  // filter. The route returns the stat'ed target as the single hit (the
+  // client resolves absolute match rows straight to the editor), and a
+  // missing target is an immediate empty result instead of a walk that burns
+  // its whole visit budget to report the same nothing.
+  it('fs.search stats an absolute query into a single direct-open hit', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-fs-search-path-'))
+    const workspace = join(root, 'workspace')
+    mkdirSync(join(workspace, 'src'), { recursive: true })
+    writeFileSync(join(workspace, 'src', 'index.ts'), 'code')
+    try {
+      const route = mount({ sessions: { get: () => ({ header: { cwd: workspace } }) } })
+      const target = join(workspace, 'src', 'index.ts')
+      const hit = await invoke(route, 'fs.search', { sessionId: 's-search', query: target })
+      expect(hit.value).toEqual({ matches: [target], dirs: [], truncated: false })
+      const miss = await invoke(route, 'fs.search', { sessionId: 's-search', query: join(workspace, 'gone.ts') })
+      expect(miss.value).toEqual({ matches: [], dirs: [], truncated: false })
+      // A relative fragment searches the workspace tree by PATH (the name
+      // walk can never match a separator-carrying query), and a dot-anchored
+      // spelling resolves against the session cwd like fs.read does.
+      const fragment = await invoke(route, 'fs.search', { sessionId: 's-search', query: 'src/index' })
+      expect(fragment.value).toEqual({ matches: ['src/index.ts'], dirs: [], truncated: false })
+      const anchored = await invoke(route, 'fs.search', { sessionId: 's-search', query: './src/index.ts' })
+      expect(anchored.value).toEqual({ matches: [join(workspace, 'src', 'index.ts')], dirs: [], truncated: false })
+    } finally {
+      removeTree(root)
     }
   })
 
@@ -1060,7 +1444,56 @@ describe('session cwd resolution over the API route', () => {
       })
       expect(tooMany).toMatchObject({ ok: false, status: 400, error: { code: 'bad-request' } })
     } finally {
-      rmSync(root, { recursive: true, force: true })
+      removeTree(root)
+    }
+  })
+
+  it('fs.trees shares ONE probe gate across the batch levels', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-fs-trees-gate-'))
+    const workspace = join(root, 'workspace')
+    const level = join(workspace, 'level')
+    mkdirSync(level, { recursive: true })
+    for (let index = 0; index < 3; index += 1) {
+      mkdirSync(join(level, `only-${index}`))
+      writeFileSync(join(level, `only-${index}`, 'child.txt'), 'x')
+    }
+    try {
+      const route = mount({ sessions: { get: () => ({ header: { cwd: workspace } }) } })
+      const before = probeGateCalls.length
+      const answer = await invoke(route, 'fs.trees', { sessionId: 's-tree-gate', paths: [workspace, level] })
+      expect(answer.ok).toBe(true)
+      // ONE gate for the whole request: a per-level gate would let each level's
+      // probe pool run at full width, which is the runaway this bounds.
+      expect(probeGateCalls.length - before).toBe(1)
+      // The shared budget changed nothing about what the levels report. (The
+      // local `invoke` types `value` as its cwd probe, hence the double cast.)
+      const levels = (answer.value as unknown as {
+        levels: { path: string; entries: { compact?: boolean }[] }[]
+      }).levels
+      expect(levels.find(entry => entry.path === level)?.entries.filter(row => row.compact === true)).toHaveLength(3)
+    } finally {
+      removeTree(root)
+    }
+  })
+
+  it('fs.tree builds one probe gate for its single level', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-fs-tree-gate-'))
+    const workspace = join(root, 'workspace')
+    mkdirSync(join(workspace, 'only'), { recursive: true })
+    writeFileSync(join(workspace, 'only', 'child.txt'), 'x')
+    try {
+      const route = mount({ sessions: { get: () => ({ header: { cwd: workspace } }) } })
+      const before = probeGateCalls.length
+      const answer = await invoke(route, 'fs.tree', { sessionId: 's-tree-single-gate', path: workspace })
+      expect(answer.ok).toBe(true)
+      // The single-layer route is a probe-bounded request too: it lists ONE
+      // level, but that level runs the same per-row probes (`fs.trees` passes
+      // a gate for exactly this reason), so it must build one as well.
+      expect(probeGateCalls.length - before).toBe(1)
+      const entries = (answer.value as unknown as { entries: { compact?: boolean }[] }).entries
+      expect(entries.filter(entry => entry.compact === true)).toHaveLength(1)
+    } finally {
+      removeTree(root)
     }
   })
 
@@ -1079,7 +1512,7 @@ describe('session cwd resolution over the API route', () => {
       expect(tree.ok).toBe(true)
       expect((tree.value as unknown as { entries: Array<{ name: string }> }).entries.map(entry => entry.name)).toEqual(['secret.txt'])
     } finally {
-      rmSync(root, { recursive: true, force: true })
+      removeTree(root)
     }
   })
 
@@ -1097,7 +1530,7 @@ describe('session cwd resolution over the API route', () => {
       expect(read.ok).toBe(true)
       expect((read.value as unknown as { content: string }).content).toBe('secret')
     } finally {
-      rmSync(root, { recursive: true, force: true })
+      removeTree(root)
     }
   })
 
@@ -1115,10 +1548,45 @@ describe('session cwd resolution over the API route', () => {
       // The write landed on the link's TARGET (the link is not replaced).
       expect(readFileSync(join(outside, 'new.txt'), 'utf8')).toBe('hack')
     } finally {
-      rmSync(root, { recursive: true, force: true })
+      removeTree(root)
     }
   })
 })
+/**
+ * One save through `POST /sidebar/write`, resolved against the most recent
+ * mount (see {@link lastMountedRoutes}).
+ * @param payload - `{ sessionId, cwd?, path, content, expectedMtimeMs? }`.
+ * @returns the parsed envelope.
+ */
+const invokeRawWrite = async (payload: unknown): Promise<{
+  ok: boolean
+  value?: unknown
+  error?: { code?: string; message: string }
+}> => {
+  const route = lastMountedRoutes.find(candidate => candidate.path === '/sidebar/write')
+  if (route === undefined) throw new Error('test setup: no /sidebar/write route was mounted')
+  const record = payload as { sessionId: string; cwd?: string; path: string; content?: unknown; expectedMtimeMs?: number }
+  const params = new URLSearchParams({ sessionId: record.sessionId, path: record.path })
+  if (record.cwd !== undefined) params.set('cwd', record.cwd)
+  if (record.expectedMtimeMs !== undefined) params.set('expectedMtimeMs', String(record.expectedMtimeMs))
+  const body = Buffer.from(String(record.content ?? ''), 'utf8')
+  const req = {
+    method: 'POST',
+    url: `/sidebar/write?${params.toString()}`,
+    headers: { host: '127.0.0.1:3080' },
+    [Symbol.asyncIterator]: async function* () { yield body },
+  } as never
+  const out: { status: number; body: string } = { status: 200, body: '' }
+  const res = {
+    headersSent: false,
+    writeHead: (status: number) => { out.status = status },
+    write: () => true,
+    end: (chunk: unknown) => { out.body += String(chunk ?? '') },
+  } as never
+  await route.handler(req, res)
+  return JSON.parse(out.body) as { ok: boolean; error?: { code?: string; message: string } }
+}
+
 /**
  * Invoke one `/sidebar/api/<method>` route against a fake Socket-ish pair.
  * @param route - the mounted prefix route.
@@ -1131,6 +1599,10 @@ const invoke = async (route: SidebarWebRoute, method: string, payload: unknown):
   value?: unknown
   error?: { code?: string; message: string }
 }> => {
+  // The editor save is its own raw route now (the document IS the body), so it
+  // is dispatched rather than posted to `/sidebar/api`. Both `invoke` helpers
+  // in this file do this; see `lastMountedRoutes` for how the route is found.
+  if (method === 'fs.write') return await invokeRawWrite(payload)
   const body = Buffer.from(JSON.stringify(payload))
   const req = {
     method: 'POST',
@@ -1198,8 +1670,9 @@ const createFakeSettings = (pre?: Record<string, Record<string, unknown>>) => {
  */
 const mountWithSettings = (settings?: unknown, home?: string): SidebarWebRoute => {
   const routes: SidebarWebRoute[] = []
+  lastMountedRoutes = routes
   const ctx = {
-    webRuntime: { trustedHosts: [] },
+    connection: { requestRejection: () => undefined },
     webServer: {
       register: (route: SidebarWebRoute) => { routes.push(route); return () => {} },
       registerUpgrade: (route: SidebarWebUpgradeRoute) => { void route; return () => {} },
@@ -1286,10 +1759,7 @@ describe('side card settings routes', () => {
       autoOpenJobs: true,
       agentOpenTools: false,
       editorExplorer: false,
-      // These title-bar fields are declared without a schema default on
-      // purpose, so a document predating them migrates rather than flips.
-      titleBarCompat: false,
-      titleBarStripPx: 40,
+      customCss: '',
       htmlViewerNoSandbox: false,
       htmlViewerDefaultUnsafe: false,
       // The enable-switch maps default to {} (everything on).
@@ -1298,12 +1768,16 @@ describe('side card settings routes', () => {
       // The plugin-owned settings map defaults to {} too.
       pluginSettings: {},
     })
+    // The retired title-bar keys are no longer part of the form at all.
+    for (const retired of ['titleBarScheme', 'titleBarPresetId', 'titleBarCompat', 'titleBarStripPx']) {
+      expect(view.value).not.toHaveProperty(retired)
+    }
 
     const written = await invoke(route, 'settings.update', { patch: { agentOpenTools: true } })
     expect(written.ok).toBe(true)
-    const after = written.value as { value: { agentOpenTools: boolean; titleBarStripPx: number }; revision: number }
+    const after = written.value as { value: { agentOpenTools: boolean; customCss: string }; revision: number }
     expect(after.value.agentOpenTools).toBe(true)
-    expect(after.value.titleBarStripPx).toBe(40)
+    expect(after.value.customCss).toBe('')
     expect(after.revision).toBe(1)
   })
 
@@ -1312,12 +1786,15 @@ describe('side card settings routes', () => {
     // DSH renames the retired document to `.imported` before importing any
     // section, and it re-imports by SAME id — this section is keyed by the
     // package name, which never matches the row id, so it is left behind. The
-    // unknown fields are the ones this release no longer declares; forwarding
-    // them would reject the whole patch and lose the preferences.
+    // unknown fields are the ones this release no longer declares (the
+    // title-bar keys joined that set when the whole strip mechanism was
+    // removed); forwarding them would reject the whole patch and lose the
+    // preferences.
     writeFileSync(join(home, 'settings.yaml.imported'), [
       'dsh-better-sidebar:',
       '  agentOpenTools: true',
       '  titleBarStripPx: 22',
+      '  titleBarScheme: custom',
       '  terminalFontSize: 13',
       '  browserInterceptHttp: false',
       'other-plugin:',
@@ -1331,12 +1808,17 @@ describe('side card settings routes', () => {
       // let its read and microtasks settle before asserting.
       await new Promise(resolve => setTimeout(resolve, 100))
       const row = settings.describe().find(candidate => candidate.ns === ENTRY_ID)
-      expect(row?.value).toMatchObject({ agentOpenTools: true, titleBarStripPx: 22 })
+      // The declared field comes across; every retired key is dropped rather
+      // than forwarded (a forwarded unknown key is what would reject the
+      // patch and lose the whole section).
+      expect(row?.value).toMatchObject({ agentOpenTools: true })
+      expect(row?.value).not.toHaveProperty('titleBarStripPx')
+      expect(row?.value).not.toHaveProperty('titleBarScheme')
       expect(row?.value).not.toHaveProperty('terminalFontSize')
       expect(row?.value).not.toHaveProperty('browserInterceptHttp')
       expect(row?.revision).toBe(1)
     } finally {
-      rmSync(home, { recursive: true, force: true })
+      removeTree(home)
     }
   })
 
@@ -1353,7 +1835,7 @@ describe('side card settings routes', () => {
       expect(row?.value).toMatchObject({ editorExplorer: true, agentOpenTools: false })
       expect(row?.revision).toBe(0)
     } finally {
-      rmSync(home, { recursive: true, force: true })
+      removeTree(home)
     }
   })
 
@@ -1374,7 +1856,7 @@ describe('side card settings routes', () => {
       const tree = await invoke(route, 'fs.tree', { sessionId: 'fence', cwd: workspace, path: outside })
       expect(tree).toMatchObject({ ok: true })
       const write = await invoke(route, 'fs.write', { sessionId: 'fence', cwd: workspace, path: join(outside, 'written.txt'), content: 'ok' })
-      expect(write).toMatchObject({ ok: true })
+      expect(write, JSON.stringify(write)).toMatchObject({ ok: true })
       expect(readFileSync(join(outside, 'written.txt'), 'utf8')).toBe('ok')
       // A legacy `workspaceFence: true` patch is just an unknown prefs key now
       // (the schema no longer declares it): it must not fail the write and must
@@ -1384,7 +1866,7 @@ describe('side card settings routes', () => {
       const stillOpen = await invoke(route, 'fs.read', { sessionId: 'fence', cwd: workspace, path: join(outside, 'secret.txt') })
       expect(stillOpen).toMatchObject({ ok: true })
     } finally {
-      rmSync(root, { recursive: true, force: true })
+      removeTree(root)
     }
   })
 
@@ -1393,7 +1875,7 @@ describe('side card settings routes', () => {
     await invoke(route, 'settings.update', { patch: { agentOpenTools: false } })
     // The second write carries the pre-write revision: the seam refuses it.
     const stale = await invoke(route, 'settings.update', {
-      patch: { titleBarStripPx: 15 },
+      patch: { agentOpenTools: true },
       expectedRevision: 0,
     })
     expect(stale.ok).toBe(false)
@@ -1430,7 +1912,7 @@ describe('agent sidebar-open tool gating', () => {
       configure: () => () => {},
     }
     const ctx = {
-      webRuntime: { trustedHosts: [] },
+      connection: { requestRejection: () => undefined },
       webServer: {
         register: (route: SidebarWebRoute) => { routes.push(route); return () => {} },
         registerUpgrade: (route: SidebarWebUpgradeRoute) => { void route; return () => {} },

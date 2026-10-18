@@ -1,22 +1,27 @@
 /**
- * fs-search: the host's recursive file-name search behind the editor side
- * panel's search box. Matches are case-insensitive name substrings, reported
- * RELATIVE to the root ('/'-separated); noise directories (`.git`,
- * `node_modules`, build caches) are skipped, symlinked directories are
- * never descended (cycle safety), and the maxMatches/maxVisited budgets
- * stop a runaway walk with `truncated: true`. `searchFiles` is the dispatch
- * the route calls (native engines first, this walk as fallback) — the walk
- * itself is pinned directly as `searchFilesPlain`, and the dispatch cases
- * below inject fake engines so no machine binary is required.
+ * fs-search: the host's recursive file search behind the editor side panel's
+ * search box. Name queries match case-insensitive name substrings, reported
+ * RELATIVE to the root ('/'-separated); a separator-carrying query matches
+ * the root-relative PATH instead (names never contain separators); and a
+ * query naming one path (absolute, `~/…`, `./x`, `../x`) is resolved through
+ * the same primitive fs.read uses and stat'ed into a direct-open hit (#879).
+ * Noise directories (`.git`, `node_modules`, build caches, worktree
+ * forests) are skipped, symlinked directories are never descended (cycle
+ * safety), and the maxMatches/maxVisited budgets stop a runaway walk with
+ * `truncated: true`. `searchFiles` is the dispatch the route calls (native
+ * engines for name queries, this walk for fragments and as fallback) — the
+ * walk itself is pinned directly as `searchFilesPlain`, and the dispatch
+ * cases below inject fake engines so no machine binary is required.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
+import { join, resolve as resolvePath } from 'node:path'
 import { compileExcludePatterns } from '../src/exclude-patterns.ts'
 import { searchFiles, searchFilesPlain } from '../src/fs-search.ts'
 import type { EngineProbe } from '../src/search-engines.ts'
 import { resetEngines, setEngineHooks } from '../src/search-engines.ts'
+import { removeTree } from './temp-tree.ts'
 
 /**
  * Symlink creation needs extra privileges on Windows; the symlink case skips
@@ -30,7 +35,25 @@ const canSymlink = (() => {
   } catch {
     return false
   } finally {
-    rmSync(dir, { recursive: true, force: true })
+    removeTree(dir)
+  }
+})()
+
+/**
+ * A file NAMED `back\slash.ts` (the backslash is part of the name, not a
+ * separator) is creatable on POSIX only — NTFS rejects a backslash inside a
+ * name. The probe keeps the backslash-is-a-name-character case below
+ * runnable exactly where such a name can exist, mirroring `canSymlink`.
+ */
+const canBackslashName = (() => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-sidebar-search-probe-'))
+  try {
+    writeFileSync(join(dir, 'back\\slash.ts'), 'x')
+    return true
+  } catch {
+    return false
+  } finally {
+    removeTree(dir)
   }
 })()
 
@@ -76,7 +99,7 @@ describe('fs-search', () => {
         expect(match).not.toContain('\\')
       }
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 
@@ -93,7 +116,7 @@ describe('fs-search', () => {
       expect(dirHit).toEqual({ matches: ['src'], dirs: ['src'], truncated: false })
       expect((await searchFilesPlain(dir, 'util')).dirs).toEqual([])
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 
@@ -105,7 +128,7 @@ describe('fs-search', () => {
       expect((await searchFilesPlain(dir, 'config')).matches).toEqual([])
       expect((await searchFilesPlain(dir, '.git')).matches).toEqual([])
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 
@@ -121,7 +144,7 @@ describe('fs-search', () => {
       expect(await searchFilesPlain(dir, '.git')).toEqual({ matches: [], dirs: [], truncated: false })
       expect((await searchFilesPlain(dir, 'util')).matches).toEqual(['util.ts'])
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 
@@ -145,7 +168,7 @@ describe('fs-search', () => {
         .toEqual(['src/index.ts', 'third_party/index.ts', 'third_party/pkg/index.ts'])
       expect((await searchFiles(dir, 'third_party')).dirs).toEqual(['third_party'])
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 
@@ -166,7 +189,72 @@ describe('fs-search', () => {
       expect((await searchFilesPlain(dir, 'node_modules')).matches).toEqual([])
       expect((await searchFilesPlain(dir, 'dist')).matches).toEqual([])
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
+    }
+  })
+
+  // #879: git worktree forests (both spellings — `.worktrees/` is the layout
+  // DeepSeek Harness itself uses) and Python envs / bytecode caches burned
+  // the whole visit budget on real projects before the walk ever reached
+  // project files, leaving `truncated: true` on every query. They are noise
+  // of exactly the node_modules class: never matched, never descended.
+  it('never descends into worktree forests or language environment dirs', async () => {
+    const dir = makeFixture()
+    try {
+      for (const noise of ['.worktrees', '.worktree', 'target', 'venv', '.venv', '__pycache__']) {
+        mkdirSync(join(dir, noise, 'pkg'), { recursive: true })
+        writeFileSync(join(dir, noise, 'pkg', 'guide.md'), 'noise')
+      }
+      expect((await searchFilesPlain(dir, 'guide')).matches).toEqual(['docs/guide.md'])
+      expect((await searchFilesPlain(dir, 'worktrees')).matches).toEqual([])
+      expect((await searchFilesPlain(dir, 'target')).matches).toEqual([])
+      expect((await searchFilesPlain(dir, 'venv')).matches).toEqual([])
+    } finally {
+      removeTree(dir)
+    }
+  })
+
+  // #879 / #306: a query carrying a path separator can never hit an entry
+  // NAME (names never contain separators), so such a query matches against
+  // the entry's root-relative PATH instead — a pasted `records/exp1` finds
+  // the file under any depth, which name matching structurally cannot.
+  it('a separator-carrying query matches the root-relative path, case-insensitively', async () => {
+    const dir = makeFixture()
+    try {
+      mkdirSync(join(dir, 'deep', 'records'), { recursive: true })
+      writeFileSync(join(dir, 'deep', 'records', 'exp1.txt'), 'x')
+      // Fragment at depth, plus a root-anchored fragment against the fixture.
+      expect(await searchFilesPlain(dir, 'records/exp1')).toEqual({ matches: ['deep/records/exp1.txt'], dirs: [], truncated: false })
+      expect(await searchFilesPlain(dir, 'docs/guide')).toEqual({ matches: ['docs/guide.md'], dirs: [], truncated: false })
+      expect((await searchFilesPlain(dir, 'RECORDS/EXP1')).matches).toEqual(['deep/records/exp1.txt'])
+      // A fragment can hit a DIRECTORY by its path; the dirs split survives.
+      expect(await searchFilesPlain(dir, 'deep/records')).toEqual({
+        matches: ['deep/records', 'deep/records/exp1.txt'],
+        dirs: ['deep/records'],
+        truncated: false,
+      })
+      // The noise fences still apply to path matching.
+      mkdirSync(join(dir, 'node_modules', 'records'), { recursive: true })
+      writeFileSync(join(dir, 'node_modules', 'records', 'exp1.txt'), 'dep')
+      expect((await searchFilesPlain(dir, 'records/exp1')).matches).toEqual(['deep/records/exp1.txt'])
+    } finally {
+      removeTree(dir)
+    }
+  })
+
+  // POSIX: a backslash is a legal NAME character, not a separator — the
+  // separator predicate must stay platform-faithful or name queries for
+  // such files silently lose engine eligibility (the dispatch case below
+  // pins that half). Here the WALK must find the file by its literal name.
+  it.skipIf(!canBackslashName)('matches a literal backslash in an entry name (POSIX name character)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-sidebar-search-backslash-'))
+    try {
+      writeFileSync(join(dir, 'back\\slash.ts'), 'x')
+      writeFileSync(join(dir, 'plain.ts'), 'x')
+      expect((await searchFilesPlain(dir, 'back\\slash')).matches).toEqual(['back\\slash.ts'])
+      expect((await searchFilesPlain(dir, 'slash')).matches).toEqual(['back\\slash.ts'])
+    } finally {
+      removeTree(dir)
     }
   })
 
@@ -176,7 +264,7 @@ describe('fs-search', () => {
       expect(await searchFilesPlain(dir, '')).toEqual({ matches: [], dirs: [], truncated: false })
       expect(await searchFilesPlain(dir, '   ')).toEqual({ matches: [], dirs: [], truncated: false })
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 
@@ -190,7 +278,7 @@ describe('fs-search', () => {
       const result = await searchFilesPlain(dir, 'util')
       expect(result).toEqual({ matches: ['src/util.ts'], dirs: [], truncated: false })
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 
@@ -207,7 +295,7 @@ describe('fs-search', () => {
       symlinkSync(join(dir, 'gone'), join(dir, 'dangling-link'))
       expect(await searchFilesPlain(dir, 'dangling-link')).toEqual({ matches: ['dangling-link'], dirs: [], truncated: false })
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 
@@ -221,7 +309,7 @@ describe('fs-search', () => {
       expect(result.truncated).toBe(true)
       expect(result.matches.length).toBe(2)
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 
@@ -236,7 +324,7 @@ describe('fs-search', () => {
       expect(result.truncated).toBe(true)
       expect(result.matches).toEqual([])
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 
@@ -246,7 +334,7 @@ describe('fs-search', () => {
       const missing = join(dir, 'does-not-exist')
       expect(await searchFilesPlain(missing, 'x')).toEqual({ matches: [], dirs: [], truncated: false })
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 })
@@ -313,6 +401,184 @@ describe('fs-search dispatch', () => {
     })
     expect(await searchFiles('/workspace', '   ')).toEqual({ matches: [], dirs: [], truncated: false })
     expect(probed).toBe(false)
+  })
+
+  // #879: a query that IS an absolute path is an open-this-file gesture.
+  // It can never match a NAME, so every engine/walk pass below is
+  // guaranteed-empty while still burning the visit budget. The target is
+  // stat'ed instead: the hit is the path as pasted (the client's
+  // resolveSidebarPath passes absolute paths through, and the fs routes
+  // reach any host-user path since the workspace fence came off).
+  it('an absolute query stats its target instead of searching', async () => {
+    const dir = makeFixture()
+    try {
+      let probed = false
+      setEngineHooks({
+        prober: async () => { probed = true; return [fakeFd] },
+        runner: async () => ({ paths: ['engine-would-return-this'], dirs: [], truncated: false }),
+      })
+      const target = join(dir, 'src', 'util.ts')
+      expect(await searchFiles(dir, target)).toEqual({ matches: [target], dirs: [], truncated: false })
+      // A directory target is reported through the #801 contract: the row
+      // navigates the tree instead of being opened as a file.
+      const folder = join(dir, 'src')
+      expect(await searchFiles(dir, folder)).toEqual({ matches: [folder], dirs: [folder], truncated: false })
+      expect(probed).toBe(false)
+    } finally {
+      removeTree(dir)
+    }
+  })
+
+  it('an absolute query that matches nothing is an immediate empty result', async () => {
+    const dir = makeFixture()
+    try {
+      let probed = false
+      setEngineHooks({
+        prober: async () => { probed = true; return [fakeFd] },
+        runner: async () => ({ paths: ['engine-would-return-this'], dirs: [], truncated: false }),
+      })
+      // maxVisited: 1 pins immediacy: a fall-through to any walk would abort
+      // the traversal at the first entry and answer truncated:true, so
+      // truncated:false proves the miss was answered without walking.
+      expect(await searchFiles(dir, join(dir, 'gone.md'), { maxVisited: 1 })).toEqual({ matches: [], dirs: [], truncated: false })
+      expect(probed).toBe(false)
+    } finally {
+      removeTree(dir)
+    }
+  })
+
+  // The direct-open spellings resolve through the SAME primitive fs.read
+  // uses (`resolveTarget`), and the RESOLVED path comes back — not the pasted
+  // spelling: shell completion appends a trailing separator, and the client
+  // compares match rows exactly against tree paths that never carry one.
+  // `./x` / `../x` resolve against the session cwd; `~` names the home
+  // directory (#713 — the resolution primitive expands it).
+  it('direct-path spellings resolve like fs.read and yield the resolved path', async () => {
+    const parent = mkdtempSync(join(tmpdir(), 'dsh-sidebar-search-anchor-'))
+    const dir = join(parent, 'workspace')
+    mkdirSync(dir, { recursive: true })
+    try {
+      mkdirSync(join(dir, 'src'), { recursive: true })
+      writeFileSync(join(dir, 'src', 'util.ts'), 'code')
+      mkdirSync(join(parent, 'sibling'), { recursive: true })
+      writeFileSync(join(parent, 'sibling', 'note.md'), 'doc')
+      setEngineHooks({ prober: async () => [] })
+
+      // Trailing separators (directory and file spellings) resolve away.
+      expect(await searchFiles(dir, `${join(dir, 'src')}/`)).toEqual({
+        matches: [join(dir, 'src')], dirs: [join(dir, 'src')], truncated: false,
+      })
+      expect(await searchFiles(dir, `${join(dir, 'src', 'util.ts')}/`)).toEqual({
+        matches: [join(dir, 'src', 'util.ts')], dirs: [], truncated: false,
+      })
+      // Dot-anchored spellings resolve against the session cwd…
+      expect(await searchFiles(dir, './src/util.ts')).toEqual({
+        matches: [join(dir, 'src', 'util.ts')], dirs: [], truncated: false,
+      })
+      // …including one level up, which lands outside the cwd — the same
+      // reach the workspace fence removal granted every fs route.
+      expect(await searchFiles(dir, '../sibling/note.md')).toEqual({
+        matches: [join(parent, 'sibling', 'note.md')], dirs: [], truncated: false,
+      })
+      // `~` expands to the home directory (the resolution primitive's own
+      // #713 behavior); the hit is the resolved home path.
+      expect((await searchFiles(dir, '~')).dirs).toEqual([resolvePath(homedir())])
+      // A missing `~`-anchored target is the same immediate empty.
+      expect(await searchFiles(dir, '~/dsh-sidebar-no-such-entry')).toEqual({ matches: [], dirs: [], truncated: false })
+    } finally {
+      removeTree(parent)
+    }
+  })
+
+  // The direct-path predicate must steal no NAME query: only `~` followed by
+  // a separator (or a bare `~`) is a path gesture, and only a dot followed
+  // by a separator is. Backup files (`util.ts~`), Office lock files
+  // (`~$doc.docx`) and dotfiles (`.env`) are NAMES and keep the name path.
+  it('tilde and dot spellings without a separator stay name queries', async () => {
+    const dir = makeFixture()
+    try {
+      writeFileSync(join(dir, 'util.ts~'), 'backup')
+      writeFileSync(join(dir, '~$lock.docx'), 'lock')
+      writeFileSync(join(dir, '.env'), 'env')
+      let probed = false
+      setEngineHooks({
+        prober: async () => { probed = true; return [fakeFd] },
+        runner: async () => ({ paths: [], dirs: [], truncated: false }),
+      })
+      // Engine eligibility IS the assertion (the fake engine answers empty —
+      // a successful engine never falls back to the walk).
+      await searchFiles(dir, 'util.ts~')
+      expect(probed).toBe(true)
+      // The name matches are proven on the walk (no engine probed). The
+      // probe result is process-cached, so the hook swap needs a reset
+      // before the engine-less prober takes effect.
+      resetEngines()
+      setEngineHooks({ prober: async () => [] })
+      expect((await searchFiles(dir, 'util.ts~')).matches).toEqual(['util.ts~'])
+      expect((await searchFiles(dir, '~$lock')).matches).toEqual(['~$lock.docx'])
+      expect((await searchFiles(dir, '.env')).matches).toEqual(['.env'])
+    } finally {
+      removeTree(dir)
+    }
+  })
+
+  // The engines are NAME matchers (fd takes --fixed-strings without
+  // --full-path; rg's three globs match single path segments), so a path
+  // fragment would come back empty from fd and root-anchored-only from rg.
+  // The walk's path matching is the single semantics for fragments.
+  it('a separator query never reaches the name-matching engines', async () => {
+    const dir = makeFixture()
+    try {
+      let probed = false
+      setEngineHooks({
+        prober: async () => { probed = true; return [fakeFd] },
+        runner: async () => ({ paths: ['engine-would-return-this'], dirs: [], truncated: false }),
+      })
+      expect((await searchFiles(dir, 'docs/guide')).matches).toEqual(['docs/guide.md'])
+      expect(probed).toBe(false)
+    } finally {
+      removeTree(dir)
+    }
+  })
+
+  // POSIX: a backslash is a legal name character, so a backslash query
+  // stays a NAME query and keeps engine eligibility. If the separator
+  // predicate ever treats '\' as a separator on POSIX, the probe assert
+  // turns this red (the fragment branch bypasses engines).
+  it.skipIf(!canBackslashName)('a backslash query stays a name query on POSIX (engines stay eligible)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-sidebar-search-backslash-'))
+    try {
+      writeFileSync(join(dir, 'back\\slash.ts'), 'x')
+      let probed = false
+      setEngineHooks({
+        prober: async () => { probed = true; return [fakeFd] },
+        runner: async () => ({ paths: ['back\\slash.ts'], dirs: [], truncated: false }),
+      })
+      expect((await searchFiles(dir, 'back\\slash')).matches).toEqual(['back\\slash.ts'])
+      expect(probed).toBe(true)
+    } finally {
+      removeTree(dir)
+    }
+  })
+
+  // POSIX: the separator in a dot-anchored gesture must be one of the
+  // PLATFORM's own separators. `.\notes` is a legal entry NAME (a dot, then
+  // a backslash) — reading it as a direct-open path stats a path that cannot
+  // exist, so the name query and its engine eligibility are both lost.
+  it.skipIf(!canBackslashName)('a dot-prefixed POSIX name with a backslash stays a name query', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-sidebar-search-dotbackslash-'))
+    try {
+      writeFileSync(join(dir, '.\\notes.md'), 'x')
+      let probed = false
+      setEngineHooks({
+        prober: async () => { probed = true; return [fakeFd] },
+        runner: async () => ({ paths: ['.\\notes.md'], dirs: [], truncated: false }),
+      })
+      expect((await searchFiles(dir, '.\\notes')).matches).toEqual(['.\\notes.md'])
+      expect(probed).toBe(true)
+    } finally {
+      removeTree(dir)
+    }
   })
 
   it('caps engine output at maxMatches and reports truncated', async () => {
@@ -384,7 +650,7 @@ describe('fs-search dispatch', () => {
       expect(await searchFiles(dir, 'util')).toEqual({ matches: ['src/util.ts'], dirs: [], truncated: false })
       expect(attempts).toBe(0)
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 
@@ -394,7 +660,7 @@ describe('fs-search dispatch', () => {
       setEngineHooks({ prober: async () => [] })
       expect(await searchFiles(dir, 'util')).toEqual({ matches: ['src/util.ts'], dirs: [], truncated: false })
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 })

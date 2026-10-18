@@ -23,7 +23,9 @@ vi.mock('../src/client/api.ts', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/client/api.ts')>()
   return {
     ...actual,
-    api: { fsWrite: (...args: unknown[]) => fsWrite(...args) },
+    // The real api object with only the save call replaced: TextEditor also
+    // reads the shared git status store in the code viewer.
+    api: { ...actual.api, fsWrite: (...args: unknown[]) => fsWrite(...args) },
   }
 })
 

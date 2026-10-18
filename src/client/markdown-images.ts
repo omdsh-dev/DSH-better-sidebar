@@ -12,6 +12,7 @@
 
 import type { SessionScope } from './api.ts'
 import { hostRouteUrl } from './host-route-url.ts'
+import { maskCodeRegions } from './markdown-code.ts'
 import { isAbsolutePath } from './paths.ts'
 
 /**
@@ -28,8 +29,10 @@ function isRemoteUrl(dest: string): boolean {
  * (POSIX `/`), its Windows drive (`C:\`), or its UNC `\\server\share`
  * prefix. The host's `requireAbsolute` (`path.resolve`) normalizes anyway,
  * but producing a canonical path here keeps the `/sidebar/file` URL clean.
+ * Shared with the markdown navigation resolver (`markdown-navigation.ts`),
+ * which canonicalizes a claimed link target the same way.
  */
-function normalizeLocalPath(path: string): string {
+export function normalizeLocalPath(path: string): string {
   const drive = /^([A-Za-z]:)[\\/]/.exec(path)?.[1]
   const body = drive !== undefined ? path.slice(drive.length) : path
   const parts = body.split(/[\\/]+/).filter((segment) => segment !== '' && segment !== '.')
@@ -52,7 +55,8 @@ function normalizeLocalPath(path: string): string {
  * destinations are left untouched for `MarkdownText`. Reference-style images
  * (`![x][id]` + `[id]: url`) are covered by rewriting their definition lines.
  *
- * Code spans (`` `...` ``) and fenced code blocks (``` ```...``` ```) are
+ * Code regions — inline spans AND fenced blocks, the latter opened by ``` ``` ```
+ * OR `~~~` (see `markdown-code.ts`, the mask both source rewriters share) — are
  * masked before rewriting so documentation that demonstrates `![alt](./img.png)`
  * is not mutated into a `/sidebar/file` URL. Reference definitions are only
  * rewritten when their label is actually referenced by an image (collapsed
@@ -103,14 +107,10 @@ export function rewriteLocalImageUrls(
 ): string {
   const resolve = (dest: string): string => resolveLocalMediaDest(dest, scope, filePath, baseUrl)
 
-  // Mask fenced code blocks and inline code spans so image-looking text
-  // inside documentation examples is never rewritten. The sentinel uses a
-  // character unlikely to appear in prose; the original spans are restored
-  // after the image rewrite.
-  const masks: string[] = []
-  const masked = text
-    .replace(/```[\s\S]*?```/g, (block) => { masks.push(block); return `\u0000${masks.length - 1}\u0000` })
-    .replace(/`[^`\n]*`/g, (span) => { masks.push(span); return `\u0000${masks.length - 1}\u0000` })
+  // Fenced blocks (``` ``` ``` AND `~~~`) and inline code spans are masked so
+  // image-looking text inside documentation examples is never rewritten; the
+  // original text goes back in after the rewrite.
+  const { masked, restore } = maskCodeRegions(text)
 
   const inline = masked.replace(/!\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g, (_match, alt, dest) => {
     return `![${alt}](${resolve(dest)})`
@@ -135,6 +135,5 @@ export function rewriteLocalImageUrls(
     return `${head}${resolve(dest.replace(/^<|>$/g, ''))}`
   })
 
-  // eslint-disable-next-line no-control-regex -- NUL is the deliberate mask sentinel (cannot appear in source markdown)
-  return refsRewritten.replace(/\u0000(\d+)\u0000/g, (_m, index: string) => masks[Number(index)] ?? '')
+  return restore(refsRewritten)
 }

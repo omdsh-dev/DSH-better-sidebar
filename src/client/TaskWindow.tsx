@@ -22,11 +22,12 @@ import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import clsx from 'clsx'
 import {
   Button, IconCheckOutlineRegular, IconEditOutlineRegular,
-  IconRefreshOutlineRegular, IconTrashOutlineRegular, Input, MarkdownText, Pill, StateDot, Tag,
+  IconRefreshOutlineRegular, IconTrashOutlineRegular, Input, MarkdownDelegateProvider, MarkdownText, Pill, StateDot, Tag,
 } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { SidebarTeamTaskView } from '../context-types.ts'
+import type { Context, SidebarTeamTaskView } from '../context-types.ts'
 import { api } from './api.ts'
 import { markdownTextProps } from './markdown-labels.tsx'
+import { useMarkdownSurface } from './use-markdown-surface.ts'
 import { FloatingWindow } from './FloatingWindow.tsx'
 import { taskBlocked, taskDotState, taskStatusLabel, taskTone } from './tasks-shared.tsx'
 import type { TeamMemberRow } from './team-projection.ts'
@@ -100,14 +101,22 @@ function OwnerPicker(props: {
  * The read-only body: the owner line and the markdown description. The status
  * and the owner NAME live in the window's own head row (see `TaskWindow`); this
  * body carries the editable owner picker beside the prose it belongs to.
+ *
+ * The description is a markdown SURFACE like every other one the plugin draws:
+ * heading slugs, in-note anchor jumps and `.md` link claiming. It renders no
+ * file of its own, so a relative link target resolves against the session cwd
+ * (`sessionId` is the team root the window was opened for).
  */
 function TaskViewBody(props: {
   task: SidebarTeamTaskView
   teammates: readonly TeamMemberRow[]
   busy: boolean
+  ctx: Context
+  sessionId: string
   onReassign(owner: string): void
 }): ReactNode {
   const { task } = props
+  const surface = useMarkdownSurface({ ctx: props.ctx, sessionId: props.sessionId })
   const body = task.description.trim()
   return (
     <>
@@ -121,19 +130,21 @@ function TaskViewBody(props: {
           </>
         )}
       </div>
-      <div className={css.taskMarkdown} data-task-description>
+      <div className={css.taskMarkdown} data-task-description ref={surface.surfaceRef}>
         {body === ''
           ? <div className={css.popHint}>{t('teamTaskNoDescription')}</div>
           : (
-            <MarkdownText
-              {...markdownTextProps(body, {
-                copyLabel: t('copy'),
-                copiedLabel: t('copied'),
-                codeLabel: t('codeBlockTitle'),
-                wrapLabel: t('codeBlockWrap'),
-                unwrapLabel: t('codeBlockUnwrap'),
-              })}
-            />
+            <MarkdownDelegateProvider openFile={surface.openFile}>
+              <MarkdownText
+                {...markdownTextProps(surface.rewrite(body), {
+                  copyLabel: t('copy'),
+                  copiedLabel: t('copied'),
+                  codeLabel: t('codeBlockTitle'),
+                  wrapLabel: t('codeBlockWrap'),
+                  unwrapLabel: t('codeBlockUnwrap'),
+                })}
+              />
+            </MarkdownDelegateProvider>
           )}
       </div>
       <div className={css.taskField}>
@@ -204,6 +215,9 @@ export interface TaskWindowProps {
   /** The task under view/edit; undefined = create mode. */
   task: SidebarTeamTaskView | undefined
   members: readonly TeamMemberRow[]
+  /** Client context: the description's markdown surface opens a claimed `.md`
+   *  link through the plugin's own file path. */
+  ctx: Context
   /** Where the window first appears (the row that opened it). */
   anchor?: HTMLElement | null
   /** Close the window (the caller's popover state). */
@@ -216,7 +230,7 @@ export interface TaskWindowProps {
  * one component.
  */
 export function TaskWindow(props: TaskWindowProps): ReactNode {
-  const { rootId, task, members, onClose } = props
+  const { rootId, task, members, ctx, onClose } = props
   const creating = task === undefined
   const [editing, setEditing] = useState(creating)
   const [subject, setSubject] = useState(task?.subject ?? '')
@@ -248,6 +262,10 @@ export function TaskWindow(props: TaskWindowProps): ReactNode {
     setDescription(seed.description)
     setSubjectTouched(false)
     setEditing(seed.creating)
+    // An armed "confirm delete" is the first half of a two-step aimed at THIS
+    // task. Carried into the next one it makes that reader's first click the
+    // delete itself.
+    setArmedDelete(false)
   }, [task?.id])
 
   const teammates = members.filter(member => member.role === 'teammate')
@@ -465,6 +483,8 @@ export function TaskWindow(props: TaskWindowProps): ReactNode {
             task={task}
             teammates={teammates}
             busy={busy}
+            ctx={ctx}
+            sessionId={rootId}
             onReassign={reassign}
           />
         )}

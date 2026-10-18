@@ -5,10 +5,12 @@
  * (src/client/service.ts `setSurface`).
  */
 import { describe, expect, it, vi } from 'vitest'
-import { createElement } from 'react'
+import { createElement, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
 import { createNativeTabRecords, NativeTabBody, NativeTabTitle } from '../src/client/native/tab-adapter.tsx'
+import { ContextDiagnosticsButton } from '../src/client/context-diagnostics-ui.tsx'
+import type { ContextDiagnosticTarget, ContextDiagnostics, ContextDiagnosticsSnapshot } from '../src/client/context-diagnostics.ts'
 import { createNativeSurface } from '../src/client/native/surface.ts'
 import { fileParamsOf, registerNativeSurface } from '../src/client/native/index.ts'
 import { createBetterSidebarService, type SidebarSurface, type TabComponentProps } from '../src/client/service.ts'
@@ -209,14 +211,25 @@ describe('fileParamsOf (the file-address seed, #826)', () => {
     expect(fileParamsOf(infoOf('dsh-resource://file/session/s1/src/main.ts'))).toEqual({ path: 'src/main.ts' })
   })
 
-  it('splits a `path:line` spec off the address and titles the tab after the file', () => {
+  it('splits a `path:line` spec off the address, titles the tab after the file and keeps the line', () => {
     // This is the #826 case: DSH reads a `#`-less markdown destination as the
     // file name verbatim, so the address arrives naming `CMakeLists.txt:131`
-    // and the editor would read a file that does not exist.
+    // and the editor would read a file that does not exist. The line rides
+    // along in the same seed so the editor can land on it (#826 second half).
     expect(fileParamsOf(infoOf('dsh-resource://file/session/s1/omlx/csrc/CMakeLists.txt:131'))).toEqual({
       path: 'omlx/csrc/CMakeLists.txt',
       title: 'CMakeLists.txt',
+      line: 131,
     })
+  })
+
+  it('seeds only the FIRST line of a range or a line:column spec', () => {
+    // The editor has nowhere to put a second cursor; the start line is the
+    // one a reader can act on.
+    expect(fileParamsOf(infoOf('dsh-resource://file/session/s1/src/main.ts:40-60')))
+      .toMatchObject({ path: 'src/main.ts', line: 40 })
+    expect(fileParamsOf(infoOf('dsh-resource://file/session/s1/src/main.ts:40:7')))
+      .toMatchObject({ path: 'src/main.ts', line: 40 })
   })
 
   it('keeps a colon-carrying name that is not a line spec', () => {
@@ -820,6 +833,100 @@ describe('NativeTabBody full-height host wrapper', () => {
 })
 
 /**
+ * The diagnostics controller reaches a native tab body through the injected
+ * bag (`NativeSurfaceDeps.diagnostics` → `inject()` → `NativeTabBody`'s
+ * provider): a body renders in the HOST's tree, so the plugin shell's own
+ * provider cannot reach it. A body whose registration carried no controller
+ * renders exactly as before — no entry point, no crash.
+ */
+describe('NativeTabBody — the diagnostics provider comes from the injected bag', () => {
+  /** A snapshot-driven controller double; it records the targets it is asked to open. */
+  const makeDiagnostics = (): { controller: ContextDiagnostics; opens: ContextDiagnosticTarget[] } => {
+    const opens: ContextDiagnosticTarget[] = []
+    const snapshot: ContextDiagnosticsSnapshot = { available: true, busy: false }
+    const controller: ContextDiagnostics = {
+      getSnapshot: () => snapshot,
+      subscribe: () => () => {},
+      open: (target: ContextDiagnosticTarget) => { opens.push(target) },
+      dismissError: () => {},
+      dispose: () => {},
+    }
+    return { controller, opens }
+  }
+
+  function renderBody(diagnostics?: ContextDiagnostics): { host: HTMLDivElement; root: Root } {
+    const store = createSidebarStore()
+    store.setSession('s1')
+    const service = createBetterSidebarService(store)
+    // The body asks for the diagnostics entry point of a job; the value it can
+    // address comes from the provider, so it exists only where the bag carried
+    // a controller down to this body.
+    const component = (): ReactNode => createElement(ContextDiagnosticsButton, {
+      kind: 'job',
+      target: { sessionId: 's1', label: 'job owner' },
+      iconSize: 12,
+    })
+    service.registerTab({ id: 'probe', title: 'Probe', component })
+    const records = createNativeTabRecords()
+    const ctx = { sessions: { list: { subscribe: () => () => {}, getSnapshot: () => ({ byId: {} }) } } } as never
+    const info = {
+      tab: {
+        id: 'native-11',
+        kind: 'probe',
+        title: 'Probe',
+        contentId: 'sidebar://probe',
+        visible: true,
+        navigation: { address: 'sidebar://probe', params: undefined, revision: 0 },
+        signal: new AbortController().signal,
+      },
+    }
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    let root: Root | undefined
+    act(() => {
+      root = createRoot(host)
+      root.render(createElement(NativeTabBody, {
+        sessionId: 's1',
+        ctx,
+        store,
+        service,
+        records,
+        descriptorId: 'probe',
+        useTabInfo: () => info,
+        ...(diagnostics === undefined ? {} : { diagnostics }),
+      }))
+    })
+    return { host, root: root! }
+  }
+
+  it('offers no entry point without a controller, and renders one with it', async () => {
+    const bare = renderBody()
+    expect(bare.host.querySelector('[data-dsh-ctx-entry="job"]')).toBeNull()
+    act(() => { bare.root.unmount() })
+    bare.host.remove()
+
+    const fake = makeDiagnostics()
+    const wired = renderBody(fake.controller)
+    const button = wired.host.querySelector('[data-dsh-ctx-entry="job"]') as HTMLButtonElement
+    expect(button, 'the injected controller must reach the body').not.toBeNull()
+    await act(async () => { button.click() })
+    expect(fake.opens).toEqual([{ sessionId: 's1', label: 'job owner' }])
+    act(() => { wired.root.unmount() })
+    wired.host.remove()
+  })
+
+  it('keeps the full-height host wrapper contract with the provider in place', () => {
+    const fake = makeDiagnostics()
+    const { host, root } = renderBody(fake.controller)
+    const wrapper = host.querySelector('[data-dsh-native-tab-host=""]')
+    expect(wrapper, 'the paneBody fill contract is unchanged').not.toBeNull()
+    expect(wrapper!.querySelector('[data-dsh-ctx-entry="job"]'), 'the entry point lives in the wrapper').not.toBeNull()
+    act(() => { root.unmount() })
+    host.remove()
+  })
+})
+
+/**
  * The revision the adapter READS off the native record is what gates the seed
  * meta (the `createNativeTabRecords` cases above pin the gate itself): this
  * pins the wiring at the real call site, where a missing `revision` would
@@ -1277,5 +1384,51 @@ describe('NativeTabBody — co-resident seats', () => {
     records.drop('s1', 'tab1')
     expect(records.has('s1', 'tab1')).toBe(false)
     again.unmount()
+  })
+})
+
+/**
+ * The file tree's rename/delete reconciliation reads the right column's tabs
+ * through `pathTabs()` — the store cannot see them — and it retargets a renamed
+ * file with `updateTab`, i.e. a plugin-side write of `path`. The native surface
+ * re-delivers the LAST navigation on every render, so an ungated `path` patch
+ * let the host's (stale) address win on the next pass: the retarget was undone
+ * and the editor saved onto the old name again.
+ */
+describe('native records: path enumeration and the navigation gate', () => {
+  const scope = { sessionId: 's1' }
+
+  it('lists exactly the records that carry a file path, across seats', () => {
+    const records = createNativeTabRecords()
+    records.ensure({ sessionId: 's1', id: 'tab1', kind: 'editor', title: 'a.ts', params: { path: '/w/a.ts' }, scope })
+    records.ensure({ sessionId: 's1', id: 'tab2', kind: 'sidechat', title: 'chat', params: { meta: { threadId: 't' } }, scope })
+    // A chat link's address is session-scoped and its path workspace-relative:
+    // the record keeps that spelling and carries the cwd that resolves it.
+    records.ensure({ sessionId: 's2', id: 'tab1', kind: 'editor', title: 'b.ts', params: { path: 'b.ts' }, scope: { sessionId: 's2', cwd: '/w' } })
+    records.ensure({ sessionId: 's3', id: 'tab9', kind: 'browser', title: 'site', params: { url: 'https://example.test/x' }, scope: { sessionId: 's3' } })
+
+    expect(records.pathTabs().sort((left, right) => left.id.localeCompare(right.id))).toEqual([
+      { sessionId: 's1', scopeSessionId: 's1', cwd: undefined, id: 'tab1', path: '/w/a.ts' },
+      { sessionId: 's2', scopeSessionId: 's2', cwd: '/w', id: 'tab1', path: 'b.ts' },
+      // A browser seed lands on `path` too (the address bar reads it there).
+      { sessionId: 's3', scopeSessionId: 's3', cwd: undefined, id: 'tab9', path: 'https://example.test/x' },
+    ])
+  })
+
+  it('keeps a plugin-side retarget across a re-delivery of the same navigation', () => {
+    const records = createNativeTabRecords()
+    const navigate = (revision: number): void => {
+      records.ensure({ sessionId: 's1', id: 'tab1', kind: 'editor', title: 'a.ts', params: { path: '/w/a.ts' }, scope, revision })
+    }
+    navigate(5)
+    records.update('s1', 'tab1', { path: '/w/b.ts', title: 'b.ts' })
+
+    // The surface re-renders: same navigation, same revision.
+    navigate(5)
+    expect(records.get('s1', 'tab1')?.tab).toMatchObject({ path: '/w/b.ts', title: 'b.ts' })
+
+    // A REAL navigation still wins: the host is addressing this tab again.
+    navigate(6)
+    expect(records.get('s1', 'tab1')?.tab.path).toBe('/w/a.ts')
   })
 })

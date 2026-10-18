@@ -14,6 +14,7 @@ import { act } from 'react-dom/test-utils'
 import { DiffPane } from '../src/client/changes/DiffPane.tsx'
 import { DiffTab } from '../src/client/DiffTab.tsx'
 import { api } from '../src/client/api.ts'
+import type { Context } from '../src/context-types.ts'
 import type { SessionScope } from '../src/client/api.ts'
 import type { SidebarDiffRef } from '../src/client/state.ts'
 
@@ -69,6 +70,7 @@ describe('useGitDiffTarget through the inline preview pane (DiffPane)', () => {
       act(() => {
         root.render(createElement(DiffPane, {
           target: { kind: 'git', ref: worktree },
+          ctx: {} as Context,
           scope: SCOPE,
           height: 300,
           onHeightCommit: () => {},
@@ -92,7 +94,7 @@ describe('useGitDiffTarget through the inline preview pane (DiffPane)', () => {
   it('renders an untracked file as a full-file addition from its content', async () => {
     const worktree: SidebarDiffRef = { kind: 'worktree', path: 'src/new.ts', staged: false, untracked: true }
     vi.spyOn(api, 'gitDiff').mockResolvedValue({ diff: '' })
-    const read = vi.spyOn(api, 'fsRead').mockResolvedValue({ kind: 'text', content: 'brand-new-line', truncated: false })
+    const read = vi.spyOn(api, 'fsRead').mockResolvedValue({ kind: 'text', content: 'brand-new-line', size: 'brand-new-line'.length })
 
     const container = document.createElement('div')
     document.body.append(container)
@@ -101,6 +103,7 @@ describe('useGitDiffTarget through the inline preview pane (DiffPane)', () => {
       act(() => {
         root.render(createElement(DiffPane, {
           target: { kind: 'git', ref: worktree },
+          ctx: {} as Context,
           scope: SCOPE,
           height: 300,
           onHeightCommit: () => {},
@@ -145,7 +148,7 @@ describe('useGitDiffTarget through the dedicated diff tab (DiffTab)', () => {
   it('fetches each side of a file ONCE for two sibling fold expansions', async () => {
     vi.spyOn(api, 'gitDiff').mockResolvedValue({ diff: TWO_GAP_PATCH })
     const show = vi.spyOn(api, 'gitShow').mockResolvedValue({ content: CONTENT })
-    const read = vi.spyOn(api, 'fsRead').mockResolvedValue({ kind: 'text', content: CONTENT, truncated: false })
+    const read = vi.spyOn(api, 'fsRead').mockResolvedValue({ kind: 'text', content: CONTENT, size: CONTENT.length })
 
     const container = document.createElement('div')
     document.body.append(container)
