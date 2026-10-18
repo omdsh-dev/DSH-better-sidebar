@@ -193,7 +193,7 @@ export function CluesTab({ ctx, store, scope, visible }: CluesTabProps): ReactNo
 
   const openImport = useCallback((): void => {
     if (service === undefined || browseWorkspaceId === undefined) return
-    openShareWindow({ windows: service.windows, workspaceId: browseWorkspaceId, face: service.clues })
+    openShareWindow({ windows: service.windows, workspaceId: browseWorkspaceId, face: service.clues, direction: 'import' })
   }, [service, browseWorkspaceId])
 
   const openSettings = useCallback((): void => {

@@ -30,7 +30,7 @@ beforeAll(() => {
 
 import { PackManagementPage, openPackManagementWindow } from '../src/client/clues/windows/pack.tsx'
 import { openClueDetailWindow } from '../src/client/clues/windows/detail.tsx'
-import { SharePage } from '../src/client/clues/windows/share.tsx'
+import { SharePage, openShareWindow } from '../src/client/clues/windows/share.tsx'
 import type { PackDraftGuard } from '../src/client/clues/windows/pack.tsx'
 import type { BetterSidebarCluesClientFace } from '../src/client/clues/registry.ts'
 import type { WindowOpenOptions, WindowHandle } from '../src/client/windows/types.ts'
@@ -76,6 +76,7 @@ interface FaceOverrides {
   listFor?: (sourceId: string) => readonly ClueCandidate[]
   searchFor?: (sourceId: string) => readonly ClueCandidate[]
   resolveCandidates?: readonly ClueCandidate[]
+  packs?: readonly CluePack[]
   readError?: () => unknown
   loadEditDocument?: () => unknown
   packsListError?: () => unknown
@@ -136,7 +137,7 @@ function faceOf(overrides: FaceOverrides = {}): { face: BetterSidebarCluesClient
     packsList: async () => {
       const rejected = overrides.packsListError?.()
       if (rejected !== undefined) throw rejected
-      return { packs: [PACK], revision: 4 }
+      return { packs: overrides.packs ?? [PACK], revision: 4 }
     },
     packsRename: async (_workspaceId: string, input: { name: string }) => {
       calls.rename += 1
@@ -1102,6 +1103,135 @@ describe('clue share window', () => {
     expect(archiveBodies.every(body => body.mode === 'references')).toBe(true)
     // The host protocol only knows the plural spelling.
     expect(bodies.some(body => body.mode === 'reference')).toBe(false)
+    view.unmount()
+  })
+
+  it('exposes the two directions as an accessible tab set', async () => {
+    const { face } = faceOf()
+    const view = renderRoot(createElement(SharePage, {
+      windows: recordingWindows().windows,
+      workspaceId: 'ws-1',
+      face,
+    }))
+    await flush()
+    const tablist = view.container.querySelector('[role="tablist"]')!
+    const exportTab = view.container.querySelector<HTMLButtonElement>('#clue-share-tab-export')!
+    const importTab = view.container.querySelector<HTMLButtonElement>('#clue-share-tab-import')!
+    expect(exportTab.getAttribute('aria-selected')).toBe('true')
+    expect(exportTab.getAttribute('aria-controls')).toBe('clue-share-panel')
+    expect(importTab.getAttribute('tabindex')).toBe('-1')
+    expect(view.container.querySelector('#clue-share-panel')?.getAttribute('role')).toBe('tabpanel')
+
+    act(() => { tablist.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })) })
+    await flush()
+    expect(importTab.getAttribute('aria-selected')).toBe('true')
+    expect(exportTab.getAttribute('tabindex')).toBe('-1')
+    act(() => { tablist.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true })) })
+    await flush()
+    expect(exportTab.getAttribute('aria-selected')).toBe('true')
+    view.unmount()
+  })
+
+  it('clears its operation state on Reset', async () => {
+    const { face } = faceOf()
+    fetchMock.mockImplementation(async (url: string) => {
+      if (String(url).includes('/sidebar/api/clues.share.exportPreview')) {
+        return new Response(JSON.stringify({
+          ok: true,
+          value: {
+            mode: 'snapshot',
+            fileName: 'release.cluepack',
+            items: [],
+            packs: [{ packId: 'p1', name: 'Release clues', members: 2 }],
+            warnings: [],
+            totals: { clues: 2, packs: 1, sources: 1 },
+          },
+        }), { status: 200 })
+      }
+      throw new Error(`unexpected fetch ${String(url)}`)
+    })
+    const view = renderRoot(createElement(SharePage, {
+      windows: recordingWindows().windows,
+      workspaceId: 'ws-1',
+      face,
+      packIds: ['p1'],
+    }))
+    await flush(6)
+    click(view.container, 'Preview')
+    await flush(6)
+    expect(view.container.textContent).toContain('2 clues')
+    click(view.container, 'Reset')
+    await flush()
+    expect(view.container.textContent).not.toContain('2 clues')
+    expect(view.container.textContent).not.toContain('Done')
+    view.unmount()
+  })
+
+  it('merges later pack selections and direction into the already-open window', async () => {
+    const second: CluePack = {
+      id: 'p2',
+      name: 'Design notes',
+      workspaceId: 'ws-1',
+      members: [],
+      revision: 1,
+      createdAt: '2026-10-17T00:00:00.000Z',
+      updatedAt: '2026-10-17T00:00:00.000Z',
+    }
+    const { face } = faceOf({ packs: [PACK, second] })
+    let content: ReactNode
+    const handles = new Map<string, WindowHandle>()
+    const windows = {
+      open(options: WindowOpenOptions): WindowHandle {
+        const existing = handles.get(options.id)
+        if (existing !== undefined) return existing
+        content = options.content as ReactNode
+        const handle: WindowHandle = {
+          id: options.id,
+          update: () => undefined,
+          focus: () => undefined,
+          close: async () => undefined,
+          navigation: { push: () => undefined, pop: () => false, back: () => false, canGoBack: () => false, depth: () => 1 },
+        }
+        handles.set(options.id, handle)
+        return handle
+      },
+    }
+    openShareWindow({ windows, workspaceId: 'ws-1', face, packIds: ['p1'] })
+    const view = renderRoot(createElement(Fragment, null, content!))
+    await flush(6)
+    openShareWindow({ windows, workspaceId: 'ws-1', face, packIds: ['p2'], direction: 'import' })
+    await flush()
+    expect(view.container.querySelector('#clue-share-tab-import')?.getAttribute('aria-selected')).toBe('true')
+
+    // The new pack is merged with the original selection, not replacing it.
+    click(view.container, 'Export')
+    await flush()
+    const checked = [...view.container.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')]
+      .filter(input => input.checked)
+    expect(checked.length).toBe(2)
+    view.unmount()
+  })
+
+  it('opens the import page when the tab asks for it', async () => {
+    const { face } = faceOf()
+    let content: ReactNode
+    const windows = {
+      open(options: WindowOpenOptions): WindowHandle {
+        content = options.content as ReactNode
+        return {
+          id: options.id,
+          update: () => undefined,
+          focus: () => undefined,
+          close: async () => undefined,
+          navigation: { push: () => undefined, pop: () => false, back: () => false, canGoBack: () => false, depth: () => 1 },
+        }
+      },
+    }
+    openShareWindow({ windows, workspaceId: 'ws-1', face, direction: 'import' })
+    const view = renderRoot(createElement(Fragment, null, content!))
+    await flush()
+    expect(view.container.querySelector('#clue-share-tab-import')?.getAttribute('aria-selected')).toBe('true')
+    expect(view.container.querySelector('input[type="file"]')).not.toBeNull()
     view.unmount()
   })
 

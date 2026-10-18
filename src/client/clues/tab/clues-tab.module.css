@@ -692,7 +692,8 @@
   align-items: center;
   justify-content: center;
   padding: 12px;
-  background: var(--dsw-alias-bg-layer-2);
+  background: var(--dsw-alias-bg-mask-1);
+  backdrop-filter: var(--dsw-mask-blur);
 }
 
 .helpDialog {

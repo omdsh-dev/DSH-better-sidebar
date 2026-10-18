@@ -73,6 +73,10 @@ export function ClueHelpOverlay({ onClose }: ClueHelpOverlayProps): ReactNode {
     const onKeyDown = (event: KeyboardEvent): void => {
       if (event.key === 'Escape') {
         event.preventDefault()
+        // The app can host other Escape listeners (floating-window layers).
+        // The help owns this Escape while it is on top: do not also close the
+        // window behind it.
+        event.stopPropagation()
         onClose()
         return
       }

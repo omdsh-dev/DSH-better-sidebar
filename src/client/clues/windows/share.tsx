@@ -48,16 +48,50 @@ export interface OpenShareWindowOptions {
   readonly face: BetterSidebarCluesClientFace
   /** Preselect these packs (the pack window's share action). */
   readonly packIds?: readonly string[]
+  /** Initial direction (the tab's Import entry opens the import page). */
+  readonly direction?: 'export' | 'import'
 }
 
-/** Open (or focus) the share window. */
+/** One request delivered to an ALREADY-OPEN share window. */
+interface ShareWindowRequest {
+  readonly packIds?: readonly string[]
+  readonly direction?: 'export' | 'import'
+}
+
+/** The one share window handle (identity check, like the detail window). */
+let shareWindowHandle: WindowHandle | undefined
+const shareWindowListeners = new Set<(request: ShareWindowRequest) => void>()
+
+/** Deliver a request to the mounted share page (no-op when it is closed). */
+function requestShareWindow(request: ShareWindowRequest): void {
+  for (const listener of [...shareWindowListeners]) listener(request)
+}
+
+/**
+ * Open (or focus) the share window.
+ *
+ * The host focuses an existing id instead of replacing it, so a second call
+ * with a new pack selection / direction publishes a request to the mounted
+ * page instead of rendering a second surface.
+ */
 export function openShareWindow(options: OpenShareWindowOptions): WindowHandle {
-  return options.windows.open({
+  const handle = options.windows.open({
     id: CLUE_SHARE_WINDOW_ID,
     title: t('clueShareTitle'),
     size: 'collection',
     content: <SharePage {...options} />,
+    onClose: () => {
+      if (shareWindowHandle === handle) shareWindowHandle = undefined
+    },
   })
+  if (shareWindowHandle === handle) {
+    requestShareWindow({
+      ...(options.packIds === undefined ? {} : { packIds: options.packIds }),
+      ...(options.direction === undefined ? {} : { direction: options.direction }),
+    })
+  }
+  shareWindowHandle = handle
+  return handle
 }
 
 /** One user-visible failure line. */
@@ -67,10 +101,23 @@ function errorLine(error: unknown): string {
   return t('clueShareFailed')
 }
 
+/** Localized labels of the host's stable progress phase ids. */
+const PROGRESS_PHASE_KEYS = {
+  collect: 'clueSharePhaseCollect',
+  read: 'clueSharePhaseRead',
+  archive: 'clueSharePhaseArchive',
+  validate: 'clueSharePhaseValidate',
+  clue: 'clueSharePhaseClue',
+  snapshot: 'clueSharePhaseSnapshot',
+  pack: 'clueSharePhasePack',
+  done: 'clueSharePhaseDone',
+} as const
+
 /** Progress line of one operation. */
 function progressLine(progress: ShareProgress): string {
+  const key = PROGRESS_PHASE_KEYS[progress.phase as keyof typeof PROGRESS_PHASE_KEYS]
   return t('clueShareProgress', {
-    phase: progress.phase,
+    phase: key === undefined ? progress.phase : t(key),
     done: progress.completed,
     total: progress.total,
   })
@@ -79,7 +126,7 @@ function progressLine(progress: ShareProgress): string {
 /** The share surface. */
 export function SharePage(props: OpenShareWindowOptions): ReactNode {
   const { workspaceId, face } = props
-  const [direction, setDirection] = useState<'export' | 'import'>('export')
+  const [direction, setDirection] = useState<'export' | 'import'>(props.direction ?? 'export')
   const [packs, setPacks] = useState<readonly CluePack[]>([])
   const [packsError, setPacksError] = useState(false)
   const [selectedPacks, setSelectedPacks] = useState<ReadonlySet<string>>(
@@ -98,6 +145,23 @@ export function SharePage(props: OpenShareWindowOptions): ReactNode {
   const [importPreview, setImportPreview] = useState<ShareImportPreview | null>(null)
   const [importResult, setImportResult] = useState<ShareImportResult | null>(null)
   const abortRef = useRef<AbortController | undefined>(undefined)
+
+  // A singleton window receives new pack selections / an Import request from
+  // a later open call; merge them without dropping the reader's current work.
+  useEffect(() => {
+    const listener = (request: ShareWindowRequest): void => {
+      if (request.direction !== undefined) setDirection(request.direction)
+      if (request.packIds !== undefined) {
+        setSelectedPacks(current => new Set([...current, ...request.packIds!]))
+        setPreview(null)
+        setInspection(null)
+        setMessage(null)
+        setFailure(null)
+      }
+    }
+    shareWindowListeners.add(listener)
+    return () => { shareWindowListeners.delete(listener) }
+  }, [])
 
   const loadPacks = useCallback(async (): Promise<void> => {
     setPacksError(false)
@@ -130,6 +194,20 @@ export function SharePage(props: OpenShareWindowOptions): ReactNode {
     abortRef.current = undefined
     setBusy(false)
   }, [])
+
+  /** Reset every operation-owned piece of state (selection stays). */
+  const reset = useCallback((): void => {
+    cancel()
+    setPreview(null)
+    setInspection(null)
+    setProgress(null)
+    setMessage(null)
+    setFailure(null)
+    setFileName(null)
+    setImportBytes(null)
+    setImportPreview(null)
+    setImportResult(null)
+  }, [cancel])
 
   const togglePack = (packId: string): void => {
     setSelectedPacks((current) => {
@@ -270,11 +348,25 @@ export function SharePage(props: OpenShareWindowOptions): ReactNode {
 
   return (
     <div className={css.root} data-clue-share-window>
-      <div className={css.tabs} role="tablist" aria-label={t('clueShareTitle')}>
+      <div
+        className={css.tabs}
+        role="tablist"
+        aria-label={t('clueShareTitle')}
+        onKeyDown={(event) => {
+          if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
+          event.preventDefault()
+          const next = event.key === 'ArrowLeft' || event.key === 'Home' ? 'export' : 'import'
+          setDirection(next)
+          document.getElementById(`clue-share-tab-${next}`)?.focus()
+        }}
+      >
         <button
+          id="clue-share-tab-export"
           type="button"
           role="tab"
           aria-selected={direction === 'export'}
+          aria-controls="clue-share-panel"
+          tabIndex={direction === 'export' ? 0 : -1}
           className={css.tab}
           data-active={direction === 'export' ? 'true' : 'false'}
           onClick={() => { setDirection('export') }}
@@ -282,9 +374,12 @@ export function SharePage(props: OpenShareWindowOptions): ReactNode {
           {t('clueShareExport')}
         </button>
         <button
+          id="clue-share-tab-import"
           type="button"
           role="tab"
           aria-selected={direction === 'import'}
+          aria-controls="clue-share-panel"
+          tabIndex={direction === 'import' ? 0 : -1}
           className={css.tab}
           data-active={direction === 'import' ? 'true' : 'false'}
           onClick={() => { setDirection('import') }}
@@ -293,6 +388,7 @@ export function SharePage(props: OpenShareWindowOptions): ReactNode {
         </button>
       </div>
 
+      <div role="tabpanel" id="clue-share-panel" aria-labelledby={`clue-share-tab-${direction}`}>
       {direction === 'export' ? (
         <div className={css.body}>
           <p className={css.hint}>{t('clueShareExportHint')}</p>
@@ -377,6 +473,16 @@ export function SharePage(props: OpenShareWindowOptions): ReactNode {
                   {preview.warnings.map(warning => <li key={warning}>{warning}</li>)}
                 </ul>
               )}
+              {preview.packs.length > 0 && (
+                <ul className={css.itemList} aria-label={t('clueSharePacks')}>
+                  {preview.packs.map(pack => (
+                    <li key={pack.packId} className={css.itemRow}>
+                      <span className={css.itemTitle}>{pack.name}</span>
+                      <span className={css.itemMeta}>{t('cluePacksMembers', { n: pack.members })}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
               {inspection !== null && (
                 <ul className={css.itemList}>
                   {inspection.items.map(item => (
@@ -423,6 +529,16 @@ export function SharePage(props: OpenShareWindowOptions): ReactNode {
                 <div className={css.warningLine}>
                   {t('clueShareMissingSources', { sources: importPreview.missingSources.join(', ') })}
                 </div>
+              )}
+              {importPreview.packs.length > 0 && (
+                <ul className={css.itemList} aria-label={t('clueSharePacks')}>
+                  {importPreview.packs.map(pack => (
+                    <li key={pack.key} className={css.itemRow}>
+                      <span className={css.itemTitle}>{pack.name}</span>
+                      <span className={css.itemMeta}>{t('cluePacksMembers', { n: pack.members })}</span>
+                    </li>
+                  ))}
+                </ul>
               )}
               {importPreview.warnings.length > 0 && (
                 <ul className={css.warningList}>
@@ -481,11 +597,12 @@ export function SharePage(props: OpenShareWindowOptions): ReactNode {
           )}
         </div>
       )}
+      </div>
 
       {message !== null && <div className={css.done} role="status">{message}</div>}
       {failure !== null && <div className={css.error} role="alert">{failure}</div>}
       <div className={css.foot}>
-        <button type="button" className={css.action} onClick={() => { cancel(); setFailure(null); setMessage(null) }}>
+        <button type="button" className={css.action} onClick={reset}>
           <IconRefreshOutlineRegular size={14} />
           {t('clueShareReset')}
         </button>
