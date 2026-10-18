@@ -173,6 +173,24 @@ describe('installClueTools', () => {
     expect(() => mountValue.dispose()).not.toThrow()
   })
 
+  it('rolls back the first tool when the second registration fails', () => {
+    let registered = 0
+    let disposedFirst = false
+    const ctx = {
+      tools: {
+        register: (): (() => void) => {
+          registered += 1
+          if (registered === 2) throw new Error('tool registry full')
+          return () => { disposedFirst = true }
+        },
+      },
+      get: () => undefined,
+    } as unknown as Context
+    expect(() => installClueTools(ctx, makeService())).toThrow('tool registry full')
+    expect(registered).toBe(2)
+    expect(disposedFirst).toBe(true)
+  })
+
   it('fails with a stable category when the host tool registry is absent', () => {
     const ctx = { get: () => undefined } as unknown as Context
     expect(() => installClueTools(ctx, makeService())).toThrow(ClueError)

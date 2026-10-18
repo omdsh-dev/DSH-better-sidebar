@@ -1036,8 +1036,9 @@ ctx.effect(() =>
 **来源与类型注册**
 
 - 外部插件只走 `registerSource(registration)`。重复 `sourceId` / `typeId` 明确拒绝，不靠注册顺序
-  覆盖；`builtin.*` 是核心保留身份（`builtin.files` / `builtin.github.*` / `builtin.feishu.*`，
-  包目录身份 `builtin.packs` 不是来源、也不能注册），公共 `registerSource` 一律拒绝。返回的
+  覆盖；固定保留 id 表 `RESERVED_SOURCE_IDS`（`builtin.files` / `builtin.github.*` /
+  `builtin.feishu.*`，以及不是来源的包目录身份 `builtin.packs`）由公共 `registerSource` 拒绝。
+  **不是整个 `builtin.*` 前缀**：也未列入该表的其他 `builtin.*` id 可以注册。返回的
   disposer 只移除运行能力，**不清除**已保存的线索、置顶、包成员、绑定与快照；同标识重新注册即恢复解析。
 - `createCluesService({ builtinSources })` / `installClues` / `createLocalFileSource` 是本插件自己的
   装配入口：`builtinSources` 是唯一能注册保留 id 的构造路径，内置本地来源由核心安装。外部插件
@@ -1154,7 +1155,8 @@ ctx.effect(() =>
   不读远程正文、不写其他草稿字段。输入框 @ 与 Tab 内插入等价。
 - Agent 只有两个只读工具：`sidebar_clue_list`（来源 / 工作区线索库 / 包）与 `sidebar_clue_read`
   （`clue` 读当前位置的最新内容、`pack` 读当前成员、`snapshot` 读一条历史快照）。发送时不预取
-  正文，模型按需读取；工具不读凭据、不启子进程。
+  正文，模型按需读取。工具自身不读凭据、不安装 CLI、不发起授权；读取复用来源既有路径
+  （GitHub 可能调用本机已安装的 `gh` CLI，飞书走已配置的 runtime）。
 - 工作区绑定只影响**新会话**：新会话第一步注入绑定引用（包先于单条线索，有行数/字数上限），
   对已存在/恢复的会话不补发；解绑不删除线索或旧会话里的引用。
 
@@ -1164,8 +1166,9 @@ ctx.effect(() =>
   [S7 线索包协议](specs/10-17-线索收集-主设计/10-17-线索收集-S7-线索包协议.md)）。导出模式
   `references`（只写清单，不读正文）与 `snapshot`（逐条读来源并携带快照/资产；单项失败写 issue、
   `complete:false`，不会伪装成完整包）。
-- 宿主侧导出 `installCluesShare` / `createCluesShareRoutes` / `CLUES_SHARE_API_METHODS` /
-  `CLUES_SHARE_ROUTE_PATHS`（`src/clues/share/index.ts`，node-only）。JSON API：
+- 内部模块 `src/clues/share/index.ts`（node-only，**不**从 `dsh-better-sidebar/clues`
+  公共子路径导出）导出 `installCluesShare` / `createCluesShareRoutes` /
+  `CLUES_SHARE_API_METHODS` / `CLUES_SHARE_ROUTE_PATHS`，由宿主装配使用。JSON API：
   `clues.share.exportPreview|exportInspect|exportProgress|importPreview|importProgress|import`；
   raw 路由（exact POST，全部过浏览器的信任围栏）：`/sidebar/clues/share/export-preview`、
   `/export`、`/import-preview`、`/import`。字节走 raw 路由，小包（≤512 KiB 解码后）可走 JSON
@@ -1251,7 +1254,7 @@ CLI 依赖/连接时，`dependencyIds` / `connectionId` 必须引用宿主装配
 
 > **本次功能线未验证项**：自动化只覆盖隔离 fixture / 假 CLI，**真实第三方 GitHub / 飞书账号、
 > 真实 `lark-cli` 安装与授权没有验证**；`pnpm test:mount`（真实宿主挂载冒烟）本阶段**未运行**；
-> 新增 S9 UI 键的第三语言词典目前是英文文本（仅 zh / en / ja 已翻译）；`uqr@0.1.3` 只用于把
+> 新增 S9 UI 键的第三语言词典：zh / en / ja 已翻译，其余 18 份词典为英文占位（键集仍与 zh 对齐）；`uqr@0.1.3` 只用于把
 > 授权提示的 `prompt.qr.uri` 渲染成二维码（当前由飞书设备授权提供），不是授权校验。
 
 ---

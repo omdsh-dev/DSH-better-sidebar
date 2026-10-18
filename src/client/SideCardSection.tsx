@@ -820,7 +820,7 @@ function sourceNeedsKey(source: ClueSourceDescriptor): string {
  * @param props - composed slot props (runtime share + injected store/service).
  * @returns the section element tree.
  */
-export function SideCardSection(props: SideCardSectionProps) {
+export function SideCardSection(props: SideCardSectionInjected & Partial<PropsRuntime<'settings.section'>>) {
   const { store, service } = props
   const settingsFace = props.settings ?? api
   const clues = props.clues ?? service.clues

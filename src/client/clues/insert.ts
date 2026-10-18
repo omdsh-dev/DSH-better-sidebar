@@ -19,11 +19,10 @@
  * field. Failures are reported and leave the draft untouched.
  */
 import type { Context } from '../../context-types.ts'
-import type { ClueCandidate, ClueTypeDescriptor } from '../../clues/types.ts'
+import type { ClueTypeDescriptor } from '../../clues/types.ts'
 import { CLUE_CODEC_SOURCE, PACK_CODEC_SOURCE } from '../../clues/types.ts'
 import { escapeClueTitle, serializeClueToken } from '../../clues/context/tokens.ts'
 import type { ClueSourceDescriptor } from '../../clues/types.ts'
-import { clueErrorMessage } from './copy.ts'
 import { t } from '../locales.ts'
 
 /** One chip insertion request. */
@@ -111,54 +110,6 @@ export function insertClueReference(ctx: Context, sessionId: string, request: Cl
     return false
   }
   return composer.input.state.getSnapshot().draftRev !== before.draftRev
-}
-
-/** Everything needed to ensure a candidate into a stable clue. */
-export interface ClueEnsureFace {
-  readonly api: {
-    ensure(
-      workspaceId: string,
-      input: {
-        readonly sourceId: string
-        readonly typeId: string
-        readonly locator: ClueCandidate['locator']
-        readonly title: string
-      },
-      signal?: AbortSignal,
-    ): Promise<{ readonly clue: { readonly id: string } }>
-  }
-}
-
-/**
- * Ensure one candidate and insert its chip.
- * @returns the stable clue id, or undefined when the insert failed.
- */
-export async function ensureAndInsertClue(
-  ctx: Context,
-  sessionId: string,
-  workspaceId: string,
-  face: ClueEnsureFace,
-  candidate: ClueCandidate,
-  signal?: AbortSignal,
-): Promise<string | undefined> {
-  try {
-    const ensured = await face.api.ensure(workspaceId, {
-      sourceId: candidate.sourceId,
-      typeId: candidate.typeId,
-      locator: candidate.locator,
-      title: candidate.title,
-    }, signal)
-    const id = ensured.clue.id
-    const inserted = insertClueReference(ctx, sessionId, { kind: 'clue', id, title: candidate.title })
-    if (!inserted) {
-      notify(t('clueInsertFailed'))
-      return undefined
-    }
-    return id
-  } catch (error) {
-    notify(clueErrorMessage(error, t('clueInsertFailed')))
-    return undefined
-  }
 }
 
 /**

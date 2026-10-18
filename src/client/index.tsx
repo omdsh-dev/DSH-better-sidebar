@@ -35,6 +35,7 @@ import { registerGithubSourceClient } from './clues/sources/github/index.tsx'
 import { registerFeishuSourceClient } from './clues/sources/feishu/index.tsx'
 import { appDateTime } from './clues/sources/feishu/time.ts'
 import { installClueInputTriggers } from './clues/mentions.ts'
+import { setClueNoticeSink } from './clues/insert.ts'
 import { clueMentionsContentSection, clueMentionsCopy, feishuClientLabels } from './clues/locale-copy.ts'
 import { notifyClue } from './clues/notify.ts'
 import { resolveWorkspaceIdForSession } from './clues/workspace-id.ts'
@@ -179,6 +180,13 @@ export function apply(ctx: Context): void {
   // are ready by the time the sidebar renders.
   const service = createBetterSidebarService(sidebarStore)
   ctx.provide('betterSidebar', service)
+  // The shared draft-insert helpers (file tree / Tab) report refusals through
+  // the plugin's ONE visible notice sink. Without this wiring they fell back
+  // to console.warn and the user never saw why an insert failed.
+  ctx.effect(() => {
+    setClueNoticeSink(notifyClue)
+    return () => { setClueNoticeSink(undefined) }
+  }, 'dsh-better-sidebar: clue notice sink')
   // The unified window host's records live with the service; the React host is
   // mounted ONCE in the root tree below (never per tab body), and disposing the
   // service drops any open window. (Each mounted window's layer registration is

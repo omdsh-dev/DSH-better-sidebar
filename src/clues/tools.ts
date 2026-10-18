@@ -1278,13 +1278,21 @@ export function installClueTools(ctx: Context, clues: CluesService): () => void 
   })
 
   const disposeList = context.tools.register(listTool)
-  const disposeRead = context.tools.register(readTool)
+  let disposeRead: (() => void) | undefined
+  try {
+    disposeRead = context.tools.register(readTool)
+  } catch (error) {
+    // A partial registration would leave the list tool behind after a failed
+    // activation; roll the first one back before surfacing the failure.
+    try { disposeList() } catch { /* the original failure is the useful one */ }
+    throw error
+  }
   let disposed = false
   return () => {
     if (disposed) return
     disposed = true
     disposeList()
-    disposeRead()
+    disposeRead?.()
   }
 }
 

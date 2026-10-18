@@ -12,7 +12,7 @@ import { createElement } from 'react'
 import type { SidebarStore } from '../../state.ts'
 import type { BetterSidebarService } from '../../service.ts'
 import type { BetterSidebarWindowsClientFace, WindowHandle } from '../../windows/types.ts'
-import type { SideCardSectionProps } from '../../SideCardSection.tsx'
+
 import { SideCardSection } from '../../SideCardSection.tsx'
 import { openClueSettings, type ClueSettingsGroup } from '../settings/navigation.ts'
 import { t } from '../../locales.ts'
@@ -44,6 +44,6 @@ export function openClueSettingsWindow(options: OpenClueSettingsWindowOptions): 
       store: options.store,
       service: options.service,
       initialGroup: group,
-    } as unknown as SideCardSectionProps),
+    }),
   })
 }
