@@ -713,7 +713,7 @@ export function PackManagementPage(
                               <input
                                 type="checkbox"
                                 checked={addSelected.has(key)}
-                                aria-label={t('clueBrowserSelect', { title: row.title })}
+                                aria-label={t('clueBrowserSelectRow', { title: row.title })}
                                 onChange={() => { toggleAddSelection(row) }}
                               />
                               <span className={css.addTitle}>{row.title}</span>
@@ -758,7 +758,7 @@ export function PackManagementPage(
                         <input
                           type="checkbox"
                           checked={addSelected.has(key)}
-                          aria-label={t('clueBrowserSelect', { title: candidate.title })}
+                          aria-label={t('clueBrowserSelectRow', { title: candidate.title })}
                           onChange={() => { toggleAddSelection(candidate) }}
                         />
                         <span className={css.addTitle}>{candidate.title}</span>
@@ -771,8 +771,8 @@ export function PackManagementPage(
                         className={css.iconButton}
                         disabled={addPinBusy}
                         aria-label={addPins.some(row => row.clueId === candidate.clueId)
-                          ? t('clueBrowserUnpin', { title: candidate.title })
-                          : t('clueBrowserPin', { title: candidate.title })}
+                          ? t('clueBrowserUnpinRow', { title: candidate.title })
+                          : t('clueBrowserPinRow', { title: candidate.title })}
                         title={addPins.some(row => row.clueId === candidate.clueId)
                           ? t('clueBrowserUnpin')
                           : t('clueBrowserPin')}

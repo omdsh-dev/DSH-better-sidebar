@@ -657,7 +657,7 @@ export function ClueBrowser(props: ClueBrowserProps): ReactNode {
                             type="checkbox"
                             className={css.rowCheckbox}
                             checked={selected.has(key)}
-                            aria-label={t('clueBrowserSelect', { title: candidate.title })}
+                            aria-label={t('clueBrowserSelectRow', { title: candidate.title })}
                             onChange={() => { selectionToggle(candidate) }}
                           />
                         )}
@@ -686,7 +686,7 @@ export function ClueBrowser(props: ClueBrowserProps): ReactNode {
                           <button
                             type="button"
                             className={css.iconButton}
-                            aria-label={t('clueBrowserInsert', { title: candidate.title })}
+                            aria-label={t('clueBrowserInsertRow', { title: candidate.title })}
                             title={t('clueBrowserInsert')}
                             disabled={busy}
                             onClick={() => { void insertCandidate(candidate) }}
@@ -697,8 +697,8 @@ export function ClueBrowser(props: ClueBrowserProps): ReactNode {
                             type="button"
                             className={css.iconButton}
                             aria-label={pinned
-                              ? t('clueBrowserUnpin', { title: candidate.title })
-                              : t('clueBrowserPin', { title: candidate.title })}
+                              ? t('clueBrowserUnpinRow', { title: candidate.title })
+                              : t('clueBrowserPinRow', { title: candidate.title })}
                             title={pinned ? t('clueBrowserUnpin') : t('clueBrowserPin')}
                             disabled={busy}
                             onClick={() => { void togglePin(candidate) }}
@@ -818,7 +818,7 @@ function PinsPanel(props: {
                       <button
                         type="button"
                         className={css.iconButton}
-                        aria-label={t('clueBrowserInsert', { title: row.title })}
+                        aria-label={t('clueBrowserInsertRow', { title: row.title })}
                         title={t('clueBrowserInsert')}
                         disabled={busy}
                         onClick={() => { props.onInsert(row) }}
@@ -828,7 +828,7 @@ function PinsPanel(props: {
                       <button
                         type="button"
                         className={css.iconButton}
-                        aria-label={t('clueBrowserUnpin', { title: row.title })}
+                        aria-label={t('clueBrowserUnpinRow', { title: row.title })}
                         title={t('clueBrowserUnpin')}
                         disabled={busy}
                         onClick={() => { props.onUnpin(row) }}

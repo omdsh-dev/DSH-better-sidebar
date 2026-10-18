@@ -106,5 +106,7 @@ describe('S9 locale copy wiring', () => {
     expect(copy.packMemberMissing?.('[[dsh-cluepack:p1]]', 'c1')).toContain('c1')
     expect(copy.partialRead?.('[[dsh-clue:x]]', 9)).toContain('9')
     expect(clueMentionsContentSection()).toBe('包含当前内容')
+    expect(t('cluePackMembersAdded', { name: '发布线索' })).toContain('发布线索')
+    expect(t('clueBrowserSelectRow', { title: 'A note' })).toContain('A note')
   })
 })
