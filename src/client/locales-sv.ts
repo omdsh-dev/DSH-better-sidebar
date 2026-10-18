@@ -774,6 +774,7 @@ export const sv: Record<string, string> = {
   clueBrowserScopeHeading: 'Browse range',
   clueBrowserScopeNeeded: 'No range chosen yet',
   clueBrowserSearchScopeNeeded: 'Choose a specific folder or wiki space before searching.',
+  clueBrowserSearchGlobalHint: 'No range chosen: searching all documents visible to this account.',
   clueBrowserScopeEdit: 'Choose range',
   clueBrowserScopeApply: 'Save range',
   clueBrowserScopeInvalid: 'Invalid range; check the value.',

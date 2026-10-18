@@ -415,7 +415,7 @@ export function PackManagementPage(
     if (requested.kind !== 'resolve') {
       const blocked = requested.kind === 'list'
         ? listNeedsScope(sourceId, scope)
-        : searchNeedsScope(sourceId, scope)
+        : searchNeedsScope(sourceId, scope, requested.query)
       if (blocked) {
         setAddView(requested)
         setAddCandidates([])
@@ -798,6 +798,13 @@ export function PackManagementPage(
                   >
                     {t('clueBrowserScopeEdit')}
                   </button>
+                </div>
+              )}
+              {addView.kind === 'search'
+                && addSourceId === BUILTIN_SOURCE_IDS.feishuDocs
+                && addScope === undefined && (
+                <div className={css.scopeHint} data-add-global-search>
+                  {t('clueBrowserSearchGlobalHint')}
                 </div>
               )}
               {addLoading && <div className={css.status} role="status">{t('loading')}</div>}

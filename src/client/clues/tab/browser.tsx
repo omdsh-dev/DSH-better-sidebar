@@ -236,7 +236,7 @@ export function ClueBrowser(props: ClueBrowserProps): ReactNode {
     if (requested.kind !== 'resolve') {
       const blocked = requested.kind === 'list'
         ? listNeedsScope(active.sourceId, activeScope)
-        : searchNeedsScope(active.sourceId, activeScope)
+        : searchNeedsScope(active.sourceId, activeScope, requested.query)
       if (blocked) {
         setState({ kind: 'needs-scope', reason: requested.kind === 'search' ? 'search' : 'list' })
         return
@@ -658,6 +658,14 @@ export function ClueBrowser(props: ClueBrowserProps): ReactNode {
               )}
               {state.kind === 'resolved' && state.candidates.length === 0 && (
                 <div className={css.stateLine}>{t('clueBrowserResolveEmpty')}</div>
+              )}
+
+              {state.kind === 'page' && state.view.kind === 'search'
+                && activeSourceId === BUILTIN_SOURCE_IDS.feishuDocs
+                && activeScope === undefined && (
+                <div className={css.scopeHint} data-clue-global-search>
+                  {t('clueBrowserSearchGlobalHint')}
+                </div>
               )}
 
               {candidates.length > 0 && (

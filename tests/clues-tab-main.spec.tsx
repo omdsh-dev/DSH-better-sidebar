@@ -605,6 +605,26 @@ describe('clue tab source browser', () => {
     view.unmount()
   })
 
+  it('searches Feishu docs account-wide when a keyword is given without a range', async () => {
+    const fx = fixture({ workspaceId: 'ws-1', enabled: [FEISHU_DOCS.sourceId] })
+    const view = mount(fx)
+    await flush()
+    // Without a range, LIST stays blocked (there is no browse root).
+    expect(fx.calls.list).toBe(0)
+
+    const input = view.container.querySelector<HTMLInputElement>('input[aria-label="Search a keyword, or paste a resource URL / path"]')!
+    typeInto(input, 'design')
+    press(view.container, 'Search')
+    await flush()
+    expect(fx.calls.search).toBe(1)
+    expect(fx.searchParams[0]).toMatchObject({ sourceId: FEISHU_DOCS.sourceId, query: 'design' })
+    expect(fx.searchParams[0]).not.toHaveProperty('scope')
+    // The account-wide range is stated explicitly, never implied silently.
+    expect(view.container.querySelector('[data-clue-global-search]')?.textContent)
+      .toContain('searching all documents visible to this account')
+    view.unmount()
+  })
+
   it('pins a result through ensure + pins.add and marks the row', async () => {
     const candidate: ClueCandidate = {
       sourceId: FILES.sourceId,

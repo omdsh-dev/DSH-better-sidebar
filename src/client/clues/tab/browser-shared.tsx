@@ -67,9 +67,24 @@ export function listNeedsScope(sourceId: string, scope: JsonValue | undefined): 
  * list their children but cannot search "everything" without a concrete
  * folder / wiki node. Sending the browse range to search would fail as an
  * `invalid-request`, so the UI asks for the narrower range first.
+ *
+ * One exception is deliberate: Feishu docs accepts a keyword with NO range at
+ * all (`drive +search --query` without a filter searches everything the
+ * account can see). The caller passes the query so this global search is
+ * allowed; the UI then shows the explicit account-wide range hint.
  */
-export function searchNeedsScope(sourceId: string, scope: JsonValue | undefined): boolean {
+export function searchNeedsScope(
+  sourceId: string,
+  scope: JsonValue | undefined,
+  query?: string,
+): boolean {
   if (!scopeRequired(sourceId)) return false
+  if (sourceId === BUILTIN_SOURCE_IDS.feishuDocs
+    && scope === undefined
+    && query !== undefined
+    && query.trim() !== '') {
+    return false
+  }
   if (scope === undefined) return true
   if (sourceId !== BUILTIN_SOURCE_IDS.feishuDocs) return false
   const kind = feishuRangeKind(scope)

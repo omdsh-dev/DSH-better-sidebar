@@ -310,6 +310,15 @@ function click(container: ParentNode, label: string): void {
   act(() => { button.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
 }
 
+/** Set one controlled input's value through React's change pipeline. */
+function typeInto(input: HTMLInputElement, value: string): void {
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+  act(() => {
+    setter.call(input, value)
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+}
+
 // ── pack management ─────────────────────────────────────────────────────────
 
 describe('clue pack management window', () => {
@@ -752,6 +761,49 @@ describe('clue pack management window', () => {
       sourceId: GITHUB_SOURCE.sourceId,
       scope: { repo: 'acme/widgets', state: 'open' },
     })
+    view.unmount()
+  })
+
+  it('searches Feishu docs account-wide from the add page when no range is chosen', async () => {
+    const feishu: ClueSourceDescriptor = {
+      sourceId: 'builtin.feishu.docs',
+      name: 'Feishu docs',
+      order: 30,
+      pluginId: 'dsh-better-sidebar',
+      types: ['builtin.feishu.docs'],
+      transport: 'cli',
+      capabilities: { resolve: true, list: true, search: true, read: true, edit: true, portable: true },
+    }
+    const { face, calls } = faceOf({ sources: [feishu] })
+    const view = renderRoot(createElement(PackManagementPage, {
+      windows: recordingWindows().windows,
+      workspaceId: 'ws-1',
+      face,
+      workspaces: [{ workspaceId: 'ws-1', title: '/repo' }],
+      pack: PACK,
+      guard: { dirty: false },
+      onInsertClue: () => true,
+      onInsertPack: () => true,
+      onNotice: () => undefined,
+    }))
+    await flush()
+    click(view.container, 'Add members')
+    await flush()
+    click(view.container, 'Feishu docs')
+    await flush()
+    // No range: the list stays blocked...
+    expect(calls.list).toBe(0)
+
+    const input = view.container.querySelector<HTMLInputElement>('input[aria-label="Search a keyword, or paste a resource URL / path"]')!
+    typeInto(input, 'design')
+    click(view.container, 'Search')
+    await flush()
+    // ...but a keyword runs the account-wide search, with the range stated.
+    expect(calls.search).toBe(1)
+    expect(calls.searchParams[0]).toMatchObject({ sourceId: 'builtin.feishu.docs', query: 'design' })
+    expect(calls.searchParams[0]).not.toHaveProperty('scope')
+    expect(view.container.querySelector('[data-add-global-search]')?.textContent)
+      .toContain('searching all documents visible to this account')
     view.unmount()
   })
 
