@@ -54,6 +54,8 @@ export interface OpenShareWindowOptions {
 
 /** One request delivered to an ALREADY-OPEN share window. */
 interface ShareWindowRequest {
+  /** The workspace the later open call was issued for (a singleton may outlive a workspace switch). */
+  readonly workspaceId?: string
   readonly packIds?: readonly string[]
   readonly direction?: 'export' | 'import'
 }
@@ -86,6 +88,7 @@ export function openShareWindow(options: OpenShareWindowOptions): WindowHandle {
   })
   if (shareWindowHandle === handle) {
     requestShareWindow({
+      workspaceId: options.workspaceId,
       ...(options.packIds === undefined ? {} : { packIds: options.packIds }),
       ...(options.direction === undefined ? {} : { direction: options.direction }),
     })
@@ -125,7 +128,12 @@ function progressLine(progress: ShareProgress): string {
 
 /** The share surface. */
 export function SharePage(props: OpenShareWindowOptions): ReactNode {
-  const { workspaceId, face } = props
+  const { face } = props
+  // The window is a singleton keyed only by id, so a later open call for
+  // ANOTHER workspace must retarget the mounted page instead of leaving it
+  // pointed at the workspace it was first opened for.
+  const [workspaceId, setWorkspaceId] = useState(props.workspaceId)
+  const workspaceRef = useRef(props.workspaceId)
   const [direction, setDirection] = useState<'export' | 'import'>(props.direction ?? 'export')
   const [packs, setPacks] = useState<readonly CluePack[]>([])
   const [packsError, setPacksError] = useState(false)
@@ -145,23 +153,6 @@ export function SharePage(props: OpenShareWindowOptions): ReactNode {
   const [importPreview, setImportPreview] = useState<ShareImportPreview | null>(null)
   const [importResult, setImportResult] = useState<ShareImportResult | null>(null)
   const abortRef = useRef<AbortController | undefined>(undefined)
-
-  // A singleton window receives new pack selections / an Import request from
-  // a later open call; merge them without dropping the reader's current work.
-  useEffect(() => {
-    const listener = (request: ShareWindowRequest): void => {
-      if (request.direction !== undefined) setDirection(request.direction)
-      if (request.packIds !== undefined) {
-        setSelectedPacks(current => new Set([...current, ...request.packIds!]))
-        setPreview(null)
-        setInspection(null)
-        setMessage(null)
-        setFailure(null)
-      }
-    }
-    shareWindowListeners.add(listener)
-    return () => { shareWindowListeners.delete(listener) }
-  }, [])
 
   const loadPacks = useCallback(async (): Promise<void> => {
     setPacksError(false)
@@ -208,6 +199,34 @@ export function SharePage(props: OpenShareWindowOptions): ReactNode {
     setImportPreview(null)
     setImportResult(null)
   }, [cancel])
+
+  // A singleton window receives new pack selections / an Import request from
+  // a later open call. Same-workspace requests merge into the reader's current
+  // work; a request for ANOTHER workspace retargets the whole surface and
+  // drops everything owned by the previous one (a selected file must never be
+  // imported into the workspace the window was merely first opened for).
+  useEffect(() => {
+    const listener = (request: ShareWindowRequest): void => {
+      if (request.workspaceId !== undefined && request.workspaceId !== workspaceRef.current) {
+        workspaceRef.current = request.workspaceId
+        reset()
+        setSelectedPacks(new Set(request.packIds ?? []))
+        setDirection(request.direction ?? 'export')
+        setWorkspaceId(request.workspaceId)
+        return
+      }
+      if (request.direction !== undefined) setDirection(request.direction)
+      if (request.packIds !== undefined) {
+        setSelectedPacks(current => new Set([...current, ...request.packIds!]))
+        setPreview(null)
+        setInspection(null)
+        setMessage(null)
+        setFailure(null)
+      }
+    }
+    shareWindowListeners.add(listener)
+    return () => { shareWindowListeners.delete(listener) }
+  }, [reset])
 
   const togglePack = (packId: string): void => {
     setSelectedPacks((current) => {

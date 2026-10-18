@@ -65,6 +65,8 @@ interface FaceCalls {
   listParams: Record<string, unknown>[]
   searchParams: Record<string, unknown>[]
   resolveParams: Record<string, unknown>[]
+  /** The workspace ids packsList was called for (share-window retargeting). */
+  packsList: string[]
 }
 
 interface FaceOverrides {
@@ -121,6 +123,7 @@ function faceOf(overrides: FaceOverrides = {}): { face: BetterSidebarCluesClient
     listParams: [],
     searchParams: [],
     resolveParams: [],
+    packsList: [],
   }
   const api = {
     sources: async () => ({
@@ -135,7 +138,8 @@ function faceOf(overrides: FaceOverrides = {}): { face: BetterSidebarCluesClient
         capabilities: { read: true, edit: overrides.editable !== false, concurrency: 'check-before-save' as const },
       }))),
     }),
-    packsList: async () => {
+    packsList: async (workspaceId: string) => {
+      calls.packsList.push(workspaceId)
       const rejected = overrides.packsListError?.()
       if (rejected !== undefined) throw rejected
       return { packs: overrides.packs ?? [PACK], revision: 4 }
@@ -1269,6 +1273,72 @@ describe('clue share window', () => {
     const checked = [...view.container.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')]
       .filter(input => input.checked)
     expect(checked.length).toBe(2)
+    view.unmount()
+  })
+
+  it('retargets an open window to the workspace of a later Import request', async () => {
+    const { face, calls } = faceOf()
+    fetchMock.mockImplementation(async (url: string) => {
+      if (String(url).includes('/sidebar/clues/share/import-preview')) {
+        return new Response(JSON.stringify({
+          ok: true,
+          value: {
+            workspaceId: 'ws-2',
+            mode: 'snapshot',
+            exportedAt: '2026-10-17T00:00:00.000Z',
+            packNames: [],
+            packs: [],
+            items: [],
+            missingSources: [],
+            snapshotCount: 0,
+            unresolvedCount: 0,
+            warnings: [],
+          },
+        }), { status: 200 })
+      }
+      throw new Error(`unexpected fetch ${String(url)}`)
+    })
+    let content: ReactNode
+    const handles = new Map<string, WindowHandle>()
+    const windows = {
+      open(options: WindowOpenOptions): WindowHandle {
+        const existing = handles.get(options.id)
+        if (existing !== undefined) return existing
+        content = options.content as ReactNode
+        const handle: WindowHandle = {
+          id: options.id,
+          update: () => undefined,
+          focus: () => undefined,
+          close: async () => undefined,
+          navigation: { push: () => undefined, pop: () => false, back: () => false, canGoBack: () => false, depth: () => 1 },
+        }
+        handles.set(options.id, handle)
+        return handle
+      },
+    }
+    openShareWindow({ windows, workspaceId: 'ws-1', face, direction: 'import' })
+    const view = renderRoot(createElement(Fragment, null, content!))
+    await flush(6)
+    expect(calls.packsList).toEqual(['ws-1'])
+
+    // The workspace switched while the singleton window stayed open; the
+    // tab's Import now names ws-2.
+    act(() => {
+      openShareWindow({ windows, workspaceId: 'ws-2', face, direction: 'import' })
+    })
+    await flush(6)
+    expect(calls.packsList).toEqual(['ws-1', 'ws-2'])
+
+    // The file chosen AFTER the switch is previewed against ws-2, never the
+    // workspace the window was first opened for.
+    const file = new File([new Uint8Array([1, 2, 3])], 'share.cluepack')
+    const input = view.container.querySelector<HTMLInputElement>('input[type="file"]')!
+    Object.defineProperty(input, 'files', { value: [file], configurable: true })
+    act(() => { input.dispatchEvent(new Event('change', { bubbles: true })) })
+    await flush(6)
+    const previewUrls = fetchMock.mock.calls.map(call => String(call[0]))
+    expect(previewUrls.some(url => url.includes('workspaceId=ws-2'))).toBe(true)
+    expect(previewUrls.some(url => url.includes('workspaceId=ws-1'))).toBe(false)
     view.unmount()
   })
 
