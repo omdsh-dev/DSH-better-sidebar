@@ -35,6 +35,7 @@ import { registerGithubSourceClient } from './clues/sources/github/index.tsx'
 import { registerFeishuSourceClient } from './clues/sources/feishu/index.tsx'
 import { appDateTime } from './clues/sources/feishu/time.ts'
 import { installClueInputTriggers } from './clues/mentions.ts'
+import { clueMentionsContentSection, clueMentionsCopy, feishuClientLabels } from './clues/locale-copy.ts'
 import { notifyClue } from './clues/notify.ts'
 import { resolveWorkspaceIdForSession } from './clues/workspace-id.ts'
 import { openClueReference } from './clues/open-reference.ts'
@@ -194,13 +195,10 @@ export function apply(ctx: Context): void {
   )
   ctx.effect(
     () => registerFeishuSourceClient(service.clues, {
-      // The live getter keeps the source names following the locale without a
-      // re-registration; `subscribe` additionally re-registers the renderers
+      // The live getter keeps every visible label following the locale without
+      // a re-registration; `subscribe` additionally re-registers the renderers
       // so an open window re-renders with the new copy.
-      labels: () => ({
-        docsName: t('clueFeishuDocsName'),
-        tasksName: t('clueFeishuTasksName'),
-      }),
+      labels: feishuClientLabels,
       formatDateTime: value => appDateTime(value),
       subscribe: listener => ctx.locale.subscribe(listener),
     }),
@@ -215,13 +213,11 @@ export function apply(ctx: Context): void {
       resolveWorkspaceId: session => resolveWorkspaceIdForSession(ctx, session.sessionId),
       onNotice: message => { notifyClue(message) },
       openReference: reference => openClueReference(ctx, reference),
-      // The refusal notices follow the active locale; the content-mode
-      // projection strings stay English on purpose (they are model-facing
-      // reference metadata, not UI chrome).
-      copy: {
-        clueInsertFailed: t('clueInsertFailed'),
-        packInsertFailed: t('clueInsertFailed'),
-      },
+      // Every user-visible refusal/description follows the active locale.
+      // (The model-facing projection labels minted inside the codec stay
+      // stable English metadata; these callbacks only wrap UI copy.)
+      copy: clueMentionsCopy(),
+      contentSection: clueMentionsContentSection(),
     }),
     'dsh-better-sidebar: clue @ sources',
   )
