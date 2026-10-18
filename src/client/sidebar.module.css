@@ -1014,6 +1014,31 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   display: inline-flex;
 }
 
+/* The root row's name is the root picker's trigger (its only affordance): the
+   caret reads as "this label is a control", and the pinned pin replaces it so
+   a root the reader chose stays legible at rest. Same metrics as the plain
+   name, so the row does not shift. */
+.explorerRootName {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.explorerRootName:hover {
+  color: var(--dsw-alias-label-primary);
+}
+
+.explorerRootNamePinned {
+  color: var(--dsw-alias-label-primary);
+}
+
 .explorerCopied {
   flex: none;
   font: var(--dsw-font-xxxs-11);
