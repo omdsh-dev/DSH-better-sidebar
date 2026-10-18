@@ -113,10 +113,9 @@ export function packWindowId(packId: string): string {
  */
 export function openPackManagementWindow(options: PackManagementOptions): WindowHandle {
   const guard: PackDraftGuard = { dirty: false }
-  let handle: WindowHandle
   const titleFor = (dirty: boolean): string =>
     dirty ? `${options.pack.name} · ${t('cluePackUnsaved')}` : options.pack.name
-  handle = options.windows.open({
+  const handle: WindowHandle = options.windows.open({
     id: packWindowId(options.pack.id),
     title: titleFor(false),
     size: 'collection',

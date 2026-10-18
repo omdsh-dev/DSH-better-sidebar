@@ -75,6 +75,7 @@ interface FaceOverrides {
   enabled?: (sourceId: string) => boolean
   listFor?: (sourceId: string) => readonly ClueCandidate[]
   searchFor?: (sourceId: string) => readonly ClueCandidate[]
+  listResultFor?: (sourceId: string, input: Record<string, unknown>) => { items: readonly ClueCandidate[]; nextCursor?: string }
   resolveCandidates?: readonly ClueCandidate[]
   packs?: readonly CluePack[]
   readError?: () => unknown
@@ -192,7 +193,7 @@ function faceOf(overrides: FaceOverrides = {}): { face: BetterSidebarCluesClient
     list: async (_workspaceId: string, input: Record<string, unknown>) => {
       calls.list += 1
       calls.listParams.push(input)
-      return {
+      return overrides.listResultFor?.(String(input.sourceId), input) ?? {
         items: overrides.listFor?.(String(input.sourceId))
           ?? [{ sourceId: 'builtin.files', typeId: 'builtin.files.markdown', locator: { path: 'c.md' }, title: 'C note' }],
       }
@@ -578,6 +579,57 @@ describe('clue pack management window', () => {
     await flush()
     const filesAgain = view.container.querySelector<HTMLInputElement>('[data-clue-add-member] ul input[type="checkbox"]')!
     expect(filesAgain.checked).toBe(true)
+    view.unmount()
+  })
+
+  it('keeps the selection across pages and pages with the returned cursor', async () => {
+    const pageOne: ClueCandidate = {
+      sourceId: 'builtin.files',
+      typeId: 'builtin.files.markdown',
+      locator: { path: 'page-1.md' },
+      title: 'Page one',
+    }
+    const pageTwo: ClueCandidate = {
+      sourceId: 'builtin.files',
+      typeId: 'builtin.files.markdown',
+      locator: { path: 'page-2.md' },
+      title: 'Page two',
+    }
+    const { face, calls } = faceOf({
+      listResultFor: (_sourceId, input) => input.cursor === 'cursor-2'
+        ? { items: [pageTwo] }
+        : { items: [pageOne], nextCursor: 'cursor-2' },
+    })
+    const view = renderRoot(createElement(PackManagementPage, {
+      windows: recordingWindows().windows,
+      workspaceId: 'ws-1',
+      face,
+      workspaces: [{ workspaceId: 'ws-1', title: '/repo' }],
+      pack: PACK,
+      guard: { dirty: false },
+      onInsertClue: () => true,
+      onInsertPack: () => true,
+      onNotice: () => undefined,
+    }))
+    await flush()
+    click(view.container, 'Add members')
+    await flush()
+    click(view.container, 'Local files')
+    await flush()
+    act(() => { view.container.querySelector<HTMLInputElement>('[data-clue-add-member] ul input[type="checkbox"]')!.click() })
+    await flush()
+    expect(view.container.textContent).toContain('1 selected')
+
+    click(view.container, 'Next')
+    await flush()
+    expect(calls.listParams.at(-1)).toMatchObject({ cursor: 'cursor-2' })
+    expect(view.container.textContent).toContain('Page two')
+    expect(view.container.textContent).toContain('1 selected')
+
+    click(view.container, 'Previous')
+    await flush()
+    expect(view.container.textContent).toContain('Page one')
+    expect(view.container.querySelector<HTMLInputElement>('[data-clue-add-member] ul input[type="checkbox"]')!.checked).toBe(true)
     view.unmount()
   })
 
@@ -1037,6 +1089,8 @@ describe('clue share window', () => {
     click(view.container, 'Preview')
     await flush(6)
     expect(view.container.textContent).toContain('2 clues')
+    expect(view.container.textContent).toContain('Release clues')
+    expect(view.container.textContent).toContain('2 members')
     click(view.container, 'Export .cluepack')
     await flush(8)
     expect(view.container.textContent).toContain('Done')
@@ -1301,6 +1355,8 @@ describe('clue share window', () => {
     act(() => { input.dispatchEvent(new Event('change', { bubbles: true })) })
     await flush(6)
     expect(view.container.textContent).toContain('share.cluepack')
+    expect(view.container.textContent).toContain('Release clues')
+    expect(view.container.textContent).toContain('1 member')
     expect(view.container.textContent).toContain('Missing sources: third.party:docs')
     expect(view.container.textContent).toContain('source not installed')
     view.unmount()
