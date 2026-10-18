@@ -927,7 +927,7 @@ describe('clue detail window', () => {
   })
 
   it('treats a source-locked edit document (archived) as read-only with the reason', async () => {
-    const { face, calls } = faceOf({
+    const { face } = faceOf({
       sources: [GITHUB_SOURCE],
       loadEditDocument: () => ({
         format: 'text/markdown',
