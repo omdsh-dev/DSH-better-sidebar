@@ -1253,7 +1253,9 @@ runtime 就绪前到达会得到明确的 `ClueError` 而不是空指针。外�
 CLI 依赖/连接时，`dependencyIds` / `connectionId` 必须引用宿主装配已注册的定义。
 
 > **本次功能线未验证项**：自动化只覆盖隔离 fixture / 假 CLI，**真实第三方 GitHub / 飞书账号、
-> 真实 `lark-cli` 安装与授权没有验证**；`pnpm test:mount`（真实宿主挂载冒烟）本阶段**未运行**；
+> 真实 `lark-cli` 安装与授权没有验证**；`pnpm test:mount`（真实宿主、keyless scratch profile、
+> DSH `0.2.1-rc.1`）已通过（13 passed / 3 skipped），但这不是真实账号/真实资源读写证据，320/390
+> 窄屏与明暗主题截图也未单独跑；
 > 新增 S9 UI 键的第三语言词典：zh / en / ja 已翻译，其余 18 份词典为英文占位（键集仍与 zh 对齐）；`uqr@0.1.3` 只用于把
 > 授权提示的 `prompt.qr.uri` 渲染成二维码（当前由飞书设备授权提供），不是授权校验。
 
