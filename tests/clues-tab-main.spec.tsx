@@ -94,6 +94,8 @@ function fixture(options: {
   enabled?: string[]
   listItems?: ClueCandidate[]
   listError?: boolean
+  searchError?: boolean
+  packsError?: boolean
   resolveCandidates?: ClueCandidate[]
 } = {}): Fixture {
   const calls: Calls = { list: 0, search: 0, resolve: 0 }
@@ -110,7 +112,10 @@ function fixture(options: {
   const emptyPins: CluesPinsResult = { pins: [], revision: 0 }
   const api = {
     sources: async (): Promise<CluesSourcesCatalogResult> => ({ sources: [FILES, FEISHU_DOCS, GITHUB], types: [] }),
-    packsList: async (): Promise<CluesPacksResult> => ({ packs, revision: 3 }),
+    packsList: async (): Promise<CluesPacksResult> => {
+      if (options.packsError === true) throw new Error('packs failed')
+      return { packs, revision: 3 }
+    },
     pinsList: async (): Promise<CluesPinsResult> => emptyPins,
     pinsAdd: async (_workspaceId: string, input: { clueId: string }): Promise<CluesPinsResult> => {
       pinned.push(input.clueId)
@@ -127,6 +132,7 @@ function fixture(options: {
     search: async (_workspaceId: string, input: Record<string, unknown>): Promise<ClueListResult> => {
       calls.search += 1
       searchParams.push(input)
+      if (options.searchError === true) throw new Error('search failed')
       return { items: options.listItems ?? [] }
     },
     resolve: async (_workspaceId: string, input: Record<string, unknown>) => {
@@ -489,6 +495,35 @@ describe('clue tab source browser', () => {
     press(view.container, 'Pin A note')
     await flush()
     expect(fx.pinned).toEqual(['c9'])
+    view.unmount()
+  })
+
+  it('shows the pack-list failure as an error instead of an empty library', async () => {
+    const fx = fixture({ workspaceId: 'ws-1', packsError: true })
+    const view = mount(fx)
+    await flush()
+    const alert = view.container.querySelector('[role="alert"]')
+    expect(alert?.textContent).toContain('Failed to load')
+    expect([...view.container.querySelectorAll('button')].some(button => (button.textContent ?? '').trim() === 'Retry')).toBe(true)
+    expect(view.container.textContent).not.toContain('No clue packs yet')
+    view.unmount()
+  })
+
+  it('retries the failed search (not a fresh list) from the error state', async () => {
+    const fx = fixture({ workspaceId: 'ws-1', enabled: [FILES.sourceId], searchError: true })
+    const view = mount(fx)
+    await flush()
+    const input = view.container.querySelector<HTMLInputElement>('input[aria-label="Search a keyword, or paste a resource URL / path"]')!
+    typeInto(input, 'release notes')
+    press(view.container, 'Search')
+    await flush()
+    expect(fx.calls.search).toBe(1)
+    const listBefore = fx.calls.list
+    press(view.container, 'Retry')
+    await flush()
+    expect(fx.calls.search).toBe(2)
+    expect(fx.calls.list).toBe(listBefore)
+    expect(fx.searchParams[1]).toMatchObject({ query: 'release notes' })
     view.unmount()
   })
 

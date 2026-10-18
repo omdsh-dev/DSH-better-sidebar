@@ -197,7 +197,7 @@ export function CluePacksSection(props: CluePacksSectionProps): ReactNode {
 
       {phase === 'loading' && <div className={css.stateLine} role="status">{t('loading')}</div>}
       {phase === 'error' && (
-        <div className={css.stateLine}>
+        <div className={css.stateLine} role="alert">
           <span>{error ?? t('error')}</span>
           <button type="button" className={css.stateAction} onClick={() => { void load() }}>{t('retry')}</button>
         </div>

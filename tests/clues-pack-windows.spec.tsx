@@ -78,6 +78,7 @@ interface FaceOverrides {
   resolveCandidates?: readonly ClueCandidate[]
   readError?: () => unknown
   loadEditDocument?: () => unknown
+  packsListError?: () => unknown
 }
 
 const FILES_SOURCE: ClueSourceDescriptor = {
@@ -132,7 +133,11 @@ function faceOf(overrides: FaceOverrides = {}): { face: BetterSidebarCluesClient
         capabilities: { read: true, edit: overrides.editable !== false, concurrency: 'check-before-save' as const },
       }))),
     }),
-    packsList: async () => ({ packs: [PACK], revision: 4 }),
+    packsList: async () => {
+      const rejected = overrides.packsListError?.()
+      if (rejected !== undefined) throw rejected
+      return { packs: [PACK], revision: 4 }
+    },
     packsRename: async (_workspaceId: string, input: { name: string }) => {
       calls.rename += 1
       if (overrides.renameError !== undefined) throw overrides.renameError()
@@ -1080,6 +1085,26 @@ describe('clue share window', () => {
     expect(archiveBodies.every(body => body.mode === 'references')).toBe(true)
     // The host protocol only knows the plural spelling.
     expect(bodies.some(body => body.mode === 'reference')).toBe(false)
+    view.unmount()
+  })
+
+  it('does not turn a failed pack list into "no packs" and retries it', async () => {
+    let fail = true
+    const { face } = faceOf({ packsListError: () => (fail ? new SidebarApiError('network', 'offline') : undefined) })
+    const view = renderRoot(createElement(SharePage, {
+      windows: recordingWindows().windows,
+      workspaceId: 'ws-1',
+      face,
+    }))
+    await flush()
+    const alert = view.container.querySelector('[role="alert"]')
+    expect(alert?.textContent).toContain('Failed to load')
+    expect(view.container.textContent).not.toContain('No clue packs yet')
+
+    fail = false
+    click(view.container, 'Retry')
+    await flush()
+    expect(view.container.textContent).toContain('Release clues')
     view.unmount()
   })
 

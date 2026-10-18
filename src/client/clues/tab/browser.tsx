@@ -142,6 +142,11 @@ export function ClueBrowser(props: ClueBrowserProps): ReactNode {
   const [busy, setBusy] = useState(false)
   const pinsRevisionRef = useRef<number | undefined>(undefined)
   const abortRef = useRef<AbortController | undefined>(undefined)
+  /** The last request that actually went to the wire (Retry replays it). */
+  const lastRequestRef = useRef<{ view: View; cursor: string | undefined }>({
+    view: { kind: 'list' },
+    cursor: undefined,
+  })
 
   const enabled = useMemo(
     () => sources.filter(source => face.isSourceEnabled(source.sourceId)),
@@ -235,6 +240,7 @@ export function ClueBrowser(props: ClueBrowserProps): ReactNode {
         return
       }
     }
+    lastRequestRef.current = { view: requested, cursor }
     abortRef.current?.abort()
     const controller = new AbortController()
     abortRef.current = controller
@@ -624,7 +630,10 @@ export function ClueBrowser(props: ClueBrowserProps): ReactNode {
                   <button
                     type="button"
                     className={css.stateAction}
-                    onClick={() => { void run({ kind: 'list' }, undefined) }}
+                    onClick={() => {
+                      const last = lastRequestRef.current
+                      void run(last.view, last.cursor)
+                    }}
                   >
                     {t('retry')}
                   </button>

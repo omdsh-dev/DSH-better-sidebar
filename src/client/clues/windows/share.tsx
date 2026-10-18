@@ -81,6 +81,7 @@ export function SharePage(props: OpenShareWindowOptions): ReactNode {
   const { workspaceId, face } = props
   const [direction, setDirection] = useState<'export' | 'import'>('export')
   const [packs, setPacks] = useState<readonly CluePack[]>([])
+  const [packsError, setPacksError] = useState(false)
   const [selectedPacks, setSelectedPacks] = useState<ReadonlySet<string>>(
     () => new Set(props.packIds ?? []),
   )
@@ -98,11 +99,26 @@ export function SharePage(props: OpenShareWindowOptions): ReactNode {
   const [importResult, setImportResult] = useState<ShareImportResult | null>(null)
   const abortRef = useRef<AbortController | undefined>(undefined)
 
+  const loadPacks = useCallback(async (): Promise<void> => {
+    setPacksError(false)
+    try {
+      const result = await face.api.packsList(workspaceId)
+      setPacks(result.packs)
+    } catch {
+      // A failed list is NOT "there are no packs": keep the explicit error
+      // and offer Retry instead of an empty-library message.
+      setPacksError(true)
+    }
+  }, [face, workspaceId])
+
   useEffect(() => {
     let active = true
     void face.api.packsList(workspaceId).then((result) => {
-      if (active) setPacks(result.packs)
-    }).catch(() => { /* the picker stays empty; the UI still explains what to do */ })
+      if (active) {
+        setPacks(result.packs)
+        setPacksError(false)
+      }
+    }).catch(() => { if (active) setPacksError(true) })
     return () => {
       active = false
       abortRef.current?.abort()
@@ -298,7 +314,16 @@ export function SharePage(props: OpenShareWindowOptions): ReactNode {
 
           <div className={css.field}>
             <span className={css.fieldLabel}>{t('clueSharePacks')}</span>
-            {packs.length === 0
+            {packsError
+              ? (
+                <div className={css.error} role="alert">
+                  <span>{t('error')}</span>
+                  <button type="button" className={css.action} onClick={() => { void loadPacks() }}>
+                    {t('retry')}
+                  </button>
+                </div>
+              )
+              : packs.length === 0
               ? <span className={css.hint}>{t('clueBrowserNoPacks')}</span>
               : (
                 <ul className={css.packPicker}>
