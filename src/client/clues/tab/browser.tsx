@@ -139,6 +139,7 @@ export function ClueBrowser(props: ClueBrowserProps): ReactNode {
   const [selectionMode, setSelectionMode] = useState(false)
   const [selected, setSelected] = useState<ReadonlyMap<string, ClueCandidate>>(new Map())
   const [packChoices, setPackChoices] = useState<readonly { id: string; name: string }[]>([])
+  const [packChoicesError, setPackChoicesError] = useState(false)
   const [busy, setBusy] = useState(false)
   const pinsRevisionRef = useRef<number | undefined>(undefined)
   const abortRef = useRef<AbortController | undefined>(undefined)
@@ -398,10 +399,14 @@ export function ClueBrowser(props: ClueBrowserProps): ReactNode {
     try {
       const result = await face.api.packsList(workspaceId)
       setPackChoices(result.packs.map(pack => ({ id: pack.id, name: pack.name })))
-    } catch {
+      setPackChoicesError(false)
+    } catch (failure) {
+      // A failed list is not "no packs": say so and keep Retry reachable.
       setPackChoices([])
+      setPackChoicesError(true)
+      onNotice(clueErrorMessage(failure, t('error')))
     }
-  }, [face, workspaceId])
+  }, [face, workspaceId, onNotice])
 
   const addSelectedToPack = useCallback(async (packId: string): Promise<void> => {
     if (packId === '') return
@@ -770,9 +775,16 @@ export function ClueBrowser(props: ClueBrowserProps): ReactNode {
                     if (packId !== '') void addSelectedToPack(packId)
                   }}
                 >
-                  <option value="">{packChoices.length === 0 ? t('clueBrowserNoPacks') : t('clueBrowserAddToPack')}</option>
+                  <option value="">
+                    {packChoicesError ? t('error') : packChoices.length === 0 ? t('clueBrowserNoPacks') : t('clueBrowserAddToPack')}
+                  </option>
                   {packChoices.map(pack => <option key={pack.id} value={pack.id}>{pack.name}</option>)}
                 </select>
+                {packChoicesError && (
+                  <button type="button" className={css.stateAction} onClick={() => { void loadPackChoices() }}>
+                    {t('retry')}
+                  </button>
+                )}
                 <button type="button" className={css.toolButton} onClick={() => { setSelected(new Map()) }}>
                   <IconCloseOutlineRegular size={14} />
                   {t('cancel')}

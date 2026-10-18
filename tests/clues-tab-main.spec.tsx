@@ -296,6 +296,22 @@ describe('clue tab main page', () => {
     act(() => { help?.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
     expect(view.container.querySelector('[role="dialog"]')).not.toBeNull()
 
+    // Escape belongs to the help layer: it must not reach the app/window
+    // listeners behind the overlay.
+    const leaked = vi.fn()
+    document.addEventListener('keydown', leaked)
+    const dialogAgain = view.container.querySelector('[role="dialog"]')!
+    act(() => {
+      dialogAgain.dispatchEvent(new KeyboardEvent('keydown', {
+        key: 'Escape',
+        bubbles: true,
+        cancelable: true,
+      }))
+    })
+    expect(leaked).not.toHaveBeenCalled()
+    expect(view.container.querySelector('[role="dialog"]')).toBeNull()
+    document.removeEventListener('keydown', leaked)
+
     view.unmount()
   })
 
