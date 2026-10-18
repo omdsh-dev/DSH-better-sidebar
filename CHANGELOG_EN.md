@@ -17,7 +17,8 @@
 - **Package**: export the `dsh-better-sidebar/icon` subpath so other packages can resolve `icon.svg` through `exports` ([#1016](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1016)).
 
 **Community contributions**: @lhh010 (#999), @wang-kaopu (#1018, #1020), @yanzhaohui1999 (#929, #956, #1012, #1002), @finley08 (#965), @UNscientific-9 (#1052, #1057), @mvanhorn (#981), @z11y11w (#1055), @WinterXMQ (#1053), @NolanHo (#1035, #1044).
-### Unreleased (clue collection S1: sources and clue foundation)
+
+### Unreleased (clue collection S1–S9: sources, clues, packs and sharing)
 
 - 🧩 **New public clue extension surface**: host Cordis service `betterSidebarClues` plus the package subpath `dsh-better-sidebar/clues` (types for sources/types/clues/packs/pins/bindings/snapshots, the service, the built-in `builtin.files` local source, and the `clues.*` route methods). The client exposes `ctx.betterSidebar.clues` (source-display registry, source/@ switch semantics, typed wire methods) and `features` gains `'clues'`. See [external-plugin guide §7.1](docs/external-plugin-guide.md#71-线索扩展面s1-开发线来源--线索--线索包).
 - ⚙️ **Contract fixes**: `clues.saveEdit` is no longer capped by the 1 MiB JSON envelope (it follows the 5 MiB editable-document bound); the host bundle and the `./clues` subpath share ONE `ClueError` class (fixed categories such as `auth-required`/`conflict` no longer degrade to `failed`); a workspace locator whose `workspaceId` does not match the operation workspace is refused; in-workspace absolute search hits re-root to the workspace locator; missing/file list and search scopes answer `not-found`/`unsupported`; pagination never emits a cursor the source would reject; saving after the file was deleted answers `conflict`; type/source capability bits are enforced before dispatch; `registerApi` refuses after dispose; duplicate snapshot ids are refused instead of overwriting; stored documents are validated row by row.
