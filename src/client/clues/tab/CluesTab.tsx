@@ -292,7 +292,14 @@ export function CluesTab({ ctx, store, scope, visible }: CluesTabProps): ReactNo
         </div>
       )}
 
-      {helpOpen && <ClueHelpOverlay onClose={closeHelp} />}
+      {/*
+        Mount the help overlay only while this tab is the visible surface.
+        Native tab bodies are keepMounted forever: a hidden clues tab would
+        otherwise keep a document-level capture Escape listener alive and
+        swallow Escape from the ACTIVE tab (the mount lane caught this as the
+        CodeMirror search panel failing to close after the clues sweep).
+      */}
+      {visible && helpOpen && <ClueHelpOverlay onClose={closeHelp} />}
     </div>
   )
 }
