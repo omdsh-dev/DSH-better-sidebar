@@ -41,6 +41,19 @@ describe('Tasks page motion', () => {
     expect(source('src/client/JobsDrawer.tsx')).toContain('useAutoAnimateRef')
   })
 
+  it('keeps graph control menu items square while clipping the rounded cluster', () => {
+    const styles = source('src/client/tasks-graph.module.css')
+    const controls = /\.controls \{([\s\S]*?)\n\}/.exec(styles)?.[1]
+    const button = /\.controlBtn \{([\s\S]*?)\n\}/.exec(styles)?.[1]
+    const textButton = /\.controlText \{([\s\S]*?)\n\}/.exec(styles)?.[1]
+    if (controls === undefined || button === undefined || textButton === undefined) {
+      throw new Error('graph control rules must exist')
+    }
+    expect(controls).toContain('overflow: hidden')
+    expect(button).toContain('border-radius: 0')
+    expect(textButton).toContain('border-radius: 0')
+  })
+
   it('gives canvas cards a mount-only CSS entrance that respects reduced motion', () => {
     const styles = source('src/client/tasks-graph.module.css')
     const node = /\.node \{([\s\S]*?)\n\}/.exec(styles)?.[1]
