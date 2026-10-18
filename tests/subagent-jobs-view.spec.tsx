@@ -357,6 +357,33 @@ describe('SubagentView background jobs', () => {
     unmount()
   })
 
+  it("shows a live job's progress line and drops it once the job has settled", async () => {
+    jobsFake.emit({
+      rows: {
+        root: [
+          {
+            id: 'plan-1', kind: 'plan', label: 'migrate the schema', status: 'running',
+            progress: '3/10 done', startedAt: 1_000,
+          },
+          {
+            id: 'plan-2', kind: 'plan', label: 'tidy the docs', status: 'completed',
+            progress: '10/10 done', startedAt: 2_000, finishedAt: 3_000,
+          },
+        ],
+      },
+    })
+    const store = makeStore(baseSnapshot())
+    const { container, unmount } = await renderPage(store)
+    const rowOf = (label: string): string =>
+      [...container.querySelectorAll('button')]
+        .find(button => (button.textContent ?? '').includes(label))?.textContent ?? ''
+    // The producer's progress line rides the running row's meta text…
+    expect(rowOf('migrate the schema')).toContain('3/10 done')
+    // …and a settled row never shows a stale one.
+    expect(rowOf('tidy the docs')).not.toContain('10/10 done')
+    unmount()
+  })
+
   it('renders nothing job-related on a deployment without the jobs service', async () => {
     const store = makeStore(baseSnapshot())
     const bare = makeCtx(store)
