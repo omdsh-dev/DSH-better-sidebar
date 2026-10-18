@@ -976,6 +976,7 @@ export const ar: Record<string, string> = {
   clueShareProgress: 'Working: {phase} ({done}/{total})',
   clueSharePhaseCollect: 'Collecting',
   clueSharePhaseRead: 'Reading',
+  clueSharePhaseContent: 'Content',
   clueSharePhaseArchive: 'Packing',
   clueSharePhaseValidate: 'Validating',
   clueSharePhaseClue: 'Clues',

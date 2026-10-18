@@ -108,6 +108,7 @@ function errorLine(error: unknown): string {
 const PROGRESS_PHASE_KEYS = {
   collect: 'clueSharePhaseCollect',
   read: 'clueSharePhaseRead',
+  content: 'clueSharePhaseContent',
   archive: 'clueSharePhaseArchive',
   validate: 'clueSharePhaseValidate',
   clue: 'clueSharePhaseClue',

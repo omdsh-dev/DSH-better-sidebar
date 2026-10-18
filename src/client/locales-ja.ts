@@ -975,6 +975,7 @@ export const ja: Record<string, string> = {
   clueShareProgress: '実行中：{phase}（{done}/{total}）',
   clueSharePhaseCollect: '収集中',
   clueSharePhaseRead: '読み取り中',
+  clueSharePhaseContent: 'コンテンツ',
   clueSharePhaseArchive: 'アーカイブ中',
   clueSharePhaseValidate: '検証中',
   clueSharePhaseClue: 'クルー',
