@@ -1,9 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { activeWorktreeRootOf } from '../src/active-worktree.ts'
+import { pinSessionRoot, unpinSessionRoot } from '../src/session-root.ts'
 import type { Context } from '../src/context-types.ts'
 import { removeTree } from './temp-tree.ts'
 
@@ -128,6 +129,68 @@ describe('active worktree root', () => {
       const ctx = sessionCtx(repo, [{ cwd: join(repo, 'src') }])
       await expect(activeWorktreeRootOf(ctx, 's-no-worktree', repo)).resolves.toBe(realpathSync.native(repo))
     } finally {
+      removeTree(root)
+    }
+  })
+
+  /**
+   * The explicit pin (the explorer's root picker) outranks every inference —
+   * including the environment override, which is process-wide and therefore the
+   * wrong tool when one session must be brought back to a checkout the reader
+   * chose. `ignorePin` is what the picker's own read uses to show what
+   * "automatic" would resolve to.
+   */
+  it('serves an explicit pin over the inference and the environment override', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-active-root-'))
+    const repoA = join(root, 'repo-a')
+    const repoB = join(root, 'repo-b')
+    const worktreeB = join(root, 'worktree-b')
+    const sessionId = 's-pinned'
+    try {
+      initRepo(repoA, 'a.txt')
+      initRepo(repoB, 'b.txt')
+      git(repoB, ['worktree', 'add', '-q', '-b', 'agent', worktreeB])
+      const ctx = sessionCtx(repoA, [{ cwd: worktreeB, path: join(worktreeB, 'b.txt') }])
+      pinSessionRoot(sessionId, realpathSync.native(repoA))
+      await expect(activeWorktreeRootOf(ctx, sessionId, repoA)).resolves.toBe(realpathSync.native(repoA))
+      // The picker's read still sees the inference …
+      await expect(activeWorktreeRootOf(ctx, sessionId, repoA, { ignorePin: true })).resolves.toBe(realpathSync.native(worktreeB))
+      // … and the process-wide override cannot take the session away from it.
+      const previous = process.env.DSH_SIDEBAR_WORKTREE_ROOT
+      process.env.DSH_SIDEBAR_WORKTREE_ROOT = realpathSync.native(repoB)
+      try {
+        await expect(activeWorktreeRootOf(ctx, sessionId, repoA)).resolves.toBe(realpathSync.native(repoA))
+      } finally {
+        if (previous === undefined) delete process.env.DSH_SIDEBAR_WORKTREE_ROOT
+        else process.env.DSH_SIDEBAR_WORKTREE_ROOT = previous
+      }
+      // Clearing the pin hands the session straight back to the inference.
+      unpinSessionRoot(sessionId)
+      await expect(activeWorktreeRootOf(ctx, sessionId, repoA)).resolves.toBe(realpathSync.native(worktreeB))
+    } finally {
+      unpinSessionRoot(sessionId)
+      removeTree(root)
+    }
+  })
+
+  it('drops a pin whose checkout was removed and falls back to the inference', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-active-root-'))
+    const repo = join(root, 'repo')
+    const sessionId = 's-pin-gone'
+    try {
+      initRepo(repo, 'a.txt')
+      const pinned = join(root, 'ghost-checkout')
+      mkdirSync(pinned)
+      // The route stores what `git worktree list` reports, i.e. a canonical
+      // path (macOS tmpdirs live under the `/var` → `/private/var` symlink).
+      const canonical = realpathSync.native(pinned)
+      const ctx = sessionCtx(repo, [{ cwd: join(repo, 'src') }])
+      pinSessionRoot(sessionId, canonical)
+      await expect(activeWorktreeRootOf(ctx, sessionId, repo)).resolves.toBe(canonical)
+      rmSync(pinned, { recursive: true, force: true })
+      await expect(activeWorktreeRootOf(ctx, sessionId, repo)).resolves.toBe(realpathSync.native(repo))
+    } finally {
+      unpinSessionRoot(sessionId)
       removeTree(root)
     }
   })

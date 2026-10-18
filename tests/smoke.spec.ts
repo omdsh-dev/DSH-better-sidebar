@@ -641,6 +641,54 @@ describe('session cwd resolution over the API route', () => {
     }
   })
 
+  /**
+   * The explorer's root picker over the real route: one session pinned to its
+   * own linked checkout follows every `cwdOf()` consumer, an unrelated
+   * repository is refused (the same rule `git.worktrees`' own `worktree`
+   * argument obeys), and clearing the pin hands the session back to the
+   * automatic root.
+   */
+  it('pins one session\'s root to its own checkout and refuses another repository', async () => {
+    const scratch = realpathSync.native(mkdtempSync(join(tmpdir(), 'sidebar-root-pin-')))
+    const repo = join(scratch, 'repo')
+    const linked = join(scratch, 'repo-linked')
+    const unrelated = join(scratch, 'unrelated')
+    const run = (dir: string, args: string[]): void => {
+      const result = spawnSync('git', ['-C', dir, '-c', 'user.name=Test', '-c', 'user.email=test@dsh.invalid', ...args], { encoding: 'utf8' })
+      if (result.status !== 0) throw new Error(result.stderr)
+    }
+    try {
+      run(scratch, ['init', '-q', '-b', 'main', repo])
+      run(repo, ['commit', '-q', '--allow-empty', '-m', 'main'])
+      run(repo, ['worktree', 'add', '-q', '-b', 'agent', linked])
+      run(scratch, ['init', '-q', '-b', 'other', unrelated])
+      run(unrelated, ['commit', '-q', '--allow-empty', '-m', 'other'])
+      const route = mount({ sessions: { get: () => ({ header: { cwd: repo } }) } })
+      const base = { sessionId: 'root-pin', cwd: repo }
+      // Nothing pinned yet: the automatic answer is the root, and the picker's
+      // read reports both so it can show what it would fall back to.
+      expect(await invoke(route, 'session.root', base)).toMatchObject({
+        ok: true, value: { pinned: false, root: repo, automatic: repo, base: repo },
+      })
+      expect(await invoke(route, 'session.root', { ...base, root: linked })).toMatchObject({
+        ok: true, value: { pinned: true, root: linked },
+      })
+      // Every route that funnels through `cwdOf()` now answers with the pin.
+      expect(await invoke(route, 'session.cwd', base)).toMatchObject({ ok: true, value: { cwd: linked, pinned: true } })
+      expect(await invoke(route, 'fs.tree', { ...base, path: linked })).toMatchObject({ ok: true })
+      // A checkout of ANOTHER repository is refused, and the pin stays put.
+      expect(await invoke(route, 'session.root', { ...base, root: unrelated })).toMatchObject({ ok: false, status: 400 })
+      expect(await invoke(route, 'session.cwd', base)).toMatchObject({ ok: true, value: { cwd: linked } })
+      // `null` clears it: the session falls straight back to the automatic root.
+      expect(await invoke(route, 'session.root', { ...base, root: null })).toMatchObject({
+        ok: true, value: { pinned: false, root: repo },
+      })
+      expect(await invoke(route, 'session.cwd', base)).toMatchObject({ ok: true, value: { cwd: repo, pinned: false } })
+    } finally {
+      removeTree(scratch)
+    }
+  })
+
   it('git.graph routes selected repositories and worktrees and maps stale cursors', async () => {
     const scratch = realpathSync.native(mkdtempSync(join(tmpdir(), 'sidebar-graph-route-')))
     const cwd = join(scratch, 'workspace')
