@@ -663,11 +663,25 @@ export interface SidebarLocaleService {
 /** The composer draft face the sidebar reaches through `ctx.conversation.input`. */
 export interface SidebarSessionInput {
   /** The live input store (draft read for append). `draftRev` is the machine's
-   *  span-CAS revision — required to mint a structured file-reference chip. */
+   *  span-CAS revision — required to mint a structured file-reference chip —
+   *  and `occurrences` are the chips' clipboard-coordinate ranges, the only
+   *  way to fold `draft` (the clipboard projection) into the detect projection
+   *  every `TokenSpan` addresses. */
   state: {
-    getSnapshot(): { draft: string; draftRev?: number }
+    getSnapshot(): {
+      draft: string
+      draftRev?: number
+      occurrences?: readonly { offset: number; length: number }[]
+    }
   }
-  /** Replace the draft text (the input machine's single public write path). */
+  /**
+   * Replace the whole draft text. **Not an insert API**: it removes inline
+   * reference chips (the draft comes back as plain text), so both insertion
+   * paths emit scoped composer events instead — see
+   * `client/conversation-draft.ts`. If a future host changes that semantic
+   * (chip-preserving replacement, or a public insert/`captureInsertion` face),
+   * revisit this note together with both paths in that module.
+   */
   setDraft(text: string): void
 }
 

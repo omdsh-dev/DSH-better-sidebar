@@ -27,8 +27,24 @@ function mount(cwd: string, options: { root?: string; phase?: 'pending' | 'ready
   let draft = 'before'
   let draftRev = 1
   const setDraft = vi.fn((text: string) => { draft = text; draftRev++ })
-  const emit = vi.fn((_event: string, _payload: unknown) => {
-    if (options.chip) draftRev++
+  // The host's two composer events, applied for real: plain text splices at
+  // the span, a reference mints the chip plus its separating space. `chip:
+  // false` models a host that refuses the structured insert, which is how the
+  // plugin's plain-text fallback is exercised.
+  const emit = vi.fn((event: string, payload: unknown) => {
+    if (event === 'slash/input-insert-text') {
+      const { text, span } = payload as { text: string; span: { start: number; end: number } }
+      draft = `${draft.slice(0, span.start)}${text}${draft.slice(span.end)}`
+      draftRev++
+      return
+    }
+    if (event !== 'slash/input-insert-reference' || !options.chip) return
+    const { reference, span } = payload as {
+      reference: { clipboardText: string }
+      span: { start: number; end: number }
+    }
+    draft = `${draft.slice(0, span.start)}${reference.clipboardText} ${draft.slice(span.end)}`
+    draftRev++
   })
   const input = { state: { getSnapshot: () => ({ draft, draftRev }) }, setDraft }
   const workspaces = { list: { getSnapshot: () => ({
@@ -75,7 +91,13 @@ describe('Sidebar workspace references', () => {
     try {
       view.insert('/work/my dir', true)
       expect(view.draft()).toBe('before @"my dir/" ')
-      expect(view.emit).not.toHaveBeenCalled()
+      // A folder mention is plain text over a span — never a whole-draft
+      // rewrite, which would flatten every inline chip already in the draft.
+      expect(view.emit).toHaveBeenCalledWith('slash/input-insert-text', {
+        text: ' @"my dir/" ',
+        span: { draftRev: 1, start: 6, end: 6 },
+      })
+      expect(view.setDraft).not.toHaveBeenCalled()
     } finally { view.unmount() }
   })
 
@@ -102,7 +124,12 @@ describe('Sidebar workspace references', () => {
         reference: { source: 'reference', ref: '@notes.md', label: 'notes.md', appearance: 'file', clipboardText: '@notes.md' },
         span: { draftRev: 2, start: beforeFile.length, end: beforeFile.length },
       })
-      expect(view.setDraft).toHaveBeenCalledTimes(1)
+      // The directory insert rode the plain-text event before it.
+      expect(view.emit).toHaveBeenNthCalledWith(1, 'slash/input-insert-text', {
+        text: expect.stringMatching(/^ @/u),
+        span: { draftRev: 1, start: 6, end: 6 },
+      })
+      expect(view.setDraft).not.toHaveBeenCalled()
     } finally { view.unmount() }
   })
 
