@@ -322,6 +322,7 @@ export function PackManagementPage(
   // ── add-member page ────────────────────────────────────────────────────────
 
   const enabledSources = sources.filter(source => face.isSourceEnabled(source.sourceId))
+  const enabledSourceKey = enabledSources.map(source => source.sourceId).join('\u0000')
   const addScope = addSourceId === null ? undefined : addScopes[addSourceId]
   const addSummary = addSourceId === null ? undefined : scopeSummary(addSourceId, addScope)
 
@@ -361,6 +362,19 @@ export function PackManagementPage(
     setAddScopeForm(formOf(addSourceId, addScopes[addSourceId]))
     setAddScopeError(null)
   }, [addSourceId, addScopes])
+
+  // A source switched off elsewhere leaves the page: drop the active one (the
+  // cross-source selection itself is preserved).
+  useEffect(() => {
+    if (addSourceId === null) return
+    if (enabledSourceKey.split('\u0000').includes(addSourceId)) return
+    addAbort.current?.abort()
+    setAddSourceId(null)
+    setAddCandidates([])
+    setAddNext(undefined)
+    setAddNeedsScope(null)
+    setAddError(null)
+  }, [addSourceId, enabledSourceKey])
 
   // A range chosen elsewhere (the tab's own browser) reaches this open window
   // through the same persisted document.
