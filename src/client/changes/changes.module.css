@@ -62,8 +62,12 @@
 
 /* Docked by the flex column above (a sibling of `.gitScroll`), plus sticky so
    it also survives the case where the host tab body itself scrolls the whole
-   tab — the branch control must never leave the bottom of the pane. */
-.gitFooter { flex: none; min-width: 0; position: sticky; bottom: 0; z-index: 1; border-top: 1px solid var(--dsw-alias-border-l1); background: var(--dsw-alias-bg-base); }
+   tab — the branch control must never leave the bottom of the pane.
+   NO z-index: in a floating window the host's resize grip is the last child
+   at `z-index: auto`, so a stacking footer paints over the bottom-right
+   corner and makes the grip un-hittable. Sticky (positioned) already paints
+   above the scrolled rows. */
+.gitFooter { flex: none; min-width: 0; position: sticky; bottom: 0; border-top: 1px solid var(--dsw-alias-border-l1); background: var(--dsw-alias-bg-base); }
 .footerRow { display: flex; align-items: center; min-width: 0; min-height: 28px; }
 
 /* A failed remote op reports above the branch row and git's stderr can be long:

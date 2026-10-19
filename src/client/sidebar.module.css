@@ -109,6 +109,20 @@
   -webkit-app-region: no-drag;
 }
 
+/* The host float window's resize grip (`data-dockkit-float-resize`, the
+   20×20 bottom-right corner) is the float's LAST child but sits at
+   `z-index: auto`. Tab content we do not control the stacking of may paint
+   above it at z-index 1 — the Git footer and the explorer's multi-select bar
+   both do — which made the grip invisible AND un-hittable: a floating Git tab
+   could not be resized by pointer at all, while the file tab's float (no
+   stacking bottom bar) resized normally. Raise the host's own hook above that
+   class of content; this is the half that also covers third-party tab
+   content we do not own (the content-side cleanup is .gitFooter dropping its
+   own z-index in changes.module.css). */
+:global([data-dockkit-float-resize]) {
+  z-index: 2;
+}
+
 :global([data-dsh-panel-host][data-dsh-panel-host-degraded]) {
   position: absolute;
   top: 0;
