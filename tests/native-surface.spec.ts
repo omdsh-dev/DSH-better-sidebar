@@ -467,10 +467,15 @@ describe('createNativeSurface activate/close (the real adapter)', () => {
     expect(closed).toEqual({ type: 'sidechat', title: 'bg' })
   })
 
-  it('close of an unknown id is undefined (a strict no-op)', () => {
+  it('close of a tab the plugin holds no record for still reaches the host', () => {
+    // Two real cases share this path: the host's own tab (the guide page) and a
+    // plugin tab whose body never rendered (records are minted by the body). The
+    // plugin cannot tell "host-owned" from "names nothing", and the host no-ops
+    // an id it does not know, so the close is forwarded either way. This is what
+    // lets the delegated middle-click close cover every chip.
     const { surface, close } = mountSurface()
-    expect(surface.close('s1', 'missing')).toBeUndefined()
-    expect(close).not.toHaveBeenCalled()
+    expect(surface.close('s1', 'host-guide-tab')).toBeUndefined()
+    expect(close).toHaveBeenCalledWith('host-guide-tab')
   })
 })
 

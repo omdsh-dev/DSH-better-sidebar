@@ -269,13 +269,22 @@ export function createNativeSurface(ctx: Context, records: NativeTabRecords): Na
       // Read through the SESSION: the same native id names a tab in every
       // session, so a bare read can hand back another session's record.
       const record = records.get(sessionId, tabId)
-      if (record === undefined) return undefined
-      records.drop(sessionId, tabId)
       const api = controller()
-      if (api !== undefined) {
+      const closeOnHost = (): void => {
+        if (api === undefined) return
         if (sessionId === mountedSessionId(ctx)) api.close(tabId)
         else if (api.closeIn !== undefined) api.closeIn(sessionId, tabId)
       }
+      if (record === undefined) {
+        // No record: the host's own tab (the guide page) or a plugin tab whose
+        // body never rendered (records are minted by the body). The host still
+        // owns closing it; the caller gets nothing back because there is no
+        // record to report.
+        closeOnHost()
+        return undefined
+      }
+      records.drop(sessionId, tabId)
+      closeOnHost()
       return {
         type: record.tab.type,
         title: record.tab.title,

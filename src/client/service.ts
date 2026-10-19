@@ -594,7 +594,12 @@ export interface SidebarSurface {
    * cannot enumerate them omits this.
    */
   pathTabs?(): NativePathTab[]
-  /** Close one native tab; the closed record's type/title/meta, or undefined when the id is not native. */
+  /**
+   * Close one native tab and return the closed record's type/title/meta, or
+   * undefined when the plugin holds no record for the id. The tab is closed
+   * through the host controller either way — the record is the plugin's own
+   * bookkeeping, not the authority on which tabs the host owns.
+   */
   close(sessionId: string, tabId: string): { type: string; title: string; meta?: unknown } | undefined
   /**
    * Patch a native tab's plugin-side record; false when it is not native.

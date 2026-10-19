@@ -2,6 +2,10 @@
 
 > 本文档收录 dsh-better-sidebar 的完整发布历史（最新版摘要见 [README](README_ZH.md)；同步发布于 [GitHub Releases](https://github.com/omdsh-dev/DSH-better-sidebar/releases)）。
 
+### 未发布
+
+- 🖱️ **右侧栏 tab 支持中键关闭**：宿主 dockkit 的 tab strip 没有中键路由，插件用 document 级事件委托补齐——按下与松开都落在同一个**可关闭** chip 才关闭（与浏览器 / VS Code 一致的 release-position 语义；拖到别处松手即取消），左键激活与右键菜单不受影响，终端里的中键粘贴照旧。宿主自己的「指南」tab 同样支持。
+
 ### v0.28.0
 
 - **正式版支持线前移到 DSH 0.2.1-rc.1+**：13 条 DSH peer 下限统一为 `^0.2.1-rc.1`，开发依赖、CI 与安装脚本使用精确 RC 基线。不新增运行时兼容层、不改功能实现。

@@ -22,6 +22,7 @@ import { registerNativeSurface } from './native/index.ts'
 import { registerBottomToggle } from './sidebar/bottom-toggle.tsx'
 import { ContextDiagnosticsHost, createContextDiagnosticsHost, registerContextDiagnosticsUI } from './context-diagnostics-ui.tsx'
 import { createNativeSurface } from './native/surface.ts'
+import { registerTabMiddleClick } from './native/tab-middle-click.ts'
 import { isTargetAvailable, openInterceptedLink, registerLinkInterception, shouldTakeOverLink } from './link-intercept.ts'
 import { registerImeGuard } from './ime-guard.ts'
 import { registerSettingsNavIcon } from './settings-nav-icon.ts'
@@ -197,6 +198,13 @@ export function apply(ctx: Context): void {
   ctx.effect(
     () => registerBottomToggle(ctx, sidebarStore),
     'dsh-better-sidebar: bottom-workbench toggle',
+  )
+  // Middle-click close for the host's right-Sidebar chips. The dockkit strip
+  // owns the chips and has no middle-button route, so the gesture is delegated
+  // at the document; one listener per activation, released with this fiber.
+  ctx.effect(
+    () => registerTabMiddleClick({ closeTab: (tabId) => { service.closeTab(tabId) } }),
+    'dsh-better-sidebar: tab middle-click close',
   )
   ctx.effect(
     () => () => { nativeSurface.dispose(); service.setSurface(undefined) },
