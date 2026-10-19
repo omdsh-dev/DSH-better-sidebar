@@ -46,7 +46,29 @@ export interface SidebarSubagentLiveRoutes {
  * Build the live-preview routes bound to the plugin context.
  * @param ctx - host plugin context.
  */
+/** One session's fold, keyed by the exact log window it was derived from. */
+interface FoldEntry {
+  /** `snapshotEvents().length` when the fold ran. */
+  length: number
+  /** Last event seq when the fold ran (-1 for an empty log). */
+  lastSeq: number
+  /** The catalog's running flag the fold ran with. */
+  running: boolean | undefined
+  view: SidebarChildLiveView
+}
+
 export function buildSubagentLiveApi(ctx: Context): SidebarSubagentLiveRoutes {
+  /**
+   * Per-session fold cache.
+   *
+   * A session's event log is append-only, so `(length, last seq)` plus the
+   * catalog's `running` flag identifies the exact input the previous fold saw.
+   * Without this every poll re-folded every session of the tree, including
+   * children that settled long ago; on a tree with several subagents that is
+   * the whole cost of the 3 s cadence. The cache is pruned to the tree being
+   * reported, so a child that leaves the tree stops being retained.
+   */
+  const folds = new Map<string, FoldEntry>()
   return {
     async live(payload) {
       const rootSessionId = requireString(payload, 'rootSessionId')
@@ -69,6 +91,10 @@ export function buildSubagentLiveApi(ctx: Context): SidebarSubagentLiveRoutes {
         )
       }
 
+      const tree = new Set<string>([rootSessionId])
+      for (const entry of descendants) tree.add(entry.id)
+      for (const key of folds.keys()) if (!tree.has(key)) folds.delete(key)
+
       const live: Record<string, SidebarChildLiveView> = {}
       /**
        * Fold one session into the map. `running` is the caller-visible activity
@@ -81,12 +107,23 @@ export function buildSubagentLiveApi(ctx: Context): SidebarSubagentLiveRoutes {
         const view: SidebarChildLiveView = running === undefined ? {} : { running }
         try {
           const events = ctx.sessions.get(sessionId)?.snapshotEvents() ?? []
+          const length = events.length
+          const lastSeq = length === 0 ? -1 : events[length - 1]!.seq
+          const cached = folds.get(sessionId)
+          if (cached !== undefined
+            && cached.length === length
+            && cached.lastSeq === lastSeq
+            && cached.running === running) {
+            live[sessionId] = cached.view
+            return
+          }
           const fold = foldProcess(events, { live: running !== false })
           if (fold.current.counts.length > 0 || fold.current.running !== undefined) {
             view.summary = fold.current
           }
           if (fold.text !== undefined) view.text = fold.text
           if (fold.lastEventTime !== undefined) view.lastEventTime = fold.lastEventTime
+          folds.set(sessionId, { length, lastSeq, running, view })
         } catch {
           // One session's event log is not readable: keep the row (a child's
           // running flag is the catalog's) and skip only its details.
