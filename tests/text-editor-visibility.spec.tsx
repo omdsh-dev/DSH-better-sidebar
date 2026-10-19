@@ -166,6 +166,37 @@ describe('TextEditor visibility recovery', () => {
     expect(requestMeasure).not.toHaveBeenCalled()
   })
 
+  it('restores the edit scroll position after the tab body is disturbed', () => {
+    // A save re-seats the tab body (dirty chip, change gutter) and a scroller
+    // that was detached comes back at scrollTop 0 — the position must survive.
+    const store = createSidebarStore()
+    container = document.createElement('div')
+    document.body.append(container)
+    root = createRoot(container)
+    act(() => { root!.render(createElement(TextEditor, props(store))) })
+    const editorHost = container.querySelector('[class*="editorCm"]') as HTMLDivElement
+    Object.defineProperties(editorHost, {
+      offsetWidth: { configurable: true, value: 480 },
+      offsetHeight: { configurable: true, value: 640 },
+    })
+    const scroller = container.querySelector('.cm-scroller') as HTMLElement
+    expect(scroller).not.toBeNull()
+    Object.defineProperties(scroller, {
+      scrollHeight: { configurable: true, value: 4000 },
+      clientHeight: { configurable: true, value: 640 },
+    })
+    // The user scrolls; the listener records the position.
+    scroller.scrollTop = 900
+    act(() => { scroller.dispatchEvent(new Event('scroll')) })
+
+    // The tab body is disturbed and the browser clamps the scroller to the top.
+    scroller.scrollTop = 0
+    const observer = instances.find(candidate => candidate.targets.includes(editorHost))
+    act(() => { observer!.trigger() })
+
+    expect(scroller.scrollTop).toBe(900)
+  })
+
   it('disconnects the observer when the editor unmounts', () => {
     const store = createSidebarStore()
     container = document.createElement('div')
