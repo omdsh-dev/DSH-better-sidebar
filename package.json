@@ -30,6 +30,7 @@
       "default": "./lib/client.js"
     },
     "./src/*": "./src/*",
+    "./icon": "./icon.svg",
     "./package.json": "./package.json",
     "./locale/*.json": "./locale/*.json"
   },
