@@ -260,11 +260,9 @@ describe('dock fallback（空白会话入口）', () => {
     }
   })
 
-  // 用户定的规则：**宿主右侧面板展开时不显示这个按钮**。那个状态下宿主右上角
-  // 本来就是自己的一簇控件（Split / Fullscreen / Collapse right sidebar），入口挤进去
-  // 只会跟它们打架 —— 干脆不出现。这条规则同时把「展开态该把入口摆哪儿」整个问题去掉，
-  // 让位/命中测试那套只需要服务收起态。
-  it('renders no entry while the host right panel is expanded', async () => {
+  // owner 定的规则（#992 后续）：**宿主右侧面板展开时按钮照旧存在**，只是让位到
+  // 那一簇控件的左侧——否则「先展开右侧栏、再想开底部面板」这条路是断的。
+  it('keeps the entry while the host right panel is expanded', async () => {
     phaseIs(true)
     // 可见的 Collapse 控件（rect 非零）＝ 右侧栏展开；收起态的 Open 控件不可见。
     const hostToggle = document.createElement('button')
@@ -278,8 +276,11 @@ describe('dock fallback（空白会话入口）', () => {
     const { unmount } = renderDockFallback()
     try {
       await act(async () => { await new Promise(resolve => { setTimeout(resolve, 0) }) })
-      expect(document.querySelector('[data-dsh-dock-fallback]'), '右侧栏展开时不该有备用入口').toBeNull()
-      expect(document.querySelector('[data-dsh-bottom-toggle]'), '右侧栏展开时不该有底部入口').toBeNull()
+      expect(document.querySelector('[data-dsh-dock-fallback]'), '右侧栏展开时仍要有备用入口').not.toBeNull()
+      const toggle = document.querySelector('[data-dsh-bottom-toggle]')
+      expect(toggle, '右侧栏展开时仍要有底部入口').not.toBeNull()
+      // 与右侧栏共存：按钮带 data-right-open 标记（样式据此让位），且不被藏掉。
+      expect(toggle?.getAttribute('data-right-open')).toBe('true')
     } finally {
       unmount()
       hostToggle.remove()

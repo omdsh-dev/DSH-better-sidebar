@@ -154,6 +154,42 @@ describe('useRightPanelOpen（共享 poller）', () => {
     expect(documentQueries - queriesBefore, '一个 tick 只扫一趟文档').toBe(2)
   })
 
+  // 事件驱动（本次修复）：宿主角落控件的属性一变就该**当帧**重读，不再等 500ms 采样。
+  // 这是「底部按钮在展开动画结束后才消失 / 收起时闪一拍」的根因修复点。
+  it('re-reads on the host corner attribute change without waiting for the fallback tick', async () => {
+    const view = mount(createElement(Consumer, { label: 'header' }))
+    expect(openOf(view.container, 'header'), '宿主没有展开态控件时读成收起').toBe('false')
+    const queriesBefore = documentQueries
+    // 宿主把座位从 expand 换成 toggle：MutationObserver 应当立刻通知。
+    await act(async () => {
+      appendExpandedToggle()
+      await Promise.resolve()
+    })
+    expect(openOf(view.container, 'header'), '属性变化后不等 tick 就更新').toBe('true')
+    // 这次更新来自观察者，不是兜底表（表一次都没跑）。
+    expect(documentQueries).toBeGreaterThan(queriesBefore)
+  })
+
+  // transitionend / animationend 是第二重信号：宿主在动画收尾才让旧控件不可见时，
+  // 属性早就翻转了，事件补一次读能把答案对齐到动画结束的那一刻。
+  it('re-reads when the host animation settles', async () => {
+    const view = mount(createElement(Consumer, { label: 'header' }))
+    expect(openOf(view.container, 'header')).toBe('false')
+    await act(async () => {
+      appendExpandedToggle()
+      await Promise.resolve()
+    })
+    expect(openOf(view.container, 'header')).toBe('true')
+    // 反过来：把展开态控件藏掉（rect 归零）再发一次 transitionend，应回到收起。
+    const toggle = document.querySelector('[data-sidebar-right-toggle]') as HTMLElement
+    toggle.getBoundingClientRect = () => ({ width: 0, height: 0, x: 0, y: 0, left: 0, top: 0, right: 0, bottom: 0, toJSON: () => ({}) }) as DOMRect
+    await act(async () => {
+      document.dispatchEvent(new Event('transitionend'))
+      await Promise.resolve()
+    })
+    expect(openOf(view.container, 'header'), '动画结束事件触发重读').toBe('false')
+  })
+
   it('holds no interval and reads nothing while hidden, then reads once on show', () => {
     // 先让共享缓存在可见状态下定成「收起」：宿主此刻没有展开态控件。
     const priming = mount(createElement(Consumer, { label: 'prime' }))

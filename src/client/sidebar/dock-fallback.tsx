@@ -21,7 +21,6 @@ import { createPortal } from 'react-dom'
 import type { SidebarStore } from '../state.ts'
 import { BottomDockToggle } from '../Sidebar.tsx'
 import { useSessionPhase } from '../session-phase.ts'
-import { useRightPanelOpen } from './right-panel-open.ts'
 import css from '../sidebar.module.css'
 
 /** 按钮尺寸与宿主展开按钮一致（28px），间距 8px。 */
@@ -158,11 +157,11 @@ export function DockFallback({ store }: { store: SidebarStore }): ReactNode {
     useCallback(() => store.getSnapshot(), [store]),
   )
   const phase = useSessionPhase(snapshot.sessionId)
-  const rightOpen = useRightPanelOpen()
   const [pos, setPos] = useState(measure)
   const [headerEntry, setHeaderEntry] = useState(headerEntryPresent)
-  // 渲染条件（顺序即下面早退的顺序）：相位已读到 blank、会话头那套入口不在场、右侧面板收起。
-  const rendered = phase !== undefined && phase.blank && !headerEntry && !rightOpen
+  // 渲染条件（顺序即下面早退的顺序）：相位已读到 blank、会话头那套入口不在场。
+  // 「是否渲染」不再看右侧栏：按钮与它共存（展开态靠 measure() 让位）。
+  const rendered = phase !== undefined && phase.blank && !headerEntry
   const onResize = useCallback((): void => {
     // 页面不可见时什么都不做：看不到的版面不值得测量，state 也不需要写。
     if (document.hidden) return
@@ -197,9 +196,7 @@ export function DockFallback({ store }: { store: SidebarStore }): ReactNode {
   if (phase === undefined || !phase.blank) return null
   // 兜底：相位说 blank、但会话头的入口确实在 DOM 里 —— 让位，绝不叠出第二套。
   if (headerEntry) return null
-  // 宿主右侧面板展开时不渲染（里面那个按钮本身也会返回 null，这里连空壳一起省掉）：
-  // 那个状态下右上角是宿主自己的一簇控件，没有本入口的容身之处。
-  if (rightOpen) return null
+
   // portal 到 body：面板宿主（z 20-30）的层叠上下文压不过会话头，按钮会被 titleRow
   // 拦截点击。40 高于 AppFrame(20) 与会话头、低于 DSH 浮层(100+)。
   return createPortal(

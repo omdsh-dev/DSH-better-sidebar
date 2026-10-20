@@ -12,18 +12,25 @@
  * （= 不隐藏），按钮照旧出现、位置由 {@link ./dock-fallback.tsx} 的让位逻辑兜住；
  * 而不是读成「永远展开」把按钮永久藏掉。
  *
- * **全模块只有一份答案、一条表**（v0.25 的稳态开销治理）：早先每个消费者各建一条
- * 500ms 的表、各做两趟全文档 `querySelectorAll`（本文件 + `dock-fallback.tsx` 共两条），
- * 与挂载了多少个消费者成正比。现在订阅者只是引用计数——0 → 1 才起表并立刻读一次，
- * 1 → 0 就停表；消费者再多也只有一条表。
+ * **全模块只有一份答案、一条表**（v0.25 的稳态开销治理）：订阅者只是引用计数——
+ * 0 → 1 才建观察者与兜底表并立刻读一次，1 → 0 全拆掉；消费者再多也只有一份。
+ *
+ * **以事件为主、采样为辅**（本次修复）：宿主切换那两个属性、整块换控件、动画收尾
+ * 都会立刻触发重读（见 {@link startObserving}），所以答案落在变化的那一帧，而不是
+ * 落在下一次采样的拍点上——此前 500ms 轮询让底部面板按钮在展开动画结束后才消失、
+ * 收起时又先闪回来一拍。兜底表降到 {@link POLL_MS}（1.5s），只服务「观察者拿不到
+ * 信号」（宿主改名/搬家）这一种情形。
  *
  * **页面不可见时表本身不存在**（不是「tick 进来再早退」）：隐藏的页面没有要服务的
  * 版面，`visibilitychange` 回到可见时才立刻读一次并重新起表。
  */
 import { useEffect, useState } from 'react'
 
-/** 复核间隔：与备用入口的位置对齐同一节拍（500ms）。 */
-const POLL_MS = 500
+/**
+ * 兜底复核间隔。事件驱动为主（见 {@link observe}），这条表只在观察者拿不到
+ * 变化时兜底：宿主换了属性名、把控件搬到另一个容器、或移除后又挂回来。
+ */
+const POLL_MS = 1_500
 
 /** 共享的展开态答案；所有消费者读同一份。 */
 let open = false
@@ -33,6 +40,9 @@ const listeners = new Set<(next: boolean) => void>()
 
 /** 全模块**唯一**的定时器：消费者再多也只有这一条。 */
 let timer: ReturnType<typeof setInterval> | undefined
+
+/** 宿主角落控件的观察者（0 → 1 个订阅者时建、1 → 0 时拆）。 */
+let observer: MutationObserver | undefined
 
 /** 真实浏览器里的 document；SSR / 极端环境缺席。 */
 function pageDocument(): Document | undefined {
@@ -88,7 +98,63 @@ function publish(): void {
   for (const listener of listeners) listener(next)
 }
 
+/** 宿主角落控件：同一座位在收起/展开两态之间换的是这两个属性之一。 */
+const CORNER_ATTRS = ['data-sidebar-right-expand', 'data-sidebar-right-toggle', 'style', 'class', 'hidden']
+
+/** 动画结束的监听器（挂在 document 的 capture 段，动画属于宿主的元素）。 */
+const settleListeners = new Set<() => void>()
+
+function reRead(): void {
+  if (!pageVisible()) return
+  publish()
+}
+
+/**
+ * 事件驱动的复核（本模块此前只有 500ms 采样）。
+ *
+ * 采样只能「碰巧」读到翻转：展开动画进行中读到的一直是旧值，于是底部面板按钮
+ * 要等动画结束后的下一拍才消失；收起时又可能在动画中途读成「已收起」，按钮
+ * 提前闪回来一拍再消失。观察宿主真正改动的那几个属性，答案就在变化的当帧落地：
+ *
+ * - `attributes` + `attributeFilter`：宿主切换 `data-sidebar-right-expand` /
+ *   `data-sidebar-right-toggle` 时就通知，`style`/`class`/`hidden` 覆盖用 CSS
+ *   隐藏的那一路；
+ * - `childList` + `subtree`：宿主整块换掉角落控件时通知；
+ * - 捕获阶段的 `transitionend` / `animationend`：动画收尾再读一次，覆盖「属性
+ *   早就翻转、可见性到动画结束才变」的情形。
+ *
+ * 兜底仍是 {@link POLL_MS} 那条表——观察者拿不到信号时（改名、搬家）靠它。
+ */
+function startObserving(): void {
+  if (observer !== undefined) return
+  const doc = pageDocument()
+  if (doc === undefined || typeof MutationObserver === 'undefined') return
+  observer = new MutationObserver(reRead)
+  observer.observe(doc.body ?? doc.documentElement, {
+    attributes: true,
+    attributeFilter: CORNER_ATTRS,
+    childList: true,
+    subtree: true,
+  })
+  doc.addEventListener('transitionend', reRead, true)
+  doc.addEventListener('animationend', reRead, true)
+  settleListeners.add(reRead)
+}
+
+function stopObserving(): void {
+  observer?.disconnect()
+  observer = undefined
+  const doc = pageDocument()
+  if (doc === undefined || settleListeners.size === 0) return
+  for (const listener of settleListeners) {
+    doc.removeEventListener('transitionend', listener, true)
+    doc.removeEventListener('animationend', listener, true)
+  }
+  settleListeners.clear()
+}
+
 function stopTimer(): void {
+  stopObserving()
   if (timer === undefined) return
   clearInterval(timer)
   timer = undefined
@@ -98,6 +164,7 @@ function stopTimer(): void {
 function startTimer(): void {
   if (timer !== undefined) return
   if (!pageVisible()) return
+  startObserving()
   timer = setInterval(publish, POLL_MS)
 }
 

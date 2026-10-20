@@ -784,9 +784,13 @@ export function BottomDockToggle(props: { store: SidebarStore }) {
     useCallback((callback: () => void) => store.subscribe(callback), [store]),
     useCallback(() => store.getSnapshot(), [store]),
   )
-  // 宿主右侧面板展开时不出现：那个状态下它右上角是一簇自己的控件
-  // （Split / Fullscreen / Collapse right sidebar），入口挤进去只会跟它们打架。
-  if (useRightPanelOpen()) return null
+  // 与右侧栏**共存**：本入口注册在宿主的 session header utilities 里（见
+  // sidebar/bottom-toggle.tsx），那一列在宿主角落控件（Split / Fullscreen /
+  // Collapse right sidebar）的左侧，本来就是流式排布、不会压住它们。此前这里
+  // 一句 `if (useRightPanelOpen()) return null` 把按钮整个藏掉，于是「先展开右侧
+  // 栏、再想开底部面板」这条路走不通——现在只在展开态打一个 `data-right-open`
+  // 标记（样式可据此让位），按钮本身照常渲染、照常可点。
+  const rightOpen = useRightPanelOpen()
   const open = snapshot.state?.bottomOpen === true
   const label = open ? t('collapseBottomPanel') : t('expandBottomPanel')
   return (
@@ -795,6 +799,7 @@ export function BottomDockToggle(props: { store: SidebarStore }) {
         type="button"
         className={css.toggleButton}
         data-dsh-bottom-toggle
+        data-right-open={rightOpen ? 'true' : undefined}
         data-active={open ? 'true' : undefined}
         aria-label={label}
         aria-pressed={open}

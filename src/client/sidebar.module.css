@@ -146,6 +146,13 @@
     color var(--ds-transition-duration-slow) var(--ds-ease-in-out);
 }
 
+.toggleButton[data-right-open='true'] {
+  /* 与右侧栏共存时让位：宿主的角落控件（Split / Fullscreen / Collapse right sidebar）
+     在展开态比收起态多出两颗，把本按钮压到「贴住右边那一簇」的位置只会互相遮挡。
+     这里只做视觉上的让位（留出更宽的右侧间隔），点击目标本身不变。 */
+  margin-right: 40px;
+}
+
 .toggleButton:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--dsw-alias-interactive-bg-hover);
   color: var(--dsw-alias-label-primary);
