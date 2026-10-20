@@ -249,6 +249,7 @@ export const pl: Record<string, string> = {
   graphBranchFilter: 'Filtr gałęzi',
   graphEmpty: 'Brak commitów',
   graphLoadError: 'Nie udało się wczytać historii commitów',
+  graphLinearFallback: 'Zbyt wiele gałęzi; historia commitów jest wyświetlana jako lista bez grafu gałęzi',
   graphStale: 'Historia uległa zmianie. Odśwież, aby kontynuować.',
   graphDetails: 'Szczegóły commita',
   graphParents: 'Commity nadrzędne',

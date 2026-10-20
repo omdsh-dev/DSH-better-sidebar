@@ -233,6 +233,7 @@ export const de: Record<string, string> = {
   graphBranchFilter: 'Branch-Filter',
   graphEmpty: 'Keine Commits',
   graphLoadError: 'Commit-Verlauf konnte nicht geladen werden',
+  graphLinearFallback: 'Zu viele Branches; der Commit-Verlauf wird als Liste ohne Branch-Grafik angezeigt',
   graphStale: 'Der Verlauf hat sich geändert. Bitte aktualisieren.',
   graphDetails: 'Commit-Details',
   graphParents: 'Übergeordnete Commits',

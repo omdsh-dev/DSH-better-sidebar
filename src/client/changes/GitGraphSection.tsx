@@ -120,6 +120,7 @@ export function GitGraphSection({ scope, worktree, visible, refreshTick = 0, onP
   const [branch, setBranch] = useState('')
   const [page, setPage] = useState<GraphPage | null>(null)
   const [branches, setBranches] = useState<GraphPage['branches']>([])
+  const [linearFallback, setLinearFallback] = useState(false)
   const selectionRef = useRef(selectedRef)
   selectionRef.current = selectedRef
   const clearPreviewRef = useRef(onClearPreview)
@@ -162,11 +163,27 @@ export function GitGraphSection({ scope, worktree, visible, refreshTick = 0, onP
     setError(null)
     setStale(false)
     try {
-      const result = await api.gitGraph(scope, {
-        branch: branch || undefined, count: 50,
-        cursor: append ? previous?.nextCursor : undefined,
-      }, worktree, controller.signal)
+      let result: GraphPage
+      let fallback = linearFallback
+      if (append && linearFallback) {
+        const history = await api.gitHistory(scope, { count: 50, cursor: previous?.nextCursor }, worktree, controller.signal)
+        result = { ...history, branches: [] }
+      } else {
+        try {
+          result = await api.gitGraph(scope, {
+            branch: branch || undefined, count: 50,
+            cursor: append ? previous?.nextCursor : undefined,
+          }, worktree, controller.signal)
+          fallback = false
+        } catch (reason) {
+          if (append || !(reason instanceof SidebarApiError) || reason.code !== 'graph-limit') throw reason
+          const history = await api.gitHistory(scope, { count: 50 }, worktree, controller.signal)
+          result = { ...history, branches: [] }
+          fallback = true
+        }
+      }
       if (controller.signal.aborted || gen !== generation.current) return
+      if (!append) setLinearFallback(fallback)
       const next = append && previous ? {
         ...result,
         entries: [...previous.entries, ...result.entries.filter(entry => !previous.entries.some(old => old.hashFull === entry.hashFull))],
@@ -199,6 +216,7 @@ export function GitGraphSection({ scope, worktree, visible, refreshTick = 0, onP
     setPage(null)
     setBranch('')
     setBranches([])
+    setLinearFallback(false)
   }, [scope.sessionId, scope.cwd, scope.repoRoot, worktree])
   useEffect(() => {
     if (visible) void request(false)
@@ -264,12 +282,13 @@ export function GitGraphSection({ scope, worktree, visible, refreshTick = 0, onP
 
   return <section className={css.root} aria-label={t('gitGraph')} data-git-graph>
     <div className={css.toolbar}>
-      <select className={css.select} aria-label={t('graphBranchFilter')}
+      {linearFallback && <div role="status">{t('graphLinearFallback')}</div>}
+      {!linearFallback && <select className={css.select} aria-label={t('graphBranchFilter')}
         value={branch} onChange={event => { chooseBranch(event.target.value) }}>
         <option value="">{t('graphAllBranches')}</option>
         {branches.map(item => <option key={item.ref} value={item.ref}>{item.name}</option>)}
         {branch && !branches.some(item => item.ref === branch) && <option value={branch}>{branch}</option>}
-      </select>
+      </select>}
     </div>
     <div className={css.scroll} aria-busy={loading} ref={scrollRef}>
       {error !== null && <div className={css.notice} role="alert">
@@ -291,11 +310,11 @@ export function GitGraphSection({ scope, worktree, visible, refreshTick = 0, onP
           onMouseLeave={cancelHover}
           onClick={() => { cancelHover(); select(entry) }}
           onContextMenu={onContextMenu === undefined ? undefined : (event) => { onContextMenu(event, entry) }}>
-          <svg width={width} height={ROW_HEIGHT} viewBox={`0 0 ${width} ${ROW_HEIGHT}`} preserveAspectRatio="none" className={css.graph} aria-hidden="true">
+          {!linearFallback && <svg width={width} height={ROW_HEIGHT} viewBox={`0 0 ${width} ${ROW_HEIGHT}`} preserveAspectRatio="none" className={css.graph} aria-hidden="true">
             {row.segments.map((edge, i) => <path key={i} data-color={colorSlot(edge.colorIndex)}
               d={edgePath(edge, laneX, ROW_HEIGHT)} />)}
             <circle cx={laneX(row.lane)} cy={ROW_HEIGHT / 2} r={3} data-color={slot} />
-          </svg>
+          </svg>}
           {entry.refs.length > 0 && <span className={css.refs}>
             {refPills(entry.refs, remotes).map(pill => <RefPill key={pill.name} pill={pill} slot={slot} />)}
           </span>}

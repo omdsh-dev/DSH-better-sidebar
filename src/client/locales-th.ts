@@ -247,6 +247,7 @@ export const th: Record<string, string> = {
   graphBranchFilter: 'ตัวกรอง branch',
   graphEmpty: 'ไม่มี commit',
   graphLoadError: 'โหลดประวัติ commit ไม่สำเร็จ',
+  graphLinearFallback: 'มีบรานช์มากเกินไป จึงแสดงประวัติ commit เป็นรายการโดยไม่มีกราฟบรานช์',
   graphStale: 'ประวัติมีการเปลี่ยนแปลง โปรดรีเฟรช',
   graphDetails: 'รายละเอียด commit',
   graphParents: 'commit แม่',

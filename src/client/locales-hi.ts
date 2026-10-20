@@ -247,6 +247,7 @@ export const hi: Record<string, string> = {
   graphBranchFilter: 'ब्रांच फ़िल्टर',
   graphEmpty: 'कोई कमिट नहीं',
   graphLoadError: 'कमिट इतिहास लोड नहीं हो सका',
+  graphLinearFallback: 'बहुत अधिक ब्रांच हैं; कमिट इतिहास ब्रांच ग्राफ़ के बिना सूची में दिखाया जा रहा है',
   graphStale: 'इतिहास बदल गया है। कृपया रीफ़्रेश करें।',
   graphDetails: 'कमिट का विवरण',
   graphParents: 'पैरेंट कमिट',

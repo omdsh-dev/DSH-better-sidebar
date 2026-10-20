@@ -247,6 +247,7 @@ export const ja: Record<string, string> = {
   graphBranchFilter: 'ブランチの絞り込み',
   graphEmpty: 'コミットはありません',
   graphLoadError: 'コミット履歴を読み込めませんでした',
+  graphLinearFallback: 'ブランチが多すぎるため、ブランチ構造を示さない履歴リストを表示しています',
   graphStale: '履歴が変更されました。更新してください。',
   graphDetails: 'コミットの詳細',
   graphParents: '親コミット',

@@ -239,6 +239,7 @@ export const ko: Record<string, string> = {
   graphBranchFilter: '브랜치 필터',
   graphEmpty: '커밋이 없습니다',
   graphLoadError: '커밋 기록을 불러오지 못했습니다',
+  graphLinearFallback: '브랜치가 너무 많아 브랜치 그래프 없이 커밋 기록을 목록으로 표시합니다',
   graphStale: '기록이 변경되었습니다. 새로고침하세요.',
   graphDetails: '커밋 상세 정보',
   graphParents: '부모 커밋',

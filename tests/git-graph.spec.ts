@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process'
 import { mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { gitGraph } from '../src/git-graph.ts'
+import { gitGraph, gitHistory } from '../src/git-graph.ts'
 
 const dirs: string[] = []
 // macOS tmpdir() keeps the /var symlink while git reports the resolved
@@ -84,6 +84,44 @@ describe('read-only Git graph', () => {
     const graph = await gitGraph(dir)
     expect(graph.entries[0]?.hashFull).toBe(detached)
     expect(graph.entries.some(e => e.hashFull === stash)).toBe(false)
+    expect((await gitHistory(dir)).entries.some(e => e.hashFull === stash)).toBe(false)
+  })
+
+  it('uses bounded graph inventory but offers snapshot-validated history across all refs', async () => {
+    const dir = repo()
+    const base = commit(dir, 'base')
+    commit(dir, 'head')
+    const first = await gitHistory(dir, { count: 1 })
+    expect(first.entries[0]?.subject).toBe('head')
+    const second = await gitHistory(dir, { count: 1, cursor: first.nextCursor })
+    expect(second.entries[0]?.hashFull).toBe(base)
+    expect(second.snapshot).toBe(first.snapshot)
+    git(dir, 'tag', 'history-tag', base)
+    await expect(gitHistory(dir, { count: 1, cursor: first.nextCursor })).rejects.toMatchObject({ code: 'graph-stale' })
+
+    const generatedRefs = Array.from({ length: 999 }, (_, i) => `create refs/heads/generated-${String(i).padStart(4, '0')} ${base}`).join('\n') + '\n'
+    execFileSync('git', ['-C', dir, 'update-ref', '--stdin'], { input: generatedRefs, env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1' } })
+    expect((await gitGraph(dir, { count: 1 })).branches).toHaveLength(1000)
+    git(dir, 'update-ref', 'refs/heads/generated-0999', base)
+    await expect(gitGraph(dir)).rejects.toMatchObject({ code: 'graph-limit' })
+    expect((await gitHistory(dir, { count: 1 })).entries[0]?.subject).toBe('head')
+  })
+
+  it('detects detached HEAD movement and shallow-boundary changes between history pages', async () => {
+    const dir = repo()
+    const firstCommit = commit(dir, 'first')
+    const second = commit(dir, 'second')
+    git(dir, 'checkout', '--detach', second)
+    const firstPage = await gitHistory(dir, { count: 1 })
+    const detachedOnly = commit(dir, 'detached-only')
+    expect((await gitHistory(dir, { count: 1 })).entries[0]?.hashFull).toBe(detachedOnly)
+    await expect(gitHistory(dir, { count: 1, cursor: firstPage.nextCursor })).rejects.toMatchObject({ code: 'graph-stale' })
+
+    const shallow = join(dir, '.git', 'shallow')
+    writeFileSync(shallow, `${second}\n`)
+    const shallowPage = await gitHistory(dir, { count: 1 })
+    writeFileSync(shallow, `${second}\n${firstCommit}\n`)
+    await expect(gitHistory(dir, { count: 1, cursor: shallowPage.nextCursor })).rejects.toMatchObject({ code: 'graph-stale' })
   })
 
   it('rejects stale pages when refs move or the filter changes', async () => {

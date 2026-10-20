@@ -230,6 +230,7 @@ export const sv: Record<string, string> = {
   graphBranchFilter: 'Grenfilter',
   graphEmpty: 'Inga commits',
   graphLoadError: 'Kunde inte läsa in commit-historiken',
+  graphLinearFallback: 'För många grenar; commit-historiken visas som en lista utan grengraf',
   graphStale: 'Historiken har ändrats. Uppdatera för att fortsätta.',
   graphDetails: 'Commit-detaljer',
   graphParents: 'Föräldracommits',

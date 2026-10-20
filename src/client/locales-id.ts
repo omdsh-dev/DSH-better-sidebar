@@ -245,6 +245,7 @@ export const id: Record<string, string> = {
   graphBranchFilter: 'Filter branch',
   graphEmpty: 'Tidak ada commit',
   graphLoadError: 'Gagal memuat riwayat commit',
+  graphLinearFallback: 'Terlalu banyak branch; riwayat commit ditampilkan sebagai daftar tanpa grafik branch',
   graphStale: 'Riwayat telah berubah. Silakan muat ulang.',
   graphDetails: 'Detail commit',
   graphParents: 'Commit induk',

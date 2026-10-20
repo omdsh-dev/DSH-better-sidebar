@@ -247,6 +247,7 @@ export const vi: Record<string, string> = {
   graphBranchFilter: 'Bộ lọc nhánh',
   graphEmpty: 'Không có commit',
   graphLoadError: 'Không thể tải lịch sử commit',
+  graphLinearFallback: 'Quá nhiều nhánh; lịch sử commit được hiển thị thành danh sách không có đồ thị nhánh',
   graphStale: 'Lịch sử đã thay đổi. Vui lòng làm mới.',
   graphDetails: 'Chi tiết commit',
   graphParents: 'Commit cha',

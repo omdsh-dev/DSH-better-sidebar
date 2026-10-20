@@ -238,6 +238,7 @@ export const it: Record<string, string> = {
   graphBranchFilter: 'Filtro per ramo',
   graphEmpty: 'Nessun commit',
   graphLoadError: 'Impossibile caricare la cronologia dei commit',
+  graphLinearFallback: 'Troppi branch; la cronologia dei commit è mostrata come elenco senza grafico dei rami',
   graphStale: 'La cronologia è cambiata. Aggiorna per continuare.',
   graphDetails: 'Dettagli del commit',
   graphParents: 'Commit genitori',

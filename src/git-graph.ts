@@ -1,4 +1,6 @@
 import { execFile } from 'node:child_process'
+import { readFile } from 'node:fs/promises'
+import { resolve } from 'node:path'
 import { createHash } from 'node:crypto'
 import { GitCommandError, repoRoot } from './git.ts'
 
@@ -26,6 +28,8 @@ export interface GitGraphResult {
 
 const MAX_OUTPUT = 8 * 1024 * 1024
 const MAX_OFFSET = 10_000
+const MAX_HISTORY_REFS = 100_000
+const MAX_SHALLOW_BYTES = 1024 * 1024
 const OID = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/
 const fail = (message: string, code = 'bad-request'): never => {
   throw new GitCommandError(message, code, 'graph')
@@ -79,6 +83,60 @@ async function snapshotOf(root: string, branch: string | undefined) {
   for (const item of branches) decorations.set(item.hashFull, [...(decorations.get(item.hashFull) ?? []), item.name])
   if (head) decorations.set(head, ['HEAD', ...(decorations.get(head) ?? [])])
   return { branches, fingerprint, tips, decorations, selected }
+}
+
+/** 计算线性历史的状态指纹，限制引用输出与浅克隆边界文件的大小。 */
+async function historySnapshot(root: string): Promise<string> {
+  const refs = await readGit(root, ['for-each-ref', '--sort=refname', '--format=%(refname)%00%(objectname)'])
+  const lines = refs.trimEnd().split('\n').filter(Boolean)
+  if (lines.length > MAX_HISTORY_REFS) fail('Too many references to safely snapshot history (limit 100000)', 'graph-limit')
+  const head = (await readGit(root, ['rev-parse', '--verify', '--quiet', 'HEAD'], true)).trim()
+  const shallowPath = (await readGit(root, ['rev-parse', '--git-path', 'shallow'])).trim()
+  let shallow: string | null = null
+  try {
+    const bytes = await readFile(resolve(root, shallowPath))
+    if (bytes.byteLength > MAX_SHALLOW_BYTES) fail('Shallow boundary metadata exceeds 1 MiB', 'graph-limit')
+    shallow = bytes.toString('base64')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+  }
+  return createHash('sha256').update(JSON.stringify({ root, refs: lines, head, shallow })).digest('hex')
+}
+
+export interface GitHistoryOptions { cursor?: string; count?: number }
+export interface GitHistoryResult { isRepo: boolean; root?: string; entries: GitGraphEntry[]; hasMore: boolean; nextCursor?: string; snapshot: string }
+
+/** 图形界面超过分支上限时读取提交列表，并校验引用、HEAD 和浅克隆边界。 */
+export async function gitHistory(cwd: string, options: GitHistoryOptions = {}, selectedRepo?: string): Promise<GitHistoryResult> {
+  const count = options.count ?? 50
+  if (!Number.isSafeInteger(count) || count < 1) fail('Invalid history count')
+  const limit = Math.min(count, 200)
+  let cursor: { fingerprint: string; offset: number } | undefined
+  if (options.cursor !== undefined) {
+    if (typeof options.cursor !== 'string' || options.cursor.length > 512) fail('Invalid history cursor')
+    try {
+      const parsed = JSON.parse(Buffer.from(options.cursor, 'base64url').toString('utf8'))
+      if (parsed?.version !== 1 || !/^[a-f0-9]{64}$/.test(parsed.fingerprint) || !Number.isSafeInteger(parsed.offset) || parsed.offset < 1 || parsed.offset > MAX_OFFSET) fail('Invalid history cursor')
+      cursor = parsed
+    } catch { fail('Invalid history cursor') }
+  }
+  const root = selectedRepo !== undefined ? await repoRoot(cwd, selectedRepo) : (await readGit(cwd, ['rev-parse', '--show-toplevel'])).trim()
+  const before = await historySnapshot(root)
+  if (cursor && cursor.fingerprint !== before) fail('History changed; refresh', 'graph-stale')
+  const offset = cursor?.offset ?? 0
+  const output = await readGit(root, ['log', '--branches', '--remotes', 'HEAD', '--topo-order', '--no-decorate', '--no-show-signature', '--encoding=UTF-8', `--max-count=${limit + 1}`, `--skip=${offset}`, '--format=%H%x00%P%x00%an%x00%ai%x00%s%x00%B%x00', '--'])
+  const fields = output.split('\0')
+  const entries: GitGraphEntry[] = []
+  for (let i = 0; i + 5 < fields.length; i += 6) {
+    const hashFull = fields[i]!.trim(), parents = fields[i + 1]!.split(' ').filter(Boolean)
+    if (!OID.test(hashFull) || parents.some(parent => !OID.test(parent))) fail('Invalid Git history output', 'git-error')
+    entries.push({ hash: hashFull.slice(0, 7), hashFull, parents, author: fields[i + 2]!, date: fields[i + 3]!, subject: fields[i + 4]!, message: fields[i + 5]!, refs: [] })
+  }
+  if (await historySnapshot(root) !== before) fail('History changed; refresh', 'graph-stale')
+  const hasMore = entries.length > limit
+  if (hasMore && offset + limit > MAX_OFFSET) fail('History limit reached (10000)', 'graph-limit')
+  return { isRepo: true, root, entries: entries.slice(0, limit), hasMore, snapshot: before,
+    ...(hasMore ? { nextCursor: Buffer.from(JSON.stringify({ version: 1, fingerprint: before, offset: offset + limit })).toString('base64url') } : {}) }
 }
 
 /** Immutable OID traversal + before/after ref fingerprints prevents concatenating

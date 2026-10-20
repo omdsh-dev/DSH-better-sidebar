@@ -230,6 +230,7 @@ export const pt: Record<string, string> = {
   graphBranchFilter: 'Filtro de branch',
   graphEmpty: 'Nenhum commit',
   graphLoadError: 'Falha ao carregar o histórico de commits',
+  graphLinearFallback: 'Ramos demais; o histórico de commits é exibido como lista sem gráfico de ramificações',
   graphStale: 'O histórico mudou. Atualize para continuar.',
   graphDetails: 'Detalhes do commit',
   graphParents: 'Commits pais',

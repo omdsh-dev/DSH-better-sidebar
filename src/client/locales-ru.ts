@@ -243,6 +243,7 @@ export const ru: Record<string, string> = {
   graphBranchFilter: 'Фильтр по ветке',
   graphEmpty: 'Нет коммитов',
   graphLoadError: 'Не удалось загрузить историю коммитов',
+  graphLinearFallback: 'Слишком много веток; история коммитов показана списком без графа веток',
   graphStale: 'История изменилась. Обновите для продолжения.',
   graphDetails: 'Сведения о коммите',
   graphParents: 'Родительские коммиты',

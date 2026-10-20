@@ -39,7 +39,7 @@ import { createSidechatPushHub } from './sidechat-push.ts'
 import { launchExternal } from './open-external.ts'
 import { createArchiveTasks, respondArchiveDownload, type ArchiveTasks } from './archive-route.ts'
 import * as git from './git.ts'
-import { gitGraph, type GitGraphOptions } from './git-graph.ts'
+import { gitGraph, gitHistory, type GitGraphOptions, type GitHistoryOptions } from './git-graph.ts'
 import { SettingsConflictError } from '@deepseek-ai/dsh-settings'
 import { AgentOpenRegistry, registerOpenTool, type AgentOpenRequest } from './agent-opens.ts'
 import { buildSubagentLiveApi, type SidebarSubagentLiveRoutes } from './subagent-live-route.ts'
@@ -902,6 +902,16 @@ function buildApi(
       } catch (error) {
         // The shared Git mapper collapses legacy command codes. Preserve the
         // graph cursor's refresh signal rather than reporting a generic error.
+        if (error instanceof git.GitCommandError && (error.code === 'graph-stale' || error.code === 'graph-limit' || error.code === 'bad-request')) {
+          throw new SidebarError(error.code, error.message, error.code === 'graph-stale' ? 409 : 400)
+        }
+        throw error
+      }
+    },
+    'git.history': async (payload) => {
+      const { cwd } = await gitCwdOf(payload)
+      try { return await gitHistory(cwd, payload as GitHistoryOptions, selectedRepoOf(payload)) }
+      catch (error) {
         if (error instanceof git.GitCommandError && (error.code === 'graph-stale' || error.code === 'graph-limit' || error.code === 'bad-request')) {
           throw new SidebarError(error.code, error.message, error.code === 'graph-stale' ? 409 : 400)
         }

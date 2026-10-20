@@ -262,6 +262,7 @@ export const zhMO: Record<string, string> = {
   graphBranchFilter: '分支篩選',
   graphEmpty: '尚無提交',
   graphLoadError: '載入提交歷史失敗',
+  graphLinearFallback: '分支過多，目前顯示不含分支圖的提交列表',
   graphStale: '提交歷史已變更，請重新整理',
   graphDetails: '提交詳情',
   graphParents: '父提交',

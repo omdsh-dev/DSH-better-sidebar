@@ -535,6 +535,9 @@ export const api = {
   /** Read-only topological history; stale cursors require a fresh first page. */
   gitGraph: (scope: SessionScope, options: GitGraphOptions = {}, worktree?: string, signal?: AbortSignal) =>
     call<GitGraphResult>('git.graph', gitPayload(scope, worktree, { ...options }), signal),
+  /** 图形界面超过分支上限时读取经状态指纹校验的分页历史。 */
+  gitHistory: (scope: SessionScope, options: { count?: number; cursor?: string } = {}, worktree?: string, signal?: AbortSignal) =>
+    call<{ isRepo: boolean; root?: string; entries: GitGraphResult['entries']; hasMore: boolean; nextCursor?: string; snapshot: string }>('git.history', gitPayload(scope, worktree, options), signal),
   /** Recent commit history, lazily pageable (skip/count; defaults 0/30). */
   gitLog: (scope: SessionScope, count?: number, skip?: number, worktree?: string, signal?: AbortSignal) =>
     call<GitLogEntry[]>('git.log', gitPayload(scope, worktree, {

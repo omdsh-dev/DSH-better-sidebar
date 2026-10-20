@@ -247,6 +247,7 @@ export const tr: Record<string, string> = {
   graphBranchFilter: 'Dal filtresi',
   graphEmpty: 'Commit yok',
   graphLoadError: 'Commit geçmişi yüklenemedi',
+  graphLinearFallback: 'Çok fazla dal var; commit geçmişi dal grafiği olmadan liste olarak gösteriliyor',
   graphStale: 'Geçmiş değişti. Devam etmek için yenileyin.',
   graphDetails: 'Commit ayrıntıları',
   graphParents: 'Üst commit’ler',

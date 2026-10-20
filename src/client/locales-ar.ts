@@ -248,6 +248,7 @@ export const ar: Record<string, string> = {
   graphBranchFilter: 'تصفية حسب الفرع',
   graphEmpty: 'لا توجد التزامات',
   graphLoadError: 'تعذر تحميل سجل الالتزامات',
+  graphLinearFallback: 'عدد الفروع كبير جدًا؛ يُعرض سجل الالتزامات كقائمة دون رسم للفروع',
   graphStale: 'تغيّر السجل. يرجى التحديث للمتابعة.',
   graphDetails: 'تفاصيل الالتزام',
   graphParents: 'الالتزامات الأصلية',

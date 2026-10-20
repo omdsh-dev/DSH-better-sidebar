@@ -245,6 +245,7 @@ export const nl: Record<string, string> = {
   graphBranchFilter: 'Branchfilter',
   graphEmpty: 'Geen commits',
   graphLoadError: 'Commitgeschiedenis laden mislukt',
+  graphLinearFallback: 'Te veel branches; de commitgeschiedenis wordt als lijst zonder vertakkingsgrafiek weergegeven',
   graphStale: 'De geschiedenis is gewijzigd. Vernieuw om door te gaan.',
   graphDetails: 'Commitdetails',
   graphParents: 'Bovenliggende commits',
