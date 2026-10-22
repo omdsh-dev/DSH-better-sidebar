@@ -63,6 +63,6 @@ describe('host runtime imports', () => {
     const source = readFileSync(resolve(SRC, 'sidechat-routes.ts'), 'utf8')
     expect(source).toContain(`import type { SessionEvent, SessionId, SessionLogOffset } from '${TYPE_ONLY_PACKAGE}'`)
     // The cast carries the brand; the runtime stamp is what the host surface lacks.
-    expect(source).toContain('inheritedEventCount: seed.length as SessionLogOffset')
+    expect(source).toContain('inheritedEventCount: inheritedEventCount as SessionLogOffset')
   })
 })

@@ -653,24 +653,40 @@ export function buildSidechatApi(ctx: Context, live?: AssistantLiveBuffer): Side
         ...(routeProvider === undefined ? {} : { agentProvider: routeProvider }),
         ...(routeModel === undefined ? {} : { agentModel: routeModel }),
       })
+      // The inherited cut sits right after the copied parent history, the
+      // same shape as the host's own session.fork (buildForkSeed): the
+      // inherited prefix, an inherited end-seed marker AT the cut, then the
+      // thread's own events. The host reads a child's descriptor only from
+      // `events.slice(inheritedEventCount)` (subagent resume, persisted
+      // session facts); a descriptor inside the prefix leaves the thread
+      // listed as corrupt and not resumable as a continuable child. The
+      // seeded constructor accepts a cut shorter than the seed only when
+      // the event at the cut is this marker.
+      const inheritedEventCount = inheritance.seed.length
+      const endSeed: SeedEvent = {
+        type: 'session/end-seed',
+        seq: inheritedEventCount,
+        time: Date.now(),
+        data: { inherited: true },
+      }
       // A truncated inheritance can end before the parent's last directory
       // change. Header cwd alone cannot win: the host projection replays seed
       // working-directory/change events over it. Stamp the committed directory
-      // at the seed boundary, using the host-owned event rather than refolding
+      // right after the cut, using the host-owned event rather than refolding
       // its history or asking set() to enqueue a synthetic user notice.
       const directorySeed: SeedEvent[] = workingDirectory === undefined ? [] : [{
         type: 'working-directory/change',
-        seq: inheritance.seed.length,
+        seq: inheritedEventCount + 1,
         time: Date.now(),
         data: { cwd: parentCwd },
       }]
       const descriptorEvent: SeedEvent = {
         type: 'subagent/descriptor',
-        seq: inheritance.seed.length + directorySeed.length,
+        seq: inheritedEventCount + 1 + directorySeed.length,
         time: Date.now(),
         data: descriptor as unknown as Record<string, unknown>,
       }
-      const seed = [...inheritance.seed, ...directorySeed, descriptorEvent]
+      const seed = [...inheritance.seed, endSeed, ...directorySeed, descriptorEvent]
       // Fork-marker fields (the exact shape the host's own session.fork uses,
       // api-session-controller): without `isSeeded` + `inheritedEventCount` the
       // session treats the whole seed as the child's OWN events, so the child's
@@ -710,7 +726,7 @@ export function buildSidechatApi(ctx: Context, live?: AssistantLiveBuffer): Side
         // stamp, so importing the value aborts the whole host half at load time.
         // `Array#length` is a non-negative safe integer by construction — exactly
         // what the upstream stamp asserts — so the cast is lossless here.
-        inheritedEventCount: seed.length as SessionLogOffset,
+        inheritedEventCount: inheritedEventCount as SessionLogOffset,
         agentOptions: childAgentOptions,
         setup,
         signal: AbortSignal.timeout(CREATE_TIMEOUT_MS),
