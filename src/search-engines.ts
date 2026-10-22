@@ -179,6 +179,7 @@ function candidates(engine: Engine): string[] {
 function verify(binary: string): Promise<boolean> {
   return new Promise((resolve) => {
     let settled = false
+    let timer: ReturnType<typeof setTimeout> | undefined = undefined
     const finish = (ok: boolean): void => {
       if (settled) return
       settled = true
@@ -192,7 +193,7 @@ function verify(binary: string): Promise<boolean> {
       finish(false)
       return
     }
-    const timer = setTimeout(() => {
+    timer = setTimeout(() => {
       child.kill()
       finish(false)
     }, PROBE_TIMEOUT_MS)

@@ -9,10 +9,10 @@
  * machines have no fd (and only sometimes rg), and the probe/runner contracts
  * are what the dispatch depends on.
  */
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import type { ChildProcess } from 'node:child_process'
+import { spawn, type ChildProcess } from 'node:child_process'
 import { PassThrough } from 'node:stream'
 import { join, posix, win32 } from 'node:path'
 import { searchFiles } from '../src/fs-search.ts'
@@ -36,6 +36,26 @@ import { removeTree } from './temp-tree.ts'
 
 const fdProbe: EngineProbe = { engine: 'fd', binary: '/fake/fd' }
 const rgProbe: EngineProbe = { engine: 'rg', binary: '/fake/rg' }
+
+vi.mock('node:child_process', { spy: true })
+
+describe('engine probe spawn failures (#995)', () => {
+  it('falls back to the plain walk when spawning a probe throws synchronously', async () => {
+    resetEngines()
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-sidebar-probe-failure-'))
+    writeFileSync(join(dir, 'needle.txt'), 'found by the plain walk')
+    vi.mocked(spawn).mockImplementation(() => { throw new Error('spawn blocked') })
+    try {
+      await expect(searchFiles(dir, 'needle')).resolves.toMatchObject({ matches: ['needle.txt'] })
+      expect(spawn).toHaveBeenCalled()
+      await expect(probeEngines()).resolves.toEqual([])
+    } finally {
+      vi.mocked(spawn).mockRestore()
+      resetEngines()
+      removeTree(dir)
+    }
+  })
+})
 
 describe('normalizeEnginePaths', () => {
   it('keeps root-relative /-separated lines as-is (fd contract)', () => {
