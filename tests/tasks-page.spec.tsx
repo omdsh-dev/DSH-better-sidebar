@@ -2,7 +2,8 @@
  * Tasks page interaction tests (jsdom): the jobs drawer's auto-collapse at
  * the agent-count threshold, the graph/tree view toggle visible in BOTH
  * modes, node click → transcript jump, ⓘ → anchored popover, and the
- * settled-leaf fold aggregate expanding on click.
+ * settled-leaf fold aggregate expanding on click. Owned task lines and
+ * tooltips must use the same blocked-status rule as the team board.
  */
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -576,6 +577,28 @@ describe('Tasks page graph interactions and team board', () => {
 })
 
 describe('Tasks page: owned tasks, host-primitive controls, draggable output', () => {
+  it.each([
+    ['pending', false, '阻塞'],
+    ['pending', true, '待办'],
+    ['in_progress', false, '进行中'],
+    ['completed', false, '已完成'],
+  ] as const)('keeps the board, task line and tooltip consistent for %s (ready: %s)', async (status, ready, label) => {
+    withTeam({ tasks: [teamTask({ status, ready, ownerName: 'writer' })] })
+    const store = makeStore(snapshotWithChildren(1))
+    const { container, unmount } = renderRoot(
+      createElement(SubagentView, { sessionId: 'root', active: true, ctx: makeCtx(store) }),
+    )
+    try {
+      await act(async () => { await Promise.resolve() })
+      expect(container.querySelector('[data-team-board]')?.textContent).toContain(label)
+      const taskLine = container.querySelector('[data-graph-node="child-0"] [role="button"]')
+      expect(taskLine?.textContent).toContain(label)
+      expect(taskLine?.getAttribute('title')).toBe(`收窄卡片（${label}）`)
+    } finally {
+      unmount()
+    }
+  })
+
   /** A board whose two tasks are both owned by the child agent. */
   function teamWithOwnedTask(): void {
     withTeam({
@@ -602,6 +625,8 @@ describe('Tasks page: owned tasks, host-primitive controls, draggable output', (
     expect(node.textContent).toContain('收窄卡片与图标化')
     expect(node.textContent).toContain('进行中')
     expect(node.textContent).toContain('+1')
+    expect(node.querySelector('[role="button"]')?.getAttribute('title'))
+      .toBe('收窄卡片与图标化（进行中）\n补点击回归（阻塞）')
     unmount()
   })
 

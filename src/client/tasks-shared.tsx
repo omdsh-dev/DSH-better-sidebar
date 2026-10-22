@@ -269,7 +269,7 @@ export function TaskLine(props: {
       role="button"
       tabIndex={0}
       className={css.taskLine}
-      title={tasks.map(task => `${task.subject}（${t(taskStatusKey(task.status))}）`).join('\n')}
+      title={tasks.map(task => `${task.subject}（${taskStatusLabel(task)}）`).join('\n')}
       onClick={(event) => {
         event.stopPropagation()
         props.onOpenTask(primary.id, event.currentTarget)
@@ -283,7 +283,7 @@ export function TaskLine(props: {
     >
       <span className={css.taskGlyph} aria-hidden="true"><IconChecklistOutlineRegular size={9} /></span>
       <span className={css.taskSubject}>{primary.subject}</span>
-      <span className={css.taskState}>{t(taskStatusKey(primary.status))}</span>
+      <span className={css.taskState}>{taskStatusLabel(primary)}</span>
       {tasks.length > 1 && <span className={css.taskMore}>{`+${tasks.length - 1}`}</span>}
     </span>
   )
