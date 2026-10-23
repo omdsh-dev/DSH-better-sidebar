@@ -3,7 +3,7 @@
  * editor host runs (planFirstMatch / planFsReadOutcome / decodeHead).
  */
 import { describe, expect, it } from 'vitest'
-import { decodeHead, planFirstMatch, planFsReadOutcome } from '../src/client/editor-load.ts'
+import { decodeHead, isDirectoryReadError, planFirstMatch, planFsReadOutcome } from '../src/client/editor-load.ts'
 import type { FileViewerDescriptor } from '../src/client/service.ts'
 
 const viewer = (over: Partial<FileViewerDescriptor>): FileViewerDescriptor => ({
@@ -139,5 +139,20 @@ describe('decodeHead', () => {
   it('decodes base64 to the exact bytes', () => {
     const head = decodeHead('AP//AA==')
     expect(Array.from(head)).toEqual([0x00, 0xff, 0xff, 0x00])
+  })
+})
+
+describe('isDirectoryReadError', () => {
+  it('recognizes the dedicated directory wire code', () => {
+    expect(isDirectoryReadError({ code: 'fs-directory', message: '"/work/src" is a directory' })).toBe(true)
+    // The real wire failure class also exposes `code` (api.ts SidebarApiError).
+    expect(isDirectoryReadError(Object.assign(new Error('"/work/src" is a directory'), { code: 'fs-directory' }))).toBe(true)
+  })
+
+  it('leaves every other failure to the error face', () => {
+    expect(isDirectoryReadError({ code: 'fs-error', message: 'boom' })).toBe(false)
+    expect(isDirectoryReadError(new Error('boom'))).toBe(false)
+    expect(isDirectoryReadError(null)).toBe(false)
+    expect(isDirectoryReadError(undefined)).toBe(false)
   })
 })

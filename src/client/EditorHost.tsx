@@ -29,7 +29,7 @@ import { IconCheckOutlineRegular, IconFolderOpenRegular, IconRefreshOutlineRegul
 import type { Context } from '../context-types.ts'
 import { api, mediaUrl, type SessionScope } from './api.ts'
 import { BinaryDownload } from './binary-download.tsx'
-import { planFirstMatch, planFsReadOutcome, type EditorLoadAction } from './editor-load.ts'
+import { isDirectoryReadError, planFirstMatch, planFsReadOutcome, type EditorLoadAction } from './editor-load.ts'
 import { clearEditorDirty, setEditorDirty } from './editor-dirty.ts'
 import { baseName } from './FileTree.tsx'
 import { createFrameBatcher } from './frame-batcher.ts'
@@ -41,7 +41,7 @@ import { createOpenInApp } from './open-in-app.ts'
 import { TreePanel } from './TreePanel.tsx'
 import { t } from './locales.ts'
 import { relativeTo } from './paths.ts'
-import { resolveSidebarPath } from './paths.ts'
+import { resolveNativeSidebarPath, resolveSidebarPath } from './paths.ts'
 import { clearRetargetedPath, closePathTabs, consumeRetargetedPath, pathTabKey, retargetPathTabs } from './tree-mutations.ts'
 import type { EditorToolbarControls, EditorToolbarState, FileViewerDescriptor } from './service.ts'
 import { firstLeaf, insertLeafAt, leafWithTab, mintTabId, type SidebarStore, type SidebarTab } from './state.ts'
@@ -472,6 +472,34 @@ export function EditorHost(props: {
             else apply(outcome)
           }).catch((error: unknown) => {
             if (cancelled) return
+            if (isDirectoryReadError(error)) {
+              // A path that resolves to a DIRECTORY is not a failed read: the
+              // editor tab must become the plugin's folder window instead of
+              // showing the host's raw `"<path>" is a directory`. This is the
+              // path a chat folder link takes (the tab carries no meta.dir), a
+              // `sidebar_open` folder takes when its seed meta was dropped on the
+              // native resource route, and a directory pasted into this tab's
+              // address bar takes (#933 / #1029).
+              //
+              // The root MUST be the platform-native absolute path: every
+              // listing answer is keyed by the host's `path.resolve`'d spelling,
+              // while FileTree keys its level cache by the REQUESTED root path.
+              // A session-relative, forward-slash-only root (the chat address
+              // spelling) therefore lands in another cache key and the tree
+              // stays on its loading placeholder forever. `ctx.sessions` carries
+              // the workspace root the file address grammar is relative to;
+              // scope.cwd is the fallback (a stripped ctx may not expose the
+              // list). `resolveNativeSidebarPath` also normalizes separators to
+              // that root's dialect (#1029 follow-up).
+              const sessionCwd = ctx.sessions?.list?.getSnapshot?.()?.byId?.[scope.sessionId]?.cwd ?? scope.cwd
+              const absolute = resolveNativeSidebarPath(sessionCwd, path)
+              ctx.get('betterSidebar')?.updateTab(tab.id, {
+                path: absolute,
+                title: baseName(absolute),
+                meta: { ...metaOf(tab), dir: true },
+              }, scope.sessionId)
+              return
+            }
             setLoad({ status: 'error', message: error instanceof Error ? error.message : String(error) })
           })
           return

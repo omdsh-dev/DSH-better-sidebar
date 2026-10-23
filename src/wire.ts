@@ -19,6 +19,7 @@ export type SidebarErrorCode =
   | 'too-large'
   | 'unavailable'
   | 'fs-error'
+  | 'fs-directory'
   | 'fs-conflict'
   | 'git-error'
   | 'graph-stale'

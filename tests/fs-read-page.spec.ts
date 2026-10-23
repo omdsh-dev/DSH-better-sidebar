@@ -238,11 +238,14 @@ describe('fs.readPage', () => {
     expect(walked.text).toBe(asciiPrefix + cjkTail)
   })
 
-  it('refuses a directory and a path outside any session', async () => {
+  it('refuses a directory with its dedicated wire code', async () => {
     const workspace = workspaceWith('dir', 'x')
     mkdirSync(join(workspace, 'sub'))
     const route = mountApi(workspace)
     const onDir = await readPage(route, join(workspace, 'sub'), 0)
-    expect(onDir).toMatchObject({ ok: false, error: { code: 'fs-error' } })
+    // `fs-directory` is what lets the client turn the open into a folder
+    // window instead of rendering an error (the generic fs-error path is kept
+    // for unreadable paths).
+    expect(onDir).toMatchObject({ ok: false, error: { code: 'fs-directory' } })
   })
 })

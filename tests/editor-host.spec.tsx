@@ -651,6 +651,76 @@ describe('EditorHost (files window)', () => {
     }
   })
 
+  it('a directory opened as a file falls back to the folder window (#1029)', async () => {
+    const { store, ctx } = setup()
+    const service = ctx.betterSidebar
+    // The chat file-link route and the native sidebar_open route can hand the
+    // editor a DIRECTORY path with no meta.dir (issue #1029). The host answers
+    // the fs.read with its dedicated directory code; the tab must promote
+    // itself to the folder window instead of rendering the raw host error.
+    // The source path is RELATIVE on purpose: that is the spelling a chat link
+    // carries. A promotion that roots the tree at that relative path lists the
+    // level under the host-resolved ABSOLUTE key, so the root would sit on its
+    // loading placeholder forever — the promotion must absolutize first.
+    service.registerFileViewer({ id: 'test:dir-read', exts: [], fetchStrategy: 'fsRead', component: () => null })
+    fsRead.mockRejectedValueOnce({ code: 'fs-directory', message: '"/tmp/src" is a directory' })
+    service.openTab({ type: 'editor', title: 'src', path: 'src', id: 'editor:src' })
+    const tab = (): SidebarTab =>
+      allLeaves(store.getSnapshot().state!.bottomSplits).flatMap(leaf => leaf.tabs)
+        .find(candidate => candidate.id === 'editor:src')!
+    const { container, rerender, unmount } = mountHost(ctx, store, tab)
+    try {
+      await act(async () => {
+        await new Promise<void>(resolve => { setTimeout(resolve, 0) })
+      })
+      expect(fsRead).toHaveBeenCalledWith(expect.anything(), 'src')
+      // The fallback persisted the folder flag exactly like a sidebar_open
+      // folder seed would have, and resolved the relative path against the
+      // session cwd (`/tmp` in setup()) before rooting the tree.
+      expect(tab().path).toBe('/tmp/src')
+      expect(tab().meta).toEqual({ dir: true })
+      rerender()
+      expect(container.querySelector('input[placeholder^="Search files"]')).not.toBeNull()
+      expect(container.textContent).not.toContain('is a directory')
+    } finally {
+      unmount()
+    }
+  })
+
+  it('a Windows session root normalizes the promoted folder root to backslashes (#1029)', async () => {
+    const { store, ctx } = setup()
+    const service = ctx.betterSidebar
+    // A chat file address carries a `/`-separated session-relative path. Joined
+    // onto a Windows cwd it must not keep the mixed spelling: the host keys
+    // every listing by its `path.resolve`'d absolute path while FileTree keys
+    // levels by the requested root, so mixed separators would leave the root on
+    // its "Loading…" placeholder forever.
+    const snapshot = (ctx.sessions as unknown as {
+      list: { getSnapshot: () => { byId: Record<string, { cwd: string }> } }
+    }).list.getSnapshot()
+    snapshot.byId[sessionId]!.cwd = 'C:\\work'
+    service.registerFileViewer({ id: 'test:dir-read-win', exts: [], fetchStrategy: 'fsRead', component: () => null })
+    fsRead.mockRejectedValueOnce({ code: 'fs-directory', message: '"C:\\work\\src" is a directory' })
+    service.openTab({ type: 'editor', title: 'src', path: 'src', id: 'editor:win-src' })
+    const tab = (): SidebarTab =>
+      allLeaves(store.getSnapshot().state!.bottomSplits).flatMap(leaf => leaf.tabs)
+        .find(candidate => candidate.id === 'editor:win-src')!
+    const { container, rerender, unmount } = mountHost(ctx, store, tab)
+    try {
+      await act(async () => {
+        await new Promise<void>(resolve => { setTimeout(resolve, 0) })
+      })
+      expect(fsRead).toHaveBeenCalledWith(expect.anything(), 'src')
+      expect(tab().path).toBe('C:\\work\\src')
+      expect(tab().meta).toEqual({ dir: true })
+      rerender()
+      expect(container.querySelector('input[placeholder^="Search files"]')).not.toBeNull()
+      expect(container.textContent).not.toContain('is a directory')
+    } finally {
+      unmount()
+    }
+  })
+
   it('a folder tab (meta.dir) renders the tree rooted at the folder, no editor chrome', () => {
     const { store, ctx } = setup()
     ctx.betterSidebar!.openTab({

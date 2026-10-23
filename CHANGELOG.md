@@ -2,6 +2,10 @@
 
 > 本文档收录 dsh-better-sidebar 的完整发布历史（最新版摘要见 [README](README_ZH.md)；同步发布于 [GitHub Releases](https://github.com/omdsh-dev/DSH-better-sidebar/releases)）。
 
+### Unreleased
+
+- **目录目标不再按文件读取**（[#1029](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1029)，同一根因覆盖 [#933](https://github.com/omdsh-dev/DSH-better-sidebar/issues/933)）：打开路径是文件夹时（会话里的目录链接、`sidebar_open` 目录、编辑器地址栏粘贴目录），`fs.read` / `fs.readPage` 返回专用错误码 `fs-directory`；`EditorHost` 捕获后把当前页签升级为文件夹窗口（`meta.dir: true` + 文件树），不再把原始 `"…" is a directory` 错误画成页签内容。升级时先把相对目标按会话工作区解析成**平台原生绝对路径**（Windows 分隔符规整、去尾部分隔符，见 `resolveNativeSidebarPath`）再作为文件夹根——host 返回的层级路径是 `path.resolve` 后的绝对路径，而 FileTree 按请求的根路径缓存层级；根是相对路径或混合斜杠时两者键不一致，文件树会永远停在「加载中」占位。
+
 ### v0.28.0
 
 - **正式版支持线前移到 DSH 0.2.1-rc.1+**：13 条 DSH peer 下限统一为 `^0.2.1-rc.1`，开发依赖、CI 与安装脚本使用精确 RC 基线。不新增运行时兼容层、不改功能实现。

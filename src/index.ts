@@ -444,7 +444,10 @@ async function readText(path: string): Promise<SidebarReadResult> {
     throw new SidebarError('fs-error', `cannot read "${path}": ${error instanceof Error ? error.message : String(error)}`, 400)
   })
   if (info.isDirectory()) {
-    throw new SidebarError('fs-error', `"${path}" is a directory`, 400)
+    // A dedicated code, not a generic fs failure: the client promotes the tab
+    // to the plugin's folder window instead of rendering this as an error (a
+    // chat folder link, a sidebar_open folder, a pasted directory path).
+    throw new SidebarError('fs-directory', `"${path}" is a directory`, 400)
   }
   const size = info.size
   const oversized = size > MAX_EDITABLE_BYTES
@@ -530,7 +533,7 @@ async function readPage(path: string, offset: number): Promise<ReadPageResult> {
     throw new SidebarError('fs-error', `cannot read "${path}": ${error instanceof Error ? error.message : String(error)}`, 400)
   })
   if (info.isDirectory()) {
-    throw new SidebarError('fs-error', `"${path}" is a directory`, 400)
+    throw new SidebarError('fs-directory', `"${path}" is a directory`, 400)
   }
   const size = info.size
   if (offset >= size) {

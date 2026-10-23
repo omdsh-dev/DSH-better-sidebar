@@ -4,6 +4,10 @@
 >
 > 📝 The Chinese [CHANGELOG](./CHANGELOG.md) is the authoritative, item-by-item record; this file carries the English summaries and has historically lagged behind it. Where the two disagree, the Chinese one is current.
 
+### Unreleased
+
+- **A directory target is no longer read as a file** ([#1029](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1029); same root cause also covers [#933](https://github.com/omdsh-dev/DSH-better-sidebar/issues/933)): when the opened path is a folder (a chat folder link, a `sidebar_open` folder, a directory pasted into the editor address bar), `fs.read` / `fs.readPage` answer with the dedicated `fs-directory` code; `EditorHost` turns the tab into the folder window (`meta.dir: true` + file tree) instead of painting the raw `"…" is a directory` host error into the tab. The promotion resolves a relative target against the session workspace root first and normalizes it to the platform-native spelling (`resolveNativeSidebarPath`: separator dialect + no trailing separator): listing answers are keyed by the host's `path.resolve`'d absolute path while FileTree caches levels by the requested root, so a relative or mixed-separator root would sit on its loading placeholder forever.
+
 ### v0.28.0
 
 - **Stable plugin support moves to DSH 0.2.1-rc.1+**: all 13 DSH peer floors are `^0.2.1-rc.1`; development dependencies, CI and installers pin the exact RC baseline. No runtime compatibility layer or feature implementation changes are introduced.
