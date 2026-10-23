@@ -11,16 +11,19 @@
  * open-tag attributes) goes through DOMPurify with an explicit denylist on
  * top of its defaults (no script/style/iframe/forms), anchors are forced to
  * open in a new tab with noopener, and local media goes through the
- * session-scoped `/sidebar/file` media route — markdown-syntax image
- * destinations are rewritten via `markdown-images.ts` and `src` attributes
- * through `resolveLocalMediaDest` (the same trust fence).
+ * session-scoped `/sidebar/file` media route — `src` attributes via
+ * `resolveLocalMediaDest` (the same trust fence). Markdown-syntax images are
+ * resolved by the owning surface's `pathImages` vocabulary
+ * (`markdown-images.ts`); that is what keeps them same-origin in the desktop
+ * shell.
  */
 import { useLayoutEffect, useMemo, useRef } from 'react'
 import { createElement, type ReactNode } from 'react'
 import DOMPurify from 'dompurify'
 import { MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
+import type { MarkdownPathImages } from '@deepseek-ai/dsh-client-ui-primitives'
 import { markdownTextProps, type MarkdownCopyLabels } from './markdown-labels.tsx'
-import { resolveLocalMediaDest, rewriteLocalImageUrls } from './markdown-images.ts'
+import { resolveLocalMediaDest } from './markdown-images.ts'
 import { rewriteLocalMarkdownLinks } from './markdown-navigation.ts'
 import {
   analyzeHtmlSegment,
@@ -41,8 +44,10 @@ import { LazyMermaidMarkdown } from './mermaid-lazy.tsx'
 export interface MarkdownHtmlMedia {
   scope: SessionScope
   path: string
-  /** The injected transport base, reverse-proxy prefix included. */
+  /** The PAGE base, reverse-proxy prefix included (`hostHttpBase()`). */
   baseUrl: string
+  /** The owner's local-path image vocabulary for markdown runs. */
+  pathImages?: MarkdownPathImages | undefined
 }
 
 /** Tag-like text in a rendered text node — the inline pass gate. */
@@ -231,6 +236,7 @@ interface MarkdownSegmentProps {
  * skips its own output, so mutation feedback settles after one extra pass.
  */
 function MarkdownSegment({ text, hasMermaid, media, codeLabels }: MarkdownSegmentProps): ReactNode {
+  const pathImages = media.pathImages
   const containerRef = useRef<HTMLDivElement>(null)
   useLayoutEffect(() => {
     const container = containerRef.current
@@ -251,8 +257,8 @@ function MarkdownSegment({ text, hasMermaid, media, codeLabels }: MarkdownSegmen
   return (
     <div ref={containerRef}>
       {hasMermaid
-        ? <LazyMermaidMarkdown text={text} codeLabels={codeLabels} />
-        : <MarkdownText {...markdownTextProps(text, codeLabels)} />}
+        ? <LazyMermaidMarkdown text={text} codeLabels={codeLabels} pathImages={pathImages} />
+        : <MarkdownText {...markdownTextProps(text, codeLabels, pathImages)} />}
     </div>
   )
 }
@@ -296,18 +302,14 @@ export function MarkdownDocument({ info, media, codeLabels }: MarkdownDocumentPr
     if (segment.kind === 'markdown') {
       const defs = info.referenceDefinitions
       const raw = defs === '' ? segment.text : `${segment.text}\n\n${defs}`
-      // MarkdownText drops non-http(s) image destinations (chat-security
-      // stance), so rewrite local ones into /sidebar/file media URLs first —
-      // the same trust fence the sanitized HTML leaves below go through.
-      // Idempotent: already-absolute media URLs pass through untouched.
-      // The link pass follows (it must see the media URLs already in place):
-      // it carries a heading fragment past the host parser and keeps every
-      // local destination the plugin does not claim inert.
-      const text = rewriteLocalMarkdownLinks(
-        rewriteLocalImageUrls(raw, media.scope, media.path, media.baseUrl),
-        media.path,
-        media.scope.cwd,
-      )
+      // Local image destinations stay as authored: the enclosing surface's
+      // `pathImages` vocabulary resolves them at render time (see
+      // markdown-images.ts — a rewritten URL could not be vouched for from the
+      // desktop shell's `dsh-app://` page). The link pass runs here so a
+      // heading fragment survives the host parser and every local link the
+      // plugin does not claim stays inert; image-referenced definitions are
+      // left alone by that pass so the renderer can still resolve them.
+      const text = rewriteLocalMarkdownLinks(raw, media.path, media.scope.cwd)
       return {
         kind: 'markdown',
         text,

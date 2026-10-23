@@ -13,6 +13,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
 import { MarkdownDocument, type MarkdownHtmlMedia } from '../src/client/MarkdownHtml.tsx'
 import { analyzeMarkdownHtml } from '../src/client/markdown-html.ts'
+import { createMarkdownPathImages } from '../src/client/markdown-images.ts'
 
 // The act() environment flag (React 18.2 reads it before flushing effects).
 import { setupReactAct } from './test-utils.ts'
@@ -23,18 +24,38 @@ const media: MarkdownHtmlMedia = {
   path: '/ws/docs/README.md',
   baseUrl: 'http://gui.origin/proxy/3080/',
 }
+/** The desktop shell's page origin: the Host listens on a different site. */
+const desktopMedia: MarkdownHtmlMedia = {
+  scope: { sessionId: 's1', cwd: '/ws' },
+  path: '/ws/docs/README.md',
+  baseUrl: 'dsh-app://app/',
+}
 const codeLabels = {
   copyLabel: 'Copy', copiedLabel: 'Copied', codeLabel: 'Code block', wrapLabel: 'Wrap lines', unwrapLabel: 'Do not wrap lines',
 }
 
-async function renderDocument(text: string): Promise<{ container: HTMLElement; root: Root }> {
+/**
+ * Render one document with the Markdown owner's `pathImages` vocabulary — the
+ * production wiring: local markdown images resolve through the page-base
+ * vocabulary, which is also the only branch that renders from the desktop
+ * shell's `dsh-app://` page (regression covered below).
+ */
+async function renderDocument(
+  text: string,
+  renderMedia: MarkdownHtmlMedia = media,
+): Promise<{ container: HTMLElement; root: Root }> {
   const container = document.createElement('div')
   document.body.appendChild(container)
   const root = createRoot(container)
+  const mediaWithImages: MarkdownHtmlMedia = {
+    ...renderMedia,
+    pathImages: renderMedia.pathImages
+      ?? createMarkdownPathImages(renderMedia.scope, renderMedia.path, renderMedia.baseUrl),
+  }
   await act(async () => {
     root.render(createElement(MarkdownDocument, {
       info: analyzeMarkdownHtml(text),
-      media,
+      media: mediaWithImages,
       codeLabels,
     }))
     // Let the MutationObserver's queued inline pass settle inside the act scope.
@@ -365,6 +386,40 @@ describe('MarkdownDocument (local markdown images)', () => {
     const { container, root } = await renderDocument(`![a](${url})`)
     const img = container.querySelector('img')
     expect(img?.getAttribute('src')).toBe(url)
+    await unmount(root)
+  })
+})
+
+describe('MarkdownDocument (desktop shell page origin)', () => {
+  // Regression: the desktop shell serves the GUI from `dsh-app://app/` and the
+  // Host listens on another origin (`__DSH_TRANSPORT__.streamBaseUrl`). A
+  // transport-origin http media URL is therefore a CROSS-SITE subresource, the
+  // Host's Connection fence rejects it (403) and MarkdownText falls back to the
+  // image's alt text — exactly the bug this suite pins. Markdown syntax is
+  // limited to the renderer's local-file vocabulary (`dsh-app://app/api/file`),
+  // whose request the shell forwards to the Host with the launch cookie.
+  it('renders markdown-syntax local images from the dsh-app page origin', async () => {
+    const { container, root } = await renderDocument([
+      '![icon](./assets/icon.svg)',
+      '',
+      '![logo][logo]',
+      '',
+      '[logo]: ./logo.png',
+    ].join('\n'), desktopMedia)
+    const imgs = [...container.querySelectorAll('img')]
+    expect(imgs.length, 'both local images must render as <img>, not alt fallback').toBe(2)
+    expect(imgs[0]?.getAttribute('src')).toBe('dsh-app://app/api/file?path=%2Fws%2Fdocs%2Fassets%2Ficon.svg')
+    expect(imgs[1]?.getAttribute('src')).toBe('dsh-app://app/api/file?path=%2Fws%2Fdocs%2Flogo.png')
+    await unmount(root)
+  })
+
+  it('renders raw-HTML local images from the dsh-app page origin', async () => {
+    const { container, root } = await renderDocument(
+      '<picture><img src="./shot.png" alt="shot"/></picture>',
+      desktopMedia,
+    )
+    const img = container.querySelector('img')
+    expect(img?.getAttribute('src')).toBe('dsh-app://app/sidebar/file?sessionId=s1&path=%2Fws%2Fdocs%2Fshot.png&cwd=%2Fws')
     await unmount(root)
   })
 })
