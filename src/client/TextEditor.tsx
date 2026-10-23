@@ -29,9 +29,9 @@ import {
   type GitGutterHost,
 } from './editor-git-gutter.ts'
 import { api, htmlUrl, SidebarApiError } from './api.ts'
-import { hostTransportBase } from './desktop-env.ts'
+import { hostHttpBase } from './desktop-env.ts'
 import { markdownPreviewSource } from './markdown-frontmatter.ts'
-import { rewriteLocalImageUrls } from './markdown-images.ts'
+import { createMarkdownPathImages } from './markdown-images.ts'
 import { rewriteLocalMarkdownLinks } from './markdown-navigation.ts'
 import { languageForPath } from './lang.ts'
 import { cmSurfaceTheme, CmThemeCompartment } from './cm-themes.ts'
@@ -674,17 +674,14 @@ export function TextEditor(props: FileViewerProps) {
     requestAnimationFrame(() => { restoringRef.current = false })
   }, [mode, previewMdText])
 
-  /** The preview source with local image destinations rewritten to absolute
-   *  media URLs (see {@link rewriteLocalImageUrls}) and the local link
-   *  destinations prepared for the host delegate (see
-   *  {@link rewriteLocalMarkdownLinks}; the split renderer runs the same two
-   *  passes per markdown run, and both are idempotent). */
+  /** The preview source with the local link destinations prepared for the
+   *  host delegate (see {@link rewriteLocalMarkdownLinks}; the split renderer
+   *  runs the same pass per markdown run, and it is idempotent). Local IMAGE
+   *  destinations stay as authored: the owner's `pathImages` vocabulary
+   *  resolves them at render time, which is the only shape that also works
+   *  from the desktop shell's `dsh-app://` page (see markdown-images.ts). */
   const previewText = markdown
-    ? rewriteLocalMarkdownLinks(
-      rewriteLocalImageUrls(previewMdText, scope, path, hostTransportBase()),
-      path,
-      scope.cwd,
-    )
+    ? rewriteLocalMarkdownLinks(previewMdText, path, scope.cwd)
     : previewMdText
   /** md/mermaid block split for the preview (mermaid fences lift out). Split
    *  only in preview mode: edit-mode keystrokes must not re-scan the source. */
@@ -694,9 +691,8 @@ export function TextEditor(props: FileViewerProps) {
   )
   /** Raw-HTML analysis (block runs lifted out + inline gate). Non-null for
    *  every markdown preview, so the render below always takes the split
-   *  renderer — its markdown runs rewrite local image destinations internally
-   *  (see MarkdownHtml.tsx). The legacy single-pass branches (fed the
-   *  pre-rewritten `previewText`) are dead in the current wiring. */
+   *  renderer. The legacy single-pass branches are dead in the current
+   *  wiring. */
   const htmlInfo = useMemo(
     () => (markdown && mode === 'preview' ? analyzeMarkdownHtml(previewMdText) : null),
     [markdown, mode, previewMdText],
@@ -709,11 +705,19 @@ export function TextEditor(props: FileViewerProps) {
     [htmlInfo, mdBlocks],
   )
   /** The media context for the split renderer (local-src rewriting inside
-   *  sanitized HTML). Memoized on primitives: MarkdownDocument sanitizes per
-   *  `media` identity, so a fresh object per render would re-sanitize every
-   *  keystroke. */
+   *  sanitized HTML, plus the owner's `pathImages` vocabulary for markdown
+   *  runs). The PAGE base is load-bearing: in the desktop shell the transport
+   *  origin is a different site and its media request would be rejected by the
+   *  Connection fence (see markdown-images.ts). Memoized on primitives:
+   *  MarkdownDocument sanitizes per `media` identity, so a fresh object per
+   *  render would re-sanitize every keystroke. */
   const htmlMedia = useMemo<MarkdownHtmlMedia>(
-    () => ({ scope, path, baseUrl: hostTransportBase() }),
+    () => ({
+      scope,
+      path,
+      baseUrl: hostHttpBase(),
+      pathImages: createMarkdownPathImages(scope, path, hostHttpBase()),
+    }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [scope.sessionId, scope.cwd, path],
   )
@@ -962,8 +966,8 @@ export function TextEditor(props: FileViewerProps) {
             {htmlInfo !== null
               ? <MarkdownDocument info={htmlInfo} media={htmlMedia} codeLabels={codeLabels} />
               : hasMermaid
-                ? <LazyMermaidMarkdown text={previewText} codeLabels={codeLabels} />
-                : <MarkdownText {...markdownTextProps(previewText, codeLabels)} />}
+                ? <LazyMermaidMarkdown text={previewText} codeLabels={codeLabels} pathImages={htmlMedia.pathImages} />
+                : <MarkdownText {...markdownTextProps(previewText, codeLabels, htmlMedia.pathImages)} />}
           </MarkdownDelegateProvider>
         </div>
       )}

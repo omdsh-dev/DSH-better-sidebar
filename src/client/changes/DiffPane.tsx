@@ -21,7 +21,7 @@ import { IconCloseOutlineRegular, IconRefreshOutlineRegular, IconRightUpOutlineR
 import type { Context } from '../../context-types.ts'
 import type { SessionScope } from '../api.ts'
 import { api, htmlUrl } from '../api.ts'
-import { hostTransportBase } from '../desktop-env.ts'
+import { hostHttpBase } from '../desktop-env.ts'
 import { t } from '../locales.ts'
 import { baseName } from '../paths.ts'
 import { resolveSidebarPath } from '../paths.ts'
@@ -36,7 +36,7 @@ import { buildDiffSegments, diffLines, diffStats, parseUnifiedDiff, unifiedSegme
 import { useGitDiffTarget } from '../diff/use-git-diff.ts'
 import { parseReadContent, parseReadLines, type FileOp } from './ops.ts'
 import { redactText } from '../redact.ts'
-import { rewriteLocalImageUrls } from '../markdown-images.ts'
+import { createMarkdownPathImages } from '../markdown-images.ts'
 import { markdownTextProps } from '../markdown-labels.tsx'
 import { useMarkdownSurface } from '../use-markdown-surface.ts'
 import { splitMermaidBlocks } from '../mermaid-blocks.ts'
@@ -164,16 +164,17 @@ export function PaneTabStrip(props: { tabs: readonly PaneTab[]; active: string; 
 }
 
 /** The reading-mode body of one markdown op target: the shared MarkdownText
- *  pass (local image destinations already rewritten to the media route by
- *  the caller). Mermaid fences render through the same chunk-resident
- *  renderer the editor preview uses (one MarkdownText pass with the fences
- *  lifted out); the plain path stays byte-for-byte for documents without
- *  any.
+ *  pass. Mermaid fences render through the same chunk-resident renderer the
+ *  editor preview uses (one MarkdownText pass with the fences lifted out); the
+ *  plain path stays byte-for-byte for documents without any.
  *
  *  The body is also a markdown SURFACE: heading slugs, anchor jumps and `.md`
  *  link claiming, with relative targets resolved against the previewed file's
- *  own directory (see use-markdown-surface). */
-function MdReadingView(props: { text: string; ctx: Context; scope: SessionScope; path: string }) {
+ *  own directory (see use-markdown-surface). Local images resolve through the
+ *  owner's `pathImages` vocabulary, based on the PAGE base — the same shape the
+ *  editor preview uses (see markdown-images.ts): a transport-origin http URL
+ *  would be cross-site and rejected from the desktop shell's page. */
+function MdReadingView(props: { text: string; ctx: Context; scope: SessionScope; path: string; filePath: string }) {
   const codeLabels = {
     copyLabel: t('copy'),
     copiedLabel: t('copied'),
@@ -187,8 +188,9 @@ function MdReadingView(props: { text: string; ctx: Context; scope: SessionScope;
     cwd: props.scope.cwd,
     path: props.path,
   })
-  // The caller already rewrote local IMAGE destinations; this pass is the link
-  // half (and is idempotent, so the two can be composed in either order).
+  const pathImages = createMarkdownPathImages(props.scope, props.filePath, hostHttpBase())
+  // The caller's link pass (surface.rewrite) is idempotent and leaves image
+  // destinations to the vocabulary above.
   const text = surface.rewrite(props.text)
   const hasMermaid = splitMermaidBlocks(text).some((block) => block.kind === 'mermaid')
   return (
@@ -196,8 +198,8 @@ function MdReadingView(props: { text: string; ctx: Context; scope: SessionScope;
       <div className={css.mdBody}>
         <MarkdownDelegateProvider openFile={surface.openFile}>
           {hasMermaid
-            ? <LazyMermaidMarkdown text={text} codeLabels={codeLabels} />
-            : <MarkdownText {...markdownTextProps(text, codeLabels)} />}
+            ? <LazyMermaidMarkdown text={text} codeLabels={codeLabels} pathImages={pathImages} />
+            : <MarkdownText {...markdownTextProps(text, codeLabels, pathImages)} />}
         </MarkdownDelegateProvider>
       </div>
     </div>
@@ -419,11 +421,12 @@ export function DiffPane({ target, ctx, scope, height, onHeightCommit, onClose, 
     () => (contentSrc === '' ? [] : contentSrc.split('\n').map((text, index) => ({ line: index + 1, text }))),
     [contentSrc],
   )
+  /** Reading mode receives the source as authored: local images resolve
+   *  through the surface's `pathImages` vocabulary in `MdReadingView` (the
+   *  source rewrite below cannot vouch for them from the desktop shell). */
   const contentText = useMemo(
-    () => (mdOp && !contentRaw && contentSrc !== ''
-      ? rewriteLocalImageUrls(contentSrc, scope, contentPath, hostTransportBase())
-      : ''),
-    [mdOp, contentRaw, contentSrc, scope, contentPath],
+    () => (mdOp && !contentRaw ? contentSrc : ''),
+    [mdOp, contentRaw, contentSrc],
   )
   const htmlRenderSrc = useMemo(
     () => (htmlOp && contentAbs !== '' ? htmlUrl(scope, contentAbs) : ''),
@@ -530,7 +533,7 @@ export function DiffPane({ target, ctx, scope, height, onHeightCommit, onClose, 
       : contentView === 'html'
         ? <HtmlRenderPreview src={htmlRenderSrc} title={title} />
         : contentView === 'md'
-          ? <MdReadingView text={contentText} ctx={ctx} scope={scope} path={contentPath} />
+          ? <MdReadingView text={contentText} ctx={ctx} scope={scope} path={contentPath} filePath={contentAbs !== '' ? contentAbs : contentPath} />
           : gitWorktree !== null
             ? (gitContent.status === 'loading' || gitContent.status === 'idle'
               ? <div className={css.paneBody}><Notice kind="loading" tone="page">{t('loading')}</Notice></div>

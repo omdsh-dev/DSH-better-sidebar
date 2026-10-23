@@ -10,6 +10,7 @@
  */
 
 import type { MarkdownCopyLabels } from './markdown-labels.tsx'
+import type { MarkdownPathImages } from '@deepseek-ai/dsh-client-ui-primitives'
 
 /** One fenced mermaid diagram lifted out of the markdown source. */
 export interface MermaidBlock {
@@ -31,6 +32,8 @@ export interface MermaidMarkdownProps {
   /** The full markdown source (rendered in a single MarkdownText pass). */
   text: string
   codeLabels: MarkdownCopyLabels
+  /** The owner's local-path image vocabulary for the same pass. */
+  pathImages?: MarkdownPathImages | undefined
 }
 
 /** CommonMark opening fence: 0-3 spaces indent + a run of 3+ backticks or tildes. */

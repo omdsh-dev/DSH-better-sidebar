@@ -33,7 +33,6 @@ import {
 import { splitMermaidBlocks, type MdBlock } from '../src/client/mermaid-blocks.ts'
 import { maskCodeRegions } from '../src/client/markdown-code.ts'
 import { rewriteLocalMarkdownLinks } from '../src/client/markdown-navigation.ts'
-import { rewriteLocalImageUrls } from '../src/client/markdown-images.ts'
 import type { SessionScope } from '../src/client/api.ts'
 
 /** One document, both spellings — every case below compares the two. */
@@ -148,14 +147,27 @@ describe('the markdown pipeline reads CRLF and LF documents identically', () => 
     expect(rewrittenCrlf).toContain('[demonstration](./demonstration.md#标题)')
   })
 
-  it('rewriteLocalImageUrls + rewriteLocalMarkdownLinks: byte parity', () => {
-    const rewrite = (text: string): string =>
-      rewriteLocalMarkdownLinks(rewriteLocalImageUrls(text, SCOPE, DOC, ''), DOC, SCOPE.cwd)
-    expect(stripCr(rewrite(CRLF))).toEqual(rewrite(LF))
-    // The image pass ran in the CRLF spelling too (its destination became the
-    // session-scoped media URL).
-    expect(rewrite(CRLF)).toContain('pic.png')
-    expect(rewrite(CRLF)).not.toContain('](./pic.png)')
+  it('leaves image destinations (and image-referenced definitions) to the renderer, CRLF included', () => {
+    // Images are resolved by the owner's `pathImages` vocabulary at render
+    // time, so the source rewrite must hand them over verbatim — including the
+    // reference definition an image uses — while a definition only links use
+    // is still pinned inert.
+    const text = [
+      '![inline](./pic.png)',
+      '',
+      '![logo][logo]',
+      '',
+      'see [docs][d]',
+      '',
+      '[logo]: ./logo.png',
+      '',
+      '[d]: ./notes.txt',
+    ].join('\n')
+    const rewrite = (source: string): string => rewriteLocalMarkdownLinks(source, DOC, SCOPE.cwd)
+    expect(stripCr(rewrite(text.replace(/\n/g, '\r\n')))).toEqual(rewrite(text))
+    expect(rewrite(text)).toContain('![inline](./pic.png)')
+    expect(rewrite(text)).toContain('[logo]: ./logo.png')
+    expect(rewrite(text)).toMatch(/\[d\]: \.\/notes\.txt\?/)
   })
 
   it('splitMermaidBlocks: a CRLF mermaid fence closes instead of swallowing the file', () => {

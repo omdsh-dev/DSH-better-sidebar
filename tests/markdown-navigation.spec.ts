@@ -193,7 +193,7 @@ describe('rewriteLocalMarkdownLinks', () => {
     expect(rewriteLocalMarkdownLinks('[x](./a.md?raw=1)', DOC, CWD)).toBe('[x](./a.md?raw=1)')
   })
 
-  it('leaves images to the image pass and code spans alone', () => {
+  it('leaves images to the renderer vocabulary and code spans alone', () => {
     expect(rewriteLocalMarkdownLinks('![alt](./pic.png)', DOC, CWD)).toBe('![alt](./pic.png)')
     expect(rewriteLocalMarkdownLinks('`[x](./other.md#标题)`', DOC, CWD)).toBe('`[x](./other.md#标题)`')
     expect(rewriteLocalMarkdownLinks('```\n[x](./other.md#标题)\n```', DOC, CWD)).toBe('```\n[x](./other.md#标题)\n```')
@@ -233,10 +233,31 @@ describe('rewriteLocalMarkdownLinks', () => {
     expect(rewriteLocalMarkdownLinks('[id]: ./other.md#标题', DOC, CWD)).toBe('[id]: ./other.md%23标题')
     expect(rewriteLocalMarkdownLinks('[id]: <./a b.md#标题>', DOC, CWD)).toBe('[id]: <./a b.md%23标题>')
     expect(rewriteLocalMarkdownLinks('[id]: ./notes.txt', DOC, CWD)).toBe('[id]: ./notes.txt?')
-    // An image-used definition was already turned into a media URL by the
-    // image pass (which runs first) — never touched here.
     expect(rewriteLocalMarkdownLinks('[id]: http://gui/sidebar/file?path=%2Fx.png', DOC, CWD))
       .toBe('[id]: http://gui/sidebar/file?path=%2Fx.png')
+  })
+
+  it('leaves image-referenced definitions for the renderer vocabulary', () => {
+    // The host renderer resolves a reference-style image through the owner's
+    // `pathImages` vocabulary; pinning the definition inert with a `?` would
+    // take that image away (it would render alt text).
+    const full = '![logo][logo]\n\n[logo]: ./logo.png'
+    expect(rewriteLocalMarkdownLinks(full, DOC, CWD)).toBe(full)
+    const collapsed = '![][id]\n\n[id]: ./pic.png'
+    expect(rewriteLocalMarkdownLinks(collapsed, DOC, CWD)).toBe(collapsed)
+    const shortcut = '![icon]\n\n[icon]: ./icon.svg'
+    expect(rewriteLocalMarkdownLinks(shortcut, DOC, CWD)).toBe(shortcut)
+    // Case-insensitive label matching, like CommonMark reference identifiers.
+    expect(rewriteLocalMarkdownLinks('![Logo][LOGO]\n\n[logo]: ./logo.png', DOC, CWD))
+      .toBe('![Logo][LOGO]\n\n[logo]: ./logo.png')
+    // A definition used only by a PLAIN LINK is still pinned inert (a non-md
+    // destination: a claimed `.md` one is left alone by the link pass).
+    expect(rewriteLocalMarkdownLinks('[docs][d]\n\n[d]: ./notes.txt', DOC, CWD))
+      .toBe('[docs][d]\n\n[d]: ./notes.txt?')
+    // The same definition used by BOTH an image and a plain link stays
+    // resolvable for the image; the link simply follows the same destination.
+    const both = '![pic][shared]\n\n[read][shared]\n\n[shared]: ./x.png'
+    expect(rewriteLocalMarkdownLinks(both, DOC, CWD)).toBe(both)
   })
 
   it('is idempotent: a second pass over its own output changes nothing', () => {
