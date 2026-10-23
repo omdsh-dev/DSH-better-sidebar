@@ -10,9 +10,10 @@
  * us, its `parseFileLink` accepts a fragment ONLY in the line grammar
  * (`#L24` / `#L24-L30`); a heading fragment (`./other.md#标题`) makes the whole
  * destination invalid, so the link would render as inert prose. That is why
- * this module owns a SOURCE rewrite as well as a DOM pass — the same shape
- * `markdown-images.ts` already has (images are rewritten into absolute
- * `/sidebar/file` URLs because the renderer refuses relative ones):
+ * this module owns a SOURCE rewrite as well as a DOM pass. Markdown images
+ * take the vocabulary route instead (the owning surface's `pathImages`, see
+ * `markdown-images.ts`), which is why the source rewrite below skips a
+ * reference definition an image uses:
  *
  * - {@link rewriteLocalMarkdownLinks} (source, before rendering): a claimed
  *   link's non-line fragment is carried past the host parser as `%23` (an
@@ -336,8 +337,10 @@ function rewriteDestination(destination: string, docPath: string | undefined, cw
  * Code regions are masked first (see `maskCodeRegions` — fenced blocks opened
  * by ``` ``` ``` OR `~~~`, and inline code spans), so documentation that
  * demonstrates `[x](./a.md#标题)` is not mutated. Image destinations are left
- * to `rewriteLocalImageUrls` (which must run FIRST: it rewrites the definitions
- * an image uses into absolute media URLs, which this pass then ignores).
+ * to the renderer's local-image vocabulary (`pathImages`), so
+ * a reference definition an IMAGE uses is skipped here as well — neutering it
+ * would take the image away from that vocabulary. A definition used only by
+ * links is still pinned inert like any other unclaimed local destination.
  * @param text - the markdown source about to be rendered.
  * @param docPath - the rendered document's absolute path (relative-link base).
  * @param cwd - the session workspace root, the base for prose surfaces.
@@ -349,24 +352,41 @@ export function rewriteLocalMarkdownLinks(
   cwd: string | undefined,
 ): string {
   const { masked, restore } = maskCodeRegions(text)
+  /** Reference labels image syntax resolves through, so those definitions are
+   *  left for the renderer's `pathImages` vocabulary instead of being pinned
+   *  inert. The label grammar image syntax uses: full `![alt][id]`,
+   *  collapsed `![][id]` and the shortcut `![alt]` (which resolves to the
+   *  label text itself). Code regions are already masked, so an example inside
+   *  a fence is never harvested. */
+  const imageLabels = new Set<string>()
+  {
+    const labelRe = /!\[([^\]]*)\](?:\[((?:[^\][]|\[[^\]]*\])*)\])?/g
+    let match: RegExpExecArray | null
+    while ((match = labelRe.exec(masked)) !== null) {
+      const alt = match[1] ?? ''
+      const ref = match[2]
+      imageLabels.add((ref !== undefined && ref !== '' ? ref : alt).toLowerCase())
+    }
+  }
 
   const links = masked
     // Inline links. The negative lookbehind keeps IMAGE destinations out, and
     // the label may hold ONE nested bracket pair — `[![badge](./b.svg)](./x.md)`
     // is a README staple, and matching only up to the inner `]` would read the
     // badge's own destination as the link's. The label is re-emitted verbatim,
-    // so nested content keeps whatever the image pass gave it.
+    // so nested content keeps its own image syntax for the renderer.
     .replace(
       /(?<!!)\[((?:[^[\]]|\[[^\]]*\])*)\]\(([^)\s]+)((?:\s+"[^"]*")?)\)/g,
       (_match, label: string, destination: string, title: string) =>
         `[${label}](${rewriteDestination(destination, docPath, cwd)}${title})`,
     )
-    // Reference definitions. Every local one is fair game: a definition an
-    // image uses was already turned into an absolute media URL by the image
-    // pass, and an absolute http(s) URL is never touched here.
+    // Reference definitions. An image-referenced definition stays verbatim so
+    // the renderer can resolve it through `pathImages`; every other local one
+    // is pinned inert like the inline links above (remote URLs untouched).
     .replace(
       /^(\s*\[([^\]]+)\]:\s*)(<[^>]+>|[^\s]+)/gm,
-      (_match, head: string, _label: string, destination: string) => {
+      (match, head: string, label: string, destination: string) => {
+        if (imageLabels.has(label.toLowerCase())) return match
         // A `<…>` destination keeps its brackets: they are what lets the path
         // carry a space, and dropping them would truncate the link.
         const bracketed = destination.startsWith('<') && destination.endsWith('>')

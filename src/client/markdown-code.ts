@@ -51,7 +51,7 @@ function fenceRun(line: string): { marker: string; length: number } | null {
  *  The tail may carry a CRLF terminator: `\r` is the line's ending, not
  *  content, and reading it as content left every fence in a CRLF document
  *  unclosed — the masked region then ran to the end of the file and the link /
- *  image passes skipped everything after the first fence. */
+ *  rewrite passes skipped everything after the first fence. */
 function closesFence(line: string, marker: string, length: number): boolean {
   if (line.charAt(0) !== marker) return false
   let run = 0

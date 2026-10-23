@@ -34,9 +34,14 @@ export interface MarkdownCopyLabels {
 }
 
 /** MarkdownText props carrying the nested chrome labels. */
-export function markdownTextProps(text: string, labels: MarkdownCopyLabels): ComponentProps<typeof MarkdownText> {
+export function markdownTextProps(
+  text: string,
+  labels: MarkdownCopyLabels,
+  pathImages?: ComponentProps<typeof MarkdownText>['pathImages'],
+): ComponentProps<typeof MarkdownText> {
   return {
     text,
+    pathImages,
     labels: {
       code: {
         copyLabel: labels.copyLabel,
