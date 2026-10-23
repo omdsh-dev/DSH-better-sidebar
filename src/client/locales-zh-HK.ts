@@ -385,6 +385,8 @@ export const zhHK: Record<string, string> = {
   viewerCode: '程式碼',
   viewerHtml: 'HTML',
   viewerJsonl: 'JSONL',
+  viewerMedia: '音訊影片',
+  mediaUnplayable: '無法播放這個檔案（編碼不受支援或檔案已損壞）',
   browser: '瀏覽器',
   browserPlaceholder: '輸入網址，例如 example.com',
   browserGo: '前往',

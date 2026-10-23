@@ -1471,6 +1471,42 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   overflow-wrap: anywhere;
 }
 
+/* Inline media (video / audio) preview: the file route already serves the
+   container with its real type and honours Range, so this pane is only the
+   stage + the transport the element brings itself. The stage fill is a token
+   like every other surface — a skin restyles the letterbox with the panel. */
+.mediaPreview {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 12px;
+}
+
+.mediaPreviewVideo {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  object-fit: contain;
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-base);
+}
+
+.mediaPreviewAudio {
+  width: 100%;
+  margin: auto 0;
+}
+
+.mediaPreviewNotice {
+  padding: 16px;
+  text-align: center;
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-tertiary);
+}
+
 /* Binary / download-only files (legacy OLE .doc/.xls/.ppt, unknown binaries):
    a centered notice plus a download link — the user always gets the file. */
 .editorBinary {

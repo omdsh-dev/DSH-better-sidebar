@@ -251,6 +251,136 @@ describe('/sidebar/html streams without a size cap', () => {
   })
 })
 
+/**
+ * Range support on the media route.
+ *
+ * A media element asks for `bytes=0-` and then seeks by asking for other
+ * windows; without 206 + `content-range` the browser can only buffer forward,
+ * so a clip is watchable but not scrubbable. These cases pin the wire shape:
+ * the 206 window, the restated `content-length`, the suffix spelling, the
+ * clamp past EOF, the 416 dead end, and the fallback to a plain 200 for
+ * spellings the route refuses to guess about.
+ */
+describe('/sidebar/file honours HTTP Range', () => {
+  it('answers 206 with exactly the requested window', async () => {
+    const ws = workspace('range-window')
+    const target = join(ws, 'clip.mp4')
+    writeFileSync(target, '0123456789')
+    const { origin } = await serve(ws)
+
+    const response = await fetch(fileUrl(origin, ws, target), { headers: { range: 'bytes=2-5' } })
+    expect(response.status).toBe(206)
+    expect(response.headers.get('content-range')).toBe('bytes 2-5/10')
+    expect(response.headers.get('content-length')).toBe('4')
+    expect(response.headers.get('accept-ranges')).toBe('bytes')
+    expect(await response.text()).toBe('2345')
+  })
+
+  it('advertises accept-ranges on the whole-body answer too', async () => {
+    const ws = workspace('range-advertise')
+    const target = join(ws, 'note.md')
+    writeFileSync(target, 'hello\n')
+    const { origin } = await serve(ws)
+
+    const response = await fetch(fileUrl(origin, ws, target))
+    expect(response.status).toBe(200)
+    expect(response.headers.get('accept-ranges')).toBe('bytes')
+    expect(response.headers.get('content-range')).toBeNull()
+  })
+
+  it('counts a suffix range back from EOF', async () => {
+    const ws = workspace('range-suffix')
+    const target = join(ws, 'clip.mp4')
+    writeFileSync(target, '0123456789')
+    const { origin } = await serve(ws)
+
+    const response = await fetch(fileUrl(origin, ws, target), { headers: { range: 'bytes=-3' } })
+    expect(response.status).toBe(206)
+    expect(response.headers.get('content-range')).toBe('bytes 7-9/10')
+    expect(await response.text()).toBe('789')
+  })
+
+  it('clamps an end past EOF instead of refusing the open-ended form', async () => {
+    const ws = workspace('range-clamp')
+    const target = join(ws, 'clip.mp4')
+    writeFileSync(target, '0123456789')
+    const { origin } = await serve(ws)
+
+    const response = await fetch(fileUrl(origin, ws, target), { headers: { range: 'bytes=5-99' } })
+    expect(response.status).toBe(206)
+    expect(response.headers.get('content-range')).toBe('bytes 5-9/10')
+    expect(await response.text()).toBe('56789')
+
+    const openEnded = await fetch(fileUrl(origin, ws, target), { headers: { range: 'bytes=7-' } })
+    expect(openEnded.status).toBe(206)
+    expect(openEnded.headers.get('content-range')).toBe('bytes 7-9/10')
+    expect(await openEnded.text()).toBe('789')
+  })
+
+  it('answers 416 when the window starts past EOF', async () => {
+    const ws = workspace('range-416')
+    const target = join(ws, 'clip.mp4')
+    writeFileSync(target, '0123456789')
+    const { origin } = await serve(ws)
+
+    const response = await fetch(fileUrl(origin, ws, target), { headers: { range: 'bytes=20-' } })
+    expect(response.status).toBe(416)
+    expect(response.headers.get('content-range')).toBe('bytes */10')
+    expect(await response.text()).toBe('')
+  })
+
+  it('answers a video container with its real type and a seekable window', async () => {
+    const ws = workspace('range-video')
+    const target = join(ws, 'clip.mp4')
+    writeFileSync(target, '0123456789')
+    const { origin } = await serve(ws)
+
+    const response = await fetch(fileUrl(origin, ws, target), { headers: { range: 'bytes=0-' } })
+    expect(response.status).toBe(206)
+    // The demuxer is picked from this header: octet-stream is the bug.
+    expect(response.headers.get('content-type')).toBe('video/mp4')
+    expect(response.headers.get('content-range')).toBe('bytes 0-9/10')
+    expect(await response.text()).toBe('0123456789')
+  })
+
+  it('falls back to 200 for a multi-range or non-bytes header', async () => {
+    const ws = workspace('range-fallback')
+    const target = join(ws, 'clip.mp4')
+    writeFileSync(target, '0123456789')
+    const { origin } = await serve(ws)
+
+    for (const range of ['bytes=0-1,4-5', 'items=0-1', 'bytes=abc']) {
+      const response = await fetch(fileUrl(origin, ws, target), { headers: { range } })
+      expect(response.status, range).toBe(200)
+      expect(await response.text(), range).toBe('0123456789')
+    }
+  })
+})
+
+describe('byteRangeOf', () => {
+  it('parses the spellings a browser sends', async () => {
+    const { byteRangeOf } = await import('../src/file-stream.ts')
+    expect(byteRangeOf('bytes=0-', 100)).toEqual({ start: 0, end: 99 })
+    expect(byteRangeOf('bytes=10-19', 100)).toEqual({ start: 10, end: 19 })
+    expect(byteRangeOf('bytes=-10', 100)).toEqual({ start: 90, end: 99 })
+    expect(byteRangeOf('bytes=90-999', 100)).toEqual({ start: 90, end: 99 })
+    expect(byteRangeOf(' BYTES=1-2 ', 100)).toBeUndefined()
+  })
+
+  it('separates "no range" from "past EOF"', async () => {
+    const { byteRangeOf } = await import('../src/file-stream.ts')
+    expect(byteRangeOf(undefined, 100)).toBeUndefined()
+    expect(byteRangeOf('items=0-1', 100)).toBeUndefined()
+    expect(byteRangeOf('bytes=0-1,4-5', 100)).toBeUndefined()
+    expect(byteRangeOf('bytes=-', 100)).toBeUndefined()
+    expect(byteRangeOf('bytes=100-', 100)).toBe('unsatisfiable')
+    expect(byteRangeOf('bytes=-0', 100)).toBe('unsatisfiable')
+    expect(byteRangeOf('bytes=0-', 0)).toBe('unsatisfiable')
+    // Start after end is a contradictory range, not an EOF complaint.
+    expect(byteRangeOf('bytes=9-2', 100)).toBeUndefined()
+  })
+})
+
 describe('writeJson after the header committed', () => {
   it('destroys the response instead of throwing ERR_HTTP_HEADERS_SENT', () => {
     // The failure mode this replaces: a streamed route errors mid-flight, its

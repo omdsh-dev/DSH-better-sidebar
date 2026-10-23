@@ -370,6 +370,8 @@ export const tr: Record<string, string> = {
   viewerCode: 'Kod',
   viewerHtml: 'HTML',
   viewerJsonl: 'JSONL',
+  viewerMedia: 'Medya',
+  mediaUnplayable: 'Bu dosya oynatılamıyor (desteklenmeyen kodek veya bozuk dosya)',
   browser: 'Tarayıcı',
   browserPlaceholder: 'Bir URL girin, örn. example.com',
   browserGo: 'Git',

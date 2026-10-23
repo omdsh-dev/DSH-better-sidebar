@@ -361,6 +361,8 @@ export const it: Record<string, string> = {
   viewerCode: 'Codice',
   viewerHtml: 'HTML',
   viewerJsonl: 'JSONL',
+  viewerMedia: 'Media',
+  mediaUnplayable: 'Impossibile riprodurre questo file (codec non supportato o file danneggiato)',
   browser: 'Browser',
   browserPlaceholder: 'Inserisca un URL, es. example.com',
   browserGo: 'Vai',

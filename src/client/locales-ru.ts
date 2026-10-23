@@ -367,6 +367,8 @@ export const ru: Record<string, string> = {
   viewerCode: 'Код',
   viewerHtml: 'HTML',
   viewerJsonl: 'JSONL',
+  viewerMedia: 'Медиа',
+  mediaUnplayable: 'Не удаётся воспроизвести этот файл (неподдерживаемый кодек или повреждённый файл)',
   browser: 'Браузер',
   browserPlaceholder: 'Введите URL, например example.com',
   browserGo: 'Перейти',

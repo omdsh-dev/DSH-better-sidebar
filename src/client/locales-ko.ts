@@ -362,6 +362,8 @@ export const ko: Record<string, string> = {
   viewerCode: '코드',
   viewerHtml: 'HTML',
   viewerJsonl: 'JSONL',
+  viewerMedia: '미디어',
+  mediaUnplayable: '이 파일을 재생할 수 없습니다(지원하지 않는 코덱이거나 파일이 손상됨)',
   browser: '브라우저',
   browserPlaceholder: 'URL 입력, 예: example.com',
   browserGo: '이동',

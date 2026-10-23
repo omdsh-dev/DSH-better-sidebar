@@ -2,6 +2,11 @@
 
 > 本文档收录 dsh-better-sidebar 的完整发布历史（最新版摘要见 [README](README_ZH.md)；同步发布于 [GitHub Releases](https://github.com/omdsh-dev/DSH-better-sidebar/releases)）。
 
+### 未发布
+
+- 🎬 **侧边栏内置音视频预览**：`.mp4` / `.m4v` / `.webm` / `.ogv` / `.mov` / `.mp3` / `.m4a` / `.aac` / `.wav` / `.flac` / `.ogg` 等容器不再落进 `code` 兜底、被判二进制后只剩「下载查看」。新增内置 `media` viewer（`fetchStrategy: 'mediaUrl'`：音频走 `<audio>`、视频走 `<video>`，`preload="metadata"` 不预下整片，解码失败或地址缺失时仍保留下载链接）；`/sidebar/file` 同步补齐媒体 MIME 表与 HTTP **Range**——单段请求答 206 + `content-range`（后缀区间、越界钳制、越界起点答 416 + `bytes */size`），多段 / 非 `bytes` 头回退整份 200。播放器因此可拖时间轴、不必等整份下载；`?download=1` 的续传同样受益。
+- 🧪 测试：`tests/file-stream-route.spec.ts` 新增 Range 真机用例（窗口 / 后缀 / 越界钳制 / 416 / 回退 200 / 视频 MIME）与 `byteRangeOf` 单测；`tests/builtins.spec.ts` 钉住 `media` 的认领面与 `mediaUrl` 策略；`tests/smoke.spec.ts` 钉住媒体 MIME 表；`tests/locales.spec.ts` 的 21 种语言键集对齐覆盖新增 `viewerMedia` / `mediaUnplayable`。
+
 ### v0.28.0
 
 - **正式版支持线前移到 DSH 0.2.1-rc.1+**：13 条 DSH peer 下限统一为 `^0.2.1-rc.1`，开发依赖、CI 与安装脚本使用精确 RC 基线。不新增运行时兼容层、不改功能实现。

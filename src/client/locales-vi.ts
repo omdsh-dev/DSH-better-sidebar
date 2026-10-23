@@ -370,6 +370,8 @@ export const vi: Record<string, string> = {
   viewerCode: 'Mã',
   viewerHtml: 'HTML',
   viewerJsonl: 'JSONL',
+  viewerMedia: 'Phương tiện',
+  mediaUnplayable: 'Không thể phát tệp này (bộ mã không được hỗ trợ hoặc tệp bị hỏng)',
   browser: 'Trình duyệt',
   browserPlaceholder: 'Nhập URL, vd: example.com',
   browserGo: 'Đi',

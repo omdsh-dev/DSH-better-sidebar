@@ -371,6 +371,8 @@ export const ar: Record<string, string> = {
   viewerCode: 'كود',
   viewerHtml: 'HTML',
   viewerJsonl: 'JSONL',
+  viewerMedia: 'الوسائط',
+  mediaUnplayable: 'تعذّر تشغيل هذا الملف (ترميز غير مدعوم أو ملف تالف)',
   browser: 'المتصفح',
   browserPlaceholder: 'أدخل عنوان URL، مثل example.com',
   browserGo: 'اذهب',

@@ -4,6 +4,11 @@
 >
 > 📝 The Chinese [CHANGELOG](./CHANGELOG.md) is the authoritative, item-by-item record; this file carries the English summaries and has historically lagged behind it. Where the two disagree, the Chinese one is current.
 
+### Unreleased
+
+- 🎬 **Built-in audio/video preview in the side card**: `.mp4` / `.m4v` / `.webm` / `.ogv` / `.mov` / `.mp3` / `.m4a` / `.aac` / `.wav` / `.flac` / `.ogg` containers no longer fall through to the `code` catch-all, get classified as binary and end on the "download to view" pane. A built-in `media` viewer (`fetchStrategy: 'mediaUrl'`; `<audio>` for audio, `<video>` for video, `preload="metadata"` so the whole file is not fetched up front, download link kept for undecodable containers and missing URLs) pairs with media MIME types and HTTP **Range** support on `/sidebar/file`: a single-range request answers 206 + `content-range` (suffix ranges, clamping past EOF, 416 + `bytes */size` for a start past EOF), multi-range and non-`bytes` headers fall back to the whole file (200). The player can scrub without waiting for the full download; `?download=1` resume benefits from the same path.
+- 🧪 Tests: `tests/file-stream-route.spec.ts` gains real-server Range cases (window / suffix / clamp / 416 / 200 fallback / video MIME) plus `byteRangeOf` unit tests; `tests/builtins.spec.ts` pins the `media` claim surface and its `mediaUrl` strategy; `tests/smoke.spec.ts` pins the media MIME table; the 21-language key-set equality in `tests/locales.spec.ts` covers the new `viewerMedia` / `mediaUnplayable` keys.
+
 ### v0.28.0
 
 - **Stable plugin support moves to DSH 0.2.1-rc.1+**: all 13 DSH peer floors are `^0.2.1-rc.1`; development dependencies, CI and installers pin the exact RC baseline. No runtime compatibility layer or feature implementation changes are introduced.

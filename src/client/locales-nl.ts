@@ -368,6 +368,8 @@ export const nl: Record<string, string> = {
   viewerCode: 'Code',
   viewerHtml: 'HTML',
   viewerJsonl: 'JSONL',
+  viewerMedia: 'Media',
+  mediaUnplayable: 'Dit bestand kan niet worden afgespeeld (niet-ondersteunde codec of beschadigd bestand)',
   browser: 'Browser',
   browserPlaceholder: 'Voer een URL in, bijv. example.com',
   browserGo: 'Ga',

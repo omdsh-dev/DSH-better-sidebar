@@ -363,6 +363,8 @@ export const fr: Record<string, string> = {
   viewerCode: 'Code',
   viewerHtml: 'HTML',
   viewerJsonl: 'JSONL',
+  viewerMedia: 'Médias',
+  mediaUnplayable: 'Impossible de lire ce fichier (codec non pris en charge ou fichier endommagé)',
   browser: 'Navigateur',
   browserPlaceholder: 'Saisissez une adresse, ex. example.com',
   browserGo: 'Aller',

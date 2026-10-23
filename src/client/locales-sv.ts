@@ -353,6 +353,8 @@ export const sv: Record<string, string> = {
   viewerCode: 'Kod',
   viewerHtml: 'HTML',
   viewerJsonl: 'JSONL',
+  viewerMedia: 'Media',
+  mediaUnplayable: 'Det här filen kan inte spelas upp (codec stöds inte eller filen är skadad)',
   browser: 'Webbläsare',
   browserPlaceholder: 'Ange en URL, t.ex. example.com',
   browserGo: 'Gå',

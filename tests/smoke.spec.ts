@@ -90,6 +90,20 @@ describe('host plugin smoke', () => {
     expect(mediaTypeForPath('/work/archive.bin')).toBe('application/octet-stream')
   })
 
+  it('serves media containers with their real type, not octet-stream', () => {
+    // `<video>` / `<audio>` choose a demuxer from this header: answering a
+    // container as application/octet-stream makes playback a coin flip even
+    // when the bundled ffmpeg can decode it.
+    expect(mediaTypeForPath('/work/clip.mp4')).toBe('video/mp4')
+    expect(mediaTypeForPath('/work/clip.M4V')).toBe('video/mp4')
+    expect(mediaTypeForPath('/work/clip.webm')).toBe('video/webm')
+    expect(mediaTypeForPath('/work/take.mov')).toBe('video/quicktime')
+    expect(mediaTypeForPath('/work/voice.MP3')).toBe('audio/mpeg')
+    expect(mediaTypeForPath('/work/voice.m4a')).toBe('audio/mp4')
+    expect(mediaTypeForPath('/work/voice.wav')).toBe('audio/wav')
+    expect(mediaTypeForPath('/work/nothing.unknown')).toBe('application/octet-stream')
+  })
+
   it('mounts the fenced routes', () => {
     const routes: SidebarWebRoute[] = []
     const upgrades: SidebarWebUpgradeRoute[] = []

@@ -232,15 +232,15 @@ describe('built-in tab registrations', () => {
 })
 
 describe('built-in file viewer registrations', () => {
-  it('registers the 4 built-in file viewers (the read-only previews yielded to the host)', () => {
+  it('registers the 5 built-in file viewers (the read-only previews yielded to the host)', () => {
     const { service } = setup()
     expect(service.getFileViewers().map(v => v.id).sort()).toEqual(
-      ['code', 'html', 'jsonl', 'markdown'],
+      ['code', 'html', 'jsonl', 'markdown', 'media'],
     )
     // The yielded ids are gone: the host's own document preview
     // (ui-sidebar-documentpreview) owns images, pdf, spreadsheets, office
     // and plain text; the plugin keeps only markdown / html / the JSONL
-    // record preview / the editable code catch-all.
+    // record preview / the media player / the editable code catch-all.
     for (const id of ['image', 'pdf', 'binary-download']) {
       expect(service.getFileViewers().map(v => v.id), `${id} must not be built in`).not.toContain(id)
     }
@@ -299,6 +299,26 @@ describe('built-in file viewer registrations', () => {
     expect(service.matchFileViewer('events.ndjson')?.id).toBe('jsonl')
     expect(service.matchFileViewer('events.JSONL')?.id).toBe('jsonl')
     expect(service.matchFileViewer('package.json')?.id).toBe('code')
+  })
+
+  it('media claims the video/audio containers through the media URL strategy', () => {
+    const { service } = setup()
+    const media = service.getFileViewers().find(v => v.id === 'media')
+    expect(media?.fetchStrategy).toBe('mediaUrl')
+    // The player is a bare <video>/<audio> on the file route: no document read,
+    // no Blob copy. `fsRead` here would classify these as binary and land on
+    // the download pane, which is exactly the regression this viewer removes.
+    expect(media?.exts).toEqual(expect.arrayContaining(['mp4', 'webm', 'mov', 'mp3', 'm4a', 'wav']))
+    expect(service.matchFileViewer('clip.mp4')?.id).toBe('media')
+    expect(service.matchFileViewer('CLIP.MP4')?.id).toBe('media')
+    expect(service.matchFileViewer('clip.webm')?.id).toBe('media')
+    expect(service.matchFileViewer('take.mov')?.id).toBe('media')
+    expect(service.matchFileViewer('voice.mp3')?.id).toBe('media')
+    expect(service.matchFileViewer('voice.m4a')?.id).toBe('media')
+    // A text/unknown file keeps the catch-all: the media viewer must not
+    // over-claim its way to the top of a `.txt` or a `.zip`.
+    expect(service.matchFileViewer('notes.txt')?.id).toBe('code')
+    expect(service.matchFileViewer('archive.zzz')?.id).toBe('code')
   })
 
   it('the html viewer declares its sandbox and default-unsafe related settings', () => {

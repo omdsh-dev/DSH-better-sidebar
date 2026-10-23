@@ -356,6 +356,8 @@ export const de: Record<string, string> = {
   viewerCode: 'Code',
   viewerHtml: 'HTML',
   viewerJsonl: 'JSONL',
+  viewerMedia: 'Medien',
+  mediaUnplayable: 'Diese Datei lässt sich nicht abspielen (nicht unterstützter Codec oder beschädigte Datei)',
   browser: 'Browser',
   browserPlaceholder: 'URL eingeben, z. B. example.com',
   browserGo: 'Los',

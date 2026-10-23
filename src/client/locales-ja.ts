@@ -370,6 +370,8 @@ export const ja: Record<string, string> = {
   viewerCode: 'コード',
   viewerHtml: 'HTML',
   viewerJsonl: 'JSONL',
+  viewerMedia: 'メディア',
+  mediaUnplayable: 'このファイルは再生できません（対応していないコーデックか、ファイルが破損しています）',
   browser: 'ブラウザー',
   browserPlaceholder: 'URL を入力、例: example.com',
   browserGo: '開く',

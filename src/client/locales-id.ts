@@ -368,6 +368,8 @@ export const id: Record<string, string> = {
   viewerCode: 'Kode',
   viewerHtml: 'HTML',
   viewerJsonl: 'JSONL',
+  viewerMedia: 'Media',
+  mediaUnplayable: 'Berkas ini tidak dapat diputar (codec tidak didukung atau berkas rusak)',
   browser: 'Browser',
   browserPlaceholder: 'Masukkan URL, mis. example.com',
   browserGo: 'Buka',

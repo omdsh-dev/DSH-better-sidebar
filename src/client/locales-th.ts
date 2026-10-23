@@ -370,6 +370,8 @@ export const th: Record<string, string> = {
   viewerCode: 'โค้ด',
   viewerHtml: 'HTML',
   viewerJsonl: 'JSONL',
+  viewerMedia: 'สื่อ',
+  mediaUnplayable: 'ไม่สามารถเล่นไฟล์นี้ได้ (ตัวเข้ารหัสไม่รองรับหรือไฟล์เสียหาย)',
   browser: 'เบราว์เซอร์',
   browserPlaceholder: 'กรอก URL เช่น example.com',
   browserGo: 'ไป',

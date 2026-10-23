@@ -370,6 +370,8 @@ export const hi: Record<string, string> = {
   viewerCode: 'कोड',
   viewerHtml: 'HTML',
   viewerJsonl: 'JSONL',
+  viewerMedia: 'मीडिया',
+  mediaUnplayable: 'यह फ़ाइल चलाई नहीं जा सकती (असमर्थित कोडेक या क्षतिग्रस्त फ़ाइल)',
   browser: 'ब्राउज़र',
   browserPlaceholder: 'URL दर्ज करें, जैसे example.com',
   browserGo: 'जाएं',
