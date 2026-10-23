@@ -1375,6 +1375,20 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   border-bottom: 1px solid var(--dsw-alias-border-l1);
 }
 
+/* Inside DSH's right Sidebar the pane body starts under the host's 38px tab
+   strip. The host's own files pane (`ui-sidebar-files`' FilesBody) opens with
+   a 38px header and a .5px `border-l3` hairline; matching both puts this
+   header's bottom rule on the session tab bar's line at the split. With the
+   roomier workbench header (6px padding + a 1px l1 border) it sat 3px lower
+   in a different shade — measured on DSH 0.2.1-rc.1: left rule y=75.0,
+   this one y=77.3. The bottom workbench keeps the taller header. */
+.nativeTabHost .editorTreeSearch {
+  box-sizing: border-box;
+  height: 38px;
+  padding: 0 8px;
+  border-bottom: 0.5px solid var(--dsw-alias-border-l3);
+}
+
 .editorSearchInput {
   flex: 1;
   min-width: 0;
