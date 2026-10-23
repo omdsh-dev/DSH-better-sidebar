@@ -13,6 +13,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import type { Context } from '../context-types.ts'
 import { createSidebarStore } from './state.ts'
 import { createBetterSidebarService, matchUrlTarget } from './service.ts'
+import { disposeSidechatSurfaces } from './sidechat-surface.ts'
 import { revalidateChunksOnReactivate, setChunkModuleSystem } from './chunk-loader.ts'
 import { registerBuiltins } from './builtins/index.ts'
 import { Sidebar } from './Sidebar.tsx'
@@ -170,6 +171,7 @@ export function apply(ctx: Context): void {
   // are ready by the time the sidebar renders.
   const service = createBetterSidebarService(sidebarStore)
   ctx.provide('betterSidebar', service)
+  ctx.effect(() => () => { disposeSidechatSurfaces(service) }, 'dsh-better-sidebar: sidechat surface adapters')
   // The native right-Sidebar surface: the plugin's content is registered as
   // DSH tab types (one per descriptor) and every open routes there, so the
   // right column belongs to the host and only the bottom workbench stays

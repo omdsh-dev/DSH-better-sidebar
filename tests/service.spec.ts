@@ -24,6 +24,17 @@ import { createBetterSidebarService, matchUrlTarget, SIDEBAR_FEATURES, SIDEBAR_S
 import { createSidebarStore, allLeaves, makeDefaultState, openDiffTab, openTabInBottomPane, sanitizeState } from '../src/client/state.ts'
 
 describe('BetterSidebar service', () => {
+  it('provides the opt-in sidechat adapter registration without exposing internal attach/dispose', () => {
+    const service = createBetterSidebarService(createSidebarStore())
+    const adapter = { id: 'synthetic:genui', mount: () => () => {} }
+    const unregister = service.registerSidechatSurfaceAdapter(adapter)
+    expect(() => service.registerSidechatSurfaceAdapter(adapter)).toThrow('already registered')
+    unregister()
+    expect(() => service.registerSidechatSurfaceAdapter(adapter)).not.toThrow()
+    expect(service).not.toHaveProperty('attachSidechatSurface')
+    expect(service).not.toHaveProperty('disposeSidechatSurfaces')
+  })
+
   it('registerTab adds to the registry and dispose removes it', () => {
     const store = createSidebarStore()
     const service = createBetterSidebarService(store)

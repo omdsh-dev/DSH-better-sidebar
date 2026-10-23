@@ -19,6 +19,7 @@ import { createElement } from 'react'
 import { act } from 'react-dom/test-utils'
 import { renderRoot, setupReactAct } from './test-utils.ts'
 import { SideChatView } from '../src/client/SideChatView.tsx'
+import { bindSidechatSurfaces, disposeSidechatSurfaces, type SidechatSurface } from '../src/client/sidechat-surface.ts'
 import { attachLocale } from '../src/client/locales.ts'
 import type { Context, SidebarSessionList } from '../src/context-types.ts'
 import type { SidebarTab } from '../src/client/state.ts'
@@ -196,6 +197,8 @@ const EARLY_EVENTS = EVENTS.slice(0, 5)
 let eventsPulls = 0
 /** The wire values the fetch stub serves; each test overrides what it reads. */
 let eventsValue: unknown[] = EVENTS
+let liveValue: unknown[] = []
+let promptCalls: Record<string, unknown>[] = []
 let pendingValue: unknown[] = []
 let infoValue: Record<string, unknown> = { live: false, provider: 'deepseek', preset: 'side' }
 let catalogValue: Record<string, unknown> = { available: false, groups: [], failures: [] }
@@ -238,6 +241,8 @@ beforeEach(() => {
   vi.stubGlobal('WebSocket', FakeSocket)
   eventsPulls = 0
   eventsValue = EVENTS
+  liveValue = []
+  promptCalls = []
   pendingValue = []
   infoValue = { live: false, provider: 'deepseek', preset: 'side' }
   catalogValue = { available: false, groups: [], failures: [] }
@@ -253,7 +258,7 @@ beforeEach(() => {
       : JSON.parse(String(init.body)) as Record<string, unknown>
     if (method === 'sidechat.events') {
       eventsPulls += 1
-      return jsonResponse({ ok: true, value: { events: eventsValue, live: [], pending: pendingValue } })
+      return jsonResponse({ ok: true, value: { events: eventsValue, live: liveValue, pending: pendingValue } })
     }
     if (method === 'sidechat.info') return jsonResponse({ ok: true, value: infoValue })
     if (method === 'sidechat.models') return jsonResponse({ ok: true, value: catalogValue })
@@ -272,6 +277,7 @@ beforeEach(() => {
       return jsonResponse({ ok: true, value: { accepted: true, removed: 1 } })
     }
     if (method === 'sidechat.prompt') {
+      promptCalls.push(payload)
       if (promptError !== null) {
         return {
           ok: false,
@@ -699,5 +705,80 @@ describe('SideChatView queue, echo and model picker', () => {
     expect(items[0]?.disabled).toBe(true)
     expect(items[0]?.textContent).toContain('继承主对话')
     unmount()
+  })
+})
+
+
+/** Actual bridge ownership, with only the unrelated sidebar controls faked. */
+function surfaceContext() {
+  const service = { updateTab: vi.fn(), openTab: vi.fn() }
+  const register = bindSidechatSurfaces(service)
+  const ctx = { sessions: { list: threadStore() }, get: (key: string) => key === 'betterSidebar' ? service : undefined } as unknown as Context
+  return { service, register, ctx }
+}
+
+describe('SideChatView opt-in assistant surfaces', () => {
+  it('exposes only settled assistant blocks, preserving indexes and excluding the entire transcript from main scanners', async () => {
+    eventsValue = EVENTS.map(event => event.type === 'assistant/message' ? { ...event, data: { turn: 1, step: 2, message: { content: [
+      { type: 'text', text: 'first block' }, { type: 'image', url: 'synthetic' },
+      { type: 'reasoning', text: 'private reasoning fixture' }, { type: 'text', text: '' },
+      { type: 'text', text: 'second block' },
+    ] } } } : event)
+    liveValue = [{ type: 'assistant/live-chunk', seq: 100, time: 7_000, data: { turn: 2, step: 1, chunk: { type: 'text-delta', index: 0, text: 'streaming fixture' } } }]
+    const { service, register, ctx } = surfaceContext()
+    const surfaces: SidechatSurface[] = []
+    register({ id: 'genui', mount: surface => { surfaces.push(surface); return () => {} } })
+    const rendered = renderRoot(createElement(SideChatView, viewProps(ctx)))
+    await act(async () => {})
+    expect(surfaces.map(surface => [surface.threadId, surface.eventSeq, surface.contentBlockIndex, surface.text])).toEqual([
+      ['t1', 5, 0, 'first block'], ['t1', 5, 4, 'second block'],
+    ])
+    expect(surfaces.every(surface => rendered.container.contains(surface.root))).toBe(true)
+    const transcript = rendered.container.querySelector('[data-dsh-md-surface]')
+    expect(transcript?.getAttribute('data-genui-surface')).toBe('dsh-better-sidebar/sidechat')
+    expect(transcript?.textContent).toContain('streaming fixture')
+    expect(transcript?.querySelector('[data-chat-role], [data-chat-seq]')).toBeNull()
+    rendered.unmount(); disposeSidechatSurfaces(service)
+  })
+
+  it('sends to the captured child only and shows route failures through the existing error UI', async () => {
+    const { service, register, ctx } = surfaceContext()
+    let surface: SidechatSurface | undefined
+    register({ id: 'genui', mount: value => { surface = value; return () => {} } })
+    const rendered = renderRoot(createElement(SideChatView, viewProps(ctx)))
+    await act(async () => {})
+    await act(async () => { await surface!.sendPrompt('synthetic action') })
+    expect(promptCalls).toEqual([{ childId: 't1', text: 'synthetic action' }])
+    promptError = 'synthetic sidechat prompt failed'
+    await act(async () => { await expect(surface!.sendPrompt('failed action')).rejects.toThrow('synthetic sidechat prompt failed') })
+    expect(rendered.container.textContent).toContain('synthetic sidechat prompt failed')
+    expect(promptCalls.every(payload => payload.childId === 't1' && !('sessionId' in payload))).toBe(true)
+    rendered.unmount(); disposeSidechatSurfaces(service)
+  })
+
+  it('never labels old cached rows as a new child and revokes callbacks on thread switch and hide', async () => {
+    const { service, register, ctx } = surfaceContext()
+    const surfaces: SidechatSurface[] = []
+    const cleanup = vi.fn()
+    register({ id: 'genui', mount: surface => { surfaces.push(surface); return cleanup } })
+    const props = viewProps(ctx)
+    const rendered = renderRoot(createElement(SideChatView, props))
+    await act(async () => {})
+    const old = surfaces[0]!
+    eventsValue = [{ type: 'assistant/message', seq: 5, time: 5_000, data: { message: { content: [{ type: 'text', text: 'new child only' }] } } }]
+    const next = { ...props, tab: { ...props.tab, meta: { threadId: 't2' } } }
+    rendered.rerender(createElement(SideChatView, next))
+    expect(surfaces.some(surface => surface.threadId === 't2' && surface.text === 'done')).toBe(false)
+    await expect(old.sendPrompt('late slider')).rejects.toThrow('no longer active')
+    await act(async () => {})
+    expect(surfaces.at(-1)).toMatchObject({ threadId: 't2', text: 'new child only' })
+    const current = surfaces.at(-1)!
+    await act(async () => { await current.sendPrompt('new child action') })
+    expect(promptCalls).toEqual([{ childId: 't2', text: 'new child action' }])
+    rendered.rerender(createElement(SideChatView, { ...next, visible: false }))
+    await expect(current.sendPrompt('hidden slider')).rejects.toThrow('no longer active')
+    expect(promptCalls).toHaveLength(1)
+    expect(cleanup).toHaveBeenCalledTimes(2)
+    rendered.unmount(); disposeSidechatSurfaces(service)
   })
 })

@@ -14,6 +14,7 @@ import {
   formatTokens,
   toolArgsSummary,
   transcriptRows,
+  sidechatRowKey,
   type SidechatTranscriptRow,
 } from '../src/client/sidechat-transcript.ts'
 
@@ -57,10 +58,10 @@ function toolRoleResultMessage(callId: string, text: string, isError = false): R
 }
 
 describe('transcriptRows', () => {
-  it('cuts the inherited seed at the last end-seed and renders the boundary as an injection row', () => {
+  it('cuts the inherited seed at the last tagged end-seed and renders the boundary as an injection row', () => {
     const entries = [
       entry(ev('user/message', 0, { content: textBlocks('inherited'), source: { kind: 'user' } })),
-      entry(ev('session/end-seed', 1)),
+      entry(ev('session/end-seed', 1, { inherited: true })),
       entry(ev('user/message', 2, { content: textBlocks(`${SIDE_BOUNDARY_PREFIX}\n\nmode`), source: { kind: SIDE_INJECTION_SOURCE_KIND } })),
       entry(ev('user/message', 3, { content: textBlocks('the side question'), source: { kind: 'user' } })),
     ]
@@ -585,5 +586,46 @@ describe('transcriptRows row reuse (newer row kinds)', () => {
     const after = transcriptRows([entry(ev('session/end-seed', 0)), call, result], before)
     expect(after[0]).not.toBe(before[0])
     expect(after[0]).toMatchObject({ kind: 'tool', executing: false })
+  })
+})
+
+
+describe('sidechat content-block identity', () => {
+  it('keeps original indexes through text, skipped, empty and reasoning blocks', () => {
+    const rows = transcriptRows([entry(ev('assistant/message', 17, { message: { content: [
+      { type: 'text', text: 'first' },
+      { type: 'image', url: 'synthetic' },
+      { type: 'text', text: '' },
+      null,
+      { type: 'text', text: 'second' },
+      { type: 'reasoning', text: 'reason one' },
+      { type: 'reasoning', text: 'reason two' },
+    ] } }))])
+    expect(rows.map(row => 'contentBlockIndex' in row ? row.contentBlockIndex : undefined)).toEqual([0, 4, 5, 6])
+    expect(rows.map(sidechatRowKey)).toEqual(['assistant:17:0', 'assistant:17:4', 'reasoning:17:5', 'reasoning:17:6'])
+    expect(new Set(rows.map(sidechatRowKey)).size).toBe(rows.length)
+  })
+
+  it('does not reuse a prior row when its block index changed', () => {
+    const first = transcriptRows([entry(ev('assistant/message', 17, { message: { content: textBlocks('same text') } }))])
+    const changed = transcriptRows([entry(ev('assistant/message', 17, { message: { content: [null, ...textBlocks('same text')] } }))], first)
+    expect(changed[0]).not.toBe(first[0])
+    expect(changed[0]).toMatchObject({ contentBlockIndex: 1 })
+    const unchanged = transcriptRows([entry(ev('assistant/message', 17, { message: { content: [null, ...textBlocks('same text')] } }))], changed)
+    expect(unchanged[0]).toBe(changed[0])
+  })
+
+  it('keeps missing and invalid streaming block indexes unavailable rather than guessing zero', () => {
+    for (const index of [undefined, -1, 0.5, '0']) {
+      const rows = transcriptRows([entry(ev('assistant/live-chunk', 20, { turn: 1, step: 1,
+        chunk: { type: 'text-delta', text: 'incomplete', ...(index === undefined ? {} : { index }) },
+      }))])
+      expect(rows[0]).toMatchObject({ kind: 'assistant', settled: false })
+      expect(rows[0]).not.toHaveProperty('contentBlockIndex')
+    }
+    const rows = transcriptRows([entry(ev('assistant/live-chunk', 20, { turn: 1, step: 1,
+      chunk: { type: 'text-delta', text: 'incomplete', index: 3 },
+    }))])
+    expect(rows[0]).toMatchObject({ contentBlockIndex: 3, settled: false })
   })
 })

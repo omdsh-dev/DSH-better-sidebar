@@ -985,6 +985,40 @@ ctx.effect(() =>
 
 ---
 
+### 7.1 侧边对话渲染适配器（新增提案，尚未发布）
+
+这是配合 [dsh-genui #354](https://github.com/omdsh-dev/dsh-genui/issues/354) 的**新增、窄范围接入提案**，不是 v0.28.0 或既有发布版本承诺过的契约。消费方必须先探测方法存在；未安装、旧版本或未注册适配器时，侧边对话继续使用原有 `MarkdownText` 和 `markdownTextProps()`，不改变普通 Markdown 与代码围栏。
+
+```ts
+interface SidechatSurface {
+  readonly root: HTMLElement
+  readonly source: 'dsh-better-sidebar/sidechat'
+  readonly threadId: string
+  readonly eventSeq: number
+  readonly contentBlockIndex: number
+  readonly text: string
+  readonly sendPrompt: (text: string) => Promise<void>
+}
+interface SidechatSurfaceAdapter {
+  readonly id: string
+  readonly mount: (surface: SidechatSurface) => (() => void)
+}
+// BetterSidebarService 的新增消费入口：
+registerSidechatSurfaceAdapter(adapter: SidechatSurfaceAdapter): () => void
+```
+
+两个类型可从 `dsh-better-sidebar` 或 `dsh-better-sidebar/client/service` 做 type-only 导入。注册必须包在消费插件的 `ctx.effect()` 中；同一个 id 重复注册会抛错，返回的 disposer 可重复调用。
+
+- 只提供当前可见、已结算、身份有效的 assistant 文本块。用户消息、推理、工具、流式增量、隐藏页签及身份缺失的行不接入。`eventSeq` 与 `contentBlockIndex` 必须是非负安全整数；块序号保留原始 `message.content` 数组位置，包括非文本和空块留下的空位，不按过滤后的行号重新编号。
+- `root` 是该行真实的 Markdown 容器；`text` 是链接改写前的原始文本。侧边对话容器始终带 `data-genui-surface="dsh-better-sidebar/sidechat"`，包括流式与没有消费插件时，供主对话扫描器明确排除；**不伪造宿主的 `data-chat-*` 标记**。
+- 消费插件自行决定是否增强 `dsh-ui` 围栏，复用它自己的解析器、渲染器和状态，不把渲染实现放到 BetterSidebar，也不扫描该 root 之外的内容。挂载返回的 cleanup 必须释放监听器、观察者、计时器和渲染实例，并还原原始 Markdown；挂载中途失败须先回滚自身改动再抛错。单个适配器的挂载或释放异常会记录，但不会中断其余适配器和侧边对话。
+- 晚注册会接到当时仍可见的行。隐藏、行变更、线程切换或卸载会释放；再次可见时重新挂载。适配器卸载会释放它自己的所有行；BetterSidebar 卸载会释放所有行和注册。内部只保留当前活跃的 root，不积累隐藏页签的引用，也不新增轮询。
+- `sendPrompt(text)` 只调用当前行捕获的子线程 `sidechat.prompt` 路由。它不读取主会话、`scope.sessionId` 或任何兜底目标。行、适配器、线程绑定或插件失效之后，旧回调拒绝执行；请求失败同时通过现有侧边对话错误区显示并 reject 给消费方。调用方应处理 rejection，销毁时取消延迟动作。
+
+该提案仍需以真实 DSH `0.2.1-rc.2` profile 同时安装两个候选插件验收，不能把单元测试或模拟 DOM 结果写成已完成双插件验收。
+
+---
+
 ## 8. 声明式设置（v0.4.1+）
 
 每个注册的 tab / viewer **自动**出现在 DSH 设置页「侧边卡片」分区（`SideCardSection` 按注册表驱动渲染，无硬编码）：
