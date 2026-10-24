@@ -10,6 +10,9 @@
 - 🗂 **右上角宿主原生页签条也等宽了（同一条带契约，另一排页签）**：文件页签平时出现在 **DSH 原生右侧栏**的页签条里，那排 chip 由宿主的 docking kit 渲染——宽度跟标题长度走（`flex: 0 1 auto`、min 80 / max 170），所以同样「每个 × 在不同位置」，而且 `×` 只在该 chip hover / 激活时才出现。宿主没有给插件任何 chip 几何 API，因此按 `make-dsh-plugin` 的口径做**最小面的宿主 DOM 调整**：`layout.css` 里三条声明，只锚宿主自己机器可读的语义属性（`data-dockkit-strip-tabs` / `data-dockkit-strip-fill` / `data-dockkit-tab`）并限定在 `[data-sidebar-right-panel]` 作用域内——不点任何 CSS Module 哈希类、不用 `!important`（两条属性选择器天然压过宿主单类，与样式表注入顺序无关），宿主改名或换布局模型时**静默失效**、chip 退回宿主自己的内容宽，不报错也不破版式。宿主自己的 80 / 170 上下限原样保留：真实 Chromium 实测（700px 条带 / 4 个页签）改前 `[100, 116.3, 150.3, 100]`、改后 `146.5 × 4`；4 种条带宽度 × 6 种页签数共 24 组全部等宽，1 个页签仍封顶 190（外框）、6 个仍落到底 100 并横向滚动；浮动窗浮层头（复用同一批类但没有这些属性）实测宽度不变。**未做**：原生条右键菜单的「关闭其他 / 左侧 / 右侧」——宿主公开的 `sidebar.right.tab.menu.item` 槽只给 `{ tab, dismiss }`，而 `TabRecord` 只有 `{ id, kind, contentId, title }`，**拿不到 pane 归属与条带顺序**，插件做只能得到「跨 pane 会误关」的近似；关闭邻居属于布局手势，按 dockkit 自己的分工应在宿主实现（记录见设计文档 §6）。
   - 🧪 `tests/native-tab-strip-width.spec.ts`（新增）：钉「三条声明 + 作用域 + 不点类名 + 不用 `!important`」——即"我们绝不越界"这条不变量，而不是"永远等宽"（宿主改名后静默回退是刻意行为）。去掉 `[data-sidebar-right-panel]` 作用域、或把 `strip-fill` 的让位规则删掉，对应用例当场红。
 
+- 🖱 **原生条右键菜单补上「关闭其他 / 左侧 / 右侧 / 全部」**：宿主 kit 的页签菜单只有自带的「关闭」。这四项通过宿主的**公开槽** `sidebar.right.tab.menu.item` 贡献（kit 的「关闭」保留、我们的行排在它后面），关闭走宿主公开的 `sidebarRight.close()`——它对唯一 guide 那类不可关闭的页签是 no-op，所以「关闭全部」不会把栏关空。唯一的缺口是槽只给 `{ tab, dismiss }`：拿不到 pane 归属与条带顺序，因此顺序从 kit 自己的 chip 读（`[data-dockkit-tab]` ⊂ `[data-dockkit-strip-tabs]`，与等宽规则同一批稳定语义属性，不点类名），分屏时用被点 chip 的 `closest()` 只作用于它自己那条带；**解析不到就一行都不渲染**（kit 的「关闭」仍在，菜单不会出现死行，也不猜「会话级」这种会误关另一栏的作用域）。行样式复刻 kit 菜单项量度（4px 7px / 12px / radius-md / hover 令牌），没有东西可动时只置灰不换行数。
+  - 🧪 `tests/native-tab-menu.spec.tsx`（新增 7 例）：四项顺序与文案、切片（其他/左/右/全部）、`dismiss` 先于关闭、单页签时前三项禁用而「全部」可用、双 pane 只动被点那条带、解析失败一行不渲染、`stripOrderOf` 纯函数。
+
 ### v0.28.0
 
 - **正式版支持线前移到 DSH 0.2.1-rc.1+**：13 条 DSH peer 下限统一为 `^0.2.1-rc.1`，开发依赖、CI 与安装脚本使用精确 RC 基线。不新增运行时兼容层、不改功能实现。

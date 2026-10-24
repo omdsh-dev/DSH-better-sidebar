@@ -92,5 +92,16 @@
 
 **已知边界（刻意接受）**：这是版本敏感的耦合——宿主哪天改名 `data-dockkit-*` 或换掉条带布局模型，三条规则**静默失效**，chip 退回宿主自己的内容宽：不报错、不破版式、不留死 UI。`tests/native-tab-strip-width.spec.ts` 钉的是「声明 + 作用域 + 不点类名 + 不用 `!important`」，也就是**我们绝不越界**这条不变量，而不是「永远等宽」。
 
-**本次不做**：原生条右键菜单的「关闭其他 / 左侧 / 右侧 / 全部」。宿主虽然提供了公开的 `sidebar.right.tab.menu.item` 槽，但 owner 只有 `{ tab, dismiss }`，`TabRecord` 也只有 `{ id, kind, contentId, title }`——**拿不到 pane 归属与条带顺序**（`tabsIn()` 返回的是 `Object.values(layout.tabs)`，记录顺序），插件只能做出「关闭其他（会话级）」这种跨 pane 会误关的近似。归属判断：关闭邻居是**布局手势**，按 dockkit 自己的约定（「kit 拥有布局手势，menu 扩展位留给内容动作」）应在宿主实现；插件侧干净可加的是内容动作（例如「在资源管理器中定位」）。
+## 7. 原生条右键菜单：关闭其他 / 左侧 / 右侧 / 全部
 
+宿主 kit 的页签菜单只有自带的「关闭」，没有邻居关闭。这四项通过宿主的**公开槽** `sidebar.right.tab.menu.item` 贡献（list slot，owner 只有 `{ tab, dismiss }`），kit 自己的「关闭」保留、我们的行排在它后面，行内自己调 `dismiss()`（菜单是 kit 的，只对自家动作自动关闭）。
+
+**缺口与补法**：槽不给 pane、也不给条带顺序——`TabRecord` 是 `{ id, kind, contentId, title }`，`tabsIn()` 是 `Object.values(layout.tabs)`（记录顺序）。而"关闭邻居"只有相对**同一条带**才有意义，所以顺序从 kit 自己的 chip 读：`[data-dockkit-tab]` ⊂ `[data-dockkit-strip-tabs]`——与等宽规则同一批稳定语义属性，**不点类名**。分屏是两个 strip，所以用被点 chip 的 `closest()` 定位它自己那条带，而不是页面里第一个 strip。
+
+**失效模式**：解析不到条带（宿主改名、chip 不在条带里）→ **一行都不渲染**。kit 自己的「关闭」还在，菜单不会出现死行；也**不猜作用域**（会话级「关闭其他」会误关另一栏的页签）。
+
+**关闭动作走宿主公开面**：`sidebarRight.close(tabId)`。它对不可关闭的页签（唯一的 docked guide）是 no-op——`closeIn` 里有 `canCloseTab` 守卫——所以「关闭全部」不会把栏关空，不需要插件自己判断。
+
+**样式**：这些行渲染在 kit 的 `<div role="menu">` 里，所以量度复刻 kit 自己的 `.menuItem`（`padding: 4px 7px`、`13px - 1px`、`--dsw-radius-md`、hover 用 `--dsw-alias-interactive-bg-hover`），颜色全走令牌；没有可复用的官方导出件（kit 的菜单项没有导出）。禁用态保留行本身（只置灰），避免不同页签的菜单项数/高度跳变。
+
+**测试**：`tests/native-tab-menu.spec.tsx` 7 例——四项顺序与文案、切片（其他/左/右/全部）、`dismiss` 先于关闭、单页签时前三项禁用而「全部」可用、双 pane 只动被点那条带、解析失败一行不渲染、`stripOrderOf` 纯函数。

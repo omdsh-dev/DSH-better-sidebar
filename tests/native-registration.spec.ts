@@ -163,7 +163,12 @@ describe('native tab registration lifecycle', () => {
     })).not.toThrow()
     expect([...host.registry.registered.keys()], 'a failed registration leaves no type behind').toEqual([])
     // Each of them is reported through the visible channel, not swallowed.
-    expect(reports.phases.sort()).toEqual(['register editor', 'register files', 'register git'])
+    // The tab-menu rows ride the same seat activation and fail the same way
+    // (`slots.inject` throws on an inactive context), so they report too —
+    // they are optional UI, and the next activation re-registers them.
+    expect(reports.phases.sort()).toEqual([
+      'register editor', 'register files', 'register git', 'register tab menu',
+    ])
 
     // The context comes back (the reload's next activation): the same ids must
     // be registrable — no "already registered" from the orphan. The event log
