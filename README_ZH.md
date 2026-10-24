@@ -141,7 +141,7 @@ export function apply(ctx: Context) {
 ```
 
 <details>
-<summary><b>生态插件目录（28 个 Tab 插件 · 4 个预览插件 · 4 个增强工具）</b></summary>
+<summary><b>生态插件目录（28 个 Tab 插件 · 4 个预览插件 · 5 个增强工具）</b></summary>
 
 ### 📑 Tab 插件（注册侧边栏页面）
 
@@ -193,6 +193,7 @@ export function apply(ctx: Context) {
 | [dong-victor/dsh-better-sidebar-terminal-plus](https://github.com/dong-victor/dsh-better-sidebar-terminal-plus) | <img alt="stars" src="https://img.shields.io/github/stars/dong-victor/dsh-better-sidebar-terminal-plus?style=flat&color=4d6bfe" /> | 终端增强：内嵌 Nerd Font 图标字体、修复 xterm 图标渲染、稳定终端 cwd |
 | [Max-Null/dsh-sidebar-preview-select](https://github.com/Max-Null/dsh-sidebar-preview-select) | <img alt="stars" src="https://img.shields.io/github/stars/Max-Null/dsh-sidebar-preview-select?style=flat&color=4d6bfe" /> | 预览划选增强：侧边栏预览里划选文本 → 浮动「发送到会话」 |
 | [Hoemr/dsh-quicklook](https://github.com/Hoemr/dsh-quicklook) | <img alt="stars" src="https://img.shields.io/github/stars/Hoemr/dsh-quicklook?style=flat&color=4d6bfe" /> | QuickLook 式空格预览：活动文件标签页按 Space 全尺寸查看图片 / PDF / 文本 |
+| [ionaryu/dsh-copy-document](https://github.com/ionaryu/dsh-copy-document) | <img alt="stars" src="https://img.shields.io/github/stars/ionaryu/dsh-copy-document?style=flat&color=4d6bfe" /> | 整篇复制：在「保存」右侧加一个按钮，把整个文件（超过 5 MB 自动分页）一次性复制到剪贴板，而不是只复制当前可见部分 |
 
 </details>
 

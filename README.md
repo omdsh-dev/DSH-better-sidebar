@@ -141,7 +141,7 @@ export function apply(ctx: Context) {
 ```
 
 <details>
-<summary><b>Ecosystem catalog (28 tab plugins · 4 viewer plugins · 4 enhancements)</b></summary>
+<summary><b>Ecosystem catalog (28 tab plugins · 4 viewer plugins · 5 enhancements)</b></summary>
 
 ### 📑 Tab plugins (sidebar pages)
 
@@ -193,6 +193,7 @@ export function apply(ctx: Context) {
 | [dong-victor/dsh-better-sidebar-terminal-plus](https://github.com/dong-victor/dsh-better-sidebar-terminal-plus) | <img alt="stars" src="https://img.shields.io/github/stars/dong-victor/dsh-better-sidebar-terminal-plus?style=flat&color=4d6bfe" /> | Terminal enhancements: bundled Nerd Font icons, fixed xterm icon rendering, stable terminal cwd |
 | [Max-Null/dsh-sidebar-preview-select](https://github.com/Max-Null/dsh-sidebar-preview-select) | <img alt="stars" src="https://img.shields.io/github/stars/Max-Null/dsh-sidebar-preview-select?style=flat&color=4d6bfe" /> | Preview selection boost: select text in the sidebar preview → floating "send to session" |
 | [Hoemr/dsh-quicklook](https://github.com/Hoemr/dsh-quicklook) | <img alt="stars" src="https://img.shields.io/github/stars/Hoemr/dsh-quicklook?style=flat&color=4d6bfe" /> | QuickLook-style Space preview: press Space on the active file tab for full-size image / PDF / text |
+| [ionaryu/dsh-copy-document](https://github.com/ionaryu/dsh-copy-document) | <img alt="stars" src="https://img.shields.io/github/stars/ionaryu/dsh-copy-document?style=flat&color=4d6bfe" /> | Whole-document copy: one control right of Save puts the entire file on the clipboard (paged above 5 MB), not just what the viewport shows |
 
 </details>
 
