@@ -1,5 +1,6 @@
 /**
- * Sidebar crash tests — the two failure modes behind issue #31.
+ * Sidebar crash tests — the failure modes behind issue #31 plus the store's
+ * listener containment.
  *
  * 1. Layout-push leak: the layout-push effect writes
  *    `--dsh-sidebar-height` on document.documentElement (the right column
@@ -13,6 +14,14 @@
  *    take down the whole sidebar. The per-tab boundary shows a strip inside
  *    that tab's pane while the toggle cluster, the other tabs, and the panel
  *    itself stay alive; the retry button recovers a transient crash.
+ *
+ * 3. Store listener containment: `service.subscribeState` is the store's own
+ *    `subscribe`, so a consumer plugin's listener runs inside `notify()` —
+ *    which runs inline in the mutating call site (the Sidebar's own mount
+ *    effect calls `store.setSession`). A throw escaping that loop lands in
+ *    the React commit phase, where the shell's ROOT RenderBoundary (index.tsx)
+ *    swaps the WHOLE sidebar for its error strip. One listener must not be
+ *    able to do that to the rest of the panel.
  *
  * Rendered with the REAL Sidebar shell + real store/service against a minimal
  * fake context (createRoot + act(), the repo's jsdom pattern).
@@ -48,12 +57,37 @@ interface MountedSidebar {
   unmount: () => void
 }
 
+/** Roots still mounted when a test ends. `afterEach` unmounts them: wiping the
+ *  DOM without unmounting leaves every effect cleanup un-run, and the 1s
+ *  `session.phase` poller in `session-phase.ts` then outlives the test — it
+ *  fires after jsdom is gone, React reads a missing `window` and the whole run
+ *  is red on `Errors 1` even though every test passed. */
+const mountedRoots: Array<() => void> = []
+
+/** Intervals created while a test runs. `session-phase.ts` polls through
+ *  `setInterval`; a live id here after the roots are unmounted means some
+ *  effect leaked a timer (see `mountedRoots`). */
+const liveIntervals = new Set<ReturnType<typeof setInterval>>()
+
 /** Mount the real Sidebar shell against a minimal context (real store + service). */
 /** Unique per-test session ids (see the comment inside). */
 let sessionSeq = 0
 
 function mountSidebar(): MountedSidebar {
   vi.stubGlobal('WebSocket', FakeWebSocket)
+  // The real timers, wrapped so `afterEach` can prove nothing outlived the
+  // test (vi.unstubAllGlobals restores both).
+  const realSetInterval = globalThis.setInterval
+  const realClearInterval = globalThis.clearInterval
+  vi.stubGlobal('setInterval', ((handler: never, timeout?: number) => {
+    const id = realSetInterval(handler, timeout)
+    liveIntervals.add(id)
+    return id
+  }) as never)
+  vi.stubGlobal('clearInterval', ((id: never) => {
+    liveIntervals.delete(id)
+    realClearInterval(id)
+  }) as never)
   const container = document.createElement('div')
   document.body.append(container)
   const store = createSidebarStore()
@@ -67,35 +101,73 @@ function mountSidebar(): MountedSidebar {
   // services return stable objects) — a fresh object per call loops forever.
   const localeSnapshot = { active: 'en' }
   const sessionsSnapshot = {
-    current: sessionId,
     // cwd present → api.sessionCwd is never called in these tests.
     byId: { [sessionId]: { cwd: '/tmp' } },
+  }
+  // The conversation on screen is the native surface's mounted seat
+  // (`ctx.sidebarRight.mounted`); the session-list snapshot never had a
+  // current-session field, so the shell binds its per-session state to THIS.
+  const mounted = {
+    getSnapshot: () => sessionId,
+    subscribe: () => () => {},
   }
   const ctx = {
     locale: { subscribe: () => () => {}, getSnapshot: () => localeSnapshot },
     sessions: { list: { subscribe: () => () => {}, getSnapshot: () => sessionsSnapshot } },
     betterSidebar: service,
-    get: (name: string) => name === 'betterSidebar' ? service : undefined,
+    get: (name: string) => name === 'betterSidebar'
+      ? service
+      : name === 'sidebarRight' ? { mounted } : undefined,
   }
   const root: Root = createRoot(container)
   act(() => { root.render(createElement(Sidebar, { ctx: ctx as never, store })) })
-  return {
-    container,
-    store,
-    service,
-    unmount: () => {
-      act(() => { root.unmount() })
-      container.remove()
-    },
+  // Idempotent: a test may unmount explicitly, and afterEach unmounts whatever
+  // is left (calling React's unmount twice throws).
+  let unmounted = false
+  const unmount = (): void => {
+    if (unmounted) return
+    unmounted = true
+    act(() => { root.unmount() })
+    container.remove()
   }
+  mountedRoots.push(unmount)
+  return { container, store, service, unmount }
 }
 
 afterEach(() => {
+  // Unmount FIRST: that is what runs the effects' cleanups, and the cleanups
+  // are what clear the pollers. Wiping the DOM instead (the old harness) left
+  // them armed and reddened CI with `window is not defined`.
+  for (const unmount of mountedRoots.splice(0).reverse()) unmount()
+  const leaked = liveIntervals.size
+  liveIntervals.clear()
+  expect(
+    leaked,
+    'every interval started by a test must be cleared before it ends — an armed one fires after jsdom is torn down',
+  ).toBe(0)
   document.body.innerHTML = ''
   // Belt and braces: drop any persisted layout a pending 200ms debounce
   // write left behind between tests (unique session ids already isolate).
   localStorage.clear()
   vi.unstubAllGlobals()
+})
+
+describe('test harness', () => {
+  // The leak guard itself lives in `afterEach` (no interval may outlive a
+  // test). A poll that never settles keeps the 1s `session.phase` interval
+  // armed from mount to the end of the test — which is exactly the state the
+  // old harness (wipe the DOM, never unmount) leaked past teardown: the timer
+  // fired after jsdom was gone, React read a missing `window`, and an
+  // all-green run went red on `Errors 1`. The assertion below proves the
+  // armed state was really reached, so this test cannot pass vacuously.
+  it('arms the session-phase poller, so afterEach has something to clear', () => {
+    vi.stubGlobal('fetch', () => new Promise(() => {}))
+    mountSidebar()
+    expect(
+      liveIntervals.size,
+      'the hanging route must leave the poller armed',
+    ).toBeGreaterThan(0)
+  })
 })
 
 describe('layout-push variable cleanup', () => {
@@ -185,5 +257,32 @@ describe('tab crash containment', () => {
     act(() => { retry!.click() })
     expect(container.textContent).toContain('recovered')
     expect(container.textContent).not.toContain('transient')
+  })
+})
+
+describe('store listener containment', () => {
+  it('a throwing consumer listener cannot take the shell down', () => {
+    const { container, service, store } = mountSidebar()
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    // A consumer plugin subscribes through the service's PUBLIC state seam
+    // (subscribeState IS the store's subscribe) and throws while reading a
+    // field this store no longer carries — the 0.19.0 shape that dropped the
+    // right column's `splits` tree, i.e. a real third-party plugin's failure
+    // mode rather than a synthetic one.
+    const unsubscribe = service.subscribeState(() => {
+      throw new Error('third-party listener boom')
+    })
+    // The mutation drives notify() from inside act(); before the isolation
+    // this call threw straight out of the store into the commit phase.
+    expect(() => { act(() => { store.reduce(toggleBottomPanel) }) }).not.toThrow()
+    // The shell is intact (the collapse control is still mounted) and the
+    // mutation landed for everyone else.
+    expect(container.textContent).not.toContain('dsh-better-sidebar:')
+    expect(container.querySelector(`[aria-label="${t('collapseBottomPanel')}"]`)).not.toBeNull()
+    expect(store.getSnapshot().state!.bottomOpen).toBe(true)
+    // The crash is reported rather than swallowed silently.
+    expect(errorSpy).toHaveBeenCalled()
+    unsubscribe()
+    errorSpy.mockRestore()
   })
 })

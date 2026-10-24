@@ -2,7 +2,11 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    # `dev` is the alpha integration branch (AGENTS.md §0): everything lands
+    # there first, so its post-merge state needs the same green signal `main`
+    # gets. `pull_request` below has no branch filter, so PRs targeting `dev`
+    # are already covered.
+    branches: [main, dev]
   pull_request:
   workflow_dispatch:
 
@@ -59,6 +63,12 @@ jobs:
   # runs the same typecheck / test / build / consumer-type-surface steps on
   # a real Windows runtime. The plugin-mount lane (real DSH + Playwright
   # Chromium) stays ubuntu-only and is deliberately NOT mirrored here.
+  #
+  # It also carries the search-engine gate: real fd/ripgrep binaries land on
+  # PATH (choco) before the suite runs, and the output-shape assertions run
+  # against them afterwards. Windows is where the engine output format bites
+  # hardest (backslash separators, CR line endings, console code pages);
+  # docs/ci-windows.md holds the red lines.
   ci-windows:
     runs-on: windows-latest
     timeout-minutes: 30
@@ -86,6 +96,12 @@ jobs:
         run: |
           git config --global user.name "dsh-better-sidebar-ci"
           git config --global user.email "ci@dsh.invalid"
+      # Real engine binaries for the output-shape assertions below. The probe
+      # inside src/search-engines.ts reads PATH, so the whole suite runs with
+      # engines present here; the specs never depend on that (they inject
+      # their own probes, and the one real-engine case skips when absent).
+      - name: Install fd / ripgrep (choco)
+        run: choco install fd ripgrep -y --no-progress
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: Typecheck
@@ -118,6 +134,13 @@ jobs:
         run: pnpm build
       - name: Check consumer type surface
         run: pnpm check:consumer-types
+      # Output-shape assertions on the REAL engine binaries installed above:
+      # the plugin's own argv must produce '/'-separated, CR-free paths and
+      # hit a non-ASCII file name. An engine that is absent skips (so the
+      # script stays runnable on a dev machine); an assertion failure exits
+      # non-zero.
+      - name: Engine output-shape assertions (real fd/rg)
+        run: pnpm check:engines
 
   # Pack the plugin as an npm tarball, mount it into a REAL DSH instance
   # through the official `dsh plugin --profile web add` channel, and render
@@ -148,34 +171,14 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # Pin the DSH CLI the lane mounts into; the profile's bundle stack
-      # (dsh-base / dsh-web-app) resolves from this installation. Keep in
-      # step with the plugin's @deepseek-ai/* peer range when bumping.
-      # DSH 0.1.5-rc.2 is the `next` dist-tag on npm (`latest` still points
-      # at rc.1); the lanes speak the slash-only RPC dialect
-      # (tests/e2e/host-protocol.ts).
-      #
-      # The larger heap is the fix for one of the two ways this step used to
-      # die (runs 34490912649 and 34363627184 on the alpha line): the pinned
-      # version's TRANSITIVES are declared as floating `^` ranges, so while
-      # upstream publishes a prerelease in stages (0.1.5-rc.2 went out
-      # 14:43-14:57 on 2026-09-10) npm resolved a mixed rc.1/rc.2 peer graph —
-      # 3062 ERESOLVE lines, then "Ineffective mark-compacts near heap limit"
-      # (exit 134). The other failure mode was a hard ETARGET on a sibling
-      # package that appeared minutes later; pinning a version that is fully
-      # published (not mid-flight) is the fix for that one.
-      #
-      # Peer resolution stays ON: `--legacy-peer-deps` was tried in the first
-      # cut of this fix and made the install broken rather than robust — it
-      # skips exactly the peers a global install has to supply, and
-      # @deepseek-ai/dsh-app-boot requires `@deepseek-ai/cordis-plugin-group`
-      # (a peer, not a dependency) at boot, so the CLI died with
-      # ERR_MODULE_NOT_FOUND before the smoke could even start. Verified
-      # locally that the plain install resolves it.
+      # Pin the exact 0.2.1-rc.1 host CLI; never use a dist-tag.
+      # Keep peer resolution ON: do not add --legacy-peer-deps; it skips boot peers.
+      # The lanes speak the slash-only RPC dialect (tests/e2e/host-protocol.ts).
+      # NODE_OPTIONS below preserves the heap budget needed for prerelease peer resolution.
       - name: Install dsh CLI (pinned)
         env:
           NODE_OPTIONS: --max-old-space-size=4096
-        run: npm install -g @deepseek-ai/dsh@0.1.5-rc.2
+        run: npm install -g @deepseek-ai/dsh@0.2.1-rc.1
 
       # lib/ is gitignored; the tarball is produced from this build.
       - name: Build and pack the npm tarball

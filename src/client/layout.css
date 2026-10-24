@@ -78,7 +78,6 @@ body[data-dsh-sidebar-dragging] #root [data-dsh-center-col] {
   #root [data-dsh-center-col] {
     transition: none;
   }
-}
 
 /* Context-menu submenu flip (viewport clamping for the portaled menus).
  *

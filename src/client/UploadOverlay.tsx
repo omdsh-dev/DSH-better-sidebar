@@ -39,7 +39,7 @@ export function UploadOverlay(props: {
     <div className={css.uploadOverlay} role="dialog" aria-modal="true" aria-label={t('uploadingTo', { dir })}>
       <div className={css.uploadOverlayCard}>
         <div className={css.uploadOverlayTitle} title={dir}>
-          <IconUploadOutline16 size={16} />
+          <IconUploadOutline16 size={14} />
           <span>{t('uploadingTo', { dir })}</span>
         </div>
         <div

@@ -53,6 +53,7 @@ interface HighlightRule {
   tag: Tag | readonly Tag[]
   color?: string
   fontStyle?: string
+  textDecoration?: string
 }
 
 /** one-dark syntax rules (mirrors @codemirror/theme-one-dark; hues from one-dark-palette.ts). */
@@ -76,7 +77,10 @@ const HIGHLIGHTS_DARK: HighlightRule[] = [
   { tag: tags.strong, fontStyle: 'bold' },
   { tag: tags.link, color: ONE_DARK.blue, fontStyle: 'underline' },
   { tag: tags.meta, color: ONE_DARK.yellow },
-  { tag: tags.invalid, color: ONE_DARK.white, fontStyle: 'bold' },
+  // A visible mark, not the one-dark convention's white: `invalid` is the
+  // token a JSONL/JSON syntax error lands on, and white-on-a-light-panel is
+  // invisible. The reader must be able to SEE which text did not parse.
+  { tag: tags.invalid, color: ONE_DARK.red, textDecoration: 'underline wavy' },
 ]
 
 /** one-light syntax rules (the light counterpart; hues from one-dark-palette.ts). */
@@ -100,7 +104,9 @@ const HIGHLIGHTS_LIGHT: HighlightRule[] = [
   { tag: tags.strong, fontStyle: 'bold' },
   { tag: tags.link, color: ONE_LIGHT.link, fontStyle: 'underline' },
   { tag: tags.meta, color: ONE_LIGHT.yellow },
-  { tag: tags.invalid, color: ONE_LIGHT.white, fontStyle: 'bold' },
+  // Same reasoning as the dark family: this used to be pure white, which on a
+  // light panel is exactly the background — an error the reader cannot see.
+  { tag: tags.invalid, color: ONE_LIGHT.red, textDecoration: 'underline wavy' },
 ]
 
 /** The scheme-dependent extension pair (surface tint + syntax highlight). */

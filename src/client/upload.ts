@@ -29,7 +29,7 @@ export interface UploadResult {
   relativePath: string
   ok: boolean
   path?: string
-  /** Wire error code when the host refused the upload ('too-large', ...). */
+  /** Wire error code when the host refused the upload. */
   code?: string
   /** The host's error message (English wire text; localize via `code`). */
   error?: string
@@ -106,13 +106,6 @@ export async function uploadItemsFromDrop(data: DataTransfer | undefined): Promi
   return nested.flat()
 }
 
-/**
- * Client-side pre-check cap. Mirrors the host's default (config `uploadLimit`)
- * only — the host enforces the real, configurable limit, so a lowered host
- * limit surfaces as a `too-large` wire error, never as a silent pass.
- */
-export const MAX_UPLOAD_BYTES = 128 * 1024 * 1024
-
 /** How long a success hint stays before fading (failures stay until the next action). */
 export const UPLOAD_HINT_MS = 3500
 
@@ -150,12 +143,8 @@ export async function uploadToDir(
     if (signal?.aborted) break
     onProgress?.(done, items.length, item.relativePath)
     try {
-      if (item.file.size > MAX_UPLOAD_BYTES) {
-        results.push({ relativePath: item.relativePath, ok: false, code: 'too-large' })
-      } else {
-        const res = await api.uploadFile(scope, dir, item.relativePath, item.file, signal)
-        results.push({ relativePath: item.relativePath, ok: true, path: res.path })
-      }
+      const res = await api.uploadFile(scope, dir, item.relativePath, item.file, signal)
+      results.push({ relativePath: item.relativePath, ok: true, path: res.path })
     } catch (error) {
       // An aborted in-flight request is a cancel, not a failure: stop quietly.
       if (error instanceof DOMException && error.name === 'AbortError') break

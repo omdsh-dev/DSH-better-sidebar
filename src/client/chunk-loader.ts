@@ -1,16 +1,16 @@
 /**
- * Lazy chunk loader for the client bundle. The heavy preview/terminal
- * libraries (CodeMirror, xterm — the editor/terminal stacks, several MB)
- * live in separate build-time bundles (`lib/client-<name>.js`) fetched only
- * on first use of the feature that needs them, so startup downloads/parses
- * only the ~1MB core bundle. (The office stack — Univer / docx-preview /
+ * Lazy chunk loader for the client bundle. The heavy preview libraries
+ * (CodeMirror's editor stack, mermaid — several MB) live in separate
+ * build-time bundles (`lib/client-<name>.js`) fetched only on first use of
+ * the feature that needs them, so startup downloads/parses only the ~1MB
+ * core bundle. (The office stack — Univer / docx-preview /
  * pptx-renderer — is no longer bundled here: Office previews moved to the
  * recommended office plugin, see plugins-viewers.ts.)
  *
  * How a chunk script works (see tsdown.config.ts chunkBundle):
  *
  *   globalThis.__dshChunks__ = globalThis.__dshChunks__ || {};
- *   globalThis.__dshChunks__["terminal"] = (require) => { ...exports };
+ *   globalThis.__dshChunks__["editor"] = (require) => { ...exports };
  *
  * The script registers its factory on a plugin-owned global registry (NOT
  * through window.__ModuleLoader__.load — the module loader's import() only
@@ -50,7 +50,9 @@
  * client.js); an edit that does land while a core HMR happens is caught by
  * the ETag comparison on the next activation.
  */
-export type ChunkName = 'terminal' | 'editor' | 'mermaid' | 'locale'
+import { hostRouteUrl } from './host-route-url.ts'
+
+export type ChunkName = 'editor' | 'mermaid' | 'locale' | 'terminal'
 
 /** The module exports a chunk factory provides (namespace-ish record). */
 export type ChunkExports = Record<string, unknown>
@@ -80,7 +82,7 @@ export const CHUNK_EXTERNALS: readonly string[] = [
 ]
 
 /** Chunk script endpoint served by the plugin host half (src/bundle-route.ts). */
-const CHUNK_URL = (name: ChunkName): string => `/sidebar/bundle/${name}.js`
+const CHUNK_URL = (name: ChunkName): string => hostRouteUrl(`sidebar/bundle/${name}.js`).href
 
 /** Bound on the revalidation HEAD round-trip. A timeout fails open (drop +
  *  re-fetch on the next open) so a stuck bundle route can never wedge lazy

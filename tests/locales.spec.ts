@@ -6,7 +6,7 @@
  * interpolation.
  */
 import { afterEach, describe, expect, it } from 'vitest'
-import { LOCALE_NS, attachBetterLocale, attachLocale, en, isZh, relativeTime, t, zh } from '../src/client/locales.ts'
+import { LOCALE_NS, attachBetterLocale, attachLocale, chatT, en, isZh, relativeTime, t, zh } from '../src/client/locales.ts'
 import { localeDicts } from '../src/client/chunks/locale.tsx'
 
 /** Minimal structural fake of the DSH LocaleService face the sidebar uses. */
@@ -62,13 +62,13 @@ describe('locales (DSH i18n following)', () => {
     attachLocale(locale)
 
     locale.switchTo('zh')
-    expect(t('changes')).toBe('文件变动')
+    expect(t('explorer')).toBe('资源管理器')
     expect(isZh()).toBe(true)
 
     // Live switch: the service's active locale wins even though the
     // browser still asks for en-US.
     locale.switchTo('en')
-    expect(t('changes')).toBe('Changes')
+    expect(t('explorer')).toBe('Explorer')
     expect(isZh()).toBe(false)
   })
 
@@ -105,6 +105,14 @@ describe('locales (DSH i18n following)', () => {
     expect(LOCALE_NS).toBe('betterSidebar')
   })
 
+  it('names the existing changes entry Git in every shipped locale', () => {
+    // Keep the translation key (and the git tab id) stable: this is display
+    // copy only. Check raw dictionaries so English fallback cannot hide a miss.
+    for (const [lang, dict] of Object.entries({ zh, en, ...localeDicts })) {
+      expect(dict.changes, lang).toBe('Git')
+    }
+  })
+
   it('keeps the zh and en dictionaries key-set-equal', () => {
     expect(Object.keys(en).sort()).toEqual(Object.keys(zh).sort())
   })
@@ -118,6 +126,56 @@ describe('locales (DSH i18n following)', () => {
       expect(Object.keys(dict).sort(), lang).toEqual(Object.keys(zh).sort())
     }
     expect(Object.keys(localeDicts), 'every shipped third language rides the locale chunk').toContain('ja')
+  })
+})
+
+/**
+ * A locale service whose `bind` reads instance state, exactly like DSH's own
+ * (`LocaleRuntime.bind` touches `this.bound`). A detached call — the natural
+ * refactor `const bind = service.bind; bind('chat')` — throws here, which is
+ * what a real host did before the mount lane caught it.
+ */
+class FakeLocaleWithBind {
+  active = 'zh'
+  private readonly dicts: Record<string, Record<string, string>> = {
+    chat: { 'message.stepProcess.done.read': '已读取文件' },
+  }
+  getSnapshot(): { active: string } {
+    return { active: this.active }
+  }
+  bind(ns: string): (key: string, params?: Record<string, string | number>) => string {
+    // The `this` read that makes a detached call blow up.
+    const dict: Record<string, string> = this.dicts[ns] ?? {}
+    return (key) => dict[key] ?? key
+  }
+}
+
+describe('locales (host chat namespace bridge)', () => {
+  it('reads the host namespace through a METHOD call on the attached service', () => {
+    attachLocale(new FakeLocaleWithBind())
+    expect(chatT('message.stepProcess.done.read')).toBe('已读取文件')
+  })
+
+  it('answers undefined for a namespace or key the host does not serve', () => {
+    attachLocale(new FakeLocaleWithBind())
+    // An unregistered host namespace resolves to the key itself: the caller
+    // must see "unavailable", never the raw `message.…` key.
+    expect(chatT('message.stepProcess.read')).toBeUndefined()
+  })
+
+  it('answers undefined when the attached face has no bind at all', () => {
+    attachLocale({ getSnapshot: () => ({ active: 'en' }) })
+    expect(chatT('message.stepProcess.done.read')).toBeUndefined()
+    attachLocale(undefined)
+    expect(chatT('message.stepProcess.done.read')).toBeUndefined()
+  })
+
+  it('never lets a throwing host seam break a render', () => {
+    attachLocale({
+      getSnapshot: () => ({ active: 'en' }),
+      bind: () => { throw new TypeError("Cannot read properties of undefined (reading 'bound')") },
+    })
+    expect(chatT('message.stepProcess.done.read')).toBeUndefined()
   })
 })
 
@@ -169,7 +227,7 @@ describe('locales (better-locale override)', () => {
     attachBetterLocale(betterLocale)
 
     // 'changes' has no ja entry in this fake; should fall back to the en text.
-    expect(t('changes')).toBe('Changes')
+    expect(t('changes')).toBe('Git')
   })
 
   it('falls back to the zh/en chain when no override is active', () => {

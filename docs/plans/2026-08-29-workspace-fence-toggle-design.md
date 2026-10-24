@@ -1,6 +1,6 @@
 # 设计：工作区路径围栏开关（`workspaceFence` 设置 + 错误面一键关闭）
 
-> 日期：2026-08-29 · 状态：已实现 · 仓库：omdsh-dev/DSH-better-sidebar
+> 日期：2026-08-29 · 状态：**已实现、随后整体移除**（见文末「后续偏差」；围栏本身在 v0.23.0 删除）· 仓库：omdsh-dev/DSH-better-sidebar
 
 ## 需求
 
@@ -53,3 +53,8 @@ GitView 两处 `isWithinWorkspace` 预判（菜单项隐藏 :578、纵深防御 
 - i18n：4 个 key（`settingsFenceTitle` / `settingsFenceDesc` / `fenceErrorReason` / `fenceDisableAction`）× 全部 21 个词典（zh/en/ja + 18 第三语言，`locales.spec` 强制 key 集相等）。
 - 测试：smoke「disarms the workspace fence…」（先拒后放，覆盖 tree/read/write）；prefs 解析专测（缺省/非法 → `true`，显式 `false` 透传）；plugin-shape schema 默认；builtins editor toggles 清单。
 - 文档：接入指南 §8 内置键清单 + 新增 §8.1（本特性对消费插件的可感知行为与风险）。
+
+## 后续偏差（本文写完之后发生的）
+
+1. **围栏整体移除（v0.23.0）**：用户要求撤掉包含性检查，`workspaceFence` 设置、`FenceErrorNotice` 与那条 403 错误面**一并删除**——插件 fs 路由（tree/read/write/rename/remove/mkdir/媒体/HTML/upload/archive）现在可读写宿主用户能访问的任意路径，仅受 OS 权限约束。`src/path-security.ts` 保留模块名与函数名但语义只剩「解析」，不再有 realpath 与 `isWithin` 守卫；`isWithin` 退化为词法工具（文件树/删除路径的客户端预判），**不再是安全边界**。发布记录见 [CHANGELOG](../../CHANGELOG.md) 的 v0.23.0「行为变更（安全相关）」条。因此本文第 5 节「客户端预判同步放行」描述的 `workspaceFence !== false` 条件已无消费者，`deriveGitView` 那两处预判只按词法包含判定。
+2. **`fs.search` 现在确实会越界（#879）**：本文末句「`fs.search` 不动——它锚定 cwd 向下走，本来就不会越界」**已不成立**。`fs.search` 新增「指名单一目标」的直开分支（绝对路径 / `~/…` / `./x` / `../x` 经 `resolveTarget` stat 直取），命中会返回工作区外路径的解析结果——这与围栏移除后 `fs.read` 的取向一致（粘贴路径是显式意图，用户 exclude 列表同样不作用于该分支）。实现与判别性用例见 `src/fs-search.ts` 与 `tests/fs-search.spec.ts`（[#879](https://github.com/omdsh-dev/DSH-better-sidebar/issues/879)）。

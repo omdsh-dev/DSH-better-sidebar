@@ -3,6 +3,7 @@
  * VSCode-family SSH URLs must launch on the browser machine, while local
  * editor URLs and reveal actions keep using the DSH host opener.
  */
+import './browser-globals.ts'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { api } from '../src/client/api.ts'
 
@@ -64,7 +65,7 @@ describe('api.openExternal', () => {
 
     expect(assign).not.toHaveBeenCalled()
     expect(fetchMock).toHaveBeenCalledOnce()
-    expect(fetchMock.mock.calls[0]?.[0]).toBe('/sidebar/api/open.external')
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe('http://localhost/sidebar/api/open.external')
   })
 
   it('keeps reveal actions and http(s) lookalikes on the host opener', async () => {

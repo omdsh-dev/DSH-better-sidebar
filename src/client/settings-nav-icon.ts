@@ -8,6 +8,10 @@
  * an icon field, the plugin identifies only its own localized row after the
  * dialog mounts. The marker owns no shell structure and is removed on fiber
  * disposal, so the adaptation remains HMR-safe.
+ *
+ * Mutation bursts are coalesced into one sync per animation frame: the
+ * observer watches the whole body, so chat streaming would otherwise run the
+ * document-wide row query at microtask cadence.
  */
 
 export const SETTINGS_NAV_MARKER = 'data-dsh-better-sidebar-settings-nav'
@@ -20,6 +24,7 @@ export const SETTINGS_NAV_MARKER = 'data-dsh-better-sidebar-settings-nav'
  */
 export function registerSettingsNavIcon(label: () => string): () => void {
   let disposed = false
+  let frame: number | null = null
 
   const sync = (): void => {
     if (disposed) return
@@ -32,13 +37,31 @@ export function registerSettingsNavIcon(label: () => string): () => void {
     }
   }
 
+  /** One sync per frame at most: the first mutation of a burst schedules it. */
+  const schedule = (): void => {
+    if (disposed || frame !== null) return
+    frame = requestAnimationFrame(() => {
+      frame = null
+      sync()
+    })
+  }
+
   sync()
-  const observer = new MutationObserver(sync)
-  observer.observe(document.body, { childList: true, subtree: true, characterData: true })
+  // No `characterData`: the marker is a function of the mounted buttons and
+  // their text, and every dialog mount/unmount or row insert/remove already
+  // changes childList. Watching character data made this observer fire for
+  // every streamed token in the main conversation — a document-wide
+  // `querySelectorAll('[role="dialog"] nav button')` per token burst.
+  const observer = new MutationObserver(schedule)
+  observer.observe(document.body, { childList: true, subtree: true })
 
   return () => {
     disposed = true
     observer.disconnect()
+    if (frame !== null) {
+      cancelAnimationFrame(frame)
+      frame = null
+    }
     document.querySelectorAll(`[${SETTINGS_NAV_MARKER}]`)
       .forEach(element => { element.removeAttribute(SETTINGS_NAV_MARKER) })
   }

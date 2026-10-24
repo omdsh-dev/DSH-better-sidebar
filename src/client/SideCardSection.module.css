@@ -143,8 +143,7 @@
 }
 
 .cardMain:focus-visible,
-.cardSettings:focus-visible,
-.rowGear:focus-visible {
+.cardSettings:focus-visible {
   outline: 2px solid var(--dsw-alias-border-l4);
   outline-offset: 2px;
 }
@@ -310,31 +309,6 @@
 }
 
 .cardSettings:hover {
-  background: var(--dsw-alias-interactive-bg-hover-accent);
-  color: var(--dsw-alias-brand-primary);
-}
-
-/* The gear icon button on a general settings ROW (the position-compat
-   row's "customize the strip height" entry): a bordered chip (not a ghost)
-   so it reads as a control at rest; hover answers with the accent tint. */
-.rowGear {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  padding: 0;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 6px;
-  background: transparent;
-  color: var(--dsw-alias-label-secondary);
-  cursor: pointer;
-  flex: none;
-  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
-}
-
-.rowGear:hover {
-  border-color: var(--dsw-alias-interactive-bg-hover-accent);
   background: var(--dsw-alias-interactive-bg-hover-accent);
   color: var(--dsw-alias-brand-primary);
 }
@@ -616,6 +590,70 @@
   outline-offset: 1px;
 }
 
+/* Patterns rows (type 'patterns'): an editable string list — removable
+   chips over the committed values plus one always-present add input. The
+   row stacks vertically (title/desc, then chips, then the input) because
+   the list needs the popup's full width. */
+.patternsRow {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  padding: 14px 16px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 12px;
+}
+
+.patternsChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.patternsChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 4px 2px 9px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 999px;
+  background: var(--dsw-alias-bg-layer-2);
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-primary);
+}
+
+.patternsChipRemove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.patternsChipRemove:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.patternsAdd {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.patternsInput {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 .error {
   padding: 10px 0 2px;
   font-size: 12px;
@@ -805,7 +843,6 @@
   .cardSettings,
   .cardSwitchTrack,
   .cardSwitchThumb,
-  .rowGear,
   .popupRow,
   .switchTrack,
   .switchThumb {

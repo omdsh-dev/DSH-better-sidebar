@@ -21,7 +21,6 @@ function makeKey(overrides: Partial<TabContentMemoKey> = {}): TabContentMemoKey 
     revealed: [],
     localeRevision: 'en-US',
     tabsVersion: 0,
-    effectiveTabId: undefined,
     ...overrides,
   }
 }

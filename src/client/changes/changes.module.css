@@ -1,340 +1,541 @@
-/* The unified changes tab: lens switcher + Git lens + session lens + the
-   shared preview pane. Semantic --dsw-alias tokens only (skin contract).
-   The git lens styles moved here from sidebar.module.css when the git panel
-   became a lens of this tab; the generic placeholder/empty/error trio stays
-   duplicated in both modules (the diff tab still owns its copy). */
+/* The unified changes tab: the 36px lens header + Git lens + session lens +
+   the shared preview pane. Token-only by contract (`tests/theme.spec.ts` scans
+   every module sheet) and cut to the plugin's native scale — 12px body, 11px
+   meta, 28px rows/controls, 2/3/4px radii (see
+   docs/plans/2026-09-27-files-changes-uiux.md §1).
 
-.root { display: flex; flex-direction: column; min-height: 0; height: 100%; background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary); font-size: 12px; }
+   The generic chrome — icon buttons, chips, section bands, badges, empty /
+   loading / error lines and the confirm dialog — now lives in
+   `src/client/ui/kit.module.css`; this sheet keeps only layout and the
+   surfaces unique to this tab. */
 
-/* ── Lens switcher ─────────────────────────────────────────────────────── */
+.root { display: flex; flex-direction: column; min-height: 0; height: 100%; background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary); font: var(--dsw-font-xxs-12); }
 
-.lensBar { flex: none; display: flex; align-items: center; padding: 8px 8px 4px 12px; }
-.lensSwitch { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--dsw-alias-border-l2); border-radius: 8px; }
-.lensButton { border: 0; border-radius: 6px; padding: 2px 10px; background: transparent; color: var(--dsw-alias-label-secondary); font: var(--dsw-font-xxxs-strong-11); cursor: pointer; }
-.lensButton:hover { color: var(--dsw-alias-label-primary); }
-.lensButton[data-active='true'] { background: var(--dsw-alias-interactive-bg-active); color: var(--dsw-alias-label-primary); }
+/* ── Lens header ───────────────────────────────────────────────────────── */
+
+.head { flex: none; display: flex; align-items: stretch; gap: 8px; height: 36px; padding: 0 8px 0 12px; border-bottom: 1px solid var(--dsw-alias-border-l1); }
+.headAction { margin-left: auto; align-self: center; }
+.head :global(.wSkVaW_tabs) { gap: 24px; }
+.lensBody { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+/* Retained but not on screen: `display: flex` above would otherwise win over
+   the `hidden` attribute and two lenses would share the column. */
+.lensBody[hidden] { display: none; }
+.head :global(.wSkVaW_tab):focus-visible { outline: 2px solid var(--dsw-alias-interactive-bg-hover-accent); outline-offset: -2px; }
 
 /* ── Git lens (the former git panel) ───────────────────────────────────── */
 
+/* Changes and Graph share one scroll body; branch/sync stays outside it. */
 .git {
   flex: 1;
   min-height: 0;
   min-width: 0;
   display: flex;
   flex-direction: column;
+  padding-top: 6px;
+}
+
+/* The inner scroll body: the change groups + the history. It owns both scroll
+   axes' policy — vertical scrolling for the list, clipping for anything wider
+   than the panel (tab pages never scroll horizontally: content wraps or
+   truncates to the panel width instead of panning sideways). */
+.gitScroll {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
   overflow-y: auto;
-  /* Tab pages never scroll horizontally: content wraps or truncates to the
-     panel width instead of panning sideways. */
   overflow-x: hidden;
-}
-
-.gitHeader {
-  flex: none;
   display: flex;
-  align-items: center;
-  gap: 8px;
-  height: 36px;
-  padding: 0 8px 0 12px;
+  flex-direction: column;
 }
 
-.gitWorktreeRow {
+.changesSection { flex: none; }
+/* Bound the section's minimum, not its maximum: 28px header + 220px viewport.
+   An automatic minimum would let the entire history stretch the outer scroller. */
+.graphSection { flex: 1; min-height: 248px; display: flex; flex-direction: column; }
+.graphArea { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+
+.scmHeader { display: flex; align-items: center; min-height: 28px; padding: 0 6px; }
+.scmDisclosure { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; min-height: 28px; padding: 0; border: none; background: transparent; color: var(--dsw-alias-label-primary); font: var(--dsw-font-xxs-strong-12); text-align: left; cursor: pointer; }
+.scmActions { display: flex; align-items: center; gap: 2px; opacity: 0; }
+.scmHeader:hover .scmActions, .scmHeader:focus-within .scmActions { opacity: 1; }
+@media (hover: none) { .scmActions { opacity: 1; } }
+
+/* Docked by the flex column above (a sibling of `.gitScroll`), plus sticky so
+   it also survives the case where the host tab body itself scrolls the whole
+   tab — the branch control must never leave the bottom of the pane. */
+.gitFooter { flex: none; min-width: 0; position: sticky; bottom: 0; z-index: 1; border-top: 1px solid var(--dsw-alias-border-l1); background: var(--dsw-alias-bg-base); }
+.footerRow { display: flex; align-items: center; min-width: 0; min-height: 28px; }
+
+/* A failed remote op reports above the branch row and git's stderr can be long:
+   it keeps its own height (never truncated) but gets a dismiss control instead
+   of living in the docked footer until the next action. */
+.actionError { display: flex; align-items: flex-start; gap: 6px; white-space: normal; }
+.actionErrorText { flex: 1; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.branchMenu { display: flex; flex: 1; min-width: 0; }
+.branchButton, .syncButton { display: flex; align-items: center; gap: 5px; min-width: 0; min-height: 28px; padding: 3px 8px; border: none; background: transparent; color: var(--dsw-alias-label-secondary); font: var(--dsw-font-xxxs-11); cursor: pointer; }
+.branchButton { flex: 1; text-align: left; }
+.syncButton { max-width: 55%; }
+.branchButton svg, .syncButton svg { flex: none; }
+.branchButton span, .syncButton span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.branchButton:hover:not(:disabled), .syncButton:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover); }
+.branchButton:disabled, .syncButton:disabled { opacity: 0.45; cursor: default; }
+
+/* ── Change groups (one directory tree each) ───────────────────────────── */
+
+/* One group is its own block so its sticky header is released exactly when the
+   group scrolls past (two headers in one block would stack on top of each
+   other). */
+.group { display: flex; flex-direction: column; padding-bottom: 2px; }
+
+/* The header band stays readable while its group scrolls under it. The extra
+   class keeps the opaque fill above the kit's transparent band no matter which
+   sheet lands first in the bundle. */
+.group .groupHeader {
+  gap: 4px;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--dsw-alias-bg-base);
+}
+
+/* Group counts match the action height and the neighbouring header controls'
+   corner radius (the host kit's `size="sm"` buttons use `--dsw-radius-sm`);
+   directory rows need no badge. */
+.countPill {
   flex: none;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 8px 0 12px;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xxxs-strong-11);
+  line-height: 20px;
+  text-align: center;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
 }
 
-.gitWorktreeLabel {
-  flex: none;
-  color: var(--dsw-alias-label-tertiary);
-  font: var(--dsw-font-xxxs-11);
+/* A band action (stage all / unstage all) stays out of the way until the band
+   is hovered or holds focus — a keyboard tab reveals it too. Touch devices
+   have no hover, so there it is always visible. */
+.group .headerAction { opacity: 0; transition: opacity 120ms var(--ds-ease-in-out); }
+.group .groupHeader:hover .headerAction,
+.group .groupHeader:focus-within .headerAction { opacity: 1; }
+@media (hover: none) {
+  .group .headerAction { opacity: 1; }
 }
 
-.gitBranchSelect {
+/* Indent row contents only; hover bands span the full panel. */
+.tree { display: flex; flex-direction: column; }
+
+/* A directory row's disclosure button. It shares the `.row` band with a file
+   row (the band owns the hover/selected fill and the trailing action), so this
+   button is only the row's main hit area. */
+.dirRow {
   flex: 1;
   min-width: 0;
-  height: 26px;
-  padding: 0 6px;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 6px;
-  background: var(--dsw-alias-bg-base);
-  color: var(--dsw-alias-label-primary);
-  font: var(--dsw-font-xxs-12);
-}
-
-.gitSection {
-  border-top: 1px solid var(--dsw-alias-border-l1);
-}
-
-.gitSectionHeader {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 6px 12px 4px;
-  font: var(--dsw-font-xxxs-strong-11);
-  color: var(--dsw-alias-label-tertiary);
-  text-transform: uppercase;
-}
-
-.gitLink {
-  border: none;
-  background: transparent;
-  font: var(--dsw-font-xxxs-11);
-  color: var(--dsw-alias-brand-primary);
-  cursor: pointer;
-  padding: 0;
-}
-
-.gitLink:hover:not(:disabled) {
-  text-decoration: underline;
-}
-
-.gitLink:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
-
-.gitRow {
   display: flex;
   align-items: center;
   gap: 6px;
-  min-height: 34px;
-  margin: 0 6px;
-  padding: 0 8px;
-  border-radius: 8px;
-  animation: dsh-row-in 150ms var(--ds-ease-in-out);
-}
-
-.gitRow:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
-}
-
-.gitRow[data-selected='true'] {
-  background: var(--dsw-alias-interactive-bg-active);
-}
-
-.gitRowMain {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 8px;
   border: none;
   background: transparent;
-  padding: 3px 0;
+  padding: 0;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
   cursor: pointer;
   text-align: left;
 }
+.dirRow:focus-visible { outline: 2px solid var(--dsw-alias-interactive-bg-hover-accent); outline-offset: -1px; }
 
-.gitBadge {
+.chevron { flex: none; display: inline-flex; color: var(--dsw-alias-label-tertiary); transition: transform 140ms var(--ds-ease-in-out); }
+.chevron[data-open='true'] { transform: rotate(90deg); }
+
+.dirName { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: var(--dsw-font-xxs-12); }
+
+/* One changed file: file artwork + porcelain badge + name + the trailing
+   action (revealed on hover/focus). */
+.row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  position: relative;
+  min-height: 28px;
+  padding: 0 6px;
+  animation: dsh-row-in 150ms var(--ds-ease-in-out);
+}
+.row:hover { background: var(--dsw-alias-interactive-bg-hover); }
+/* Selected and hovered are different pictures: the selected row keeps the
+   active fill AND the design's 2px accent marker — a pseudo element inset 4px
+   (the tasks page's own recipe), so the row stays shadowless and no metric
+   shifts between rows. */
+.row[data-selected='true'],
+.opRow[data-selected='true'] {
+  background: var(--dsw-alias-interactive-bg-active);
+}
+
+.row[data-selected='true']::before,
+.opRow[data-selected='true']::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 4px;
+  bottom: 4px;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--dsw-alias-state-business-primary);
+}
+
+/* The tree's indent guides: the same 1px `border-l1` edge the old nested
+   `.treeChildren` wrapper drew (`margin-left: 11px` boundaries become the
+   absolutely placed columns in `IndentGuides`), one per level above the row and
+   spanning the whole band, so the flex metrics never move. */
+.guide {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  border-left: 1px solid var(--dsw-alias-border-l1);
+}
+
+.rowMain {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: none;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+}
+.rowMain:focus-visible { outline: 2px solid var(--dsw-alias-interactive-bg-hover-accent); outline-offset: -1px; }
+
+/* The row's icons are content at the plugin's own scale, not chrome. */
+.rowIcon { flex: none; display: inline-flex; align-items: center; }
+
+.rowName { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: var(--dsw-font-xxs-12); color: var(--dsw-alias-label-primary); }
+.rowPath { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: var(--dsw-font-xxxs-11); color: var(--dsw-alias-label-tertiary); }
+
+/* A row's / band's line counts (#131): `+N −M` in the diff pane's own ink (the
+   `.statAdd` / `.statDel` atoms of `diff.module.css`, reused rather than
+   re-coloured here). Tabular figures keep the column from shifting between
+   readings, and the code face matches every other number in the tab. Size and
+   line height come from the smallest host font token (11px/14px) — the family
+   is overridden back to the code stack right after the shorthand, which is the
+   order the shorthand requires. */
+.lineCounts {
   flex: none;
-  width: 20px;
-  height: 16px;
+  display: inline-flex;
+  gap: 5px;
+  font: var(--dsw-font-xxxs-11);
+  font-family: var(--ds-font-family-code, monospace);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The stand-ins for "no numbers exist": a binary change and an untracked (new)
+   file. Quiet tertiary ink — they are a state, not a measurement. */
+.lineNote {
+  flex: none;
+  font: var(--dsw-font-xxxs-11);
+  color: var(--dsw-alias-label-tertiary);
+  white-space: nowrap;
+}
+
+/* Match both glyphs and keep their hover boxes smaller than the 28px row. */
+.row .rowAction, .group .headerAction { width: 20px; height: 20px; }
+
+/* The row action is invisible until its row is hovered or holds focus (a
+   keyboard tab lands on it and reveals it). The three-class form outranks the
+   kit's own disabled rule, which would otherwise pin every button to a dim but
+   visible 0.4 whenever a git action is in flight. */
+.row:not(:hover):not(:focus-within) .rowAction { opacity: 0; }
+@media (hover: none) {
+  .row:not(:hover):not(:focus-within) .rowAction { opacity: 1; }
+}
+
+/* ── Message draft (inside Changes) ─────────────────────────────────────── */
+
+.messageBox { display: flex; padding: 4px 8px 8px; }
+
+/* Desktop's official Input frame, with a growing textarea instead of input. */
+.commitInputWrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  min-height: 32px;
+  box-sizing: border-box;
+  padding: 0 4px 0 8px;
+  border: 0.5px solid var(--dsw-alias-border-l4);
+  border-radius: var(--dsw-radius-md);
+  background: var(--dsw-alias-bg-layer-1);
+}
+.commitInputWrap:focus-within { border-color: var(--dsw-alias-state-business-primary); }
+
+.commitInput {
+  flex: 1;
+  min-width: 0;
+  height: 22px;
+  min-height: 22px;
+  max-height: 132px;
+  padding: 0;
+  margin: 4px 0;
+  border: none;
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-s-14);
+  line-height: 22px;
+  resize: none;
+  overflow-y: hidden;
+  outline: none;
+}
+
+.commitInput::placeholder {
+  color: var(--dsw-alias-label-dimmed);
+}
+
+.commitInput:disabled {
+  opacity: 0.5;
+}
+.commitInput[data-message-busy='true'] { color: transparent; caret-color: transparent; }
+
+/* Busy text in the input's place: the running-status sweep used by the side
+   chat (gradient text scrolled by background-position). The real placeholder
+   is cleared while busy, so the two never overlap. */
+.commitBusyText {
+  position: absolute;
+  inset: 0 38px 0 0;
+  display: flex;
+  align-items: center;
+  /* Match the frame's inset while keeping the generate button unobscured. */
+  padding: 0 8px;
+  pointer-events: none;
+  font: var(--dsw-font-s-14);
+  line-height: 22px;
+  background-image: linear-gradient(
+    90deg,
+    var(--dsw-alias-label-tertiary) 0%,
+    var(--dsw-alias-label-primary) 50%,
+    var(--dsw-alias-label-tertiary) 100%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: commitSweep 2.6s linear infinite;
+}
+
+@keyframes commitSweep {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .commitBusyText { animation: none; }
+}
+
+/* Generate fills the draft only. Inline on the input's right edge. */
+.suggestButton {
+  flex: none;
+  align-self: flex-start;
+  margin-top: 3px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 4px;
-  font: var(--dsw-font-xxxs-strong-11);
-  background: var(--dsw-alias-interactive-bg-hover);
-  color: var(--dsw-alias-label-secondary);
-}
-
-/* Status-letter tint: A added / D deleted / M·R modified / C·U conflicts;
-   untracked '?' reads as a not-yet-added file, so it shares the added tint. */
-.gitBadge[data-letter='A'], .gitBadge[data-letter='?'] { color: var(--dsw-alias-state-success-primary); }
-.gitBadge[data-letter='D'] { color: var(--dsw-alias-state-error-primary); }
-.gitBadge[data-letter='M'], .gitBadge[data-letter='R'] { color: var(--dsw-alias-state-business-primary); }
-.gitBadge[data-letter='C'], .gitBadge[data-letter='U'] { color: var(--dsw-alias-state-warn-primary); }
-
-.gitName {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font: var(--dsw-font-s-14);
-  color: var(--dsw-alias-label-primary);
-}
-
-.gitEmpty {
-  padding: 4px 12px 8px;
-  font: var(--dsw-font-xxs-12);
-  color: var(--dsw-alias-label-tertiary);
-}
-
-.gitPlaceholder {
-  padding: 16px;
-  font: var(--dsw-font-xxs-12);
-  color: var(--dsw-alias-label-tertiary);
-  text-align: center;
-}
-
-.gitError {
-  padding: 8px 12px;
-  font: var(--dsw-font-xxs-12);
-  color: var(--dsw-alias-state-error-primary);
-  white-space: pre-wrap;
-}
-
-.gitConfirmDesc {
-  margin: 0;
-  font: var(--dsw-font-s-14);
-  color: var(--dsw-alias-label-primary);
-  white-space: pre-wrap;
-}
-
-.gitCommit {
-  display: flex;
-  gap: 6px;
-  padding: 8px 12px;
-  border-top: 1px solid var(--dsw-alias-border-l1);
-  align-items: center;
-}
-
-.gitCommitInput {
-  flex: 1;
-  min-width: 0;
-}
-
-.gitCommitButton {
-  flex: none;
-  height: 26px;
-  padding: 0 12px;
+  width: 24px;
+  height: 24px;
+  padding: 0;
   border: none;
-  border-radius: 6px;
-  background: var(--dsw-alias-button-primary-fill);
-  color: var(--dsw-alias-label-primary-inverted);
-  font: var(--dsw-font-xxs-strong-12);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
   cursor: pointer;
 }
 
-.gitCommitButton:hover:not(:disabled) {
-  background: var(--dsw-alias-button-primary-hover);
+.suggestButton:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
 }
 
-.gitCommitButton:disabled {
+.suggestButton:disabled {
   opacity: 0.45;
   cursor: default;
 }
 
-/* A history row: line 1 = hash + subject, line 2 = ref badges + author/date
-   (badges live on the second line so they never crowd the subject). */
-.gitLogRow {
+.suggestBusy {
+  color: var(--dsw-alias-interactive-bg-hover-accent);
+  animation: commitSuggestPulse 1.2s ease-in-out infinite;
+}
+
+@keyframes commitSuggestPulse {
+  50% { opacity: 0.45; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .suggestBusy { animation: none; }
+}
+
+/* The Git card's pinned-model setting (rendered through settings.render). */
+.commitModel {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding: 5px 12px;
-  cursor: pointer;
-  border-radius: 8px;
+  gap: 4px;
+  padding: 8px 12px;
 }
 
-.gitLogRow:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
+.commitModelTitle {
+  font: var(--dsw-font-xxs-strong-12);
+  color: var(--dsw-alias-label-primary);
 }
 
-.gitLogRow[data-selected='true'] {
-  background: var(--dsw-alias-interactive-bg-active);
-}
-
-.gitLogLine1 {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  min-width: 0;
-}
-
-.gitLogHash {
-  flex: none;
-  font: var(--dsw-font-markdown-code-block-small);
+.commitModelDesc {
+  font: var(--dsw-font-xxs-12);
   color: var(--dsw-alias-label-tertiary);
 }
 
-.gitLogLine2 {
+/* Follow-the-conversation switch: a native checkbox (real semantics and
+   focus) beside its label, matching the side card's switch rows. */
+.commitModelRow {
   display: flex;
   align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.commitModelSwitch {
+  display: inline-flex;
+  align-items: center;
   gap: 6px;
-  min-width: 0;
-  flex-wrap: wrap;
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-primary);
+  cursor: pointer;
 }
 
-.gitLogRef {
-  flex: none;
-  padding: 0 5px;
+.commitModelSwitch input {
+  accent-color: var(--dsw-alias-interactive-bg-hover-accent);
+}
+
+/* The searchable route box: the wrapper span the Menu renders around the
+   input. Its default `.root` is `display: inline-flex`, which shrinks to the
+   input's intrinsic width — overridden here so the box fills the panel. The
+   candidate list itself is portalled to <body> (see the component), so its
+   width is pinned to the input at runtime. */
+.commitModelMenuRoot {
+  display: block;
+  width: 100%;
+}
+
+.commitModelBox {
+  display: block;
+}
+
+/* The stored route, shown on its own line: the search box below stays an empty
+   filter, so reopening the picker lists every candidate instead of filtering
+   down to the model that is already selected. */
+.commitModelCurrent {
+  margin-bottom: 4px;
+  font: var(--dsw-font-xxs-strong-12);
+  color: var(--dsw-alias-label-primary);
+  overflow-wrap: anywhere;
+}
+
+.commitModelInput {
+  width: 100%;
+  box-sizing: border-box;
+  height: 26px;
+  padding: 0 6px;
   border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 999px;
-  font: var(--dsw-font-xxxs-strong-11);
-  color: var(--dsw-alias-brand-primary);
-  white-space: nowrap;
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xxs-12);
 }
 
-.gitLogSubject {
-  flex: 1;
+.commitModelInput:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* One candidate row inside the portalled Menu: the route text plus its source
+   badge. The menu shell (background, hover, radius) is the primitive's. */
+.commitModelOption {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  /* border-box, or `width: 100%` plus the horizontal padding overflows its
+     label box by 12px — which the Menu's `.itemLabel{overflow:hidden}` then
+     slices off the trailing badge. */
+  box-sizing: border-box;
+  width: 100%;
+  padding: 4px 6px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xxs-12);
+  text-align: left;
+  cursor: pointer;
+}
+
+.commitModelOption:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+/* `flex-basis: auto` (NOT `1`, which is basis 0) matters here: the menu card
+   is sized shrink-to-fit, and a zero basis makes that intrinsic width ignore
+   the route text — the card then converges on the input's width alone and the
+   trailing badge is clipped by the Menu's own `.itemLabel{overflow:hidden}`.
+   With auto the text contributes its real width, and `min-width: 0` still lets
+   it ellipsize when the card hits the Menu's max-width. */
+.commitModelOptionText {
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font: var(--dsw-font-s-14);
-  color: var(--dsw-alias-label-primary);
 }
 
-.gitLogMeta {
-  font: var(--dsw-font-xxxs-11);
+/* The badge keeps its full width under any shrink pressure. */
+.commitModelOptionNote {
+  flex: 0 0 auto;
+  min-width: max-content;
+  white-space: nowrap;
   color: var(--dsw-alias-label-tertiary);
 }
 
-.gitLogMore {
-  display: block;
-  width: calc(100% - 24px);
-  margin: 4px 12px 8px;
-  padding: 6px 0;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 6px;
-  background: transparent;
+.commitModelHint {
   font: var(--dsw-font-xxs-12);
-  color: var(--dsw-alias-label-secondary);
-  cursor: pointer;
+  color: var(--dsw-alias-label-tertiary);
 }
 
-.gitLogMore:hover:not(:disabled) {
-  background: var(--dsw-alias-interactive-bg-hover);
-  color: var(--dsw-alias-label-primary);
-}
+/* ── Commit graph ──────────────────────────────────────────────────────── */
 
-.gitLogMore:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
+.graphSvg { flex: none; max-width: 40%; height: 22px; overflow: hidden; }
+.graphContent { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; padding-right: 4px; }
+.logRefs { display: inline-flex; gap: 3px; flex-shrink: 1; min-width: 0; max-width: 45%; overflow: hidden; }
+.logRef { flex: none; padding: 0 4px; border: 1px solid var(--dsw-alias-border-l2); border-radius: 3px; font: var(--dsw-font-xxxs-strong-11); color: var(--dsw-alias-brand-primary); white-space: nowrap; }
+
 
 /* ── Session lens (this round's files) ─────────────────────────────────── */
 
 .session { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.filterRow { flex: none; display: flex; gap: 4px; padding: 6px 12px; flex-wrap: wrap; }
+.sessionList { flex: 1; min-height: 0; overflow-y: auto; padding: 0 6px 10px; gap: 4px; display: flex; flex-direction: column; margin-top: 4px; }
 
-.filterRow { flex: none; display: flex; gap: 4px; padding: 2px 8px 6px 12px; flex-wrap: wrap; }
-.filterChip { border: 1px solid var(--dsw-alias-border-l2); border-radius: 999px; padding: 1px 8px; background: transparent; color: var(--dsw-alias-label-secondary); font: var(--dsw-font-xxxs-11); cursor: pointer; }
-.filterChip:hover { color: var(--dsw-alias-label-primary); background: var(--dsw-alias-interactive-bg-hover); }
-.filterChip[data-active='true'] { background: var(--dsw-alias-interactive-bg-active); color: var(--dsw-alias-label-primary); border-color: transparent; }
+/* Every op carries its own path between the badge and trailing meta. Long paths
+   truncate inside the row; the title keeps the full path available on hover. */
+.filePath { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dsw-alias-label-tertiary); font-family: var(--ds-font-family-code, monospace); font-size: 11px; }
 
-.sessionList { flex: 1; min-height: 0; overflow-y: auto; padding: 0 6px 10px; }
-.empty { color: var(--dsw-alias-label-tertiary); padding: 24px 8px; text-align: center; }
-.loadError { margin: 4px 8px; padding: 6px 10px; border-left: 3px solid var(--dsw-alias-state-warn-primary); border-radius: 0 6px 6px 0; color: var(--dsw-alias-label-secondary); font-size: 11px; }
-
-.fileGroup { margin-bottom: 6px; }
-/* The group label sits between op blocks: extra head padding separates it from
-   the previous file's rows, the first group starts flush. */
-.filePath { display: block; color: var(--dsw-alias-label-tertiary); font-family: var(--ds-font-family-code, monospace); font-size: 11px; padding: 6px 4px 2px; word-break: break-all; }
-.fileGroup:first-child .filePath { padding-top: 2px; }
-.opRow { display: flex; align-items: center; gap: 6px; width: 100%; border: 0; border-radius: 6px; background: transparent; color: var(--dsw-alias-label-primary); font: inherit; font-size: 11px; padding: 3px 5px; cursor: pointer; text-align: left; }
+.opRow { position: relative; display: flex; align-items: center; gap: 6px; width: 100%; min-height: 24px; border: 0; border-radius: 4px; background: transparent; color: var(--dsw-alias-label-primary); font: inherit; font-size: 11px; padding: 0 5px; cursor: pointer; text-align: left; }
 .opRow:hover { background: var(--dsw-alias-interactive-bg-hover); }
-.opRow[data-selected='true'] { background: var(--dsw-alias-interactive-bg-active); }
 /* A failed op carries a quiet error inset bar (the flag chip names it). */
 .opRow[data-op-error='true'] { box-shadow: inset 2px 0 0 var(--dsw-alias-state-error-primary); }
-.opKind { border-radius: 4px; font-size: 10px; line-height: 16px; padding: 0 5px; background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-secondary); flex: none; }
-.opKind[data-kind='write'] { color: var(--dsw-alias-state-success-primary); }
-.opKind[data-kind='edit'] { color: var(--dsw-alias-state-business-primary); }
-/* Size + relative time ride as one right-aligned cluster so the kind chips
+/* Size + relative time ride as one right-aligned cluster so the kind badges
    form a scannable left rail and the meta column stays flush right. */
-.opMeta { margin-left: auto; display: inline-flex; align-items: baseline; gap: 8px; flex: none; min-width: 0; }
+.opMeta { margin-left: auto; display: inline-flex; align-items: baseline; gap: 8px; flex: none; min-width: 0; white-space: nowrap; }
 .opTime { color: var(--dsw-alias-label-tertiary); font-size: 10px; flex: none; }
 .opFlag { color: var(--dsw-alias-state-business-primary); font-size: 10px; flex: none; }
 .opFlagError { color: var(--dsw-alias-state-error-primary); font-size: 10px; flex: none; }
@@ -342,10 +543,7 @@
 
 /* ── Shared preview pane ───────────────────────────────────────────────── */
 
-.redactBanner { flex: none; font: var(--dsw-font-xxxs-strong-11); padding: 2px 8px; border-radius: 7px; color: var(--dsw-alias-state-warn-primary); background: var(--dsw-alias-interactive-bg-hover); white-space: nowrap; }
-.mdToggle { flex: none; border: 1px solid var(--dsw-alias-border-l1); border-radius: 7px; background: transparent; color: var(--dsw-alias-label-secondary); font: var(--dsw-font-xxxs-strong-11); padding: 2px 8px; cursor: pointer; }
-.mdToggle:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
-.mdToggle[data-on='true'] { border-color: var(--dsw-alias-state-business-primary); color: var(--dsw-alias-state-business-primary); }
+.redactBanner { flex: none; font: var(--dsw-font-xxxs-strong-11); padding: 2px 8px; border-radius: 2px; color: var(--dsw-alias-state-warn-primary); background: var(--dsw-alias-interactive-bg-hover); white-space: nowrap; }
 .mdBody { padding: 12px 16px 20px; font: var(--dsw-font-xs-regular-13); line-height: 1.6; min-height: 0; overflow-y: auto; }
 .htmlPane { flex: 1; min-height: 0; display: flex; }
 .htmlFrame { flex: 1; width: 100%; border: none; background: var(--dsw-alias-bg-base); }
@@ -354,37 +552,45 @@
 .dragHandle { flex: none; height: 8px; cursor: ns-resize; position: relative; background: var(--dsw-alias-bg-base); }
 .dragHandle::after { content: ''; position: absolute; left: calc(50% - 18px); top: 3px; width: 36px; height: 2px; border-radius: 1px; background: var(--dsw-alias-border-l2); }
 .dragHandle:hover::after, .dragHandle:focus-visible::after { background: var(--dsw-alias-state-business-primary); }
+
+/* ── Bottom pane tab strip (VS Code-style panel) ───────────────────────────
+   Only rendered when the pane really hosts two views (a graph commit's
+   `details` + its diff); a diff-only preview keeps the strip-less head. The
+   strip sits under the drag handle, so the handle stays the pane's top edge
+   and the strip doubles as the row that names the active view. */
+.paneTabs { flex: none; display: flex; align-items: center; gap: 2px; height: 28px; padding: 0 8px; border-bottom: 1px solid var(--dsw-alias-border-l1); }
+.paneTab {
+  align-self: stretch;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 8px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xxxs-strong-11);
+  cursor: pointer;
+}
+.paneTab:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
+.paneTab[data-active='true'] { color: var(--dsw-alias-label-primary); border-bottom-color: var(--dsw-alias-brand-primary); }
+.paneTab:focus-visible { outline: 2px solid var(--dsw-alias-interactive-bg-hover-accent); outline-offset: -2px; }
+
+/* The non-diff tab's body: the pane owns the frame, the content fills it and
+   scrolls itself (CommitDetails' own section is the scroller). */
+.altBody { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .diffHead { display: flex; align-items: center; gap: 6px; padding: 3px 8px 3px 10px; border-bottom: 1px solid var(--dsw-alias-border-l1); }
-.diffKind { flex: none; border-radius: 4px; font-size: 10px; line-height: 16px; padding: 0 5px; background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-secondary); }
-.diffKind[data-kind='git'] { color: var(--dsw-alias-brand-primary); }
-.diffKind[data-kind='write'] { color: var(--dsw-alias-state-success-primary); }
-.diffKind[data-kind='edit'] { color: var(--dsw-alias-state-business-primary); }
 /* The path keeps its tail (the file name is the identity; directories are
    context): an RTL paragraph renders an ASCII path in reading order while
    clipping its HEAD under the ellipsis. */
 .diffPath { flex: 1; direction: rtl; font-family: var(--ds-font-family-code, monospace); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--dsw-alias-label-primary); min-width: 0; }
 .diffStats { flex: none; display: inline-flex; gap: 5px; font-size: 10px; font-family: var(--ds-font-family-code, monospace); }
 
-.iconButton {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  border: none;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--dsw-alias-label-secondary);
-  cursor: pointer;
-  flex: none;
-}
-.iconButton:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
-.iconButton:disabled { opacity: 0.4; cursor: default; }
-
 .paneBody { flex: 1; min-height: 0; overflow-y: auto; }
-.readError { color: var(--dsw-alias-state-error-primary); border-left: 3px solid var(--dsw-alias-state-error-primary); border-radius: 0 6px 6px 0; margin: 6px 8px; padding: 6px 10px; white-space: pre-wrap; word-break: break-word; }
-.priorUnknown { color: var(--dsw-alias-label-tertiary); font-size: 10px; padding: 3px 10px; }
+/* An op's error body: the kit's error ink with the row's inset bar. */
+.readError { border-left: 3px solid var(--dsw-alias-state-error-primary); margin: 6px 8px; padding: 6px 10px; word-break: break-word; }
+
+/* The op preview whose callId left the loaded event window. */
+.paneGone { flex: none; display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-top: 1px solid var(--dsw-alias-border-l1); }
 
 /* ── Shared bits ───────────────────────────────────────────────────────── */
 
@@ -393,15 +599,15 @@
   from { opacity: 0; }
 }
 
-/* Keyboard focus rings match the shared sidebar convention. */
-.gitLink:focus-visible, .gitRowMain:focus-visible, .gitLogRow:focus-visible,
-.gitCommitButton:focus-visible, .gitLogMore:focus-visible, .gitBranchSelect:focus-visible,
-.lensButton:focus-visible, .filterChip:focus-visible, .iconButton:focus-visible,
-.dragHandle:focus-visible {
+/* Keyboard focus rings match the shared sidebar convention (the kit atoms and
+   the tree rows carry their own). */
+.opRow:focus-visible, .scmDisclosure:focus-visible,
+.branchButton:focus-visible, .syncButton:focus-visible, .suggestButton:focus-visible,
+.select:focus-visible, .dragHandle:focus-visible {
   outline: 2px solid var(--dsw-alias-interactive-bg-hover-accent);
   outline-offset: -1px;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .gitRow { animation: none; }
+  .row { animation: none; }
 }

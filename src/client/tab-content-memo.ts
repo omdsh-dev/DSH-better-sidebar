@@ -3,7 +3,7 @@
  *
  * Kept as a pure module so the "what re-renders a tab cell" contract is unit
  * testable: geometry/store re-renders of the Sidebar shell must NOT reconcile
- * every mounted tab (xterm/CodeMirror/FileTree subtrees — issue #315), while
+ * every mounted tab (CodeMirror/FileTree subtrees — issue #315), while
  * locale switches (localeRevision), tab-registry updates (tabsVersion), and
  * a tab MOVING BETWEEN PANES (paneId — onOpenDiff closes over the pane id,
  * and moveTab reuses the SAME tab object, so only the pane id identifies the
@@ -27,11 +27,6 @@ export interface TabContentMemoKey {
   revealed: string[]
   localeRevision: string
   tabsVersion: number
-  /** When the tab is a pinned virtual tab (injected from another session),
-   *  this overrides `tab.id` passed to the tab descriptor's component so
-   *  TerminalView connects to the home session's PTY by the original id.
-   *  Undefined for regular tabs (no override). */
-  effectiveTabId: string | undefined
 }
 
 /** True when the cell may skip a re-render (all render-affecting fields
@@ -49,7 +44,6 @@ export function tabContentCompare(prev: TabContentMemoKey, next: TabContentMemoK
     prev.expanded === next.expanded &&
     prev.revealed === next.revealed &&
     prev.localeRevision === next.localeRevision &&
-    prev.tabsVersion === next.tabsVersion &&
-    prev.effectiveTabId === next.effectiveTabId
+    prev.tabsVersion === next.tabsVersion
   )
 }

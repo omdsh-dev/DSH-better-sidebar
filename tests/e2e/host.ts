@@ -60,6 +60,41 @@ export async function exchangeLaunchCookie(
 /** The `name=value` pair of the auth cookie, once per process. */
 let cookieHeader: string | undefined
 
+/**
+ * Exchange the launch token through Playwright's own request stack.
+ *
+ * {@link exchangeLaunchCookie} takes any `fetch`, but the Node global one
+ * cannot stand in for a browser here: the host's static fallback answers a
+ * plain Node GET of the token URL with an empty `405` and no `Set-Cookie`
+ * (reproduced on both `0.1.5-rc.2` and `0.1.7-alpha.1`, so it is a harness
+ * quirk rather than a host regression), which left every later `/api` call
+ * unauthenticated and the lane's session seeding dead. Playwright's request
+ * context speaks enough of a browser shape to complete the exchange, and
+ * `maxRedirects: 0` keeps the `303` from being followed — following it drops
+ * the `Set-Cookie` this exists to capture.
+ * @param launchUrl - the token URL as printed by the host.
+ * @returns the `name=value` cookie pair.
+ */
+export async function exchangeLaunchCookieViaPlaywright(launchUrl: string): Promise<string> {
+  const context = await request.newContext()
+  try {
+    await context.get(launchUrl, { maxRedirects: 0 })
+    const [cookie] = (await context.storageState()).cookies
+    if (cookie === undefined) {
+      throw new Error('token exchange produced no cookie — cannot authenticate /api seeding')
+    }
+    return `${cookie.name}=${cookie.value}`
+  } finally {
+    await context.dispose()
+  }
+}
+
+/** The exchanged cookie pair, memoised for the process. */
+async function authCookie(): Promise<string> {
+  cookieHeader ??= await exchangeLaunchCookieViaPlaywright(RAW_URL)
+  return cookieHeader
+}
+
 /** page.goto through the host auth. A plain navigation goes to PAGE_URL (the
  *  token URL performs the browser's exchange), but a STAMPED navigation
  *  cannot: the exchange answers `303 → /` and silently DROPS every sibling
@@ -69,11 +104,11 @@ let cookieHeader: string | undefined
  *  context, so the seeding is per-call and idempotent. */
 export async function gotoPage(page: Page, extra: Record<string, string> = {}): Promise<void> {
   if (Object.keys(extra).length > 0) {
-    if (cookieHeader === undefined) cookieHeader = await exchangeLaunchCookie(RAW_URL)
-    const eq = cookieHeader.indexOf('=')
+    const header = await authCookie()
+    const eq = header.indexOf('=')
     await page.context().addCookies([{
-      name: cookieHeader.slice(0, eq),
-      value: cookieHeader.slice(eq + 1),
+      name: header.slice(0, eq),
+      value: header.slice(eq + 1),
       url: ORIGIN,
     }])
     await page.goto(pageUrlWith(ORIGIN, extra), { waitUntil: 'domcontentloaded' })
@@ -82,14 +117,46 @@ export async function gotoPage(page: Page, extra: Record<string, string> = {}): 
   await page.goto(pageUrl(extra), { waitUntil: 'domcontentloaded' })
 }
 
+/** Dismiss keyless onboarding before interacting with the shell. */
+export async function dismissOnboarding(page: Page): Promise<void> {
+  // alpha.5's Close belongs to Get started, not to another panel or dialog.
+  const getStarted = page.getByRole('dialog', { name: 'Get started', exact: true })
+  const buttons = [
+    getStarted.getByRole('button', { name: 'Close', exact: true }),
+    page.getByRole('button', { name: 'Continue', exact: true }),
+    page.getByRole('button', { name: 'Configure later', exact: true }),
+  ]
+  try {
+    await expect.poll(async () => {
+      const counts = await Promise.all(buttons.map(button => button.count()))
+      return counts.reduce((total, count) => total + count, 0)
+    }, { timeout: 60_000 }).toBeGreaterThan(0)
+  } catch {
+    // A previously acknowledged onboarding may not appear again.
+    return
+  }
+  for (let round = 0; round < 8; round++) {
+    let dismissed = false
+    for (const button of buttons) {
+      if (await button.count() === 0) continue
+      try {
+        await button.click({ timeout: 4_000 })
+        dismissed = true
+        await page.waitForTimeout(1_000)
+      } catch {
+        // A stacked welcome notice can mask another onboarding step.
+      }
+    }
+    if (!dismissed) break
+  }
+  await expect(getStarted).not.toBeVisible()
+}
+
 /** Authenticated request context for host RPC seeding (cookie attached). */
 export async function createHostApi(): Promise<APIRequestContext> {
-  if (cookieHeader === undefined) {
-    cookieHeader = await exchangeLaunchCookie(RAW_URL)
-  }
   return request.newContext({
     baseURL: ORIGIN,
-    extraHTTPHeaders: { cookie: cookieHeader },
+    extraHTTPHeaders: { cookie: await authCookie() },
   })
 }
 

@@ -71,18 +71,46 @@ describe('test-registry path (vitest / jsdom-less environments)', () => {
 
   it('a failed load clears the cache so the next call retries', async () => {
     let calls = 0
-    registerChunkForTests('terminal', async () => {
+    registerChunkForTests('locale', async () => {
       calls += 1
       if (calls === 1) throw new Error('boom')
-      return { TerminalView: 'terminal-view' }
+      return { localeDicts: 'locale-dicts' }
     })
-    await expect(loadChunk('terminal')).rejects.toThrow('boom')
-    await expect(loadChunk('terminal')).resolves.toEqual({ TerminalView: 'terminal-view' })
+    await expect(loadChunk('locale')).rejects.toThrow('boom')
+    await expect(loadChunk('locale')).resolves.toEqual({ localeDicts: 'locale-dicts' })
     expect(calls).toBe(2)
   })
 })
 
 describe('production path (script injection + global registry + externals require)', () => {
+  it('injects the chunk script under the page prefix (reverse proxy, issue #753)', async () => {
+    installModuleSystem()
+    // The loader's fire-and-forget ETag HEAD rides along; stub it so no real
+    // request to the fake prefix host outlives this case.
+    vi.stubGlobal('fetch', vi.fn(async () => ({ headers: { get: () => null } }) as unknown as Response))
+    const loaded: string[] = []
+    setChunkScriptLoaderForTests(async (src) => {
+      loaded.push(src)
+      simulateScript('editor', () => ({ TextEditor: 'editor-view' }))
+    })
+    // The GUI served at `/dataops/proxy/3080/`: a leading-slash bundle URL
+    // would ask the origin root, where the proxy serves nothing → 404 and a
+    // chunk that never materializes.
+    const document = globalThis.document as { baseURI?: string }
+    const previous = document.baseURI
+    Object.defineProperty(document, 'baseURI', {
+      value: 'https://host.test/dataops/proxy/3080/',
+      configurable: true,
+      writable: true,
+    })
+    try {
+      await loadChunk('editor')
+    } finally {
+      Object.defineProperty(document, 'baseURI', { value: previous, configurable: true, writable: true })
+    }
+    expect(loaded).toEqual(['https://host.test/dataops/proxy/3080/sidebar/bundle/editor.js'])
+  })
+
   it('resolves externals through an injected ctx.modules system (rc.8 — no page global)', async () => {
     const modules = installModuleSystem()
     const loaded: string[] = []
@@ -91,7 +119,7 @@ describe('production path (script injection + global registry + externals requir
       simulateScript('editor', (require) => ({ TextEditor: `view:${String(require('react'))}` }))
     })
     const exports = await loadChunk('editor')
-    expect(loaded).toEqual(['/sidebar/bundle/editor.js'])
+    expect(loaded).toEqual(['http://localhost/sidebar/bundle/editor.js'])
     expect(exports).toEqual({ TextEditor: 'view:[object Object]' })
     expect(modules.import).toHaveBeenCalledTimes(CHUNK_EXTERNALS.length)
     // The injection also lands on a plugin-owned global so chunk-bundle
@@ -116,7 +144,7 @@ describe('production path (script injection + global registry + externals requir
       simulateScript('editor', (require) => ({ TextEditor: `view:${String(require('react'))}` }))
     })
     const exports = await loadChunk('editor')
-    expect(loaded).toEqual(['/sidebar/bundle/editor.js'])
+    expect(loaded).toEqual(['http://localhost/sidebar/bundle/editor.js'])
     expect(exports).toEqual({ TextEditor: 'view:[object Object]' })
     // Externals resolved through the module system's seed branch, once.
     expect(modules.import).toHaveBeenCalledTimes(CHUNK_EXTERNALS.length)
@@ -131,11 +159,11 @@ describe('production path (script injection + global registry + externals requir
     const seen: string[] = []
     setChunkScriptLoaderForTests(async (src) => {
       seen.push(src)
-      simulateScript(src.endsWith('editor.js') ? 'editor' : 'terminal', () => ({}))
+      simulateScript(src.endsWith('editor.js') ? 'editor' : 'locale', () => ({}))
     })
-    await loadChunk('terminal')
+    await loadChunk('locale')
     await loadChunk('editor')
-    expect(seen).toEqual(['/sidebar/bundle/terminal.js', '/sidebar/bundle/editor.js'])
+    expect(seen).toEqual(['http://localhost/sidebar/bundle/locale.js', 'http://localhost/sidebar/bundle/editor.js'])
     expect(modules.import).toHaveBeenCalledTimes(CHUNK_EXTERNALS.length)
   })
 
@@ -150,11 +178,11 @@ describe('production path (script injection + global registry + externals requir
   it('a script load failure rejects without materializing', async () => {
     const modules = installModuleSystem()
     setChunkScriptLoaderForTests(async () => { throw new Error('script 404') })
-    await expect(loadChunk('terminal')).rejects.toThrow('script 404')
+    await expect(loadChunk('locale')).rejects.toThrow('script 404')
     expect(modules.import).not.toHaveBeenCalled()
     // Cache cleared: the retry re-attempts the script load.
-    setChunkScriptLoaderForTests(async () => { simulateScript('terminal', () => ({ TerminalView: 'ok' })) })
-    await expect(loadChunk('terminal')).resolves.toEqual({ TerminalView: 'ok' })
+    setChunkScriptLoaderForTests(async () => { simulateScript('locale', () => ({ localeDicts: 'ok' })) })
+    await expect(loadChunk('locale')).resolves.toEqual({ localeDicts: 'ok' })
   })
 
   it('a script that ran but registered no factory fails with a clear error', async () => {
@@ -216,7 +244,7 @@ describe('revalidateChunksOnReactivate (HMR re-activation keeps unchanged chunks
   function stubBundleHead(etagFor: (name: string) => string | null | Error): void {
     vi.stubGlobal('fetch', vi.fn(async (input: unknown) => {
       const url = String(input)
-      const name = url.endsWith('terminal.js') ? 'terminal' : 'editor'
+      const name = url.endsWith('locale.js') ? 'locale' : 'editor'
       const etag = etagFor(name)
       if (etag instanceof Error) throw etag
       return {
@@ -268,13 +296,13 @@ describe('revalidateChunksOnReactivate (HMR re-activation keeps unchanged chunks
     let scriptCalls = 0
     setChunkScriptLoaderForTests(async () => {
       scriptCalls += 1
-      simulateScript('terminal', () => ({ TerminalView: 'tv' }))
+      simulateScript('locale', () => ({ localeDicts: 'ld' }))
     })
     stubBundleHead(() => new Error('HEAD unreachable'))
-    await loadChunk('terminal')
+    await loadChunk('locale')
     await settleEtag()
     await revalidateChunksOnReactivate()
-    await loadChunk('terminal')
+    await loadChunk('locale')
     expect(scriptCalls).toBe(2)
   })
 

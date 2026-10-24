@@ -2,34 +2,31 @@
  * `isSessionActivityIdle` — the predicate behind the opt-in auto-collapse
  * (`autoCollapseAfterIdle`). It answers "is the activity that popped the Tasks
  * page over?", so the cases that matter are exactly the ones that keep a column
- * on screen: a live job, a running direct subagent, a running catalog row. The
+ * on screen: a live host job or a running direct subagent. The
  * feed is plain data, so every case is a table row.
  */
 import { describe, expect, it } from 'vitest'
 import { isSessionActivityIdle } from '../src/client/host-activity.ts'
-import type { SidebarJobStatus, SidebarSessionList } from '../src/context-types.ts'
+import type { SidebarJobStatus, SidebarJobView, SidebarSessionList } from '../src/context-types.ts'
 
 const ROOT = 'root'
 
 function list(overrides: Partial<SidebarSessionList> = {}): SidebarSessionList {
   return {
-    current: ROOT,
     byId: { [ROOT]: { id: ROOT, displayTitle: 'Root' } },
     ...overrides,
   }
 }
 
-function job(status: SidebarJobStatus, owner = ROOT): SidebarSessionList['jobsBySession'] {
-  return {
-    [owner]: [{
-      id: 'bash-1',
-      kind: 'bash',
-      label: 'sleep 30',
-      status,
-      startedAt: 1_000,
-      ...(status === 'running' ? {} : { finishedAt: 2_000 }),
-    }],
-  }
+function job(status: SidebarJobStatus): readonly SidebarJobView[] {
+  return [{
+    id: 'bash-1',
+    kind: 'bash',
+    label: 'sleep 30',
+    status,
+    startedAt: 1_000,
+    ...(status === 'running' ? {} : { finishedAt: 2_000 }),
+  }]
 }
 
 describe('isSessionActivityIdle', () => {
@@ -38,15 +35,15 @@ describe('isSessionActivityIdle', () => {
   })
 
   it('is busy while a job is running', () => {
-    expect(isSessionActivityIdle(list({ jobsBySession: job('running') }), ROOT)).toBe(false)
+    expect(isSessionActivityIdle(list(), ROOT, job('running'))).toBe(false)
   })
 
   it('is busy while a job is stopping', () => {
-    expect(isSessionActivityIdle(list({ jobsBySession: job('stopping') }), ROOT)).toBe(false)
+    expect(isSessionActivityIdle(list(), ROOT, job('stopping'))).toBe(false)
   })
 
   it.each(['completed', 'killed', 'failed'] as const)('is idle once the job settled as %s', (status) => {
-    expect(isSessionActivityIdle(list({ jobsBySession: job(status) }), ROOT)).toBe(true)
+    expect(isSessionActivityIdle(list(), ROOT, job(status))).toBe(true)
   })
 
   it('is busy while a direct subagent is running', () => {
@@ -85,23 +82,8 @@ describe('isSessionActivityIdle', () => {
     expect(isSessionActivityIdle(feed, ROOT)).toBe(true)
   })
 
-  it('is busy when the catalog still reports a running child', () => {
-    const feed = list({
-      subagentsByParent: {
-        [ROOT]: {
-          parentAvailable: true,
-          state: 'ready',
-          error: null,
-          entries: [{ kind: 'child', id: 'child', activity: 'running', hasChildren: false, mode: 'one-shot' }],
-        },
-      },
-    })
-    expect(isSessionActivityIdle(feed, ROOT)).toBe(false)
-  })
-
   it('ignores another conversation\'s activity', () => {
     const feed = list({
-      jobsBySession: job('running', 'other'),
       byId: {
         [ROOT]: { id: ROOT, displayTitle: 'Root' },
         child: { id: 'child', displayTitle: 'Worker', origin: 'subagent', parentId: 'other', running: true },

@@ -1,0 +1,142 @@
+/**
+ * Chrome of the plugin's persistent floating window (FloatingWindow.tsx):
+ * a fixed, portaled card with a drag handle title bar, a scrolling body, an
+ * optional footer and three resize strips.
+ *
+ * Tokens only (`--dsw-alias-*` / `--dsw-font-*`): the frame wears the same
+ * 1px `border-l2` edge and 8px radius as the Tasks page's node cards, and the
+ * floating layer keeps the app's `--dsw-shadow-lv3` (the one shadow tier the
+ * plugin is allowed on a floating surface).
+ */
+.window {
+  position: fixed;
+  z-index: 90;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--dsw-alias-bg-layer-1);
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  box-shadow: var(--dsw-shadow-lv3);
+  overflow: hidden;
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-primary);
+  box-sizing: border-box;
+}
+
+/* The drag handle. It is exactly one control tall, so the close button and the
+   title sit on one optical line whatever the header's actions are. */
+.titleBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex: none;
+  min-height: 34px;
+  padding: 0 6px 0 12px;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+  background: var(--dsw-alias-bg-layer-2);
+  cursor: grab;
+  user-select: none;
+}
+
+.titleBar:active {
+  cursor: grabbing;
+}
+
+.title {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-family: var(--ds-font-family-code, monospace);
+  font-size: 11px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.titleActions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+}
+
+.close {
+  flex: none;
+}
+
+/* The body IS the height bound: whatever the caller renders (a long terminal
+   log, a table) scrolls here instead of growing the window past the viewport.
+   `min-height: 0` is what lets a flex child actually shrink and scroll. */
+.body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 10px 12px 12px;
+}
+
+/* A body whose content should FILL the window instead of stacking from the top
+   (a form with one editable region, a detail view with prose): the caller's
+   children become a column and decide for themselves what takes the slack, so
+   dragging the window bigger grows the content rather than the empty space. */
+.bodyFill {
+  display: flex;
+  flex-direction: column;
+}
+
+.bodyFill > * {
+  flex: 1;
+  min-height: 0;
+}
+
+.footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex: none;
+  padding: 8px 12px;
+  border-top: 1px solid var(--dsw-alias-border-l1);
+  background: var(--dsw-alias-bg-base);
+}
+
+/* Resize strips sit on top of the body's own scrollbar area; each one owns
+   only its axis (the cursor says which). */
+.handle {
+  position: absolute;
+  touch-action: none;
+}
+
+.handleRight {
+  top: 34px;
+  right: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: ew-resize;
+}
+
+.handleBottom {
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 6px;
+  cursor: ns-resize;
+}
+
+/* The corner wins over both edges (it is declared last and larger). */
+.handleCorner {
+  right: 0;
+  bottom: 0;
+  width: 16px;
+  height: 16px;
+  cursor: nwse-resize;
+  background: linear-gradient(
+    135deg,
+    transparent 0%,
+    transparent 55%,
+    color-mix(in srgb, var(--dsw-alias-label-tertiary) 45%, transparent) 55%,
+    color-mix(in srgb, var(--dsw-alias-label-tertiary) 45%, transparent) 100%
+  );
+}

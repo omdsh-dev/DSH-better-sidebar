@@ -1,9 +1,9 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
-  activateTab, allLeaves, BOTTOM_DEFAULT, BOTTOM_MIN, closeTab, CONVERSATION_MIN, createSidebarStore,
+  activateTab, allLeaves, ancestorDirs, BOTTOM_DEFAULT, BOTTOM_MIN, closeTab, CONVERSATION_MIN, createSidebarStore,
   insertLeafAt, makeDefaultState, moveTab, moveTabToEdge, openDiffTab,
   openTabInBottomPane, patchTab, resizeSplit,
-  resizeSplitIn, revealPaths, sanitizeState, setBottomHeight, setTabPin,
+  resizeSplitIn, revealPaths, sanitizeState, setBottomHeight,
   splitPane, tabOpenIn, toggleBottomPanel, toggleExpanded,
   type SidebarState, type SidebarTab, type SplitNode,
 } from '../src/client/state.ts'
@@ -13,7 +13,7 @@ describe('sidebar state', () => {
 
   it('sanitizeState migrates persisted explorer tabs to editor home tabs', () => {
     const valid = sanitizeState({
-      nextTerminal: 1,
+      nextBrowser: 1,
       activePane: 'pane:1',
       expanded: [],
       bottomSplits: {
@@ -117,7 +117,7 @@ describe('sidebar state', () => {
 
   it('sanitize drops diff tabs (ephemeral, like VSCode diff editors)', () => {
     const valid = sanitizeState({
-      nextTerminal: 1,
+      nextBrowser: 1,
       activePane: 'pane:1',
       expanded: [],
       bottomSplits: {
@@ -138,7 +138,7 @@ describe('sidebar state', () => {
     expect((valid?.bottomSplits as { active: string | null }).active).toBeNull()
     // A leaf of ONLY diff tabs survives as an empty pane (welcome cards).
     const onlyDiff = sanitizeState({
-      nextTerminal: 1,
+      nextBrowser: 1,
       activePane: 'pane:1',
       expanded: [],
       bottomSplits: {
@@ -154,7 +154,7 @@ describe('sidebar state', () => {
 
   it('sanitize removes a pane emptied by ephemeral diff tabs', () => {
     const valid = sanitizeState({
-      nextTerminal: 1,
+      nextBrowser: 1,
       activePane: 'pane:diff',
       expanded: [],
       bottomSplits: {
@@ -247,6 +247,40 @@ describe('sidebar state', () => {
     expect(after.tabs).toHaveLength(2)
   })
 
+  it('dragging a pane\'s only tab onto its own edge splits in place instead of losing the tab', () => {
+    let s = state()
+    s = openTabInBottomPane(s, { id: 'git', type: 'git', title: 'Git' })
+    s = splitPane(s, 'col')
+    const split = s.bottomSplits as Extract<SplitNode, { kind: 'split' }>
+    const paneA = split.children[0] as { id: string; tabs: { id: string }[] }
+    const paneB = split.children[1] as { id: string }
+    const tabId = paneA.tabs[0]!.id
+    s = moveTab(s, paneA.id, tabId, paneB.id)
+    // paneB now holds the single tab; dropping it onto paneB's own edge
+    // used to empty paneB, delete its leaf, and discard the tab entirely.
+    s = moveTabToEdge(s, paneB.id, tabId, paneB.id, 'left')
+    const leaves = allLeaves(s.bottomSplits)
+    expect(leaves).toHaveLength(1)
+    expect(leaves[0]!.tabs.map(t => t.id)).toEqual([tabId])
+    expect(s.activePane).toBe(leaves[0]!.id)
+  })
+
+  it('dragging one of several tabs onto its own pane edge splits the pane with the dragged tab', () => {
+    let s = state()
+    s = openTabInBottomPane(s, { id: 'git', type: 'git', title: 'Git' })
+    s = openTabInBottomPane(s, { id: 't2', type: 'terminal', title: 'T2' })
+    const leaf = s.bottomSplits as { id: string; tabs: { id: string }[] }
+    const first = leaf.tabs[0]!.id
+    s = moveTabToEdge(s, leaf.id, first, leaf.id, 'right')
+    const leaves = allLeaves(s.bottomSplits)
+    expect(leaves).toHaveLength(2)
+    const dragged = leaves.find(candidate => candidate.tabs.some(t => t.id === first))
+    const kept = leaves.find(candidate => candidate !== dragged)
+    expect(dragged!.tabs.map(t => t.id)).toEqual([first])
+    expect(kept!.tabs.map(t => t.id)).toEqual([leaf.tabs[1]!.id])
+    expect(s.activePane).toBe(dragged!.id)
+  })
+
   it('closing the last tab removes the pane (promotes the sibling)', () => {
     let s = state()
     s = openTabInBottomPane(s, { id: 'git', type: 'git', title: 'Git' })
@@ -314,7 +348,7 @@ describe('sidebar state', () => {
 
   it('sanitize accepts nextBrowser (defaulting a missing/malformed one to 1)', () => {
     const base = {
-      nextTerminal: 1,
+      nextBrowser: 1,
       activePane: 'pane:1',
       expanded: [],
       bottomSplits: {
@@ -391,7 +425,7 @@ describe('sidebar state', () => {
 
   it('sanitize defaults the bottom fields for older persisted states and repairs a broken bottom tree', () => {
     const base = {
-      nextTerminal: 1,
+      nextBrowser: 1,
       activePane: 'pane:1',
       expanded: [],
     }
@@ -699,6 +733,45 @@ describe('v0.12.0 store additions', () => {
   })
 })
 
+describe('unread mark persistence (v0.25.0)', () => {
+  // "A page the reader has not looked at" must outlive the mount that raised
+  // it (the mark is drawn by a chip that unmounts on every session switch and
+  // every page reload), so the mark rides the session's persisted state — and
+  // sanitizeState's `unread` branch is the ONLY thing that carries it back.
+  it('survives a reload: a fresh store reads the mark back from localStorage', () => {
+    const g = globalThis as Record<string, unknown>
+    const storage = new Map<string, string>()
+    const timers: Array<() => void> = []
+    g.window = {
+      clearTimeout: () => {},
+      setTimeout: (fn: () => void) => { timers.push(fn); return timers.length },
+      innerWidth: 1024,
+      innerHeight: 800,
+    }
+    g.localStorage = {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => { storage.set(key, value) },
+      removeItem: (key: string) => { storage.delete(key) },
+    }
+    try {
+      const first = createSidebarStore()
+      first.setSession('s1')
+      expect(first.markUnread('subagent')).toBe(true)
+      // The write is debounced; fire the pending timer the page would hit
+      // after the delay, then read the persisted layout back.
+      for (const fn of timers.splice(0)) fn()
+      expect(JSON.parse(storage.get('dsh-sidebar:v1:s1')!).unread).toEqual(['subagent'])
+      // A reload is a brand-new store over the SAME storage.
+      const reloaded = createSidebarStore()
+      reloaded.setSession('s1')
+      expect(reloaded.getSnapshot().state!.unread).toEqual(['subagent'])
+    } finally {
+      delete g.window
+      delete g.localStorage
+    }
+  })
+})
+
 describe('revealPaths (show in folder)', () => {
   it('expands ancestors with their ABSOLUTE path (leading separator preserved)', () => {
     // POSIX: the root (/w/src) is not itself expanded, but the subdirs
@@ -726,105 +799,26 @@ describe('revealPaths (show in folder)', () => {
   })
 })
 
-describe('pinned terminals (v0.17.0)', () => {
-  // setTabPin reads neither window nor localStorage directly, but the
-  // pinnedTab-aware sanitize round-trip below uses JSON.parse/stringify
-  // only — keep this block window-less for parity with the main describe.
-  const state = (): SidebarState => makeDefaultState()
-
-  it('setTabPin marks a terminal in the workbench', () => {
-    let s = state()
-    s = openTabInBottomPane(s, { id: 'terminal:1', type: 'terminal', title: 'T' })
-    s = setTabPin(s, 'terminal:1', { scope: 'workspace', homeCwd: '/proj' })
-    const tab = allLeaves(s.bottomSplits).flatMap(l => l.tabs).find(t => t.id === 'terminal:1')!
-    expect(tab.pin).toEqual({ scope: 'workspace', homeCwd: '/proj' })
+describe('ancestorDirs (the levels a lazy tree must expand)', () => {
+  it('lists the absolute ancestors below the explorer root, excluding the path itself', () => {
+    // The root itself is not a level the tree expands, and the target is not
+    // its own ancestor.
+    expect(ancestorDirs('/w/src', ['/w/src/sub/deep/a.ts'])).toEqual(['/w/src/sub', '/w/src/sub/deep'])
+    expect(ancestorDirs('/w/src', ['/w/src/a.ts'])).toEqual([])
   })
 
-  it('setTabPin with null clears the pin marker but keeps the tab', () => {
-    let s = state()
-    s = openTabInBottomPane(s, { id: 'terminal:1', type: 'terminal', title: 'T' })
-    s = setTabPin(s, 'terminal:1', { scope: 'global' })
-    s = setTabPin(s, 'terminal:1', null)
-    const tab = allLeaves(s.bottomSplits).flatMap(l => l.tabs).find(t => t.id === 'terminal:1')!
-    expect(tab.pin).toBeUndefined()
-    expect(tabOpenIn(s, 'terminal:1')).toBe(true)
+  it('keeps a Windows drive-letter root and a UNC prefix', () => {
+    expect(ancestorDirs('C:\\work', ['C:\\work\\src\\a.ts'])).toEqual(['C:\\work\\src'])
+    expect(ancestorDirs('\\\\server\\share', ['\\\\server\\share\\sub\\a.ts'])).toEqual(['\\\\server\\share\\sub'])
   })
 
-  it('setTabPin on an unknown tab id is a strict same-reference no-op', () => {
-    const s = state()
-    expect(setTabPin(s, 'ghost', { scope: 'global' })).toBe(s)
-    expect(setTabPin(s, 'ghost', null)).toBe(s)
-  })
-
-  it('setTabPin is idempotent: setting the same pin twice returns the same reference', () => {
-    let s = state()
-    s = openTabInBottomPane(s, { id: 'terminal:1', type: 'terminal', title: 'T' })
-    s = setTabPin(s, 'terminal:1', { scope: 'workspace', homeCwd: '/p' })
-    const once = s
-    s = setTabPin(s, 'terminal:1', { scope: 'workspace', homeCwd: '/p' })
-    expect(s).toBe(once)
-  })
-
-  it('sanitizeState preserves a legal pin and strips an illegal scope (keeps the tab)', () => {
-    const g = globalThis as Record<string, unknown>
-    g.window = { clearTimeout: () => {}, setTimeout: () => 0, innerWidth: 1024, innerHeight: 768 }
-    g.localStorage = { getItem: () => null, setItem: () => {} }
-    try {
-      const legal = JSON.parse(JSON.stringify(makeDefaultState())) as {
-        bottomSplits: { kind: 'leaf'; id: string; tabs: SidebarTab[]; active: string | null }
-      }
-      legal.bottomSplits.tabs.push({
-        id: 'terminal:1', type: 'terminal', title: 'T',
-        pin: { scope: 'workspace', homeCwd: '/proj' },
-      } as SidebarTab)
-      legal.bottomSplits.active = 'terminal:1'
-      const restored = sanitizeState(legal)!
-      const tab = (restored.bottomSplits as { tabs: SidebarTab[] }).tabs.find(t => t.id === 'terminal:1')!
-      expect(tab.pin).toEqual({ scope: 'workspace', homeCwd: '/proj' })
-
-      // Illegal scope drops the pin, keeps the tab.
-      const illegal = JSON.parse(JSON.stringify(makeDefaultState())) as {
-        bottomSplits: { kind: 'leaf'; id: string; tabs: SidebarTab[]; active: string | null }
-      }
-      illegal.bottomSplits.tabs.push({
-        id: 'terminal:2', type: 'terminal', title: 'T2',
-        pin: { scope: 'bogus', homeCwd: '/x' },
-      } as unknown as SidebarTab)
-      illegal.bottomSplits.active = 'terminal:2'
-      const cleaned = sanitizeState(illegal)!
-      const tab2 = (cleaned.bottomSplits as { tabs: SidebarTab[] }).tabs.find(t => t.id === 'terminal:2')!
-      expect(tab2.pin).toBeUndefined()
-      expect(tab2.id).toBe('terminal:2')
-
-      // Non-string homeCwd drops homeCwd but keeps a global pin.
-      const weirdHome = JSON.parse(JSON.stringify(makeDefaultState())) as {
-        bottomSplits: { kind: 'leaf'; id: string; tabs: SidebarTab[]; active: string | null }
-      }
-      weirdHome.bottomSplits.tabs.push({
-        id: 'terminal:3', type: 'terminal', title: 'T3',
-        pin: { scope: 'global', homeCwd: 42 },
-      } as unknown as SidebarTab)
-      weirdHome.bottomSplits.active = 'terminal:3'
-      const weird = sanitizeState(weirdHome)!
-      const tab3 = (weird.bottomSplits as { tabs: SidebarTab[] }).tabs.find(t => t.id === 'terminal:3')!
-      expect(tab3.pin).toEqual({ scope: 'global' })
-
-      // Older state without pin loads unchanged.
-      const legacy = JSON.parse(JSON.stringify(makeDefaultState())) as {
-        bottomSplits: { kind: 'leaf'; id: string; tabs: SidebarTab[]; active: string | null }
-      }
-      legacy.bottomSplits.tabs.push({ id: 'terminal:4', type: 'terminal', title: 'T4' } as SidebarTab)
-      legacy.bottomSplits.active = 'terminal:4'
-      const legacyRestored = sanitizeState(legacy)!
-      const tab4 = (legacyRestored.bottomSplits as { tabs: SidebarTab[] }).tabs.find(t => t.id === 'terminal:4')!
-      expect(tab4.pin).toBeUndefined()
-    } finally {
-      delete g.window
-      delete g.localStorage
-    }
+  it('skips empty and non-string entries and de-duplicates shared ancestors', () => {
+    expect(ancestorDirs('/w', ['', '/w/a/b.ts', '/w/a/c.ts'])).toEqual(['/w/a'])
+    // Without a root there is nothing to anchor against, so every leading
+    // level is still reported (the caller only uses this when cwd is known).
+    expect(ancestorDirs(undefined, [undefined as unknown as string, '/a/b/c.ts'])).toEqual(['/a', '/a/b'])
   })
 })
-
 
 describe('URL reset escape hatch (issue #369)', () => {
   // Same browser-global stubs as the v0.12.0 block above; loadState reads
@@ -842,7 +836,7 @@ describe('URL reset escape hatch (issue #369)', () => {
 
   /** A persisted layout whose restored git tab would re-hang the page. */
   const frozenState = JSON.stringify({
-    nextTerminal: 1,
+    nextBrowser: 1,
     activePane: 'pane:1',
     expanded: [],
     bottomSplits: { kind: 'leaf', id: 'pane:1', active: 'g1', tabs: [{ id: 'g1', type: 'git', title: 'Git' }] },
@@ -889,5 +883,181 @@ describe('URL reset escape hatch (issue #369)', () => {
     store.setSession('s1')
     const leaf = store.getSnapshot().state!.bottomSplits as { tabs: { type: string }[] }
     expect(leaf.tabs.map(tab => tab.type)).toEqual([])
+  })
+})
+
+/**
+ * listener isolation. `service.subscribeState` is this store's own
+ * `subscribe`, so a consumer plugin's listener throws INSIDE notify() — and
+ * notify() runs inline in the mutating call site (setSession from the
+ * Sidebar's mount effect, reduce from a click handler). An escaping throw
+ * therefore lands in the React commit phase, where the shell's ROOT
+ * RenderBoundary swaps the whole sidebar for its error strip.
+ */
+describe('store listener isolation', () => {
+  // Same browser-global stubs as the blocks above: setSession → loadState
+  // reads window.location.search and localStorage.
+  beforeEach(() => {
+    const g = globalThis as Record<string, unknown>
+    g.window = { clearTimeout: () => {}, setTimeout: () => 0, innerWidth: 1024, innerHeight: 800, location: { search: '' } }
+    g.localStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} }
+  })
+  afterEach(() => {
+    const g = globalThis as Record<string, unknown>
+    delete g.window
+    delete g.localStorage
+  })
+
+  it('contains a throwing listener and still delivers the change to the rest', () => {
+    const store = createSidebarStore()
+    const delivered: string[] = []
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    store.subscribe(() => {
+      delivered.push('throwing')
+      throw new Error('third-party listener boom')
+    })
+    store.subscribe(() => { delivered.push('healthy') })
+    // The mutation must not throw out of the store, and the throwing
+    // listener must not rob the healthy ones of their notification (React's
+    // own useSyncExternalStore callback shares this loop in the real shell).
+    expect(() => store.setSession('s1')).not.toThrow()
+    expect(delivered).toEqual(['throwing', 'healthy'])
+    // The mutation itself still landed.
+    expect(store.getSnapshot().sessionId).toBe('s1')
+    expect(store.getSnapshot().state).toBeDefined()
+    // The crash is reported, not swallowed silently.
+    expect(errorSpy).toHaveBeenCalled()
+    errorSpy.mockRestore()
+  })
+
+  it('keeps notifying every listener on later mutations (the loop recovers)', () => {
+    const store = createSidebarStore()
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    let healthyCalls = 0
+    store.subscribe(() => { throw new Error('boom') })
+    store.subscribe(() => { healthyCalls += 1 })
+    store.setSession('s1')
+    const afterFirst = healthyCalls
+    // A later mutation notifies again: the throwing listener was neither
+    // dropped from the set nor left the loop half-iterated.
+    store.reduce(toggleBottomPanel)
+    expect(healthyCalls).toBe(afterFirst + 1)
+    errorSpy.mockRestore()
+  })
+})
+
+/**
+ * Session-state retention (v0.26.x). The host keeps every visited native tab
+ * body mounted, so a per-session map that never deletes an entry is memory
+ * that only grows — and `getSessionStates()` used to allocate a fresh copy of
+ * that whole map per call (once per store notify in the native records'
+ * `syncExpanded`, plus once per native body render). Three contracts:
+ *
+ *  - BOUNDED: at most 32 entries, the least recently touched evicted, the
+ *    CURRENT session never among them.
+ *  - STABLE: a per-session read returns the same object while that session is
+ *    untouched, and the whole-map view is a cached snapshot, so a notify that
+ *    changed nothing invalidates no downstream memo.
+ *  - LOSSLESS: eviction drops only the in-memory copy — the pending debounced
+ *    write is flushed first, so switching back reloads what was there.
+ */
+describe('session-state retention (v0.26.x)', () => {
+  const g = globalThis as Record<string, unknown>
+  let storage: Map<string, string>
+  let timers: Map<number, () => void>
+  let seq: number
+
+  beforeEach(() => {
+    storage = new Map()
+    timers = new Map()
+    seq = 0
+    g.window = {
+      clearTimeout: (id: number) => { timers.delete(id) },
+      setTimeout: (fn: () => void) => { const id = ++seq; timers.set(id, fn); return id },
+      innerWidth: 1024,
+      innerHeight: 800,
+      location: { search: '' },
+    }
+    g.localStorage = {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => { storage.set(key, value) },
+      removeItem: (key: string) => { storage.delete(key) },
+    }
+  })
+  afterEach(() => {
+    delete g.window
+    delete g.localStorage
+  })
+
+  it('keeps the 32 most recently touched sessions and drops the oldest', () => {
+    const store = createSidebarStore()
+    for (let i = 0; i < 40; i += 1) store.setSession(`s${i}`)
+    expect(store.getSessionStates().size).toBe(32)
+    // The newest are all here; the 8 oldest are gone.
+    expect(store.getSessionState('s39')).toBeDefined()
+    expect(store.getSessionState('s8')).toBeDefined()
+    expect(store.getSessionState('s7')).toBeUndefined()
+    expect(store.getSessionState('s0')).toBeUndefined()
+    // Revisiting a session moves it back to the front of the window.
+    store.setSession('s8')
+    store.setSession('s40')
+    expect(store.getSessionState('s8')).toBeDefined()
+    expect(store.getSessionState('s9')).toBeUndefined()
+  })
+
+  it('never evicts the current session, even when it is the oldest entry', () => {
+    const store = createSidebarStore()
+    store.setSession('keep')
+    // Targeted writes touch OTHER sessions only: 'keep' stays the oldest entry
+    // and would be the first casualty of a plain LRU.
+    for (let i = 0; i < 40; i += 1) {
+      store.reduceFor(`t${i}`, state => ({ ...state, expanded: [`/${i}`] }))
+    }
+    expect(store.getSessionState('keep')).toBeDefined()
+    expect(store.getSessionState('t39')).toBeDefined()
+    expect(store.getSessionState('t0')).toBeUndefined()
+    expect(store.getSessionStates().size).toBe(32)
+  })
+
+  it('flushes a pending write before eviction, so the session reloads intact', () => {
+    const store = createSidebarStore()
+    store.setSession('old')
+    store.reduce(state => ({ ...state, expanded: ['/old'] }))
+    // The debounced write has not landed yet (the timers never fire here).
+    expect(storage.has('dsh-sidebar:v1:old')).toBe(false)
+    for (let i = 0; i < 40; i += 1) store.setSession(`n${i}`)
+    // Evicted from memory — but not lost: the write was flushed on the way out.
+    expect(store.getSessionState('old')).toBeUndefined()
+    expect(JSON.parse(storage.get('dsh-sidebar:v1:old')!).expanded).toEqual(['/old'])
+    store.setSession('old')
+    expect(store.getSnapshot().state?.expanded).toEqual(['/old'])
+  })
+
+  it('keeps per-session references and the whole-map snapshot stable across a no-op notify', () => {
+    const store = createSidebarStore()
+    store.setSession('s1')
+    const one = store.getSessionState('s1')
+    expect(one).toBeDefined()
+    const all = store.getSessionStates()
+    // Two reads with no write between them are the SAME map (no fresh copy).
+    expect(store.getSessionStates()).toBe(all)
+
+    let notified = 0
+    store.subscribe(() => { notified += 1 })
+    // A store notify that writes no session state (prefs only): consumers are
+    // told, but nothing they memoize on was replaced.
+    store.setPrefs(store.getPrefs())
+    expect(notified).toBe(1)
+    expect(store.getSessionState('s1')).toBe(one)
+    expect(store.getSessionStates()).toBe(all)
+
+    // A real write to another session replaces the snapshot, and only that
+    // session's state object.
+    store.reduceFor('s2', state => ({ ...state, expanded: ['/x'] }))
+    expect(store.getSessionState('s1')).toBe(one)
+    expect(store.getSessionStates()).not.toBe(all)
+    const after = store.getSessionStates()
+    expect(store.getSessionStates()).toBe(after)
+    expect(after.get('s2')?.expanded).toEqual(['/x'])
   })
 })

@@ -1,12 +1,13 @@
 import { execFile, execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { describe, expect, it } from 'vitest'
 import { parseUnifiedDiff } from '../src/client/diff/rows.ts'
-import { parseLogLines, parsePorcelainZ, repoRoots, status } from '../src/git.ts'
+import { branches, checkout, currentBranch, log, parseLogLines, parseNumstat, parsePorcelainZ, parseStatusPorcelainV2Z, repoRoots, status } from '../src/git.ts'
+import { removeTree } from './temp-tree.ts'
 
 const execFileAsync = promisify(execFile)
 const normalizePath = (path: string): string => path.replaceAll('\\', '/')
@@ -41,6 +42,89 @@ describe('git parsing', () => {
     }
   })
 
+  it('discovers root and direct child repositories when root is also a git repository', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'dsh-better-sidebar-root-git-'))
+    const child = join(workspace, 'child-repo')
+    try {
+      await mkdir(child)
+      await Promise.all([
+        execFileAsync('git', ['-C', workspace, 'init']),
+        execFileAsync('git', ['-C', child, 'init']),
+      ])
+
+      await expect(repoRoots(workspace)).resolves.toEqual([canonical(workspace), canonical(child)])
+      await expect(status(workspace, canonical(child))).resolves.toMatchObject({
+        isRepo: true,
+        root: canonical(child),
+        repositories: [canonical(workspace), canonical(child)],
+      })
+    } finally {
+      await rm(workspace, { recursive: true, force: true })
+    }
+  })
+
+  it('discovers nested child repositories up to three levels below a git root', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'dsh-better-sidebar-nested-git-'))
+    const level2 = join(workspace, 'group', 'project')
+    const level3 = join(level2, 'vendor-lib')
+    const level3Worktree = join(level2, 'vendor-tools')
+    try {
+      mkdirSync(level3, { recursive: true })
+      mkdirSync(level3Worktree, { recursive: true })
+      await Promise.all([
+        execFileAsync('git', ['-C', workspace, 'init']),
+        execFileAsync('git', ['-C', level2, 'init']),
+        execFileAsync('git', ['-C', level3, 'init']),
+        // Worktree form: `.git` is a plain file pointing at the real gitdir.
+        writeFileSync(join(level3Worktree, '.git'), 'gitdir: /tmp/nonexistent/worktrees/x\n'),
+      ])
+
+      await expect(repoRoots(workspace)).resolves.toEqual([
+        canonical(workspace),
+        canonical(level2),
+        canonical(level3),
+        canonical(level3Worktree),
+      ])
+      await expect(status(workspace, canonical(level3))).resolves.toMatchObject({
+        isRepo: true,
+        root: canonical(level3),
+        repositories: [canonical(workspace), canonical(level2), canonical(level3), canonical(level3Worktree)],
+      })
+    } finally {
+      await rm(workspace, { recursive: true, force: true })
+    }
+  })
+
+  it('descends into discovered repositories and skips hidden, node_modules and beyond-cap depths', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'dsh-better-sidebar-embedded-git-'))
+    const outer = join(workspace, 'outer')
+    const embedded = join(outer, 'packages', 'embedded')
+    const inNodeModules = join(outer, 'node_modules', 'shadowed')
+    const tooDeep = join(workspace, 'a', 'b', 'c', 'too-deep')
+    try {
+      mkdirSync(embedded, { recursive: true })
+      mkdirSync(inNodeModules, { recursive: true })
+      mkdirSync(tooDeep, { recursive: true })
+      await Promise.all([
+        execFileAsync('git', ['-C', workspace, 'init']),
+        execFileAsync('git', ['-C', outer, 'init']),
+        execFileAsync('git', ['-C', embedded, 'init']),
+        execFileAsync('git', ['-C', inNodeModules, 'init']),
+        execFileAsync('git', ['-C', tooDeep, 'init']),
+      ])
+
+      // Repos hidden inside node_modules or beyond depth DISCOVERY_MAX_DEPTH - 1
+      // stay invisible; the repo embedded inside `outer` is still discovered.
+      await expect(repoRoots(workspace)).resolves.toEqual([
+        canonical(workspace),
+        canonical(outer),
+        canonical(embedded),
+      ])
+    } finally {
+      await rm(workspace, { recursive: true, force: true })
+    }
+  })
+
   it('parses porcelain -z entries including renames', () => {
     const output = ['M  src/a.ts', ' M src/b.ts', '?? src/c.ts', 'R  src/new.ts', 'src/old.ts', ''].join('\0')
     const entries = parsePorcelainZ(output)
@@ -50,6 +134,69 @@ describe('git parsing', () => {
       { path: 'src/c.ts', xy: '??' },
       { path: 'src/new.ts', xy: 'R ' },
     ])
+  })
+
+  it('parses v2 branch metadata and keeps v1 XY and literal rename/conflict paths', () => {
+    const raw = [
+      '# branch.oid deadbeef', '# branch.head feature/topic',
+      '# branch.upstream upstream/review', '# branch.ab +2 -3',
+      '1 .M N... 100644 100644 100644 abc abc src/space name.ts',
+      '2 R. N... 100644 100644 100644 abc abc R100 src/new name.ts', 'src/old name.ts',
+      'u UU N... 100644 100644 100644 100644 abc abc abc src/conflict.ts',
+      '? newdir/line\nbreak.ts', '',
+    ].join('\0')
+    expect(parseStatusPorcelainV2Z(raw)).toEqual({
+      isRepo: true, branch: 'feature/topic', upstream: 'upstream/review', ahead: 2, behind: 3, detached: false,
+      entries: [
+        { path: 'src/space name.ts', xy: ' M' },
+        { path: 'src/new name.ts', xy: 'R ' },
+        { path: 'src/conflict.ts', xy: 'UU' },
+        { path: 'newdir/line\nbreak.ts', xy: '??' },
+      ],
+    })
+  })
+
+  it('reports nonrepo, unborn, no-upstream and detached HEAD without inventing a branch', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-git-head-'))
+    const nonrepo = join(root, 'plain')
+    const repo = join(root, 'repo')
+    const git = (...args: string[]): string => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim()
+    try {
+      mkdirSync(nonrepo)
+      mkdirSync(repo)
+      expect(await status(nonrepo)).toEqual({ isRepo: false, entries: [], repositories: [] })
+      git('init', '-q', '-b', 'fresh')
+      git('config', 'user.email', 't@t')
+      git('config', 'user.name', 't')
+      writeFileSync(join(repo, 'new.txt'), 'unborn\n')
+      const unborn = await status(repo)
+      expect(unborn).toMatchObject({ branch: 'fresh', detached: false, entries: [{ path: 'new.txt', xy: '??' }] })
+      expect(unborn.upstream).toBeUndefined()
+      expect(unborn.ahead).toBeUndefined()
+      expect(unborn.behind).toBeUndefined()
+      expect(unborn.operation).toBeUndefined()
+      await expect(currentBranch(repo)).resolves.toBe('fresh')
+      await expect(branches(repo)).resolves.toEqual({ current: 'fresh', names: ['fresh'] })
+      await expect(log(repo)).resolves.toEqual([])
+
+      git('commit', '-q', '--allow-empty', '-m', 'base')
+      const untracked = await status(repo)
+      expect(untracked.branch).toBe('fresh')
+      expect(untracked.upstream).toBeUndefined()
+      expect(untracked.ahead).toBeUndefined()
+      expect(untracked.behind).toBeUndefined()
+      git('checkout', '-q', '--detach')
+      const detached = await status(repo)
+      expect(detached.detached).toBe(true)
+      expect(detached.branch).toBeUndefined()
+      expect(detached.upstream).toBeUndefined()
+      expect(detached.ahead).toBeUndefined()
+      expect(detached.behind).toBeUndefined()
+      await expect(currentBranch(repo)).rejects.toThrow()
+      await expect(branches(repo)).resolves.toEqual({ current: '', names: ['fresh'] })
+    } finally {
+      removeTree(root)
+    }
   })
 
   it('keeps untracked files inside new directories as individual rows (status --untracked-files=all)', () => {
@@ -78,7 +225,7 @@ describe('git parsing', () => {
       expect(paths).toContain('newdir/a.ts')
       expect(paths.some(path => path.endsWith('/'))).toBe(false)
     } finally {
-      rmSync(root, { recursive: true, force: true })
+      removeTree(root)
     }
   })
 
@@ -97,7 +244,7 @@ describe('git parsing', () => {
       expect(result.entries).toHaveLength(2_000)
       expect(result.truncated).toBe(true)
     } finally {
-      rmSync(root, { recursive: true, force: true })
+      removeTree(root)
     }
   })
 
@@ -110,7 +257,7 @@ describe('git parsing', () => {
       expect(result.entries).toHaveLength(3)
       expect(result.truncated).toBe(false)
     } finally {
-      rmSync(root, { recursive: true, force: true })
+      removeTree(root)
     }
   })
 
@@ -136,10 +283,10 @@ describe('git parsing', () => {
     }
   })
 
-  it('parses log rows with unit separators (full hash + refs)', () => {
+  it('parses log rows with unit separators (full hash + refs + parent hashes)', () => {
     const rows = parseLogLines(
-      'abc1234\x1fFirst subject\x1fAlice\x1f2024-01-01 10:00:00 +0800\x1fabc1234def5678abc1234def5678abc1234def5678\x1fHEAD -> main, origin/main\n'
-      + 'def5678\x1fSecond subject\x1fBob\x1f2024-01-02 10:00:00 +0800\x1fdef5678abc1234def5678abc1234def5678abc1234\x1f\n',
+      'abc1234\x1fFirst subject\x1fAlice\x1f2024-01-01 10:00:00 +0800\x1fabc1234def5678abc1234def5678abc1234def5678\x1fHEAD -> main, origin/main\x1fdef5678abc1234def5678abc1234def5678abc1234 1234567890123456789012345678901234567890\n'
+      + 'def5678\x1fSecond subject\x1fBob\x1f2024-01-02 10:00:00 +0800\x1fdef5678abc1234def5678abc1234def5678abc1234\x1f\x1f\n',
     )
     expect(rows).toEqual([
       {
@@ -149,6 +296,7 @@ describe('git parsing', () => {
         date: '2024-01-01 10:00:00 +0800',
         hashFull: 'abc1234def5678abc1234def5678abc1234def5678',
         refs: 'HEAD -> main, origin/main',
+        parents: ['def5678abc1234def5678abc1234def5678abc1234', '1234567890123456789012345678901234567890'],
       },
       {
         hash: 'def5678',
@@ -157,8 +305,101 @@ describe('git parsing', () => {
         date: '2024-01-02 10:00:00 +0800',
         hashFull: 'def5678abc1234def5678abc1234def5678abc1234',
         refs: '',
+        parents: [],
       },
     ])
+  })
+
+  it('logs real merge parents and other local refs in topological order with stable pagination', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-git-graph-'))
+    const git = (...args: string[]): string => execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: 'pipe' }).trim()
+    const commit = (subject: string, date: string): string => {
+      execFileSync('git', ['commit', '-q', '--allow-empty', '-m', subject], {
+        cwd: root, stdio: 'pipe', env: { ...process.env, GIT_AUTHOR_DATE: date, GIT_COMMITTER_DATE: date },
+      })
+      return git('rev-parse', 'HEAD')
+    }
+    try {
+      git('init', '-q', '-b', 'main')
+      git('config', 'user.email', 't@t')
+      git('config', 'user.name', 't')
+      const base = commit('base', '2024-01-01T00:00:00Z')
+      git('branch', 'topic')
+      const main = commit('main tip', '2024-01-04T00:00:00Z')
+      git('checkout', '-q', 'topic')
+      const topic = commit('topic tip', '2024-01-03T00:00:00Z')
+      git('checkout', '-q', 'main')
+      git('merge', '-q', '--no-ff', '--no-edit', 'topic')
+      const merge = git('rev-parse', 'HEAD')
+      git('checkout', '-q', '-b', 'unmerged', base)
+      const unmerged = commit('other local ref', '2024-01-05T00:00:00Z')
+      // A detached commit reachable only from HEAD must not disappear under --all.
+      git('checkout', '-q', '--detach', merge)
+      const detached = commit('detached tip', '2024-01-02T00:00:00Z')
+      const rows = await log(root, 20)
+      expect(rows).toHaveLength(6)
+      expect(rows.find(row => row.hashFull === merge)?.parents).toEqual([main, topic])
+      expect(rows.find(row => row.hashFull === main)?.parents).toEqual([base])
+      expect(rows.find(row => row.hashFull === topic)?.parents).toEqual([base])
+      expect(rows.find(row => row.hashFull === detached)?.parents).toEqual([merge])
+      expect(rows.find(row => row.hashFull === base)?.parents).toEqual([])
+      expect(rows.find(row => row.hashFull === unmerged)?.refs).toContain('unmerged')
+      const positions = new Map(rows.map((row, index) => [row.hashFull, index]))
+      for (const [index, row] of rows.entries()) {
+        for (const parent of row.parents) expect(positions.get(parent)).toBeGreaterThan(index)
+      }
+      expect([...await log(root, 2), ...await log(root, 20, 2)]).toEqual(rows)
+    } finally {
+      removeTree(root)
+    }
+  })
+
+  it('reads merge and both rebase backends from the selected linked worktree only', async () => {
+    const scratch = mkdtempSync(join(tmpdir(), 'dsh-git-operation-'))
+    const root = join(scratch, 'repo')
+    const linked = join(scratch, 'linked')
+    const git = (cwd: string, ...args: string[]): string => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: 'pipe' }).trim()
+    try {
+      mkdirSync(root)
+      git(root, 'init', '-q', '-b', 'main')
+      git(root, 'config', 'user.email', 't@t')
+      git(root, 'config', 'user.name', 't')
+      git(root, 'config', 'core.autocrlf', 'false')
+      writeFileSync(join(root, 'a.txt'), 'base\n')
+      git(root, 'add', '-A')
+      git(root, 'commit', '-q', '-m', 'base')
+      git(root, 'branch', 'topic')
+      writeFileSync(join(root, 'a.txt'), 'main\n')
+      git(root, 'commit', '-q', '-am', 'main change')
+      git(root, 'worktree', 'add', '-q', linked, 'topic')
+      writeFileSync(join(linked, 'a.txt'), 'topic\n')
+      git(linked, 'commit', '-q', '-am', 'topic change')
+
+      expect(() => git(linked, 'merge', '--no-edit', 'main')).toThrow()
+      expect(await status(linked)).toMatchObject({
+        branch: 'topic', detached: false, operation: 'merge', entries: [{ path: 'a.txt', xy: 'UU' }],
+      })
+      expect((await status(root)).operation).toBeUndefined()
+      git(linked, 'merge', '--abort')
+      expect((await status(linked)).operation).toBeUndefined()
+      for (const backend of ['--merge', '--apply']) {
+        expect(() => git(linked, 'rebase', backend, 'main')).toThrow()
+        const rebasing = await status(linked)
+        expect(rebasing).toMatchObject({ detached: true, operation: 'rebase' })
+        expect(rebasing.branch).toBeUndefined()
+        expect((await status(root)).operation).toBeUndefined()
+        git(linked, 'rebase', '--abort')
+        expect((await status(linked)).operation).toBeUndefined()
+      }
+      // `git am` shares rebase-apply storage, but is not a rebase.
+      const patch = join(scratch, 'topic.patch')
+      writeFileSync(patch, git(linked, 'format-patch', '-1', '--stdout'))
+      expect(() => git(root, 'am', patch)).toThrow()
+      expect((await status(root)).operation).toBeUndefined()
+      git(root, 'am', '--abort')
+    } finally {
+      removeTree(scratch)
+    }
   })
 
   it('parses a multi-file unified diff with aligned line numbers', () => {
@@ -224,6 +465,10 @@ describe('git parsing', () => {
     const parsed = parseUnifiedDiff(diff)
     expect(parsed.files).toHaveLength(2)
     expect(parsed.files[0]!.binary).toBe(true)
+    // git prints no ---/+++ for the binary section: the name comes from its
+    // own `Binary files …` line.
+    expect(parsed.files[0]!.oldPath).toBe('a/img.png')
+    expect(parsed.files[0]!.newPath).toBe('b/img.png')
     expect(parsed.files[0]!.hunks).toHaveLength(0)
     const gone = parsed.files[1]!
     expect(gone.newPath).toBe('/dev/null')
@@ -234,7 +479,10 @@ describe('git parsing', () => {
     ])
   })
 
-  it('keeps mode/rename-only sections hunkless', () => {
+  it('names mode/rename-only sections while keeping them hunkless', () => {
+    // git prints no ---/+++ for these two shapes, so the paths come from the
+    // section's own header lines; a section that reached the renderer without
+    // a path drew a header with nothing but its badge.
     const parsed = parseUnifiedDiff([
       'diff --git a/run.sh b/run.sh',
       'old mode 100644',
@@ -246,13 +494,194 @@ describe('git parsing', () => {
       '',
     ].join('\n'))
     expect(parsed.files).toHaveLength(2)
-    expect(parsed.files[0]!.oldPath).toBe('')
+    expect(parsed.files[0]!.oldPath).toBe('a/run.sh')
+    expect(parsed.files[0]!.newPath).toBe('b/run.sh')
     expect(parsed.files[0]!.hunks).toHaveLength(0)
+    expect(parsed.files[1]!.oldPath).toBe('old.ts')
+    expect(parsed.files[1]!.newPath).toBe('new.ts')
     expect(parsed.files[1]!.hunks).toHaveLength(0)
   })
 
   it('parses an empty or junk diff into no files', () => {
     expect(parseUnifiedDiff('').files).toEqual([])
     expect(parseUnifiedDiff('no diff here\n').files).toEqual([])
+  })
+
+  it('never lets a branch operand reach git as an option (checkout)', async () => {
+    // A caller-supplied branch name went into argv as a bare operand, so `-f`
+    // was parsed as git's OPTION and force-discarded the worktree changes
+    // (`--work-tree=…` redirected the checkout). The sentinel ends option
+    // parsing — the same guard 4100e16 added to show / commitDiff / revert /
+    // cherryPick, which missed this call.
+    const root = mkdtempSync(join(tmpdir(), 'dsh-git-checkout-'))
+    try {
+      execFileSync('git', ['init', '-q'], { cwd: root })
+      execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: root })
+      execFileSync('git', ['config', 'user.name', 'test'], { cwd: root })
+      writeFileSync(join(root, 'a.txt'), 'committed\n')
+      execFileSync('git', ['add', 'a.txt'], { cwd: root })
+      execFileSync('git', ['commit', '-q', '-m', 'init'], { cwd: root })
+      execFileSync('git', ['branch', 'other'], { cwd: root })
+      writeFileSync(join(root, 'a.txt'), 'UNSAVED WORK\n')
+
+      await expect(checkout(root, '-f')).rejects.toThrow()
+      expect(readFileSync(join(root, 'a.txt'), 'utf8')).toBe('UNSAVED WORK\n')
+
+      await expect(checkout(root, '--work-tree=/elsewhere')).rejects.toThrow()
+      expect(readFileSync(join(root, 'a.txt'), 'utf8')).toBe('UNSAVED WORK\n')
+
+      // The guard must not break the real operation.
+      await checkout(root, 'other')
+      expect(execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim())
+        .toBe('other')
+    } finally {
+      removeTree(root)
+    }
+  })
+})
+
+/**
+ * Issue #131: the per-path added/deleted line counts ride the EXISTING status
+ * read (one batch, never one git process per file). The parser below is what
+ * turns `git diff --numstat` answers into those numbers.
+ */
+describe('numstat line counts (#131)', () => {
+  it('parses line-framed records into added/deleted per path', () => {
+    expect(parseNumstat(['2\t0\tsrc/a.ts', '0\t3\tsrc/b.ts', ''].join('\n'))).toEqual(new Map([
+      ['src/a.ts', { additions: 2, deletions: 0 }],
+      ['src/b.ts', { additions: 0, deletions: 3 }],
+    ]))
+  })
+
+  it('parses the production NUL framing (what status() actually runs)', () => {
+    // `git diff --numstat -z` puts the counts and the path in NUL-framed
+    // records, so a path with a newline or a quote stays lossless.
+    expect(parseNumstat(['12\t4\tsrc/a.ts', '1\t1\todd\nname.ts', ''].join('\0'))).toEqual(new Map([
+      ['src/a.ts', { additions: 12, deletions: 4 }],
+      ['odd\nname.ts', { additions: 1, deletions: 1 }],
+    ]))
+  })
+
+  it('reads a binary change as binary rather than as 0/0', () => {
+    // git prints `-` for both counts: there are no line counts to report, and
+    // a fabricated `0 0` would make a changed blob read as an empty change.
+    expect(parseNumstat('-\t-\tassets/logo.png\0')).toEqual(new Map([
+      ['assets/logo.png', { binary: true }],
+    ]))
+  })
+
+  it('attributes a rename to the NEW path (plain and brace notations)', () => {
+    expect(parseNumstat(['5\t1\told.txt => new.txt', ''].join('\n'))).toEqual(new Map([
+      ['new.txt', { additions: 5, deletions: 1 }],
+    ]))
+    // The brace form keeps the unchanged prefix/suffix around the arrow.
+    expect(parseNumstat(['3\t1\tsrc/{a => b}/x.ts', ''].join('\n'))).toEqual(new Map([
+      ['src/b/x.ts', { additions: 3, deletions: 1 }],
+    ]))
+  })
+
+  it('attributes a NUL-framed rename from its two name fields', () => {
+    // In `-z` framing the origin and the new name are their own NUL fields
+    // (origin first) — the format `status()` consumes.
+    expect(parseNumstat('0\t0\t\0src/a/y.ts\0src/b/z.ts\0')).toEqual(new Map([
+      ['src/b/z.ts', { additions: 0, deletions: 0 }],
+    ]))
+  })
+
+  it('keeps a path that literally contains an arrow under NUL framing', () => {
+    // `-z` framing never folds names into rename notation, so this is a real
+    // file name and must stay attributable to itself.
+    expect(parseNumstat('1\t0\ta => b.txt\0')).toEqual(new Map([
+      ['a => b.txt', { additions: 1, deletions: 0 }],
+    ]))
+  })
+
+  it('answers an empty map for empty or junk output', () => {
+    expect(parseNumstat('')).toEqual(new Map())
+    expect(parseNumstat('\0')).toEqual(new Map())
+    expect(parseNumstat('not a numstat record\nanother one\n')).toEqual(new Map())
+  })
+
+  /** A fresh repo whose `files` (path → content) are committed as the baseline.
+   *  `config` entries are applied before that first commit. */
+  function mkRepo(files: Record<string, string | Buffer>, config: Record<string, string> = {}): string {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-git-repo-'))
+    execFileSync('git', ['init', '-q'], { cwd: root })
+    execFileSync('git', ['config', 'user.email', 't@t'], { cwd: root })
+    execFileSync('git', ['config', 'user.name', 't'], { cwd: root })
+    for (const [key, value] of Object.entries(config)) execFileSync('git', ['config', key, value], { cwd: root })
+    for (const [name, content] of Object.entries(files)) writeFileSync(join(root, name), content)
+    execFileSync('git', ['add', '-A'], { cwd: root })
+    execFileSync('git', ['commit', '-q', '-m', 'init'], { cwd: root })
+    return root
+  }
+
+  it('carries each side\'s counts, the binary marker and the untracked absence through status()', async () => {
+    // Rename detection is a user config (diff.renames / status.renames); pin it
+    // so this fixture means the same thing on every machine.
+    const root = mkRepo(
+      { 'tracked.txt': 'one\ntwo\n', 'renamed.txt': 'same\n' },
+      { 'diff.renames': 'true', 'status.renames': 'true' },
+    )
+    try {
+      // ONE path changed on BOTH sides (porcelain 'MM'): one line staged, then
+      // one more in the worktree. The two diffs have different bases, so the
+      // entry carries two readings — never one number that adds them up.
+      writeFileSync(join(root, 'tracked.txt'), 'one\ntwo\nthree\n')
+      execFileSync('git', ['add', 'tracked.txt'], { cwd: root })
+      writeFileSync(join(root, 'tracked.txt'), 'one\ntwo\nthree\nfour\n')
+      // A staged rename: the counts belong to the new path.
+      execFileSync('git', ['mv', 'renamed.txt', 'moved.txt'], { cwd: root })
+      // A binary blob, and an untracked file git will not diff at all.
+      writeFileSync(join(root, 'blob.bin'), Buffer.from([0, 1, 2, 3, 0, 5]))
+      execFileSync('git', ['add', 'blob.bin'], { cwd: root })
+      writeFileSync(join(root, 'untracked.txt'), 'brand new\n')
+
+      const result = await status(root)
+      const byPath = new Map(result.entries.map(entry => [entry.path, entry]))
+      expect(byPath.get('tracked.txt')).toEqual({
+        path: 'tracked.txt',
+        xy: 'MM',
+        staged: { additions: 1, deletions: 0 },
+        unstaged: { additions: 1, deletions: 0 },
+      })
+      expect(byPath.get('moved.txt')).toEqual({
+        path: 'moved.txt', xy: 'R ', staged: { additions: 0, deletions: 0 },
+      })
+      expect(byPath.get('blob.bin')).toEqual({
+        path: 'blob.bin', xy: 'A ', staged: { binary: true },
+      })
+      // No numstat row exists for an untracked file on either side: the entry
+      // keeps no counts at all, which is what the row renders as "new file".
+      expect(byPath.get('untracked.txt')).toEqual({ path: 'untracked.txt', xy: '??' })
+      expect(byPath.has('renamed.txt')).toBe(false)
+    } finally {
+      removeTree(root)
+    }
+  })
+
+  it('never adds the two sides up: a line both diffs see is counted once per side', async () => {
+    // The double-count regression. Editing the SAME line twice — staged once,
+    // then edited again in the worktree — makes both numstat sides report the
+    // same single line; summing them reported a 2-line change on BOTH rows.
+    const root = mkRepo({ 'a.txt': 'one\ntwo\nthree\n' })
+    try {
+      writeFileSync(join(root, 'a.txt'), 'one\nTWO\nthree\n')
+      execFileSync('git', ['add', 'a.txt'], { cwd: root })
+      writeFileSync(join(root, 'a.txt'), 'one\nTwo\nthree\n')
+
+      const result = await status(root)
+      expect(result.entries).toEqual([{
+        path: 'a.txt',
+        xy: 'MM',
+        staged: { additions: 1, deletions: 1 },
+        unstaged: { additions: 1, deletions: 1 },
+      }])
+      // The reading the panel must never print: the sum of two diffs that saw
+      // the same line.
+      expect(JSON.stringify(result.entries)).not.toContain('"additions":2')
+    } finally {
+      removeTree(root)
+    }
   })
 })

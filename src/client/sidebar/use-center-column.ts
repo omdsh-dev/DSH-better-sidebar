@@ -94,8 +94,17 @@ export function useCenterColumn(
           observer?.disconnect()
           observer = undefined
         }
+        // No usable column: keep the slow safety net armed — this is the
+        // state (boot before the AppFrame exists, HMR swap) that has no other
+        // convergence path.
+        startRetry()
         return
       }
+      // A usable column is cached: the safety net stops. Its window equals the
+      // old tick period, so a running table would re-validate on EVERY tick and
+      // the query-free fast path could never apply. The two observers above
+      // remain the recovery path (a swapped node mutates #root / <html style>).
+      stopRetry()
       if (centerColRef.current !== col) {
         // A NEW column node (boot swap, HMR re-render, or a previous locate
         // that found nothing): attach the ResizeObserver to THIS node and
@@ -115,6 +124,28 @@ export function useCenterColumn(
         measureCenter()
       }
     }
+    // Last-resort safety net (issue #248): the slow re-locate runs ONLY while
+    // no usable column is cached. It used to run unconditionally every 1.5s,
+    // which is exactly CENTER_COLUMN_REVALIDATE_MS — so the cached-node fast
+    // path could never apply: every tick fell due the moment it fired and paid
+    // the full document selector + computed-style ancestor walk. Now the
+    // cached column stops this table, and a detached/missing column starts it
+    // again: the no-column state is the one that has no other convergence path
+    // (boot before the AppFrame exists, HMR re-renders, #root swaps).
+    //
+    // `window.setInterval` (not the bare global): the client runs in the
+    // browser, where the id is a number — the bare global resolves to Node's
+    // Timeout under this tsconfig.
+    let retry: number | undefined
+    const stopRetry = (): void => {
+      if (retry === undefined) return
+      window.clearInterval(retry)
+      retry = undefined
+    }
+    const startRetry = (): void => {
+      if (retry !== undefined) return
+      retry = window.setInterval(locate, 1500)
+    }
     locate()
     // rAF-debounce the mutation watchers: #root's subtree changes at chat
     // cadence (streaming turns), and locate() itself must stay cheap.
@@ -125,7 +156,7 @@ export function useCenterColumn(
       // attribute, which is the mutation this watcher observes — relocating
       // per drag frame is pointless (the center column node cannot change
       // while the pointer is captured) and adds locator work to every
-      // frame's budget (#315). The 1.5s retry below still covers any node
+      // frame's budget (#315). The slow safety net still covers any node
       // swap that somehow lands mid-drag.
       if (draggingRef.current) return
       locateFrame = requestAnimationFrame(() => {
@@ -146,19 +177,10 @@ export function useCenterColumn(
     // instead of staying hidden on a stale {0,0} center rect.
     const htmlStyleWatcher = new MutationObserver(scheduleLocate)
     htmlStyleWatcher.observe(document.documentElement, { attributes: true, attributeFilter: ['style'] })
-    // Last-resort safety net (issue #248): no watcher is guaranteed to fire
-    // for every HMR teardown/setup interleaving (e.g. the style attribute
-    // may end up byte-identical, and the col may be swapped before the
-    // subtree watcher attaches). A slow unconditional re-locate makes the
-    // panel converge on the real column within a couple of seconds no
-    // matter what sequence the shell used. locate() is query-free while the
-    // cached column stays connected; only a detached/missing cache falls
-    // back to the document selector.
-    const retry = window.setInterval(locate, 1500)
     return () => {
       disposed = true
       if (locateFrame !== null) cancelAnimationFrame(locateFrame)
-      window.clearInterval(retry)
+      stopRetry()
       observer?.disconnect()
       watcher.disconnect()
       htmlStyleWatcher.disconnect()

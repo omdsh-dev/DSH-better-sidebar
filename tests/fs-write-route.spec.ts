@@ -1,0 +1,449 @@
+/**
+ * Host save route (`POST /sidebar/write`): the guarantees the editor's save
+ * depends on.
+ *
+ * The route carries the document as its RAW BODY — it used to be a JSON field
+ * on `/sidebar/api/fs.write`, which put the 1 MiB `MAX_BODY_BYTES` ceiling on
+ * every save: a file the editor could open could not be written back. The
+ * request shape changed; every guarantee below is the same logic reached
+ * through `writeWorkspaceText` (src/fs-operations.ts).
+ *
+ * 1. Concurrent saves to the SAME path are independent — each writes its own
+ *    uniquely named temp sibling, so one save's cleanup can never delete the
+ *    other's temp file before its rename (the old shared
+ *    `.dsh-sidebar-tmp-<pid>` name made the second rename fail with ENOENT).
+ *    This guarantee ALREADY landed on dev (2e22b90, `.dsh-sidebar-tmp-<uuid>`);
+ *    the case below pins dev's naming, it does not carry a fix of its own.
+ * 2. `expectedMtimeMs` is an optimistic-concurrency gate: a file that changed
+ *    on disk since the draft was loaded refuses with `fs-conflict` (409)
+ *    instead of clobbering the new bytes, and a successful save reports the
+ *    fresh baseline the client adopts. A file that is GONE at save time is the
+ *    same refusal — a numeric baseline proves it was read from an existing
+ *    file, so its absence is a change the user made, not permission to
+ *    re-create it.
+ */
+import { describe, expect, it } from 'vitest'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { apply } from '../src/index.ts'
+import { encodeText } from '../src/text-encoding.ts'
+import type { SidebarWebRoute } from '../src/context-types.ts'
+import { removeTree } from './temp-tree.ts'
+
+interface FakeContext {
+  connection: { requestRejection: () => undefined }
+  webServer: {
+    register: (route: SidebarWebRoute) => () => void
+    registerUpgrade: () => () => void
+  }
+  sessions: { get: (id: string) => { header: { cwd?: string } } | undefined }
+  tools: { register: () => () => void }
+  effect: (fn: () => void | (() => void)) => void
+  inject: (deps: readonly string[], callback: (sctx: never) => void) => () => void
+  /** The assistant-live buffer subscribes on mount (dev's apply). */
+  on: () => () => void
+  get: (key: string) => undefined
+}
+
+/** The two routes this spec drives: the JSON read and the raw save. */
+interface Mounted {
+  api: SidebarWebRoute
+  write: SidebarWebRoute
+}
+
+/** Mount the plugin against a fake context whose session cwd is `workspace`. */
+function mountApi(workspace: string): Mounted {
+  const routes: SidebarWebRoute[] = []
+  const ctx: FakeContext = {
+    connection: { requestRejection: () => undefined },
+    webServer: { register: (route) => { routes.push(route); return () => {} }, registerUpgrade: () => () => {} },
+    sessions: { get: () => ({ header: { cwd: workspace } }) },
+    tools: { register: () => () => {} },
+    effect: (fn) => { fn() },
+    inject: () => () => {},
+    on: () => () => {},
+    get: () => undefined,
+  }
+  apply(ctx as never, {})
+  return {
+    api: routes.find(route => route.path === '/sidebar/api')!,
+    write: routes.find(route => route.path === '/sidebar/write')!,
+  }
+}
+
+interface Invoked {
+  ok: boolean
+  status: number
+  value?: { ok?: boolean; mtimeMs?: number; kind?: string; content?: string }
+  error?: { code?: string; message?: string }
+}
+
+async function invoke(route: SidebarWebRoute, method: string, payload: unknown): Promise<Invoked> {
+  const body = Buffer.from(JSON.stringify(payload))
+  const req = {
+    method: 'POST',
+    url: `/sidebar/api/${method}`,
+    headers: { host: '127.0.0.1:3080' },
+    [Symbol.asyncIterator]: async function* () { yield body },
+  } as never
+  const out = { status: 200, body: '' }
+  const res = {
+    writeHead: (status: number) => { out.status = status },
+    end: (chunk: unknown) => { out.body += String(chunk ?? '') },
+  } as never
+  await route.handler(req, res)
+  return { ...JSON.parse(out.body) as Invoked, status: out.status }
+}
+
+/**
+ * One save through the raw route: the document IS the body, everything else is
+ * a query parameter. Chunked on purpose — the route must accept a body that
+ * arrives in pieces, which a single Buffer would never exercise.
+ */
+async function invokeWrite(
+  mounted: Mounted,
+  input: { sessionId: string; path: string; content: string; expectedMtimeMs?: number; cwd?: string },
+): Promise<Invoked> {
+  const params = new URLSearchParams({ sessionId: input.sessionId, path: input.path })
+  if (input.cwd !== undefined) params.set('cwd', input.cwd)
+  if (input.expectedMtimeMs !== undefined) params.set('expectedMtimeMs', String(input.expectedMtimeMs))
+  const body = Buffer.from(input.content, 'utf8')
+  const req = {
+    method: 'POST',
+    url: `/sidebar/write?${params.toString()}`,
+    headers: { host: '127.0.0.1:3080' },
+    [Symbol.asyncIterator]: async function* () {
+      for (let offset = 0; offset < body.length; offset += 64 * 1024) {
+        yield body.subarray(offset, offset + 64 * 1024)
+      }
+    },
+  } as never
+  const out = { status: 200, body: '' }
+  const res = {
+    writeHead: (status: number) => { out.status = status },
+    end: (chunk: unknown) => { out.body += String(chunk ?? '') },
+  } as never
+  await mounted.write.handler(req, res)
+  return { ...JSON.parse(out.body) as Invoked, status: out.status }
+}
+
+/** Temp siblings the route may leave behind on failure (dev's per-save name,
+ *  landed by 2e22b90 — this PR keeps it as-is). */
+function tempLeftovers(dir: string): string[] {
+  return readdirSync(dir).filter(name => name.includes('.dsh-sidebar-tmp-'))
+}
+
+describe('/sidebar/write route', () => {
+  it('keeps concurrent saves to the same path independent and leaves no temp files', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-write-race-'))
+    try {
+      const workspace = join(root, 'ws')
+      mkdirSync(workspace)
+      const target = join(workspace, 'race.txt')
+      const route = mountApi(workspace)
+      const results = await Promise.all([
+        invokeWrite(route, { sessionId: 's', path: target, content: 'first' }),
+        invokeWrite(route, { sessionId: 's', path: target, content: 'second' }),
+        invokeWrite(route, { sessionId: 's', path: target, content: 'third' }),
+      ])
+      for (const result of results) {
+        // The bug this pins: with ONE shared temp name, a loser's cleanup
+        // rm()s the winner's temp file and its rename fails ENOENT. Windows
+        // may still refuse a concurrent rename over an open file with EPERM
+        // (antivirus / handle timing) — a platform quirk, not cross-talk.
+        expect(result.ok || (result.error?.message ?? '').includes('EPERM'), JSON.stringify(result)).toBe(true)
+      }
+      // At least one rename landed (the last successful writer wins), and no
+      // temp sibling survived either path.
+      expect(['first', 'second', 'third']).toContain(readFileSync(target, 'utf8'))
+      expect(tempLeftovers(workspace)).toEqual([])
+    } finally {
+      removeTree(root)
+    }
+  })
+
+  it('runs repeated saves to the same path cleanly and leaves no temp files', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-write-repeat-'))
+    try {
+      const workspace = join(root, 'ws')
+      mkdirSync(workspace)
+      const target = join(workspace, 'seq.txt')
+      writeFileSync(target, 'v0')
+      const route = mountApi(workspace)
+      for (const content of ['v1', 'v2', 'v3']) {
+        const result = await invokeWrite(route, { sessionId: 's', path: target, content })
+        expect(result, JSON.stringify(result)).toMatchObject({ ok: true, status: 200 })
+      }
+      expect(readFileSync(target, 'utf8')).toBe('v3')
+      expect(tempLeftovers(workspace)).toEqual([])
+    } finally {
+      removeTree(root)
+    }
+  })
+
+  it('refuses a save whose baseline mtime no longer matches the file on disk', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-write-conflict-'))
+    try {
+      const workspace = join(root, 'ws')
+      mkdirSync(workspace)
+      const target = join(workspace, 'draft.txt')
+      writeFileSync(target, 'disk-v1')
+      const route = mountApi(workspace)
+
+      const read = await invoke(route.api, 'fs.read', { sessionId: 's', path: target })
+      expect(read).toMatchObject({ ok: true, value: { kind: 'text', content: 'disk-v1' } })
+      const baseline = read.value?.mtimeMs
+      expect(typeof baseline).toBe('number')
+
+      // Something else (the model, another tab, an external editor) wrote it.
+      writeFileSync(target, 'disk-v2')
+      utimesSync(target, new Date(), new Date(Date.now() + 2_000))
+
+      const stale = await invokeWrite(route, {
+        sessionId: 's', path: target, content: 'my-draft', expectedMtimeMs: baseline,
+      })
+      expect(stale).toMatchObject({ ok: false, status: 409, error: { code: 'fs-conflict' } })
+      // The foreign bytes survive: the write was refused, not merged.
+      expect(readFileSync(target, 'utf8')).toBe('disk-v2')
+      expect(tempLeftovers(workspace)).toEqual([])
+    } finally {
+      removeTree(root)
+    }
+  })
+
+  it('accepts a save whose baseline still matches and reports the fresh baseline', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-write-ok-'))
+    try {
+      const workspace = join(root, 'ws')
+      mkdirSync(workspace)
+      const target = join(workspace, 'draft.txt')
+      writeFileSync(target, 'disk-v1')
+      const route = mountApi(workspace)
+
+      const read = await invoke(route.api, 'fs.read', { sessionId: 's', path: target })
+      const saved = await invokeWrite(route, {
+        sessionId: 's', path: target, content: 'disk-v2', expectedMtimeMs: read.value?.mtimeMs,
+      })
+      expect(saved).toMatchObject({ ok: true, status: 200, value: { ok: true } })
+      expect(typeof saved.value?.mtimeMs).toBe('number')
+      expect(readFileSync(target, 'utf8')).toBe('disk-v2')
+
+      // The reported baseline is the one a follow-up save must present.
+      const second = await invokeWrite(route, {
+        sessionId: 's', path: target, content: 'disk-v3', expectedMtimeMs: saved.value?.mtimeMs,
+      })
+      expect(second).toMatchObject({ ok: true, status: 200 })
+      expect(readFileSync(target, 'utf8')).toBe('disk-v3')
+    } finally {
+      removeTree(root)
+    }
+  })
+
+  // The whole reason the route is raw: JSON framing capped a save at 1 MiB
+  // (MAX_BODY_BYTES), so a file the editor could OPEN could not be written
+  // back. Four megabytes of text goes through in one request now.
+  it('saves a document far past the old 1 MiB JSON ceiling', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-write-large-'))
+    try {
+      const workspace = join(root, 'ws')
+      mkdirSync(workspace)
+      const target = join(workspace, 'big.jsonl')
+      // Multi-byte content on purpose: the route counts BYTES, so the fixture
+      // is sized by byte length. (Sizing it by `line.length` builds a body
+      // three times larger than intended and lands on the wrong side of the
+      // guard — which is how this test first failed.)
+      const line = `${JSON.stringify({ text: '中文内容'.repeat(20) })}\n`
+      const content = line.repeat(Math.ceil((4 * 1024 * 1024) / Buffer.byteLength(line, 'utf8')))
+      expect(Buffer.byteLength(content, 'utf8')).toBeGreaterThan(4 * 1024 * 1024)
+      expect(Buffer.byteLength(content, 'utf8')).toBeLessThan(8 * 1024 * 1024)
+
+      const route = mountApi(workspace)
+      const result = await invokeWrite(route, { sessionId: 's', path: target, content })
+      expect(result, JSON.stringify(result)).toMatchObject({ ok: true, status: 200 })
+      expect(readFileSync(target, 'utf8')).toBe(content)
+      expect(tempLeftovers(workspace)).toEqual([])
+    } finally {
+      removeTree(root)
+    }
+  })
+
+  // A baseline the client still holds means the draft was loaded from a file
+  // that existed. If the path is GONE at save time (the user removed it, the
+  // model ran `rm`, a branch switch took it away), the old code read the failed
+  // stat as "no baseline to compare" and wrote the draft back — re-creating the
+  // file, and its parent directory, with no prompt while reporting a clean
+  // save. Only "the file changed" was treated as a conflict; "the file is not
+  // there any more" is the same class of surprise.
+  it('refuses to re-create a file that was deleted since it was loaded', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-write-gone-'))
+    try {
+      const workspace = join(root, 'ws')
+      mkdirSync(workspace)
+      const target = join(workspace, 'draft.txt')
+      writeFileSync(target, 'disk-v1')
+      const route = mountApi(workspace)
+
+      const read = await invoke(route.api, 'fs.read', { sessionId: 's', path: target })
+      const baseline = read.value?.mtimeMs
+      expect(typeof baseline).toBe('number')
+
+      // The user (or something else) removed it while the draft was open.
+      rmSync(target, { force: true })
+
+      const stale = await invokeWrite(route, {
+        sessionId: 's', path: target, content: 'my-draft', expectedMtimeMs: baseline,
+      })
+      expect(stale).toMatchObject({ ok: false, status: 409, error: { code: 'fs-conflict' } })
+      // The deletion stands: nothing was written back, and no temp sibling
+      // survived the refusal.
+      expect(existsSync(target)).toBe(false)
+      expect(tempLeftovers(workspace)).toEqual([])
+    } finally {
+      removeTree(root)
+    }
+  })
+
+  it('refuses a save path that is missing, and writes nothing', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-write-nopath-'))
+    try {
+      const workspace = join(root, 'ws')
+      mkdirSync(workspace)
+      const route = mountApi(workspace)
+      const params = new URLSearchParams({ sessionId: 's' })
+      const req = {
+        method: 'POST',
+        url: `/sidebar/write?${params.toString()}`,
+        headers: { host: '127.0.0.1:3080' },
+        [Symbol.asyncIterator]: async function* () { yield Buffer.from('x') },
+      } as never
+      const out = { status: 200, body: '' }
+      const res = {
+        writeHead: (status: number) => { out.status = status },
+        end: (chunk: unknown) => { out.body += String(chunk ?? '') },
+      } as never
+      await route.write.handler(req, res)
+      expect({ ...JSON.parse(out.body) as Invoked, status: out.status })
+        .toMatchObject({ ok: false, status: 400, error: { code: 'bad-request' } })
+    } finally {
+      removeTree(root)
+    }
+  })
+
+  it('refuses the same way when the whole parent directory is gone', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-write-gonedir-'))
+    try {
+      const workspace = join(root, 'ws')
+      const nested = join(workspace, 'src')
+      mkdirSync(nested, { recursive: true })
+      const target = join(nested, 'draft.txt')
+      writeFileSync(target, 'disk-v1')
+      const route = mountApi(workspace)
+
+      const read = await invoke(route.api, 'fs.read', { sessionId: 's', path: target })
+      const baseline = read.value?.mtimeMs
+      // A rename/removal of the parent directory: the writer's `mkdir -p` used
+      // to rebuild the tree for a single file.
+      removeTree(nested)
+
+      const stale = await invokeWrite(route, {
+        sessionId: 's', path: target, content: 'my-draft', expectedMtimeMs: baseline,
+      })
+      expect(stale).toMatchObject({ ok: false, status: 409, error: { code: 'fs-conflict' } })
+      expect(existsSync(nested)).toBe(false)
+    } finally {
+      removeTree(root)
+    }
+  })
+
+  it('treats an omitted baseline as no gate (older callers keep working)', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-write-legacy-'))
+    try {
+      const workspace = join(root, 'ws')
+      mkdirSync(workspace)
+      const target = join(workspace, 'legacy.txt')
+      writeFileSync(target, 'disk-v1')
+      const route = mountApi(workspace)
+      const result = await invokeWrite(route, { sessionId: 's', path: target, content: 'overwritten' })
+      expect(result).toMatchObject({ ok: true, status: 200 })
+      expect(readFileSync(target, 'utf8')).toBe('overwritten')
+    } finally {
+      removeTree(root)
+    }
+  })
+
+  // #871: the editor transports an LF document (CodeMirror has no other line
+  // model), so writing it verbatim turned ONE edited line into a whole-file diff
+  // on every CRLF checkout. The route now restores the style the file already
+  // had — the SAME guarantee the host's own `edit` tool gives (dsh-fs-local's
+  // restoreLineEndings), which the host's `write` tool does not.
+  it('keeps a CRLF file CRLF when the editor saves its LF document (#871)', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-write-crlf-'))
+    try {
+      const workspace = join(root, 'ws')
+      mkdirSync(workspace)
+      const target = join(workspace, 'win.txt')
+      writeFileSync(target, 'one\r\ntwo\r\nthree\r\n')
+      const route = mountApi(workspace)
+      const result = await invokeWrite(route, {
+        sessionId: 's',
+        path: target,
+        content: 'one\ntwo edited\nthree\n',
+      })
+      expect(result, JSON.stringify(result)).toMatchObject({ ok: true, status: 200 })
+      const written = readFileSync(target, 'utf8')
+      expect(written).toBe('one\r\ntwo edited\r\nthree\r\n')
+      // No bare LF may survive — that is precisely the whole-file diff.
+      expect(written.replaceAll('\r\n', '')).not.toContain('\n')
+    } finally {
+      removeTree(root)
+    }
+  })
+
+  it('leaves an LF file LF — a save never introduces CR', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-write-lf-'))
+    try {
+      const workspace = join(root, 'ws')
+      mkdirSync(workspace)
+      const target = join(workspace, 'posix.sh')
+      writeFileSync(target, 'one\ntwo\n')
+      const route = mountApi(workspace)
+      const result = await invokeWrite(route, {
+        sessionId: 's',
+        path: target,
+        content: 'one\ntwo edited\n',
+      })
+      expect(result, JSON.stringify(result)).toMatchObject({ ok: true, status: 200 })
+      const written = readFileSync(target, 'utf8')
+      expect(written).toBe('one\ntwo edited\n')
+      expect(written).not.toContain('\r')
+    } finally {
+      removeTree(root)
+    }
+  })
+
+  it('composes the EOL restore with the encoding restore (GBK + CRLF, no \\r\\r\\n)', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-write-gbk-crlf-'))
+    try {
+      const workspace = join(root, 'ws')
+      mkdirSync(workspace)
+      const target = join(workspace, 'legacy.cmd')
+      writeFileSync(target, encodeText('@echo off\r\necho 中文\r\n', 'gbk'))
+      const route = mountApi(workspace)
+      // An LF document (what the editor always sends) into a GBK + CRLF file:
+      // both restores have to fire for the bytes to match.
+      const result = await invokeWrite(route, {
+        sessionId: 's',
+        path: target,
+        content: '@echo off\necho 中文 saved\n',
+      })
+      expect(result, JSON.stringify(result)).toMatchObject({ ok: true, status: 200 })
+      expect(readFileSync(target).equals(encodeText('@echo off\r\necho 中文 saved\r\n', 'gbk'))).toBe(true)
+      // Redundant with the byte comparison, but keeps the intent readable when
+      // that assertion ever gets relaxed.
+      expect(readFileSync(target).toString('utf8')).not.toContain('\r\r')
+    } finally {
+      removeTree(root)
+    }
+  })
+})

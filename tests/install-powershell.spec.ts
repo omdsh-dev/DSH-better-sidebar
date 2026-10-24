@@ -1,9 +1,10 @@
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { delimiter, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
+import { removeTree } from './temp-tree.ts'
 
 const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)))
 const INSTALLER = resolve(ROOT, 'scripts/install.ps1')
@@ -66,7 +67,7 @@ function assertInMemoryInvocation(executable: string): void {
 }
 
 afterEach(() => {
-  for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true })
+  for (const dir of tempDirs.splice(0)) removeTree(dir)
 })
 
 /**
@@ -83,7 +84,7 @@ describe('PowerShell installer entry points', { timeout: 30_000 }, () => {
   })
 
   it('documents only BOM-safe in-memory invocation', () => {
-    for (const file of ['README.md', 'README_EN.md', 'scripts/install.ps1']) {
+    for (const file of ['README.md', 'README_ZH.md', 'scripts/install.ps1']) {
       const source = readFileSync(resolve(ROOT, file), 'utf8')
       expect(source, file).not.toMatch(new RegExp(`irm [^\\r\\n]*${INSTALLER_URL.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[^\\r\\n]*\\|\\s*iex`, 'i'))
       expect(source, file).not.toMatch(/\[scriptblock\]::Create\(\(irm\b/i)

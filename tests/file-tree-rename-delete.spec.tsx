@@ -10,7 +10,6 @@ import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
 import { FileTree } from '../src/client/FileTree.tsx'
-import { createSidebarStore } from '../src/client/state.ts'
 
 // The act() environment flag (React 18.2 reads it before flushing effects).
 import { setupReactAct } from './test-utils.ts'
@@ -30,14 +29,17 @@ const { fsRename, fsRemove } = vi.hoisted(() => ({
 
 vi.mock('../src/client/api.ts', () => ({
   api: {
-    fsTree: async () => ({
-      entries: [
+    fsTrees: async (_scope: unknown, paths: readonly string[]) => ({
+      levels: paths.map(path => ({ path, entries: [
         { name: 'a.ts', path: '/tmp/a.ts', isDir: false },
         { name: 'sub', path: '/tmp/sub', isDir: true },
-      ],
+      ], truncated: false })),
     }),
     fsRename,
     fsRemove,
+    // The tree reads the shared git-status store; a non-repo answer keeps
+    // every row plain (this spec is about rename/delete).
+    gitStatus: async () => ({ isRepo: false, entries: [] }),
   },
   downloadUrl: () => '/sidebar/file',
   isOutsideWorkspaceMessage: () => false,
@@ -60,7 +62,6 @@ async function mountTree(): Promise<Harness> {
     root.render(createElement(FileTree, {
       sessionId: 's1',
       cwd: '/tmp',
-      store: createSidebarStore(),
       expanded: [],
       revealed: [],
       onToggle: () => {},

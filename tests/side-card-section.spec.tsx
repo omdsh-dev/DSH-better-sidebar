@@ -92,12 +92,15 @@ describe('SideCardSection declarative inventory', () => {
     expect(html).toContain('>Subagents<')
     // Default prefs: the general switch is off (agentOpenTools defaults off),
     // and both tabs + the image viewer cards are pressed (3 aria-pressed
-    // cards).
+    // cards). The mobile switches are NOT cards — they are rows in the 手机
+    // group, and their own defaults (both on) show up as checked checkboxes.
     // The nested auto-open toggle is NOT an inline card (it lives in the popup).
     expect(pressedCount(html, 'true')).toBe(3)
     expect(pressedCount(html, 'false')).toBe(0)
-    // The general toggles are custom switches (real checkboxes, none checked).
-    expect(html.match(/checked=""/g)?.length ?? 0).toBe(0)
+    // The custom switches are real checkboxes: the two mobile adaptations are
+    // on by default, agentOpenTools is not.
+    // The two mobile adaptations are on by default.
+    expect(html.match(/checked=""/g)?.length ?? 0).toBe(2)
     expect(html).not.toContain('Auto-open Subagents')
   })
 
@@ -110,6 +113,20 @@ describe('SideCardSection declarative inventory', () => {
     expect(html).toContain('>File viewers</span><span')
     expect(html).toContain('>2</span>')
     expect(html).toContain('>1</span>')
+  })
+
+  it('renders the mobile group: heading + both narrow-viewport switches, on by default', () => {
+    const { store, service } = mount()
+    const html = renderSection(store, service)
+    expect(html).toContain('>Mobile</div>')
+    expect(html).toContain('auto-open on narrow screens')
+    expect(html).toContain('Default the Tasks page to the tree')
+    // Both are ON by default; disarming one shows up as an unchecked box.
+    expect(html).toContain('checked=""')
+    store.setPrefs({ ...store.getPrefs(), mobileNoAutoOpen: false, mobileDefaultTree: false })
+    const off = renderSection(store, service)
+    expect(off).toContain('>Mobile</div>')
+    expect(off).not.toContain('checked=""')
   })
 
   it('renders one small card per registered viewer: icon + title + exts', () => {
@@ -126,8 +143,7 @@ describe('SideCardSection declarative inventory', () => {
     const html = renderSection(store, service)
     // Subagents declares a toggle → its card carries the settings gear
     // (aria-label = "<title> Feature settings"); Explorer and Image declare
-    // none → no gear. The position-compat row is a DROPDOWN (no gear unless
-    // the custom scheme is active), so the total is 1.
+    // none → no gear, so the total is 1.
     expect(html.match(/aria-label="[^"]*Feature settings"/g)?.length).toBe(1)
     expect(html).toContain('Subagents Feature settings')
   })
@@ -153,44 +169,43 @@ describe('SideCardSection declarative inventory', () => {
     expect(html).toContain('>Subagents<')
     expect(html).toContain('>Image<')
     expect(pressedCount(html, 'false')).toBe(2)
-    // The explorer card stays pressed; no general switch is on by default.
+    // The explorer card stays pressed.
     expect(pressedCount(html, 'true')).toBe(1)
-    expect(html.match(/checked=""/g)?.length ?? 0).toBe(0)
+    // The two mobile adaptations are on by default.
+    expect(html.match(/checked=""/g)?.length ?? 0).toBe(2)
   })
 
   it('hides the gear of a disabled feature (its related settings are dormant)', () => {
     const { store, service } = mount()
     store.setPrefs({ ...store.getPrefs(), tabsEnabled: { subagent: false } })
     const html = renderSection(store, service)
-    // The disabled Subagents card loses its gear; the position-compat row
-    // is a dropdown (default auto → no gear either).
+    // The disabled Subagents card loses its gear — nothing else renders one.
     expect(html).not.toContain('Feature settings')
   })
 
-  it('renders the position-compat mode row as a scheme dropdown: auto default, custom keeps the gear', () => {
+  it('renders the custom-CSS escape hatch as its own group (no scheme dropdown, no strip row)', () => {
     const { store, service } = mount()
     let html = renderSection(store, service)
-    // The general row renders its title and description; the scheme is the
-    // conservative auto by default and the row is the shared SelectMenu
-    // dropdown (the closed anchor shows the picked option — NOT a native
-    // <select>).
-    expect(html).toContain('Position compatibility mode')
-    expect(html).toContain('Pick the title-bar compatibility scheme: auto-detect (default, conservative) / DSH official web / known desktop shells / custom (shift distance + custom CSS)')
-    expect(html).not.toContain('<select')
-    expect(html).toContain('>Auto-detect<')
-    // One general-row switch remains (agentOpenTools), off by default — the
-    // scheme row is a dropdown, not a switch.
-    expect(html.match(/type="checkbox"/g)?.length).toBe(1)
-    expect(html.match(/checked=""/g)?.length ?? 0).toBe(0)
-    // Auto (default) needs no further settings → no gear.
-    expect(html).not.toContain('Position compatibility mode Feature settings')
+    // The group heading and the textarea's accessible name are the copy key;
+    // the placeholder carries the example (a stable selector + a token, NOT
+    // the retired --dsh-title-bar-strip variable).
+    expect(html).toContain('Custom CSS')
+    expect(html).toContain('aria-label="Custom CSS"')
+    expect(html).toContain('data-dsh-bottom-panel')
+    expect(html).not.toContain('title-bar')
+    // Three general-row switches remain (agentOpenTools off by default, plus
+    // the two mobile adaptations on) — the removed scheme row was a dropdown.
+    expect(html.match(/type="checkbox"/g)?.length).toBe(3)
+    // The two mobile adaptations are on by default (agentOpenTools is not).
+    expect(html.match(/checked=""/g)?.length ?? 0).toBe(2)
+    // The escape hatch is always reachable: no gear, no scheme gate — the
+    // only gear left on the page is the Subagents card's own.
+    expect(html).not.toContain('Custom CSS Feature settings')
+    expect(html.match(/aria-label="[^"]*Feature settings"/g)?.length).toBe(1)
 
-    // The custom scheme keeps its settings button (the px + CSS popup);
-    // the anchor now shows the picked custom option.
-    store.setPrefs({ ...store.getPrefs(), titleBarScheme: 'custom', titleBarCompat: true })
+    store.setPrefs({ ...store.getPrefs(), customCss: 'html { --x: 1; }' })
     html = renderSection(store, service)
-    expect(html).toContain('>Custom<')
-    expect(html).toContain('aria-label="Position compatibility mode Feature settings"')
+    expect(html).toContain('html { --x: 1; }')
   })
 })
 
@@ -199,6 +214,10 @@ describe('FeatureSettingsRows (the secondary settings popup body)', () => {
     ...SIDEBAR_PREFS_DEFAULTS,
     autoOpenSubagent: false,
   }
+  /** The row renderer reads `prefs[toggle.key]` for whatever key a descriptor
+   *  declares, so a plugin-shaped fixture key needs a widened copy (a fresh
+   *  literal with an undeclared key fails excess-property checking). */
+  const withPluginKey = (key: string, value: unknown): typeof prefs => ({ ...prefs, [key]: value })
   const toggles = [{
     key: 'autoOpenSubagent',
     title: () => 'Auto-open Subagents',
@@ -228,16 +247,19 @@ describe('FeatureSettingsRows (the secondary settings popup body)', () => {
     expect(html).toContain('checked=""')
   })
 
-  it('renders a text row as an input seeded with the pref value (empty = theme default)', () => {
+  it('renders a text row as an input seeded with the pref value', () => {
+    // The row renderer is GENERIC: it reads `prefs[toggle.key]` for whatever
+    // key a descriptor declares. These fixtures use plugin-shaped keys that
+    // collide with no host pref on purpose.
     const html = renderToString(createElement(FeatureSettingsRows, {
       toggles: [{
-        key: 'terminalFontFamily',
+        key: 'myPluginFontFamily',
         type: 'text',
         title: () => 'Font family',
-        desc: () => 'CSS stack',
+        desc: () => 'CSS font stack',
         placeholder: '"JetBrains Mono", monospace',
       }],
-      prefs: { ...prefs, terminalFontFamily: '"JetBrains Mono", monospace' },
+      prefs: withPluginKey('myPluginFontFamily', '"JetBrains Mono", monospace'),
       onToggle: () => {},
       onCommit: () => '',
     }))
@@ -248,21 +270,21 @@ describe('FeatureSettingsRows (the secondary settings popup body)', () => {
     expect(html).not.toContain('type="checkbox"')
   })
 
-  it('renders a number row with the pref value, the declared bounds and a unit suffix', () => {
+  it('renders a number row with the pref value, the declared bounds and a unit suffix (non-default bounds)', () => {
     const html = renderToString(createElement(FeatureSettingsRows, {
       toggles: [{
-        key: 'terminalFontSize',
+        key: 'myPluginRowPx',
         type: 'number',
-        title: () => 'Font size',
+        title: () => 'Row height',
         min: 9,
         max: 32,
         unit: 'px',
       }],
-      prefs: { ...prefs, terminalFontSize: 18 },
+      prefs: withPluginKey('myPluginRowPx', 18),
       onToggle: () => {},
       onCommit: () => '18',
     }))
-    expect(html).toContain('Font size')
+    expect(html).toContain('Row height')
     expect(html).toContain('type="number"')
     expect(html).toContain('value="18"')
     expect(html).toContain('min="9"')
@@ -271,23 +293,23 @@ describe('FeatureSettingsRows (the secondary settings popup body)', () => {
     expect(html).not.toContain('type="checkbox"')
   })
 
-  it('renders the title-bar strip row: the pref value, the 0–120 bounds and the px suffix', () => {
+  it('renders a bounded number row with its desc line, the declared bounds and the px suffix', () => {
     const html = renderToString(createElement(FeatureSettingsRows, {
       toggles: [{
-        key: 'titleBarStripPx',
+        key: 'myPluginRowPx',
         type: 'number',
-        title: () => 'Shift distance',
-        desc: () => 'Title-bar strip height in px',
+        title: () => 'Row height',
+        desc: () => 'Height in px',
         min: 0,
         max: 120,
         unit: 'px',
       }],
-      prefs: { ...prefs, titleBarStripPx: 64 },
+      prefs: withPluginKey('myPluginRowPx', 64),
       onToggle: () => {},
       onCommit: () => '64',
     }))
-    expect(html).toContain('Shift distance')
-    expect(html).toContain('Title-bar strip height in px')
+    expect(html).toContain('Row height')
+    expect(html).toContain('Height in px')
     expect(html).toContain('type="number"')
     expect(html).toContain('value="64"')
     expect(html).toContain('min="0"')
@@ -372,9 +394,11 @@ describe('SettingsBody rows + custom render panel (open-with seam)', () => {
       onToggle: () => {},
       onCommit: () => '',
       onSelectValue: () => {},
+      onPatterns: () => {},
       onPluginToggle: () => {},
       onPluginCommit: () => '',
       onPluginSelectValue: () => {},
+      onPluginPatterns: () => {},
       onPluginWrite: () => {},
       onClose: () => {},
     }))
@@ -402,9 +426,11 @@ describe('SettingsBody rows + custom render panel (open-with seam)', () => {
       onToggle: () => {},
       onCommit: () => '',
       onSelectValue: () => {},
+      onPatterns: () => {},
       onPluginToggle: () => {},
       onPluginCommit: () => '',
       onPluginSelectValue: () => {},
+      onPluginPatterns: () => {},
       onPluginWrite: () => {},
       onClose: () => {},
     }))

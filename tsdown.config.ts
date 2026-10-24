@@ -1,6 +1,5 @@
 /**
- * tsdown build for dsh-better-sidebar: the host-half lib (lib/index.js and
- * the lib/invariant.js companion, ESM node) plus the two browser client
+ * tsdown build for dsh-better-sidebar: the host-half lib (lib/index.js, ESM node) plus the two browser client
  * bundles (lib/client.js and lib/client-registry.js, CJS closure factory) —
  * one per install channel:
  *
@@ -27,8 +26,8 @@
  * - each artifact registers itself via window.__ModuleLoader__.load({id,
  *   factory}) with the (require) => exports CJS closure shape.
  *
- * Lazy chunks (lib/client-<name>.js): the heavy preview/terminal libraries
- * (CodeMirror, xterm) build as two standalone chunk bundles
+ * Lazy chunks (lib/client-<name>.js): the heavy preview libraries
+ * (CodeMirror, mermaid) build as standalone chunk bundles
  * (src/client/chunks/<name>.tsx), shared by both channels. Each script
  * assigns its factory to the plugin-owned global registry
  * (globalThis.__dshChunks__) and is fetched by
@@ -324,11 +323,11 @@ function makeCssPlugin(pluginId: string): BuildPlugin {
 }
 
 /** The lazy chunk names (keep in sync with src/bundle-route.ts CHUNK_NAMES). */
-const CHUNKS = ['terminal', 'editor', 'mermaid', 'locale']
+const CHUNKS = ['editor', 'mermaid', 'locale', 'terminal']
 
 export default [
   {
-    entry: { index: 'src/index.ts', invariant: 'src/invariant.ts' },
+    entry: { index: 'src/index.ts' },
     outDir: 'lib',
     format: ['esm'],
     platform: 'node',
@@ -342,7 +341,10 @@ export default [
   },
   // Official profile channel: bundle id = package name (package.json `name`).
   clientBundle('dsh-better-sidebar', 'client.js'),
-  // Plugin-registry channel: bundle id = manifest id (dsh.plugin.json `id`).
+  // Third-party registry channel: bundle id = the market manifest's id
+  // (dsh.plugin.json). DSH never reads that file — the official profile
+  // channel is the package-name bundle above, declared through
+  // package.json's `dsh.bundle.patch`.
   clientBundle('dsh-external/dsh-better-sidebar', 'client-registry.js'),
   // Lazy chunks: shared by both channels, fetched on first use through the
   // plugin's /sidebar/bundle route (see src/client/chunk-loader.ts).

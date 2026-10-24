@@ -32,16 +32,17 @@ export interface SidebarTab {
   type: TabType
   title: string
   path?: string
+  /** The 1-based line a file reference named (`a/b.c#L131`, `a/b.c:131`).
+   *  Transient by design: `sanitizePersistedTab` copies a whitelist of known
+   *  fields, and this one is deliberately left out — a link's landing line is
+   *  a one-shot navigation target, and a reload that yanked the reader back
+   *  to a line they scrolled away from days ago would be worse than starting
+   *  at the top. Same spirit as `revealed`. */
+  line?: number
   diff?: SidebarDiffRef
   /** Plugin-owned state (v0.12.0+): MUST be JSON-serializable — it is
    *  persisted with the layout and restored verbatim on reload. */
   meta?: unknown
-  /** Pinned-terminal marker (v0.17.0+): a pinned terminal tab survives a
-   *  session switch in its home session's state and surfaces in the
-   *  PinnedRail of every session the scope allows. `homeCwd` is the cwd
-   *  snapshot at pin time — a `workspace`-scoped pin is only visible to
-   *  sessions whose cwd matches it. Absent = unpinned (legacy states). */
-  pin?: { scope: 'workspace' | 'global'; homeCwd?: string }
 }
 
 /** A tab group. */
@@ -67,9 +68,7 @@ export type SplitNode = SidebarLeaf | SidebarSplit
 export interface SidebarState {
   /** The pane receiving newly opened tabs (the last pane the user touched). */
   activePane: string | null
-  /** Monotonic terminal tab counter (ids survive reloads). */
-  nextTerminal: number
-  /** Monotonic browser tab counter (ids survive reloads; mirrors nextTerminal). */
+  /** Monotonic browser tab counter (ids survive reloads). */
   nextBrowser: number
   /** Explorer expansion set (absolute directory paths). */
   expanded: string[]
@@ -79,26 +78,21 @@ export interface SidebarState {
    * unhighlighted.
    */
   revealed: string[]
+  /**
+   * Tab types whose page the reader has not looked at yet: written when a
+   * background activation opens its page WITHOUT taking the column over
+   * (src/client/sidebar/use-host-feeds.ts) and cleared the moment that page
+   * becomes the one on screen. Deliberately NOT transient — it survives the
+   * tab body's unmount, a session switch and a reload, because an unread page
+   * stays unread until it is read.
+   */
+  unread: TabType[]
   /** Whether the bottom panel (the plugin's one workbench) is open. */
   bottomOpen: boolean
   /** The bottom panel's height (clamped to the contract range). */
   bottomHeight: number
-  /**
-   * Whether the bottom panel has been expanded at least once in this
-   * session — the FIRST expansion tries to auto-open a terminal tab (gated
-   * on the bottomPanelAutoTerminal pref); later expansions never do.
-   */
-  bottomOpenedOnce: boolean
   /** The bottom workbench's split tree. */
   bottomSplits: SplitNode
-  /**
-   * Live agent-terminal wait state (uuid → the wait the model currently
-   * blocks on in `terminal_wait_for`), mirrored from the host's
-   * agent-terminals push. Transient by design: sanitizeState never restores
-   * it, so a reload starts clean and the next push (sent immediately on WS
-   * attach) repopulates it.
-   */
-  agentWaits: Record<string, { needle: string; since: number }>
 }
 
 export const TAB_MAX_WIDTH = 160
@@ -167,15 +161,13 @@ export function makeDefaultState(): SidebarState {
   const bottomLeaf: SidebarLeaf = { kind: 'leaf', id: uid('pane'), tabs: [], active: null }
   return {
     activePane: bottomLeaf.id,
-    nextTerminal: 1,
     nextBrowser: 1,
     expanded: [],
     revealed: [],
+    unread: [],
     bottomOpen: false,
     bottomHeight: BOTTOM_DEFAULT,
-    bottomOpenedOnce: false,
     bottomSplits: bottomLeaf,
-    agentWaits: {},
   }
 }
 
@@ -295,23 +287,35 @@ export function moveTabToEdge(
   const source = leafWithTab(node, tabId)
   if (source === undefined) return state
   const tab = source.tabs.find(candidate => candidate.id === tabId)!
-  let emptied = false
-  let splits = mapLeaf(node, source.id, (leaf) => {
-    leaf.tabs = leaf.tabs.filter(candidate => candidate.id !== tabId)
-    if (leaf.active === tabId) leaf.active = leaf.tabs[leaf.tabs.length - 1]?.id ?? null
-    if (leaf.tabs.length === 0) emptied = true
-  })
-  if (emptied) splits = removeLeafAt(splits, source.id)
   if (zone === 'center') {
+    let emptied = false
+    let splits = mapLeaf(node, source.id, (leaf) => {
+      leaf.tabs = leaf.tabs.filter(candidate => candidate.id !== tabId)
+      if (leaf.active === tabId) leaf.active = leaf.tabs[leaf.tabs.length - 1]?.id ?? null
+      if (leaf.tabs.length === 0) emptied = true
+    })
+    if (emptied) splits = removeLeafAt(splits, source.id)
     splits = mapLeaf(splits, toPane, (leaf) => {
       leaf.tabs = [...leaf.tabs, tab]
       leaf.active = tab.id
     })
     return { ...state, bottomSplits: splits, activePane: toPane }
   }
+  // Edge zones split the target pane first, then lift the tab out of its
+  // source pane. Doing it the other way around breaks a self-drop: removing
+  // the tab empties the source leaf and removeLeafAt deletes it from the
+  // tree, so insertLeafAt targets an id that no longer exists and the
+  // dragged tab is silently discarded.
   const dir = zone === 'left' || zone === 'right' ? 'row' : 'col'
-  const result = insertLeafAt(splits, toPane, dir, tab, zone === 'left' || zone === 'up')
-  return { ...state, bottomSplits: result.node, activePane: result.leafId }
+  const inserted = insertLeafAt(node, toPane, dir, tab, zone === 'left' || zone === 'up')
+  let emptied = false
+  let splits = mapLeaf(inserted.node, source.id, (leaf) => {
+    leaf.tabs = leaf.tabs.filter(candidate => candidate.id !== tabId)
+    if (leaf.active === tabId) leaf.active = leaf.tabs[leaf.tabs.length - 1]?.id ?? null
+    if (leaf.tabs.length === 0) emptied = true
+  })
+  if (emptied) splits = removeLeafAt(splits, source.id)
+  return { ...state, bottomSplits: splits, activePane: inserted.leafId }
 }
 
 /**
@@ -356,11 +360,37 @@ export function activateTab(state: SidebarState, paneId: string, tabId: string):
   }
 }
 
+/**
+ * Mark one tab TYPE as having a page the reader has not looked at yet (the
+ * dot drawn on its tab). Identity-preserving when it is already marked, so a
+ * repeat activation does not churn the store (and therefore localStorage).
+ */
+export function markUnread(state: SidebarState, type: TabType): SidebarState {
+  return state.unread.includes(type) ? state : { ...state, unread: [...state.unread, type] }
+}
+
+/** Clear one tab type's unread mark (the reader just looked at its page). */
+export function clearUnread(state: SidebarState, type: TabType): SidebarState {
+  if (!state.unread.includes(type)) return state
+  return { ...state, unread: state.unread.filter(entry => entry !== type) }
+}
+
+/** Whether one tab type is currently marked unread. */
+export function isUnread(state: SidebarState | undefined, type: TabType): boolean {
+  return state !== undefined && state.unread.includes(type)
+}
+
 /** Update the display fields of one open tab (title / path / meta) without
  *  re-opening it. The browser tab persists its current URL and hostname
  *  title through this reducer so a reload restores the visited page. A
  *  missing tab id is a no-op. The tab may live in either tree or a free
- *  window. */
+ *  window.
+ *
+ *  A PATH CHANGE is a new open: the transient landing line (#826) is dropped
+ *  with it. `line` belongs to the navigation that delivered the file, not to
+ *  the tab — an in-place switch or a rename that kept it would send the next
+ *  file to the previous file's line (and force a markdown file into the
+ *  editor, which is how the reader gets stuck). */
 export function patchTab(
   state: SidebarState,
   tabId: string,
@@ -374,6 +404,12 @@ export function patchTab(
       ...(patch.title !== undefined ? { title: patch.title } : {}),
       ...(patch.path !== undefined ? { path: patch.path } : {}),
       ...(patch.meta !== undefined ? { meta: patch.meta } : {}),
+      // Cleared (not merely left alone) so the reader's next file does not
+      // inherit this one's line. Compared against the current value to keep
+      // the object identity when nothing moved.
+      ...(patch.path !== undefined && patch.path !== tab.path && tab.line !== undefined
+        ? { line: undefined }
+        : {}),
     }
   }
   const walk = (node: SplitNode): SplitNode => {
@@ -389,72 +425,10 @@ export function patchTab(
 }
 
 /**
- * Set or clear the pin marker on one open tab (v0.17.0+). A pin marker is
- * structural metadata (NOT display fields like title/path), so it walks
- * the workbench's split tree exactly like {@link patchTab}. Passing `null` clears the pin
- * (the tab stays open in its home session); passing a `{ scope, homeCwd }`
- * object sets it. An unknown tab id is a strict no-op (same reference
- * returned) so a stale pin request never churns the state or rewrites
- * localStorage.
- * @param state - the current per-session sidebar state.
- * @param tabId - the tab to pin/unpin.
- * @param pin - the pin marker to set, or null to clear.
- * @returns the next state (or the same reference when the tab is missing
- *          or the pin marker is already the requested value).
- */
-export function setTabPin(
-  state: SidebarState,
-  tabId: string,
-  pin: { scope: 'workspace' | 'global'; homeCwd?: string } | null,
-): SidebarState {
-  let changed = false
-  const apply = (tab: SidebarTab): SidebarTab => {
-    // Pin is terminal-only (design YAGNI): a defensive guard keeps the
-    // invariant even if a caller accidentally targets a non-terminal tab.
-    if (tab.type !== 'terminal') return tab
-    // Idempotent: setting the same pin (deep-equal on scope + homeCwd) is a
-    // no-op so re-clicking the menu item never churns the state.
-    if (pin === null) {
-      if (tab.pin === undefined) return tab
-    } else if (
-      tab.pin !== undefined
-      && tab.pin.scope === pin.scope
-      && tab.pin.homeCwd === pin.homeCwd
-    ) {
-      return tab
-    }
-    changed = true
-    const { pin: _omit, ...rest } = tab
-    return pin === null ? rest : { ...rest, pin }
-  }
-  const walk = (node: SplitNode): SplitNode => {
-    if (node.kind === 'leaf') {
-      // Find the target tab without rebuilding the whole array: only clone
-      // when the tab is actually here and apply changed it (idempotent
-      // no-ops return the same tab reference, so === holds).
-      const idx = node.tabs.findIndex(tab => tab.id === tabId)
-      if (idx < 0) return node
-      const oldTab = node.tabs[idx]!
-      const newTab = apply(oldTab)
-      if (newTab === oldTab) return node
-      const tabs = node.tabs.slice()
-      tabs[idx] = newTab
-      return { ...node, tabs }
-    }
-    const children = node.children.map(walk)
-    // Only rebuild if at least one child actually changed reference.
-    if (children.every((child, i) => child === node.children[i])) return node
-    return { ...node, children }
-  }
-  const bottomSplits = walk(state.bottomSplits)
-  return changed ? { ...state, bottomSplits } : state
-}
-
-/**
  * Land a tab in the workbench's first pane — the plugin's own opens (its
- * bottom-panel + menu, the auto-terminal, and every open when no native
- * surface is installed): the plugin owns no right column any more (DSH's
- * native sidebar is the right one), so the bottom workbench is the only tree.
+ * bottom-panel + menu, and every open when no native surface is installed):
+ * the plugin owns no right column any more (DSH's native sidebar is the
+ * right one), so the bottom workbench is the only tree.
  * @param state - the session state.
  * @param tab - the tab to land.
  * @returns the next state, with the bottom panel open.
@@ -596,6 +570,33 @@ export function toggleExpanded(state: SidebarState, path: string): SidebarState 
 }
 
 /**
+ * The absolute ancestor directories between the explorer root (`cwd`) and each
+ * given path, EXCLUDING the paths themselves: the levels a lazy tree must have
+ * expanded before those rows can exist. Empty strings and non-strings are
+ * skipped; the result is de-duplicated in first-seen order.
+ * @param cwd - the explorer's root (session working directory).
+ * @param files - absolute paths whose ancestors are wanted.
+ */
+export function ancestorDirs(cwd: string | undefined, files: readonly string[]): string[] {
+  const found = new Set<string>()
+  const rootParts = (cwd ?? '').split(/[\\/]+/).filter(part => part !== '')
+  for (const file of files) {
+    if (typeof file !== 'string' || file === '') continue
+    const parts = file.split(/[\\/]+/).filter(part => part !== '' && part !== '.')
+    const separator = file.includes('\\') ? '\\' : '/'
+    // Keep the original leading separator(s) when rebuilding ancestor dirs:
+    // FileTree matches expansion against ABSOLUTE paths, so dropping the
+    // root (POSIX `/w/src` → `w/src`) or a UNC prefix (`\\server\share`)
+    // would leave every ancestor collapsed and the row unreachable.
+    const prefix = file.startsWith('/') ? '/' : file.startsWith('\\\\') ? '\\\\' : file.startsWith('\\') ? '\\' : ''
+    for (let i = rootParts.length; i < parts.length - 1; i++) {
+      found.add(prefix + parts.slice(0, i + 1).join(separator))
+    }
+  }
+  return [...found]
+}
+
+/**
  * Reveal files in the explorer: expand every ancestor directory between the
  * explorer root and each file (so the lazy tree actually shows the row) and
  * record the paths for highlighting. The reveal set is transient —
@@ -606,25 +607,11 @@ export function toggleExpanded(state: SidebarState, path: string): SidebarState 
  * @returns the next state, or the same reference when nothing is revealed.
  */
 export function revealPaths(state: SidebarState, cwd: string | undefined, files: readonly string[]): SidebarState {
-  const expanded = new Set(state.expanded)
-  const revealed: string[] = []
-  const rootParts = (cwd ?? '').split(/[\\/]+/).filter(part => part !== '')
-  for (const file of files) {
-    if (typeof file !== 'string' || file === '') continue
-    revealed.push(file)
-    const parts = file.split(/[\\/]+/).filter(part => part !== '' && part !== '.')
-    const separator = file.includes('\\') ? '\\' : '/'
-    // Keep the original leading separator(s) when rebuilding ancestor dirs:
-    // FileTree matches expansion against ABSOLUTE paths, so dropping the
-    // root (POSIX `/w/src` �W `w/src`) or a UNC prefix (`\\server\share`)
-    // would leave every ancestor collapsed and the row unreachable.
-    const prefix = file.startsWith('/') ? '/' : file.startsWith('\\\\') ? '\\\\' : file.startsWith('\\') ? '\\' : ''
-    for (let i = rootParts.length; i < parts.length - 1; i++) {
-      expanded.add(prefix + parts.slice(0, i + 1).join(separator))
-    }
-  }
+  const revealed = files.filter(file => typeof file === 'string' && file !== '')
   if (revealed.length === 0) return state
-  return { ...state, expanded: [...expanded], revealed }
+  const expanded = new Set(state.expanded)
+  for (const dir of ancestorDirs(cwd, revealed)) expanded.add(dir)
+  return { ...state, expanded: [...expanded], revealed: [...revealed] }
 }
 
 /** Adjust one split divider: `i` is the left/top child index, delta in fractions. */
@@ -650,129 +637,6 @@ export function resizeSplit(node: SplitNode, splitId: string, index: number, del
 export function resizeSplitIn(state: SidebarState, splitId: string, index: number, delta: number): SidebarState {
   const key = 'bottomSplits'
   return { ...state, [key]: resizeSplit(state[key], splitId, index, delta) }
-}
-
-/** Prefix marking a tab id as an agent-owned terminal (suffix is the uuid). */
-export const AGENT_TAB_PREFIX = 'agent:'
-
-/** Whether a tab id refers to an agent-owned terminal. */
-export function isAgentTabId(tabId: string): boolean {
-  return tabId.startsWith(AGENT_TAB_PREFIX)
-}
-
-/** Extract the agent terminal uuid from an `agent:<uuid>` tab id. */
-export function agentUuidOf(tabId: string): string {
-  return tabId.slice(AGENT_TAB_PREFIX.length)
-}
-
-/** Build the sidebar tab id for one agent terminal uuid. */
-export function agentTabId(uuid: string): string {
-  return `${AGENT_TAB_PREFIX}${uuid}`
-}
-
-/** Shallow equality of two agent-wait maps (same keys, same needle+since). */
-function sameAgentWaits(
-  a: SidebarState['agentWaits'] | undefined,
-  b: Record<string, { needle: string; since: number }>,
-): boolean {
-  if (a === undefined) return Object.keys(b).length === 0
-  const aKeys = Object.keys(a)
-  if (aKeys.length !== Object.keys(b).length) return false
-  for (const key of aKeys) {
-    const av = a[key]
-    const bv = b[key]
-    if (av === undefined || bv === undefined) return false
-    if (av.needle !== bv.needle || av.since !== bv.since) return false
-  }
-  return true
-}
-
-/** Fold the pushed terminal snapshots into the authoritative wait map. */
-function serverWaitsOf(
-  agentTerminals: ReadonlyArray<{ uuid: string; title: string; waiting?: { needle: string; since: number } | null }>,
-): Record<string, { needle: string; since: number }> {
-  const serverWaits: Record<string, { needle: string; since: number }> = {}
-  for (const terminal of agentTerminals) {
-    if (terminal.waiting !== undefined && terminal.waiting !== null) {
-      serverWaits[terminal.uuid] = { needle: terminal.waiting.needle, since: terminal.waiting.since }
-    }
-  }
-  return serverWaits
-}
-
-/**
- * Reconcile the sidebar's agent-terminal tabs with the host's live list.
- * The host pushes the current list of agent terminals (created by the model
- * through the `terminal_create` tool) over a dedicated WebSocket; this
- * reducer mirrors that list into tabs: new uuids get a tab, vanished uuids
- * lose theirs. The agent owns the lifetime — the user closing a tab sends a
- * WS close frame that kills the pty, which fires a change, which converges
- * the view. Idempotent: a no-op when the lists already match.
- * @param state - the current per-session sidebar state.
- * @param agentTerminals - the live agent terminal snapshots from the host.
- * @returns the next state (or the same reference if no change was needed).
- */
-export function reconcileAgentTerminals(
-  state: SidebarState,
-  agentTerminals: ReadonlyArray<{ uuid: string; title: string; waiting?: { needle: string; since: number } | null }>,
-): SidebarState {
-  const existingTabs = allLeaves(state.bottomSplits).flatMap(leaf => leaf.tabs)
-  const existingAgentTabs = existingTabs.filter(tab => isAgentTabId(tab.id))
-  const existingUuids = new Set(existingAgentTabs.map(tab => agentUuidOf(tab.id)))
-  const serverUuids = new Set(agentTerminals.map(t => t.uuid))
-  const toAdd = agentTerminals.filter(t => !existingUuids.has(t.uuid))
-  // Pinned agent terminals (v0.17.0+) are EXEMPT from removal: the agent
-  // closed them or the pty exited, but the user pinned them so the tab
-  // stays as a disconnected surface. The xterm view's reconnect-failure
-  // banner is the user-visible "disconnected" signal (the design's M3
-  // convergence: no title suffix, no meta write — the tab keeps its uuid
-  // so a later reconcile push revives it if the agent reopens the same one).
-  const toRemove = existingAgentTabs.filter(tab => !serverUuids.has(agentUuidOf(tab.id)) && tab.pin === undefined)
-  // Mirror the live wait state from the push (authoritative: a vanished
-  // waiting field simply drops the entry). A waits-only change must still
-  // produce a new state — the tab add/remove no-change check alone would
-  // swallow banner updates.
-  const serverWaits = serverWaitsOf(agentTerminals)
-  if (toAdd.length === 0 && toRemove.length === 0 && sameAgentWaits(state.agentWaits, serverWaits)) return state
-  // Remove tabs whose uuids vanished from the server list (the agent closed
-  // them, or the pty exited and was reaped). Reuse closeTab's leaf cleanup.
-  let bottomSplits = state.bottomSplits
-  for (const tab of toRemove) {
-    const leaf = leafWithTab(bottomSplits, tab.id)
-    if (leaf !== undefined) {
-      bottomSplits = closeTab({ ...state, bottomSplits }, leaf.id, tab.id).bottomSplits
-    }
-  }
-  // Add tabs for new uuids (the agent created a terminal). They land in the
-  // workbench's landing pane via openTabInBottomPane; the next reconcile is a
-  // no-op for them.
-  let next: SidebarState = { ...state, bottomSplits }
-  for (const terminal of toAdd) {
-    const tab: SidebarTab = {
-      id: agentTabId(terminal.uuid),
-      type: 'terminal',
-      title: terminal.title,
-    }
-    next = openTabInBottomPane(next, tab)
-  }
-  return { ...next, agentWaits: serverWaits }
-}
-
-/**
- * Mirror ONLY the authoritative agent-wait map from a push — no tab
- * add/remove reconciliation. Used while the `terminal` tab type is disabled:
- * the tab surface is frozen, but a wait that resolves during that window
- * must still clear its banner state, or a re-enabled terminal keeps a stale
- * banner/⏳ until some unrelated host event fires the next full reconcile.
- * Idempotent: a no-op when the map already matches.
- */
-export function mirrorAgentWaits(
-  state: SidebarState,
-  agentTerminals: ReadonlyArray<{ uuid: string; title: string; waiting?: { needle: string; since: number } | null }>,
-): SidebarState {
-  const serverWaits = serverWaitsOf(agentTerminals)
-  if (sameAgentWaits(state.agentWaits, serverWaits)) return state
-  return { ...state, agentWaits: serverWaits }
 }
 
 // ── The per-session store ──────────────────────────────────────────────────
@@ -855,17 +719,21 @@ function loadState(sessionId: string): SidebarState {
 export function sanitizeState(parsed: unknown): SidebarState | undefined {
   if (parsed === null || typeof parsed !== 'object') return undefined
   const record = parsed as Record<string, unknown>
-  if (typeof record.nextTerminal !== 'number' || !Number.isInteger(record.nextTerminal) || record.nextTerminal < 1) {
-    return undefined
-  }
-  // nextBrowser arrived in a later build; a missing or malformed value on an
-  // OLDER persisted state defaults to 1 so existing layouts keep loading
-  // (unlike nextTerminal, which is strict — it predates the v1 shape).
+  // A missing or malformed counter defaults to 1 rather than rejecting the
+  // whole layout: these counters only name NEW tabs, so restarting one at 1
+  // can at worst reuse a free id, while refusing the state would drop every
+  // open tab of a session that was persisted by an older build.
   const nextBrowser = typeof record.nextBrowser === 'number' && Number.isInteger(record.nextBrowser) && record.nextBrowser >= 1
     ? record.nextBrowser
     : 1
   if (typeof record.activePane !== 'string' && record.activePane !== null) return undefined
   if (!Array.isArray(record.expanded) || record.expanded.some(item => typeof item !== 'string')) return undefined
+  // Unread marks arrived in a later build: like the workbench fields below, a
+  // missing or malformed value on an OLDER persisted state defaults to "none
+  // unread" rather than rejecting the whole layout.
+  const unread = Array.isArray(record.unread)
+    ? (record.unread as unknown[]).filter((item): item is string => typeof item === 'string')
+    : []
   // Pane/split ids must be globally unique (the runtime uid counter is
   // shared), so a duplicate id gets a fresh one.
   const seen = new Set<string>()
@@ -899,20 +767,15 @@ export function sanitizeState(parsed: unknown): SidebarState | undefined {
     // A stale duplicate pane id may have been re-ided; follow the rename so
     // new tabs still land in the pane the user was using.
     activePane,
-    nextTerminal: record.nextTerminal,
     nextBrowser,
     expanded: record.expanded as string[],
     revealed: [],
+    // Restored, unlike `revealed`: an unread page is still unread after a
+    // reload, and this list is what draws its dot.
+    unread: unread,
     bottomOpen,
     bottomHeight,
-    // An older persisted state never expanded the bottom panel (the field
-    // arrived later): defaulting to false gives it the first-expansion
-    // auto-terminal exactly once after the upgrade.
-    bottomOpenedOnce: record.bottomOpenedOnce === true,
     bottomSplits,
-    // The agent wait state is TRANSIENT (like revealed): never restored from
-    // storage — the host's first push after attach repopulates it.
-    agentWaits: {},
   }
 }
 
@@ -980,22 +843,9 @@ function sanitizePersistedTab(tab: unknown): SidebarTab | 'diff' | undefined {
     ...(typeof candidate.path === 'string' ? { path: candidate.path } : {}),
     ...(candidate.meta !== undefined ? { meta: candidate.meta } : {}),
   }
-  // `pin` (v0.17.0+): a pinned-terminal marker. Whitelist-validate the
-  // shape so a hand-edited / corrupted pin never crashes the rail's
-  // resolver: an unknown scope or a non-string homeCwd drops the pin
-  // silently (the tab survives, just unpinned — the legacy behavior).
-  // Pin is terminal-only: a non-terminal tab carrying a persisted pin
-  // (e.g. from a hand-edited state) has it stripped here.
-  const pin = (candidate as Record<string, unknown>).pin
-  if (pin !== null && typeof pin === 'object' && !Array.isArray(pin) && result.type === 'terminal') {
-    const pinRecord = pin as Record<string, unknown>
-    if (pinRecord.scope === 'workspace' || pinRecord.scope === 'global') {
-      const homeCwd = pinRecord.homeCwd
-      result.pin = homeCwd === undefined || typeof homeCwd === 'string'
-        ? { scope: pinRecord.scope, ...(typeof homeCwd === 'string' ? { homeCwd } : {}) }
-        : { scope: pinRecord.scope }
-    }
-  }
+  // A persisted `pin` (the removed pinned-terminal marker) is simply not
+  // copied into the rebuilt tab: only known fields survive, so a stale
+  // layout loads unpinned instead of failing validation.
   return result
 }
 
@@ -1043,6 +893,17 @@ function sanitizeNode(node: unknown, seen: Set<string>, reid: Map<string, string
   return undefined
 }
 
+/**
+ * How many session states stay in memory at once. `bySession` used to grow for
+ * the life of the page — nothing deleted an entry — which under the host's
+ * `keepMounted` tab bodies means one permanent entry per conversation ever
+ * visited. The CURRENT session is always kept; everything else is an LRU of
+ * the most recently touched sessions. Eviction is transparent: the state also
+ * lives in localStorage (a pending debounced write is flushed first), so
+ * switching back to an evicted session reloads exactly what was there.
+ */
+const SESSION_STATE_CAP = 32
+
 /** The session-scoped store: one state per conversation, localStorage-backed. */
 export class SidebarStore {
   private readonly bySession = new Map<string, SidebarState>()
@@ -1055,6 +916,12 @@ export class SidebarStore {
   /** Per-session persist debounce timers (v0.12.0+: one per session, so a
    *  targeted open never cancels another session's pending write). */
   private readonly persistTimers = new Map<string, number>()
+  /**
+   * The `getSessionStates()` answer, rebuilt on the next read after a write.
+   * Callers use the map as a memo input / `useSyncExternalStore` value, so a
+   * fresh copy per call invalidated every downstream memo on each render.
+   */
+  private sessionStatesCache: ReadonlyMap<string, SidebarState> | undefined
   /** User-facing side card prefs seeding brand-new session states (defaults until the settings RPC resolves). */
   private prefs: SidebarPrefs = { ...SIDEBAR_PREFS_DEFAULTS }
   /**
@@ -1101,17 +968,18 @@ export class SidebarStore {
     if (sessionId === undefined) {
       this.snapshot = { sessionId: undefined, state: undefined, prefs: this.prefs }
     } else {
-      let state = this.bySession.get(sessionId)
-      if (state === undefined) {
-        state = loadState(sessionId)
-        this.bySession.set(sessionId, state)
-      } else {
+      const cached = this.bySession.get(sessionId)
+      const state = cached ?? loadState(sessionId)
+      if (cached !== undefined) {
         // Cache hit: another session's load/ops may have left the uid
         // counter below THIS session's persisted ids — re-seed so fresh
         // pane/split ids can never collide with its tree.
         nextIdCounter = maxCounterId(state)
       }
+      // Publish before recording the entry: eviction must never drop the
+      // session that is now current.
       this.snapshot = { sessionId, state, prefs: this.prefs }
+      this.putSession(sessionId, state)
     }
     this.notify()
   }
@@ -1119,6 +987,53 @@ export class SidebarStore {
   subscribe(listener: () => void): () => void {
     this.listeners.add(listener)
     return () => { this.listeners.delete(listener) }
+  }
+
+  /**
+   * Mark one tab type as unread in the CURRENT session (the dot on its tab).
+   *
+   * Reached from the background-activation path alone, so it refuses to
+   * notify when there is nothing to draw: a repeat mark keeps the state
+   * reference AND skips the listener fan-out, which is what lets a test (and
+   * the render path) treat a notification as "the marker really changed".
+   * Returns whether the marker was set.
+   */
+  markUnread(type: TabType): boolean {
+    const state = this.snapshot.state
+    if (state === undefined || state.unread.includes(type)) return false
+    this.reduce(current => markUnread(current, type))
+    return true
+  }
+
+  /**
+   * Clear one tab type's unread mark in a NAMED session — the reader switched
+   * to that page. The current session goes through the publishing path (the
+   * dot has to disappear from the shell AND from the native chip, both of
+   * which read the published snapshot); a session that is not on screen takes
+   * the targeted path, which publishes nothing: its stored state is updated so
+   * the mark is already gone when the reader switches to it.
+   *
+   * `reduceFor` is deliberately not used for the current session: it never
+   * touches the published snapshot, so reading the mark back (or rendering
+   * from it) would keep seeing the old value.
+   *
+   * A type that is not marked is a strict no-op in both paths — no notify, no
+   * persist — so a carrier can call this on every visibility change.
+   * Returns whether a mark was cleared.
+   */
+  clearUnread(type: TabType, sessionId?: string): boolean {
+    const state = this.snapshot.state
+    const target = sessionId ?? this.snapshot.sessionId
+    if (target === undefined) return false
+    if (target === this.snapshot.sessionId) {
+      if (state === undefined || !state.unread.includes(type)) return false
+      this.reduce(current => clearUnread(current, type))
+      return true
+    }
+    const stored = this.bySession.get(target)
+    if (stored === undefined || !stored.unread.includes(type)) return false
+    this.putSession(target, clearUnread(stored, type))
+    return true
   }
 
   getSnapshot(): SidebarSnapshot {
@@ -1132,8 +1047,8 @@ export class SidebarStore {
     if (sessionId === undefined || state === undefined) return
     const draft = structuredClone(state)
     mutator(draft)
-    this.bySession.set(sessionId, draft)
     this.snapshot = { sessionId, state: draft, prefs: this.prefs }
+    this.putSession(sessionId, draft)
     this.schedulePersist(sessionId, draft)
     this.notify()
   }
@@ -1154,16 +1069,32 @@ export class SidebarStore {
   }
 
   /**
-   * Read-only view of EVERY cached session's state (v0.17.0+). The
-   * PinnedRail uses this to collect pinned terminals across sessions
-   * without each render reading private fields. The map is the live
-   * `bySession` reference — callers MUST treat it as read-only (mutations
-   * go through {@link reduce} / {@link reduceFor}). A session that has
-   * never been visited in this run is absent (its pinned tabs are not
-   * visible until first load — accepted as YAGNI by the design).
+   * One session's cached state, or `undefined` when it has never been loaded
+   * in this run (see {@link getSessionStates} for the whole map). The
+   * reference is STABLE while nothing writes that session — the store's state
+   * objects are immutable and replaced wholesale — so a hot reader may use it
+   * as a memo input instead of copying the whole map per render.
+   */
+  getSessionState(sessionId: string): SidebarState | undefined {
+    return this.bySession.get(sessionId)
+  }
+
+  /**
+   * Read-only view of EVERY cached session's state (v0.17.0+): the whole-map
+   * read, for a caller that needs several sessions at once (a per-session
+   * question should use {@link getSessionState} — it does not allocate).
+   * Callers MUST treat the returned map as read-only (mutations go through
+   * {@link reduce} / {@link reduceFor}); it is a cached SNAPSHOT, invalidated
+   * by the next write, so two reads with no write between them return the same
+   * object — a fresh copy per call invalidated every consumer's memo on every
+   * render. A session that has never been visited in this run is absent (its
+   * pinned tabs are not visible until first load — accepted as YAGNI by the
+   * design), and the same is true of a session evicted by the retention cap
+   * ({@link SESSION_STATE_CAP}) until it is loaded again.
    */
   getSessionStates(): ReadonlyMap<string, SidebarState> {
-    return new Map(this.bySession)
+    if (this.sessionStatesCache === undefined) this.sessionStatesCache = new Map(this.bySession)
+    return this.sessionStatesCache
   }
 
   /** Apply a pure reducer (returns the next state). */
@@ -1177,8 +1108,8 @@ export class SidebarStore {
     // patchTab on a missing tab) must not churn the state or rewrite
     // localStorage.
     if (next === state) return
-    this.bySession.set(sessionId, next)
     this.snapshot = { sessionId, state: next, prefs: this.prefs }
+    this.putSession(sessionId, next)
     this.schedulePersist(sessionId, next)
     this.notify()
   }
@@ -1198,11 +1129,9 @@ export class SidebarStore {
     // active session's next mint collision-free — ids minted for the target
     // only need to exceed the target's own max, which the seed guaranteed.
     const counterBefore = nextIdCounter
-    let state = this.bySession.get(sessionId)
-    if (state === undefined) {
-      state = loadState(sessionId)
-      this.bySession.set(sessionId, state)
-    } else {
+    const cached = this.bySession.get(sessionId)
+    const state = cached ?? loadState(sessionId)
+    if (cached !== undefined) {
       // Re-seed the uid counter past THIS session's persisted ids, exactly
       // like setSession's cache-hit path.
       nextIdCounter = maxCounterId(state)
@@ -1211,9 +1140,64 @@ export class SidebarStore {
     // Same-reference result = no change: keep the counter restore (it may
     // have been seeded down) but skip the write.
     nextIdCounter = Math.max(nextIdCounter, counterBefore)
+    if (next === state && cached !== undefined) return
+    // (A freshly loaded target is recorded even when the reducer changed
+    // nothing, exactly like the old `bySession.set` on the load path.)
+    this.putSession(sessionId, next)
     if (next === state) return
-    this.bySession.set(sessionId, next)
     this.schedulePersist(sessionId, next)
+  }
+
+  /**
+   * Record one session's state: refresh its recency and bound the map.
+   * Every write to `bySession` goes through here, so the LRU order and the
+   * `getSessionStates()` snapshot stay in step with the entries.
+   */
+  private putSession(sessionId: string, state: SidebarState): void {
+    // delete + set: an existing key keeps its insertion position otherwise,
+    // and the eviction below drops from the FRONT.
+    this.bySession.delete(sessionId)
+    this.bySession.set(sessionId, state)
+    this.sessionStatesCache = undefined
+    this.evictSessions()
+  }
+
+  /**
+   * Drop the least recently touched sessions beyond {@link SESSION_STATE_CAP}.
+   * The current session is never dropped, and an evicted session's state is
+   * not lost: it lives in localStorage, so the next `setSession` reloads it.
+   */
+  private evictSessions(): void {
+    if (this.bySession.size <= SESSION_STATE_CAP) return
+    for (const id of [...this.bySession.keys()]) {
+      if (this.bySession.size <= SESSION_STATE_CAP) return
+      if (id === this.snapshot.sessionId) continue
+      this.flushPersist(id)
+      this.bySession.delete(id)
+    }
+  }
+
+  /**
+   * Write one session's state NOW instead of waiting for its debounce timer.
+   * Eviction flushes before dropping an entry: the in-memory copy is what the
+   * reader sees until they switch back, and a pending write that landed after
+   * a switch-back would leave the reloaded state behind the storage one.
+   */
+  private flushPersist(sessionId: string): void {
+    const timer = this.persistTimers.get(sessionId)
+    if (timer === undefined) return
+    window.clearTimeout(timer)
+    this.persistTimers.delete(sessionId)
+    const state = this.bySession.get(sessionId)
+    if (state !== undefined) this.writePersisted(sessionId, state)
+  }
+
+  private writePersisted(sessionId: string, state: SidebarState): void {
+    try {
+      localStorage.setItem(`${STORAGE_PREFIX}:${sessionId}`, JSON.stringify(state))
+    } catch {
+      // Storage full or unavailable: layout memory is best-effort.
+    }
   }
 
   private schedulePersist(sessionId: string, state: SidebarState): void {
@@ -1226,17 +1210,36 @@ export class SidebarStore {
     if (existing !== undefined) window.clearTimeout(existing)
     const timer = window.setTimeout(() => {
       this.persistTimers.delete(sessionId)
-      try {
-        localStorage.setItem(`${STORAGE_PREFIX}:${sessionId}`, JSON.stringify(state))
-      } catch {
-        // Storage full or unavailable: layout memory is best-effort.
-      }
+      this.writePersisted(sessionId, state)
     }, 200)
     this.persistTimers.set(sessionId, timer)
   }
 
+  /**
+   * Fan one store change out to every subscribed listener. A throwing
+   * listener is CONTAINED instead of aborting the loop.
+   *
+   * `service.subscribeState` hands this store's own `subscribe` to consumer
+   * plugins, and `notify()` runs inline in whatever call site mutated the
+   * store — `setSession` from the Sidebar's mount effect, `reduce` from a
+   * click handler. An exception escaping here therefore surfaces as a
+   * render/commit-phase error, and the shell's ROOT RenderBoundary swaps the
+   * ENTIRE sidebar for its error strip: one plugin misreading a field this
+   * store no longer carries (0.19.0 dropped the right column's `splits`
+   * tree) takes the panel down for every other plugin and for the user.
+   *
+   * Isolating per listener also keeps the remaining listeners running —
+   * React's own useSyncExternalStore callback shares this loop, so a crash
+   * in one subscriber no longer costs the healthy ones their re-render.
+   */
   private notify(): void {
-    for (const listener of [...this.listeners]) listener()
+    for (const listener of [...this.listeners]) {
+      try {
+        listener()
+      } catch (error) {
+        console.error('[dsh-better-sidebar] store listener error:', error)
+      }
+    }
   }
 }
 

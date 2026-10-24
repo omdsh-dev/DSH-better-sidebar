@@ -17,6 +17,18 @@
  * text and reasoning deltas (DSH 0.1.5 publishes them outside the session
  * log — see assistant-live.ts). The mapping accumulates both per block and
  * supersedes them with the assembled message once it lands (settled rows).
+ *
+ * Failures: a provider/agent error used to end a turn with nothing on screen.
+ * The terminal `turn/end` reason and a failed attempt's embedded finish chunk
+ * both map onto one visible `error` row per turn.
+ *
+ * Deliveries: a `present` call maps onto a compact deliverables card, and the
+ * authoritative `deliverables/presented` event the tool appends attaches to
+ * that card by `callId` — or stands alone when the call row is outside the
+ * events route's head cap. One card per call; a FAILED call replaces its card
+ * with the generic failed tool row. (The host's own `PresentRow` is a status
+ * disclosure row over the call — its delivery cards come from the turn-tail
+ * deliverables, not from the call itself.)
  */
 import type { DiffHunk, ReadBlockLine } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SidebarHistoryEntry } from '../context-types.ts'
@@ -41,16 +53,33 @@ export type SidechatToolCard =
   | { type: 'diff'; diffs: DiffHunk[] }
   | { type: 'read'; label: string; lines: ReadBlockLine[]; totalLines: number; lang?: string }
 
+/** One file a `present` call delivered: its path (absolute from the
+ *  `deliverables/presented` event, session-relative from the call arguments)
+ *  plus the model's own description when it wrote one. */
+export interface SidechatDeliverable {
+  path: string
+  description?: string
+}
+
 /** One compact transcript row rendered in the thread view. `seq` is the
  *  source event's log sequence — stable row identity for React keys across
  *  polls (streaming caches ride the key, so window slides must not re-key
  *  rows). */
 export type SidechatTranscriptRow =
-  | { kind: 'user'; seq: number; text: string }
+  /** `messageId` is the durable message identity the log records on the event
+   *  (`data.id`); the view uses it to dedupe a still-pending inbox row against
+   *  the durable row the claim eventually writes. Older logs may lack it. */
+  | { kind: 'user'; seq: number; text: string; messageId?: string }
   /** A context injection (the side boundary prompt + the parked in-progress
    *  snapshot, or any plugin-sourced context): rendered as one collapsible
    *  row, never as a user bubble. */
   | { kind: 'injection'; seq: number; text: string }
+  /** A provider/agent FAILURE, which used to end a turn silently: either a
+   *  `turn/end` carrying `reason.kind === 'error'` or a failed
+   *  `assistant/attempt` (its stream's terminal `finish` chunk). One row per
+   *  turn — the attempt error and the turn/end that follows it are the same
+   *  failure. */
+  | { kind: 'error'; seq: number; text: string }
   /** `settled` distinguishes an assembled message from a still-streaming
    *  chunk accumulation (streaming rows are superseded by the settle). */
   | { kind: 'assistant'; seq: number; text: string; settled: boolean }
@@ -69,6 +98,13 @@ export type SidechatTranscriptRow =
     /** Structured render payload (host Block atoms); absent = generic row. */
     card?: SidechatToolCard
   }
+  /** One `present` delivery (a compact deliverables card instead of a tool
+   *  row). A `deliverables/presented` event with the same `callId` REPLACES
+   *  the call's arguments copy — one card per call, never two, whichever
+   *  event lands first. An event with no call row in the window (an
+   *  event-only delivery) still gets its own. A FAILED present call delivered
+   *  nothing and renders as the generic failed tool row instead. */
+  | { kind: 'deliverables'; seq: number; callId?: string; files: readonly SidechatDeliverable[] }
   /** One turn's tail metrics, emitted at `turn/end`: the turn's token usage
    *  (aggregated from `assistant/message.usage`) and wall duration (envelope
    *  time delta from `turn/start`), whichever are computable. */
@@ -140,25 +176,37 @@ export function toolArgsSummary(args: string | undefined): string {
   return flatTruncate(args)
 }
 
-/** The plain text of a tool/result message (text blocks inside its
- *  `tool-result` content block). */
-function resultTextOf(data: Record<string, unknown>): string {
-  const message = data.message as { content?: unknown } | undefined
-  const content = message?.content
-  if (!Array.isArray(content)) return ''
-  const parts: string[] = []
+/**
+ * The result content blocks of one tool/result message under BOTH logged
+ * shapes: 0.1.6 wrapped them in a single `type: 'tool-result'` content block
+ * on a user-role message, 0.1.7's first-class tool-role message carries them
+ * at the message's own top level. Historical logs keep the old shape forever,
+ * so both are read. Undefined when the message carries no block array.
+ */
+function resultBlocks(content: unknown): readonly unknown[] | undefined {
+  if (!Array.isArray(content)) return undefined
   for (const block of content) {
     if (block === null || typeof block !== 'object') continue
-    const candidate = block as { type?: unknown; content?: unknown }
-    if (candidate.type !== 'tool-result') continue
-    const inner = candidate.content
-    if (!Array.isArray(inner)) continue
-    for (const item of inner) {
-      if (item === null || typeof item !== 'object') continue
-      const textItem = item as { type?: unknown; text?: unknown }
-      if (textItem.type === 'text' && typeof textItem.text === 'string') {
-        parts.push(textItem.text)
-      }
+    const wrapper = block as { type?: unknown; content?: unknown }
+    if (wrapper.type === 'tool-result' && Array.isArray(wrapper.content)) {
+      return wrapper.content as readonly unknown[]
+    }
+  }
+  return content as readonly unknown[]
+}
+
+/** The plain text of a tool/result message (its text blocks, under either of
+ *  the two shapes {@link resultBlocks} reads). */
+function resultTextOf(data: Record<string, unknown>): string {
+  const message = data.message as { content?: unknown } | undefined
+  const blocks = resultBlocks(message?.content)
+  if (blocks === undefined) return ''
+  const parts: string[] = []
+  for (const item of blocks) {
+    if (item === null || typeof item !== 'object') continue
+    const textItem = item as { type?: unknown; text?: unknown }
+    if (textItem.type === 'text' && typeof textItem.text === 'string') {
+      parts.push(textItem.text)
     }
   }
   return parts.join('\n')
@@ -182,6 +230,43 @@ function parseArgsObject(args: string | undefined): Record<string, unknown> | un
   } catch {
     return undefined
   }
+}
+
+/**
+ * Narrow one delivered-file entry (`{ path, description? }`). The path is
+ * kept verbatim: the card resolves it against the session cwd on click and
+ * through the media route on render, so both the call-arguments spelling
+ * (cwd-relative) and the event spelling (absolute) work unchanged. A
+ * malformed entry declines the whole list: the call-arguments path then falls
+ * back to the generic tool row, while the event path renders no card (an
+ * event carries no call row of its own to fall back to).
+ */
+function deliverableOf(value: unknown): SidechatDeliverable | undefined {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const { path, description } = value as { path?: unknown; description?: unknown }
+  if (typeof path !== 'string' || path.trim() === '') return undefined
+  if (description !== undefined && typeof description !== 'string') return undefined
+  return { path, ...(description !== undefined && description !== '' ? { description } : {}) }
+}
+
+/** The `files` array of a `present` argument object or a
+ *  `deliverables/presented` event, or undefined when the value is not one. */
+function deliverableFiles(value: unknown): SidechatDeliverable[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const files: SidechatDeliverable[] = []
+  for (const entry of value) {
+    const file = deliverableOf(entry)
+    if (file === undefined) return undefined
+    files.push(file)
+  }
+  return files
+}
+
+/** The delivered files of a `present` tool call, or undefined when its
+ *  arguments name none (the call then renders as the generic tool row). */
+function presentCallFiles(args: string | undefined): SidechatDeliverable[] | undefined {
+  const files = deliverableFiles(parseArgsObject(args)?.files)
+  return files !== undefined && files.length > 0 ? files : undefined
 }
 
 /**
@@ -298,13 +383,56 @@ function resultCard(
 }
 
 /**
+ * The human-readable text of one FAILURE reason, or undefined when the reason
+ * is not an error. `turn/end` records the failure as `reason.error.message`
+ * (the agent loop's own shape); an attempt's terminal `finish` chunk carries
+ * the adapter-failure shape `reason.failure.message` (dsh-llm's
+ * `adapterFailureChunk`). Neither present falls back to a plain string
+ * rendering of the reason, so the row is never blank.
+ */
+function failureText(reason: unknown): string | undefined {
+  if (reason === null || typeof reason !== 'object' || Array.isArray(reason)) return undefined
+  const record = reason as Record<string, unknown>
+  if (record.kind !== 'error') return undefined
+  for (const candidate of [record.error, record.failure]) {
+    if (candidate === null || typeof candidate !== 'object') continue
+    const message = (candidate as { message?: unknown }).message
+    if (typeof message === 'string' && message !== '') return message
+  }
+  return String(reason)
+}
+
+/**
+ * The failure that an `assistant/attempt` carries in its durable stream: the
+ * terminal `finish` chunk's `reason`. The record walk mirrors sidechat-core's
+ * `streamTexts` (the same compact `AssistantStreamRecord[]` shape), only
+ * reading the finish reason instead of the text chunks. Undefined when the
+ * attempt ended any other way (`stop`, `max-tokens`, `aborted`, …).
+ */
+function attemptFailure(stream: unknown): string | undefined {
+  if (!Array.isArray(stream)) return undefined
+  for (const record of stream) {
+    if (record === null || typeof record !== 'object') continue
+    const entry = record as { type?: unknown; chunk?: unknown }
+    if (entry.type !== 'chunk') continue
+    const chunk = entry.chunk as { type?: unknown; reason?: unknown } | undefined
+    if (chunk === null || typeof chunk !== 'object' || chunk.type !== 'finish') continue
+    const text = failureText(chunk.reason)
+    if (text !== undefined) return text
+  }
+  return undefined
+}
+
+/**
  * Map a thread child's history rows onto compact transcript rows: the
  * inherited fork seed is cut at the last `session/end-seed`, context
  * injections map onto a collapsible injection row, `assistant/live-chunk`
  * deltas accumulate into streaming rows per (turn, step, block) and are
  * superseded by the assembled `assistant/message`, and tool invocations
  * render one expandable line each (arguments, paired result text, failure
- * marker; a still-executing call is marked until its result lands).
+ * marker; a still-executing call is marked until its result lands). A failed
+ * turn renders exactly one `error` row — the attempt's stream error and the
+ * `turn/end` reason are the same failure.
  * @param entries - history rows (event + host-computed view) in seq order,
  *   the live deltas of the in-flight attempt appended after the durable tail.
  * @returns display rows in log order.
@@ -317,8 +445,16 @@ export function transcriptRows(entries: readonly SidebarHistoryEntry[], prev?: r
   const streamRows = new Map<string, number>()
   /** tool callId → index of its tool row in `rows` (result pairing). */
   const callRows = new Map<string, number>()
+  /** present callId → its deliverables card: the card row's index plus the
+   *  call's raw arguments (a FAILED result needs them to rebuild the generic
+   *  tool row). A `deliverables/presented` event attaches to this card
+   *  instead of appending a second one, in either arrival order. */
+  const presentCalls = new Map<string, { rowIndex: number; args: string | undefined }>()
   /** turn → envelope time of its `turn/start` (turn-tail duration basis). */
   const turnStarts = new Map<number, number>()
+  /** Turns that already rendered a failure row (an attempt error and the
+   *  `turn/end` that follows it are the SAME failure — one row per turn). */
+  const errorTurns = new Set<number>()
   /** turn → usage aggregate: output accumulates across steps, input takes the
    *  last request's prompt size (earlier steps' input is mostly the same
    *  context re-sent, so summing would double-count). */
@@ -337,6 +473,11 @@ export function transcriptRows(entries: readonly SidebarHistoryEntry[], prev?: r
       case 'turn/end': {
         const turn = data.turn
         if (typeof turn !== 'number' || !Number.isInteger(turn)) break
+        const failure = failureText(data.reason)
+        if (failure !== undefined && !errorTurns.has(turn)) {
+          errorTurns.add(turn)
+          rows.push({ kind: 'error', seq: event.seq, text: failure })
+        }
         const start = turnStarts.get(turn)
         turnStarts.delete(turn)
         const usage = turnUsage.get(turn)
@@ -351,8 +492,23 @@ export function transcriptRows(entries: readonly SidebarHistoryEntry[], prev?: r
         })
         break
       }
+      case 'assistant/attempt': {
+        // A failed attempt settles durably WITHOUT a message: the visible
+        // error row is the finish chunk's reason (the turn/end that follows
+        // repeats the same failure and must not render it twice).
+        const turn = data.turn
+        if (typeof turn !== 'number' || !Number.isInteger(turn) || errorTurns.has(turn)) break
+        const failure = attemptFailure(data.stream)
+        if (failure === undefined) break
+        errorTurns.add(turn)
+        rows.push({ kind: 'error', seq: event.seq, text: failure })
+        break
+      }
       case 'user/message': {
         const text = blockText(Array.isArray(data.content) ? data.content : [])
+        // The durable identity the pending-row dedupe keys on (absent on logs
+        // written before the field existed, and on the loose fixtures).
+        const messageId = typeof data.id === 'string' && data.id !== '' ? data.id : undefined
         // Context injections (the boundary prompt + snapshot, plugin-sourced
         // context) collapse into an injection row; genuine user messages —
         // including the FIRST one, which the host now delivers as its own
@@ -367,13 +523,13 @@ export function transcriptRows(entries: readonly SidebarHistoryEntry[], prev?: r
           if (source?.kind === 'user' && text.startsWith(`${SIDE_BOUNDARY_PROMPT}\n\n`)) {
             rows.push({ kind: 'injection', seq: event.seq, text: SIDE_BOUNDARY_PROMPT })
             const body = text.slice(SIDE_BOUNDARY_PROMPT.length + 2)
-            if (body !== '') rows.push({ kind: 'user', seq: event.seq, text: body })
+            if (body !== '') rows.push({ kind: 'user', seq: event.seq, text: body, ...(messageId !== undefined ? { messageId } : {}) })
             break
           }
           rows.push({ kind: 'injection', seq: event.seq, text })
           break
         }
-        rows.push({ kind: 'user', seq: event.seq, text })
+        rows.push({ kind: 'user', seq: event.seq, text, ...(messageId !== undefined ? { messageId } : {}) })
         break
       }
       case 'assistant/live-chunk': {
@@ -440,6 +596,29 @@ export function transcriptRows(entries: readonly SidebarHistoryEntry[], prev?: r
         const callId = data.callId
         const name = typeof data.name === 'string' ? data.name : 'tool'
         const args = typeof data.arguments === 'string' ? data.arguments : undefined
+        // A present call renders as its deliverables card, not a tool row.
+        // Its arguments are the pre-event copy a later deliverables/presented
+        // event refines; when the event already drew the card, keep that card
+        // and record the arguments only for a possible failed result.
+        if (name === 'present') {
+          // Event-first: the deliverables event already drew this call's card
+          // (the event reached the window before the call). The event is
+          // authoritative, so keep its files and only record the arguments a
+          // failed result needs.
+          if (typeof callId === 'string') {
+            const existing = presentCalls.get(callId)
+            if (existing !== undefined) {
+              presentCalls.set(callId, { ...existing, args })
+              break
+            }
+          }
+          const files = presentCallFiles(args)
+          if (files !== undefined) {
+            if (typeof callId === 'string') presentCalls.set(callId, { rowIndex: rows.length, args })
+            rows.push({ kind: 'deliverables', seq: event.seq, ...(typeof callId === 'string' ? { callId } : {}), files })
+            break
+          }
+        }
         const card = callCard(name, args)
         const rowIndex = rows.length
         if (typeof callId === 'string') callRows.set(callId, rowIndex)
@@ -449,9 +628,33 @@ export function transcriptRows(entries: readonly SidebarHistoryEntry[], prev?: r
       case 'tool/result': {
         const source = data.message as { source?: { callId?: unknown } } | undefined
         const callId = typeof source?.source?.callId === 'string' ? source.source.callId : undefined
+        const resultText = resultTextOf(data)
+        // A present call's result is not a row: its deliverables card already
+        // shows what was delivered (and the event supersedes that copy). A
+        // FAILED present delivered nothing, so its card is replaced by the
+        // generic failed tool row the call rendered before the card existed,
+        // and the call stops being associated with a card.
+        const present = callId === undefined ? undefined : presentCalls.get(callId)
+        if (callId !== undefined && present !== undefined) {
+          if (data.error !== undefined) {
+            presentCalls.delete(callId)
+            const card = rows[present.rowIndex]
+            if (card !== undefined && card.kind === 'deliverables') {
+              rows[present.rowIndex] = {
+                kind: 'tool',
+                seq: card.seq,
+                name: 'present',
+                failed: true,
+                ...(present.args !== undefined ? { args: present.args } : {}),
+                ...(resultText !== '' ? { resultText } : {}),
+                executing: false,
+              }
+            }
+          }
+          break
+        }
         const rowIndex = callId === undefined ? undefined : callRows.get(callId)
         const failed = data.error !== undefined
-        const resultText = resultTextOf(data)
         if (rowIndex !== undefined) {
           const row = rows[rowIndex]
           if (row !== undefined && row.kind === 'tool') {
@@ -481,6 +684,25 @@ export function transcriptRows(entries: readonly SidebarHistoryEntry[], prev?: r
         }
         break
       }
+      case 'deliverables/presented': {
+        // The authoritative delivery record (`files[].path` absolute, plus the
+        // model's descriptions). It attaches to its call's card by callId —
+        // one card per call — and stands on its own when the call row is not
+        // in the window (the events route caps the window's head, so this
+        // event can be served without its earlier call).
+        const files = deliverableFiles(data.files)
+        if (files === undefined || files.length === 0) break
+        const callId = typeof data.callId === 'string' ? data.callId : undefined
+        const existing = callId === undefined ? undefined : presentCalls.get(callId)
+        const card = existing === undefined ? undefined : rows[existing.rowIndex]
+        if (existing !== undefined && card !== undefined && card.kind === 'deliverables') {
+          rows[existing.rowIndex] = { ...card, files }
+          break
+        }
+        if (callId !== undefined) presentCalls.set(callId, { rowIndex: rows.length, args: undefined })
+        rows.push({ kind: 'deliverables', seq: event.seq, ...(callId !== undefined ? { callId } : {}), files })
+        break
+      }
       default: {
         break
       }
@@ -494,8 +716,12 @@ export function transcriptRows(entries: readonly SidebarHistoryEntry[], prev?: r
 function rowsEqual(a: SidechatTranscriptRow, b: SidechatTranscriptRow): boolean {
   if (a.kind !== b.kind || a.seq !== b.seq) return false
   switch (a.kind) {
-    case 'user':
-    case 'injection': {
+    case 'user': {
+      const other = b as typeof a
+      return a.text === other.text && a.messageId === other.messageId
+    }
+    case 'injection':
+    case 'error': {
       const other = b as typeof a
       return a.text === other.text
     }
@@ -515,6 +741,14 @@ function rowsEqual(a: SidechatTranscriptRow, b: SidechatTranscriptRow): boolean 
       return a.name === other.name && a.failed === other.failed && a.args === other.args
         && a.resultText === other.resultText && a.executing === other.executing
     }
+    case 'deliverables': {
+      const other = b as typeof a
+      if (a.callId !== other.callId || a.files.length !== other.files.length) return false
+      return a.files.every((file, index) => {
+        const peer = other.files[index]
+        return peer !== undefined && file.path === peer.path && file.description === peer.description
+      })
+    }
     case 'turnSummary': {
       const other = b as typeof a
       return a.inputTokens === other.inputTokens && a.outputTokens === other.outputTokens
@@ -525,7 +759,7 @@ function rowsEqual(a: SidechatTranscriptRow, b: SidechatTranscriptRow): boolean 
 
 /** Re-adopt the PREVIOUS poll's row objects wherever the content is
  *  unchanged (position-aligned, append-mostly): settled rows keep their
- *  object identity across the 2s polls, so React's reconciler and the
+ *  object identity across the transcript pulls, so React's reconciler and the
  *  markdown/DOMPurify caches downstream skip them instead of re-rendering
  *  the whole transcript every poll. Comparing the strings is far cheaper
  *  than what a fresh reference costs the row below. Rows past the first

@@ -53,8 +53,8 @@ const tab: TabDescriptor = {
   single: false,
   dedupeKey: (t: SidebarTab) => t.id,
   createTab: (state: SidebarState) => ({
-    tab: { id: `my-plugin:db:${state.nextTerminal}`, type: 'my-plugin:db', title: 'DB', meta: { n: state.nextTerminal } },
-    patch: { nextTerminal: state.nextTerminal + 1 },
+    tab: { id: `my-plugin:db:${state.nextBrowser}`, type: 'my-plugin:db', title: 'DB', meta: { n: state.nextBrowser } },
+    patch: { nextBrowser: state.nextBrowser + 1 },
   }),
   badge: (ctx, scope, state) => (state.expanded.length > 0 ? state.expanded.length : null),
   onOpen: (tab: SidebarTab, scope: SessionScope) => { void tab; void scope },
@@ -97,8 +97,8 @@ const viewer: FileViewerDescriptor = {
   },
   settings: { pluginToggles: [{ key: 'delimiter', title: 'Delimiter', type: 'text', placeholder: ',' }] },
   component: (props: FileViewerProps) => {
-    const { customData, content, truncated, mediaUrl, viewerId, path, title } = props
-    void customData; void content; void truncated; void mediaUrl; void viewerId; void path; void title
+    const { customData, content, size, largeFile, mediaUrl, viewerId, path, title } = props
+    void customData; void content; void size; void largeFile; void mediaUrl; void viewerId; void path; void title
     return null
   },
 }
@@ -119,6 +119,8 @@ service.subscribe(() => {})
 const seed: OpenTabSeed = { type: 'my-plugin:db', title: 'DB', path: '/p', id: 'x', meta: { a: 1 } }
 service.openTab(seed)
 service.openTab(seed, { sessionId: 's1', cwd: '/p' })
+// `reveal: false` places the tab without focusing it (a background open).
+service.openTab({ ...seed, reveal: false })
 const _version: string = service.version
 service.features.includes('badge')
 const snapshot: SidebarSnapshot | undefined = service.getSnapshot()
@@ -126,6 +128,8 @@ void snapshot
 service.subscribeState(() => {})
 service.updateTab('tab:1', { title: 'T', path: '/p', meta: 1 })
 service.activateTab('tab:1')
+// Retiring the "new page" dot for one session's tab type.
+service.clearUnread('my-plugin:db', 's1')
 service.openFile({ sessionId: 's1', cwd: '/p' }, '/p/a.csv', 'Data')
 
 /** File-icon registration surface (feature `fileIcons`). */

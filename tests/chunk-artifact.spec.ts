@@ -11,13 +11,20 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 // Browser globals first: chunk bodies probe `self`/`document` at evaluation
-// (xterm's UMD wrapper, CodeMirror's UA probe).
+// (CodeMirror's UA probe).
 import './browser-globals.ts'
 import { CHUNK_EXTERNALS } from '../src/client/chunk-loader.ts'
+import { CHUNK_NAMES } from '../src/bundle-route.ts'
 
 const g = globalThis as Record<string, unknown>
 
-const CHUNKS = ['terminal', 'editor', 'mermaid']
+/**
+ * The chunk set, DERIVED from the host route's allowlist — the same registry
+ * `/sidebar/bundle` serves from (src/bundle-route.ts). Never hand-mirrored:
+ * the hand-written list that used to live here drifted (`locale` was
+ * missing), so the locale artifact went unguarded.
+ */
+const CHUNKS = CHUNK_NAMES
 
 /** All chunk artifacts present (tsdown emits the whole lib/ in one run). */
 const chunksBuilt = CHUNKS.every(name => existsSync(`lib/client-${name}.js`))
@@ -44,13 +51,47 @@ describe.skipIf(!chunksBuilt)('built chunk artifacts', () => {
 
   it('each chunk factory materializes through a require over the platform externals', () => {
     const registry = g.__dshChunks__ as Record<string, unknown>
-    const table = new Map<string, unknown>(CHUNK_EXTERNALS.map(spec => [spec, { spec }]))
+    /**
+     * Externals whose members are CALLED while a chunk module is evaluated, so
+     * a bare marker object is not enough. The editor chunk memoizes its JSONL
+     * record row at module scope, which means `react.memo` has to be callable
+     * the moment the factory runs. Everything else stays a marker: the point of
+     * this case is that the REQUIRES resolve, not that a stub behaves like
+     * React.
+     */
+    const callable: Record<string, unknown> = {
+      react: { memo: (component: unknown) => component },
+    }
+    const table = new Map<string, unknown>(CHUNK_EXTERNALS.map(spec => [spec, callable[spec] ?? { spec }]))
     for (const name of CHUNKS) {
       const factory = registry[name] as (require: (spec: string) => unknown) => Record<string, unknown>
       expect(() => factory((spec) => {
         if (!table.has(spec)) throw new Error(`require("${spec}") missed the module table`)
         return table.get(spec)
       }), name).not.toThrow()
+    }
+  })
+
+  /**
+   * The emulator's own DOM contract, present in xterm's runtime source AND in
+   * its stylesheet — either half landing in the core bundle means the lazy
+   * split broke. `@xterm/xterm` alone would be too weak a probe: the package
+   * NAME also shows up in doc comments and locale copy.
+   */
+  const XTERM_MARKER = 'xterm-char-measure-element'
+
+  it('the terminal chunk carries xterm and the core bundles carry none of it', () => {
+    // #774's whole build requirement: several hundred KB of emulator must not
+    // reach startup. The core bundle is what the plugin ships to every page
+    // load, so a static import of src/client/TerminalView.tsx (or of the
+    // xterm stylesheet) from a core module would show up here.
+    const chunk = readFileSync('lib/client-terminal.js', 'utf8')
+    expect(chunk).toContain(XTERM_MARKER)
+    expect(chunk).toContain('@xterm/xterm/lib/xterm.js')
+    for (const file of ['lib/client.js', 'lib/client-registry.js']) {
+      const source = readFileSync(file, 'utf8')
+      expect(source, `${file} must not bundle xterm`).not.toContain(XTERM_MARKER)
+      expect(source, `${file} must not resolve @xterm/xterm`).not.toContain('@xterm/xterm')
     }
   })
 })

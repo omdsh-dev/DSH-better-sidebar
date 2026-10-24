@@ -1,0 +1,219 @@
+/*
+ * The global kit's sheet. Token-only by contract: `tests/theme.spec.ts`
+ * scans every `src/client/**\/*.module.css` and rejects a `color:`
+ * declaration whose value does not dereference a `--dsw-*` / `--ds-*` token.
+ *
+ * Scale (see docs/plans/2026-09-27-files-changes-uiux.md §1): 12px body,
+ * 11px meta, 28px controls, 2/3/4/8px radii — the tasks page's native scale,
+ * which the files and changes pages are being cut to.
+ */
+
+/* ── IconButton ─────────────────────────────────────────────────────────── */
+
+.iconButton {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+  border-radius: 3px;
+}
+
+.iconButtonMd {
+  width: 28px;
+  height: 28px;
+}
+
+.iconButtonSm {
+  width: 24px;
+  height: 24px;
+  border-radius: 3px;
+}
+
+.iconButton:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.iconButton:focus-visible {
+  outline: 2px solid var(--dsw-alias-interactive-bg-hover-accent);
+  outline-offset: -1px;
+}
+
+.iconButton:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.iconButtonActive {
+  color: var(--dsw-alias-state-business-primary);
+}
+
+.iconButtonDanger {
+  color: var(--dsw-alias-state-error-primary);
+}
+
+/* ── Chip ───────────────────────────────────────────────────────────────── */
+
+.chip {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 999px;
+  background: none;
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xxxs-11);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.chip:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.chip:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* Rest / hover / selected are three different pictures: the selected chip
+   keeps a filled accent-tinted surface AND the accent edge, so a hovered
+   neighbour never reads as selected. */
+.chipActive,
+.chipActive:hover {
+  background: var(--dsw-alias-interactive-bg-hover-accent);
+  border-color: var(--dsw-alias-state-business-primary);
+  color: var(--dsw-alias-label-primary);
+}
+
+.chipLabel {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chipCount {
+  color: var(--dsw-alias-label-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.chipActive .chipCount {
+  color: var(--dsw-alias-label-secondary);
+}
+
+/* ── SectionHeader ──────────────────────────────────────────────────────── */
+
+.sectionHeader {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  height: 28px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+  font: var(--dsw-font-xxs-strong-12);
+  color: var(--dsw-alias-label-secondary);
+}
+
+.sectionLabel {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sectionCount {
+  flex: none;
+  font: var(--dsw-font-xxxs-11);
+  font-variant-numeric: tabular-nums;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* The band's one trailing action is pushed to the right edge. */
+.sectionAction {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+}
+
+/* ── Notice ─────────────────────────────────────────────────────────────── */
+
+.notice {
+  box-sizing: border-box;
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-tertiary);
+  white-space: pre-wrap;
+}
+
+.noticeWell {
+  padding: 4px 12px 8px;
+}
+
+.noticePage {
+  padding: 16px;
+  text-align: center;
+}
+
+.noticeInline {
+  padding: 0;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.noticeError {
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.noticeWarn {
+  color: var(--dsw-alias-state-warn-primary);
+}
+
+.noticeHint {
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* ── ConfirmDialog ──────────────────────────────────────────────────────── */
+
+.confirmDesc {
+  margin: 0;
+  font: var(--dsw-font-s-14);
+  color: var(--dsw-alias-label-primary);
+}
+
+.confirmDesc[data-danger='true'] {
+  color: var(--dsw-alias-label-primary);
+}
+
+/* ── StatusBadge ────────────────────────────────────────────────────────── */
+
+.statusBadge {
+  flex: none;
+  padding: 0 4px;
+  border-radius: 2px;
+  font: var(--dsw-font-xxxs-strong-11);
+  font-family: var(--ds-font-family-code, monospace);
+  color: var(--dsw-alias-label-secondary);
+}
+
+.statusBadge[data-tone='modified'] { color: var(--dsw-alias-state-warn-primary); }
+.statusBadge[data-tone='added'] { color: var(--dsw-alias-state-success-primary); }
+.statusBadge[data-tone='untracked'] { color: var(--dsw-alias-state-success-primary); }
+.statusBadge[data-tone='deleted'] { color: var(--dsw-alias-state-error-primary); }
+.statusBadge[data-tone='renamed'] { color: var(--dsw-alias-state-business-primary); }
+.statusBadge[data-tone='conflict'] { color: var(--dsw-alias-state-error-primary); }
+.statusBadge[data-tone='read'] { color: var(--dsw-alias-state-success-primary); }
+.statusBadge[data-tone='write'] { color: var(--dsw-alias-state-business-primary); }
+.statusBadge[data-tone='edit'] { color: var(--dsw-alias-state-warn-primary); }
+.statusBadge[data-tone='neutral'] { color: var(--dsw-alias-label-tertiary); }

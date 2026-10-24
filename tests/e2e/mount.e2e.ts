@@ -13,11 +13,12 @@
  *     plugin's `[data-dsh-better-sidebar]` host mount;
  *  3. asserts the plugin's crash markers never appear (no RenderBoundary /
  *     fail() strips, no `pageerror`, no plugin-prefixed console errors);
- *  4. expands DSH's native right Sidebar, sweeps every built-in tab type
- *     through its guide page (Files / Changes / Tasks / Terminal / Browser) —
- *     including the lazily-fetched terminal chunk — and then opens seeded
- *     files through the Files window's tree (separate mode: each file opens
- *     its own new tab, the seeded home "Files" tab stays the explorer),
+ *  4. expands DSH's native right Sidebar, sweeps every tab type the COMPOSED
+ *     guide offers (the plugin's own Files / Changes / Tasks / Side chat, plus
+ *     whatever the host contributes — its own terminal and browser tab types
+ *     when those packages are mounted) through its guide page, and then opens
+ *     seeded files through the Files window's tree (separate mode: each file
+ *     opens its own new tab, the seeded home "Files" tab stays the explorer),
  *     while response waits armed before goto prove the lazily-fetched editor
  *     chunk (client-editor.js) and the mermaid chunk (client-mermaid.js,
  *     rendered SVG diagram + zoom modal) loaded.
@@ -30,7 +31,7 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, expect, type APIRequestContext } from '@playwright/test'
-import { PAGE_URL, createHostApi, gotoPage, hostRpc, sendFirstMessage, sidebarApi } from './host'
+import { PAGE_URL, createHostApi, dismissOnboarding, gotoPage, hostRpc, sendFirstMessage, sidebarApi } from './host'
 
 /** Workspace the sidebar renders against (created by the lane's seeding). */
 const WORKSPACE_PATH = process.env.DSH_E2E_WORKSPACE ?? join(tmpdir(), 'dsh-e2e-workspace')
@@ -56,8 +57,24 @@ const SEEDED_README_FILE = 'readme-style.md'
  */
 const CRASH_STRIP_PATTERNS = [/^dsh-better-sidebar:/, /^\[dsh-better-sidebar\]/]
 
-/** Built-in tab titles the sweep drives (en-US copy; follows DSH locale). */
-const NATIVE_TABS = ['files', 'git', 'subagent', 'sidechat', 'terminal', 'browser']
+/**
+ * The tab types the plugin itself contributes, plus the host-owned kind the
+ * guide is asserted to still offer.
+ *
+ * `terminal` is DSH's own right-Sidebar type: this plugin deliberately ships
+ * neither terminal nor browser (it used to own both), so the guide must show
+ * exactly ONE `terminal` entry when the host mounts that package — a second
+ * entry would mean the plugin is shadowing the host again.
+ *
+ * `browser` is deliberately NOT in this list and is asserted ABSENT below: DSH
+ * 0.1.7 disables `@deepseek-ai/dsh-client-ui-sidebar-browser` outside the
+ * desktop profile ("Web profiles opt in; Desktop retains sandboxed HTTP(S)
+ * Browser tabs"), and every lane here drives the web profile. Listing it would
+ * demand a guide entry the host itself has stopped offering.
+ */
+const PLUGIN_TABS = ['files', 'git', 'subagent', 'sidechat'] as const
+const HOST_OWNED_TABS = ['terminal'] as const
+const NATIVE_TABS: readonly string[] = [...PLUGIN_TABS, ...HOST_OWNED_TABS]
 
 let api: APIRequestContext
 /** The seeded session id (captured by seedSession; the Side Chat smoke's parent). */
@@ -99,6 +116,7 @@ async function seedSession(): Promise<void> {
     '  <script>alert(1)</script>',
     '</div>',
     '',
+    '<a id="readme-anchor"></a>',
     '## Setup',
     '',
     '[docs link][def]',
@@ -136,6 +154,7 @@ test.beforeAll(async () => {
   api = await createHostApi()
   await seedSession()
 })
+
 
 test.afterAll(async () => {
   await api?.dispose()
@@ -177,38 +196,9 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   expect(hostZ).toBeGreaterThan(20)
   expect(hostZ).toBeLessThan(30)
 
-  // A keyless boot stacks onboarding takeovers that mask the whole shell: a
-  // versioned welcome notice ("Continue", persists its acknowledgement to
-  // settings) and, once that is acknowledged, a provider-config dialog
-  // ("Configure later", session-only — always present while no credential is
-  // configured). Both mount only after the settings join resolves. Wait
-  // (bounded) for one to appear; a DSH build without onboarding proceeds
-  // straight to the sweep.
-  try {
-    await expect
-      .poll(() => page.getByRole('button', { name: /^(Continue|Configure later)$/ }).count(), { timeout: 60_000 })
-      .toBeGreaterThan(0)
-  } catch {
-    console.warn('[e2e] no onboarding takeover appeared; proceeding without dismissal')
-  }
-  // Dismiss whatever takeover is present, in any stacking order, until none
-  // remain — a masked click is retried next round instead of failing.
-  for (let round = 0; round < 8; round++) {
-    let dismissed = false
-    for (const name of ['Continue', 'Configure later']) {
-      const button = page.getByRole('button', { name, exact: true }).first()
-      if ((await button.count()) === 0) continue
-      try {
-        await button.click({ timeout: 4_000 })
-        dismissed = true
-        await page.waitForTimeout(1_000)
-      } catch {
-        // Masked by the takeover stacked above it; the next round tries the
-        // other button first.
-      }
-    }
-    if (!dismissed) break
-  }
+  // A keyless boot stacks onboarding takeovers that mask the whole shell; see
+  // dismissOnboarding.
+  await dismissOnboarding(page)
 
   // The seeded session must give the sidebar a session scope: without it the
   // workbench has no pane to render and the tab sweep is impossible.
@@ -261,7 +251,9 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   // control is registered into DSH's session-header utilities (the header's
   // corner belongs to the native sidebar), and the workbench host itself is
   // mounted. Both are stable addressing surfaces for user CSS / presets.
-  await expect(page.locator('[data-dsh-bottom-toggle]')).toBeAttached({ timeout: 30_000 })
+  // 宿主会为每个保留会话渲染隐藏的会话头副本（rect 仍在）——入口断言看**可见**的那个，
+  // 而不是统计 attached 节点数。
+  await expect(page.locator('[data-dsh-bottom-toggle]:visible').first()).toBeAttached({ timeout: 30_000 })
   await expect(page.locator('[data-dsh-bottom-panel]')).toBeAttached()
 
   // DSH 0.1.5 owns the right column: the plugin contributes tab TYPES to the
@@ -287,8 +279,17 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
     ).toHaveCount(1)
   }
 
+  // The browser kind the plugin handed to the host is NOT offered on a web
+  // profile: DSH 0.1.7 mounts its browser package only for the desktop
+  // profile. Pinned rather than merely omitted, so a future lane that starts
+  // seeing a browser entry learns the host changed its mind.
+  await expect(
+    page.locator('[data-sidebar-right-guide-entry="browser"]'),
+    'the web profile must not offer a browser guide entry at DSH 0.1.7',
+  ).toHaveCount(0)
+
   // Sweep every type through the guide. Each open mounts a real viewer (the
-  // terminal fetches its lazy chunk); a failure anywhere surfaces as a
+  // editor and mermaid chunks arrive lazily); a failure anywhere surfaces as a
   // pageerror or a crash strip, both of which the next assertion sees. A pane
   // holds one guide tab, so re-seed it through the strip's add control before
   // every pick.
@@ -296,7 +297,19 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
     if (await page.locator('[data-sidebar-right-guide]').count() === 0) await addTab.click()
     const entry = page.locator(`[data-sidebar-right-guide-entry="${kind}"]`)
     await expect(entry, `guide entry "${kind}" must be reachable`).toHaveCount(1, { timeout: 30_000 })
+    let changesRequests = 0
+    /** Count the session-event requests the browser actually issues while idle. */
+    const countChangesRequest = (request: { url(): string }): void => {
+      if (request.url().includes('/sidebar/api/changes.ops')) changesRequests += 1
+    }
+    if (kind === 'git') page.on('request', countChangesRequest)
     await entry.click()
+    if (kind === 'git') {
+      await page.locator('[data-dsh-native-tab-host]:visible').getByRole('tab', { name: /^(Session|本轮文件)$/ }).click()
+      await page.waitForTimeout(8_000)
+      page.off('request', countChangesRequest)
+      expect(changesRequests, '空窗 8 秒内应有一次基线请求和一条等待中的增量请求').toBe(2)
+    }
     await page.waitForTimeout(1_500)
     await assertNoCrash()
   }
@@ -304,8 +317,12 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   // The sweep opened the Side Chat type, whose view auto-creates a thread and
   // polls the transcript — that poll MUST ride the plugin's own
   // sidechat.events route (the host transport this lane locks). The poll runs
-  // only while the tab is visible, so activate its chip first.
-  await pane.getByRole('tab', { name: /Side Chat|侧边对话|侧边聊天/ }).first().click()
+  // only while the tab is visible, so activate it first — THROUGH ITS GUIDE
+  // ENTRY, not by chip text: the chip follows the thread's own display title
+  // once the tab keeps its record (the state-retention fix), so `/Side Chat/`
+  // no longer names it.
+  if (await page.locator('[data-sidebar-right-guide]').count() === 0) await addTab.click()
+  await page.locator('[data-sidebar-right-guide-entry="sidechat"]').click()
   await expect
     .poll(
       () => page.evaluate(() =>
@@ -361,7 +378,7 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   const settingsGetBody = (await settingsGet.json()) as { value?: { tabsEnabled?: Record<string, boolean> } }
   const originalTabsEnabled = settingsGetBody.value?.tabsEnabled ?? {}
   /** The types this check switches off (leaving three entries, i.e. ≤4). */
-  const shrunken = ['git', 'subagent', 'terminal'] as const
+  const shrunken = ['git', 'subagent'] as const
   try {
     // Send the FULL map back (the route's patch is key-wise merged, so a
     // full map is correct whether the host merges or replaces).
@@ -419,10 +436,32 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   ).toBe(true)
   const eventsLive = await api.post(sidebarApi('sidechat.events'), { data: { childId } })
   expect(eventsLive.ok(), `sidechat.events (live): ${eventsLive.status()} ${await eventsLive.text()}`).toBe(true)
-  const eventsLiveBody = (await eventsLive.json()) as { ok: boolean; value?: { events?: Array<{ type: string }>; live?: unknown[] } }
+  const eventsLiveBody = (await eventsLive.json()) as { ok: boolean; value?: { events?: Array<{ type: string }>; live?: unknown[]; pending?: unknown[] } }
   expect(eventsLiveBody.ok, `sidechat.events envelope: ${JSON.stringify(eventsLiveBody)}`).toBe(true)
   expect(Array.isArray(eventsLiveBody.value?.events), 'sidechat.events must answer an events array').toBe(true)
   expect(Array.isArray(eventsLiveBody.value?.live), 'sidechat.events must answer a live-delta array').toBe(true)
+  expect(Array.isArray(eventsLiveBody.value?.pending), 'sidechat.events must answer a pending-queue array').toBe(true)
+  // Nothing is queued yet, so the queue is empty and dequeue is a no-op.
+  const dequeueIdle = await api.post(sidebarApi('sidechat.dequeue'), { data: { childId } })
+  expect(dequeueIdle.ok(), `sidechat.dequeue (idle): ${dequeueIdle.status()} ${await dequeueIdle.text()}`).toBe(true)
+  const dequeueIdleBody = (await dequeueIdle.json()) as { value?: { accepted?: boolean; removed?: number } }
+  expect(dequeueIdleBody.value, 'sidechat.dequeue must answer {accepted, removed}').toMatchObject({ accepted: true, removed: 0 })
+  // The per-thread model picker's catalog: the host service is present in the
+  // web profile, so the picker must be able to list groups (its ABSENCE is
+  // also a valid answer — `available: false` — but the shape must hold).
+  const models = await api.post(sidebarApi('sidechat.models'), { data: {} })
+  expect(models.ok(), `sidechat.models: ${models.status()} ${await models.text()}`).toBe(true)
+  const modelsBody = (await models.json()) as { ok: boolean; value?: { available?: boolean; groups?: unknown[] } }
+  expect(modelsBody.value, 'sidechat.models must answer {available, groups}').toMatchObject({ available: expect.any(Boolean) })
+  expect(Array.isArray(modelsBody.value?.groups), 'sidechat.models must answer a groups array').toBe(true)
+  // Model selection validates through the host LLM service: an unroutable
+  // provider is a bad-request, never a silent acceptance.
+  const badModel = await api.post(sidebarApi('sidechat.model'), {
+    data: { childId, provider: 'definitely-not-a-provider', model: 'nope' },
+  })
+  const badModelBody = (await badModel.json()) as { ok: boolean; error?: { code?: string } }
+  expect(badModelBody.ok, 'an unroutable model must be rejected').toBe(false)
+  expect(badModelBody.error?.code, 'the rejection must be a bad-request').toBe('bad-request')
   for (const method of ['sidechat.prompt', 'sidechat.cancel', 'sidechat.dispose']) {
     const response = await api.post(sidebarApi(method), {
       data: method === 'sidechat.prompt' ? { childId, text: 'follow-up' } : { childId },
@@ -433,6 +472,12 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   // PERSISTED log (the cold path a re-opened tab polls).
   const eventsCold = await api.post(sidebarApi('sidechat.events'), { data: { childId } })
   expect(eventsCold.ok(), `sidechat.events (cold): ${eventsCold.status()} ${await eventsCold.text()}`).toBe(true)
+  // A cold thread has no live inbox, so dequeue reports nothing removed
+  // instead of failing (the queue is a runtime object).
+  const dequeueCold = await api.post(sidebarApi('sidechat.dequeue'), { data: { childId, messageId: 'nope' } })
+  expect(dequeueCold.ok(), `sidechat.dequeue (cold): ${dequeueCold.status()} ${await dequeueCold.text()}`).toBe(true)
+  const dequeueColdBody = (await dequeueCold.json()) as { value?: { removed?: number } }
+  expect(dequeueColdBody.value, 'a cold dequeue removes nothing').toMatchObject({ accepted: true, removed: 0 })
 
   // The editor chunk (client-editor.js) only loads when the plugin's files
   // window renders. The plugin took the built-in `files` kind over, so the
@@ -451,6 +496,21 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
     pane.locator('.cm-editor').first(),
     'the plugin editor must render the seeded file inside the native tab',
   ).toBeVisible({ timeout: 30_000 })
+  // Find-in-file (Cmd/Ctrl+F): the plain-text tab is a code viewer with no
+  // edit toggle — the editor is mounted in its "preview" (read-mostly)
+  // surface, which must search too. The extension rides the SHARED base
+  // extension list, so this proves the search panel opens in a real browser
+  // against the lazily-loaded editor chunk (the jsdom spec covers the unit
+  // level). Mod is Cmd on macOS, Ctrl everywhere else.
+  await pane.locator('.cm-content:visible').first().click()
+  await page.keyboard.press(`${process.platform === 'darwin' ? 'Meta' : 'Control'}+f`)
+  const searchPanel = pane.locator('.cm-panels-top .cm-search')
+  await expect(
+    searchPanel,
+    'Cmd/Ctrl+F must open the top-pinned search panel in the code viewer',
+  ).toHaveCount(1, { timeout: 10_000 })
+  await page.keyboard.press('Escape')
+  await expect(searchPanel, 'Escape must close the search panel').toHaveCount(0, { timeout: 10_000 })
   await page.waitForTimeout(1_500)
   await assertNoCrash()
 
@@ -491,6 +551,28 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   const modal = page.locator('[data-mermaid-modal]')
   await pane.locator('[data-mermaid-diagram] svg').first().click()
   await expect(modal, 'clicking the diagram must open the zoom modal').toHaveCount(1, { timeout: 10_000 })
+  // While it is up, the modal is the plugin's OTHER viewport-sized BODY CHILD:
+  // without the app-region reset the shell's blanket `body > :not(#root)`
+  // no-drag makes it cancel every window-drag strip (and the macOS
+  // double-click-title zoom) until it closes — issue #772. Measured against the
+  // SHELL's own darwin rules (present in this page's stylesheet, activated by
+  // the platform attribute) rather than a copy: the modal must compute the
+  // neutral `none`, while its toolbar buttons keep `no-drag` so a click on them
+  // is never a window drag.
+  const modalRegions = await page.evaluate(() => {
+    const previous = document.documentElement.dataset.platform
+    document.documentElement.dataset.platform = 'darwin'
+    const modalElement = document.querySelector('[data-mermaid-modal]')
+    const region = (element: Element | null): string => element === null
+      ? 'missing'
+      : getComputedStyle(element).getPropertyValue('-webkit-app-region').trim()
+    const result = { modal: region(modalElement), button: region(modalElement?.querySelector('button') ?? null) }
+    if (previous === undefined) delete document.documentElement.dataset.platform
+    else document.documentElement.dataset.platform = previous
+    return result
+  })
+  expect(modalRegions.modal, 'the zoom modal must opt out of app-region computation').toBe('none')
+  expect(modalRegions.button, 'its buttons must stay no-drag').toBe('no-drag')
   await page.keyboard.press('Escape')
   await expect(modal, 'Esc must close the zoom modal').toHaveCount(0, { timeout: 10_000 })
   await assertNoCrash()
@@ -519,6 +601,26 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   const details = pane.locator('details')
   await expect(details, 'the details run must render as a real element').toHaveCount(1, { timeout: 30_000 })
   await expect(details.locator('summary'), 'the details summary must render').toHaveCount(1)
+  // Direct child, not merely a descendant: HTML only honors a summary there,
+  // so a block-leaf wrapper in between silently swaps in the UA's own label.
+  await expect(
+    details.locator(':scope > summary'),
+    'the summary must be a direct child of <details>',
+  ).toHaveCount(1)
+  await expect(
+    details.locator(':scope > summary'),
+    'the authored summary text must be the disclosure label',
+  ).toHaveText('Steps')
+  // The bare anchor line: the id must survive as a real anchor, and the stray
+  // `</a>` half of the pair must never be printed as source text.
+  await expect(
+    pane.locator('a#readme-anchor'),
+    'an author anchor must keep its id for deep links',
+  ).toHaveCount(1)
+  await expect(
+    pane.locator('p:has(a#readme-anchor)'),
+    'the stray close tag must not be printed next to its anchor',
+  ).not.toContainText('</a>')
   await expect(
     details.locator('h3', { hasText: 'Inside' }),
     'the heading between the details tags must nest inside the element',
@@ -558,26 +660,156 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   await page.screenshot({ path: 'test-results/mount-final.png' })
 })
 
-test('conservative auto: URL stamps alone never modify the layout; plugin chrome carries the stable data attributes', async ({ page }) => {
+test('the bottom workbench opens the plugin terminal (#774) without shadowing the host terminal', async ({ page }) => {
+  // The bottom terminal is the ONE plugin page that is not a native tab type
+  // (`bottomOnly`): it draws its own xterm against the host's session-scoped
+  // terminal service. Two things must hold at once in a real browser —
+  //  - the tab opens, mounts a real emulator and the chunk is fetched from
+  //    /sidebar/bundle/terminal.js, with no console error or pageerror, and
+  //  - DSH's own right-Sidebar `terminal` capsule is STILL exactly one: the
+  //    plugin must not be shadowing the host again (AGENTS §2).
+  const pageErrors: string[] = []
+  const consoleErrors: string[] = []
+  page.on('pageerror', (error) => pageErrors.push(String(error)))
+  page.on('console', (message) => {
+    if (message.type() === 'error') consoleErrors.push(message.text())
+  })
+
+  const terminalChunk = page.waitForResponse(
+    (response) => response.url().includes('/sidebar/bundle/terminal.js'),
+    { timeout: 120_000 },
+  )
+  await page.goto(PAGE_URL, { waitUntil: 'domcontentloaded' })
+  await expect(page.locator('#root > *')).not.toHaveCount(0, { timeout: 90_000 })
+  const sidebar = page.locator('[data-dsh-better-sidebar]')
+  await expect(sidebar).toBeAttached({ timeout: 90_000 })
+  await dismissOnboarding(page)
+
+  // The seeded session already has content — the header's workbench toggle is
+  // registered into DSH's session-header utilities, which render only for such
+  // a session. Open the native right column FIRST: the guide below is what the
+  // shadowing assertion reads, and the bottom panel anchors itself to the
+  // center column DSH's AppFrame lays out between the two sidebars, so the
+  // column has to be in its settled geometry before the panel measures it.
+  await sendFirstMessage(page)
+  await page.locator('[data-sidebar-right-expand]').first().click()
+  const guide = page.locator('[data-sidebar-right-guide]')
+  await expect(guide).toBeVisible({ timeout: 60_000 })
+  const hostTerminalEntry = page.locator('[data-sidebar-right-guide-entry="terminal"]')
+  await expect(
+    hostTerminalEntry,
+    'the host terminal capsule must exist before the plugin one (baseline)',
+  ).toHaveCount(1, { timeout: 30_000 })
+
+  // The workbench toggle is a TOGGLE, and a session that already shows its
+  // seeded editor tab is open on arrival — clicking unconditionally would
+  // collapse it, and every later query would then measure the slid-off
+  // (translateY(102%)) panel.
+  //
+  // It is also HIDDEN while the host right sidebar is open (the plugin's own
+  // rule: that corner belongs to the host's Split/Fullscreen/Collapse cluster),
+  // so the sidebar opened above must be collapsed again before the toggle can
+  // be clicked at all. Waiting for it while the panel is open was a race the
+  // suite used to win by landing inside the 500 ms re-check window — and lost
+  // on 2026-10-15 (identical commit, one run green and one red).
+  await page.locator('[data-sidebar-right-toggle]').first().click()
+  await expect(
+    page.locator('[data-sidebar-right-expand]').first(),
+    'the right sidebar must be collapsed before the workbench toggle can render',
+  ).toBeVisible({ timeout: 30_000 })
+  const bottomExpand = page.locator('[data-dsh-bottom-toggle]:visible').first()
+  await expect(bottomExpand).toBeAttached({ timeout: 60_000 })
+  if ((await bottomExpand.getAttribute('data-active')) !== 'true') await bottomExpand.click()
+  await expect(bottomExpand, 'the workbench must end up expanded').toHaveAttribute('data-active', 'true', { timeout: 30_000 })
+  // The layout push is the expanded state's own observable: it is 0 while the
+  // workbench is closed (`bottomPushHeight`), so this also proves the panel is
+  // on screen rather than mid-slide.
+  await expect
+    .poll(
+      () => page.evaluate(() => Number.parseFloat(
+        document.documentElement.style.getPropertyValue('--dsh-sidebar-height'),
+      ) || 0),
+      { timeout: 60_000 },
+    )
+    .toBeGreaterThan(0)
+  const bottomPanel = page.locator('[data-dsh-bottom-panel]')
+  await expect(bottomPanel).toBeVisible({ timeout: 30_000 })
+
+  // The workbench's NEW-TAB surface is what must offer the type. An empty pane
+  // renders one card per openable type (`PaneEmptyCards`), fed by the very
+  // same `buildNewTabOptions` list as the + menu — so a `Terminal` card here
+  // is the same registration evidence, and unlike the + button it cannot be
+  // pushed out of the viewport by the strip's own scrollport.
+  const terminalCard = bottomPanel.getByRole('button', { name: 'Terminal', exact: true })
+  await expect(
+    terminalCard,
+    'the bottom workbench must offer the plugin terminal as an openable type',
+  ).toHaveCount(1, { timeout: 30_000 })
+  await terminalCard.click()
+
+  const terminal = bottomPanel.locator('[data-dsh-bottom-terminal]')
+  await expect(terminal, 'the bottom terminal view must mount').toHaveCount(1, { timeout: 30_000 })
+  await expect(
+    terminal.locator('.xterm'),
+    'a real xterm emulator must be attached (the chunk materialized)',
+  ).toHaveCount(1, { timeout: 60_000 })
+  await terminalChunk
+  // The host service is mounted on the web profile, so the view leaves its
+  // pending phases; a PTY the sandbox refuses still ends in a terminal state
+  // (failed/disconnected), which the status line reports rather than crashes.
+  await expect
+    .poll(async () => terminal.getAttribute('data-terminal-state'), { timeout: 60_000 })
+    .not.toBe('unavailable')
+  expect(
+    await terminal.getAttribute('data-terminal-state'),
+    'the terminal must not wedge in a pending phase',
+  ).not.toBe('loading')
+
+  // Shadowing check: the plugin's entry is bottom-only, so the host's own
+  // guide STILL lists exactly one `terminal` capsule — with the plugin's
+  // terminal now open beside it — and never one for `terminal-bottom`.
+  // The sidebar was collapsed to reach the workbench toggle above, so it is
+  // re-opened here: this check IS about the host's guide being intact.
+  await page.locator('[data-sidebar-right-expand]').first().click()
+  await expect(guide).toBeVisible({ timeout: 30_000 })
+  await expect(
+    hostTerminalEntry,
+    'the plugin must not shadow the host terminal',
+  ).toHaveCount(1, { timeout: 30_000 })
+  await expect(
+    page.locator('[data-sidebar-right-guide-entry="terminal-bottom"]'),
+    'a bottom-only type must never take a guide slot',
+  ).toHaveCount(0)
+  await expect(guide).toBeVisible()
+
+  expect(pageErrors, 'pageerrors during the terminal open').toEqual([])
+  expect(
+    consoleErrors.filter((text) => /dsh-better-sidebar|Unhandled/.test(text)),
+    'plugin-prefixed or unhandled console errors during the terminal open',
+  ).toEqual([])
+  await page.screenshot({ path: 'test-results/mount-terminal.png' })
+})
+
+test('a shell-stamped render URL mounts normally; plugin chrome carries the stable data attributes', async ({ page }) => {
   // The official DSH Desktop shell stamps every render URL with
-  // dsh-desktop-mode / dsh-desktop-platform. Under the conservative AUTO
-  // scheme, shell stamps are REPORTS, not geometry: without the standard
-  // Window Controls Overlay API the layout must stay untouched (plain-web
-  // semantics) — the strip/body attribute appear only for real standard
-  // geometry (see the WCO scenario below) or an opt-in preset.
+  // dsh-desktop-mode / dsh-desktop-platform. Those stamps used to drive the
+  // title-bar strip mechanism, which is GONE (the plugin paints no top chrome
+  // and no rule ever read the strip it published): the stamps are now inert
+  // environment reports, and this scenario pins exactly that — a stamped page
+  // mounts the plugin untouched.
   await gotoPage(page, { 'dsh-desktop-mode': 'advanced', 'dsh-desktop-platform': 'win32' })
   await expect(page.locator('[data-dsh-better-sidebar]')).toBeAttached({ timeout: 90_000 })
   await expect(
     page.locator('body[data-dsh-title-bar-compat]'),
-    'stamps alone must NOT auto-enable title-bar compatibility under auto',
+    'nothing may write the retired title-bar attributes any more',
   ).toHaveCount(0)
   await expect
     .poll(() => page.evaluate(() => document.documentElement.style.getPropertyValue('--dsh-title-bar-strip')))
     .toBe('')
-  // The stable addressing surface for presets / custom CSS is mounted: the
-  // plugin's own host (its bottom workbench and the header toggle live in
-  // DSH's session header, which this stamp-only page has no session for —
-  // the native-surface sweep asserts those once a session exists).
+  // The stable addressing surface for custom CSS is mounted: the plugin's own
+  // host (its bottom workbench and the header toggle live in DSH's session
+  // header, which this stamp-only page has no session for — the
+  // native-surface sweep asserts those once a session exists).
   await expect(page.locator('[data-dsh-panel-host]')).toBeAttached()
   // The plugin's interactive chrome opts out of Electron drag regions
   // (issues #103/#111) — inert in plain browsers, present in the bundle
@@ -589,81 +821,68 @@ test('conservative auto: URL stamps alone never modify the layout; plugin chrome
     return false
   })
   expect(hasNoDragRule, 'the bundle must ship the drag-region opt-out rule').toBe(true)
-})
-
-test('standard WCO geometry drives the strip reactively (issue #257)', async ({ page }) => {
-  // The Window Controls Overlay API is the STANDARD signal for shells that
-  // draw the native caption buttons over web content (Electron
-  // `titleBarOverlay`). Mock it with the real API shape: the strip must
-  // follow the reported rect and react to geometrychange (maximize/restore).
-  await page.addInitScript(() => {
-    const rect = { x: 0, y: 0, width: 138, height: 36 }
-    const listeners = new Set<() => void>()
-    Object.defineProperty(navigator, 'windowControlsOverlay', {
-      configurable: true,
-      value: {
-        visible: true,
-        getTitlebarAreaRect: () => ({ ...rect }),
-        addEventListener: (type: string, listener: () => void) => { if (type === 'geometrychange') listeners.add(listener) },
-        removeEventListener: (type: string, listener: () => void) => { if (type === 'geometrychange') listeners.delete(listener) },
-      },
-    })
-    ;(globalThis as { __wcoMock?: { setHeight: (height: number) => void } }).__wcoMock = {
-      setHeight: (height: number) => {
-        rect.height = height
-        for (const listener of listeners) listener()
-      },
-    }
+  // The plugin host is a direct body child, so on macOS it picks up the
+  // shell's blanket `body > :not(#root) { no-drag }` and — because app-region
+  // ignores pointer-events — the viewport-sized layer inside it cancelled every
+  // window-drag strip beneath it (issue #772). A text match only proves the
+  // declaration shipped, so this probe reproduces the SHELL's two darwin rules
+  // verbatim, flips the platform attribute the shell stamps, and reads the
+  // COMPUTED property. Two things to know when reading the expectations below:
+  // the strip itself computes `drag` in every configuration (a fix validated
+  // against the strip alone proves nothing), and `[data-dsh-panel-host]` is NOT
+  // a body child (it lives inside the host), so its own value is pinned by the
+  // unit guard rather than by this probe — see the `layer` expectation.
+  const regions = await page.evaluate(() => {
+    const style = document.createElement('style')
+    style.textContent = [
+      'html[data-platform=darwin] [data-window-drag]{-webkit-app-region:drag}',
+      'html[data-platform=darwin] body>:not(#root){-webkit-app-region:no-drag}',
+    ].join('\n')
+    const strip = document.createElement('div')
+    strip.setAttribute('data-window-drag', '')
+    strip.style.cssText = 'position:fixed;top:0;left:0;right:0;height:8px'
+    const probe = document.createElement('div')
+    document.head.appendChild(style)
+    // INSIDE #root: the shell's real drag strip is a frame child, not a body
+    // child — a body child would be caught by the blanket rule itself (it is
+    // id-bearing, so it outranks the `[data-window-drag]` rule).
+    const root = document.querySelector('#root')
+    ;(root ?? document.body).appendChild(strip)
+    const host = document.querySelector('[data-dsh-better-sidebar]')
+    const layer = document.querySelector('[data-dsh-panel-host]')
+    // This stamp-only page has no session, so the panel host has no child of
+    // its own; `probe` stands in for the workbench panel the same `> *`
+    // selector targets in a real session.
+    layer?.appendChild(probe)
+    const previous = document.documentElement.dataset.platform
+    document.documentElement.dataset.platform = 'darwin'
+    const read = (element: Element | null): string => element === null
+      ? 'missing'
+      : getComputedStyle(element).getPropertyValue('-webkit-app-region').trim()
+    const result = { strip: read(strip), host: read(host), layer: read(layer), layerChild: read(probe) }
+    probe.remove()
+    strip.remove()
+    style.remove()
+    if (previous === undefined) delete document.documentElement.dataset.platform
+    else document.documentElement.dataset.platform = previous
+    return result
   })
-  await page.goto(PAGE_URL, { waitUntil: 'domcontentloaded' })
-  await expect(page.locator('[data-dsh-better-sidebar]')).toBeAttached({ timeout: 90_000 })
-  // Real reported height (36px, not a hardcoded 32) drives the strip.
-  await expect(page.locator('body[data-dsh-title-bar-compat]')).toBeAttached({ timeout: 90_000 })
-  await expect
-    .poll(() => page.evaluate(() => document.documentElement.style.getPropertyValue('--dsh-title-bar-strip')))
-    .toBe('36px')
-  // Maximize → the overlay reports a zero rect → the strip is removed.
-  await page.evaluate(() => (globalThis as { __wcoMock?: { setHeight: (height: number) => void } }).__wcoMock?.setHeight(0))
-  await expect(page.locator('body[data-dsh-title-bar-compat]')).toHaveCount(0)
-  await expect
-    .poll(() => page.evaluate(() => document.documentElement.style.getPropertyValue('--dsh-title-bar-strip')))
-    .toBe('')
-  // Restore → the strip comes back.
-  await page.evaluate(() => (globalThis as { __wcoMock?: { setHeight: (height: number) => void } }).__wcoMock?.setHeight(36))
-  await expect(page.locator('body[data-dsh-title-bar-compat]')).toBeAttached()
+  expect(regions.strip, 'the drag strip itself must keep computing `drag`').toBe('drag')
+  expect(regions.host, 'the plugin host must not take the shell blanket no-drag').toBe('none')
+  // NOT discriminating here, and kept as a regression nail only: the layer is
+  // not a body child, and this engine does not propagate the property into it,
+  // so it reads `none` pre- and post-fix. Its rule is pinned by
+  // tests/panel-host-css.spec.ts; in Electron (#772's CDP reading) the layer
+  // DOES end up no-drag through that propagation.
+  expect(regions.layer, 'the panel layer must keep its own reset').toBe('none')
+  expect(regions.layerChild, 'panels stay no-drag so their controls keep receiving clicks').toBe('no-drag')
 })
 
-test('opt-in shell preset applies its strip when WCO is absent (data-driven, manual)', async ({ request, page }) => {
-  // The anywhere-labs DSH Desktop preset (shell-presets.ts) is OPT-IN: under
-  // the preset scheme the win32 advanced stamp resolves to its 32px fallback
-  // even without the WCO API; auto never does this.
-  const update = await request.post(sidebarApi('settings.update'), {
-    data: { patch: { titleBarScheme: 'preset', titleBarPresetId: 'dsh-desktop', titleBarCompat: true } },
-  })
-  expect(update.ok(), `settings.update: ${update.status()}`).toBe(true)
-  try {
-    await gotoPage(page, { 'dsh-desktop-mode': 'advanced', 'dsh-desktop-platform': 'win32' })
-    await expect(page.locator('[data-dsh-better-sidebar]')).toBeAttached({ timeout: 90_000 })
-    await expect(page.locator('body[data-dsh-title-bar-compat]')).toBeAttached({ timeout: 90_000 })
-    await expect
-      .poll(() => page.evaluate(() => document.documentElement.style.getPropertyValue('--dsh-title-bar-strip')))
-      .toBe('32px')
-    // The v1 anywhere-labs preset is PURE STRIP DATA (no extra CSS — the
-    // injection mechanism is exercised by the custom-scheme test). Assert
-    // the absence explicitly: a future preset that ADDS css would trip
-    // here instead of silently shipping unstyled.
-    await expect(page.locator('style[data-dsh-preset-css]')).toHaveCount(0)
-  } finally {
-    // Restore the shared server state for the lanes after this one.
-    await request.post(sidebarApi('settings.update'), {
-      data: { patch: { titleBarScheme: 'auto', titleBarPresetId: '', customCss: '', titleBarCompat: false } },
-    })
-  }
-})
-
-test('custom scheme injects the user stylesheet live', async ({ request, page }) => {
-  const update = await request.post(sidebarApi('settings.update'), {
-    data: { patch: { titleBarScheme: 'custom', customCss: 'html { --dsh-e2e-marker: 1; }', titleBarCompat: true } },
+test('the custom-CSS escape hatch injects the user stylesheet live', async ({ page }) => {
+  // The one setting the removed scheme row really owned: user-space CSS. It
+  // has no scheme gate any more — a non-empty customCss is always applied.
+  const update = await api.post(sidebarApi('settings.update'), {
+    data: { patch: { customCss: 'html { --dsh-e2e-marker: 1; }' } },
   })
   expect(update.ok(), `settings.update: ${update.status()}`).toBe(true)
   try {
@@ -674,8 +893,6 @@ test('custom scheme injects the user stylesheet live', async ({ request, page })
     const marker = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--dsh-e2e-marker').trim())
     expect(marker).toBe('1')
   } finally {
-    await request.post(sidebarApi('settings.update'), {
-      data: { patch: { titleBarScheme: 'auto', titleBarPresetId: '', customCss: '', titleBarCompat: false } },
-    })
+    await api.post(sidebarApi('settings.update'), { data: { patch: { customCss: '' } } })
   }
 })

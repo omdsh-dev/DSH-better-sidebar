@@ -13,8 +13,8 @@
  *   hardcode: single-instance (`() => type`), per-path (`tab => tab.path`),
  *   and per-id (`tab => tab.id` for diff tabs whose id is change-derived).
  *   `single: true` is sugar for `dedupeKey: () => id`.
- * - `createTab` lets a descriptor own tab instantiation (the terminal
- *   builtin uses it to mint `terminal:<n>` ids and bump `nextTerminal`).
+ * - `createTab` lets a descriptor own tab instantiation (the side chat
+ *   builtin uses it to mint one `sidechat:<threadId>` tab per thread).
  * - `matchFileViewer` walks descriptors in priority order (desc, stable):
  *   per descriptor it tries `detect` first (when `head` bytes are given),
  *   then `exts`; `exts: []` is a catch-all that matches any path.
@@ -27,6 +27,7 @@ import {
   type SidebarSnapshot, type SidebarState, type SidebarStore, type SidebarTab, type TabType,
 } from './state.ts'
 import { baseName, extOf } from './paths.ts'
+import { hostRouteUrl as resolveHostRoute } from './host-route-url.ts'
 import { builtinFileIcon, builtinFolderIcon } from './file-icons.tsx'
 import type { SessionScope } from './api.ts'
 import type { SidebarPrefs } from '../prefs-shared.ts'
@@ -49,7 +50,7 @@ export type { SessionScope } from './api.ts'
 export type { SidebarPrefs } from '../prefs-shared.ts'
 
 /** The row control a declarative setting renders as in the settings popup. */
-export type SidebarSettingToggleType = 'switch' | 'text' | 'number' | 'select'
+export type SidebarSettingToggleType = 'switch' | 'text' | 'number' | 'select' | 'patterns'
 
 /** One option of a `type: 'select'` setting row. */
 export interface SidebarSettingSelectOption {
@@ -74,7 +75,10 @@ export interface SidebarSettingSelectOption {
  *  'text' a free-form input committed on blur/Enter, 'number' a numeric
  *  input clamped to `min`/`max`, 'select' a dropdown over the declared
  *  `options` (single-pick writes the option's value; `multi: true` writes
- *  the array of picked values and defaults to false). */
+ *  the array of picked values and defaults to false), 'patterns' an
+ *  editable string list (chips with a remove button + an add input) that
+ *  commits the whole `string[]` value — the setting key must hold a string
+ *  array (the editor's `explorerExclude` glob list uses it). */
 export interface SidebarSettingToggle {
   /** The SidebarPrefs field this toggle reads and writes ('autoOpenSubagent'). */
   key: string
@@ -90,6 +94,8 @@ export interface SidebarSettingToggle {
   max?: number
   /** Input placeholder for `type: 'text'` rows. */
   placeholder?: string
+  /** Input placeholder for the add input of `type: 'patterns'` rows. */
+  patternsPlaceholder?: string
   /** Unit suffix rendered after the input (e.g. 'px' for a size row). */
   unit?: string
   /** Options of a `type: 'select'` row. */
@@ -180,6 +186,22 @@ export interface TabDescriptor {
   /** Hide from the + menu (the editor tab is opened by file-open, not by the menu). */
   hidden?: boolean
   /**
+   * Bottom-workbench-only type (v0.26.0+): offered in the plugin's OWN bottom
+   * + menu and nowhere else. Without this flag every registered type also
+   * becomes a tab type of DSH's native right Sidebar — a guide capsule plus a
+   * `kind` the host can open — which is wrong for a page that only makes sense
+   * docked under the conversation. (`terminal-bottom` is the case: its host
+   * counterpart is DSH's own right-Sidebar `terminal` type, so a second
+   * capsule titled "Terminal" is exactly the shadowing
+   * `tests/e2e/mount.e2e.ts` pins as absent.)
+   *
+   * Effects: `openTab` forces this type's landing to the bottom workbench
+   * whatever `target` the caller asked for, and the native surface registers
+   * neither a type nor a guide entry for it. `hidden` is unrelated — that one
+   * hides a type from the + menu while keeping its native tab.
+   */
+  bottomOnly?: boolean
+  /**
    * + menu disabled predicate (e.g. terminal at capacity). Receives the
    * session scope and the live sidebar state (counts, expansions).
    */
@@ -201,23 +223,22 @@ export interface TabDescriptor {
   dedupeKey?: (tab: SidebarTab) => string | undefined
   /**
    * Custom tab creation (minting the `SidebarTab` and any state patches).
-   * Return `null` to refuse creation. The terminal builtin uses this to
-   * mint `terminal:<n>` ids and bump `nextTerminal`.
+   * Return `null` to refuse creation. The side chat builtin uses this to mint
+   * one tab per thread and to park a pending thread id in `meta`.
    * When omitted, a default `{ id, type, title }` tab is created.
    */
   createTab?: (state: SidebarState) => { tab: SidebarTab; patch?: Partial<SidebarState> } | null
   /**
    * External-link target claim (v0.13.0+): when a GUI external-link click
-   * is taken over (the `browserInterceptLinks` master AND the URL's
-   * protocol flag — `browserInterceptHttp` / `browserInterceptHttps` —
-   * are on), the first registered tab whose `urlTarget(url)` returns true
-   * is opened with `openTab({ type, url, title: hostname })` — the URL is
-   * the whole payload (the tab reads it from `tab.path`). Registration
+   * is taken over, the first registered tab whose `urlTarget(url)` returns
+   * true is opened with `openTab({ type, url, title: hostname })` — the URL
+   * is the whole payload (the tab reads it from `tab.path`). Registration
    * order wins (first claim first served); a disabled tab type is skipped;
    * a throwing predicate is swallowed (console.error, the type is skipped).
-   * The built-in browser tab declares NO urlTarget — it stays the implicit
-   * fallback target, so plugins can never be shadowed by it. To host more
-   * than one URL at a time, mint per-URL ids through `createTab` (the
+   * A click no type claims is NOT taken over at all: it stays with whoever
+   * rendered the link (DSH 0.1.7's own chat view routes http(s) by the
+   * user's link-opening preference and falls back to a real browser tab).
+   * To host more than one URL at a time, mint per-URL ids through `createTab` (the
    * browser builtin's pattern); otherwise the id safety net focuses the
    * existing tab of the same type and the new URL is not applied.
    */
@@ -236,6 +257,23 @@ export interface TabDescriptor {
    * so keep it cheap; a throw is swallowed (no badge shown).
    */
   badge?: (ctx: Context, scope: SessionScope, state: SidebarState) => string | number | null | undefined
+  /**
+   * Right-aligned action area for the tab strip (v0.25.0+). When the tab is
+   * active, the returned ReactNode renders at the right end of its pane's
+   * tab strip (between the + button and the panel's close control). Lets a
+   * descriptor put its toolbar directly in the strip instead of a separate
+   * header row below it. Returning null/undefined renders nothing at all
+   * (not even an empty wrapper); a throw is swallowed (no actions shown).
+   * Called on every tab-strip render, so keep it cheap.
+   *
+   * `tab` is the open instance this strip is rendering for: with
+   * `single: false` and split panes, several instances of one type can be
+   * open at once and every pane renders its own strip, so toolbar actions
+   * (restart / close / …) must target `tab`, never "the" tab of this type.
+   * `paneId` is that strip's pane (compare with `state.activePane` to tell
+   * whether the pane is the focused one).
+   */
+  rightActions?: (ctx: Context, scope: SessionScope, state: SidebarState, tab: SidebarTab, paneId: string) => ReactNode
   /**
    * Lifecycle callbacks (v0.12.0+). Fired by the SERVICE paths only:
    * `onOpen` when an open actually creates a tab (a dedupe/id-safety-net
@@ -270,9 +308,35 @@ export interface FileViewerProps {
   title: string
   /** The matching descriptor's id (`'code'`, `'my-plugin:csv'`). */
   viewerId: string
-  /** fsRead text content (fetchStrategy='fsRead'). */
+  /** The 1-based line the tab's file reference named, when it carried one
+   *  (`a/b.c#L131`, `a/b.c:131` — see #826). A viewer that renders text
+   *  positions the reader there once, on arrival; every other viewer ignores
+   *  it. Absent on an ordinary open. */
+  line?: number
+  /** The viewer reports that it has APPLIED the `line` it was handed (or that
+   *  the line does not apply to it), and the host stops handing it out: the
+   *  line is one navigation, not a mode of the file. The host has to own that
+   *  memory — a reload remounts the viewer, so a viewer that only remembers
+   *  the line inside itself would receive it again after every refresh (for
+   *  markdown/html that means re-forcing the editor open, and the reader could
+   *  never return to preview). Optional: absent means "keep handing it out". */
+  onLineConsumed?: () => void
+  /** fsRead text content (fetchStrategy='fsRead'). Absent when the file is
+   *  above the editable threshold — see {@link largeFile}. */
   content?: string
-  truncated?: boolean
+  /** The file's size in bytes, as the host measured it for this read. */
+  size?: number
+  /**
+   * Present when the host refused to hand the document over because the file
+   * exceeds the editable threshold. The viewer renders a read-only paged
+   * preview instead of an editor: CodeMirror has to hold the whole document in
+   * the browser, which is exactly what a file this size makes impossible.
+   */
+  largeFile?: { size: number }
+  /** Last-modified time (ms) of the loaded bytes — the built-in text editor's
+   *  save baseline (a file that changed on disk since refuses the write).
+   *  Absent for viewers/loads that carry no baseline. */
+  mtimeMs?: number
   /** mediaUrl for the path (fetchStrategy='mediaUrl'). */
   mediaUrl?: string
   /** custom load() return value (fetchStrategy='custom'). */
@@ -282,21 +346,32 @@ export interface FileViewerProps {
    *  fed through the two callbacks below. Viewers that ignore these fields
    *  render exactly as before. */
   toolbar?: 'self' | 'host'
+  /** Internal: whether this tab is the ACTIVE one with its panel open. Native
+   *  tabs stay mounted while parked, so an over-limit preview must know to
+   *  stop reading pages for a tab nobody is looking at. Absent = visible. */
+  visible?: boolean
   /** Internal: the viewer reports its toolbar state (mode/dirty/save). */
   onToolbarState?: (state: EditorToolbarState) => void
   /** Internal: the viewer registers its toolbar commands on mount (null on
    *  unmount). */
   onToolbarControls?: (controls: EditorToolbarControls | null) => void
+  /** Internal: reload the file from disk (the save-conflict banner's action). */
+  onReload?: () => void
 }
 
 /** The toolbar state a text editor reports to the host's merged-mode header. */
 export interface EditorToolbarState {
-  /** Whether the preview/edit mode toggle applies (markdown/html). */
+  /** Whether the preview/edit mode toggle applies (markdown / html / jsonl). */
   modes: boolean
   mode: 'preview' | 'edit'
   dirty: boolean
-  /** Whether saving applies (text content loaded). */
+  /** Whether saving applies (an editable document was loaded). */
   editable: boolean
+  /** Whether the viewer is showing the read-only paged preview for an
+   *  over-limit file. Nothing can be edited or saved in that state, so the
+   *  header drops the save button and the viewer's own notice carries the
+   *  size and the download escape hatch. */
+  largeFile?: boolean
   saveState: 'idle' | 'saving' | 'saved' | 'failed'
 }
 
@@ -406,6 +481,17 @@ export interface OpenTabSeed {
   path?: string
   /** A diff reference (the diff tab's content seed). */
   diff?: SidebarTab['diff']
+  /**
+   * The 1-based line a file reference named, for the `editor` kind (`#826`).
+   * Transient like the record's own `line`: it rides the open as a navigation
+   * the editor applies once (leaving preview, which renders no source lines)
+   * and the record forgets it right after.
+   *
+   * It is applied on a CREATE and on a native re-navigation; a store-branch
+   * FOCUS of an already-open tab (a host with no native surface) keeps the tab
+   * as it is — the same limitation the `diff` seed has.
+   */
+  line?: SidebarTab['line']
   /** Explicit tab id (defaults to the type). */
   id?: string
   /** A URL the tab navigates to on mount (the browser tab's seed). */
@@ -416,9 +502,26 @@ export interface OpenTabSeed {
    * Where the open lands. `'right'` (the default) is DSH's right Sidebar —
    * the plugin's content is registered there as native tab types; `'bottom'`
    * is the plugin's own bottom workbench. Only the plugin's own flows pass
-   * `'bottom'` (the bottom panel's + menu, the auto-terminal).
+   * `'bottom'` (the bottom panel's + menu, the auto-terminal). A descriptor
+   * declaring `bottomOnly` is forced there whatever this says: it has no
+   * native tab type to land in.
+   *
+   * `'side'` also means the right Sidebar, but it lands in a SECOND pane
+   * there (`preferNewPane`, the host's own split): that is the "open to the
+   * side" action, which must not fall back to the bottom workbench a native
+   * tab never lives in. A path-less editor seed is the file explorer page, so
+   * `'side'` only changes where a path seed lands.
    */
-  target?: 'right' | 'bottom'
+  target?: 'right' | 'bottom' | 'side'
+  /**
+   * Whether the open may FOCUS what it opens (`target: 'right'` only; the
+   * bottom workbench already lands everything in its own pane). Defaults to
+   * true — every consumer-facing open means "show me this". A background
+   * activation passes `false` so the reader's page survives: the host places
+   * the tab without the focus op, and the caller raises the unread dot in its
+   * place (see `src/client/sidebar/use-host-feeds.ts`).
+   */
+  reveal?: boolean
 }
 
 /**
@@ -439,6 +542,28 @@ export interface NativeTabParams {
 }
 
 /**
+ * One native tab that carries a file path, as {@link SidebarSurface.pathTabs}
+ * reports it. The right column's records live in the native adapter and are
+ * invisible to the store, so this is the only handle on its open files.
+ */
+export interface NativePathTab {
+  /** The SEAT session the tab is drawn in (native tab ids restart per session,
+   *  so this is what tells two same-numbered tabs apart). */
+  sessionId: string
+  /** The session the tab's CONTENT belongs to — the `scope.sessionId` its
+   *  editor runs with. */
+  scopeSessionId: string
+  /** That session's workspace root, for resolving `path` when the address
+   *  stored it workspace-relative (a chat link does). */
+  cwd: string | undefined
+  /** The native tab id. */
+  id: string
+  /** The path the tab is bound to — a file path, or a browser tab's address
+   *  (a url seed is stored on the same field). */
+  path: string
+}
+
+/**
  * The plugin's write face over DSH's native right Sidebar.
  *
  * Installed by the client half ({@link ./native/surface.ts}) so the service —
@@ -450,19 +575,39 @@ export interface NativeTabParams {
  */
 export interface SidebarSurface {
   /** Open a page type in one session's native surface. */
-  openTab(input: { sessionId: string; kind: string; params: NativeTabParams; revealIfOpened: boolean }): void
+  openTab(input: { sessionId: string; kind: string; params: NativeTabParams; revealIfOpened: boolean; preferNewPane?: boolean }): void
   /** Open a resource address in one session's native surface. */
-  openResource(input: { sessionId: string; address: string; line?: number; revealIfOpened: boolean }): void
+  openResource(input: { sessionId: string; address: string; line?: number; revealIfOpened: boolean; preferNewPane?: boolean }): void
   /** The file address of one path (the native surface owns the grammar). */
   fileAddress(sessionId: string, cwd: string | undefined, path: string): string
-  /** Close one native tab; the closed record's type/title, or undefined when the id is not native. */
-  close(sessionId: string, tabId: string): { type: string; title: string } | undefined
-  /** Patch a native tab's plugin-side record; false when it is not native. */
-  update(tabId: string, patch: { title?: string; path?: string; meta?: unknown }): boolean
-  /** Focus a native tab; false when it is not native. */
-  activate(tabId: string): boolean
-  /** Whether a tab id belongs to the native surface. */
-  has(tabId: string): boolean
+  /**
+   * The plugin tab type one native tab id belongs to, or undefined when this
+   * session has no such tab. Used to clear the unread dot when an activation
+   * lands on the native surface — the service cannot see the native records
+   * itself, and a tab id is not a type.
+   */
+  tabTypeOf?(sessionId: string, tabId: string): string | undefined
+  /**
+   * Every native tab bound to a path. The file tree's rename/delete
+   * reconciliation walks BOTH tab spaces — the bottom workbench's splits come
+   * from the store, and the right column exists only here. A surface that
+   * cannot enumerate them omits this.
+   */
+  pathTabs?(): NativePathTab[]
+  /** Close one native tab; the closed record's type/title/meta, or undefined when the id is not native. */
+  close(sessionId: string, tabId: string): { type: string; title: string; meta?: unknown } | undefined
+  /**
+   * Patch a native tab's plugin-side record; false when it is not native.
+   * `sessionId` (optional) names the seat session the tab lives in: native tab
+   * ids restart per session and several sessions' tabs are alive at once
+   * (`keepMounted`), so a caller that knows its session should pass it.
+   * Omitted, the id resolves against the mounted seat.
+   */
+  update(tabId: string, patch: { title?: string; path?: string; meta?: unknown }, sessionId?: string): boolean
+  /** Focus a native tab through the host controller; false when it is not native (same `sessionId` rule as `update`). */
+  activate(tabId: string, sessionId?: string): boolean
+  /** Whether a tab id belongs to the native surface (same `sessionId` rule as `update`). */
+  has(tabId: string, sessionId?: string): boolean
 }
 
 /**
@@ -580,8 +725,18 @@ export interface BetterSidebarService {
   getSnapshot(): SidebarSnapshot
   /** Subscribe to snapshot changes (session switch, state changes, prefs changes). Returns the disposer. */
   subscribeState(listener: () => void): () => void
-  /** Update an open tab's display fields (title / path / meta); a missing tab id is a no-op. */
-  updateTab(tabId: string, patch: { title?: string; path?: string; meta?: unknown }): void
+  /**
+   * Update the display fields of one open tab (title / path / meta) without
+   * re-opening it; a missing tab id is a no-op. `sessionId` names the seat
+   * session the tab lives in — native ids restart per session and several
+   * sessions' tabs stay mounted at once, so a component that knows its scope
+   * should pass it; omitted, a native id resolves against the mounted seat.
+   * A **path change is a new open**: the transient landing line a reference
+   * carried (#826) is dropped with it, because that line belongs to the
+   * navigation that delivered the file — an in-place switch or a rename that
+   * kept it would send the next file to the previous file's line.
+   */
+  updateTab(tabId: string, patch: { title?: string; path?: string; meta?: unknown }, sessionId?: string): void
   /**
    * Activate an open tab (the tab-bar activation path; fires
    * descriptor.onActivate). An unknown tab id is a strict no-op. `scope`
@@ -591,10 +746,40 @@ export interface BetterSidebarService {
   /** Open a file in the sidebar editor of `scope`'s session (title defaults to the file name). */
   openFile(scope: SessionScope, path: string, title?: string): void
   /**
+   * Resolve one of the plugin's own host routes (`sidebar/api/fs.read`) into
+   * an absolute URL the page can fetch even when the GUI is served under a
+   * reverse-proxy directory (v0.25.0+; `features` contains 'hostRouteUrl').
+   *
+   * Never build these URLs with a leading slash yourself: that pins the
+   * request to the ORIGIN ROOT, so `/proxy/<port>/sidebar/api/…` leaves the
+   * prefix and 404s (and a desktop shell's `dsh-app://` origin is not
+   * reachable at all). `path` is taken with or without a leading slash.
+   */
+  hostRouteUrl(path: string): string
+  /**
+   * Retire one session's "new page" dot for a tab type — the reader just
+   * looked at that page. A type that is not marked is a strict no-op, so a
+   * carrier can call this on every visibility change without churning the
+   * store.
+   *
+   * The mark itself is raised by the plugin's own background activation; this
+   * is the retirement half a carrier that renders a marked tab needs. The
+   * bottom workbench retires its marks through {@link activateTab} instead
+   * (a click there IS an activation), so the native chip is the caller.
+   */
+  clearUnread(type: TabType, sessionId: string): void
+  /**
    * Install (or clear) the native right-Sidebar write face.
    * @internal Called once by the client half; not part of the consumer API.
    */
   setSurface(surface: SidebarSurface | undefined): void
+  /**
+   * Every native tab bound to a path (empty when no native surface is
+   * installed).
+   * @internal The file tree's rename/delete reconciliation; not part of the
+   * consumer API.
+   */
+  nativePathTabs(): NativePathTab[]
 }
 
 /** The file name of a path (both separators). */
@@ -634,7 +819,7 @@ export function matchUrlTarget(tabs: readonly TabDescriptor[], url: URL): TabDes
  * The plugin version this service instance reports. Keep in lockstep with
  * `package.json`'s version — `tests/service.spec.ts` asserts the pair.
  */
-export const SIDEBAR_SERVICE_VERSION = '0.19.1'
+export const SIDEBAR_SERVICE_VERSION = '0.28.0'
 
 /**
  * Monotonic capability list consumers use to gate new API usage (features
@@ -653,6 +838,10 @@ export const SIDEBAR_SERVICE_VERSION = '0.19.1'
  *   external file-tree icons overriding the built-in glyphs, matched by
  *   extension (`exts`), exact file name (`names`), or directory name
  *   (`folderNames`).
+ * - 'rightActions' (v0.25.0): TabDescriptor.rightActions — the active tab's
+ *   right-aligned action area rendered at the tab strip's right end.
+ * - 'settingPatterns': SidebarSettingToggle type 'patterns' (editable
+ *   string-list row, committed as one string[] value).
  *
  * v0.19.0 REMOVED 'floatWindows': the free-window feature is gone (DSH 0.1.5
  * owns the right column, so the plugin keeps only its bottom workbench).
@@ -670,6 +859,9 @@ export const SIDEBAR_FEATURES = [
   'urlTarget',
   'settingSelect',
   'fileIcons',
+  'rightActions',
+  'settingPatterns',
+  'hostRouteUrl',
 ] as const
 
 /** Run one plugin callback; a throw is logged and never breaks the caller. */
@@ -701,6 +893,20 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
   const subscribe = (listener: () => void): (() => void) => {
     listeners.add(listener)
     return () => { listeners.delete(listener) }
+  }
+
+  /**
+   * Retire one session's unread mark for a tab type. The argument ORDER is
+   * the service's own `(type, sessionId)` — this is the implementation of
+   * {@link BetterSidebarService.clearUnread} and takes its parameter list
+   * verbatim, so the facade cannot silently swap them.
+   *
+   * Named-session aware on purpose (see {@link SidebarStore.clearUnread}): the
+   * current session publishes the change so both carriers re-render, while a
+   * session that is not on screen is updated in place without waking the shell.
+   */
+  const clearUnreadFor = (type: TabType, sessionId: string): void => {
+    store.clearUnread(type, sessionId)
   }
 
   const registerTab = (descriptor: TabDescriptor): (() => void) => {
@@ -891,7 +1097,8 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
     const callbackScope: SessionScope = scope ?? { sessionId: targetSessionId }
     // ── Native right Sidebar ──────────────────────────────────────────────
     // With the native surface installed, every open except an explicit
-    // bottom-panel one lands there. The path seed's meaning depends on the
+    // bottom-panel one — and except a `bottomOnly` type, which has no native
+    // tab at all — lands there. The path seed's meaning depends on the
     // type: `editor` is the only kind registered with
     // `dsh-resource://file/**` patterns (src/client/native/index.ts), so its
     // path seeds become resource addresses (the native registry routes the
@@ -900,7 +1107,13 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
     // component state, not a file to open — and rides the seed (path
     // included) as navigation params, which the tab adapter merges onto the
     // synthetic record's `tab.path` for the registered component.
-    if (surface !== undefined && seed.target !== 'bottom') {
+    if (surface !== undefined && seed.target !== 'bottom' && descriptor.bottomOnly !== true) {
+      // "Open to the side" asks the host for a NEW pane instead of reusing
+      // the pane the acting tab lives in. `revealIfOpened: false` permits a
+      // duplicate of an already-open resource, so the split really happens
+      // (the host's `preferNewPane` falls back to the target pane when no
+      // split is available — that fallback is the host's rule, not ours).
+      const side = seed.target === 'side'
       const state = store.getSnapshot().state
       // The descriptor's own factory mints what a view needs beyond the seed:
       // the side chat's thread bootstrap / reattach meta, the terminal's
@@ -914,24 +1127,47 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
       // Multi-instance kinds (terminal / browser / side chat / diff) mint a
       // fresh tab per open; single-instance kinds focus the existing one.
       const revealIfOpened = descriptor.createTab === undefined
+      // Whether this open may FOCUS what it lands on. `target: 'side'` never
+      // does (it is a split beside the reader's page), and a background
+      // activation asks for the same without the split (`reveal: false`),
+      // which is what keeps a gated auto-open from taking the column over.
+      const reveal = seed.reveal !== false && !side
+      // A url seed lands on `path`: the browser tab reads its address from
+      // there and persists navigations back to the same field
+      // (BrowserView's `persist`), so dropping the seed left an opened tab
+      // with an empty address bar. `path` means the file to open only for
+      // `editor`, which never carries a url seed.
+      const componentPath = seed.path ?? seed.url
       const synthetic: SidebarTab = {
         id: seed.id ?? minted?.tab.id ?? seed.type,
         type: seed.type,
         title,
-        ...(seed.path === undefined ? {} : { path: seed.path }),
+        ...(componentPath === undefined ? {} : { path: componentPath }),
         ...(seed.diff === undefined ? {} : { diff: seed.diff }),
+        ...(seed.line === undefined ? {} : { line: seed.line }),
         ...(seed.meta === undefined && minted?.tab.meta === undefined ? {} : { meta: seed.meta ?? minted?.tab.meta }),
       }
       if (seed.type === 'editor') {
         if (seed.path !== undefined) {
+          // No `kind` is named on the resource open: the HOST's tab registry
+          // decides the claiming type (#695), so a third-party type with a
+          // more specific pattern (a `.drawio` canvas at `extension` priority)
+          // receives the file and the plugin's editor only takes what nobody
+          // else claims. `claim()` throws when nothing recognizes the address;
+          // the editor's `dsh-resource://file/**` plus the built-in previews
+          // cover every file address in practice.
           surface.openResource({
             sessionId: targetSessionId,
             address: surface.fileAddress(targetSessionId, scope?.cwd, seed.path),
-            revealIfOpened: true,
+            revealIfOpened: reveal,
+            // The reference's landing line, when the open came from one
+            // (`a.c#L131` — #826). Transient: the record spends it on arrival.
+            ...(seed.line === undefined ? {} : { line: seed.line }),
+            ...(side ? { preferNewPane: true } : {}),
           })
         } else {
           // The path-less editor window IS the file explorer.
-          surface.openTab({ sessionId: targetSessionId, kind: 'files', params: {}, revealIfOpened: true })
+          surface.openTab({ sessionId: targetSessionId, kind: 'files', params: {}, revealIfOpened: reveal })
         }
       } else {
         // A component type's path seed stays on the page open (regression
@@ -947,7 +1183,8 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
             ...(seed.diff === undefined ? {} : { diff: seed.diff }),
             ...(synthetic.meta === undefined ? {} : { meta: synthetic.meta }),
           },
-          revealIfOpened,
+          revealIfOpened: reveal && revealIfOpened,
+          ...(side ? { preferNewPane: true } : {}),
         })
       }
       // The native surface reports one open event, not create-vs-focus, so a
@@ -969,7 +1206,7 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
     // native sidebar owns the right column).
     const land = openTabInBottomPane
     const reducer = (state: SidebarState): SidebarState => {
-      // Let the descriptor mint the tab (terminal's nextTerminal bump, etc.).
+      // Let the descriptor mint the tab (and any state patch it owns).
       let tab: SidebarTab
       let next: SidebarState
       if (descriptor.createTab !== undefined) {
@@ -987,6 +1224,9 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
           title: seed.title ?? (typeof descriptor.title === 'function' ? descriptor.title() : descriptor.title),
           ...(seed.path !== undefined ? { path: seed.path } : {}),
           ...(seed.diff !== undefined ? { diff: seed.diff } : {}),
+          // The landing line, when this open came from a file reference
+          // (`a.c#L131` — #826); the editor spends it on arrival.
+          ...(seed.line !== undefined ? { line: seed.line } : {}),
           ...(seed.meta !== undefined ? { meta: seed.meta } : {}),
         }
         next = applyDedupe(state, tab, descriptor, land)
@@ -1058,7 +1298,12 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
         const descriptor = tabs.get(closedNative.type)
         if (descriptor !== undefined) {
           safeCall(() => descriptor.onClose?.(
-            { id: tabId, type: closedNative.type as TabType, title: closedNative.title },
+            {
+              id: tabId,
+              type: closedNative.type as TabType,
+              title: closedNative.title,
+              ...(closedNative.meta === undefined ? {} : { meta: closedNative.meta }),
+            },
             scope ?? { sessionId },
           ))
         }
@@ -1092,8 +1337,12 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
   const subscribeState = (listener: () => void): (() => void) => store.subscribe(listener)
 
   /** Patch an open tab's display fields (a missing tab id is a no-op). */
-  const updateTab = (tabId: string, patch: { title?: string; path?: string; meta?: unknown }): void => {
-    if (surface?.update(tabId, patch) === true) return
+  const updateTab = (
+    tabId: string,
+    patch: { title?: string; path?: string; meta?: unknown },
+    sessionId?: string,
+  ): void => {
+    if (surface?.update(tabId, patch, sessionId) === true) return
     store.reduce((state) => patchTab(state, tabId, {
       ...(patch.title !== undefined ? { title: patch.title } : {}),
       ...(patch.path !== undefined ? { path: patch.path } : {}),
@@ -1103,7 +1352,19 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
 
   /** Activate an open tab (the tab-bar activation path; fires onActivate). */
   const activateTab = (tabId: string, scope?: SessionScope): void => {
-    if (surface?.activate(tabId) === true) return
+    // Activating a tab is the reader LOOKING at that page, so it retires the
+    // unread dot wherever the tab lives. Resolved before the activation
+    // because the native branch below returns early: the record (and therefore
+    // the type) is dropped when the tab unmounts. Nothing is marked unread in
+    // the target session by a cross-session activation (the service's own
+    // background triggers mark the session they are actually running for), so
+    // an unknown type clears nothing.
+    const activatedSessionId = scope?.sessionId ?? store.getSnapshot().sessionId
+    if (activatedSessionId !== undefined) {
+      const type = surface?.tabTypeOf?.(activatedSessionId, tabId)
+      if (type !== undefined) clearUnreadFor(type, activatedSessionId)
+    }
+    if (surface?.activate(tabId, scope?.sessionId) === true) return
     let activated: SidebarTab | undefined
     store.reduce((state) => {
       // Unknown tab ids are a strict no-op (no state churn / notify).
@@ -1116,6 +1377,7 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
     if (activated !== undefined) {
       const sessionId = scope?.sessionId ?? store.getSnapshot().sessionId
       if (sessionId !== undefined) {
+        clearUnreadFor(activated.type, sessionId)
         const descriptor = tabs.get(activated.type)
         // An explicit scope (with its optional cwd) rides to the callback.
         safeCall(() => descriptor?.onActivate?.(activated!, scope ?? { sessionId }))
@@ -1125,7 +1387,15 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
 
   /** Open a file in the sidebar editor of `scope`'s session (title defaults
    *  to the file name; the tab id is path-derived, like the internal
-   *  open-path interception, so distinct files open side by side). */
+   *  open-path interception, so distinct files open side by side).
+   *
+   *  The `editor` seed does NOT hard-code the winner (#695): with the native
+   *  surface installed, `openTab`'s native branch turns the path seed into a
+   *  resource address and the HOST's tab registry decides the claiming type —
+   *  a third-party type registered with a more specific pattern (a `.drawio`
+   *  canvas, say) renders its own tab, and the plugin's editor only takes
+   *  files nobody else claims. (This module holds no ctx, so the probe used
+   *  by the tree's own carriers lives in sidebar-file.ts instead.) */
   const openFile = (scope: SessionScope, path: string, title?: string): void => {
     openTab({ type: 'editor', title: title ?? baseNameOf(path), path, id: `editor:${path}` }, scope)
   }
@@ -1155,7 +1425,10 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
     updateTab,
     activateTab,
     openFile,
+    hostRouteUrl: (path: string): string => resolveHostRoute(path).href,
     setSurface: (next: SidebarSurface | undefined) => { surface = next },
+    nativePathTabs: () => surface?.pathTabs?.() ?? [],
+    clearUnread: clearUnreadFor,
   }
 }
 

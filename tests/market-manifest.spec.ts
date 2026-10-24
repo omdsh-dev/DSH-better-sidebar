@@ -22,11 +22,12 @@
  * script rebuilds the gitignored lib/, like the release flow does).
  */
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
+import { removeTree } from './temp-tree.ts'
 
 const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)))
 
@@ -63,7 +64,7 @@ function packedManifest(): Record<string, unknown> {
     execFileSync('tar', ['-xzf', `${pkg.name}-${pkg.version}.tgz`, 'package/package.json'], { cwd: dir, stdio: 'pipe' })
     return JSON.parse(readFileSync(join(dir, 'package/package.json'), 'utf8')) as Record<string, unknown>
   } finally {
-    rmSync(dir, { recursive: true, force: true })
+    removeTree(dir)
   }
 }
 
@@ -113,5 +114,35 @@ describe('DSH community-market manifest compatibility', () => {
 
   it('declares an exact SemVer version (no range or tag; prerelease allowed for the alpha track)', () => {
     expect(pkg.version).toMatch(EXACT_SEMVER)
+  })
+
+  it('keeps every DSH peer a floating range the host runtime can satisfy', () => {
+    // DSH 0.1.7-rc.1 added a startup compatibility preflight
+    // (packages/boot/app-boot/src/plugin-compatibility.ts): for every peer
+    // named `@deepseek-ai/dsh` or `@deepseek-ai/dsh-*`, the host evaluates
+    // `semver.satisfies(runtimeVersion, range, { includePrerelease: true })`
+    // and DISABLES the whole profile row when it fails — one stderr line in a
+    // log nobody reads, no dialog, and `peerDependenciesMeta.optional` grants
+    // no exemption. An exact pin (the style devDependencies use) or a
+    // comparator carrying no prerelease (`^0.2.0`) would therefore make the
+    // plugin silently stop loading, so the published ranges must stay carets
+    // on the baseline tuple. `pnpm peers check` cannot see this: it validates
+    // the resolved dev tree, not the range shape a host will read.
+    //
+    // A caret NEVER spans a minor bump, even with `includePrerelease` on:
+    // `^0.1.7-rc.1` expands to `>=0.1.7-rc.1 <0.2.0-0`, so it rejects
+    // `0.2.0-rc.2` (measured: false) and a 0.2.0 host would disable the row
+    // instead of loading the plugin. The support line therefore moves WITH the
+    // baseline and is never widened to "cover both lines". (An explicit
+    // comparator behaves differently — `>=0.1.1-rc.2 <0.2.0` does admit
+    // `0.2.0-rc.2`, because only carets get the `-0` upper bound — which is why
+    // the assertion below pins the baseline tuple instead of accepting any
+    // caret that looks plausible.)
+    const peers = pkg.peerDependencies ?? {}
+    const dshPeers = Object.keys(peers).filter(name => name === '@deepseek-ai/dsh' || name.startsWith('@deepseek-ai/dsh-'))
+    expect(dshPeers.length).toBeGreaterThan(10)
+    for (const name of dshPeers) {
+      expect(peers[name], name).toMatch(/^\^0\.2\.1-rc\.1$/)
+    }
   })
 })

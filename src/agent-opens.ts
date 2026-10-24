@@ -50,6 +50,15 @@ export interface AgentOpenRequest {
 type Sender = (request: AgentOpenRequest) => void
 
 /**
+ * Cap on one session's queue of un-delivered opens. A session whose sidebar is
+ * never shown (a long unattended run that keeps opening files) would otherwise
+ * grow this array for the lifetime of the host process; past the cap the OLDEST
+ * queued opens are dropped, so the newest intent survives and the order of what
+ * remains is still FIFO.
+ */
+const AGENT_OPEN_QUEUE_MAX = 64
+
+/**
  * Per-session queue of open requests plus the connected sidebar views.
  *
  * Lifecycle: `enqueue` adds a request and — when at least one view for the
@@ -70,6 +79,8 @@ export class AgentOpenRegistry {
     const request: AgentOpenRequest = { id: randomUUID(), sessionId, kind, target, title }
     const list = this.pending.get(sessionId) ?? []
     list.push(request)
+    // Bounded per-session queue: drop the OLDEST queued opens past the cap.
+    if (list.length > AGENT_OPEN_QUEUE_MAX) list.splice(0, list.length - AGENT_OPEN_QUEUE_MAX)
     this.pending.set(sessionId, list)
     const views = this.subscribers.get(sessionId)
     if (views !== undefined && views.size > 0) {

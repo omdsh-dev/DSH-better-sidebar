@@ -1,12 +1,16 @@
 /**
- * Changes tab session-lens data layer: event-log folding into file
- * operations, plus a sanity pass over the shared diff/highlight engines
- * (their full behavior suites live in the standalone dsh-file-trace plugin).
+ * Changes tab data layer: event-log folding into file operations, the
+ * directory tree the Git lens renders its groups through, and a sanity pass
+ * over the shared diff/highlight engines (their full behavior suites live in
+ * the standalone dsh-file-trace plugin).
  */
 import { describe, expect, it } from 'vitest'
-import { extractFileOps, groupByFile, knownContentBefore, parseReadContent, parseReadLines } from '../src/client/changes/ops.ts'
+import { createToolResultMessage, ToolCallId } from '@deepseek-ai/dsh-llm'
+import { extractFileOps, knownContentBefore, parseReadContent, parseReadLines } from '../src/client/changes/ops.ts'
+import { buildChangeTree, type ChangeNode } from '../src/client/changes/change-tree.ts'
 import { diffLines, buildDiffSegments, coalesceInline, diffInline } from '../src/client/diff/rows.ts'
 import { langOfPath, scanLine } from '../src/client/diff/highlight.ts'
+import type { GitStatusEntry } from '../src/client/api.ts'
 import type { SidebarSessionEvent } from '../src/context-types.ts'
 
 /** One synthetic session event. */
@@ -19,10 +23,26 @@ function call(seq: number, name: string, callId: string, args: unknown, time = s
   return ev('tool/call', seq, time, { name, callId, arguments: JSON.stringify(args) })
 }
 
-/** A tool/result event carrying one tool-result block with inner text. */
+/** A tool/result event carrying one first-class tool-role message (the 0.1.7
+ *  shape: result blocks and `isError` at the message's own top level). */
 function result(seq: number, callId: string, text: string, isError = false, time = seq): SidebarSessionEvent {
   return ev('tool/result', seq, time, {
     message: {
+      role: 'tool',
+      source: { kind: 'tool', callId },
+      toolCallId: callId,
+      isError,
+      content: [{ type: 'text', text }],
+    },
+  })
+}
+
+/** The retired 0.1.6 shape: a role-'user' message wrapping the result in one
+ *  `tool-result` content block. Historical logs still carry it. */
+function legacyResult(seq: number, callId: string, text: string, isError = false, time = seq): SidebarSessionEvent {
+  return ev('tool/result', seq, time, {
+    message: {
+      role: 'user',
       source: { kind: 'tool', callId },
       content: [{ type: 'tool-result', isError, content: [{ type: 'text', text }] }],
     },
@@ -51,6 +71,32 @@ describe('parseReadContent', () => {
 })
 
 describe('extractFileOps', () => {
+  it('resolves paths before finding earlier content', () => {
+    const ops = extractFileOps([
+      call(1, 'write', 'first', { file_path: 'src/package.json', content: 'first' }),
+      call(2, 'edit', 'second', { path: '/repo/src/package.json', old_string: 'first', new_string: 'second' }),
+      call(3, 'read', 'third', { filePath: 'tests/package.json' }),
+    ], '/repo')
+    // The same file reached by a relative and an absolute spelling resolves to
+    // ONE path — the row text the lens prints, and the key the earlier-content
+    // lookup uses.
+    expect(ops.map(op => op.path).sort()).toEqual([
+      '/repo/src/package.json', '/repo/src/package.json', '/repo/tests/package.json',
+    ])
+    expect(knownContentBefore(ops, '/repo/src/package.json', ops.find(op => op.callId === 'second')!)).toBe('first')
+  })
+
+  it('resolves Windows relative paths and preserves absolute drive and UNC paths', () => {
+    const ops = extractFileOps([
+      call(1, 'read', 'relative', { file_path: 'src\\package.json' }),
+      call(2, 'read', 'drive', { file_path: 'D:\\other\\package.json' }),
+      call(3, 'read', 'network', { file_path: '\\\\server\\share\\package.json' }),
+    ], 'C:\\repo')
+    expect(ops.find(op => op.callId === 'relative')?.path).toBe('C:\\repo\\src\\package.json')
+    expect(ops.find(op => op.callId === 'drive')?.path).toBe('D:\\other\\package.json')
+    expect(ops.find(op => op.callId === 'network')?.path).toBe('\\\\server\\share\\package.json')
+  })
+
   it('seeds running ops from tool/call and settles them from tool/result', () => {
     const ops = extractFileOps([
       call(1, 'write', 'w1', { file_path: 'a.ts', content: 'body' }),
@@ -96,13 +142,92 @@ describe('extractFileOps', () => {
     expect(ops.map(op => op.callId)).toEqual(['r'])
   })
 
-  it('groups by file newest-first and recovers prior write content', () => {
+  it('reads the tool/result message dsh-llm actually produces (producer round-trip)', () => {
+    const message = createToolResultMessage({
+      callId: ToolCallId('r'),
+      content: [{ type: 'text', text: 'produced file body' }],
+      isError: false,
+    })
+    const ops = extractFileOps([
+      call(1, 'read', 'r', { file_path: 'a.ts' }),
+      ev('tool/result', 2, 2, { message: message as unknown as Record<string, unknown> }),
+    ])
+    expect(ops[0]!.running).toBe(false)
+    expect(ops[0]!.read).toBe('produced file body')
+  })
+
+  it('reads a LEGACY 0.1.6-era tool-result wrapper (historical logs keep that shape)', () => {
+    const ops = extractFileOps([
+      // No content in the model's arguments, so the settled result supplies it.
+      call(1, 'write', 'w', { file_path: 'a' }),
+      legacyResult(2, 'w', 'legacy write detail'),
+      call(3, 'read', 'r', { file_path: 'b' }),
+      legacyResult(4, 'r', 'cannot read "b": not found', true),
+    ])
+    expect(ops.find(op => op.kind === 'write')?.content).toBe('legacy write detail')
+    expect(ops.find(op => op.kind === 'read')?.errorText).toBe('cannot read "b": not found')
+  })
+
+  it('records PTC file calls by subCallId and settles them from dispatch results', () => {
+    const rootCallId = 'root'
+    const write = {
+      rootCallId, parentCallId: rootCallId, subCallId: 'root:ptc:1', name: 'write',
+      arguments: { file_path: 'notes.txt', content: 'PTC content' },
+    }
+    const read = {
+      rootCallId, parentCallId: rootCallId, subCallId: 'root:ptc:2', name: 'read',
+      arguments: { file_path: 'notes.txt' },
+    }
+    const ops = extractFileOps([
+      call(1, 'run_code', rootCallId, { code: 'write(); read()' }),
+      ev('tool/ptc-dispatch-start', 2, 20, write),
+      ev('tool/ptc-dispatch-start', 3, 30, read),
+      ev('tool/ptc-dispatch', 4, 40, { ...read, isError: false, content: [{ type: 'text', text: '<content>\n1: PTC content\n</content>' }] }),
+      ev('tool/ptc-dispatch', 5, 50, { ...write, isError: false, content: [{ type: 'text', text: 'written' }] }),
+      result(6, rootCallId, 'run_code completed'),
+    ])
+    expect(ops.map(op => op.callId)).toEqual(['root:ptc:2', 'root:ptc:1'])
+    expect(ops[0]).toMatchObject({ kind: 'read', path: 'notes.txt', time: 30, running: false, isError: false, read: '<content>\n1: PTC content\n</content>' })
+    expect(ops[1]).toMatchObject({ kind: 'write', path: 'notes.txt', time: 20, running: false, isError: false, content: 'PTC content' })
+  })
+
+  it('keeps an unfinished PTC call running and recovers a complete dispatch without its start', () => {
+    const rootCallId = 'root'
+    const edit = {
+      rootCallId, parentCallId: rootCallId, subCallId: 'root:ptc:1', name: 'edit',
+      arguments: { file_path: 'draft.txt', old_string: 'before', new_string: 'after' },
+    }
+    const failedWrite = {
+      rootCallId, parentCallId: rootCallId, subCallId: 'root:ptc:2', name: 'write',
+      arguments: { file_path: 'readonly.txt', content: 'new' },
+      isError: true, content: [{ type: 'text', text: 'permission denied' }],
+    }
+    const ops = extractFileOps([
+      ev('tool/ptc-dispatch-start', 1, 10, edit),
+      ev('tool/ptc-dispatch', 2, 20, failedWrite),
+    ])
+    expect(ops.find(op => op.callId === edit.subCallId)).toMatchObject({ kind: 'edit', running: true, edit: { oldString: 'before', newString: 'after' } })
+    expect(ops.find(op => op.callId === failedWrite.subCallId)).toMatchObject({ kind: 'write', time: 20, running: false, isError: true, errorText: 'permission denied' })
+  })
+
+  it('settles a PTC edit with its replacement payload', () => {
+    const dispatch = {
+      rootCallId: 'root', parentCallId: 'root', subCallId: 'root:ptc:1', name: 'edit',
+      arguments: { file_path: 'draft.txt', old_string: 'before', new_string: 'after' },
+      isError: false, content: [{ type: 'text', text: 'edited' }],
+    }
+    expect(extractFileOps([ev('tool/ptc-dispatch', 1, 10, dispatch)])).toMatchObject([
+      { callId: 'root:ptc:1', kind: 'edit', path: 'draft.txt', running: false, isError: false, edit: { oldString: 'before', newString: 'after' } },
+    ])
+  })
+
+  it('keeps operations newest-first and recovers prior write content', () => {
     const ops = extractFileOps([
       call(1, 'write', 'w1', { file_path: 'a.ts', content: 'first' }),
       call(2, 'write', 'w2', { file_path: 'a.ts', content: 'second' }),
       call(3, 'write', 'w3', { file_path: 'b.ts', content: 'x' }),
     ])
-    expect([...groupByFile(ops).keys()]).toEqual(['b.ts', 'a.ts'])
+    expect(ops.map(op => op.callId)).toEqual(['w3', 'w2', 'w1'])
     expect(knownContentBefore(ops, 'a.ts', ops.find(op => op.callId === 'w2')!)).toBe('first')
   })
 })
@@ -111,6 +236,137 @@ describe('parseReadLines', () => {
   it('recovers real line numbers from the read envelope', () => {
     const lines = parseReadLines('<path>a.ts</path>\n<type>file</type>\n<content>\n10: x\n11: y\n\n(Showing lines 10-11 of 20. Use offset=12 to continue.)\n</content>')
     expect(lines).toEqual([{ line: 10, text: 'x' }, { line: 11, text: 'y' }])
+  })
+})
+
+describe('change tree (the Git lens reads its groups through it)', () => {
+  /** One `git status` row from a path and its porcelain code. */
+  const entry = (path: string, xy = ' M'): GitStatusEntry => ({ path, xy })
+
+  /** The tree of one band. These cases exercise the SHAPE only, so the side is
+   *  fixed; the per-side readings have their own suite. */
+  const band = (entries: readonly GitStatusEntry[]): ChangeNode[] => buildChangeTree(entries, 'unstaged')
+
+  /** A compact, assertion-friendly projection of one tree. */
+  const shape = (nodes: readonly ChangeNode[]): unknown[] => nodes.map(node => node.kind === 'dir'
+    ? { dir: node.name, path: node.path, changes: node.changes, children: shape(node.children) }
+    : { file: node.name, path: node.path, letter: node.status.letter, tone: node.status.tone })
+
+  it('keeps a single root-level file as one leaf', () => {
+    expect(shape(band([entry('readme.md')]))).toEqual([
+      { file: 'readme.md', path: 'readme.md', letter: 'M', tone: 'modified' },
+    ])
+  })
+
+  it('nests a deep path and compresses its single-child chain into one row', () => {
+    const tree = band([entry('src/client/changes/a.ts')])
+    expect(shape(tree)).toEqual([
+      {
+        dir: 'src/client/changes',
+        path: 'src/client/changes',
+        changes: 1,
+        children: [{ file: 'a.ts', path: 'src/client/changes/a.ts', letter: 'M', tone: 'modified' }],
+      },
+    ])
+  })
+
+  it('stops compressing where the path branches or a directory holds its own file', () => {
+    // Two child directories: 'src' keeps its own row.
+    expect(shape(band([entry('src/a/x.ts'), entry('src/b/y.ts')]))).toEqual([
+      {
+        dir: 'src',
+        path: 'src',
+        changes: 2,
+        children: [
+          { dir: 'a', path: 'src/a', changes: 1, children: [{ file: 'x.ts', path: 'src/a/x.ts', letter: 'M', tone: 'modified' }] },
+          { dir: 'b', path: 'src/b', changes: 1, children: [{ file: 'y.ts', path: 'src/b/y.ts', letter: 'M', tone: 'modified' }] },
+        ],
+      },
+    ])
+    // A file AT this level: 'a' keeps its own row (and its file leads the child).
+    expect(shape(band([entry('a/x.ts'), entry('a/b/y.ts')]))).toEqual([
+      {
+        dir: 'a',
+        path: 'a',
+        changes: 2,
+        children: [
+          { dir: 'b', path: 'a/b', changes: 1, children: [{ file: 'y.ts', path: 'a/b/y.ts', letter: 'M', tone: 'modified' }] },
+          { file: 'x.ts', path: 'a/x.ts', letter: 'M', tone: 'modified' },
+        ],
+      },
+    ])
+  })
+
+  it('orders directories before files, each by name case-insensitively', () => {
+    const tree = band([
+      entry('Zed.ts'), entry('B.ts'), entry('a.ts'), entry('zdir/f.ts'), entry('Adir/f.ts'),
+    ])
+    expect(shape(tree).map(node => (node as { dir?: string; file?: string }).dir ?? (node as { file: string }).file))
+      .toEqual(['Adir', 'zdir', 'a.ts', 'B.ts', 'Zed.ts'])
+  })
+
+  it('mixes root-level files with nested paths and keeps same-named files apart', () => {
+    expect(shape(band([
+      entry('b/index.ts'), entry('index.ts'), entry('a/index.ts'),
+    ]))).toEqual([
+      { dir: 'a', path: 'a', changes: 1, children: [{ file: 'index.ts', path: 'a/index.ts', letter: 'M', tone: 'modified' }] },
+      { dir: 'b', path: 'b', changes: 1, children: [{ file: 'index.ts', path: 'b/index.ts', letter: 'M', tone: 'modified' }] },
+      { file: 'index.ts', path: 'index.ts', letter: 'M', tone: 'modified' },
+    ])
+  })
+
+  it('carries every file porcelain status and counts the files under each row', () => {
+    const tree = band([
+      entry('src/a.ts', ' M'), entry('src/new.ts', '??'), entry('src/gone.ts', ' D'), entry('src/kept.ts', '  '),
+    ])
+    expect(shape(tree)).toEqual([
+      {
+        dir: 'src',
+        path: 'src',
+        changes: 3,
+        children: [
+          { file: 'a.ts', path: 'src/a.ts', letter: 'M', tone: 'modified' },
+          { file: 'gone.ts', path: 'src/gone.ts', letter: 'D', tone: 'deleted' },
+          { file: 'new.ts', path: 'src/new.ts', letter: 'U', tone: 'untracked' },
+        ],
+      },
+    ])
+  })
+
+  it('pins the collation, so the order cannot move with the runtime locale', () => {
+    // Mixed case + accents + non-letters: the comparator runs an explicit
+    // 'en' base collation and breaks ties by code point. A bare
+    // `localeCompare(other)` would follow the machine's ICU default and could
+    // reorder the same change list on another machine.
+    const names = ['b.ts', 'A.ts', 'ä.ts', 'Z.ts', 'a.ts', 'Ä.ts', '_x.ts', '1.ts']
+    const order = (list: readonly string[]): string[] =>
+      band(list.map(path => entry(path))).map(node => node.name)
+    expect(order(names)).toEqual(['_x.ts', '1.ts', 'A.ts', 'a.ts', 'Ä.ts', 'ä.ts', 'b.ts', 'Z.ts'])
+    // …and it is a TOTAL order: reversing the input cannot move a row.
+    expect(order([...names].reverse())).toEqual(order(names))
+
+    const dirs = ['Zdir/f.ts', 'adir/f.ts', 'Ädir/f.ts', '_dir/f.ts']
+    const dirOrder = (list: readonly string[]): string[] =>
+      band(list.map(path => entry(path))).map(node => node.name)
+    expect(dirOrder(dirs)).toEqual(['_dir', 'adir', 'Ädir', 'Zdir'])
+    expect(dirOrder([...dirs].reverse())).toEqual(dirOrder(dirs))
+
+    // Why the pin is load-bearing: under Swedish collation 'ä' sorts AFTER
+    // 'z', so an unpinned comparator would order this very list differently on
+    // a machine whose runtime locale happens to be Swedish.
+    expect(['z.ts', 'ä.ts'].sort((left, right) => left.localeCompare(right, 'sv', { sensitivity: 'base' })))
+      .toEqual(['z.ts', 'ä.ts'])
+  })
+
+  it('returns no nodes for an empty or all-clean list', () => {
+    expect(band([])).toEqual([])
+    expect(band([entry('a.ts', '  '), entry('b.ts', '!!')])).toEqual([])
+  })
+
+  it('counts a repeated path once', () => {
+    expect(shape(band([entry('a.ts'), entry('a.ts', '??')]))).toEqual([
+      { file: 'a.ts', path: 'a.ts', letter: 'M', tone: 'modified' },
+    ])
   })
 })
 

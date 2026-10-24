@@ -28,6 +28,11 @@ const elementStub = (): Record<string, unknown> => ({
 
 if (g.document === undefined) {
   g.document = {
+    // host-route-url.ts resolves the plugin's /sidebar/* URLs against the
+    // transport base, whose fallback is `document.baseURI` when the shell
+    // injected no __DSH_TRANSPORT__ (see desktop-env.ts); specs pin one
+    // stable page base.
+    baseURI: 'http://localhost/',
     createElement: () => elementStub(),
     createDocumentFragment: () => elementStub(),
     addEventListener: () => {},
@@ -55,8 +60,15 @@ if (g.window === undefined) {
     innerWidth: 1024,
     innerHeight: 768,
     getComputedStyle: () => ({ getPropertyValue: () => '' }),
-    // desktop-env.ts reads the shell's URL stamps from location.search
-    // (Sidebar renders with parseDesktopEnv even in specs).
+    // DSH 0.1.7's ui-primitives subscribes at MODULE EVALUATION time (a shared
+    // scroll/resize placement effect), so a window stub without these throws
+    // before any spec body runs.
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    dispatchEvent: () => true,
+    matchMedia: () => ({ matches: false, addEventListener: () => {}, removeEventListener: () => {} }),
+    // The store's reset-param probe reads window.location.search
+    // (state.ts); nothing else in the plugin reads the URL any more.
     location: { search: '' },
   }
 }

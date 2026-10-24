@@ -1,0 +1,125 @@
+.root { display: flex; flex: 1; flex-direction: column; min-height: 0; min-width: 0; font: var(--dsw-font-xxs-12); color: var(--dsw-alias-label-primary); }
+.toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 6px 12px; }
+.select { flex: 1; min-width: 0; max-width: 100%; height: 28px; border: 1px solid var(--dsw-alias-border-l2); border-radius: 3px; background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary); font: inherit; }
+.hint { color: var(--dsw-alias-label-secondary); font: var(--dsw-font-xxxs-11); }
+.scroll { flex: 1; min-height: 0; overflow: auto; }
+/* A commit row is ONE 28px line — rail, ref pills, subject (the GitLens-style
+   picture): author, date and hash live in the details card, with the tooltip
+   still carrying them. Selected keeps the active fill AND the 2px accent
+   marker, so hover and selection read as two different pictures. */
+.row { position: relative; display: flex; align-items: center; width: 100%; min-width: 0; height: 28px; padding: 0 8px 0 4px; border: 0; text-align: start; background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary); font: inherit; cursor: pointer; }
+.row[aria-pressed="true"] { background: var(--dsw-alias-interactive-bg-active); }
+.row[aria-pressed="true"]::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 3px;
+  bottom: 3px;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--dsw-alias-state-business-primary);
+}
+.row:hover { background: var(--dsw-alias-interactive-bg-hover); }
+.row:focus-visible { outline: 1px solid var(--dsw-alias-border-l2); outline-offset: -1px; }
+/* `overflow: visible` matters: a join edge crosses over at the row boundary
+   (y = row height), and an SVG root clips by default — the outer half of that
+   1.5px stroke would be cut off, rendering the crossing as a hairline that
+   reads "thinner than every other line". The content itself never overflows
+   (the box is the viewBox, stretched to fit by preserveAspectRatio="none"). */
+.graph { flex-shrink: 0; max-width: 45%; overflow: visible; }
+.graph path { fill: none; stroke: currentColor; stroke-width: 1.5; }
+.graph circle { fill: currentColor; }
+/* The pills sit between the rail and the subject, capped so a decorated merge
+   cannot starve the message; each pill ellipsizes itself. */
+.refs { display: flex; flex: none; align-items: center; gap: 4px; min-width: 0; max-width: 55%; padding-left: 6px; overflow: hidden; }
+.ref { display: inline-flex; flex: none; align-items: center; gap: 3px; min-width: 0; max-width: 140px; height: 16px; padding: 0 5px; border: 1px solid currentColor; border-radius: 3px; font: var(--dsw-font-xxxs-strong-11); color: var(--dsw-alias-label-primary); white-space: nowrap; }
+.ref svg { flex: none; }
+.refName { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* The current branch's pill is filled so it still reads first among several
+   same-coloured pills on one commit; border and text come from the lane. */
+.ref[data-tone="head"] { background: var(--dsw-alias-interactive-bg-active); }
+.subject { flex: 1; min-width: 0; padding-left: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: var(--dsw-font-xxs-12); color: var(--dsw-alias-label-primary); }
+.notice { padding: 8px 12px; }
+
+/* ── Floating card (commit hover) ────────────────────────────────────────── */
+
+/* The one card skeleton of the graph page (same skeleton as the tasks page's
+   cards): the one surface that carries the elevation shadow. */
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  box-sizing: border-box;
+  background: var(--dsw-alias-bg-layer-1);
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 4px;
+  box-shadow: var(--dsw-shadow-lv3);
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-primary);
+}
+.hoverSubject { font: var(--dsw-font-xxs-strong-12); color: var(--dsw-alias-label-primary); overflow-wrap: anywhere; }
+.hoverMeta { display: flex; align-items: center; gap: 4px; min-width: 0; color: var(--dsw-alias-label-tertiary); font: var(--dsw-font-xxxs-11); overflow-wrap: anywhere; }
+/* The shared "nothing here" dash (the details card's empty parents list). */
+.dash { color: var(--dsw-alias-label-tertiary); font: var(--dsw-font-xxxs-11); }
+
+/* The lane palette: five theme slots, shared by every painter — the graph
+   edges and node dots and the ref pills. Colours follow the LANE, never the
+   branch: a colour says "a different line", not "a unique branch" (lanes can
+   outlive the branches that opened them), which is why there is deliberately
+   NO legend — the ref pills on the rows are the only branch key, the
+   convention every graph tool shares. The five are all STATE colours: they
+   are the tokens designed to stay legible as thin lines and small text on
+   both theme families — `brand-primary` is a surface-scale navy that reads as
+   a hole on the dark theme, so it is deliberately NOT a lane colour. */
+.graph [data-color="0"], .ref[data-color="0"] { color: var(--dsw-alias-state-business-primary, var(--dsw-alias-label-primary)); }
+.graph [data-color="1"], .ref[data-color="1"] { color: var(--dsw-alias-state-success-primary, var(--dsw-alias-label-primary)); }
+.graph [data-color="2"], .ref[data-color="2"] { color: var(--dsw-alias-state-warn-primary, var(--dsw-alias-label-primary)); }
+.graph [data-color="3"], .ref[data-color="3"] { color: var(--dsw-alias-state-error-primary, var(--dsw-alias-label-primary)); }
+.graph [data-color="4"], .ref[data-color="4"] { color: var(--dsw-alias-label-secondary); }
+
+/* ── Commit details ──────────────────────────────────────────────────────
+   Rendered as the changes tab's bottom-pane `details` tab (CommitDetails),
+   never inside the lens any more: the pane frame, the height and the tab strip
+   belong to the shared bottom region, so this is frameless — it fills its body
+   and scrolls itself. */
+
+/* The card IS the scroller: no inner wrapper holds a height cap any more, so
+   the details tab uses every pixel the resizable pane gives it. */
+.details { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 6px; padding: 8px 12px 10px; overflow-y: auto; overflow-wrap: anywhere; }
+/* The card's title IS the commit subject (the pane tab already carries the
+   "commit details" label), so it reads one step above the meta ladder. */
+.detailSubject { font: var(--dsw-font-xs-strong-13); color: var(--dsw-alias-label-primary); }
+.metaRow { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.metaGlyph { flex: none; display: inline-flex; color: var(--dsw-alias-label-tertiary); }
+.metaLabel { flex: none; color: var(--dsw-alias-label-tertiary); font: var(--dsw-font-xxxs-strong-11); }
+.metaValue { min-width: 0; color: var(--dsw-alias-label-secondary); font: var(--dsw-font-xxxs-11); }
+.hashChip {
+  padding: 1px 4px;
+  border-radius: 2px;
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-markdown-code-block-small);
+  overflow-wrap: anywhere;
+}
+.parents { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
+.parentChip {
+  padding: 1px 4px;
+  border-radius: 2px;
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-markdown-code-block-small);
+}
+.detailRefs { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
+/* The message itself: rendered as markdown in the card's own reading column
+   (no cap, no own scrollbar — the card scrolls), so a long body is just more
+   page. A hairline separates it from the metadata block. */
+.messageBody {
+  min-width: 0;
+  margin-top: 2px;
+  padding-top: 8px;
+  border-top: 1px solid var(--dsw-alias-border-l1);
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xs-regular-13);
+  line-height: 1.6;
+}

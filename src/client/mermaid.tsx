@@ -28,12 +28,13 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type MouseEv
 import { createPortal } from 'react-dom'
 import { createRoot, type Root } from 'react-dom/client'
 import mermaid from 'mermaid'
-import { IconCopyOutline16, MarkdownText, writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconCopyOutlineRegular, MarkdownText, writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives'
 import { isDarkScheme, subscribeColorScheme } from './theme.ts'
 import { markdownTextProps } from './markdown-labels.tsx'
 import { t } from './locales.ts'
 import { sanitizeSvg } from './mermaid-sanitize.ts'
 import type { MermaidMarkdownProps } from './mermaid-blocks.ts'
+import { splitMermaidBlocks } from './mermaid-blocks.ts'
 import css from './sidebar.module.css'
 
 /** Monotonic id seed: every render call gets a fresh, document-unique id. */
@@ -288,7 +289,7 @@ function MermaidDiagram({ code }: { code: string }): React.ReactNode {
           aria-label={t('copy')}
           title={t('copy')}
         >
-          <IconCopyOutline16 />
+          <IconCopyOutlineRegular />
           <span>{copied ? t('copied') : t('copy')}</span>
         </button>
       </div>
@@ -315,20 +316,45 @@ interface MermaidMount {
 }
 
 /**
- * True when a rendered CodeBlock is a mermaid fence. The DSH CodeBlock has
- * two bodies: the shiki path carries the `language-*` class on generated
- * <code> elements, while the plain path (which is always the one mermaid
- * takes — no shiki grammar) only shows the language in the banner
- * infostring (first element of the banner row; CSS-module classes are
- * hashed, so that match is structural).
+ * Fence bodies of every mermaid fence in the source, normalized for matching
+ * against the rendered block.
+ * @param text - the markdown source the same component renders.
+ * @returns the trailing-whitespace-normalized diagram sources.
  */
-function isMermaidBlock(block: HTMLElement): boolean {
+function mermaidFenceBodies(text: string): Set<string> {
+  const bodies = new Set<string>()
+  for (const block of splitMermaidBlocks(text)) {
+    if (block.kind === 'mermaid') bodies.add(block.code.trimEnd())
+  }
+  return bodies
+}
+
+/** The block's fence body as rendered: CodeBlock trims one trailing newline. */
+function blockBody(block: HTMLElement): string {
+  return (block.querySelector('code')?.textContent ?? '').trimEnd()
+}
+
+/**
+ * True when a rendered CodeBlock is a mermaid fence.
+ *
+ * The match is by FENCE BODY, not by the header: DSH ≤ 0.1.7-alpha.1 rendered a
+ * banner whose info string said `mermaid`, but rc.1's code card shows
+ * `labels.codeLabel` for any language the highlighter does not know, and
+ * mermaid has no shiki grammar — so once the card is adopted the language word
+ * is nowhere in the DOM. The body is, in both card variants, and the component
+ * already has the source that produced it.
+ *
+ * The `language-mermaid` class stays as the first probe: the highlighted arm
+ * would carry it if a grammar ever appears for the fence.
+ * @param block - one rendered `.md-code-block`.
+ * @param bodies - {@link mermaidFenceBodies} of the source being rendered.
+ * @returns whether this block holds a mermaid diagram.
+ */
+function isMermaidBlock(block: HTMLElement, bodies: ReadonlySet<string>): boolean {
   const code = block.querySelector('code')
-  if (code !== null && [...code.classList].some(c => c.startsWith('language-mermaid'))) return true
-  const infostring = block.firstElementChild?.firstElementChild?.firstElementChild
-  return infostring !== null
-    && infostring !== undefined
-    && (infostring.textContent ?? '').trim() === 'mermaid'
+  if (code === null) return false
+  if ([...code.classList].some(c => c.startsWith('language-mermaid'))) return true
+  return bodies.has(blockBody(block))
 }
 
 /**
@@ -350,10 +376,11 @@ export function MermaidMarkdown({ text, codeLabels }: MermaidMarkdownProps): Rea
     if (container === null) return
     const mounts = mountsRef.current
     const seen = new Set<HTMLElement>()
+    const bodies = mermaidFenceBodies(text)
 
     for (const block of container.querySelectorAll<HTMLElement>('.md-code-block')) {
       const mount = mounts.get(block)
-      const isMermaid = isMermaidBlock(block)
+      const isMermaid = isMermaidBlock(block, bodies)
       if (!isMermaid) {
         // A previously swapped block that is no longer a mermaid fence:
         // restore the CodeBlock children React still manages, so the plain

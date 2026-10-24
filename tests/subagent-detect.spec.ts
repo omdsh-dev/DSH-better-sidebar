@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
-  collectBranchIds, countSubagentDescendants, detectNewDirectSubagent,
+  countSubagentDescendants, detectNewDirectSubagent,
   directSubagentCount, rootAncestor,
 } from '../src/client/subagent-detect.ts'
-import type { SidebarSessionList, SidebarSubagentCatalog } from '../src/context-types.ts'
+import { isKnownLeaf, subagentCatalogs } from '../src/client/subagent-catalog.ts'
+import type { SidebarSessionList, SidebarSubagentCatalogEntry } from '../src/context-types.ts'
 
 describe('subagent detection over the sessions list feed', () => {
   /** A list snapshot carrying the given direct subagent children of `parent`. */
@@ -22,7 +23,7 @@ describe('subagent detection over the sessions list feed', () => {
         running: running.includes(id),
       }
     }
-    return { current: parent, byId }
+    return { byId }
   }
 
   it('counts only the direct subagent children of the given session', () => {
@@ -87,9 +88,8 @@ describe('subagent detection over the sessions list feed', () => {
     expect(directSubagentCount(byId, 'p1')).toBe(1)
     expect(countSubagentDescendants(byId, 'p1')).toEqual({ count: 1, runningCount: 0 })
     // A side thread appearing under an empty session never trips 0 → N.
-    const before: SidebarSessionList = { current: 'p2', byId: { p2: { id: 'p2', displayTitle: 'P2' } } }
+    const before: SidebarSessionList = { byId: { p2: { id: 'p2', displayTitle: 'P2' } } }
     const after: SidebarSessionList = {
-      current: 'p2',
       byId: {
         p2: { id: 'p2', displayTitle: 'P2' },
         s2: { id: 's2', displayTitle: 'Side: New thread', origin: 'subagent', parentId: 'p2' },
@@ -106,9 +106,8 @@ describe('subagent detection over the sessions list feed', () => {
     // AUTO_OPEN_DEBOUNCE_MS and re-evaluates the ORIGINAL baseline against
     // the live snapshot; once the title frame has landed the same baseline
     // yields no trigger. These two assertions pin exactly that dependency.
-    const baseline: SidebarSessionList = { current: 'p2', byId: { p2: { id: 'p2', displayTitle: 'P2' } } }
+    const baseline: SidebarSessionList = { byId: { p2: { id: 'p2', displayTitle: 'P2' } } }
     const firstFrame: SidebarSessionList = {
-      current: 'p2',
       byId: {
         p2: { id: 'p2', displayTitle: 'P2' },
         s2: { id: 's2', displayTitle: 'DSH-better-sidebar', origin: 'subagent', parentId: 'p2' },
@@ -116,7 +115,6 @@ describe('subagent detection over the sessions list feed', () => {
     }
     expect(detectNewDirectSubagent(baseline, firstFrame, 'p2')).toBe(true) // the race
     const settled: SidebarSessionList = {
-      current: 'p2',
       byId: {
         p2: { id: 'p2', displayTitle: 'P2' },
         s2: { id: 's2', displayTitle: 'Side: New thread', origin: 'subagent', parentId: 'p2' },
@@ -142,21 +140,52 @@ describe('subagent detection over the sessions list feed', () => {
     expect(rootAncestor(byId, undefined)).toBeUndefined()
   })
 
-  it('collects every catalog branch of the topology, cycle-safe', () => {
-    const child = (id: string, hasChildren: boolean): SidebarSubagentCatalog['entries'][number] => ({
-      kind: 'child', id, activity: 'inactive', hasChildren, mode: 'one-shot',
+  it('derives branch disclosure from the child\'s own projection catalog', () => {
+    // DSH 0.1.7's catalog row is `{id, createdAt, mode, label?}` — the 0.1.6
+    // `hasChildren` boolean is gone, so the topology infers it from the
+    // child's OWN `subagentCatalog` projection: a child whose catalog loaded
+    // EMPTY is a known leaf, and everything else keeps its level open.
+    const row = (id: string, over: Partial<SidebarSubagentCatalogEntry> = {}): SidebarSubagentCatalogEntry => ({
+      id, createdAt: 1_000, mode: 'one-shot', ...over,
     })
-    const catalogs: Record<string, SidebarSubagentCatalog> = {
-      root: { entries: [child('a', true), child('b', false)], parentAvailable: true, state: 'ready', error: null },
-      a: { entries: [child('c', false)], parentAvailable: true, state: 'ready', error: null },
-    }
-    expect(collectBranchIds(catalogs, 'root')).toEqual(['a'])
-    expect(collectBranchIds(catalogs, undefined)).toEqual([])
-    // A cycle terminates (each branch id collected at most once, no hang).
-    const cyclic: Record<string, SidebarSubagentCatalog> = {
-      root: { entries: [child('a', true)], parentAvailable: true, state: 'ready', error: null },
-      a: { entries: [child('root', true)], parentAvailable: true, state: 'ready', error: null },
-    }
-    expect(collectBranchIds(cyclic, 'root')).toEqual(['a', 'root'])
+    const catalogs = subagentCatalogs({
+      root: {
+        values: { subagentCatalog: [row('branch'), row('leaf')] },
+        state: 'ready',
+        error: null,
+      },
+      // The branch has a child of its own; the leaf's catalog loaded empty.
+      branch: {
+        values: { subagentCatalog: [row('grand', { mode: 'continuable', label: 'Grand' })] },
+        state: 'ready',
+        error: null,
+      },
+      leaf: { values: { subagentCatalog: [] }, state: 'ready', error: null },
+    })
+    expect(catalogs.root?.entries.map(entry => entry.id)).toEqual(['branch', 'leaf'])
+    expect(catalogs.root?.state).toBe('ready')
+    expect(isKnownLeaf(catalogs, 'leaf')).toBe(true)
+    expect(isKnownLeaf(catalogs, 'branch')).toBe(false)
+    // A catalog that has not landed (absent from the snapshot, idle without a
+    // value, still loading, or failed) is NOT a known leaf: the level stays
+    // reserved instead of flapping shut.
+    expect(isKnownLeaf(catalogs, 'not-in-snapshot')).toBe(false)
+    const pending = subagentCatalogs({
+      idle: { values: {}, state: 'idle', error: null },
+      loading: { values: {}, state: 'loading', error: null },
+      failed: { values: {}, state: 'error', error: { code: 'boom', message: 'boom' } },
+      cached: { values: { subagentCatalog: [row('a')] }, state: 'idle', error: null },
+    })
+    expect(pending.idle).toMatchObject({ state: 'loading', entries: [] })
+    expect(isKnownLeaf(pending, 'idle')).toBe(false)
+    expect(isKnownLeaf(pending, 'loading')).toBe(false)
+    // A failed catalog keeps the level open (there may be children) and
+    // carries the failure the retry row renders.
+    expect(pending.failed).toMatchObject({ state: 'error', error: { message: 'boom' } })
+    expect(isKnownLeaf(pending, 'failed')).toBe(false)
+    // An idle row WITH a value is the persisted checkpoint's catalog.
+    expect(pending.cached).toMatchObject({ state: 'ready', entries: [expect.objectContaining({ id: 'a' })] })
+    // A host with no projection store at all leaves every catalog empty.
+    expect(subagentCatalogs(undefined)).toEqual({})
   })
 })

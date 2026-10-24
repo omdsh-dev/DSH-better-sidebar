@@ -30,31 +30,25 @@ describe('side card preferences', () => {
   })
 
   it('parses a valid value', async () => {
-    expect(await loadPrefs(wire({ autoOpenSubagent: false, agentTerminalTools: true })))
+    expect(await loadPrefs(wire({ autoOpenSubagent: false, agentOpenTools: true })))
       .toEqual({
         autoOpenSubagent: false,
         autoOpenJobs: true,
         autoCollapseAfterIdle: false,
-        agentTerminalTools: true, agentOpenTools: false,
-        bottomPanelAutoTerminal: true,
-        terminalFontFamily: '',
-        terminalFontSize: 13,
+        tasksViewMode: 'graph',
+        tasksAutoFoldSettled: true,
+        tasksAutoFoldBranches: true,
+        tasksAutoFoldIdle: true,
+        jobsAutoCollapse: true,
+        mobileNoAutoOpen: true,
+        mobileDefaultTree: true,
+        agentOpenTools: true,
         editorExplorer: false,
-        workspaceFence: true,
-        terminalShell: '',
-        terminalShellArgs: '',
-        titleBarScheme: 'auto',
-        titleBarPresetId: '',
+        editorGitGutter: true,
+        explorerExclude: ['.DS_Store', 'Thumbs.db'],
         customCss: '',
-        titleBarCompat: false,
-        titleBarStripPx: 40,
         htmlViewerNoSandbox: false,
         htmlViewerDefaultUnsafe: false,
-        browserNoSandbox: false,
-        browserInterceptLinks: true,
-        browserInterceptHttp: true,
-        browserInterceptHttps: false,
-        browserAllowedLoopback: '',
         tabsEnabled: {},
         viewersEnabled: {},
         pluginSettings: {},
@@ -62,77 +56,58 @@ describe('side card preferences', () => {
   })
 
   it('falls back per-field when a stored field is malformed', async () => {
-    expect(await loadPrefs(wire({ autoOpenSubagent: 'no', agentTerminalTools: 'yes' })))
+    expect(await loadPrefs(wire({ autoOpenSubagent: 'no', agentOpenTools: 'yes' })))
       .toEqual({
         autoOpenSubagent: true,
         autoOpenJobs: true,
         autoCollapseAfterIdle: false,
-        agentTerminalTools: false, agentOpenTools: false,
-        bottomPanelAutoTerminal: true,
-        terminalFontFamily: '',
-        terminalFontSize: 13,
+        tasksViewMode: 'graph',
+        tasksAutoFoldSettled: true,
+        tasksAutoFoldBranches: true,
+        tasksAutoFoldIdle: true,
+        jobsAutoCollapse: true,
+        mobileNoAutoOpen: true,
+        mobileDefaultTree: true,
+        agentOpenTools: false,
         editorExplorer: false,
-        workspaceFence: true,
-        terminalShell: '',
-        terminalShellArgs: '',
-        titleBarScheme: 'auto',
-        titleBarPresetId: '',
+        editorGitGutter: true,
+        explorerExclude: ['.DS_Store', 'Thumbs.db'],
         customCss: '',
-        titleBarCompat: false,
-        titleBarStripPx: 40,
         htmlViewerNoSandbox: false,
         htmlViewerDefaultUnsafe: false,
-        browserNoSandbox: false,
-        browserInterceptLinks: true,
-        browserInterceptHttp: true,
-        browserInterceptHttps: false,
-        browserAllowedLoopback: '',
         tabsEnabled: {},
         viewersEnabled: {},
         pluginSettings: {},
       })
   })
 
-  it('defaults autoOpenSubagent to true and agentTerminalTools to false when the stored value is absent or malformed', async () => {
+  it('defaults autoOpenSubagent to true and the agent toggles to false when the stored value is absent or malformed', async () => {
     expect(await loadPrefs(wire({})))
       .toEqual({
         autoOpenSubagent: true,
         autoOpenJobs: true,
         autoCollapseAfterIdle: false,
-        agentTerminalTools: false, agentOpenTools: false,
-        bottomPanelAutoTerminal: true,
-        terminalFontFamily: '',
-        terminalFontSize: 13,
+        tasksViewMode: 'graph',
+        tasksAutoFoldSettled: true,
+        tasksAutoFoldBranches: true,
+        tasksAutoFoldIdle: true,
+        jobsAutoCollapse: true,
+        mobileNoAutoOpen: true,
+        mobileDefaultTree: true,
+        agentOpenTools: false,
         editorExplorer: false,
-        workspaceFence: true,
-        terminalShell: '',
-        terminalShellArgs: '',
-        titleBarScheme: 'auto',
-        titleBarPresetId: '',
+        editorGitGutter: true,
+        explorerExclude: ['.DS_Store', 'Thumbs.db'],
         customCss: '',
-        titleBarCompat: false,
-        titleBarStripPx: 40,
         htmlViewerNoSandbox: false,
         htmlViewerDefaultUnsafe: false,
-        browserNoSandbox: false,
-        browserInterceptLinks: true,
-        browserInterceptHttp: true,
-        browserInterceptHttps: false,
-        browserAllowedLoopback: '',
         tabsEnabled: {},
         viewersEnabled: {},
         pluginSettings: {},
       })
     expect((await loadPrefs(wire({ autoOpenSubagent: 1 }))).autoOpenSubagent)
       .toBe(true)
-    // The terminal-tools feature is OFF by default; only an explicit true turns it on.
-    expect((await loadPrefs(wire({}))).agentTerminalTools)
-      .toBe(false)
-    expect((await loadPrefs(wire({ agentTerminalTools: 1 }))).agentTerminalTools)
-      .toBe(false)
-    expect((await loadPrefs(wire({ agentTerminalTools: true }))).agentTerminalTools)
-      .toBe(true)
-    // The sidebar-open tool is OFF by default too; only an explicit true turns it on.
+    // The sidebar-open tool is OFF by default; only an explicit true turns it on.
     expect((await loadPrefs(wire({}))).agentOpenTools)
       .toBe(false)
     expect((await loadPrefs(wire({ agentOpenTools: 1 }))).agentOpenTools)
@@ -144,13 +119,42 @@ describe('side card preferences', () => {
       .toBe(true)
     expect((await loadPrefs(wire({ autoOpenJobs: false }))).autoOpenJobs)
       .toBe(false)
-    // The idle auto-collapse is OFF by default; only an explicit true turns it on.
-    expect((await loadPrefs(wire({ autoCollapseAfterIdle: 'yes' }))).autoCollapseAfterIdle)
-      .toBe(false)
-    expect((await loadPrefs(wire({ autoCollapseAfterIdle: 1 }))).autoCollapseAfterIdle)
-      .toBe(false)
-    expect((await loadPrefs(wire({ autoCollapseAfterIdle: true }))).autoCollapseAfterIdle)
-      .toBe(true)
+  })
+
+  it('defaults automatic task folding and jobs collapse to on and preserves explicit booleans', async () => {
+    for (const key of ['tasksAutoFoldSettled', 'tasksAutoFoldBranches', 'tasksAutoFoldIdle', 'jobsAutoCollapse'] as const) {
+      expect(SIDEBAR_PREFS_DEFAULTS[key], key).toBe(true)
+      for (const malformed of [undefined, null, 'false', 0, [], {}]) {
+        expect((await loadPrefs(wire({ [key]: malformed })))[key], key).toBe(true)
+      }
+      expect((await loadPrefs(wire({ [key]: false })))[key], key).toBe(false)
+      expect((await loadPrefs(wire({ [key]: true })))[key], key).toBe(true)
+    }
+  })
+
+  it('defaults both mobile adaptations to on; only an explicit false disarms one', async () => {
+    // Absent or malformed → ON: a phone is exactly the case these exist for,
+    // and each one only changes what happens on a NARROW viewport.
+    for (const key of ['mobileNoAutoOpen', 'mobileDefaultTree'] as const) {
+      expect((await loadPrefs(wire({})))[key]).toBe(true)
+      expect((await loadPrefs(wire({ [key]: 'yes' })))[key]).toBe(true)
+      expect((await loadPrefs(wire({ [key]: 1 })))[key]).toBe(true)
+      // Explicit booleans survive verbatim.
+      expect((await loadPrefs(wire({ [key]: false })))[key]).toBe(false)
+      expect((await loadPrefs(wire({ [key]: true })))[key]).toBe(true)
+    }
+  })
+
+  it('defaults explorerExclude to the stock junk list; only a valid string array overrides it', async () => {
+    // Absent or malformed → the stock list.
+    expect((await loadPrefs(wire({}))).explorerExclude).toEqual(['.DS_Store', 'Thumbs.db'])
+    expect((await loadPrefs(wire({ explorerExclude: 'node_modules' }))).explorerExclude).toEqual(['.DS_Store', 'Thumbs.db'])
+    expect((await loadPrefs(wire({ explorerExclude: { a: 1 } }))).explorerExclude).toEqual(['.DS_Store', 'Thumbs.db'])
+    // Non-string entries drop out; blanks drop out; entries trim.
+    expect((await loadPrefs(wire({ explorerExclude: ['node_modules', 42, '  *.log  ', '', null] }))).explorerExclude)
+      .toEqual(['node_modules', '*.log'])
+    // An explicit empty array means "exclude nothing" and survives verbatim.
+    expect((await loadPrefs(wire({ explorerExclude: [] }))).explorerExclude).toEqual([])
   })
 
   it('defaults editorExplorer to false; only an explicit true enables the merged editor-explorer', async () => {
@@ -163,96 +167,43 @@ describe('side card preferences', () => {
     expect((await loadPrefs(wire({ editorExplorer: true }))).editorExplorer).toBe(true)
   })
 
-  it('defaults workspaceFence to true; only an explicit false disarms the containment guard', async () => {
-    // Absent or malformed → on (the fs routes keep refusing outside paths).
-    expect((await loadPrefs(wire({}))).workspaceFence).toBe(true)
-    expect((await loadPrefs(wire({ workspaceFence: 'no' }))).workspaceFence).toBe(true)
-    expect((await loadPrefs(wire({ workspaceFence: 0 }))).workspaceFence).toBe(true)
-    // An explicit false survives (the one-click off in the fence error notice).
-    expect((await loadPrefs(wire({ workspaceFence: false }))).workspaceFence).toBe(false)
+  it('no longer exposes a workspaceFence pref (the containment guard is gone)', async () => {
+    // The field was retired together with the fence: whatever a stored
+    // document (or a legacy profile) still carries, the typed prefs the client
+    // consumes do not have it — there is nothing left to arm or disarm.
+    expect('workspaceFence' in await loadPrefs(wire({}))).toBe(false)
+    expect('workspaceFence' in await loadPrefs(wire({ workspaceFence: true }))).toBe(false)
+    expect('workspaceFence' in await loadPrefs(wire({ workspaceFence: false }))).toBe(false)
   })
 
-  it('defaults the title-bar scheme to the conservative auto with no preset or custom CSS', async () => {
-    // Absent or malformed → auto (plain web keeps the untouched layout).
-    expect((await loadPrefs(wire({}))).titleBarScheme).toBe('auto')
-    expect((await loadPrefs(wire({ titleBarScheme: 'weird' }))).titleBarScheme).toBe('auto')
-    expect((await loadPrefs(wire({ titleBarScheme: 1 }))).titleBarScheme).toBe('auto')
-    expect((await loadPrefs(wire({}))).titleBarPresetId).toBe('')
-    expect((await loadPrefs(wire({ titleBarPresetId: 5 }))).titleBarPresetId).toBe('')
+  it('defaults customCss to the empty string; only a stored string survives', async () => {
+    // The custom-CSS escape hatch is inert until the user writes something.
     expect((await loadPrefs(wire({}))).customCss).toBe('')
     expect((await loadPrefs(wire({ customCss: 7 }))).customCss).toBe('')
-    // Valid values survive verbatim (including the explicit web scheme).
-    const picked = await loadPrefs(wire({ titleBarScheme: 'preset', titleBarPresetId: 'dsh-desktop', customCss: 'html { }' }))
-    expect(picked.titleBarScheme).toBe('preset')
-    expect(picked.titleBarPresetId).toBe('dsh-desktop')
-    expect(picked.customCss).toBe('html { }')
-    expect((await loadPrefs(wire({ titleBarScheme: 'web' }))).titleBarScheme).toBe('web')
+    expect((await loadPrefs(wire({ customCss: 'html { }' }))).customCss).toBe('html { }')
   })
 
-  it('migrates LEGACY documents that ALREADY HAVE VALUES into the custom scheme', async () => {
-    // A pre-scheme document with the manual compat flag on maps to the
-    // custom scheme, keeping the strip px the user chose.
-    const migrated = await loadPrefs(wire({ titleBarCompat: true, titleBarStripPx: 56 }))
-    expect(migrated.titleBarScheme).toBe('custom')
-    expect(migrated.titleBarStripPx).toBe(56)
-    // A non-default strip px alone (only reachable through the old gear
-    // popup) also counts as "already has values" → custom.
-    const stripOnly = await loadPrefs(wire({ titleBarStripPx: 48 }))
-    expect(stripOnly.titleBarScheme).toBe('custom')
-    expect(stripOnly.titleBarStripPx).toBe(48)
-    // A stored scheme always wins over the legacy fields (round-trip of the
-    // mirrored write: preset stays preset even though the mirror is true).
-    const roundTrip = await loadPrefs(wire({ titleBarScheme: 'preset', titleBarCompat: true }))
-    expect(roundTrip.titleBarScheme).toBe('preset')
-    // Legacy off / absent / default strip → the conservative auto scheme.
-    expect((await loadPrefs(wire({ titleBarCompat: false }))).titleBarScheme).toBe('auto')
-    expect((await loadPrefs(wire({ titleBarStripPx: 40 }))).titleBarScheme).toBe('auto')
-    expect((await loadPrefs(wire({}))).titleBarScheme).toBe('auto')
-  })
-
-  it('defaults titleBarStripPx to 40 and clamps stored values into the contract range', async () => {
-    // Absent or malformed → 40 (the strip default).
-    expect((await loadPrefs(wire({}))).titleBarStripPx).toBe(40)
-    expect((await loadPrefs(wire({ titleBarStripPx: 'yes' }))).titleBarStripPx).toBe(40)
-    // Out-of-range numbers clamp into 0–120.
-    expect((await loadPrefs(wire({ titleBarStripPx: -5 }))).titleBarStripPx).toBe(0)
-    expect((await loadPrefs(wire({ titleBarStripPx: 200 }))).titleBarStripPx).toBe(120)
-    expect((await loadPrefs(wire({ titleBarStripPx: 47.6 }))).titleBarStripPx).toBe(48)
-    // In-range values survive verbatim.
-    expect((await loadPrefs(wire({ titleBarStripPx: 0 }))).titleBarStripPx).toBe(0)
-    expect((await loadPrefs(wire({ titleBarStripPx: 64 }))).titleBarStripPx).toBe(64)
-  })
-
-  it('defaults the link-takeover protocol flags: http on, https off, master on', async () => {
-    // Absent or malformed → the per-protocol defaults.
-    expect((await loadPrefs(wire({}))).browserInterceptLinks).toBe(true)
-    expect((await loadPrefs(wire({}))).browserInterceptHttp).toBe(true)
-    expect((await loadPrefs(wire({}))).browserInterceptHttps).toBe(false)
-    expect((await loadPrefs(wire({ browserInterceptHttp: 'yes' }))).browserInterceptHttp).toBe(true)
-    expect((await loadPrefs(wire({ browserInterceptHttps: 0 }))).browserInterceptHttps).toBe(false)
-    // Explicit booleans survive verbatim.
-    expect((await loadPrefs(wire({ browserInterceptHttp: false }))).browserInterceptHttp).toBe(false)
-    expect((await loadPrefs(wire({ browserInterceptHttps: true }))).browserInterceptHttps).toBe(true)
-    // The master is independent of the protocol flags (an explicit master
-    // false stays "never take over" regardless of the flags).
-    expect((await loadPrefs(wire({ browserInterceptLinks: false, browserInterceptHttp: true, browserInterceptHttps: true }))))
-      .toMatchObject({ browserInterceptLinks: false, browserInterceptHttp: true, browserInterceptHttps: true })
-  })
-
-  it('resolves the terminal font prefs (family passthrough, size clamp)', async () => {
-    // Absent → theme default (empty family) + default size.
-    expect((await loadPrefs(wire({}))).terminalFontFamily).toBe('')
-    expect((await loadPrefs(wire({}))).terminalFontSize).toBe(13)
-    // A custom family survives verbatim; a malformed one falls back.
-    expect((await loadPrefs(wire({ terminalFontFamily: '"JetBrains Mono", monospace' }))).terminalFontFamily)
-      .toBe('"JetBrains Mono", monospace')
-    expect((await loadPrefs(wire({ terminalFontFamily: 42 }))).terminalFontFamily).toBe('')
-    // The size clamps into 9–32 (rounded); non-numbers fall back.
-    expect((await loadPrefs(wire({ terminalFontSize: 5 }))).terminalFontSize).toBe(9)
-    expect((await loadPrefs(wire({ terminalFontSize: 40 }))).terminalFontSize).toBe(32)
-    expect((await loadPrefs(wire({ terminalFontSize: 15.6 }))).terminalFontSize).toBe(16)
-    expect((await loadPrefs(wire({ terminalFontSize: 'big' }))).terminalFontSize).toBe(13)
-    expect((await loadPrefs(wire({ terminalFontSize: 18 }))).terminalFontSize).toBe(18)
+  it('IGNORES the retired title-bar keys: a stored document that still carries them parses', async () => {
+    // The whole title-bar strip mechanism (and its four preference keys) was
+    // removed. A settings document written by an older version still carries
+    // them — the host schema is OPEN, so they resolve through it untouched
+    // (see plugin-shape.spec.ts), and this typed face is what makes them
+    // inert: parsePrefs builds its result from DECLARED fields only, so the
+    // retired keys never reach the client and never come back on a write.
+    const stored = {
+      titleBarScheme: 'preset',
+      titleBarPresetId: 'dsh-desktop',
+      titleBarCompat: true,
+      titleBarStripPx: 56,
+    }
+    const parsed = await loadPrefs(wire({ ...stored, agentOpenTools: true }))
+    expect(parsed).toEqual({ ...SIDEBAR_PREFS_DEFAULTS, agentOpenTools: true })
+    for (const key of Object.keys(stored)) {
+      expect(key in parsed, `${key} must not survive into the parsed prefs`).toBe(false)
+    }
+    // A malformed retired value is just as harmless (nothing reads it).
+    const junk = await loadPrefs(wire({ titleBarScheme: 42, titleBarStripPx: 'yes' }))
+    expect(junk).toEqual(SIDEBAR_PREFS_DEFAULTS)
   })
 
   it('validates the per-tab / per-viewer enable maps (absent keys mean enabled)', async () => {
@@ -304,8 +255,15 @@ describe('boot decision (one fetch for prefs + external disable)', () => {
   })
 
   it('reads suspended false when the flag is absent', async () => {
-    const decision = await loadBootDecision(wire({ terminalFontSize: 20 }))
+    const decision = await loadBootDecision(wire({ customCss: 'html { }' }))
     expect(decision.suspended).toBe(false)
-    expect(decision.prefs.terminalFontSize).toBe(20)
+    expect(decision.prefs.customCss).toBe('html { }')
   })
+})
+
+it('keeps auto-collapse opt-in and rejects malformed stored values', async () => {
+  expect((await loadPrefs(wire({}))).autoCollapseAfterIdle).toBe(false)
+  expect((await loadPrefs(wire({ autoCollapseAfterIdle: 'yes' }))).autoCollapseAfterIdle).toBe(false)
+  expect((await loadPrefs(wire({ autoCollapseAfterIdle: true }))).autoCollapseAfterIdle).toBe(true)
+  expect((await loadPrefs(wire({ autoCollapseAfterIdle: false }))).autoCollapseAfterIdle).toBe(false)
 })

@@ -1,13 +1,17 @@
 /**
  * Tab-strip right-click context-menu tests. Right-clicking a tab takes over
  * the browser menu (preventDefault) and shows the tab context menu with
- * exactly five items: move to free window / close / close others / close to
- * the left / close to the right. All bulk operations are scoped to the
- * CURRENT pane (the render time tab snapshot) and reuse the per-tab onClose
- * path, so the target tab is never closed and the pane never empties
- * mid-loop. The menu items gray out when there is nothing to close (single
- * tab → close others; leftmost → close left; rightmost → close right).
- * Opening the menu must not activate the right-clicked tab.
+ * exactly six items: close / close others / close to the left / close to the
+ * right / close all / reveal in the file manager. All close operations are
+ * scoped to the CURRENT pane (the render-time tab snapshot) and reuse the
+ * per-tab onClose path, so every closed tab keeps its own lifecycle and the
+ * pane never empties mid-loop; "close all" is the one that closes the
+ * right-clicked tab too. The reveal row hands the tab's associated file
+ * (`path`, i.e. an editor window) to the shell's reveal resolver and is
+ * disabled for a tab that has none. Menu rows gray out when there is nothing
+ * to do (single tab → close others; leftmost → close left; rightmost → close
+ * right; no file → reveal). Opening the menu must not activate the
+ * right-clicked tab.
  */
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -20,7 +24,10 @@ import { setupReactAct } from './test-utils.ts'
 setupReactAct()
 
 import { TabBar } from '../src/client/TabBar.tsx'
-import type { SidebarTab } from '../src/client/state.ts'
+import { Sidebar } from '../src/client/Sidebar.tsx'
+import { Workbench } from '../src/client/split-pane.tsx'
+import { createSidebarStore, makeDefaultState, type SidebarState, type SidebarTab } from '../src/client/state.ts'
+import { createBetterSidebarService } from '../src/client/service.ts'
 
 /** Point the browser-language fallback at Chinese so the menu labels assert. */
 function stubZh(): void {
@@ -30,20 +37,27 @@ function stubZh(): void {
   })
 }
 
-const MENU_LABELS = ['关闭', '关闭其他页签', '关闭左侧页签', '关闭右侧页签']
+const MENU_LABELS = [
+  '关闭', '关闭其他页签', '关闭左侧页签', '关闭右侧页签', '关闭全部页签', '在资源管理器中定位',
+]
 
-function mountBar(tabs: SidebarTab[], opts: { onPinTab?: (tabId: string, scope: 'workspace' | 'global' | null) => void } = {}): {
+function mountBar(tabs: SidebarTab[], opts: {
+  /** Omit the reveal resolver (the shell always passes one; this pins the
+   *  disabled-without-resolver half of the contract). */
+  noRevealResolver?: boolean
+} = {}): {
   tabEls: HTMLElement[]
   onClose: ReturnType<typeof vi.fn>
   onActivate: ReturnType<typeof vi.fn>
-  onPinTab?: (tabId: string, scope: 'workspace' | 'global' | null) => void
+  /** The reveal resolver the strip was given (undefined when omitted). */
+  onRevealInFileManager?: ReturnType<typeof vi.fn>
   unmount: () => void
 } {
   const container = document.createElement('div')
   document.body.append(container)
   const onClose = vi.fn()
   const onActivate = vi.fn()
-  const onPinTab = opts.onPinTab
+  const onRevealInFileManager = opts.noRevealResolver === true ? undefined : vi.fn()
   const root: Root = createRoot(container)
   act(() => {
     root.render(createElement(TabBar, {
@@ -54,7 +68,7 @@ function mountBar(tabs: SidebarTab[], opts: { onPinTab?: (tabId: string, scope: 
       onClose,
       onNewTab: () => {},
       newTabOptions: [],
-      ...(onPinTab !== undefined ? { onPinTab } : {}),
+      ...(onRevealInFileManager === undefined ? {} : { onRevealInFileManager }),
       onDropTab: () => {},
     }))
   })
@@ -63,7 +77,7 @@ function mountBar(tabs: SidebarTab[], opts: { onPinTab?: (tabId: string, scope: 
     tabEls,
     onClose,
     onActivate,
-    ...(onPinTab !== undefined ? { onPinTab } : {}),
+    ...(onRevealInFileManager === undefined ? {} : { onRevealInFileManager }),
     unmount: () => {
       act(() => { root.unmount() })
       container.remove()
@@ -80,6 +94,14 @@ function fourTabs(): SidebarTab[] {
   ]
 }
 
+/** Two tabs where only the first carries a file (an editor window). */
+function fileTabs(): SidebarTab[] {
+  return [
+    { id: 'f1', type: 'editor', title: 'a.ts', path: '/repo/src/a.ts' },
+    { id: 'f2', type: 'git', title: 'Changes' },
+  ]
+}
+
 /** Dispatch a native right-click (contextmenu) and return the event. */
 function rightClick(target: EventTarget): MouseEvent {
   const event = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 120, clientY: 40 })
@@ -92,13 +114,20 @@ function menuItems(): HTMLElement[] {
   return [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')]
 }
 
+/** The disabled flags of the portaled rows, in menu order. */
+function menuDisabled(): boolean[] {
+  return menuItems().map(item => (item as HTMLButtonElement).disabled)
+}
+
 afterEach(() => {
   document.body.innerHTML = ''
   vi.restoreAllMocks()
+  vi.unstubAllGlobals()
+  localStorage.clear()
 })
 
 describe('TabBar right-click context menu', () => {
-  it('opens the five-item menu at the cursor, prevents the browser menu, and does not activate', () => {
+  it('opens the six-item menu at the cursor, prevents the browser menu, and does not activate', () => {
     stubZh()
     const { tabEls, onActivate, unmount } = mountBar(fourTabs())
     try {
@@ -180,6 +209,37 @@ describe('TabBar right-click context menu', () => {
     }
   })
 
+  it('close all closes every tab in the pane, the right-clicked one included', () => {
+    stubZh()
+    const { tabEls, onClose, unmount } = mountBar(fourTabs())
+    try {
+      act(() => { rightClick(tabEls[1]!) })
+      act(() => { menuItems()[4]!.click() })
+      expect(onClose.mock.calls.map(call => call[0])).toEqual(['t1', 't2', 't3', 't4'])
+      expect(menuItems()).toHaveLength(0)
+    } finally {
+      unmount()
+    }
+  })
+
+  it('reveals the right-clicked tab file through the shell resolver', () => {
+    stubZh()
+    const { tabEls, onRevealInFileManager, onClose, unmount } = mountBar(fileTabs())
+    try {
+      act(() => { rightClick(tabEls[0]!) })
+      // The file tab's row is live; the pane's other tab has no file.
+      expect(menuDisabled()).toEqual([false, false, true, false, false, false])
+      act(() => { menuItems()[5]!.click() })
+      expect(onRevealInFileManager).toHaveBeenCalledTimes(1)
+      expect(onRevealInFileManager).toHaveBeenCalledWith('/repo/src/a.ts')
+      // Revealing is not a close: no tab may go away.
+      expect(onClose).not.toHaveBeenCalled()
+      expect(menuItems()).toHaveLength(0)
+    } finally {
+      unmount()
+    }
+  })
+
   it('grays out close others on a single tab and close left/right at the strip ends', () => {
     stubZh()
     const single = mountBar([
@@ -187,11 +247,11 @@ describe('TabBar right-click context menu', () => {
     ])
     try {
       act(() => { rightClick(single.tabEls[0]!) })
-      const items = menuItems()
       // The Menu renders each row as a disabled <button role="menuitem">.
-      expect(items.map(item => (item as HTMLButtonElement).disabled)).toEqual([false, true, true, true])
+      // Close all stays live (it always has at least the right-clicked tab).
+      expect(menuDisabled()).toEqual([false, true, true, true, false, true])
       // Clicking the disabled row must not close anything.
-      act(() => { items[1]!.click() })
+      act(() => { menuItems()[1]!.click() })
       expect(single.onClose).not.toHaveBeenCalled()
     } finally {
       single.unmount()
@@ -200,164 +260,162 @@ describe('TabBar right-click context menu', () => {
     const four = mountBar(fourTabs())
     try {
       act(() => { rightClick(four.tabEls[0]!) })
-      expect(menuItems().map(item => (item as HTMLButtonElement).disabled)).toEqual([false, false, true, false])
+      expect(menuDisabled()).toEqual([false, false, true, false, false, true])
       act(() => { rightClick(four.tabEls[3]!) })
-      expect(menuItems().map(item => (item as HTMLButtonElement).disabled)).toEqual([false, false, false, true])
+      expect(menuDisabled()).toEqual([false, false, false, true, false, true])
     } finally {
       four.unmount()
     }
   })
+
+  it('grays out the reveal row for a tab with no associated file', () => {
+    stubZh()
+    const tabs = fileTabs()
+    const { tabEls, onRevealInFileManager, onClose, unmount } = mountBar(tabs)
+    try {
+      act(() => { rightClick(tabEls[1]!) })
+      // The changes tab carries no file of its own (its diff ref is
+      // repo-relative, not a path the host could reveal).
+      expect(menuDisabled()).toEqual([false, false, false, true, false, true])
+      act(() => { menuItems()[5]!.click() })
+      expect(onRevealInFileManager).not.toHaveBeenCalled()
+      expect(onClose).not.toHaveBeenCalled()
+    } finally {
+      unmount()
+    }
+  })
+
+  it('grays out the reveal row when the shell passes no resolver', () => {
+    stubZh()
+    const { tabEls, onRevealInFileManager, unmount } = mountBar(fileTabs(), { noRevealResolver: true })
+    try {
+      act(() => { rightClick(tabEls[0]!) })
+      expect(onRevealInFileManager).toBeUndefined()
+      expect(menuDisabled()[5]).toBe(true)
+    } finally {
+      unmount()
+    }
+  })
 })
 
-describe('TabBar pin submenu (v0.17.0)', () => {
-  /** The portaled submenu rows (aria-expanded parent + nested menuitem rows). */
-  function submenuItems(): HTMLElement[] {
-    return [...document.querySelectorAll<HTMLElement>('[role="menuitemradio"], [role="menuitem"]')]
+describe('Workbench tab context menu', () => {
+  /** Two panes side by side, each with one file tab (the recursive render
+   *  path a split workbench takes to its strips). */
+  function splitState(): SidebarState {
+    return {
+      ...makeDefaultState(),
+      bottomSplits: {
+        kind: 'split',
+        id: 'split:1',
+        dir: 'row',
+        sizes: [0.5, 0.5],
+        children: [
+          { kind: 'leaf', id: 'pane:1', tabs: [{ id: 't1', type: 'editor', title: 'a.ts', path: '/repo/a.ts' }], active: 't1' },
+          { kind: 'leaf', id: 'pane:2', tabs: [{ id: 't2', type: 'editor', title: 'b.ts', path: '/repo/b.ts' }], active: 't2' },
+        ],
+      },
+    }
   }
 
-  it('hides the pin entry when onPinTab is not provided (legacy callers)', () => {
+  it('hands every pane strip the shell reveal resolver', () => {
     stubZh()
-    const { tabEls, unmount } = mountBar(fourTabs())
+    const state = splitState()
+    const onRevealInFileManager = vi.fn()
+    const container = document.createElement('div')
+    document.body.append(container)
+    const root: Root = createRoot(container)
+    act(() => {
+      root.render(createElement(Workbench, {
+        state,
+        tree: state.bottomSplits,
+        newTabOptions: [],
+        actions: {
+          closeTab: () => {},
+          activateTab: () => {},
+          focusPane: () => {},
+          moveTabToEdge: () => {},
+          moveTabBefore: () => {},
+          resizeSplit: () => {},
+        },
+        onNewTab: () => {},
+        // The strip is what this spec is about: the panes' bodies stay empty.
+        renderTab: () => null,
+        onRevealInFileManager,
+      }))
+    })
     try {
-      act(() => { rightClick(tabEls[2]!) }) // t3 = terminal
-      // Exactly the legacy close-only menu, no pin row.
-      expect(menuItems().map(item => item.textContent)).toEqual(MENU_LABELS)
-    } finally {
-      unmount()
-    }
-  })
+      const paneTabs = [...container.querySelectorAll<HTMLElement>('[class*="tabList"] > [class*="tab"]')]
+      expect(paneTabs).toHaveLength(2)
+      // Each strip's reveal row must reach the resolver with ITS tab's file.
+      act(() => { rightClick(paneTabs[0]!) })
+      expect(menuDisabled()[5]).toBe(false)
+      act(() => { menuItems()[5]!.click() })
+      expect(onRevealInFileManager).toHaveBeenLastCalledWith('/repo/a.ts')
 
-  it('adds a "Pin Terminal ▸" submenu for an unpinned UI terminal', () => {
-    stubZh()
-    const onPinTab = vi.fn<(tabId: string, scope: 'workspace' | 'global' | null) => void>()
-    const { tabEls, unmount } = mountBar(fourTabs(), { onPinTab })
-    try {
-      act(() => { rightClick(tabEls[2]!) }) // t3 = UI terminal
-      const labels = menuItems().map(item => item.textContent)
-      // pin (with submenu indicator) | close | closeOthers | closeLeft | closeRight
-      expect(labels[0]).toBe('固定终端')
-      expect(labels[1]).toBe('关闭')
-      // Hovering the pin row reveals the submenu items. React synthesizes
-      // onMouseEnter from the bubbling mouseover event, so dispatch that.
-      act(() => { menuItems()[0]!.dispatchEvent(new MouseEvent('mouseover', { bubbles: true })) })
-      const sub = submenuItems().map(item => item.textContent)
-      expect(sub).toContain('固定到工作区')
-      expect(sub).toContain('固定到全局')
-      // Clicking "pin to workspace" fires the callback.
-      const wsItem = submenuItems().find(item => item.textContent === '固定到工作区')!
-      act(() => { wsItem.click() })
-      expect(onPinTab).toHaveBeenCalledWith('t3', 'workspace')
+      act(() => { rightClick(paneTabs[1]!) })
+      act(() => { menuItems()[5]!.click() })
+      expect(onRevealInFileManager).toHaveBeenLastCalledWith('/repo/b.ts')
+      expect(onRevealInFileManager).toHaveBeenCalledTimes(2)
     } finally {
-      unmount()
-    }
-  })
-
-  it('uses the "Pin Agent Terminal" label for an agent terminal tab', () => {
-    stubZh()
-    const onPinTab = vi.fn<(tabId: string, scope: 'workspace' | 'global' | null) => void>()
-    const tabs: SidebarTab[] = [
-      { id: 'agent:abc-123', type: 'terminal', title: 'Agent T' },
-    ]
-    const { tabEls, unmount } = mountBar(tabs, { onPinTab })
-    try {
-      act(() => { rightClick(tabEls[0]!) })
-      const labels = menuItems().map(item => item.textContent)
-      expect(labels[0]).toBe('固定 Agent 终端')
-    } finally {
-      unmount()
-    }
-  })
-
-  it('shows "Unpin" instead of the submenu for an already-pinned terminal', () => {
-    stubZh()
-    const onPinTab = vi.fn<(tabId: string, scope: 'workspace' | 'global' | null) => void>()
-    const tabs: SidebarTab[] = [
-      { id: 'terminal:1', type: 'terminal', title: 'T', pin: { scope: 'global' } },
-    ]
-    const { tabEls, unmount } = mountBar(tabs, { onPinTab })
-    try {
-      act(() => { rightClick(tabEls[0]!) })
-      const labels = menuItems().map(item => item.textContent)
-      expect(labels).toContain('取消固定')
-      expect(labels).not.toContain('固定终端')
-      const unpinItem = menuItems().find(item => item.textContent === '取消固定')!
-      act(() => { unpinItem.click() })
-      expect(onPinTab).toHaveBeenCalledWith('terminal:1', null)
-    } finally {
-      unmount()
-    }
-  })
-
-  it('does not add a pin entry for non-terminal tabs even with onPinTab provided', () => {
-    stubZh()
-    const onPinTab = vi.fn<(tabId: string, scope: 'workspace' | 'global' | null) => void>()
-    const { tabEls, unmount } = mountBar(fourTabs(), { onPinTab })
-    try {
-      act(() => { rightClick(tabEls[0]!) }) // t1 = editor
-      expect(menuItems().map(item => item.textContent)).toEqual(MENU_LABELS)
-      act(() => { rightClick(tabEls[1]!) }) // t2 = git
-      expect(menuItems().map(item => item.textContent)).toEqual(MENU_LABELS)
-      expect(onPinTab).not.toHaveBeenCalled()
-    } finally {
-      unmount()
+      act(() => { root.unmount() })
+      container.remove()
     }
   })
 })
 
-describe('TabBar context menu flip geometry (submenu clamping)', () => {
-  const ATTR = 'data-dsh-sidebar-submenu'
-
-  /** jsdom's default viewport (what the hook reads via window.innerWidth/Height). */
-  const VW = window.innerWidth
-  const VH = window.innerHeight
-
-  it('publishes "down" while the menu is open and clears it on selection', () => {
-    stubZh()
-    const { tabEls, onClose, unmount } = mountBar(fourTabs())
-    try {
-      // rightClick() dispatches at clientY 40 — the top strip, upper half.
-      act(() => { rightClick(tabEls[1]!) })
-      expect(document.body.getAttribute(ATTR)).toBe('down')
-      act(() => { menuItems()[0]!.click() })
-      expect(onClose).toHaveBeenCalledWith('t2')
-      expect(document.body.hasAttribute(ATTR)).toBe(false)
-    } finally {
-      unmount()
+describe('Sidebar tab context menu reveal', () => {
+  /**
+   * The whole shell on a fake host: the bottom workbench holds one file tab,
+   * and the reveal row must reach the host's open-in-app remote — the same
+   * call the explorer's own reveal row makes (`ctx.remote.session.
+   * openWorkspacePath({ path, action: 'reveal' })`). This is the only
+   * coverage of the shell's own wiring between the strip resolver and the
+   * open-in-app adapter; `tests/open-in-app.spec.ts` covers the adapter.
+   */
+  it('reveals the tab file through the host open-in-app remote', async () => {
+    vi.stubGlobal('WebSocket', class { close(): void {} })
+    const store = createSidebarStore()
+    store.setSession('s1')
+    store.reduce(state => ({ ...state, bottomOpen: true }))
+    const service = createBetterSidebarService(store)
+    service.registerTab({ id: 'probe', title: 'Probe', component: () => null })
+    service.openTab({ type: 'probe', title: 'probe.ts', path: '/repo/src/probe.ts' })
+    const reveal = vi.fn(async () => ({ ok: true }))
+    // Both snapshots are stable references (useSyncExternalStore re-reads
+    // them on every render: a fresh object here is an infinite loop). The
+    // shell follows the host's MOUNTED seat (`ctx.sidebarRight.mounted`) for
+    // its per-session state, so the fake column has to report one — without
+    // it the shell unbinds the store and renders nothing.
+    const localeSnapshot = { active: 'en' }
+    const sessionsSnapshot = { byId: { s1: { id: 's1', cwd: '/repo' } } }
+    const ctx = {
+      locale: { subscribe: () => () => {}, getSnapshot: () => localeSnapshot },
+      sessions: { list: { subscribe: () => () => {}, getSnapshot: () => sessionsSnapshot } },
+      get: (name: string) => ({
+        betterSidebar: service,
+        remote: { session: { openWorkspacePath: reveal } },
+        sidebarRight: { mounted: { subscribe: () => () => {}, getSnapshot: () => 's1' } },
+      })[name],
     }
-  })
-
-  it('flips left when the cursor sits within the right-hand submenu room', () => {
-    stubZh()
-    const { tabEls, unmount } = mountBar(fourTabs())
+    const container = document.createElement('div')
+    document.body.append(container)
+    const root: Root = createRoot(container)
+    act(() => { root.render(createElement(Sidebar, { ctx: ctx as never, store })) })
     try {
-      const nearRight = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: VW - 10, clientY: 40 })
-      act(() => { tabEls[1]!.dispatchEvent(nearRight) })
-      expect(document.body.getAttribute(ATTR)).toBe('down left')
+      const tab = container.querySelector<HTMLElement>('[class*="bottomPanel"] [class*="tabList"] > [class*="tab"]')
+      expect(tab).not.toBeNull()
+      act(() => { rightClick(tab!) })
+      // The copy is pinned by the TabBar block above (against zh); here the
+      // shape and the row's live state are what matter (the shell runs on the
+      // default locale).
+      expect(menuItems()).toHaveLength(MENU_LABELS.length)
+      expect(menuDisabled()[5]).toBe(false)
+      await act(async () => { menuItems()[5]!.click() })
+      expect(reveal).toHaveBeenCalledTimes(1)
+      expect(reveal).toHaveBeenCalledWith({ path: '/repo/src/probe.ts', action: 'reveal' })
     } finally {
-      unmount()
+      act(() => { root.unmount() })
+      container.remove()
     }
-  })
-
-  it('keeps the primitive defaults (empty tokens) for a lower-half opening', () => {
-    stubZh()
-    const { tabEls, unmount } = mountBar(fourTabs())
-    try {
-      const lowLeft = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 120, clientY: VH - 40 })
-      act(() => { tabEls[1]!.dispatchEvent(lowLeft) })
-      // Attribute present but empty: layout.css matches no token, so the
-      // host primitive's own up/right geometry applies.
-      expect(document.body.getAttribute(ATTR)).toBe('')
-    } finally {
-      unmount()
-    }
-  })
-
-  it('clears the attribute on unmount with the menu still open', () => {
-    stubZh()
-    const { tabEls, unmount } = mountBar(fourTabs())
-    act(() => { rightClick(tabEls[1]!) })
-    expect(document.body.getAttribute(ATTR)).toBe('down')
-    unmount()
-    expect(document.body.hasAttribute(ATTR)).toBe(false)
   })
 })
