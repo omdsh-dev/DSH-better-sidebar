@@ -341,6 +341,8 @@ export const vi: Record<string, string> = {
   settingsSubagentDesc: 'Khi phiên hiện tại tạo tác nhân con mới, trang Quản lý tác vụ được tạo trong thẻ bên và đánh dấu chấm chưa đọc; thẻ bên đang mở ở trang khác sẽ không bị chiếm — bấm vào chấm để đến đó; trên màn hình rộng, thẻ bên cũng được mở rộng; trên màn hình hẹp, ngăn kéo toàn màn hình không bị ép mở; tắt để ngừng tạo tự động',
   settingsJobsTitle: 'Tự động kích hoạt trang Quản lý tác vụ khi có tác vụ nền mới',
   settingsJobsDesc: 'Mỗi khi phiên hiện tại có tác vụ nền mới, trang Quản lý tác vụ được tạo trong thẻ bên và đánh dấu chấm chưa đọc (mỗi tác vụ mới đều kích hoạt); thẻ bên đang mở ở trang khác sẽ không bị chiếm — bấm vào chấm để đến đó; trên màn hình rộng, thẻ bên cũng được mở rộng; trên màn hình hẹp, ngăn kéo toàn màn hình không bị ép mở; tắt để ngừng tạo tự động',
+  settingsAutoCollapseTitle: 'Tự động thu gọn thẻ bên khi tác vụ kết thúc',
+  settingsAutoCollapseDesc: 'Khi tính năng kích hoạt tự động mở rộng một thẻ bên đang thu gọn, thẻ sẽ được thu gọn lại sau khi mọi subagent và tác vụ nền của phiên hiện tại kết thúc và giữ trạng thái rảnh trong giây lát (chỉ đóng thẻ, tab vẫn còn; thẻ bạn tự mở rộng sẽ không bị đụng tới). Mặc định tắt',
   settingsTasksAutoFoldSettledTitle: 'Tự động thu gọn tác vụ lá đã hoàn tất',
   settingsTasksAutoFoldSettledDesc: 'Tự động thu gọn tác vụ lá đã hoàn tất, thất bại hoặc đã dừng và không có tác nhân con; mặc định bật',
   settingsTasksAutoFoldBranchesTitle: 'Chỉ tự động thu gọn nhánh đã kết thúc hoàn toàn',

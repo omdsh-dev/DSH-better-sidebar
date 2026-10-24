@@ -356,6 +356,8 @@ export const zhTW: Record<string, string> = {
   settingsSubagentDesc: '目前工作階段產生新的子代理時，在側邊欄建立任務管理頁並標記未讀紅點；若右欄正展開在其他頁面則不搶焦點，點紅點即可前往；寬螢幕時亦會展開側邊欄，窄螢幕時不會強制開啟全螢幕抽屜；關閉後不再自動建立',
   settingsJobsTitle: '有新背景任務時自動選取任務管理頁',
   settingsJobsDesc: '目前工作階段出現新的背景任務時，在側邊欄建立任務管理頁並標記未讀紅點（每個新任務都會觸發）；若右欄正展開在其他頁面則不搶焦點，點紅點即可前往；寬螢幕時亦會展開側邊欄，窄螢幕時不會強制開啟全螢幕抽屜；關閉後不再自動建立',
+  settingsAutoCollapseTitle: '任務結束後自動收起側邊欄',
+  settingsAutoCollapseDesc: '自動選取把原本收合的側邊欄展開時，等目前工作階段的子代理與背景任務全部結束並保持閒置片刻後，自動把側邊欄收起（只收面板，頁籤保留）；你原本就展開的面板不會被動到。預設關閉',
   settingsTasksAutoFoldSettledTitle: '自動摺疊已結束葉子任務',
   settingsTasksAutoFoldSettledDesc: '自動摺疊已完成、失敗或停止且沒有子代理的葉子任務；預設開啟',
   settingsTasksAutoFoldBranchesTitle: '僅自動摺疊完全結束的分支',
