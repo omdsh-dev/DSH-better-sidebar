@@ -23,6 +23,7 @@
  * absent from the native guide and `openTab` refuses it.
  */
 import type { Context } from '../../context-types.ts'
+import { addressBaseOf, resolveAddressPath } from '../address-base.ts'
 import { t } from '../locales.ts'
 import { splitTrailingLineSpec } from '../path-line.ts'
 import { baseName } from '../paths.ts'
@@ -179,14 +180,29 @@ interface Registration {
  * {@link NativeTabParams.line}. The range end and the column are deliberately
  * dropped: {@link splitTrailingLineSpec} parses them, and a start line is all
  * the editor has anywhere to put a cursor.
+ *
+ * `base` is where an address-relative path is resolved, and it must be the
+ * base the ADDRESS was built with — the session's stored header cwd, see
+ * `src/client/address-base.ts` — never the tab body's worktree root. Without
+ * it the seed stays relative and every downstream reader (the viewer's
+ * `fs.read`, the editor, the directory watch) re-bases it on the ACTIVE
+ * worktree: a chat link to `<repo>/frontend/.worktrees/wt/a.md` arrives as
+ * `frontend/.worktrees/wt/a.md` and is joined onto the worktree root a second
+ * time (#947), or silently reads the same-named file of another checkout
+ * (#950). Omitted (a caller with no session context) keeps the historical
+ * relative seed.
  * @param info - the native tab record the body is drawing.
+ * @param base - the address's own base, when the caller knows it.
  * @returns the seed, or `undefined` when the tab is not a file address.
  */
-export function fileParamsOf(info: NativeTabInfo): NativeTabParams | undefined {
+export function fileParamsOf(info: NativeTabInfo, base?: string): NativeTabParams | undefined {
   const address = parseFileAddress(info.tab.contentId)
   if (address === undefined) return undefined
-  const spec = splitTrailingLineSpec(address.path)
-  if (spec === undefined) return { path: address.path }
+  // Resolve BEFORE the trailing line spec is split off: the spec belongs to
+  // the file name, and a base can only be prepended to the path.
+  const path = base === undefined ? address.path : resolveAddressPath(base, address.path)
+  const spec = splitTrailingLineSpec(path)
+  if (spec === undefined) return { path }
   return { path: spec.path, title: baseName(spec.path), line: spec.line }
 }
 
@@ -394,7 +410,14 @@ export function registerNativeSurface(deps: NativeSurfaceDeps): () => void {
         slots = registerSlots(
           id,
           { ctx, store, service, records, descriptorId: descriptor.id },
-          isEditor ? { paramsOf: fileParamsOf, sessionIdOf: fileSessionIdOf } : {},
+          isEditor
+            ? {
+              // The address's own session, not the seat's: a file address
+              // carries the session whose workspace resolves its path.
+              paramsOf: (info: NativeTabInfo) => fileParamsOf(info, addressBaseOf(ctx, fileSessionIdOf(info))),
+              sessionIdOf: fileSessionIdOf,
+            }
+            : {},
         )
       } catch (error) {
         disposeSafely(disposeType, `native tab type "${id}"`)

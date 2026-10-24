@@ -141,7 +141,7 @@ export function builtinTabs(ctx: Context): readonly TabDescriptor[] {
           scope={scope}
           tab={tab}
           visible={visible}
-          onOpenFile={(path) => { openSidebarFile(ctx, scope.sessionId, path) }}
+          onOpenFile={(path) => { openSidebarFile(ctx, scope.sessionId, path, { cwd: scope.cwd }) }}
           onOpenDiff={onOpenDiff}
         />
       ),

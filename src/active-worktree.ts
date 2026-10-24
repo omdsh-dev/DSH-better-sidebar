@@ -14,7 +14,13 @@
  * `git rev-parse --show-toplevel` (falling back to its directory for files),
  * and only top levels whose `--absolute-git-dir` differs from their
  * `--git-common-dir` (i.e. real LINKED worktrees, not the main checkout and
- * not submodules) are adopted. The highest-scoring linked worktree of the
+ * not submodules) are adopted. A linked worktree that sits INSIDE the session
+ * workspace is adopted only when it belongs to the SAME repository — a
+ * `git worktree add .worktrees/x` of the session's own repo is the session
+ * moving, while a nested repository's worktree is ordinary content of the
+ * workspace: re-rooting the explorer into it hides every sibling directory
+ * (#952). Outside the workspace any linked worktree is adopted, which is PR
+ * #802's cross-repository case. The highest-scoring adoptable worktree of the
  * newest event that has one wins, but only evidence after the last committed
  * working-directory/change is eligible. When there is no evidence the cwd is
  * kept (lifted to the repository top level for subdirectory sessions).
@@ -51,7 +57,7 @@ const ACTIVE_ROOT_MAX_EVENTS = 4_000
 const ACTIVE_ROOT_MAX_PROBES = 24
 /** Bounds of the three process-wide caches below (LRU, oldest evicted first). */
 const PATH_TOP_CACHE_MAX = 512
-const LINKED_WORKTREE_CACHE_MAX = 512
+const GIT_IDENTITY_CACHE_MAX = 512
 const ACTIVE_ROOT_CACHE_MAX = 256
 /** Explicit override, mainly for tests and manual pinning. */
 const ACTIVE_ROOT_OVERRIDE_ENV = 'DSH_SIDEBAR_WORKTREE_ROOT'
@@ -83,11 +89,13 @@ const ACTIVE_ROOT_PATH_PATTERN = /[A-Za-z]:(?:\\|\/)[^\\/\s"'\x60,;|)<>*?]+(?:[\
  * sidebar that keeps asking about every session it has ever shown) would
  * otherwise grow them forever. `pathTopCache` caches negative answers too
  * (`undefined` = "no git top level here"), which is what keeps a non-repo
- * session cheap; those entries are evictable like any other.
+ * session cheap; `gitIdentityCache` does the same for "not in a repository",
+ * and `activeWorktreeRootCache` the same for a session with no evidence —
+ * those entries are evictable like any other.
  */
 const activeWorktreeRootCache = new Map<string, { root: string; base: string; directoryEpoch: number | undefined; eventSeq: number | undefined; gitResolved: boolean; expires: number }>()
 const pathTopCache = new Map<string, string | undefined>()
-const linkedWorktreeCache = new Map<string, boolean>()
+const gitIdentityCache = new Map<string, GitIdentity | undefined>()
 
 /**
  * In-flight de-duplication, mirroring `git.ts`'s `repoRootsInFlight`.
@@ -283,34 +291,104 @@ async function topOfActivePath(value: string): Promise<string | undefined> {
 }
 
 /**
- * Whether a git top level is a LINKED worktree: its git dir lives under the
- * common dir (`<main>/.git/worktrees/<name>`) instead of being it. Submodules
- * report the same dir for both, so they are excluded.
+ * The git identity of one checkout, as `git rev-parse` reports it: the
+ * checkout's OWN git dir and the COMMON dir every checkout of that repository
+ * shares. Two paths belong to the same repository exactly when their common
+ * dirs match, which is the only reliable way to tell "the session moved into a
+ * worktree of its own repo" from "the workspace contains another repo's
+ * worktree" (#952) — a bare repo's checkouts and a container workspace's
+ * sub-projects are indistinguishable by path alone.
+ *
+ * `main checkout: gitDir === commonDir === <repo>/.git`; `linked worktree:
+ * gitDir = <repo>/.git/worktrees/<name>, commonDir = <repo>/.git`; `submodule:
+ * both are <super>/.git/modules/<name>`.
  */
-async function isLinkedWorktree(top: string): Promise<boolean> {
-  const key = pathKeyOf(top)
-  const cached = linkedWorktreeCache.get(key)
-  if (cached !== undefined) {
-    cachePut(linkedWorktreeCache, key, cached, LINKED_WORKTREE_CACHE_MAX)
+interface GitIdentity {
+  /** The checkout's own git dir (`--absolute-git-dir`). */
+  gitDir: string
+  /** The repository's shared git dir (`--git-common-dir`). */
+  commonDir: string
+}
+
+/**
+ * `git rev-parse` identity of one directory, cached process-wide (a probe is a
+ * spawn). `undefined` for a directory that is not in a repository, or whose
+ * answer is unusable — callers treat that as "no identity", never as a match.
+ * @param dir - an existing directory (or any path inside one).
+ * @returns the identity, or undefined.
+ */
+async function gitIdentityOf(dir: string): Promise<GitIdentity | undefined> {
+  const key = pathKeyOf(dir)
+  if (gitIdentityCache.has(key)) {
+    const cached = gitIdentityCache.get(key)
+    // A cached `undefined` ("not in a repository") is a real answer that keeps
+    // a subdirectory session from re-probing the same directory, so a hit is
+    // re-inserted like any other — which also refreshes its LRU recency.
+    cachePut(gitIdentityCache, key, cached, GIT_IDENTITY_CACHE_MAX)
     return cached
   }
-  let linked = false
+  let identity: GitIdentity | undefined
   try {
-    const out = (await runGit(top, ['rev-parse', '--absolute-git-dir', '--git-common-dir'])).trim().split(/\r?\n/)
+    const out = (await runGit(dir, ['rev-parse', '--absolute-git-dir', '--git-common-dir'])).trim().split(/\r?\n/)
     const gitDir = out[0]
     const commonRaw = out[1] ?? ''
     if (gitDir !== undefined && gitDir !== '' && commonRaw !== '') {
-      const common = isAbsolute(commonRaw) ? commonRaw : join(top, commonRaw)
-      linked = pathKeyOf(requireAbsolute(gitDir)) !== pathKeyOf(requireAbsolute(common))
+      // The common dir comes back relative when the checkout is the main one
+      // (`.git`); resolve it against the probed directory, not the process cwd.
+      identity = {
+        gitDir: requireAbsolute(gitDir),
+        commonDir: requireAbsolute(isAbsolute(commonRaw) ? commonRaw : join(dir, commonRaw)),
+      }
     }
   } catch {
-    linked = false
+    identity = undefined
   }
-  // `false` is a real answer ("the main checkout", "a submodule", "not a
-  // repo") and is cached: the negative is what keeps a subdirectory session
-  // from re-probing the same top level on every scan.
-  cachePut(linkedWorktreeCache, key, linked, LINKED_WORKTREE_CACHE_MAX)
-  return linked
+  cachePut(gitIdentityCache, key, identity, GIT_IDENTITY_CACHE_MAX)
+  return identity
+}
+
+/**
+ * Whether a git top level is a LINKED worktree: its git dir lives under the
+ * common dir (`<main>/.git/worktrees/<name>`) instead of being it. Submodules
+ * report the same dir for both, so they are excluded.
+ *
+ * Both questions are answered from ONE {@link gitIdentityOf} probe: the same
+ * identity also names the repository a checkout belongs to, which is what
+ * {@link isAdoptableTop} compares against the session workspace.
+ */
+async function isLinkedWorktree(top: string): Promise<boolean> {
+  const identity = await gitIdentityOf(top)
+  return identity !== undefined && pathKeyOf(identity.gitDir) !== pathKeyOf(identity.commonDir)
+}
+
+/**
+ * Whether a linked worktree is the session MOVING there, rather than ordinary
+ * content of the workspace it already roots (#952).
+ *
+ * Outside the workspace any linked worktree counts — that is exactly PR #802's
+ * case (the session's header cwd points at one repository and the agent works
+ * in a worktree of another). Inside the workspace the answer depends on the
+ * repository: `.worktrees/<branch>` of the session's OWN repo is the session
+ * working on a branch, which the explorer should follow; the linked worktrees
+ * of a repository NESTED in the workspace (a bare repo's checkouts, a
+ * container workspace's sub-projects) are ordinary content, and adopting one
+ * re-roots the explorer into that single subdirectory and hides every sibling
+ * — the reported 20-of-27-sessions bug.
+ *
+ * @param top - a candidate's `git rev-parse --show-toplevel`.
+ * @param base - the session's effective workspace root.
+ * @returns whether the candidate may become the active root.
+ */
+async function isAdoptableTop(top: string, base: string): Promise<boolean> {
+  if (!(await isLinkedWorktree(top))) return false
+  // A base of `/` (or of another filesystem root) puts everything "inside";
+  // keeping the check would switch the whole feature off, so treat it as no
+  // workspace at all.
+  if (pathKeyOf(base) === '' || !pathUnderOf(base, top)) return true
+  const candidate = await gitIdentityOf(top)
+  const workspace = await gitIdentityOf(base)
+  return candidate !== undefined && workspace !== undefined
+    && pathKeyOf(candidate.commonDir) === pathKeyOf(workspace.commonDir)
 }
 
 /** The newest linked worktree the session's tool/call paths resolve to. */
@@ -337,7 +415,7 @@ async function activeRootFromEvents(events: readonly SidebarSessionEvent[], base
       if (top === undefined) continue
       const topKey = pathKeyOf(top)
       if (topKey === baseKey) continue
-      if (!(await isLinkedWorktree(top))) continue
+      if (!(await isAdoptableTop(top, base))) continue
       const entry = scores.get(topKey)
       if (entry === undefined) scores.set(topKey, { top, score: candidate.score })
       else entry.score += candidate.score

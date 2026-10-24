@@ -1,6 +1,6 @@
 # dsh-better-sidebar 仓库规则（AGENTS）
 
-> 本文只含**每次都要遵守的规则**。深度参考不放在这里：接入 API → [docs/external-plugin-guide.md](docs/external-plugin-guide.md)；宿主契约（原 §3.4 第 1–12 条）与历史线沿用至今的约束 → [docs/host-contracts.md](docs/host-contracts.md)；逐特性设计史与历次 DSH 适配记录 → [docs/plans/](docs/plans/)；用户可见变更 → [CHANGELOG.md](CHANGELOG.md)。
+> 本文只含**每次都要遵守的规则**。深度参考不放在这里：接入 API → [docs/external-plugin-guide.md](docs/external-plugin-guide.md)；宿主契约（原 §3.4 第 1–13 条）与历史线沿用至今的约束 → [docs/host-contracts.md](docs/host-contracts.md)；逐特性设计史与历次 DSH 适配记录 → [docs/plans/](docs/plans/)；用户可见变更 → [CHANGELOG.md](CHANGELOG.md)。
 
 ---
 
@@ -48,7 +48,7 @@
 - **沿用 alpha.5 的删除契约**：不再依赖 `@deepseek-ai/dsh-invariants`、`ctx.invariants` 或上游 `/invariant` 子路径，也不发布本插件的 invariant companion；HTTP/WS 准入统一调用 `ctx.connection.requestRejection(req)`，仅 `undefined` 放行，不恢复 `webRuntime` / 自建信任例外。
 - **v0.28.0 正式版接管 npm `latest`**：宿主 npm `latest` 此时仍指向 `0.2.0-rc.2`，不满足本插件 RC 基线；用户已明确接受这一分离，所有安装文档必须显著提醒旧宿主固定 `v0.26.1`，不要用浮动 `latest`。发布 workflow 沿用现有版本号规则，无需改动。
 - **本次 RC 适配不改功能实现**：alpha.5 → rc.1 上游完整树差异共 355 项，全部为 `package.json`，源码零变化；同步版本、peer、伴随依赖与文档，重新获取 RC 验证证据，不沿用 alpha 测试数字。
-- 动设置面 / sidechat / 原生 tab 之前，先读 [docs/host-contracts.md](docs/host-contracts.md)（原 §3.4 的 1–12 条按原编号都在那里）。
+- 动设置面 / sidechat / 原生 tab 之前，先读 [docs/host-contracts.md](docs/host-contracts.md)（原 §3.4 的 1–13 条按原编号都在那里）。
 
 ---
 
@@ -78,7 +78,7 @@ v0.28.0 正式版沿用现有发布规则进入 npm `latest`，无需修改 work
 ## 6. 去哪找什么
 
 - **接入 API 全参考**：[docs/external-plugin-guide.md](docs/external-plugin-guide.md)（§0 承载面 / §4 Tab / §5 FileViewer / §7 服务 / §10 平台陷阱 / §12 皮肤契约 / §15 案例）。
-- **宿主契约与沿用至今的适配约束**：[docs/host-contracts.md](docs/host-contracts.md)（编号与旧 §3.4 第 1–12 条一致）。
+- **宿主契约与沿用至今的适配约束**：[docs/host-contracts.md](docs/host-contracts.md)（编号与旧 §3.4 第 1–13 条一致）。
 - **设计史 / 历次版本适配**：[docs/plans/](docs/plans/)；**用户可见变更**：[CHANGELOG.md](CHANGELOG.md)。
 - **Issue / PR 分诊**：[.agents/skills/issue-triage/SKILL.md](.agents/skills/issue-triage/SKILL.md)（脚本在同目录 `scripts/`）。
 - **测试**：契约写在每个 spec 的**头注释**里——改哪个子系统就跑对应 spec（注册表 `service` / `builtins` / `market-manifest`；原生承载面 `native-surface` / `native-registration`；文件树 `fs-tree-*` / `file-tree-*` / `fs-watch`；编辑器与文件路由 `file-stream-route` / `fs-read-page` / `text-encoding` / `fs-write-route`；Git `git-status-poll` / `git-scm` / `git-graph*`）。
