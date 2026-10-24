@@ -97,8 +97,23 @@ describe('native tab menu rows', () => {
     expect(rows(container).map(node => node.dataset.dshBetterSidebarTabMenuAction))
       .toEqual(['closeOthers', 'closeLeft', 'closeRight', 'closeAll'])
     expect(rows(container).map(node => node.textContent)).toEqual([
-      '关闭其他页签', '关闭左侧页签', '关闭右侧页签', '关闭全部页签',
+      '关闭其他', '关闭左侧', '关闭右侧', '关闭全部',
     ])
+  })
+
+  it('gives every row a distinct leading glyph, split from the kit\'s own Close', () => {
+    filmstrip(['t1', 't2'], 'pane:1')
+    const { container } = mount('t1')
+    const items = rows(container)
+    // Four rows that share one verb are told apart by their glyphs, not by
+    // the word at the end of the line.
+    for (const item of items) expect(item.querySelector('svg'), item.textContent ?? '').not.toBeNull()
+    const separator = container.querySelector('[role="separator"]')
+    expect(separator).not.toBeNull()
+    const first = items[0]
+    if (separator === null || first === undefined) throw new Error('missing separator or row')
+    // The rule sits ABOVE the group: the kit's "Close" row is not ours to move.
+    expect(separator.compareDocumentPosition(first) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 
   it('closes the other tabs of the clicked strip after dismissing the menu', () => {

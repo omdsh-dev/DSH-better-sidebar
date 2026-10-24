@@ -18,6 +18,7 @@ import {
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SidebarTab } from './state.ts'
 import { t } from './locales.ts'
+import { closeAllIcon, closeLeftIcon, closeOthersIcon, closeRightIcon } from './close-family-icons.tsx'
 import { contentWidthOf } from './tab-strip-freeze.ts'
 import css from './sidebar.module.css'
 
@@ -370,10 +371,10 @@ export function TabBar(props: {
           onClose={() => { setTabMenu(null) }}
           items={[
             { id: 'close', label: t('close') },
-            { id: 'closeOthers', label: t('closeOtherTabs'), ...(tabs.length <= 1 ? { disabled: true } : {}) },
-            { id: 'closeLeft', label: t('closeLeftTabs'), ...(tabMenuIndex <= 0 ? { disabled: true } : {}) },
-            { id: 'closeRight', label: t('closeRightTabs'), ...(tabMenuIndex >= tabs.length - 1 ? { disabled: true } : {}) },
-            { id: 'closeAll', label: t('closeAllTabs') },
+            { id: 'closeOthers', label: t('closeOtherTabs'), icon: closeOthersIcon, ...(tabs.length <= 1 ? { disabled: true } : {}) },
+            { id: 'closeLeft', label: t('closeLeftTabs'), icon: closeLeftIcon, ...(tabMenuIndex <= 0 ? { disabled: true } : {}) },
+            { id: 'closeRight', label: t('closeRightTabs'), icon: closeRightIcon, ...(tabMenuIndex >= tabs.length - 1 ? { disabled: true } : {}) },
+            { id: 'closeAll', label: t('closeAllTabs'), icon: closeAllIcon },
             { id: 'revealInFileManager', label: t('revealTabInFileManager'), ...(canReveal ? {} : { disabled: true }) },
           ]}
           onSelect={(id) => {

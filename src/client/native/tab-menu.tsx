@@ -24,6 +24,7 @@
  */
 import type { ReactNode } from 'react'
 import type { Context } from '../../context-types.ts'
+import { closeAllIcon, closeLeftIcon, closeOthersIcon, closeRightIcon } from '../close-family-icons.tsx'
 import { t } from '../locales.ts'
 import css from '../sidebar.module.css'
 
@@ -70,6 +71,7 @@ export function stripOrderOf(tabId: string): string[] | undefined {
 function row(
   action: string,
   label: string,
+  icon: ReactNode,
   targets: readonly string[],
   run: (targets: readonly string[]) => void,
 ): ReactNode {
@@ -83,6 +85,7 @@ function row(
       disabled={targets.length === 0}
       onClick={() => { run(targets) }}
     >
+      <span className={css.nativeTabMenuIcon} aria-hidden="true">{icon}</span>
       {label}
     </button>
   )
@@ -109,10 +112,14 @@ export function NativeTabMenuItems(props: NativeTabMenuOwner & NativeTabMenuDeps
   }
   return (
     <>
-      {row('closeOthers', t('closeOtherTabs'), others, run)}
-      {row('closeLeft', t('closeLeftTabs'), left, run)}
-      {row('closeRight', t('closeRightTabs'), right, run)}
-      {row('closeAll', t('closeAllTabs'), ids, run)}
+      {/* The kit's own "Close" sits above these rows; the rule keeps the
+          single-tab action apart from the four bulk ones, so the group reads
+          as "here is the family" rather than one long list of "Close …". */}
+      <div className={css.nativeTabMenuSeparator} role="separator" aria-orientation="horizontal" />
+      {row('closeOthers', t('closeOtherTabs'), closeOthersIcon, others, run)}
+      {row('closeLeft', t('closeLeftTabs'), closeLeftIcon, left, run)}
+      {row('closeRight', t('closeRightTabs'), closeRightIcon, right, run)}
+      {row('closeAll', t('closeAllTabs'), closeAllIcon, ids, run)}
     </>
   )
 }

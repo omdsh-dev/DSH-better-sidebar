@@ -745,6 +745,9 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
    as part of it: metrics mirror the kit's own `.menuItem` (4px 7px, one step
    below the secondary font size, radius-md), colors ride tokens. */
 .nativeTabMenuItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   padding: 4px 7px;
   color: var(--dsw-alias-label-primary);
   font: inherit;
@@ -754,6 +757,22 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   border: none;
   border-radius: var(--dsw-radius-md);
   cursor: pointer;
+}
+
+/* The leading glyph carries the scope (see close-family-icons.tsx): muted vs
+   the label, and it dims with the label when the row has nothing to act on. */
+.nativeTabMenuIcon {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* Separates the kit's own "Close" row from the four bulk actions. */
+.nativeTabMenuSeparator {
+  height: 1px;
+  margin: 4px 2px;
+  background: var(--dsw-alias-border-l1);
 }
 
 .nativeTabMenuItem:hover:not(:disabled) {

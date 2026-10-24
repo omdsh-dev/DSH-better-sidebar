@@ -102,6 +102,8 @@
 
 **关闭动作走宿主公开面**：`sidebarRight.close(tabId)`。它对不可关闭的页签（唯一的 docked guide）是 no-op——`closeIn` 里有 `canCloseTab` 守卫——所以「关闭全部」不会把栏关空，不需要插件自己判断。
 
+**可读性**（后来补的）：四行都以「关闭 / Close」开头，用户必须逐行读到中段才分得出——所以每行加了一颗**前置图形**（⊗ 其他 / ‹ 左 / › 右 / 🗑 全部，宿主图标集、14px、随禁用态变淡），并用细分隔线与 kit 自带的「关闭」分组；英文文案缩短成 `Close others / Close left / Close right / Close all`，中文去掉「页签」后缀。图形给作用域、文字做确认，换语言也不失效（词序不影响图形）。
+
 **样式**：这些行渲染在 kit 的 `<div role="menu">` 里，所以量度复刻 kit 自己的 `.menuItem`（`padding: 4px 7px`、`13px - 1px`、`--dsw-radius-md`、hover 用 `--dsw-alias-interactive-bg-hover`），颜色全走令牌；没有可复用的官方导出件（kit 的菜单项没有导出）。禁用态保留行本身（只置灰），避免不同页签的菜单项数/高度跳变。
 
 **测试**：`tests/native-tab-menu.spec.tsx` 7 例——四项顺序与文案、切片（其他/左/右/全部）、`dismiss` 先于关闭、单页签时前三项禁用而「全部」可用、双 pane 只动被点那条带、解析失败一行不渲染、`stripOrderOf` 纯函数。
