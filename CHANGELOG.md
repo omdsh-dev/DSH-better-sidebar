@@ -15,6 +15,9 @@
 
 - 🐞 **`layout.css` 的 `@media (prefers-reduced-motion: reduce)` 块从未闭合（v0.26.0–v0.28.0 一直如此），它之后的每条规则在普通浏览器里都没生效**：浏览器在文件末尾隐式闭合这个块，所以「语法合法、构建通过、单测全绿」，但**子面板翻转 / 视觉贴靠**那一整段（`body[data-dsh-sidebar-submenu]` 系列）与本次新增的原生 chip 等宽三条规则**全部落在那个 media 块里面**，只在开启了「减少动态效果」的机器上才生效。这是**真机挂载验证**抓到的（Playwright 里 `getComputedStyle(chip).flex` 仍是宿主的 `0 1 auto`，而页面里确实有我们的 `<style>`）。已补上缺失的 `}`，并新增块结构门禁：`tests/layout-css.spec.ts` 现在断言「花括号配平 + 该 media 块只包含 center-column 那条规则」——把 `}` 拿掉当场红（`expected 16 to be 15`）。副作用是**菜单子面板的翻转/贴靠从本版起真正生效**（此前是死代码）。
 
+- ⏸ **关页签时不再立刻重排：指针还在条带上就冻结宽度（Chrome 的行为）**：等宽之后每关一个页签、存活页签都会变宽，鼠标没动但下一个 × 已经挪走了——「连关几个」于是变成每关一次重新找 ×。现在**两排页签**都是「关闭手势发生时先量下当前宽度并冻结，指针离开条带才重排」：插件自己的底栏走 React 状态（`data-frozen` + `--dsh-tab-frozen-width`）；宿主原生条没有 React 树、**且宿主在关闭时会重建条带 DOM**（真机实测 `[data-dockkit-strip]` 节点被整个换掉），所以冻结挂在 **`<html>`** 上、由**关闭手势**（`pointerdown` 落在宿主的 `[data-dockkit-tab-close]`，或中键按在 chip 上）触发，释放按「指针是否还在那条带」判定（`pointerout` 的 `relatedTarget: null` 会先做一次命中复核，否则关掉被 hover 的 chip 那一刻就自己解冻了）。新建页签 / 拖动 / 点选都不冻结，收窄仍然即时。真机实测（1440×900，右栏 675px）：4 签各 115.3 → 关一个仍 115.3 → 再关一个仍 115.3 → 指针移出后才变 190，零控制台错误。
+  - 🧪 `tests/native-strip-freeze.spec.ts`（10 例）与 `tests/tab-bar-freeze.spec.tsx`（5 例）分别钉住两排的触发、保持、释放与「宿主重建 DOM 后依然有效」。
+
 ### v0.28.0
 
 - **正式版支持线前移到 DSH 0.2.1-rc.1+**：13 条 DSH peer 下限统一为 `^0.2.1-rc.1`，开发依赖、CI 与安装脚本使用精确 RC 基线。不新增运行时兼容层、不改功能实现。

@@ -30,6 +30,7 @@ import { parseFileAddress } from '../resource-address.ts'
 import type { ContextDiagnostics } from '../context-diagnostics.ts'
 import type { BetterSidebarService, TabDescriptor } from '../service.ts'
 import type { SidebarStore } from '../state.ts'
+import { installNativeStripFreeze } from '../tab-strip-freeze.ts'
 import { registerNativeTabMenu } from './tab-menu.tsx'
 import {
   NativeTabBody,
@@ -526,7 +527,13 @@ export function registerNativeSurface(deps: NativeSurfaceDeps): () => void {
       for (const dispose of disposeSubscriptions.reverse()) disposeSafely(dispose, 'a native tab subscription')
     }
   })
+  // The host strip keeps its widths while the pointer is inside it, so a run of
+  // closes never moves the next × (see tab-strip-freeze.ts). Installed once
+  // with the native surface: it is a document-level pointer + MutationObserver
+  // pair, not per session.
+  const disposeStripFreeze = installNativeStripFreeze()
   return () => {
+    disposeStripFreeze()
     void seat.dispose()
   }
 }

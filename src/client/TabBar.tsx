@@ -18,6 +18,7 @@ import {
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SidebarTab } from './state.ts'
 import { t } from './locales.ts'
+import { contentWidthOf } from './tab-strip-freeze.ts'
 import css from './sidebar.module.css'
 
 /** One + menu option. */
@@ -110,6 +111,12 @@ export function TabBar(props: {
   // position (the portaled Menu anchors there, following the git lens/FileTree).
   const [tabMenu, setTabMenu] = useState<{ tabId: string; x: number; y: number } | null>(null)
   const [dragOver, setDragOver] = useState(false)
+  // Widths are pinned while the pointer is inside the strip, so a close does
+  // not re-lay-out the survivors under the cursor (Chrome's strip does the
+  // same and re-lays-out when the pointer leaves). `null` = not pinned.
+  const [frozenWidth, setFrozenWidth] = useState<number | null>(null)
+  const frozenWidthRef = useRef<number | null>(null)
+  const hoveredRef = useRef(false)
   const listRef = useRef<HTMLDivElement>(null)
   // The context target's index in the render-time tab snapshot; -1 when the
   // tab disappeared since the menu opened (the menu hides then).
@@ -144,6 +151,25 @@ export function TabBar(props: {
   // swallow the close; settling on the recorded press target at mouseup
   // keeps release semantics without depending on auxclick delivery.
   const onCloseRef = useRef(onClose)
+  // Measure-and-pin, stable across renders for the window-level mouseup
+  // listener: the width of the first tab is the width every tab has right now
+  // (they are equal by construction), captured BEFORE the close removes one.
+  const freezeRef = useRef<() => void>(() => {})
+  freezeRef.current = () => {
+    if (!hoveredRef.current || frozenWidthRef.current !== null) return
+    const chip = listRef.current?.querySelector<HTMLElement>('[data-dsh-tab]')
+    const width = chip === null || chip === undefined ? undefined : contentWidthOf(chip)
+    if (width === undefined) return
+    frozenWidthRef.current = width
+    setFrozenWidth(width)
+  }
+  // Every close gesture that starts inside the strip pins first: the ×, a
+  // middle click, and the context-menu rows (the menu is portaled, but the
+  // pointer was inside the strip when it opened, so the pin still applies).
+  const closeWithFreeze = (tabId: string): void => {
+    freezeRef.current()
+    onClose(tabId)
+  }
   const middlePressed = useRef<{ id: string; node: HTMLElement } | null>(null)
   useEffect(() => {
     onCloseRef.current = onClose
@@ -156,6 +182,7 @@ export function TabBar(props: {
       // Close only when the release lands on the pressed tab; a drag-away
       // release cancels the press (one-shot per press).
       if (pressed !== null && pressed.node.isConnected && pressed.node.contains(event.target as Node)) {
+        freezeRef.current()
         onCloseRef.current(pressed.id)
       }
     }
@@ -198,6 +225,14 @@ export function TabBar(props: {
   return (
     <div
       className={clsx(css.tabBar, dragOver && css.tabBarDrop)}
+      data-frozen={frozenWidth === null ? undefined : ''}
+      style={frozenWidth === null ? undefined : { ['--dsh-tab-frozen-width' as string]: `${frozenWidth}px` }}
+      onPointerEnter={() => { hoveredRef.current = true }}
+      onPointerLeave={() => {
+        hoveredRef.current = false
+        frozenWidthRef.current = null
+        setFrozenWidth(null)
+      }}
       onDragOver={(event) => {
         // The strip owns drops on itself (merge into this pane); stopping
         // propagation keeps the pane root from also running its edge-zone
@@ -221,6 +256,7 @@ export function TabBar(props: {
         {tabs.map(tab => (
           <div
             key={tab.id}
+            data-dsh-tab={tab.id}
             className={clsx(css.tab, active === tab.id && css.tabActive)}
             title={tab.title}
             draggable
@@ -279,7 +315,7 @@ export function TabBar(props: {
               aria-label={t('close')}
               onClick={(event) => {
                 event.stopPropagation()
-                onClose(tab.id)
+                closeWithFreeze(tab.id)
               }}
             >
               <IconCloseFillRegular size={14} />
@@ -347,20 +383,20 @@ export function TabBar(props: {
             const index = tabs.findIndex(tab => tab.id === target.tabId)
             if (index < 0) return
             if (id === 'close') {
-              onClose(target.tabId)
+              closeWithFreeze(target.tabId)
             } else if (id === 'closeOthers') {
               for (const tab of tabs) {
-                if (tab.id !== target.tabId) onClose(tab.id)
+                if (tab.id !== target.tabId) closeWithFreeze(tab.id)
               }
             } else if (id === 'closeLeft') {
-              for (const tab of tabs.slice(0, index)) onClose(tab.id)
+              for (const tab of tabs.slice(0, index)) closeWithFreeze(tab.id)
             } else if (id === 'closeRight') {
-              for (const tab of tabs.slice(index + 1)) onClose(tab.id)
+              for (const tab of tabs.slice(index + 1)) closeWithFreeze(tab.id)
             } else if (id === 'closeAll') {
               // EVERY tab in this pane, the right-clicked one included (that
               // is what separates it from "close others") and the ones
               // scrolled out of the strip's viewport included.
-              for (const tab of tabs) onClose(tab.id)
+              for (const tab of tabs) closeWithFreeze(tab.id)
             } else if (id === 'revealInFileManager') {
               const path = tabs[index]?.path
               if (path !== undefined && path !== '') onRevealInFileManager?.(path)

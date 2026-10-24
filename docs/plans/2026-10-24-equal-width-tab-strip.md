@@ -114,3 +114,21 @@
 2. **`layout.css` 的 `@media (prefers-reduced-motion: reduce)` 块从未闭合**（v0.26.0 起）：后续所有规则都落在这个 media 块里，普通浏览器不生效。真机里 `getComputedStyle(chip).flex` 仍是 `0 1 auto`、页面里却有我们的 `<style>`，就是这条的指纹。补上 `}` 后同一次量测变成 `1 1 0px`、两个 chip 各 190px（上限）、极差 0；并加了块结构门禁（见 CHANGELOG）。
 
 真机复测（1440×900 视口，右栏宽 675px，2 个页签）：`chipFlex = 1 1 0px`、两签各 190px、右键菜单 = 宿主的 Close + 我们的 Close Other Tabs / Close Tabs to the Left / Close Tabs to the Right（末位签时禁用）/ Close All Tabs，控制台零报错。
+
+## 9. 关闭时不立刻重排：指针还在条带里就冻结宽度
+
+**问题**：等宽之后，每关一个页签存活的页签都会变宽——鼠标还停在原地，下一个 × 已经挪走了。于是「连关几个」变成每关一次重新找 ×。Chrome 的做法是：**只要指针还在标签条上，宽度就不变**，指针离开时才重排。
+
+**两排都要**（同一份体验），但机制不同：
+
+- **插件自己的条（底部工作台，`TabBar`）**：React 内的状态。关闭手势（×、中键、右键菜单的行）先把当前签宽量下来（`contentWidthOf`：border box 减去 padding/border，因为 content-box 的 `flex-basis` 是内容宽），给条带挂 `data-frozen` + `--dsh-tab-frozen-width`；`onPointerLeave` 清掉。CSS 一条 `.tabBar[data-frozen] .tab { flex: 0 0 var(--dsh-tab-frozen-width) }`。
+- **宿主原生条**：没有 React 树可用，而且**宿主在关闭时会重建条带的 DOM**（真机实测：`[data-dockkit-strip]` 节点被整个换掉，所以挂在条带元素上的属性/观察者全部失效——第一版就是死在这）。最终做法是把冻结状态放在 **`<html>`** 上：
+  - **触发用「关闭手势」而不是「DOM 变化」**：`pointerdown` 落在宿主自己的关闭控件 `[data-dockkit-tab-close]`（或中键按在 chip 上）时，立刻量宽并把 `data-dsh-tabs-frozen` + `--dsh-tab-frozen-width` 写到根上——量的是**关闭前**的宽度，正是需要的那个值；换 DOM 也不影响。
+  - **释放按「指针是否还在那条带上」**：`pointerout` 的 relatedTarget 在带内 → 不动；不在 → 下一个 task 用 `elementFromPoint` 复核（关掉被 hover 的那个 chip 时浏览器会发 `relatedTarget: null` 的 `pointerout`，不能当成「离开」）；`pointerover` 落到带外也释放。
+  - CSS：`html[data-dsh-tabs-frozen] [data-sidebar-right-panel] [data-dockkit-tab] { flex: 0 0 var(--dsh-tab-frozen-width) }`。
+
+**真机实测**（1440×900，右栏 675px）：4 个页签各 115.3 → 关掉一个（指针停在条带里）**仍是 115.3**（`pin: true`、`--dsh-tab-frozen-width: 95.25px`）→ 再关一个**仍是 115.3** → 指针移出条带后才变成 **190**（三个变两个、回到 170 上限）。全程零控制台错误。
+
+**只对关闭生效**：新建页签、拖动、点选页签都不冻结（没有关闭手势就不挂 pin），所以「打开文件时收窄」仍然是即时的。
+
+**测试**：`tests/native-strip-freeze.spec.ts`（10 例：手势 pin/中键/普通按下不 pin/宿主重建 DOM 后仍有效/显式离开/停在空尾不释放/`relatedTarget: null` 的歧义两种结果/条带被移除/未知 DOM 不动）；`tests/tab-bar-freeze.spec.tsx`（5 例：× 冻结、带外点击不冻结、连关保持同值、中键冻结、离开释放）。

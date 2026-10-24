@@ -63,7 +63,9 @@ describe('native tab strip width', () => {
     for (const rule of panelRules) {
       // A bare `[data-dockkit-tab]` would restyle every docking surface in
       // the page (the float header included); the panel scope is the contract.
-      expect(rule.selector.startsWith('[data-sidebar-right-panel] ')).toBe(true)
+      // (The frozen-width rule adds the `html[data-dsh-tabs-frozen]` gate on
+      // top — it must never apply unconditionally, asserted below.)
+      expect(rule.selector).toContain('[data-sidebar-right-panel]')
     }
   })
 
@@ -80,6 +82,17 @@ describe('native tab strip width', () => {
   it('lets the chip row claim the strip and the fill spacer yield', () => {
     expect(ruleOf('[data-sidebar-right-panel] [data-dockkit-strip-tabs]').decls.get('flex')).toBe('1 1 0')
     expect(ruleOf('[data-sidebar-right-panel] [data-dockkit-strip-fill]').decls.get('flex')).toBe('0 0 0')
+  })
+
+  it('gates the frozen-width override on the freeze attribute', () => {
+    // `--dsh-tab-frozen-width` is written by the close-gesture controller for
+    // as long as the pointer stays on the strip (see tab-strip-freeze.ts).
+    // Without the gate the chips would have no width at all.
+    const frozen = panelRules.filter(rule => rule.decls.get('flex')?.includes('var(--dsh-tab-frozen-width)'))
+    expect(frozen.length).toBeGreaterThanOrEqual(1)
+    for (const rule of frozen) {
+      expect(rule.selector).toContain('[data-dsh-tabs-frozen]')
+    }
   })
 
   it('gives every chip an equal share of that row', () => {

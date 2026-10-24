@@ -600,6 +600,15 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   scrollbar-width: none;
 }
 
+/* Frozen widths, pinned while the pointer is inside the strip (TabBar sets
+   `data-frozen` on the interaction, see `tab-strip-freeze.ts`): every tab
+   keeps the width it had when the run of closes started, so the next × stays
+   where the pointer already is. Removing the attribute restores the equal
+   share — that happens on pointer leave, i.e. Chrome's re-layout moment. */
+.tabBar[data-frozen] .tab {
+  flex: 0 0 var(--dsh-tab-frozen-width);
+}
+
 .tabList::-webkit-scrollbar {
   display: none;
 }
