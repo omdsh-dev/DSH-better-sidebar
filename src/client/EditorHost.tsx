@@ -25,11 +25,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { createElement } from 'react'
 import clsx from 'clsx'
-import { IconCheckOutlineRegular, IconFolderOpenRegular, IconRefreshOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconCheckOutlineRegular, IconFolderOpenRegular, IconRefreshOutlineRegular, writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context } from '../context-types.ts'
-import { api, mediaUrl, type SessionScope } from './api.ts'
+import { api, mediaUrl, SidebarApiError, type SessionScope } from './api.ts'
 import { BinaryDownload } from './binary-download.tsx'
 import { planFirstMatch, planFsReadOutcome, type EditorLoadAction } from './editor-load.ts'
+import { isWindowsAbsolutePath, markdownPathRepairCandidates } from './markdown-path-repair.ts'
 import { clearEditorDirty, setEditorDirty } from './editor-dirty.ts'
 import { baseName } from './FileTree.tsx'
 import { createFrameBatcher } from './frame-batcher.ts'
@@ -49,7 +50,7 @@ import css from './sidebar.module.css'
 
 type EditorLoad =
   | { status: 'loading' }
-  | { status: 'error'; message: string }
+  | { status: 'error'; message: string; fileNotFound?: boolean; windowsAbsolutePath?: boolean; repairStatus?: 'searching' | 'done'; repairMatches?: string[]; repairError?: string }
   | { status: 'ready'; viewer: FileViewerDescriptor; content?: string; size?: number; largeFile?: { size: number }; mtimeMs?: number; mediaUrl?: string; customData?: unknown }
   | { status: 'binary' }
 
@@ -136,6 +137,7 @@ export function EditorHost(props: {
   // the viewer loading flow (a directory is not a file).
   const isDir = metaOf(tab).dir === true
   const [load, setLoad] = useState<EditorLoad>({ status: 'loading' })
+  const [fileErrorAction, setFileErrorAction] = useState<string | null>(null)
   // Manual refresh (issue #167): bumping the sequence re-runs the load effect
   // with the same path/scope — the only reload entry besides open/close.
   const [reloadSeq, setReloadSeq] = useState(0)
@@ -433,6 +435,7 @@ export function EditorHost(props: {
     // closed, path changed, session switched) or re-matches the viewer.
     const controller = new AbortController()
     setLoad({ status: 'loading' })
+    setFileErrorAction(null)
     const mediaUrlOf = (): string => mediaUrl(scope, path)
     const apply = (action: EditorLoadAction): void => {
       if (cancelled) return
@@ -470,9 +473,63 @@ export function EditorHost(props: {
             // editor uses it as the save baseline (fs-conflict on drift).
             if (outcome.kind === 'render') setLoad({ ...outcome, status: 'ready', mtimeMs: result.mtimeMs })
             else apply(outcome)
-          }).catch((error: unknown) => {
+          }).catch(async (error: unknown) => {
             if (cancelled) return
-            setLoad({ status: 'error', message: error instanceof Error ? error.message : String(error) })
+            const message = error instanceof Error ? error.message : String(error)
+            const fileNotFound = error instanceof SidebarApiError
+              && error.code === 'fs-error'
+              && message.startsWith('File not found: ')
+            if (!fileNotFound) {
+              setLoad({ status: 'error', message })
+              return
+            }
+
+            const candidates = markdownPathRepairCandidates(path)
+            setLoad({
+              status: 'error',
+              message,
+              fileNotFound: true,
+              windowsAbsolutePath: isWindowsAbsolutePath(path),
+              ...(candidates.length > 0 ? { repairStatus: 'searching' as const } : {}),
+            })
+            if (candidates.length === 0) return
+
+            const matches = new Set<string>()
+            try {
+              for (let offset = 0; offset < candidates.length; offset += 8) {
+                const batch = candidates.slice(offset, offset + 8)
+                const results = await Promise.all(batch.map(candidate => api.fsSearch(scope, candidate, undefined, controller.signal)))
+                for (const result of results) {
+                  const directories = new Set(result.dirs)
+                  for (const match of result.matches) {
+                    if (!directories.has(match)) matches.add(match)
+                  }
+                }
+              }
+            } catch (repairError: unknown) {
+              if (cancelled) return
+              setLoad({
+                status: 'error',
+                message,
+                fileNotFound: true,
+                windowsAbsolutePath: true,
+                repairStatus: 'done',
+                repairError: repairError instanceof Error ? repairError.message : String(repairError),
+              })
+              return
+            }
+
+            if (cancelled) return
+            const repairMatches = [...matches]
+            if (repairMatches.length === 1) {
+              const repairedPath = repairMatches[0]!
+              const betterSidebar = ctx.get('betterSidebar')
+              if (betterSidebar?.updateTab !== undefined) {
+                betterSidebar.updateTab(tab.id, { path: repairedPath, title: baseName(repairedPath) }, scope.sessionId)
+                return
+              }
+            }
+            setLoad({ status: 'error', message, fileNotFound: true, windowsAbsolutePath: true, repairStatus: 'done', repairMatches })
           })
           return
       }
@@ -652,7 +709,51 @@ export function EditorHost(props: {
         <div className={css.editorMain}>
           {showEmpty && <div className={css.editorPlaceholder}>{t('editorEmptyHint')}</div>}
           {!showEmpty && load.status === 'loading' && <div className={css.editorPlaceholder}>{t('loading')}</div>}
-          {!showEmpty && load.status === 'error' && <div className={css.editorError}>{load.message}</div>}
+          {!showEmpty && load.status === 'error' && (
+            <div className={css.editorError} role="alert">
+              <div>{load.fileNotFound ? t('editorFileNotFound', { path }) : load.message}</div>
+              {load.fileNotFound && load.windowsAbsolutePath && (
+                <div className={css.editorErrorHint}>{t('editorMarkdownPathHint')}</div>
+              )}
+              {load.repairStatus === 'searching' && <div className={css.editorErrorHint}>{t('editorPathRepairSearching')}</div>}
+              {load.repairStatus === 'done' && load.repairMatches?.length === 0 && (
+                <div className={css.editorErrorHint}>{t('editorPathRepairNone')}</div>
+              )}
+              {load.repairMatches !== undefined && load.repairMatches.length > 0 && (
+                <div className={css.editorErrorCandidates}>
+                  <div>{t('editorPathRepairChoices')}</div>
+                  {load.repairMatches.map(candidate => (
+                    <Button key={candidate} variant="outline" onClick={() => {
+                      ctx.get('betterSidebar')?.updateTab(tab.id, { path: candidate, title: baseName(candidate) }, scope.sessionId)
+                    }}>
+                      {candidate}
+                    </Button>
+                  ))}
+                </div>
+              )}
+              {load.repairError !== undefined && (
+                <div className={css.editorErrorHint}>{t('editorPathRepairFailed', { message: load.repairError })}</div>
+              )}
+              <div className={css.editorErrorActions}>
+                <Button variant="outline" onClick={() => {
+                  void writeClipboard(path).then((copied) => {
+                    setFileErrorAction(copied ? null : t('editorCopyPathFailed'))
+                  })
+                }}>
+                  {t('editorCopyPath')}
+                </Button>
+                <Button variant="outline" onClick={() => {
+                  void openInApp.reveal(path).then((opened) => {
+                    setFileErrorAction(opened ? null : t('editorRevealPathFailed'))
+                  })
+                }}>
+                  {t('editorOpenInFileManager')}
+                </Button>
+                <Button variant="outline" onClick={refreshFile}>{t('retry')}</Button>
+              </div>
+              {fileErrorAction !== null && <div className={css.editorErrorHint} role="status">{fileErrorAction}</div>}
+            </div>
+          )}
           {!showEmpty && load.status === 'binary' && <BinaryDownload scope={scope} path={path} />}
           {!showEmpty && load.status === 'ready' && createElement(load.viewer.component, {
             ctx, store, scope, path, title,

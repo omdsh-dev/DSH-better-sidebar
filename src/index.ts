@@ -49,6 +49,7 @@ import { buildSidechatApi } from './sidechat-routes.ts'
 import { createAssistantLiveBuffer, type AssistantLiveBuffer } from './assistant-live.ts'
 import { readJsonBody, readTextBody, requireString, SidebarError, writeError, writeJson, writeOk } from './wire.ts'
 import { streamFileToResponse } from './file-stream.ts'
+import { fileReadError } from './fs-read-error.ts'
 import { readPersistedSession } from './session-store.ts'
 import { createChangesOpsApi } from './changes-ops.ts'
 import { BlockAssembler, createUserMessage, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
@@ -405,11 +406,7 @@ const READ_HEAD_LIMIT = 4096
  */
 async function statFileForRoute(path: string): Promise<Stats> {
   return await stat(path).catch((error: unknown) => {
-    throw new SidebarError(
-      'fs-error',
-      `cannot read "${path}": ${error instanceof Error ? error.message : String(error)}`,
-      400,
-    )
+    throw fileReadError(path, error)
   })
 }
 
@@ -441,7 +438,7 @@ export type SidebarReadResult =
  */
 async function readText(path: string): Promise<SidebarReadResult> {
   const info = await stat(path).catch((error: unknown) => {
-    throw new SidebarError('fs-error', `cannot read "${path}": ${error instanceof Error ? error.message : String(error)}`, 400)
+    throw fileReadError(path, error)
   })
   if (info.isDirectory()) {
     throw new SidebarError('fs-error', `"${path}" is a directory`, 400)
@@ -449,7 +446,7 @@ async function readText(path: string): Promise<SidebarReadResult> {
   const size = info.size
   const oversized = size > MAX_EDITABLE_BYTES
   const handle = await open(path, 'r').catch((error: unknown) => {
-    throw new SidebarError('fs-error', `cannot read "${path}": ${error instanceof Error ? error.message : String(error)}`, 400)
+    throw fileReadError(path, error)
   })
   try {
     // An over-limit file still yields its first bytes: that is what decides
@@ -527,7 +524,7 @@ interface ReadPageResult {
  */
 async function readPage(path: string, offset: number): Promise<ReadPageResult> {
   const info = await stat(path).catch((error: unknown) => {
-    throw new SidebarError('fs-error', `cannot read "${path}": ${error instanceof Error ? error.message : String(error)}`, 400)
+    throw fileReadError(path, error)
   })
   if (info.isDirectory()) {
     throw new SidebarError('fs-error', `"${path}" is a directory`, 400)
@@ -546,7 +543,7 @@ async function readPage(path: string, offset: number): Promise<ReadPageResult> {
     }
   }
   const handle = await open(path, 'r').catch((error: unknown) => {
-    throw new SidebarError('fs-error', `cannot read "${path}": ${error instanceof Error ? error.message : String(error)}`, 400)
+    throw fileReadError(path, error)
   })
   try {
     const length = Math.min(PAGE_BYTES, size - offset)
