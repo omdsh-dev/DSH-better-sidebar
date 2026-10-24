@@ -1,6 +1,9 @@
 /**
- * The tab strip of one pane: tabs capped at TAB_MAX_WIDTH (ellipsized),
- * overflow scrolls horizontally, a close button per tab, a four-way split
+ * The tab strip of one pane: equal-width tabs — every tab gets the same share
+ * of the strip, so the width follows the open count (clamp(64px, strip / n,
+ * TAB_MAX_WIDTH)) exactly like Chrome's strip, and overflow scrolls
+ * horizontally instead of squeezing past the 64px floor; labels ellipsize and
+ * a close button per tab, a four-way split
  * button cluster, and the + menu that opens new tabs (explorer / git). Tabs
  * are draggable; dropping onto another tab inserts before it, dropping on the
  * strip background appends to this pane. Right-clicking a tab opens the tab

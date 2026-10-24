@@ -2,6 +2,11 @@
 
 > 本文档收录 dsh-better-sidebar 的完整发布历史（最新版摘要见 [README](README_ZH.md)；同步发布于 [GitHub Releases](https://github.com/omdsh-dev/DSH-better-sidebar/releases)）。
 
+### Unreleased
+
+- 🗂 **页签改成等宽，宽度随打开数量自动变化（Chrome 式条带）**：此前每个页签的宽度由**标题长度**决定（`.tab { flex: none }`），同一个条带里 `README.md` 窄、`sidebar.module.css` 宽，于是**每个关闭按钮的横坐标都不一样**——想连关几个页签，就得每次重新找 ×。现在 `.tab` 改成 `flex: 1 1 0`：每个页签等分条带的剩余宽度，全部渲染成同一个 `clamp(64px, 可用宽度 / n, 160px)`（上限仍是 `TAB_MAX_WIDTH`，下限仍是 64px），页签增减、面板拖宽都由浏览器自己重算，**没有任何 JS 测量**——DOM、拖拽 / 中键关闭 / 右键菜单 / 滚轮横滚、`ctx.betterSidebar` 接入 API 与 localStorage 格式全未变，纯样式改动。到 64px 下限后不再继续压扁 label，改由条带的横向滚动接管（`.tabList` 原有行为）。真实 Chromium 实测（条带 380px）：改前 4 个页签宽 `128.3 / 126.4 / 159.7 / 113`、× 在 `122 / 249 / 408 / 521`；改后 2 个页签各 153、3 个各 102、4 个起统一 79（外框，= 64 内容 + 内边距/描边）且 × 等距。设计、5×8 组量测与「为什么保留下限 64px」的权衡见 [docs/plans/2026-10-24-equal-width-tab-strip.md](docs/plans/2026-10-24-equal-width-tab-strip.md)。**顺带说明**：反馈里提到的「右键关闭其他 / 关闭右侧」不是缺失功能，那套菜单（关闭 / 关闭其他 / 关闭左侧 / 关闭右侧 / 关闭全部 / 在资源管理器中定位）自 v0.15.x 起就在，本次未改。
+  - 🧪 `tests/tab-strip-equal-width.spec.ts`（新增）：jsdom 不做 flex 布局，所以钉的是**产生几何的声明**——`.tab` 必须 grow 1 / shrink 1 / basis 0、不得声明 `width`、`max-width` 必须与 `TAB_MAX_WIDTH` 一致、`min-width` 必须是正的下限；外加 `.tabList` 仍是 `overflow-x: auto` 的滚动容器、`.tabTitle` 的省略号三件套（等宽让截断成为常态，省略号是承重件）。把 `flex: 1 1 0` 退回 `flex: none` 这条用例当场红。
+
 ### v0.28.0
 
 - **正式版支持线前移到 DSH 0.2.1-rc.1+**：13 条 DSH peer 下限统一为 `^0.2.1-rc.1`，开发依赖、CI 与安装脚本使用精确 RC 基线。不新增运行时兼容层、不改功能实现。

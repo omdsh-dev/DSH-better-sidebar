@@ -604,8 +604,20 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   display: none;
 }
 
+/* Equal-width tabs, the way Chrome's strip behaves: the width follows the
+   OPEN COUNT, never the label length. `flex-basis: 0` is the whole trick —
+   every tab asks for zero width and then grows by an equal share of what is
+   left, so all of them render at the same clamp(64px, strip / n, 160px)
+   simultaneously: roomy while few tabs are open, evenly narrowing as more
+   arrive, floored at 64px (past that the strip scrolls instead of squeezing
+   a label to a bare ellipsis). The payoff is muscle memory — the close
+   button sits at the same offset in every tab, so closing several in a row
+   is one repeated motion instead of a hunt for the ×.
+   The 160px max is mirrored by TAB_MAX_WIDTH in state.ts; the two are pinned
+   together by tests/tab-strip-equal-width.spec.ts (jsdom cannot lay flex out,
+   so that spec guards these declarations rather than measured pixels). */
 .tab {
-  flex: none;
+  flex: 1 1 0;
   max-width: 160px;
   min-width: 64px;
   display: flex;
