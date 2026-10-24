@@ -1858,6 +1858,15 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   border-radius: 6px;
   background: var(--dsw-alias-bg-layer-1);
   overflow: hidden;
+  /* Scroll performance: a rendered diagram is a large SVG. Skip layout and
+     paint for the diagrams outside the viewport (a diagram-heavy article can
+     hold dozens) and remember the measured height once a block has been on
+     screen, so scrolling past already-rendered diagrams costs nothing. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 240px;
+  /* Isolate the box: a diagram landing must not invalidate the layout or paint
+     of the surrounding article. */
+  contain: layout paint style;
 }
 
 .mermaidHeader {
@@ -1907,11 +1916,71 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   height: auto;
 }
 
+/* Lazy render placeholder: the fence's diagram is queued and swaps in as soon
+   as the render queue reaches it (visible diagrams first, the rest while the
+   browser is idle). The min-height comes from the fence's line count so the
+   article does not jump under the reader's cursor when the diagram arrives. */
+.mermaidPending {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 18px 24px;
+}
+
+.mermaidPendingBar {
+  display: block;
+  width: min(320px, 70%);
+  height: 10px;
+  border-radius: 5px;
+  background: var(--dsw-alias-bg-layer-2);
+  animation: mermaidPendingPulse 1.4s ease-in-out infinite;
+}
+
+.mermaidPendingBar:nth-child(2) {
+  width: min(240px, 55%);
+  animation-delay: 0.15s;
+}
+
+.mermaidPendingBar:nth-child(3) {
+  width: min(160px, 40%);
+  animation-delay: 0.3s;
+}
+
+@keyframes mermaidPendingPulse {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+
+  50% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mermaidPendingBar {
+    animation: none;
+  }
+}
+
 .mermaidError {
   padding: 6px 10px;
   border-bottom: 1px solid var(--dsw-alias-border-l1);
   color: var(--dsw-alias-state-error-primary);
   font: var(--dsw-font-xxxs-11);
+}
+
+/* The mermaid parse/render message itself: the generic label alone makes a
+   broken fence hard to find, so the first lines follow it (mermaid's full
+   dump stays on the hover title). */
+.mermaidErrorDetail {
+  display: block;
+  margin-top: 2px;
+  color: var(--dsw-alias-label-tertiary);
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 /* The diagram source shown under a render error (helps fixing the fence). */

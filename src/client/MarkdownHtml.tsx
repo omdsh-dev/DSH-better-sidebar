@@ -236,17 +236,24 @@ function MarkdownSegment({ text, hasMermaid, media, codeLabels }: MarkdownSegmen
     const container = containerRef.current
     if (container === null) return
     runInlineHtmlPass(container, media)
-    let scheduled = false
+    let timer: number | undefined
     const observer = new MutationObserver(() => {
-      if (scheduled) return
-      scheduled = true
-      queueMicrotask(() => {
-        scheduled = false
+      if (timer !== undefined) return
+      // Coalesce a burst of mutations (shiki settling, diagram swaps, inline
+      // HTML injection) into one pass: the scan walks every text node in the
+      // document, so a pass per mutation turns a diagram-heavy render into a
+      // stream of full-document scans.
+      timer = window.setTimeout(() => {
+        timer = undefined
+        if (document.visibilityState !== 'visible') return
         runInlineHtmlPass(container, media)
-      })
+      }, 80)
     })
     observer.observe(container, { childList: true, subtree: true })
-    return () => { observer.disconnect() }
+    return () => {
+      observer.disconnect()
+      if (timer !== undefined) window.clearTimeout(timer)
+    }
   }, [text, media])
   return (
     <div ref={containerRef}>

@@ -156,20 +156,22 @@ function attachMarkdownSurface(
   // write to the scroller.
   if (pending !== null) queueMicrotask(applyPending)
 
-  let scheduled = false
+  let scheduled: number | undefined
   const observer = new MutationObserver(() => {
-    if (scheduled) return
-    scheduled = true
-    queueMicrotask(() => {
-      scheduled = false
+    if (scheduled !== undefined) return
+    // Coalesce a burst of mutations into one DOM pass: each pass walks the
+    // whole preview, and diagram swapping / shiki settling emit many mutations.
+    scheduled = window.setTimeout(() => {
+      scheduled = undefined
       prepareMarkdownAnchors(container)
       applyPending()
-    })
+    }, 80)
   })
   observer.observe(container, { childList: true, subtree: true })
 
   return () => {
     observer.disconnect()
+    if (scheduled !== undefined) window.clearTimeout(scheduled)
     container.removeAttribute(MARKDOWN_SURFACE_ATTR)
   }
 }

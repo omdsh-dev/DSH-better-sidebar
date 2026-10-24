@@ -73,12 +73,13 @@
     "locale/*.json"
   ],
   "scripts": {
-    "build": "node -e \"require('node:fs').rmSync('lib',{recursive:true,force:true})\" && tsc -p tsconfig.build.json && tsdown",
+    "build": "node scripts/build-mermaid-frame-asset.mjs && node -e \"require('node:fs').rmSync('lib',{recursive:true,force:true})\" && tsc -p tsconfig.build.json && tsdown",
+    "build:asset": "node scripts/build-mermaid-frame-asset.mjs",
     "prepublishOnly": "pnpm build",
     "typecheck": "tsc --noEmit",
-    "bundle": "tsdown",
-    "watch": "tsdown --watch",
-    "prepare": "tsdown",
+    "bundle": "node scripts/build-mermaid-frame-asset.mjs && tsdown",
+    "watch": "node scripts/build-mermaid-frame-asset.mjs && tsdown --watch",
+    "prepare": "node scripts/build-mermaid-frame-asset.mjs && tsdown",
     "test": "vitest run",
     "test:windows": "vitest run --maxWorkers=1",
     "test:mount": "bash scripts/e2e-mount.sh",
