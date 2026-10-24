@@ -13,6 +13,8 @@
 - 🖱 **原生条右键菜单补上「关闭其他 / 左侧 / 右侧 / 全部」**：宿主 kit 的页签菜单只有自带的「关闭」。这四项通过宿主的**公开槽** `sidebar.right.tab.menu.item` 贡献（kit 的「关闭」保留、我们的行排在它后面），关闭走宿主公开的 `sidebarRight.close()`——它对唯一 guide 那类不可关闭的页签是 no-op，所以「关闭全部」不会把栏关空。唯一的缺口是槽只给 `{ tab, dismiss }`：拿不到 pane 归属与条带顺序，因此顺序从 kit 自己的 chip 读（`[data-dockkit-tab]` ⊂ `[data-dockkit-strip-tabs]`，与等宽规则同一批稳定语义属性，不点类名），分屏时用被点 chip 的 `closest()` 只作用于它自己那条带；**解析不到就一行都不渲染**（kit 的「关闭」仍在，菜单不会出现死行，也不猜「会话级」这种会误关另一栏的作用域）。行样式复刻 kit 菜单项量度（4px 7px / 12px / radius-md / hover 令牌），没有东西可动时只置灰不换行数。
   - 🧪 `tests/native-tab-menu.spec.tsx`（新增 7 例）：四项顺序与文案、切片（其他/左/右/全部）、`dismiss` 先于关闭、单页签时前三项禁用而「全部」可用、双 pane 只动被点那条带、解析失败一行不渲染、`stripOrderOf` 纯函数。
 
+- 🐞 **`layout.css` 的 `@media (prefers-reduced-motion: reduce)` 块从未闭合（v0.26.0–v0.28.0 一直如此），它之后的每条规则在普通浏览器里都没生效**：浏览器在文件末尾隐式闭合这个块，所以「语法合法、构建通过、单测全绿」，但**子面板翻转 / 视觉贴靠**那一整段（`body[data-dsh-sidebar-submenu]` 系列）与本次新增的原生 chip 等宽三条规则**全部落在那个 media 块里面**，只在开启了「减少动态效果」的机器上才生效。这是**真机挂载验证**抓到的（Playwright 里 `getComputedStyle(chip).flex` 仍是宿主的 `0 1 auto`，而页面里确实有我们的 `<style>`）。已补上缺失的 `}`，并新增块结构门禁：`tests/layout-css.spec.ts` 现在断言「花括号配平 + 该 media 块只包含 center-column 那条规则」——把 `}` 拿掉当场红（`expected 16 to be 15`）。副作用是**菜单子面板的翻转/贴靠从本版起真正生效**（此前是死代码）。
+
 ### v0.28.0
 
 - **正式版支持线前移到 DSH 0.2.1-rc.1+**：13 条 DSH peer 下限统一为 `^0.2.1-rc.1`，开发依赖、CI 与安装脚本使用精确 RC 基线。不新增运行时兼容层、不改功能实现。
