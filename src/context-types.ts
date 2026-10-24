@@ -660,14 +660,75 @@ export interface SidebarLocaleService {
   register(ns: string, locale: string, dict: Record<string, string>): () => void
 }
 
+/**
+ * One reference chip's footprint in the draft, in clipboard-projection
+ * coordinates: the chip covers `[offset, offset + length)`. Read straight off
+ * the host's published `InputState.occurrences`.
+ */
+export interface SidebarSessionOccurrence {
+  /** Start offset in the clipboard projection (the same plane as `draft`). */
+  offset: number
+  /** Length in the clipboard projection (the chip's whole `clipboardText`). */
+  length: number
+}
+
+/** One structured reference chip's insertion payload (mirror of the host's
+ *  `ReferenceInsert`). */
+export interface SidebarReferenceInsert {
+  /** Trigger source id; `'reference'` for a programmatic insert. */
+  source: string
+  /** What the model receives on send — the chip's full serialized form. */
+  ref: string
+  /** What the composer shows in place of `ref`. */
+  label: string
+  /** Chip icon family; the host picks its own default when omitted. */
+  appearance?: 'session' | 'file' | 'folder'
+  /** The text this chip occupies in the draft projection. */
+  clipboardText: string
+}
+
 /** The composer draft face the sidebar reaches through `ctx.conversation.input`. */
 export interface SidebarSessionInput {
   /** The live input store (draft read for append). `draftRev` is the machine's
-   *  span-CAS revision — required to mint a structured file-reference chip. */
+   *  span-CAS revision — required to mint a structured reference chip. */
   state: {
-    getSnapshot(): { draft: string; draftRev?: number }
+    getSnapshot(): {
+      draft: string
+      draftRev?: number
+      /**
+       * The editor's reference chips as footprints in `draft` coordinates:
+       * `[offset, offset + length)` per chip, sorted by offset. The host's
+       * insert/replace spans live in the *editor* projection instead (one
+       * placeholder character per chip), so a span derived from a `draft`
+       * offset must fold through these first (`foldClipboardOffset`).
+       * Absent on hosts without the chip channel.
+       */
+      occurrences?: readonly SidebarSessionOccurrence[]
+      /**
+       * Admission phase. `claimed` means a command chip (`/goal`) heads the
+       * draft; `adjudicating`/`submitting` freeze every write. A command chip
+       * is NOT in `occurrences` (the host only collects reference chips), yet
+       * it still collapses to one character in the detect projection — so a
+       * span derived from `draft` is wrong whenever `phase === 'claimed'`.
+       */
+      phase?: 'plain' | 'adjudicating' | 'claimed' | 'submitting'
+      /**
+       * The claimed command's spelling with its trailing separator (`/goal `),
+       * present exactly while `phase` is `claimed`/`submitting`. The host
+       * treats it as one chip covering this exact draft prefix.
+       */
+      claim?: { readonly token: string }
+    }
   }
-  /** Replace the draft text (the input machine's single public write path). */
+  /**
+   * Replace the trigger span with one reference chip (span-CAS'd). Absent on
+   * hosts without the chip channel.
+   */
+  insertReference?(
+    ref: SidebarReferenceInsert,
+    span: { start: number; end: number; draftRev: number },
+  ): boolean
+  /** Replace the draft text — flattens every existing chip into its text. */
   setDraft(text: string): void
 }
 

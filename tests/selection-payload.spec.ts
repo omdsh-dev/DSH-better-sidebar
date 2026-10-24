@@ -40,26 +40,34 @@ describe('headerOf', () => {
 
 describe('buildSelectionInsert', () => {
   it('wraps a small selection in a fenced block with the path:line info line', () => {
-    expect(buildSelectionInsert('/p/a.ts', '/p', { start: 2, end: 4 }, 'const x = 1')).toBe(
-      '```a.ts:2-4\nconst x = 1\n```',
-    )
+    expect(buildSelectionInsert('/p/a.ts', '/p', { start: 2, end: 4 }, 'const x = 1')).toEqual({
+      label: 'a.ts:2-4',
+      text: '```a.ts:2-4\nconst x = 1\n```',
+    })
   })
 
   it('accepts a selection exactly at the limit (fenced)', () => {
     const text = 'x'.repeat(SELECTION_LIMIT)
-    expect(buildSelectionInsert('/p/a.ts', '/p', { start: 1, end: 1 }, text)).toBe(
-      `\`\`\`a.ts:1\n${text}\n\`\`\``,
-    )
+    expect(buildSelectionInsert('/p/a.ts', '/p', { start: 1, end: 1 }, text)).toEqual({
+      label: 'a.ts:1',
+      text: `\`\`\`a.ts:1\n${text}\n\`\`\``,
+    })
   })
 
   it('drops the content past the limit: one plain path line, no fence', () => {
     const text = 'x'.repeat(SELECTION_LIMIT + 1)
-    expect(buildSelectionInsert('/p/a.ts', '/p', { start: 7, end: 7 }, text)).toBe('a.ts:7')
+    expect(buildSelectionInsert('/p/a.ts', '/p', { start: 7, end: 7 }, text)).toEqual({
+      label: 'a.ts:7',
+      text: 'a.ts:7',
+    })
   })
 
   it('keeps the plain-line form when past the limit without line numbers', () => {
     const text = 'x'.repeat(SELECTION_LIMIT + 1)
-    expect(buildSelectionInsert('/p/a.ts', '/p', undefined, text)).toBe('a.ts')
+    expect(buildSelectionInsert('/p/a.ts', '/p', undefined, text)).toEqual({
+      label: 'a.ts',
+      text: 'a.ts',
+    })
   })
 })
 

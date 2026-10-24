@@ -30,7 +30,16 @@ function mount(cwd: string, options: { root?: string; phase?: 'pending' | 'ready
   const emit = vi.fn((_event: string, _payload: unknown) => {
     if (options.chip) draftRev++
   })
-  const input = { state: { getSnapshot: () => ({ draft, draftRev }) }, setDraft }
+  const insertReference = vi.fn((_ref: unknown, _span: unknown) => {
+    if (!options.chip) return false
+    draftRev++
+    return true
+  })
+  const input = {
+    state: { getSnapshot: () => ({ draft, draftRev }) },
+    setDraft,
+    ...options.chip === false ? {} : { insertReference },
+  }
   const workspaces = { list: { getSnapshot: () => ({
     phase: options.phase ?? 'ready',
     state: options.state ?? 'idle',
@@ -64,7 +73,7 @@ function mount(cwd: string, options: { root?: string; phase?: 'pending' | 'ready
   expect(reference).toBeTypeOf('function')
   return {
     insert: (path: string, isDir: boolean) => { act(() => { reference!(path, isDir) }) },
-    draft: () => draft, emit, setDraft, warn,
+    draft: () => draft, emit, insertReference, setDraft, warn,
     unmount: () => { act(() => { root.unmount() }); container.remove() },
   }
 }
@@ -83,10 +92,11 @@ describe('Sidebar workspace references', () => {
     const view = mount('/work/src', { root: '/work', chip: true })
     try {
       view.insert('/work/docs/my notes.md', false)
-      expect(view.emit).toHaveBeenCalledWith('slash/input-insert-reference', {
-        reference: { source: 'reference', ref: '@"docs/my notes.md"', label: 'my notes.md', appearance: 'file', clipboardText: '@"docs/my notes.md"' },
-        span: { draftRev: 1, start: 6, end: 6 },
-      })
+      // The draft `before` ends in a non-space, so a separator is emitted
+      // first: the revision and the append offset both move one place.
+      expect(view.insertReference).toHaveBeenCalledWith({
+        source: 'reference', ref: '@"docs/my notes.md"', label: 'my notes.md', appearance: 'file', clipboardText: '@"docs/my notes.md"',
+      }, { draftRev: 2, start: 7, end: 7 })
       expect(view.setDraft).not.toHaveBeenCalled()
     } finally { view.unmount() }
   })
@@ -98,10 +108,9 @@ describe('Sidebar workspace references', () => {
       const beforeFile = view.draft()
       expect(beforeFile).toMatch(/\s$/)
       view.insert('/work/notes.md', false)
-      expect(view.emit).toHaveBeenCalledWith('slash/input-insert-reference', {
-        reference: { source: 'reference', ref: '@notes.md', label: 'notes.md', appearance: 'file', clipboardText: '@notes.md' },
-        span: { draftRev: 2, start: beforeFile.length, end: beforeFile.length },
-      })
+      expect(view.insertReference).toHaveBeenCalledWith({
+        source: 'reference', ref: '@notes.md', label: 'notes.md', appearance: 'file', clipboardText: '@notes.md',
+      }, { draftRev: 2, start: beforeFile.length, end: beforeFile.length })
       expect(view.setDraft).toHaveBeenCalledTimes(1)
     } finally { view.unmount() }
   })

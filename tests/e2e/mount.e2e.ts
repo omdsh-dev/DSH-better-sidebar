@@ -31,7 +31,7 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, expect, type APIRequestContext } from '@playwright/test'
-import { PAGE_URL, createHostApi, dismissOnboarding, gotoPage, hostRpc, sendFirstMessage, sidebarApi } from './host'
+import { PAGE_URL, composerEditable, createHostApi, dismissOnboarding, gotoPage, hostRpc, sendFirstMessage, sidebarApi } from './host'
 
 /** Workspace the sidebar renders against (created by the lane's seeding). */
 const WORKSPACE_PATH = process.env.DSH_E2E_WORKSPACE ?? join(tmpdir(), 'dsh-e2e-workspace')
@@ -575,6 +575,52 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   expect(modalRegions.button, 'its buttons must stay no-drag').toBe('no-drag')
   await page.keyboard.press('Escape')
   await expect(modal, 'Esc must close the zoom modal').toHaveCount(0, { timeout: 10_000 })
+  await assertNoCrash()
+
+  // Selection references commit as CHIPS, not quoted blocks: select a line in
+  // the markdown preview, click the floating "add to conversation" button, and
+  // require the composer to hold one reference chip whose label is
+  // `path:lines` — with no fenced body anywhere in the draft. This is the
+  // whole point of the chip path: a host that ignores the reference-insert
+  // event degrades to plain text and fails right here.
+  // Seed the draft with a word that does NOT end in whitespace: the host's
+  // chip insert only adds a space after the chip, so without the plugin's own
+  // leading separator the chip would read `hello` + chip with no gap.
+  const composer = composerEditable(page)
+  await composer.click()
+  await page.keyboard.type('hello')
+  const previewLine = pane.locator('p', { hasText: 'tail text' }).first()
+  // A real drag selects the text and fires mouseup with the selection still
+  // live; a synthetic triple-click can clear it before mouseup reaches the
+  // preview container's handler.
+  const lineBox = await previewLine.boundingBox()
+  expect(lineBox, 'the preview line must have a measurable box').not.toBeNull()
+  await page.mouse.move(lineBox!.x + 1, lineBox!.y + lineBox!.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(lineBox!.x + lineBox!.width - 1, lineBox!.y + lineBox!.height / 2, { steps: 8 })
+  await page.mouse.up()
+  const addToChat = page.locator('button', { hasText: /添加到对话|Add to conversation/ }).first()
+  await expect(addToChat, 'selecting preview text must raise the add-to-conversation button')
+    .toBeVisible({ timeout: 10_000 })
+  await addToChat.click()
+  // `data-composer-chip` is the host's own anchor for a composer chip (its
+  // JSDoc names e2e as the reason it exists) — a bare `[class*="reference"]`
+  // match could land on any element whose hashed class happens to contain it.
+  const chip = page.locator(`[data-composer-chip]`).filter({ hasText: `${SEEDED_MD_FILE}:` }).first()
+  await expect(chip, 'the selection must land in the composer as a reference chip')
+    .toBeVisible({ timeout: 10_000 })
+  // A selection chip's `ref` is a fenced block, not a path: the host must not
+  // mark it openable, or a click would hand that block to the file opener.
+  await expect(chip, 'a selection chip must not advertise itself as openable')
+    .not.toHaveClass(/openable/u)
+  const composerText = await composer.innerText()
+  expect(composerText, 'the draft must not carry the quoted body the chip replaced')
+    .not.toContain('```')
+  // The chip must not fuse with the word typed before it. The exact separator
+  // is the composer's business (Lexical may render it as a line break rather
+  // than a space), so assert the boundary, not the character.
+  expect(composerText, 'the chip must not stick to the word typed before it')
+    .toMatch(/hello\s/u)
   await assertNoCrash()
 
   // README-style markdown (raw-HTML runs + TOC): open the seeded file and

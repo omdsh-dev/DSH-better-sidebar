@@ -5,167 +5,241 @@
  * through `ctx.get` (the inject-free read the app's own plugins use); a
  * missing service or scope degrades to a logged no-op, never a crash.
  *
- * File references additionally use DSH's own structured insert event
- * (`slash/input-insert-reference`, see `insertFileReference`) instead of
- * plain draft text: the native `@file` picker emits this event, and the
- * conversation input machine mints one occurrence whose chip covers the
- * whole reference. Plain text `@folder/file.ts` only ever gets DSH's
- * folder-ref decoration (`@folder/`) — the file name stays undecorated — so
- * plain append is the fallback, not the primary path, for files.
+ * Structured references (file chips, selection chips, and any append onto a
+ * draft that already carries chips) go through the host's span channels
+ * instead of plain draft text: `setDraft` rebuilds the document from a string
+ * and flattens every chip. A reference chip mints through
+ * `SidebarSessionInput.insertReference` (what the native `@` picker
+ * calls); plain-text insertion onto a chipped draft has no facade method and
+ * emits `slash/input-insert-text` directly. Plain `setDraft` is the fallback
+ * for chipless drafts only.
  *
- * Insert position (fixes upstream issue #425): the draft store only exposes
- * the whole string (`getSnapshot().draft` + `setDraft(text)`) — there is no
- * caret API on the conversation service. The composer's `<textarea>` keeps
- * its last selection even while unfocused, so the live caret is probed from
- * the DOM (guarded by a value-sync check), and the text is spliced at that
- * position, replacing any live selection — with whitespace-aware joins, an
- * insert into the middle of a sentence keeps single-space separation like
- * the append path. An unknown/stale caret falls back to appending at the
- * end (the pre-fix behavior).
- *
- * The caret is also *restored* after the insert: committing a programmatic
- * draft change resets the controlled textarea's caret (observed landing at
- * the start of the value), which would make every later insert probe the
- * reset position and drift the stack (A|B + C + D ended up as |DACB). The
- * placement (`placeComposerCaretAfterInsert`) puts the caret right after the
- * inserted text once the value commit lands — the index accounts for the
- * separating space on the left, so stacked inserts stay at their running
- * position (A|B + C + D → ACD|B).
+ * Everything appends at the document end. The host composer is a Lexical
+ * contenteditable and this face publishes no caret, so a mid-draft insert
+ * would have to guess a position — see {@link appendOffset} for the one
+ * coordinate it does derive.
  */
-import type { Context, SidebarConversation } from '../context-types.ts'
+import type {
+  Context,
+  SidebarConversation,
+  SidebarReferenceInsert,
+  SidebarSessionInput,
+  SidebarSessionOccurrence,
+} from '../context-types.ts'
 import { baseName, workspaceRelativePath } from './paths.ts'
 
-/** A resolved composer caret/selection in draft coordinates. */
-export interface DraftCaret {
-  start: number
-  end: number
-}
-
 /**
- * The spliced draft plus the caret index (in that draft) right after the
- * inserted text — the left-side separating space shifts the caret by one,
- * which naive `start + text.length` misses (it would land before the tail).
- */
-interface SpliceResult {
-  draft: string
-  caretAfter: number
-}
-
-/**
- * Splice `text` into `draft` at `caret` (replacing any live selection) with
- * whitespace-aware joins and report the caret position right after the
- * inserted text. `caret === null` (position unknown) appends at the end,
- * exactly like the original behavior.
- */
-function spliceInsert(draft: string, text: string, caret: DraftCaret | null): SpliceResult {
-  if (caret === null || draft === '') {
-    const next = draft.trim() === '' ? text : `${draft}${/\s$/.test(draft) ? '' : ' '}${text}`
-    return { draft: next, caretAfter: next.length }
-  }
-  const prefix = draft.slice(0, caret.start)
-  const suffix = draft.slice(caret.end)
-  if (prefix === '' && suffix === '') return { draft: text, caretAfter: text.length }
-  // One separating space, but never doubled against adjacent whitespace
-  // (or the string edges) — mirrors how typing in the middle of a sentence
-  // behaves.
-  const left = prefix === '' || /\s$/.test(prefix) ? '' : ' '
-  const right = suffix === '' || /^\s/.test(suffix) || /\s$/.test(text) ? '' : ' '
-  return {
-    draft: `${prefix}${left}${text}${right}${suffix}`,
-    caretAfter: prefix.length + left.length + text.length,
-  }
-}
-
-/**
- * The spliced draft string (see {@link spliceInsert}); pure string math —
- * unit-tested directly.
- */
-export function insertAtCaret(draft: string, text: string, caret: DraftCaret | null): string {
-  return spliceInsert(draft, text, caret).draft
-}
-
-/**
- * Locate the composer `<textarea>` in the conversation column: prefer the
- * `data-phase`-tagged textarea (the composer's marker), falling back to any
- * textarea in the column, then to a bare data-phase textarea (older host
- * layouts without the column attribute). Null in jsdom-less hosts.
- */
-function findComposerTextarea(): HTMLTextAreaElement | null {
-  if (typeof document === 'undefined') return null
-  const column = document.querySelector('#root [data-slot="conversation"]')
-  const find = (scope: ParentNode): HTMLTextAreaElement | null =>
-    scope.querySelector('textarea[data-phase]') ?? scope.querySelector('textarea')
-  return column !== null
-    ? find(column)
-    : document.querySelector<HTMLTextAreaElement>('textarea[data-phase]')
-}
-
-/**
- * Resolve the composer's live caret from its DOM `<textarea>`. The draft
- * store has no caret API, so the sidebar reads the composed input's selection
- * directly; the value-sync check (`el.value === draft`) discards stale or
- * wrong-composer reads — a caret must never be applied against a draft it
- * was not measured on.
+ * One structured reference to insert as a chip: the compact `label` the
+ * composer shows, and the `text` the model receives on send. The two are
+ * deliberately different — a selection reads as `docs/a.md:12-15` on screen
+ * while the model still gets the whole fenced block.
  *
- * Returns null when the composer is missing, disabled/read-only, out of
- * sync with the store draft, or has no measurable selection (jsdom/odd
- * hosts report null selectionStart/End).
+ * Named `Pending*` to keep clear of the host's own `DraftReference`, which is
+ * the opposite thing: a chip ALREADY in the draft, carrying its offset and
+ * length.
  */
-export function probeComposerCaret(draft: string): DraftCaret | null {
-  const el = findComposerTextarea()
-  if (el === null || el.disabled || el.readOnly) return null
-  if (el.value !== draft) return null
-  let start = el.selectionStart
-  let end = el.selectionEnd
-  if (typeof start !== 'number' || typeof end !== 'number') return null
-  if (!Number.isFinite(start) || !Number.isFinite(end)) return null
-  start = Math.max(0, Math.min(start, draft.length))
-  end = Math.max(start, Math.min(end, draft.length))
-  return { start, end }
+export interface PendingReference {
+  label: string
+  text: string
+  /**
+   * What the draft string carries for this chip (the clipboard projection).
+   * Defaults to `label`; a file reference spells its `@path` here instead.
+   * This is the text other draft consumers (copy, plain projections) see, so
+   * it stays short — the full payload rides in `text` and is only expanded
+   * on send.
+   */
+  clipboardText?: string
+  /**
+   * Chip icon family. Omit for a reference whose `text` is not a path: the
+   * host marks `'file'` chips openable, and a click would hand the raw text
+   * (a fenced block, for a selection) to the file opener.
+   */
+  appearance?: 'file' | 'folder' | 'session'
 }
 
 /**
- * Restore the composer caret to `caretIndex` after a programmatic
- * `setDraft` commit. A controlled textarea update resets the caret (React
- * commits the value asynchronously and the browser moves the caret to the
- * start/end), so the placement is scheduled and retried across at most two
- * animation frames (setTimeout fallback for jsdom), and only applied when
- * the textarea still matches `expectedDraft` — a newer edit or a different
- * composer wins the race untouched. The caret is clamped into the value
- * bounds, mirroring how browsers clamp type-in positions.
+ * The separating space an append needs on its left — one space, but never
+ * doubled against existing whitespace. Both the string append and the span
+ * channel (which does no splice math of its own) obey this single rule. A
+ * blank draft takes no separator: it is replaced outright.
  */
-export function placeComposerCaretAfterInsert(expectedDraft: string, caretIndex: number): void {
-  let remaining = 2
-  let scheduled = false
-  const schedule = (fn: () => void): void => {
-    if (scheduled) return
-    scheduled = true
-    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(fn)
-    else setTimeout(fn, 0)
-  }
-  const place = (): void => {
-    scheduled = false
-    if (remaining <= 0) return
-    remaining -= 1
-    const el = findComposerTextarea()
-    if (el === null || el.disabled || el.readOnly) return
-    if (el.value !== expectedDraft) {
-      // The commit has not landed yet (or a competing edit won) — one more
-      // frame before giving up.
-      schedule(place)
-      return
+function leadFor(draft: string): string {
+  if (draft.trim() === '') return ''
+  return /\s$/.test(draft) ? '' : ' '
+}
+
+/** `draft` with `text` appended behind one separating space when needed. */
+export function appendText(draft: string, text: string): string {
+  return `${draft}${leadFor(draft)}${text}`
+}
+
+/**
+ * Fold one clipboard-projection offset to its detect-projection twin.
+ *
+ * The host maintains two coordinate systems over the same document: the
+ * clipboard projection (`InputState.draft`, `occurrences`) expands every chip
+ * to its whole `clipboardText`, while the detect projection — the one every
+ * insert/replace event's `span` must speak — collapses each chip to a single
+ * placeholder character. Deriving a span from a draft offset without folding
+ * therefore overshoots by `length - 1` per chip, and the host rejects the
+ * out-of-range span (`applied = false`) — the second chip insert of a session
+ * would silently fail.
+ *
+ * An offset inside a chip's expansion snaps to that chip's trailing edge: the
+ * host only ever replaces whole chips, never splits one. An offset exactly at
+ * a chip's START resolves to the position BEFORE the chip — the host's own
+ * `detectOffsetOfClipboardOffset` reads that case as "inside" and returns the
+ * trailing edge, which would move a caret one chip too far right.
+ */
+export function foldClipboardOffset(
+  draft: string,
+  occurrences: readonly SidebarSessionOccurrence[],
+  offset: number,
+): number {
+  const target = Math.max(0, Math.min(offset, draft.length))
+  let shrink = 0
+  for (const occurrence of occurrences) {
+    const end = occurrence.offset + occurrence.length
+    if (target >= end) {
+      // The whole chip sits at or before the offset: it contributes one
+      // character instead of its expansion.
+      shrink += occurrence.length - 1
+      continue
     }
-    const clamped = Math.max(0, Math.min(caretIndex, el.value.length))
-    el.setSelectionRange(clamped, clamped)
+    if (target > occurrence.offset) {
+      // Inside the chip's expansion — the host only replaces whole chips, so
+      // snap to this chip's trailing edge.
+      return occurrence.offset - shrink + 1
+    }
+    break
   }
-  schedule(place)
+  return target - shrink
 }
 
 /**
- * Insert `text` into the session's composer draft at the composer's live
- * caret (see {@link probeComposerCaret}), falling back to appending at the
- * end when the caret cannot be resolved. Returns false — and logs — when the
- * conversation service or the session scope is unavailable.
+ * The detect-projection offset that appends at the document end, or
+ * `undefined` when it cannot be derived.
+ *
+ * `foldClipboardOffset` alone is not enough: a command chip (`/goal `, present
+ * while `phase === 'claimed'`) collapses to one detect character but never
+ * appears in `occurrences` — the host only collects reference chips. The chip
+ * covers exactly `claim.token`, a prefix of the draft, so its own characters
+ * fold away and one placeholder takes their place.
+ */
+function appendOffset(snapshot: ReturnType<SidebarSessionInput['state']['getSnapshot']>): number | undefined {
+  const { draft, claim } = snapshot
+  const occurrences = snapshot.occurrences ?? []
+  const token = snapshot.phase === 'claimed' && claim !== undefined && draft.startsWith(claim.token)
+    ? claim.token
+    : ''
+  if (token === '') return foldClipboardOffset(draft, occurrences, draft.length)
+  // Fold the arguments behind the token, then add the command chip's one
+  // detect character in front.
+  const rest = draft.slice(token.length)
+  const offsetInRest = occurrences
+    .filter(occurrence => occurrence.offset >= token.length)
+    .map(occurrence => ({ offset: occurrence.offset - token.length, length: occurrence.length }))
+  return 1 + foldClipboardOffset(rest, offsetInRest, rest.length)
+}
+
+/**
+ * Mint one reference chip through the host's own `insertReference` — the
+ * same facade method the native `@` picker's event listener calls, so the
+ * composer shows a compact chip while the model receives `reference.text`.
+ * The host runs its own admission-phase and revision guards and reports
+ * whether the edit applied.
+ *
+ * The chip's `clipboardText` is the compact `label`, not the full payload —
+ * see {@link PendingReference.clipboardText}.
+ *
+ * Returns false when the host refused the insert (stale revision, a frozen
+ * submission phase, or no chip channel at all) so the caller can fall back.
+ */
+export function insertDraftReference(
+  ctx: Context,
+  sessionId: string,
+  reference: PendingReference,
+): boolean {
+  let before: number | undefined
+  try {
+    const actx = ctx.sessions.scope(sessionId)
+    if (actx === undefined) return false
+    const conversation = ctx.get('conversation') as SidebarConversation | undefined
+    if (conversation === undefined) return false
+    const input = conversation.input.for(actx)
+    const snapshot = input.state.getSnapshot()
+    if (input.insertReference === undefined || snapshot.draftRev === undefined) return false
+    if (snapshot.phase === 'adjudicating' || snapshot.phase === 'submitting') return false
+    before = snapshot.draftRev
+    // Chips always append at the document end (there is no caret API and the
+    // composer is a contenteditable, not a textarea — `probeComposerCaret`
+    // never resolves one), so the span is the folded end position.
+    const at = appendOffset(snapshot)
+    if (at === undefined) return false
+    // The host's insertReference adds a space AFTER the chip but never before
+    // it (client.js:14758), so a chip appended to `hello` would read
+    // `hello[chip]`. Reserve the separator first through the same span
+    // channel — a stray trailing space is harmless if the chip then fails.
+    let rev = snapshot.draftRev
+    let start = at
+    if (leadFor(snapshot.draft) !== '') {
+      const actxEmit = actx as unknown as { emit(name: string, payload: unknown): void }
+      actxEmit.emit('slash/input-insert-text', {
+        text: ' ',
+        span: { draftRev: rev, start: at, end: at },
+      })
+      const afterSpace = input.state.getSnapshot()
+      if (afterSpace.draftRev === rev) return false
+      rev = afterSpace.draftRev ?? rev
+      start = at + 1
+    }
+    const chip: SidebarReferenceInsert = {
+      source: 'reference',
+      ref: reference.text,
+      label: reference.label,
+      // A selection chip's `ref` is a fenced block, not a path: leaving
+      // `appearance` unset keeps the host from marking it openable (a click
+      // would otherwise feed that block to the file opener).
+      ...reference.appearance === undefined ? {} : { appearance: reference.appearance },
+      clipboardText: reference.clipboardText ?? reference.label,
+    }
+    return input.insertReference(chip, { draftRev: rev, start, end: start })
+  } catch (error) {
+    // The host may have applied the edit and THEN thrown from its own update
+    // listeners — reporting false would make the caller insert the same
+    // reference a second time as plain text. A changed revision means the
+    // chip is already in the document.
+    console.warn('[dsh-better-sidebar] reference chip insert failed:', error)
+    return revisionChanged(ctx, sessionId, before)
+  }
+}
+
+/**
+ * Whether the session's draft revision moved past `revision` — the only
+ * trustworthy success signal after an exception swallowed the host's answer.
+ * A missing service or snapshot counts as "no evidence of success".
+ */
+function revisionChanged(ctx: Context, sessionId: string, revision?: number): boolean {
+  try {
+    const actx = ctx.sessions.scope(sessionId)
+    if (actx === undefined) return false
+    const conversation = ctx.get('conversation') as SidebarConversation | undefined
+    const input = conversation?.input.for(actx)
+    const now = input?.state.getSnapshot().draftRev
+    if (now === undefined || revision === undefined) return false
+    return now !== revision
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Append `text` to the session's composer draft. Returns false — and logs —
+ * when the conversation service or the session scope is unavailable.
+ *
+ * The host composer is a Lexical contenteditable with no caret API on this
+ * face, so this appends at the end; a mid-draft insert would need the caret
+ * the host does not publish here.
  */
 export function appendToDraft(ctx: Context, sessionId: string, text: string): boolean {
   try {
@@ -180,19 +254,57 @@ export function appendToDraft(ctx: Context, sessionId: string, text: string): bo
       return false
     }
     const input = conversation.input.for(actx)
-    const draft = input.state.getSnapshot().draft
-    const caret = probeComposerCaret(draft)
-    const { draft: next, caretAfter } = spliceInsert(draft, text, caret)
-    input.setDraft(next)
-    // Put the caret right after the inserted text once the value commit
-    // lands — see the module doc for why this keeps stacked inserts at the
-    // running position.
-    placeComposerCaretAfterInsert(next, caretAfter)
+    const snapshot = input.state.getSnapshot()
+    const draft = snapshot.draft
+    const occurrences = snapshot.occurrences ?? []
+    // A command chip (`/goal`) is not a reference occurrence, but `setDraft`
+    // flattens it just the same — and flattening it also drops the claim, so
+    // the host re-reads the draft as plain text and cancels the command. Both
+    // chip kinds take the span path.
+    const hasChips = occurrences.length > 0 || snapshot.phase === 'claimed'
+    if (hasChips) {
+      // `setDraft` rebuilds the document from a plain string, which flattens
+      // every existing chip into its text — so on a draft that already
+      // carries chips, insert through the span event instead. The host's
+      // `SessionInput` has no plain-text facade method (`insertText` lives on
+      // the InputBar-private `InputActions`), so this event is the only
+      // channel that preserves chips.
+      const at = appendOffset(snapshot)
+      if (snapshot.draftRev === undefined || at === undefined) {
+        // No revision means no span channel either — the only remaining write
+        // path (`setDraft`) would flatten every chip, so refuse instead.
+        console.warn('[dsh-better-sidebar] draft insert skipped: chip draft without a revision')
+        return false
+      }
+      // The session-scope Context's typed `emit` is keyed to DSH's closed
+      // event map; this internal composer event is string-loose at runtime.
+      const actxEmit = actx as unknown as { emit(name: string, payload: unknown): void }
+      actxEmit.emit('slash/input-insert-text', {
+        text: `${leadFor(draft)}${text}`,
+        span: { draftRev: snapshot.draftRev, start: at, end: at },
+      })
+      return input.state.getSnapshot().draftRev !== snapshot.draftRev
+    }
+    input.setDraft(appendText(draft, text))
     return true
   } catch (error) {
     console.warn('[dsh-better-sidebar] draft insert failed:', error)
     return false
   }
+}
+
+/**
+ * Insert one reference as a chip, degrading to its plain-text form when the
+ * host has no chip channel or refuses the insert. This is the ONE place the
+ * fallback policy lives: the explorer's `@` button and the viewer selection
+ * popup both come through here.
+ */
+export function insertReferenceOrText(
+  ctx: Context,
+  sessionId: string,
+  reference: PendingReference,
+): boolean {
+  return insertDraftReference(ctx, sessionId, reference) || appendToDraft(ctx, sessionId, reference.text)
 }
 
 /**
@@ -254,61 +366,29 @@ export function insertWorkspaceReference(ctx: Context, sessionId: string, path: 
       console.warn('[dsh-better-sidebar] reference insert skipped: workspace root unavailable or path outside workspace')
       return false
     }
-    const mention = isDir ? directoryMention(relative) : mentionFor(relative, 'file')?.mention
-    if (mention === undefined) {
+    if (isDir) {
+      const mention = directoryMention(relative)
+      if (mention === undefined) {
+        console.warn('[dsh-better-sidebar] reference insert skipped: path cannot be represented as a mention')
+        return false
+      }
+      // The host adds space after a file chip, but not before it. Complete
+      // directory inserts need their own separator for the next @ click.
+      return appendToDraft(ctx, sessionId, `${mention} `)
+    }
+    const file = mentionFor(relative, 'file')
+    if (file === undefined) {
       console.warn('[dsh-better-sidebar] reference insert skipped: path cannot be represented as a mention')
       return false
     }
-    if (!isDir && insertFileReference(ctx, sessionId, relative)) return true
-    // The host adds space after a file chip, but not before it. Complete
-    // directory inserts need their own separator for the next @ click.
-    return appendToDraft(ctx, sessionId, isDir ? `${mention} ` : mention)
+    return insertReferenceOrText(ctx, sessionId, {
+      label: file.label,
+      text: file.mention,
+      clipboardText: file.mention,
+      appearance: 'file',
+    })
   } catch (error) {
     console.warn('[dsh-better-sidebar] workspace-reference insert failed:', error)
-    return false
-  }
-}
-
-/**
- * Insert one FILE reference as a structured chip (like DSH's own `@` picker).
- * The chip displays `@<basename>` but serializes to `@<relative path>` on
- * send, so the reference stays a single link from trigger to basename.
- *
- * Directories keep the sidebar's plain-text completion behavior (`@dir/`)
- * through `insertWorkspaceReference`. The rc.1 picker also supports folder
- * chips on explicit selection; its drill action still inserts plain text.
- */
-export function insertFileReference(ctx: Context, sessionId: string, relativePath: string): boolean {
-  const reference = mentionFor(relativePath, 'file')
-  if (reference === undefined) return false
-  try {
-    const actx = ctx.sessions.scope(sessionId)
-    if (actx === undefined) return false
-    const conversation = ctx.get('conversation') as SidebarConversation | undefined
-    if (conversation === undefined) return false
-    const input = conversation.input.for(actx)
-    const before = input.state.getSnapshot()
-    if (before.draftRev === undefined) return false
-    // The session-scope Context's typed `emit` is keyed to DSH's closed event
-    // map; this internal composer event is deliberately string-loose at runtime.
-    ;(actx as unknown as { emit(name: string, payload: unknown): void }).emit('slash/input-insert-reference', {
-      reference: {
-        source: 'reference',
-        ref: reference.mention,
-        label: reference.label,
-        appearance: 'file',
-        clipboardText: reference.mention,
-      },
-      span: {
-        draftRev: before.draftRev,
-        start: before.draft.length,
-        end: before.draft.length,
-      },
-    })
-    const after = input.state.getSnapshot()
-    return after.draftRev !== before.draftRev
-  } catch (error) {
-    console.warn('[dsh-better-sidebar] file-reference insert failed:', error)
     return false
   }
 }
