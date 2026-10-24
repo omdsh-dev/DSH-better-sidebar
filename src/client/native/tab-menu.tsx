@@ -142,7 +142,14 @@ export function registerNativeTabMenu(ctx: Context): () => void {
     }
   }
   return ctx.slots.inject('sidebar.right.tab.menu.item', () => ctx.slots.register(
-    { name: 'sidebar.right.tab.menu.item' },
+    {
+      name: 'sidebar.right.tab.menu.item',
+      // List slots are addressed by `id`, not by `key`: the host refuses a
+      // registration without one (`list slot "…" requires options.id`) — and
+      // a fake context that only mirrors `name` hides exactly that failure
+      // until a real mount. The id is this entry's identity in the list.
+      id: 'dsh-better-sidebar:close-family',
+    },
     (owner: NativeTabMenuOwner) => <NativeTabMenuItems {...owner} close={close} />,
   ))
 }

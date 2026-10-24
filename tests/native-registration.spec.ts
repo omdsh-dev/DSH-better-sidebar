@@ -96,7 +96,9 @@ function createHost() {
     /** `name::key` slots whose registration throws. */
     failSlots: new Set<string>(),
   }
-  const slotId = (options: { name: string; key?: string }): string => `${options.name}::${options.key ?? ''}`
+  const slotId = (options: { name: string; key?: string; id?: string }): string => `${options.name}::${options.key ?? options.id ?? ''}`
+  /** List slots the host declares; it REFUSES a list registration without an `id`. */
+  const LIST_SLOTS = new Set(['sidebar.right.tab.menu.item'])
   const ctx = {
     inject: (
       _deps: readonly string[],
@@ -111,7 +113,13 @@ function createHost() {
         if (state.inactive) throw new Error('cannot create effect on inactive context')
         return typeof callback === 'function' ? callback() : () => {}
       },
-      register: (options: { name: string; key?: string }) => {
+      register: (options: { name: string; key?: string; id?: string }) => {
+        // Mirror the host's cardinality rules, so a mock cannot keep passing
+        // where the real registry throws (`list slot "…" requires options.id`
+        // was found on a real mount, not here).
+        if (LIST_SLOTS.has(options.name) && options.id === undefined) {
+          throw new Error(`list slot "${options.name}" requires options.id`)
+        }
         const id = slotId(options)
         if (state.failSlots.has(id)) throw new Error(`slot registration for "${id}" failed`)
         slotEvents.push(`register ${id}`)
@@ -182,6 +190,18 @@ describe('native tab registration lifecycle', () => {
       'register dsh-better-sidebar:files',
       'register dsh-better-sidebar:git',
     ])
+  })
+
+  it('contributes the tab-menu rows as a list entry the host will accept', () => {
+    const host = createHost()
+    const { store, service, records } = createPlugins()
+    const dispose = registerNativeSurface({ ctx: host.ctx as never, store, service, records })
+    // A list slot is addressed by `id`; without one the real registry throws
+    // `list slot "…" requires options.id` — a failure a mock that only mirrors
+    // `name` cannot produce (it was found on a real mount).
+    expect(host.slotEvents).toContain('register sidebar.right.tab.menu.item::dsh-better-sidebar:close-family')
+    dispose()
+    expect(host.slotEvents).toContain('release sidebar.right.tab.menu.item::dsh-better-sidebar:close-family')
   })
 
   it('never re-creates the "files" takeover on an unrelated notification', () => {

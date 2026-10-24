@@ -105,3 +105,12 @@
 **样式**：这些行渲染在 kit 的 `<div role="menu">` 里，所以量度复刻 kit 自己的 `.menuItem`（`padding: 4px 7px`、`13px - 1px`、`--dsw-radius-md`、hover 用 `--dsw-alias-interactive-bg-hover`），颜色全走令牌；没有可复用的官方导出件（kit 的菜单项没有导出）。禁用态保留行本身（只置灰），避免不同页签的菜单项数/高度跳变。
 
 **测试**：`tests/native-tab-menu.spec.tsx` 7 例——四项顺序与文案、切片（其他/左/右/全部）、`dismiss` 先于关闭、单页签时前三项禁用而「全部」可用、双 pane 只动被点那条带、解析失败一行不渲染、`stripOrderOf` 纯函数。
+
+## 8. 真机挂载验证（独立实例）抓到的两件事
+
+按 skill 纪律 11 起了独立实例（新 `DSH_HOME` + `--port 0` + `dsh plugin add <tarball>`）之后，两件事只有真挂载才暴露：
+
+1. **`list` 槽必须给 `options.id`**：`ctx.slots.register({ name: 'sidebar.right.tab.menu.item' })` 在真实 registry 上抛 `list slot "…" requires options.id`（keyed 槽要 `key`、list 槽要 `id`、chain 槽要 `select`）。假 ctx 只镜像了 `name`，所以 6 个单测全绿也照样炸；修复是补 `id: 'dsh-better-sidebar:close-family'`，并把假 ctx **升级成会拒绝无 id 的 list 注册**（`tests/native-registration.spec.ts` 新增一条「注册确实带 id」的正向断言）。
+2. **`layout.css` 的 `@media (prefers-reduced-motion: reduce)` 块从未闭合**（v0.26.0 起）：后续所有规则都落在这个 media 块里，普通浏览器不生效。真机里 `getComputedStyle(chip).flex` 仍是 `0 1 auto`、页面里却有我们的 `<style>`，就是这条的指纹。补上 `}` 后同一次量测变成 `1 1 0px`、两个 chip 各 190px（上限）、极差 0；并加了块结构门禁（见 CHANGELOG）。
+
+真机复测（1440×900 视口，右栏宽 675px，2 个页签）：`chipFlex = 1 1 0px`、两签各 190px、右键菜单 = 宿主的 Close + 我们的 Close Other Tabs / Close Tabs to the Left / Close Tabs to the Right（末位签时禁用）/ Close All Tabs，控制台零报错。
