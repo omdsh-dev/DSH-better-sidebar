@@ -48,7 +48,6 @@ import { createOpenInApp } from './open-in-app.ts'
 import { useCenterColumn } from './sidebar/use-center-column.ts'
 import { useHostFeeds } from './sidebar/use-host-feeds.ts'
 import { mountedSessions } from './native/surface.ts'
-import { useRightPanelOpen } from './sidebar/right-panel-open.ts'
 import type { TabDragPayload } from './TabBar.tsx'
 import { t } from './locales.ts'
 import { useSessionRoot } from './use-session-root.ts'
@@ -784,9 +783,9 @@ export function BottomDockToggle(props: { store: SidebarStore }) {
     useCallback((callback: () => void) => store.subscribe(callback), [store]),
     useCallback(() => store.getSnapshot(), [store]),
   )
-  // 宿主右侧面板展开时不出现：那个状态下它右上角是一簇自己的控件
-  // （Split / Fullscreen / Collapse right sidebar），入口挤进去只会跟它们打架。
-  if (useRightPanelOpen()) return null
+  // 宿主右侧面板展开时**照常渲染**：本入口在会话头 utilities，位于右栏控件簇
+  // （Split / Fullscreen / Collapse right sidebar）左侧的独立一列，不会被它们盖住。
+  // 早先这里在右栏展开时早退，结果「先开右栏就再也打不开工作台」。
   const open = snapshot.state?.bottomOpen === true
   const label = open ? t('collapseBottomPanel') : t('expandBottomPanel')
   return (

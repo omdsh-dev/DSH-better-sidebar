@@ -197,8 +197,9 @@ export function DockFallback({ store }: { store: SidebarStore }): ReactNode {
   if (phase === undefined || !phase.blank) return null
   // 兜底：相位说 blank、但会话头的入口确实在 DOM 里 —— 让位，绝不叠出第二套。
   if (headerEntry) return null
-  // 宿主右侧面板展开时不渲染（里面那个按钮本身也会返回 null，这里连空壳一起省掉）：
-  // 那个状态下右上角是宿主自己的一簇控件，没有本入口的容身之处。
+  // 宿主右侧面板展开时不渲染：兜底入口是 fixed 定位、锚在那簇控件左侧，展开时锚点
+  // 落在面板内部，放过去会盖住面板内容。正常会话的顶部入口不受此限（见 Sidebar.tsx
+  // 的 BottomDockToggle：它在会话头 utilities 里，与旧栏控件分属两列）。
   if (rightOpen) return null
   // portal 到 body：面板宿主（z 20-30）的层叠上下文压不过会话头，按钮会被 titleRow
   // 拦截点击。40 高于 AppFrame(20) 与会话头、低于 DSH 浮层(100+)。
