@@ -14,16 +14,18 @@
  * terminal, which is `bottomOnly` and therefore contributes no native tab
  * type. It is the one built-in whose carrier surface is asserted here.
  */
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ReactElement } from 'react'
 import { VscCommentDiscussion, VscGitCommit, VscLayers } from 'react-icons/vsc'
 // First import: browser globals before the xterm-carrying builtin graph loads.
 import './browser-globals.ts'
 
 import type { Context } from '../src/context-types.ts'
+import { api } from '../src/client/api.ts'
 import { createBetterSidebarService } from '../src/client/service.ts'
 import { planFsReadOutcome } from '../src/client/editor-load.ts'
 import { createSidebarStore } from '../src/client/state.ts'
+import { builtinTabs } from '../src/client/builtins/tabs.tsx'
 import { registerBuiltins } from '../src/client/builtins/index.ts'
 import { parkSidechatReopen } from '../src/client/SideChatView.tsx'
 
@@ -234,6 +236,90 @@ describe('built-in tab registrations', () => {
     expect(glyphOf('subagent')).toBe(VscLayers)
     expect(glyphOf('git')).toBe(VscGitCommit)
     expect(glyphOf('sidechat')).toBe(VscCommentDiscussion)
+  })
+})
+
+describe('side chat close archives the bound thread', () => {
+  const scope = { sessionId: 'parent' }
+
+  function bound(threadId: string) {
+    return { id: `sidechat:${threadId}`, type: 'sidechat', title: 'Side Chat', meta: { threadId } }
+  }
+
+  function ctxWithArchive(
+    archiveSession?: (sessionId: string, options: { stopActivity: boolean }) => Promise<void>,
+  ): Context {
+    return {
+      get: (name: string) => (
+        name === 'uiWorkspace' && archiveSession !== undefined ? { archiveSession } : undefined
+      ),
+    } as unknown as Context
+  }
+
+  function sidechatClose(ctx: Context) {
+    return builtinTabs(ctx).find(tab => tab.id === 'sidechat')?.onClose
+  }
+
+  afterEach(() => { vi.restoreAllMocks() })
+
+  it('archives a bound thread with stopActivity, then disposes the live agent', async () => {
+    const order: string[] = []
+    let settle!: () => void
+    const gate = new Promise<void>(resolve => { settle = resolve })
+    const archiveSession = vi.fn(async (sessionId: string) => {
+      order.push(`archive:${sessionId}`)
+      await gate
+    })
+    const dispose = vi.spyOn(api, 'sidechatDispose').mockImplementation(async (childId) => {
+      order.push(`dispose:${childId}`)
+      return { accepted: true }
+    })
+    sidechatClose(ctxWithArchive(archiveSession))?.(bound('child-1'), scope)
+    expect(archiveSession).toHaveBeenCalledWith('child-1', { stopActivity: true })
+    expect(dispose).not.toHaveBeenCalled()
+    settle()
+    await vi.waitFor(() => {
+      expect(order).toEqual(['archive:child-1', 'dispose:child-1'])
+    })
+  })
+
+  it('still disposes when archive is unavailable or rejects, with no unhandled rejection', async () => {
+    const rejections: unknown[] = []
+    const onRejection = (reason: unknown): void => { rejections.push(reason) }
+    process.on('unhandledRejection', onRejection)
+    const dispose = vi.spyOn(api, 'sidechatDispose').mockResolvedValue({ accepted: true })
+    try {
+      sidechatClose(ctxWithArchive())?.(bound('child-missing'), scope)
+      const throwing = {
+        get: () => { throw new Error('no workspace service') },
+      } as unknown as Context
+      sidechatClose(throwing)?.(bound('child-throw'), scope)
+      const archiveSession = vi.fn(() => Promise.reject(new Error('archive failed')))
+      sidechatClose(ctxWithArchive(archiveSession))?.(bound('child-reject'), scope)
+      await vi.waitFor(() => {
+        expect(dispose.mock.calls.map(call => call[0])).toEqual(['child-missing', 'child-throw', 'child-reject'])
+      })
+      expect(archiveSession).toHaveBeenCalledWith('child-reject', { stopActivity: true })
+      await new Promise(resolve => { setTimeout(resolve, 0) })
+      expect(rejections).toEqual([])
+    } finally {
+      process.off('unhandledRejection', onRejection)
+    }
+  })
+
+  it('does not archive or dispose an unbound autoCreate tab', async () => {
+    const archiveSession = vi.fn(async () => {})
+    const dispose = vi.spyOn(api, 'sidechatDispose').mockResolvedValue({ accepted: true })
+    sidechatClose(ctxWithArchive(archiveSession))?.({
+      id: 'sidechat:new-1',
+      type: 'sidechat',
+      title: 'Untitled',
+      meta: { autoCreate: true },
+    }, scope)
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(archiveSession).not.toHaveBeenCalled()
+    expect(dispose).not.toHaveBeenCalled()
   })
 })
 
