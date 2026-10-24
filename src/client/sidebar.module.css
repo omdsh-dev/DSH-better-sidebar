@@ -1517,6 +1517,25 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   color: var(--dsw-alias-state-error-primary);
 }
 
+.editorErrorHint {
+  margin-top: 8px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.editorErrorCandidates,
+.editorErrorActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.editorErrorCandidates {
+  align-items: flex-start;
+  flex-direction: column;
+}
+
 .editorBanner {
   flex: none;
   padding: 4px 8px;
