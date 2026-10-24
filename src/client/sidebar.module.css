@@ -600,12 +600,33 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   scrollbar-width: none;
 }
 
+/* Frozen widths, pinned while the pointer is inside the strip (TabBar sets
+   `data-frozen` on the interaction, see `tab-strip-freeze.ts`): every tab
+   keeps the width it had when the run of closes started, so the next × stays
+   where the pointer already is. Removing the attribute restores the equal
+   share — that happens on pointer leave, i.e. Chrome's re-layout moment. */
+.tabBar[data-frozen] .tab {
+  flex: 0 0 var(--dsh-tab-frozen-width);
+}
+
 .tabList::-webkit-scrollbar {
   display: none;
 }
 
+/* Equal-width tabs, the way Chrome's strip behaves: the width follows the
+   OPEN COUNT, never the label length. `flex-basis: 0` is the whole trick —
+   every tab asks for zero width and then grows by an equal share of what is
+   left, so all of them render at the same clamp(64px, strip / n, 160px)
+   simultaneously: roomy while few tabs are open, evenly narrowing as more
+   arrive, floored at 64px (past that the strip scrolls instead of squeezing
+   a label to a bare ellipsis). The payoff is muscle memory — the close
+   button sits at the same offset in every tab, so closing several in a row
+   is one repeated motion instead of a hunt for the ×.
+   The 160px max is mirrored by TAB_MAX_WIDTH in state.ts; the two are pinned
+   together by tests/tab-strip-equal-width.spec.ts (jsdom cannot lay flex out,
+   so that spec guards these declarations rather than measured pixels). */
 .tab {
-  flex: none;
+  flex: 1 1 0;
   max-width: 160px;
   min-width: 64px;
   display: flex;
@@ -716,6 +737,53 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   gap: 2px;
   padding-right: 4px;
   overflow: hidden;
+}
+
+/* One row of the NATIVE tab menu's close-family actions (the rows the plugin
+   contributes through `sidebar.right.tab.menu.item`, see native/tab-menu.tsx).
+   The menu itself belongs to the host's docking kit, so these rows must read
+   as part of it: metrics mirror the kit's own `.menuItem` (4px 7px, one step
+   below the secondary font size, radius-md), colors ride tokens. */
+.nativeTabMenuItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 7px;
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  font-size: calc(var(--dsh-content-font-size-secondary, 13px) - 1px);
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: var(--dsw-radius-md);
+  cursor: pointer;
+}
+
+/* The leading glyph carries the scope (see close-family-icons.tsx): muted vs
+   the label, and it dims with the label when the row has nothing to act on. */
+.nativeTabMenuIcon {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* Separates the kit's own "Close" row from the four bulk actions. */
+.nativeTabMenuSeparator {
+  height: 1px;
+  margin: 4px 2px;
+  background: var(--dsw-alias-border-l1);
+}
+
+.nativeTabMenuItem:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+/* Nothing to do (the clicked tab is alone, or first/last in its strip): the
+   row stays visible — the menu's shape should not jump between tabs. */
+.nativeTabMenuItem:disabled {
+  color: var(--dsw-alias-label-tertiary);
+  cursor: default;
 }
 
 /* ── Explorer ──────────────────────────────────────────────────────────── */

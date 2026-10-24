@@ -38,7 +38,7 @@ function stubZh(): void {
 }
 
 const MENU_LABELS = [
-  '关闭', '关闭其他页签', '关闭左侧页签', '关闭右侧页签', '关闭全部页签', '在资源管理器中定位',
+  '关闭', '关闭其他', '关闭左侧', '关闭右侧', '关闭全部', '在资源管理器中定位',
 ]
 
 function mountBar(tabs: SidebarTab[], opts: {

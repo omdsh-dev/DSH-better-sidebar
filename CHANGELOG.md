@@ -2,6 +2,25 @@
 
 > 本文档收录 dsh-better-sidebar 的完整发布历史（最新版摘要见 [README](README_ZH.md)；同步发布于 [GitHub Releases](https://github.com/omdsh-dev/DSH-better-sidebar/releases)）。
 
+### Unreleased
+
+- 🗂 **页签改成等宽，宽度随打开数量自动变化（Chrome 式条带）**：此前每个页签的宽度由**标题长度**决定（`.tab { flex: none }`），同一个条带里 `README.md` 窄、`sidebar.module.css` 宽，于是**每个关闭按钮的横坐标都不一样**——想连关几个页签，就得每次重新找 ×。现在 `.tab` 改成 `flex: 1 1 0`：每个页签等分条带的剩余宽度，全部渲染成同一个 `clamp(64px, 可用宽度 / n, 160px)`（上限仍是 `TAB_MAX_WIDTH`，下限仍是 64px），页签增减、面板拖宽都由浏览器自己重算，**没有任何 JS 测量**——DOM、拖拽 / 中键关闭 / 右键菜单 / 滚轮横滚、`ctx.betterSidebar` 接入 API 与 localStorage 格式全未变，纯样式改动。到 64px 下限后不再继续压扁 label，改由条带的横向滚动接管（`.tabList` 原有行为）。真实 Chromium 实测（条带 380px）：改前 4 个页签宽 `128.3 / 126.4 / 159.7 / 113`、× 在 `122 / 249 / 408 / 521`；改后 2 个页签各 153、3 个各 102、4 个起统一 79（外框，= 64 内容 + 内边距/描边）且 × 等距。设计、5×8 组量测与「为什么保留下限 64px」的权衡见 [docs/plans/2026-10-24-equal-width-tab-strip.md](docs/plans/2026-10-24-equal-width-tab-strip.md)。**顺带说明**：反馈里提到的「右键关闭其他 / 关闭右侧」不是缺失功能，那套菜单（关闭 / 关闭其他 / 关闭左侧 / 关闭右侧 / 关闭全部 / 在资源管理器中定位）自 v0.15.x 起就在，本次未改。
+  - 🧪 `tests/tab-strip-equal-width.spec.ts`（新增）：jsdom 不做 flex 布局，所以钉的是**产生几何的声明**——`.tab` 必须 grow 1 / shrink 1 / basis 0、不得声明 `width`、`max-width` 必须与 `TAB_MAX_WIDTH` 一致、`min-width` 必须是正的下限；外加 `.tabList` 仍是 `overflow-x: auto` 的滚动容器、`.tabTitle` 的省略号三件套（等宽让截断成为常态，省略号是承重件）。把 `flex: 1 1 0` 退回 `flex: none` 这条用例当场红。
+
+- 🗂 **右上角宿主原生页签条也等宽了（同一条带契约，另一排页签）**：文件页签平时出现在 **DSH 原生右侧栏**的页签条里，那排 chip 由宿主的 docking kit 渲染——宽度跟标题长度走（`flex: 0 1 auto`、min 80 / max 170），所以同样「每个 × 在不同位置」，而且 `×` 只在该 chip hover / 激活时才出现。宿主没有给插件任何 chip 几何 API，因此按 `make-dsh-plugin` 的口径做**最小面的宿主 DOM 调整**：`layout.css` 里三条声明，只锚宿主自己机器可读的语义属性（`data-dockkit-strip-tabs` / `data-dockkit-strip-fill` / `data-dockkit-tab`）并限定在 `[data-sidebar-right-panel]` 作用域内——不点任何 CSS Module 哈希类、不用 `!important`（两条属性选择器天然压过宿主单类，与样式表注入顺序无关），宿主改名或换布局模型时**静默失效**、chip 退回宿主自己的内容宽，不报错也不破版式。宿主自己的 80 / 170 上下限原样保留：真实 Chromium 实测（700px 条带 / 4 个页签）改前 `[100, 116.3, 150.3, 100]`、改后 `146.5 × 4`；4 种条带宽度 × 6 种页签数共 24 组全部等宽，1 个页签仍封顶 190（外框）、6 个仍落到底 100 并横向滚动；浮动窗浮层头（复用同一批类但没有这些属性）实测宽度不变。**未做**：原生条右键菜单的「关闭其他 / 左侧 / 右侧」——宿主公开的 `sidebar.right.tab.menu.item` 槽只给 `{ tab, dismiss }`，而 `TabRecord` 只有 `{ id, kind, contentId, title }`，**拿不到 pane 归属与条带顺序**，插件做只能得到「跨 pane 会误关」的近似；关闭邻居属于布局手势，按 dockkit 自己的分工应在宿主实现（记录见设计文档 §6）。
+  - 🧪 `tests/native-tab-strip-width.spec.ts`（新增）：钉「三条声明 + 作用域 + 不点类名 + 不用 `!important`」——即"我们绝不越界"这条不变量，而不是"永远等宽"（宿主改名后静默回退是刻意行为）。去掉 `[data-sidebar-right-panel]` 作用域、或把 `strip-fill` 的让位规则删掉，对应用例当场红。
+
+- 🖱 **原生条右键菜单补上「关闭其他 / 左侧 / 右侧 / 全部」**：宿主 kit 的页签菜单只有自带的「关闭」。这四项通过宿主的**公开槽** `sidebar.right.tab.menu.item` 贡献（kit 的「关闭」保留、我们的行排在它后面），关闭走宿主公开的 `sidebarRight.close()`——它对唯一 guide 那类不可关闭的页签是 no-op，所以「关闭全部」不会把栏关空。唯一的缺口是槽只给 `{ tab, dismiss }`：拿不到 pane 归属与条带顺序，因此顺序从 kit 自己的 chip 读（`[data-dockkit-tab]` ⊂ `[data-dockkit-strip-tabs]`，与等宽规则同一批稳定语义属性，不点类名），分屏时用被点 chip 的 `closest()` 只作用于它自己那条带；**解析不到就一行都不渲染**（kit 的「关闭」仍在，菜单不会出现死行，也不猜「会话级」这种会误关另一栏的作用域）。行样式复刻 kit 菜单项量度（4px 7px / 12px / radius-md / hover 令牌），没有东西可动时只置灰不换行数。
+  - 🧪 `tests/native-tab-menu.spec.tsx`（新增 7 例）：四项顺序与文案、切片（其他/左/右/全部）、`dismiss` 先于关闭、单页签时前三项禁用而「全部」可用、双 pane 只动被点那条带、解析失败一行不渲染、`stripOrderOf` 纯函数。
+
+- 🐞 **`layout.css` 的 `@media (prefers-reduced-motion: reduce)` 块从未闭合（v0.26.0–v0.28.0 一直如此），它之后的每条规则在普通浏览器里都没生效**：浏览器在文件末尾隐式闭合这个块，所以「语法合法、构建通过、单测全绿」，但**子面板翻转 / 视觉贴靠**那一整段（`body[data-dsh-sidebar-submenu]` 系列）与本次新增的原生 chip 等宽三条规则**全部落在那个 media 块里面**，只在开启了「减少动态效果」的机器上才生效。这是**真机挂载验证**抓到的（Playwright 里 `getComputedStyle(chip).flex` 仍是宿主的 `0 1 auto`，而页面里确实有我们的 `<style>`）。已补上缺失的 `}`，并新增块结构门禁：`tests/layout-css.spec.ts` 现在断言「花括号配平 + 该 media 块只包含 center-column 那条规则」——把 `}` 拿掉当场红（`expected 16 to be 15`）。副作用是**菜单子面板的翻转/贴靠从本版起真正生效**（此前是死代码）。
+
+- ⏸ **关页签时不再立刻重排：指针还在条带上就冻结宽度（Chrome 的行为）**：等宽之后每关一个页签、存活页签都会变宽，鼠标没动但下一个 × 已经挪走了——「连关几个」于是变成每关一次重新找 ×。现在**两排页签**都是「关闭手势发生时先量下当前宽度并冻结，指针离开条带才重排」：插件自己的底栏走 React 状态（`data-frozen` + `--dsh-tab-frozen-width`）；宿主原生条没有 React 树、**且宿主在关闭时会重建条带 DOM**（真机实测 `[data-dockkit-strip]` 节点被整个换掉），所以冻结挂在 **`<html>`** 上、由**关闭手势**（`pointerdown` 落在宿主的 `[data-dockkit-tab-close]`，或中键按在 chip 上）触发，释放按「指针是否还在那条带」判定（`pointerout` 的 `relatedTarget: null` 会先做一次命中复核，否则关掉被 hover 的 chip 那一刻就自己解冻了）。新建页签 / 拖动 / 点选都不冻结，收窄仍然即时。真机实测（1440×900，右栏 675px）：4 签各 115.3 → 关一个仍 115.3 → 再关一个仍 115.3 → 指针移出后才变 190，零控制台错误。
+  - 🧪 `tests/native-strip-freeze.spec.ts`（10 例）与 `tests/tab-bar-freeze.spec.tsx`（5 例）分别钉住两排的触发、保持、释放与「宿主重建 DOM 后依然有效」。
+
+- 👁 **页签右键菜单的行现在能一眼分辨**：四行「关闭其他 / 左侧 / 右侧 / 全部」在原生条和底栏都加了**前置图形**（⊗ 其他 / ‹ 左 / › 右 / **××** 全部；前三颗取自宿主图标集，「全部」是双叉、因为垃圾桶会读成「删除」而不是「关掉」；14px、随禁用态一起变淡），并用一条细分隔线与宿主自带的「关闭」分开；英文文案从「Close Tabs to the Left / Right」这种**第 4 个词才不同**的句子缩短为 `Close others / Close left / Close right / Close all`，中文去掉冗余的「页签」后缀（`关闭其他 / 关闭左侧 / 关闭右侧 / 关闭全部`）。原先四行都以同一个动词开头，用户必须逐行读到中段才能分辨；现在图形先给出作用域、文字再确认。
+  - 🧪 `tests/native-tab-menu.spec.tsx` 增加一条契约：四行各有一颗 `svg`，且分隔线在整组之上（宿主的「Close」行不动）。
+
 ### v0.28.0
 
 - **正式版支持线前移到 DSH 0.2.1-rc.1+**：13 条 DSH peer 下限统一为 `^0.2.1-rc.1`，开发依赖、CI 与安装脚本使用精确 RC 基线。不新增运行时兼容层、不改功能实现。

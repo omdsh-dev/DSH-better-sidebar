@@ -31,3 +31,38 @@ describe('layout.css conversation column', () => {
     expect(conversationRule).not.toMatch(/(?:^|[;\s])overflow\s*:/)
   })
 })
+
+describe('layout.css block structure', () => {
+  const bare = css.replace(/\/\*[\s\S]*?\*\//g, '')
+
+  it('closes the reduced-motion block before the rest of the sheet', () => {
+    // An unclosed @media block is implicitly closed at EOF, which silently
+    // swallows every rule after it. That shipped from v0.26.0 through v0.28.0:
+    // the submenu-flip/tether rules and the native-chip width rules compiled
+    // into the bundle but never applied in a normal (no reduced-motion)
+    // browser. Brace balance is the cheap tell; the block boundary is the
+    // contract.
+    const open = (bare.match(/\{/g) ?? []).length
+    const close = (bare.match(/\}/g) ?? []).length
+    expect(open).toBe(close)
+
+    const start = bare.indexOf('@media (prefers-reduced-motion: reduce)')
+    expect(start).toBeGreaterThan(-1)
+    let depth = 0
+    let end = -1
+    for (let i = start; i < bare.length; i += 1) {
+      if (bare[i] === '{') depth += 1
+      else if (bare[i] === '}') {
+        depth -= 1
+        if (depth === 0) { end = i; break }
+      }
+    }
+    expect(end, 'the reduced-motion block never closes').toBeGreaterThan(-1)
+    const block = bare.slice(start, end)
+    expect(block).toContain('#root [data-dsh-center-col]')
+    // Everything else must stay OUT of it: these are unconditional rules.
+    expect(block).not.toContain('[data-dsh-sidebar-submenu')
+    expect(block).not.toContain('[data-dockkit-tab]')
+    expect(block).not.toContain('[data-dsh-better-sidebar-settings-nav]')
+  })
+})

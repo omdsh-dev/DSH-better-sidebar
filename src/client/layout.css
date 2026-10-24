@@ -78,6 +78,7 @@ body[data-dsh-sidebar-dragging] #root [data-dsh-center-col] {
   #root [data-dsh-center-col] {
     transition: none;
   }
+}
 
 /* Context-menu submenu flip (viewport clamping for the portaled menus).
  *
@@ -137,4 +138,53 @@ body[data-dsh-sidebar-submenu~="left"] div[role="menu"] div[role="menu"] {
 body[data-dsh-sidebar-submenu~="left"] div[role="menu"] div[role="menu"]::before {
   left: auto;
   right: -4px;
+}
+
+/* ── Native right-sidebar tab chips: equal width, Chrome-style ────────────
+ *
+ * The chip row is the HOST's (its docking kit): each chip is content-sized
+ * (`flex: 0 1 auto`, min 80 / max 170), so a strip of tabs with different
+ * titles puts every close button at a different x. Closing several tabs in a
+ * row then means hunting the × each time — the reason Chrome's chips are all
+ * the same width and shrink as the count grows.
+ *
+ * There is no host API for chip geometry, so this is the narrowest lever a
+ * plugin has: three declarations anchored on the semantic attributes the
+ * host's own layout code reads (`data-dockkit-strip-tabs`, `data-dockkit-tab`,
+ * `data-dockkit-strip-fill`) and scoped to the right panel — no class names,
+ * no JS, no `!important` (the two-attribute selectors out-specify the host's
+ * single-class rules regardless of stylesheet order).
+ *
+ *  - the chip row claims the strip's slack (its fill spacer yields instead of
+ *    competing for it), and
+ *  - chips share that width equally: clamp(80px, row / n, 170px) for all of
+ *    them at once, the host's own floor/ceiling untouched.
+ *
+ * Failure mode is silence, by design: a host version that renames these
+ * attributes or re-models the row simply stops matching, and the chips fall
+ * back to the host's content sizing — no error, no broken geometry, no dead
+ * UI. Scope matters as much as the declarations: the float panel header
+ * reuses the kit's `.tab` / `.stripFill` classes, and must keep its own
+ * geometry (it has neither of the attributes above, and these rules never
+ * name a class). tests/native-tab-strip-width.spec.ts pins all of it. */
+[data-sidebar-right-panel] [data-dockkit-strip-tabs] {
+  flex: 1 1 0;
+}
+
+[data-sidebar-right-panel] [data-dockkit-strip-fill] {
+  flex: 0 0 0;
+}
+
+[data-sidebar-right-panel] [data-dockkit-tab] {
+  flex: 1 1 0;
+}
+
+/* Frozen widths for the HOST strip: while a close gesture is in flight and the
+   pointer stays on the strip, its tabs keep the width they had when the run of
+   closes started — so the next × never moves out from under the pointer (the
+   mechanism lives in `tab-strip-freeze.ts`). The pin sits on `<html>` on
+   purpose: the host rebuilds the strip's DOM on a close, so an attribute on
+   the strip itself would be thrown away exactly when it is needed. */
+html[data-dsh-tabs-frozen] [data-sidebar-right-panel] [data-dockkit-tab] {
+  flex: 0 0 var(--dsh-tab-frozen-width);
 }
