@@ -60,3 +60,37 @@
 
 - `tests/tab-strip-equal-width.spec.ts`（新增）：jsdom 不做 flex 布局，所以钉的是**产生几何的声明**——`.tab` 必须是 grow 1 / shrink 1 / basis 0、不得声明 `width`、`max-width` 必须等于 `TAB_MAX_WIDTH`、`min-width` 必须为正且小于上限；同时钉住 `.tabList` 仍是 `overflow-x: auto` 的滚动容器（下限以下靠它）与 `.tabTitle` 的省略号三件套（等宽让截断成为常态，省略号变成承重件）。把 `flex: 1 1 0` 退回 `flex: none` 这条用例当场红。
 - 真实浏览器量测：见 §3（一次性验证，不进 CI 套件——CI 里没有稳定的 Chromium 量测位置，且 flex 几何由 `tests/tab-strip-equal-width.spec.ts` 的声明契约守）。
+
+## 6. 第二排：宿主原生条（dockkit chip）
+
+右上角那排页签不是这个插件画的——它由宿主的 docking kit 渲染，插件只往 chip 里塞标题内容（`sidebar.right.pane.tab.title` 槽）。chip 的宽度是宿主 CSS 的（`.tab { flex: 0 1 auto; min-width: 80px; max-width: 170px }`），**宿主没有给插件任何"设置 chip 几何"的 API**。
+
+按 `make-dsh-plugin` 的口径（06 §7「不要锚官方 CSS Module 的哈希类名；给视图挂稳定 `data-*` 属性定位」＋ 四条铁律「能复用官方控件就复用，不抄第二份」），这里采用**最小面的宿主 DOM 调整**：三条声明，只锚宿主自己机器可读的语义属性，限定作用域，失效即静默回退。
+
+```css
+/* src/client/layout.css */
+[data-sidebar-right-panel] [data-dockkit-strip-tabs] { flex: 1 1 0; }
+[data-sidebar-right-panel] [data-dockkit-strip-fill] { flex: 0 0 0; }
+[data-sidebar-right-panel] [data-dockkit-tab] { flex: 1 1 0; }
+```
+
+三条各自都是必需的：
+
+1. `strip-tabs` 必须是 `1 1 0`——它原本是 `flex: 0 1 auto`（内容宽），单改 chip 只会在"内容宽的行"内部等分，页签簇不会去吃条带余量（实测 2 个页签时停在 115.2 而不是 190）。
+2. `strip-fill` 必须让位——它原本也是 `flex: 1 1 0`，会和 `strip-tabs` **对半分**剩余空间（实测 4 个页签只剩 146.5 的一半宽度、页签簇偏在左半边）。
+3. chip 本身 `1 1 0`——等分；宿主自己的 `min-width: 80 / max-width: 170` 原样保留，所以下限以下仍然横向滚动，上限仍然 170。
+
+**作用域是契约的一半**：浮动窗的浮层头复用同一批类（`.tab.floatTitle`、`.stripFill`），但它们没有 `data-dockkit-tab` / `data-dockkit-strip-tabs`。规则**永不点类名**，所以浮层头碰不到——实测浮层头标题宽度在加规则前后都是 100px。
+
+**实测**（真实 Chromium，宿主 `dockkit.module.css` 的规则原样抽取 + 上面三条）：
+
+| 条带 | 改前（4 个页签） | 改后（4 个页签） |
+|---|---|---|
+| 700px | `[100, 116.3, 150.3, 100]`（极差 50.3） | `146.5 × 4`（极差 0） |
+
+4 种条带宽度（380 / 460 / 560 / 700）× 6 种页签数 = **24 组全部等宽**；上限/下限照旧：1 个 190（170 + padding），700px 下 6 个 → 100 + 横向滚动。**与样式表顺序无关**：两条属性的选择器（0,2,0）压过宿主的单类（0,1,0），插件 CSS 先注入还是后注入都是 146.5。
+
+**已知边界（刻意接受）**：这是版本敏感的耦合——宿主哪天改名 `data-dockkit-*` 或换掉条带布局模型，三条规则**静默失效**，chip 退回宿主自己的内容宽：不报错、不破版式、不留死 UI。`tests/native-tab-strip-width.spec.ts` 钉的是「声明 + 作用域 + 不点类名 + 不用 `!important`」，也就是**我们绝不越界**这条不变量，而不是「永远等宽」。
+
+**本次不做**：原生条右键菜单的「关闭其他 / 左侧 / 右侧 / 全部」。宿主虽然提供了公开的 `sidebar.right.tab.menu.item` 槽，但 owner 只有 `{ tab, dismiss }`，`TabRecord` 也只有 `{ id, kind, contentId, title }`——**拿不到 pane 归属与条带顺序**（`tabsIn()` 返回的是 `Object.values(layout.tabs)`，记录顺序），插件只能做出「关闭其他（会话级）」这种跨 pane 会误关的近似。归属判断：关闭邻居是**布局手势**，按 dockkit 自己的约定（「kit 拥有布局手势，menu 扩展位留给内容动作」）应在宿主实现；插件侧干净可加的是内容动作（例如「在资源管理器中定位」）。
+
