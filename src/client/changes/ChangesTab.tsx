@@ -79,10 +79,27 @@ type PreviewSelection =
   | { kind: 'git'; ref: SidebarDiffRef }
   | { kind: 'op'; path: string; callId: string }
 
-export function ChangesTab({ ctx, store, scope, tab, visible, onOpenFile, onOpenDiff }: TabComponentProps) {
+/** What the changes page accepts beyond a tab body's props. */
+interface ChangesTabProps extends TabComponentProps {
+  /**
+   * Pin the page to ONE lens (`'session'` today): the tab type itself is the
+   * lens, so the switcher is not rendered, the persisted `meta.lens` is
+   * ignored, and the other lens' body is never mounted. The session-only
+   * `changes-session` tab type uses this — a page that can only ever show the
+   * session lens must not pay for the Git lens' status fetch.
+   */
+  lockedLens?: Lens
+}
+
+export function ChangesTab({
+  ctx, store, scope, tab, visible, onOpenFile, onOpenDiff, lockedLens,
+}: ChangesTabProps) {
   const meta = (tab.meta ?? {}) as ChangesMeta
   const lensId = useId()
-  const [lens, setLens] = useState<Lens>(meta.lens === 'session' ? 'session' : 'git')
+  // A locked page ignores the persisted lens: the page IS that lens.
+  const [lens, setLens] = useState<Lens>(
+    lockedLens ?? (meta.lens === 'session' ? 'session' : 'git'),
+  )
   const [selection, setSelection] = useState<PreviewSelection | null>(null)
   /** The Git Graph's selected commit (its card + the ref tones it needs), or
    *  null while nothing is selected there. Null keeps the pane diff-only. */
@@ -250,8 +267,9 @@ export function ChangesTab({ ctx, store, scope, tab, visible, onOpenFile, onOpen
     <div className={css.root}>
       <div className={css.head}>
         {/* ponytail: conversation Tabs are private in DSH 0.2.0-rc.2; reuse
-            their CSS classes until the host exports the component. */}
-        <div className="wSkVaW_tabs" role="tablist" aria-label={t('changes')}>
+            their CSS classes until the host exports the component. A locked
+            page has no switcher — its tab type already names the lens. */}
+        {lockedLens === undefined && <div className="wSkVaW_tabs" role="tablist" aria-label={t('changes')}>
           {(['git', 'session'] as const).map(value => (
             <button
               key={value}
@@ -277,7 +295,7 @@ export function ChangesTab({ ctx, store, scope, tab, visible, onOpenFile, onOpen
               {t(value === 'git' ? 'changesGitLens' : 'changesSessionLens')}
             </button>
           ))}
-        </div>
+        </div>}
         {/* The Git lens refreshes from its own Changes header (#944); only the
             session lens needs the tab-level action. */}
         {lens === 'session' && <IconButton
@@ -292,8 +310,10 @@ export function ChangesTab({ ctx, store, scope, tab, visible, onOpenFile, onOpen
           lens then keeps its expanded groups, its commit draft and the Graph
           section's scroll and selection while the session lens is on screen
           (the graph's own `visible` gate keeps it from fetching meanwhile).
-          The host keeps tab bodies the same way (`keepMounted`). */}
-      <div className={css.lensBody} id={`${lensId}-git-panel`} role="tabpanel"
+          The host keeps tab bodies the same way (`keepMounted`). A LOCKED page
+          is the exception: it has no other lens to come back to, so the Git
+          panel is never mounted at all — its status fetch would be pure cost. */}
+      {lockedLens !== 'session' && <div className={css.lensBody} id={`${lensId}-git-panel`} role="tabpanel"
         aria-labelledby={`${lensId}-git`} hidden={lens !== 'git'}>
         <GitLens
           ctx={ctx}
@@ -308,9 +328,13 @@ export function ChangesTab({ ctx, store, scope, tab, visible, onOpenFile, onOpen
           onClearPreview={() => { setSelection(null) }}
           onDetailsChange={reportGraphDetails}
         />
-      </div>
-      <div className={css.lensBody} id={`${lensId}-session-panel`} role="tabpanel"
-        aria-labelledby={`${lensId}-session`} hidden={lens !== 'session'}>
+      </div>}
+      {/* A locked page has no tab button to point at, so it is a region
+          rather than a tabpanel. */}
+      <div className={css.lensBody} id={`${lensId}-session-panel`}
+        role={lockedLens === undefined ? 'tabpanel' : 'region'}
+        aria-labelledby={lockedLens === undefined ? `${lensId}-session` : undefined}
+        hidden={lens !== 'session'}>
         <SessionLens
           ops={ops}
           loadError={opsError && ops.length === 0}

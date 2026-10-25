@@ -58,6 +58,7 @@ import { api } from './api.ts'
 import { parsePrefs } from './prefs.ts'
 import { AddPluginModal, type PluginKind } from './add-plugin-modal.tsx'
 import { t } from './locales.ts'
+import { isTabTypeEnabled } from './tab-enabled.ts'
 import type { SidebarStore } from './state.ts'
 import type {
   BetterSidebarService,
@@ -738,6 +739,11 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
     applyPref({ viewersEnabled: { ...optimisticRef.current.viewersEnabled, [id]: next } })
   }
 
+  /** Whether one tab card reads as ON — {@link isTabTypeEnabled}, the same
+   *  rule `service.isTabEnabled` applies, so the card never disagrees with
+   *  whether the type is actually offered. */
+  const tabEnabled = (tab: TabDescriptor): boolean => isTabTypeEnabled(tab, prefs.tabsEnabled)
+
   /** Flip one declaratively-declared toggle (a SidebarPrefs boolean field). */
   const onToggleSetting = (toggle: SidebarSettingToggle, next: boolean): void => {
     applyPref({ [toggle.key]: next })
@@ -958,11 +964,11 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
                 title: textOf(tab.title),
                 desc: tab.id,
                 icon: iconOf(tab.icon, 16),
-                enabled: prefs.tabsEnabled[tab.id] !== false,
+                enabled: tabEnabled(tab),
                 onToggle: (next) => { onToggleTab(tab.id, next) },
                 // The settings gear only while the feature is enabled: its
                 // related settings are dormant while the feature is off.
-                onOpenSettings: prefs.tabsEnabled[tab.id] !== false && hasSettings(tab)
+                onOpenSettings: tabEnabled(tab) && hasSettings(tab)
                   ? () => { setSettingsFor(tab) }
                   : undefined,
               })}

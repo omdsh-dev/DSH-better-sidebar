@@ -17,6 +17,8 @@
  * working inside the sidebar).
  */
 
+import { isTabTypeEnabled, type TabEnableShape } from './tab-enabled.ts'
+
 /** `new URL(value)`, or null for an unparsable href. */
 function parseUrl(value: string): URL | null {
   try {
@@ -67,16 +69,18 @@ export function shouldTakeOverLink(url: URL, opts: {
 
 /**
  * Whether a claimed type is still on offer at OPEN time: registered in the
- * tab registry AND not switched off in the settings. The claim (gate) and the
- * open are two separate turns of the event loop, so the type may disappear in
- * between — a plugin unloaded, the user disabled it, the registry reset.
+ * tab registry AND switched on. The claim (gate) and the open are two
+ * separate turns of the event loop, so the type may disappear in between — a
+ * plugin unloaded, the user disabled it, the registry reset. "Switched on"
+ * goes through {@link isTabTypeEnabled}, so a type that ships off
+ * (`defaultEnabled: false`) reads as off here too.
  */
 export function isTargetAvailable(
   type: string,
-  tabs: readonly { id: string }[],
+  tabs: readonly TabEnableShape[],
   tabsEnabled: Record<string, boolean>,
 ): boolean {
-  return tabs.some(tab => tab.id === type && tabsEnabled[tab.id] !== false)
+  return tabs.some(tab => tab.id === type && isTabTypeEnabled(tab, tabsEnabled))
 }
 
 /**

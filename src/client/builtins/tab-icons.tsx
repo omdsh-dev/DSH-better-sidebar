@@ -21,6 +21,7 @@ import {
   VscCommentDiscussion,
   VscGitCommit,
   VscGlobe,
+  VscHistory,
   VscLayers,
   VscTerminal,
 } from 'react-icons/vsc'
@@ -45,6 +46,13 @@ export const filesTabIcon: TabIcon = (size) => (
 /** Changes / diff: the commit glyph, green like the diff affordances. */
 export const changesTabIcon: TabIcon = (size) =>
   themed(css.changes, <VscGitCommit size={size} />)
+
+/**
+ * The session-only changes page: the history glyph in the same green family
+ * as its unified parent — same subject (what changed here), different page.
+ */
+export const sessionChangesTabIcon: TabIcon = (size) =>
+  themed(css.changes, <VscHistory size={size} />)
 
 /**
  * Tasks (subagents and background jobs) — the live-activity amber. The glyph

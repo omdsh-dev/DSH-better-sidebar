@@ -1,5 +1,5 @@
 /**
- * Built-in registration tests: the plugin registers 6 tabs and 4 file
+ * Built-in registration tests: the plugin registers 7 tabs and 4 file
  * viewers through the same service external plugins use (dogfooding);
  * the catch-all `code` viewer and the html sandbox settings pin the
  * registry's behavior. The read-only previews (image / pdf /
@@ -10,9 +10,14 @@
  * see src/client/plugins-viewers.ts.) The git tab is the unified changes
  * tab (git lens + session lens, PR #471's file-trace merged in).
  *
- * `terminal-bottom` (#774) is the sixth: the plugin's OWN bottom-workbench
- * terminal, which is `bottomOnly` and therefore contributes no native tab
- * type. It is the one built-in whose carrier surface is asserted here.
+ * `terminal-bottom` (#774) is `bottomOnly`: the plugin's OWN bottom-workbench
+ * terminal, which therefore contributes no native tab type. It is the one
+ * built-in whose carrier surface is asserted here.
+ *
+ * `changes-session` is the session lens on a page of its own and ships
+ * SWITCHED OFF (`defaultEnabled: false`), because both lenses already live in
+ * the unified `git` tab: it exists for setups whose Git page comes from a Git
+ * plugin, where the two pages would otherwise duplicate each other.
  */
 import { describe, expect, it } from 'vitest'
 import type { ReactElement } from 'react'
@@ -35,10 +40,10 @@ function setup(): { service: ReturnType<typeof createBetterSidebarService>; stor
 }
 
 describe('built-in tab registrations', () => {
-  it('registers the 6 built-in tabs (the host owns the right-sidebar terminal and browser)', () => {
+  it('registers the 7 built-in tabs (the host owns the right-sidebar terminal and browser)', () => {
     const { service } = setup()
     expect(service.getTabs().map(t => t.id).sort()).toEqual(
-      ['diff', 'editor', 'git', 'sidechat', 'subagent', 'terminal-bottom'],
+      ['changes-session', 'diff', 'editor', 'git', 'sidechat', 'subagent', 'terminal-bottom'],
     )
   })
 
@@ -70,6 +75,28 @@ describe('built-in tab registrations', () => {
     expect(changes?.hidden).not.toBe(true)
     expect(changes?.badge).toBeDefined()
     expect(changes?.component).toBeDefined()
+  })
+
+  it('the session-only changes page ships switched off and honours an explicit enable', () => {
+    const { service, store } = setup()
+    const session = service.getTab('changes-session')
+    expect(session?.defaultEnabled).toBe(false)
+    expect(session?.single).toBe(true)
+    expect(session?.hidden).not.toBe(true)
+    expect(session?.badge).toBeDefined()
+    const title = typeof session?.title === 'function' ? session.title() : session?.title
+    expect(title).toBeTruthy()
+    // A page of its own, not a second name for the unified tab.
+    expect(title).not.toBe('Git')
+    // No pref entry: the ship-off flag decides, and it beats every other tab.
+    expect(service.isTabEnabled('changes-session')).toBe(false)
+    expect(service.isTabEnabled('git')).toBe(true)
+    // An explicit entry always wins, in both directions.
+    store.setPrefs({ ...store.getPrefs(), tabsEnabled: { 'changes-session': true } })
+    expect(service.isTabEnabled('changes-session')).toBe(true)
+    store.setPrefs({ ...store.getPrefs(), tabsEnabled: { 'changes-session': true, git: false } })
+    expect(service.isTabEnabled('git')).toBe(false)
+    expect(service.isTabEnabled('changes-session')).toBe(true)
   })
 
   it('every visible tab declares a non-empty, mutually distinct title', () => {

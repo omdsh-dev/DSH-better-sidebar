@@ -387,8 +387,9 @@ export function apply(ctx: Context): void {
           // therefore goes back to the host's `openExternalLink`, and
           // plugin-drawn markdown to the anchor's own `window.open`.
           const urlTargetOf = (url: URL): string | undefined => {
-            const prefs = sidebarStore.getPrefs()
-            const enabled = service.getTabs().filter(tab => prefs.tabsEnabled[tab.id] !== false)
+            // Enabled types only — `isTabEnabled` also honours a descriptor
+            // that ships off (defaultEnabled: false).
+            const enabled = service.getTabs().filter(tab => service.isTabEnabled(tab.id))
             return matchUrlTarget(enabled, url)?.id
           }
           return registerLinkInterception({

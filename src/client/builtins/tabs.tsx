@@ -1,6 +1,7 @@
 /**
  * The built-in tab descriptors: the plugin registers its own pages
- * (editor / git — the unified changes tab / subagent / sidechat / terminal-bottom /
+ * (editor / git — the unified changes tab / changes-session — the session
+ * lens on its own opt-in page / subagent / sidechat / terminal-bottom /
  * diff) through
  * the same {@link BetterSidebarService} external plugins use — eating its
  * own dogfood. The editor IS the files window (the old standalone explorer
@@ -20,7 +21,7 @@
  */
 import { IconCodeOutlineRegular, IconPanelLeftOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import {
-  changesTabIcon, filesTabIcon, sidechatTabIcon, tasksTabIcon, terminalTabIcon,
+  changesTabIcon, filesTabIcon, sessionChangesTabIcon, sidechatTabIcon, tasksTabIcon, terminalTabIcon,
 } from './tab-icons.tsx'
 import { t } from '../locales.ts'
 import { openSidebarFile } from '../sidebar-file.ts'
@@ -141,6 +142,37 @@ export function builtinTabs(ctx: Context): readonly TabDescriptor[] {
           scope={scope}
           tab={tab}
           visible={visible}
+          onOpenFile={(path) => { openSidebarFile(ctx, scope.sessionId, path) }}
+          onOpenDiff={onOpenDiff}
+        />
+      ),
+    },
+    {
+      // The session lens on a page of its OWN — opt-in (`defaultEnabled:
+      // false`), because both lenses of the unified `git` tab already cover
+      // it. The case it exists for: a Git plugin (dsh-ide-git and friends)
+      // drawing the "Git" page, where the only thing still wanted from this
+      // plugin is what the session's agent changed. Enable this type, switch
+      // `git` off in the side card settings, and no page is duplicated.
+      id: 'changes-session',
+      title: () => t('changesSessionTab'),
+      description: () => t('guideDescSession'),
+      icon: sessionChangesTabIcon,
+      order: 21,
+      single: true,
+      defaultEnabled: false,
+      badge: (_ctx, scope) => {
+        const count = opCountOf(scope.sessionId)
+        return count === undefined || count === 0 ? null : count
+      },
+      component: ({ ctx, store, scope, tab, visible, onOpenDiff }) => (
+        <ChangesTab
+          ctx={ctx}
+          store={store}
+          scope={scope}
+          tab={tab}
+          visible={visible}
+          lockedLens="session"
           onOpenFile={(path) => { openSidebarFile(ctx, scope.sessionId, path) }}
           onOpenDiff={onOpenDiff}
         />

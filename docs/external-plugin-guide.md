@@ -42,7 +42,7 @@
 | 底部终端的恢复语义（#774） | 刷新后重新上屏同一页签时，页面用**同一份 `(sessionId, key, contentId)`** 再次调用宿主的 `webTerminals.view()`：宿主持久化在 localStorage 的 `(sessionId, contentId) → 终端 id` 绑定因此把**同一个** PTY 认回来（`contentId` 是 `dsh-better-sidebar:terminal-bottom:<instance>`——**每个页签一个实例，不再是恒定值**，#926）。插件**不把 terminalId 写进 `tab.meta`**：`view()` 显式传 terminalId 会关掉宿主的「缺了就建」分支，一个过期的 id 会把页签永久卡在 `missingTerminal` 上。DSH 重启后 PTY 全没了而 localStorage 绑定还在，所以「新建终端」按钮把 `tab.meta.terminalRun` +1 换一代 `contentId`，让宿主另铸一个进程，而不是反复认领死绑定 |
 | 底部工作台的开合 | 落到底部工作台的打开一律展开它（新建与聚焦都算），因此 `openTab` 的落点永远可见；开合按钮注册在 DSH 会话头的 utilities 槽（`conversation.session.header.utilities`），不在插件自己的宿主里 |
 | 在侧边打开（`target: 'side'`，v0.22.0+） | 原生栏里的 tab **不在插件底部工作台的分栏树里**，所以「在侧边打开」不能写 `bottomSplits`（那样会落到用户没展开的底部工作台 = 点了没反应）。服务改为把这一步交给宿主：带 path 的 `editor` seed 走 `openResource(address, { preferNewPane: true, revealIfOpened: false })`——宿主先按自己的两格上限与空间规则尝试分栏，分不了才回退到当前格；`revealIfOpened: false` 允许与已打开的同名资源并存，因此对同一个文件再点一次也会新开一格。其余类型若传 `target: 'side'`，同样以 `preferNewPane` 落原生栏（组件型 tab 的 path 仍是组件种子）——**唯一的例外是 `bottomOnly` 类型**（#774）：它没有原生承载面可落，`target: 'side'` 被改道回 `'bottom'`。path-less 的 `editor`（文件页）与 `'bottom'` 行为不变 |
-| 新建标签页列表 | 每个 tab 类型在原生 guide 里占一行：标题取 `title` + 图标取 `icon`（缺图标时宿主补一个方块占位），说明取可选的 `description`——**宿主只在 guide 列出的条目 ≤ 4 条时渲染说明**（上游 `MAX_DESCRIBED_ENTRIES = 4`），更长的列表整列丢掉所有说明；未声明 `description` 的条目渲染成单行「图标 + 标题」（rc.1 起 `description` 回到宿主契约，但**宿主与插件都没有兜底句**，所以插件恢复字段而不恢复旧的通用句）；`hidden: true` 的类型不占行，**`bottomOnly: true` 的类型同样不占行**（#774：它只活在插件自己的底部 `+` 菜单里）。插件的 `editor` 类型不再单独占行（它认领的文件资源由 `files` 接管页承载同一视图）。**本插件默认贡献 4 个 guide 条目**（文件 / Git / 任务管理 / 侧边对话，恰好在上限内），**但宿主的终端条目也占一行**——装了宿主终端即是 5 条，说明整列不渲染；要让说明回来，需在插件设置页关掉足够多的 tab 类型把总数压到 ≤ 4 条 |
+| 新建标签页列表 | 每个 tab 类型在原生 guide 里占一行：标题取 `title` + 图标取 `icon`（缺图标时宿主补一个方块占位），说明取可选的 `description`——**宿主只在 guide 列出的条目 ≤ 4 条时渲染说明**（上游 `MAX_DESCRIBED_ENTRIES = 4`），更长的列表整列丢掉所有说明；未声明 `description` 的条目渲染成单行「图标 + 标题」（rc.1 起 `description` 回到宿主契约，但**宿主与插件都没有兜底句**，所以插件恢复字段而不恢复旧的通用句）；`hidden: true` 的类型不占行，**`bottomOnly: true` 的类型同样不占行**（#774：它只活在插件自己的底部 `+` 菜单里）。插件的 `editor` 类型不再单独占行（它认领的文件资源由 `files` 接管页承载同一视图）。**本插件默认贡献 4 个 guide 条目**（文件 / Git / 任务管理 / 侧边对话，恰好在上限内）——内置的 `changes-session`（会话改动）出厂关闭，所以默认仍是这 4 条；在设置页打开它就会变成 5 条，说明整列随之消失，**但宿主的终端条目也占一行**——装了宿主终端即是 5 条，说明整列不渲染；要让说明回来，需在插件设置页关掉足够多的 tab 类型把总数压到 ≤ 4 条 |
 | 新建面板的种子（alpha.2） | 在新会话打开原生新面板时，宿主从已注册的 guide 条目里播种：恰好 1 个条目 → 直接打开那一页；0 或 ≥2 个条目 → 打开指南。`revealIfOpened` 打开的「页面」在**同一 pane 内**强制去重（已在该 pane 就不再新建）；由已有 tab 地址驱动的打开不受该去重影响 |
 | alpha.2 全局面板（不接入） | 插件**不采用** alpha.2 引入的全局主面板模型——根级 keyed `main` 槽（预留 key `conversation`，由 ui-conversation 注册为 `main.conversation`）、根级 `sidebar.panellist` 列表槽（`SidebarPanelMetadata` / `SidebarPanelIconOwnerProps`）、`ctx.layout.selectPanel(MainPanelId|null)` / `beginNavigation()` / `dispose()`、全局标准 prop `usePanelInfo`，以及改根级并新增会话级 `rightbar.session` 子槽的 `rightbar`——这些只作兼容保留，不向其迁移 |
 | dsh-context 可选联动（开发线） | 通过 Cordis 子作用域等待宿主服务，并订阅原生类型及内容槽注册；仅当 Context 侧栏可用时显示 Agent 详情、后台任务真实属主与当前会话标题栏的诊断入口。跨会话先导航到目标再打开 Context，复用该会话其他分栏已有标签；发起导航即关闭来源详情/输出浮层，插件级请求不随浮层卸载取消；导航最多等待 10 秒，用户继续导航或依赖消失即结束。后台任务没有真实 `job.owner` 或可靠子代理地址时不提供诊断，不回退到观察会话。只借用 `ctx.layout.beginNavigation()` 的取消语义，不贡献全局主面板；不扩展 `ctx.betterSidebar` 公共 API，也不要求消费插件改代码或安装 dsh-context。 |
@@ -57,7 +57,7 @@ better-sidebar 从 v0.4.0 起把自己改造成一个**注册表服务**：
 - **新页面（tab）**：注册一种新的侧边栏 tab 类型，出现在侧边栏 `+` 菜单里，用户点击后在自己的分栏里打开你的 React 页面；
 - **文件预览器（file viewer）**：注册一种文件类型预览器，让用户在侧边栏打开文件时走你的渲染组件（覆盖或补充内置的 markdown/html/code）。**宿主自己也有文档预览**——DSH 0.1.7 的 `ui-sidebar-documentpreview` 拿走了表格 / PDF / 图片 / Office 等只读格式，本插件因此**拒绝**认领那些扩展名，你的 viewer 也接不到它们（清单与原因见 §5.4）。
 
-内置的 6 个 tab（editor / git——「Git」统一 tab（Source Control 视角 + 本轮文件视角，Git 视角内含只读提交图）/ subagent / sidechat / terminal-bottom / diff）和 4 个 viewer（markdown / html / jsonl / code）**自己也是通过同一套 API 注册的**（吃自己的狗粮），所以外部插件的能力与内置功能完全对等。**不再内置 terminal / browser 两个 tab 类型**：DSH 0.1.6 自带右列终端（`ui-sidebar-terminal`、kind `terminal`），浏览器是 0.1.6 的 `ui-sidebar-browser`（kind `browser`，**0.1.7 起只在 desktop profile 挂载**，Web profile 没有这个 kind）；插件的同名类型会让读者看到两份实现。同理，0.1.7 的 `ui-sidebar-documentpreview` 让插件的 image / pdf / Office / 表格预览失去意义，那三个 viewer 描述符（image / pdf / binary-download）已删除。
+内置的 7 个 tab（editor / git——「Git」统一 tab（Source Control 视角 + 本轮文件视角，Git 视角内含只读提交图）/ changes-session——「会话改动」（只留本轮文件视角，`defaultEnabled: false` 出厂关闭）/ subagent / sidechat / terminal-bottom / diff）和 4 个 viewer（markdown / html / jsonl / code）**自己也是通过同一套 API 注册的**（吃自己的狗粮），所以外部插件的能力与内置功能完全对等。**不再内置 terminal / browser 两个 tab 类型**：DSH 0.1.6 自带右列终端（`ui-sidebar-terminal`、kind `terminal`），浏览器是 0.1.6 的 `ui-sidebar-browser`（kind `browser`，**0.1.7 起只在 desktop profile 挂载**，Web profile 没有这个 kind）；插件的同名类型会让读者看到两份实现。同理，0.1.7 的 `ui-sidebar-documentpreview` 让插件的 image / pdf / Office / 表格预览失去意义，那三个 viewer 描述符（image / pdf / binary-download）已删除。
 
 关键机制一句话：better-sidebar 的 client half 在 `apply()` 开头执行 `ctx.provide('betterSidebar', service)`（`src/client/index.tsx`），消费插件在 `inject` 里声明 `'betterSidebar'`，Cordis 保证服务就绪后才激活你的插件，然后你调用 `ctx.betterSidebar.registerTab(...)` / `registerFileViewer(...)` 完成注册，返回的 disposer 由 Cordis fiber 在卸载（HMR / 禁用）时自动调用。
 
@@ -208,7 +208,7 @@ interface TabDescriptor {
   description?: string | (() => string)
   /** 图标：ReactNode 或 (size: number) => ReactNode（不声明时宿主补一个方块占位） */
   icon?: ReactNode | ((size: number) => ReactNode)
-  /** + 菜单排序（升序）；默认 100。内置：editor=10, git=20, subagent=30, sidechat=35, terminal-bottom=40 */
+  /** + 菜单排序（升序）；默认 100。内置：editor=10, git=20, changes-session=21, subagent=30, sidechat=35, terminal-bottom=40 */
   order?: number
   /** 从 + 菜单隐藏（editor/diff 用：由其他流程触发打开，不在菜单里） */
   hidden?: boolean
@@ -237,6 +237,22 @@ interface TabDescriptor {
    * 同类型 tab 而非新开）。显式给出 dedupeKey 时优先于 single。
    */
   single?: boolean
+  /**
+   * 出厂即关闭（默认 `true` = 注册即可用）：类型照常注册，但在用户到
+   * 设置页「侧边卡片」把它打开之前，`isTabEnabled` 一律返回 false——
+   * 与用户手动关掉的效果完全相同（不进 `+` 菜单、原生承载面不注册、
+   * `openTab` 拒绝、派生流程跳过），而设置页那张卡片仍在，用户一键可开。
+   *
+   * 判定顺序：`tabsEnabled[id]` 有显式值就用它（`true` 打开、`false`
+   * 关闭），没有显式值时才看这里的 `defaultEnabled`。规则只有一份实现
+   * （`src/client/tab-enabled.ts` 的 `isTabTypeEnabled`），服务、设置页、
+   * 外链拦截三处共用，不会各说各话。
+   *
+   * 内置用例是 `changes-session`（本轮文件独立页）：统一 `git` 页本来
+   * 就含两个镜头，所以「单镜头第二页」只对「Git 页交给 Git 插件」
+   * 的安装方式是净收益，出厂必须关闭。
+   */
+  defaultEnabled?: boolean
   /**
    * 去重键：openTab 时若已存在 dedupeKey 相同的 tab，则聚焦而非新开。
    * 返回 undefined 表示不去重（每次都新开，但同 id 会被 id 安全网聚焦）。
@@ -461,6 +477,7 @@ ctx.effect(() => {
 |---|---|---|---|---|
 | `editor` | 10 | 否（按 path 去重） | 否 | 唯一「文件窗口」（编辑/预览 + 资源管理）。chrome 恒合并形态：路径输入框 + 编辑器控件 + 可开关内嵌文件树（全局搜索 `fs.search`；状态存 `tab.meta.treeOpen/treeWidth`）。`editorExplorer`：关（默认）= 按 path 新开，无路径窗口 = 纯资源管理器；开 = 树点击/Enter 经 `updateTab` 原地切换（id/meta 不变），无路径窗口 = 带 chrome 空窗口。树右键「在新 Tab 中打开」「在侧边打开」（pane 右侧 split）。新会话 seed 空文件窗口（`title:'Files'`）；旧 `explorer` tab 经 `sanitizeState` 迁移。树 listing 与文件名搜索应用 `explorerExclude` 排除模式（editor 卡片齿轮弹窗可编辑；host 侧过滤，匹配条目彻底移除且永不阻塞折叠）；单目录链折叠为 `a/b/c` 面包屑行（POSIX 隐藏与排除条目不计入唯一子项判定） |
 | `git` | 20 | 是 | 是（本轮文件操作数） | 「Git」统一 tab（id 保留 `git` 以兼容持久化布局）：**Git 视角**（Source Control：独立折叠的 Changes / Graph；Changes 内为多行 Message + 仅填草稿的 Generate、Merge Changes → Staged Changes → Changes（资源组也独立折叠，计数常驻标题最右，文件行整行 hover）；Git 刷新仅留在 Changes 标题，外层本轮文件刷新保留；真实 parent hashes 泳道图；常驻底栏为可点击分支 + `*`/`+`/`!` 标记、upstream 的 behind↓ / ahead↑ 及安全 Pull-then-Push 同步；Push/Pull 与 worktree·子仓库选择移入 More Actions；提交只消费已暂存项，冲突/空消息/无暂存时禁止，草稿按会话·仓库·worktree 隔离）+ **本轮文件视角**（原 file-trace：模型读/写/编辑实时折叠，按操作时间倒序平铺、不按文件分组，每行「操作 → 文件路径 → 大小/时间」，支持类型筛选）；会话事件经插件自有宿主路由 `changes.ops` 供给（live 日志优先、冷会话回放持久化记录，`afterSeq` 增量），primed 后用 `wait` 挂在宿主侧等下一个工具事件而不是重放整窗），badge 读 tab 轮询写入的同步缓存。页头复用宿主会话页的下划线 Tabs 样式（`wSkVaW_tabs/tab/tabActive`，宿主尚未公开组件；支持左右方向键与 Home/End 切换）。两视角共用底部可拖拽预览面板（`tab.meta.lens/previewH` 持久化），diff 渲染统一走 `src/client/diff/`（`DiffRows`/`DiffFiles`：mod 配对 + 行内高亮 + 语法着色 + 上下文折叠）；Git 目标可展开为独立 diff tab（落进工作台的 diff 分栏） |
+| `changes-session` | 21 | 是 | 否（本轮文件操作数） | 「会话改动」：只把 `git` 统一 tab 的**本轮文件视角**单独成一页，供「Git 页交给 Git 插件」的安装方式使用（那种装法下两份 Git 页语义重叠，而本轮文件视角无处安放）。同一份 `ChangesTab` 以 `lockedLens: 'session'` 渲染：页头不画 Git / 本轮文件切换器，也不挂 Git 视角组件（连 `git status` 都不请求），数据仍走 `changes.ops`。**`defaultEnabled: false`**——出厂关闭：设置页「侧边卡片」照常有卡片、一键可开，打开前不进 `+` 菜单、不注册原生 tab 类型（见 §4 的 `defaultEnabled`），打开/关闭由 `native` 的 `sync()` 订阅实时生效，无需刷新 |
 | `subagent` | 30 | 是 | 否 | 任务管理（工作流图/树、团队任务板、后台任务抽屉） |
 | `sidechat` | 35 | 否（`sidechat:<uuid>`，按 `meta.threadId` 去重） | 否 | 侧边对话（每对话一 Tab）：打开即建空线程（首条消息赢得标签并同步标题）；线程 = 插件自建子会话（种子继承父会话上下文，进行中回合以 `interrupted` 闭合；种子带合法 `subagent/descriptor`，SubagentView 按 `Side: ` 前缀过滤），`origin:'subagent'` 隐藏于主列表；走 `/sidebar/api/sidechat.*` 路由；头部菜单切换/重开（`parkSidechatReopen` + 确定性 id），关 Tab 释放 live agent；重开经 `collectOwnEvents` 回源到种子边界；「保存为新会话」= `session.fork`（`this` 敏感）。[设计文档](plans/2026-08-20-sidechat-tab-design.md) |
 | `diff` | -1 | 否（按 id 去重） | 是 | 差异查看（changes tab 的预览面板「展开为独立页签」触发，同一渲染栈） |
@@ -990,8 +1007,8 @@ ctx.effect(() =>
 每个注册的 tab / viewer **自动**出现在 DSH 设置页「侧边卡片」分区（`SideCardSection` 按注册表驱动渲染，无硬编码）：
 
 - 展示：小卡片网格（图标 + 标题 + 类型 id），**高亮 = 启用**，勾选徽标钉在卡片最右端；viewer 卡片额外显示扩展名。
-- 持久化：开关写入 `SidebarPrefs.tabsEnabled / viewersEnabled`（开放 map，**缺省 = 启用**，显式 `false` 才禁用）。
-- 关闭语义：tab 从 `+` 菜单消失、`openTab` 拒绝新开（`console.warn`）、派生流程（子代理自动展开、agent 终端自动补 tab）停止，**已打开的 tab 保留**；viewer 被 `matchFileViewer` 跳过，文件落到下一个匹配。
+- 持久化：开关写入 `SidebarPrefs.tabsEnabled / viewersEnabled`（开放 map，**缺省看描述符的 `defaultEnabled`**——缺该字段即启用；用户点过之后写下的显式 `true` / `false` **永远优先**于它）。
+- 关闭语义（出厂关闭的 `defaultEnabled: false` 与用户手动关闭完全同效）：tab 从 `+` 菜单消失、`openTab` 拒绝新开（`console.warn`）、派生流程（子代理自动展开、agent 终端自动补 tab）停止，**已打开的 tab 保留**；viewer 被 `matchFileViewer` 跳过，文件落到下一个匹配。
 - `settings.toggles`（可选）：在卡片行下追加**嵌套设置行**（仅父级启用时显示），绑定 `SidebarPrefs` 字段；通过卡片底部「功能设置」条在原生弹窗中编辑。行控件形状见 §4.1 的 `SettingRow`：`type: 'switch' | 'text' | 'number'`（v0.11.0+；text/number 行 blur/Enter 提交，number 行按 min/max 钳制，unit 渲染单位后缀）与 `type: 'select'`（v0.13.0+；`options` 支持 value/title/desc/icon，`multi` 多选存数组并按 options 顺序提交；任一项带 icon 时渲染大图标选项卡）与 `type: 'patterns'`（可编辑字符串数组——chips + 删除钮 + 常驻添加输入框，add/remove 均原子提交整表，占位符走 `patternsPlaceholder`，值必须存 `string[]`；能力 gate `settingPatterns`）。内置示例：subagent tab 的 `autoOpenSubagent`、editor tab 的 `editorExplorer` 图标化下拉（工作区路径围栏与它的开关已移除，见 §8.1）与 `explorerExclude` 排除模式行。
 - `settings.pluginToggles`（可选，v0.12.0+）：**插件自有设置行**，行控件与 toggles 相同，但 key 是插件局部的——持久化在 prefs 文档的 `pluginSettings[<descriptor id>]`（开放 map，无需宿主 schema 字段）。tab 与 viewer 都可用（v0.12.0 起 viewer 卡片也有设置条）。
 - `settings.render`（可选，v0.12.0+）：**自定义设置面板**——追加渲染在行列表之后，可单独存在。props 含 store/service/prefs、本 descriptor 的 `pluginSettings` blob、`updatePluginSetting(key, value)` 与 `close()`；抛错会被吞掉并显示内联错误。

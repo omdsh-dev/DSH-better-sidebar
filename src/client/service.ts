@@ -29,6 +29,7 @@ import {
 import { baseName, extOf } from './paths.ts'
 import { hostRouteUrl as resolveHostRoute } from './host-route-url.ts'
 import { builtinFileIcon, builtinFolderIcon } from './file-icons.tsx'
+import { isTabTypeEnabled } from './tab-enabled.ts'
 import type { SessionScope } from './api.ts'
 import type { SidebarPrefs } from '../prefs-shared.ts'
 
@@ -213,6 +214,19 @@ export interface TabDescriptor {
    * are given. Builtins: explorer/git/subagent use `single: true`.
    */
   single?: boolean
+  /**
+   * Ship switched off: the type still registers, but `isTabEnabled` answers
+   * `false` until the user turns it on in the side card settings
+   * (`tabsEnabled[id] = true`, which always wins). A type that ships off
+   * therefore stays out of the + menu, the native guide and every derived
+   * flow — exactly like one the user disabled — while its card still sits
+   * in the settings page. Absent means enabled.
+   *
+   * Builtins: `changes-session` (the session-only changes page). Both
+   * changes lenses are already one page in `git`, so a second page for one
+   * of them is opt-in for people whose Git tab is owned by a Git plugin.
+   */
+  defaultEnabled?: boolean
   /**
    * If provided, opening a tab whose `dedupeKey(tab)` matches an existing
    * tab's key focuses the existing one instead of creating a new one.
@@ -663,10 +677,10 @@ export interface BetterSidebarService {
   /** Find a tab descriptor by id (undefined if not registered). */
   getTab(id: string): TabDescriptor | undefined
   /**
-   * Whether a tab type is enabled in the side card prefs. An absent
-   * `tabsEnabled[id]` entry means enabled — only an explicit `false`
-   * disables the type (hidden from the + menu, `openTab` refuses, and
-   * derived flows gate on it).
+   * Whether a tab type is enabled in the side card prefs. An explicit
+   * `tabsEnabled[id]` entry wins; with none, the descriptor's
+   * `defaultEnabled` decides (absent = enabled). A disabled type is hidden
+   * from the + menu, `openTab` refuses it, and derived flows gate on it.
    */
   isTabEnabled(id: string): boolean
   /** Whether a file viewer is enabled (absent `viewersEnabled[id]` = enabled). */
@@ -1046,8 +1060,10 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
   }
 
   // The enable switches come from the user's side card prefs (the shared
-  // store the service is bound to): an absent key means enabled.
-  const isTabEnabled = (id: string): boolean => store.getPrefs().tabsEnabled[id] !== false
+  // store the service is bound to); the ship-off flag is the fallback — see
+  // {@link isTabTypeEnabled}, which every other surface shares.
+  const isTabEnabled = (id: string): boolean =>
+    isTabTypeEnabled(tabs.get(id), store.getPrefs().tabsEnabled)
   const isViewerEnabled = (id: string): boolean => store.getPrefs().viewersEnabled[id] !== false
 
   const matchFileViewer = (path: string, head?: Uint8Array): FileViewerDescriptor | undefined => {

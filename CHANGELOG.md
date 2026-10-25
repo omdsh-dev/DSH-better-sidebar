@@ -4,6 +4,9 @@
 
 ### 未发布
 
+- 🌿 **新增出厂关闭的「会话改动」页（`changes-session`）**：`git` 统一页把「Git」与「本轮文件」两个镜头放在一页，前提是 Git 页由本插件画；当 Git 页由 `dsh-ide-git` 一类 Git 插件接管时，关掉本插件的 `git` 页会连本轮文件视角一起失去。新增内置 tab `changes-session`（order 21、单实例）用同一份变更页以 `lockedLens: 'session'` 渲染：只留本轮文件视角，页头不画镜头切换器、不挂 Git 镜头（连 `git status` 都不请求，数据仍走 `changes.ops`）。**出厂关闭**由新增的描述符字段 `TabDescriptor.defaultEnabled` 表达——显式 `tabsEnabled[id]` 永远优先，缺省时才看它（缺字段 = 启用），判定收敛到 `src/client/tab-enabled.ts` 的 `isTabTypeEnabled`，服务 / 设置页 / 外链拦截三处共用，所以默认零行为变化、`+` 菜单与原生 guide 不多一行；用户在设置页打开后原生条目由既有的 `sync()` 订阅实时出现，关闭即摘掉。21 份词典、指南 §4/§4.4/§8 与 `tests/builtins.spec.ts` 同步。
+- 🧪 测试：`tests/builtins.spec.ts` 新增「出厂关闭 + 显式开启」用例（默认 `isTabEnabled('changes-session')` 为 false、`git` 仍为 true，写 `tabsEnabled` 后按显式值翻转），内置 tab 清单断言更新为 7 个。
+
 - ⚡ **卡顿扫描与一轮低风险收敛**（前端页面 + 宿主 `/sidebar/*` 请求；逐条取证与误报核实见[扫描记录](docs/plans/2026-10-24-perf-scan.md)）：
   - **文件树在隐藏页签里不再干活**：宿主把访问过的页签 body 常驻挂载，此前每个隐藏的文件树仍会在窗口获得焦点、刷新 tick 或另一个树展开目录时发 `fs.trees` 并重渲染整棵树；现在停靠树在隐藏时不加载（含折叠链预加载：隐藏后才返回的在飞层不会再拉下一节）、不监听焦点刷新，重新可见时由目录 watcher 对整套被 watch 的目录发一次批量 `fs.trees`（此前是每目录一次 POST；隐藏期间恰好没有缓存且展开集身份同时变化时最多两批，超过宿主 64 条路径上限仍按上限拆批）。
   - **任务图滚轮缩放改为每帧一次提交**：高回报率滚轮/触控板此前每个 wheel 事件都重绘整张图，且每帧只保住一步缩放；现在与平移共用 `frame batcher`，同一帧的缩放量按步夹紧后完整复合、只提交一次（与逐帧应用等价）；背景拖拽期间滚轮让位给拖拽，避免两种手势互相覆盖。
