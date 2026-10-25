@@ -22,6 +22,7 @@ import { registerNativeSurface } from './native/index.ts'
 import { registerBottomToggle } from './sidebar/bottom-toggle.tsx'
 import { ContextDiagnosticsHost, createContextDiagnosticsHost, registerContextDiagnosticsUI } from './context-diagnostics-ui.tsx'
 import { createNativeSurface } from './native/surface.ts'
+import { createDiagnosticStrips } from './diagnostic-strip.ts'
 import { isTargetAvailable, openInterceptedLink, registerLinkInterception, shouldTakeOverLink } from './link-intercept.ts'
 import { registerImeGuard } from './ime-guard.ts'
 import { registerSettingsNavIcon } from './settings-nav-icon.ts'
@@ -138,26 +139,21 @@ export function apply(ctx: Context): void {
   }, 'dsh-better-sidebar: better-locale lazy integration')
   // A failure anywhere in the client lifecycle must never take the app down
   // silently: log with the plugin prefix and pin a visible diagnostic strip
-  // to the page so a blank panel is never the only symptom. This strip is
-  // the last-resort reporter (no CSS module is reachable from here), so its
-  // colors go through skin token chains with the previous hexes as the
-  // chain tails — worst case (no skin tokens on the page) it renders
-  // byte-identical to the old hardcoded bar, and any `--dsw-alias-*` skin
-  // re-themes it (guide §12: no hardcoded colors).
+  // to the page so a blank panel is never the only symptom. One strip row per
+  // PHASE — a repeated failure updates its own row instead of stacking another
+  // — and the strip is removable (per-row close button, plus the disposer
+  // below on fiber teardown). See `./diagnostic-strip.ts` for the DOM and the
+  // skin-token chain.
+  const diagnostics = createDiagnosticStrips()
+  // Registered as early as the reporter itself: a lifecycle that fails early
+  // must still hand the page back on dispose (HMR / plugin disable).
+  ctx.effect(() => () => { diagnostics.clear() }, 'dsh-better-sidebar: diagnostic strip')
   const fail = (phase: string, error: unknown): void => {
     console.error(`[dsh-better-sidebar] ${phase} error:`, error)
-    try {
-      const bar = document.createElement('div')
-      bar.style.cssText = 'position:fixed;left:8px;bottom:8px;z-index:2147483000;max-width:70vw;padding:8px 12px;'
-        + 'font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;'
-        + 'color:var(--dsw-alias-state-error-primary,#f2a1a1);'
-        + 'background:var(--dsw-alias-bg-layer-3,var(--dsw-alias-bg-base,#1b1b22));'
-        + 'border:1px solid var(--dsw-alias-state-error-primary,#f2a1a1);border-radius:8px;white-space:pre-wrap'
-      bar.textContent = `[dsh-better-sidebar] ${phase} error: ${error instanceof Error ? error.message : String(error)}`
-      document.body.appendChild(bar)
-    } catch {
-      // Nothing left to report with.
-    }
+    diagnostics.report(
+      phase,
+      `[dsh-better-sidebar] ${phase} error: ${error instanceof Error ? error.message : String(error)}`,
+    )
   }
   // One store instance per activation: production code creates it only here,
   // then hands it to the mounted panel and closes over it in the slot
@@ -184,10 +180,10 @@ export function apply(ctx: Context): void {
   // and the native tab bodies through the native surface's deps). On a
   // deployment without dsh-context it reports `available: false` and every
   // entry point stays absent.
-  const diagnostics = createContextDiagnosticsHost(ctx)
+  const contextDiagnostics = createContextDiagnosticsHost(ctx)
   ctx.effect(
     () => registerNativeSurface({
-      ctx, store: sidebarStore, service, records: nativeRecords, diagnostics,
+      ctx, store: sidebarStore, service, records: nativeRecords, diagnostics: contextDiagnostics,
       reportFailure: (phase, error) => { fail(`native ${phase}`, error) },
     }),
     'dsh-better-sidebar: native right-Sidebar registrations',
@@ -203,13 +199,13 @@ export function apply(ctx: Context): void {
     'dsh-better-sidebar: native right-Sidebar surface',
   )
   ctx.effect(
-    () => registerContextDiagnosticsUI(ctx, diagnostics),
+    () => registerContextDiagnosticsUI(ctx, contextDiagnostics),
     'dsh-better-sidebar: context diagnostics surfaces',
   )
   // The controller holds a child fiber (its runtime-face integration) and a
   // pending-open timer; releasing both is what keeps a disabled plugin — and a
   // hot reload that activates a fresh one — from leaving the old one behind.
-  ctx.effect(() => () => { diagnostics.dispose() }, 'dsh-better-sidebar: context diagnostics controller')
+  ctx.effect(() => () => { contextDiagnostics.dispose() }, 'dsh-better-sidebar: context diagnostics controller')
   // Register the plugin's own built-in tabs and viewers through the same
   // service (eating our own dogfood). The disposer unregisters them on
   // fiber disposal (HMR-safe).
@@ -319,7 +315,7 @@ export function apply(ctx: Context): void {
             { className: css.boundaryError },
             createElement(
               ContextDiagnosticsHost,
-              { controller: diagnostics },
+              { controller: contextDiagnostics },
               createElement(Sidebar, { ctx, store: sidebarStore }),
             ),
           ))
