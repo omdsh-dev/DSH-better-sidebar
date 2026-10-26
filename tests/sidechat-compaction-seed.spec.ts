@@ -326,6 +326,40 @@ describe('buildSidechatInheritance compaction tail', () => {
     expectAcceptedSeed(seed)
   })
 
+  it('drops inherited delivery watermarks whose parent coordinates the rebase cannot preserve', () => {
+    const events = compactedLog()
+    // The host's own `session-log-deepseek` extension logs this row after a
+    // model request is accepted: `sessionId` names the session that issued
+    // the request and `throughSeq` cites that session's log. Appending two
+    // watermarks to the parent log models a real compacted parent that used
+    // the extension; both are valid in the parent's coordinates.
+    const first = events.length
+    const withWatermarks = [
+      ...events,
+      lo('session-log-deepseek/delivery-accepted', first, {
+        sessionId: 'session-parent',
+        sessionFormatVersion: 4,
+        throughSeq: first - 1,
+      }),
+      lo('session-log-deepseek/delivery-accepted', first + 1, {
+        sessionId: 'session-parent',
+        sessionFormatVersion: 4,
+        throughSeq: first,
+      }),
+    ]
+    const { seed } = buildSidechatInheritance(withWatermarks)
+    // The host's released-v4 reader requires `delivery-accepted.throughSeq`
+    // to precede the marker's own seq. The rebase renumbers the kept rows, so
+    // a copied parent watermark keeps its old absolute coordinate and fails
+    // that rule — the saved child log then refuses to load ("delivery
+    // throughSeq must precede its marker"). The child writes its own
+    // watermarks for its own requests, so inherited ones are dropped.
+    expect(seed.some(event => event.type === 'session-log-deepseek/delivery-accepted')).toBe(false)
+    expectContiguous(seed)
+    // Dropping log-only rows must not change one visible node.
+    expect(visibleSequence(seed)).toEqual(visibleSequence(withWatermarks))
+  })
+
   it('falls back to the verbatim full copy when the log has no compaction', () => {
     const events = turn(0, 1, { callId: 'c1' }).events
     const { seed } = buildSidechatInheritance(events)

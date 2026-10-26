@@ -932,8 +932,10 @@ function sameVisibleSequence(
  *  head-side and never shift.
  * @returns the rebased event, or undefined when the tail is not provable.
  */
-/** Sentinel: the event is log-only metering whose referenced span did not
- *  survive the rebase — drop it instead of aborting the whole tail. */
+/** Sentinel: the event is log-only metering that no longer describes the
+ *  child — either its referenced span did not survive the rebase, or its
+ *  coordinates belong to the parent session (`delivery-accepted`). It drops
+ *  instead of aborting the whole tail. */
 const DROPPED: unique symbol = Symbol('dropped')
 
 type RebasedEvent = SeedEvent | undefined | typeof DROPPED
@@ -945,6 +947,16 @@ function rebaseEvent(
   turnOffset: number,
   firstKeptTurn: number | undefined,
 ): RebasedEvent {
+  // `delivery-accepted` is log-only metering of the PARENT's model requests:
+  // its `sessionId` names the parent and its `throughSeq` cites parent seq
+  // coordinates. A planted seed is inherited history under a new header, and
+  // the host's released-v4 reader requires `throughSeq` to precede the
+  // marker's own `seq`; after this positional renumbering the copied payload
+  // would violate that rule and the saved child log fails to load
+  // ("delivery throughSeq must precede its marker"). The child writes its own
+  // watermarks for its own requests, so inherited ones carry no valid child
+  // coordinate and drop.
+  if (event.type === 'session-log-deepseek/delivery-accepted') return DROPPED
   const source = event as SidechatLogEvent & { ignorable?: true }
   const seed: SeedEvent = { type: source.type, seq, time: source.time, data: dataOf(source) }
   if (source.ignorable === true) seed.ignorable = true
