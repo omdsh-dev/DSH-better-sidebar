@@ -2,6 +2,10 @@
 
 > 本文档收录 dsh-better-sidebar 的完整发布历史（最新版摘要见 [README](README_ZH.md)；同步发布于 [GitHub Releases](https://github.com/omdsh-dev/DSH-better-sidebar/releases)）。
 
+### Unreleased
+
+- **可选接入 dsh-zen-remote 远程会话桥（协作声明）**：宿主同时装有 dsh-zen-remote ≥ 2.3.4 时，`ctx.inject(['zenRemote'])` 自动登记一份桥接声明（`src/zen-remote-bridge.ts`，从 API 分发表派生，含 sidechat 的 `childId` 定位、`sidechat.start` 新建线程的 id 虚拟化、`open.external` 远程拒绝与两条 WebSocket）；远程会话（手机/子客户端）里的文件树、Git、任务、侧聊改为读写**主服务端**数据。未装 zen-remote 时 `inject` 不触发，零影响、零新增依赖。已知远程降级：`changes.ops` 长轮询退回轮询节奏；客户端 `cwd` 提示在 0.28.2 起本就是解析末位。
+
 ### v0.29.0
 
 - **侧边对话接入 GenUI**：通过现有 `ctx.betterSidebar` 服务新增可选的 `registerSidechatSurfaceAdapter`，支持 GenUI 0.15.0 渲染已结算的助手回复；未注册消费方时保持原 Markdown。

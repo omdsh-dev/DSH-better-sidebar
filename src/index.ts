@@ -48,6 +48,8 @@ import { buildWorkflowsApi, type SidebarWorkflowRoutes } from './workflow-routes
 import { buildSidechatApi } from './sidechat-routes.ts'
 import { createAssistantLiveBuffer, type AssistantLiveBuffer } from './assistant-live.ts'
 import { readJsonBody, readTextBody, requireString, SidebarError, writeError, writeJson, writeOk } from './wire.ts'
+import { SIDEBAR_SERVICE_VERSION } from './client/service.ts'
+import { registerZenRemoteBridge } from './zen-remote-bridge.ts'
 import { streamFileToResponse } from './file-stream.ts'
 import { createChangesOpsApi } from './changes-ops.ts'
 import { BlockAssembler, createUserMessage, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
@@ -1541,6 +1543,9 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   const archiveTasks = createArchiveTasks()
   ctx.effect(() => () => { archiveTasks.dispose() }, 'dsh-better-sidebar: archive task table')
   const api = buildApi(ctx, resolved, () => settingsFace, assistantLive, archiveTasks)
+  // Cooperative remote-session bridge: inert unless dsh-zen-remote is mounted
+  // on the same host (see zen-remote-bridge.ts).
+  registerZenRemoteBridge(ctx, api, SIDEBAR_SERVICE_VERSION)
   ctx.effect(() => ctx.webServer.register({
     kind: 'prefix',
     path: '/sidebar/api',
