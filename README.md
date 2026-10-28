@@ -1,4 +1,5 @@
 # dsh-better-sidebar
+[![DSH Insights health](https://dsh-insights.com/badge/omdsh-dev/DSH-better-sidebar.svg)](https://dsh-insights.com/p/omdsh-dev/DSH-better-sidebar/)
 
 <div align="center">
   <b style="font-size: 1.15em;">A dual workbench for DSH: native right sidebar + self-drawn bottom panel, with the <code>ctx.betterSidebar</code> service open to every plugin</b><br /><br />
