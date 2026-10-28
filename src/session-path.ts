@@ -79,6 +79,12 @@ function relativeUnderPosix(base: string, target: string): string | undefined {
  * Windows treats `/foo` as rooted on the current drive, so `path.resolve()`
  * turns it into e.g. `C:\\foo`. That is wrong for a session whose cwd is a
  * WSL UNC path: in that namespace `/foo` means the distro's Linux `/foo`.
+ * Git Bash / MSYS adds another session namespace where `/c/x` means
+ * `C:\\x`. Project only those recognizable forms; drive paths, UNC paths,
+ * non-Windows hosts and other slash-rooted Windows paths keep their existing
+ * semantics.
+ *
+ * Further path checks belong to the caller after session-specific projection.
  * It is equally wrong for a dsh-remote mirror session, whose cwd is a local
  * directory (`...\\.dsh\\remote-workspaces\\<host>\\<workspace>`) standing in
  * for a remote POSIX workspace: there `/srv/app/src/a.ts` means the mirrored
@@ -127,6 +133,16 @@ export function resolveSessionPath(
         return relative === '' ? win32.resolve(mirrorRoot) : win32.resolve(mirrorRoot, relative.replace(/\//g, '\\'))
       }
     }
+  }
+
+  // Git Bash / MSYS maps a leading single-letter segment to a drive root:
+  // `/e/project` = `E:\\project`. WSL and remote mirror namespaces take precedence.
+  const msys = /^\/([a-zA-Z])\//.exec(target)
+  const drive = msys?.[1]
+  if (drive !== undefined) {
+    const driveRoot = `${drive.toUpperCase()}:\\`
+    const relative = target.slice(3).replace(/\//g, '\\')
+    return win32.resolve(driveRoot, relative)
   }
 
   return target
