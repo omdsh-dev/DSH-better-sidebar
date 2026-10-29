@@ -31,6 +31,8 @@ import { hostRouteUrl as resolveHostRoute } from './host-route-url.ts'
 import { builtinFileIcon, builtinFolderIcon } from './file-icons.tsx'
 import type { SessionScope } from './api.ts'
 import type { SidebarPrefs } from '../prefs-shared.ts'
+import { bindSidechatSurfaces, type SidechatSurfaceAdapter } from './sidechat-surface.ts'
+export type { SidechatSurface, SidechatSurfaceAdapter } from './sidechat-surface.ts'
 
 /**
  * Public state vocabulary re-exported for consumers (type-only; the values
@@ -619,6 +621,8 @@ export interface SidebarSurface {
  * The registry service published as `ctx.betterSidebar`.
  */
 export interface BetterSidebarService {
+  /** Proposed opt-in bridge for settled assistant Markdown in sidechat only. */
+  registerSidechatSurfaceAdapter(adapter: SidechatSurfaceAdapter): () => void
   registerTab(descriptor: TabDescriptor): () => void
   registerFileViewer(descriptor: FileViewerDescriptor): () => void
   registerFileIcon(descriptor: FileIconDescriptor): () => void
@@ -672,6 +676,13 @@ export interface BetterSidebarService {
    * `tabsEnabled[id]` entry means enabled — only an explicit `false`
    * disables the type (hidden from the + menu, `openTab` refuses, and
    * derived flows gate on it).
+   *
+   * A `hidden: true` type is ALWAYS enabled: it has no + menu row and no
+   * native guide entry, so the side-card inventory offers no switch for it —
+   * and none of the paths that open it (a diff's "expand to page", a remote
+   * plugin's file open) has a visible state the user could read. The entry is
+   * ignored rather than honoured so a value written by an older build cannot
+   * keep silently refusing those opens (#1009).
    */
   isTabEnabled(id: string): boolean
   /** Whether a file viewer is enabled (absent `viewersEnabled[id]` = enabled). */
@@ -836,7 +847,7 @@ export function matchUrlTarget(tabs: readonly TabDescriptor[], url: URL): TabDes
  * The plugin version this service instance reports. Keep in lockstep with
  * `package.json`'s version — `tests/service.spec.ts` asserts the pair.
  */
-export const SIDEBAR_SERVICE_VERSION = '0.28.2'
+export const SIDEBAR_SERVICE_VERSION = '0.29.0'
 
 /**
  * Monotonic capability list consumers use to gate new API usage (features
@@ -1063,8 +1074,12 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
   }
 
   // The enable switches come from the user's side card prefs (the shared
-  // store the service is bound to): an absent key means enabled.
-  const isTabEnabled = (id: string): boolean => store.getPrefs().tabsEnabled[id] !== false
+  // store the service is bound to): an absent key means enabled. A hidden
+  // type is exempt — it has no side-card card (SideCardSection skips it), so
+  // its prefs entry can only be a leftover from an older build and must not
+  // keep refusing the programmatic opens it exists for (#1009).
+  const isTabEnabled = (id: string): boolean =>
+    tabs.get(id)?.hidden === true || store.getPrefs().tabsEnabled[id] !== false
   const isViewerEnabled = (id: string): boolean => store.getPrefs().viewersEnabled[id] !== false
 
   const matchFileViewer = (path: string, head?: Uint8Array): FileViewerDescriptor | undefined => {
@@ -1444,7 +1459,8 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
     openTab({ type: 'editor', title: title ?? baseNameOf(path), path, id: `editor:${path}` }, scope)
   }
 
-  return {
+  const service: BetterSidebarService = {
+    registerSidechatSurfaceAdapter: adapter => registerSidechatSurfaceAdapter(adapter),
     registerTab,
     registerFileViewer,
     registerFileIcon,
@@ -1474,6 +1490,8 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
     nativePathTabs: () => surface?.pathTabs?.() ?? [],
     clearUnread: clearUnreadFor,
   }
+  const registerSidechatSurfaceAdapter = bindSidechatSurfaces(service)
+  return service
 }
 
 /**

@@ -268,12 +268,16 @@ beforeEach(() => {
 })
 
 afterEach(async () => {
+  // `start()` launches `pack()` detached; give its open/spawn a beat to land
+  // before dispose kills the child. Disposing first lets a late open create a
+  // temp file AFTER the cleanup below has already walked the tree.
+  await new Promise(resolve => setTimeout(resolve, 50))
   // Before the mocks go: `dispose()` kills through a fake whose `kill` is a
   // `vi.fn`, and those implementations do not survive a restore.
   for (const tasks of tables.splice(0)) tasks.dispose()
   // A killed child closes asynchronously; let the close land (and the packer
   // close its descriptor) before the directories underneath it disappear.
-  await new Promise(resolve => setTimeout(resolve, 0))
+  await new Promise(resolve => setTimeout(resolve, 50))
   for (const [key, value] of Object.entries(savedTmp)) {
     if (value === undefined) delete process.env[key]
     else process.env[key] = value

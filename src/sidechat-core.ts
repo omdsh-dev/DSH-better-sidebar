@@ -1459,12 +1459,15 @@ export function effectiveModelSelection(
   return parentModelSelection(events)
 }
 
-/** The events a thread produced itself: everything after the LAST
- *  `session/end-seed` marker (the fork-seed boundary). A log with no marker
- *  (a thread created before seeding existed) is returned whole. */
+/** The events a thread produced itself: everything after its last
+ *  `session/end-seed { inherited: true }` fork boundary. Untagged markers
+ *  delimit restore/replay lifecycles, not inherited history. A log with no
+ *  inherited marker (including an already-cut route payload) is returned whole. */
 export function threadOwnLogEvents(events: readonly SidechatLogEvent[]): SidechatLogEvent[] {
   for (let index = events.length - 1; index >= 0; index--) {
-    if (events[index]?.type === 'session/end-seed') return events.slice(index + 1)
+    const event = events[index]
+    if (event?.type === 'session/end-seed' && typeof event.data === 'object' && event.data !== null
+      && 'inherited' in event.data && event.data.inherited === true) return events.slice(index + 1)
   }
   return [...events]
 }

@@ -180,6 +180,20 @@ describe('address base (worktree sessions)', () => {
     expect(resolveAddressPath('/repo', 'a\\b.ts')).toBe('/repo/a\\b.ts')
   })
 
+  it('keeps a UNC prefix when folding separators (Windows + WSL workspace)', () => {
+    // A UNC root is ONE path root, not a separator run: folding its `\\` into
+    // `\` left a drive-root-relative path, which the host then re-anchored on
+    // its process drive with `path.resolve()` (`C:\wsl.localhost\...`), so
+    // every file opened from a `\\wsl.localhost\<distro>\...` workspace failed
+    // with ENOENT. The prefix must survive, only the body is re-spelled.
+    const root = '\\\\wsl.localhost\\Ubuntu\\home\\me\\repo'
+    const file = '\\\\wsl.localhost\\Ubuntu\\home\\me\\repo\\src\\a.ts'
+    expect(resolveAddressPath(root, file)).toBe(file)
+    expect(resolveAddressPath(root, 'src/a.ts')).toBe(file)
+    // A forward-slash UNC spelling folds to the base style, prefix intact.
+    expect(resolveAddressPath(root, '//wsl.localhost/Ubuntu/home/me/repo/src/a.ts')).toBe(file)
+  })
+
   it('builds every plugin address on the session base, never on the caller root', () => {
     const fixture = makeFixture()
     try {

@@ -19,6 +19,7 @@ import { createSidebarStore } from '../src/client/state.ts'
 import { api, type GitStatusEntry, type GitStatusResult, type GitWorktree } from '../src/client/api.ts'
 import type { BetterSidebarService } from '../src/client/service.ts'
 import { t } from '../src/client/locales.ts'
+import { SUBMENU_FLIP_ATTR } from '../src/client/menu-flip.ts'
 import type { Context } from '../src/context-types.ts'
 
 import { setupReactAct } from './test-utils.ts'
@@ -486,6 +487,51 @@ describe('GitLens (changes tab, git lens) linked-worktree consistency', () => {
       expect(banner!.parentElement).toBe(container.querySelector('[data-git-scroll]'))
       expect(container.querySelector('[data-git-footer] [role="alert"]')).toBeNull()
       expect(banner!.compareDocumentPosition(input!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    } finally {
+      act(() => { root.unmount() })
+      container.remove()
+    }
+  })
+})
+
+/**
+ * Issue #988: the More Actions menu's repo/worktree rows open nested
+ * submenus. The button-anchored menu used to skip the body attribute the
+ * file-tree row menu publishes (menu-flip.ts), so layout.css never had the
+ * tokens it needs to flip those submenus back inside the viewport — in a
+ * right-docked sidebar they opened past the right edge and were unreachable.
+ */
+describe('GitLens (changes tab, git lens) More Actions submenu flip (#988)', () => {
+  it('publishes the flip geometry while the menu is open and clears it on close', async () => {
+    vi.spyOn(api, 'gitWorktrees').mockResolvedValue(inventories)
+    vi.spyOn(api, 'gitStatus').mockImplementation(async (_scope, target) => statusFor(target))
+    vi.spyOn(api, 'gitBranch').mockImplementation(async (_scope, target) => ({
+      current: target === AGENT ? 'agent' : 'main',
+      names: target === AGENT ? ['agent'] : ['main'],
+    }))
+    vi.spyOn(api, 'gitGraph').mockResolvedValue(graphFor(AGENT))
+
+    const { container, root } = makeRoot()
+    try {
+      mountGit(root)
+      await flushEffects()
+      // The attribute's lifetime IS the mechanism's scope: closed menu, no
+      // attribute (layout.css must not touch host-owned menus).
+      expect(document.body.hasAttribute(SUBMENU_FLIP_ATTR)).toBe(false)
+
+      // The trigger of a right-docked sidebar, above the viewport's midpoint.
+      // Those coordinates have to produce BOTH flips: left (no right-hand room
+      // for card + submenu) and down (more room below the top-edge row menu).
+      const trigger = container.querySelector<HTMLButtonElement>(`button[aria-label="${t('gitMoreActions')}"]`)
+      if (trigger === null) throw new Error('More Actions button not found')
+      vi.spyOn(trigger, 'getBoundingClientRect').mockReturnValue(new DOMRect(976, 100, 24, 24))
+
+      expect(openMoreSubmenu(container, t('worktree')).length).toBeGreaterThan(0)
+      expect(document.body.getAttribute(SUBMENU_FLIP_ATTR)).toBe('down left')
+
+      // Closing the menu drops the tokens: the next menu gets its own geometry.
+      act(() => { trigger.click() })
+      expect(document.body.hasAttribute(SUBMENU_FLIP_ATTR)).toBe(false)
     } finally {
       act(() => { root.unmount() })
       container.remove()

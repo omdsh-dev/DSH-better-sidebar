@@ -19,6 +19,7 @@ import { createElement } from 'react'
 import { act } from 'react-dom/test-utils'
 import { renderRoot, setupReactAct } from './test-utils.ts'
 import { SideChatView } from '../src/client/SideChatView.tsx'
+import { bindSidechatSurfaces, disposeSidechatSurfaces, type SidechatSurface } from '../src/client/sidechat-surface.ts'
 import { attachLocale } from '../src/client/locales.ts'
 import type { Context, SidebarSessionList } from '../src/context-types.ts'
 import type { SidebarTab } from '../src/client/state.ts'
@@ -128,11 +129,18 @@ function makeConnection(initial: 'connected' | 'disconnected' | 'connecting') {
 type Connection = ReturnType<typeof makeConnection>
 
 /** The client context face SideChatView touches (everything inert but list). */
-function makeCtx(store: ReturnType<typeof makeStore>, connection?: Connection): Context {
+function makeCtx(
+  store: ReturnType<typeof makeStore>,
+  connection?: Connection,
+  betterSidebar: { updateTab: ReturnType<typeof vi.fn>; openTab: ReturnType<typeof vi.fn> } = {
+    updateTab: vi.fn(),
+    openTab: vi.fn(),
+  },
+): Context {
   return {
     sessions: { list: store },
     ...(connection !== undefined ? { connection } : {}),
-    get: (key: string) => (key === 'betterSidebar' ? { updateTab: vi.fn(), openTab: vi.fn() } : undefined),
+    get: (key: string) => (key === 'betterSidebar' ? betterSidebar : undefined),
   } as unknown as Context
 }
 
@@ -185,6 +193,40 @@ async function clickArchive(button: HTMLButtonElement): Promise<void> {
   })
 }
 
+/** jsdom ships no ResizeObserver; a visible Tooltip bubble measures itself
+ *  with one. The measurement result is irrelevant here — only the rendered
+ *  label is asserted. */
+function stubResizeObserver(): () => void {
+  const original = (globalThis as Record<string, unknown>).ResizeObserver
+  class Fake {
+    observe(): void {}
+    unobserve(): void {}
+    disconnect(): void {}
+  }
+  ;(globalThis as Record<string, unknown>).ResizeObserver = Fake
+  return () => {
+    if (original === undefined) delete (globalThis as Record<string, unknown>).ResizeObserver
+    else (globalThis as Record<string, unknown>).ResizeObserver = original
+  }
+}
+
+/** Open a composer-bar control's hover bubble and return its text. */
+async function tooltipOf(control: HTMLElement): Promise<string> {
+  const restore = stubResizeObserver()
+  try {
+    const anchor = control.parentElement
+    if (anchor === null) throw new Error('the control is missing its hover anchor')
+    await act(async () => {
+      anchor.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))
+      // ComposerTip's 120 ms hover delay (TIP_DELAY_MS).
+      await new Promise(resolve => setTimeout(resolve, 180))
+    })
+    return document.body.querySelector('[role="tooltip"]')?.textContent ?? ''
+  } finally {
+    restore()
+  }
+}
+
 function jsonResponse(value: unknown): Response {
   return { ok: true, status: 200, json: async () => value } as unknown as Response
 }
@@ -196,6 +238,8 @@ const EARLY_EVENTS = EVENTS.slice(0, 5)
 let eventsPulls = 0
 /** The wire values the fetch stub serves; each test overrides what it reads. */
 let eventsValue: unknown[] = EVENTS
+let liveValue: unknown[] = []
+let promptCalls: Record<string, unknown>[] = []
 let pendingValue: unknown[] = []
 let infoValue: Record<string, unknown> = { live: false, provider: 'deepseek', preset: 'side' }
 let catalogValue: Record<string, unknown> = { available: false, groups: [], failures: [] }
@@ -238,6 +282,8 @@ beforeEach(() => {
   vi.stubGlobal('WebSocket', FakeSocket)
   eventsPulls = 0
   eventsValue = EVENTS
+  liveValue = []
+  promptCalls = []
   pendingValue = []
   infoValue = { live: false, provider: 'deepseek', preset: 'side' }
   catalogValue = { available: false, groups: [], failures: [] }
@@ -253,7 +299,7 @@ beforeEach(() => {
       : JSON.parse(String(init.body)) as Record<string, unknown>
     if (method === 'sidechat.events') {
       eventsPulls += 1
-      return jsonResponse({ ok: true, value: { events: eventsValue, live: [], pending: pendingValue } })
+      return jsonResponse({ ok: true, value: { events: eventsValue, live: liveValue, pending: pendingValue } })
     }
     if (method === 'sidechat.info') return jsonResponse({ ok: true, value: infoValue })
     if (method === 'sidechat.models') return jsonResponse({ ok: true, value: catalogValue })
@@ -272,6 +318,7 @@ beforeEach(() => {
       return jsonResponse({ ok: true, value: { accepted: true, removed: 1 } })
     }
     if (method === 'sidechat.prompt') {
+      promptCalls.push(payload)
       if (promptError !== null) {
         return {
           ok: false,
@@ -333,6 +380,42 @@ describe('SideChatView rendering', () => {
     unmount()
   })
 
+  it.each([
+    ['src/Foo.java:37-58', '/p/src/Foo.java', 37],
+    ['E:/Code/project/Foo.java:37', 'E:\\Code\\project\\Foo.java', 37],
+    ['E:/Code/my project/目录/Foo(1).java:12:5', 'E:\\Code\\my project\\目录\\Foo(1).java', 12],
+    ['src/main.ts#L8-L15', '/p/src/main.ts', 8],
+  ])('renders and opens a source link to %s at its first referenced line', async (destination, path, line) => {
+    eventsValue = EVENTS.map(event => event.type === 'assistant/message'
+      ? {
+        ...event,
+        data: {
+          ...event.data,
+          message: {
+            ...event.data.message,
+            content: [{ type: 'text', text: `See [source](<${destination}>)` }],
+          },
+        },
+      }
+      : event)
+    const host = { updateTab: vi.fn(), openTab: vi.fn() }
+    const { container, unmount } = renderRoot(createElement(SideChatView,
+      viewProps(makeCtx(threadStore(), undefined, host)),
+    ))
+    try {
+      await act(async () => {})
+      const link = [...container.querySelectorAll<HTMLButtonElement>('button')]
+        .find(button => button.title === destination.split('#')[0])
+      expect(link).not.toBeUndefined()
+      expect(link?.querySelector('svg')).not.toBeNull()
+      expect(container.textContent).not.toContain(`(<${destination}`)
+      act(() => { link?.click() })
+      expect(host.openTab).toHaveBeenCalledWith(expect.objectContaining({ path, line }))
+    } finally {
+      unmount()
+    }
+  })
+
   it('shows the disconnect banner, reconnects on click, and pulls immediately on recovery', async () => {
     const connection = makeConnection('disconnected')
     const props = viewProps(makeCtx(threadStore(), connection))
@@ -366,12 +449,42 @@ describe('SideChatView rendering', () => {
 })
 
 describe('SideChatView archive', () => {
-  it('archives the bound thread with stopActivity and rebinds the tab to the newest remaining thread', async () => {
+  /** A bound session the host's own session list CAN show (no subagent
+   *  origin): the only case in which the archive action stays enabled, so the
+   *  handler's archive-and-rebind contract is pinned on it. */
+  const recoverableStore = (running = false) => makeStore({
+    byId: {
+      root: { id: 'root', displayTitle: '主会话', running: false },
+      t1: { id: 't1', displayTitle: '线程一', running },
+    },
+  })
+
+  it('disables archiving a side thread and explains that the host can never show it again', async () => {
+    const host = makeArchiveHost()
+    const props = viewProps(makeArchiveCtx(threadStore(), host))
+    const { container, unmount } = renderRoot(createElement(SideChatView, props))
+    await act(async () => {})  // flush the initial transcript pull
+
+    // Every thread this view binds is `origin: 'subagent'`, and the host's
+    // session list hides those rows in ALL archive filters (its
+    // sessionVisible() returns false BEFORE the filter runs), so archiving one
+    // is a one-way door: no list entry can ever offer "unarchive".
+    const button = archiveButton(container)
+    expect(button.disabled).toBe(true)
+    expect(await tooltipOf(button)).toContain('归档后无法找回')
+    // A disabled control swallows the click: no request, no rebind.
+    await clickArchive(button)
+    expect(host.archiveSession).not.toHaveBeenCalled()
+    expect(host.betterSidebar.updateTab).not.toHaveBeenCalled()
+    unmount()
+  })
+
+  it('archives a recoverable bound session with stopActivity and rebinds to the newest remaining thread', async () => {
     const host = makeArchiveHost()
     const store = makeStore({
       byId: {
         root: { id: 'root', displayTitle: '主会话', running: false },
-        t1: { id: 't1', displayTitle: 'Side: 线程一', origin: 'subagent', parentId: 'root', running: false },
+        t1: { id: 't1', displayTitle: '线程一', running: false },
         t2: { id: 't2', displayTitle: 'Side: 线程二', origin: 'subagent', parentId: 'root', running: false },
       },
       // The host's own catalog carries the creation order the fallback ranks by.
@@ -379,7 +492,6 @@ describe('SideChatView archive', () => {
         root: {
           values: {
             subagentCatalog: [
-              { id: 't1', createdAt: 1_000, mode: 'continuable', label: 'Side: 线程一' },
               { id: 't2', createdAt: 2_000, mode: 'continuable', label: 'Side: 线程二' },
             ],
           },
@@ -397,7 +509,7 @@ describe('SideChatView archive', () => {
     // The host's own archive capability, once, with a running agent settled.
     expect(host.archiveSession).toHaveBeenCalledTimes(1)
     expect(host.archiveSession).toHaveBeenCalledWith('t1', { stopActivity: true })
-    // The tab moves to the newest remaining thread (t2 outranks t1 in the catalog).
+    // The tab moves to the newest remaining thread.
     expect(host.betterSidebar.updateTab).toHaveBeenCalledTimes(1)
     expect(host.betterSidebar.updateTab).toHaveBeenCalledWith('tab1', { meta: { threadId: 't2' } })
     unmount()
@@ -405,13 +517,7 @@ describe('SideChatView archive', () => {
 
   it('disables the archive button while the thread runs and archives nothing on click', async () => {
     const host = makeArchiveHost()
-    const store = makeStore({
-      byId: {
-        root: { id: 'root', displayTitle: '主会话', running: false },
-        t1: { id: 't1', displayTitle: 'Side: 线程一', origin: 'subagent', parentId: 'root', running: true },
-      },
-    })
-    const props = viewProps(makeArchiveCtx(store, host))
+    const props = viewProps(makeArchiveCtx(recoverableStore(true), host))
     const { container, unmount } = renderRoot(createElement(SideChatView, props))
     await act(async () => {})  // flush the initial transcript pull
 
@@ -426,8 +532,7 @@ describe('SideChatView archive', () => {
 
   it('unbinds the tab to the empty state once no thread is left to switch to', async () => {
     const host = makeArchiveHost()
-    const store = threadStore()  // the bound thread t1 is the only one under 'root'
-    const props = viewProps(makeArchiveCtx(store, host))
+    const props = viewProps(makeArchiveCtx(recoverableStore(), host))
     const { container, unmount } = renderRoot(createElement(SideChatView, props))
     await act(async () => {})  // flush the initial transcript pull
 
@@ -699,5 +804,80 @@ describe('SideChatView queue, echo and model picker', () => {
     expect(items[0]?.disabled).toBe(true)
     expect(items[0]?.textContent).toContain('继承主对话')
     unmount()
+  })
+})
+
+
+/** Actual bridge ownership, with only the unrelated sidebar controls faked. */
+function surfaceContext() {
+  const service = { updateTab: vi.fn(), openTab: vi.fn() }
+  const register = bindSidechatSurfaces(service)
+  const ctx = { sessions: { list: threadStore() }, get: (key: string) => key === 'betterSidebar' ? service : undefined } as unknown as Context
+  return { service, register, ctx }
+}
+
+describe('SideChatView opt-in assistant surfaces', () => {
+  it('exposes only settled assistant blocks, preserving indexes and excluding the entire transcript from main scanners', async () => {
+    eventsValue = EVENTS.map(event => event.type === 'assistant/message' ? { ...event, data: { turn: 1, step: 2, message: { content: [
+      { type: 'text', text: 'first block' }, { type: 'image', url: 'synthetic' },
+      { type: 'reasoning', text: 'private reasoning fixture' }, { type: 'text', text: '' },
+      { type: 'text', text: 'second block' },
+    ] } } } : event)
+    liveValue = [{ type: 'assistant/live-chunk', seq: 100, time: 7_000, data: { turn: 2, step: 1, chunk: { type: 'text-delta', index: 0, text: 'streaming fixture' } } }]
+    const { service, register, ctx } = surfaceContext()
+    const surfaces: SidechatSurface[] = []
+    register({ id: 'genui', mount: surface => { surfaces.push(surface); return () => {} } })
+    const rendered = renderRoot(createElement(SideChatView, viewProps(ctx)))
+    await act(async () => {})
+    expect(surfaces.map(surface => [surface.threadId, surface.eventSeq, surface.contentBlockIndex, surface.text])).toEqual([
+      ['t1', 5, 0, 'first block'], ['t1', 5, 4, 'second block'],
+    ])
+    expect(surfaces.every(surface => rendered.container.contains(surface.root))).toBe(true)
+    const transcript = rendered.container.querySelector('[data-dsh-md-surface]')
+    expect(transcript?.getAttribute('data-genui-surface')).toBe('dsh-better-sidebar/sidechat')
+    expect(transcript?.textContent).toContain('streaming fixture')
+    expect(transcript?.querySelector('[data-chat-role], [data-chat-seq]')).toBeNull()
+    rendered.unmount(); disposeSidechatSurfaces(service)
+  })
+
+  it('sends to the captured child only and shows route failures through the existing error UI', async () => {
+    const { service, register, ctx } = surfaceContext()
+    let surface: SidechatSurface | undefined
+    register({ id: 'genui', mount: value => { surface = value; return () => {} } })
+    const rendered = renderRoot(createElement(SideChatView, viewProps(ctx)))
+    await act(async () => {})
+    await act(async () => { await surface!.sendPrompt('synthetic action') })
+    expect(promptCalls).toEqual([{ childId: 't1', text: 'synthetic action' }])
+    promptError = 'synthetic sidechat prompt failed'
+    await act(async () => { await expect(surface!.sendPrompt('failed action')).rejects.toThrow('synthetic sidechat prompt failed') })
+    expect(rendered.container.textContent).toContain('synthetic sidechat prompt failed')
+    expect(promptCalls.every(payload => payload.childId === 't1' && !('sessionId' in payload))).toBe(true)
+    rendered.unmount(); disposeSidechatSurfaces(service)
+  })
+
+  it('never labels old cached rows as a new child and revokes callbacks on thread switch and hide', async () => {
+    const { service, register, ctx } = surfaceContext()
+    const surfaces: SidechatSurface[] = []
+    const cleanup = vi.fn()
+    register({ id: 'genui', mount: surface => { surfaces.push(surface); return cleanup } })
+    const props = viewProps(ctx)
+    const rendered = renderRoot(createElement(SideChatView, props))
+    await act(async () => {})
+    const old = surfaces[0]!
+    eventsValue = [{ type: 'assistant/message', seq: 5, time: 5_000, data: { message: { content: [{ type: 'text', text: 'new child only' }] } } }]
+    const next = { ...props, tab: { ...props.tab, meta: { threadId: 't2' } } }
+    rendered.rerender(createElement(SideChatView, next))
+    expect(surfaces.some(surface => surface.threadId === 't2' && surface.text === 'done')).toBe(false)
+    await expect(old.sendPrompt('late slider')).rejects.toThrow('no longer active')
+    await act(async () => {})
+    expect(surfaces.at(-1)).toMatchObject({ threadId: 't2', text: 'new child only' })
+    const current = surfaces.at(-1)!
+    await act(async () => { await current.sendPrompt('new child action') })
+    expect(promptCalls).toEqual([{ childId: 't2', text: 'new child action' }])
+    rendered.rerender(createElement(SideChatView, { ...next, visible: false }))
+    await expect(current.sendPrompt('hidden slider')).rejects.toThrow('no longer active')
+    expect(promptCalls).toHaveLength(1)
+    expect(cleanup).toHaveBeenCalledTimes(2)
+    rendered.unmount(); disposeSidechatSurfaces(service)
   })
 })

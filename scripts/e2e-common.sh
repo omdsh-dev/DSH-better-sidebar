@@ -163,13 +163,16 @@ EOF
 
 # ── dsh web 启动 + 就绪轮询 ──────────────────────────────────────────────────
 # 后台启动 dsh web（--port 0 = OS 分配，避免端口冲突；keyless 可起）。
+# `--no-open` 是必须的：宿主默认会在启动后打开系统浏览器，本地反复跑这条
+# lane 会不断弹窗（CI 是无头环境不受影响，本地开发机不是）。基线宿主
+# 0.2.1-rc.1 的 web app 已提供该 flag（@deepseek-ai/dsh-web-app/lib/startup.js）。
 # $1 = stdout 日志；$2 = stderr 日志（缺省合并进 $1：mount lane 单文件，
 # aggregate lane 分 out/err 两个文件）。写入全局 SERVER_PID。
 e2e_start_dsh_web() {
   if [ $# -ge 2 ]; then
-    $DSH_CMD web --port "$PORT" >"$1" 2>"$2" &
+    $DSH_CMD web --port "$PORT" --no-open >"$1" 2>"$2" &
   else
-    $DSH_CMD web --port "$PORT" >"$1" 2>&1 &
+    $DSH_CMD web --port "$PORT" --no-open >"$1" 2>&1 &
   fi
   SERVER_PID=$!
 }

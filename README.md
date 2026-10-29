@@ -44,14 +44,14 @@ dsh plugin --profile web add dsh-better-sidebar@latest
 
 Then **hard-refresh the browser** (Cmd/Ctrl+Shift+R). Requires DSH **0.2.1-rc.1+**.
 
-> **Compatibility warning — match the plugin to the host line.** As of 2026-10-26, DSH's npm `latest` is **0.2.1-rc.2**, so the command above installs the compatible v0.28.2. Hosts still on **0.2.0-rc.2** must pin `dsh-better-sidebar@0.26.1` (and should upgrade the host to `0.2.1-rc.2` first); DSH 0.2.1-alpha.5 users must pin `dsh-better-sidebar@0.28.0-alpha.0`. The marketplace installer picks the plugin's `latest` regardless of host version, so an old host gets a version-rejection error — upgrade the host or pin the version explicitly. The two packages' `latest` tags are independent.
+> **Compatibility warning — match the plugin to the host line.** As of 2026-10-28, DSH's npm `latest` is **0.2.1-rc.2**, so the command above installs the compatible v0.29.0. Hosts still on **0.2.0-rc.2** must pin `dsh-better-sidebar@0.26.1` (and should upgrade the host to `0.2.1-rc.2` first); DSH 0.2.1-alpha.5 users must pin `dsh-better-sidebar@0.28.0-alpha.0`. The marketplace installer picks the plugin's `latest` regardless of host version, so an old host gets a version-rejection error — upgrade the host or pin the version explicitly. The two packages' `latest` tags are independent.
 
 <details>
 <summary><b>Pick the plugin version for your DSH version</b></summary>
 
 | Your DSH version | Install command |
 | --- | --- |
-| **0.2.1-rc.1+** | `dsh plugin --profile web add dsh-better-sidebar@0.28.2` |
+| **0.2.1-rc.1+** | `dsh plugin --profile web add dsh-better-sidebar@0.29.0` |
 | **0.2.1-alpha.5** | `dsh plugin --profile web add dsh-better-sidebar@0.28.0-alpha.0` |
 | **0.2.0-rc.2** | `dsh plugin --profile web add dsh-better-sidebar@0.26.1` |
 | **0.2.0-rc.1** | `dsh plugin --profile web add dsh-better-sidebar@0.24.1` |
@@ -70,12 +70,12 @@ Always pin **exact versions** for older releases (`latest` moves forward with ea
 
 ```text
 Install the dsh-better-sidebar plugin (a sidebar workbench for DSH):
-1. Confirm DSH is 0.2.1-rc.1 or newer, then run dsh plugin --profile web add dsh-better-sidebar@0.28.2
+1. Confirm DSH is 0.2.1-rc.1 or newer, then run dsh plugin --profile web add dsh-better-sidebar@0.29.0
 2. Remind me to hard-refresh the browser (Cmd/Ctrl+Shift+R) afterwards
 If something fails, check the FAQ table in https://github.com/omdsh-dev/DSH-better-sidebar README first.
 ```
 
-**One-line script** — clone this repo and run `bash scripts/install.sh 0.28.2` (macOS / Linux / Windows Git Bash; `./scripts/install.ps1 -Version 0.28.2` for native Windows). It handles installation + bundle registration.
+**One-line script** — clone this repo and run `bash scripts/install.sh 0.29.0` (macOS / Linux / Windows Git Bash; `./scripts/install.ps1 -Version 0.29.0` for native Windows). It handles installation + bundle registration.
 
 **Updating**: just re-run the install command, then hard-refresh the browser.
 
@@ -92,11 +92,17 @@ If something fails, check the FAQ table in https://github.com/omdsh-dev/DSH-bett
 | **Two sidebars** on the page | Double mounting. Remove the legacy manual mount line (`- insert: ... better-sidebar ...`) from `~/.dsh/profiles/web/cordis.patch.yml`; aggregate packages mounting this package under a different id are auto-yielded, no action needed. |
 | Settings values gone after upgrade | Since DSH 0.1.7, preferences live on this plugin's mount row in the profile (default entry id `better-sidebar`). The plugin migrates your old `settings.yaml` values once on first start and never overwrites newer values. |
 | Terminal unavailable | Terminals are provided by **DSH itself** (this plugin ships no PTY) — see DSH docs; "host provides no terminal capability" in the bottom terminal means this deployment has no terminal controller mounted. |
-| `dsh: command not found` | Install DSH first; or use `npx -y --package @deepseek-ai/dsh@0.2.1-rc.1 dsh plugin --profile web add dsh-better-sidebar@0.28.2`. |
+| `dsh: command not found` | Install DSH first; or use `npx -y --package @deepseek-ai/dsh@0.2.1-rc.1 dsh plugin --profile web add dsh-better-sidebar@0.29.0`. |
 
 </details>
 
 ## 🆕 Recent Updates
+
+**v0.29.0 — GenUI in side chats**
+
+- Adds the opt-in `registerSidechatSurfaceAdapter` service for GenUI 0.15.0. Settled assistant replies can render interactive components, with actions and state kept in the owning child thread.
+- Uninstalled consumers, streaming replies and unsupported fences retain the existing Markdown view. The 0.28.2 cold-session read fix remains included.
+- Provider contribution: [@sunxiuguo](https://github.com/sunxiuguo), [#1033](https://github.com/omdsh-dev/DSH-better-sidebar/pull/1033).
 
 **v0.28.2 — large-session cold-read fix**
 
@@ -215,7 +221,7 @@ export function apply(ctx: Context) {
 
 - Routes sit behind a Host-header trust fence (same as `/api`); `fs.write` is atomic; git is only invoked via CLI and never sets identity
 - ⚠️ **Since v0.23.0 the fs routes do no workspace-containment check**: they can read/write any path the host user can reach (OS permissions only) — callers must not treat these routes as fenced
-- HTML previews render in an **opaque-origin sandboxed iframe**; the sandbox can be disabled per feature in settings (off by default, with warnings)
+- HTML previews render in an **opaque-origin sandboxed iframe** and serve relative CSS, JavaScript, JSON, fonts and WebAssembly with their content types; the sandbox can be disabled per feature in settings (off by default, with warnings)
 - No git push/pull/fetch; the file tree only watches **expanded** directories; Markdown preview renders the saved file
 - Read-only formats (spreadsheets / PDF / images / Office) are rendered by DSH's own document preview and follow the host version; the browser view only exists in the desktop profile
 - Unsaved drafts are confirmed before closing a tab / deleting a file / refreshing; saving after external modification is rejected, never silently overwritten

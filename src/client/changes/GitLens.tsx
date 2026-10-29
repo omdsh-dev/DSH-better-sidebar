@@ -19,6 +19,7 @@ import type { GitLineCounts, GitLogEntry, GitStatusEntry, GitStatusResult, GitWo
 import { api, SidebarApiError } from '../api.ts'
 import { builtinFileIcon, builtinFolderIcon } from '../file-icons.tsx'
 import { usePolling } from '../use-polling.ts'
+import { useSubmenuFlip } from '../menu-flip.ts'
 import { baseName, relativeTo } from '../paths.ts'
 import { resolveSidebarPath } from '../paths.ts'
 import { isZh, t } from '../locales.ts'
@@ -403,7 +404,17 @@ export function GitLens(props: GitLensProps) {
   const [graphRefresh, setGraphRefresh] = useState(0)
   const [changesOpen, setChangesOpen] = useState(true)
   const [graphOpen, setGraphOpen] = useState(true)
-  const [moreOpen, setMoreOpen] = useState(false)
+  /**
+   * The open More Actions menu: the trigger's viewport corner (null = closed).
+   * Its repo/worktree rows carry nested submenus, which the primitives anchor
+   * with static CSS growing RIGHT of the card — past the right edge of this
+   * docked panel. This menu is button-anchored (no cursor point to publish),
+   * so open/close keeps the measured corner and hands it to the same flip
+   * mechanism as the file-tree row menu.
+   */
+  const [moreMenu, setMoreMenu] = useState<{ x: number; y: number } | null>(null)
+  const moreOpen = moreMenu !== null
+  useSubmenuFlip(moreMenu)
   const [branchOpen, setBranchOpen] = useState(false)
   /** Commit drafts, one per scope: the Commit button asks only for a message
    *  and a staged row, so a draft typed against another project would submit
@@ -557,7 +568,7 @@ export function GitLens(props: GitLensProps) {
     setFileMenu(null)
     setHistoryMenu(null)
     setConfirm(null)
-    setMoreOpen(false)
+    setMoreMenu(null)
     setBranchOpen(false)
   }
 
@@ -1092,9 +1103,15 @@ export function GitLens(props: GitLensProps) {
                   disabled={!canCommit} onClick={commit} />
                 <IconButton size="sm" icon={<IconRefreshOutlineRegular size={14} />} label={t('refresh')}
                   disabled={busy || suggesting} onClick={() => { invalidateGitStatus(scope.sessionId); void refresh(false) }} />
-                <Menu open={moreOpen} onClose={() => { setMoreOpen(false) }} portal compact align="end" autoFocus
+                <Menu open={moreOpen} onClose={() => { setMoreMenu(null) }} portal compact align="end" autoFocus
                   anchor={<IconButton size="sm" icon={<IconEllipsisOutlineRegular size={14} />} label={t('gitMoreActions')}
-                    active={moreOpen} onClick={() => { setMoreOpen(open => !open) }} />}
+                    active={moreOpen} onClick={(event) => {
+                      if (moreOpen) { setMoreMenu(null); return }
+                      // The menu hangs off this button, so its corner IS the anchor the
+                      // flip heuristic needs (a keyboard activation has no cursor point).
+                      const rect = event.currentTarget.getBoundingClientRect()
+                      setMoreMenu({ x: rect.right, y: rect.top })
+                    }} />}
                   items={[
                     { id: 'pull', label: t('pull'), disabled: busy || suggesting || snapshot?.detached === true },
                     { id: 'push', label: t('push'), disabled: busy || suggesting || snapshot?.detached === true },
@@ -1108,7 +1125,7 @@ export function GitLens(props: GitLensProps) {
                     }] : []),
                   ]}
                   onSelect={id => {
-                    setMoreOpen(false)
+                    setMoreMenu(null)
                     if (id === 'push') push()
                     else if (id === 'pull') pull()
                     else if (id.startsWith('repo:')) chooseRepo(id.slice(5))

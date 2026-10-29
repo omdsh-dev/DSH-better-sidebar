@@ -36,6 +36,7 @@ import {
   takeMarkdownAnchor,
 } from './markdown-navigation.ts'
 import { openSidebarFile } from './sidebar-file.ts'
+import { splitTrailingLineSpec } from './path-line.ts'
 
 /** The DOM marker the installer puts on the container it owns (the claim
  *  boundary is the provider scope; this makes the surface inspectable in a
@@ -57,6 +58,8 @@ export interface MarkdownSurfaceOptions {
    *  directory. Prose surfaces (transcript, task note) omit it — their
    *  relative targets resolve against the session cwd instead. */
   path?: string
+  /** Prose such as Side Chat can open source files as well as Markdown documents. */
+  allLocalFiles?: boolean
 }
 
 /** What a surface wires into its markup. */
@@ -75,7 +78,7 @@ export interface MarkdownSurfaceBinding {
  * @returns the container ref, the delegate handler and the source rewrite.
  */
 export function useMarkdownSurface(opts: MarkdownSurfaceOptions): MarkdownSurfaceBinding {
-  const { ctx, sessionId, cwd, path } = opts
+  const { ctx, sessionId, cwd, path, allLocalFiles = false } = opts
   const containerRef = useRef<HTMLElement | null>(null)
   const detachRef = useRef<(() => void) | null>(null)
 
@@ -96,7 +99,7 @@ export function useMarkdownSurface(opts: MarkdownSurfaceOptions): MarkdownSurfac
   }, [sessionId, path, resolveCwd])
 
   const openFile = useCallback((destination: string, options?: { line?: number }): void => {
-    const target = markdownAnchorTarget(destination, path, resolveCwd())
+    const target = markdownAnchorTarget(destination, path, resolveCwd(), allLocalFiles)
     if (target === null) return
     if (target.kind === 'same-page') {
       const container = containerRef.current
@@ -109,26 +112,28 @@ export function useMarkdownSurface(opts: MarkdownSurfaceOptions): MarkdownSurfac
     // the line has to travel WITH the open — a line reference asks for source,
     // so the editor lands on it (and leaves preview, which renders no lines).
     // Only a heading fragment parks a jump for the document about to open.
-    const line = options?.line ?? lineOfHostFragment(target.fragment)
+    const spec = allLocalFiles ? splitTrailingLineSpec(target.path) : undefined
+    const filePath = spec?.path ?? target.path
+    const line = options?.line ?? lineOfHostFragment(target.fragment) ?? spec?.line
     if (line === undefined && target.fragment !== '') {
-      rememberMarkdownAnchor(sessionId, resolveCwd(), target.path, target.fragment)
+      rememberMarkdownAnchor(sessionId, resolveCwd(), filePath, target.fragment)
     }
     try {
       // The live root rides along: a destination that resolved to a RELATIVE
       // path (neither the document's directory nor a cwd was known) must land
       // on the same workspace the surrounding tree and routes use, not on the
       // session's frozen header cwd (#950).
-      openSidebarFile(ctx, sessionId, target.path, { line, cwd: resolveCwd() })
+      openSidebarFile(ctx, sessionId, filePath, { line, cwd: resolveCwd() })
     } catch (error) {
       // A failed open leaves the reader where they are (the link was claimed);
       // the parked fragment expires on its own.
       console.error('[dsh-better-sidebar] markdown file link open failed', error)
     }
-  }, [ctx, sessionId, path, resolveCwd])
+  }, [ctx, sessionId, path, resolveCwd, allLocalFiles])
 
   const rewrite = useCallback(
-    (text: string): string => rewriteLocalMarkdownLinks(text, path, resolveCwd()),
-    [path, resolveCwd],
+    (text: string): string => rewriteLocalMarkdownLinks(text, path, resolveCwd(), allLocalFiles),
+    [path, resolveCwd, allLocalFiles],
   )
 
   return { surfaceRef, openFile, rewrite }
@@ -160,20 +165,22 @@ function attachMarkdownSurface(
   // write to the scroller.
   if (pending !== null) queueMicrotask(applyPending)
 
-  let scheduled = false
+  let scheduled: number | undefined
   const observer = new MutationObserver(() => {
-    if (scheduled) return
-    scheduled = true
-    queueMicrotask(() => {
-      scheduled = false
+    if (scheduled !== undefined) return
+    // Coalesce a burst of mutations into one DOM pass: each pass walks the
+    // whole preview, and diagram swapping / shiki settling emit many mutations.
+    scheduled = window.setTimeout(() => {
+      scheduled = undefined
       prepareMarkdownAnchors(container)
       applyPending()
-    })
+    }, 80)
   })
   observer.observe(container, { childList: true, subtree: true })
 
   return () => {
     observer.disconnect()
+    if (scheduled !== undefined) window.clearTimeout(scheduled)
     container.removeAttribute(MARKDOWN_SURFACE_ATTR)
   }
 }

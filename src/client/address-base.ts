@@ -57,11 +57,21 @@ export function addressBaseOf(ctx: Context, sessionId: string | undefined): stri
  * POSIX keeps the path verbatim: there `\` is a legal file-name character, not
  * a separator (the same reason `resolveSidebarPath` never folds on POSIX).
  *
+ * A UNC prefix is NOT a separator run to fold: `\\server\share` is one path
+ * root, and folding its two leading separators into one turns an absolute
+ * network path into a drive-root-relative one. On Windows the host then runs
+ * `path.resolve()` on it, anchoring `\wsl.localhost\...` on the host process
+ * drive (`C:\wsl.localhost\...`, ENOENT) — every file opened from a
+ * `\\wsl.localhost\<distro>\...` workspace failed that way. Keep exactly the
+ * two leading separators and fold only the rest.
+ *
  * @param base - the workspace root whose separator style decides the answer.
  * @param path - an address path (relative to `base`) or an absolute path.
  * @returns the resolved path in `base`'s separator style.
  */
 export function resolveAddressPath(base: string | undefined, path: string): string {
   const resolved = resolveSidebarPath(base, path)
-  return base !== undefined && base.includes('\\') ? resolved.replace(/[/\\]+/g, '\\') : resolved
+  if (base === undefined || !base.includes('\\')) return resolved
+  const folded = resolved.replace(/[/\\]+/g, '\\')
+  return /^[\\/]{2}/.test(resolved) ? `\\\\${folded.replace(/^\\+/, '')}` : folded
 }

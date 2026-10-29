@@ -182,7 +182,7 @@ describe('SideChatView present deliverables card (C2)', () => {
         time: 0,
         data: { turn: 1, callId: 'c-seed', files: [{ path: `${SESSION_CWD}/seed-only.pdf`, description: 'seed 交付' }] },
       },
-      { type: 'session/end-seed', seq: 1, time: 1_000, data: {} },
+      { type: 'session/end-seed', seq: 1, time: 1_000, data: { inherited: true } },
       { type: 'user/message', seq: 2, time: 2_000, data: { content: [{ type: 'text', text: 'and now?' }], source: { kind: 'user' } } },
       { type: 'turn/start', seq: 3, time: 3_000, data: { turn: 2 } },
       {

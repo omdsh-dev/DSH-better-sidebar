@@ -11,7 +11,11 @@
  *  - 侧边栏内容: one SMALL CARD per REGISTERED tab type (built-ins and
  *    external plugins alike), laid out in a responsive grid that wraps
  *    several cards per row — icon chip + title + type id, clicked to toggle
- *    the switch persisted in `prefs.tabsEnabled[id]`.
+ *    the switch persisted in `prefs.tabsEnabled[id]`. Programmatic-only
+ *    types (`hidden: true`, e.g. the built-in diff page or dsh-remote's
+ *    `dsh-remote:file`) are NOT listed: they have no + menu row and no
+ *    native guide entry, so a switch could only break their opens without
+ *    hiding anything (#1009).
  *  - 文件预览: one SMALL CARD per REGISTERED file viewer — icon chip + title
  *    + the extensions it covers, clicked to toggle `prefs.viewersEnabled[id]`.
  *
@@ -97,10 +101,17 @@ function iconOf(icon: ReactNode | ((size: number) => ReactNode) | undefined, siz
   return typeof icon === 'function' ? icon(size) : icon
 }
 
-/** Tab inventory order: hidden types (editor/diff) last, then + menu order. */
-function tabOrder(a: TabDescriptor, b: TabDescriptor): number {
-  if (a.hidden !== b.hidden) return a.hidden === true ? 1 : -1
-  return (a.order ?? 100) - (b.order ?? 100)
+/**
+ * The tab inventory: the types that actually reach the side card, in + menu
+ * order. `hidden` types are programmatic-only (no + menu row, no native
+ * guide entry), so they have no side-card presence to switch — listing them
+ * produced switches whose only observable effect was to refuse their own
+ * opens (#1009).
+ * @param tabs - the service's whole registry.
+ * @returns a sorted copy without the hidden types.
+ */
+function tabInventory(tabs: readonly TabDescriptor[]): TabDescriptor[] {
+  return tabs.filter(tab => tab.hidden !== true).sort((a, b) => (a.order ?? 100) - (b.order ?? 100))
 }
 
 /** Viewer inventory order: priority desc (the catch-all `code` comes last). */
@@ -658,10 +669,10 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
   // The declarative inventory: the registered tab types and file viewers.
   // Local state + service.subscribe (registry changes are rare — plugin
   // load/unload — so a plain effect is enough; no external-store ceremony).
-  const [tabs, setTabs] = useState<TabDescriptor[]>(() => [...service.getTabs()].sort(tabOrder))
+  const [tabs, setTabs] = useState<TabDescriptor[]>(() => tabInventory(service.getTabs()))
   const [viewers, setViewers] = useState<FileViewerDescriptor[]>(() => [...service.getFileViewers()].sort(viewerOrder))
   useEffect(() => service.subscribe(() => {
-    setTabs([...service.getTabs()].sort(tabOrder))
+    setTabs(tabInventory(service.getTabs()))
     setViewers([...service.getFileViewers()].sort(viewerOrder))
   }), [service])
 

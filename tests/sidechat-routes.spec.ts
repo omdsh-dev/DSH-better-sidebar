@@ -645,7 +645,7 @@ function threadLog(): Array<ReturnType<typeof ev>> {
   return [
     ev('user/message', 0, { content: [{ type: 'text', text: 'inherited parent question' }], source: { kind: 'user' } }),
     ev('turn/end', 1, { turn: 0, reason: { kind: 'completed' } }),
-    ev('session/end-seed', 2),
+    ev('session/end-seed', 2, { inherited: true }),
     ev('subagent/descriptor', 3, { mode: 'continuable' }),
     ev('user/message', 4, { content: [{ type: 'text', text: 'Side conversation boundary.' }], source: { kind: SIDE_INJECTION_SOURCE_KIND } }),
     ev('user/message', 5, { content: [{ type: 'text', text: 'the side question' }], source: { kind: 'user' } }),
@@ -662,6 +662,17 @@ describe('sidechat.events', () => {
     const result = await api['sidechat.events']({ childId: 'child' })
     expect(result.events.map(event => event.seq)).toEqual([3, 4, 5, 6, 7])
     expect(result.events[0]).toMatchObject({ type: 'subagent/descriptor', seq: 3 })
+    expect(services.open).not.toHaveBeenCalled()
+  })
+
+  it('keeps pre-resume child history when a live restored log ends in an untagged lifecycle marker', async () => {
+    const child = agent('child', { events: [...threadLog(), ev('session/end-seed', 8, {})] })
+    const services = happyServices(undefined, child)
+    const api = buildSidechatApi(ctxWith(services))
+    const result = await api['sidechat.events']({ childId: 'child' })
+    expect(result.events.map(event => event.seq)).toEqual([3, 4, 5, 6, 7, 8])
+    const delta = await api['sidechat.events']({ childId: 'child', afterSeq: 6 })
+    expect(delta.events.map(event => event.seq)).toEqual([7, 8])
     expect(services.open).not.toHaveBeenCalled()
   })
 

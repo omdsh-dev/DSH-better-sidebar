@@ -210,7 +210,13 @@ interface TabDescriptor {
   icon?: ReactNode | ((size: number) => ReactNode)
   /** + 菜单排序（升序）；默认 100。内置：editor=10, git=20, subagent=30, sidechat=35, terminal-bottom=40 */
   order?: number
-  /** 从 + 菜单隐藏（editor/diff 用：由其他流程触发打开，不在菜单里） */
+  /**
+   * 从 + 菜单隐藏（diff 用：由其他流程触发打开，不在菜单里）。同时不占原生
+   * guide 条目、也不出现在「侧边卡片」设置清单里——它没有任何可见承载面，
+   * 开关无处可关（旧版本给它发过开关，点掉后唯一效果是 `openTab` 静默拒绝，
+   * 见 #1009）。因此 hidden 类型**恒为启用**：`isTabEnabled()` 忽略
+   * `tabsEnabled[id]`。
+   */
   hidden?: boolean
   /**
    * 只投放到插件自己的底部工作台，**永不注册原生右侧栏承载面**（#774）。
@@ -749,7 +755,8 @@ interface BetterSidebarService {
   folderIcon(path: string, open: boolean, size: number): ReactNode
   /** 按 id 查 tab 描述符 */
   getTab(id: string): TabDescriptor | undefined
-  /** 某个 tab 类型是否在 Side card 设置中启用（v0.4.1+；缺省 = 启用） */
+  /** 某个 tab 类型是否在 Side card 设置中启用（v0.4.1+；缺省 = 启用；
+   *  hidden: true 的类型恒为 true——设置清单不提供它的开关，见 §4） */
   isTabEnabled(id: string): boolean
   /** 某个 file viewer 是否在 Side card 设置中启用（v0.4.1+；缺省 = 启用） */
   isViewerEnabled(id: string): boolean
@@ -995,12 +1002,46 @@ ctx.effect(() =>
 
 ---
 
+### 7.1 侧边对话渲染适配器（新增提案，尚未发布）
+
+这是 v0.29.0 新增、配合 GenUI 0.15.0 的窄范围接入能力，关联 [dsh-genui #354](https://github.com/omdsh-dev/dsh-genui/issues/354)。消费方必须先探测方法存在；未安装、旧版本或未注册适配器时，侧边对话继续使用原有 `MarkdownText` 和 `markdownTextProps()`，不改变普通 Markdown 与代码围栏。
+
+```ts
+interface SidechatSurface {
+  readonly root: HTMLElement
+  readonly source: 'dsh-better-sidebar/sidechat'
+  readonly threadId: string
+  readonly eventSeq: number
+  readonly contentBlockIndex: number
+  readonly text: string
+  readonly sendPrompt: (text: string) => Promise<void>
+}
+interface SidechatSurfaceAdapter {
+  readonly id: string
+  readonly mount: (surface: SidechatSurface) => (() => void)
+}
+// BetterSidebarService 的新增消费入口：
+registerSidechatSurfaceAdapter(adapter: SidechatSurfaceAdapter): () => void
+```
+
+两个类型可从 `dsh-better-sidebar` 或 `dsh-better-sidebar/client/service` 做 type-only 导入。注册必须包在消费插件的 `ctx.effect()` 中；同一个 id 重复注册会抛错，返回的 disposer 可重复调用。
+
+- 只提供当前可见、已结算、身份有效的 assistant 文本块。用户消息、推理、工具、流式增量、隐藏页签及身份缺失的行不接入。`eventSeq` 与 `contentBlockIndex` 必须是非负安全整数；块序号保留原始 `message.content` 数组位置，包括非文本和空块留下的空位，不按过滤后的行号重新编号。
+- `root` 是该行真实的 Markdown 容器；`text` 是链接改写前的原始文本。侧边对话容器始终带 `data-genui-surface="dsh-better-sidebar/sidechat"`，包括流式与没有消费插件时，供主对话扫描器明确排除；**不伪造宿主的 `data-chat-*` 标记**。
+- 消费插件自行决定是否增强 `dsh-ui` 围栏，复用它自己的解析器、渲染器和状态，不把渲染实现放到 BetterSidebar，也不扫描该 root 之外的内容。挂载返回的 cleanup 必须释放监听器、观察者、计时器和渲染实例，并还原原始 Markdown；挂载中途失败须先回滚自身改动再抛错。单个适配器的挂载或释放异常会记录，但不会中断其余适配器和侧边对话。
+- 晚注册会接到当时仍可见的行。隐藏、行变更、线程切换或卸载会释放；再次可见时重新挂载。适配器卸载会释放它自己的所有行；BetterSidebar 卸载会释放所有行和注册。内部只保留当前活跃的 root，不积累隐藏页签的引用，也不新增轮询。
+- `sendPrompt(text)` 只调用当前行捕获的子线程 `sidechat.prompt` 路由。它不读取主会话、`scope.sessionId` 或任何兜底目标。行、适配器、线程绑定或插件失效之后，旧回调拒绝执行；请求失败同时通过现有侧边对话错误区显示并 reject 给消费方。调用方应处理 rejection，销毁时取消延迟动作。
+
+该提案仍需以真实 DSH `0.2.1-rc.2` profile 同时安装两个候选插件验收，不能把单元测试或模拟 DOM 结果写成已完成双插件验收。
+
+---
+
 ## 8. 声明式设置（v0.4.1+）
 
-每个注册的 tab / viewer **自动**出现在 DSH 设置页「侧边卡片」分区（`SideCardSection` 按注册表驱动渲染，无硬编码）：
+每个注册的 tab / viewer **自动**出现在 DSH 设置页「侧边卡片」分区（`SideCardSection` 按注册表驱动渲染，无硬编码），**`hidden: true` 的 tab 类型除外**：
 
-- 展示：小卡片网格（图标 + 标题 + 类型 id），**高亮 = 启用**，勾选徽标钉在卡片最右端；viewer 卡片额外显示扩展名。
-- 持久化：开关写入 `SidebarPrefs.tabsEnabled / viewersEnabled`（开放 map，**缺省 = 启用**，显式 `false` 才禁用）。
+- 展示：小卡片网格（图标 + 标题 + 类型 id），**高亮 = 启用**，勾选徽标钉在卡片最右端；viewer 卡片额外显示扩展名。`hidden` 类型没有 `+` 菜单行、没有原生 guide 条目，也就没有可切换的承载面，因此不进清单，且 `isTabEnabled()` 对它恒为 true（#1009）。
+- 持久化：开关写入 `SidebarPrefs.tabsEnabled / viewersEnabled`（开放 map，**缺省 = 启用**，显式 `false` 才禁用；`hidden` 类型的键被忽略）。
 - 关闭语义：tab 从 `+` 菜单消失、`openTab` 拒绝新开（`console.warn`）、派生流程（子代理自动展开、agent 终端自动补 tab）停止，**已打开的 tab 保留**；viewer 被 `matchFileViewer` 跳过，文件落到下一个匹配。
 - `settings.toggles`（可选）：在卡片行下追加**嵌套设置行**（仅父级启用时显示），绑定 `SidebarPrefs` 字段；通过卡片底部「功能设置」条在原生弹窗中编辑。行控件形状见 §4.1 的 `SettingRow`：`type: 'switch' | 'text' | 'number'`（v0.11.0+；text/number 行 blur/Enter 提交，number 行按 min/max 钳制，unit 渲染单位后缀）与 `type: 'select'`（v0.13.0+；`options` 支持 value/title/desc/icon，`multi` 多选存数组并按 options 顺序提交；任一项带 icon 时渲染大图标选项卡）与 `type: 'patterns'`（可编辑字符串数组——chips + 删除钮 + 常驻添加输入框，add/remove 均原子提交整表，占位符走 `patternsPlaceholder`，值必须存 `string[]`；能力 gate `settingPatterns`）。内置示例：subagent tab 的 `autoOpenSubagent`、editor tab 的 `editorExplorer` 图标化下拉（工作区路径围栏与它的开关已移除，见 §8.1）与 `explorerExclude` 排除模式行。
 - `settings.pluginToggles`（可选，v0.12.0+）：**插件自有设置行**，行控件与 toggles 相同，但 key 是插件局部的——持久化在 prefs 文档的 `pluginSettings[<descriptor id>]`（开放 map，无需宿主 schema 字段）。tab 与 viewer 都可用（v0.12.0 起 viewer 卡片也有设置条）。
@@ -1159,7 +1200,7 @@ interface SettingsDescriptor {
 
 - **面板表面**：右/底面板背景 = `var(--dsw-alias-bg-layer-1)`。**绝不消费 `--dsw-specific-sidebar-fill`**（宿主左导航专属，皮肤按左导航语义覆盖它，面板消费会失去填充）。换面板表面 = 覆写 `--dsw-alias-bg-layer-1`。
 - **终端/编辑器表面**：`effectiveTokenValue` 读 `--dsw-alias-bg-base`——`transparent` 与 alpha < 0.9 的半透明值回退不透明底色（文字不叠背景画，issue #90）；≥ 0.9 放行。
-- **根锚点**：宿主 div 带 `data-dsh-better-sidebar`（append 到 body）；其内**面板宿主层** `[data-dsh-panel-host]`（`fixed; inset:0; z-25; pointer-events:none; overflow:hidden+clip`，v0.13.1+），面板/开关簇 absolute 定位，免疫中间层 transform 劫持；页面级 transform 触发 `data-dsh-panel-host-degraded` 降级。`overflow` 级联是**契约**（`hidden` 兜底 + `clip` 收尾，`tests/panel-host-css.spec.ts` 守护）：`hidden` 盒子仍是滚动容器，脚本滚动或浏览器 scroll-into-view 修正（焦点移入视口外区域、嵌套 iframe/工作台加载时抢焦点、面板滑出动画中 focus() 落点）会沿最近可滚祖先滚走整层——面板与开关簇集体偏离视口角（computed left/right 仍"正确"，偏移藏在盒子自身 scroll offset 里）；`clip` 裁剪语义相同但不产生滚动盒，任何路径都滚不动这层。皮肤作用域覆盖限定在 `[data-dsh-better-sidebar]` 内。
+- **根锚点**：宿主 div 带 `data-dsh-better-sidebar`（append 到 body）；其内**面板宿主层** `[data-dsh-panel-host]`（`fixed; inset:0; height:100vh 兜底 + 100dvh; z-25; pointer-events:none; overflow:hidden+clip`，v0.13.1+），面板/开关簇 absolute 定位，免疫中间层 transform 劫持；页面级 transform 触发 `data-dsh-panel-host-degraded` 降级。显式高度同样**契约**（`tests/panel-host-css.spec.ts` 守护）：不得依赖包含块（`100%` / `auto`，issue #616）；`dvh` 必须排在 `vh` 之后——`vh` 取的是大视口，手机地址栏展开时该层高于布局视口，会误触发挂载自检、把宿主降级成 `absolute` 并撑高文档（issue #1014）。`overflow` 级联是**契约**（`hidden` 兜底 + `clip` 收尾，`tests/panel-host-css.spec.ts` 守护）：`hidden` 盒子仍是滚动容器，脚本滚动或浏览器 scroll-into-view 修正（焦点移入视口外区域、嵌套 iframe/工作台加载时抢焦点、面板滑出动画中 focus() 落点）会沿最近可滚祖先滚走整层——面板与开关簇集体偏离视口角（computed left/right 仍"正确"，偏移藏在盒子自身 scroll offset 里）；`clip` 裁剪语义相同但不产生滚动盒，任何路径都滚不动这层。皮肤作用域覆盖限定在 `[data-dsh-better-sidebar]` 内。
 - **布局变量**（`<html>` 上，面板打开时有效）：`--dsh-sidebar-width` / `--dsh-sidebar-height`。右面板宽度 = AppFrame 的 `padding-right` 预留（新版 `#root [data-dsh-frame]` / rc.8 `#root > [data-slot="root"] > div` 双锚点），AppFrame border box 保持完整桌面视口宽度（Harness 以此判定桌面/窄屏布局，避免插件面板展开误入窄屏）；AppFrame 的 details 拖拽手柄按同一变量向左平移贴合列边缘。底部面板仍走 centerCol `margin-bottom`；centerCol 锚点 = **JS 标注**（禁止 `nth-child`）：侧栏 shell 的定位器给测得的 centerCol 节点打 `[data-dsh-center-col]` 标签（`Sidebar.tsx` locate，节点更换/HMR 时随 ref 迁移），`layout.css` 用 `#root [data-dsh-center-col]` 选中（`drag-layout.e2e.ts` 断言恰一节点且为对话槽宿主的父级——alpha.2 起 shell 把 `#root [data-slot="main.conversation"]` 解析进列并跳过 `display: contents` 祖先（`center-column.ts` 的 `CENTER_COLUMN_SELECTOR` 同时认 `main.conversation` 与 alpha.1 的 `conversation`），定位器从槽宿主向上取第一个非 `contents` 的祖先；frame 宽度与桌面 Session Log 由 `desktop-layout.e2e.ts` 断言）。
 - **用户空间 CSS（v0.14.1+；titleBar 让位机制移除后只剩它）**：`SidebarPrefs.customCss`（设置页「自定义 CSS」分组）注入 `<style data-dsh-custom-css="custom">` 到 head 末尾（后写胜出；覆盖 JS 内联需 `!important`），fiber 卸载即移除，**非空即生效**（不再有方案门控）。稳定寻址面：`[data-dsh-toggle-cluster]` / `[data-dsh-panel]` / `[data-dsh-bottom-panel]`。
   - **已移除：位置兼容模式 / titleBar 让位机制**（v0.14.1 引入，本次整体删除，见 [docs/plans/2026-10-05-remove-titlebar-compat-strip.md](plans/2026-10-05-remove-titlebar-compat-strip.md)）。历史模型是四方案 `titleBarScheme`（`auto` / `web` / 壳预设 / `custom`），由 `src/client/titlebar-strip.ts` 的纯函数按「壳自带 `ctx.desktopWindow` 契约 → `navigator.windowControlsOverlay` 真实几何 → URL `dsh-desktop-titlebar-inset` → 壳预设 → 手动 px」求出顶栏让位高度，写 `body[data-dsh-title-bar-compat]` + `--dsh-title-bar-strip`。删除原因：插件自 v0.19.0 起不再自绘顶部 chrome，**CSS 里没有任何规则读这两个值**，宿主也不读这条契约（用户想移动的侧边栏按钮是宿主原生控件，插件没有它的位置 API），于是改设置只写变量、什么都不动；而设置项描述与现实不符。

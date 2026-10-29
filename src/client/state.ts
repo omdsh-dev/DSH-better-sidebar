@@ -451,10 +451,24 @@ export function openTabInBottomPane(state: SidebarState, tab: SidebarTab): Sideb
   }
 }
 
-/** Move a tab from one pane to another (insert at index; -1 appends).
- *  The panes may live in DIFFERENT trees — dragging a tab between the two
- *  panels removes it from its own tree and lands it in the other one. */
+/**
+ * 在底部工作台窗格之间移动标签，或在同一窗格内重排。
+ * index 对应移动前的目标标签位置，-1 表示追加。
+ */
 export function moveTab(state: SidebarState, fromPane: string, tabId: string, toPane: string, index = -1): SidebarState {
+  if (fromPane === toPane) {
+    const source = leafWithTab(state.bottomSplits, tabId)
+    if (source?.id !== fromPane) return state
+    const sourceIndex = source.tabs.findIndex(tab => tab.id === tabId)
+    const tabs = source.tabs.filter(tab => tab.id !== tabId)
+    const insertAt = index < 0 || index > source.tabs.length ? tabs.length : sourceIndex < index ? index - 1 : index
+    tabs.splice(insertAt, 0, source.tabs[sourceIndex]!)
+    const splits = mapLeaf(state.bottomSplits, fromPane, leaf => {
+      leaf.tabs = tabs
+      leaf.active = tabId
+    })
+    return { ...state, bottomSplits: splits, activePane: fromPane }
+  }
   const fromKey = 'bottomSplits'
   const toKey = 'bottomSplits'
   if (fromKey !== toKey) {

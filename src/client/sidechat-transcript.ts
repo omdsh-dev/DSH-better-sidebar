@@ -5,8 +5,9 @@
  * display rows.
  *
  * A thread child's log starts with the ENTIRE inherited parent log as its
- * fork seed. The route already cuts everything up to the LAST
- * `session/end-seed` marker; the mapping re-applies the same cut so any
+ * fork seed. The route already cuts everything up to the last tagged
+ * `session/end-seed { inherited: true }` marker; the mapping re-applies the
+ * same cut (never a restore/replay lifecycle marker) so any
  * seed event that somehow crosses the wire still never renders, and maps
  * context injections (the "Side conversation boundary" prompt,
  * plugin-sourced context) onto a collapsible injection row, so the view
@@ -32,7 +33,7 @@
  */
 import type { DiffHunk, ReadBlockLine } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SidebarHistoryEntry } from '../context-types.ts'
-import { isContextInjectionMessage, SIDE_BOUNDARY_PROMPT } from '../sidechat-core.ts'
+import { isContextInjectionMessage, SIDE_BOUNDARY_PROMPT, threadOwnLogEvents } from '../sidechat-core.ts'
 
 /**
  * Structured render payload for a tool row that maps onto one of the host's
@@ -62,9 +63,9 @@ export interface SidechatDeliverable {
 }
 
 /** One compact transcript row rendered in the thread view. `seq` is the
- *  source event's log sequence — stable row identity for React keys across
- *  polls (streaming caches ride the key, so window slides must not re-key
- *  rows). */
+ *  source event's log sequence. Text/reasoning also retain the original
+ *  content-block index: one event can yield several rows, so seq alone is
+ *  not a unique React key across polls. */
 export type SidechatTranscriptRow =
   /** `messageId` is the durable message identity the log records on the event
    *  (`data.id`); the view uses it to dedupe a still-pending inbox row against
@@ -81,9 +82,10 @@ export type SidechatTranscriptRow =
    *  failure. */
   | { kind: 'error'; seq: number; text: string }
   /** `settled` distinguishes an assembled message from a still-streaming
-   *  chunk accumulation (streaming rows are superseded by the settle). */
-  | { kind: 'assistant'; seq: number; text: string; settled: boolean }
-  | { kind: 'reasoning'; seq: number; text: string; settled: boolean }
+   *  chunk accumulation. Original content-block indexes are never compacted;
+   *  a live chunk that lacks a valid index keeps it undefined. */
+  | { kind: 'assistant'; seq: number; text: string; settled: boolean; contentBlockIndex?: number }
+  | { kind: 'reasoning'; seq: number; text: string; settled: boolean; contentBlockIndex?: number }
   | {
     kind: 'tool'
     seq: number
@@ -210,14 +212,6 @@ function resultTextOf(data: Record<string, unknown>): string {
     }
   }
   return parts.join('\n')
-}
-
-/** Index of the last `session/end-seed` event (fork seed marker), or -1. */
-function lastSeedEnd(events: readonly { type: string }[]): number {
-  for (let index = events.length - 1; index >= 0; index--) {
-    if (events[index]?.type === 'session/end-seed') return index
-  }
-  return -1
 }
 
 /** Parse the tool's raw arguments JSON to an object, or undefined. */
@@ -438,8 +432,7 @@ function attemptFailure(stream: unknown): string | undefined {
  * @returns display rows in log order.
  */
 export function transcriptRows(entries: readonly SidebarHistoryEntry[], prev?: readonly SidechatTranscriptRow[]): SidechatTranscriptRow[] {
-  const events = entries.map(entry => entry.event)
-  const seedEnd = lastSeedEnd(events)
+  const events = threadOwnLogEvents(entries.map(entry => entry.event))
   const rows: SidechatTranscriptRow[] = []
   /** (turn, step, index, kind) key → index of its accumulating stream row. */
   const streamRows = new Map<string, number>()
@@ -460,7 +453,6 @@ export function transcriptRows(entries: readonly SidebarHistoryEntry[], prev?: r
    *  context re-sent, so summing would double-count). */
   const turnUsage = new Map<number, { inputTokens: number; outputTokens: number }>()
   for (let index = 0; index < events.length; index++) {
-    if (index <= seedEnd) continue
     const event = events[index]
     if (event === undefined) continue
     const data = event.data as Record<string, unknown>
@@ -549,7 +541,10 @@ export function transcriptRows(entries: readonly SidebarHistoryEntry[], prev?: r
           }
         } else {
           streamRows.set(key, rows.length)
-          rows.push({ kind, seq: event.seq, text: chunk.text, settled: false })
+          rows.push({ kind, seq: event.seq, text: chunk.text, settled: false,
+            ...(typeof blockIndex === 'number' && Number.isSafeInteger(blockIndex) && blockIndex >= 0
+              ? { contentBlockIndex: blockIndex } : {}),
+          })
         }
         break
       }
@@ -577,14 +572,14 @@ export function transcriptRows(entries: readonly SidebarHistoryEntry[], prev?: r
         const content = Array.isArray((data.message as { content?: unknown } | undefined)?.content)
           ? (data.message as { content: readonly unknown[] }).content
           : []
-        const settled: SidechatTranscriptRow[] = content.flatMap((block): SidechatTranscriptRow[] => {
+        const settled: SidechatTranscriptRow[] = content.flatMap((block, contentBlockIndex): SidechatTranscriptRow[] => {
           if (block === null || typeof block !== 'object') return []
           const candidate = block as { type?: unknown; text?: unknown }
           if (candidate.type === 'reasoning' && typeof candidate.text === 'string' && candidate.text !== '') {
-            return [{ kind: 'reasoning', seq: event.seq, text: candidate.text, settled: true }]
+            return [{ kind: 'reasoning', seq: event.seq, text: candidate.text, settled: true, contentBlockIndex }]
           }
           if (candidate.type === 'text' && typeof candidate.text === 'string' && candidate.text !== '') {
-            return [{ kind: 'assistant', seq: event.seq, text: candidate.text, settled: true }]
+            return [{ kind: 'assistant', seq: event.seq, text: candidate.text, settled: true, contentBlockIndex }]
           }
           return []
         })
@@ -711,6 +706,14 @@ export function transcriptRows(entries: readonly SidebarHistoryEntry[], prev?: r
   return reuseRows(rows, prev)
 }
 
+/** A single assistant event can have multiple text/reasoning blocks. Keep the
+ * original block index (including skipped blocks), not a filtered row index. */
+export function sidechatRowKey(row: SidechatTranscriptRow): string {
+  return row.kind === 'assistant' || row.kind === 'reasoning'
+    ? `${row.kind}:${row.seq}:${row.contentBlockIndex ?? 'unknown'}`
+    : `${row.kind}:${row.seq}`
+}
+
 /** Whether two rows carry identical display content (identity fields plus
  *  every rendered field of their kind). */
 function rowsEqual(a: SidechatTranscriptRow, b: SidechatTranscriptRow): boolean {
@@ -729,6 +732,7 @@ function rowsEqual(a: SidechatTranscriptRow, b: SidechatTranscriptRow): boolean 
     case 'reasoning': {
       const other = b as typeof a
       return a.text === other.text && a.settled === other.settled
+        && a.contentBlockIndex === other.contentBlockIndex
     }
     case 'tool': {
       // The card is NOT compared by value: its content is a pure function of

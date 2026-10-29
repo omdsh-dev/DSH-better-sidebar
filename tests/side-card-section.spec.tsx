@@ -175,6 +175,26 @@ describe('SideCardSection declarative inventory', () => {
     expect(html.match(/checked=""/g)?.length ?? 0).toBe(2)
   })
 
+  it('does not list a hidden tab type: it has no sidebar presence to switch', () => {
+    const { store, service } = mount()
+    // Programmatic-only types (the built-in diff page, dsh-remote's
+    // `dsh-remote:file`) take no + menu row and no native guide entry, so an
+    // enable switch could only break their opens without hiding anything
+    // (issue #1009). They keep working; the inventory has no card for them.
+    service.registerTab({
+      id: 'my-plugin:hidden',
+      title: () => 'Hidden helper',
+      hidden: true,
+      component: () => null,
+    })
+    const html = renderSection(store, service)
+    expect(html).not.toContain('>Hidden helper<')
+    expect(html).not.toContain('>my-plugin:hidden<')
+    // The two visible tabs + the image viewer keep their cards (3 pressed);
+    // the hidden type does not add a fourth.
+    expect(pressedCount(html, 'true')).toBe(3)
+  })
+
   it('hides the gear of a disabled feature (its related settings are dormant)', () => {
     const { store, service } = mount()
     store.setPrefs({ ...store.getPrefs(), tabsEnabled: { subagent: false } })

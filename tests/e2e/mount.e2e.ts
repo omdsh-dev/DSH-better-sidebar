@@ -526,8 +526,12 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   const mdRow = pane.locator(`[role="button"][title$="${SEEDED_MD_FILE}"]:visible`)
   await expect(mdRow, `the seeded "${SEEDED_MD_FILE}" file must appear in the plugin's explorer`).toHaveCount(1, { timeout: 30_000 })
   await mdRow.click({ position: { x: 8, y: 8 } })
+  // The editor tab keeps its CodeMirror host mounted and hides it in preview
+  // mode; whether CodeMirror has virtualized the document's last line by now is
+  // a matter of when its hidden view was measured, so the matching element is
+  // not stable. Only the VISIBLE copy is the preview this assertion is about.
   await expect(
-    pane.getByText('tail text'),
+    pane.getByText('tail text').filter({ visible: true }),
     'the markdown preview must render the seeded document',
   ).toHaveCount(1, { timeout: 30_000 })
   await mermaidChunk
@@ -1053,7 +1057,11 @@ test('the explorer @-reference button keeps earlier chips (no whole-draft rewrit
   const mdRow = pane.locator(`[role="button"][title$="${SEEDED_MD_FILE}"]:visible`)
   await expect(mdRow).toHaveCount(1, { timeout: 30_000 })
   await mdRow.click({ position: { x: 8, y: 8 } }) // open the file (not the @ action)
-  await expect(pane.getByText('tail text')).toHaveCount(1, { timeout: 30_000 })
+  // Same hidden-CodeMirror copy as above: the preview is the visible one.
+  await expect(
+    pane.getByText('tail text').filter({ visible: true }),
+    'the markdown preview must render the seeded document exactly once',
+  ).toHaveCount(1, { timeout: 30_000 })
   // A multi-line selection in the code viewer (CodeMirror): the editor path
   // raises the same popup with a fenced payload carrying the file and its line
   // range — the multi-line shape this module has to hand over verbatim.

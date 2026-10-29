@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { activeWorktreeRootOf } from '../src/active-worktree.ts'
@@ -157,6 +157,53 @@ describe('active worktree root', () => {
       initRepo(repo, 'a.txt')
       const ctx = sessionCtx(repo, [{ cwd: join(repo, 'src') }])
       await expect(activeWorktreeRootOf(ctx, 's-no-worktree', repo)).resolves.toBe(realpathSync.native(repo))
+    } finally {
+      removeTree(root)
+    }
+  })
+
+  // A workspace registered at `<repo>/<subdir>` (a plain subdirectory, not a
+  // linked worktree) must keep that subdirectory as the root: a relative link
+  // such as `tools/a.md` is resolved against it, so lifting the root to
+  // `<repo>` opens `<repo>/tools/a.md` and ENOENTs (#1024 / #1080). The ASCII
+  // and Chinese names are separate cases on purpose: a Unicode normalization
+  // artifact can move a spelling, but it cannot drop a whole path segment.
+  for (const [label, subdirectory, sessionId] of [
+    ['an ASCII', 'sub-en', 's-subdir-en'],
+    ['a Chinese', '社媒运营', 's-subdir-zh'],
+  ] as const) {
+    it(`keeps ${label} subdirectory session cwd instead of lifting it to the repository top level`, async () => {
+      const root = mkdtempSync(join(tmpdir(), 'dsh-active-root-'))
+      const repo = join(root, 'repo')
+      const base = join(repo, subdirectory)
+      try {
+        initRepo(repo, 'a.txt')
+        mkdirSync(join(base, 'tools'), { recursive: true })
+        writeFileSync(join(base, 'tools', 'a.md'), '# a\n')
+        const ctx = sessionCtx(base, [])
+        const resolved = await activeWorktreeRootOf(ctx, sessionId, base)
+        expect(resolved).toBe(realpathSync.native(base))
+        // The reported symptom, asserted on a real read through the root: the
+        // file exists one level below the repository top level.
+        expect(readFileSync(join(resolved, 'tools', 'a.md'), 'utf8')).toBe('# a\n')
+      } finally {
+        removeTree(root)
+      }
+    })
+  }
+
+  it('keeps a session cwd that is a SUBDIRECTORY of the repository', async () => {
+    // A workspace registered at `<repo>/workspace` (a plain subdirectory, not a
+    // linked worktree) must stay the root: replacing it with the repository
+    // toplevel makes every relative path resolve one level too high.
+    const root = mkdtempSync(join(tmpdir(), 'dsh-active-root-'))
+    const repo = join(root, 'repo')
+    const subdir = join(repo, 'workspace')
+    try {
+      initRepo(repo, 'a.txt')
+      mkdirSync(subdir)
+      const ctx = sessionCtx(subdir, [])
+      await expect(activeWorktreeRootOf(ctx, 's-subdir', subdir)).resolves.toBe(realpathSync.native(subdir))
     } finally {
       removeTree(root)
     }
