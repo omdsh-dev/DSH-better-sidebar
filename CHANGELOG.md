@@ -2,6 +2,10 @@
 
 > 本文档收录 dsh-better-sidebar 的完整发布历史（最新版摘要见 [README](README_ZH.md)；同步发布于 [GitHub Releases](https://github.com/omdsh-dev/DSH-better-sidebar/releases)）。
 
+### 未发布
+
+- **按类型隐藏后台任务**：任务管理设置新增隐藏类型列表（`jobsHiddenKinds`），按任务的 `kind` 精确匹配（例如 `codex`）；匹配的任务不显示在后台任务抽屉，也不触发自动打开任务管理页，默认留空显示全部类型。
+
 ### v0.29.0
 
 - **侧边对话接入 GenUI**：通过现有 `ctx.betterSidebar` 服务新增可选的 `registerSidechatSurfaceAdapter`，支持 GenUI 0.15.0 渲染已结算的助手回复；未注册消费方时保持原 Markdown。

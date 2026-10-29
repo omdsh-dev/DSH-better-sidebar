@@ -336,6 +336,8 @@ export const de: Record<string, string> = {
   settingsTasksAutoFoldIdleDesc: 'Inaktive Teammitglieder automatisch einklappen, sobald mindestens 3 auf neue Anweisungen warten; standardmäßig aktiviert',
   settingsJobsAutoCollapseTitle: 'Hintergrundaufgaben-Schublade automatisch einklappen',
   settingsJobsAutoCollapseDesc: 'Die Hintergrundaufgaben-Schublade automatisch einklappen, sobald insgesamt mindestens 8 Agenten vorhanden sind; der manuelle Schalter bleibt verfügbar; standardmäßig aktiviert',
+  settingsJobsHiddenKindsTitle: 'Diese Hintergrundaufgabentypen auf der Aufgabenseite ausblenden',
+  settingsJobsHiddenKindsDesc: 'Aufgaben nach ihrem kind-Wert ausblenden (zum Beispiel codex). Leer lassen, um alle Typen anzuzeigen.',
   settingsToolsTitle: 'Terminal-Werkzeuge für das Modell bereitstellen',
   settingsToolsDesc: 'Wenn aktiviert, kann das Modell über die 8 terminal_*-Werkzeuge Terminale in der Seitenleiste erstellen und steuern (standardmäßig deaktiviert)',
   settingsBottomTerminalTitle: 'Beim ersten Ausklappen des unteren Panels automatisch ein Terminal öffnen',

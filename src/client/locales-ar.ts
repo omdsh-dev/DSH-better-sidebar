@@ -351,6 +351,8 @@ export const ar: Record<string, string> = {
   settingsTasksAutoFoldIdleDesc: 'يتم طي أعضاء الفريق الخاملين تلقائياً عندما يبلغ عددهم 3 أو أكثر وهم ينتظرون تعليمات جديدة؛ مفعّل افتراضياً',
   settingsJobsAutoCollapseTitle: 'الطي التلقائي لدرج المهام الخلفية',
   settingsJobsAutoCollapseDesc: 'يتم طي درج المهام الخلفية تلقائياً عندما يبلغ إجمالي الوكلاء 8 أو أكثر؛ ويبقى المفتاح اليدوي متاحاً؛ مفعّل افتراضياً',
+  settingsJobsHiddenKindsTitle: 'إخفاء هذه الأنواع من المهام الخلفية في صفحة المهام',
+  settingsJobsHiddenKindsDesc: 'إخفاء المهام حسب قيمة kind (مثل codex). اترك القائمة فارغة لعرض جميع الأنواع.',
   settingsToolsTitle: 'حقن أدوات الطرفية للنموذج',
   settingsToolsDesc: 'عند التفعيل، يمكن للنموذج إنشاء وتشغيل طرفيات الشريط الجانبي عبر أدوات terminal_* الثمانية (معطّل افتراضياً)',
   settingsBottomTerminalTitle: 'فتح طرفية تلقائياً عند أول توسيع للوحة السفلية',

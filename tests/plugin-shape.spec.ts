@@ -66,6 +66,16 @@ describe('dsh-better-sidebar plugin export shape', () => {
     expect(Config.dict?.listLimit?.meta.volatile).not.toBe(true)
   })
 
+  it('defaults hidden job kinds to an empty string array and commits them as volatile prefs', async () => {
+    const { PrefsSchema, Config } = await import('../src/config.ts')
+    const resolve = PrefsSchema as unknown as (input: Record<string, unknown>) => Record<string, unknown>
+    expect(resolve({}).jobsHiddenKinds).toEqual([])
+    expect(resolve({ jobsHiddenKinds: ['codex'] }).jobsHiddenKinds).toEqual(['codex'])
+    expect(() => resolve({ jobsHiddenKinds: 'codex' })).toThrow()
+    expect(() => resolve({ jobsHiddenKinds: [1] })).toThrow()
+    expect(Config.dict?.jobsHiddenKinds?.meta.volatile).toBe(true)
+  })
+
   it('registers the side card preferences schema with the documented defaults', async () => {
     const { PrefsSchema, SIDEBAR_PREFS_NS, SIDEBAR_PREFS_DEFAULTS } = await import('../src/config.ts')
     expect(SIDEBAR_PREFS_NS).toBe('dsh-better-sidebar')

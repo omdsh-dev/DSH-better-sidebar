@@ -342,6 +342,8 @@ export const ko: Record<string, string> = {
   settingsTasksAutoFoldIdleDesc: '새 지시를 기다리는 대기 중 팀 멤버가 3명 이상이면 자동으로 접습니다. 기본적으로 켜짐',
   settingsJobsAutoCollapseTitle: '백그라운드 작업 드로어 자동 접기',
   settingsJobsAutoCollapseDesc: '전체 에이전트가 8개 이상이면 백그라운드 작업 드로어를 자동으로 접습니다. 수동 전환은 그대로 사용할 수 있습니다. 기본적으로 켜짐',
+  settingsJobsHiddenKindsTitle: '작업 관리에서 숨길 백그라운드 작업 유형',
+  settingsJobsHiddenKindsDesc: '작업의 kind 값(예: codex)으로 숨깁니다. 비워 두면 모든 유형을 표시합니다.',
   settingsToolsTitle: '모델에 터미널 도구 주입',
   settingsToolsDesc: '켜면 모델이 terminal_create 등 8개 도구로 사이드바 터미널을 만들고 조작할 수 있습니다(기본 꺼짐)',
   settingsBottomTerminalTitle: '하단 패널을 처음 펼칠 때 터미널 자동 열기',

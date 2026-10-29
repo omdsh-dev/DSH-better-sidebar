@@ -1,11 +1,24 @@
 import { describe, expect, it } from 'vitest'
-import { loadBootDecision, loadExternalDisable, loadPrefs, type SidebarSettingsClient } from '../src/client/prefs.ts'
+import { loadBootDecision, loadExternalDisable, loadPrefs, parsePrefs, type SidebarSettingsClient } from '../src/client/prefs.ts'
 import { SIDEBAR_PREFS_DEFAULTS } from '../src/prefs-shared.ts'
 
 /** A fake settings wire face whose settingsGet resolves to one raw value. */
 const wire = (value: unknown): SidebarSettingsClient => ({
   settingsGet: async () => ({ value, revision: 1 }),
   settingsUpdate: async () => ({ value, revision: 2 }),
+})
+
+describe('parsePrefs jobsHiddenKinds', () => {
+  it.each([undefined, null, 'codex', 42, {}, true])('defaults missing or invalid values to [] (%j)', (value) => {
+    expect(parsePrefs({}).jobsHiddenKinds).toEqual([])
+    expect(parsePrefs({ jobsHiddenKinds: value }).jobsHiddenKinds).toEqual([])
+  })
+
+  it('keeps exact string entries and filters non-strings', () => {
+    expect(parsePrefs({ jobsHiddenKinds: ['codex', 'bash'] }).jobsHiddenKinds).toEqual(['codex', 'bash'])
+    expect(parsePrefs({ jobsHiddenKinds: ['codex', null, 1, false, {}, ['bash'], ' Codex ', ''] }).jobsHiddenKinds)
+      .toEqual(['codex', ' Codex ', ''])
+  })
 })
 
 /** A fake wire carrying an explicit externalDisable flag. */
@@ -39,6 +52,7 @@ describe('side card preferences', () => {
         tasksAutoFoldBranches: true,
         tasksAutoFoldIdle: true,
         jobsAutoCollapse: true,
+        jobsHiddenKinds: [],
         mobileNoAutoOpen: true,
         mobileDefaultTree: true,
         agentOpenTools: true,
@@ -64,6 +78,7 @@ describe('side card preferences', () => {
         tasksAutoFoldBranches: true,
         tasksAutoFoldIdle: true,
         jobsAutoCollapse: true,
+        jobsHiddenKinds: [],
         mobileNoAutoOpen: true,
         mobileDefaultTree: true,
         agentOpenTools: false,
@@ -89,6 +104,7 @@ describe('side card preferences', () => {
         tasksAutoFoldBranches: true,
         tasksAutoFoldIdle: true,
         jobsAutoCollapse: true,
+        jobsHiddenKinds: [],
         mobileNoAutoOpen: true,
         mobileDefaultTree: true,
         agentOpenTools: false,

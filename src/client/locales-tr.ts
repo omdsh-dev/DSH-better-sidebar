@@ -350,6 +350,8 @@ export const tr: Record<string, string> = {
   settingsTasksAutoFoldIdleDesc: 'Yeni talimat bekleyen etkin olmayan ekip üyesi sayısı 3 veya daha fazla olduğunda otomatik daralt; varsayılan olarak açık',
   settingsJobsAutoCollapseTitle: 'Arka plan işleri çekmecesini otomatik daralt',
   settingsJobsAutoCollapseDesc: 'Toplam 8 veya daha fazla ajan olduğunda arka plan işleri çekmecesini otomatik daralt; manuel geçiş hâlâ çalışır; varsayılan olarak açık',
+  settingsJobsHiddenKindsTitle: 'Görevler sayfasında bu arka plan işi türlerini gizle',
+  settingsJobsHiddenKindsDesc: 'İşleri kind değerine göre gizleyin (örneğin codex). Tüm türleri göstermek için boş bırakın.',
   settingsToolsTitle: 'Model için terminal araçları enjekte et',
   settingsToolsDesc: 'Etkinleştirildiğinde model, 8 terminal_* aracı üzerinden kenar çubuğu terminalleri oluşturup kullanabilir (varsayılan kapalı)',
   settingsBottomTerminalTitle: 'Alt panelin ilk genişletilmesinde otomatik terminal aç',

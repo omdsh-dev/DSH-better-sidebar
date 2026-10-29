@@ -229,6 +229,11 @@ export function builtinTabs(ctx: Context): readonly TabDescriptor[] {
           key: 'jobsAutoCollapse',
           title: () => t('settingsJobsAutoCollapseTitle'),
           desc: () => t('settingsJobsAutoCollapseDesc'),
+        }, {
+          key: 'jobsHiddenKinds',
+          type: 'patterns',
+          title: () => t('settingsJobsHiddenKindsTitle'),
+          desc: () => t('settingsJobsHiddenKindsDesc'),
         }],
       },
       component: ({ ctx, store, scope, visible, onSubagentJump }) => (

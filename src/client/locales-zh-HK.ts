@@ -365,6 +365,8 @@ export const zhHK: Record<string, string> = {
   settingsTasksAutoFoldIdleDesc: '閒置成員達到 3 個或以上時自動摺疊；預設開啟',
   settingsJobsAutoCollapseTitle: '自動收起背景任務抽屜',
   settingsJobsAutoCollapseDesc: '代理總數達到 8 個或以上時自動收起背景任務抽屜；手動開關仍然可用；預設開啟',
+  settingsJobsHiddenKindsTitle: '在任務管理中隱藏這些背景工作類型',
+  settingsJobsHiddenKindsDesc: '按工作的 kind 隱藏（例如 codex）。留空顯示全部。',
   settingsToolsTitle: '為模型注入終端工具',
   settingsToolsDesc: '開啟後，模型可透過 terminal_create 等 8 個工具建立並操作側邊欄終端（預設關閉）',
   settingsBottomTerminalTitle: '底部面板首次展開自動開終端',

@@ -350,6 +350,8 @@ export const th: Record<string, string> = {
   settingsTasksAutoFoldIdleDesc: 'ย่อสมาชิกทีมที่ว่างอัตโนมัติเมื่อมี 3 คนขึ้นไปรอคำสั่งใหม่; เปิดเป็นค่าเริ่มต้น',
   settingsJobsAutoCollapseTitle: 'ย่อลิ้นชักงานเบื้องหลังอัตโนมัติ',
   settingsJobsAutoCollapseDesc: 'ลิ้นชักงานเบื้องหลังจะย่ออัตโนมัติเมื่อมีเอเจนต์รวม 8 ตัวขึ้นไป; ปุ่มสลับด้วยตนเองยังใช้ได้; เปิดเป็นค่าเริ่มต้น',
+  settingsJobsHiddenKindsTitle: 'ซ่อนงานเบื้องหลังประเภทเหล่านี้ในหน้าจัดการงาน',
+  settingsJobsHiddenKindsDesc: 'ซ่อนงานตามค่า kind (เช่น codex) เว้นว่างไว้เพื่อแสดงทุกประเภท',
   settingsToolsTitle: 'ฉีดเครื่องมือเทอร์มินัลสำหรับโมเดล',
   settingsToolsDesc: 'เมื่อเปิดใช้ โมเดลสามารถสร้างและควบคุมเทอร์มินัลแถบด้านข้างผ่านเครื่องมือ terminal_* 8 ตัว (ปิดเป็นค่าเริ่มต้น)',
   settingsBottomTerminalTitle: 'เปิดเทอร์มินัลอัตโนมัติเมื่อพาเนลล่างขยายครั้งแรก',

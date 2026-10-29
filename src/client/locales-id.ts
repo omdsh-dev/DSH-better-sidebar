@@ -348,6 +348,8 @@ export const id: Record<string, string> = {
   settingsTasksAutoFoldIdleDesc: 'Lipat otomatis anggota tim yang menganggur saat ada 3 atau lebih yang menunggu instruksi baru; aktif secara default',
   settingsJobsAutoCollapseTitle: 'Lipat otomatis laci tugas latar',
   settingsJobsAutoCollapseDesc: 'Laci tugas latar dilipat otomatis saat total agen mencapai 8 atau lebih; tombol manual tetap tersedia; aktif secara default',
+  settingsJobsHiddenKindsTitle: 'Sembunyikan jenis tugas latar belakang ini di halaman Tugas',
+  settingsJobsHiddenKindsDesc: 'Sembunyikan tugas berdasarkan nilai kind (misalnya codex). Biarkan kosong untuk menampilkan semua jenis.',
   settingsToolsTitle: 'Suntik alat terminal untuk model',
   settingsToolsDesc: 'Saat diaktifkan, model dapat membuat dan mengendalikan terminal sidebar melalui 8 alat terminal_* (nonaktif secara default)',
   settingsBottomTerminalTitle: 'Buka terminal otomatis saat panel bawah pertama kali dibentangkan',

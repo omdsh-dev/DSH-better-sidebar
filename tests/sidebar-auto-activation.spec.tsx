@@ -594,6 +594,33 @@ describe('Sidebar background-activity auto-activation (#162)', () => {
     expect(sidebar.column.toggles).toBe(0)
   })
 
+  it('hidden job kinds never activate Tasks; a non-hidden kind still does', async () => {
+    const sidebar = mountSidebar(1024, false, { prefs: { jobsHiddenKinds: ['codex'] } })
+    const hidden: SidebarJobView = {
+      id: 'codex-1', kind: 'codex', label: 'hidden work', status: 'running', startedAt: Date.now() + 1,
+    }
+    sidebar.jobs.publish(sidebar.sessionId, [hidden])
+    await flushFeeds()
+    expect(sidebar.surface.opens).toEqual([])
+    expect(sidebar.store.getSnapshot().state!.unread).toEqual([])
+    // Repeated roster frames and status changes must stay quiet too.
+    sidebar.jobs.publish(sidebar.sessionId, [{ ...hidden, status: 'completed' }])
+    await flushFeeds()
+    expect(sidebar.surface.opens).toEqual([])
+    sidebar.jobs.publish(sidebar.sessionId, [hidden, {
+      id: 'bash-1', kind: 'bash', label: 'visible work', status: 'running', startedAt: Date.now() + 1,
+    }])
+    await flushFeeds()
+    expectNativeTasksOpen(sidebar, sidebar.sessionId)
+  })
+
+  it('reads changed hidden-kind preferences before comparing the next roster', async () => {
+    const sidebar = mountSidebar(1024)
+    act(() => { sidebar.store.setPrefs({ ...sidebar.store.getPrefs(), jobsHiddenKinds: ['bash'] }) })
+    await publishJob(sidebar)
+    expect(sidebar.surface.opens).toEqual([])
+  })
+
   it('a page that loads with jobs already running never triggers; the next NEW job does', async () => {
     const sidebar = mountSidebar(1024)
     // The conversation is already running work when the sidebar mounts: the

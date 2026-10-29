@@ -350,6 +350,8 @@ export const hi: Record<string, string> = {
   settingsTasksAutoFoldIdleDesc: 'जब 3 या अधिक निष्क्रिय टीम सदस्य नए निर्देशों की प्रतीक्षा कर रहे हों, तो उन्हें स्वतः संकुचित करें; डिफ़ॉल्ट रूप से चालू',
   settingsJobsAutoCollapseTitle: 'पृष्ठभूमि कार्य दराज स्वतः संकुचित करें',
   settingsJobsAutoCollapseDesc: 'कुल 8 या अधिक एजेंट होने पर पृष्ठभूमि कार्य दराज स्वतः संकुचित करें; मैन्युअल टॉगल उपलब्ध रहता है; डिफ़ॉल्ट रूप से चालू',
+  settingsJobsHiddenKindsTitle: 'कार्य पृष्ठ पर इन प्रकारों के पृष्ठभूमि कार्य छिपाएँ',
+  settingsJobsHiddenKindsDesc: 'kind के आधार पर कार्य छिपाएँ (जैसे codex)। सभी प्रकार दिखाने के लिए खाली छोड़ें।',
   settingsToolsTitle: 'मॉडल के लिए टर्मिनल टूल इंजेक्ट करें',
   settingsToolsDesc: 'सक्षम होने पर, मॉडल 8 terminal_* टूल्स से साइडबार टर्मिनल बना और चला सकता है (डिफ़ॉल्ट रूप से बंद)',
   settingsBottomTerminalTitle: 'निचला पैनल पहली बार खुलने पर स्वतः टर्मिनल खोलें',

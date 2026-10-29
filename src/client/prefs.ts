@@ -61,6 +61,9 @@ export function parsePrefs(value: unknown): SidebarPrefs {
     jobsAutoCollapse: typeof record.jobsAutoCollapse === 'boolean'
       ? record.jobsAutoCollapse
       : SIDEBAR_PREFS_DEFAULTS.jobsAutoCollapse,
+    jobsHiddenKinds: Array.isArray(record.jobsHiddenKinds)
+      ? record.jobsHiddenKinds.filter(item => typeof item === 'string')
+      : SIDEBAR_PREFS_DEFAULTS.jobsHiddenKinds,
     mobileNoAutoOpen: typeof record.mobileNoAutoOpen === 'boolean'
       ? record.mobileNoAutoOpen
       : SIDEBAR_PREFS_DEFAULTS.mobileNoAutoOpen,

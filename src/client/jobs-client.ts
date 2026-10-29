@@ -96,21 +96,25 @@ export function useJobObservation(
  * An UNOWNED job is visible to every watched session, so the union of rosters
  * repeats it: rows are keyed by job id and attributed to the watched session
  * whose roster carried them (which is also the session the observation and the
- * kill go through). Jobs owned by a session outside the tree are dropped.
+ * kill go through). Jobs owned by a session outside the tree or whose kind
+ * is hidden by the user's preferences are dropped.
  *
  * @param snapshot - the client service snapshot.
  * @param byId - the session mirror (owner labels).
  * @param treeIds - the tree's session ids (root included).
+ * @param hiddenKinds - exact job kinds to exclude (omitted shows every kind).
  */
 export function collectRows(
   snapshot: SidebarJobsSnapshot,
   byId: SidebarSessionList['byId'],
   treeIds: ReadonlySet<string>,
+  hiddenKinds?: ReadonlySet<string>,
 ): TreeJob[] {
   const rows: TreeJob[] = []
   const seen = new Set<string>()
   for (const [watched, jobs] of Object.entries(snapshot.rows)) {
     for (const job of jobs) {
+      if (hiddenKinds?.has(job.kind)) continue
       if (seen.has(job.id)) continue
       if (job.owner !== undefined && !treeIds.has(job.owner)) continue
       seen.add(job.id)

@@ -91,6 +91,7 @@ export const PrefsSchema: z<SidebarPrefs> = z.object({
   tasksAutoFoldBranches: z.boolean().default(true),
   tasksAutoFoldIdle: z.boolean().default(true),
   jobsAutoCollapse: z.boolean().default(true),
+  jobsHiddenKinds: z.array(z.string()).default([]),
   mobileNoAutoOpen: z.boolean().default(true),
   mobileDefaultTree: z.boolean().default(true),
   agentOpenTools: z.boolean().default(false),

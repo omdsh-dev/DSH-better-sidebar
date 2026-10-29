@@ -350,6 +350,8 @@ export const vi: Record<string, string> = {
   settingsTasksAutoFoldIdleDesc: 'Tự động thu gọn thành viên nhóm đang rảnh khi có từ 3 thành viên trở lên đang chờ hướng dẫn mới; mặc định bật',
   settingsJobsAutoCollapseTitle: 'Tự động thu gọn ngăn tác vụ nền',
   settingsJobsAutoCollapseDesc: 'Ngăn tác vụ nền tự động thu gọn khi tổng số tác nhân từ 8 trở lên; nút chuyển thủ công vẫn dùng được; mặc định bật',
+  settingsJobsHiddenKindsTitle: 'Ẩn các loại tác vụ nền này trong trang Tác vụ',
+  settingsJobsHiddenKindsDesc: 'Ẩn tác vụ theo giá trị kind (ví dụ codex). Để trống để hiển thị mọi loại.',
   settingsToolsTitle: 'Tiêm công cụ terminal cho mô hình',
   settingsToolsDesc: 'Khi bật, mô hình có thể tạo và điều khiển terminal thanh bên qua 8 công cụ terminal_* (mặc định tắt)',
   settingsBottomTerminalTitle: 'Tự động mở terminal khi panel dưới mở rộng lần đầu',

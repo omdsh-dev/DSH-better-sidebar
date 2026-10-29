@@ -343,6 +343,8 @@ export const fr: Record<string, string> = {
   settingsTasksAutoFoldIdleDesc: 'Replier automatiquement les membres d’équipe inactifs dès qu’au moins 3 attendent de nouvelles instructions ; activé par défaut',
   settingsJobsAutoCollapseTitle: 'Replier automatiquement le tiroir des tâches d’arrière-plan',
   settingsJobsAutoCollapseDesc: 'Le tiroir des tâches d’arrière-plan se replie automatiquement dès qu’il y a au moins 8 agents au total ; la bascule manuelle reste disponible ; activé par défaut',
+  settingsJobsHiddenKindsTitle: 'Masquer ces types de tâches en arrière-plan dans les tâches',
+  settingsJobsHiddenKindsDesc: 'Masquer les tâches selon leur valeur kind (par exemple codex). Laisser vide pour afficher tous les types.',
   settingsToolsTitle: 'Injecter des outils de terminal au modèle',
   settingsToolsDesc: 'Une fois activé, le modèle peut créer et piloter des terminaux de la barre latérale via les 8 outils terminal_* (désactivé par défaut)',
   settingsBottomTerminalTitle: 'Ouvrir automatiquement un terminal au premier déploiement du panneau inférieur',

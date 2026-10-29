@@ -341,6 +341,8 @@ export const it: Record<string, string> = {
   settingsTasksAutoFoldIdleDesc: 'Comprimi automaticamente i membri del team inattivi quando almeno 3 attendono nuove istruzioni; attivo per impostazione predefinita',
   settingsJobsAutoCollapseTitle: 'Comprimi automaticamente il pannello dei job in background',
   settingsJobsAutoCollapseDesc: 'Il pannello dei job in background si comprime automaticamente quando ci sono almeno 8 agenti in totale; l’interruttore manuale resta disponibile; attivo per impostazione predefinita',
+  settingsJobsHiddenKindsTitle: 'Nascondi questi tipi di attività in background nella pagina Attività',
+  settingsJobsHiddenKindsDesc: 'Nascondi le attività in base al valore kind (ad esempio codex). Lascia vuoto per mostrare tutti i tipi.',
   settingsToolsTitle: 'Inietta strumenti del terminale per il modello',
   settingsToolsDesc: 'Se attivato, il modello può creare e gestire terminali della barra laterale attraverso gli 8 strumenti terminal_* (disattivato per impostazione predefinita)',
   settingsBottomTerminalTitle: 'Apri automaticamente un terminale alla prima espansione del pannello inferiore',

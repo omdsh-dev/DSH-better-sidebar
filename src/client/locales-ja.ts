@@ -350,6 +350,8 @@ export const ja: Record<string, string> = {
   settingsTasksAutoFoldIdleDesc: '新しい指示を待機しているアイドル状態のチームメンバーが 3 人以上になると自動的に折りたたみます。既定でオン',
   settingsJobsAutoCollapseTitle: 'バックグラウンドタスクのドロワーを自動折りたたみ',
   settingsJobsAutoCollapseDesc: 'エージェントが合計 8 体以上になるとバックグラウンドタスクのドロワーを自動的に折りたたみます。手動切り替えは引き続き使えます。既定でオン',
+  settingsJobsHiddenKindsTitle: 'タスク管理で非表示にするバックグラウンドジョブの種類',
+  settingsJobsHiddenKindsDesc: 'ジョブの kind（例：codex）で非表示にします。空欄の場合はすべての種類を表示します。',
   settingsToolsTitle: 'モデルにターミナルツールを注入',
   settingsToolsDesc: 'オンにすると、モデルが terminal_create 等 8 個のツールでサイドバーターミナルを作成・操作可能（デフォルトオフ）',
   settingsBottomTerminalTitle: '下パネル初回展開時に自動でターミナルを開く',

@@ -4,6 +4,7 @@
  * "is this really new work?" rule.
  */
 import { describe, expect, it } from 'vitest'
+import { collectRows } from '../src/client/jobs-client.ts'
 import {
   detectNewJob,
   formatJobDuration,
@@ -58,6 +59,34 @@ describe('treeSessionIds', () => {
     }
     expect(treeSessionIds(byId, 'root').size).toBe(1)
     expect(treeSessionIds(byId, undefined).size).toBe(0)
+  })
+})
+
+describe('collectRows', () => {
+  const byId = { root: summary('root'), child: summary('child') }
+  const treeIds = new Set(['root', 'child'])
+  const hidden = job('codex-1', { kind: 'codex', owner: 'root' })
+  const shared = job('shared')
+  const snapshot = {
+    rows: {
+      root: [hidden, shared, job('outside', { owner: 'other' })],
+      child: [hidden, shared, job('child-job', { owner: 'child' }), job('case-sensitive', { kind: 'Codex' })],
+    },
+    observed: {},
+  }
+
+  it('filters exact kinds and outside owners, keeping other jobs deduped across rosters', () => {
+    const rows = collectRows(snapshot, byId, treeIds, new Set(['codex']))
+    expect(rows.map(row => row.job.id)).toEqual(['shared', 'child-job', 'case-sensitive'])
+    expect(rows[0]?.ownerSessionId).toBe('root')
+    expect(rows[1]?.ownerTitle).toBe('title-child')
+  })
+
+  it('hides nothing when the set is omitted, undefined, or empty', () => {
+    const expected = ['codex-1', 'shared', 'child-job', 'case-sensitive']
+    expect(collectRows(snapshot, byId, treeIds).map(row => row.job.id)).toEqual(expected)
+    expect(collectRows(snapshot, byId, treeIds, undefined).map(row => row.job.id)).toEqual(expected)
+    expect(collectRows(snapshot, byId, treeIds, new Set()).map(row => row.job.id)).toEqual(expected)
   })
 })
 

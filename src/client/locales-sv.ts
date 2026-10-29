@@ -333,6 +333,8 @@ export const sv: Record<string, string> = {
   settingsTasksAutoFoldIdleDesc: 'Fäll automatiskt ihop inaktiva teammedlemmar när minst 3 väntar på nya instruktioner; på som standard',
   settingsJobsAutoCollapseTitle: 'Fäll ihop bakgrundsjobbspanelen automatiskt',
   settingsJobsAutoCollapseDesc: 'Bakgrundsjobbspanelen fälls ihop automatiskt när det finns minst 8 agenter totalt; den manuella växlingen fungerar fortfarande; på som standard',
+  settingsJobsHiddenKindsTitle: 'Dölj dessa typer av bakgrundsjobb på uppgiftssidan',
+  settingsJobsHiddenKindsDesc: 'Dölj jobb efter deras kind-värde (till exempel codex). Lämna tomt för att visa alla typer.',
   settingsToolsTitle: 'Injicera terminalverktyg för modellen',
   settingsToolsDesc: 'När aktiverat kan modellen skapa och styra sidopanelsterminaler via de 8 terminal_*-verktygen (av som standard)',
   settingsBottomTerminalTitle: 'Öppna automatiskt en terminal vid bottenpanelens första expandering',

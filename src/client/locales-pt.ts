@@ -333,6 +333,8 @@ export const pt: Record<string, string> = {
   settingsTasksAutoFoldIdleDesc: 'Recolher automaticamente membros da equipe inativos quando 3 ou mais estiverem aguardando novas instruções; ativado por padrão',
   settingsJobsAutoCollapseTitle: 'Recolher automaticamente a gaveta de tarefas em segundo plano',
   settingsJobsAutoCollapseDesc: 'A gaveta de tarefas em segundo plano é recolhida automaticamente quando há 8 agentes ou mais no total; o botão manual continua disponível; ativado por padrão',
+  settingsJobsHiddenKindsTitle: 'Ocultar estes tipos de tarefas em segundo plano na página de tarefas',
+  settingsJobsHiddenKindsDesc: 'Ocultar tarefas pelo valor de kind (por exemplo, codex). Deixe vazio para mostrar todos os tipos.',
   settingsToolsTitle: 'Injetar ferramentas de terminal para o modelo',
   settingsToolsDesc: 'Quando ativado, o modelo pode criar e operar terminais da barra lateral por meio das 8 ferramentas terminal_* (desativado por padrão)',
   settingsBottomTerminalTitle: 'Abrir um terminal automaticamente na primeira expansão do painel inferior',

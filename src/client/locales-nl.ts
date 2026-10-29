@@ -348,6 +348,8 @@ export const nl: Record<string, string> = {
   settingsTasksAutoFoldIdleDesc: 'Inactieve teamleden automatisch inklappen zodra er minstens 3 op nieuwe instructies wachten; standaard aan',
   settingsJobsAutoCollapseTitle: 'De achtergrondtaken-lade automatisch inklappen',
   settingsJobsAutoCollapseDesc: 'De achtergrondtaken-lade wordt automatisch ingeklapt zodra er in totaal minstens 8 agents zijn; de handmatige schakelaar blijft beschikbaar; standaard aan',
+  settingsJobsHiddenKindsTitle: 'Deze achtergrondtaaktypen verbergen op de Taken-pagina',
+  settingsJobsHiddenKindsDesc: 'Verberg taken op basis van hun kind-waarde (bijvoorbeeld codex). Laat leeg om alle typen te tonen.',
   settingsToolsTitle: 'Terminaltools voor het model injecteren',
   settingsToolsDesc: 'Indien ingeschakeld kan het model zijbalk-terminals aanmaken en besturen via de 8 terminal_*-tools (standaard uit)',
   settingsBottomTerminalTitle: 'Automatisch een terminal openen bij de eerste uitklap van het onderpaneel',

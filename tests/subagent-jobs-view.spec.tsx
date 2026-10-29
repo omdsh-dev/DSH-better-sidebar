@@ -15,6 +15,7 @@ import { createElement } from 'react'
 import { act } from 'react-dom/test-utils'
 import { renderRoot } from './test-utils.ts'
 import { SubagentView } from '../src/client/SubagentView.tsx'
+import { createSidebarStore } from '../src/client/state.ts'
 import { ContextDiagnosticsHost } from '../src/client/context-diagnostics-ui.tsx'
 import type {
   ContextDiagnosticTarget,
@@ -341,6 +342,31 @@ describe('SubagentView topology (projectionsBySession)', () => {
 })
 
 describe('SubagentView background jobs', () => {
+  it('updates hidden kinds reactively without waiting for another jobs frame', async () => {
+    const sessions = makeStore(baseSnapshot())
+    const store = createSidebarStore()
+    store.setPrefs({ ...store.getPrefs(), jobsHiddenKinds: ['codex'] })
+    jobsFake.emit({ rows: { root: [
+      { id: 'codex-1', kind: 'codex', label: 'hidden codex work', status: 'running', startedAt: 1_000 },
+      { id: 'bash-1', kind: 'bash', label: 'visible bash work', status: 'running', startedAt: 1_000 },
+    ] } })
+    const { container, unmount } = renderRoot(createElement(SubagentView, {
+      sessionId: 'root', active: true, ctx: makeCtx(sessions, undefined, jobsFake), store,
+    }))
+    await flushJobs()
+    expect(container.textContent).not.toContain('hidden codex work')
+    expect(container.textContent).toContain('visible bash work')
+
+    act(() => { store.setPrefs({ ...store.getPrefs(), jobsHiddenKinds: ['bash'] }) })
+    expect(container.textContent).toContain('hidden codex work')
+    expect(container.textContent).not.toContain('visible bash work')
+
+    act(() => { store.setPrefs({ ...store.getPrefs(), jobsHiddenKinds: [] }) })
+    expect(container.textContent).toContain('hidden codex work')
+    expect(container.textContent).toContain('visible bash work')
+    unmount()
+  })
+
   it('renders the tree jobs with status, durations, and owner labels', async () => {
     const store = makeStore(baseSnapshot())
     const { container, unmount } = await renderPage(store)

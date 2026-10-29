@@ -352,6 +352,8 @@ export const pl: Record<string, string> = {
   settingsTasksAutoFoldIdleDesc: 'Automatycznie zwijaj bezczynnych członków zespołu, gdy co najmniej 3 czekają na nowe instrukcje; domyślnie włączone',
   settingsJobsAutoCollapseTitle: 'Automatycznie zwijaj szufladę zadań w tle',
   settingsJobsAutoCollapseDesc: 'Szuflada zadań w tle zwija się automatycznie, gdy łącznie jest co najmniej 8 agentów; ręczny przełącznik nadal działa; domyślnie włączone',
+  settingsJobsHiddenKindsTitle: 'Ukryj te typy zadań w tle na stronie zadań',
+  settingsJobsHiddenKindsDesc: 'Ukryj zadania według wartości kind (na przykład codex). Pozostaw puste, aby pokazać wszystkie typy.',
   settingsToolsTitle: 'Wstrzyknij narzędzia terminala dla modelu',
   settingsToolsDesc: 'Po włączeniu model może tworzyć i sterować terminalami panelu bocznego przez 8 narzędzi terminal_* (domyślnie wyłączone)',
   settingsBottomTerminalTitle: 'Automatycznie otwieraj terminal przy pierwszym rozwinięciu panelu dolnego',

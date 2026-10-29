@@ -314,7 +314,8 @@ export function useHostFeeds(feeds: {
   }, [jobsService, sessionId])
   useEffect(() => {
     if (jobsService === undefined || sessionId === undefined) return
-    const rows = jobsSnapshot.rows[sessionId] ?? []
+    const hiddenKinds = new Set(store.getPrefs().jobsHiddenKinds)
+    const rows = (jobsSnapshot.rows[sessionId] ?? []).filter(job => !hiddenKinds.has(job.kind))
     const prev = jobBaselineRef.current
     jobBaselineRef.current = rows
     if (prev === undefined) return

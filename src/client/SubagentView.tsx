@@ -251,6 +251,7 @@ function useTreeJobs(
   byId: SidebarSessionList['byId'],
   rootId: string | undefined,
   active: boolean,
+  hiddenKinds: ReadonlySet<string>,
 ): {
   rows: TreeJob[]
   jobs: SidebarClientJobsService | undefined
@@ -265,8 +266,8 @@ function useTreeJobs(
   )
   useJobWatchers(jobs, treeIds, active)
   const rows = useMemo(
-    () => (rootId === undefined ? [] : orderJobs(collectRows(snapshot, byId, new Set(treeIds)))),
-    [snapshot, byId, rootId, treeIds],
+    () => (rootId === undefined ? [] : orderJobs(collectRows(snapshot, byId, new Set(treeIds), hiddenKinds))),
+    [snapshot, byId, rootId, treeIds, hiddenKinds],
   )
   return { rows, jobs, observed: snapshot.observed }
 }
@@ -590,7 +591,12 @@ export function SubagentView(props: {
   const agentCount = totals.count + 1
 
   /** The tree's ordered job rows (owner-labeled, off the host's push roster). */
-  const treeJobs = useTreeJobs(ctx, byId, rootId, active)
+  const jobsHiddenKinds = useSyncExternalStore(
+    useMemo(() => (callback: () => void) => store?.subscribe(callback) ?? (() => {}), [store]),
+    useCallback(() => store?.getSnapshot().prefs.jobsHiddenKinds ?? SIDEBAR_PREFS_DEFAULTS.jobsHiddenKinds, [store]),
+  )
+  const hiddenKinds = useMemo(() => new Set(jobsHiddenKinds), [jobsHiddenKinds])
+  const treeJobs = useTreeJobs(ctx, byId, rootId, active, hiddenKinds)
   const jobRows = treeJobs.rows
   // Only the open panel's job is observed: the host streams output per observer.
   const openJob = popover?.kind === 'job'

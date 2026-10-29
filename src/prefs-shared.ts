@@ -39,6 +39,11 @@ export interface SidebarPrefs {
    */
   jobsAutoCollapse: boolean
   /**
+   * Exact JobView.kind strings excluded from the Tasks drawer and its
+   * auto-open trigger. An empty list shows every kind.
+   */
+  jobsHiddenKinds: string[]
+  /**
    * MOBILE ADAPTATION (narrow viewports, `isNarrowWidth`): while the viewport
    * is narrow, do not auto-activate the Tasks page for background activity —
    * it suppresses BOTH triggers (`autoOpenSubagent` and `autoOpenJobs`) at
@@ -156,6 +161,7 @@ export const SIDEBAR_PREFS_DEFAULTS: SidebarPrefs = {
   tasksAutoFoldBranches: true,
   tasksAutoFoldIdle: true,
   jobsAutoCollapse: true,
+  jobsHiddenKinds: [],
   // Both mobile adaptations are ON by default: a phone is the case they exist
   // for, and each one only ever changes what happens on a NARROW viewport.
   mobileNoAutoOpen: true,

@@ -168,12 +168,13 @@ describe('built-in tab registrations', () => {
     const { service } = setup()
     const toggles = service.getTab('subagent')?.settings?.toggles ?? []
     expect(toggles.map(t => t.key)).toEqual(['autoOpenSubagent', 'autoOpenJobs', 'tasksViewMode',
-      'tasksAutoFoldSettled', 'tasksAutoFoldBranches', 'tasksAutoFoldIdle', 'jobsAutoCollapse'])
+      'tasksAutoFoldSettled', 'tasksAutoFoldBranches', 'tasksAutoFoldIdle', 'jobsAutoCollapse', 'jobsHiddenKinds'])
     // The default-view row is a graph/tree select (values are strings).
     const viewMode = toggles[2]
     expect(viewMode?.type).toBe('select')
     expect((viewMode?.options ?? []).map(o => o.value)).toEqual(['graph', 'tree'])
-    for (const toggle of toggles.slice(3)) {
+    expect(toggles.at(-1)?.type).toBe('patterns')
+    for (const toggle of toggles.slice(3, -1)) {
       expect(toggle.type ?? 'switch', toggle.key).toBe('switch')
       expect(typeof toggle.title === 'function' ? toggle.title() : toggle.title, toggle.key).toBeTruthy()
       expect(typeof toggle.desc === 'function' ? toggle.desc() : toggle.desc, toggle.key).toBeTruthy()

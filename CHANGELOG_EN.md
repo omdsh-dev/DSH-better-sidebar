@@ -4,6 +4,11 @@
 >
 > 📝 The Chinese [CHANGELOG](./CHANGELOG.md) is the authoritative, item-by-item record; this file carries the English summaries and has historically lagged behind it. Where the two disagree, the Chinese one is current.
 
+### Unreleased
+
+- **Hide background jobs by kind**: Tasks settings now include a hidden-kinds list (`jobsHiddenKinds`) that matches exact job `kind` values (for example `codex`); matching jobs are excluded from the background-jobs drawer and never auto-open Tasks.
+  The default empty list shows every kind.
+
 ### v0.29.0
 
 - **GenUI in side chats**: the existing `ctx.betterSidebar` service exposes the opt-in `registerSidechatSurfaceAdapter` for GenUI 0.15.0 to render settled assistant replies. Without a consumer, Markdown rendering stays unchanged.
