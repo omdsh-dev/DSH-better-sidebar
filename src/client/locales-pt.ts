@@ -639,4 +639,6 @@ export const pt: Record<string, string> = {
   pluginTurnOutlineDesc: "Dobra a sessão em turnos do usuário (entrada + etapas de ferramenta + saída); clique em qualquer etapa para voltar ao ponto exato da conversa — sem chamadas de LLM, somente leitura",
   pluginDshMemoryDeltaName: 'dsh-memory-delta Memória',
   pluginDshMemoryDeltaDesc: 'Memória entre sessões: injeta apenas o que mudou (nada quando nada mudou), com lembrete de revisão, busca por relevância e aba lateral.',
+  pluginPrInboxName: "dsh-pr-inbox Caixa de PRs",
+  pluginPrInboxDesc: "Os PRs do GitHub do workspace atual em três grupos — criados por mim / aguardando minha revisão / mesclados por mim — com corpo, resumo de comentários e arquivos alterados no painel; somente leitura via seu login local do gh",
 }

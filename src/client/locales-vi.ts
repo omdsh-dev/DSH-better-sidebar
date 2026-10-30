@@ -656,4 +656,6 @@ export const vi: Record<string, string> = {
   pluginTurnOutlineDesc: "Gấp phiên thành các vòng của người dùng (đầu vào + bước công cụ + đầu ra); nhấp vào bất kỳ bước nào để nhảy về đúng vị trí trong hội thoại — không gọi LLM, chỉ đọc",
   pluginDshMemoryDeltaName: 'dsh-memory-delta Bộ nhớ',
   pluginDshMemoryDeltaDesc: 'Bộ nhớ xuyên phiên: chỉ chèn phần đã thay đổi (không chèn gì nếu không có thay đổi), kèm nhắc ngày rà soát, tìm kiếm theo độ liên quan và tab thanh bên.',
+  pluginPrInboxName: "dsh-pr-inbox Hộp thư PR",
+  pluginPrInboxDesc: "PR GitHub của workspace hiện tại theo ba nhóm — do tôi tạo / đang chờ tôi review / do tôi hợp nhất — với nội dung, tóm tắt bình luận và danh sách tệp thay đổi ngay trong bảng; chỉ đọc qua đăng nhập gh cục bộ",
 }

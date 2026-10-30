@@ -639,4 +639,6 @@ export const sv: Record<string, string> = {
   pluginTurnOutlineDesc: "Viker sessionen i användarvarv (indata + verktygssteg + utdata); klicka på ett steg för att hoppa till exakt plats i samtalet — utan LLM-anrop, skrivskyddad",
   pluginDshMemoryDeltaName: 'dsh-memory-delta Minne',
   pluginDshMemoryDeltaDesc: 'Minne mellan sessioner: endast det som ändrats injiceras (inget när inget ändrats), med påminnelse om granskningsdatum, relevanssorterad sökning och en sidopanelflik.',
+  pluginPrInboxName: "dsh-pr-inbox PR-inkorg",
+  pluginPrInboxDesc: "GitHub-PR:er för aktuell arbetsyta i tre grupper — skapade av mig / väntar på min granskning / mergade av mig — med text, kommentarssammanfattning och ändrade filer i panelen; skrivskyddat via din lokala gh-inloggning",
 }

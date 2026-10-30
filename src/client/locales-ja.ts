@@ -656,4 +656,6 @@ export const ja: Record<string, string> = {
   pluginTurnOutlineDesc: "セッションをユーザーターン（入力＋ツール手順＋出力）ごとに折りたたみ、任意のステップをクリックすると会話の該当箇所へワンクリックでジャンプ。LLM 呼び出しなし・読み取り専用",
   pluginDshMemoryDeltaName: 'dsh-memory-delta メモリ',
   pluginDshMemoryDeltaDesc: 'セッションをまたぐ記憶：変化した部分だけを注入し（変化がなければ何も注入しません）、レビュー期日のリマインド、関連度順の検索、サイドバーのタブを備えます。',
+  pluginPrInboxName: 'dsh-pr-inbox PR 受信箱',
+  pluginPrInboxDesc: '現在のワークスペースの GitHub PR を「自分が出した / レビュー待ち / 自分がマージした」の 3 バケットで表示。本文・コメント概要・変更ファイルをパネル内で読め、ローカルの gh ログインを利用する読み取り専用プラグイン',
 }
