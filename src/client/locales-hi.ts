@@ -738,4 +738,6 @@ export const hi: Record<string, string> = {
   pluginDshMemoryDeltaDesc: 'सत्रों के बीच स्मृति: केवल बदला हुआ भाग इंजेक्ट होता है (कुछ न बदले तो कुछ नहीं), समीक्षा-तिथि अनुस्मारक, प्रासंगिकता-क्रमित खोज और साइडबार टैब के साथ।',
   pluginPrInboxName: "dsh-pr-inbox PR इनबॉक्स",
   pluginPrInboxDesc: "वर्तमान वर्कस्पेस के GitHub PR तीन समूहों में — मेरे बनाए / मेरी समीक्षा की प्रतीक्षा में / मेरे द्वारा मर्ज किए गए — पैनल में बॉडी, टिप्पणी सारांश और बदली गई फ़ाइलें; स्थानीय gh लॉगिन से केवल-पढ़ने के लिए",
+  pluginBioviewerName: 'BioViewer',
+  pluginBioviewerDesc: 'better-sidebar संपादक में आणविक आणुजीव फ़ाइल प्रीव्यू (PDB / mmCIF / MRC मैप / छोटे अणु और Chimera .cmm चिह्न, जिसमें .gz), BioViewer वर्कस्पेस टैब और bio_open / bio_add टूल',
 }

@@ -729,4 +729,6 @@ export const it: Record<string, string> = {
   pluginDshMemoryDeltaDesc: 'Memoria tra sessioni: inietta solo ciò che è cambiato (nulla se nulla è cambiato), con promemoria di revisione, ricerca per rilevanza e scheda laterale.',
   pluginPrInboxName: "dsh-pr-inbox Casella PR",
   pluginPrInboxDesc: "Le PR GitHub del workspace corrente in tre gruppi — create da me / in attesa della mia revisione / unite da me — con corpo, riepilogo dei commenti e file modificati nel pannello; sola lettura tramite il tuo login gh locale",
+  pluginBioviewerName: 'BioViewer',
+  pluginBioviewerDesc: 'Anteprima Mol* (PDB / mmCIF / mappe MRC / piccole molecole e marcatori Chimera .cmm, incluso .gz) nell’editor better-sidebar, più scheda spazio di lavoro BioViewer e strumenti bio_open / bio_add',
 }

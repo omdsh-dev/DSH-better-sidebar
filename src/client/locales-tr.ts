@@ -738,4 +738,6 @@ export const tr: Record<string, string> = {
   pluginDshMemoryDeltaDesc: 'Oturumlar arası bellek: yalnızca değişenler enjekte edilir (değişiklik yoksa hiçbir şey), gözden geçirme tarihi hatırlatması, alaka sıralı arama ve kenar çubuğu sekmesi ile.',
   pluginPrInboxName: "dsh-pr-inbox PR Gelen Kutusu",
   pluginPrInboxDesc: "Geçerli çalışma alanının GitHub PR'ları üç grupta — benim açtıklarım / incelememi bekleyenler / benim birleştirdiklerim — panelde gövde, yorum özeti ve değişen dosyalarla; yerel gh oturumunuzla salt okunur",
+  pluginBioviewerName: 'BioViewer',
+  pluginBioviewerDesc: 'better-sidebar düzenleyicisinde Mol* dosya önizlemesi (PDB / mmCIF / MRC haritaları / küçük moleküller ve Chimera .cmm işaretleyicileri, .gz dahil), artı BioViewer çalışma alanı sekmesi ve bio_open / bio_add araçları',
 }

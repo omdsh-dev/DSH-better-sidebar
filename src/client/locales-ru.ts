@@ -736,4 +736,6 @@ export const ru: Record<string, string> = {
   pluginDshMemoryDeltaDesc: 'Память между сессиями: внедряется только то, что изменилось (ничего, если ничего не менялось), с напоминанием о дате проверки, поиском по релевантности и вкладкой в боковой панели.',
   pluginPrInboxName: "dsh-pr-inbox Входящие PR",
   pluginPrInboxDesc: "PR GitHub текущего рабочего пространства в трёх группах — созданные мной / ожидающие моего ревью / слитые мной — с текстом, сводкой комментариев и списком изменённых файлов в панели; только чтение через локальный вход gh",
+  pluginBioviewerName: 'BioViewer',
+  pluginBioviewerDesc: 'Предпросмотр Mol* (PDB / mmCIF / карты MRC / малые молекулы и маркеры Chimera .cmm, включая .gz) в редакторе better-sidebar, вкладка рабочей области BioViewer и инструменты bio_open / bio_add',
 }
