@@ -637,4 +637,6 @@ export const sv: Record<string, string> = {
   pluginTurnOutlineDesc: "Viker sessionen i användarvarv (indata + verktygssteg + utdata); klicka på ett steg för att hoppa till exakt plats i samtalet — utan LLM-anrop, skrivskyddad",
   pluginDshMemoryDeltaName: 'dsh-memory-delta Minne',
   pluginDshMemoryDeltaDesc: 'Minne mellan sessioner: endast det som ändrats injiceras (inget när inget ändrats), med påminnelse om granskningsdatum, relevanssorterad sökning och en sidopanelflik.',
+  pluginBioviewerName: 'BioViewer',
+  pluginBioviewerDesc: 'Mol*-förhandsvisning (PDB / mmCIF / MRC-kartor / små molekyler och Chimera-.cmm-markörer, inklusive .gz) i better-sidebar-redigeraren, plus en BioViewer-arbetsytflik och bio_open / bio_add',
 }

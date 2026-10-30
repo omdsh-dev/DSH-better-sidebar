@@ -655,4 +655,6 @@ export const ar: Record<string, string> = {
   pluginTurnOutlineDesc: "يطوي الجلسة إلى جولات المستخدم (الإدخال + خطوات الأدوات + المخرجات)؛ انقر على أي خطوة للانتقال إلى موضعها الدقيق في المحادثة — بدون استدعاء LLM، للقراءة فقط",
   pluginDshMemoryDeltaName: 'dsh-memory-delta الذاكرة',
   pluginDshMemoryDeltaDesc: 'ذاكرة عبر الجلسات: يُحقن ما تغيّر فقط (ولا شيء عند عدم وجود تغيير)، مع تذكير بموعد المراجعة وبحث مرتّب حسب الصلة وتبويب في الشريط الجانبي.',
+  pluginBioviewerName: 'BioViewer',
+  pluginBioviewerDesc: 'معاينة ملفات الجزيئات الحيوية (PDB / mmCIF / خرائط MRC / الجزيئات الصغيرة وعلامات Chimera .cmm بما في ذلك .gz) في محرر better-sidebar، مع تبويب مساحة العمل BioViewer وأدوات bio_open / bio_add',
 }
