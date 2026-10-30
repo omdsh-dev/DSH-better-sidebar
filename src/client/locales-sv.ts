@@ -326,6 +326,8 @@ export const sv: Record<string, string> = {
   settingsSubagentDesc: 'När den aktuella konversationen skapar en ny subagent skapas sidan Uppgifter i sidokortet och markeras med en oläst punkt; ett sidokort som redan visar en annan sida tas inte över — klicka på punkten för att gå dit; på breda skärmar expanderas även sidokortet, medan helskärmspanelen inte tvingas öppnas på smala skärmar; stäng av för att sluta skapa den automatiskt',
   settingsJobsTitle: 'Aktivera sidan Uppgifter automatiskt vid ett nytt bakgrundsjobb',
   settingsJobsDesc: 'När ett nytt bakgrundsjobb dyker upp för den aktuella konversationen skapas sidan Uppgifter i sidokortet och markeras med en oläst punkt (detta sker för varje nytt jobb); ett sidokort som redan visar en annan sida tas inte över — klicka på punkten för att gå dit; på breda skärmar expanderas även sidokortet, medan helskärmspanelen inte tvingas öppnas på smala skärmar; stäng av för att sluta skapa den automatiskt',
+  settingsAutoCollapseTitle: 'Fäll ihop sidokortet automatiskt när aktiviteten är klar',
+  settingsAutoCollapseDesc: 'När den automatiska aktiveringen fäller ut ett ihopfällt sidokort fälls det ihop igen när alla underagenter och bakgrundsjobb i den aktuella konversationen är klara och förblir inaktiva en stund (endast kortet stängs, fliken finns kvar; ett kort du själv fällt ut rörs aldrig). Av som standard',
   settingsTasksAutoFoldSettledTitle: 'Fäll ihop avslutade lövnoder automatiskt',
   settingsTasksAutoFoldSettledDesc: 'Fäll automatiskt ihop lövnoder som är avslutade, misslyckade eller stoppade och inte har några underordnade agenter; på som standard',
   settingsTasksAutoFoldBranchesTitle: 'Fäll endast ihop helt avslutade grenar automatiskt',

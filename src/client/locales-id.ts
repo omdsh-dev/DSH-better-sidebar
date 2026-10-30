@@ -341,6 +341,8 @@ export const id: Record<string, string> = {
   settingsSubagentDesc: 'Saat obrolan saat ini membuat subagen baru, halaman Tasks dibuat di kartu samping dan ditandai titik belum dibaca; kartu samping yang sudah terbuka pada halaman lain tidak diambil alih — klik titiknya untuk ke sana; pada layar lebar kartu samping juga dibentangkan, sedangkan pada layar sempit laci layar penuh tidak dipaksa terbuka; matikan untuk berhenti membuatnya otomatis',
   settingsJobsTitle: 'Aktifkan otomatis halaman Tasks saat ada tugas latar baru',
   settingsJobsDesc: 'Setiap kali tugas latar baru muncul untuk obrolan saat ini, halaman Tasks dibuat di kartu samping dan ditandai titik belum dibaca (setiap tugas baru memicu); kartu samping yang sudah terbuka pada halaman lain tidak diambil alih — klik titiknya untuk ke sana; pada layar lebar kartu samping juga dibentangkan, sedangkan pada layar sempit laci layar penuh tidak dipaksa terbuka; matikan untuk berhenti membuatnya otomatis',
+  settingsAutoCollapseTitle: 'Lipat otomatis kartu samping setelah aktivitas selesai',
+  settingsAutoCollapseDesc: 'Saat aktivasi otomatis membentangkan kartu samping yang terlipat, kartu itu dilipat kembali setelah semua subagen dan tugas latar obrolan saat ini selesai dan tetap menganggur sesaat (hanya kartunya yang ditutup, tabnya tetap ada; kartu yang Anda bentangkan sendiri tidak pernah diubah). Nonaktif secara bawaan',
   settingsTasksAutoFoldSettledTitle: 'Lipat otomatis tugas daun yang selesai',
   settingsTasksAutoFoldSettledDesc: 'Lipat otomatis tugas daun yang telah selesai (berhasil, gagal, atau dihentikan) dan tidak memiliki subagen; aktif secara default',
   settingsTasksAutoFoldBranchesTitle: 'Hanya lipat otomatis cabang yang selesai seluruhnya',

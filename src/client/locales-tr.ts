@@ -343,6 +343,8 @@ export const tr: Record<string, string> = {
   settingsSubagentDesc: 'Geçerli sohbet yeni bir alt aracı oluşturduğunda Görevler sayfası yan kartta oluşturulur ve okunmamış noktasıyla işaretlenir; başka bir sayfada açık olan yan kart ele geçirilmez — oraya gitmek için noktaya tıklayın; geniş ekranlarda yan kart da genişletilir, dar ekranlarda tam ekran çekmecesi zorla açılmaz; otomatik oluşturmayı durdurmak için kapatın',
   settingsJobsTitle: 'Yeni bir arka plan işi belirdiğinde Görevler sayfasını otomatik etkinleştir',
   settingsJobsDesc: 'Geçerli sohbette her yeni arka plan işi belirdiğinde Görevler sayfası yan kartta oluşturulur ve okunmamış noktasıyla işaretlenir (her yeni iş tetikler); başka bir sayfada açık olan yan kart ele geçirilmez — oraya gitmek için noktaya tıklayın; geniş ekranlarda yan kart da genişletilir, dar ekranlarda tam ekran çekmecesi zorla açılmaz; otomatik oluşturmayı durdurmak için kapatın',
+  settingsAutoCollapseTitle: 'Etkinlik bittiğinde yan kartı otomatik daralt',
+  settingsAutoCollapseDesc: 'Otomatik etkinleştirme katlanmış bir yan kartı genişlettiğinde, geçerli sohbetin tüm alt ajanları ve arka plan işleri bittikten ve bir süre boşta kaldıktan sonra kart yeniden daraltılır (yalnızca kart kapanır, sekme kalır; kendi genişlettiğiniz kartlara dokunulmaz). Varsayılan olarak kapalı',
   settingsTasksAutoFoldSettledTitle: 'Tamamlanan yaprak görevleri otomatik daralt',
   settingsTasksAutoFoldSettledDesc: 'Tamamlanan, başarısız olan veya durdurulan ve alt aracısı olmayan yaprak görevleri otomatik daralt; varsayılan olarak açık',
   settingsTasksAutoFoldBranchesTitle: 'Yalnızca tamamen biten dalları otomatik daralt',

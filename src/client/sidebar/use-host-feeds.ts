@@ -5,13 +5,14 @@
  * jump-back). All of it reacts to the host's live feeds for the CURRENT
  * session; the sidebar shell only consumes the returned jump-back ref.
  */
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { Context, SidebarJobView, SidebarSessionList } from '../../context-types.ts'
 import type { SidebarStore } from '../state.ts'
 import { isNarrowWidth } from '../breakpoints.ts'
 import { hostWebSocketUrl } from '../host-route-url.ts'
 import { detectNewDirectSubagent } from '../subagent-detect.ts'
 import { detectNewJob } from '../subagent-jobs.ts'
+import { isSessionActivityIdle } from '../host-activity.ts'
 import { clientJobs, useJobsSnapshot } from '../jobs-client.ts'
 import { mountedSessionId } from '../native/surface.ts'
 import { t } from '../locales.ts'
@@ -29,6 +30,7 @@ const FAILURE_LIMIT = 3
  * title frame has had time to land.
  */
 const AUTO_OPEN_DEBOUNCE_MS = 500
+const AUTO_COLLAPSE_IDLE_MS = 3000
 
 /**
  * The native column's public face, as this module reaches it. Every reader
@@ -99,7 +101,7 @@ function activateTasksPage(
   store: SidebarStore,
   sessionId: string,
   options: { background: boolean },
-): void {
+): boolean {
   const column = ctx.get('sidebarRight') as unknown as NativeColumnFace | undefined
   // The face acts on the MOUNTED session: both gates below are only meaningful
   // (and only safe) when the activation targets the one on screen. "On screen"
@@ -108,6 +110,7 @@ function activateTasksPage(
   // without the feed) reads as "not this session": the plugin then leaves the
   // column alone rather than reading or toggling one it is not drawing.
   const onScreen = mountedSessionId(ctx) === sessionId
+  const wasCollapsed = column?.isExpanded?.() === false
   // Do not take over the page the reader is looking at (see the docblock).
   if (options.background && onScreen && column?.isExpanded?.() === true) {
     const shown = column.active?.()
@@ -118,7 +121,7 @@ function activateTasksPage(
       // The dot belongs to the session the work is in, which is the current
       // one (the gate above proved this seat is the mounted session).
       store.markUnread('subagent')
-      return
+      return false
     }
   }
   const park = options.background
@@ -126,9 +129,10 @@ function activateTasksPage(
     && isNarrowWidth(window.innerWidth)
     // Only a column the user had COLLAPSED is put back: an expanded one is in
     // use, and closing it under the user would be worse than the takeover.
-    && column?.isExpanded?.() === false
+    && wasCollapsed
   ctx.get('betterSidebar')?.openTab({ type: 'subagent', title: t('subagent') })
   if (park) column?.toggleExpanded?.()
+  return options.background && onScreen && !park && wasCollapsed
 }
 
 export function useHostFeeds(feeds: {
@@ -138,6 +142,8 @@ export function useHostFeeds(feeds: {
   sessionId: string | undefined
 }): { subagentJumpRef: { current: string | undefined } } {
   const { ctx, store, sessionList, sessionId } = feeds
+  const [autoCollapseSession, setAutoCollapseSession] = useState<string | undefined>()
+  const autoCollapseEnabled = store.getPrefs().autoCollapseAfterIdle
 
   /**
    * Agent opens push: subscribe to the host's `sidebar_open` requests for
@@ -258,7 +264,8 @@ export function useHostFeeds(feeds: {
       if (!store.getPrefs().autoOpenSubagent) return
       if (store.getPrefs().mobileNoAutoOpen && isNarrowWidth(window.innerWidth)) return
       if (ctx.get('betterSidebar')?.isTabEnabled('subagent') === false) return
-      activateTasksPage(ctx, store, sessionId, { background: true })
+      if (activateTasksPage(ctx, store, sessionId, { background: true })
+        && store.getPrefs().autoCollapseAfterIdle) setAutoCollapseSession(sessionId)
     }, AUTO_OPEN_DEBOUNCE_MS)
     autoOpenPendingRef.current = { baseline, timer }
   }, [sessionList, sessionId, store, ctx])
@@ -322,7 +329,8 @@ export function useHostFeeds(feeds: {
     if (!store.getPrefs().autoOpenJobs) return
     if (store.getPrefs().mobileNoAutoOpen && isNarrowWidth(window.innerWidth)) return
     if (ctx.get('betterSidebar')?.isTabEnabled('subagent') === false) return
-    activateTasksPage(ctx, store, sessionId, { background: true })
+    if (activateTasksPage(ctx, store, sessionId, { background: true })
+      && store.getPrefs().autoCollapseAfterIdle) setAutoCollapseSession(sessionId)
   }, [jobsService, jobsSnapshot, sessionId, store, ctx])
 
   /**
@@ -344,6 +352,31 @@ export function useHostFeeds(feeds: {
     subagentJumpRef.current = undefined
     activateTasksPage(ctx, store, sessionId, { background: false })
   }, [sessionId, store, ctx])
+
+  // Only an expansion caused by our auto-open may be handed back. The timer
+  // exists only while armed and idle; a new job/subagent cancels the grace.
+  useEffect(() => {
+    if (autoCollapseSession === undefined) return
+    if (!autoCollapseEnabled || autoCollapseSession !== sessionId) {
+      setAutoCollapseSession(undefined)
+      return
+    }
+    if (!isSessionActivityIdle(sessionList, autoCollapseSession,
+      jobsSnapshot.rows[autoCollapseSession])) return
+    const timer = window.setTimeout(() => {
+      setAutoCollapseSession(undefined)
+      if (mountedSessionId(ctx) !== autoCollapseSession
+        || !store.getPrefs().autoCollapseAfterIdle) return
+      if (!isSessionActivityIdle(ctx.sessions.list.getSnapshot(), autoCollapseSession,
+        jobsService?.state.getSnapshot().rows[autoCollapseSession])) return
+      const column = ctx.get('sidebarRight') as unknown as NativeColumnFace | undefined
+      // A reader who moved to a different page owns the column now. Older
+      // hosts without an active-page face are left alone as well.
+      if (column?.isExpanded?.() !== true || column.active?.()?.kind !== 'subagent') return
+      column.toggleExpanded?.()
+    }, AUTO_COLLAPSE_IDLE_MS)
+    return () => window.clearTimeout(timer)
+  }, [autoCollapseSession, autoCollapseEnabled, sessionId, sessionList, jobsSnapshot, jobsService, ctx, store])
 
   return { subagentJumpRef }
 }

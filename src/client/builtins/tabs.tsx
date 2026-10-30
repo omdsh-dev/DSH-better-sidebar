@@ -197,6 +197,10 @@ export function builtinTabs(ctx: Context): readonly TabDescriptor[] {
           title: () => t('settingsJobsTitle'),
           desc: () => t('settingsJobsDesc'),
         }, {
+          key: 'autoCollapseAfterIdle',
+          title: () => t('settingsAutoCollapseTitle'),
+          desc: () => t('settingsAutoCollapseDesc'),
+        }, {
           key: 'tasksViewMode',
           type: 'select',
           title: () => t('settingsViewModeTitle'),
