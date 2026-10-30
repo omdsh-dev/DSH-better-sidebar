@@ -753,4 +753,6 @@ export const zhHK: Record<string, string> = {
   pluginDshMemoryDeltaDesc: '跨工作階段記憶：只注入有變動的部分（沒有變動則完全不注入），附到期覆核提醒、相關度排序檢索與側邊欄分頁。',
   pluginPrInboxName: "dsh-pr-inbox PR 收件箱",
   pluginPrInboxDesc: "用「我提出的 / 待我審查 / 我合併的」三個分類檢視目前工作區的 GitHub PR；可在面板內閱讀正文、留言摘要與變更檔案清單，沿用本機 gh 登入，唯讀",
+  pluginBioviewerName: 'BioViewer 分子預覽',
+  pluginBioviewerDesc: '為 better-sidebar 預覽 PDB / mmCIF / MRC 密度圖 / 小分子和 Chimera .cmm 標記（含 .gz），提供 BioViewer 工作區標籤，以及 bio_open / bio_add 工具',
 }

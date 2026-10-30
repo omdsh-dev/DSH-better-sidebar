@@ -738,4 +738,6 @@ export const ja: Record<string, string> = {
   pluginDshMemoryDeltaDesc: 'セッションをまたぐ記憶：変化した部分だけを注入し（変化がなければ何も注入しません）、レビュー期日のリマインド、関連度順の検索、サイドバーのタブを備えます。',
   pluginPrInboxName: 'dsh-pr-inbox PR 受信箱',
   pluginPrInboxDesc: '現在のワークスペースの GitHub PR を「自分が出した / レビュー待ち / 自分がマージした」の 3 バケットで表示。本文・コメント概要・変更ファイルをパネル内で読め、ローカルの gh ログインを利用する読み取り専用プラグイン',
+  pluginBioviewerName: 'BioViewer 分子プレビュー',
+  pluginBioviewerDesc: 'better-sidebar エディターで PDB / mmCIF / MRC 密度図 / 小分子および Chimera .cmm マーカー（.gz 含む）を Mol* でプレビューし、BioViewer ワークスペースタブと bio_open / bio_add ツールを提供',
 }

@@ -739,4 +739,6 @@ export const ar: Record<string, string> = {
   pluginDshMemoryDeltaDesc: 'ذاكرة عبر الجلسات: يُحقن ما تغيّر فقط (ولا شيء عند عدم وجود تغيير)، مع تذكير بموعد المراجعة وبحث مرتّب حسب الصلة وتبويب في الشريط الجانبي.',
   pluginPrInboxName: "dsh-pr-inbox صندوق PR",
   pluginPrInboxDesc: "طلبات السحب (PR) في مساحة العمل الحالية ضمن ثلاث مجموعات — التي أنشأتها / التي تنتظر مراجعتي / التي دمجتها — مع النص وملخص التعليقات وقائمة الملفات المتغيرة داخل اللوحة؛ للقراءة فقط عبر تسجيل دخول gh المحلي",
+  pluginBioviewerName: 'BioViewer',
+  pluginBioviewerDesc: 'معاينة ملفات الجزيئات الحيوية (PDB / mmCIF / خرائط MRC / الجزيئات الصغيرة وعلامات Chimera .cmm بما في ذلك .gz) في محرر better-sidebar، مع تبويب مساحة العمل BioViewer وأدوات bio_open / bio_add',
 }

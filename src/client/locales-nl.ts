@@ -736,4 +736,6 @@ export const nl: Record<string, string> = {
   pluginDshMemoryDeltaDesc: 'Geheugen tussen sessies: alleen wat is gewijzigd wordt geïnjecteerd (niets als er niets is gewijzigd), met herinnering aan de controledatum, relevantiegerangschikt zoeken en een zijbalktabblad.',
   pluginPrInboxName: "dsh-pr-inbox PR-inbox",
   pluginPrInboxDesc: "De GitHub-PR's van de huidige workspace in drie groepen — door mij aangemaakt / wacht op mijn review / door mij gemerged — met tekst, reactiesamenvatting en gewijzigde bestanden in het paneel; alleen-lezen via je lokale gh-login",
+  pluginBioviewerName: 'BioViewer',
+  pluginBioviewerDesc: 'Mol*-bestandsvoorbeeld (PDB / mmCIF / MRC-kaarten / kleine moleculen en Chimera-.cmm-markeringen, inclusief .gz) in de better-sidebar-editor, plus een BioViewer-werkruimtetabblad en bio_open / bio_add',
 }

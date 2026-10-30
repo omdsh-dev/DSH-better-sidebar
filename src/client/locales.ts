@@ -747,6 +747,8 @@ export const zh = {
   pluginDshMemoryDeltaName: 'dsh-memory-delta 记忆',
   pluginPrInboxName: 'dsh-pr-inbox PR 收件箱',
   pluginPrInboxDesc: '按「我提的 / 待我审 / 我合并的」三桶看当前工作区的 GitHub PR；点开可读正文、评论摘要与改动文件清单，复用本机 gh 登录，只读',
+  pluginBioviewerName: 'BioViewer 分子预览',
+  pluginBioviewerDesc: '为 better-sidebar 预览 PDB / mmCIF / MRC 密度图 / 小分子和 Chimera .cmm 标记（含 .gz），提供 BioViewer 工作区标签，以及 bio_open / bio_add 工具',
 }
 
 /** The en dictionary (key-set-equal to zh, enforced by the type annotation). */
@@ -1473,6 +1475,8 @@ export const en: Record<keyof typeof zh, string> = {
   pluginDshMemoryDeltaName: 'dsh-memory-delta Memory',
   pluginPrInboxName: 'dsh-pr-inbox PR Inbox',
   pluginPrInboxDesc: 'The current workspace\'s GitHub PRs in three buckets — authored by me / needs my review / merged by me — with in-panel body, comment summaries and changed files; read-only through your local gh login',
+  pluginBioviewerName: 'BioViewer',
+  pluginBioviewerDesc: 'Mol* file preview (PDB / mmCIF / MRC maps / small molecules and Chimera .cmm, including .gz) for the better-sidebar editor, plus a BioViewer workspace tab and bio_open / bio_add tools',
 }
 
 /**

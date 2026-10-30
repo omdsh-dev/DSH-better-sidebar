@@ -736,4 +736,6 @@ export const id: Record<string, string> = {
   pluginDshMemoryDeltaDesc: 'Memori antar sesi: hanya yang berubah yang disuntikkan (tidak ada saat tidak ada perubahan), dengan pengingat tanggal tinjauan, pencarian berperingkat relevansi, dan tab bilah samping.',
   pluginPrInboxName: "dsh-pr-inbox Kotak Masuk PR",
   pluginPrInboxDesc: "PR GitHub dari workspace saat ini dalam tiga kelompok — yang saya buat / menunggu review saya / yang saya merge — dengan isi, ringkasan komentar, dan daftar file yang berubah di panel; hanya-baca melalui login gh lokal Anda",
+  pluginBioviewerName: 'BioViewer',
+  pluginBioviewerDesc: 'Pratinjau berkas Mol* (PDB / mmCIF / peta MRC / molekul kecil dan penanda Chimera .cmm, termasuk .gz) di editor better-sidebar, plus tab ruang kerja BioViewer dan alat bio_open / bio_add',
 }
