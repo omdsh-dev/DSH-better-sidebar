@@ -77,13 +77,24 @@ const pendingMessage = (id: string, kind: string, text: string) => ({
   source: { kind },
 })
 
-/** The shape the routes pass since the marker fix: isSeeded + inheritedEventCount. */
-const forkMarkedSession = (id: string, seed: readonly SidebarSessionEvent[]): Session =>
+/** The shape sidechat.start passes: isSeeded + inheritedEventCount = the
+ *  inherited prefix, an inherited end-seed marker AT the cut, then the
+ *  thread's own durable descriptor (the host's own session.fork shape). */
+const forkMarkedSession = (id: string, inherited: readonly SidebarSessionEvent[]): Session =>
   Session.create(
     id as SessionId,
-    seed as never,
+    [
+      ...inherited,
+      { type: 'session/end-seed', seq: inherited.length, time: Date.now(), data: { inherited: true } },
+      {
+        type: 'subagent/descriptor',
+        seq: inherited.length + 1,
+        time: Date.now(),
+        data: snapshotSubagentDescriptor({ mode: 'continuable', provider: 'sidechat', label: 'Side: test' }),
+      },
+    ] as never,
     { version: SESSION_FORMAT_VERSION, id: id as SessionId, createdAt: Date.now(), isSeeded: true },
-    SessionLogOffset(seed.length),
+    SessionLogOffset(inherited.length),
   )
 
 /** Real loop order: inbox insert → turn/start → claim deletion → step/start
@@ -202,8 +213,9 @@ describe('sidechat seed against the real dsh-session validator', () => {
   it('accepts the durable subagent descriptor the routes append to the seed', () => {
     // Regression guard for the catalog-corrupt fix: a cold thread WITHOUT a
     // descriptor renders as a 'corrupt' diagnostic in the host subagents.list.
-    // The descriptor is a log-only event appended INSIDE the seed (before the
-    // end-seed marker); the real validator must accept the combined seed.
+    // The descriptor is a log-only event carried in the seed; the real
+    // validator must accept the combined seed. (Its position relative to the
+    // inherited cut is pinned in sidechat-routes.spec.ts.)
     const { seed } = buildSidechatInheritance(parentLog())
     const descriptor = snapshotSubagentDescriptor({
       mode: 'continuable',
@@ -280,25 +292,16 @@ describe('sidechat seed fork markers vs the reconstructed inbox', () => {
   })
 
   it('the fork-marker pair (isSeeded + inheritedEventCount) empties the ownEvents()-based fold', () => {
-    // Same mid-turn log as the root-cause case, plus the descriptor the
-    // routes append — exactly what sidechat.start passes to agents.create.
+    // Same mid-turn log as the root-cause case, plus the marker and the
+    // descriptor the routes append — exactly what sidechat.start passes to
+    // agents.create.
     // NOTE: this pins the marker pair's ownEvents() cut only — necessary but
     // NOT sufficient for the RUNTIME inbox, which folds the full log (the
     // describe below proves the hole and the route's clear() fence).
     const { seed } = buildSidechatInheritance(midTurnLog())
-    const withDescriptor = [
-      ...seed,
-      {
-        type: 'subagent/descriptor',
-        seq: seed.length,
-        time: Date.now(),
-        data: snapshotSubagentDescriptor({ mode: 'continuable', provider: 'sidechat', label: 'Side: test' }),
-      } as unknown as SidebarSessionEvent,
-    ]
-    const marked = forkMarkedSession('session-inbox-marked', withDescriptor)
-    // Only the end-seed marker is own; the transcript cut is unchanged.
-    expect(marked.ownEvents().map(event => event.type)).toEqual(['session/end-seed'])
-    expect(marked.snapshotEvents().map(event => event.type).at(-1)).toBe('session/end-seed')
+    const marked = forkMarkedSession('session-inbox-marked', seed)
+    // Only the end-seed marker and the descriptor are own.
+    expect(marked.ownEvents().map(event => event.type)).toEqual(['session/end-seed', 'subagent/descriptor'])
     expect(inboxOver(marked)).toEqual({ nextTurn: 0, nextStep: 0 })
   })
 })
@@ -358,16 +361,7 @@ describe('sidechat seed vs the REAL projection registry (the runtime inbox path)
       ev('agent/inbox/spliced', 16, { target: 'next-turn', start: 0, inserted: [pendingMessage('m-late', 'user', 'queued while running')] }),
     ]
     const { seed } = buildSidechatInheritance(log)
-    const withDescriptor = [
-      ...seed,
-      {
-        type: 'subagent/descriptor',
-        seq: seed.length,
-        time: Date.now(),
-        data: snapshotSubagentDescriptor({ mode: 'continuable', provider: 'sidechat', label: 'Side: test' }),
-      } as unknown as SidebarSessionEvent,
-    ]
-    return forkMarkedSession('session-inbox-registry', withDescriptor)
+    return forkMarkedSession('session-inbox-registry', seed)
   }
 
   it('the fork-marker pair ALONE leaves the phantom input live in the runtime inbox (the rc.2 projection hole)', () => {
@@ -398,6 +392,6 @@ describe('sidechat seed vs the REAL projection registry (the runtime inbox path)
     // stored log to the same empty state, and the transcript cut is
     // unchanged (splices never render).
     expect(child.ownEvents().map(event => event.type))
-      .toEqual(['session/end-seed', 'agent/inbox/spliced', 'agent/inbox/spliced'])
+      .toEqual(['session/end-seed', 'subagent/descriptor', 'agent/inbox/spliced', 'agent/inbox/spliced'])
   })
 })

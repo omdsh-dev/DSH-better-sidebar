@@ -12,7 +12,7 @@ import { resolve } from 'node:path'
 import WorkingDirectoryService from '@deepseek-ai/dsh-working-directory'
 import { Session, SessionLogOffset, SESSION_FORMAT_VERSION } from '@deepseek-ai/dsh-session'
 import type { SessionEvent, SessionHeader, SessionId } from '@deepseek-ai/dsh-session'
-import { SUBAGENT_DESCRIPTOR_VERSION } from '@deepseek-ai/dsh-subagent'
+import { foldSubagentDescriptor, SUBAGENT_DESCRIPTOR_VERSION } from '@deepseek-ai/dsh-subagent'
 import { buildSidechatApi } from '../src/sidechat-routes.ts'
 import { SidebarError } from '../src/wire.ts'
 import { buildSidechatInheritance, SIDE_BOUNDARY_PROMPT, SIDE_INJECTION_SOURCE_KIND, SIDE_NEW_THREAD_TITLE, sideLabel } from '../src/sidechat-core.ts'
@@ -243,16 +243,18 @@ describe('sidechat.start', () => {
     })
     // The fork-marker pair is load-bearing: without it the child's Inbox
     // replays the parent's seed inbox splices and inherits whatever input sat
-    // unclaimed in the parent (see sidechat-seed-validation.spec.ts).
-    expect(options.inheritedEventCount).toBe(options.seed.length)
+    // unclaimed in the parent (see sidechat-seed-validation.spec.ts). The cut
+    // is the copied parent history; the marker and the descriptor after it
+    // are the thread's own events.
+    expect(options.inheritedEventCount).toBe(options.seed.length - 2)
     expect(options.agentOptions).toEqual({ provider: 'test', model: 'model-x' })
     // The child carries the parent's completed turns as a verbatim seed,
-    // closed by the durable subagent descriptor (honest catalog citizenship:
-    // without it the host's subagents.list renders the cold thread as a
-    // 'corrupt' diagnostic row).
+    // then the inherited end-seed marker and the durable subagent descriptor
+    // (honest catalog citizenship: without it the host's subagents.list
+    // renders the cold thread as a 'corrupt' diagnostic row).
     expect(options.seed.map(event => event.type)).toEqual([
       'user/message', 'turn/start', 'step/start', 'assistant/message', 'step/end', 'turn/end',
-      'subagent/descriptor',
+      'session/end-seed', 'subagent/descriptor',
     ])
     expect(options.seed.at(-1)?.data).toMatchObject({
       // The descriptor version is stamped by the host package's
@@ -310,9 +312,9 @@ describe('sidechat.start', () => {
     const options = services.create.mock.calls[0]![0] as { seed: Array<{ type: string; data: Record<string, unknown> }> }
     expect(options.seed.map(event => event.type)).toEqual([
       'user/message', 'turn/start', 'step/start', 'step/end', 'turn/end',
-      'subagent/descriptor',
+      'session/end-seed', 'subagent/descriptor',
     ])
-    expect(options.seed.at(-2)?.data).toEqual({ turn: 1, reason: { kind: 'interrupted' } })
+    expect(options.seed.at(-3)?.data).toEqual({ turn: 1, reason: { kind: 'interrupted' } })
   })
 
   it('falls back to the snapshot when a tool call is still executing', async () => {
@@ -332,7 +334,7 @@ describe('sidechat.start', () => {
 
     const options = services.create.mock.calls[0]![0] as { seed: Array<{ type: string }> }
     // Cut BEFORE the open turn: only the pending user message is inherited.
-    expect(options.seed.map(event => event.type)).toEqual(['user/message', 'subagent/descriptor'])
+    expect(options.seed.map(event => event.type)).toEqual(['user/message', 'session/end-seed', 'subagent/descriptor'])
     // The snapshot rides the injection, not the follow-up question.
     const injection = child.inject.mock.calls[0]![0] as { content: Array<{ text: string }> }
     expect(injection.content[0]!.text).toContain('`bash` (executing)')
@@ -356,14 +358,15 @@ describe('sidechat.start', () => {
     const { childId } = await api['sidechat.start']({ sessionId: 'parent', question: '   ' })
 
     // The empty thread carries the same fork-marker pair (isSeeded +
-    // inheritedEventCount = seed length) as the prompted create.
+    // inheritedEventCount = the inherited prefix) as the prompted create.
     const options = services.create.mock.calls[0]![0] as {
       meta: Record<string, unknown>
       seed: readonly { type: string }[]
       inheritedEventCount: number
     }
     expect(options.meta.isSeeded).toBe(true)
-    expect(options.inheritedEventCount).toBe(options.seed.length)
+    expect(options.inheritedEventCount).toBe(options.seed.length - 2)
+    expect(options.seed[options.inheritedEventCount]).toMatchObject({ type: 'session/end-seed', data: { inherited: true } })
 
     // No prompt yet: the composer owns the first message; the placeholder
     // label is pinned and the in-progress snapshot is parked for it.
@@ -514,6 +517,51 @@ describe('sidechat.start', () => {
       model: 'glm-5.3-flash',
     })
     expect(options.agentOptions.reasoningEffort).toBeUndefined()
+  })
+
+  it('puts the side thread descriptor after the inherited cut, where the host looks for it', async () => {
+    // The host reads a child's descriptor only from its OWN events, i.e.
+    // `events.slice(inheritedEventCount)` (dsh-subagent cold resume; the
+    // persisted-session facts read the same range). A descriptor inside the
+    // inherited prefix leaves the side thread without one: it lists as corrupt
+    // and cannot be resumed as a continuable child.
+    const parent = agent('parent', {
+      events: [
+        ev('user/message', 0, { id: 'm-q', role: 'user', content: [{ type: 'text', text: 'q' }], source: { kind: 'user' } }),
+        ev('turn/start', 1, { turn: 1 }),
+        ev('step/start', 2, { turn: 1, step: 1 }),
+        ev('assistant/message', 3, {
+          turn: 1,
+          step: 1,
+          message: { id: 'm-a', role: 'assistant', content: [{ type: 'text', text: 'a' }], source: { kind: 'model', provider: 'test', model: 'model-x' } },
+          stream: [],
+        }),
+        ev('step/end', 4, { turn: 1, step: 1 }),
+        ev('turn/end', 5, { turn: 1, reason: { kind: 'completed' } }),
+      ],
+    })
+    const services = happyServices(parent, agent('child'))
+    const workingDirectory = { get: vi.fn((_session: unknown) => resolve('/current-execution')) }
+    await buildSidechatApi(ctxWith({ ...services, workingDirectory }))['sidechat.start']({ sessionId: 'parent', question: 'q' })
+    const options = services.create.mock.calls[0]![0] as {
+      sessionId: SessionId; meta: Partial<SessionHeader>; seed: readonly SessionEvent[]; inheritedEventCount: number
+    }
+    // The REAL seeded constructor must accept the seed and keep the cut.
+    const child = Session.create(options.sessionId, options.seed, {
+      ...options.meta, id: options.sessionId, version: SESSION_FORMAT_VERSION, createdAt: Date.now(), isSeeded: true,
+    }, SessionLogOffset(options.inheritedEventCount))
+    expect(Number(child.inheritedEventCount)).toBe(options.inheritedEventCount)
+    const own = child.snapshotEvents().slice(options.inheritedEventCount)
+    expect(foldSubagentDescriptor(own)).toMatchObject({ mode: 'continuable', provider: 'sidechat', label: sideLabel('q') })
+    // The inherited prefix is exactly the parent history the thread copied.
+    expect(child.snapshotEvents(SessionLogOffset(0), SessionLogOffset(options.inheritedEventCount)).map(event => event.type)).toEqual([
+      'user/message', 'turn/start', 'step/start', 'assistant/message', 'step/end', 'turn/end',
+    ])
+    // Same shape as the host's own session.fork: the inherited end-seed
+    // marker opens the thread's own range, followed by its own events.
+    expect(own.map(event => event.type)).toEqual(['session/end-seed', 'working-directory/change', 'subagent/descriptor'])
+    expect(own[0]!.data).toEqual({ inherited: true })
+    expect(child.snapshotEvents().every((event, index) => event.seq === index)).toBe(true)
   })
 
   it('rejects a non-running parent', async () => {
