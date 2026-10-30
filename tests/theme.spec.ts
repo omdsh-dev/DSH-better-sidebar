@@ -292,6 +292,22 @@ describe('skin contract: the plugin owns no color of its own', () => {
     expect(block).not.toContain('--dsw-alias-bg-l2')
   })
 
+  it('the native files header follows the host files pane header', () => {
+    // The right Sidebar's pane body starts under the host's 38px tab strip,
+    // and the host's own files pane (`ui-sidebar-files`) opens with a 38px
+    // header and a .5px `border-l3` hairline. Both values are what put this
+    // header's bottom rule on the session tab bar's line at the split; with
+    // the roomier workbench header it sat ~3px lower and in a dimmer shade
+    // (measured on DSH 0.2.1-rc.1). Pin the host-derived numbers.
+    const styles = readFileSync(resolve(ROOT, 'src/client/sidebar.module.css'), 'utf8')
+    const block = /\.nativeTabHost \.editorTreeSearch \{([\s\S]*?)\n\}/.exec(styles)?.[1]
+    if (block === undefined) throw new Error('the native-scoped .editorTreeSearch rule must exist')
+    expect(block).toContain('box-sizing: border-box')
+    expect(block).toContain('height: 38px')
+    expect(block).toContain('padding: 0 8px')
+    expect(block).toContain('border-bottom: 0.5px solid var(--dsw-alias-border-l3)')
+  })
+
   it('no icon dataset is shipped as a lazy chunk', () => {
     const chunkDir = resolve(ROOT, 'src/client/chunks')
     const chunks = readdirSync(chunkDir).filter(name => /\.tsx?$/.test(name))
