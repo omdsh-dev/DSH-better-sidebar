@@ -49,4 +49,11 @@ export const builtinViewerPlugins: readonly PluginEntry[] = [
     description: () => t('pluginAudioDesc'),
     install: 'cd ~/.dsh && dsh plugin --profile web add @huanlin/dsh-plugin-better-sidebar-plugin-audio',
   },
+  {
+    id: 'dsh-bioviewer',
+    name: () => t('pluginBioviewerName'),
+    url: 'https://github.com/shuuul/dsh-bioviewer',
+    description: () => t('pluginBioviewerDesc'),
+    install: 'cd ~/.dsh && dsh plugin --profile web add dsh-bioviewer',
+  },
 ]

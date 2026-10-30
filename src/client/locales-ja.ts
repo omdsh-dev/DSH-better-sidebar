@@ -654,4 +654,6 @@ export const ja: Record<string, string> = {
   pluginTurnOutlineDesc: "セッションをユーザーターン（入力＋ツール手順＋出力）ごとに折りたたみ、任意のステップをクリックすると会話の該当箇所へワンクリックでジャンプ。LLM 呼び出しなし・読み取り専用",
   pluginDshMemoryDeltaName: 'dsh-memory-delta メモリ',
   pluginDshMemoryDeltaDesc: 'セッションをまたぐ記憶：変化した部分だけを注入し（変化がなければ何も注入しません）、レビュー期日のリマインド、関連度順の検索、サイドバーのタブを備えます。',
+  pluginBioviewerName: 'BioViewer 分子プレビュー',
+  pluginBioviewerDesc: 'better-sidebar エディターで PDB / mmCIF / MRC 密度図 / 小分子および Chimera .cmm マーカー（.gz 含む）を Mol* でプレビューし、BioViewer ワークスペースタブと bio_open / bio_add ツールを提供',
 }

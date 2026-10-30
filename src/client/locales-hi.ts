@@ -654,4 +654,6 @@ export const hi: Record<string, string> = {
   pluginTurnOutlineDesc: "सत्र को उपयोगकर्ता टर्न (इनपुट + टूल चरण + आउटपुट) में मोड़ें; किसी भी चरण पर क्लिक करें और बातचीत के सटीक स्थान पर जाएँ — कोई LLM कॉल नहीं, केवल पढ़ना",
   pluginDshMemoryDeltaName: 'dsh-memory-delta स्मृति',
   pluginDshMemoryDeltaDesc: 'सत्रों के बीच स्मृति: केवल बदला हुआ भाग इंजेक्ट होता है (कुछ न बदले तो कुछ नहीं), समीक्षा-तिथि अनुस्मारक, प्रासंगिकता-क्रमित खोज और साइडबार टैब के साथ।',
+  pluginBioviewerName: 'BioViewer',
+  pluginBioviewerDesc: 'better-sidebar संपादक में आणविक आणुजीव फ़ाइल प्रीव्यू (PDB / mmCIF / MRC मैप / छोटे अणु और Chimera .cmm चिह्न, जिसमें .gz), BioViewer वर्कस्पेस टैब और bio_open / bio_add टूल',
 }

@@ -652,4 +652,6 @@ export const nl: Record<string, string> = {
   pluginTurnOutlineDesc: "Vouwt de sessie op in gebruikersbeurten (invoer + toolstappen + uitvoer); klik op een stap om terug te springen naar de exacte plek in het gesprek — zonder LLM-aanroepen, alleen-lezen",
   pluginDshMemoryDeltaName: 'dsh-memory-delta Geheugen',
   pluginDshMemoryDeltaDesc: 'Geheugen tussen sessies: alleen wat is gewijzigd wordt geïnjecteerd (niets als er niets is gewijzigd), met herinnering aan de controledatum, relevantiegerangschikt zoeken en een zijbalktabblad.',
+  pluginBioviewerName: 'BioViewer',
+  pluginBioviewerDesc: 'Mol*-bestandsvoorbeeld (PDB / mmCIF / MRC-kaarten / kleine moleculen en Chimera-.cmm-markeringen, inclusief .gz) in de better-sidebar-editor, plus een BioViewer-werkruimtetabblad en bio_open / bio_add',
 }

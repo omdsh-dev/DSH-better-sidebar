@@ -645,4 +645,6 @@ export const it: Record<string, string> = {
   pluginTurnOutlineDesc: "Ripiega la sessione in turni utente (input + passaggi strumento + output); clic su un passaggio per tornare al punto esatto della conversazione — nessuna chiamata LLM, sola lettura",
   pluginDshMemoryDeltaName: 'dsh-memory-delta Memoria',
   pluginDshMemoryDeltaDesc: 'Memoria tra sessioni: inietta solo ciò che è cambiato (nulla se nulla è cambiato), con promemoria di revisione, ricerca per rilevanza e scheda laterale.',
+  pluginBioviewerName: 'BioViewer',
+  pluginBioviewerDesc: 'Anteprima Mol* (PDB / mmCIF / mappe MRC / piccole molecole e marcatori Chimera .cmm, incluso .gz) nell’editor better-sidebar, più scheda spazio di lavoro BioViewer e strumenti bio_open / bio_add',
 }

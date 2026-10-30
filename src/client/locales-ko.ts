@@ -646,4 +646,6 @@ export const ko: Record<string, string> = {
   pluginTurnOutlineDesc: "세션을 사용자 턴(입력 + 도구 단계 + 출력)으로 접어 요약하고, 아무 단계나 클릭하면 대화의 정확한 위치로 한 번에 점프합니다. LLM 호출 없음, 읽기 전용",
   pluginDshMemoryDeltaName: 'dsh-memory-delta 메모리',
   pluginDshMemoryDeltaDesc: '세션 간 기억: 변경된 부분만 주입하고(변경이 없으면 아무것도 주입하지 않음), 검토 시점 알림, 관련도 정렬 검색, 사이드바 탭을 제공합니다.',
+  pluginBioviewerName: 'BioViewer',
+  pluginBioviewerDesc: 'better-sidebar 편집기에서 PDB / mmCIF / MRC 맵 / 소분자 및 Chimera .cmm 마커(.gz 포함)를 Mol*로 미리보기하며, BioViewer 작업 공간 탭과 bio_open / bio_add 도구를 제공',
 }

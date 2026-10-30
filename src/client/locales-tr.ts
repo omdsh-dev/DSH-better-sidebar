@@ -654,4 +654,6 @@ export const tr: Record<string, string> = {
   pluginTurnOutlineDesc: "Oturumu kullanıcı turlarına (girdi + araç adımları + çıktı) katlar; herhangi bir adıma tıklayarak sohbette tam konumuna atlayın — LLM çağrısı yok, yalnızca okunur",
   pluginDshMemoryDeltaName: 'dsh-memory-delta Bellek',
   pluginDshMemoryDeltaDesc: 'Oturumlar arası bellek: yalnızca değişenler enjekte edilir (değişiklik yoksa hiçbir şey), gözden geçirme tarihi hatırlatması, alaka sıralı arama ve kenar çubuğu sekmesi ile.',
+  pluginBioviewerName: 'BioViewer',
+  pluginBioviewerDesc: 'better-sidebar düzenleyicisinde Mol* dosya önizlemesi (PDB / mmCIF / MRC haritaları / küçük moleküller ve Chimera .cmm işaretleyicileri, .gz dahil), artı BioViewer çalışma alanı sekmesi ve bio_open / bio_add araçları',
 }

@@ -654,4 +654,6 @@ export const vi: Record<string, string> = {
   pluginTurnOutlineDesc: "Gấp phiên thành các vòng của người dùng (đầu vào + bước công cụ + đầu ra); nhấp vào bất kỳ bước nào để nhảy về đúng vị trí trong hội thoại — không gọi LLM, chỉ đọc",
   pluginDshMemoryDeltaName: 'dsh-memory-delta Bộ nhớ',
   pluginDshMemoryDeltaDesc: 'Bộ nhớ xuyên phiên: chỉ chèn phần đã thay đổi (không chèn gì nếu không có thay đổi), kèm nhắc ngày rà soát, tìm kiếm theo độ liên quan và tab thanh bên.',
+  pluginBioviewerName: 'BioViewer',
+  pluginBioviewerDesc: 'Xem trước Mol* (PDB / mmCIF / bản đồ MRC / phân tử nhỏ và đánh dấu Chimera .cmm, kể cả .gz) trong trình soạn better-sidebar, kèm thẻ không gian làm việc BioViewer và công cụ bio_open / bio_add',
 }

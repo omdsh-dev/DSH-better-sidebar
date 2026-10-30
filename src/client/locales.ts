@@ -663,6 +663,8 @@ export const zh = {
   pluginTurnOutlineName: 'dsh-turn-outline 轮次轨迹',
   pluginTurnOutlineDesc: '把会话按用户轮次折叠成「输入 + 工具步骤 + 输出」摘要，点击任意步骤一键跳回对话原位；零 LLM 调用、只读',
   pluginDshMemoryDeltaName: 'dsh-memory-delta 记忆',
+  pluginBioviewerName: 'BioViewer 分子预览',
+  pluginBioviewerDesc: '为 better-sidebar 预览 PDB / mmCIF / MRC 密度图 / 小分子和 Chimera .cmm 标记（含 .gz），提供 BioViewer 工作区标签，以及 bio_open / bio_add 工具',
 }
 
 /** The en dictionary (key-set-equal to zh, enforced by the type annotation). */
@@ -1305,6 +1307,8 @@ export const en: Record<keyof typeof zh, string> = {
   pluginTurnOutlineName: 'dsh-turn-outline Turn Outline',
   pluginTurnOutlineDesc: 'Fold the session into user turns (input + tool steps + output) and click any step to jump back to its exact spot in the conversation — no LLM calls, read-only',
   pluginDshMemoryDeltaName: 'dsh-memory-delta Memory',
+  pluginBioviewerName: 'BioViewer',
+  pluginBioviewerDesc: 'Mol* file preview (PDB / mmCIF / MRC maps / small molecules and Chimera .cmm, including .gz) for the better-sidebar editor, plus a BioViewer workspace tab and bio_open / bio_add tools',
 }
 
 /**
