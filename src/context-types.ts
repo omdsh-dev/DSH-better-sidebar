@@ -161,12 +161,33 @@ export interface SidebarSessionSummary {
   id: string
   cwd?: string
   displayTitle: string
+  /**
+   * Host-computed projection values published on the list row (DSH 0.2.x).
+   *
+   * Only `workingDirectory` is read here: it is the directory the session
+   * actually works in, which stops matching the immutable header `cwd` after
+   * a `cd` — and never matches it at all for a bridge session that starts
+   * outside the project (see `client/address-base.ts`). Absent on hosts that
+   * publish projections only through {@link SidebarSessionList.projectionsBySession}.
+   */
+  projectionValues?: SidebarProjectionValues
   /** Coarse durable origin for navigation filtering (subagent children). */
   origin?: 'subagent'
   /** Durable direct parent session id (present on subagent children). */
   parentId?: string
   /** Whether the session's agent is currently running. */
   running?: boolean
+}
+
+/**
+ * The subset of one session's host-computed projection values this plugin
+ * reads from a list row. The host publishes more keys (title, todos, usage
+ * …); they are carried through unread and typed loosely on purpose.
+ */
+export interface SidebarProjectionValues {
+  /** The session's LIVE working directory, or `null` before the first change. */
+  workingDirectory?: string | null
+  readonly [key: string]: unknown
 }
 
 /** Durable parent/child address that selects subagent transport in the client. */
@@ -563,6 +584,15 @@ export interface SidebarProjectionSnapshot {
     tokenUsage?: SidebarTokenUsage
     /** Turn timing of a descriptor-backed CHILD session (see ./session-metrics.ts). */
     subagentTiming?: SidebarSubagentTiming
+    /**
+     * The session's LIVE working directory (after a `cd`), `null` before the
+     * first change. The session row's `cwd` is the immutable header cwd; the
+     * two differ whenever the session moved, and they are unrelated for a
+     * bridge session that opened outside the project. Read by
+     * `client/address-base.ts`; the sidebar's own roots come from the
+     * `/sidebar/api` cwd feed instead.
+     */
+    workingDirectory?: string | null
   }
   state: 'idle' | 'loading' | 'ready' | 'error'
   error: { code?: string; message?: string } | null
