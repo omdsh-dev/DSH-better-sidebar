@@ -47,6 +47,7 @@ import {
   IconCloseFillRegular,
   IconEditOutlineRegular,
   IconNewChatOutlineRegular,
+  IconPaperclipOutlineRegular,
   IconPlusOutlineRegular,
   IconSearchOutlineRegular,
   IconSendOutlineRegular,
@@ -1547,7 +1548,7 @@ export function SideChatView(props: {
           <div className={css.sidechatComposerTools}>
             <ComposerTip label={info?.images?.available === true ? t('sideChatAddImages') : t('sideChatImagesDisabled')}>
               <button type="button" className={css.sidechatIconBtn} aria-label={t('sideChatAddImages')}
-                disabled={info?.images?.available !== true} onClick={() => { fileInputRef.current?.click() }}><IconBrowseOutlineRegular size={16} /></button>
+                disabled={info?.images?.available !== true} onClick={() => { fileInputRef.current?.click() }}><IconPaperclipOutlineRegular size={16} /></button>
             </ComposerTip>
             <ComposerTip label={t('sideChatNew')}>
               <button
