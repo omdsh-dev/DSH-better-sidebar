@@ -1,0 +1,153 @@
+{
+  "status": "passed",
+  "host": "0.2.1-rc.1",
+  "browser": "Chrome",
+  "artifact": {
+    "format": "npm tarball",
+    "bytes": 5595547,
+    "sha256": "cfadc207aa539c293e1c57cee5d803773b8b542ff1db5ba2a0089ffbae60b529"
+  },
+  "fixture": {
+    "bytes": 2352559,
+    "width": 1024,
+    "height": 768
+  },
+  "tests": {
+    "finalFocused": {
+      "total": 317,
+      "passed": 317,
+      "failed": 0,
+      "skipped": 0
+    },
+    "earlierWindowsFullSweep": {
+      "total": 2968,
+      "passed": 2960,
+      "failed": 1,
+      "skipped": 7,
+      "scope": "Before the final model-selection microtask regression and paperclip adjustment; these are covered by finalFocused.",
+      "knownFailure": "plugin-meta.spec.ts expects LF-only tar listing names; Windows tar emits CRLF. Present in the unchanged baseline."
+    }
+  },
+  "steps": [
+    {
+      "step": "host-authenticated"
+    },
+    {
+      "step": "baseline-rendered"
+    },
+    {
+      "step": "selected-provider-image",
+      "images": [
+        {
+          "mime": "image/jpeg",
+          "bytes": 557783,
+          "sha256": "2345b9bccf138e32b86b6b4484af026b4501b222a3205e5092291098338ba763",
+          "width": 1024,
+          "height": 768
+        }
+      ]
+    },
+    {
+      "step": "selected-saved",
+      "count": 1,
+      "images": [
+        {
+          "alt": "fixture.png",
+          "width": 1024,
+          "height": 768
+        }
+      ]
+    },
+    {
+      "step": "pasted-provider-image",
+      "images": [
+        {
+          "mime": "image/jpeg",
+          "bytes": 557783,
+          "sha256": "2345b9bccf138e32b86b6b4484af026b4501b222a3205e5092291098338ba763",
+          "width": 1024,
+          "height": 768
+        },
+        {
+          "mime": "image/jpeg",
+          "bytes": 557783,
+          "sha256": "2345b9bccf138e32b86b6b4484af026b4501b222a3205e5092291098338ba763",
+          "width": 1024,
+          "height": 768
+        }
+      ]
+    },
+    {
+      "step": "pasted-saved",
+      "count": 2,
+      "images": [
+        {
+          "alt": "fixture.png",
+          "width": 1024,
+          "height": 768
+        },
+        {
+          "alt": "image.png",
+          "width": 1024,
+          "height": 768
+        }
+      ]
+    },
+    {
+      "step": "page-reload",
+      "count": 2,
+      "images": [
+        {
+          "alt": "fixture.png",
+          "width": 1024,
+          "height": 768
+        },
+        {
+          "alt": "image.png",
+          "width": 1024,
+          "height": 768
+        }
+      ]
+    },
+    {
+      "step": "host-authenticated"
+    },
+    {
+      "step": "cold-host-restart",
+      "count": 2,
+      "images": [
+        {
+          "alt": "fixture.png",
+          "width": 1024,
+          "height": 768
+        },
+        {
+          "alt": "image.png",
+          "width": 1024,
+          "height": 768
+        }
+      ]
+    },
+    {
+      "step": "packed-mount-and-native-entry-replacement",
+      "filesReadable": true,
+      "registrationErrors": 0
+    }
+  ],
+  "imagePromptBodyBytes": [
+    3136904,
+    3142724
+  ],
+  "imageReadStatuses": [
+    200,
+    200,
+    200,
+    200,
+    200,
+    200,
+    200,
+    200
+  ],
+  "pageErrors": [],
+  "registrationErrors": []
+}
