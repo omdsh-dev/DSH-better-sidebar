@@ -105,6 +105,19 @@ describe('sidechat image admission and owned reads', () => {
     expect(h.inbox.nextStep).toEqual([])
   })
 
+  it('rejects a model change between capability validation and enqueue', async () => {
+    const h = harness()
+    h.services.llm.resolveModelInfo.mockResolvedValueOnce({ inputModalities: ['image'] })
+    h.services.llm.resolveModelInfo.mockImplementationOnce(async () => {
+      queueMicrotask(() => queueMicrotask(() => {
+        h.events.push(ev('model/selection', 2, { provider: 'test', model: 'text-only' }))
+      }))
+      return { inputModalities: ['image'] }
+    })
+    await expect(h.api['sidechat.prompt']({ childId: 'child', text: '', images: [upload] })).rejects.toMatchObject({ status: 409 })
+    expect(h.inbox).toMatchObject({ nextStep: [], nextTurn: [] })
+  })
+
   it('refuses inherited, removed, cross-thread and text-block references', async () => {
     const h = harness()
     h.events.unshift(ev('user/message', 0, message('parent-image')))

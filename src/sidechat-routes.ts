@@ -558,9 +558,9 @@ async function ensureLiveThread(ctx: Context, childId: string): Promise<Agent> {
   return promise
 }
 
-async function assertImageModel(ctx: Context, agent: Agent): Promise<void> {
+async function assertImageModel(ctx: Context, agent: Agent): Promise<string | undefined> {
   const llm = ctx.get('llm') as SidebarLlmService | undefined
-  if (llm?.resolveModelInfo === undefined) return
+  if (llm?.resolveModelInfo === undefined) return JSON.stringify(selectionOf(agent))
   for (let attempt = 0; attempt < 4; attempt++) {
     const selection = selectionOf(agent)
     if (selection === undefined) return
@@ -569,7 +569,7 @@ async function assertImageModel(ctx: Context, agent: Agent): Promise<void> {
     if (info.inputModalities !== undefined && !info.inputModalities.includes('image')) {
       throw new SidebarError('bad-request', 'The selected model does not accept images')
     }
-    return
+    return JSON.stringify(selection)
   }
   throw new SidebarError('sidechat-error', 'Model selection changed during image admission; try again', 409)
 }
@@ -827,7 +827,10 @@ export function buildSidechatApi(ctx: Context, live?: AssistantLiveBuffer, signa
           await assertImageModel(ctx, agent)
           try { blocks = await sidechatAttachments(ctx)!.admitPromptContent(content) as ContentBlock[] }
           catch (error) { throw new SidebarError('bad-request', error instanceof Error ? error.message : String(error)) }
-          await assertImageModel(ctx, agent)
+          const validatedSelection = await assertImageModel(ctx, agent)
+          if (validatedSelection !== JSON.stringify(selectionOf(agent))) {
+            throw new SidebarError('sidechat-error', 'Model selection changed during image admission; try again', 409)
+          }
         }
         if (signal?.aborted || activation.disposed) throw new SidebarError('sidechat-error', 'Thread was closed while sending', 409)
         const first = !boundaryDelivered(agent.session.snapshotEvents() as unknown as readonly SidechatLogEvent[]) && !boundaryPending(agent)
