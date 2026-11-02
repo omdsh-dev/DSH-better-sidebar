@@ -889,14 +889,14 @@ export function SideChatView(props: {
   // loadLastThreads) reattaches to the thread the session was last in instead
   // of leaving yet another orphan "Side: New thread" session behind.
   useEffect(() => {
-    if (threadId !== undefined || !autoCreate || !visible) return
+    if (threadId !== undefined || !visible) return
     const reattach = reattachTarget()
     if (reattach !== undefined) {
       // Name the seat session: the same native id names a tab in every session.
       ctx.get('betterSidebar')?.updateTab(tab.id, { meta: { threadId: reattach } }, scope.sessionId)
       return
     }
-    void startThread()
+    if (autoCreate) void startThread()
   }, [threadId, autoCreate, visible, startThread, reattachTarget, ctx, tab.id, scope.sessionId])
 
   // Remember the thread this tab holds, so reopening the panel (or a restart)

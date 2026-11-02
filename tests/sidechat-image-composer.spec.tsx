@@ -133,6 +133,16 @@ describe('sidechat image composer', () => {
     expect(calls).toHaveLength(1)
   })
 
+  it('reattaches a restored native tab to the remembered thread without sending again', async () => {
+    await harness.flush()
+    const snapshot = { byId: { root: { id: 'root', displayTitle: 'root', running: false }, t1: { id: 't1', displayTitle: 'Side: thread', origin: 'subagent', parentId: 'root', running: false } } }
+    const ctx = { get: (key: string) => key === 'betterSidebar' ? harness.host : undefined, sessions: { list: { subscribe: () => () => {}, getSnapshot: () => snapshot } } } as unknown as Context
+    mounted.rerender(createElement(SideChatView, { ctx, scope: { sessionId: 'root', cwd: '/p' }, tab: { id: 'restored', type: 'sidechat', title: 'Side Chat' }, visible: true }))
+    await harness.flush()
+    expect(harness.host.updateTab).toHaveBeenCalledWith('restored', { meta: { threadId: 't1' } }, 'root')
+    expect(calls).toEqual([])
+  })
+
   it('renders saved and cold pending images by occurrence, disables cold dequeue and cleans loaded URLs', async () => {
     harness.wire.events = [{ type: 'user/message', seq: 1, time: 1, data: { id: 'saved', source: { kind: 'user' }, content: [{ type: 'image', attachment: { mediaType: 'image/png', bytes: 3, width: 1, height: 1, name: 'saved.png' } }] } }]
     harness.wire.pending = [{ id: 'queued', target: 'next-turn', text: '', removable: false, images: [{ blockIndex: 0, mediaType: 'image/png', bytes: 3, width: 1, height: 1, name: 'queued.png' }] }]
