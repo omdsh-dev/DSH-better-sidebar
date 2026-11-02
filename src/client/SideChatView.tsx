@@ -33,7 +33,6 @@
  */
 import { SidechatImages } from './SidechatImages.tsx'
 import { useSidechatDraft, encodeSidechatImages } from './sidechat-draft.ts'
-import { projectSidechatContent, type SidechatImageOccurrence } from '../sidechat-images.ts'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useSyncExternalStore } from 'react'
 import clsx from 'clsx'
@@ -722,7 +721,7 @@ export function SideChatView(props: {
   const [menuOpen, setMenuOpen] = useState(false)
   const [modelMenuOpen, setModelMenuOpen] = useState(false)
   const [catalog, setCatalog] = useState<SidechatModelCatalog | null>(null)
-  const [echo, setEcho] = useState<{ text: string; messageId: string; images?: SidechatImageOccurrence[] } | null>(null)
+  const [echo, setEcho] = useState<{ text: string; messageId: string; hasImages: boolean } | null>(null)
 
   const cacheRef = useRef<ThreadCache>({ entries: [], live: [], pending: [] })
   // The previous poll's rows (see the mapping's reuse pass below).
@@ -1303,9 +1302,7 @@ export function SideChatView(props: {
       if (!attempt.owner.active) return
       const result = await api.sidechatPrompt(childId, attempt.text, images)
       if (!attempt.owner.active) return
-      const projected = projectSidechatContent(images.map(image => ({ type: 'image', attachment: { ...image, bytes: 0, width: 0, height: 0 } })))
-      const occurrences = projected.images?.map(image => ({ ...image, blockIndex: image.blockIndex + (attempt.text === '' ? 0 : 1) }))
-      setEcho({ text: attempt.text, messageId: result.messageId, images: occurrences })
+      setEcho({ text: attempt.text, messageId: result.messageId, hasImages: images.length > 0 })
       draft.accept(attempt)
       void fetchThread(childId)
       void fetchInfo(childId)
@@ -1482,7 +1479,7 @@ export function SideChatView(props: {
             <div className={css.sidechatPending}>
               <div className={css.sidechatPendingText}>
                 {echo.text !== '' && <MarkdownText {...markdownTextProps(rewriteChatText(echo.text), rowLabels)} />}
-                <SidechatImages visible={visible} childId={threadId} messageId={echo.messageId} images={echo.images} />
+                {echo.hasImages && <span role="status">{t('sideChatImageLoading')}</span>}
               </div>
               <div className={css.sidechatPendingMeta}>
                 <StateDot state="ongoing" size={8} />

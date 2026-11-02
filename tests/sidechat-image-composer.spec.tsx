@@ -12,6 +12,7 @@ const limits = { maxImagesPerMessage: 8, maxImageBytes: 1000, maxMessageImageByt
 let harness: SidechatHarness
 let mounted: RenderedRoot
 let calls: Record<string, unknown>[]
+let imageReads: string[]
 let hold: Promise<void> | undefined
 let rejectSend = false
 const createUrl = vi.fn(() => `blob:preview-${createUrl.mock.calls.length}`)
@@ -20,12 +21,15 @@ const response = (value: unknown) => ({ ok: true, status: 200, json: async () =>
 const image = (name = 'shot.png') => new File(['abc'], name, { type: 'image/png' })
 
 beforeEach(() => {
-  calls = []; hold = undefined; rejectSend = false; createUrl.mockClear(); revokeUrl.mockClear()
+  calls = []; imageReads = []; hold = undefined; rejectSend = false; createUrl.mockClear(); revokeUrl.mockClear()
   harness = installSidechatHarness({ info: { live: true, images: { available: true, limits } } })
   Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: createUrl })
   Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: revokeUrl })
   vi.stubGlobal('fetch', async (url: string | URL, options?: RequestInit) => {
-    if (String(url).includes('sidechat-image?')) return { ok: true, blob: async () => new Blob(['abc'], { type: 'image/png' }) } as Response
+    if (String(url).includes('sidechat-image?')) {
+      imageReads.push(String(url))
+      return { ok: true, blob: async () => new Blob(['abc'], { type: 'image/png' }) } as Response
+    }
     const method = String(url).split('/').pop()
     if (method === 'sidechat.events') return response({ events: harness.wire.events, live: [], pending: harness.wire.pending })
     if (method === 'sidechat.info') return response(harness.wire.info)
@@ -81,7 +85,8 @@ describe('sidechat image composer', () => {
     await send()
     expect(calls).toEqual([{ childId: 't1', text: '', images: [{ mediaType: 'image/png', name: 'second.png', data: 'YWJj' }] }])
     expect(mounted.container.querySelector('textarea')?.value).toBe('')
-    expect(mounted.container.textContent).not.toContain('…排队')
+    expect(imageReads).toEqual([])
+    expect(mounted.container.textContent).toContain('正在加载图片')
     expect(revokeUrl.mock.calls).toContainEqual(['blob:preview-2'])
   })
 
