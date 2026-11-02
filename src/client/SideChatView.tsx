@@ -31,6 +31,9 @@
  * session, archive) lives in the COMPOSER BAR, not a top header — the reader's
  * attention is on the input, and a header's actions went unnoticed.
  */
+import { SidechatImages } from './SidechatImages.tsx'
+import { useSidechatDraft, encodeSidechatImages } from './sidechat-draft.ts'
+import { projectSidechatContent, type SidechatImageOccurrence } from '../sidechat-images.ts'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useSyncExternalStore } from 'react'
 import clsx from 'clsx'
@@ -94,7 +97,7 @@ import {
   type SidechatToolCard,
   type SidechatTranscriptRow,
 } from './sidechat-transcript.ts'
-import { api, mediaUrl } from './api.ts'
+import { api, mediaUrl, SidebarApiError } from './api.ts'
 import { usePolling } from './use-polling.ts'
 import { useSidechatPush } from './use-sidechat-push.ts'
 import { t } from './locales.ts'
@@ -510,7 +513,8 @@ function renderRow(row: SidechatTranscriptRow, labels: RowLabels, surface: RowSu
     case 'user':
       return (
         <div key={key} className={css.sidechatUser}>
-          <MarkdownText {...markdownTextProps(surface.rewrite(row), labels)} />
+          {row.text !== '' && <MarkdownText {...markdownTextProps(surface.rewrite(row), labels)} />}
+          <SidechatImages visible={genui.visible} childId={genui.threadId} messageId={row.messageId} images={row.images} />
         </div>
       )
     case 'assistant':
@@ -706,7 +710,10 @@ export function SideChatView(props: {
   const threadId = sidechatThreadIdOf(tab)
   const autoCreate = (tab.meta as { autoCreate?: unknown } | undefined)?.autoCreate === true
 
-  const [composer, setComposer] = useState('')
+  const draft = useSidechatDraft(threadId)
+  const composer = draft.owner.text
+  const setComposer = draft.setText
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
   const [busy, setBusy] = useState<'starting' | 'sending' | 'saving' | 'archiving' | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
@@ -715,11 +722,7 @@ export function SideChatView(props: {
   const [menuOpen, setMenuOpen] = useState(false)
   const [modelMenuOpen, setModelMenuOpen] = useState(false)
   const [catalog, setCatalog] = useState<SidechatModelCatalog | null>(null)
-  /** Local echo of the message just sent: shown until the host reports it
-   *  pending or logs it durably (see the drop effect below). `seq` is the
-   *  transcript tail at send time, so an OLDER identical message cannot
-   *  retire the echo. */
-  const [echo, setEcho] = useState<{ text: string; seq: number } | null>(null)
+  const [echo, setEcho] = useState<{ text: string; messageId: string; images?: SidechatImageOccurrence[] } | null>(null)
 
   const cacheRef = useRef<ThreadCache>({ entries: [], live: [], pending: [] })
   // The previous poll's rows (see the mapping's reuse pass below).
@@ -951,7 +954,9 @@ export function SideChatView(props: {
   /** The composer-bar badge pull (live state + preset/model identity). */
   const fetchInfo = useCallback(async (childId: string): Promise<void> => {
     try {
-      setInfo(await api.sidechatInfo(childId))
+      const cache = cacheRef.current
+      const result = await api.sidechatInfo(childId)
+      if (cache === cacheRef.current && cache.threadId === childId) setInfo(result)
     } catch {
       // The badge is decorative; a wire failure keeps the last value.
     }
@@ -971,6 +976,7 @@ export function SideChatView(props: {
     setSaved(false)
     setInfo(null)
     setEcho(null)
+    setBusy(null)
     if (threadId !== undefined) {
       void fetchInfo(threadId)
       window.setTimeout(() => composerRef.current?.focus(), 0)
@@ -1088,25 +1094,18 @@ export function SideChatView(props: {
     [threadId, revision, rows],
   )
 
-  // Retire the local echo once the host accounts for the message it carries:
-  // either the unclaimed inbox lists it (the claim has not happened yet) or a
-  // durable user row NEWER than the send logged it (the claim already ran).
-  // An identical older message cannot retire the echo — the seq gate.
   const echoText = echo?.text ?? ''
   useEffect(() => {
     if (echo === null || busy === 'sending') return
-    if (pendingRows.some(item => item.text === echo.text)) {
+    if (pendingRows.some(item => item.id === echo.messageId)) {
       setEcho(null)
       return
     }
-    if (rows.some(row => row.kind === 'user' && row.seq > echo.seq && row.text === echo.text)) {
+    if (rows.some(row => row.kind === 'user' && row.messageId === echo.messageId)) {
       setEcho(null)
     }
   }, [echo, busy, pendingRows, rows])
-  /** The echo is hidden the moment the inbox already carries the same text
-   *  (the retire effect above then drops the state) so the message never shows
-   *  twice for a frame. */
-  const showEcho = echo !== null && !pendingRows.some(item => item.text === echo.text)
+  const showEcho = echo !== null && !pendingRows.some(item => item.id === echo.messageId) && !rows.some(row => row.kind === 'user' && row.messageId === echo.messageId)
 
   const canSave = threadId !== undefined && threadHasCompletedTurn(cacheRef.current.entries)
   const trailingPending = threadId !== undefined && threadTrailingPending(cacheRef.current.entries)
@@ -1116,7 +1115,7 @@ export function SideChatView(props: {
    *  reports it running. A RUNNING thread keeps the row regardless (the
    *  long-tool-call window has no streaming text to show progress). */
   const hasOutputRow = rows.some(row => row.kind === 'assistant' || row.kind === 'reasoning')
-  const showThinking = threadId !== undefined && (running || (echo !== null && !hasOutputRow))
+  const showThinking = threadId !== undefined && (running || ((echo !== null || busy === 'sending') && !hasOutputRow))
 
   // Follow the stream: stick to the bottom while the log — or the pending
   // tail — grows.
@@ -1288,29 +1287,34 @@ export function SideChatView(props: {
     service: ctx.get('betterSidebar'), threadId, visible, sendPrompt: sendSurfacePrompt,
   }
 
+  const addImages = (files: readonly File[]): void => {
+    try { draft.add(files, info?.images?.available === true ? info.images.limits : undefined); setError(null) }
+    catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)) }
+  }
+
   const handleSend = async (): Promise<void> => {
-    const text = composer.trim()
-    if (text === '' || threadId === undefined || busy !== null) return
+    const attempt = draft.capture()
+    const childId = attempt.owner.childId
+    if ((attempt.text === '' && attempt.images.length === 0) || childId === undefined || busy !== null) return
     setBusy('sending')
     setError(null)
-    // Local echo: the host accepts a message into the child's inbox and only
-    // LOGS it when a step claims it, so between those moments the message used
-    // to be invisible ("sent, nothing happened"). The bubble shows at once and
-    // is retired once the inbox or the log carries the message.
-    setEcho({ text, seq: cacheRef.current.entries.at(-1)?.event.seq ?? 0 })
     try {
-      await api.sidechatPrompt(threadId, text)
-      setComposer('')
-      const field = composerRef.current
-      if (field !== null) field.style.height = ''
-      void fetchThread(threadId)
-      void fetchInfo(threadId)
+      const images = await encodeSidechatImages(attempt)
+      if (!attempt.owner.active) return
+      const result = await api.sidechatPrompt(childId, attempt.text, images)
+      if (!attempt.owner.active) return
+      const projected = projectSidechatContent(images.map(image => ({ type: 'image', attachment: { ...image, bytes: 0, width: 0, height: 0 } })))
+      const occurrences = projected.images?.map(image => ({ ...image, blockIndex: image.blockIndex + (attempt.text === '' ? 0 : 1) }))
+      setEcho({ text: attempt.text, messageId: result.messageId, images: occurrences })
+      draft.accept(attempt)
+      void fetchThread(childId)
+      void fetchInfo(childId)
     } catch (cause) {
-      // Nothing reached the host: drop the echo and say why.
-      setEcho(null)
-      setError(cause instanceof Error ? cause.message : String(cause))
+      if (attempt.owner.active) setError(cause instanceof SidebarApiError && cause.code === 'network'
+        ? t('sideChatSendUncertain')
+        : cause instanceof Error ? cause.message : String(cause))
     } finally {
-      setBusy(null)
+      if (attempt.owner.active) setBusy(null)
     }
   }
 
@@ -1454,7 +1458,8 @@ export function SideChatView(props: {
           {pendingRows.map(item => (
             <div key={`pending:${item.id}`} className={css.sidechatPending}>
               <div className={css.sidechatPendingText}>
-                <MarkdownText {...markdownTextProps(rewriteChatText(item.text), rowLabels)} />
+                {item.text !== '' && <MarkdownText {...markdownTextProps(rewriteChatText(item.text), rowLabels)} />}
+                <SidechatImages visible={visible} childId={threadId} messageId={item.id} images={item.images} />
               </div>
               <div className={css.sidechatPendingMeta}>
                 <StateDot state="ongoing" size={8} />
@@ -1463,6 +1468,7 @@ export function SideChatView(props: {
                   type="button"
                   className={css.sidechatDequeueBtn}
                   onClick={() => void handleDequeue(item.id)}
+                  disabled={item.removable === false}
                   title={t('sideChatDequeue')}
                   aria-label={t('sideChatDequeue')}
                 >
@@ -1475,7 +1481,8 @@ export function SideChatView(props: {
           {showEcho && echo !== null && (
             <div className={css.sidechatPending}>
               <div className={css.sidechatPendingText}>
-                <MarkdownText {...markdownTextProps(rewriteChatText(echo.text), rowLabels)} />
+                {echo.text !== '' && <MarkdownText {...markdownTextProps(rewriteChatText(echo.text), rowLabels)} />}
+                <SidechatImages visible={visible} childId={threadId} messageId={echo.messageId} images={echo.images} />
               </div>
               <div className={css.sidechatPendingMeta}>
                 <StateDot state="ongoing" size={8} />
@@ -1501,6 +1508,16 @@ export function SideChatView(props: {
       {saved && <div className={css.sidechatHint}>{t('sideChatSaved')}</div>}
       {error !== null && <div className={css.sidechatError}>{t('sideChatError', { message: error })}</div>}
       <div className={css.sidechatComposer}>
+        <input ref={fileInputRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden
+          aria-label={t('sideChatAddImages')} onChange={event => { addImages(Array.from(event.target.files ?? [])); event.target.value = '' }} />
+        {draft.owner.images.length > 0 && <div className={css.sidechatImages}>
+          {draft.owner.images.map(image => <div className={css.sidechatImagePreview} key={image.id}>
+            <img className={css.sidechatImage} src={image.preview} alt={image.file.name} />
+            <button type="button" className={css.sidechatIconBtn} aria-label={t('sideChatRemoveImage', { name: image.file.name })}
+              onClick={() => { draft.remove(image.id) }}><IconCloseFillRegular size={14} /></button>
+          </div>)}
+        </div>}
+        {busy === 'sending' && <span role="status">{t('sideChatSending')}</span>}
         <textarea
           ref={composerRef}
           className={css.sidechatComposerInput}
@@ -1510,6 +1527,13 @@ export function SideChatView(props: {
           onChange={event => {
             setComposer(event.target.value)
             growComposer()
+          }}
+          onPaste={event => {
+            const files = Array.from(event.clipboardData.items).filter(item => item.kind === 'file' && item.type.startsWith('image/')).flatMap(item => { const file = item.getAsFile(); return file === null ? [] : [file] })
+            if (files.length === 0) return
+            event.preventDefault()
+            event.stopPropagation()
+            addImages(files)
           }}
           onKeyDown={event => {
             if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return
@@ -1524,6 +1548,10 @@ export function SideChatView(props: {
               a hover bubble (ComposerTip) so its meaning is readable without
               leaving the input. */}
           <div className={css.sidechatComposerTools}>
+            <ComposerTip label={info?.images?.available === true ? t('sideChatAddImages') : t('sideChatImagesDisabled')}>
+              <button type="button" className={css.sidechatIconBtn} aria-label={t('sideChatAddImages')}
+                disabled={info?.images?.available !== true} onClick={() => { fileInputRef.current?.click() }}><IconBrowseOutlineRegular size={16} /></button>
+            </ComposerTip>
             <ComposerTip label={t('sideChatNew')}>
               <button
                 type="button"
@@ -1626,7 +1654,7 @@ export function SideChatView(props: {
                 type="button"
                 className={css.sidechatSendBtn}
                 onClick={() => void handleSend()}
-                disabled={composer.trim() === '' || busy !== null}
+                disabled={(composer.trim() === '' && draft.owner.images.length === 0) || busy !== null}
                 aria-label={t('sideChatSend')}
               >
                 <IconSendOutlineRegular size={16} />

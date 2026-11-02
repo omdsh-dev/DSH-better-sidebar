@@ -1185,6 +1185,12 @@ interface SettingsDescriptor {
 
 ---
 
+### Side Chat 图片输入
+
+`POST /sidebar/api/sidechat.prompt` 接受 `{childId,text,images?}`，图片条目为 `{mediaType,data,name?}`，`data` 是原始图片字节的 base64，允许空文本加图片。成功返回 `{accepted:true,messageId}`，消息身份由宿主创建。`sidechat.info` 的 `images` 字段报告附件服务可用性和实际数量、单张及合计字节限制；图片是否适用于所选模型在发送时校验。
+
+转录与 pending 行携带图片出现位置和显示元数据，读取走经宿主鉴权的 `GET /sidebar/sidechat-image?childId=...&messageId=...&blockIndex=...`。路由核验侧聊归属与用户消息身份，禁止用附件 ID 或本地路径直接读取。图片请求只在页签可见时发出；冷历史读取不恢复 Agent。输入与读取边界详见[设计记录](plans/2026-11-02-sidechat-image-input.md)。
+
 ## 12. 皮肤兼容（令牌驱动）
 
 > better-sidebar 所有视觉值消费 DSH 的 `--dsw-alias-*` / `--dsw-font-*` / `--ds-*` 令牌（无硬编码颜色），**不做每皮肤适配**。已与 dsh-web-ui 皮肤中心兼容（10 款皮肤全覆盖 `--dsw-alias-*` 层；`tests/theme.spec.ts` 守护）。你的 tab/viewer 组件遵循同样的令牌规则即可自动兼容全部皮肤。
@@ -1210,6 +1216,7 @@ interface SettingsDescriptor {
 - **拖拽区退出（视口层）**：宿主把每个**直挂 body 的子元素**都设成 `no-drag`（`html[data-platform=darwin] body > :not(#root)`，选择器含 id，只能靠 `!important` 压过），而 app-region **无视 `pointer-events`**——插件宿主就是这样一个 body 子元素，在 Electron 里该值还会传到它内部的**铺满视口的面板层**（#772 的 CDP 实测；挂载 lane 用的浏览器引擎不传播该属性，所以面板层自己也声明了同一条规则），于是它把下面每条 `[data-window-drag]` 拖拽带一起抵消（窗口拖一次就失效，同时丢掉 macOS 双击标题栏缩放，issue #772）。契约：装饰性的视口层用**中性值** `-webkit-app-region: initial !important` 退出计算（`initial` 的计算值 `none` 不扣减拖拽区；注意**字面量 `none` 不是中性值**——它计算成 `no-drag`，是扣减值），层内的面板/控件再声明 `no-drag` 保住点击；当前覆盖 `[data-dsh-better-sidebar]`、`[data-dsh-panel-host]`（`> *` 保持 `no-drag`）与 `.mermaidModal`（放大视图是第二个**持久**铺满视口的 body 直挂层）。**交互弹层不要加 `initial`**（`.selectionPopup` 是 `<button>`，`FloatingWindow` / `AnchoredPopover` 自带指针拖拽、不是遮罩层）：宿主 `:is(button, a, input, …)` 已给它们 `no-drag`，反过来声明 `initial !important` 会让按下变成拖窗（重演 #103/#111）。放大视图是**遮罩层例外**——它是模态，只有其中的控件必须保持 `no-drag`；代价是它覆盖在顶部拖拽带上时，点背景会变成拖窗而不是关闭（为「放大图时窗口仍可拖」付的账）。**未纳入**：`FileTree` 的 `.uploadDropChatHint` 同样是 body 直挂的装饰层，但它只在 OS 文件拖拽悬停期间存在且 `pointer-events: none`，收益极小、暂不处理（`FloatingWindow` / `AnchoredPopover` 是交互层，按上面的判据本就该保持 `no-drag`）。形状由 `tests/panel-host-css.spec.ts` 在 Linux 的 `pnpm test` 里守护（无 macOS runner；`tests/theme.spec.ts` 只守颜色，故本轮不涉及），真实级联由挂载 lane 的探针按宿主规则断言计算值（面板宿主探针复现宿主两条 darwin 规则，放大视图探针直接用页面里宿主自己的规则）。
 - **z-index**：面板宿主层 25、按钮簇 45——低于 DSH ui-cordis 插件面板（30）与浮层栈（100/1000+），浮层天然盖住侧边栏。
 - **更改行选中态**：Git 文件行和本轮操作行保持原有布局；选中只绘制 `--dsw-alias-interactive-bg-active` 背景，以及行内 inset 4px、宽 2px 的 `--dsw-alias-state-business-primary` 标记。选中规则与缩进参考线的绝对定位规则必须分开；`tests/theme.spec.ts` 解析实际 CSS 规则守护，挂载测试验证点击后文件行仍在原分组内。
+- **侧聊图片**：草稿预览与历史图片使用同一缩略图布局，长宽保持比例且限制在输入框与转录列内；草稿边框使用 `--dsw-alias-hairline`，移除按钮沿用宿主 `Button`。隐藏页签停止图片读取并释放 blob URL，切回后按消息身份重新读取。图片内容本身保留用户的原始颜色。
 - **提交图高度**：更改区保持自然高度，提交图区填满固定底栏上方的剩余空间，不设 `vh` 或固定最大高度。展开的图谱分区以 248px（28px 标题 + 220px 视口）为最小高度参与 flex 分配，避免自动最小内容高度把长历史撑到外层；折叠后只保留标题，长历史在内部滚动；更改列表过长时仍由原外层滚动容器承载。预览区展开或窗口缩放后随可用空间调整，无需额外尺寸观察器。
 - **提交图的 ref pills（含 tag）**：分支/远端/HEAD 按 lane 调色板上色（五个 `--dsw-alias-state-*`）；tag 是装饰而非 lane，使用中性 `--dsw-alias-label-secondary` + 虚线边框，不占 `data-color` 槽位，并以服务端返回的 `tag: ` 名称前缀作为文字 kind 标记（不新增图标/文案）。HEAD 只折叠进本地分支，tag 永不成为 current（detached HEAD 场景同样）；`tests/theme.spec.ts` 钉住 tag 的 CSS 规则，`tests/git-graph-ui.spec.tsx` 钉住 tone / current / 无调色板槽位。
 

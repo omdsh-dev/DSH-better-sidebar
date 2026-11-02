@@ -47,6 +47,8 @@ import { buildTeamsApi, type SidebarTeamsRoutes } from './team-routes.ts'
 import { buildWorkflowsApi, type SidebarWorkflowRoutes } from './workflow-routes.ts'
 import { buildSidechatApi } from './sidechat-routes.ts'
 import { createAssistantLiveBuffer, type AssistantLiveBuffer } from './assistant-live.ts'
+import { readSidechatImage } from './sidechat-routes.ts'
+import { sidechatPromptBodyLimit } from './sidechat-image-admission.ts'
 import { readJsonBody, readTextBody, requireString, SidebarError, writeError, writeJson, writeOk } from './wire.ts'
 import { streamFileToResponse } from './file-stream.ts'
 import { createChangesOpsApi } from './changes-ops.ts'
@@ -706,6 +708,7 @@ function buildApi(
   getSettings: () => SidebarSettingsFace | undefined,
   assistantLive: AssistantLiveBuffer,
   archiveTasks: ArchiveTasks,
+  sidechatSignal: AbortSignal,
 ): Record<string, ApiMethod> {
   /**
    * Same-key sharing for the shared cwd path. Every file/Git route below
@@ -1264,7 +1267,7 @@ function buildApi(
     // identities are fenced from the generic session RPCs (agent-lookup
     // ownership), and the thread is created with a CUSTOM seed the stock
     // fork APIs cannot express.
-    ...buildSidechatApi(ctx, assistantLive),
+    ...buildSidechatApi(ctx, assistantLive, sidechatSignal),
   }
 }
 
@@ -1583,7 +1586,10 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   // an unmounted plugin must not leave orphan archives in the OS temp dir.
   const archiveTasks = createArchiveTasks()
   ctx.effect(() => () => { archiveTasks.dispose() }, 'dsh-better-sidebar: archive task table')
-  const api = buildApi(ctx, resolved, () => settingsFace, assistantLive, archiveTasks)
+  const sidechatLifetime = new AbortController()
+  ctx.effect(() => () => { sidechatLifetime.abort() }, 'dsh-better-sidebar: sidechat admissions')
+  const api = buildApi(ctx, resolved, () => settingsFace, assistantLive, archiveTasks, sidechatLifetime.signal)
+  let promptAdmissions = 0
   ctx.effect(() => ctx.webServer.register({
     kind: 'prefix',
     path: '/sidebar/api',
@@ -1602,12 +1608,18 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
         writeError(res, new SidebarError('not-found', 'unknown sidebar API method', 404))
         return
       }
+      const largePrompt = method === 'sidechat.prompt'
+      if (largePrompt && promptAdmissions >= 2) {
+        writeError(res, new SidebarError('unavailable', 'Too many image admissions; try again', 503))
+        return
+      }
+      if (largePrompt) promptAdmissions++
       const controller = method === 'changes.ops' ? new AbortController() : undefined
       const response = controller === undefined ? undefined : res as ServerResponse
       const abort = (): void => { controller?.abort() }
       response?.once('close', abort)
       try {
-        const payload = await readJsonBody(req)
+        const payload = await readJsonBody(req, largePrompt ? sidechatPromptBodyLimit(ctx) : undefined)
         // Own properties only. The dispatch table is an object literal, so a
         // bare lookup resolved Object.prototype members as "methods":
         // POST /sidebar/api/constructor answered 200 {}, toString answered
@@ -1622,10 +1634,30 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
       } catch (error) {
         if (controller?.signal.aborted !== true) writeError(res, error)
       } finally {
+        if (largePrompt) promptAdmissions--
         response?.off('close', abort)
       }
     },
   }), 'dsh-better-sidebar: /sidebar/api routes')
+
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'exact',
+    path: '/sidebar/sidechat-image',
+    handler: async (req, res) => {
+      if (!fence(req)) { writeError(res, new SidebarError('forbidden', 'forbidden', 403)); return }
+      if (req.method !== 'GET') { writeError(res, new SidebarError('method-error', 'method not allowed', 405)); return }
+      try {
+        const params = new URL(req.url ?? '/', 'http://dsh.internal').searchParams
+        const childId = params.get('childId')
+        const messageId = params.get('messageId')
+        const index = params.get('blockIndex')
+        if (!childId || !messageId || index === null || !/^\d+$/.test(index)) throw new SidebarError('bad-request', 'childId, messageId and blockIndex are required')
+        const image = await readSidechatImage(ctx, childId, messageId, Number(index))
+        res.writeHead(200, { 'content-type': image.ref.mediaType, 'x-content-type-options': 'nosniff', 'cache-control': 'private, no-store' })
+        res.end(image.data)
+      } catch (error) { writeError(res, error) }
+    },
+  }), 'dsh-better-sidebar: sidechat image route')
 
   // ── Raw upload route ───────────────────────────────────────────────────
   // One request writes one file without JSON/base64 inflation. Folder uploads

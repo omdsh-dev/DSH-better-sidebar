@@ -32,6 +32,7 @@
  * deliverables, not from the call itself.)
  */
 import type { DiffHunk, ReadBlockLine } from '@deepseek-ai/dsh-client-ui-primitives'
+import { projectSidechatContent, type SidechatImageOccurrence } from '../sidechat-images.ts'
 import type { SidebarHistoryEntry } from '../context-types.ts'
 import { isContextInjectionMessage, SIDE_BOUNDARY_PROMPT, threadOwnLogEvents } from '../sidechat-core.ts'
 
@@ -70,7 +71,7 @@ export type SidechatTranscriptRow =
   /** `messageId` is the durable message identity the log records on the event
    *  (`data.id`); the view uses it to dedupe a still-pending inbox row against
    *  the durable row the claim eventually writes. Older logs may lack it. */
-  | { kind: 'user'; seq: number; text: string; messageId?: string }
+  | { kind: 'user'; seq: number; text: string; messageId?: string; images?: SidechatImageOccurrence[] }
   /** A context injection (the side boundary prompt + the parked in-progress
    *  snapshot, or any plugin-sourced context): rendered as one collapsible
    *  row, never as a user bubble. */
@@ -497,7 +498,8 @@ export function transcriptRows(entries: readonly SidebarHistoryEntry[], prev?: r
         break
       }
       case 'user/message': {
-        const text = blockText(Array.isArray(data.content) ? data.content : [])
+        const projected = projectSidechatContent(data.content, '\n\n')
+        const text = projected.text === '' && projected.images === undefined ? '…' : projected.text
         // The durable identity the pending-row dedupe keys on (absent on logs
         // written before the field existed, and on the loose fixtures).
         const messageId = typeof data.id === 'string' && data.id !== '' ? data.id : undefined
@@ -521,7 +523,7 @@ export function transcriptRows(entries: readonly SidebarHistoryEntry[], prev?: r
           rows.push({ kind: 'injection', seq: event.seq, text })
           break
         }
-        rows.push({ kind: 'user', seq: event.seq, text, ...(messageId !== undefined ? { messageId } : {}) })
+        rows.push({ kind: 'user', seq: event.seq, ...projected, text, ...(messageId !== undefined ? { messageId } : {}) })
         break
       }
       case 'assistant/live-chunk': {
@@ -721,7 +723,7 @@ function rowsEqual(a: SidechatTranscriptRow, b: SidechatTranscriptRow): boolean 
   switch (a.kind) {
     case 'user': {
       const other = b as typeof a
-      return a.text === other.text && a.messageId === other.messageId
+      return a.text === other.text && a.messageId === other.messageId && JSON.stringify(a.images) === JSON.stringify(other.images)
     }
     case 'injection':
     case 'error': {

@@ -292,6 +292,23 @@ describe('skin contract: the plugin owns no color of its own', () => {
     expect(block).not.toContain('--dsw-alias-bg-l2')
   })
 
+  it('sidechat image previews fit the transcript and keep the host border token', () => {
+    const sheet = document.createElement('style')
+    sheet.textContent = readFileSync(resolve(ROOT, 'src/client/SideChatView.module.css'), 'utf8')
+    document.head.append(sheet)
+    try {
+      const rules = Array.from(sheet.sheet!.cssRules).filter((rule): rule is CSSStyleRule => 'selectorText' in rule)
+      const image = rules.find(rule => rule.selectorText === '.sidechatImage')!.style
+      expect(image.getPropertyValue('object-fit')).toBe('contain')
+      expect(image.getPropertyValue('max-width')).not.toBe('')
+      expect(image.getPropertyValue('max-height')).not.toBe('')
+      const preview = rules.find(rule => rule.selectorText === '.sidechatImagePreview')!.style
+      expect(preview.getPropertyValue('border')).toMatch(/var\(--dsw-alias-/)
+    } finally {
+      sheet.remove()
+    }
+  })
+
   it('no icon dataset is shipped as a lazy chunk', () => {
     const chunkDir = resolve(ROOT, 'src/client/chunks')
     const chunks = readdirSync(chunkDir).filter(name => /\.tsx?$/.test(name))

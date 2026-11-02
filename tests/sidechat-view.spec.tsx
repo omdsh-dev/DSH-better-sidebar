@@ -327,7 +327,7 @@ beforeEach(() => {
         } as unknown as Response
       }
       if (promptHold !== null) await promptHold
-      return jsonResponse({ ok: true, value: { accepted: true } })
+      return jsonResponse({ ok: true, value: { accepted: true, messageId: 'm9' } })
     }
     return jsonResponse({ ok: true, value: {} })
   })
