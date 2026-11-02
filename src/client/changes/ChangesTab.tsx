@@ -248,9 +248,10 @@ export function ChangesTab({ ctx, store, scope, tab, visible, onOpenFile, onOpen
   return (
     <div className={css.root}>
       <div className={css.head}>
-        {/* ponytail: conversation Tabs are private in DSH 0.2.0-rc.2; reuse
-            their CSS classes until the host exports the component. */}
-        <div className="wSkVaW_tabs" role="tablist" aria-label={t('changes')}>
+        {/* Self-styled lens switcher: the host keeps its Tabs component
+            private, and borrowing the conversation tabs' CSS-module hash
+            broke these tabs once DSH changed it. */}
+        <div className={css.lensTabs} role="tablist" aria-label={t('changes')}>
           {(['git', 'session'] as const).map(value => (
             <button
               key={value}
@@ -260,7 +261,7 @@ export function ChangesTab({ ctx, store, scope, tab, visible, onOpenFile, onOpen
               aria-selected={lens === value}
               aria-controls={`${lensId}-${value}-panel`}
               tabIndex={lens === value ? 0 : -1}
-              className={`wSkVaW_tab${lens === value ? ' wSkVaW_tabActive' : ''}`}
+              className={css.lensTab}
               onClick={() => { chooseLens(value) }}
               onKeyDown={event => {
                 let next: Lens
