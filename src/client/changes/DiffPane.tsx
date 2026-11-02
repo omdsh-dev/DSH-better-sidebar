@@ -124,9 +124,8 @@ export interface PaneTab {
  * A compact tab strip — a real tablist with roving focus: the active tab is
  * the only tab stop, and Left/Right/Home/End move focus AND selection (the
  * standard automatic-activation model). Born as the bottom pane's strip
- * (details / diff); the changes tab's header reuses it for the lens switcher
- * so the page's two switchers read as one component. Rendered only when the
- * caller hosts more than one view, so a diff-only preview never grows a strip.
+ * (details / diff). Rendered only when the caller hosts more than one view,
+ * so a diff-only preview never grows a strip.
  */
 export function PaneTabStrip(props: { tabs: readonly PaneTab[]; active: string; onSelect(id: string): void; className?: string; label?: string }) {
   const buttons = useRef<(HTMLButtonElement | null)[]>([])
