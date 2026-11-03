@@ -34,6 +34,15 @@ export const builtinTabPlugins: readonly PluginEntry[] = [
     install: 'cd ~/.dsh && dsh plugin --profile web add dsh-better-sidebar && dsh plugin --profile web add git+https://github.com/Fisfzy/ego-browser.git',
   },
   {
+    id: '@local/dsh-session-sources',
+    name: () => t('pluginSessionSourcesName'),
+    url: 'https://github.com/CCColastic/dsh-session-sources',
+    description: () => t('pluginSessionSourcesDesc'),
+    // Optional better-sidebar integration with a native sidebar fallback.
+    // The pinned GitHub release includes the generated client bundle.
+    install: 'cd ~/.dsh && dsh plugin --profile web add dsh-better-sidebar@0.29.0 && dsh plugin --profile web add "github:CCColastic/dsh-session-sources#v0.1.2"',
+  },
+  {
     id: '@modusensus/dsh-mneme',
     name: () => t('pluginMnemeName'),
     url: 'https://github.com/modusensus/dsh-mneme',
