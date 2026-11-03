@@ -632,6 +632,8 @@ export const tr: Record<string, string> = {
   pluginFileTraceName: 'dsh-file-trace Dosya İzleme',
   pluginFileTraceDesc: 'Modelin okuduğu, yazdığı veya düzenlediği her dosyayı kaydeder; içerik ve satır bazlı diff ile gruplu liste, Markdown okuma modu ve gizli bilgi maskeleme; better-sidebar yokken bağımsız yüzen pencere',
   pluginMnemeName: 'dsh-mneme Bellek kütüphanesi',
+  pluginSessionSourcesName: 'Session Sources',
+  pluginSessionSourcesDesc: 'Recover images, files, and explicit HTTP/HTTPS links from the current conversation with per-session isolation, preview, download, re-attach, and source details; keeps a native panel fallback without better-sidebar',
   pluginMnemeDesc: 'Oturumlar arası bellek motoru: autoDream arka plan pekiştirmesi, oturum özetleri ve kullanıcı profili; SQLite + elle düzenlenebilir Markdown aynaları, tamamen çevrimdışı ve özel. better-sidebar varsa «Bellek kütüphanesi» sekmesini kaydeder (bellek/varlık/durum/ayar görünümleri), yoksa bağımsız kenar çubuğu panelini korur',
   pluginEgoBrowserName: 'ego-browser Ajan tarayıcısı',
   pluginBetterOverleafName: 'dsh-better-overleaf Overleaf sekmesi',

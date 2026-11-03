@@ -632,6 +632,8 @@ export const hi: Record<string, string> = {
   pluginFileTraceName: 'dsh-file-trace फ़ाइल ट्रैसिंग',
   pluginFileTraceDesc: 'मॉडल द्वारा पढ़ी/लिखी/संपादित हर फ़ाइल दर्ज करता है; सामग्री और लाइन-बाय-लाइन diff के साथ समूहबद्ध सूची, Markdown पढ़ने का मोड और गुप्त मास्किंग; better-sidebar के बिना स्वतंत्र फ़्लोटिंग विंडो',
   pluginMnemeName: 'dsh-mneme स्मृति लाइब्रेरी',
+  pluginSessionSourcesName: 'Session Sources',
+  pluginSessionSourcesDesc: 'Recover images, files, and explicit HTTP/HTTPS links from the current conversation with per-session isolation, preview, download, re-attach, and source details; keeps a native panel fallback without better-sidebar',
   pluginMnemeDesc: 'सत्रों के बीच स्मृति इंजन: autoDream बैकग्राउंड समेकन, सत्र सारांश और उपयोगकर्ता प्रोफ़ाइल; SQLite + हाथ से संपादन योग्य Markdown मिरर, पूरी तरह ऑफ़लाइन और निजी। better-sidebar मौजूद होने पर «स्मृति लाइब्रेरी» टैब रजिस्टर करता है (स्मृति/एंटिटी/स्थिति/सेटिंग चार दृश्य), अन्यथा साइडबार का स्वतंत्र पैनल बनाए रखता है',
   pluginEgoBrowserName: 'ego-browser एजेंट ब्राउज़र',
   pluginBetterOverleafName: 'dsh-better-overleaf Overleaf टैब',

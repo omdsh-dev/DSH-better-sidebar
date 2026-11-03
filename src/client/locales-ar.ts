@@ -633,6 +633,8 @@ export const ar: Record<string, string> = {
   pluginFileTraceName: 'dsh-file-trace تتبّع الملفات',
   pluginFileTraceDesc: 'يسجّل كل ملف يقرأه النموذج أو يكتبه أو يعدّله؛ قائمة مجمّعة بالمحتويات وفروقات سطر بسطر، مع وضع قراءة Markdown وإخفاء الأسرار؛ نافذة عائمة مستقلة بدون better-sidebar',
   pluginMnemeName: 'dsh-mneme مكتبة الذاكرة',
+  pluginSessionSourcesName: 'Session Sources',
+  pluginSessionSourcesDesc: 'Recover images, files, and explicit HTTP/HTTPS links from the current conversation with per-session isolation, preview, download, re-attach, and source details; keeps a native panel fallback without better-sidebar',
   pluginMnemeDesc: 'محرك ذاكرة عبر الجلسات: ترسيخ في الخلفية عبر autoDream، وتلخيص الجلسات، وملف المستخدم؛ SQLite + نسخ Markdown قابلة للتحرير يدويًا، يعمل دون اتصال تمامًا وبخصوصية تامة. يسجّل تبويب «مكتبة الذاكرة» (عرض الذاكرة/الكيانات/الحالة/الإعدادات) عند وجود better-sidebar، وإلا يحتفظ بلوحة جانبية مستقلة',
   pluginEgoBrowserName: 'ego-browser متصفح الوكيل',
   pluginBetterOverleafName: 'dsh-better-overleaf تبويب Overleaf',

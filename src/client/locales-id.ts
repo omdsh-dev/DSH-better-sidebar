@@ -630,6 +630,8 @@ export const id: Record<string, string> = {
   pluginFileTraceName: 'dsh-file-trace Pelacakan File',
   pluginFileTraceDesc: 'Mencatat setiap file yang dibaca, ditulis, atau diedit model; daftar terkelompok dengan konten dan diff per baris, mode baca Markdown dan penyamaran rahasia; jendela mengambang mandiri tanpa better-sidebar',
   pluginMnemeName: 'dsh-mneme Pustaka memori',
+  pluginSessionSourcesName: 'Session Sources',
+  pluginSessionSourcesDesc: 'Recover images, files, and explicit HTTP/HTTPS links from the current conversation with per-session isolation, preview, download, re-attach, and source details; keeps a native panel fallback without better-sidebar',
   pluginMnemeDesc: 'Mesin memori antar sesi: konsolidasi latar belakang autoDream, ringkasan sesi, dan profil pengguna; SQLite + mirror Markdown yang bisa disunting manual, sepenuhnya luring dan privat. Mendaftarkan tab «Pustaka memori» (tampilan memori/entitas/status/pengaturan) jika better-sidebar terpasang; jika tidak, panel samping mandiri tetap dipertahankan',
   pluginEgoBrowserName: 'ego-browser Peramban agen',
   pluginBetterOverleafName: 'dsh-better-overleaf Tab Overleaf',
