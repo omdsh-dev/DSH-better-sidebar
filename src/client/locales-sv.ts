@@ -287,6 +287,7 @@ export const sv: Record<string, string> = {
   openEditor: 'Öppna editor',
   referenceFile: '@fil',
   addToConversation: 'Lägg till i konversation',
+  quoteChip: 'Citat {where}',
   copyRelative: 'Kopiera relativ sökväg',
   copyAbsolute: 'Kopiera absolut sökväg',
   rename: 'Byt namn',

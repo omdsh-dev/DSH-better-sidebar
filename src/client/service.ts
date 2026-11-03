@@ -32,6 +32,7 @@ import { builtinFileIcon, builtinFolderIcon } from './file-icons.tsx'
 import type { SessionScope } from './api.ts'
 import type { SidebarPrefs } from '../prefs-shared.ts'
 import { bindSidechatSurfaces, type SidechatSurfaceAdapter } from './sidechat-surface.ts'
+import { armLineEnd } from './line-target.ts'
 export type { SidechatSurface, SidechatSurfaceAdapter } from './sidechat-surface.ts'
 
 /**
@@ -315,6 +316,13 @@ export interface FileViewerProps {
    *  positions the reader there once, on arrival; every other viewer ignores
    *  it. Absent on an ordinary open. */
   line?: number
+  /** The last 1-based line of the landing RANGE, with {@link
+   *  FileViewerProps.line} — a quote chip's click-through carries the quoted
+   *  span, and the text viewer flashes `line..lineEnd` so the span is visible
+   *  at a glance rather than a caret somewhere. It rides the plugin's own
+   *  side channel (`line-target.ts`), not the host's resource parameters,
+   *  which declare `line` only. Absent = a single-line landing. */
+  lineEnd?: number
   /** The viewer reports that it has APPLIED the `line` it was handed (or that
    *  the line does not apply to it), and the host stops handing it out: the
    *  line is one navigation, not a mode of the file. The host has to own that
@@ -771,8 +779,13 @@ export interface BetterSidebarService {
    * (v0.12.0+) rides to the callback like `closeTab`'s.
    */
   activateTab(tabId: string, scope?: SessionScope): void
-  /** Open a file in the sidebar editor of `scope`'s session (title defaults to the file name). */
-  openFile(scope: SessionScope, path: string, title?: string): void
+  /**
+   * Open a file in the sidebar editor of `scope`'s session (title defaults to
+   * the file name). `options.line` lands the viewer on that 1-based source
+   * line (a quote chip's click-through); `options.lineEnd` extends the
+   * landing flash through that line, so the quoted span reads at a glance.
+   */
+  openFile(scope: SessionScope, path: string, title?: string, options?: { line?: number; lineEnd?: number }): void
   /**
    * Resolve one of the plugin's own host routes (`sidebar/api/fs.read`) into
    * an absolute URL the page can fetch even when the GUI is served under a
@@ -1454,9 +1467,22 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
    *  a third-party type registered with a more specific pattern (a `.drawio`
    *  canvas, say) renders its own tab, and the plugin's editor only takes
    *  files nobody else claims. (This module holds no ctx, so the probe used
-   *  by the tree's own carriers lives in sidebar-file.ts instead.) */
-  const openFile = (scope: SessionScope, path: string, title?: string): void => {
-    openTab({ type: 'editor', title: title ?? baseNameOf(path), path, id: `editor:${path}` }, scope)
+   *  by the tree's own carriers lives in sidebar-file.ts instead.)
+   *
+   *  `options.line` rides the seed's own landing line (#826) and
+   *  `options.lineEnd` arms the landing flash's span through the side channel
+   *  in line-target.ts — the host's resource parameter map declares `line`
+   *  only, and smuggling a second key through host-owned params would work
+   *  exactly until upstream tightened that shape. */
+  const openFile = (scope: SessionScope, path: string, title?: string, options?: { line?: number; lineEnd?: number }): void => {
+    if (options?.line !== undefined) armLineEnd(path, options.line, options.lineEnd)
+    openTab({
+      type: 'editor',
+      title: title ?? baseNameOf(path),
+      path,
+      id: `editor:${path}`,
+      ...(options?.line === undefined ? {} : { line: options.line }),
+    }, scope)
   }
 
   const service: BetterSidebarService = {

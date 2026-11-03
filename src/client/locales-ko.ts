@@ -296,6 +296,7 @@ export const ko: Record<string, string> = {
   openEditor: '편집기 열기',
   referenceFile: '@파일',
   addToConversation: '대화에 추가',
+  quoteChip: '인용 {where}',
   copyRelative: '상대 경로 복사',
   copyAbsolute: '절대 경로 복사',
   rename: '이름 바꾸기',

@@ -40,6 +40,7 @@ import { updatePluginSettings } from './plugin-settings.ts'
 import { createOpenInApp } from './open-in-app.ts'
 import { TreePanel } from './TreePanel.tsx'
 import { t } from './locales.ts'
+import { takeLineEnd } from './line-target.ts'
 import { relativeTo } from './paths.ts'
 import { resolveSidebarPath } from './paths.ts'
 import { clearRetargetedPath, closePathTabs, consumeRetargetedPath, pathTabKey, retargetPathTabs } from './tree-mutations.ts'
@@ -166,6 +167,22 @@ export function EditorHost(props: {
     if (lineKey !== null) setSpentLine(lineKey)
   }, [lineKey])
   useEffect(() => { setSpentLine(null) }, [path])
+
+  // The quoted span's END, alongside the landing line (the flash range). It
+  // rides the plugin's side channel (line-target.ts) because the host's
+  // resource parameters carry `line` only; armed by the open that carried the
+  // range, spent here once per landing. Reading it through a ref keyed by the
+  // SAME `${path}#${line}` keeps the render pure: React may render twice and
+  // the map entry is already gone after the first read.
+  const liveLineKey = lineKey !== null && lineKey !== spentLine ? lineKey : null
+  const lineEndRef = useRef<{ key: string; end: number | undefined } | null>(null)
+  if (liveLineKey !== null && lineEndRef.current?.key !== liveLineKey) {
+    lineEndRef.current = {
+      key: liveLineKey,
+      end: tab.line === undefined ? undefined : takeLineEnd(path, tab.line),
+    }
+  }
+  const lineEnd = liveLineKey === null ? undefined : lineEndRef.current?.end
 
   // Manual refresh (issue #167 + PR #228): a dirty draft is dropped by the
   // reload (the editor instance remounts), so confirm before discarding it.
@@ -670,6 +687,9 @@ export function EditorHost(props: {
             // AND this open has not spent it yet. Only the text viewer acts on
             // it; a markdown/html/image viewer gets the field and ignores it.
             line: lineKey !== null && lineKey !== spentLine ? tab.line : undefined,
+            // The quoted span's end, when the open armed one (the landing
+            // flash). Viewers without a flash ignore it.
+            lineEnd,
             onLineConsumed,
             content: load.content,
             size: load.size,

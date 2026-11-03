@@ -304,6 +304,7 @@ export const th: Record<string, string> = {
   openEditor: 'เปิดตัวแก้ไข',
   referenceFile: '@ไฟล์',
   addToConversation: 'เพิ่มไปยังแชท',
+  quoteChip: 'อ้างอิง {where}',
   copyRelative: 'คัดลอกพาธสัมพัทธ์',
   copyAbsolute: 'คัดลอกพาธ absolute',
   rename: 'เปลี่ยนชื่อ',

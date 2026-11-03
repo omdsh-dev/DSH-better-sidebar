@@ -117,7 +117,7 @@ If something fails, check the FAQ table in https://github.com/omdsh-dev/DSH-bett
 - **Silent wrong-file writes are gone**: tab reconciliation now covers tabs in background sessions, and worktree sessions use one address base — a renamed/deleted file is no longer re-created on the next save, and a chat link never opens a same-named file from another checkout
 - **Host crash guard**: pathological `git status` output is capped with a latch and a process-tree kill, turning "host dies with `RangeError`" into one failed SCM refresh
 - **Git page**: histories with more than 1,000 branches load again; tags now decorate commits, rows and details, and tag changes invalidate pagination
-- **Editor**: saving after an mtime-only change no longer deadlocks on `fs-conflict`; the reading position survives tab re-seating; “Add to conversation” lands as a compact reference chip and never flattens earlier chips
+- **Editor**: saving after an mtime-only change no longer deadlocks on `fs-conflict`; the reading position survives tab re-seating; “Add to conversation” lands as a compact reference chip and never flattens earlier chips — and a selected passage now becomes a *clickable* quote chip that jumps back to the source file and flashes the quoted lines ([#888](https://github.com/omdsh-dev/DSH-better-sidebar/issues/888))
 - **Markdown links**: local destinations normalize Windows backslashes, so `C:\ws\_analysis\report.md` opens instead of a bare ENOENT
 - **Sidebar**: the bottom-workbench toggle stays visible while the right panel is open; the macOS dock fallback avoids the traffic lights; a content-stable tab scope ends needless full-file re-reads; closing a side-chat tab archives its session
 

@@ -304,6 +304,7 @@ export const ja: Record<string, string> = {
   openEditor: 'エディターで開く',
   referenceFile: '@ファイル',
   addToConversation: '会話に追加',
+  quoteChip: '引用 {where}',
   copyRelative: '相対パスをコピー',
   copyAbsolute: '絶対パスをコピー',
   rename: '名前の変更',

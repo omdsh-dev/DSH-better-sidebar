@@ -304,6 +304,7 @@ export const hi: Record<string, string> = {
   openEditor: 'एडिटर खोलें',
   referenceFile: '@फ़ाइल',
   addToConversation: 'वार्तालाप में जोड़ें',
+  quoteChip: 'उद्धरण {where}',
   copyRelative: 'सापेक्ष पथ कॉपी',
   copyAbsolute: 'निरपेक्ष पथ कॉपी',
   rename: 'नाम बदलें',

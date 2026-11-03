@@ -25,6 +25,7 @@ import { ContextDiagnosticsHost, createContextDiagnosticsHost, registerContextDi
 import { createNativeSurface } from './native/surface.ts'
 import { isTargetAvailable, openInterceptedLink, registerLinkInterception, shouldTakeOverLink } from './link-intercept.ts'
 import { registerImeGuard } from './ime-guard.ts'
+import { registerQuoteSource } from './selection-quote.ts'
 import { registerSettingsNavIcon } from './settings-nav-icon.ts'
 import { loadBootDecision } from './prefs.ts'
 import { SideCardSection } from './SideCardSection.tsx'
@@ -218,6 +219,14 @@ export function apply(ctx: Context): void {
   ctx.effect(
     () => registerBuiltins(ctx, service),
     'dsh-better-sidebar: register built-in tabs and viewers',
+  )
+  // The quote chip's input-trigger source ("add selection to conversation"):
+  // it answers chip clicks (open the quoted lines) and send-time
+  // serialization. Waits briefly for the host's input-trigger service; without
+  // it the popup keeps #1052's plain reference chip.
+  ctx.effect(
+    () => registerQuoteSource(ctx),
+    'dsh-better-sidebar: quote-chip input-trigger source',
   )
   try {
     // rc.8+ exposes the client module system as the `ctx.modules` service;

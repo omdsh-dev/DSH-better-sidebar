@@ -249,6 +249,39 @@ describe('insertDraftReference', () => {
     expect((fake.chipInserts[0]?.ref as { appearance?: string }).appearance).toBe('file')
   })
 
+  it('carries the source and ref a chip OWNER overrides (the quote chip)', () => {
+    const fake = composerCtx({ draft: '' })
+    insertDraftReference(fake.ctx, 's1', {
+      label: 'Quote a.md L2-3',
+      text: '```a.md:2-3\nx\n```',
+      source: 'betterSidebarQuote',
+      ref: 'q1-abcd',
+      appearance: 'file',
+      clipboardText: 'a.md:2-3',
+    })
+    // A source-owned chip: the click and the send-time expansion go to the
+    // plugin's own source, not to the built-in 'reference' one whose text IS
+    // the payload.
+    expect(fake.chipInserts[0]?.ref).toEqual({
+      source: 'betterSidebarQuote',
+      ref: 'q1-abcd',
+      label: 'Quote a.md L2-3',
+      appearance: 'file',
+      clipboardText: 'a.md:2-3',
+    })
+  })
+
+  it('keeps the built-in source + fenced text when nothing overrides them', () => {
+    const fake = composerCtx({ draft: '' })
+    insertDraftReference(fake.ctx, 's1', { label: 'a.md:3', text: 'X' })
+    expect(fake.chipInserts[0]?.ref).toEqual({
+      source: 'reference',
+      ref: 'X',
+      label: 'a.md:3',
+      clipboardText: 'a.md:3',
+    })
+  })
+
   it('offsets past a command chip, which never appears in occurrences', () => {
     // '/goal ' is a command chip: 6 draft characters, 1 detect character.
     const fake = composerCtx({ draft: '/goal ', phase: 'claimed' })

@@ -306,6 +306,7 @@ export const pl: Record<string, string> = {
   openEditor: 'Otwórz edytor',
   referenceFile: '@plik',
   addToConversation: 'Dodaj do rozmowy',
+  quoteChip: 'Cytat {where}',
   copyRelative: 'Kopiuj ścieżkę względną',
   copyAbsolute: 'Kopiuj ścieżkę bezwzględną',
   rename: 'Zmień nazwę',

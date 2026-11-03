@@ -97,6 +97,8 @@ import type {} from 'dsh-better-sidebar'  // 触发 declare module '@deepseek-ai
 
 > ⚠️ **计划上架 DSH 插件市场**的插件还须遵守市场 manifest 约束（`dependencies`/`peerDependencies`/`optionalDependencies` 一律不得出现 `cordis`、`scripts` 不得含 install 类钩子），详见 [AGENTS.md](../AGENTS.md) 硬约束一节。
 
+> 📌 本插件自己的 DSH peer 下限自 v0.28.0 起统一为 `^0.2.1-rc.1`（**v0.30.0 起 14 条**——新增 `@deepseek-ai/dsh-client-ui-input-trigger`，划选引用 chip 的点击与发送展开走它的 `ctx.inputTriggers` 服务，见 §7.2）。宿主预检按名字为 `@deepseek-ai/dsh` 或 `@deepseek-ai/dsh-` 开头的 peer 判定兼容性，所以**只加在 devDependencies 里是不够的**。
+
 ### 2.3 类型导入路径
 
 ```ts
@@ -534,6 +536,9 @@ interface FileViewerProps {
   customData?: unknown     // fetchStrategy='custom' 时（load() 的返回值）
   // 引用带行号时才有（#826，见 §0「地址里的行号」）：一次性导航，不是文件的属性
   line?: number            // 1 基行号（如 `a.c#L131` / `a.c:131`）；定位用得上的 viewer 消费它
+  // 行段引用（v0.30.0+）：与 line 同时到达，给出被引区间的末行。内置编辑器据此
+  // 闪一下整段；不消费它的 viewer 行为与只收到 line 相同。
+  lineEnd?: number
   onLineConsumed?: () => void // 已消费该 line 的回报；不调用则每次加载都会重新下发（默认不消费）
   // 以下为内置文本编辑器与 EditorHost 内部协作字段，外部 viewer 忽略：
   toolbar?: 'self' | 'host'
@@ -843,8 +848,15 @@ interface BetterSidebarService {
   /** 在 scope.sessionId 的侧边栏编辑器打开一个文件（title 缺省为文件名；
    *  id 按路径派生（`editor:` + path），与内置 open-path 拦截一致，不同文件可并排打开）。
    *  注意：path 派生 id 只对 openFile/openSidebarFile 成立；editorExplorer 合并模式的
-   *  原地切换经 updateTab 重写 path/title，tab id 保持稳定、不再对应 path。 */
-  openFile(scope: SessionScope, path: string, title?: string): void
+   *  原地切换经 updateTab 重写 path/title，tab id 保持稳定、不再对应 path。
+   *  `options`（v0.30.0+）：`{ line?, lineEnd? }` —— 打开后定位到该行；给了
+   *  `lineEnd` 时内置编辑器会把**整段**闪一下（划选引用 chip 的回跳用它标出
+   *  「引的是哪几行」）。行号语义与聊天链接一致：只取起始行、列号丢弃，
+   *  markdown / html 先切到编辑态，`line` 是瞬态（不进持久化白名单）。
+   *  `lineEnd` 走 `src/client/line-target.ts` 的一次性旁路（key = path + line，
+   *  被 viewer 取走即删），**不进**宿主的 `navigation.params`——那张表只声明了
+   *  `line`，塞额外键属于未声明契约。 */
+  openFile(scope: SessionScope, path: string, title?: string, options?: { line?: number; lineEnd?: number }): void
   /** 把插件自有 host 路由（如 `'sidebar/api/fs.read'`）解析成绝对 URL，
    *  保留反代子路径前缀（v0.25.0+，features 含 'hostRouteUrl'）。前导斜杠会被
    *  去掉——带着它就会甩掉前缀、钉到源站根；桌面壳的真实基底也由它给出。
@@ -1033,6 +1045,29 @@ registerSidechatSurfaceAdapter(adapter: SidechatSurfaceAdapter): () => void
 - `sendPrompt(text)` 只调用当前行捕获的子线程 `sidechat.prompt` 路由。它不读取主会话、`scope.sessionId` 或任何兜底目标。行、适配器、线程绑定或插件失效之后，旧回调拒绝执行；请求失败同时通过现有侧边对话错误区显示并 reject 给消费方。调用方应处理 rejection，销毁时取消延迟动作。
 
 该提案仍需以真实 DSH `0.2.1-rc.2` profile 同时安装两个候选插件验收，不能把单元测试或模拟 DOM 结果写成已完成双插件验收。
+
+### 7.2 划选「添加到对话」的引用 chip（v0.30.0+）
+
+在内置编辑器（`code` / `markdown` / `jsonl` 的 CodeMirror 面，以及 markdown 预览）里划选一段文字，弹窗「添加到对话」会往主会话 composer 落一枚 chip。此处记录它用到的契约与降级，第三方插件若想复刻同一套交互可以照抄。
+
+**宿主服务与 chip 身份**
+
+- 落 chip 走宿主 `conversation` 服务的 `input.for(session).insertReference(ref, span)`（#1052 之后内置的通道；`ref: ReferenceInsert = { source, ref, label, appearance?, clipboardText }`，`span = { draftRev, start, end }`）。`insertDraftReference()` 负责把「插件投影坐标」折成编辑器检测投影坐标、补前导空格、并在 `snapshot.occurrences` 存在时走 span 通道而不是整框重写（#1002：整框重写会把已有 chip 拍平成纯文本）。
+- **要可点击、要在发送时展开，chip 必须属于一个自有的 input-trigger source**：`ctx.inputTriggers.registerSource({ trigger: '@', name, candidates, onPick, openReference?, codec? })`。`name` 就是 chip 的 `ref.source`，宿主按它路由点击（`openReference(session, { ref, appearance })` 返回 `true` 表示已处理）与发送时的 `codec.serialize(ref, signal)`。没有 codec 的 source，宿主会**拒绝发送**而不是静默降级成剪贴板文本——所以「注册 source」必须先于「插 chip」。
+- 本插件的 source 名是 `betterSidebarQuote`，`candidates` 恒为空（它不进 `@` 菜单，只做 chip 归属）；chip 的 `ref` 是短 id，记录（路径 / 行段 / 正文 / 所属会话）存在 `localStorage`（`dsh-better-sidebar:quote-refs`，FIFO 200 条）——因为该模块同时进 core bundle 与 lazy editor chunk，两个模块实例只能靠 `localStorage` 互见记录。
+- 发送时的展开结果与「没有 chip 的时代」字节一致：`<相对路径>[:起[-止]]` 表头 + ≤500 字符时附围栏正文，超限只留表头。
+
+**降级链（每一级都是宿主真支持的，不是静默 no-op）**
+
+1. 自有 source 已注册且 chip 插得进去 → 可点击 chip；
+2. 否（宿主无 `ctx.inputTriggers`、注册被拒、composer 不在 plain/claimed 相位、`draftRev` 不匹配……）→ 退回 #1052 的内置 `source: 'reference'` chip（不可点击，但内容正确）；
+3. 再否（没有 chip 通道）→ 纯文本 `appendToDraft`。
+
+失败的那次尝试会把刚写入的 quote 记录回滚（`localStorage` 里不留孤儿 id）。
+
+**点击回跳**
+
+`openReference` 校验 chip 的 `sessionId` 与当前会话一致（否则拒绝：换了会话 cwd 可能不同，会打开错文件），然后 `ctx.betterSidebar.openFile(scope, path, undefined, { line, lineEnd })`；内置编辑器定位到 `line` 并把 `line`–`lineEnd` 整段闪 2.4 s（皮肤令牌 `--dsw-alias-interactive-bg-hover-accent`，`prefers-reduced-motion` 下减弱）。`lineEnd` 是**插件的模块级一次性旁路**（`src/client/line-target.ts`，key = path + line），不写进宿主导航参数。底部工作台的编辑器也走这条链路，但那里不消费 `line`，因此**只在右侧栏可见**（`target: 'bottom'` 时 chip 仍能点开文件，只是不定位、不闪光）。
 
 ---
 

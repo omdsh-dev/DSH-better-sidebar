@@ -302,6 +302,7 @@ export const nl: Record<string, string> = {
   openEditor: 'Editor openen',
   referenceFile: '@bestand',
   addToConversation: 'Aan conversatie toevoegen',
+  quoteChip: 'Citaat {where}',
   copyRelative: 'Relatief pad kopiëren',
   copyAbsolute: 'Absoluut pad kopiëren',
   rename: 'Naam wijzigen',

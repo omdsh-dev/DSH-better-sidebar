@@ -304,6 +304,7 @@ export const tr: Record<string, string> = {
   openEditor: 'Düzenleyiciyi aç',
   referenceFile: '@dosya',
   addToConversation: 'Sohbete ekle',
+  quoteChip: 'Alıntı {where}',
   copyRelative: 'Göreli yolu kopyala',
   copyAbsolute: 'Mutlak yolu kopyala',
   rename: 'Yeniden adlandır',
