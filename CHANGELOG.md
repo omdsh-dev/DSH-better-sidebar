@@ -7,6 +7,9 @@
 - 🎯 **设置页「侧边卡片」的导航图标不再叠成两个**：插件此前按"宿主设置导航还没有图标通道"的老假设，用 CSS 把兜底齿轮藏起来、再画自己的图标；宿主早已提供按 section id 寻址的 `settings.section.icon` 插槽，而且图标的 DOM 外面多了一层 span，老选择器失效后兜底 SVG 露了出来，与插件图标并排显示。现在改为**走宿主插槽**提供图标，删掉标记 + CSS 遮罩那一套（顺带去掉了一个监听整个 document 的 MutationObserver）。
   - 🧪 测试：`tests/settings-nav-icon.spec.tsx` 钉住图标按宿主给的 `size` 缩放、只用 `currentColor`；真实宿主上用无头浏览器确认导航行只剩一个 `svg`、无残留标记。
 
+- 🪟 **浮层不再把自己的标题栏摆进桌面壳的原生窗口控件带**（[#805](https://github.com/omdsh-dev/DSH-better-sidebar/issues/805) 同根因）：Windows 桌面壳用 `titleBarOverlay` 在视口顶部画原生「最小化/最大化/关闭」，那条带子里的指针事件到不了网页。任务详情浮窗（`FloatingWindow`）的最小顶部距离写死 8px、自身标题栏 34px，× 正好落在带子里点不动；节点详情弹层（`AnchoredPopover`）与 mermaid 放大图工具栏同理。新增 `src/client/viewport-inset.ts` 读标准 `navigator.windowControlsOverlay`（`visible` + `getTitlebarAreaRect()`，订阅 `geometrychange`，`resize` 兜底）求出带高，三处消费者把可交互区压在带子下方；拖拽/重排的纵向下限同步，带子出现时把已摆好的浮层抬起、消失时不主动下拉（用户摆的位置不被最大化/还原弹走）。**只读探测、零配置**：不写 CSS 变量、不写 DOM 属性、不加偏好键、不复活 #430 删掉的 `--dsh-title-bar-strip`；API 缺失 / `visible:false` / 读取抛错一律退化为 0，普通浏览器与网页版的位置与今天逐字一致。
+  - 🧪 测试：新增 `tests/viewport-inset.spec.ts`（9 例：API 缺失 / 高度 0 / `visible:false` / 抛错 / 小数取整 / `y+height` 取值 / `geometrychange` 增删 / 换源清理监听）；`tests/floating-window.spec.tsx` 新增 5 例（锚点在带内抬起 / 拖拽不越界 / 带子出现抬起 / 带子消失不下拉 / 幽灵接口保持原 8px）；挂载 lane 注入假 WCO 断言放大图工具栏 16→52→16 的真实布局。
+
 ### v0.30.0
 
 - 🧭 **适配 DSH 0.2.2-rc.1（本版 peer 下限抬到 `^0.2.2-rc.1`）**：宿主把模型选择从可安装的 `ModelSelectionRef` 换成 agent 自有的 `AgentModel`——`agent.model.select()` 同时落盘并作用于下一步，侧边对话的线程模型选择随之改写（不再自己 install 一份 ref）；`dsh-tools` 移除了 PTC（`tool/ptc-dispatch*`）的事件**类型声明**（运行期仍记录），宿主图标由内联 `<path>` 改为 sprite `<use href="#dsw-icon-…">`。**支持线随之移动**：0.x 的 caret 不跨 minor，因此 DSH 0.2.1 线（`0.2.1-rc.1 ~ rc.5`，即当前的宿主 npm `latest`）请继续固定插件 **v0.28.2**（`v0.29.0` 从未发布到 npm），0.2.2-rc.1+ 请用 **v0.30.0**。
