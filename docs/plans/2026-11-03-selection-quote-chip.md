@@ -64,17 +64,19 @@ interface SidebarRightResourceParamsMap {
 
 `line` 之外的键**没有任何声明，也没有运行期校验**——今天能过，是因为宿主把 params 当不透明对象往下传；哪天它开始按声明裁剪或做形状校验，行段末端就会静默丢失，而且丢得没人知道（表现为「闪光没了」，不报错）。
 
-改成插件自己的旁路：`src/client/line-target.ts` 是一个模块级 `Map`，key = `` `${path}#${line}` ``，`armLineEnd(path, line, lineEnd?)` 写、`takeLineEnd(path, line)` 读并**立即删除**（一次性，避免下一次意外打开同一行也闪光）。`MAX_ARMED = 32`，超了淘汰最旧的。`openFile` 实现里先 `arm` 再 `openTab`；`EditorHost` 在拿到 `line` 时 `take` 一次，结果存进 ref（key 变化才重新取，否则 React 重渲染会把已取走的值当 undefined）。
+改成插件自己的旁路：`src/client/line-target.ts` 是一个模块级 `Map`，key = `` `${path}#${line}` ``，值 = `{nonce, end?}`。`armLineEnd(path, line, lineEnd?)` 每次 arm 都自增 nonce；`peekLineTarget(path, line)` 是**纯读**（render-safe，丢弃的并发渲染不会吃掉 arm）；`consumeLineTarget(path, line)` 在编辑器把导航交给 viewer 后消费一次。`MAX_ARMED = 32`，超了淘汰最旧的。`openFile` 实现里先 `arm` 再 `openTab`；`EditorHost` 在 layout effect 里消费，并把 `(path#line, nonce)` 作为「已落地」身份。
 
-路径安全性：armed 和 take 的是同一个 `path` 字符串（`openTab` 的 `path` 原样传递），不做 resolve——两边都来自同一个 `openFile` 调用，做规范化反而可能让两侧不一致。
+**nonce 是二次点击修复的关键**：宿主 `tab-adapter` 只在 `params.line !== existing.tab.line` 时 patch 导航，同一个 chip 连点两次不会重发导航；只比较 `path#line` 会把第二次误判成已消费（不跳不闪），而残留的 arm 还可能让之后同 path#line 的普通打开误闪。带 nonce 后，每次点 chip 都是新导航，落地即消费。
+
+路径安全性：armed 和 peek/consume 的是同一个 `path` 字符串（`openTab` 的 `path` 原样传递），不做 resolve——两边都来自同一个 `openFile` 调用，做规范化反而可能让两侧不一致。
 
 ## 5. 决定四：记录放 `localStorage`，因为模块有两个实例
 
 `selection-quote.ts` 既被 core bundle 的 `index.tsx` 引用（注册 source），又被 lazy `editor` chunk 的 `TextEditor.tsx` 引用（插入 chip）。两次打包 → **两个独立的模块实例**，各自有各自的模块级 `Map`。注册发生在 core 实例里，插入发生在 editor 实例里，靠模块变量是看不见彼此的。
 
-所以记录（`{id, sessionId, path, cwd, lines, text, label, clipboardText, n}`）落在 `localStorage` 的 `dsh-better-sidebar:quote-refs`，FIFO 200 条；两个实例每次读写都先 `readStoreIntoMemory()`（按 `id` 合并，保留量大的顺序）再操作。id 形如 `q<n>-<4 位随机>`——`n` 单调递增，便于 FIFO 排序，随机后缀避免两个实例在同一毫秒各自计数撞号。
+所以记录（`{id, sessionId, path, cwd, lines, text, label, clipboardText, n}`）落在 `localStorage` 的 `dsh-better-sidebar:quote-refs`，FIFO 200 条；两个实例每次读写都先 `readStoreIntoMemory()`（按 `id` 合并，保留量大的顺序）再操作。id 形如 `q<n>-<4 位随机>`——`n` 单调递增，便于 FIFO 排序，随机后缀避免两个实例在同一毫秒各自计数撞号。`text` 存的是 `buildSelectionInsert(...).text`（**已按 500 字符上限截断**的发送载荷），不是原始选区：否则 200 条大选区会撑爆配额，而配额失败后仍插 chip 会得到一个点不动、发送时被 codec 抛错阻断的死 chip。
 
-**插不进去就删记录**：`insertQuoteChip` 返回 false 时把刚写的记录删掉，然后调用方退回 #1052 的 chip 或纯文本。旧分支是「保留记录」，结果是 localStorage 里堆一批永远没人引用的 id。
+**先持久化再插 chip**：`saveStore()` 返回是否真的写进 `localStorage`；写失败就回滚记录并让 `insertQuoteChip` 返回 false，调用方退回 #1052 的 chip 或纯文本。chip 插不进去（composer 拒绝）时同样删记录。旧分支是「保留记录」，结果是 localStorage 里堆一批永远没人引用的 id。
 
 ## 6. 决定五：闪光用皮肤令牌 + CodeMirror 行装饰
 
@@ -95,16 +97,17 @@ interface SidebarRightResourceParamsMap {
 | composer 不在 `plain`/`claimed` 相位、`draftRev` 不匹配 | `insertReference` 返回 false → 同上 |
 | 没有 chip 通道 | `insertReferenceOrText` 退纯文本 `appendToDraft` |
 
-「重复注册」这条被显式当成功处理：宿主文案是 `slash source "@betterSidebarQuote" is already registered`，正则 `/already registered|duplicate/i` 命中即认为 source 就绪（HMR 重载、两个 bundle 实例都会撞这条）。
+「重复注册」按宿主的真实契约处理：`registerSource` 对同名 source **必抛**（文案是 `slash source "@betterSidebarQuote" is already registered`，正则 `/already registered|duplicate/i` 命中）。那通常意味着另一个 bundle 实例持有 source，因此本次插入仍可继续；但本实例**没有 disposer**，无法感知那个 owner 何时卸载（fiber 释放在另一个实例里发生），所以每次 commit 都会重新探测：槽位一旦空闲就接管注册，避免「ready 标志永真、实际无人注册」的死 chip。
 
 ## 8. 门禁与实测
 
 - `tsc --noEmit` 绿；`eslint` 改动文件零输出。
-- 全量 `vitest run`：240 files / 2994 tests → 2976 passed、17 skipped、**1 failed**（`tests/git.spec.ts:510`，本机 git 2.34.1 不支持 `checkout --end-of-options`，与本分支无关：`git diff --stat c6c2e75 -- src/git.ts tests/git.spec.ts` 为空，且 scratch 仓库手动复现同一报错）。
-- 新增用例：`tests/selection-quote.spec.ts` 23、`tests/quote-flash.spec.ts` 13、`tests/line-target.spec.ts` 7，`tests/conversation-draft.spec.ts` +2。
+- 全量 `vitest run`：240 files / 3000 tests → 2983 passed、17 skipped、0 failed。
+- 新增用例：`tests/selection-quote.spec.ts` 27、`tests/quote-flash.spec.ts` 13、`tests/line-target.spec.ts` 8，`tests/conversation-draft.spec.ts` +2，`tests/editor-line-nav-mode.spec.tsx` +1（同一 chip 连点两次仍跳转/闪光）。
 
 ## 9. 未覆盖 / 已知边界
 
-- **底部工作台不定位**：那里不消费 `line`（宿主也不传 params 给底部承载面），chip 仍能点开文件，只是不跳行、不闪光。
+- **底部工作台没有该入口**：chip 只打开右侧栏；底部 `TabContent → EditorHost` 是同一组件、同样消费 `line`（只是 `openFile` 不开到底部），本功能**未在底部真机验证**。
+- **行号漂移**：记录的是划选时的行号快照；源文件之后被编辑，点击会落到同一行号（可能已偏移）。不做锚点搜索 / 内容定位，超出本次范围。
 - **挂载 lane 没有 chip 冒烟**：`pnpm test:mount` 不覆盖「点 chip → 文件打开 → 闪光」，只覆盖到编辑器 chunk 加载。要真机验证得手工点一次。
 - **多实例并发写 localStorage**：两个 bundle 实例同时插入时，后写者会覆盖前者的 `readStoreIntoMemory` 结果（窗口是毫秒级，实际是同一个用户操作串行发生）。没有加锁；如果将来出现丢记录的实测，再改成「写前重读 + 只 append 自己的 id」。

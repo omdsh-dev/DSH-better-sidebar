@@ -2,13 +2,13 @@
 
 > 面向 **消费插件开发者**：如何让你的插件向 better-sidebar 注册新的侧边栏页面（tab）和文件类型预览器。
 >
-> 适用版本：**v0.4.0+**（`ctx.betterSidebar` 服务）；声明式设置 **v0.4.1+**；text/number 设置行 **v0.11.0+**；badge/生命周期/定向打开/插件设置/版本探测 **v0.12.0+**；select 设置行（`settingSelect`）与外链认领（`urlTarget`）**v0.13.0+**；统一 `@deepseek-ai/cordis` 类型基底 **v0.15.2+**；路由前缀安全解析（`hostRouteUrl`）**v0.25.0+**。当前版本 **v0.28.2 正式版**（13 条 DSH peer 下限 `^0.2.1-rc.1`，仅支持 DSH **0.2.1-rc.1+**；0.2.1-alpha.5 请固定 v0.28.0-alpha.0，0.2.0-rc.2 请固定 v0.26.1（v0.27.0 尚未发布），0.2.0-rc.1 请用 v0.24.1，0.1.7 线请用 v0.22.1——caret 范围跨 minor 不成立，`^0.1.7-rc.1` 会被 0.2.0 宿主的启动预检静默禁用）。**v0.19.0 移除了自绘右侧面板与自由窗口**（见 §0、§11）；**自 v0.20.0 开发线起**（**注意：0.20.0 从未发布到 npm，这些变更全部落在 v0.21.1**）插件**移除了自带的终端**（宿主 0.1.6 的 `ui-sidebar-terminal` 取代，见 §4.4）、**移除了终端固定（pin）**，并在 0.1.7 上**把浏览器视图与只读文件预览整体让给宿主**（`ui-sidebar-browser` / `ui-sidebar-documentpreview`，见 §4.4、§5.4）、**收敛了外链接管**（见 §4.1）、**重写了设置接入面**（`SettingsForms`，见 §8.2）、**给文件树加了实时刷新**（见 §10）；同时**删除了轮尾产物行接管**（DSH 0.1.6 把 `conversation.chat.turnTail` 从 chain 改成只能追加的 list，替换语义不复存在）。
+> 适用版本：**v0.4.0+**（`ctx.betterSidebar` 服务）；声明式设置 **v0.4.1+**；text/number 设置行 **v0.11.0+**；badge/生命周期/定向打开/插件设置/版本探测 **v0.12.0+**；select 设置行（`settingSelect`）与外链认领（`urlTarget`）**v0.13.0+**；统一 `@deepseek-ai/cordis` 类型基底 **v0.15.2+**；路由前缀安全解析（`hostRouteUrl`）**v0.25.0+**。当前版本 **v0.28.2 正式版**（14 条 DSH peer 下限 `^0.2.1-rc.1`，仅支持 DSH **0.2.1-rc.1+**；0.2.1-alpha.5 请固定 v0.28.0-alpha.0，0.2.0-rc.2 请固定 v0.26.1（v0.27.0 尚未发布），0.2.0-rc.1 请用 v0.24.1，0.1.7 线请用 v0.22.1——caret 范围跨 minor 不成立，`^0.1.7-rc.1` 会被 0.2.0 宿主的启动预检静默禁用）。**v0.19.0 移除了自绘右侧面板与自由窗口**（见 §0、§11）；**自 v0.20.0 开发线起**（**注意：0.20.0 从未发布到 npm，这些变更全部落在 v0.21.1**）插件**移除了自带的终端**（宿主 0.1.6 的 `ui-sidebar-terminal` 取代，见 §4.4）、**移除了终端固定（pin）**，并在 0.1.7 上**把浏览器视图与只读文件预览整体让给宿主**（`ui-sidebar-browser` / `ui-sidebar-documentpreview`，见 §4.4、§5.4）、**收敛了外链接管**（见 §4.1）、**重写了设置接入面**（`SettingsForms`，见 §8.2）、**给文件树加了实时刷新**（见 §10）；同时**删除了轮尾产物行接管**（DSH 0.1.6 把 `conversation.chat.turnTail` 从 chain 改成只能追加的 list，替换语义不复存在）。
 > **版本对照提醒**：当前正式版为 **v0.28.2**（DSH 0.2.1-rc.1+；宿主 npm `latest` 已为 0.2.1-rc.2）。仍停留在 DSH 0.2.0-rc.2 的宿主必须固定插件 v0.26.1；DSH 0.2.1-alpha.5 固定 v0.28.0-alpha.0。市场安装器按插件 `latest` 安装、不按宿主版本选版本。
 > 本次 alpha.5 → rc.1 上游完整树差异 355 项全部为 `package.json`、源码零变化，因此不改功能实现；伴随依赖为 Cordis peer `^4.0.5` / dev `4.0.5`、group `1.0.5`、schemastery `~3.18.5`、include `1.0.10`。RC 验证单独记录于 [适配记录](plans/2026-10-17-dsh-0.2.1-rc.1-adaptation.md)，不以已发布 alpha 的测试数字替代。
 > 权威代码：`src/client/service.ts`（服务实现）、`src/client/builtins/`（内置 6 tab + 3 viewer 参考实现）、`lib/types/client/service.d.ts`（类型声明）。
 > alpha.5 已删除 `@deepseek-ai/dsh-invariants` 与上游 `/invariant` 子路径；本插件同步移除 invariant companion，不提供替代注册服务。HTTP/WS 准入遵循宿主 Connection（见 §6.2）。
 > 当前目录语义：**已 attach** 的会话里，文件 / Git / 终端与新建 sidechat 跟随会话 `working_directory`（live 读 `ctx.workingDirectory.get(session)`）；**cold / detached** 会话读存储 header（`ctx.sessionPersistence.stat(id)`，只读第一个 zstd 帧，不解码日志；进程内 memo + 在飞去重），`activeWorktreeRootOf` 对 detached 直接返回该工作区地址。不要为取一个 cwd 调 `ctx.sessionQuery.observeSession`：它会解码整份会话日志并水合全部投影，启动期 fs-watch 每目录一帧的扇出会把它放大成数十次整读（详见 [2026-10-27 记录](plans/2026-10-27-workspace-cwd-over-cold-reads.md)）。linked worktree 仍按 base 目录记账；新 sidechat seed 尾部盖章当前 cwd，防止继承历史目录覆盖它。
-> alpha.5 的 `TerminalBlockLabels` 要求 `commandLine(line)`；两个渲染消费者与全部 21 份词典同步。宿主兼容性优先读 `package.json#engines.dsh`，缺席才读 DSH peers；本插件没有该字段，仍用 13 条 peers（第三方 `dsh.plugin.json` 不参与）。
+> alpha.5 的 `TerminalBlockLabels` 要求 `commandLine(line)`；两个渲染消费者与全部 21 份词典同步。宿主兼容性优先读 `package.json#engines.dsh`，缺席才读 DSH peers；本插件没有该字段，仍用 14 条 peers（第三方 `dsh.plugin.json` 不参与）。
 > 仓库开发规则（硬约束 / CI / 发版）见 [AGENTS.md](../AGENTS.md)。
 
 ---
@@ -1067,7 +1067,7 @@ registerSidechatSurfaceAdapter(adapter: SidechatSurfaceAdapter): () => void
 
 **点击回跳**
 
-`openReference` 校验 chip 的 `sessionId` 与当前会话一致（否则拒绝：换了会话 cwd 可能不同，会打开错文件），然后 `ctx.betterSidebar.openFile(scope, path, undefined, { line, lineEnd })`；内置编辑器定位到 `line` 并把 `line`–`lineEnd` 整段闪 2.4 s（皮肤令牌 `--dsw-alias-interactive-bg-hover-accent`，`prefers-reduced-motion` 下减弱）。`lineEnd` 是**插件的模块级一次性旁路**（`src/client/line-target.ts`，key = path + line），不写进宿主导航参数。底部工作台的编辑器也走这条链路，但那里不消费 `line`，因此**只在右侧栏可见**（`target: 'bottom'` 时 chip 仍能点开文件，只是不定位、不闪光）。
+`openReference` 校验 chip 的 `sessionId` 与当前会话一致（否则拒绝：换了会话 cwd 可能不同，会打开错文件），然后 `ctx.betterSidebar.openFile(scope, path, undefined, { line, lineEnd })`；内置编辑器定位到 `line` 并把 `line`–`lineEnd` 整段闪 2.4 s（皮肤令牌 `--dsw-alias-interactive-bg-hover-accent`，`prefers-reduced-motion` 下减弱）。`lineEnd` 与「本次导航的 nonce」都走**插件的模块级一次性旁路**（`src/client/line-target.ts`，key = path + line；arm 时自增 nonce，编辑器按 nonce 判重、读后即消费），不写进宿主导航参数。nonce 是「同一个 chip 连点两次」仍能再次跳转/闪光的关键：宿主对没移动的 `line` 不重发导航，只比较 path + line 会把二次点击误判成已消费，残留的 arm 还可能让之后同 path + line 的普通打开误闪。**底部工作台没有该入口**：chip 只打开右侧栏，底部 `TabContent → EditorHost` 虽是同一组件、同样消费 `line`，但本功能未在底部真机验证。**行号漂移**：记录的是划选时的行号，文件之后被编辑，点击会落到同一行号（可能已偏移）；不做锚点搜索或内容定位。
 
 ---
 
