@@ -211,6 +211,9 @@ export interface SidebarChildLiveView {
    * its session's running state from the session list).
    */
   running?: boolean
+  /** Whitelisted metadata from the newest actual request/header, not spawn defaults. */
+  provider?: string
+  model?: string
   /** The child's newest assistant text (the card's detail line). */
   text?: string
   /** The newest range's merged activity; absent when that range called nothing. */
@@ -881,6 +884,13 @@ export interface SidebarContextShape {
   webServer: SidebarWebServer
   /** The session store (host `.get`) and the client list feed (`.list`) faces. */
   sessions: SidebarSessionStore & SidebarSessionsService
+  /** Read-only live/prepared session observations; does not activate Agents. */
+  sessionQuery: {
+    observeSession(id: string, options: { projectionMode: 'none' }): Promise<{
+      readonly events: readonly SidebarSessionEvent[]
+      [Symbol.dispose](): void
+    }>
+  }
   /** Committed current execution directory; the header keeps the original project. */
   workingDirectory: {
     readonly defaultDirectory?: string

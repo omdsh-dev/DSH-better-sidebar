@@ -553,6 +553,8 @@ export const zhMO: Record<string, string> = {
   tasksNodeOpenMain: "在主視窗中打開",
   tasksNodeMode: '模式',
   tasksNodeModel: '模型',
+  tasksNodeProvider: '供應商',
+  tasksNodeNotRecorded: '未記錄',
   tasksNodeTeamRole: '團隊角色',
   tasksStateRunning: '執行中',
   tasksStateIdle: '閒置',

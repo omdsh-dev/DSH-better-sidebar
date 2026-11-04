@@ -253,6 +253,16 @@ export function AgentNodePopover(props: {
         {nodeMode !== undefined && (
           <PopRow label={t('tasksNodeMode')}>{nodeMode}</PopRow>
         )}
+        {node.parentId !== undefined && (
+          <>
+            <PopRow label={t('tasksNodeModel')} mono>
+              <span title={node.live?.model}>{node.live?.model ?? t('tasksNodeNotRecorded')}</span>
+            </PopRow>
+            <PopRow label={t('tasksNodeProvider')} mono>
+              <span title={node.live?.provider}>{node.live?.provider ?? t('tasksNodeNotRecorded')}</span>
+            </PopRow>
+          </>
+        )}
         {node.team !== undefined && (
           <PopRow label={t('tasksNodeTeamRole')}>
             {node.team.role === 'lead' ? 'lead' : node.team.name}

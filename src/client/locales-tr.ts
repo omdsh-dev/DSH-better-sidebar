@@ -538,6 +538,8 @@ export const tr: Record<string, string> = {
   tasksNodeOpenMain: "Open in the main window",
   tasksNodeMode: 'Mod',
   tasksNodeModel: 'Model',
+  tasksNodeProvider: 'Sağlayıcı',
+  tasksNodeNotRecorded: 'Kaydedilmedi',
   tasksNodeTeamRole: 'Takım rolü',
   tasksStateRunning: 'Çalışıyor',
   tasksStateIdle: 'Beklemede',

@@ -538,6 +538,8 @@ export const hi: Record<string, string> = {
   tasksNodeOpenMain: "Open in the main window",
   tasksNodeMode: 'मोड',
   tasksNodeModel: 'मॉडल',
+  tasksNodeProvider: 'प्रदाता',
+  tasksNodeNotRecorded: 'दर्ज नहीं',
   tasksNodeTeamRole: 'टीम भूमिका',
   tasksStateRunning: 'चल रहा है',
   tasksStateIdle: 'निष्क्रिय',
