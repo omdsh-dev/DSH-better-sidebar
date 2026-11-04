@@ -68,6 +68,18 @@ function errorMessage(reason: unknown): string {
   return reason instanceof Error ? reason.message : String(reason)
 }
 
+/** One checkout root in the form comparisons use: `git rev-parse` reports
+ *  forward slashes, React state may carry the shell's backslashes, Windows
+ *  folds case, and a trailing separator means the same directory. */
+function rootKey(value: string | undefined): string {
+  return (value ?? '').replaceAll('\\', '/').replace(/\/+$/, '').toLowerCase()
+}
+
+/** Whether two spellings name the SAME checkout root. */
+function sameRepoRoot(left: string | undefined, right: string | undefined): boolean {
+  return rootKey(left) === rootKey(right)
+}
+
 /**
  * Whether two inventory listings say the same thing. Every listing pass answers
  * with a fresh array of fresh rows, so identity alone would republish on each
@@ -1087,6 +1099,27 @@ export function GitLens(props: GitLensProps) {
         {snapshot === null && !status.loading && status.error && <Notice kind="error" tone="page">{t('error')}</Notice>}
         {snapshot !== null && !isRepo && <Notice kind="empty" tone="page">{t('notRepo')}</Notice>}
         {snapshot?.truncated === true && <Notice kind="warn">{t('statusTruncated')}</Notice>}
+
+        {/* A container workspace can hold several independent repositories, and
+            every view below is pinned to ONE of them — without this row the
+            panel silently shows the first root, so nothing on screen says the
+            others exist. The switcher is not a second source of truth:
+            `repoChoices` comes from the status snapshot, `chooseRepo` re-pins
+            the scope (reads, writes, graph) to the clicked root. */}
+        {isRepo && repoChoices.length > 1 && (
+          <div className={css.repoSwitcher} data-scm-repos role="group" aria-label={t('gitRepository')}>
+            {repoChoices.map(root => {
+              const isActive = sameRepoRoot(root, repoRoot ?? snapshot?.root)
+              return (
+                <button key={root} type="button" className={css.repoChip} data-scm-repo={root}
+                  data-active={isActive ? 'true' : undefined} aria-pressed={isActive} title={root}
+                  disabled={busy || suggesting} onClick={() => { chooseRepo(root) }}>
+                  {baseName(root)}
+                </button>
+              )
+            })}
+          </div>
+        )}
 
         {isRepo && (
           <section className={css.changesSection} data-scm-section="changes">

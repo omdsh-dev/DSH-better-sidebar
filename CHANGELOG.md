@@ -4,6 +4,8 @@
 
 ### 未发布
 
+- 🗂 **容器工作区里能直接看到并切换每个子仓库**：`git.status` 早就把发现到的全部根放在 `repositories` 里，但 Git 面板只在「⋯（更多操作）→ 仓库」二级菜单中列出它们——面板顶部既没有仓库名也没有数量，正文默认渲染 `repositories[0]`，于是有三个项目的工作区看起来只有一个。现在发现多个根时，「更改」区块上方渲染一行仓库胶囊（`data-scm-repos`，每个根一个 `[data-scm-repo]`），当前检出以 `[data-active="true"]` 高亮；点击走既有的 `chooseRepo`，读数、写操作与提交图继续被钉在选中的根上。单一仓库工作区不渲染这一行，原菜单入口保留。
+  - 🧪 `tests/git-repo-switcher.spec.tsx` 新增 3 例：多仓库逐个列出并可切换、同一检出的反斜杠/尾斜杠/大小写写法只算一个、单仓库不渲染切换行。
 - ⚡ **大 Markdown 的 Mermaid 预览不再卡死渲染器（chunk 内测量隔离到沙箱 iframe）**：Mermaid 用 `SVGElement.getBBox()` 量文字，测量节点挂在 `document.body` 上 → 每次测量都刷新整个 DSH 文档布局。真机实测一次 `getBBox` **59–75 ms**（15,418 节点），空 iframe 里只要 **1 ms**；31 张图因此阻塞主线程 >20 s，触发桌面壳看门狗杀渲染器，恢复标签页后循环卡死。现在图表改在隐藏的 `sandbox="allow-scripts"` iframe（blob: 自包含 mermaid UMD + 协议）里渲染，父侧只做 postMessage 收发与 SVG 清洗：**单图 1,500–7,300 ms → 30–104 ms，31 图约 5 s 内完成**，客户端 mermaid chunk 同时从 **7.04 MB → 3.69 MB**。另加共享渲染队列（可见/近视口优先，其余 `requestIdleCallback` 逐张补齐，两次之间让出 16 ms 主线程；**所有图最终都会渲染成图，不再退化为代码块**）与按围栏行数预留高度的占位骨架。设计与实测见 [docs/plans/2026-10-23-mermaid-iframe-isolation.md](docs/plans/2026-10-23-mermaid-iframe-isolation.md)。
 - ⚡ **大文档滚动流畅性：渲染让位于滚动、隐藏页签不空转、摘掉全量 DOM 扫描**：图表渲染队列在滚动期间暂停（停止滚动 350 ms 后恢复），并且只服务当前可见的预览——隐藏页签里的图表保持占位、切回时才渲染；`Markdown` 变更触发的两次全量扫描（内联 HTML pass、标题锚点 pass）由「每次 mutation 跑一遍」（实测 8–15 ms/次）改为 80 ms 合并一次；打开文档时的近视口判断改为先批量读 rect、再统一写入，去掉每张图一次强制布局；`.mermaidWrap` 增加 `content-visibility: auto` + `contain-intrinsic-size` + `contain: layout paint style`，视口外的图表不再参与布局与绘制。滚动时不再有后台渲染、全量扫描与视口外 SVG 重绘抢主线程；图表仍会在滚动停止后或进入视口时补齐，不退化为代码块。
 - 🐞 **图表渲染失败时直接显示 mermaid 的解析错误**：之前只显示通用「Mermaid 渲染失败」+ 源码块（完整错误只在 hover title 里）。现在错误条下方直接给出 mermaid 报错的首两行（如 `Parse error on line 10 ... Expecting 'SEMI', ... got 'UNICODE_TEXT'`），配合下方源码可快速定位坏围栏；错误信息仍完整保留在 title 中。
