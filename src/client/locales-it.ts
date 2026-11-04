@@ -529,6 +529,8 @@ export const it: Record<string, string> = {
   tasksNodeOpenMain: "Open in the main window",
   tasksNodeMode: 'Modalità',
   tasksNodeModel: 'Modello',
+  tasksNodeProvider: 'Fornitore',
+  tasksNodeNotRecorded: 'Non registrato',
   tasksNodeTeamRole: 'Ruolo nel team',
   tasksStateRunning: 'In esecuzione',
   tasksStateIdle: 'In attesa',
