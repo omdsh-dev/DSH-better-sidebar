@@ -48,7 +48,7 @@ import { buildWorkflowsApi, type SidebarWorkflowRoutes } from './workflow-routes
 import { buildSidechatApi } from './sidechat-routes.ts'
 import { createAssistantLiveBuffer, type AssistantLiveBuffer } from './assistant-live.ts'
 import { readSidechatImage } from './sidechat-routes.ts'
-import { sidechatPromptBodyLimit } from './sidechat-image-admission.ts'
+import { SIDECHAT_METADATA_BYTES, sidechatPromptBodyLimit } from './sidechat-image-admission.ts'
 import { readJsonBody, readTextBody, requireString, SidebarError, writeError, writeJson, writeOk } from './wire.ts'
 import { streamFileToResponse } from './file-stream.ts'
 import { createChangesOpsApi } from './changes-ops.ts'
@@ -1589,7 +1589,27 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   const sidechatLifetime = new AbortController()
   ctx.effect(() => () => { sidechatLifetime.abort() }, 'dsh-better-sidebar: sidechat admissions')
   const api = buildApi(ctx, resolved, () => settingsFace, assistantLive, archiveTasks, sidechatLifetime.signal)
-  let promptAdmissions = 0
+  // Concurrent LARGE-prompt admissions. Only a prompt body that may carry
+  // encoded images is counted: the prompt's JSON metadata is capped at
+  // SIDECHAT_METADATA_BYTES, so a body past that threshold is the only one
+  // that can hold image bytes. Pure-text prompts never reach it — an earlier
+  // counter charged EVERY `sidechat.prompt` and rejected plain text with a
+  // bogus 503 "Too many image admissions".
+  //
+  // A slot is taken from the declared `content-length` before reading, or
+  // while streaming bytes for a chunked body. Exceeding the cap answers 413
+  // `too-large` — the repo's status for an over-cap body (see readJsonBody) —
+  // instead of a retryable 503.
+  const SIDECHAT_LARGE_PROMPT_ADMISSIONS = 2
+  let largePromptAdmissions = 0
+  const reserveLargePrompt = (): (() => void) => {
+    if (largePromptAdmissions >= SIDECHAT_LARGE_PROMPT_ADMISSIONS) {
+      throw new SidebarError('too-large', 'Too many image admissions; try again', 413)
+    }
+    largePromptAdmissions++
+    let released = false
+    return () => { if (!released) { released = true; largePromptAdmissions-- } }
+  }
   ctx.effect(() => ctx.webServer.register({
     kind: 'prefix',
     path: '/sidebar/api',
@@ -1608,18 +1628,27 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
         writeError(res, new SidebarError('not-found', 'unknown sidebar API method', 404))
         return
       }
-      const largePrompt = method === 'sidechat.prompt'
-      if (largePrompt && promptAdmissions >= 2) {
-        writeError(res, new SidebarError('unavailable', 'Too many image admissions; try again', 503))
-        return
-      }
-      if (largePrompt) promptAdmissions++
+      const imagePrompt = method === 'sidechat.prompt'
+      let releaseImagePrompt: (() => void) | undefined
+      const admitLargePrompt = (): void => { releaseImagePrompt ??= reserveLargePrompt() }
       const controller = method === 'changes.ops' ? new AbortController() : undefined
       const response = controller === undefined ? undefined : res as ServerResponse
       const abort = (): void => { controller?.abort() }
       response?.once('close', abort)
       try {
-        const payload = await readJsonBody(req, largePrompt ? sidechatPromptBodyLimit(ctx) : undefined)
+        // Browsers send content-length for a string-body fetch; refuse before
+        // reading when the declared size can already carry image bytes.
+        if (imagePrompt) {
+          const declared = Number(req.headers['content-length'])
+          if (Number.isFinite(declared) && declared > SIDECHAT_METADATA_BYTES) admitLargePrompt()
+        }
+        const payload = await readJsonBody(
+          req,
+          imagePrompt ? sidechatPromptBodyLimit(ctx) : undefined,
+          // A chunked (or lying-header) body is counted as soon as the bytes
+          // it delivered could hold an image.
+          imagePrompt ? total => { if (total > SIDECHAT_METADATA_BYTES) admitLargePrompt() } : undefined,
+        )
         // Own properties only. The dispatch table is an object literal, so a
         // bare lookup resolved Object.prototype members as "methods":
         // POST /sidebar/api/constructor answered 200 {}, toString answered
@@ -1634,7 +1663,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
       } catch (error) {
         if (controller?.signal.aborted !== true) writeError(res, error)
       } finally {
-        if (largePrompt) promptAdmissions--
+        releaseImagePrompt?.()
         response?.off('close', abort)
       }
     },

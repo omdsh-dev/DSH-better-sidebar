@@ -1,5 +1,6 @@
 /** Side Chat admits bounded image batches, preserves message identity, and reads only owned occurrences from live or cold queues. */
 import { describe, expect, it, vi } from 'vitest'
+import { AttachmentError, isAttachmentError } from '@deepseek-ai/dsh-attachment'
 import { buildSidechatApi, readSidechatImage } from '../src/sidechat-routes.ts'
 import { coldPendingMessages, pendingInputs } from '../src/sidechat-core.ts'
 import { parseSidechatPrompt, sidechatPromptBodyLimit } from '../src/sidechat-image-admission.ts'
@@ -27,6 +28,7 @@ function harness(signal?: AbortSignal) {
   let live = true
   const attachments = {
     imageLimits: limits,
+    isAttachmentError,
     admitPromptContent: vi.fn(async (parts: { type: string }[]) => parts.map(part => part.type === 'image' ? { type: 'image', attachment: ref } : part)),
     readImage: vi.fn(async () => ({ ref, data: new Uint8Array([97, 98, 99]) })),
   }
@@ -74,6 +76,27 @@ describe('sidechat image admission and owned reads', () => {
     expect(h.inbox).toMatchObject({ nextStep: [], nextTurn: [] })
     const result = await h.api['sidechat.prompt']({ childId: 'child', text: 'legacy' })
     expect(h.inbox.nextTurn[0]).toMatchObject({ id: result.messageId, content: [{ type: 'text', text: 'legacy' }] })
+  })
+
+  it('maps an oversized image to 413 too-large and a storage fault to 500', async () => {
+    const h = harness()
+    h.services.attachments.admitPromptContent.mockRejectedValueOnce(
+      new AttachmentError('Image exceeds the configured pixel budget.', 'IMAGE_TOO_MANY_PIXELS'),
+    )
+    await expect(h.api['sidechat.prompt']({ childId: 'child', text: '', images: [upload] })).rejects.toMatchObject({
+      code: 'too-large',
+      status: 413,
+      message: 'Image exceeds the configured pixel budget.',
+    })
+    h.services.attachments.admitPromptContent.mockRejectedValueOnce(
+      new AttachmentError('attachment store is read-only', 'ATTACHMENT_WRITE_FAILED'),
+    )
+    await expect(h.api['sidechat.prompt']({ childId: 'child', text: '', images: [upload] })).rejects.toMatchObject({
+      code: 'sidechat-error',
+      status: 500,
+      message: 'attachment store is read-only',
+    })
+    expect(h.inbox).toMatchObject({ nextStep: [], nextTurn: [] })
   })
 
   it('rejects explicit text-only models, defers unknown capabilities and reports lookup failure', async () => {

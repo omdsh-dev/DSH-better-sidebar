@@ -22,7 +22,7 @@
  *   AgentRegistry.resume, composing the preset the child recorded.
  */
 import type { ImageAttachmentRef, StoredImageAttachment } from '@deepseek-ai/dsh-attachment'
-import { parseSidechatPrompt, sidechatAttachments, sidechatImageLimits } from './sidechat-image-admission.ts'
+import { parseSidechatPrompt, sidechatAdmissionError, sidechatAttachments, sidechatImageLimits } from './sidechat-image-admission.ts'
 import { randomUUID } from 'node:crypto'
 import { createUserMessage, ReasoningEffortId, type ContentBlock, type UserMessage } from '@deepseek-ai/dsh-llm'
 import type { MessageId } from '@deepseek-ai/dsh-llm/brand'
@@ -825,8 +825,12 @@ export function buildSidechatApi(ctx: Context, live?: AssistantLiveBuffer, signa
         let blocks: ContentBlock[] = content as ContentBlock[]
         if (hasImages) {
           await assertImageModel(ctx, agent)
-          try { blocks = await sidechatAttachments(ctx)!.admitPromptContent(content) as ContentBlock[] }
-          catch (error) { throw new SidebarError('bad-request', error instanceof Error ? error.message : String(error)) }
+          const attachments = sidechatAttachments(ctx)!
+          try { blocks = await attachments.admitPromptContent(content) as ContentBlock[] }
+          // Host attachment failures are machine-coded: an oversized image
+          // (pixel/dimension budgets the plugin cannot pre-check) is 413; a
+          // storage fault is a server failure, never the caller's 400.
+          catch (error) { throw sidechatAdmissionError(attachments, error) }
           const validatedSelection = await assertImageModel(ctx, agent)
           if (validatedSelection !== JSON.stringify(selectionOf(agent))) {
             throw new SidebarError('sidechat-error', 'Model selection changed during image admission; try again', 409)
@@ -933,7 +937,9 @@ export function buildSidechatApi(ctx: Context, live?: AssistantLiveBuffer, signa
         live: liveEventsOf(live?.chunksFor(childId) ?? [], tailSeq),
         // Accepted-but-unclaimed input, so the transcript can show it as
         // pending (with a dequeue affordance) instead of looking dead until a
-        // claim logs the durable `user/message`. A cold thread has none.
+        // claim logs the durable `user/message`. A cold thread has no RUNTIME
+        // queue, so its rows are folded from the persisted log and are not
+        // removable.
         pending: agent === undefined ? pendingInputs(cold!.nextStep, cold!.nextTurn).map(row => ({ ...row, removable: false })) : pendingOf(agent),
       }
     },
