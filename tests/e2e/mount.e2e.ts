@@ -610,9 +610,15 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   // `data-composer-chip` is the host's own anchor for a composer chip (its
   // JSDoc names e2e as the reason it exists) — a bare `[class*="reference"]`
   // match could land on any element whose hashed class happens to contain it.
-  const chip = page.locator(`[data-composer-chip]`).filter({ hasText: `${SEEDED_MD_FILE}:` }).first()
+  //
+  // The chip's VISIBLE label is the localized `quoteChip` string ("引用 …" /
+  // "Quote …") carrying the file name and line range; the compact `path:line`
+  // form is the chip's clipboard text, not its face (#1111). Match the file
+  // name, not the separator, and require exactly one chip so a duplicated
+  // insert still fails.
+  const chip = page.locator('[data-composer-chip]').filter({ hasText: SEEDED_MD_FILE })
   await expect(chip, 'the selection must land in the composer as a reference chip')
-    .toBeVisible({ timeout: 10_000 })
+    .toHaveCount(1, { timeout: 10_000 })
   // A selection chip's `ref` is a fenced block, not a path: the host must not
   // mark it openable, or a click would hand that block to the file opener.
   await expect(chip, 'a selection chip must not advertise itself as openable')
