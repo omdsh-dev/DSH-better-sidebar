@@ -2,7 +2,7 @@
 
 > 本文档收录 dsh-better-sidebar 的完整发布历史（最新版摘要见 [README](README_ZH.md)；同步发布于 [GitHub Releases](https://github.com/omdsh-dev/DSH-better-sidebar/releases)）。
 
-### 未发布
+### v0.30.0
 
 - 🧭 **适配 DSH 0.2.2-rc.1（本版 peer 下限抬到 `^0.2.2-rc.1`）**：宿主把模型选择从可安装的 `ModelSelectionRef` 换成 agent 自有的 `AgentModel`——`agent.model.select()` 同时落盘并作用于下一步，侧边对话的线程模型选择随之改写（不再自己 install 一份 ref）；`dsh-tools` 移除了 PTC（`tool/ptc-dispatch*`）的事件**类型声明**（运行期仍记录），宿主图标由内联 `<path>` 改为 sprite `<use href="#dsw-icon-…">`。**支持线随之移动**：0.x 的 caret 不跨 minor，因此 DSH 0.2.1 线（`0.2.1-rc.1 ~ rc.5`，即当前的宿主 npm `latest`）请继续固定插件 **v0.28.2**（`v0.29.0` 从未发布到 npm），0.2.2-rc.1+ 请用 **v0.30.0**。
   - 🧪 验证：`typecheck` + 全量 `vitest` + `plugin-mount`（真实 0.2.2-rc.1 宿主 + Chromium）；逐项证据见 [0.2.2 适配记录](docs/plans/2026-11-04-dsh-0.2.2-rc.1-adaptation.md)。

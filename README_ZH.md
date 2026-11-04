@@ -100,6 +100,14 @@ dsh plugin --profile web add dsh-better-sidebar@latest
 
 ## 🆕 最近更新
 
+**v0.30.0 — 支持 DSH 0.2.2、侧边对话可发图、引用 chip 可点击**
+
+- **基线抬到 DSH 0.2.2-rc.1**（14 条 peer 下限全部前移到 `^0.2.2-rc.1`）。宿主把可安装的模型选择 ref 换成了 agent 自有的 `AgentModel`，侧边对话的模型切换改走 `agent.model.select()`——只落盘一次，并作用于下一步。0.x 的 caret 不跨 minor：DSH 0.2.1 线（也就是今天的 npm `latest`）继续固定插件 v0.28.2。
+- **侧边对话可以发图**：粘贴截图或选择 PNG / JPEG / WebP / GIF，发送前可预览、可移除，也可以只发图片；刷新页面或冷恢复后预览仍在。
+- **引用 chip 可点击**：用「添加到对话」划选的一段文字会落成一枚 chip，点击跳回源文件并闪烁被引行段；带 nonce，所以连点两次仍会再次跳转。引用记录写不进存储时回退到原来的内置 chip，而不是落一枚点不动的死 chip。
+- **草稿不再被宿主侧的关闭路径吞掉**：关闭原生侧边页签、或退出桌面端时，未保存草稿会被备份，重开同一文件时提示恢复——宿主没有可取消的关闭钩子，所以这是备份 + 恢复，不是弹窗拦截。
+- **可靠性**：父会话压缩过之后开的侧聊不再写出不可读的会话日志；页面 CSS zoom 不再被误判为页面变换；底部工作台终端不再自带黑底；容器工作区在 Git 面板里能看到每个子仓库；安装脚本发现 profile 里 `@deepseek-ai/dsh-*` 版本混搭会直接拒绝并打印修复命令。
+
 **v0.29.0 — 侧边对话接入 GenUI**
 
 - 新增可选的 `registerSidechatSurfaceAdapter` 服务，配合 GenUI 0.15.0 在已结算的侧边回复里渲染交互组件；状态和动作归属对应子线程。
@@ -122,13 +130,6 @@ dsh plugin --profile web add dsh-better-sidebar@latest
 - **编辑器**：仅 mtime 变化后保存不再死锁 `fs-conflict`；刷新后保留阅读位置；「添加到对话」落地为紧凑引用 chip，不再展平已有 chip —— 现在划选的一段文字还会变成**可点击**的引用 chip，点击跳回源文件并闪烁被引行段（[#888](https://github.com/omdsh-dev/DSH-better-sidebar/issues/888)）
 - **Markdown 链接**：本地 destination 的 Windows 反斜杠归一，`C:\ws\_analysis\report.md` 不再报裸 ENOENT
 - **侧栏**：右栏展开时底部工作台入口常显；macOS 兜底入口避开红绿灯；页签 scope 按内容稳定，消除无谓的整文件重读；关闭侧聊页签时归档其会话
-
-**v0.28.0 — 面向 DSH 0.2.2-rc.1+ 的插件正式版**
-
-- 13 条 DSH peer 下限前移到 `^0.2.2-rc.1`，沿用 alpha.0 的功能实现，不增加运行时改动
-- 上游 alpha.5 → rc.1 完整树差异共 355 个文件，全部为 `package.json`，源码零变化
-- DSH 0.2.0-rc.2 宿主固定插件 v0.26.1；DSH 0.2.1-alpha.5 宿主固定 v0.28.0-alpha.0
-- 验证：[RC 适配记录](./docs/plans/2026-10-17-dsh-0.2.1-rc.1-adaptation.md)
 
 ## 🔌 插件生态
 

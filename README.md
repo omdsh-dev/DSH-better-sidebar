@@ -100,6 +100,14 @@ If something fails, check the FAQ table in https://github.com/omdsh-dev/DSH-bett
 
 ## 🆕 Recent Updates
 
+**v0.30.0 — DSH 0.2.2 support, side-chat images, clickable quote chips**
+
+- **DSH 0.2.2-rc.1 is the new baseline** (all 14 peer floors move to `^0.2.2-rc.1`). The host replaced the installable model-selection ref with an agent-owned `AgentModel`, so a side-chat thread's model switch now goes through `agent.model.select()` — recorded once in the log and applied to the next step. A 0.x caret never spans a minor: DSH 0.2.1 hosts (today's npm `latest`) keep pinning plugin v0.28.2.
+- **Side Chat takes images**: paste a screenshot or pick PNG / JPEG / WebP / GIF, preview or remove before sending, or send images alone; the preview survives a reload and a cold restore.
+- **Quote chips are clickable**: a passage selected with "Add to conversation" lands as a chip that jumps back to the source file and flashes the quoted lines, with a nonce so a second click jumps again; if the reference record cannot be persisted the plugin falls back to the previous built-in chip instead of landing a dead one.
+- **Drafts survive the host-owned close paths**: closing a native sidebar tab or quitting the desktop app keeps the unsaved draft and offers it back when the same file is reopened — the host exposes no cancellable close hook, so this is backup-and-restore rather than a prompt.
+- **Reliability**: a side-chat seed built from a compacted parent no longer persists an unreadable session log; page CSS zoom is no longer misread as a page transform; the bottom workbench terminal no longer paints black; container workspaces show every child repository in the Git panel; the installers refuse a profile whose `@deepseek-ai/dsh-*` copies are a mixed version pair and print the repair command.
+
 **v0.29.0 — GenUI in side chats**
 
 - Adds the opt-in `registerSidechatSurfaceAdapter` service for GenUI 0.15.0. Settled assistant replies can render interactive components, with actions and state kept in the owning child thread.
@@ -122,13 +130,6 @@ If something fails, check the FAQ table in https://github.com/omdsh-dev/DSH-bett
 - **Editor**: saving after an mtime-only change no longer deadlocks on `fs-conflict`; the reading position survives tab re-seating; “Add to conversation” lands as a compact reference chip and never flattens earlier chips — and a selected passage now becomes a *clickable* quote chip that jumps back to the source file and flashes the quoted lines ([#888](https://github.com/omdsh-dev/DSH-better-sidebar/issues/888))
 - **Markdown links**: local destinations normalize Windows backslashes, so `C:\ws\_analysis\report.md` opens instead of a bare ENOENT
 - **Sidebar**: the bottom-workbench toggle stays visible while the right panel is open; the macOS dock fallback avoids the traffic lights; a content-stable tab scope ends needless full-file re-reads; closing a side-chat tab archives its session
-
-**v0.28.0 — stable plugin release for DSH 0.2.2-rc.1+**
-
-- Move all 13 DSH peer floors to `^0.2.2-rc.1`; retain the alpha.0 functionality without runtime changes
-- The upstream alpha.5 → rc.1 full-tree diff contains 355 files, all `package.json`; no source changes
-- DSH 0.2.0-rc.2 hosts stay on plugin v0.26.1; DSH 0.2.1-alpha.5 hosts stay on v0.28.0-alpha.0
-- Validation: [RC adaptation record](./docs/plans/2026-10-17-dsh-0.2.1-rc.1-adaptation.md)
 
 ## 🔌 Plugin Ecosystem
 
