@@ -2,7 +2,7 @@
  * The unified changes tab: one tab, two lenses on "what changed?" — Git
  * (repository truth: staged/unstaged files, commit box, history) and the
  * session round (agent truth: every file the model read, wrote, or edited).
- * A 36px header carries the host conversation Tabs and the current
+ * A 36px header carries the public SegmentedControl and the current
  * lens's refresh action; both lenses preview their selections in a shared
  * resizable bottom pane ({@link DiffPane}), and git targets expand into the
  * dedicated diff tab docked in the workbench's diff pane. The bottom pane is
@@ -22,7 +22,7 @@
  * store owns its own poller).
  */
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
-import { IconRefreshOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconRefreshOutlineRegular, SegmentedControl } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SidebarSessionEvent } from '../../context-types.ts'
 import type { TabComponentProps } from '../service.ts'
 import { t } from '../locales.ts'
@@ -248,35 +248,16 @@ export function ChangesTab({ ctx, store, scope, tab, visible, onOpenFile, onOpen
   return (
     <div className={css.root}>
       <div className={css.head}>
-        {/* ponytail: conversation Tabs are private in DSH 0.2.0-rc.2; reuse
-            their CSS classes until the host exports the component. */}
-        <div className="wSkVaW_tabs" role="tablist" aria-label={t('changes')}>
-          {(['git', 'session'] as const).map(value => (
-            <button
-              key={value}
-              id={`${lensId}-${value}`}
-              type="button"
-              role="tab"
-              aria-selected={lens === value}
-              aria-controls={`${lensId}-${value}-panel`}
-              tabIndex={lens === value ? 0 : -1}
-              className={`wSkVaW_tab${lens === value ? ' wSkVaW_tabActive' : ''}`}
-              onClick={() => { chooseLens(value) }}
-              onKeyDown={event => {
-                let next: Lens
-                if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') next = value === 'git' ? 'session' : 'git'
-                else if (event.key === 'Home') next = 'git'
-                else if (event.key === 'End') next = 'session'
-                else return
-                event.preventDefault()
-                chooseLens(next)
-                event.currentTarget.parentElement?.querySelector<HTMLButtonElement>(`[id="${lensId}-${next}"]`)?.focus()
-              }}
-            >
-              {t(value === 'git' ? 'changesGitLens' : 'changesSessionLens')}
-            </button>
-          ))}
-        </div>
+        <SegmentedControl
+          id={lensId}
+          value={lens === 'session' ? 'session' : 'git'}
+          options={[
+            { value: 'git', label: t('changesGitLens') },
+            { value: 'session', label: t('changesSessionLens') },
+          ] as const}
+          onChange={chooseLens}
+          label={t('changes')}
+        />
         {/* The Git lens refreshes from its own Changes header (#944); only the
             session lens needs the tab-level action. */}
         {lens === 'session' && <IconButton

@@ -22,7 +22,7 @@
  * The strategy dispatch is pure (planFirstMatch / planFsReadOutcome in
  * editor-load.ts); this component only wires it to the host APIs.
  */
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { createElement } from 'react'
 import clsx from 'clsx'
 import { IconCheckOutlineRegular, IconFolderOpenRegular, IconRefreshOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -30,7 +30,8 @@ import type { Context } from '../context-types.ts'
 import { api, mediaUrl, type SessionScope } from './api.ts'
 import { BinaryDownload } from './binary-download.tsx'
 import { planFirstMatch, planFsReadOutcome, type EditorLoadAction } from './editor-load.ts'
-import { clearEditorDirty, setEditorDirty } from './editor-dirty.ts'
+import { clearDraftBackup } from './editor-draft-backup.ts'
+import { clearEditorDirty, isEditorDirty, setEditorDirty } from './editor-dirty.ts'
 import { baseName } from './FileTree.tsx'
 import { createFrameBatcher } from './frame-batcher.ts'
 import { openClaimedNativeFile, openSidebarFile } from './sidebar-file.ts'
@@ -40,12 +41,16 @@ import { updatePluginSettings } from './plugin-settings.ts'
 import { createOpenInApp } from './open-in-app.ts'
 import { TreePanel } from './TreePanel.tsx'
 import { t } from './locales.ts'
+import { consumeLineTarget, peekLineTarget } from './line-target.ts'
 import { relativeTo } from './paths.ts'
 import { resolveSidebarPath } from './paths.ts'
 import { clearRetargetedPath, closePathTabs, consumeRetargetedPath, pathTabKey, retargetPathTabs } from './tree-mutations.ts'
 import type { EditorToolbarControls, EditorToolbarState, FileViewerDescriptor } from './service.ts'
 import { firstLeaf, insertLeafAt, leafWithTab, mintTabId, type SidebarStore, type SidebarTab } from './state.ts'
 import css from './sidebar.module.css'
+
+/** One landing navigation the editor host has read from the side channel. */
+interface LineNav { key: string; nonce: number | null; end?: number }
 
 type EditorLoad =
   | { status: 'loading' }
@@ -113,6 +118,14 @@ function accepted(pending: Promise<unknown>): Promise<boolean> {
   )
 }
 
+/** Ask before a reload/switch drops a draft. A host without confirm blocks
+ *  the action: refusing is recoverable, while silently discarding is not.
+ *  (The tab-close guard intentionally proceeds instead — an unclosable tab
+ *  is worse than one skipped prompt.) */
+function confirmDiscard(message: string): boolean {
+  return typeof window.confirm === 'function' ? window.confirm(message) : false
+}
+
 export function EditorHost(props: {
   ctx: Context
   store: SidebarStore
@@ -152,22 +165,68 @@ export function EditorHost(props: {
   // preview. This host survives every reload, so the spent line is remembered
   // here; the key carries the line, so a NEW reference re-arms it, and a file
   // switch drops it (coming back to a file is a fresh open).
-  const [spentLine, setSpentLine] = useState<string | null>(null)
+  //
+  // The identity is (key, nonce), not just the key: a SECOND click on the same
+  // chip names the same `path#line`, and the host's navigation drops it (its
+  // adapter only patches a `line` that moved), so the key alone would read as
+  // "already spent" and the second click would neither jump nor flash. The
+  // nonce rides the side channel (line-target.ts) and is bumped on every arm
+  // of that key, so a re-click is a fresh navigation and no arm outlives it.
+  const [spentLine, setSpentLine] = useState<LineNav | null>(null)
   const lineKey = tab.line === undefined ? null : `${path}#${tab.line}`
+  // The pending range/identity for this landing. The peek is a PURE read on
+  // purpose: React may render twice, and a discarded render must not eat the
+  // arm the committed one still needs (the arm is consumed by the layout
+  // effect below, after commit).
+  const peeked = tab.line === undefined ? undefined : peekLineTarget(path, tab.line)
+  // The navigation this host took for `lineKey`, kept across the renders in
+  // between: the first commit shows the loading row (no viewer yet), so the
+  // viewer's render must reuse the arm this host already read — otherwise the
+  // flash range would be gone by the time the viewer exists.
+  const lineNavRef = useRef<LineNav | null>(null)
+  const previous = lineNavRef.current
+  const nav = useMemo<LineNav | null>(() => {
+    if (lineKey === null) return null
+    if (peeked !== undefined) {
+      return { key: lineKey, nonce: peeked.nonce, ...(peeked.end === undefined ? {} : { end: peeked.end }) }
+    }
+    return previous !== null && previous.key === lineKey ? previous : null
+  }, [lineKey, peeked, previous])
+  const isFreshLine = lineKey !== null && (
+    spentLine === null
+    || spentLine.key !== lineKey
+    || (nav !== null && nav.nonce !== spentLine.nonce)
+  )
+  const lineEnd = isFreshLine ? nav?.end : undefined
+  // The navigation this commit actually hands to the viewer, so the viewer's
+  // consumption marks exactly that one spent (and not a newer arm).
+  const handedLineRef = useRef<{ key: string; nonce: number | null } | null>(null)
+  useLayoutEffect(() => {
+    if (isFreshLine && lineKey !== null) {
+      // A plain line open (no arm) still hands a navigation; its identity has
+      // a null nonce, so the viewer can spend it like any other.
+      lineNavRef.current = nav ?? { key: lineKey, nonce: null }
+      handedLineRef.current = { key: lineKey, nonce: lineNavRef.current.nonce }
+      // One shot per handed navigation: an ordinary open of the same line
+      // later must not inherit this flash.
+      if (tab.line !== undefined) consumeLineTarget(path, tab.line)
+      return
+    }
+    handedLineRef.current = null
+    if (nav === null) lineNavRef.current = null
+  }, [nav, isFreshLine, lineKey, path, tab.line])
   const onLineConsumed = useCallback(() => {
-    if (lineKey !== null) setSpentLine(lineKey)
-  }, [lineKey])
+    if (handedLineRef.current !== null) setSpentLine(handedLineRef.current)
+  }, [])
   useEffect(() => { setSpentLine(null) }, [path])
 
   // Manual refresh (issue #167 + PR #228): a dirty draft is dropped by the
   // reload (the editor instance remounts), so confirm before discarding it.
   const refreshFile = (): void => {
-    if (toolbar?.dirty === true) {
-      const confirmed = typeof window.confirm === 'function'
-        ? window.confirm(t('refreshUnsavedConfirm'))
-        : false
-      if (!confirmed) return
-    }
+    if (toolbar?.dirty === true && !confirmDiscard(t('refreshUnsavedConfirm'))) return
+    // The confirmed reload discards the live draft: its durable backup must
+    // not offer the discarded bytes back on the next open.
+    if (toolbar?.dirty === true) clearDraftBackup(scope.sessionId, path)
     setReloadSeq(sequence => sequence + 1)
   }
 
@@ -231,9 +290,20 @@ export function EditorHost(props: {
    */
   const openFile = (absolute: string): void => {
     if (inPlace) {
-      if (!openClaimedNativeFile(ctx, scope.sessionId, scope.cwd, absolute)) {
-        ctx.get('betterSidebar')?.updateTab(tab.id, { path: absolute, title: baseName(absolute) }, scope.sessionId)
+      // A native tab type claims the file: it opens elsewhere and THIS editor
+      // keeps its draft, so there is nothing to confirm.
+      if (openClaimedNativeFile(ctx, scope.sessionId, scope.cwd, absolute)) return
+      // An in-place switch remounts the viewer, and the draft lives only in
+      // that instance — ask before dropping it, reading the same dirty
+      // registry the tab close uses. Re-opening the current path is not a
+      // switch.
+      if (absolute !== path && isEditorDirty(tab.id, scope.sessionId)) {
+        if (!confirmDiscard(t('switchUnsavedConfirm'))) return
+        // The confirmed switch discards the live draft: drop its durable
+        // backup too, or the next open would offer the discarded bytes back.
+        clearDraftBackup(scope.sessionId, path)
       }
+      ctx.get('betterSidebar')?.updateTab(tab.id, { path: absolute, title: baseName(absolute) }, scope.sessionId)
     } else {
       openSidebarFile(ctx, scope.sessionId, absolute, { cwd: scope.cwd })
     }
@@ -659,7 +729,10 @@ export function EditorHost(props: {
             // The reference's landing line, if the address carried one (#826)
             // AND this open has not spent it yet. Only the text viewer acts on
             // it; a markdown/html/image viewer gets the field and ignores it.
-            line: lineKey !== null && lineKey !== spentLine ? tab.line : undefined,
+            line: isFreshLine ? tab.line : undefined,
+            // The quoted span's end, when the open armed one (the landing
+            // flash). Viewers without a flash ignore it.
+            lineEnd,
             onLineConsumed,
             content: load.content,
             size: load.size,

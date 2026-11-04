@@ -7,6 +7,7 @@
  * is still hydrating at page load (a detached session would otherwise fail the
  * request). Failures surface as {@link SidebarApiError} with the wire code.
  */
+import type { SidechatImageUpload } from '../sidechat-images.ts'
 import { encodeHtmlUrl } from '../html-route.ts'
 import { hostRouteUrl } from './host-route-url.ts'
 import { resolveSidebarPath } from './paths.ts'
@@ -609,8 +610,8 @@ export const api = {
   sidechatStart: (sessionId: string, question?: string) =>
     call<{ childId: string }>('sidechat.start', { sessionId, question: question ?? '' }),
   /** Deliver one follow-up message to a Side Chat thread. */
-  sidechatPrompt: (childId: string, text: string) =>
-    call<{ accepted: true }>('sidechat.prompt', { childId, text }),
+  sidechatPrompt: (childId: string, text: string, images?: readonly SidechatImageUpload[]) =>
+    call<{ accepted: true; messageId: string }>('sidechat.prompt', { childId, text, ...(images === undefined || images.length === 0 ? {} : { images }) }),
   /** Abort a Side Chat thread's running turn (queued work is preserved). */
   sidechatCancel: (childId: string) =>
     call<{ accepted: true }>('sidechat.cancel', { childId }),

@@ -24,6 +24,7 @@ import {
   isEditorDirty, setEditorDirty, subscribeEditorDirty,
 } from '../src/client/editor-dirty.ts'
 import { clearRetargetedPath, closePathTabs, consumeRetargetedPath, pathTabKey, retargetPathTabs } from '../src/client/tree-mutations.ts'
+import { flushDraftBackups, readDraftBackup, registerDraftSource, scheduleDraftBackup } from '../src/client/editor-draft-backup.ts'
 import { createNativeSurface } from '../src/client/native/surface.ts'
 import { createNativeTabRecords } from '../src/client/native/tab-adapter.tsx'
 
@@ -238,6 +239,44 @@ describe('editor-dirty registry', () => {
     confirmSpy.mockReturnValue(false)
     expect(confirmDiscardDraft('t1', 'sure?', 's1')).toBe(true)
     expect(isEditorDirty('t1', 's9')).toBe(true)
+  })
+
+  it('a confirmed discard drops the durable draft backup too, a declined one keeps it', () => {
+    // The backup is the same draft: offering it back after the user chose to
+    // discard would resurrect what they just dropped.
+    const release = registerDraftSource('s1', '/tmp/durable.ts', () => 'live draft')
+    scheduleDraftBackup('s1', '/tmp/durable.ts')
+    flushDraftBackups()
+    release()
+    const confirmSpy = vi.fn().mockReturnValue(false)
+    vi.stubGlobal('confirm', confirmSpy)
+    setEditorDirty('t1', true, 's1', '/tmp/durable.ts')
+
+    expect(confirmDiscardDraft('t1', 'sure?', 's1')).toBe(false)
+    expect(readDraftBackup('s1', '/tmp/durable.ts', 'disk')).toBe('live draft')
+
+    confirmSpy.mockReturnValue(true)
+    expect(confirmDiscardDraft('t1', 'sure?', 's1')).toBe(true)
+    expect(readDraftBackup('s1', '/tmp/durable.ts', 'disk')).toBeNull()
+  })
+})
+
+describe('sidebar unload guard', () => {
+  it('flushes a pending durable draft and blocks the unload while a draft is dirty', () => {
+    const mounted = mountSidebarWithEditor()
+    const release = registerDraftSource(mounted.sessionId, '/tmp/a.ts', () => 'pending draft')
+    try {
+      scheduleDraftBackup(mounted.sessionId, '/tmp/a.ts')
+      // The throttle has not fired: only the unload guard's flush persists it.
+      expect(readDraftBackup(mounted.sessionId, '/tmp/a.ts', 'hello')).toBeNull()
+      const event = new Event('beforeunload', { cancelable: true })
+      act(() => { window.dispatchEvent(event) })
+      expect(readDraftBackup(mounted.sessionId, '/tmp/a.ts', 'hello')).toBe('pending draft')
+      expect(event.defaultPrevented, 'a dirty draft still arms the browser prompt').toBe(true)
+    } finally {
+      release()
+      mounted.unmount()
+    }
   })
 })
 

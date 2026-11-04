@@ -13,6 +13,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import type { Context } from '../context-types.ts'
 import { createSidebarStore } from './state.ts'
 import { createBetterSidebarService, matchUrlTarget } from './service.ts'
+import { disposeSidechatSurfaces } from './sidechat-surface.ts'
 import { revalidateChunksOnReactivate, setChunkModuleSystem } from './chunk-loader.ts'
 import { registerBuiltins } from './builtins/index.ts'
 import { Sidebar } from './Sidebar.tsx'
@@ -24,6 +25,7 @@ import { ContextDiagnosticsHost, createContextDiagnosticsHost, registerContextDi
 import { createNativeSurface } from './native/surface.ts'
 import { isTargetAvailable, openInterceptedLink, registerLinkInterception, shouldTakeOverLink } from './link-intercept.ts'
 import { registerImeGuard } from './ime-guard.ts'
+import { registerQuoteSource } from './selection-quote.ts'
 import { registerSettingsNavIcon } from './settings-nav-icon.ts'
 import { loadBootDecision } from './prefs.ts'
 import { SideCardSection } from './SideCardSection.tsx'
@@ -170,6 +172,7 @@ export function apply(ctx: Context): void {
   // are ready by the time the sidebar renders.
   const service = createBetterSidebarService(sidebarStore)
   ctx.provide('betterSidebar', service)
+  ctx.effect(() => () => { disposeSidechatSurfaces(service) }, 'dsh-better-sidebar: sidechat surface adapters')
   // The native right-Sidebar surface: the plugin's content is registered as
   // DSH tab types (one per descriptor) and every open routes there, so the
   // right column belongs to the host and only the bottom workbench stays
@@ -216,6 +219,14 @@ export function apply(ctx: Context): void {
   ctx.effect(
     () => registerBuiltins(ctx, service),
     'dsh-better-sidebar: register built-in tabs and viewers',
+  )
+  // The quote chip's input-trigger source ("add selection to conversation"):
+  // it answers chip clicks (open the quoted lines) and send-time
+  // serialization. Waits briefly for the host's input-trigger service; without
+  // it the popup keeps #1052's plain reference chip.
+  ctx.effect(
+    () => registerQuoteSource(ctx),
+    'dsh-better-sidebar: quote-chip input-trigger source',
   )
   try {
     // rc.8+ exposes the client module system as the `ctx.modules` service;
@@ -271,9 +282,20 @@ export function apply(ctx: Context): void {
           hostCheckFrame = null
           const layer = host?.querySelector<HTMLElement>('[data-dsh-panel-host]')
           if (layer === null || layer === undefined) return
+          // Viewport height units are scaled by CSS zoom even though the
+          // fixed inset width still fits the viewport. Only normalize that
+          // expected height; rect/offset ratios would also hide real transforms.
+          const expectedHeight = (): number => {
+            let zoom = 1
+            for (let node: HTMLElement | null = layer; node !== null; node = node.parentElement) {
+              const value = Number.parseFloat(getComputedStyle(node).zoom)
+              if (Number.isFinite(value) && value > 0) zoom *= value
+            }
+            return window.innerHeight * zoom
+          }
           const rect = layer.getBoundingClientRect()
           const mismatched = Math.abs(rect.left) > 8 || Math.abs(rect.top) > 8
-            || Math.abs(rect.width - window.innerWidth) > 8 || Math.abs(rect.height - window.innerHeight) > 8
+            || Math.abs(rect.width - window.innerWidth) > 8 || Math.abs(rect.height - expectedHeight()) > 8
           if (!mismatched) {
             layer.removeAttribute('data-dsh-panel-host-degraded')
             layer.style.transform = ''
@@ -292,7 +314,7 @@ export function apply(ctx: Context): void {
             const rawLeft = r.left - applied.x
             const rawTop = r.top - applied.y
             if (Math.abs(rawLeft) <= 1 && Math.abs(rawTop) <= 1
-              && Math.abs(r.width - window.innerWidth) <= 1 && Math.abs(r.height - window.innerHeight) <= 1) {
+              && Math.abs(r.width - window.innerWidth) <= 1 && Math.abs(r.height - expectedHeight()) <= 1) {
               layer.removeAttribute('data-dsh-panel-host-degraded')
               layer.style.transform = ''
               return

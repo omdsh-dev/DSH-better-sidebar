@@ -78,6 +78,7 @@ body[data-dsh-sidebar-dragging] #root [data-dsh-center-col] {
   #root [data-dsh-center-col] {
     transition: none;
   }
+}
 
 /* Context-menu submenu flip (viewport clamping for the portaled menus).
  *
@@ -91,8 +92,8 @@ body[data-dsh-sidebar-dragging] #root [data-dsh-center-col] {
  *
  * menu-flip.ts publishes `data-dsh-sidebar-submenu` on <body> — with the
  * words "down" and/or "left" — for exactly the lifetime of one of OUR
- * submenu-bearing menus (FileTree row menu, TabBar tab menu). The tokens
- * flip the growth direction; the attribute's absence restores the
+ * submenu-bearing menus (FileTree row menu, Git panel's More Actions menu).
+ * The tokens flip the growth direction; the attribute's absence restores the
  * primitive's own geometry untouched, and host-owned menus are never
  * affected because they never open while the attribute exists (each side
  * closes on the other's outside pointerdown).

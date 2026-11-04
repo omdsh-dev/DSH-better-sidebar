@@ -236,17 +236,45 @@ function MarkdownSegment({ text, hasMermaid, media, codeLabels }: MarkdownSegmen
     const container = containerRef.current
     if (container === null) return
     runInlineHtmlPass(container, media)
-    let scheduled = false
+    let timer: number | undefined
+    /** A pass was skipped because the page was hidden; flush it on return. */
+    let dirty = false
+    const runPass = (): void => {
+      // Only `hidden` pauses the pass; jsdom reports a non-visible state too,
+      // and the initial pass already ran there.
+      if (document.visibilityState === 'hidden') {
+        dirty = true
+        return
+      }
+      dirty = false
+      runInlineHtmlPass(container, media)
+    }
     const observer = new MutationObserver(() => {
-      if (scheduled) return
-      scheduled = true
-      queueMicrotask(() => {
-        scheduled = false
-        runInlineHtmlPass(container, media)
-      })
+      if (timer !== undefined) return
+      // Coalesce a burst of mutations (shiki settling, diagram swaps, inline
+      // HTML injection) into one pass: the scan walks every text node in the
+      // document, so a pass per mutation turns a diagram-heavy render into a
+      // stream of full-document scans.
+      timer = window.setTimeout(() => {
+        timer = undefined
+        runPass()
+      }, 80)
     })
+    const onVisibilityChange = (): void => {
+      if (document.visibilityState === 'hidden' || !dirty) return
+      if (timer !== undefined) {
+        window.clearTimeout(timer)
+        timer = undefined
+      }
+      runPass()
+    }
+    document.addEventListener('visibilitychange', onVisibilityChange)
     observer.observe(container, { childList: true, subtree: true })
-    return () => { observer.disconnect() }
+    return () => {
+      observer.disconnect()
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+      if (timer !== undefined) window.clearTimeout(timer)
+    }
   }, [text, media])
   return (
     <div ref={containerRef}>

@@ -251,12 +251,14 @@ export function prepareMarkdownAnchors(root: ParentNode): void {
  * @param docPath - the absolute path of the markdown document being rendered;
  *   relative targets resolve against its directory. Absent for prose surfaces.
  * @param cwd - the session workspace root, the base for prose surfaces.
+ * @param allLocalFiles - claim source files too, accepting only empty or line fragments.
  * @returns the resolved target, or null for every link the plugin does not own.
  */
 export function markdownAnchorTarget(
   destination: string,
   docPath: string | undefined,
   cwd: string | undefined,
+  allLocalFiles = false,
 ): MarkdownAnchorTarget | null {
   const raw = destination.trim()
   if (raw === '') return null
@@ -269,8 +271,11 @@ export function markdownAnchorTarget(
   if (SCHEME_RE.test(pathPart) && !DRIVE_RE.test(pathPart)) return null
   // `//host/x.md` — a scheme-relative URL, i.e. remote too.
   if (pathPart.startsWith('//')) return null
+  // Match the host parser: a raw query is never a local file reference.
+  if (pathPart.includes('?')) return null
   const path = decodePercent(pathPart)
-  if (!MARKDOWN_EXT_RE.test(path)) return null
+  if (!MARKDOWN_EXT_RE.test(path)
+    && (!allLocalFiles || (fragment !== '' && !isHostLineFragment(fragment)))) return null
   return { kind: 'file', path: resolveTargetPath(path, docPath, cwd), fragment }
 }
 
@@ -319,11 +324,16 @@ function markdownPathOf(path: string): string {
  * Idempotent: an already-rewritten `%23` destination, a line destination and a
  * fragment-less link all come back untouched.
  */
-function rewriteDestination(destination: string, docPath: string | undefined, cwd: string | undefined): string {
+function rewriteDestination(
+  destination: string,
+  docPath: string | undefined,
+  cwd: string | undefined,
+  allLocalFiles = false,
+): string {
   const separator = separatorOf(destination)
   const pathPart = separator === null ? destination : destination.slice(0, separator.at)
   const fragment = separator === null ? '' : destination.slice(separator.at + separator.length)
-  if (markdownAnchorTarget(destination, docPath, cwd) === null) {
+  if (markdownAnchorTarget(destination, docPath, cwd, allLocalFiles) === null) {
     // Not ours: a remote link keeps its own anchor; a local one is pinned back
     // to plain text (`parseFileLink` refuses a destination carrying a query),
     // so the surface's delegate never offers an action it would not serve.
@@ -346,7 +356,8 @@ function rewriteDestination(destination: string, docPath: string | undefined, cw
 /**
  * Make the host renderer able to SERVE the local links of one markdown text:
  * a claimed `.md`/`.markdown` destination gets its heading fragment carried as
- * `%23`, and every other local destination gets the `?` that keeps it inert.
+ * `%23`. Other local destinations stay inert unless `allLocalFiles` opts the
+ * surface into opening source files as well.
  *
  * Code regions are masked first (see `maskCodeRegions` — fenced blocks opened
  * by ``` ``` ``` OR `~~~`, and inline code spans), so documentation that
@@ -362,6 +373,7 @@ export function rewriteLocalMarkdownLinks(
   text: string,
   docPath: string | undefined,
   cwd: string | undefined,
+  allLocalFiles = false,
 ): string {
   const { masked, restore } = maskCodeRegions(text)
 
@@ -371,10 +383,18 @@ export function rewriteLocalMarkdownLinks(
     // is a README staple, and matching only up to the inner `]` would read the
     // badge's own destination as the link's. The label is re-emitted verbatim,
     // so nested content keeps whatever the image pass gave it.
+    // An angle-delimited destination is matched as a whole: those brackets are
+    // markdown syntax, not path characters, and they are the only way a
+    // destination may carry a space (or a parenthesis). They are stripped
+    // before the judgement and re-emitted around the rewritten inner text.
     .replace(
-      /(?<!!)\[((?:[^[\]]|\[[^\]]*\])*)\]\(([^)\s]+)((?:\s+"[^"]*")?)\)/g,
-      (_match, label: string, destination: string, title: string) =>
-        `[${label}](${rewriteDestination(destination, docPath, cwd)}${title})`,
+      /(?<!!)\[((?:[^[\]]|\[[^\]]*\])*)\]\((<[^<>\n]*>|[^)\s]+)((?:\s+"[^"]*")?)\)/g,
+      (_match, label: string, destination: string, title: string) => {
+        const bracketed = destination.startsWith('<') && destination.endsWith('>')
+        const inner = bracketed ? destination.slice(1, -1) : destination
+        const rewritten = rewriteDestination(inner, docPath, cwd, allLocalFiles)
+        return `[${label}](${bracketed ? `<${rewritten}>` : rewritten}${title})`
+      },
     )
     // Reference definitions. Every local one is fair game: a definition an
     // image uses was already turned into an absolute media URL by the image
@@ -386,7 +406,7 @@ export function rewriteLocalMarkdownLinks(
         // carry a space, and dropping them would truncate the link.
         const bracketed = destination.startsWith('<') && destination.endsWith('>')
         const inner = bracketed ? destination.slice(1, -1) : destination
-        const rewritten = rewriteDestination(inner, docPath, cwd)
+        const rewritten = rewriteDestination(inner, docPath, cwd, allLocalFiles)
         return `${head}${bracketed ? `<${rewritten}>` : rewritten}`
       },
     )

@@ -42,12 +42,26 @@
      containing block with the ancestor's own padding box. The shell's content
      is itself fixed/viewport-sized, so that box is zero-height: the host
      collapses to 0px and the whole native right sidebar goes invisible while
-     its DOM (and every panel in it) is fully present. `vh` is measured
-     against the viewport instead, so the height survives any ancestor's
-     containing-block games; the over-constrained triple (top: 0 + height +
-     bottom: 0) resolves by ignoring `bottom`, keeping this a top-anchored
-     viewport-height layer. */
+     its DOM (and every panel in it) is fully present. Viewport units are
+     measured against the viewport instead, so the height survives any
+     ancestor's containing-block games; the over-constrained triple (top: 0 +
+     height + bottom: 0) resolves by ignoring `bottom`, keeping this a
+     top-anchored viewport-height layer.
+
+     TWO declarations, cascade order is the contract (issue #1014). `vh` is
+     the LARGE viewport: on a mobile browser with its URL bar showing, the
+     layer resolves taller than the layout viewport (`innerHeight`), and the
+     mount self-check in index.tsx reads a rect.height that far from
+     `innerHeight` as a page-level transform. It then flips degraded mode,
+     whose `position: absolute` DOES contribute to the document's height —
+     the whole page starts scrolling and the shifted layer keeps the check
+     failing, so it never recovers (#1014's "exit and re-enter" repro).
+     `dvh` tracks the dynamic viewport, which is what `innerHeight`
+     reports. Declared last so it wins; `vh` stays first as the fallback for
+     engines without dvh — they keep the #616 fix unchanged and only mobile
+     browsers with a retractable URL bar are affected by the old value. */
   height: 100vh;
+  height: 100dvh;
   z-index: 25;
   pointer-events: none;
   /* Clip at the viewport edge: collapsed panels slide off-screen with
@@ -55,8 +69,8 @@
      contributes to its ancestors' scrollable overflow — without this the
      hidden panels extended the document's scrollable area, making the whole
      page draggable left-right and up-down while any panel was collapsed.
-     The host is exactly viewport-sized (inset: 0 + the explicit 100vh
-     height above), so the clip is invisible
+     The host is exactly viewport-sized (inset: 0 + the explicit viewport
+     height above, `vh` fallback then `dvh`), so the clip is invisible
      until a panel slides in from the edge; internal scroll containers and
      the app's fixed overlay stack are unaffected. `clip`, not `hidden`: a
      hidden box stays a PROGRAMMATICALLY scrollable container, and a
@@ -1872,6 +1886,15 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   border-radius: 6px;
   background: var(--dsw-alias-bg-layer-1);
   overflow: hidden;
+  /* Scroll performance: a rendered diagram is a large SVG. Skip layout and
+     paint for the diagrams outside the viewport (a diagram-heavy article can
+     hold dozens) and remember the measured height once a block has been on
+     screen, so scrolling past already-rendered diagrams costs nothing. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 240px;
+  /* Isolate the box: a diagram landing must not invalidate the layout or paint
+     of the surrounding article. */
+  contain: layout paint style;
 }
 
 .mermaidHeader {
@@ -1921,11 +1944,71 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   height: auto;
 }
 
+/* Lazy render placeholder: the fence's diagram is queued and swaps in as soon
+   as the render queue reaches it (visible diagrams first, the rest while the
+   browser is idle). The min-height comes from the fence's line count so the
+   article does not jump under the reader's cursor when the diagram arrives. */
+.mermaidPending {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 18px 24px;
+}
+
+.mermaidPendingBar {
+  display: block;
+  width: min(320px, 70%);
+  height: 10px;
+  border-radius: 5px;
+  background: var(--dsw-alias-bg-layer-2);
+  animation: mermaidPendingPulse 1.4s ease-in-out infinite;
+}
+
+.mermaidPendingBar:nth-child(2) {
+  width: min(240px, 55%);
+  animation-delay: 0.15s;
+}
+
+.mermaidPendingBar:nth-child(3) {
+  width: min(160px, 40%);
+  animation-delay: 0.3s;
+}
+
+@keyframes mermaidPendingPulse {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+
+  50% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mermaidPendingBar {
+    animation: none;
+  }
+}
+
 .mermaidError {
   padding: 6px 10px;
   border-bottom: 1px solid var(--dsw-alias-border-l1);
   color: var(--dsw-alias-state-error-primary);
   font: var(--dsw-font-xxxs-11);
+}
+
+/* The mermaid parse/render message itself: the generic label alone makes a
+   broken fence hard to find, so the first lines follow it (mermaid's full
+   dump stays on the hover title). */
+.mermaidErrorDetail {
+  display: block;
+  margin-top: 2px;
+  color: var(--dsw-alias-label-tertiary);
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 /* The diagram source shown under a render error (helps fixing the fence). */

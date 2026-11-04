@@ -24,6 +24,7 @@
  */
 import type { Context } from '../../context-types.ts'
 import { addressBaseOf, resolveAddressPath } from '../address-base.ts'
+import { flushDraftBackups } from '../editor-draft-backup.ts'
 import { t } from '../locales.ts'
 import { splitTrailingLineSpec } from '../path-line.ts'
 import { baseName } from '../paths.ts'
@@ -83,6 +84,16 @@ function hostOwnedPath(path: string): boolean {
   const name = path.slice(path.lastIndexOf('/') + 1)
   const dot = name.lastIndexOf('.')
   return dot > 0 && HOST_OWNED_EXTS.has(name.slice(dot + 1).toLowerCase())
+}
+
+/**
+ * The close-hook slice of `ctx.sidebarRight`: `registerCloseHandler` lives on
+ * the concrete controller, not on `ISidebarRight`, so it is probed
+ * structurally (same shape the host's own terminal tab uses).
+ */
+interface CloseHandlerHost {
+  /** Run one kind's cleanup before its record is removed; a throw vetoes the close. */
+  registerCloseHandler(kind: string, handler: (sessionId: string, tab: { kind: string }) => void): () => void
 }
 
 /** The native tab-type registry face (`ctx.sidebarRightTabs`). */
@@ -283,10 +294,29 @@ export function registerNativeSurface(deps: NativeSurfaceDeps): () => void {
   // `sidebarRightTabs` undefined, and the registry appeared a moment later.
   // `ctx.inject` re-runs this body whenever the service appears/reappears,
   // which is the lifecycle the registrations need.
-  const seat = ctx.inject(['sidebarRightTabs'], (injected) => {
+  //
+  // The close handler below needs `sidebarRight` as well; both services are
+  // provided by the same host package, so waiting for both changes nothing
+  // about WHEN the types register.
+  const seat = ctx.inject(['sidebarRightTabs', 'sidebarRight'], (injected) => {
     const tabs = injected.get('sidebarRightTabs') as unknown as NativeTabRegistry | undefined
     if (tabs === undefined) return
+    const right = injected.get('sidebarRight') as unknown as CloseHandlerHost | undefined
     const live = new Map<string, Registration>()
+
+    // The host runs this hook before removing a record (the strip's ×, its
+    // context menu, `page.close`, and a `replaceTab`). Flush the throttled
+    // draft here so the keystrokes of the last second survive the body's
+    // unmount; the hook is a synchronous cleanup, not a veto, so it cannot
+    // ask first (see editor-draft-backup.ts).
+    let disposeClose: (() => void) | undefined
+    if (typeof right?.registerCloseHandler === 'function') {
+      try {
+        disposeClose = right.registerCloseHandler(EDITOR_KIND, () => { flushDraftBackups() })
+      } catch (error) {
+        reportFailure?.('register editor close handler', error)
+      }
+    }
 
     const fileSessionIdOf = (info: NativeTabInfo): string | undefined => {
       const address = parseFileAddress(info.tab.contentId)
@@ -528,6 +558,7 @@ export function registerNativeSurface(deps: NativeSurfaceDeps): () => void {
       }
       live.clear()
       for (const dispose of disposeSubscriptions.reverse()) disposeSafely(dispose, 'a native tab subscription')
+      if (disposeClose !== undefined) disposeSafely(disposeClose, 'the editor close handler')
     }
   })
   return () => {

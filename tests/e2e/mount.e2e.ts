@@ -526,8 +526,12 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   const mdRow = pane.locator(`[role="button"][title$="${SEEDED_MD_FILE}"]:visible`)
   await expect(mdRow, `the seeded "${SEEDED_MD_FILE}" file must appear in the plugin's explorer`).toHaveCount(1, { timeout: 30_000 })
   await mdRow.click({ position: { x: 8, y: 8 } })
+  // The editor tab keeps its CodeMirror host mounted and hides it in preview
+  // mode; whether CodeMirror has virtualized the document's last line by now is
+  // a matter of when its hidden view was measured, so the matching element is
+  // not stable. Only the VISIBLE copy is the preview this assertion is about.
   await expect(
-    pane.getByText('tail text'),
+    pane.getByText('tail text').filter({ visible: true }),
     'the markdown preview must render the seeded document',
   ).toHaveCount(1, { timeout: 30_000 })
   await mermaidChunk
@@ -606,9 +610,15 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   // `data-composer-chip` is the host's own anchor for a composer chip (its
   // JSDoc names e2e as the reason it exists) — a bare `[class*="reference"]`
   // match could land on any element whose hashed class happens to contain it.
-  const chip = page.locator(`[data-composer-chip]`).filter({ hasText: `${SEEDED_MD_FILE}:` }).first()
+  //
+  // The chip's VISIBLE label is the localized `quoteChip` string ("引用 …" /
+  // "Quote …") carrying the file name and line range; the compact `path:line`
+  // form is the chip's clipboard text, not its face (#1111). Match the file
+  // name, not the separator, and require exactly one chip so a duplicated
+  // insert still fails.
+  const chip = page.locator('[data-composer-chip]').filter({ hasText: SEEDED_MD_FILE })
   await expect(chip, 'the selection must land in the composer as a reference chip')
-    .toBeVisible({ timeout: 10_000 })
+    .toHaveCount(1, { timeout: 10_000 })
   // A selection chip's `ref` is a fenced block, not a path: the host must not
   // mark it openable, or a click would hand that block to the file opener.
   await expect(chip, 'a selection chip must not advertise itself as openable')
@@ -1053,7 +1063,11 @@ test('the explorer @-reference button keeps earlier chips (no whole-draft rewrit
   const mdRow = pane.locator(`[role="button"][title$="${SEEDED_MD_FILE}"]:visible`)
   await expect(mdRow).toHaveCount(1, { timeout: 30_000 })
   await mdRow.click({ position: { x: 8, y: 8 } }) // open the file (not the @ action)
-  await expect(pane.getByText('tail text')).toHaveCount(1, { timeout: 30_000 })
+  // Same hidden-CodeMirror copy as above: the preview is the visible one.
+  await expect(
+    pane.getByText('tail text').filter({ visible: true }),
+    'the markdown preview must render the seeded document exactly once',
+  ).toHaveCount(1, { timeout: 30_000 })
   // A multi-line selection in the code viewer (CodeMirror): the editor path
   // raises the same popup with a fenced payload carrying the file and its line
   // range — the multi-line shape this module has to hand over verbatim.

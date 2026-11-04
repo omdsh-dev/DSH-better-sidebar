@@ -118,6 +118,7 @@ describe('host plugin smoke', () => {
     apply(ctx as never)
     expect(routes.map(route => route.path)).toEqual([
       '/sidebar/api',
+      '/sidebar/sidechat-image',
       '/sidebar/upload',
       '/sidebar/write',
       '/sidebar/bundle',
@@ -1587,6 +1588,133 @@ describe('session cwd resolution over the API route', () => {
   })
 })
 /**
+ * Side Chat prompt admission over the REAL `/sidebar/api` route: only a body
+ * that may carry encoded images (past the 1 MiB prompt-metadata cap) is
+ * counted. The old gate charged every `sidechat.prompt`, so three plain-text
+ * sends could answer a bogus 503 "Too many image admissions".
+ */
+describe('sidechat prompt large-body admission', () => {
+  const limits = {
+    maxImagesPerMessage: 8,
+    maxImageBytes: 10 * 1024 * 1024,
+    maxMessageImageBytes: 3 * 1024 * 1024,
+    maxImagePixels: 100,
+    maxImageDimension: 10,
+    mediaTypes: ['image/png'] as const,
+  }
+  const ref = { attachmentId: 'saved', mediaType: 'image/png', bytes: 900_000, width: 1, height: 1 }
+
+  /** Mount the plugin and hand back the `/sidebar/api` route. */
+  const mountServer = (): SidebarWebRoute => {
+    const routes: SidebarWebRoute[] = []
+    lastMountedRoutes = routes
+    const events = [
+      { type: 'subagent/descriptor', seq: 0, time: 0, data: { provider: 'sidechat', mode: 'continuable', version: 3 } },
+      { type: 'session/end-seed', seq: 1, time: 1, data: { inherited: true } },
+    ]
+    const agent = {
+      id: 'child',
+      status: 'idle',
+      options: { provider: 'test', model: 'vision' },
+      ctx: { on: () => () => {} },
+      session: { header: { origin: 'subagent', parentSession: 'parent' }, inheritedEventCount: 1, snapshotEvents: () => events, append: () => {} },
+      inject: vi.fn(),
+      followup: vi.fn(),
+      cancel: vi.fn(),
+      inbox: { nextStep: [] as unknown[], nextTurn: [] as unknown[], remove: () => true, clear: () => {} },
+    }
+    const attachments = {
+      imageLimits: limits,
+      admitPromptContent: vi.fn(async (parts: Array<{ type: string }>) => parts.map(part => part.type === 'image' ? { type: 'image', attachment: ref } : part)),
+      readImage: vi.fn(async () => ({})),
+      isAttachmentError: () => false,
+    }
+    const ctx = {
+      connection: { requestRejection: () => undefined },
+      webServer: {
+        register: (route: SidebarWebRoute) => { routes.push(route); return () => {} },
+        registerUpgrade: () => () => {},
+      },
+      sessions: { get: () => undefined },
+      tools: { register: () => () => {} },
+      effect: (fn: () => void | (() => void)) => { fn() },
+      inject: () => () => {},
+      on: () => () => {},
+      get: (key: string) => key === 'agents' ? { get: () => agent } : key === 'attachments' ? attachments : undefined,
+      logger: { info: () => {}, warn: () => {}, debug: () => {}, error: () => {} },
+    }
+    apply(ctx as never)
+    return routes.find(route => route.path === '/sidebar/api')!
+  }
+
+  /** Invoke the route with one fake request and parse the wire envelope. */
+  const deliver = async (route: SidebarWebRoute, req: unknown): Promise<{ ok: boolean; status: number; error?: { code?: string; message: string } }> => {
+    const out = { status: 200, body: '' }
+    const res = {
+      writeHead: (status: number) => { out.status = status },
+      end: (chunk: unknown) => { out.body += String(chunk ?? '') },
+    } as never
+    await route.handler(req as never, res)
+    return { ...JSON.parse(out.body) as { ok: boolean; error?: { code?: string; message: string } }, status: out.status }
+  }
+
+  /**
+   * A prompt request whose body is split at 1.1 MB: the head always crosses the
+   * admission threshold, and a held request can then stay mid-read.
+   */
+  const request = (body: string, headers: Record<string, string> = {}, hold?: Promise<void>): unknown => {
+    const head = Buffer.from(body.slice(0, 1_100_000))
+    const tail = Buffer.from(body.slice(1_100_000))
+    return {
+      method: 'POST',
+      url: '/sidebar/api/sidechat.prompt',
+      headers: { host: '127.0.0.1:3080', ...headers },
+      [Symbol.asyncIterator]: async function* () {
+        yield head
+        if (hold !== undefined) await hold
+        yield tail
+      },
+    }
+  }
+  const deferred = (): { promise: Promise<void>; resolve: () => void } => {
+    let resolve!: () => void
+    const promise = new Promise<void>(done => { resolve = done })
+    return { promise, resolve }
+  }
+  const tick = (): Promise<void> => new Promise(resolve => setTimeout(resolve, 0))
+
+  it('serves three concurrent pure-text prompts without the image admission gate', async () => {
+    const route = mountServer()
+    const answers = await Promise.all([1, 2, 3].map(n => deliver(
+      route,
+      request(JSON.stringify({ childId: 'child', text: `message ${n}` })),
+    )))
+    expect(answers.map(answer => answer.status)).toEqual([200, 200, 200])
+    expect(answers.every(answer => answer.ok)).toBe(true)
+  })
+
+  it('answers a third concurrent large prompt with 413 and releases the slots', async () => {
+    const route = mountServer()
+    const body = JSON.stringify({ childId: 'child', text: '', images: [{ mediaType: 'image/png', data: 'A'.repeat(1_200_000) }] })
+    const firstHold = deferred()
+    const secondHold = deferred()
+    // Slot one: declared content-length, taken before a byte is read.
+    const first = deliver(route, request(body, { 'content-length': String(Buffer.byteLength(body)) }, firstHold.promise))
+    // Slot two: a chunked body, counted when the stream crosses the metadata cap.
+    const second = deliver(route, request(body, {}, secondHold.promise))
+    await tick()
+    // Slot three: the same threshold must answer 413 rather than queue.
+    const third = await deliver(route, request(body))
+    expect(third).toMatchObject({ ok: false, status: 413, error: { code: 'too-large' } })
+    // A declared content-length is refused before the body is read, too.
+    const fourth = await deliver(route, request(body, { 'content-length': String(Buffer.byteLength(body)) }))
+    expect(fourth).toMatchObject({ ok: false, status: 413, error: { code: 'too-large' } })
+    firstHold.resolve()
+    secondHold.resolve()
+    expect((await Promise.all([first, second])).map(answer => answer.status)).toEqual([200, 200])
+  })
+})
+/**
  * One save through `POST /sidebar/write`, resolved against the most recent
  * mount (see {@link lastMountedRoutes}).
  * @param payload - `{ sessionId, cwd?, path, content, expectedMtimeMs? }`.
@@ -1929,19 +2057,27 @@ describe('agent sidebar-open tool gating', () => {
   /**
    * DSH 0.1.7 emits its settings change on the settings service's own context,
    * which is not an ancestor of this plugin's fiber, so the gate cannot watch
-   * an event. It is re-evaluated whenever the client re-reads the form instead
-   * — which is exactly what the fenced `settings.get` route below does, and
-   * what the Side card page does on every `settings/document-updated` push.
+   * an event. It is re-evaluated on every form read instead — the fenced
+   * `settings.get` route below, the Side card page's `settings/document-updated`
+   * push — plus the two decision points of issue #951: the settings write
+   * itself (`settings.update`) and the loader settling (the point where the
+   * plugin's row first becomes addressable).
    */
-  const gatingCtx = (enabled: () => boolean, routes: SidebarWebRoute[]) => {
+  const gatingCtx = (
+    read: () => Record<string, unknown> | undefined,
+    routes: SidebarWebRoute[],
+    awaitLoader: () => Promise<void> = () => new Promise<void>(() => {}),
+  ) => {
     let registered = 0
     let disposed = 0
     const settings = {
-      describe: () => [{
-        ns: ENTRY_ID,
-        value: { ...SIDEBAR_PREFS_DEFAULTS, agentOpenTools: enabled() },
-        revision: 0,
-      }],
+      // Mirrors the host's settings service: an entry whose fiber is not
+      // ACTIVE is simply ABSENT from describe() (a normal remount window),
+      // and a broken service can throw. Both are "unknown", never "off".
+      describe: () => {
+        const value = read()
+        return value === undefined ? [] : [{ ns: ENTRY_ID, value, revision: 0 }]
+      },
       async update() {},
       configure: () => () => {},
     }
@@ -1963,9 +2099,9 @@ describe('agent sidebar-open tool gating', () => {
       fiber: PLUGIN_FIBER,
       loader: {
         entries: () => [{ options: { id: ENTRY_ID, name: 'dsh-better-sidebar' }, fiber: PLUGIN_FIBER }],
-          // The real loader settles before a form is addressable; the fake
-          // resolves immediately so the import runs on the same tick.
-          await: () => Promise.resolve(),
+        // Only a case that pins the post-loader re-evaluation settles it; the
+        // default keeps the injection-time read the sole trigger.
+        await: awaitLoader,
       },
       logger: { info: () => {}, warn: () => {}, debug: () => {}, error: () => {} },
     }
@@ -1975,7 +2111,10 @@ describe('agent sidebar-open tool gating', () => {
   it('injects the one open tool only when the side-card setting is enabled (default off)', async () => {
     let enabled = false
     const routes: SidebarWebRoute[] = []
-    const harness = gatingCtx(() => enabled, routes)
+    const harness = gatingCtx(
+      () => ({ ...SIDEBAR_PREFS_DEFAULTS, agentOpenTools: enabled }),
+      routes,
+    )
     apply(harness.ctx as never)
     const route = routes.find(candidate => candidate.path === '/sidebar/api')!
     // Default off: no open tool is registered even though settings is mounted.
@@ -1997,5 +2136,94 @@ describe('agent sidebar-open tool gating', () => {
     await invoke(route, 'settings.get', {})
     expect(harness.live()).toBe(1)
     expect(harness.registrations()).toBe(2)
+  })
+
+  it('never treats an unreadable form as the setting being off (issue #951)', async () => {
+    let prefs: Record<string, unknown> | undefined = { ...SIDEBAR_PREFS_DEFAULTS, agentOpenTools: true }
+    let readThrows = false
+    const routes: SidebarWebRoute[] = []
+    const harness = gatingCtx(() => {
+      if (readThrows) throw new Error('the settings service is unavailable')
+      return prefs
+    }, routes)
+    apply(harness.ctx as never)
+    const route = routes.find(candidate => candidate.path === '/sidebar/api')!
+
+    // A readable form with the switch on registers the tool.
+    await invoke(route, 'settings.get', {})
+    expect(harness.live()).toBe(1)
+
+    // The host lists an entry only while its fiber is ACTIVE, so the row
+    // vanishing (loader mount / live-commit remount) is normal: keep the
+    // registration instead of reading the absence as "the user turned it off".
+    prefs = undefined
+    await invoke(route, 'settings.get', {})
+    expect(harness.live()).toBe(1)
+    expect(harness.disposals()).toBe(0)
+
+    // A thrown read is the same unknown.
+    readThrows = true
+    await invoke(route, 'settings.get', {})
+    expect(harness.live()).toBe(1)
+    expect(harness.disposals()).toBe(0)
+
+    // A partial form without the boolean field is not an explicit false either.
+    readThrows = false
+    prefs = {}
+    await invoke(route, 'settings.get', {})
+    expect(harness.live()).toBe(1)
+    expect(harness.disposals()).toBe(0)
+
+    // Only an explicit false is a user decision — unregister once, and a
+    // repeated sync is a no-op rather than a second disposal.
+    prefs = { ...SIDEBAR_PREFS_DEFAULTS, agentOpenTools: false }
+    await invoke(route, 'settings.get', {})
+    expect(harness.live()).toBe(0)
+    expect(harness.disposals()).toBe(1)
+    await invoke(route, 'settings.get', {})
+    expect(harness.live()).toBe(0)
+    expect(harness.disposals()).toBe(1)
+  })
+
+  it('registers as soon as the loader lists the form, without a settings.get (issue #951)', async () => {
+    let listed = false
+    let release = (): void => {}
+    const loaderReady = new Promise<void>(resolve => { release = resolve })
+    const routes: SidebarWebRoute[] = []
+    const harness = gatingCtx(
+      () => (listed ? { ...SIDEBAR_PREFS_DEFAULTS, agentOpenTools: true } : undefined),
+      routes,
+      () => loaderReady,
+    )
+    apply(harness.ctx as never)
+    // The inject callback runs while the loader is still mounting rows: the
+    // form is not addressable yet, so the injection-time read must not
+    // unregister anything (there is nothing yet) — and must not decide "off".
+    expect(harness.live()).toBe(0)
+
+    // The loader settles and the row becomes readable; the gate re-evaluates
+    // on its own, so the first model turn already carries the tool.
+    listed = true
+    release()
+    await new Promise<void>(resolve => { setTimeout(resolve, 0) })
+    expect(harness.live()).toBe(1)
+    expect(harness.registrations()).toBe(1)
+  })
+
+  it('re-evaluates the gate after settings.update, not only on the next read (issue #951)', async () => {
+    let prefs: Record<string, unknown> = { ...SIDEBAR_PREFS_DEFAULTS, agentOpenTools: false }
+    const routes: SidebarWebRoute[] = []
+    const harness = gatingCtx(() => prefs, routes)
+    apply(harness.ctx as never)
+    const route = routes.find(candidate => candidate.path === '/sidebar/api')!
+    expect(harness.live()).toBe(0)
+
+    // The write lands (the fake update is a no-op; the read now says true):
+    // the update path itself must re-evaluate, or the tool stays missing
+    // until some unrelated settings.get happens to run.
+    prefs = { ...SIDEBAR_PREFS_DEFAULTS, agentOpenTools: true }
+    const written = await invoke(route, 'settings.update', { patch: { agentOpenTools: true } })
+    expect(written.ok).toBe(true)
+    expect(harness.live()).toBe(1)
   })
 })

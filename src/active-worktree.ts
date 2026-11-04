@@ -22,8 +22,9 @@
  * (#952). Outside the workspace any linked worktree is adopted, which is PR
  * #802's cross-repository case. The highest-scoring adoptable worktree of the
  * newest event that has one wins, but only evidence after the last committed
- * working-directory/change is eligible. When there is no evidence the cwd is
- * kept (lifted to the repository top level for subdirectory sessions).
+ * working-directory/change is eligible. With no such evidence the session cwd
+ * itself is kept, a session living in a subdirectory of its repository
+ * included: the repository top level is never a root on its own.
  *
  * Resolutions are cached process-wide ({@link ACTIVE_ROOT_TTL_MS}), concurrent
  * callers share one in-flight resolution AND one in-flight base probe, and
@@ -33,7 +34,7 @@
  * answered with its base (the workspace address) and never folds the stored
  * log — see {@link activeWorktreeRootOf}.
  */
-import { stat } from 'node:fs/promises'
+import { realpath, stat } from 'node:fs/promises'
 import { dirname, isAbsolute, join, sep } from 'node:path'
 import type { Context, SidebarSessionEvent } from './context-types.ts'
 import { requireAbsolute } from './fs-tree.ts'
@@ -459,7 +460,8 @@ async function sessionEventsOf(ctx: Context, sessionId: string): Promise<readonl
  * @param ctx - host plugin context.
  * @param sessionId - session whose tool calls are inspected.
  * @param base - the authoritative session cwd (already resolved by the caller).
- * @returns the active linked worktree, the repository top level, or `base`.
+ * @returns the linked worktree the session moved into, or the session cwd's
+ *   own (real) path — never the repository top level.
  */
 export async function activeWorktreeRootOf(ctx: Context, sessionId: string, base: string): Promise<string> {
   if (base === '') return base
@@ -512,6 +514,29 @@ export async function activeWorktreeRootOf(ctx: Context, sessionId: string, base
   return promise
 }
 
+/**
+ * The session cwd as the filesystem spells it, without ever substituting the
+ * repository top level.
+ *
+ * This value is the base a relative link path resolves against, so lifting a
+ * subdirectory session to `<repo>` would resolve `<subdir>/tools/a.md` as
+ * `<repo>/tools/a.md` (#1024 / #1080). Canonicalizing instead of returning the
+ * caller's spelling keeps the value comparable with the canonical paths
+ * `git rev-parse` reports: the workspace-containment decision in
+ * {@link isAdoptableTop} must still see a nested worktree as INSIDE the
+ * workspace when the cwd was reached through a symlink (macOS's `/var` vs
+ * `/private/var` is the #952 layout).
+ */
+async function sessionRootOf(base: string): Promise<string> {
+  try {
+    return await realpath(base)
+  } catch {
+    // A cwd deleted between the git probe and this syscall keeps its spelling;
+    // that answer is no worse than the pre-existing one.
+    return base
+  }
+}
+
 /** One uncached resolution (see {@link activeWorktreeRootOf}). */
 async function resolveActiveWorktreeRoot(ctx: Context, sessionId: string, base: string, directoryEpoch: number | undefined): Promise<string> {
   // Read the cursor BEFORE the scan: if an event lands mid-resolution the
@@ -525,10 +550,9 @@ async function resolveActiveWorktreeRoot(ctx: Context, sessionId: string, base: 
     cachePut(activeWorktreeRootCache, sessionId, { root: base, base, directoryEpoch, eventSeq, gitResolved: false, expires: Date.now() + ACTIVE_ROOT_TTL_MS }, ACTIVE_ROOT_CACHE_MAX)
     return base
   }
-  const canonicalTop = requireAbsolute(top)
-  const effectiveBase = pathUnderOf(base, canonicalTop) ? base : canonicalTop
-  const active = await activeRootFromEvents(await sessionEventsOf(ctx, sessionId), effectiveBase)
-  const root = active ?? effectiveBase
+  const canonicalBase = await sessionRootOf(base)
+  const active = await activeRootFromEvents(await sessionEventsOf(ctx, sessionId), canonicalBase)
+  const root = active ?? canonicalBase
   cachePut(activeWorktreeRootCache, sessionId, { root, base, directoryEpoch, eventSeq, gitResolved: true, expires: Date.now() + ACTIVE_ROOT_TTL_MS }, ACTIVE_ROOT_CACHE_MAX)
   return root
 }
