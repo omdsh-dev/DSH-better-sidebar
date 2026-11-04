@@ -4,6 +4,8 @@
 
 ### 未发布
 
+- 🧭 **安装脚本会先查 profile 自带的 `@deepseek-ai/dsh-*` 副本是否混版**（[#1107](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1107)）：profile 里自己装的宿主包会抢在 DSH 安装之前被解析，本插件静态 import 的 `dsh-subagent` 因此绑到混搭版本；混版缺导出时整只宿主只报 `DesktopHostFatalError: required plugins did not activate`，看不到是哪个包缺了什么。`scripts/install.sh` / `scripts/install.ps1` 现在装完会运行随包发布的 `scripts/check-profile-host-tree.mjs`（按 DSH 自己的 profile 解析规则：只看 profile 内的副本、只判定 `dsh-subagent` 精确声明的 `dsh-attachment` peer）——混版就打印两份版本号与修复命令并退出，不再提示重启。README 常见问题补了同一条修复路径（从 profile 的 `package.json` / overrides 移除 `@deepseek-ai/dsh-*` 后 `pnpm install`，或把两份副本对齐到同一版本）。
+  - 🧪 测试：新增 `tests/install-host-tree.spec.ts`（6 例，真跑发布脚本：混版退出码 1 并给出两份版本；配对一致 / 只有 subagent 副本 / profile 之外的旧副本被忽略 / 未装插件均放行；并钉住两个安装脚本都调用它、脚本随包发布）。
 - 📐 **页面 CSS zoom 不再被误判成页面级 transform**（[#1102](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1102)；贡献者 PR [#1110](https://github.com/omdsh-dev/DSH-better-sidebar/pull/1110) @HootRock）：`body { zoom: 1.15 }` 下 panel host 的 `100vh` 按 zoom 放大（811px 视口 → 约 932.6px），几何自检因此判定「页面被 transform」→ 降级成 absolute、把文档撑高，聚焦 / 滚动会把整个外壳一起推走。现在预期高度按祖先链累积的 `zoom` 归一，宽度与位移仍按原阈值判定，真实 transform 不会被掩盖。
   - 🧪 测试：`tests/e2e/panel-host-zoom.e2e.ts`（Chromium 实测 `body { zoom: 1.15 }` 下不再降级）。
 - 🎛 **Changes 的「Git / 本轮文件」切换改用公开组件**（[#1098](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1098)；贡献者 PR [#1101](https://github.com/omdsh-dev/DSH-better-sidebar/pull/1101) @wang-kaopu）：此前自己画一套按钮、还依赖宿主私有 CSS Modules 的哈希类名，宿主一改样式就退化成浏览器原生按钮（方框 + 1px 黑边）。现在改用 `dsh-client-ui-primitives` 公开导出的 `SegmentedControl`，私有类名依赖一并删除。
