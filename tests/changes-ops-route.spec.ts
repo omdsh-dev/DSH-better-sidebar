@@ -41,34 +41,15 @@ describe('changes.ops waiting form', () => {
     }
   })
 
-  it('ships the PTC sub-call pair, not just the plain tool pair', async () => {
-    const runtime = new CordisContext()
-    const fiber = await runtime.plugin(SessionStore)
-    const session = runtime.sessions.create()
-    const changesOps = createChangesOpsApi(runtime as Context)
-    try {
-      const at = () => ({
-        turn: 0,
-        step: 0,
-        rootCallId: ToolCallId('root'),
-        parentCallId: ToolCallId('root'),
-        subCallId: ToolCallId('root:ptc:1'),
-        name: 'write',
-      })
-      session.append('tool/ptc-dispatch-start', { ...at(), arguments: { file_path: 'notes.txt', content: 'x' } })
-      session.append('tool/ptc-dispatch', {
-        ...at(),
-        arguments: { file_path: 'notes.txt', content: 'x' },
-        isError: false,
-        content: [{ type: 'text', text: 'written' }],
-      })
-      const answer = await changesOps({ sessionId: session.id })
-      expect(answer.events.map(event => event.type))
-        .toEqual(['tool/ptc-dispatch-start', 'tool/ptc-dispatch'])
-    } finally {
-      await fiber.dispose()
-    }
-  })
+  // The PTC sub-call pair (`tool/ptc-dispatch-start` + `tool/ptc-dispatch`) can
+  // no longer be produced here: DSH 0.2.2 dropped both from the session event
+  // TYPE map and from the store's append registry, so `SessionStore.append`
+  // rejects them outright. The READER still has to understand them — logs
+  // recorded on 0.2.1 keep those events, and `dsh-session`'s known-event-types
+  // table still names them — but that contract belongs to the fold, which is
+  // fed synthetic events directly in `tests/changes-ops.spec.ts` ("keeps PTC
+  // sub-calls ..."). This route-level copy tested the store, not our filter, so
+  // it is gone rather than faked.
 
   it('ends the empty-window wait when the client disconnects', async () => {
     const runtime = new CordisContext()

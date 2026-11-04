@@ -31,7 +31,7 @@
 
 本地：`pnpm build && pnpm pack && pnpm exec playwright install chromium && pnpm test:mount`。
 
-- **钉版写精确版本号，绝不写 dist-tag**（`alpha` / `latest` / `next` 的指向与候选版经常不一致）；默认与 CI 同为 `@deepseek-ai/dsh@0.2.1-rc.1`。
+- **钉版写精确版本号，绝不写 dist-tag**（`alpha` / `latest` / `next` 的指向与候选版经常不一致）；默认与 CI 同为 `@deepseek-ai/dsh@0.2.2-rc.1`。
 - 该步骤需要 `NODE_OPTIONS=--max-old-space-size=4096`（浮动的传递依赖会组出混合 peer 图 → ERESOLVE 后 OOM）；**不要加 `--legacy-peer-deps`**（会跳掉 boot 必需的 peer，CLI 直接 `ERR_MODULE_NOT_FOUND`）。
 - 本机 npm registry 是 npmmirror、对新预发布滞后：装不到时 `pnpm install --registry https://registry.npmjs.org`。
 - Windows lane 跑 `pnpm test:windows`（`--maxWorkers=1`），`vitest.config.ts` 的 `testTimeout: 30_000` 与它配套。e2e spec 命名 `*.e2e.ts` + vitest `exclude` 双保险；**改 `exclude` 必须保留默认排除项**。
@@ -40,14 +40,14 @@
 
 ## 3. DSH 版本适配
 
-- **当前基线 DSH 0.2.1-rc.1（v0.28.0 正式版起）**。**v0.30.0 起 14 条** `@deepseek-ai/dsh-*` peer（新增 `dsh-client-ui-input-trigger`，划选引用 chip 用它的 `ctx.inputTriggers`）下限均为 `^0.2.1-rc.1` 浮动 caret 范围、**绝不钉精确版本**（只有 devDependencies 精确钉）；本包不声明 `package.json#engines.dsh`，因此走 peer 兼容性检查；宿主对声明了该字段的包优先且仅按它判定，不读 peer。`dsh.plugin.json#engines.dsh` 不参与这一规则。`tests/market-manifest.spec.ts` 钉住这条形状。
+- **当前基线 DSH 0.2.2-rc.1（v0.30.0 起）**。**v0.30.0 起 14 条** `@deepseek-ai/dsh-*` peer（新增 `dsh-client-ui-input-trigger`，划选引用 chip 用它的 `ctx.inputTriggers`）下限均为 `^0.2.2-rc.1` 浮动 caret 范围、**绝不钉精确版本**（只有 devDependencies 精确钉）；本包不声明 `package.json#engines.dsh`，因此走 peer 兼容性检查；宿主对声明了该字段的包优先且仅按它判定，不读 peer。`dsh.plugin.json#engines.dsh` 不参与这一规则。`tests/market-manifest.spec.ts` 钉住这条形状。
 - **0.x caret 不跨 minor，但可跨 patch**：`^0.1.7-rc.1` 对 `0.2.0-rc.1` 判定为 false → 整行 `disabled`、插件静默不加载。**抬基线必须同批抬 peer 下限。**
-- 支持线（用户侧）：DSH **0.2.1-rc.1+** 使用插件 **v0.29.0**；0.2.1-alpha.5 用户固定 **v0.28.0-alpha.0**；0.2.0-rc.2 用户固定 **v0.26.1**（v0.27.0 尚未发布）；0.2.0-rc.1 用户固定 v0.24.1；0.1.7 线的最后支持版是 **v0.22.1**（v0.23.0 从未发布到 npm）。按本仓库先例**不写运行时兼容层**。
+- 支持线（用户侧）：DSH **0.2.2-rc.1+** 使用插件 **v0.30.0**；DSH **0.2.1-rc.1+（含 npm `latest` 0.2.1-rc.5）** 固定 **v0.28.2**——v0.29.0 从未发布到 npm，0.2.1 线不要再抬；0.2.1-alpha.5 用户固定 **v0.28.0-alpha.0**；0.2.0-rc.2 用户固定 **v0.26.1**（v0.27.0 尚未发布）；0.2.0-rc.1 用户固定 v0.24.1；0.1.7 线的最后支持版是 **v0.22.1**（v0.23.0 从未发布到 npm）。按本仓库先例**不写运行时兼容层**。
 - **抬基线动作清单**：① `pnpm peers check`，把失配的传递 peer 提升进 devDependencies；② 扫宿主包产物的**裸 import 差集**（`pnpm peers check` 看不到这类失败，0.1.7 线是 `zustand` / `immer`）；③ 对消费的宿主包做类型面 diff（重点 `ui-primitives` / `dsh-session` / `sidebar-right`），确认导出只增不减；④ 复查会话格式版本、`SUBAGENT_DESCRIPTOR_VERSION`、web profile 的 inject 列表；⑤ 同批同步 CI 钉版、`scripts/e2e-common.sh`、**`scripts/install.sh` / `scripts/install.ps1`（随包发布、会直接给用户 npx 命令）** 与 README / 指南的版本行。
 - **用户 profile 自己的 `overrides: '@deepseek-ai/dsh-*'` 要同批抬**，否则旧包遮蔽 bundle → 预检禁用 `config-editor` → `settings` 行永久 `pending`；先看宿主日志的 `disabling profile plugin row` 与 `pending (waiting for service: …)`。
 - **沿用 alpha.5 的删除契约**：不再依赖 `@deepseek-ai/dsh-invariants`、`ctx.invariants` 或上游 `/invariant` 子路径，也不发布本插件的 invariant companion；HTTP/WS 准入统一调用 `ctx.connection.requestRejection(req)`，仅 `undefined` 放行，不恢复 `webRuntime` / 自建信任例外。
 - **v0.28.0 正式版接管 npm `latest`**：宿主 npm `latest` 此时仍指向 `0.2.0-rc.2`，不满足本插件 RC 基线；用户已明确接受这一分离，所有安装文档必须显著提醒旧宿主固定 `v0.26.1`，不要用浮动 `latest`。发布 workflow 沿用现有版本号规则，无需改动。
-- **本次 RC 适配不改功能实现**：alpha.5 → rc.1 上游完整树差异共 355 项，全部为 `package.json`，源码零变化；同步版本、peer、伴随依赖与文档，重新获取 RC 验证证据，不沿用 alpha 测试数字。
+- **本次 0.2.1 → 0.2.2 适配有真实代码改动**（不是纯版本同步）：`dsh-agent` 用 agent 自有的 `AgentModel`（`agent.model`，`select()` 同时落盘并作用于下一步）替换了可安装的 `ModelSelectionRef` + `installModelSelection(ctx, ref)`，sidechat 的模型选择随之改写；`dsh-tools` 移除了 PTC（`tool/ptc-dispatch*`）的事件**类型声明**（运行期仍记录，`known-event-types` 仍在），只有测试要按擦除形状追加；图标从内联 `<path>` 变成 sprite `<use href="#dsw-icon-…">`，按图元的断言要跟着改。逐项证据见 [0.2.2 适配记录](docs/plans/2026-11-04-dsh-0.2.2-rc.1-adaptation.md)。
 - 动设置面 / sidechat / 原生 tab 之前，先读 [docs/host-contracts.md](docs/host-contracts.md)（原 §3.4 的 1–13 条按原编号都在那里）。
 
 ---

@@ -9,6 +9,7 @@
  */
 import { describe, expect, it, vi } from 'vitest'
 import { resolve } from 'node:path'
+import { Service } from '@deepseek-ai/cordis'
 import WorkingDirectoryService from '@deepseek-ai/dsh-working-directory'
 import { Session, SessionLogOffset, SESSION_FORMAT_VERSION } from '@deepseek-ai/dsh-session'
 import type { SessionEvent, SessionHeader, SessionId } from '@deepseek-ai/dsh-session'
@@ -43,8 +44,10 @@ function agent(id: string, over: {
       model: over.model ?? 'model-x',
       ...(over.reasoningEffort !== undefined ? { reasoningEffort: over.reasoningEffort } : {}),
     },
-    // The agent-scoped context `installModelSelection` binds its prompt /
-    // request waterfalls to; the fake records the listeners' existence only.
+    // DSH 0.2.2 moved the model seam onto the agent itself (`agent.model`),
+    // so the fake records the selections the plugin applies instead of the
+    // waterfall listeners the old installable ref registered.
+    model: { current: vi.fn(() => undefined), select: vi.fn() },
     ctx: { on: vi.fn((_event: string, _listener: unknown) => () => {}) },
     session: {
       id,
@@ -168,21 +171,29 @@ describe('sidechat.start', () => {
       apply(state: string | null, event: SessionEvent): string | null
     }
     let registered: DirectoryProjection | undefined
-    // Capture the REAL alpha.5 unit contributed by the host service. These
-    // context seams do not run system-prompt assembly, fs checks, or notices.
+    /** Fold one session's log through the captured unit — what the registry's
+     *  reader evaluates for this projection key. */
+    const stateOf = (session: { header: { cwd?: string }; snapshotEvents(): SessionEvent[] }): string | null => {
+      if (registered === undefined) throw new Error('working-directory unit not registered')
+      return session.snapshotEvents().reduce((cwd, event) => registered!.apply(cwd, event), registered.init(session.header))
+    }
+    // Capture the REAL host unit. These context seams do not run system-prompt
+    // assembly, fs checks, or notices. DSH 0.2.2 moved that registration into
+    // the service's cordis init and reads the state back through the HANDLE
+    // `register` now returns (0.2.1 registered from the constructor and read
+    // `sessionProjections.stateOf(session, key)`), so the fake registry has to
+    // hand one out and the spec has to drive the lifecycle step itself.
     const workingDirectory = new WorkingDirectoryService({
       reflect: { provide: () => {} },
       sessionProjections: {
-        register: (definition: DirectoryProjection) => { registered = definition },
-        stateOf: (session: { header: { cwd?: string }; snapshotEvents(): SessionEvent[] }) => {
-          if (registered === undefined) throw new Error('working-directory unit not registered')
-          return session.snapshotEvents().reduce((cwd, event) => registered!.apply(cwd, event), registered.init(session.header))
-        },
+        register: (definition: DirectoryProjection) => { registered = definition; return { stateOf } },
       },
       systemPrompt: { context: () => {}, getContextOrder: () => 0 },
       on: () => {},
       effect: () => {},
     } as never, {})
+    const lifecycle = workingDirectory as unknown as Record<symbol, () => Promise<void>>
+    await lifecycle[Service.init]!()
     expect(workingDirectory.get(parent.session as never)).toBe(current)
     const services = happyServices(parent, agent('child'))
     await buildSidechatApi(ctxWith({ ...services, workingDirectory }))['sidechat.start']({ sessionId: 'parent' })
@@ -1032,13 +1043,15 @@ describe('sidechat.models and sidechat.model', () => {
       model: 'm2',
       reasoningEffort: 'high',
     })
-    // The selection seam is installed ONCE per agent: the second switch of the
-    // same thread only mutates the ref.
-    const listeners = child.ctx.on.mock.calls.length
-    expect(listeners).toBeGreaterThan(0)
+    // The thread is claimed once: the first switch both SEEDS the agent's model
+    // from the thread's recorded selection and applies the requested one, so
+    // the second switch adds exactly one more select — no re-seed, no second
+    // install — which is what the removed "install once" listener count proved.
+    const selections = child.model.select.mock.calls.length
+    expect(selections).toBe(2)
     await api['sidechat.model']({ childId: 'child-model', provider: 'p2', model: 'm2' })
     expect(child.session.append).toHaveBeenCalledTimes(2)
-    expect(child.ctx.on.mock.calls.length).toBe(listeners)
+    expect(child.model.select.mock.calls.length).toBe(selections + 1)
   })
 
   it('rejects an unavailable model with a bad-request', async () => {
