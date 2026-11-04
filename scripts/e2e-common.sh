@@ -44,7 +44,7 @@ e2e_require_cmd() {
 # 回退的 npx 版本是显式钉死的：不钉就会解析 npm 的 dist-tag，可能静默挂到
 # 插件不支持的宿主上。**必须写精确版本，不能写 `@next`/`@alpha` 等 dist-tag**。
 # 该版本必须与 package.json 的 DSH peer 基线同步。
-DSH_NPX_SPEC="${DSH_NPX_SPEC:-@deepseek-ai/dsh@0.2.1-rc.1}"
+DSH_NPX_SPEC="${DSH_NPX_SPEC:-@deepseek-ai/dsh@0.2.2-rc.1}"
 e2e_resolve_dsh_cmd() {
   local explicit="${DSH_CMD}"
   if ! command -v "$DSH_CMD" >/dev/null 2>&1; then
@@ -66,7 +66,7 @@ e2e_resolve_dsh_cmd() {
 # 己在挂什么），只告警。
 e2e_check_dsh_version() {
   local explicit="$1" actual expected
-  expected="${DSH_EXPECT_VERSION:-0.2.1-rc.1}"
+  expected="${DSH_EXPECT_VERSION:-0.2.2-rc.1}"
   # `dsh --version` 冷启动要走 npx，给足预算；拿不到版本就只告警。
   actual="$($DSH_CMD --version 2>/dev/null | tr -d '[:space:]' | head -c 64 || true)"
   case "$actual" in
@@ -165,7 +165,7 @@ EOF
 # 后台启动 dsh web（--port 0 = OS 分配，避免端口冲突；keyless 可起）。
 # `--no-open` 是必须的：宿主默认会在启动后打开系统浏览器，本地反复跑这条
 # lane 会不断弹窗（CI 是无头环境不受影响，本地开发机不是）。基线宿主
-# 0.2.1-rc.1 的 web app 已提供该 flag（@deepseek-ai/dsh-web-app/lib/startup.js）。
+# 0.2.2-rc.1 的 web app 已提供该 flag（@deepseek-ai/dsh-web-app/lib/startup.js）。
 # $1 = stdout 日志；$2 = stderr 日志（缺省合并进 $1：mount lane 单文件，
 # aggregate lane 分 out/err 两个文件）。写入全局 SERVER_PID。
 e2e_start_dsh_web() {

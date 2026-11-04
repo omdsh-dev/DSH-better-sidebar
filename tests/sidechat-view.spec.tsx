@@ -210,20 +210,50 @@ function stubResizeObserver(): () => void {
   }
 }
 
+/** jsdom ships no `matchMedia`, and the 0.2.2 host Tooltip gates its hover
+ *  handler on a hover-capable pointer (`(any-hover: hover)`), so the spec has
+ *  to declare one before any bubble can open. */
+function stubHoverCapable(): () => void {
+  const original = Object.getOwnPropertyDescriptor(window, 'matchMedia')
+  Object.defineProperty(window, 'matchMedia', {
+    configurable: true,
+    value: (query: string) => ({
+      matches: true,
+      media: query,
+      onchange: null,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      addListener: () => {},
+      removeListener: () => {},
+      dispatchEvent: () => false,
+    }),
+  })
+  return () => {
+    if (original === undefined) Reflect.deleteProperty(window, 'matchMedia')
+    else Object.defineProperty(window, 'matchMedia', original)
+  }
+}
+
 /** Open a composer-bar control's hover bubble and return its text. */
 async function tooltipOf(control: HTMLElement): Promise<string> {
-  const restore = stubResizeObserver()
+  const restoreObserver = stubResizeObserver()
+  const restoreHover = stubHoverCapable()
   try {
     const anchor = control.parentElement
     if (anchor === null) throw new Error('the control is missing its hover anchor')
     await act(async () => {
-      anchor.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))
+      // DSH 0.2.2's Tooltip opens on POINTER enter (React derives
+      // `onPointerEnter` from a bubbling `pointerover`) and rejects touch;
+      // 0.2.1's listened to mouse enter, which is why this used to dispatch
+      // `mouseover` and now opens nothing at all.
+      anchor.dispatchEvent(new PointerEvent('pointerover', { bubbles: true, pointerType: 'mouse' }))
       // ComposerTip's 120 ms hover delay (TIP_DELAY_MS).
       await new Promise(resolve => setTimeout(resolve, 180))
     })
     return document.body.querySelector('[role="tooltip"]')?.textContent ?? ''
   } finally {
-    restore()
+    restoreHover()
+    restoreObserver()
   }
 }
 
@@ -381,11 +411,12 @@ describe('SideChatView rendering', () => {
   })
 
   it.each([
-    ['src/Foo.java:37-58', '/p/src/Foo.java', 37],
-    ['E:/Code/project/Foo.java:37', 'E:\\Code\\project\\Foo.java', 37],
-    ['E:/Code/my project/目录/Foo(1).java:12:5', 'E:\\Code\\my project\\目录\\Foo(1).java', 12],
-    ['src/main.ts#L8-L15', '/p/src/main.ts', 8],
-  ])('renders and opens a source link to %s at its first referenced line', async (destination, path, line) => {
+    // destination · the file button's title · the absolute path openTab takes · line
+    ['src/Foo.java:37-58', 'src/Foo.java', '/p/src/Foo.java', 37],
+    ['E:/Code/project/Foo.java:37', 'E:/Code/project/Foo.java', 'E:\\Code\\project\\Foo.java', 37],
+    ['E:/Code/my project/目录/Foo(1).java:12:5', 'E:/Code/my project/目录/Foo(1).java', 'E:\\Code\\my project\\目录\\Foo(1).java', 12],
+    ['src/main.ts#L8-L15', 'src/main.ts', '/p/src/main.ts', 8],
+  ])('renders and opens a source link to %s at its first referenced line', async (destination, title, path, line) => {
     eventsValue = EVENTS.map(event => event.type === 'assistant/message'
       ? {
         ...event,
@@ -404,9 +435,15 @@ describe('SideChatView rendering', () => {
     ))
     try {
       await act(async () => {})
-      const link = [...container.querySelectorAll<HTMLButtonElement>('button')]
-        .find(button => button.title === destination.split('#')[0])
-      expect(link).not.toBeUndefined()
+      // DSH 0.2.2's MarkdownText parses the line location ITSELF — both the
+      // GitHub fragment (`#L8-L15`) and the `:37` / `:12:5` suffixes — and
+      // titles the file button with the PATH it parsed, so the location is no
+      // longer part of the destination the plugin sees (0.2.1 carried it
+      // verbatim, which is what `path-line.ts` still splits for native tab
+      // addresses). The titled button with the link glyph is the host's own
+      // file-link shape; the click below is the contract we own.
+      const link = container.querySelector<HTMLButtonElement>(`button[title="${title}"]`)
+      expect(link).not.toBeNull()
       expect(link?.querySelector('svg')).not.toBeNull()
       expect(container.textContent).not.toContain(`(<${destination}`)
       act(() => { link?.click() })

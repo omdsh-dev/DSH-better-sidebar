@@ -31,6 +31,9 @@ const MAIN = 'C:/repo/main'
 
 /** The unstage artwork the SCM rows draw (the horizontal half of the host's Plus). */
 const MINUS_GLYPH = 'M2 8H14'
+/** The host's own Plus, a document-sprite reference since DSH 0.2.2 (it used
+ *  to be inline `<path>` artwork, so only the sprite id identifies it now). */
+const PLUS_ICON = '#dsw-icon-plus-outline-regular'
 
 /** One synthetic tool/call + tool/result pair (write of one file). */
 function writeEvents(seq: number, path: string): Array<{ type: string; seq: number; time: number; data: Record<string, unknown> }> {
@@ -635,13 +638,13 @@ describe('ChangesTab', () => {
       }
       // A stage affordance that drew the unstage glyph is the #941 regression:
       // the two directions must not share artwork (vscode: $(add) vs $(remove)).
-      // Unstage is the horizontal half alone; staging adds the vertical stroke
-      // (the host's Plus) — the two directions must not share one glyph.
+      // Unstage is the plugin's own horizontal half; staging is the host's Plus
+      // sprite — the two directions must not share one glyph.
       const stage = iconOf(t('stage'))
       const unstage = iconOf(t('unstage'))
       expect(unstage).toContain(MINUS_GLYPH)
-      expect(unstage).not.toContain('M8 2V14')
-      expect(stage).toContain('M8 2V14')
+      expect(unstage).not.toContain(PLUS_ICON)
+      expect(stage).toContain(PLUS_ICON)
     } finally {
       act(() => { root.unmount() })
       container.remove()

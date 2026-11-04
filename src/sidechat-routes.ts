@@ -27,11 +27,9 @@ import { randomUUID } from 'node:crypto'
 import { createUserMessage, ReasoningEffortId, type ContentBlock, type UserMessage } from '@deepseek-ai/dsh-llm'
 import type { MessageId } from '@deepseek-ai/dsh-llm/brand'
 import {
-  installModelSelection,
   type Agent,
   type AgentSetup,
   type CreateAgentOptions,
-  type ModelSelectionRef,
   type ResumeAgentOptions,
 } from '@deepseek-ai/dsh-agent'
 import { snapshotSubagentDescriptor } from '@deepseek-ai/dsh-subagent'
@@ -167,14 +165,14 @@ const threadDisposers = new Map<string, () => Promise<void>>()
  *  prompt is then delivered alone, a logged degradation). */
 const pendingSnapshots = new Map<string, string>()
 
-/** Per-thread model-selection refs installed on the live agent. The host's
- *  own composer commits a model switch by appending `model/selection` AND
- *  installing this agent-scoped ref (`SessionController.selectForNextRequest`);
- *  the ref is what prompt assembly and request routing actually read, because
- *  the controller caches one selection object per agent and never re-reads the
- *  projection. A subagent-origin thread never passes through the controller's
- *  fence, so the plugin installs the same seam itself. */
-const threadModelRefs = new Map<string, ModelSelectionRef>()
+/** One live agent's model seam (`agent.model`). DSH 0.2.2 replaced the
+ *  installable `ModelSelectionRef` with an agent-owned `AgentModel` whose
+ *  `select()` records the choice durably and applies it to the next step, so
+ *  the plugin no longer installs anything: it holds the agent's own handle.
+ *  The map only remembers which threads this module has already claimed, so a
+ *  resumed thread is not re-seeded from a stale log every route. */
+type AgentModelHandle = Agent['model']
+const threadModelRefs = new Map<string, AgentModelHandle>()
 
 /** The host model catalog service's structural face (dsh-api-session-controller
  *  is not a plugin peer; only `modelCatalog()` is read, and its shape is
@@ -494,17 +492,14 @@ function brandedSelection(selection: SidechatModelSelection): {
  * @param childId - thread identity (the ref's key).
  * @returns the installed (or already installed) ref.
  */
-function ensureModelSelection(agent: Agent, childId: string): ModelSelectionRef {
+function ensureModelSelection(agent: Agent, childId: string): AgentModelHandle {
   const existing = threadModelRefs.get(childId)
   if (existing !== undefined) return existing
+  const model = agent.model
   const selection = selectionOf(agent)
-  const ref: ModelSelectionRef = {
-    current: selection === undefined ? undefined : brandedSelection(selection),
-    assembled: undefined,
-  }
-  installModelSelection(agent.ctx, ref)
-  threadModelRefs.set(childId, ref)
-  return ref
+  if (selection !== undefined) model.select(brandedSelection(selection))
+  threadModelRefs.set(childId, model)
+  return model
 }
 
 /** Resolve the thread's live agent, cold-resuming the persisted session under
@@ -983,7 +978,7 @@ export function buildSidechatApi(ctx: Context, live?: AssistantLiveBuffer, signa
       // the durable intent lands in the log, and the agent-scoped ref is what
       // prompt assembly and request routing read for the NEXT step.
       agent.session.append('model/selection', brandedSelection(selection))
-      ensureModelSelection(agent, childId).current = brandedSelection(selection)
+      ensureModelSelection(agent, childId).select(brandedSelection(selection))
       return { accepted: true as const, selection }
     },
   }
