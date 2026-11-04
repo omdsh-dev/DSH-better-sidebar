@@ -551,7 +551,7 @@ describe('registerNativeSurface lifecycle (service-driven registration)', () => 
 
     const ctx = {
       inject: (deps: readonly string[], callback: (injected: { get: (name: string) => unknown }) => void) => {
-        expect(deps).toEqual(['sidebarRightTabs'])
+        expect(deps).toEqual(['sidebarRightTabs', 'sidebarRight'])
         runInjected = () => { callback({ get: () => registry.current }) }
         return { dispose: () => { runInjected = undefined } }
       },

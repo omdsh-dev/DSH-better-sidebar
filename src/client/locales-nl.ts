@@ -156,6 +156,7 @@ export const nl: Record<string, string> = {
   showInFolder: 'In map tonen',
   refreshUnsavedConfirm: 'Het bestand is op schijf gewijzigd. Vernieuwen gooit niet-opgeslagen wijzigingen weg. Doorgaan?',
   closeUnsavedConfirm: 'Dit bestand heeft niet-opgeslagen wijzigingen. Het sluiten van het tabblad gooit ze weg. Doorgaan?',
+  draftRestoreConfirm: 'Er is een niet-opgeslagen concept gevonden. Herstellen? (Annuleren verwijdert het concept.)',
   switchUnsavedConfirm: 'Dit bestand heeft niet-opgeslagen wijzigingen. Het wisselen van bestand gooit ze weg. Doorgaan?',
   save: 'Opslaan',
   saved: 'Opgeslagen',

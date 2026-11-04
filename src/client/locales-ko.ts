@@ -150,6 +150,7 @@ export const ko: Record<string, string> = {
   showInFolder: '폴더에서 표시',
   refreshUnsavedConfirm: '디스크의 파일이 변경되었습니다. 새로고침하면 저장되지 않은 편집 내용이 손실됩니다. 계속하시겠습니까?',
   closeUnsavedConfirm: '이 파일에 저장되지 않은 편집이 있습니다. 탭을 닫으면 삭제됩니다. 계속하시겠습니까?',
+  draftRestoreConfirm: '저장되지 않은 초안이 있습니다. 복원할까요? (취소하면 초안이 삭제됩니다.)',
   switchUnsavedConfirm: '이 파일에 저장되지 않은 편집이 있습니다. 파일을 전환하면 삭제됩니다. 계속하시겠습니까?',
   save: '저장',
   saved: '저장됨',

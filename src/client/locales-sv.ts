@@ -141,6 +141,7 @@ export const sv: Record<string, string> = {
   showInFolder: 'Visa i mapp',
   refreshUnsavedConfirm: 'Filen ändrades på disken. Uppdatering kastar osparade ändringar. Fortsätta?',
   closeUnsavedConfirm: 'Filen har osparade ändringar. Att stänga fliken kastar dem. Fortsätta?',
+  draftRestoreConfirm: 'Ett osparat utkast hittades. Återställa? (Avbryt kastar utkastet.)',
   switchUnsavedConfirm: 'Filen har osparade ändringar. Att byta fil kastar dem. Fortsätta?',
   save: 'Spara',
   saved: 'Sparad',

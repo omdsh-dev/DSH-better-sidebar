@@ -158,6 +158,7 @@ export const ja: Record<string, string> = {
   showInFolder: 'フォルダーで表示',
   refreshUnsavedConfirm: 'ディスク上のファイルが変更されました。更新すると未保存の編集が失われます。続行しますか？',
   closeUnsavedConfirm: 'このファイルには未保存の編集があります。タブを閉じると破棄されます。続行しますか？',
+  draftRestoreConfirm: '未保存の下書きが見つかりました。復元しますか？（キャンセルすると破棄されます）',
   switchUnsavedConfirm: 'このファイルには未保存の編集があります。ファイルを切り替えると破棄されます。続行しますか？',
   save: '保存',
   saved: '保存済み',

@@ -4,6 +4,10 @@
 
 ### 未发布
 
+- 🛟 **原生页签关闭与桌面 Cmd+Q 不再无声丢掉编辑器草稿**（[#1072](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1072) / [#1071](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1071)）：宿主原生右侧栏的页签条（× / 中键 / 上下文菜单 / `page.close`）与桌面壳的退出都没有「可确认」的关闭钩子（`registerCloseHandler` 是同步清理，唯一的阻止方式是 `throw`；桌面 Cmd+Q 走壳自己的 `before-quit` → `app.exitRequested`，页面收不到可取消事件，详见[宿主契约 §C](docs/host-contracts.md)）。插件无法在这两条路径上弹确认，因此改为降低损失：草稿变脏时按 1 s 节流把**实时文档**写入 `localStorage`（key = `sessionId::path`；单条 200k 字符、总计 600k、最多 8 条、FIFO 淘汰），在原生关闭回调与 `beforeunload` 时立即落盘，重开同一文件时提示「检测到未保存的草稿，恢复吗？」。保存成功、确认丢弃、确认刷新 / 就地换文件都会删掉对应备份。
+  - 🧪 测试：新增 `tests/editor-draft-backup.spec.tsx`（8 例：节流后读到实时文本、FIFO 上限、超大草稿跳过、与磁盘相同即丢弃、恢复后保存的是草稿、拒绝恢复时打开磁盘内容、无草稿不提示、原生关闭钩子立即落盘）；`tests/editor-unsaved-guard.spec.tsx` 追加 2 例（确认丢弃同时删备份、`beforeunload` 先落盘再拦截）。
+  - ⚠️ 宿主侧仍缺：Electron 桌面壳没有 `will-prevent-unload` 对话框，也没有退出前可取消钩子；真正的「保存 / 丢弃 / 取消」需要宿主补能力，届时再接 `confirmDiscardDraft` 并删除这条降级路径。
+
 - 📐 **页面 CSS zoom 不再被误判成页面级 transform**（[#1102](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1102)；贡献者 PR [#1110](https://github.com/omdsh-dev/DSH-better-sidebar/pull/1110) @HootRock）：`body { zoom: 1.15 }` 下 panel host 的 `100vh` 按 zoom 放大（811px 视口 → 约 932.6px），几何自检因此判定「页面被 transform」→ 降级成 absolute、把文档撑高，聚焦 / 滚动会把整个外壳一起推走。现在预期高度按祖先链累积的 `zoom` 归一，宽度与位移仍按原阈值判定，真实 transform 不会被掩盖。
   - 🧪 测试：`tests/e2e/panel-host-zoom.e2e.ts`（Chromium 实测 `body { zoom: 1.15 }` 下不再降级）。
 - 🎛 **Changes 的「Git / 本轮文件」切换改用公开组件**（[#1098](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1098)；贡献者 PR [#1101](https://github.com/omdsh-dev/DSH-better-sidebar/pull/1101) @wang-kaopu）：此前自己画一套按钮、还依赖宿主私有 CSS Modules 的哈希类名，宿主一改样式就退化成浏览器原生按钮（方框 + 1px 黑边）。现在改用 `dsh-client-ui-primitives` 公开导出的 `SegmentedControl`，私有类名依赖一并删除。

@@ -30,6 +30,7 @@ import type { Context } from '../context-types.ts'
 import { api, mediaUrl, type SessionScope } from './api.ts'
 import { BinaryDownload } from './binary-download.tsx'
 import { planFirstMatch, planFsReadOutcome, type EditorLoadAction } from './editor-load.ts'
+import { clearDraftBackup } from './editor-draft-backup.ts'
 import { clearEditorDirty, isEditorDirty, setEditorDirty } from './editor-dirty.ts'
 import { baseName } from './FileTree.tsx'
 import { createFrameBatcher } from './frame-batcher.ts'
@@ -223,6 +224,9 @@ export function EditorHost(props: {
   // reload (the editor instance remounts), so confirm before discarding it.
   const refreshFile = (): void => {
     if (toolbar?.dirty === true && !confirmDiscard(t('refreshUnsavedConfirm'))) return
+    // The confirmed reload discards the live draft: its durable backup must
+    // not offer the discarded bytes back on the next open.
+    if (toolbar?.dirty === true) clearDraftBackup(scope.sessionId, path)
     setReloadSeq(sequence => sequence + 1)
   }
 
@@ -293,8 +297,12 @@ export function EditorHost(props: {
       // that instance — ask before dropping it, reading the same dirty
       // registry the tab close uses. Re-opening the current path is not a
       // switch.
-      if (absolute !== path && isEditorDirty(tab.id, scope.sessionId)
-        && !confirmDiscard(t('switchUnsavedConfirm'))) return
+      if (absolute !== path && isEditorDirty(tab.id, scope.sessionId)) {
+        if (!confirmDiscard(t('switchUnsavedConfirm'))) return
+        // The confirmed switch discards the live draft: drop its durable
+        // backup too, or the next open would offer the discarded bytes back.
+        clearDraftBackup(scope.sessionId, path)
+      }
       ctx.get('betterSidebar')?.updateTab(tab.id, { path: absolute, title: baseName(absolute) }, scope.sessionId)
     } else {
       openSidebarFile(ctx, scope.sessionId, absolute, { cwd: scope.cwd })

@@ -151,6 +151,7 @@ export const fr: Record<string, string> = {
   showInFolder: 'Afficher dans le dossier',
   refreshUnsavedConfirm: 'Le fichier a changé sur le disque. Actualiser supprimera les modifications non enregistrées. Continuer ?',
   closeUnsavedConfirm: 'Ce fichier contient des modifications non enregistrées. Fermer l\'onglet les perdra. Continuer ?',
+  draftRestoreConfirm: 'Un brouillon non enregistré a été trouvé. Le restaurer ? (Annuler le supprime.)',
   switchUnsavedConfirm: 'Ce fichier contient des modifications non enregistrées. Changer de fichier les perdra. Continuer ?',
   save: 'Enregistrer',
   saved: 'Enregistré',
