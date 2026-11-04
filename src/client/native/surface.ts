@@ -25,10 +25,11 @@ import { addressBaseOf } from '../address-base.ts'
 import { fileAddressFor } from '../resource-address.ts'
 import type { NativePathTab, NativeTabParams, SidebarSurface } from '../service.ts'
 import type { NativeTabRecords } from './tab-adapter.tsx'
+import type { SidebarTab } from '../state.ts'
 
 /** One open the surface could not place yet. */
 type Pending =
-  | { kind: 'tab'; sessionId: string; tabKind: string; params: NativeTabParams; revealIfOpened: boolean; preferNewPane: boolean }
+  | { kind: 'tab'; sessionId: string; tabKind: string; params: NativeTabParams; revealIfOpened: boolean; preferNewPane: boolean; reveal?: boolean; reuseTab?: () => boolean; matchTab?: (tab: SidebarTab) => boolean }
   | { kind: 'resource'; sessionId: string; address: string; line: number | undefined; revealIfOpened: boolean; preferNewPane: boolean }
 
 /**
@@ -43,7 +44,11 @@ export interface MountedSessions {
 }
 
 /** The controller face this module uses (a structural slice of `ISidebarRight`). */
+interface OpenTab { sessionId: string; tabId: string; kind: string; contentId: string }
+
 interface NativeController {
+  openTabs?: { getSnapshot(): readonly OpenTab[]; subscribe(listener: () => void): () => void }
+  registerCloseHandler?(kind: string, handler: (sessionId: string, tab: { id: string; kind: string; contentId: string }) => void): () => void
   openTab(kind: string, options?: { params?: unknown; revealIfOpened?: boolean; preferNewPane?: boolean }): void
   openResource(address: string, options?: { params?: unknown; revealIfOpened?: boolean; preferNewPane?: boolean }): void
   close(tabId: string): void
@@ -136,9 +141,41 @@ export function mountedSessionId(ctx: Context): string | undefined {
  * @param records - the plugin's native tab record registry.
  * @returns the surface, plus a disposer unbinding its two feed subscriptions.
  */
-export function createNativeSurface(ctx: Context, records: NativeTabRecords): NativeSurface {
+export function createNativeSurface(ctx: Context, records: NativeTabRecords, onClose?: (tab: SidebarTab, sessionId: string) => void): NativeSurface {
   const pending: Pending[] = []
   const controller = (): NativeController | undefined => controllerOf(ctx)
+  let closeController: NativeController | undefined
+  let disposeClose: (() => void) | undefined
+  const bindClose = (): void => {
+    const api = controller()
+    if (api === closeController || api?.registerCloseHandler === undefined) return
+    disposeClose?.()
+    closeController = api
+    disposeClose = api.registerCloseHandler('sidechat', (sessionId, nativeTab) => {
+      const tab = records.tabAt(sessionId, nativeTab.id, nativeTab.kind, nativeTab.contentId)
+      // A service.close already claimed the lifecycle; native x/context-menu
+      // closes arrive here with the binding still present. Never run on unload.
+      records.drop(sessionId, nativeTab.id)
+      records.sidechatBindings.delete(sessionId, nativeTab.contentId)
+      if (tab !== undefined) onClose?.(tab, sessionId)
+    })
+  }
+  const rememberSeed = (entry: Extract<Pending, { kind: 'tab' }>, opened: OpenTab): void => {
+    if (entry.tabKind !== 'sidechat') return
+    const meta = entry.params.meta as { threadId?: unknown } | undefined
+    if (typeof meta?.threadId === 'string') {
+      records.sidechatBindings.set(entry.sessionId, opened.contentId, meta.threadId, entry.params.title ?? '')
+    }
+  }
+
+  const findTab = (sessionId: string, kind: string, match: (tab: SidebarTab) => boolean): string | undefined => {
+    const opened = controller()?.openTabs?.getSnapshot().find(row => {
+      if (row.sessionId !== sessionId || row.kind !== kind) return false
+      const tab = records.tabAt(row.sessionId, row.tabId, row.kind, row.contentId)
+      return tab !== undefined && match(tab)
+    })
+    return opened?.tabId
+  }
 
   const place = (entry: Pending): boolean => {
     const api = controller()
@@ -151,7 +188,25 @@ export function createNativeSurface(ctx: Context, records: NativeTabRecords): Na
         ...(entry.preferNewPane ? { preferNewPane: true } : {}),
       }
       if (onScreen) {
+        if (entry.reuseTab?.() === true) return true
+        const before = api.openTabs?.getSnapshot() ?? []
+        if (entry.matchTab !== undefined) {
+          const match = before.find(opened => {
+            if (opened.sessionId !== entry.sessionId || opened.kind !== entry.tabKind) return false
+            const tab = records.tabAt(opened.sessionId, opened.tabId, opened.kind, opened.contentId)
+            return tab !== undefined && entry.matchTab!(tab)
+          })
+          if (match !== undefined && api.focus !== undefined) {
+            if (entry.reveal !== false) api.focus(match.tabId)
+            return true
+          }
+        }
         api.openTab(entry.tabKind, options)
+        // Seed the durable binding before React mounts: two synchronous opens
+        // of an existing thread must dedupe even with no body record yet.
+        const opened = api.openTabs?.getSnapshot().find(tab => tab.sessionId === entry.sessionId
+          && tab.kind === entry.tabKind && !before.some(old => old.sessionId === tab.sessionId && old.tabId === tab.tabId))
+        if (opened !== undefined) rememberSeed(entry, opened)
         return true
       }
       // Do not hand a non-current session's open to openTabIn(): for a session
@@ -202,7 +257,11 @@ export function createNativeSurface(ctx: Context, records: NativeTabRecords): Na
    * @returns the owning session, or undefined.
    */
   const sessionOf = (tabId: string, sessionId?: string): string | undefined => {
-    if (sessionId !== undefined) return records.has(sessionId, tabId) ? sessionId : undefined
+    if (sessionId !== undefined) {
+      const inventory = controller()?.openTabs?.getSnapshot()
+      if (inventory !== undefined && !inventory.some(tab => tab.sessionId === sessionId && tab.tabId === tabId)) return undefined
+      return records.has(sessionId, tabId) ? sessionId : undefined
+    }
     const mounted = mountedSessionId(ctx)
     if (mounted !== undefined && records.has(mounted, tabId)) return mounted
     const byId = ctx.sessions.list.getSnapshot().byId ?? {}
@@ -241,6 +300,7 @@ export function createNativeSurface(ctx: Context, records: NativeTabRecords): Na
   // pulse additionally reclaims the records of sessions that are gone.
   let mountedUnsubscribe: (() => void) | undefined
   const onListChange = (): void => {
+    bindClose()
     if (mountedUnsubscribe === undefined) {
       const mounted = controller()?.mounted
       if (typeof mounted?.subscribe === 'function') mountedUnsubscribe = mounted.subscribe(flushPending)
@@ -248,11 +308,21 @@ export function createNativeSurface(ctx: Context, records: NativeTabRecords): Na
     flushPending()
     evictGoneSessions()
   }
+  const closeSeat = typeof ctx.inject === 'function' ? ctx.inject(['sidebarRight'], () => {
+    bindClose()
+    return () => {
+      disposeClose?.()
+      disposeClose = undefined
+      closeController = undefined
+    }
+  }) : undefined
   const unsubscribeList = ctx.sessions.list.subscribe(onListChange)
   evictGoneSessions()
+  bindClose()
   return {
-    openTab({ sessionId, kind, params, revealIfOpened, preferNewPane }) {
-      enqueue({ kind: 'tab', sessionId, tabKind: kind, params, revealIfOpened, preferNewPane: preferNewPane === true })
+    findTab,
+    openTab({ sessionId, kind, params, revealIfOpened, preferNewPane, matchTab, reveal, reuseTab }) {
+      enqueue({ kind: 'tab', sessionId, tabKind: kind, params, revealIfOpened, preferNewPane: preferNewPane === true, matchTab, reveal, reuseTab })
     },
     openResource({ sessionId, address, line, revealIfOpened, preferNewPane }) {
       enqueue({ kind: 'resource', sessionId, address, line, revealIfOpened, preferNewPane: preferNewPane === true })
@@ -277,18 +347,22 @@ export function createNativeSurface(ctx: Context, records: NativeTabRecords): Na
     close(sessionId, tabId) {
       // Read through the SESSION: the same native id names a tab in every
       // session, so a bare read can hand back another session's record.
-      const record = records.get(sessionId, tabId)
-      if (record === undefined) return undefined
-      records.drop(sessionId, tabId)
       const api = controller()
+      const nativeTab = api?.openTabs?.getSnapshot().find(tab => tab.sessionId === sessionId && tab.tabId === tabId)
+      const record = records.get(sessionId, tabId)
+      const tab = record?.tab ?? (nativeTab === undefined ? undefined : records.tabAt(sessionId, tabId, nativeTab.kind, nativeTab.contentId))
+      if (tab === undefined) return undefined
+      const contentId = nativeTab?.contentId ?? record?.contentId
+      records.drop(sessionId, tabId)
+      if (contentId !== undefined) records.sidechatBindings.delete(sessionId, contentId)
       if (api !== undefined) {
         if (sessionId === mountedSessionId(ctx)) api.close(tabId)
         else if (api.closeIn !== undefined) api.closeIn(sessionId, tabId)
       }
       return {
-        type: record.tab.type,
-        title: record.tab.title,
-        ...(record.tab.meta === undefined ? {} : { meta: record.tab.meta }),
+        type: tab.type,
+        title: tab.title,
+        ...(tab.meta === undefined ? {} : { meta: tab.meta }),
       }
     },
     update(tabId, patch, sessionId) {
@@ -301,7 +375,8 @@ export function createNativeSurface(ctx: Context, records: NativeTabRecords): Na
       // External plugin tabs (multi-instance kinds like side chats) carry no
       // (kind, address) identity to re-open against, so "open again to focus"
       // cannot work for them — focus through the controller's own face.
-      if (sessionOf(tabId, sessionId) === undefined) return false
+      const owner = sessionOf(tabId, sessionId)
+      if (owner === undefined || owner !== mountedSessionId(ctx)) return false
       controller()?.focus?.(tabId)
       return true
     },
@@ -309,6 +384,8 @@ export function createNativeSurface(ctx: Context, records: NativeTabRecords): Na
     pathTabs: () => records.pathTabs(),
     flushPending,
     dispose: () => {
+      void closeSeat?.dispose()
+      disposeClose?.()
       unsubscribeList()
       mountedUnsubscribe?.()
     },

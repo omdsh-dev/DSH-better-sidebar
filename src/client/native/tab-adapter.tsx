@@ -39,6 +39,7 @@ import { t } from '../locales.ts'
 import { isUnread, toggleExpanded } from '../state.ts'
 import type { SidebarStore, SidebarTab, TabType } from '../state.ts'
 import css from '../sidebar.module.css'
+import { createSidechatBindings } from './sidechat-bindings.ts'
 
 /** The chip glyph's size: the tab strip's own icon scale. */
 const CHIP_ICON_SIZE = 14
@@ -94,6 +95,8 @@ interface View {
    * session id may itself contain the separator.
    */
   seat: string
+  /** Stable host page identity; unlike tab1 it survives reload without reuse. */
+  contentId?: string
   scope: SessionScope
   /**
    * A PROJECTION of the session's expansion set (never an authoritative copy):
@@ -124,6 +127,9 @@ function viewKey(sessionId: string, id: string): string {
 
 /** The plugin-side record registry for native tabs. */
 export interface NativeTabRecords {
+  readonly sidechatBindings: ReturnType<typeof createSidechatBindings>
+  /** Read a live or durably bound occurrence, including an unmounted tab. */
+  tabAt(sessionId: string, id: string, kind: string, contentId: string): SidebarTab | undefined
   /**
    * The synthetic record for one seat's native tab, minted on first sight and
    * kept across navigations (a navigation refreshes the seed fields, never the
@@ -140,6 +146,7 @@ export interface NativeTabRecords {
     sessionId: string
     id: string
     kind: string
+    contentId?: string
     title: string
     params: NativeTabParams | undefined
     scope: SessionScope
@@ -213,6 +220,16 @@ function samePaths(left: readonly string[], right: readonly string[]): boolean {
 /** Create the record registry for one client activation. */
 export function createNativeTabRecords(): NativeTabRecords {
   const views = new Map<string, View>()
+  const sidechatBindings = createSidechatBindings()
+  const persist = (view: View): void => {
+    if (view.tab.type !== 'sidechat' || view.contentId === undefined) return
+    const meta = view.tab.meta as { threadId?: unknown } | undefined
+    if (typeof meta?.threadId === 'string' && meta.threadId !== '') {
+      sidechatBindings.set(view.seat, view.contentId, meta.threadId, view.tab.title)
+    } else {
+      sidechatBindings.delete(view.seat, view.contentId)
+    }
+  }
   const instances = new Map<string, number>()
   /**
    * Record key -> the navigation revision whose seed meta was last adopted.
@@ -230,6 +247,7 @@ export function createNativeTabRecords(): NativeTabRecords {
   const listeners = new Set<() => void>()
   const notify = (): void => { for (const listener of listeners) listener() }
   const put = (key: string, view: View): void => {
+    persist(view)
     views.set(key, { ...view, version: view.version + 1 })
     notify()
   }
@@ -259,6 +277,13 @@ export function createNativeTabRecords(): NativeTabRecords {
     if (changed) notify()
   }
   return {
+    sidechatBindings,
+    tabAt(sessionId, id, kind, contentId) {
+      const live = views.get(viewKey(sessionId, id))
+      if (live !== undefined && (live.contentId === undefined || live.contentId === contentId)) return live.tab
+      const binding = kind === 'sidechat' ? sidechatBindings.get(sessionId, contentId) : undefined
+      return binding === undefined ? undefined : { id, type: kind, title: binding.title, meta: { threadId: binding.threadId } }
+    },
     attachStore(next) {
       if (store === next) return
       store = next
@@ -267,12 +292,22 @@ export function createNativeTabRecords(): NativeTabRecords {
       next.subscribe(syncExpanded)
       syncExpanded()
     },
-    ensure({ sessionId, id, kind, title, params, scope, revision, mint }) {
+    ensure({ sessionId, id, kind, contentId, title, params, scope, revision, mint }) {
       const key = viewKey(sessionId, id)
-      const existing = views.get(key)
+      const held = views.get(key)
+      const existing = held?.contentId === contentId ? held : undefined
       if (existing === undefined) {
-        const seeded = params?.title === undefined && params?.meta === undefined ? mint?.() : undefined
-        const meta = params?.meta ?? seeded?.meta
+        // A new open gets a NEW contentId. The same occurrence may remount
+        // with revision zero (reload) or its original autoCreate navigation
+        // (client entry replacement); neither may replace its bound thread.
+        const explicit = params?.meta as { threadId?: unknown } | undefined
+        const binding = kind === 'sidechat' && contentId !== undefined && typeof explicit?.threadId !== 'string'
+          ? sidechatBindings.get(sessionId, contentId) : undefined
+        const restoring = kind === 'sidechat' && contentId !== undefined && revision === 0 && params?.meta === undefined
+        const seeded = binding !== undefined || restoring
+          ? { title: binding?.title, meta: binding === undefined ? {} : { threadId: binding.threadId } }
+          : params?.title === undefined && params?.meta === undefined ? mint?.() : undefined
+        const meta = binding !== undefined ? seeded?.meta : params?.meta ?? seeded?.meta
         // A url seed lands on `path`: the browser tab reads its address from
         // there and persists navigations back to the same field, so a record
         // that dropped it opened with an empty address bar.
@@ -281,7 +316,7 @@ export function createNativeTabRecords(): NativeTabRecords {
           tab: {
             id,
             type: kind as TabType,
-            title: params?.title ?? seeded?.title ?? title,
+            title: binding?.title ?? params?.title ?? seeded?.title ?? title,
             ...(path === undefined ? {} : { path }),
             ...(params?.line === undefined ? {} : { line: params.line }),
             ...(params?.diff === undefined ? {} : { diff: params.diff }),
@@ -289,10 +324,12 @@ export function createNativeTabRecords(): NativeTabRecords {
           },
           scope,
           seat: sessionId,
+          ...(contentId === undefined ? {} : { contentId }),
           expanded: expandedOf(scope.sessionId),
           revealed: [],
           version: 0,
         }
+        persist(minted)
         views.set(key, minted)
         // The seed meta of THIS navigation is what the mint just adopted: a
         // re-delivery of the same navigation must not re-adopt it (it would
@@ -345,6 +382,7 @@ export function createNativeTabRecords(): NativeTabRecords {
       }
       if (Object.keys(patch).length === 0) return existing
       const next: View = { ...existing, tab: { ...existing.tab, ...patch } }
+      persist(next)
       views.set(key, next)
       return next
     },
@@ -513,6 +551,7 @@ export function NativeTabBody(props: NativeBodyInjected & NativeBodyFrameworkPro
     sessionId: seatSessionId,
     id: nativeTab.id,
     kind: nativeTab.kind,
+    contentId: nativeTab.contentId,
     title: nativeTab.title,
     params,
     scope,

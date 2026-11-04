@@ -479,6 +479,7 @@ export function registerNativeSurface(deps: NativeSurfaceDeps): () => void {
         // (records, tree expansion, scroll, unsaved drafts) survives without
         // the adapter faking it.
         keepMounted: true,
+        ...(descriptor.multiple === true ? { multiple: true } : {}),
         ...(isEditor
           ? {
             patterns: ['dsh-resource://file/**'],

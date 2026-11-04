@@ -187,7 +187,9 @@ export function apply(ctx: Context): void {
   // released with this activation.
   const nativeGuide = createNativeGuideCatalog(ctx)
   ctx.effect(() => () => { nativeGuide.dispose() }, 'dsh-better-sidebar: native guide catalog')
-  const nativeSurface = createNativeSurface(ctx, nativeRecords)
+  const nativeSurface = createNativeSurface(ctx, nativeRecords, (tab, sessionId) => {
+    service.getTab(tab.type)?.onClose?.(tab, { sessionId })
+  })
   service.setSurface(nativeSurface)
   // The optional dsh-context diagnostics: ONE controller per activation. It
   // re-proves the optional runtime faces itself, so the plugin needs no new
