@@ -61,7 +61,8 @@ export function whereOf(path: string, lines?: SelectionLines): string {
  * The composer payload for one selection: the chip label and the model text.
  * Over the limit the content is dropped and both halves are the plain path
  * line (an empty fenced block would just occupy the draft).
- */export function buildSelectionInsert(
+ */
+export function buildSelectionInsert(
   path: string,
   cwd: string | undefined,
   lines: SelectionLines | undefined,

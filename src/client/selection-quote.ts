@@ -26,13 +26,17 @@
  *   two independent module instances whose in-memory maps only see their own
  *   writes, so the shared store is also how they see each other.
  *
- * Degradation: without the input-trigger service (older hosts) or before the
- * source registers, {@link insertQuoteChip} reports false and the caller keeps
- * the #1052 behavior — the plain built-in reference chip, or the fenced text
- * on hosts with no chip channel at all. A failed quote insert never leaves a
- * dead chip behind, because the record is only persisted once the insert
- * lands... and a record that lands but whose source later disappears still
- * fails the SEND loudly (the codec throws), never silently.
+ * Degradation: without the input-trigger service (older hosts), before the
+ * source registers, or when the record cannot be persisted, {@link
+ * insertQuoteChip} reports false and the caller keeps the #1052 behavior — the
+ * plain built-in reference chip, or the fenced text on hosts with no chip
+ * channel at all. A failed quote insert never leaves a dead chip behind: the
+ * record is written BEFORE the chip is inserted, and a store write that does
+ * not land (quota, private mode) rolls it back and falls back — the other
+ * bundle instance resolves refs through `localStorage`, so an unpersisted
+ * record would click into nothing and block the send in the codec. Only a
+ * record that PERSISTED and whose source later disappears fails the send
+ * loudly (the codec throws), never silently.
  */
 import type { Context } from '../context-types.ts'
 import { insertDraftReference, type PendingReference } from './conversation-draft.ts'
@@ -66,18 +70,33 @@ export interface QuoteSelection {
   text: string
 }
 
-/** One persisted chip: the selection plus its identity. */
-export interface QuoteRecord extends QuoteSelection {
+/**
+ * One persisted chip: the facts a click-through and a send need.
+ *
+ * `text` is the payload the model receives, built once at insert time — NOT
+ * the raw selection. The raw text is unbounded (a 200-record FIFO of whole
+ * selections overflows the localStorage quota), and an unpersisted record is a
+ * dead chip in the other bundle instance (see the module doc).
+ */
+export interface QuoteRecord {
   /** The chip's `ref` — also the store key. */
   id: string
   /** The session the chip belongs to (clicks from other sessions refuse). */
   sessionId: string
   /** The monotonic chip number (kept across reloads so labels do not collide). */
   n: number
+  /** The quoted file. */
+  path: string
+  /** The session cwd the header path was relativized with. */
+  cwd?: string
+  /** The quoted source span, when the selection mapped to lines. */
+  lines?: SelectionLines
   /** The chip's visible text (`引用 a.md L12-15`). */
   label: string
   /** What copying the chip yields (the `path:lines` header line). */
   clipboardText: string
+  /** The fenced block (header only past the limit) `codec.serialize` returns. */
+  text: string
 }
 
 /**
@@ -152,20 +171,32 @@ function isQuoteRecord(value: unknown): value is QuoteRecord {
     && typeof record.clipboardText === 'string'
 }
 
-/** Persist the store, dropping the oldest records beyond {@link QUOTE_STORE_CAP}. */
-function saveStore(): void {
+/**
+ * Persist the store, dropping the oldest records beyond {@link QUOTE_STORE_CAP}.
+ * @returns whether the store really reached `localStorage`. `false` means the
+ *   record must NOT become a chip: the other module instance (the core bundle
+ *   registers the source, the editor chunk inserts) resolves refs through this
+ *   store, so an unpersisted record would be a silent dead chip and the codec
+ *   would block the send.
+ */
+function saveStore(): boolean {
   try {
-    if (typeof localStorage === 'undefined') return
+    if (typeof localStorage === 'undefined') return false
     const all = [...records.values()].sort((a, b) => a.n - b.n)
     const over = Math.max(0, all.length - QUOTE_STORE_CAP)
-    if (over > 0) for (const dropped of all.slice(0, over)) records.delete(dropped.id)
     const kept = all.slice(over)
     // An empty store is no key at all: the first quote (or a rolled-back
     // record) must not leave an `[]` behind for the next read to interpret.
     if (kept.length === 0) localStorage.removeItem(QUOTE_STORE_KEY)
     else localStorage.setItem(QUOTE_STORE_KEY, JSON.stringify(kept))
+    // Evict from MEMORY only after the write landed: a failed write must not
+    // cost this page records it could still resolve.
+    if (over > 0) for (const dropped of all.slice(0, over)) records.delete(dropped.id)
+    return true
   } catch {
-    // Private mode / quota: the registry still works in memory for this page.
+    // Private mode / quota: report it so the caller falls back instead of
+    // minting a chip no other module instance can resolve.
+    return false
   }
 }
 
@@ -225,7 +256,9 @@ function createQuoteSource(ctx: Context): SidebarQuoteSource {
           // so a dropped record surfaces as an error rather than a wrong text.
           throw new Error(`[dsh-better-sidebar] quote reference "${ref}" is no longer available`)
         }
-        return buildSelectionInsert(record.path, record.cwd, record.lines, record.text).text
+        // The payload was built and size-reduced at insert time (see
+        // `QuoteRecord.text`): no raw selection round-trips through storage.
+        return record.text
       },
     },
   }
@@ -233,26 +266,36 @@ function createQuoteSource(ctx: Context): SidebarQuoteSource {
 
 // ── Registration (startup) ──────────────────────────────────────────────────
 
-/** Whether the quote source is registered in THIS module instance. */
+/** Whether a quote source is live (ours or the other bundle instance's). */
 let sourceReady = false
-/** The disposer of the source THIS instance registered (a duplicate-tolerant
- *  self-heal leaves it undefined — the other instance owns the live source). */
+/** The disposer of the source THIS instance registered. `undefined` while the
+ *  live source is BORROWED (the other module instance owns it — duplicate
+ *  registration is a real error in the host, see `tryRegisterOnce`). */
 let registeredDisposer: (() => void) | undefined
+/** Whether the live source is the other instance's (readiness is a borrow,
+ *  and every commit re-probes for the moment that owner releases it). */
+let borrowed = false
 
 /**
- * One synchronous registration attempt. Duplicate-tolerant BY DESIGN: this
- * module is bundled into BOTH the core bundle and the editor chunk (two
- * independent module instances at runtime), so "duplicate" usually means the
- * other instance already registered the source — inserts and click routing
- * work identically either way. Every outcome logs; nothing stays silent.
+ * One synchronous registration attempt. Duplicate tolerance here is about the
+ * BORROWED case, not about calling `registerSource` twice: this module ships
+ * in both the core bundle and the editor chunk (two independent module
+ * instances), so the host's "already registered" error usually means the other
+ * instance owns the live source — inserts and click routing work identically
+ * either way. But the borrowing instance holds no disposer, so it cannot learn
+ * when that owner unregisters (a fiber disposal does not reach it): readiness
+ * is therefore re-probed on every commit that does not own the source, and a
+ * released slot is taken over instead of leaving a dead chip behind. Every
+ * outcome logs; nothing stays silent.
  */
 function tryRegisterOnce(ctx: Context): boolean {
-  if (sourceReady) return true
+  if (sourceReady && registeredDisposer !== undefined) return true
   try {
     const triggers = ctx.get('inputTriggers') as SidebarInputTriggerService | undefined
     if (triggers === undefined) return false
     registeredDisposer = triggers.registerSource(createQuoteSource(ctx))
     sourceReady = true
+    borrowed = false
     // Positive proof the chip build is live (a silent feature-off reads
     // exactly like a stale bundle served by the host).
     console.info('[dsh-better-sidebar] quote chips ready')
@@ -264,7 +307,12 @@ function tryRegisterOnce(ctx: Context): boolean {
     // turn "already live" into a permanent fallback.
     if (error instanceof Error && /already registered|duplicate/i.test(error.message)) {
       sourceReady = true
-      console.info('[dsh-better-sidebar] quote chips ready (source already registered)')
+      // Log the TRANSITION only: a borrowed instance re-probes on every
+      // commit, and a log line per selection would drown the console.
+      if (!borrowed) {
+        borrowed = true
+        console.info('[dsh-better-sidebar] quote chips ready (source already registered by the other bundle instance)')
+      }
       return true
     }
     console.warn('[dsh-better-sidebar] quote source registration failed:', error)
@@ -328,21 +376,26 @@ export function quoteFallbackInsert(sel: QuoteSelection): string {
 /**
  * Register the selection as a quote record and insert its chip into the
  * session's composer draft. Returns false — leaving the draft untouched —
- * when chips are unavailable or the host refuses the insert; the caller then
- * falls back to {@link quoteFallbackInsert}.
+ * when chips are unavailable, the record cannot be persisted (quota / private
+ * mode), or the host refuses the insert; the caller then falls back to
+ * {@link quoteFallbackInsert}.
  * @param ctx - the client context.
  * @param sessionId - the session whose composer receives the chip.
  * @param sel - the selection the viewer's popup committed.
  * @returns whether the chip landed in the draft.
  */
 export function insertQuoteChip(ctx: Context, sessionId: string, sel: QuoteSelection): boolean {
-  if (!sourceReady) {
+  if (!sourceReady || registeredDisposer === undefined) {
     // Self-heal, and the reason registration state lives in module scope
     // rather than the apply closure: THIS instance (the one the editor's
     // commit actually calls) may never have gone through apply, and a fiber
     // disposal unregisters without a re-apply. Registering here fixes both —
     // whichever instance wins, the source closures are equivalent.
-    console.info('[dsh-better-sidebar] quote source not ready at commit, re-registering')
+    //
+    // `registeredDisposer === undefined` also covers the BORROWED source: we
+    // hold no disposer, so re-probe — the owner may have released the slot,
+    // and a readiness flag with no owner is exactly how chips turn dead.
+    if (!sourceReady) console.info('[dsh-better-sidebar] quote source not ready at commit, re-registering')
     if (!tryRegisterOnce(ctx)) {
       console.info('[dsh-better-sidebar] quote chips unavailable: source not registered')
       return false
@@ -351,13 +404,20 @@ export function insertQuoteChip(ctx: Context, sessionId: string, sel: QuoteSelec
   loadStore()
   const n = nextN++
   const clipboardText = headerOf(sel.path, sel.cwd, sel.lines)
+  // Built ONCE and kept in its size-reduced form (a raw selection is
+  // unbounded storage); the chip's fallback text and the send-time payload are
+  // the same bytes the pre-chip insert produced.
+  const insert = buildSelectionInsert(sel.path, sel.cwd, sel.lines, sel.text)
   const record: QuoteRecord = {
-    ...sel,
     id: quoteId(n),
     sessionId,
     n,
+    path: sel.path,
+    ...(sel.cwd === undefined ? {} : { cwd: sel.cwd }),
+    ...(sel.lines === undefined ? {} : { lines: sel.lines }),
     label: t('quoteChip', { where: whereOf(sel.path, sel.lines) }),
     clipboardText,
+    text: insert.text,
   }
   const reference: PendingReference = {
     source: QUOTE_SOURCE,
@@ -369,14 +429,22 @@ export function insertQuoteChip(ctx: Context, sessionId: string, sel: QuoteSelec
     // send), but the plain-text form an ordinary path would fall back to —
     // and the fenced block itself, so a chip that cannot land still yields
     // the same payload as the pre-chip insert.
-    text: buildSelectionInsert(sel.path, sel.cwd, sel.lines, sel.text).text,
+    text: insert.text,
   }
   records.set(record.id, record)
-  saveStore()
+  if (!saveStore()) {
+    // No persisted record = no chip: the core bundle resolves refs through
+    // localStorage, so a chip whose record never landed would click into
+    // nothing and block the send in the codec. The caller falls back to
+    // #1052's built-in chip (same payload, just not clickable).
+    records.delete(record.id)
+    console.warn('[dsh-better-sidebar] quote chip skipped: the reference store cannot be written (quota/private mode)')
+    return false
+  }
   const landed = insertDraftReference(ctx, sessionId, reference)
   if (!landed) {
     // The record is not referenced by any draft, so drop it rather than leak
-    // a number: the caller's fallback insert carries the same payload.
+    // an id: the caller's fallback insert carries the same payload.
     records.delete(record.id)
     saveStore()
   }
