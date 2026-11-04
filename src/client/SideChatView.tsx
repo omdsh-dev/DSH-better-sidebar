@@ -66,6 +66,7 @@ import {
   type ReadBlockLabels,
   type TerminalBlockLabels,
 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { SIDECHAT_IMAGE_MEDIA_TYPES } from '../sidechat-images.ts'
 import { markdownTextProps } from './markdown-labels.tsx'
 import { SidechatAssistantRow, type SidechatRowSurfaceBinding } from './SidechatAssistantRow.tsx'
 import { rewriteProseLocalImageUrls } from './markdown-images.ts'
@@ -1506,7 +1507,7 @@ export function SideChatView(props: {
       {saved && <div className={css.sidechatHint}>{t('sideChatSaved')}</div>}
       {error !== null && <div className={css.sidechatError}>{t('sideChatError', { message: error })}</div>}
       <div className={css.sidechatComposer}>
-        <input ref={fileInputRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden
+        <input ref={fileInputRef} type="file" accept={SIDECHAT_IMAGE_MEDIA_TYPES.join(',')} multiple hidden
           aria-label={t('sideChatAddImages')} onChange={event => { addImages(Array.from(event.target.files ?? [])); event.target.value = '' }} />
         {draft.owner.images.length > 0 && <div className={css.sidechatImages}>
           {draft.owner.images.map(image => <div className={css.sidechatImagePreview} key={image.id}>

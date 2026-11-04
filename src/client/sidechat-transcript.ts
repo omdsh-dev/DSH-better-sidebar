@@ -131,21 +131,6 @@ export function formatDurationMs(ms: number): string {
   return `${Math.floor(whole / 60)}m${whole % 60}s`
 }
 
-/** Extract the visible text of a content-block list (`text` blocks verbatim,
- *  joined by blank lines); empty reads `…` so rows never render blank. */
-export function blockText(content: readonly unknown[]): string {
-  const parts: string[] = []
-  for (const block of content) {
-    if (block === null || typeof block !== 'object') continue
-    const candidate = block as { type?: unknown; text?: unknown }
-    if (candidate.type === 'text' && typeof candidate.text === 'string') {
-      parts.push(candidate.text)
-    }
-  }
-  const text = parts.join('\n\n')
-  return text === '' ? '…' : text
-}
-
 /** Cap for a tool row's one-line argument summary (display only). */
 const ARGS_SUMMARY_MAX = 80
 

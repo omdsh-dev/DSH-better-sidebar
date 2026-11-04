@@ -90,6 +90,15 @@ describe('sidechat image composer', () => {
     expect(revokeUrl.mock.calls).toContainEqual(['blob:preview-2'])
   })
 
+  it('does not swallow a clipboard that has no image file', async () => {
+    await harness.flush()
+    const event = new Event('paste', { bubbles: true, cancelable: true })
+    Object.defineProperty(event, 'clipboardData', { value: { items: [{ kind: 'string', type: 'text/plain', getAsString: () => 'hello' }] } })
+    act(() => { mounted.container.querySelector('textarea')!.dispatchEvent(event) })
+    expect(event.defaultPrevented).toBe(false)
+    expect(mounted.container.querySelectorAll('img')).toHaveLength(0)
+  })
+
   it('retains the draft on network uncertainty and surfaces unsupported files', async () => {
     await harness.flush()
     select([new File(['text'], 'bad.svg', { type: 'image/svg+xml' })])
