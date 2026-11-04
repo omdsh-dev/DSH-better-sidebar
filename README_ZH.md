@@ -117,7 +117,7 @@ dsh plugin --profile web add dsh-better-sidebar@latest
 - **不再静默写错文件**：页签调解覆盖后台会话，worktree 会话统一地址基准——改名/删除的已打开文件不会被下一次保存重建，聊天链接也不会静默打开另一检出的同名文件
 - **宿主崩溃防护**：病态 `git status` 输出加了闩锁与进程树终止，「宿主 `RangeError` 崩溃」降为一次 SCM 刷新失败
 - **Git 页**：>1000 分支的历史恢复加载；tag 现在装饰提交行与详情，tag 变化会使旧分页失效
-- **编辑器**：仅 mtime 变化后保存不再死锁 `fs-conflict`；刷新后保留阅读位置；「添加到对话」落地为紧凑引用 chip，不再展平已有 chip
+- **编辑器**：仅 mtime 变化后保存不再死锁 `fs-conflict`；刷新后保留阅读位置；「添加到对话」落地为紧凑引用 chip，不再展平已有 chip —— 现在划选的一段文字还会变成**可点击**的引用 chip，点击跳回源文件并闪烁被引行段（[#888](https://github.com/omdsh-dev/DSH-better-sidebar/issues/888)）
 - **Markdown 链接**：本地 destination 的 Windows 反斜杠归一，`C:\ws\_analysis\report.md` 不再报裸 ENOENT
 - **侧栏**：右栏展开时底部工作台入口常显；macOS 兜底入口避开红绿灯；页签 scope 按内容稳定，消除无谓的整文件重读；关闭侧聊页签时归档其会话
 

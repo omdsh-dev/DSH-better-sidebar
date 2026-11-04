@@ -290,6 +290,7 @@ export const de: Record<string, string> = {
   openEditor: 'Editor öffnen',
   referenceFile: '@Datei',
   addToConversation: 'Zur Unterhaltung hinzufügen',
+  quoteChip: 'Zitat {where}',
   copyRelative: 'Relativen Pfad kopieren',
   copyAbsolute: 'Absoluten Pfad kopieren',
   rename: 'Umbenennen',

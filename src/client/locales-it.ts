@@ -295,6 +295,7 @@ export const it: Record<string, string> = {
   openEditor: 'Apri editor',
   referenceFile: '@file',
   addToConversation: 'Aggiungi alla conversazione',
+  quoteChip: 'Citazione {where}',
   copyRelative: 'Copia percorso relativo',
   copyAbsolute: 'Copia percorso assoluto',
   rename: 'Rinomina',

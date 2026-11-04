@@ -302,6 +302,7 @@ export const id: Record<string, string> = {
   openEditor: 'Buka editor',
   referenceFile: '@berkas',
   addToConversation: 'Tambahkan ke obrolan',
+  quoteChip: 'Kutipan {where}',
   copyRelative: 'Salin path relatif',
   copyAbsolute: 'Salin path absolut',
   rename: 'Ganti nama',

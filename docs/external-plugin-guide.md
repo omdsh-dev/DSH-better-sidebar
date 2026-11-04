@@ -2,13 +2,13 @@
 
 > 面向 **消费插件开发者**：如何让你的插件向 better-sidebar 注册新的侧边栏页面（tab）和文件类型预览器。
 >
-> 适用版本：**v0.4.0+**（`ctx.betterSidebar` 服务）；声明式设置 **v0.4.1+**；text/number 设置行 **v0.11.0+**；badge/生命周期/定向打开/插件设置/版本探测 **v0.12.0+**；select 设置行（`settingSelect`）与外链认领（`urlTarget`）**v0.13.0+**；统一 `@deepseek-ai/cordis` 类型基底 **v0.15.2+**；路由前缀安全解析（`hostRouteUrl`）**v0.25.0+**。当前版本 **v0.28.2 正式版**（13 条 DSH peer 下限 `^0.2.1-rc.1`，仅支持 DSH **0.2.1-rc.1+**；0.2.1-alpha.5 请固定 v0.28.0-alpha.0，0.2.0-rc.2 请固定 v0.26.1（v0.27.0 尚未发布），0.2.0-rc.1 请用 v0.24.1，0.1.7 线请用 v0.22.1——caret 范围跨 minor 不成立，`^0.1.7-rc.1` 会被 0.2.0 宿主的启动预检静默禁用）。**v0.19.0 移除了自绘右侧面板与自由窗口**（见 §0、§11）；**自 v0.20.0 开发线起**（**注意：0.20.0 从未发布到 npm，这些变更全部落在 v0.21.1**）插件**移除了自带的终端**（宿主 0.1.6 的 `ui-sidebar-terminal` 取代，见 §4.4）、**移除了终端固定（pin）**，并在 0.1.7 上**把浏览器视图与只读文件预览整体让给宿主**（`ui-sidebar-browser` / `ui-sidebar-documentpreview`，见 §4.4、§5.4）、**收敛了外链接管**（见 §4.1）、**重写了设置接入面**（`SettingsForms`，见 §8.2）、**给文件树加了实时刷新**（见 §10）；同时**删除了轮尾产物行接管**（DSH 0.1.6 把 `conversation.chat.turnTail` 从 chain 改成只能追加的 list，替换语义不复存在）。
+> 适用版本：**v0.4.0+**（`ctx.betterSidebar` 服务）；声明式设置 **v0.4.1+**；text/number 设置行 **v0.11.0+**；badge/生命周期/定向打开/插件设置/版本探测 **v0.12.0+**；select 设置行（`settingSelect`）与外链认领（`urlTarget`）**v0.13.0+**；统一 `@deepseek-ai/cordis` 类型基底 **v0.15.2+**；路由前缀安全解析（`hostRouteUrl`）**v0.25.0+**。当前版本 **v0.28.2 正式版**（14 条 DSH peer 下限 `^0.2.1-rc.1`，仅支持 DSH **0.2.1-rc.1+**；0.2.1-alpha.5 请固定 v0.28.0-alpha.0，0.2.0-rc.2 请固定 v0.26.1（v0.27.0 尚未发布），0.2.0-rc.1 请用 v0.24.1，0.1.7 线请用 v0.22.1——caret 范围跨 minor 不成立，`^0.1.7-rc.1` 会被 0.2.0 宿主的启动预检静默禁用）。**v0.19.0 移除了自绘右侧面板与自由窗口**（见 §0、§11）；**自 v0.20.0 开发线起**（**注意：0.20.0 从未发布到 npm，这些变更全部落在 v0.21.1**）插件**移除了自带的终端**（宿主 0.1.6 的 `ui-sidebar-terminal` 取代，见 §4.4）、**移除了终端固定（pin）**，并在 0.1.7 上**把浏览器视图与只读文件预览整体让给宿主**（`ui-sidebar-browser` / `ui-sidebar-documentpreview`，见 §4.4、§5.4）、**收敛了外链接管**（见 §4.1）、**重写了设置接入面**（`SettingsForms`，见 §8.2）、**给文件树加了实时刷新**（见 §10）；同时**删除了轮尾产物行接管**（DSH 0.1.6 把 `conversation.chat.turnTail` 从 chain 改成只能追加的 list，替换语义不复存在）。
 > **版本对照提醒**：当前正式版为 **v0.28.2**（DSH 0.2.1-rc.1+；宿主 npm `latest` 已为 0.2.1-rc.2）。仍停留在 DSH 0.2.0-rc.2 的宿主必须固定插件 v0.26.1；DSH 0.2.1-alpha.5 固定 v0.28.0-alpha.0。市场安装器按插件 `latest` 安装、不按宿主版本选版本。
 > 本次 alpha.5 → rc.1 上游完整树差异 355 项全部为 `package.json`、源码零变化，因此不改功能实现；伴随依赖为 Cordis peer `^4.0.5` / dev `4.0.5`、group `1.0.5`、schemastery `~3.18.5`、include `1.0.10`。RC 验证单独记录于 [适配记录](plans/2026-10-17-dsh-0.2.1-rc.1-adaptation.md)，不以已发布 alpha 的测试数字替代。
 > 权威代码：`src/client/service.ts`（服务实现）、`src/client/builtins/`（内置 6 tab + 3 viewer 参考实现）、`lib/types/client/service.d.ts`（类型声明）。
 > alpha.5 已删除 `@deepseek-ai/dsh-invariants` 与上游 `/invariant` 子路径；本插件同步移除 invariant companion，不提供替代注册服务。HTTP/WS 准入遵循宿主 Connection（见 §6）。
 > 当前目录语义：**已 attach** 的会话里，文件 / Git / 终端与新建 sidechat 跟随会话 `working_directory`（live 读 `ctx.workingDirectory.get(session)`）；**cold / detached** 会话读存储 header（`ctx.sessionPersistence.stat(id)`，只读第一个 zstd 帧，不解码日志；进程内 memo + 在飞去重），`activeWorktreeRootOf` 对 detached 直接返回该工作区地址。不要为取一个 cwd 调 `ctx.sessionQuery.observeSession`：它会解码整份会话日志并水合全部投影，启动期 fs-watch 每目录一帧的扇出会把它放大成数十次整读（详见 [2026-10-27 记录](plans/2026-10-27-workspace-cwd-over-cold-reads.md)）。linked worktree 仍按 base 目录记账；新 sidechat seed 尾部盖章当前 cwd，防止继承历史目录覆盖它。
-> alpha.5 的 `TerminalBlockLabels` 要求 `commandLine(line)`；两个渲染消费者与全部 21 份词典同步。宿主兼容性优先读 `package.json#engines.dsh`，缺席才读 DSH peers；本插件没有该字段，仍用 13 条 peers（第三方 `dsh.plugin.json` 不参与）。
+> alpha.5 的 `TerminalBlockLabels` 要求 `commandLine(line)`；两个渲染消费者与全部 21 份词典同步。宿主兼容性优先读 `package.json#engines.dsh`，缺席才读 DSH peers；本插件没有该字段，仍用 14 条 peers（第三方 `dsh.plugin.json` 不参与）。
 > 仓库开发规则（硬约束 / CI / 发版）见 [AGENTS.md](../AGENTS.md)。
 
 ---
@@ -96,6 +96,8 @@ import type {} from 'dsh-better-sidebar'  // 触发 declare module '@deepseek-ai
 - `optional: true`：better-sidebar 未安装时你的插件照常加载，注册代码因为 `ctx.betterSidebar` 为 undefined 而安全跳过。
 
 > ⚠️ **计划上架 DSH 插件市场**的插件还须遵守市场 manifest 约束（`dependencies`/`peerDependencies`/`optionalDependencies` 一律不得出现 `cordis`、`scripts` 不得含 install 类钩子），详见 [AGENTS.md](../AGENTS.md) 硬约束一节。
+
+> 📌 本插件自己的 DSH peer 下限自 v0.28.0 起统一为 `^0.2.1-rc.1`（**v0.30.0 起 14 条**——新增 `@deepseek-ai/dsh-client-ui-input-trigger`，划选引用 chip 的点击与发送展开走它的 `ctx.inputTriggers` 服务，见 §7.2）。宿主预检按名字为 `@deepseek-ai/dsh` 或 `@deepseek-ai/dsh-` 开头的 peer 判定兼容性，所以**只加在 devDependencies 里是不够的**。
 
 ### 2.3 类型导入路径
 
@@ -534,6 +536,9 @@ interface FileViewerProps {
   customData?: unknown     // fetchStrategy='custom' 时（load() 的返回值）
   // 引用带行号时才有（#826，见 §0「地址里的行号」）：一次性导航，不是文件的属性
   line?: number            // 1 基行号（如 `a.c#L131` / `a.c:131`）；定位用得上的 viewer 消费它
+  // 行段引用（v0.30.0+）：与 line 同时到达，给出被引区间的末行。内置编辑器据此
+  // 闪一下整段；不消费它的 viewer 行为与只收到 line 相同。
+  lineEnd?: number
   onLineConsumed?: () => void // 已消费该 line 的回报；不调用则每次加载都会重新下发（默认不消费）
   // 以下为内置文本编辑器与 EditorHost 内部协作字段，外部 viewer 忽略：
   toolbar?: 'self' | 'host'
@@ -851,8 +856,15 @@ interface BetterSidebarService {
   /** 在 scope.sessionId 的侧边栏编辑器打开一个文件（title 缺省为文件名；
    *  id 按路径派生（`editor:` + path），与内置 open-path 拦截一致，不同文件可并排打开）。
    *  注意：path 派生 id 只对 openFile/openSidebarFile 成立；editorExplorer 合并模式的
-   *  原地切换经 updateTab 重写 path/title，tab id 保持稳定、不再对应 path。 */
-  openFile(scope: SessionScope, path: string, title?: string): void
+   *  原地切换经 updateTab 重写 path/title，tab id 保持稳定、不再对应 path。
+   *  `options`（v0.30.0+）：`{ line?, lineEnd? }` —— 打开后定位到该行；给了
+   *  `lineEnd` 时内置编辑器会把**整段**闪一下（划选引用 chip 的回跳用它标出
+   *  「引的是哪几行」）。行号语义与聊天链接一致：只取起始行、列号丢弃，
+   *  markdown / html 先切到编辑态，`line` 是瞬态（不进持久化白名单）。
+   *  `lineEnd` 走 `src/client/line-target.ts` 的一次性旁路（key = path + line，
+   *  被 viewer 取走即删），**不进**宿主的 `navigation.params`——那张表只声明了
+   *  `line`，塞额外键属于未声明契约。 */
+  openFile(scope: SessionScope, path: string, title?: string, options?: { line?: number; lineEnd?: number }): void
   /** 把插件自有 host 路由（如 `'sidebar/api/fs.read'`）解析成绝对 URL，
    *  保留反代子路径前缀（v0.25.0+，features 含 'hostRouteUrl'）。前导斜杠会被
    *  去掉——带着它就会甩掉前缀、钉到源站根；桌面壳的真实基底也由它给出。
@@ -1041,6 +1053,29 @@ registerSidechatSurfaceAdapter(adapter: SidechatSurfaceAdapter): () => void
 - `sendPrompt(text)` 只调用当前行捕获的子线程 `sidechat.prompt` 路由。它不读取主会话、`scope.sessionId` 或任何兜底目标。行、适配器、线程绑定或插件失效之后，旧回调拒绝执行；请求失败同时通过现有侧边对话错误区显示并 reject 给消费方。调用方应处理 rejection，销毁时取消延迟动作。
 
 该提案仍需以真实 DSH `0.2.1-rc.2` profile 同时安装两个候选插件验收，不能把单元测试或模拟 DOM 结果写成已完成双插件验收。
+
+### 7.2 划选「添加到对话」的引用 chip（v0.30.0+）
+
+在内置编辑器（`code` / `markdown` / `jsonl` 的 CodeMirror 面，以及 markdown 预览）里划选一段文字，弹窗「添加到对话」会往主会话 composer 落一枚 chip。此处记录它用到的契约与降级，第三方插件若想复刻同一套交互可以照抄。
+
+**宿主服务与 chip 身份**
+
+- 落 chip 走宿主 `conversation` 服务的 `input.for(session).insertReference(ref, span)`（#1052 之后内置的通道；`ref: ReferenceInsert = { source, ref, label, appearance?, clipboardText }`，`span = { draftRev, start, end }`）。`insertDraftReference()` 负责把「插件投影坐标」折成编辑器检测投影坐标、补前导空格、并在 `snapshot.occurrences` 存在时走 span 通道而不是整框重写（#1002：整框重写会把已有 chip 拍平成纯文本）。
+- **要可点击、要在发送时展开，chip 必须属于一个自有的 input-trigger source**：`ctx.inputTriggers.registerSource({ trigger: '@', name, candidates, onPick, openReference?, codec? })`。`name` 就是 chip 的 `ref.source`，宿主按它路由点击（`openReference(session, { ref, appearance })` 返回 `true` 表示已处理）与发送时的 `codec.serialize(ref, signal)`。没有 codec 的 source，宿主会**拒绝发送**而不是静默降级成剪贴板文本——所以「注册 source」必须先于「插 chip」。
+- 本插件的 source 名是 `betterSidebarQuote`，`candidates` 恒为空（它不进 `@` 菜单，只做 chip 归属）；chip 的 `ref` 是短 id，记录（路径 / 行段 / 正文 / 所属会话）存在 `localStorage`（`dsh-better-sidebar:quote-refs`，FIFO 200 条）——因为该模块同时进 core bundle 与 lazy editor chunk，两个模块实例只能靠 `localStorage` 互见记录。
+- 发送时的展开结果与「没有 chip 的时代」字节一致：`<相对路径>[:起[-止]]` 表头 + ≤500 字符时附围栏正文，超限只留表头。
+
+**降级链（每一级都是宿主真支持的，不是静默 no-op）**
+
+1. 自有 source 已注册且 chip 插得进去 → 可点击 chip；
+2. 否（宿主无 `ctx.inputTriggers`、注册被拒、composer 不在 plain/claimed 相位、`draftRev` 不匹配……）→ 退回 #1052 的内置 `source: 'reference'` chip（不可点击，但内容正确）；
+3. 再否（没有 chip 通道）→ 纯文本 `appendToDraft`。
+
+失败的那次尝试会把刚写入的 quote 记录回滚（`localStorage` 里不留孤儿 id）。
+
+**点击回跳**
+
+`openReference` 校验 chip 的 `sessionId` 与当前会话一致（否则拒绝：换了会话 cwd 可能不同，会打开错文件），然后 `ctx.betterSidebar.openFile(scope, path, undefined, { line, lineEnd })`；内置编辑器定位到 `line` 并把 `line`–`lineEnd` 整段闪 2.4 s（皮肤令牌 `--dsw-alias-interactive-bg-hover-accent`，`prefers-reduced-motion` 下减弱）。`lineEnd` 与「本次导航的 nonce」都走**插件的模块级一次性旁路**（`src/client/line-target.ts`，key = path + line；arm 时自增 nonce，编辑器按 nonce 判重、读后即消费），不写进宿主导航参数。nonce 是「同一个 chip 连点两次」仍能再次跳转/闪光的关键：宿主对没移动的 `line` 不重发导航，只比较 path + line 会把二次点击误判成已消费，残留的 arm 还可能让之后同 path + line 的普通打开误闪。**底部工作台没有该入口**：chip 只打开右侧栏，底部 `TabContent → EditorHost` 虽是同一组件、同样消费 `line`，但本功能未在底部真机验证。**行号漂移**：记录的是划选时的行号，文件之后被编辑，点击会落到同一行号（可能已偏移）；不做锚点搜索或内容定位。
 
 ---
 

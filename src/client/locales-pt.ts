@@ -287,6 +287,7 @@ export const pt: Record<string, string> = {
   openEditor: 'Abrir editor',
   referenceFile: '@arquivo',
   addToConversation: 'Adicionar à conversa',
+  quoteChip: 'Citação {where}',
   copyRelative: 'Copiar caminho relativo',
   copyAbsolute: 'Copiar caminho absoluto',
   rename: 'Renomear',

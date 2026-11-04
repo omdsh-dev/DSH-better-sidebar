@@ -305,6 +305,7 @@ export const ar: Record<string, string> = {
   openEditor: 'فتح المحرّر',
   referenceFile: '@ملف',
   addToConversation: 'إضافة إلى المحادثة',
+  quoteChip: 'اقتباس {where}',
   copyRelative: 'نسخ المسار النسبي',
   copyAbsolute: 'نسخ المسار المطلق',
   rename: 'إعادة تسمية',

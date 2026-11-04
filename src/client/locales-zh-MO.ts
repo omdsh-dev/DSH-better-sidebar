@@ -319,6 +319,7 @@ export const zhMO: Record<string, string> = {
   openEditor: '開啟編輯器',
   referenceFile: '@檔案',
   addToConversation: '新增到對話',
+  quoteChip: '引用 {where}',
   copyRelative: '複製相對位址',
   copyAbsolute: '複製絕對位址',
   rename: '重新命名',

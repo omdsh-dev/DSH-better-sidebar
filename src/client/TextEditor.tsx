@@ -36,11 +36,13 @@ import { rewriteLocalMarkdownLinks } from './markdown-navigation.ts'
 import { languageForPath } from './lang.ts'
 import { cmSurfaceTheme, CmThemeCompartment } from './cm-themes.ts'
 import { cmSearchExtensions, CmSearchPhrases } from './cm-search.ts'
+import { flashQuoteLines, quoteFlashField, quoteFlashHighlight } from './quote-flash.ts'
 import { isDarkScheme, subscribeColorScheme } from './theme.ts'
 import { SandboxStatusBar } from './SandboxStatusBar.tsx'
 import { insertReferenceOrText, type PendingReference } from './conversation-draft.ts'
 import { useSelectionPopup } from './selection-popup.ts'
-import { buildSelectionInsert, linesOfSelection } from './selection-payload.ts'
+import { buildSelectionInsert, linesOfSelection, type SelectionLines } from './selection-payload.ts'
+import { insertQuoteChip, type QuoteSelection } from './selection-quote.ts'
 import { analyzeMarkdownHtml } from './markdown-html.ts'
 import { LazyMermaidMarkdown, MarkdownDocument, type MarkdownHtmlMedia } from './MarkdownHtml.tsx'
 import { LargeFileView } from './LargeFileView.tsx'
@@ -54,6 +56,34 @@ import css from './sidebar.module.css'
 
 /** Previewable files (rendered output vs source editing). */
 type ViewMode = 'preview' | 'edit'
+
+/**
+ * The popup's payload: the built-in reference chip #1052 already minted PLUS
+ * the structured selection the quote chip mints from (the path and the line
+ * span are facts only the viewer knows — the pending chip keeps them folded
+ * into one label string).
+ */
+interface SelectionInsert extends PendingReference {
+  selection: QuoteSelection
+}
+
+/** Build the popup payload for one selection. */
+function selectionInsertOf(
+  path: string,
+  cwd: string | undefined,
+  lines: SelectionLines | undefined,
+  text: string,
+): SelectionInsert {
+  return {
+    ...buildSelectionInsert(path, cwd, lines, text),
+    selection: {
+      path,
+      ...(cwd === undefined ? {} : { cwd }),
+      ...(lines === undefined ? {} : { lines }),
+      text,
+    },
+  }
+}
 
 /** Per-file preview scroll memory. Module-level so it survives viewer
  *  remounts: the save-then-switch-to-preview reload (EditorHost #215 case B)
@@ -138,6 +168,9 @@ export function TextEditor(props: FileViewerProps) {
   const [conflict, setConflict] = useState(false)
   const hostRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<CodeMirrorView | null>(null)
+  /** The landing flash's self-clear timer (one per editor; see the landing
+   *  effect and the view's unmount cleanup). */
+  const flashTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const savingRef = useRef(false)
   /** The mtime the draft is based on (`null` = the file did not exist yet).
    *  Seeded from the load, re-based whenever a fresh load reports a new mtime
@@ -254,8 +287,12 @@ export function TextEditor(props: FileViewerProps) {
    * listeners (outside mousedown, Escape, hidden tab/window, surface
    * leaving the viewport) — see selection-popup.ts.
    */
-  const selectionPopup = useSelectionPopup<PendingReference>({
+  const selectionPopup = useSelectionPopup<SelectionInsert>({
     onCommit: (insert) => {
+      // The quote chip first (a clickable, source-owned chip), then #1052's
+      // plain built-in reference chip, then bare text — every step down is one
+      // the host actually supports, never a silent no-op.
+      if (insertQuoteChip(ctx, scope.sessionId, insert.selection)) return
       insertReferenceOrText(ctx, scope.sessionId, insert)
     },
     // The surface that must stay on screen: the markdown preview container
@@ -353,6 +390,10 @@ export function TextEditor(props: FileViewerProps) {
         EditorState.tabSize.of(2),
         CodeMirrorView.contentAttributes.of({ spellcheck: 'false' }),
         cmSurfaceTheme,
+        // The landing flash's range field and its per-line decorations
+        // (inert until a navigation hands this editor a quoted span).
+        quoteFlashField,
+        quoteFlashHighlight,
         themeComp.of(dark),
         // Find-in-file (Cmd/Ctrl+F): the top-pinned search panel plus the
         // upstream search keymap, registered BEFORE the editor's own keymap
@@ -409,11 +450,12 @@ export function TextEditor(props: FileViewerProps) {
               return
             }
             const doc = update.state.doc
+            const lines = {
+              start: doc.lineAt(sel.from).number,
+              end: doc.lineAt(sel.to).number,
+            }
             selectionPopup.show(
-              buildSelectionInsert(path, scope.cwd, {
-                start: doc.lineAt(sel.from).number,
-                end: doc.lineAt(sel.to).number,
-              }, text),
+              selectionInsertOf(path, scope.cwd, lines, text),
               rect.left - window.scrollX + (rect.right - rect.left) / 2,
               rect.top - window.scrollY,
             )
@@ -442,6 +484,9 @@ export function TextEditor(props: FileViewerProps) {
       themeCompRef.current = null
       searchPhrasesRef.current = null
       gitCompRef.current = null
+      // The flash's clear timer must not fire against a destroyed view.
+      if (flashTimerRef.current !== undefined) clearTimeout(flashTimerRef.current)
+      flashTimerRef.current = undefined
     }
     // The keymap's save() reads live refs; scope/path are stable for a
     // tab's lifetime, and the dark flip is handled by the reconfigure
@@ -581,6 +626,14 @@ export function TextEditor(props: FileViewerProps) {
     // line reference focuses; an ordinary open leaves the reader's focus where
     // it was (e.g. in the chat composer they clicked the link from).
     view.focus()
+    // A quoted span (the quote chip's click-through) flashes its lines so the
+    // reader sees WHICH part the chip carries, not just where the caret went.
+    // One timer per editor: a second navigation cancels the pending clear, and
+    // the unmount effect below does too (the field dies with the view).
+    if (props.lineEnd !== undefined && props.lineEnd > line) {
+      if (flashTimerRef.current !== undefined) clearTimeout(flashTimerRef.current)
+      flashTimerRef.current = flashQuoteLines(view, line, props.lineEnd)
+    }
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
         const block = view.lineBlockAt(target)
@@ -599,7 +652,7 @@ export function TextEditor(props: FileViewerProps) {
     // The reveal reads the live view ref; `markdown`/`html` are derived from
     // `viewerId`, which the view-creation effect already keys on.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [content, path, line, mode, props.onLineConsumed])
+  }, [content, path, line, mode, props.onLineConsumed, props.lineEnd])
 
   // Scheme flip: re-theme in place (the compartment holds only the
   // scheme-dependent extensions; everything else is untouched).
@@ -881,7 +934,7 @@ export function TextEditor(props: FileViewerProps) {
     const rect = sel.getRangeAt(0).getBoundingClientRect()
     const lines = linesOfSelection(mdText, text)
     selectionPopup.show(
-      buildSelectionInsert(path, scope.cwd, lines ?? undefined, text),
+      selectionInsertOf(path, scope.cwd, lines ?? undefined, text),
       rect.left + rect.width / 2,
       rect.top,
     )

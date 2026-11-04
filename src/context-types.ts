@@ -753,6 +753,19 @@ export interface SidebarConversation {
   }
 }
 
+/**
+ * The client input-trigger registry face this plugin consumes
+ * (`ctx.inputTriggers`, provided by @deepseek-ai/dsh-client-ui-input-trigger,
+ * DSH 0.2.1+). Only the registration the quote chip needs is mirrored here —
+ * the source shape itself is declared structurally in
+ * `./client/selection-quote.ts`. Optional on {@link SidebarContextShape} so
+ * older hosts and test fakes simply hide the feature.
+ */
+export interface SidebarInputTriggerServiceFace {
+  /** Register one trigger source; `(trigger, name)` must be unique (duplicates throw). */
+  registerSource(src: object): () => void
+}
+
 /** Read-only subset of api-workspace-controller's public IWorkspaces.list. */
 export interface SidebarWorkspacesService {
   readonly list: {
@@ -913,6 +926,13 @@ export interface SidebarContextShape {
   sessionPersistence: SidebarSessionPersistenceService
   /** The composer draft face (client ui-conversation, lazy `ctx.get` probe). */
   conversation: SidebarConversation
+  /**
+   * The client input-trigger registry (DSH 0.2.1+, optional so older hosts and
+   * test fakes hide it): the quote chip registers a source here so its clicks
+   * open the quoted lines and its send-time serialization expands the fence
+   * (see `./client/selection-quote.ts`).
+   */
+  inputTriggers?: SidebarInputTriggerServiceFace
   /** Host-authoritative workspace membership; resolved lazily at reference insertion. */
   workspaces?: SidebarWorkspacesService
   /**

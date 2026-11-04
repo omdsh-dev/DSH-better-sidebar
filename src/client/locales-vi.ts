@@ -304,6 +304,7 @@ export const vi: Record<string, string> = {
   openEditor: 'Mở trình soạn thảo',
   referenceFile: '@tệp',
   addToConversation: 'Thêm vào cuộc trò chuyện',
+  quoteChip: 'Trích dẫn {where}',
   copyRelative: 'Sao chép đường dẫn tương đối',
   copyAbsolute: 'Sao chép đường dẫn tuyệt đối',
   rename: 'Đổi tên',

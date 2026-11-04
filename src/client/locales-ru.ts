@@ -300,6 +300,7 @@ export const ru: Record<string, string> = {
   openEditor: 'Открыть редактор',
   referenceFile: '@файл',
   addToConversation: 'Добавить в диалог',
+  quoteChip: 'Цитата {where}',
   copyRelative: 'Копировать относительный путь',
   copyAbsolute: 'Копировать абсолютный путь',
   rename: 'Переименовать',

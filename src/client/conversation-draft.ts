@@ -52,9 +52,27 @@ export interface PendingReference {
   /**
    * Chip icon family. Omit for a reference whose `text` is not a path: the
    * host marks `'file'` chips openable, and a click would hand the raw text
-   * (a fenced block, for a selection) to the file opener.
+   * (a fenced block, for a selection) to the file opener. A chip whose
+   * {@link PendingReference.source} is a plugin-owned source may declare one
+   * safely — that source answers the click itself.
    */
   appearance?: 'file' | 'folder' | 'session'
+  /**
+   * The trigger source that OWNS this chip. Defaults to the host's built-in
+   * `'reference'`, whose `ref` is the payload itself (`text`). A
+   * plugin-owned source (see `selection-quote.ts`) passes its own name so the
+   * host routes chip clicks and send-time serialization there instead.
+   */
+  source?: string
+  /**
+   * The chip's reference id under {@link PendingReference.source}. Defaults
+   * to `text` — the built-in source's spelling, where the ref IS the
+   * payload. A custom source passes a short opaque id and resolves the
+   * payload from its own store (it must also answer the serialization codec,
+   * or the host refuses the send rather than downgrading to the clipboard
+   * text).
+   */
+  ref?: string
 }
 
 /**
@@ -194,12 +212,14 @@ export function insertDraftReference(
       start = at + 1
     }
     const chip: SidebarReferenceInsert = {
-      source: 'reference',
-      ref: reference.text,
+      source: reference.source ?? 'reference',
+      ref: reference.ref ?? reference.text,
       label: reference.label,
-      // A selection chip's `ref` is a fenced block, not a path: leaving
-      // `appearance` unset keeps the host from marking it openable (a click
-      // would otherwise feed that block to the file opener).
+      // The built-in source's `ref` is a fenced block, not a path: leaving
+      // `appearance` unset on such a chip keeps the host from marking it
+      // openable (a click would feed that block to the file opener). A
+      // plugin-owned source answers its own clicks, so its chips may declare
+      // one.
       ...reference.appearance === undefined ? {} : { appearance: reference.appearance },
       clipboardText: reference.clipboardText ?? reference.label,
     }
