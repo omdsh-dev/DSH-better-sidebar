@@ -6,7 +6,7 @@
 > **版本对照提醒**：当前正式版为 **v0.28.2**（DSH 0.2.1-rc.1+；宿主 npm `latest` 已为 0.2.1-rc.2）。仍停留在 DSH 0.2.0-rc.2 的宿主必须固定插件 v0.26.1；DSH 0.2.1-alpha.5 固定 v0.28.0-alpha.0。市场安装器按插件 `latest` 安装、不按宿主版本选版本。
 > 本次 alpha.5 → rc.1 上游完整树差异 355 项全部为 `package.json`、源码零变化，因此不改功能实现；伴随依赖为 Cordis peer `^4.0.5` / dev `4.0.5`、group `1.0.5`、schemastery `~3.18.5`、include `1.0.10`。RC 验证单独记录于 [适配记录](plans/2026-10-17-dsh-0.2.1-rc.1-adaptation.md)，不以已发布 alpha 的测试数字替代。
 > 权威代码：`src/client/service.ts`（服务实现）、`src/client/builtins/`（内置 6 tab + 3 viewer 参考实现）、`lib/types/client/service.d.ts`（类型声明）。
-> alpha.5 已删除 `@deepseek-ai/dsh-invariants` 与上游 `/invariant` 子路径；本插件同步移除 invariant companion，不提供替代注册服务。HTTP/WS 准入遵循宿主 Connection（见 §6.2）。
+> alpha.5 已删除 `@deepseek-ai/dsh-invariants` 与上游 `/invariant` 子路径；本插件同步移除 invariant companion，不提供替代注册服务。HTTP/WS 准入遵循宿主 Connection（见 §6）。
 > 当前目录语义：**已 attach** 的会话里，文件 / Git / 终端与新建 sidechat 跟随会话 `working_directory`（live 读 `ctx.workingDirectory.get(session)`）；**cold / detached** 会话读存储 header（`ctx.sessionPersistence.stat(id)`，只读第一个 zstd 帧，不解码日志；进程内 memo + 在飞去重），`activeWorktreeRootOf` 对 detached 直接返回该工作区地址。不要为取一个 cwd 调 `ctx.sessionQuery.observeSession`：它会解码整份会话日志并水合全部投影，启动期 fs-watch 每目录一帧的扇出会把它放大成数十次整读（详见 [2026-10-27 记录](plans/2026-10-27-workspace-cwd-over-cold-reads.md)）。linked worktree 仍按 base 目录记账；新 sidechat seed 尾部盖章当前 cwd，防止继承历史目录覆盖它。
 > alpha.5 的 `TerminalBlockLabels` 要求 `commandLine(line)`；两个渲染消费者与全部 21 份词典同步。宿主兼容性优先读 `package.json#engines.dsh`，缺席才读 DSH peers；本插件没有该字段，仍用 13 条 peers（第三方 `dsh.plugin.json` 不参与）。
 > 仓库开发规则（硬约束 / CI / 发版）见 [AGENTS.md](../AGENTS.md)。
@@ -718,6 +718,14 @@ const url = ctx.betterSidebar.hostRouteUrl(
 
 > 注：内置的 `api.ts` 是 better-sidebar 内部模块，外部插件 **不要** value-import 它（构建纯度门会挡）；按上表模式自己 fetch 即可，路由一律经 `hostRouteUrl()`（或等价的「相对路径 + 页面前缀」解析）。所有 HTTP/WS 路由复用宿主 `ctx.connection.requestRejection(req)`：Host/Origin 与浏览器认证均由宿主裁决，只有返回 `undefined` 才准入；同源页面也必须先完成宿主登录。
 
+### 6.2 侧聊图片输入
+
+`POST /sidebar/api/sidechat.prompt` 接受 `{childId,text,images?}`，图片条目为 `{mediaType,data,name?}`，`data` 是原始图片字节的 base64，允许空文本加图片。成功返回 `{accepted:true,messageId}`，消息身份由宿主创建。`sidechat.info` 的 `images` 字段报告附件服务可用性和实际数量、单张及合计字节限制；图片是否适用于所选模型在发送时校验。像素预算与边长上限由宿主在准入时校验，超限回 **413**（wire 错误码 `too-large`，保留宿主 message）；存储失败回 **500** `sidechat-error`，不再冒充调用方的 400。
+
+请求体只在可能携带图片（超过 1 MiB 元数据上限）时计入并发图片准入；纯文本 prompt 不受该限制影响，超限回 413 而不是可重试的 503。
+
+转录与 pending 行携带图片出现位置和显示元数据，读取走经宿主鉴权的 `GET /sidebar/sidechat-image?childId=...&messageId=...&blockIndex=...`。路由核验侧聊归属与用户消息身份，禁止用附件 ID 或本地路径直接读取。图片请求只在页签可见时发出；冷历史读取不恢复 Agent。输入与读取边界详见[设计记录](plans/2026-11-02-sidechat-image-input.md)。
+
 ---
 
 ## 7. 服务方法完整清单
@@ -1137,7 +1145,7 @@ interface SettingsDescriptor {
 >
 > 这是一次**权限放开**：插件侧边栏的 fs 路由现在能读写**宿主用户能访问的任意路径**，只受 OS 权限约束。也就是说，一个能访问到本插件 `/sidebar/*` 路由的同源页面/脚本（**包括你写的第三方消费插件**）可以借这些路由读取、改写、删除该用户权限内的任何文件——例如 `~/.ssh/`、`~/.dsh/`、其他项目的源码。
 >
-> 缓解手段只有两块，别指望有第三块：① 每条 HTTP/WS 路由都过宿主的**浏览器信任与认证栅栏**（`ctx.connection.requestRejection(req)`，见 §6.2），所以前提是攻击面已有宿主认可的来源与认证；② 宿主用户的 OS 权限本身的边界。**不要**再把「工作区围栏」当成安全边界来设计你的插件——它已经不在了。
+> 缓解手段只有两块，别指望有第三块：① 每条 HTTP/WS 路由都过宿主的**浏览器信任与认证栅栏**（`ctx.connection.requestRejection(req)`，见 §6），所以前提是攻击面已有宿主认可的来源与认证；② 宿主用户的 OS 权限本身的边界。**不要**再把「工作区围栏」当成安全边界来设计你的插件——它已经不在了。
 
 历史背景（`< v0.23.0`）：旧的实现用 realpath 解析后比对工作区前缀，越界回 403，并有一个 `workspaceFence` 开关（默认开）可临时关闭；开启时编辑器/文件树错误面会显示原因 + 一键关闭按钮（`FenceErrorNotice`）。用户要求删除该检查，上述代码路径随之删除（`src/path-security.ts` 现在是纯词法解析）。旧 profile 里遗留的 `workspaceFence` 键只是**未知键**——schemastery 的 object schema 对未知键是容忍的，既不报错也不再有任何效果。
 
@@ -1185,12 +1193,6 @@ interface SettingsDescriptor {
 
 ---
 
-### Side Chat 图片输入
-
-`POST /sidebar/api/sidechat.prompt` 接受 `{childId,text,images?}`，图片条目为 `{mediaType,data,name?}`，`data` 是原始图片字节的 base64，允许空文本加图片。成功返回 `{accepted:true,messageId}`，消息身份由宿主创建。`sidechat.info` 的 `images` 字段报告附件服务可用性和实际数量、单张及合计字节限制；图片是否适用于所选模型在发送时校验。
-
-转录与 pending 行携带图片出现位置和显示元数据，读取走经宿主鉴权的 `GET /sidebar/sidechat-image?childId=...&messageId=...&blockIndex=...`。路由核验侧聊归属与用户消息身份，禁止用附件 ID 或本地路径直接读取。图片请求只在页签可见时发出；冷历史读取不恢复 Agent。输入与读取边界详见[设计记录](plans/2026-11-02-sidechat-image-input.md)。
-
 ## 12. 皮肤兼容（令牌驱动）
 
 > better-sidebar 所有视觉值消费 DSH 的 `--dsw-alias-*` / `--dsw-font-*` / `--ds-*` 令牌（无硬编码颜色），**不做每皮肤适配**。已与 dsh-web-ui 皮肤中心兼容（10 款皮肤全覆盖 `--dsw-alias-*` 层；`tests/theme.spec.ts` 守护）。你的 tab/viewer 组件遵循同样的令牌规则即可自动兼容全部皮肤。
@@ -1216,7 +1218,7 @@ interface SettingsDescriptor {
 - **拖拽区退出（视口层）**：宿主把每个**直挂 body 的子元素**都设成 `no-drag`（`html[data-platform=darwin] body > :not(#root)`，选择器含 id，只能靠 `!important` 压过），而 app-region **无视 `pointer-events`**——插件宿主就是这样一个 body 子元素，在 Electron 里该值还会传到它内部的**铺满视口的面板层**（#772 的 CDP 实测；挂载 lane 用的浏览器引擎不传播该属性，所以面板层自己也声明了同一条规则），于是它把下面每条 `[data-window-drag]` 拖拽带一起抵消（窗口拖一次就失效，同时丢掉 macOS 双击标题栏缩放，issue #772）。契约：装饰性的视口层用**中性值** `-webkit-app-region: initial !important` 退出计算（`initial` 的计算值 `none` 不扣减拖拽区；注意**字面量 `none` 不是中性值**——它计算成 `no-drag`，是扣减值），层内的面板/控件再声明 `no-drag` 保住点击；当前覆盖 `[data-dsh-better-sidebar]`、`[data-dsh-panel-host]`（`> *` 保持 `no-drag`）与 `.mermaidModal`（放大视图是第二个**持久**铺满视口的 body 直挂层）。**交互弹层不要加 `initial`**（`.selectionPopup` 是 `<button>`，`FloatingWindow` / `AnchoredPopover` 自带指针拖拽、不是遮罩层）：宿主 `:is(button, a, input, …)` 已给它们 `no-drag`，反过来声明 `initial !important` 会让按下变成拖窗（重演 #103/#111）。放大视图是**遮罩层例外**——它是模态，只有其中的控件必须保持 `no-drag`；代价是它覆盖在顶部拖拽带上时，点背景会变成拖窗而不是关闭（为「放大图时窗口仍可拖」付的账）。**未纳入**：`FileTree` 的 `.uploadDropChatHint` 同样是 body 直挂的装饰层，但它只在 OS 文件拖拽悬停期间存在且 `pointer-events: none`，收益极小、暂不处理（`FloatingWindow` / `AnchoredPopover` 是交互层，按上面的判据本就该保持 `no-drag`）。形状由 `tests/panel-host-css.spec.ts` 在 Linux 的 `pnpm test` 里守护（无 macOS runner；`tests/theme.spec.ts` 只守颜色，故本轮不涉及），真实级联由挂载 lane 的探针按宿主规则断言计算值（面板宿主探针复现宿主两条 darwin 规则，放大视图探针直接用页面里宿主自己的规则）。
 - **z-index**：面板宿主层 25、按钮簇 45——低于 DSH ui-cordis 插件面板（30）与浮层栈（100/1000+），浮层天然盖住侧边栏。
 - **更改行选中态**：Git 文件行和本轮操作行保持原有布局；选中只绘制 `--dsw-alias-interactive-bg-active` 背景，以及行内 inset 4px、宽 2px 的 `--dsw-alias-state-business-primary` 标记。选中规则与缩进参考线的绝对定位规则必须分开；`tests/theme.spec.ts` 解析实际 CSS 规则守护，挂载测试验证点击后文件行仍在原分组内。
-- **侧聊图片**：草稿预览与历史图片使用同一缩略图布局，长宽保持比例且限制在输入框与转录列内；草稿边框使用 `--dsw-alias-hairline`，移除按钮沿用宿主 `Button`。隐藏页签停止图片读取并释放 blob URL，切回后按消息身份重新读取。图片内容本身保留用户的原始颜色。
+- **侧聊图片**：草稿预览与历史图片使用同一缩略图布局，长宽保持比例且限制在输入框与转录列内；草稿边框使用 `--dsw-alias-hairline`，移除按钮是自绘的图标按钮（`<button className={css.sidechatIconBtn}>` + 宿主 `IconCloseFillRegular`，14 px），不是宿主 `Button`。隐藏页签停止图片读取并释放 blob URL，切回后按消息身份重新读取。图片内容本身保留用户的原始颜色。
 - **提交图高度**：更改区保持自然高度，提交图区填满固定底栏上方的剩余空间，不设 `vh` 或固定最大高度。展开的图谱分区以 248px（28px 标题 + 220px 视口）为最小高度参与 flex 分配，避免自动最小内容高度把长历史撑到外层；折叠后只保留标题，长历史在内部滚动；更改列表过长时仍由原外层滚动容器承载。预览区展开或窗口缩放后随可用空间调整，无需额外尺寸观察器。
 - **提交图的 ref pills（含 tag）**：分支/远端/HEAD 按 lane 调色板上色（五个 `--dsw-alias-state-*`）；tag 是装饰而非 lane，使用中性 `--dsw-alias-label-secondary` + 虚线边框，不占 `data-color` 槽位，并以服务端返回的 `tag: ` 名称前缀作为文字 kind 标记（不新增图标/文案）。HEAD 只折叠进本地分支，tag 永不成为 current（detached HEAD 场景同样）；`tests/theme.spec.ts` 钉住 tag 的 CSS 规则，`tests/git-graph-ui.spec.tsx` 钉住 tone / current / 无调色板槽位。
 
