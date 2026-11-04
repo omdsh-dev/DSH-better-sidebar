@@ -216,6 +216,69 @@ function midSpanLog(): SidebarSessionEvent[] {
   return events
 }
 
+/** One DeepSeek log-ledger marker: the host appends it after the model request
+ *  that confirmed the upload through `throughSeq` — an ABSOLUTE seq, and the
+ *  host's v4 reader requires it to precede its own marker. */
+function deliveryMarker(seq: number, throughSeq: number): SidebarSessionEvent {
+  return lo('session-log-deepseek/delivery-accepted', seq, {
+    sessionId: 'session-parent',
+    sessionFormatVersion: SESSION_FORMAT_VERSION,
+    throughSeq,
+  })
+}
+
+/**
+ * Rebuild any fixture with one delivery marker after every message-producing
+ * event (the real host appends one per accepted model request), renumbering
+ * `seq === index` and following every absolute seq reference the fixture
+ * carries — surface ranges, citations and compaction spans. The result is the
+ * shape a real parent log has: the plugin creates these markers only when
+ * copying a parent log, never itself.
+ */
+function withDeliveries(events: readonly SidebarSessionEvent[]): SidebarSessionEvent[] {
+  const layout: Array<{ event: SidebarSessionEvent } | { after: number }> = []
+  for (const event of events) {
+    layout.push({ event })
+    if (event.type === 'assistant/message' || event.type === 'tool/result') {
+      layout.push({ after: event.seq })
+    }
+  }
+  const mapping = new Map<number, number>()
+  for (const [index, slot] of layout.entries()) {
+    if ('event' in slot) mapping.set(slot.event.seq, index)
+  }
+  const rebaseSeq = (value: unknown): number => {
+    const mapped = typeof value === 'number' ? mapping.get(value) : undefined
+    if (mapped === undefined) throw new Error(`fixture cites seq ${String(value)}, which does not exist`)
+    return mapped
+  }
+  return layout.map((slot, index) => {
+    if ('after' in slot) return deliveryMarker(index, rebaseSeq(slot.after))
+    const copy = JSON.parse(JSON.stringify(slot.event)) as SidebarSessionEvent & {
+      surfaceOp?: unknown
+      sourceEventSeqs?: number[]
+    }
+    copy.seq = index
+    copy.time = index * 1000
+    const op = copy.surfaceOp as { op?: unknown; startSeq?: unknown; endSeq?: unknown } | undefined
+    if (op !== undefined && op.op === 'replace') {
+      op.startSeq = rebaseSeq(op.startSeq)
+      op.endSeq = rebaseSeq(op.endSeq)
+    }
+    if (Array.isArray(copy.sourceEventSeqs)) copy.sourceEventSeqs = copy.sourceEventSeqs.map(rebaseSeq)
+    const data = copy.data as {
+      shadowedRange?: { start?: unknown; end?: unknown }
+      shadowedSeqs?: number[]
+    }
+    if (data.shadowedRange !== undefined) {
+      data.shadowedRange.start = rebaseSeq(data.shadowedRange.start)
+      data.shadowedRange.end = rebaseSeq(data.shadowedRange.end)
+    }
+    if (Array.isArray(data.shadowedSeqs)) data.shadowedSeqs = data.shadowedSeqs.map(rebaseSeq)
+    return copy
+  })
+}
+
 /**
  * The automatic-compaction shape: the group fires INSIDE a still-open turn
  * (that turn's skeleton and first message sit BEFORE the cut), and the log
@@ -947,5 +1010,60 @@ describe('buildSidechatInheritance compaction tail', () => {
     // never sees them, and they keep the parent's metering history honest).
     expect(seed.length).toBeLessThan(events.length)
     expect(seed.some(event => JSON.stringify(event).includes('old result'))).toBe(false)
+  })
+
+  /**
+   * Regression (#1109): a side thread opened while the parent was mid-turn was
+   * seeded from a COMPACTED parent, whose rebase renumbers every seq. The
+   * inherited `session-log-deepseek/delivery-accepted` watermark is an
+   * absolute seq and was left pointing at its parent position, so the child
+   * shipped a marker whose `throughSeq` did not precede it. The host's v4
+   * reader rejects such a log outright ("delivery throughSeq must precede its
+   * marker") and the child became permanently unreadable — taking the parent's
+   * `includeDescendants` export down with it. The invariant is checked here
+   * on the seed itself: every surviving marker must cite the same EARLIER
+   * event the parent marked, and a marker whose watermark the trim dropped
+   * must not survive at all.
+   */
+  it('rebases inherited delivery watermarks into the seed seq space', () => {
+    // The mid-span fixture keeps nodes on both sides of the cut, so the seed
+    // carries markers whose watermark survived AND markers whose watermark
+    // was shadowed — the remap and the drop branch in one parent log.
+    const events = withDeliveries(midSpanLog())
+    const { seed } = buildSidechatInheritance(events)
+    expect(seed.length).toBeLessThan(events.length)
+    const markersOf = (log: readonly SidebarSessionEvent[]): SidebarSessionEvent[] =>
+      log.filter(event => event.type === 'session-log-deepseek/delivery-accepted')
+    const parentMarkers = markersOf(events)
+    const seedMarkers = markersOf(seed)
+    expect(parentMarkers.length).toBeGreaterThan(0)
+    expect(seedMarkers.length).toBeGreaterThan(0)
+    const byTime = new Map(parentMarkers.map(marker => [marker.time, marker]))
+    let remapped = 0
+    for (const marker of seedMarkers) {
+      const parent = byTime.get(marker.time)
+      expect(parent).toBeDefined()
+      const throughSeq = (marker.data as { throughSeq: number }).throughSeq
+      const cited = (parent as SidebarSessionEvent).data as { throughSeq: number }
+      // The host's rule, verbatim: the watermark precedes its own marker.
+      expect(throughSeq).toBeLessThan(marker.seq)
+      // ... and it still names the very event the parent's request confirmed,
+      // not a neighbour that happens to sit at the old absolute position.
+      expect(seed[throughSeq]?.type).toBe(events[cited.throughSeq]?.type)
+      expect(seed[throughSeq]?.time).toBe(events[cited.throughSeq]?.time)
+      remapped += 1
+    }
+    // A watermark the trim dropped has no child-side equivalent: the record
+    // itself must drop rather than claim a delivery it cannot name.
+    const orphaned = parentMarkers.filter(marker => {
+      const cited = events[(marker.data as { throughSeq: number }).throughSeq]
+      return !seed.some(event => event.type === cited?.type && event.time === cited?.time)
+    })
+    expect(remapped).toBeGreaterThan(0)
+    expect(orphaned.length).toBeGreaterThan(0)
+    for (const marker of orphaned) {
+      expect(seedMarkers.some(event => event.time === marker.time)).toBe(false)
+    }
+    expectAcceptedSeed(seed)
   })
 })
