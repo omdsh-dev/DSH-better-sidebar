@@ -4,6 +4,11 @@
 
 ### 未发布
 
+- 侧聊注册为原生多实例页面：顶部「＋」和输入框下方「＋」均新建独立标签，不再聚焦或覆盖首个侧聊。
+- 明确区分新建与恢复：新建不再复用会话的 last/newest 线程；原生侧聊按 `(sessionId, contentId)` 保存线程绑定和标题，刷新只恢复该标签。旧标签缺绑定时显示空态，可从历史菜单找回，不猜测绑定。
+- 线程历史按 threadId 在原生栏与底部工作台间去重；底部 createTab 合并显式 seed.meta。归档清空当前绑定，不再自动切到其他线程。
+- 原生关闭使用宿主 registerCloseHandler 清理本条侧聊，组件卸载与插件重载不归档；创建中关闭会释放刚生成的孤立线程；同名 tab1 的并发创建按会话隔离。
+
 - 🧭 **安装脚本会先查 profile 自带的 `@deepseek-ai/dsh-*` 副本是否混版**（[#1107](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1107)）：profile 里自己装的宿主包会抢在 DSH 安装之前被解析，本插件静态 import 的 `dsh-subagent` 因此绑到混搭版本；混版缺导出时整只宿主只报 `DesktopHostFatalError: required plugins did not activate`，看不到是哪个包缺了什么。`scripts/install.sh` / `scripts/install.ps1` 现在装完会运行随包发布的 `scripts/check-profile-host-tree.mjs`（按 DSH 自己的 profile 解析规则：只看 profile 内的副本、只判定 `dsh-subagent` 精确声明的 `dsh-attachment` peer）——混版就打印两份版本号与修复命令并退出，不再提示重启。README 常见问题补了同一条修复路径（从 profile 的 `package.json` / overrides 移除 `@deepseek-ai/dsh-*` 后 `pnpm install`，或把两份副本对齐到同一版本）。
   - 🧪 测试：新增 `tests/install-host-tree.spec.ts`（6 例，真跑发布脚本：混版退出码 1 并给出两份版本；配对一致 / 只有 subagent 副本 / profile 之外的旧副本被忽略 / 未装插件均放行；并钉住两个安装脚本都调用它、脚本随包发布）。
 - 🧵 **父会话进行中开的侧边对话不再写出一份永久不可读的子会话日志**（[#1109](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1109)）：父会话压缩过之后，种子是围绕最后一个压缩检查点按**重编号**复制的，而继承来的 `session-log-deepseek/delivery-accepted` 的 `throughSeq` 是绝对 seq——重编号后它仍指向父会话的位置，于是子会话里出现「水位线不早于它自己的标记」，宿主 v4 读取器直接判日志损坏（`SessionFormatError: delivery throughSeq must precede its marker`）：该子会话从此再也读不出来，连带父会话 `includeDescendants` 导出失败。现在重编号会把这条水位线一起重映射；水位线落在被丢弃的区间（子会话侧没有对应事件）时，该记录整条丢弃而不是伪造一个水位线。**已损坏的历史日志不会被修复**，只是不再产生新的。

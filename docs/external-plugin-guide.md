@@ -26,9 +26,9 @@
 
 | 事项 | 说明 |
 |---|---|
-| 生命周期回调 | 原生面的「打开」不区分新建/聚焦，因此 `onOpen` 每次打开都触发（`onActivate` 仅在插件自己的底部工作台里触发）。程序化 `closeTab` 与 `activateTab` 在原生 tab 上正常工作：关闭走宿主 per-session 面，回调拿到完整 `tab`（**含 `meta`**）；激活经 `ISidebarRight.focus` 聚焦 tab 与其 pane。**例外**：用户直接点原生 tab 上的 × 关闭不会触发 `onClose`（宿主不广播该事件，插件在 tab 体卸载时丢弃记录） |
-| 去重 | 原生按 `(kind, 地址)` 去重：有 `createTab` 的类型每次新开一个 tab（sidechat / diff），其余聚焦已有 tab；`dedupeKey` 的自定义语义不参与原生面 |
-| 布局持久化 | 原生栏的布局**只在内存**（刷新后回到折叠默认），插件自己的底部工作台仍然持久化 |
+| 生命周期回调 | 原生面的「打开」不区分新建/聚焦，因此 `onOpen` 每次打开都触发（`onActivate` 仅在插件自己的底部工作台里触发）。程序化 `closeTab` 与 `activateTab` 在原生 tab 上正常工作：关闭走宿主 per-session 面，回调拿到完整 `tab`（**含 `meta`**）；激活经 `ISidebarRight.focus` 聚焦 tab 与其 pane。**侧聊例外已修复**：sidechat 通过宿主 `registerCloseHandler` 接收原生 ×/菜单关闭，归档并释放该线程一次；组件卸载、折叠、刷新和插件卸载不触发归档。其他类型仍需自行注册宿主关闭处理器 |
+| 去重 | 原生页面默认每个 pane 同 kind 单实例，`createTab` / `revealIfOpened: false` 不能覆盖这条宿主规则。声明 `multiple: true` 才会创建独立原生 occurrence；内置 sidechat 已声明。多实例类型的 `dedupeKey` 在原生打开时参与查找；显式 `seed.meta` 的线程打开同时检查底部与原生栏，已有线程只聚焦其所属面。底部工厂返回值也会合并显式 `seed.meta` 再去重。 |
+| 布局持久化 | 原生宿主持久化布局及 contentId，但不持久化 navigation.params。sidechat 单独按 `(sessionId, contentId)` 保存线程绑定和标题（最多 512 项）；新建从不恢复 last/newest 线程。缺失/损坏绑定的旧标签显示空态与历史菜单，不自动猜测或创建替代线程。底部工作台继续保存 tab.meta。 |
 | 跨会话打开 | 目标会话的右侧栏 store 未挂载时，打开会排队到该会话上屏后重放 |
 | 内置类型接管 | 插件的 `editor` 类型以 `extension` 优先级认领 `dsh-resource://file/**`（压过内置 `ui-sidebar-documentpreview` 的 `text` 预览——即 `fallback` 带），并接管内置 `files` 页面 kind（`openTab('files')` 打开插件的文件树）；插件卸载/禁用时内置实现自动复位。**但认领是有选择的**：宿主自己的文档预览已经覆盖的格式（表格 / PDF / 图片 / Office，清单见 §5.4）由 `editor.canOpen` 主动**拒绝**，地址交回内置 `text` 档 |
 | 文件树实时刷新（v0.21.1+） | 插件接管了内置 `files` 页，所以宿主自己的按目录 watch 覆盖不到这棵树——插件自带一条 `/sidebar/ws/fs-watch` socket：客户端上报**已展开**的目录集，宿主侧按目录 `fs.watch`（150ms 去抖、每连接上限 64 个句柄），变动后只让那一层缓存失效并重列；目录折叠即退订。路径仍走 `fs.tree` 同一套词法解析 |
@@ -245,6 +245,8 @@ interface TabDescriptor {
    * 同类型 tab 而非新开）。显式给出 dedupeKey 时优先于 single。
    */
   single?: boolean
+  /** 原生页面多实例（内置 sidechat 已启用）；缺省为宿主单实例页面。 */
+  multiple?: boolean
   /**
    * 去重键：openTab 时若已存在 dedupeKey 相同的 tab，则聚焦而非新开。
    * 返回 undefined 表示不去重（每次都新开，但同 id 会被 id 安全网聚焦）。
@@ -804,6 +806,8 @@ interface BetterSidebarService {
    *  ——走定向通道（不发布、不通知），与定向 `openTab(seed, scope)` 同一条路；
    *  这正是文件树删除调解能覆盖后台会话页面的机制。不传 scope 行为不变。 */
   closeTab(tabId: string, scope?: SessionScope): void
+  /** 异步创建返回前可检查标签是否仍存在，避免关闭后绑定到不存在的标签。 */
+  hasTab?(tabId: string, sessionId: string): boolean
   /** 订阅注册表变化（register/dispose 时触发） */
   subscribe(listener: () => void): () => void
   // ── v0.12.0+ ──────────────────────────────────────────────────────────

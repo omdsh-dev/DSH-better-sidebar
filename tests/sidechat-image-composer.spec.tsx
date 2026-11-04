@@ -5,6 +5,7 @@ import { act } from 'react-dom/test-utils'
 import { createElement } from 'react'
 import { installSidechatHarness, type SidechatHarness } from './helpers/sidechat-view-harness.tsx'
 import { SideChatView } from '../src/client/SideChatView.tsx'
+import { createNativeTabRecords } from '../src/client/native/tab-adapter.tsx'
 import type { Context } from '../src/context-types.ts'
 import type { RenderedRoot } from './test-utils.ts'
 
@@ -147,13 +148,17 @@ describe('sidechat image composer', () => {
     expect(calls).toHaveLength(1)
   })
 
-  it('reattaches a restored native tab to the remembered thread without sending again', async () => {
+  it('restores the native occurrence’s exact thread without sending again', async () => {
     await harness.flush()
     const snapshot = { byId: { root: { id: 'root', displayTitle: 'root', running: false }, t1: { id: 't1', displayTitle: 'Side: thread', origin: 'subagent', parentId: 'root', running: false } } }
     const ctx = { get: (key: string) => key === 'betterSidebar' ? harness.host : undefined, sessions: { list: { subscribe: () => () => {}, getSnapshot: () => snapshot } } } as unknown as Context
-    mounted.rerender(createElement(SideChatView, { ctx, scope: { sessionId: 'root', cwd: '/p' }, tab: { id: 'restored', type: 'sidechat', title: 'Side Chat' }, visible: true }))
+    const records = createNativeTabRecords()
+    records.sidechatBindings.set('root', 'sidebar://sidechat/image-thread', 't1', 'Side Chat')
+    const restored = createNativeTabRecords().ensure({ sessionId: 'root', id: 'restored', kind: 'sidechat', contentId: 'sidebar://sidechat/image-thread', title: 'Side Chat', params: undefined, revision: 0, scope: { sessionId: 'root', cwd: '/p' } })
+    mounted.rerender(createElement(SideChatView, { ctx, scope: restored.scope, tab: restored.tab, visible: true }))
     await harness.flush()
-    expect(harness.host.updateTab).toHaveBeenCalledWith('restored', { meta: { threadId: 't1' } }, 'root')
+    expect(restored.tab.meta).toEqual({ threadId: 't1' })
+    expect(mounted.container.querySelector('textarea')).not.toBeNull()
     expect(calls).toEqual([])
   })
 
