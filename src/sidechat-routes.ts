@@ -484,13 +484,16 @@ function brandedSelection(selection: SidechatModelSelection): {
 }
 
 /**
- * Hand the agent the model-selection seam, once per live agent: the ref prompt
- * assembly snapshots and request routing applies. Seeded from the thread's
- * recorded selection, so a resumed thread keeps the model the user picked
- * instead of reverting to the deployment default.
+ * Claim the thread's model seam once per live agent. DSH 0.2.2 hands every agent
+ * its own `AgentModel` (`agent.model`), whose `select()` records the choice in
+ * the log AND applies it to the next step — there is nothing to install, only a
+ * handle to remember. Claiming SEEDS it from the thread's recorded selection so
+ * a resumed thread keeps the model the user picked instead of reverting to the
+ * deployment default; `select()` is a no-op when that choice is already the
+ * recorded one, so re-seeding never appends a duplicate.
  * @param agent - the live thread agent.
- * @param childId - thread identity (the ref's key).
- * @returns the installed (or already installed) ref.
+ * @param childId - thread identity (the map key).
+ * @returns the agent's model handle.
  */
 function ensureModelSelection(agent: Agent, childId: string): AgentModelHandle {
   const existing = threadModelRefs.get(childId)
@@ -974,10 +977,11 @@ export function buildSidechatApi(ctx: Context, live?: AssistantLiveBuffer, signa
       }
       const selection = await normalizeSelection(ctx, requested)
       const agent = await ensureLiveThread(ctx, childId)
-      // The host's own commit shape (`SessionController.selectForNextRequest`):
-      // the durable intent lands in the log, and the agent-scoped ref is what
-      // prompt assembly and request routing read for the NEXT step.
-      agent.session.append('model/selection', brandedSelection(selection))
+      // `AgentModel.select()` IS the host's commit shape in 0.2.2: it appends
+      // `model/selection` when the choice differs and applies it to the next
+      // step (a no-op for the same choice). Appending here as well would record
+      // every switch twice — the 0.2.1 installable ref needed both calls, this
+      // one does not.
       ensureModelSelection(agent, childId).select(brandedSelection(selection))
       return { accepted: true as const, selection }
     },

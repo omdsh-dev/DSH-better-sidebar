@@ -1027,7 +1027,7 @@ describe('sidechat.models and sidechat.model', () => {
     expect(result.failures).toEqual([{ id: 'host', message: 'boom' }])
   })
 
-  it('normalizes, logs and installs a selection for the live thread', async () => {
+  it('normalizes and applies a selection for the live thread', async () => {
     const child = agent('child-model', { events: threadLog() })
     const services = happyServices(undefined, child)
     const resolveCallConfig = vi.fn(async () => ({ provider: 'p2', model: 'm2', reasoningEffort: 'high' }))
@@ -1038,11 +1038,14 @@ describe('sidechat.models and sidechat.model', () => {
         selection: { provider: 'p2', model: 'm2', reasoningEffort: 'high' },
       })
     expect(resolveCallConfig).toHaveBeenCalledTimes(1)
-    expect(child.session.append).toHaveBeenCalledWith('model/selection', {
+    // `select()` is the durable commit in 0.2.2: it appends `model/selection`
+    // itself, so the route must NOT append a second one.
+    expect(child.model.select).toHaveBeenCalledWith({
       provider: 'p2',
       model: 'm2',
-      reasoningEffort: 'high',
+      reasoningEffort: expect.anything(),
     })
+    expect(child.session.append).not.toHaveBeenCalled()
     // The thread is claimed once: the first switch both SEEDS the agent's model
     // from the thread's recorded selection and applies the requested one, so
     // the second switch adds exactly one more select — no re-seed, no second
@@ -1050,7 +1053,6 @@ describe('sidechat.models and sidechat.model', () => {
     const selections = child.model.select.mock.calls.length
     expect(selections).toBe(2)
     await api['sidechat.model']({ childId: 'child-model', provider: 'p2', model: 'm2' })
-    expect(child.session.append).toHaveBeenCalledTimes(2)
     expect(child.model.select.mock.calls.length).toBe(selections + 1)
   })
 
@@ -1063,17 +1065,23 @@ describe('sidechat.models and sidechat.model', () => {
     }))
     await expect(api['sidechat.model']({ childId: 'child', provider: 'p9', model: 'm9' }))
       .rejects.toMatchObject({ code: 'bad-request', status: 400 })
+    expect(child.model.select).not.toHaveBeenCalled()
     expect(child.session.append).not.toHaveBeenCalled()
   })
 
-  it('cold-resumes the thread before installing a selection', async () => {
-    const child = agent('child', { events: threadLog() })
+  it('cold-resumes the thread before applying a selection', async () => {
+    // Its own thread id: the claimed-thread map is module state, so reusing a
+    // previously claimed id would (correctly) skip the first-claim seeding.
+    const child = agent('child-p3', { events: threadLog() })
     const services = happyServices(undefined, child)
     services.agents.get = vi.fn((_id: unknown) => undefined)
     const api = buildSidechatApi(ctxWith(services))
-    await api['sidechat.model']({ childId: 'child', provider: 'p3', model: 'm3' })
+    await api['sidechat.model']({ childId: 'child-p3', provider: 'p3', model: 'm3' })
     expect(services.resume).toHaveBeenCalledTimes(1)
-    expect(child.session.append).toHaveBeenCalledWith('model/selection', { provider: 'p3', model: 'm3' })
+    // The agent's own model handle records and applies the choice; the route
+    // does not append the event a second time.
+    expect(child.model.select).toHaveBeenCalledWith({ provider: 'p3', model: 'm3' })
+    expect(child.session.append).not.toHaveBeenCalled()
   })
 })
 
