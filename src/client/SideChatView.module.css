@@ -645,3 +645,23 @@
     transition: none;
   }
 }
+
+.sidechatImages {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px;
+}
+.sidechatImagePreview {
+  display: flex;
+  align-items: flex-start;
+  border: 1px solid var(--dsw-alias-hairline);
+  border-radius: 8px;
+}
+.sidechatImage {
+  display: block;
+  max-width: 180px;
+  max-height: 140px;
+  object-fit: contain;
+  border-radius: 6px;
+}

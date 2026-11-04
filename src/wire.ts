@@ -56,8 +56,21 @@ export interface SidebarOk<T> { ok: true; value: T }
 /** Failure envelope of one API method. */
 export interface SidebarErr { ok: false; error: { code: SidebarErrorCode; message: string } }
 
-/** Read and parse the JSON request body (bounded; malformed → bad-request). */
-export async function readJsonBody(req: SidebarHttpRequest): Promise<unknown> {
+/**
+ * Read and parse the JSON request body (bounded; malformed → bad-request).
+ *
+ * @param req - the request face (async-iterable body).
+ * @param limit - maximum accepted body size in bytes.
+ * @param onBytes - optional per-chunk observer of the cumulative size. Callers
+ *   that must account for a LARGE body before the whole read finishes (the
+ *   Side Chat image admission gate) use it; a throw from the callback aborts
+ *   the read and propagates like any other route failure.
+ */
+export async function readJsonBody(
+  req: SidebarHttpRequest,
+  limit = MAX_BODY_BYTES,
+  onBytes?: (total: number) => void,
+): Promise<unknown> {
   const chunks: Buffer[] = []
   let total = 0
   for await (const chunk of req) {
@@ -65,9 +78,10 @@ export async function readJsonBody(req: SidebarHttpRequest): Promise<unknown> {
     // both (and the real runtime chunks are node Buffers anyway).
     const buffer = Buffer.from(chunk)
     total += buffer.length
-    if (total > MAX_BODY_BYTES) {
-      throw new SidebarError('bad-request', 'request body too large')
+    if (total > limit) {
+      throw new SidebarError('too-large', 'request body too large', 413)
     }
+    onBytes?.(total)
     chunks.push(buffer)
   }
   const text = Buffer.concat(chunks).toString('utf8')

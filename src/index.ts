@@ -47,6 +47,8 @@ import { buildTeamsApi, type SidebarTeamsRoutes } from './team-routes.ts'
 import { buildWorkflowsApi, type SidebarWorkflowRoutes } from './workflow-routes.ts'
 import { buildSidechatApi } from './sidechat-routes.ts'
 import { createAssistantLiveBuffer, type AssistantLiveBuffer } from './assistant-live.ts'
+import { readSidechatImage } from './sidechat-routes.ts'
+import { SIDECHAT_METADATA_BYTES, sidechatPromptBodyLimit } from './sidechat-image-admission.ts'
 import { readJsonBody, readTextBody, requireString, SidebarError, writeError, writeJson, writeOk } from './wire.ts'
 import { streamFileToResponse } from './file-stream.ts'
 import { createChangesOpsApi } from './changes-ops.ts'
@@ -706,6 +708,7 @@ function buildApi(
   getSettings: () => SidebarSettingsFace | undefined,
   assistantLive: AssistantLiveBuffer,
   archiveTasks: ArchiveTasks,
+  sidechatSignal: AbortSignal,
 ): Record<string, ApiMethod> {
   /**
    * Same-key sharing for the shared cwd path. Every file/Git route below
@@ -1264,7 +1267,7 @@ function buildApi(
     // identities are fenced from the generic session RPCs (agent-lookup
     // ownership), and the thread is created with a CUSTOM seed the stock
     // fork APIs cannot express.
-    ...buildSidechatApi(ctx, assistantLive),
+    ...buildSidechatApi(ctx, assistantLive, sidechatSignal),
   }
 }
 
@@ -1583,7 +1586,30 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   // an unmounted plugin must not leave orphan archives in the OS temp dir.
   const archiveTasks = createArchiveTasks()
   ctx.effect(() => () => { archiveTasks.dispose() }, 'dsh-better-sidebar: archive task table')
-  const api = buildApi(ctx, resolved, () => settingsFace, assistantLive, archiveTasks)
+  const sidechatLifetime = new AbortController()
+  ctx.effect(() => () => { sidechatLifetime.abort() }, 'dsh-better-sidebar: sidechat admissions')
+  const api = buildApi(ctx, resolved, () => settingsFace, assistantLive, archiveTasks, sidechatLifetime.signal)
+  // Concurrent LARGE-prompt admissions. Only a prompt body that may carry
+  // encoded images is counted: the prompt's JSON metadata is capped at
+  // SIDECHAT_METADATA_BYTES, so a body past that threshold is the only one
+  // that can hold image bytes. Pure-text prompts never reach it — an earlier
+  // counter charged EVERY `sidechat.prompt` and rejected plain text with a
+  // bogus 503 "Too many image admissions".
+  //
+  // A slot is taken from the declared `content-length` before reading, or
+  // while streaming bytes for a chunked body. Exceeding the cap answers 413
+  // `too-large` — the repo's status for an over-cap body (see readJsonBody) —
+  // instead of a retryable 503.
+  const SIDECHAT_LARGE_PROMPT_ADMISSIONS = 2
+  let largePromptAdmissions = 0
+  const reserveLargePrompt = (): (() => void) => {
+    if (largePromptAdmissions >= SIDECHAT_LARGE_PROMPT_ADMISSIONS) {
+      throw new SidebarError('too-large', 'Too many image admissions; try again', 413)
+    }
+    largePromptAdmissions++
+    let released = false
+    return () => { if (!released) { released = true; largePromptAdmissions-- } }
+  }
   ctx.effect(() => ctx.webServer.register({
     kind: 'prefix',
     path: '/sidebar/api',
@@ -1602,12 +1628,27 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
         writeError(res, new SidebarError('not-found', 'unknown sidebar API method', 404))
         return
       }
+      const imagePrompt = method === 'sidechat.prompt'
+      let releaseImagePrompt: (() => void) | undefined
+      const admitLargePrompt = (): void => { releaseImagePrompt ??= reserveLargePrompt() }
       const controller = method === 'changes.ops' ? new AbortController() : undefined
       const response = controller === undefined ? undefined : res as ServerResponse
       const abort = (): void => { controller?.abort() }
       response?.once('close', abort)
       try {
-        const payload = await readJsonBody(req)
+        // Browsers send content-length for a string-body fetch; refuse before
+        // reading when the declared size can already carry image bytes.
+        if (imagePrompt) {
+          const declared = Number(req.headers['content-length'])
+          if (Number.isFinite(declared) && declared > SIDECHAT_METADATA_BYTES) admitLargePrompt()
+        }
+        const payload = await readJsonBody(
+          req,
+          imagePrompt ? sidechatPromptBodyLimit(ctx) : undefined,
+          // A chunked (or lying-header) body is counted as soon as the bytes
+          // it delivered could hold an image.
+          imagePrompt ? total => { if (total > SIDECHAT_METADATA_BYTES) admitLargePrompt() } : undefined,
+        )
         // Own properties only. The dispatch table is an object literal, so a
         // bare lookup resolved Object.prototype members as "methods":
         // POST /sidebar/api/constructor answered 200 {}, toString answered
@@ -1622,10 +1663,30 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
       } catch (error) {
         if (controller?.signal.aborted !== true) writeError(res, error)
       } finally {
+        releaseImagePrompt?.()
         response?.off('close', abort)
       }
     },
   }), 'dsh-better-sidebar: /sidebar/api routes')
+
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'exact',
+    path: '/sidebar/sidechat-image',
+    handler: async (req, res) => {
+      if (!fence(req)) { writeError(res, new SidebarError('forbidden', 'forbidden', 403)); return }
+      if (req.method !== 'GET') { writeError(res, new SidebarError('method-error', 'method not allowed', 405)); return }
+      try {
+        const params = new URL(req.url ?? '/', 'http://dsh.internal').searchParams
+        const childId = params.get('childId')
+        const messageId = params.get('messageId')
+        const index = params.get('blockIndex')
+        if (!childId || !messageId || index === null || !/^\d+$/.test(index)) throw new SidebarError('bad-request', 'childId, messageId and blockIndex are required')
+        const image = await readSidechatImage(ctx, childId, messageId, Number(index))
+        res.writeHead(200, { 'content-type': image.ref.mediaType, 'x-content-type-options': 'nosniff', 'cache-control': 'private, no-store' })
+        res.end(image.data)
+      } catch (error) { writeError(res, error) }
+    },
+  }), 'dsh-better-sidebar: sidechat image route')
 
   // ── Raw upload route ───────────────────────────────────────────────────
   // One request writes one file without JSON/base64 inflation. Folder uploads

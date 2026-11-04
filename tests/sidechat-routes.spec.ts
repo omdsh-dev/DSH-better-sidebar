@@ -547,7 +547,7 @@ describe('sidechat.prompt', () => {
     const services = happyServices(undefined, child)
     const api = buildSidechatApi(ctxWith(services))
     const result = await api['sidechat.prompt']({ childId: 'child', text: 'tell me more' })
-    expect(result).toEqual({ accepted: true })
+    expect(result).toEqual({ accepted: true, messageId: expect.any(String) })
     expect(child.inject).not.toHaveBeenCalled()
     expect(child.followup).toHaveBeenCalledTimes(1)
     const message = child.followup.mock.calls[0]![0] as { content: Array<{ text: string }> }
@@ -611,6 +611,7 @@ describe('sidechat.info', () => {
     const api = buildSidechatApi(ctxWith(services))
     const info = await api['sidechat.info']({ childId: 'child' })
     expect(info).toEqual({
+      images: { available: false },
       live: true,
       status: 'idle',
       provider: 'test',
@@ -625,7 +626,7 @@ describe('sidechat.info', () => {
     services.agents.get = vi.fn((_id: unknown) => undefined)
     const api = buildSidechatApi(ctxWith(services))
     const info = await api['sidechat.info']({ childId: 'child' })
-    expect(info).toEqual({ live: false, preset: 'preset-a' })
+    expect(info).toEqual({ live: false, preset: 'preset-a', images: { available: false } })
     expect(services.open).toHaveBeenCalledWith('child', 'read')
   })
 
@@ -635,7 +636,7 @@ describe('sidechat.info', () => {
     services.open = vi.fn(async () => { throw new Error('unknown session') })
     services.sessionPersistence = { open: services.open }
     const api = buildSidechatApi(ctxWith(services))
-    await expect(api['sidechat.info']({ childId: 'ghost' })).resolves.toEqual({ live: false })
+    await expect(api['sidechat.info']({ childId: 'ghost' })).resolves.toEqual({ live: false, images: { available: false } })
   })
 })
 
@@ -1075,6 +1076,7 @@ describe('sidechat.info reports the effective route', () => {
     const services = happyServices(undefined, child)
     const api = buildSidechatApi(ctxWith(services))
     await expect(api['sidechat.info']({ childId: 'child' })).resolves.toEqual({
+      images: { available: false },
       live: true,
       status: 'idle',
       provider: 'live',
@@ -1105,6 +1107,7 @@ describe('sidechat.info reports the effective route', () => {
     }))
     const api = buildSidechatApi(ctxWith(services))
     await expect(api['sidechat.info']({ childId: 'child' })).resolves.toEqual({
+      images: { available: false },
       live: false,
       preset: 'preset-a',
       provider: 'cold',

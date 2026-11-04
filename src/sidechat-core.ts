@@ -21,6 +21,7 @@
  * a structured text snapshot inside the boundary prompt.
  */
 import type { SidebarHistoryEntry, SidebarSessionSummary } from './context-types.ts'
+import { projectSidechatContent, type SidechatImageLimits, type SidechatImageOccurrence } from './sidechat-images.ts'
 import type { AssistantLiveChunk } from './assistant-live.ts'
 import { foldSurface, isSurfaceEligibleType } from '@deepseek-ai/dsh-session/surface'
 
@@ -1284,6 +1285,7 @@ export function isContextInjectionMessage(data: Record<string, unknown>): boolea
 
 /** The info the thread header shows (live runtime state + agent identity). */
 export interface SidechatThreadInfo {
+  images?: { available: boolean; limits?: SidechatImageLimits }
   /** A live agent drives the thread right now (false = cold/persisted). */
   live: boolean
   /** Live lifecycle state; absent on cold threads. */
@@ -1306,6 +1308,8 @@ export interface SidechatThreadInfo {
  * invisible until a claim logs it as a durable `user/message`.
  */
 export interface SidechatPendingInput {
+  images?: SidechatImageOccurrence[]
+  removable?: boolean
   /** Durable message identity — the `sidechat.dequeue` key. */
   id: string
   /** Which boundary will claim it; `next-step` entries are claimed first. */
@@ -1351,20 +1355,6 @@ export interface SidechatModelCatalog {
   failures: readonly { id: string; name?: string; message: string }[]
 }
 
-/** Flatten one pending message's content into the text the bubble shows. */
-function pendingText(message: unknown): string {
-  const content = (message as { content?: unknown } | undefined)?.content
-  if (typeof content === 'string') return content
-  if (!Array.isArray(content)) return ''
-  const parts: string[] = []
-  for (const block of content) {
-    if (block === null || typeof block !== 'object') continue
-    const item = block as { type?: unknown; text?: unknown }
-    if (item.type === 'text' && typeof item.text === 'string') parts.push(item.text)
-  }
-  return parts.join('\n')
-}
-
 /** The identity one inbox message carries (`MessageId`, a branded string). */
 export function pendingInputId(message: unknown): string | undefined {
   const id = (message as { id?: unknown } | undefined)?.id
@@ -1385,7 +1375,7 @@ export function pendingInputs(
   const add = (message: unknown, target: SidechatPendingInput['target']): void => {
     const id = pendingInputId(message)
     if (id === undefined) return
-    rows.push({ id, target, text: pendingText(message) })
+    rows.push({ id, target, ...projectSidechatContent((message as { content?: unknown }).content) })
   }
   for (const message of nextStep) add(message, 'next-step')
   for (const message of nextTurn) add(message, 'next-turn')
@@ -1407,7 +1397,7 @@ export function pendingInputs(
  *   prefix length, or the whole log).
  * @returns the ids of messages still pending after the folded events.
  */
-export function pendingIdsInLog(events: readonly SidechatLogEvent[], limit?: number): string[] {
+export function inboxInLog(events: readonly SidechatLogEvent[], limit?: number): { nextStep: unknown[]; nextTurn: unknown[] } {
   const nextTurn: unknown[] = []
   const nextStep: unknown[] = []
   const end = limit === undefined ? events.length : Math.min(limit, events.length)
@@ -1422,6 +1412,11 @@ export function pendingIdsInLog(events: readonly SidechatLogEvent[], limit?: num
     const inserted = Array.isArray(data.inserted) ? data.inserted : []
     target.splice(Math.max(0, Math.min(start, target.length)), Math.max(0, removed), ...inserted)
   }
+  return { nextStep, nextTurn }
+}
+
+export function pendingIdsInLog(events: readonly SidechatLogEvent[], limit?: number): string[] {
+  const { nextStep, nextTurn } = inboxInLog(events, limit)
   const ids: string[] = []
   for (const message of [...nextStep, ...nextTurn]) {
     const id = pendingInputId(message)
@@ -1445,6 +1440,14 @@ export function inheritedPendingIds(
   inheritedEventCount: number,
 ): string[] {
   return pendingIdsInLog(events, Math.max(0, Math.trunc(inheritedEventCount)))
+}
+
+export function coldPendingMessages(events: readonly SidechatLogEvent[], inheritedEventCount?: number): { nextStep: unknown[]; nextTurn: unknown[] } {
+  const boundary = inheritedEventCount ?? events.findLastIndex(event => event.type === 'session/end-seed' && (event.data as { inherited?: boolean }).inherited === true)
+  const ghosts = new Set(inheritedPendingIds(events, Math.max(0, boundary)))
+  const inbox = inboxInLog(events)
+  const owned = (message: unknown): boolean => !ghosts.has(pendingInputId(message) ?? '')
+  return { nextStep: inbox.nextStep.filter(owned), nextTurn: inbox.nextTurn.filter(owned) }
 }
 
 /**

@@ -118,6 +118,7 @@ describe('host plugin smoke', () => {
     apply(ctx as never)
     expect(routes.map(route => route.path)).toEqual([
       '/sidebar/api',
+      '/sidebar/sidechat-image',
       '/sidebar/upload',
       '/sidebar/write',
       '/sidebar/bundle',
@@ -1584,6 +1585,133 @@ describe('session cwd resolution over the API route', () => {
     } finally {
       removeTree(root)
     }
+  })
+})
+/**
+ * Side Chat prompt admission over the REAL `/sidebar/api` route: only a body
+ * that may carry encoded images (past the 1 MiB prompt-metadata cap) is
+ * counted. The old gate charged every `sidechat.prompt`, so three plain-text
+ * sends could answer a bogus 503 "Too many image admissions".
+ */
+describe('sidechat prompt large-body admission', () => {
+  const limits = {
+    maxImagesPerMessage: 8,
+    maxImageBytes: 10 * 1024 * 1024,
+    maxMessageImageBytes: 3 * 1024 * 1024,
+    maxImagePixels: 100,
+    maxImageDimension: 10,
+    mediaTypes: ['image/png'] as const,
+  }
+  const ref = { attachmentId: 'saved', mediaType: 'image/png', bytes: 900_000, width: 1, height: 1 }
+
+  /** Mount the plugin and hand back the `/sidebar/api` route. */
+  const mountServer = (): SidebarWebRoute => {
+    const routes: SidebarWebRoute[] = []
+    lastMountedRoutes = routes
+    const events = [
+      { type: 'subagent/descriptor', seq: 0, time: 0, data: { provider: 'sidechat', mode: 'continuable', version: 3 } },
+      { type: 'session/end-seed', seq: 1, time: 1, data: { inherited: true } },
+    ]
+    const agent = {
+      id: 'child',
+      status: 'idle',
+      options: { provider: 'test', model: 'vision' },
+      ctx: { on: () => () => {} },
+      session: { header: { origin: 'subagent', parentSession: 'parent' }, inheritedEventCount: 1, snapshotEvents: () => events, append: () => {} },
+      inject: vi.fn(),
+      followup: vi.fn(),
+      cancel: vi.fn(),
+      inbox: { nextStep: [] as unknown[], nextTurn: [] as unknown[], remove: () => true, clear: () => {} },
+    }
+    const attachments = {
+      imageLimits: limits,
+      admitPromptContent: vi.fn(async (parts: Array<{ type: string }>) => parts.map(part => part.type === 'image' ? { type: 'image', attachment: ref } : part)),
+      readImage: vi.fn(async () => ({})),
+      isAttachmentError: () => false,
+    }
+    const ctx = {
+      connection: { requestRejection: () => undefined },
+      webServer: {
+        register: (route: SidebarWebRoute) => { routes.push(route); return () => {} },
+        registerUpgrade: () => () => {},
+      },
+      sessions: { get: () => undefined },
+      tools: { register: () => () => {} },
+      effect: (fn: () => void | (() => void)) => { fn() },
+      inject: () => () => {},
+      on: () => () => {},
+      get: (key: string) => key === 'agents' ? { get: () => agent } : key === 'attachments' ? attachments : undefined,
+      logger: { info: () => {}, warn: () => {}, debug: () => {}, error: () => {} },
+    }
+    apply(ctx as never)
+    return routes.find(route => route.path === '/sidebar/api')!
+  }
+
+  /** Invoke the route with one fake request and parse the wire envelope. */
+  const deliver = async (route: SidebarWebRoute, req: unknown): Promise<{ ok: boolean; status: number; error?: { code?: string; message: string } }> => {
+    const out = { status: 200, body: '' }
+    const res = {
+      writeHead: (status: number) => { out.status = status },
+      end: (chunk: unknown) => { out.body += String(chunk ?? '') },
+    } as never
+    await route.handler(req as never, res)
+    return { ...JSON.parse(out.body) as { ok: boolean; error?: { code?: string; message: string } }, status: out.status }
+  }
+
+  /**
+   * A prompt request whose body is split at 1.1 MB: the head always crosses the
+   * admission threshold, and a held request can then stay mid-read.
+   */
+  const request = (body: string, headers: Record<string, string> = {}, hold?: Promise<void>): unknown => {
+    const head = Buffer.from(body.slice(0, 1_100_000))
+    const tail = Buffer.from(body.slice(1_100_000))
+    return {
+      method: 'POST',
+      url: '/sidebar/api/sidechat.prompt',
+      headers: { host: '127.0.0.1:3080', ...headers },
+      [Symbol.asyncIterator]: async function* () {
+        yield head
+        if (hold !== undefined) await hold
+        yield tail
+      },
+    }
+  }
+  const deferred = (): { promise: Promise<void>; resolve: () => void } => {
+    let resolve!: () => void
+    const promise = new Promise<void>(done => { resolve = done })
+    return { promise, resolve }
+  }
+  const tick = (): Promise<void> => new Promise(resolve => setTimeout(resolve, 0))
+
+  it('serves three concurrent pure-text prompts without the image admission gate', async () => {
+    const route = mountServer()
+    const answers = await Promise.all([1, 2, 3].map(n => deliver(
+      route,
+      request(JSON.stringify({ childId: 'child', text: `message ${n}` })),
+    )))
+    expect(answers.map(answer => answer.status)).toEqual([200, 200, 200])
+    expect(answers.every(answer => answer.ok)).toBe(true)
+  })
+
+  it('answers a third concurrent large prompt with 413 and releases the slots', async () => {
+    const route = mountServer()
+    const body = JSON.stringify({ childId: 'child', text: '', images: [{ mediaType: 'image/png', data: 'A'.repeat(1_200_000) }] })
+    const firstHold = deferred()
+    const secondHold = deferred()
+    // Slot one: declared content-length, taken before a byte is read.
+    const first = deliver(route, request(body, { 'content-length': String(Buffer.byteLength(body)) }, firstHold.promise))
+    // Slot two: a chunked body, counted when the stream crosses the metadata cap.
+    const second = deliver(route, request(body, {}, secondHold.promise))
+    await tick()
+    // Slot three: the same threshold must answer 413 rather than queue.
+    const third = await deliver(route, request(body))
+    expect(third).toMatchObject({ ok: false, status: 413, error: { code: 'too-large' } })
+    // A declared content-length is refused before the body is read, too.
+    const fourth = await deliver(route, request(body, { 'content-length': String(Buffer.byteLength(body)) }))
+    expect(fourth).toMatchObject({ ok: false, status: 413, error: { code: 'too-large' } })
+    firstHold.resolve()
+    secondHold.resolve()
+    expect((await Promise.all([first, second])).map(answer => answer.status)).toEqual([200, 200])
   })
 })
 /**
