@@ -141,6 +141,7 @@ export const pt: Record<string, string> = {
   showInFolder: 'Mostrar na pasta',
   refreshUnsavedConfirm: 'O arquivo mudou no disco. Atualizar descartará edições não salvas. Continuar?',
   closeUnsavedConfirm: 'Este arquivo tem edições não salvas. Fechar a aba irá descartá-las. Continuar?',
+  draftRestoreConfirm: 'Foi encontrado um rascunho não salvo. Restaurar? (Cancelar descarta o rascunho.)',
   switchUnsavedConfirm: 'Este arquivo tem edições não salvas. Trocar de arquivo irá descartá-las. Continuar?',
   save: 'Salvar',
   saved: 'Salvo',

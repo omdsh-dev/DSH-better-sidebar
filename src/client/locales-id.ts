@@ -156,6 +156,7 @@ export const id: Record<string, string> = {
   showInFolder: 'Tampilkan di folder',
   refreshUnsavedConfirm: 'File berubah di disk. Menyegarkan akan membuang edit yang belum disimpan. Lanjutkan?',
   closeUnsavedConfirm: 'File ini memiliki edit yang belum disimpan. Menutup tab akan membuangnya. Lanjutkan?',
+  draftRestoreConfirm: 'Draf yang belum disimpan ditemukan. Pulihkan? (Batal akan membuang draf.)',
   switchUnsavedConfirm: 'File ini memiliki edit yang belum disimpan. Mengganti file akan membuangnya. Lanjutkan?',
   save: 'Simpan',
   saved: 'Tersimpan',

@@ -160,6 +160,7 @@ export const pl: Record<string, string> = {
   showInFolder: 'Pokaż w folderze',
   refreshUnsavedConfirm: 'Plik zmienił się na dysku. Odświeżenie odrzuci niezapisane zmiany. Kontynuować?',
   closeUnsavedConfirm: 'Ten plik ma niezapisane zmiany. Zamknięcie karty je odrzuci. Kontynuować?',
+  draftRestoreConfirm: 'Znaleziono niezapisany szkic. Przywrócić? (Anulowanie go odrzuci.)',
   switchUnsavedConfirm: 'Ten plik ma niezapisane zmiany. Przełączenie pliku je odrzuci. Kontynuować?',
   save: 'Zapisz',
   saved: 'Zapisano',

@@ -149,6 +149,7 @@ export const it: Record<string, string> = {
   showInFolder: 'Mostra nella cartella',
   refreshUnsavedConfirm: 'Il file è cambiato su disco. Aggiornare scarterà le modifiche non salvate. Continuare?',
   closeUnsavedConfirm: 'Questo file ha modifiche non salvate. Chiudere la scheda le perderà. Continuare?',
+  draftRestoreConfirm: 'Trovata una bozza non salvata. Ripristinarla? (Annulla la scarta.)',
   switchUnsavedConfirm: 'Questo file ha modifiche non salvate. Cambiare file le perderà. Continuare?',
   save: 'Salva',
   saved: 'Salvato',

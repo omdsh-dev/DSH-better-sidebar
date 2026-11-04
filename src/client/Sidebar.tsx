@@ -43,6 +43,7 @@ import { Workbench, type WorkbenchActions } from './split-pane.tsx'
 import { useViewportSize } from './breakpoints.ts'
 import { bottomPushHeight } from './layout-push.ts'
 import { TabContent, buildNewTabOptions } from './sidebar/TabContent.tsx'
+import { flushDraftBackups } from './editor-draft-backup.ts'
 import { confirmDiscardDraft, dirtyCount, editorDirtyRevision, subscribeEditorDirty } from './editor-dirty.ts'
 import { createOpenInApp } from './open-in-app.ts'
 import { useCenterColumn } from './sidebar/use-center-column.ts'
@@ -231,6 +232,11 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
   useEffect(() => {
     const onBeforeUnload = (event: BeforeUnloadEvent): void => {
       if (dirtyCount() === 0) return
+      // Persist the latest drafts before the page may go away: the Desktop
+      // shell's quit is shell-owned and can complete without ever rendering
+      // this guard's prompt (docs/host-contracts.md), so the durable copy is
+      // the only record of the draft left.
+      flushDraftBackups()
       event.preventDefault()
       event.returnValue = ''
     }

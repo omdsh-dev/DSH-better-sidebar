@@ -36,6 +36,7 @@ import { rewriteLocalMarkdownLinks } from './markdown-navigation.ts'
 import { languageForPath } from './lang.ts'
 import { cmSurfaceTheme, CmThemeCompartment } from './cm-themes.ts'
 import { cmSearchExtensions, CmSearchPhrases } from './cm-search.ts'
+import { clearDraftBackup, flushDraftBackups, readDraftBackup, registerDraftSource, scheduleDraftBackup } from './editor-draft-backup.ts'
 import { flashQuoteLines, quoteFlashField, quoteFlashHighlight } from './quote-flash.ts'
 import { isDarkScheme, subscribeColorScheme } from './theme.ts'
 import { SandboxStatusBar } from './SandboxStatusBar.tsx'
@@ -357,6 +358,25 @@ export function TextEditor(props: FileViewerProps) {
     editScrollRef.current = editScrollOf(scope, path)
   }, [scope, path])
 
+  /**
+   * Offer this file's durable backup back to the reader (see
+   * editor-draft-backup.ts): the native tab strip's × and the Desktop shell's
+   * quit can drop the tab without a prompt, so the draft is kept in storage.
+   * Declining drops it; accepting makes it the live draft, which the normal
+   * dirty path then owns.
+   */
+  const restoreDraftBackup = (): string | null => {
+    if (content === undefined) return null
+    const backup = readDraftBackup(scope.sessionId, path, content)
+    if (backup === null) return null
+    const confirmed = typeof window.confirm === 'function' ? window.confirm(t('draftRestoreConfirm')) : false
+    if (!confirmed) {
+      clearDraftBackup(scope.sessionId, path)
+      return null
+    }
+    return backup
+  }
+
   // Create the CodeMirror editor once the content is loaded. The view owns
   // the document; React only tracks dirty state through the update listener
   // (the draft — the preview's text — is snapshotted from the live view on
@@ -376,8 +396,9 @@ export function TextEditor(props: FileViewerProps) {
     searchPhrasesRef.current = searchPhrases
     const gitComp = new CmGitGutterCompartment()
     gitCompRef.current = gitComp
+    const restored = restoreDraftBackup()
     const state = EditorState.create({
-      doc: content,
+      doc: restored ?? content,
       extensions: [
         CodeMirrorView.lineWrapping,
         // The change bar sits BEFORE the line numbers (VS Code's own order):
@@ -406,6 +427,7 @@ export function TextEditor(props: FileViewerProps) {
         CodeMirrorView.updateListener.of((update) => {
           if (update.docChanged) {
             setDirty(true)
+            scheduleDraftBackup(scope.sessionId, path)
           }
         }),
         keymap.of([
@@ -465,6 +487,14 @@ export function TextEditor(props: FileViewerProps) {
     })
     const view = new CodeMirrorView({ state, parent: host })
     viewRef.current = view
+    const releaseDraft = registerDraftSource(scope.sessionId, path, () => viewRef.current?.state.doc.toString() ?? null)
+    if (restored !== null) {
+      setDirty(true)
+      setDraft(restored)
+      // Re-persist the adopted draft from the live document: the entry must
+      // not disappear just because the app quits before the next edit.
+      scheduleDraftBackup(scope.sessionId, path)
+    }
     // Edit-mode scroll memory. The native sidebar re-seats a tab while it is
     // being saved (the chip's dirty mark, the change gutter), and a scroller
     // that is detached from the document comes back with `scrollTop` 0 — the
@@ -479,6 +509,10 @@ export function TextEditor(props: FileViewerProps) {
     scroller.addEventListener('scroll', onScroll, { passive: true })
     return () => {
       scroller.removeEventListener('scroll', onScroll)
+      // The throttled entry may still be pending: write it while this view
+      // (the only reader of its text) is still alive.
+      flushDraftBackups()
+      releaseDraft()
       view.destroy()
       viewRef.current = null
       themeCompRef.current = null
@@ -788,6 +822,9 @@ export function TextEditor(props: FileViewerProps) {
       setDirty(false)
       setConflict(false)
       setSaveState('saved')
+      // Saved: nothing is unsaved any more, so the durable backup must not
+      // offer itself back on the next open.
+      clearDraftBackup(scope.sessionId, path)
       // The saved bytes are a new revision of the uncommitted diff: re-read
       // the change set (the file's XY status code usually stays the same, so
       // the status store alone would never wake the gutter up again).

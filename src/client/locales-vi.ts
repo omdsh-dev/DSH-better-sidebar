@@ -158,6 +158,7 @@ export const vi: Record<string, string> = {
   showInFolder: 'Hiển thị trong thư mục',
   refreshUnsavedConfirm: 'Tệp đã thay đổi trên đĩa. Làm mới sẽ loại bỏ các chỉnh sửa chưa lưu. Tiếp tục?',
   closeUnsavedConfirm: 'Tệp này có chỉnh sửa chưa lưu. Đóng tab sẽ loại bỏ chúng. Tiếp tục?',
+  draftRestoreConfirm: 'Đã tìm thấy bản nháp chưa lưu. Khôi phục? (Hủy sẽ bỏ bản nháp.)',
   switchUnsavedConfirm: 'Tệp này có chỉnh sửa chưa lưu. Chuyển tệp sẽ loại bỏ chúng. Tiếp tục?',
   save: 'Lưu',
   saved: 'Đã lưu',
