@@ -2057,6 +2057,9 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 
 .mermaidModalToolbar {
   position: absolute;
+  /* Fallback only: mermaid.tsx sets an inline `top` that also clears the
+     shell's native window-control band, which swallows pointer events (#805).
+     Kept here so the toolbar still lands somewhere sane if that never runs. */
   top: 16px;
   right: 16px;
   display: flex;
