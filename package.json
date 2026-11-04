@@ -64,6 +64,7 @@
     "lib/client-terminal.js",
     "lib/types/**/*.d.ts",
     "src",
+    "scripts/check-profile-host-tree.mjs",
     "scripts/install.sh",
     "scripts/install.ps1",
     "cordis.patch.yml",
