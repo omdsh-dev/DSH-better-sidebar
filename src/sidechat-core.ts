@@ -981,6 +981,19 @@ function rebaseEvent(
       shadowedSeqs: mapped as number[],
     }
   }
+  // The DeepSeek log ledger cites an ABSOLUTE watermark: `throughSeq` is
+  // the last event whose upload a request confirmed, and the host's v4 reader
+  // requires it to precede its own marker. Renumbering without it ships a
+  // seed the reader rejects outright ("delivery throughSeq must precede its
+  // marker") — the child then stays permanently unreadable. Carry the
+  // watermark through the same map; one that names an event inside the
+  // dropped span has no child-side equivalent, so the record drops rather
+  // than citing a delivery that never happened.
+  if (event.type === 'session-log-deepseek/delivery-accepted' && typeof sourceData.throughSeq === 'number') {
+    const mapped = rebase.get(sourceData.throughSeq)
+    if (mapped === undefined) return DROPPED
+    seed.data = { ...seed.data, throughSeq: mapped }
+  }
   const headerSeq = sourceData.headerSeq
   if (event.type === 'developer/message' && typeof headerSeq === 'number') {
     const mapped = rebase.get(headerSeq)
