@@ -273,9 +273,20 @@ export function apply(ctx: Context): void {
           hostCheckFrame = null
           const layer = host?.querySelector<HTMLElement>('[data-dsh-panel-host]')
           if (layer === null || layer === undefined) return
+          // Viewport height units are scaled by CSS zoom even though the
+          // fixed inset width still fits the viewport. Only normalize that
+          // expected height; rect/offset ratios would also hide real transforms.
+          const expectedHeight = (): number => {
+            let zoom = 1
+            for (let node: HTMLElement | null = layer; node !== null; node = node.parentElement) {
+              const value = Number.parseFloat(getComputedStyle(node).zoom)
+              if (Number.isFinite(value) && value > 0) zoom *= value
+            }
+            return window.innerHeight * zoom
+          }
           const rect = layer.getBoundingClientRect()
           const mismatched = Math.abs(rect.left) > 8 || Math.abs(rect.top) > 8
-            || Math.abs(rect.width - window.innerWidth) > 8 || Math.abs(rect.height - window.innerHeight) > 8
+            || Math.abs(rect.width - window.innerWidth) > 8 || Math.abs(rect.height - expectedHeight()) > 8
           if (!mismatched) {
             layer.removeAttribute('data-dsh-panel-host-degraded')
             layer.style.transform = ''
@@ -294,7 +305,7 @@ export function apply(ctx: Context): void {
             const rawLeft = r.left - applied.x
             const rawTop = r.top - applied.y
             if (Math.abs(rawLeft) <= 1 && Math.abs(rawTop) <= 1
-              && Math.abs(r.width - window.innerWidth) <= 1 && Math.abs(r.height - window.innerHeight) <= 1) {
+              && Math.abs(r.width - window.innerWidth) <= 1 && Math.abs(r.height - expectedHeight()) <= 1) {
               layer.removeAttribute('data-dsh-panel-host-degraded')
               layer.style.transform = ''
               return
