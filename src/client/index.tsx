@@ -26,7 +26,8 @@ import { createNativeSurface } from './native/surface.ts'
 import { isTargetAvailable, openInterceptedLink, registerLinkInterception, shouldTakeOverLink } from './link-intercept.ts'
 import { registerImeGuard } from './ime-guard.ts'
 import { registerQuoteSource } from './selection-quote.ts'
-import { registerSettingsNavIcon } from './settings-nav-icon.ts'
+import { IconSideCardNav } from './icons.tsx'
+import type { SettingsSectionIconOwnerProps } from '@deepseek-ai/dsh-client-ui-settings/client'
 import { loadBootDecision } from './prefs.ts'
 import { SideCardSection } from './SideCardSection.tsx'
 import { api } from './api.ts'
@@ -462,15 +463,19 @@ export function apply(ctx: Context): void {
       'dsh-better-sidebar: IME composition guard',
     )
 
-    // DSH 0.1.x does not yet carry an icon through the settings.section
-    // registration contract: its shell renders a generic gear for every
-    // external section. Mark only this plugin's localized nav row so
-    // layout.css can paint the requested Side card SVG; the disposer clears
-    // the marker for HMR / plugin disable.
-    ctx.effect(
-      () => registerSettingsNavIcon(() => t('settingsNav')),
-      'dsh-better-sidebar: settings navigation icon',
-    )
+    // The settings nav icon, contributed through the shell's own slot. The
+    // contract addresses an icon by the section id (an unmatched id never
+    // renders) and says the shell keeps its default glyph when none is
+    // registered — so filling the slot REPLACES the fallback. The old
+    // marker-and-CSS-mask replacement is gone with it: under the current shell
+    // the nav icon is wrapped in a span, the stale `> svg:first-child` rule
+    // stopped hiding the fallback and the row painted two glyphs.
+    ctx.slots.inject('settings.section.icon', () => ctx.slots.register({
+      name: 'settings.section.icon',
+      id: 'better-sidebar',
+      order: 100,
+      label: () => t('settingsNav'),
+    }, ({ size }: SettingsSectionIconOwnerProps) => createElement(IconSideCardNav, { size })))
 
     // The "Side card" settings section: appears in the DSH Settings shell
     // once the shell's declaration is on the ledger (slots.inject waits for
