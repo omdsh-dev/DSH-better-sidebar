@@ -70,9 +70,14 @@ function errorMessage(reason: unknown): string {
 
 /** One checkout root in the form comparisons use: `git rev-parse` reports
  *  forward slashes, React state may carry the shell's backslashes, Windows
- *  folds case, and a trailing separator means the same directory. */
+ *  folds case, and a trailing separator means the same directory.
+ *
+ *  Case folds only for Windows spellings. POSIX keeps case: a container
+ *  workspace can legally hold `Foo` and `foo` as two different checkouts, and
+ *  folding would light up both chips. */
 function rootKey(value: string | undefined): string {
-  return (value ?? '').replaceAll('\\', '/').replace(/\/+$/, '').toLowerCase()
+  const key = (value ?? '').replaceAll('\\', '/').replace(/\/+$/, '')
+  return /^[a-zA-Z]:\//.test(key) ? key.toLowerCase() : key
 }
 
 /** Whether two spellings name the SAME checkout root. */

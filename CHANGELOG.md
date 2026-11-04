@@ -3,6 +3,11 @@
 > 本文档收录 dsh-better-sidebar 的完整发布历史（最新版摘要见 [README](README_ZH.md)；同步发布于 [GitHub Releases](https://github.com/omdsh-dev/DSH-better-sidebar/releases)）。
 
 ### 未发布
+
+- 📐 **页面 CSS zoom 不再被误判成页面级 transform**（[#1102](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1102)；贡献者 PR [#1110](https://github.com/omdsh-dev/DSH-better-sidebar/pull/1110) @HootRock）：`body { zoom: 1.15 }` 下 panel host 的 `100vh` 按 zoom 放大（811px 视口 → 约 932.6px），几何自检因此判定「页面被 transform」→ 降级成 absolute、把文档撑高，聚焦 / 滚动会把整个外壳一起推走。现在预期高度按祖先链累积的 `zoom` 归一，宽度与位移仍按原阈值判定，真实 transform 不会被掩盖。
+  - 🧪 测试：`tests/e2e/panel-host-zoom.e2e.ts`（Chromium 实测 `body { zoom: 1.15 }` 下不再降级）。
+- 🎛 **Changes 的「Git / 本轮文件」切换改用公开组件**（[#1098](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1098)；贡献者 PR [#1101](https://github.com/omdsh-dev/DSH-better-sidebar/pull/1101) @wang-kaopu）：此前自己画一套按钮、还依赖宿主私有 CSS Modules 的哈希类名，宿主一改样式就退化成浏览器原生按钮（方框 + 1px 黑边）。现在改用 `dsh-client-ui-primitives` 公开导出的 `SegmentedControl`，私有类名依赖一并删除。
+  - 🧪 测试：`tests/changes-tab.spec.tsx` 覆盖 ARIA 面板关系、键盘导航、lens 持久化与刷新。
 - 🎨 **底部工作台的终端不再自带黑底**：终端区域一直是一块纯黑矩形，而周围的 tab 条与面板都不是。原因是 xterm 自带样式表里的 `.xterm .xterm-viewport { background-color: #000 }`，而本插件的规则 `.screen .xterm-viewport` 被 CSS Modules 把 xterm 的类名也哈希了（编译成 `.o8IiwG_xterm-viewport`），真实 DOM 里根本不匹配；即便包上 `:global()`，同权重的规则也会因为 xterm 在 `open()` 时才注入样式表而输在源顺序。现在选择器写成 `.screen :global(.xterm .xterm-viewport)`（`:global` 保命、多一级 `.xterm` 把特异性抬到 0,3,0），`.screen` 自身也不再画 `bg-base`。Chromium 实测：0,2,0 → `rgb(0, 0, 0)`，0,3,0 → `rgba(0, 0, 0, 0)`。
 - 🗂 **容器工作区里能直接看到并切换每个子仓库**：`git.status` 早就把发现到的全部根放在 `repositories` 里，但 Git 面板只在「⋯（更多操作）→ 仓库」二级菜单中列出它们——面板顶部既没有仓库名也没有数量，正文默认渲染 `repositories[0]`，于是有三个项目的工作区看起来只有一个。现在发现多个根时，「更改」区块上方渲染一行仓库胶囊（`data-scm-repos`，每个根一个 `[data-scm-repo]`），当前检出以 `[data-active="true"]` 高亮；点击走既有的 `chooseRepo`，读数、写操作与提交图继续被钉在选中的根上。单一仓库工作区不渲染这一行，原菜单入口保留。
   - 🧪 `tests/git-repo-switcher.spec.tsx` 新增 3 例：多仓库逐个列出并可切换、同一检出的反斜杠/尾斜杠/大小写写法只算一个、单仓库不渲染切换行。
