@@ -41,8 +41,17 @@ function fakeTriggers(): FakeTriggers {
   return {
     captured,
     registerSource: (src: SidebarQuoteSource): (() => void) => {
+      // The REAL contract (`ctx.inputTriggers`): one source per (trigger,
+      // name); a second registration THROWS. A permissive fake would hide the
+      // borrowed-source lifecycle bug this file pins.
+      if (captured.length > 0) {
+        throw new Error('slash source "@betterSidebarQuote" is already registered')
+      }
       captured.push(src)
-      return () => { captured.splice(captured.indexOf(src), 1) }
+      return () => {
+        const at = captured.indexOf(src)
+        if (at !== -1) captured.splice(at, 1)
+      }
     },
   }
 }
@@ -141,6 +150,56 @@ describe('quoteFallbackInsert', () => {
   })
 })
 
+describe('the record store (persistence is a prerequisite for a chip)', () => {
+  it('skips the chip when the record cannot be written (the caller falls back)', async () => {
+    const mod = await freshModule()
+    mod.registerQuoteSource(fakeCtx({ triggers: fakeTriggers() }))
+    // Private mode / quota: writes throw. There is no readable store at all.
+    Object.defineProperty(globalThis, 'localStorage', {
+      configurable: true,
+      writable: true,
+      value: {
+        getItem: () => null,
+        setItem: () => { throw new Error('QuotaExceededError') },
+        removeItem: () => {},
+        clear: () => {},
+        key: () => null,
+        length: 0,
+      },
+    })
+    const composer = fakeComposer()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    // A chip whose record never landed would click into nothing and make the
+    // codec throw on send, so the insert must report false and leave the
+    // composer to the built-in fallback (identical payload, not clickable).
+    expect(mod.insertQuoteChip(fakeCtx({ composer }), 's1', SELECTION)).toBe(false)
+    expect(composer.insertReference).not.toHaveBeenCalled()
+    expect(warn).toHaveBeenCalled()
+  })
+
+  it('persists the size-reduced payload, not the raw selection', async () => {
+    const mod = await freshModule()
+    mod.registerQuoteSource(fakeCtx({ triggers: fakeTriggers() }))
+    // A large selection is exactly what used to blow the quota: the record
+    // must carry the send payload (header only past the limit), never the raw
+    // text (200 records of whole selections).
+    const huge = { ...SELECTION, text: 'x'.repeat(200_000) }
+    expect(mod.insertQuoteChip(fakeCtx({ composer: fakeComposer() }), 's1', huge)).toBe(true)
+    const record = storedRecord(mod)
+    expect(record?.text).toBe('src/a.ts:2-3')
+    const raw = localStorage.getItem(mod.QUOTE_STORE_KEY) ?? ''
+    expect(raw.length).toBeLessThan(1_000)
+    expect(raw).not.toContain('xxxx')
+  })
+
+  it('stores the fenced block a normal selection sends, byte for byte', async () => {
+    const mod = await freshModule()
+    mod.registerQuoteSource(fakeCtx({ triggers: fakeTriggers() }))
+    expect(mod.insertQuoteChip(fakeCtx({ composer: fakeComposer() }), 's1', SELECTION)).toBe(true)
+    expect(storedRecord(mod)?.text).toBe('```src/a.ts:2-3\nconst x = 1\n```')
+  })
+})
+
 describe('insertQuoteChip without a registered source', () => {
   it('refuses and leaves the store untouched (the caller falls back)', async () => {
     const mod = await freshModule()
@@ -194,7 +253,7 @@ describe('lifecycle self-heal (a disposed fiber must not kill the feature silent
     expect(storedJson(mod)).toBeTruthy()
   })
 
-  it('treats a duplicate registration as ready instead of staying off forever', async () => {
+  it('treats the other instance\'s source as ready instead of staying off forever', async () => {
     const mod = await freshModule()
     // The exact host wording (ui-input-trigger service.ts:58) — it contains
     // "already registered", not "duplicate"; the tolerance must match it.
@@ -203,17 +262,19 @@ describe('lifecycle self-heal (a disposed fiber must not kill the feature silent
         throw new Error('slash source "@betterSidebarQuote" is already registered')
       },
     }
-    mod.registerQuoteSource(fakeCtx({ triggers: dup }))
+    const ctx = fakeCtx({ triggers: dup, composer: fakeComposer() })
+    mod.registerQuoteSource(ctx)
     // The gate passed → the insert path runs (and lands in the fake composer).
-    expect(mod.insertQuoteChip(fakeCtx({ composer: fakeComposer() }), 's1', SELECTION)).toBe(true)
+    expect(mod.insertQuoteChip(ctx, 's1', SELECTION)).toBe(true)
     expect(storedJson(mod)).toBeTruthy()
   })
 
-  it('a second module instance (the editor chunk copy) self-registers and shares the store', async () => {
+  it('a second module instance (the editor chunk copy) reuses the registered source and shares the store', async () => {
     // The build ships this module in the core bundle AND the lazy editor
     // chunk: two independent module instances at runtime. The core copy
     // registers at apply; the editor copy — the one the commit actually
-    // calls — starts cold and must self-heal at commit.
+    // calls — starts cold. The host refuses its duplicate registration, so it
+    // must commit through the BORROWED source and reach the same store.
     const core = await freshModule()
     const triggers = fakeTriggers()
     core.registerQuoteSource(fakeCtx({ triggers, sidebar: { openFile: vi.fn() } }))
@@ -221,13 +282,33 @@ describe('lifecycle self-heal (a disposed fiber must not kill the feature silent
 
     const editor = await freshModule() // a cold second instance of the module
     expect(editor.insertQuoteChip(fakeCtx({ triggers, composer: fakeComposer() }), 's1', SELECTION)).toBe(true)
-    expect(triggers.captured).toHaveLength(2) // THIS copy registered its own source
+    expect(triggers.captured).toHaveLength(1) // no second source: the host refused it
     const record = storedRecord(editor)
     expect(record?.path).toBe('/w/src/a.ts')
 
     // The core copy resolves the editor-written record through the shared
     // localStorage (click routing / send serialization live there).
     expect(core.resolveQuote(record?.id as string)?.path).toBe('/w/src/a.ts')
+  })
+
+  it('takes the source over after the owning instance disposes (a chip must never go dead)', async () => {
+    const core = await freshModule()
+    const triggers = fakeTriggers()
+    const ctx = fakeCtx({ triggers, composer: fakeComposer() })
+    const disposeCore = core.registerQuoteSource(ctx)
+    const editor = await freshModule()
+    // The editor copy borrows the live source from the core bundle.
+    expect(editor.insertQuoteChip(ctx, 's1', SELECTION)).toBe(true)
+    expect(triggers.captured).toHaveLength(1)
+    // The owner goes away (session switch / socket reconnect / HMR). Nothing
+    // tells the borrowing instance, so its next commit must notice the empty
+    // slot and register — otherwise clicks are silently ignored and the codec
+    // blocks the send.
+    disposeCore()
+    expect(triggers.captured).toHaveLength(0)
+    expect(editor.insertQuoteChip(ctx, 's1', SELECTION)).toBe(true)
+    expect(triggers.captured).toHaveLength(1)
+    expect(triggers.captured[0]?.name).toBe(editor.QUOTE_SOURCE)
   })
 })
 
