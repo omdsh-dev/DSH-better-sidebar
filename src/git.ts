@@ -395,6 +395,44 @@ export interface RunGitOptions {
   maxNulFields?: number
 }
 
+/**
+ * `\\wsl.localhost\<distro>\<path>` — the cwd of a WSL workspace session as
+ * the Windows host sees it. The legacy `\\wsl$\<distro>\…` share and the
+ * forward-slash spelling (`//wsl.localhost/…`, which a POSIX-ish caller
+ * hands over) both name the same tree, so all three are accepted.
+ */
+const WSL_UNC_ROOT = /^[/\\]{2}wsl(?:\.localhost|\$)[/\\]([^/\\]+)(?:[/\\](.*))?$/i
+
+/** Where one git command must run when the cwd lives in a distribution. */
+export interface WslLaunch {
+  /** The distribution to enter — the share's first segment. */
+  distro: string
+  /** The cwd as the distribution sees it, `/`-separated. */
+  path: string
+}
+
+/**
+ * The distribution-side launch a UNC workspace cwd calls for, or undefined
+ * when the cwd is an ordinary Windows path.
+ *
+ * The git binary named on the Windows PATH is a Windows build, and running it
+ * against a `\\wsl.localhost` tree goes through the 9P file server one `stat`
+ * per worktree file: measured on a 3 102-file repository, `status` alone did
+ * not finish in 180 s, while the SAME argv inside the distribution answered in
+ * 0.47 s. Every command that walks the worktree (`status`, `diff --numstat`)
+ * therefore timed out, the panel retried, and the retries piled up as orphaned
+ * `git.exe` processes. Entering the distribution to run its own git removes
+ * the file server from the path entirely.
+ */
+export function wslLaunch(cwd: string): WslLaunch | undefined {
+  const match = WSL_UNC_ROOT.exec(cwd)
+  if (match === null) return undefined
+  const distro = match[1]
+  if (distro === undefined || distro === '') return undefined
+  const rest = (match[2] ?? '').replace(/[/\\]+$/, '')
+  return { distro, path: rest === '' ? '/' : `/${rest.replace(/[\\/]+/g, '/')}` }
+}
+
 /** Count the NUL bytes of one stdout chunk (the `-z` field separator). */
 function countNulFields(chunk: Buffer): number {
   let count = 0
@@ -425,12 +463,23 @@ function spawnGit(
   ]
   const maxBytes = options.maxBytes ?? GIT_OUTPUT_MAX_BYTES
   const maxNulFields = options.maxNulFields
+  const launch = wslLaunch(cwd)
   return new Promise<string>((resolvePromise, reject) => {
-    const child = spawn('git', full, {
-      stdio: ['ignore', 'pipe', 'pipe'],
-      windowsHide: true,
-      env: { ...process.env, ...GIT_ENV },
-    })
+    const child = launch === undefined
+      ? spawn('git', full, {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        windowsHide: true,
+        env: { ...process.env, ...GIT_ENV },
+      })
+      : spawn('wsl.exe', ['-d', launch.distro, '--cd', launch.path, '-e', 'git', ...full.slice(2)], {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        windowsHide: true,
+        // `wsl.exe` does not forward the caller's environment: only the names
+        // listed in WSLENV cross the boundary, and `LC_ALL`/`GIT_OPTIONAL_LOCKS`
+        // are load-bearing here (a C locale keeps a refused path parseable, and
+        // the read-only panel must not take write locks).
+        env: { ...process.env, ...GIT_ENV, WSLENV: 'LC_ALL:GIT_OPTIONAL_LOCKS' },
+      })
     let stdout = ''
     let outBytes = 0
     let outFields = 0
