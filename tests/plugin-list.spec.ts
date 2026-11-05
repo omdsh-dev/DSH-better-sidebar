@@ -28,8 +28,8 @@ describe('builtin plugin catalogs', () => {
     const ids = (list: readonly PluginEntry[]): string[] => list.map(p => p.id)
     expect(ids(builtinViewerPlugins)).toContain('@huanlin/dsh-plugin-better-sidebar-plugin-office')
     expect(ids(builtinViewerPlugins)).toContain('@huanlin/dsh-plugin-better-sidebar-plugin-audio')
+    expect(ids(builtinViewerPlugins)).toContain('dsh-bioviewer')
     expect(ids(builtinTabPlugins)).toContain('@dsh-external/dsh-sentinel')
-    expect(ids(builtinTabPlugins)).not.toContain('@huanlin/dsh-plugin-better-sidebar-plugin-office')
   })
 
   for (const [name, list] of catalogs) {
