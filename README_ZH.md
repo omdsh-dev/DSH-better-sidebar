@@ -51,7 +51,7 @@ dsh plugin --profile web add dsh-better-sidebar@latest
 
 | 你的 DSH 版本 | 安装命令 |
 | --- | --- |
-| **0.2.2-rc.1+** | `dsh plugin --profile web add dsh-better-sidebar@0.30.0` |
+| **0.2.2-rc.1+** | `dsh plugin --profile web add dsh-better-sidebar@0.30.1` |
 | **0.2.1-rc.1 ~ 0.2.1-rc.5** | `dsh plugin --profile web add dsh-better-sidebar@0.28.2` |
 | **0.2.1-alpha.5** | `dsh plugin --profile web add dsh-better-sidebar@0.28.0-alpha.0` |
 | **0.2.0-rc.2** | `dsh plugin --profile web add dsh-better-sidebar@0.26.1` |
@@ -71,12 +71,12 @@ dsh plugin --profile web add dsh-better-sidebar@latest
 
 ```text
 帮我安装 dsh-better-sidebar 插件（DSH 侧边栏工作台），步骤：
-1. 先确认 DSH 为 0.2.2-rc.1 或更新版本，再执行 dsh plugin --profile web add dsh-better-sidebar@0.30.0
+1. 先确认 DSH 为 0.2.2-rc.1 或更新版本，再执行 dsh plugin --profile web add dsh-better-sidebar@0.30.1
 2. 完成后提醒我硬刷新浏览器（Cmd/Ctrl+Shift+R）
 遇到报错先查 https://github.com/omdsh-dev/DSH-better-sidebar README 的常见问题表。
 ```
 
-**一键脚本**——克隆本仓库后执行 `bash scripts/install.sh 0.30.0`（macOS / Linux / Windows Git Bash；Windows 原生用 `./scripts/install.ps1 -Version 0.30.0`），自动完成安装 + bundle 注册。
+**一键脚本**——克隆本仓库后执行 `bash scripts/install.sh 0.30.1`（macOS / Linux / Windows Git Bash；Windows 原生用 `./scripts/install.ps1 -Version 0.30.1`），自动完成安装 + bundle 注册。
 
 **更新**：重跑一次安装命令即可，然后硬刷新浏览器。
 
@@ -94,11 +94,15 @@ dsh plugin --profile web add dsh-better-sidebar@latest
 | 页面出现**两个侧边栏** | 双挂载。删掉 `~/.dsh/profiles/web/cordis.patch.yml` 里旧的手动挂载行（`- insert: ... better-sidebar ...`）；聚合包以不同 id 挂载本包时会自动退让，无需处理。 |
 | 升级后设置页的值去哪了 | DSH 0.1.7 起偏好写在 profile 里本插件的挂载行上（默认 entry id `better-sidebar`），插件首次启动会把旧 `settings.yaml` 里的配置一次性回迁，不会覆盖新设的值。 |
 | 终端无法使用 | 终端由 **DSH 自身**提供（本插件不自带 PTY），请查 DSH 侧文档；底部终端显示「宿主未提供终端能力」= 这个部署没挂终端控制器。 |
-| 提示 `dsh: command not found` | 先安装 DSH；或用 `npx -y --package @deepseek-ai/dsh@0.2.2-rc.1 dsh plugin --profile web add dsh-better-sidebar@0.30.0`。 |
+| 提示 `dsh: command not found` | 先安装 DSH；或用 `npx -y --package @deepseek-ai/dsh@0.2.2-rc.1 dsh plugin --profile web add dsh-better-sidebar@0.30.1`。 |
 
 </details>
 
 ## 🆕 最近更新
+
+**v0.30.1 — 设置导航图标修复**
+
+- **设置页「侧边卡片」那一行不再显示两个图标**：插件此前用 CSS 遮罩盖住宿主的兜底齿轮、再画自己的图标；宿主的导航图标外层多了容器，同时也提供了按 section 挂图标的口子。现在图标走宿主插槽，标记 + 遮罩那一套整体删除（顺带去掉了一个全局 DOM 观察器）。
 
 **v0.30.0 — 支持 DSH 0.2.2、侧边对话可发图、引用 chip 可点击**
 
@@ -113,23 +117,6 @@ dsh plugin --profile web add dsh-better-sidebar@latest
 - 新增可选的 `registerSidechatSurfaceAdapter` 服务，配合 GenUI 0.15.0 在已结算的侧边回复里渲染交互组件；状态和动作归属对应子线程。
 - 未安装消费插件、流式回复及不支持的围栏继续显示原 Markdown；保留 0.28.2 的冷会话读取修复。
 - 配套实现由 [@sunxiuguo](https://github.com/sunxiuguo) 贡献，见 [#1033](https://github.com/omdsh-dev/DSH-better-sidebar/pull/1033)。
-
-**v0.28.2 — 大会话冷读修复**
-
-- **根因修复**：detached 会话的 cwd 不再解码整份会话日志——改读存储在 header 里的工作区地址（只读第一个 zstd 帧，header-only），按会话做进程内缓存与在飞去重；`activeWorktreeRootOf` 对 detached 会话不再折持久化日志
-- **为什么 0.28.1 没修好**：单飞只覆盖 `/sidebar/api`，而启动期真正并发的是 fs-watch 每个监视目录一帧、`/sidebar/file|html` 每资源一次——39 MB 级会话仍被并发整读数十次
-- **行为**：会话 attach 后仍跟随 `working_directory` 与 linked worktree；attach 之前侧边栏根是原始项目目录，下一次 5 s 轮询自动切回
-- **实测（40.2 MB 会话，本机）**：12 路由 + 36 个绕过入口并发 → 1 次 header 读、0 次整读、3 ms、RSS +0.3 MB；修复前 6 个入口并发即 6 次整读、峰值 +1.0 GB（外推 36 次 ≈ 6 GB）
-
-**v0.28.1 — UX 与可靠性补丁**
-
-- **OOM 修复**：12 条 `/sidebar/*` 路由共享的冷 cwd 读取按「会话 + 客户端提示」合并，切换会话的并发突发不再并行解码同一份大会话日志
-- **不再静默写错文件**：页签调解覆盖后台会话，worktree 会话统一地址基准——改名/删除的已打开文件不会被下一次保存重建，聊天链接也不会静默打开另一检出的同名文件
-- **宿主崩溃防护**：病态 `git status` 输出加了闩锁与进程树终止，「宿主 `RangeError` 崩溃」降为一次 SCM 刷新失败
-- **Git 页**：>1000 分支的历史恢复加载；tag 现在装饰提交行与详情，tag 变化会使旧分页失效
-- **编辑器**：仅 mtime 变化后保存不再死锁 `fs-conflict`；刷新后保留阅读位置；「添加到对话」落地为紧凑引用 chip，不再展平已有 chip —— 现在划选的一段文字还会变成**可点击**的引用 chip，点击跳回源文件并闪烁被引行段（[#888](https://github.com/omdsh-dev/DSH-better-sidebar/issues/888)）
-- **Markdown 链接**：本地 destination 的 Windows 反斜杠归一，`C:\ws\_analysis\report.md` 不再报裸 ENOENT
-- **侧栏**：右栏展开时底部工作台入口常显；macOS 兜底入口避开红绿灯；页签 scope 按内容稳定，消除无谓的整文件重读；关闭侧聊页签时归档其会话
 
 ## 🔌 插件生态
 

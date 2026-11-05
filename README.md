@@ -51,7 +51,7 @@ Then **hard-refresh the browser** (Cmd/Ctrl+Shift+R). Requires DSH **0.2.2-rc.1+
 
 | Your DSH version | Install command |
 | --- | --- |
-| **0.2.2-rc.1+** | `dsh plugin --profile web add dsh-better-sidebar@0.30.0` |
+| **0.2.2-rc.1+** | `dsh plugin --profile web add dsh-better-sidebar@0.30.1` |
 | **0.2.1-rc.1 ~ 0.2.1-rc.5** | `dsh plugin --profile web add dsh-better-sidebar@0.28.2` |
 | **0.2.1-alpha.5** | `dsh plugin --profile web add dsh-better-sidebar@0.28.0-alpha.0` |
 | **0.2.0-rc.2** | `dsh plugin --profile web add dsh-better-sidebar@0.26.1` |
@@ -71,12 +71,12 @@ Always pin **exact versions** for older releases (`latest` moves forward with ea
 
 ```text
 Install the dsh-better-sidebar plugin (a sidebar workbench for DSH):
-1. Confirm DSH is 0.2.2-rc.1 or newer, then run dsh plugin --profile web add dsh-better-sidebar@0.30.0
+1. Confirm DSH is 0.2.2-rc.1 or newer, then run dsh plugin --profile web add dsh-better-sidebar@0.30.1
 2. Remind me to hard-refresh the browser (Cmd/Ctrl+Shift+R) afterwards
 If something fails, check the FAQ table in https://github.com/omdsh-dev/DSH-better-sidebar README first.
 ```
 
-**One-line script** — clone this repo and run `bash scripts/install.sh 0.30.0` (macOS / Linux / Windows Git Bash; `./scripts/install.ps1 -Version 0.30.0` for native Windows). It handles installation + bundle registration.
+**One-line script** — clone this repo and run `bash scripts/install.sh 0.30.1` (macOS / Linux / Windows Git Bash; `./scripts/install.ps1 -Version 0.30.1` for native Windows). It handles installation + bundle registration.
 
 **Updating**: just re-run the install command, then hard-refresh the browser.
 
@@ -94,11 +94,15 @@ If something fails, check the FAQ table in https://github.com/omdsh-dev/DSH-bett
 | **Two sidebars** on the page | Double mounting. Remove the legacy manual mount line (`- insert: ... better-sidebar ...`) from `~/.dsh/profiles/web/cordis.patch.yml`; aggregate packages mounting this package under a different id are auto-yielded, no action needed. |
 | Settings values gone after upgrade | Since DSH 0.1.7, preferences live on this plugin's mount row in the profile (default entry id `better-sidebar`). The plugin migrates your old `settings.yaml` values once on first start and never overwrites newer values. |
 | Terminal unavailable | Terminals are provided by **DSH itself** (this plugin ships no PTY) — see DSH docs; "host provides no terminal capability" in the bottom terminal means this deployment has no terminal controller mounted. |
-| `dsh: command not found` | Install DSH first; or use `npx -y --package @deepseek-ai/dsh@0.2.2-rc.1 dsh plugin --profile web add dsh-better-sidebar@0.30.0`. |
+| `dsh: command not found` | Install DSH first; or use `npx -y --package @deepseek-ai/dsh@0.2.2-rc.1 dsh plugin --profile web add dsh-better-sidebar@0.30.1`. |
 
 </details>
 
 ## 🆕 Recent Updates
+
+**v0.30.1 — settings nav icon fix**
+
+- **The "Side card" row in Settings no longer shows two icons.** The plugin used to paint its own glyph over the shell's fallback gear with a CSS mask; the shell now wraps the nav icon in a container and exposes a per-section icon slot. The row contributes its icon through that slot, and the stale marker + CSS apparatus is gone — along with a document-wide DOM observer.
 
 **v0.30.0 — DSH 0.2.2 support, side-chat images, clickable quote chips**
 
@@ -113,23 +117,6 @@ If something fails, check the FAQ table in https://github.com/omdsh-dev/DSH-bett
 - Adds the opt-in `registerSidechatSurfaceAdapter` service for GenUI 0.15.0. Settled assistant replies can render interactive components, with actions and state kept in the owning child thread.
 - Uninstalled consumers, streaming replies and unsupported fences retain the existing Markdown view. The 0.28.2 cold-session read fix remains included.
 - Provider contribution: [@sunxiuguo](https://github.com/sunxiuguo), [#1033](https://github.com/omdsh-dev/DSH-better-sidebar/pull/1033).
-
-**v0.28.2 — large-session cold-read fix**
-
-- **Root cause fixed**: a detached session's cwd no longer decodes the whole session log — it reads the workspace address stored in the header (first zstd frame only, header-only), memoized per session with in-flight sharing; `activeWorktreeRootOf` no longer folds the stored log for a detached session
-- **Why 0.28.1 missed it**: the single-flight only covered `/sidebar/api`, while the real startup fan-out is one fs-watch frame per watched directory and one cwd resolution per `/sidebar/file|html` resource — a 39 MB session was still fully decoded dozens of times in parallel
-- **Behavior**: an attached session still follows `working_directory` and linked worktrees; before attach the sidebar roots at the original project and the next 5 s poll switches back
-- **Measured (40.2 MB session, local)**: 12 routes + 36 bypass-entry calls concurrently → 1 header read, 0 full reads, 3 ms, +0.3 MB RSS; pre-fix, 6 bypass calls were 6 full reads with a +1.0 GB peak (≈6 GB extrapolated for 36)
-
-**v0.28.1 — UX and reliability patch**
-
-- **OOM fix**: cold cwd reads shared by the twelve `/sidebar/*` routes are merged per session and client hint, so a session-switch burst no longer decodes the same large session log N times in parallel
-- **Silent wrong-file writes are gone**: tab reconciliation now covers tabs in background sessions, and worktree sessions use one address base — a renamed/deleted file is no longer re-created on the next save, and a chat link never opens a same-named file from another checkout
-- **Host crash guard**: pathological `git status` output is capped with a latch and a process-tree kill, turning "host dies with `RangeError`" into one failed SCM refresh
-- **Git page**: histories with more than 1,000 branches load again; tags now decorate commits, rows and details, and tag changes invalidate pagination
-- **Editor**: saving after an mtime-only change no longer deadlocks on `fs-conflict`; the reading position survives tab re-seating; “Add to conversation” lands as a compact reference chip and never flattens earlier chips — and a selected passage now becomes a *clickable* quote chip that jumps back to the source file and flashes the quoted lines ([#888](https://github.com/omdsh-dev/DSH-better-sidebar/issues/888))
-- **Markdown links**: local destinations normalize Windows backslashes, so `C:\ws\_analysis\report.md` opens instead of a bare ENOENT
-- **Sidebar**: the bottom-workbench toggle stays visible while the right panel is open; the macOS dock fallback avoids the traffic lights; a content-stable tab scope ends needless full-file re-reads; closing a side-chat tab archives its session
 
 ## 🔌 Plugin Ecosystem
 

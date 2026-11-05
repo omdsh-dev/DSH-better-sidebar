@@ -4,6 +4,11 @@
 >
 > 📝 The Chinese [CHANGELOG](./CHANGELOG.md) is the authoritative, item-by-item record; this file carries the English summaries and has historically lagged behind it. Where the two disagree, the Chinese one is current.
 
+### v0.30.1
+
+- 🎯 **The "Side card" settings row no longer shows two icons**: the plugin still assumed the settings navigation had no icon channel, so it hid the fallback gear with CSS and painted its own glyph. The shell has long since exposed a `settings.section.icon` slot addressed by section id, and it now wraps the nav icon in a span — the stale `> svg:first-child` rule stopped hiding the fallback, so both glyphs rendered side by side. The row now contributes its icon **through the slot**, and the marker + CSS-mask apparatus is gone (along with a document-wide MutationObserver).
+  - 🧪 `tests/settings-nav-icon.spec.tsx` pins the glyph to the slot-provided `size` and `currentColor`; a headless pass against a real host confirms one `svg` in the row and no leftover marker.
+
 ### v0.30.0
 
 - 🧭 **Adapted to DSH 0.2.2-rc.1 (peer floors move to `^0.2.2-rc.1`)**: the host replaced the installable `ModelSelectionRef` with an agent-owned `AgentModel` — `agent.model.select()` records the choice durably and applies it to the next step, so the side-chat thread model selection rides the agent's own handle instead of an installed ref. `dsh-tools` dropped the PTC (`tool/ptc-dispatch*`) event **type declarations** (the runtime still records them), and host icons switched from inline `<path>` to sprite `<use href="#dsw-icon-…">`. **The support line moves with it**: a 0.x caret never spans a minor, so DSH 0.2.1 hosts (`0.2.1-rc.1 ~ rc.5`, today's npm `latest`) keep pinning plugin **v0.28.2** (`v0.29.0` was never published), while 0.2.2-rc.1+ takes **v0.30.0**.
