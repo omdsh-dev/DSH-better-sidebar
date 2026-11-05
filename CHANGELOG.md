@@ -33,6 +33,9 @@
 
 ### v0.30.1
 
+- 🧩 **插件可以往文件树的行菜单里加自己的动作（`registerFileAction`，新能力 `'fileActions'`）**：此前文件树的右键菜单完全由插件自己组装（打开方式 / 下载 / 上传到此目录 / 复制 / 重命名 / 删除），外部插件没有任何位置能加一项——「把这个文件传到我的云端」这类入口只能另开界面。现在 `ctx.betterSidebar.registerFileAction({ id, label, icon, row, dirs, order, when, run })` 注册的项排在内置打开/下载行之后、复制/重命名之前；`row: true` 再在行右侧「引用」按钮旁加一个悬停按钮（要求同时给 `icon`）。回调拿到的是行的**绝对路径**加上这棵树的根与会话，失败按既有策略落进文件树的错误条（`run` 抛错即 `error.message`），**树只提供入口，不替注册方上传、复制或移动任何东西**；同一 (id, path) 在飞行中的重复点击会被忽略。`when` 抛错只隐藏该注册，不打断文件树。接入面与两条约定写进[指南 §7.3](docs/external-plugin-guide.md)。
+  - 🧪 测试：新增 `tests/file-actions.spec.tsx`（12 例：注册序 = order 升序 + 注册序、重复 id 抛错、旧 disposer 不能拆掉新注册、菜单位置、绝对路径/根/会话、目录默认不认领、`when` 判定与抛错隔离、悬停按钮与 `title`/`aria-label`、无图标只进菜单、reject 落错误条且成功静默）。
+
 - 🎯 **设置页「侧边卡片」的导航图标不再叠成两个**：插件此前按"宿主设置导航还没有图标通道"的老假设，用 CSS 把兜底齿轮藏起来、再画自己的图标；宿主早已提供按 section id 寻址的 `settings.section.icon` 插槽，而且图标的 DOM 外面多了一层 span，老选择器失效后兜底 SVG 露了出来，与插件图标并排显示。现在改为**走宿主插槽**提供图标，删掉标记 + CSS 遮罩那一套（顺带去掉了一个监听整个 document 的 MutationObserver）。
   - 🧪 测试：`tests/settings-nav-icon.spec.tsx` 钉住图标按宿主给的 `size` 缩放、只用 `currentColor`；真实宿主上用无头浏览器确认导航行只剩一个 `svg`、无残留标记。
 
