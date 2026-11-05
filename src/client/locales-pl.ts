@@ -647,6 +647,8 @@ export const pl: Record<string, string> = {
   pluginFileTraceName: 'dsh-file-trace Śledzenie plików',
   pluginFileTraceDesc: 'Zapisuje każdy plik odczytany, zapisany lub edytowany przez model; pogrupowana lista z zawartością i diffami linia po linii, tryb czytania Markdown i maskowanie sekretów; bez better-sidebar osobne okno pływające',
   pluginMnemeName: 'dsh-mneme Biblioteka pamięci',
+  pluginSessionSourcesName: 'Session Sources',
+  pluginSessionSourcesDesc: 'Recover images, files, and explicit HTTP/HTTPS links from the current conversation with per-session isolation, preview, download, re-attach, and source details; keeps a native panel fallback without better-sidebar',
   pluginMnemeDesc: 'Silnik pamięci międzysesyjnej: konsolidacja w tle autoDream, podsumowania sesji i profil użytkownika; SQLite + ręcznie edytowalne kopie Markdown, w pełni offline i prywatne. Rejestruje kartę «Biblioteka pamięci» (widoki pamięć/encje/status/ustawienia), gdy better-sidebar jest zainstalowany; w przeciwnym razie zachowuje niezależny panel boczny',
   pluginEgoBrowserName: 'ego-browser Przeglądarka agenta',
   pluginBetterOverleafName: 'dsh-better-overleaf Karta Overleaf',

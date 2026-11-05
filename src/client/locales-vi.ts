@@ -645,6 +645,8 @@ export const vi: Record<string, string> = {
   pluginFileTraceName: 'dsh-file-trace Truy vết tệp',
   pluginFileTraceDesc: 'Ghi lại mọi tệp mô hình đọc, ghi hoặc chỉnh sửa; danh sách nhóm theo tệp với nội dung và diff từng dòng, chế độ đọc Markdown và che dữ liệu nhạy cảm; cửa sổ nổi độc lập khi không có better-sidebar',
   pluginMnemeName: 'dsh-mneme Thư viện bộ nhớ',
+  pluginSessionSourcesName: 'Session Sources',
+  pluginSessionSourcesDesc: 'Recover images, files, and explicit HTTP/HTTPS links from the current conversation with per-session isolation, preview, download, re-attach, and source details; keeps a native panel fallback without better-sidebar',
   pluginMnemeDesc: 'Engine bộ nhớ xuyên phiên: autoDream hợp nhất trong nền, tóm tắt phiên và hồ sơ người dùng; SQLite + bản sao Markdown chỉnh sửa được bằng tay, hoàn toàn ngoại tuyến và riêng tư. Có better-sidebar thì đăng ký tab «Thư viện bộ nhớ» (bốn khung nhìn bộ nhớ/thực thể/trạng thái/cài đặt), không có thì giữ nguyên panel thanh bên độc lập',
   pluginEgoBrowserName: 'ego-browser Trình duyệt agent',
   pluginBetterOverleafName: 'dsh-better-overleaf Tab Overleaf',
