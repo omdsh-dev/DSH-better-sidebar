@@ -53,6 +53,15 @@ interface StoredDraft {
   text: string
   /** Write time; the FIFO order for eviction. */
   savedAt: number
+  /** The file's mtime the draft was typed against (the editor's save baseline).
+   *  Absent when the editor had none, and on entries from before this field. */
+  baseMtimeMs?: number
+}
+
+/** One mounted editor's live readers (see {@link registerDraftSource}). */
+interface DraftSource {
+  read: () => string | null
+  readBase: (() => number | null) | undefined
 }
 
 /**
@@ -60,7 +69,7 @@ interface StoredDraft {
  * Reading at flush time (rather than per keystroke) keeps the backup free of
  * the O(document) stringification the editor deliberately avoids on every key.
  */
-const sources = new Map<string, () => string | null>()
+const sources = new Map<string, DraftSource>()
 /** Keys whose draft changed since the last write. */
 const pending = new Set<string>()
 let timer: ReturnType<typeof setTimeout> | null = null
@@ -87,9 +96,9 @@ function readStored(key: string): StoredDraft | undefined {
   try {
     const parsed: unknown = JSON.parse(raw)
     if (typeof parsed !== 'object' || parsed === null) return undefined
-    const { text, savedAt } = parsed as { text?: unknown; savedAt?: unknown }
+    const { text, savedAt, baseMtimeMs } = parsed as { text?: unknown; savedAt?: unknown; baseMtimeMs?: unknown }
     if (typeof text !== 'string' || typeof savedAt !== 'number') return undefined
-    return { text, savedAt }
+    return typeof baseMtimeMs === 'number' ? { text, savedAt, baseMtimeMs } : { text, savedAt }
   } catch {
     return undefined
   }
@@ -121,7 +130,7 @@ function evict(store: Storage): void {
 }
 
 /** Persist one draft, dropping older ones when storage is full. */
-function writeDraft(key: string, text: string): void {
+function writeDraft(key: string, text: string, baseMtimeMs: number | undefined): void {
   const store = storage()
   if (store === undefined) return
   if (text.length === 0 || text.length > DRAFT_BACKUP_CHARS) return
@@ -129,7 +138,7 @@ function writeDraft(key: string, text: string): void {
   // An unchanged draft keeps its original timestamp (and therefore its place
   // in the FIFO order), so a restore that is re-persisted does not look new.
   if (previous?.text === text) return
-  const payload = JSON.stringify({ text, savedAt: Date.now() } satisfies StoredDraft)
+  const payload = JSON.stringify({ text, savedAt: Date.now(), baseMtimeMs } satisfies StoredDraft)
   try {
     store.setItem(STORAGE_PREFIX + key, payload)
   } catch {
@@ -154,8 +163,9 @@ export function flushDraftBackups(): void {
   const keys = [...pending]
   pending.clear()
   for (const key of keys) {
-    const text = sources.get(key)?.()
-    if (text !== null && text !== undefined) writeDraft(key, text)
+    const source = sources.get(key)
+    const text = source?.read()
+    if (text !== null && text !== undefined) writeDraft(key, text, source?.readBase?.() ?? undefined)
   }
 }
 
@@ -167,17 +177,24 @@ export function flushDraftBackups(): void {
  * @param sessionId - the session owning the tab.
  * @param path - the file the draft belongs to.
  * @param read - the live document's text, or null.
+ * @param readBase - the mtime the live document is based on, stored with the draft.
  * @returns the disposer (idempotent; a newer source for the same file wins).
  */
-export function registerDraftSource(sessionId: string, path: string, read: () => string | null): () => void {
+export function registerDraftSource(
+  sessionId: string,
+  path: string,
+  read: () => string | null,
+  readBase?: () => number | null,
+): () => void {
   const key = keyOf(sessionId, path)
-  sources.set(key, read)
+  const source: DraftSource = { read, readBase }
+  sources.set(key, source)
   if (sources.size > SOURCE_LIMIT) {
     const oldest = sources.keys().next().value
     if (oldest !== undefined && oldest !== key) sources.delete(oldest)
   }
   return () => {
-    if (sources.get(key) === read) sources.delete(key)
+    if (sources.get(key) === source) sources.delete(key)
   }
 }
 
@@ -198,9 +215,19 @@ export function scheduleDraftBackup(sessionId: string, path: string): void {
   }, DRAFT_BACKUP_THROTTLE_MS)
 }
 
+/** Whether two spellings are the SAME document — byte-equal, or equal once
+ *  line endings are normalized CRLF/CR → LF. Line endings are not content:
+ *  CodeMirror keeps every document with `\n` endings whatever the file used,
+ *  so the live document of a freshly opened CRLF file differs from the bytes
+ *  it was loaded from by line endings alone. */
+export function sameDocument(a: string, b: string): boolean {
+  return a === b || a.replace(/\r\n?/g, '\n') === b.replace(/\r\n?/g, '\n')
+}
+
 /**
  * The pending draft of one file, if its content differs from the bytes on
- * disk; otherwise the stale entry is dropped.
+ * disk (line endings aside, see {@link sameDocument}); otherwise the stale
+ * entry is dropped.
  * @param sessionId - the session owning the tab.
  * @param path - the file the draft belongs to.
  * @param content - the bytes just loaded from disk.
@@ -209,11 +236,21 @@ export function scheduleDraftBackup(sessionId: string, path: string): void {
 export function readDraftBackup(sessionId: string, path: string, content: string): string | null {
   const entry = readStored(keyOf(sessionId, path))
   if (entry === undefined) return null
-  if (entry.text === content) {
+  if (sameDocument(entry.text, content)) {
     clearDraftBackup(sessionId, path)
     return null
   }
   return entry.text
+}
+
+/**
+ * The mtime one file's stored draft was typed against.
+ * @param sessionId - the session owning the tab.
+ * @param path - the file the draft belongs to.
+ * @returns the baseline, or undefined when the entry carries none.
+ */
+export function draftBackupBaseMtime(sessionId: string, path: string): number | undefined {
+  return readStored(keyOf(sessionId, path))?.baseMtimeMs
 }
 
 /** Drop one file's backup (saved, discarded, or restored). Idempotent. */
