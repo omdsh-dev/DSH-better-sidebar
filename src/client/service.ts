@@ -466,6 +466,71 @@ export interface FileIconDescriptor {
   icon: (path: string, size: number, open?: boolean) => ReactNode
 }
 
+/** The row a file action is asked about — everything `when` sees. */
+export interface FileActionRow {
+  /** ABSOLUTE path of the row the action was invoked on. */
+  path: string
+  /** The tree's workspace root (absolute), when the tree knows one. */
+  root: string | undefined
+  /** The host session whose conversation owns this tree. */
+  sessionId?: string
+  /** Whether the target is a directory row. */
+  isDir: boolean
+}
+
+/** What a file action is handed when it runs. */
+export interface FileActionContext extends FileActionRow {
+  /**
+   * Show a message in the file tree's own error strip (the same strip a failed
+   * rename or open-in-app lands in). Use it for anything the user must read;
+   * an exception thrown by `run` reaches the same strip as `error.message`.
+   */
+  fail: (message: string) => void
+}
+
+/**
+ * Describes one external file action (feature `fileActions`): a row-menu item,
+ * and optionally a hover button on the row itself.
+ *
+ * The callback runs CLIENT-SIDE only — the plugin that registers it owns the
+ * work (its own routes, its own toasts). The tree contributes the entry point
+ * and the failure strip; it never uploads, copies or moves anything itself.
+ */
+export interface FileActionDescriptor {
+  /** Unique id (`'my-plugin:upload'`). Re-registering the same id throws. */
+  id: string
+  /** Menu and hover label (i18n-friendly: string or a thunk). */
+  label: string | (() => string)
+  /** Leading glyph for the menu row and the hover button. */
+  icon?: ReactNode | ((size: number) => ReactNode)
+  /** Order among external actions; ascending, default 0 (built-ins are unaffected). */
+  order?: number
+  /**
+   * Render a hover button on the row as well as the menu item (default
+   * false: menu only). The button shows the same label through `title` /
+   * `aria-label`, so a glyph-only affordance stays readable.
+   */
+  row?: boolean
+  /**
+   * Claim DIRECTORY rows too (default false). The action gets `isDir` in its
+   * context either way, so it can refine the decision itself.
+   */
+  dirs?: boolean
+  /**
+   * Whether the action applies to one row. Called per row render (for `row`)
+   * and once per menu open, so it must be cheap and side-effect free. Omitted
+   * = every row this descriptor's `dirs` setting allows.
+   */
+  when?: (row: FileActionRow) => boolean
+  /**
+   * Do the work. A rejected promise is reported as `error.message` in the
+   * tree's error strip; a resolved one says nothing (the owner reports its
+   * own outcome). Runs are guarded per (id, path): a second press while the
+   * first is in flight is ignored.
+   */
+  run: (context: FileActionContext) => void | Promise<void>
+}
+
 /**
  * Reserved `exts` values that claim DIRECTORY rows instead of file
  * extensions: `'folder'` matches a closed directory, `'folder-open'` an
@@ -634,9 +699,19 @@ export interface BetterSidebarService {
   registerTab(descriptor: TabDescriptor): () => void
   registerFileViewer(descriptor: FileViewerDescriptor): () => void
   registerFileIcon(descriptor: FileIconDescriptor): () => void
+  /**
+   * Contribute an action to the file tree's row menu (feature `fileActions`).
+   * Menu items appear in `order` (then registration) order, after the
+   * built-in open/download rows and before the copy/mutation rows the tree
+   * owns; `row: true` also puts a hover button on the row next to the
+   * reference button. The registration is disposed with the plugin fiber.
+   */
+  registerFileAction(descriptor: FileActionDescriptor): () => void
   getTabs(): readonly TabDescriptor[]
   getFileViewers(): readonly FileViewerDescriptor[]
   getFileIcons(): readonly FileIconDescriptor[]
+  /** Every registered file action, in the order the tree renders them. */
+  getFileActions(): readonly FileActionDescriptor[]
   /**
    * Find a SPECIFIC registered file icon for a path (priority desc, then
    * registration order): a `names` match first, then an `exts` match.
@@ -883,6 +958,10 @@ export const SIDEBAR_SERVICE_VERSION = '0.30.0'
  *   right-aligned action area rendered at the tab strip's right end.
  * - 'settingPatterns': SidebarSettingToggle type 'patterns' (editable
  *   string-list row, committed as one string[] value).
+ * - 'fileActions' (v0.31.0): registerFileAction/getFileActions — external
+ *   contributions to the file tree's row menu (and, with `row: true`, a
+ *   hover button on the row). The callback is client-side only: the tree
+ *   supplies the entry point and the error strip, the owner does the work.
  *
  * v0.19.0 REMOVED 'floatWindows': the free-window feature is gone (DSH 0.1.5
  * owns the right column, so the plugin keeps only its bottom workbench).
@@ -903,6 +982,7 @@ export const SIDEBAR_FEATURES = [
   'rightActions',
   'settingPatterns',
   'hostRouteUrl',
+  'fileActions',
 ] as const
 
 /** Run one plugin callback; a throw is logged and never breaks the caller. */
@@ -923,6 +1003,7 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
   const tabs = new Map<string, TabDescriptor>()
   const viewers = new Map<string, FileViewerDescriptor>()
   const fileIcons = new Map<string, FileIconDescriptor>()
+  const fileActions = new Map<string, FileActionDescriptor>()
   const listeners = new Set<() => void>()
   /** The native right-Sidebar write face, installed by the client half. */
   let surface: SidebarSurface | undefined
@@ -996,6 +1077,28 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
       }
     }
   }
+
+  const registerFileAction = (descriptor: FileActionDescriptor): (() => void) => {
+    if (fileActions.has(descriptor.id)) {
+      throw new Error(`[dsh-better-sidebar] file action "${descriptor.id}" already registered`)
+    }
+    fileActions.set(descriptor.id, descriptor)
+    notify()
+    return () => {
+      if (fileActions.get(descriptor.id) === descriptor) {
+        fileActions.delete(descriptor.id)
+        notify()
+      }
+    }
+  }
+
+  /**
+   * External actions in render order: `order` ascending, then registration
+   * order (Map insertion is stable, and `Array#sort` is stable, so equal
+   * orders keep the order they registered in).
+   */
+  const getFileActions = (): readonly FileActionDescriptor[] =>
+    Array.from(fileActions.values()).sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
 
   // Registrations in ranking order: priority desc, stable for equal
   // priorities (insertion order) — the same ranking `matchFileViewer` uses.
@@ -1490,9 +1593,11 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
     registerTab,
     registerFileViewer,
     registerFileIcon,
+    registerFileAction,
     getTabs,
     getFileViewers,
     getFileIcons,
+    getFileActions,
     matchFileIcon,
     matchFolderIcon,
     fileIcon,
