@@ -288,6 +288,30 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
     'the web profile must not offer a browser guide entry at DSH 0.1.7',
   ).toHaveCount(0)
 
+  // Compare real boxes with the official compass title: jsdom cannot catch
+  // a nested inline SVG's baseline offset or the host gap plus our margin.
+  const chipGeometry = (node: Element) => {
+    const svg = node.querySelector('svg')!
+    const icon = svg.getBoundingClientRect()
+    const row = node.getBoundingClientRect()
+    const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT)
+    let text: Node | null
+    while ((text = walker.nextNode()) !== null) {
+      if (text.textContent?.trim() && !svg.contains(text)) break
+    }
+    if (text === null) throw new Error('tab title text is missing')
+    const range = document.createRange()
+    range.selectNodeContents(text)
+    return {
+      width: icon.width,
+      height: icon.height,
+      gap: range.getBoundingClientRect().left - icon.right,
+      offset: icon.top + icon.height / 2 - (row.top + row.height / 2),
+    }
+  }
+  const activeChipTitle = pane.locator('[data-dockkit-tab][aria-selected="true"] [data-dockkit-tab-title]').first()
+  const officialGeometry = await activeChipTitle.evaluate(chipGeometry)
+
   // Sweep every type through the guide. Each open mounts a real viewer (the
   // editor and mermaid chunks arrive lazily); a failure anywhere surfaces as a
   // pageerror or a crash strip, both of which the next assertion sees. A pane
@@ -312,6 +336,13 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
     }
     await page.waitForTimeout(1_500)
     await assertNoCrash()
+    if (kind === 'files' || kind === 'git') {
+      const geometry = await activeChipTitle.evaluate(chipGeometry)
+      expect(geometry.width).toBe(officialGeometry.width)
+      expect(geometry.height).toBe(officialGeometry.height)
+      expect(Math.abs(geometry.gap - officialGeometry.gap), `${kind} icon/title spacing`).toBeLessThan(0.5)
+      expect(Math.abs(geometry.offset - officialGeometry.offset), `${kind} icon vertical centring`).toBeLessThan(0.5)
+    }
   }
 
   // The sweep opened the Side Chat type, whose view auto-creates a thread and

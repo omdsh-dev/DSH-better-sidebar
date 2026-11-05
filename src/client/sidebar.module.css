@@ -495,15 +495,16 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   overflow: hidden;
 }
 
-/* The native tab chip's glyph (drawn by the plugin inside the host's
-   `sidebar.right.pane.tab.title` slot, which is the chip's content): sized to
-   the text, aligned on its baseline box, and separated from the title the way
-   the workbench strip separates its own glyph from its label. */
+/* The host title row owns centring and its 5px gap. Nested themed glyphs
+   must not add an inline SVG's baseline space to the icon's box. */
 .chipIcon {
   display: inline-flex;
   align-items: center;
-  margin-right: 6px;
   flex: none;
+}
+
+.chipIcon svg {
+  display: block;
 }
 
 /* "This page has something you have not looked at": a small solid dot on the
