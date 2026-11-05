@@ -167,6 +167,21 @@ describe('/sidebar/file streams without a size cap', () => {
     expect(response.headers.get('referrer-policy')).toBe('no-referrer')
   })
 
+  it.each(['html', 'htm', 'HTML', 'bin'])('keeps arbitrary file previews in an opaque origin (%s)', async extension => {
+    const ws = workspace('opaque-preview')
+    const target = join(ws, `preview.${extension}`)
+    writeFileSync(target, '<script>window.fixture = true</script>')
+    const { origin } = await serve(ws)
+    const response = await fetch(fileUrl(origin, ws, target))
+    expect(response.status).toBe(200)
+    const policy = response.headers.get('content-security-policy') ?? ''
+    expect(policy).toContain('sandbox')
+    expect(policy).not.toContain('allow-same-origin')
+    expect(response.headers.get('x-content-type-options')).toBe('nosniff')
+    expect(response.headers.get('referrer-policy')).toBe('no-referrer')
+    expect(await response.text()).toContain('window.fixture')
+  })
+
   it('answers the JSON error envelope when the file cannot be opened', async () => {
     const ws = workspace('missing')
     const { origin } = await serve(ws)
