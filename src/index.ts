@@ -1846,7 +1846,13 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
         const type = mediaTypeForPath(path)
         // Raw bytes either way (binary-safe); ?download=1 switches the
         // disposition so the browser saves the file instead of showing it.
-        const headers: Record<string, string> = { 'content-type': type, 'cache-control': 'no-cache' }
+        const headers: Record<string, string> = {
+          'content-type': type,
+          'cache-control': 'no-cache',
+          'content-security-policy': "sandbox allow-scripts allow-popups allow-downloads allow-modals; object-src 'none'",
+          'x-content-type-options': 'nosniff',
+          'referrer-policy': 'no-referrer',
+        }
         // An SVG is a scriptable DOCUMENT, not an inert image: navigating to
         // this URL directly would run its <script> in the GUI's origin, with
         // same-origin access to /sidebar/api/*. The sibling html route already
