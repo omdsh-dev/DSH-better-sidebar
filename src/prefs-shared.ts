@@ -22,6 +22,8 @@ export interface SidebarPrefs {
    * conversation (any new job id, not just the first one).
    */
   autoOpenJobs: boolean
+  /** Return a column opened by background activity after three idle seconds. Off by default. */
+  autoCollapseAfterIdle: boolean
   /**
    * The Tasks page's default presentation: the workflow graph canvas or the
    * classic indentation tree (the in-page toggle still flips it ad hoc).
@@ -151,6 +153,7 @@ export const EXPLORER_EXCLUDE_DEFAULTS: readonly string[] = ['.DS_Store', 'Thumb
 export const SIDEBAR_PREFS_DEFAULTS: SidebarPrefs = {
   autoOpenSubagent: true,
   autoOpenJobs: true,
+  autoCollapseAfterIdle: false,
   tasksViewMode: 'graph',
   tasksAutoFoldSettled: true,
   tasksAutoFoldBranches: true,

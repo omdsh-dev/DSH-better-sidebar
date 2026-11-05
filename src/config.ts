@@ -86,6 +86,7 @@ export function resolveSidebarConfig(config: SidebarConfig | undefined): Resolve
 export const PrefsSchema: z<SidebarPrefs> = z.object({
   autoOpenSubagent: z.boolean().default(true),
   autoOpenJobs: z.boolean().default(true),
+  autoCollapseAfterIdle: z.boolean().default(false),
   tasksViewMode: z.union([z.const('graph'), z.const('tree')]).default('graph'),
   tasksAutoFoldSettled: z.boolean().default(true),
   tasksAutoFoldBranches: z.boolean().default(true),

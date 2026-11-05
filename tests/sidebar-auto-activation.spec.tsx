@@ -87,12 +87,12 @@ interface NativeSurfaceSpy {
   opens: NativeOpen[]
 }
 
-function makeNativeSurfaceSpy(): NativeSurfaceSpy {
+function makeNativeSurfaceSpy(onOpen: (input: NativeOpen) => void): NativeSurfaceSpy {
   const opens: NativeOpen[] = []
   return {
     opens,
     surface: {
-      openTab: input => { opens.push({ ...input }) },
+      openTab: input => { opens.push({ ...input }); onOpen(input) },
       openResource: () => {},
       fileAddress: (sessionId, cwd, path) => `addr://${sessionId}${cwd ?? ''}${path}`,
       close: () => undefined,
@@ -135,6 +135,8 @@ interface NativeColumnSpy {
     mounted: MountedStore
   }
   toggles: number
+  expanded: boolean
+  activeKind: string | undefined
   mounted: MountedStore
 }
 
@@ -153,6 +155,7 @@ function makeNativeColumnSpy(
   const spy = {
     toggles: 0,
     expanded,
+    activeKind,
     mounted: makeMountedStore(mounted),
     face: {} as NativeColumnSpy['face'],
   }
@@ -162,7 +165,7 @@ function makeNativeColumnSpy(
       spy.toggles += 1
       spy.expanded = !spy.expanded
     },
-    active: () => (activeKind === undefined ? undefined : { kind: activeKind }),
+    active: () => (spy.activeKind === undefined ? undefined : { kind: spy.activeKind }),
     mounted: spy.mounted,
   }
   return spy
@@ -273,7 +276,11 @@ function mountSidebar(
   store.setSession(sessionId)
   store.reduce(state => ({ ...state, bottomOpen }))
   const service = createBetterSidebarService(store)
-  const surface = makeNativeSurfaceSpy()
+  const surface = makeNativeSurfaceSpy(input => {
+    if (!input.revealIfOpened) return
+    column.expanded = true
+    column.activeKind = input.kind
+  })
   service.setSurface(surface.surface)
   service.registerTab({ id: 'subagent', title: 'Subagent', component: JumpHarness })
   const column = makeNativeColumnSpy(
@@ -690,6 +697,155 @@ describe('Sidebar background-activity auto-activation (#162)', () => {
     expect(sidebar.store.getSnapshot().state!.bottomOpen).toBe(true)
     switchToChild(sidebar)
     expectNativeTasksOpen(sidebar, 'child')
+    expect(sidebar.column.toggles).toBe(0)
+  })
+})
+
+
+/** Settle activity through the separate session/job feeds current hosts provide. */
+async function settleActivity(sidebar: MountedSidebar, source: ActivitySource): Promise<void> {
+  if (source === 'job') {
+    act(() => { sidebar.jobs.publish(sidebar.sessionId, []) })
+  } else {
+    const before = sidebar.feed.getSnapshot()
+    act(() => { sidebar.feed.set({ ...before, byId: {
+      ...before.byId, child: { ...before.byId.child!, running: false },
+    } }) })
+  }
+  await flushFeeds()
+}
+
+describe('opt-in auto-collapse after background activity settles', () => {
+  it.each(['job', 'subagent'] as const)('returns its auto-opened column after %s settles', async source => {
+    const sidebar = mountSidebar(1280, false, { prefs: { autoCollapseAfterIdle: true } })
+    await publishActivity(sidebar, source)
+    expect(sidebar.column.expanded).toBe(true)
+    act(() => { vi.advanceTimersByTime(5000) })
+    expect(sidebar.column.toggles).toBe(0)
+    await settleActivity(sidebar, source)
+    act(() => { vi.advanceTimersByTime(2999) })
+    expect(sidebar.column.expanded).toBe(true)
+    act(() => { vi.advanceTimersByTime(1) })
+    expect(sidebar.column.expanded).toBe(false)
+    expect(sidebar.column.toggles).toBe(1)
+    expect(sidebar.surface.opens).toHaveLength(1)
+  })
+
+  it('leaves the column open by default', async () => {
+    const sidebar = mountSidebar(1280)
+    await publishActivity(sidebar, 'job')
+    await settleActivity(sidebar, 'job')
+    act(() => { vi.advanceTimersByTime(5000) })
+    expect(sidebar.column.expanded).toBe(true)
+    expect(sidebar.column.toggles).toBe(0)
+  })
+
+  it('does not own a column the user had already expanded', async () => {
+    const sidebar = mountSidebar(1280, false, { columnExpanded: true, prefs: { autoCollapseAfterIdle: true } })
+    await publishActivity(sidebar, 'job')
+    await settleActivity(sidebar, 'job')
+    act(() => { vi.advanceTimersByTime(5000) })
+    expect(sidebar.column.expanded).toBe(true)
+    expect(sidebar.column.toggles).toBe(0)
+  })
+
+  it('does not arm a narrow-screen park', async () => {
+    const sidebar = mountSidebar(600, false, { prefs: { autoCollapseAfterIdle: true, mobileNoAutoOpen: false } })
+    await publishActivity(sidebar, 'job')
+    expect(sidebar.column.expanded).toBe(false)
+    await settleActivity(sidebar, 'job')
+    act(() => { vi.advanceTimersByTime(5000) })
+    expect(sidebar.column.toggles).toBe(1)
+  })
+
+  it('hands ownership to a reader who switches native tabs', async () => {
+    const sidebar = mountSidebar(1280, false, { prefs: { autoCollapseAfterIdle: true } })
+    await publishActivity(sidebar, 'job')
+    await settleActivity(sidebar, 'job')
+    sidebar.column.activeKind = 'editor'
+    act(() => { vi.advanceTimersByTime(3000) })
+    expect(sidebar.column.expanded).toBe(true)
+    expect(sidebar.column.toggles).toBe(0)
+  })
+
+  it('never reopens a column the reader closed during grace', async () => {
+    const sidebar = mountSidebar(1280, false, { prefs: { autoCollapseAfterIdle: true } })
+    await publishActivity(sidebar, 'job')
+    await settleActivity(sidebar, 'job')
+    sidebar.column.expanded = false
+    act(() => { vi.advanceTimersByTime(3000) })
+    expect(sidebar.column.expanded).toBe(false)
+    expect(sidebar.column.toggles).toBe(0)
+  })
+
+  it('restarts the full grace period when another job arrives', async () => {
+    const sidebar = mountSidebar(1280, false, { prefs: { autoCollapseAfterIdle: true } })
+    await publishActivity(sidebar, 'job')
+    await settleActivity(sidebar, 'job')
+    act(() => { vi.advanceTimersByTime(2000) })
+    await publishJob(sidebar)
+    act(() => { vi.advanceTimersByTime(2000) })
+    expect(sidebar.column.expanded).toBe(true)
+    await settleActivity(sidebar, 'job')
+    act(() => { vi.advanceTimersByTime(2999) })
+    expect(sidebar.column.expanded).toBe(true)
+    act(() => { vi.advanceTimersByTime(1) })
+    expect(sidebar.column.expanded).toBe(false)
+  })
+
+  it('waits for both jobs and subagents on their separate feeds', async () => {
+    const sidebar = mountSidebar(1280, false, { prefs: { autoCollapseAfterIdle: true } })
+    await publishActivity(sidebar, 'job')
+    await publishActivity(sidebar, 'subagent')
+    await settleActivity(sidebar, 'job')
+    act(() => { vi.advanceTimersByTime(5000) })
+    expect(sidebar.column.expanded).toBe(true)
+    await settleActivity(sidebar, 'subagent')
+    act(() => { vi.advanceTimersByTime(3000) })
+    expect(sidebar.column.expanded).toBe(false)
+  })
+
+  it('cancels ownership when the opt-in is switched off', async () => {
+    const sidebar = mountSidebar(1280, false, { prefs: { autoCollapseAfterIdle: true } })
+    await publishActivity(sidebar, 'job')
+    await settleActivity(sidebar, 'job')
+    act(() => { sidebar.store.setPrefs({ ...sidebar.store.getPrefs(), autoCollapseAfterIdle: false }) })
+    await flushFeeds()
+    act(() => { sidebar.store.setPrefs({ ...sidebar.store.getPrefs(), autoCollapseAfterIdle: true }) })
+    act(() => { vi.advanceTimersByTime(5000) })
+    expect(sidebar.column.expanded).toBe(true)
+  })
+
+  it('disarms on session switch even if the reader returns during grace', async () => {
+    const sidebar = mountSidebar(1280, false, { prefs: { autoCollapseAfterIdle: true } })
+    await publishActivity(sidebar, 'job')
+    await settleActivity(sidebar, 'job')
+    act(() => { sidebar.column.mounted.set('other') })
+    await flushFeeds()
+    act(() => { sidebar.column.mounted.set(sidebar.sessionId) })
+    await flushFeeds()
+    act(() => { vi.advanceTimersByTime(5000) })
+    expect(sidebar.column.expanded).toBe(true)
+    expect(sidebar.column.toggles).toBe(0)
+  })
+
+  it('schedules a subagent that settled before the opening debounce fired', async () => {
+    const sidebar = mountSidebar(1280, false, { prefs: { autoCollapseAfterIdle: true } })
+    publishSubagent(sidebar)
+    await settleActivity(sidebar, 'subagent')
+    flushSubagentDebounce()
+    expect(sidebar.column.expanded).toBe(true)
+    act(() => { vi.advanceTimersByTime(3000) })
+    expect(sidebar.column.expanded).toBe(false)
+  })
+
+  it('cleans up the grace timer on unmount', async () => {
+    const sidebar = mountSidebar(1280, false, { prefs: { autoCollapseAfterIdle: true } })
+    await publishActivity(sidebar, 'job')
+    await settleActivity(sidebar, 'job')
+    sidebar.unmount()
+    mounted.splice(mounted.indexOf(sidebar), 1)
+    act(() => { vi.advanceTimersByTime(5000) })
     expect(sidebar.column.toggles).toBe(0)
   })
 })
