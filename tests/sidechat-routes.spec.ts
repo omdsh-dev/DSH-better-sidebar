@@ -9,6 +9,7 @@
  */
 import { describe, expect, it, vi } from 'vitest'
 import { resolve } from 'node:path'
+import { Service } from '@deepseek-ai/cordis'
 import WorkingDirectoryService from '@deepseek-ai/dsh-working-directory'
 import { Session, SessionLogOffset, SESSION_FORMAT_VERSION } from '@deepseek-ai/dsh-session'
 import type { SessionEvent, SessionHeader, SessionId } from '@deepseek-ai/dsh-session'
@@ -43,8 +44,10 @@ function agent(id: string, over: {
       model: over.model ?? 'model-x',
       ...(over.reasoningEffort !== undefined ? { reasoningEffort: over.reasoningEffort } : {}),
     },
-    // The agent-scoped context `installModelSelection` binds its prompt /
-    // request waterfalls to; the fake records the listeners' existence only.
+    // DSH 0.2.2 moved the model seam onto the agent itself (`agent.model`),
+    // so the fake records the selections the plugin applies instead of the
+    // waterfall listeners the old installable ref registered.
+    model: { current: vi.fn(() => undefined), select: vi.fn() },
     ctx: { on: vi.fn((_event: string, _listener: unknown) => () => {}) },
     session: {
       id,
@@ -168,21 +171,29 @@ describe('sidechat.start', () => {
       apply(state: string | null, event: SessionEvent): string | null
     }
     let registered: DirectoryProjection | undefined
-    // Capture the REAL alpha.5 unit contributed by the host service. These
-    // context seams do not run system-prompt assembly, fs checks, or notices.
+    /** Fold one session's log through the captured unit — what the registry's
+     *  reader evaluates for this projection key. */
+    const stateOf = (session: { header: { cwd?: string }; snapshotEvents(): SessionEvent[] }): string | null => {
+      if (registered === undefined) throw new Error('working-directory unit not registered')
+      return session.snapshotEvents().reduce((cwd, event) => registered!.apply(cwd, event), registered.init(session.header))
+    }
+    // Capture the REAL host unit. These context seams do not run system-prompt
+    // assembly, fs checks, or notices. DSH 0.2.2 moved that registration into
+    // the service's cordis init and reads the state back through the HANDLE
+    // `register` now returns (0.2.1 registered from the constructor and read
+    // `sessionProjections.stateOf(session, key)`), so the fake registry has to
+    // hand one out and the spec has to drive the lifecycle step itself.
     const workingDirectory = new WorkingDirectoryService({
       reflect: { provide: () => {} },
       sessionProjections: {
-        register: (definition: DirectoryProjection) => { registered = definition },
-        stateOf: (session: { header: { cwd?: string }; snapshotEvents(): SessionEvent[] }) => {
-          if (registered === undefined) throw new Error('working-directory unit not registered')
-          return session.snapshotEvents().reduce((cwd, event) => registered!.apply(cwd, event), registered.init(session.header))
-        },
+        register: (definition: DirectoryProjection) => { registered = definition; return { stateOf } },
       },
       systemPrompt: { context: () => {}, getContextOrder: () => 0 },
       on: () => {},
       effect: () => {},
     } as never, {})
+    const lifecycle = workingDirectory as unknown as Record<symbol, () => Promise<void>>
+    await lifecycle[Service.init]!()
     expect(workingDirectory.get(parent.session as never)).toBe(current)
     const services = happyServices(parent, agent('child'))
     await buildSidechatApi(ctxWith({ ...services, workingDirectory }))['sidechat.start']({ sessionId: 'parent' })
@@ -1016,7 +1027,7 @@ describe('sidechat.models and sidechat.model', () => {
     expect(result.failures).toEqual([{ id: 'host', message: 'boom' }])
   })
 
-  it('normalizes, logs and installs a selection for the live thread', async () => {
+  it('normalizes and applies a selection for the live thread', async () => {
     const child = agent('child-model', { events: threadLog() })
     const services = happyServices(undefined, child)
     const resolveCallConfig = vi.fn(async () => ({ provider: 'p2', model: 'm2', reasoningEffort: 'high' }))
@@ -1027,18 +1038,22 @@ describe('sidechat.models and sidechat.model', () => {
         selection: { provider: 'p2', model: 'm2', reasoningEffort: 'high' },
       })
     expect(resolveCallConfig).toHaveBeenCalledTimes(1)
-    expect(child.session.append).toHaveBeenCalledWith('model/selection', {
+    // `select()` is the durable commit in 0.2.2: it appends `model/selection`
+    // itself, so the route must NOT append a second one.
+    expect(child.model.select).toHaveBeenCalledWith({
       provider: 'p2',
       model: 'm2',
-      reasoningEffort: 'high',
+      reasoningEffort: expect.anything(),
     })
-    // The selection seam is installed ONCE per agent: the second switch of the
-    // same thread only mutates the ref.
-    const listeners = child.ctx.on.mock.calls.length
-    expect(listeners).toBeGreaterThan(0)
+    expect(child.session.append).not.toHaveBeenCalled()
+    // The thread is claimed once: the first switch both SEEDS the agent's model
+    // from the thread's recorded selection and applies the requested one, so
+    // the second switch adds exactly one more select — no re-seed, no second
+    // install — which is what the removed "install once" listener count proved.
+    const selections = child.model.select.mock.calls.length
+    expect(selections).toBe(2)
     await api['sidechat.model']({ childId: 'child-model', provider: 'p2', model: 'm2' })
-    expect(child.session.append).toHaveBeenCalledTimes(2)
-    expect(child.ctx.on.mock.calls.length).toBe(listeners)
+    expect(child.model.select.mock.calls.length).toBe(selections + 1)
   })
 
   it('rejects an unavailable model with a bad-request', async () => {
@@ -1050,17 +1065,23 @@ describe('sidechat.models and sidechat.model', () => {
     }))
     await expect(api['sidechat.model']({ childId: 'child', provider: 'p9', model: 'm9' }))
       .rejects.toMatchObject({ code: 'bad-request', status: 400 })
+    expect(child.model.select).not.toHaveBeenCalled()
     expect(child.session.append).not.toHaveBeenCalled()
   })
 
-  it('cold-resumes the thread before installing a selection', async () => {
-    const child = agent('child', { events: threadLog() })
+  it('cold-resumes the thread before applying a selection', async () => {
+    // Its own thread id: the claimed-thread map is module state, so reusing a
+    // previously claimed id would (correctly) skip the first-claim seeding.
+    const child = agent('child-p3', { events: threadLog() })
     const services = happyServices(undefined, child)
     services.agents.get = vi.fn((_id: unknown) => undefined)
     const api = buildSidechatApi(ctxWith(services))
-    await api['sidechat.model']({ childId: 'child', provider: 'p3', model: 'm3' })
+    await api['sidechat.model']({ childId: 'child-p3', provider: 'p3', model: 'm3' })
     expect(services.resume).toHaveBeenCalledTimes(1)
-    expect(child.session.append).toHaveBeenCalledWith('model/selection', { provider: 'p3', model: 'm3' })
+    // The agent's own model handle records and applies the choice; the route
+    // does not append the event a second time.
+    expect(child.model.select).toHaveBeenCalledWith({ provider: 'p3', model: 'm3' })
+    expect(child.session.append).not.toHaveBeenCalled()
   })
 })
 

@@ -9,6 +9,13 @@
 - 线程历史按 threadId 在原生栏与底部工作台间去重；底部 createTab 合并显式 seed.meta。归档清空当前绑定，不再自动切到其他线程。
 - 原生关闭使用宿主 registerCloseHandler 清理本条侧聊，组件卸载与插件重载不归档；创建中关闭会释放刚生成的孤立线程；同名 tab1 的并发创建按会话隔离。
 
+- 🎯 **设置页「侧边卡片」的导航图标不再叠成两个**：插件此前按"宿主设置导航还没有图标通道"的老假设，用 CSS 把兜底齿轮藏起来、再画自己的图标；宿主早已提供按 section id 寻址的 `settings.section.icon` 插槽，而且图标的 DOM 外面多了一层 span，老选择器失效后兜底 SVG 露了出来，与插件图标并排显示。现在改为**走宿主插槽**提供图标，删掉标记 + CSS 遮罩那一套（顺带去掉了一个监听整个 document 的 MutationObserver）。
+  - 🧪 测试：`tests/settings-nav-icon.spec.tsx` 钉住图标按宿主给的 `size` 缩放、只用 `currentColor`；真实宿主上用无头浏览器确认导航行只剩一个 `svg`、无残留标记。
+
+### v0.30.0
+
+- 🧭 **适配 DSH 0.2.2-rc.1（本版 peer 下限抬到 `^0.2.2-rc.1`）**：宿主把模型选择从可安装的 `ModelSelectionRef` 换成 agent 自有的 `AgentModel`——`agent.model.select()` 同时落盘并作用于下一步，侧边对话的线程模型选择随之改写（不再自己 install 一份 ref）；`dsh-tools` 移除了 PTC（`tool/ptc-dispatch*`）的事件**类型声明**（运行期仍记录），宿主图标由内联 `<path>` 改为 sprite `<use href="#dsw-icon-…">`。**支持线随之移动**：0.x 的 caret 不跨 minor，因此 DSH 0.2.1 线（`0.2.1-rc.1 ~ rc.5`，即当前的宿主 npm `latest`）请继续固定插件 **v0.28.2**（`v0.29.0` 从未发布到 npm），0.2.2-rc.1+ 请用 **v0.30.0**。
+  - 🧪 验证：`typecheck` + 全量 `vitest` + `plugin-mount`（真实 0.2.2-rc.1 宿主 + Chromium）；逐项证据见 [0.2.2 适配记录](docs/plans/2026-11-04-dsh-0.2.2-rc.1-adaptation.md)。
 - 🧭 **安装脚本会先查 profile 自带的 `@deepseek-ai/dsh-*` 副本是否混版**（[#1107](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1107)）：profile 里自己装的宿主包会抢在 DSH 安装之前被解析，本插件静态 import 的 `dsh-subagent` 因此绑到混搭版本；混版缺导出时整只宿主只报 `DesktopHostFatalError: required plugins did not activate`，看不到是哪个包缺了什么。`scripts/install.sh` / `scripts/install.ps1` 现在装完会运行随包发布的 `scripts/check-profile-host-tree.mjs`（按 DSH 自己的 profile 解析规则：只看 profile 内的副本、只判定 `dsh-subagent` 精确声明的 `dsh-attachment` peer）——混版就打印两份版本号与修复命令并退出，不再提示重启。README 常见问题补了同一条修复路径（从 profile 的 `package.json` / overrides 移除 `@deepseek-ai/dsh-*` 后 `pnpm install`，或把两份副本对齐到同一版本）。
   - 🧪 测试：新增 `tests/install-host-tree.spec.ts`（6 例，真跑发布脚本：混版退出码 1 并给出两份版本；配对一致 / 只有 subagent 副本 / profile 之外的旧副本被忽略 / 未装插件均放行；并钉住两个安装脚本都调用它、脚本随包发布）。
 - 🧵 **父会话进行中开的侧边对话不再写出一份永久不可读的子会话日志**（[#1109](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1109)）：父会话压缩过之后，种子是围绕最后一个压缩检查点按**重编号**复制的，而继承来的 `session-log-deepseek/delivery-accepted` 的 `throughSeq` 是绝对 seq——重编号后它仍指向父会话的位置，于是子会话里出现「水位线不早于它自己的标记」，宿主 v4 读取器直接判日志损坏（`SessionFormatError: delivery throughSeq must precede its marker`）：该子会话从此再也读不出来，连带父会话 `includeDescendants` 导出失败。现在重编号会把这条水位线一起重映射；水位线落在被丢弃的区间（子会话侧没有对应事件）时，该记录整条丢弃而不是伪造一个水位线。**已损坏的历史日志不会被修复**，只是不再产生新的。

@@ -29,7 +29,7 @@ assert(hostRootOption, '--host-root is required (directory containing node_modul
 const hostRoot = resolve(hostRootOption)
 const tools = join(hostRoot, 'node_modules')
 const hostPackage = JSON.parse(readFileSync(join(tools, '@deepseek-ai/dsh/package.json'), 'utf8'))
-assert.equal(hostPackage.version, '0.2.1-rc.1', 'preinstalled host must be 0.2.1-rc.1')
+assert.equal(hostPackage.version, '0.2.2-rc.1', 'preinstalled host must be 0.2.2-rc.1')
 const channel = option('--channel')
 const require = createRequire(join(root, 'package.json'))
 const { chromium, request, expect } = require('@playwright/test')

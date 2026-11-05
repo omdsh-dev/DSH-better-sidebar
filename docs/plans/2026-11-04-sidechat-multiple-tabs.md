@@ -22,7 +22,7 @@ There are two independent causes:
 
 ## Compatibility and scope
 
-The contribution is based on upstream `dev` at `09b83cc`. It preserves the image-draft, GenUI, and model-selection paths. The #949 manual archive guard remains intact. A recoverable non-subagent binding clears only its own tab after archive, rather than stealing another open thread.
+The contribution originally targeted upstream `dev` at `09b83cc`; the conflict-resolution update merges `dev` at `11e6c8e`, including upstream's v0.30.0 / DSH 0.2.2-rc.1 adaptation. It preserves the image-draft, GenUI, and model-selection paths. The #949 manual archive guard remains intact. A recoverable non-subagent binding clears only its own tab after archive, rather than stealing another open thread.
 
 **Close semantics remain archive-on-close** as specified by the existing descriptor and #942/#981. This patch makes the native close button honor that behavior too. A user who needs an independently recoverable ordinary session must use “Save as new session” before closing; this change does not introduce an unarchive interface for hidden subagent sessions.
 
