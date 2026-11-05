@@ -31,13 +31,6 @@ export interface WindowControlsOverlayLike {
   removeEventListener(type: 'geometrychange', listener: () => void): void
 }
 
-/** The part of the viewport a floating surface must not cover. */
-export interface ViewportInset {
-  readonly top: number
-}
-
-export const NO_VIEWPORT_INSET: ViewportInset = Object.freeze({ top: 0 })
-
 function overlayOf(navigatorLike: Navigator | undefined): WindowControlsOverlayLike | undefined {
   const candidate = (navigatorLike as
     | (Navigator & { windowControlsOverlay?: WindowControlsOverlayLike })
@@ -54,23 +47,25 @@ function overlayOf(navigatorLike: Navigator | undefined): WindowControlsOverlayL
  *
  * Everything unusable collapses to 0 — no API, `visible: false` (headless
  * Chromium and some macOS builds expose the interface with no overlay), a
- * zero-height band (full screen), or a throwing call. 0 keeps plain browsers
- * and web profiles exactly as they were.
+ * zero-height band, or a throwing call. 0 keeps plain browsers and web
+ * profiles exactly as they were.
  */
-function computeInset(candidate: WindowControlsOverlayLike | undefined): ViewportInset {
-  if (candidate === undefined) return NO_VIEWPORT_INSET
+function computeInset(candidate: WindowControlsOverlayLike | undefined): number {
+  if (candidate === undefined) return 0
   try {
-    if (candidate.visible !== true) return NO_VIEWPORT_INSET
+    if (candidate.visible !== true) return 0
     const rect = candidate.getTitlebarAreaRect()
     const top = Math.round(rect.y + rect.height)
-    return Number.isFinite(top) && top > 0 ? { top } : NO_VIEWPORT_INSET
+    return Number.isFinite(top) && top > 0 ? top : 0
   } catch {
-    return NO_VIEWPORT_INSET
+    return 0
   }
 }
 
 let source: WindowControlsOverlayLike | undefined
-let snapshot: ViewportInset = NO_VIEWPORT_INSET
+// A number, not an object: the change check below is then a value comparison,
+// so an unchanged band never wakes the consumers.
+let snapshot = 0
 const listeners = new Set<() => void>()
 
 function emit(): void {
@@ -102,8 +97,8 @@ if (typeof window !== 'undefined') {
   window.addEventListener('resize', reread)
 }
 
-/** The current inset. Stable reference until the geometry actually changes. */
-export function getViewportInset(): ViewportInset {
+/** The current inset in CSS pixels (0 when there is none). */
+export function getViewportInset(): number {
   return snapshot
 }
 
@@ -119,20 +114,11 @@ export function setViewportInsetSourceForTests(
 ): void {
   source?.removeEventListener('geometrychange', reread)
   source = next
-  const computed = computeInset(next)
-  if (computed !== snapshot) {
-    snapshot = computed
-    emit()
-  }
+  reread()
   next?.addEventListener('geometrychange', reread)
 }
 
-/** React consumer: the inset, re-rendering when the shell band changes. */
-export function useViewportInset(): ViewportInset {
-  return useSyncExternalStore(subscribeViewportInset, getViewportInset, getViewportInset)
-}
-
-/** Convenience for callers that only need the number. */
+/** React consumer: the inset, re-rendering only when the shell band changes. */
 export function useViewportInsetTop(): number {
-  return useViewportInset().top
+  return useSyncExternalStore(subscribeViewportInset, getViewportInset, getViewportInset)
 }
