@@ -179,7 +179,9 @@ export function apply(ctx: Context): void {
   // right column belongs to the host and only the bottom workbench stays
   // plugin-owned. Both halves live for this fiber's lifetime.
   const nativeRecords = createNativeTabRecords()
-  const nativeSurface = createNativeSurface(ctx, nativeRecords)
+  const nativeSurface = createNativeSurface(ctx, nativeRecords, (tab, sessionId) => {
+    service.getTab(tab.type)?.onClose?.(tab, { sessionId })
+  })
   service.setSurface(nativeSurface)
   // The optional dsh-context diagnostics: ONE controller per activation. It
   // re-proves the optional runtime faces itself, so the plugin needs no new
