@@ -8,16 +8,15 @@
  *   the Changes section: each option pairs the display-only disambiguation
  *   label (`buildRepositoryLabels(roots, scope.cwd, hostHome)` — deeper roots
  *   carry their relative parent, so same-named checkouts stay tellable apart)
- *   with its absolute root as the value. The ⋯ → Repository submenu shares the
- *   same label list.
+ *   with its absolute root as the value.
  * - The picker's value is the RESOLVED status root, and both spellings of one
  *   checkout fold (forward/back slashes, trailing separator, Windows case).
  *   When that root is no longer among the retained choices (the server fell
  *   back), it renders as a DISABLED stand-in option with its own short label —
  *   the stale request or the first option is never silently presented as the
  *   selection.
- * - Changing the picker re-pins the scope through the same `chooseRepo` the
- *   submenu uses, so the next status read carries that root and the picker
+ * - Changing the picker re-pins the scope through the existing `chooseRepo`,
+ *   so the next status read carries that root and the picker
  *   survives the following read (a selected child still reports the full
  *   `repositories` list).
  * - A single-repository workspace renders NO picker: the row must not steal
@@ -111,18 +110,10 @@ it('renders no picker for a single-repository workspace', async () => {
   expect(view.container.querySelector('[data-scm-section="changes"]')).not.toBeNull()
 })
 
-it('labels deeper repositories with their relative parent and shares the list with the menu', async () => {
+it('labels deeper repositories with their relative parent', async () => {
   const view = await mount({ sessionId: 'scm-repos-labels', repositories: [CWD, DEEP_A, DEEP_B] })
   expect(options(picker(view.container)).map(option => option.textContent))
     .toEqual(['work', 'alpha (pack)', 'beta (pack)'])
-  // The ⋯ → Repository submenu reads the same label list.
-  act(() => { view.container.querySelector<HTMLButtonElement>(`button[aria-label="${t('gitMoreActions')}"]`)!.click() })
-  const parent = [...document.querySelectorAll<HTMLButtonElement>('button[role="menuitem"]')]
-    .find(button => button.textContent?.trim() === t('gitRepository'))
-  expect(parent).not.toBeUndefined()
-  act(() => { parent!.click() })
-  const items = [...document.querySelectorAll<HTMLButtonElement>('[role="menu"] [role="menu"] button[role="menuitem"]')]
-  expect(items.map(item => item.textContent)).toEqual(['work', 'alpha (pack)', 'beta (pack)'])
 })
 
 it('shows the server-fallback root as a disabled stand-in, never as a silent first option', async () => {

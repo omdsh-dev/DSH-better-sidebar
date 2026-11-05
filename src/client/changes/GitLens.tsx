@@ -1186,9 +1186,6 @@ export function GitLens(props: GitLensProps) {
                   items={[
                     { id: 'pull', label: t('pull'), disabled: busy || suggesting || snapshot?.detached === true },
                     { id: 'push', label: t('push'), disabled: busy || suggesting || snapshot?.detached === true },
-                    ...(repoChoices.length > 1 ? [{ id: 'repos', label: t('gitRepository'),
-                      submenu: repositoryLabels.map(({ root, label }) => ({ id: `repo:${root}`, label, disabled: busy || suggesting })),
-                    }] : []),
                     ...(worktrees.length > 1 ? [{ id: 'worktrees', label: t('worktree'),
                       submenu: worktrees.map(entry => ({ id: `worktree:${entry.path}`,
                         label: `${entry.branch || t('gitDetached')} · ${baseName(entry.path)} (${entry.changes})`, disabled: busy || suggesting,
@@ -1199,7 +1196,6 @@ export function GitLens(props: GitLensProps) {
                     setMoreMenu(null)
                     if (id === 'push') push()
                     else if (id === 'pull') pull()
-                    else if (id.startsWith('repo:')) chooseRepo(id.slice(5))
                     else if (id.startsWith('worktree:')) chooseWorktree(id.slice(9))
                   }} />
               </div>
