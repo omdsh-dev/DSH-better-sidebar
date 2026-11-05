@@ -168,6 +168,30 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
     if (message.type() === 'error') consoleErrors.push(message.text())
   })
 
+  // A fake Window Controls Overlay so the test can play the desktop shell's
+  // native window-control band. It starts at 0 (plain-browser behaviour, so
+  // every other assertion in this lane stays exactly as before); the mermaid
+  // section below raises it and measures the REAL layout.
+  await page.addInitScript(() => {
+    const listeners = new Set<() => void>()
+    const band = { height: 0, visible: true }
+    Object.defineProperty(navigator, 'windowControlsOverlay', {
+      configurable: true,
+      value: {
+        get visible() { return band.visible },
+        getTitlebarAreaRect: () => ({ x: 0, y: 0, width: window.innerWidth, height: band.height }),
+        addEventListener: (type: string, listener: () => void) => {
+          if (type === 'geometrychange') listeners.add(listener)
+        },
+        removeEventListener: (_type: string, listener: () => void) => { listeners.delete(listener) },
+      },
+    })
+    ;(window as unknown as { __setTitlebarBand(height: number): void }).__setTitlebarBand = (height) => {
+      band.height = height
+      for (const listener of listeners) listener()
+    }
+  })
+
   // Load the shell. The app renders into #root; the plugin appends its own
   // [data-dsh-better-sidebar] host once its client half activates.
   //
@@ -577,6 +601,25 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   })
   expect(modalRegions.modal, 'the zoom modal must opt out of app-region computation').toBe('none')
   expect(modalRegions.button, 'its buttons must stay no-drag').toBe('no-drag')
+  // Issue #805: the shell draws its native window controls OVER the page's
+  // top-right and those pointer events never reach the document, so the
+  // toolbar must sit below that band. At the reporter's 42px overlay a bare
+  // 16px inset left only the bottom 10px of each 36px button clickable while
+  // `elementFromPoint` still answered the button — the control read as dead.
+  // Play the band and measure the real layout.
+  const toolbar = page.locator('[data-mermaid-modal] [data-mermaid-toolbar]')
+  const toolbarTop = async (): Promise<number> => await toolbar.evaluate(
+    (element) => Math.round(element.getBoundingClientRect().top),
+  )
+  expect(await toolbarTop(), 'with no band the toolbar keeps its 16px inset').toBe(16)
+  await page.evaluate(() => {
+    ;(window as unknown as { __setTitlebarBand(h: number): void }).__setTitlebarBand(36)
+  })
+  await expect.poll(toolbarTop, 'a 36px band must push the toolbar clear of it').toBe(52)
+  await page.evaluate(() => {
+    ;(window as unknown as { __setTitlebarBand(h: number): void }).__setTitlebarBand(0)
+  })
+  await expect.poll(toolbarTop, 'shrinking the band must pull the toolbar back').toBe(16)
   await page.keyboard.press('Escape')
   await expect(modal, 'Esc must close the zoom modal').toHaveCount(0, { timeout: 10_000 })
   await assertNoCrash()
