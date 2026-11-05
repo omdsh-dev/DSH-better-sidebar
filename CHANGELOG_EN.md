@@ -4,6 +4,13 @@
 >
 > 📝 The Chinese [CHANGELOG](./CHANGELOG.md) is the authoritative, item-by-item record; this file carries the English summaries and has historically lagged behind it. Where the two disagree, the Chinese one is current.
 
+### Unreleased
+
+- **Equal-width tab strips**: bottom-workbench and native right-sidebar tabs share the available width, retaining their minimum/maximum widths and horizontal scrolling instead of sizing each tab to its title.
+- **Stable widths while closing**: a close gesture captures the current width until the pointer leaves. Native freezing is scoped to the initiating pane in the visible panel, without changing another split or hidden session.
+- **Native bulk-close menu**: the host menu slot gains close others / left / right / all, limited to the target strip in the visible session. Ambiguous strips render no actions, and actions revalidate their scope before closing.
+- **Recognizable close actions**: both strips use leading icons and shorter labels; the native menu separates single-tab close from bulk operations.
+
 ### v0.30.1
 
 - 🎯 **The "Side card" settings row no longer shows two icons**: the plugin still assumed the settings navigation had no icon channel, so it hid the fallback gear with CSS and painted its own glyph. The shell has long since exposed a `settings.section.icon` slot addressed by section id, and it now wraps the nav icon in a span — the stale `> svg:first-child` rule stopped hiding the fallback, so both glyphs rendered side by side. The row now contributes its icon **through the slot**, and the marker + CSS-mask apparatus is gone (along with a document-wide MutationObserver).

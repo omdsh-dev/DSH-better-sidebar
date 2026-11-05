@@ -21,6 +21,19 @@ afterEach(() => {
   document.body.removeAttribute('style')
 })
 
+describe('native tab close menu skin contract', () => {
+  it('uses host color tokens and currentColor glyphs without root-global freeze CSS', () => {
+    const css = readFileSync(resolve('src/client/sidebar.module.css'), 'utf8')
+    const icons = readFileSync(resolve('src/client/close-family-icons.tsx'), 'utf8')
+    const layout = readFileSync(resolve('src/client/layout.css'), 'utf8')
+    expect(css).toMatch(/\.nativeTabMenuSeparator\s*\{[^}]*background:\s*var\(--dsw-alias-border-l1\)/)
+    expect(css).toMatch(/\.nativeTabMenuItem:disabled\s*\{[^}]*color:\s*var\(--dsw-alias-label-tertiary\)/)
+    expect(icons).toContain('currentColor')
+    expect(icons).not.toMatch(/#[\da-f]{3,8}\b|rgba?\(/i)
+    expect(layout).not.toMatch(/html\[data-dsh-tabs-frozen\]/)
+  })
+})
+
 describe('colorAlpha', () => {
   it('parses the hex family', () => {
     expect(colorAlpha('#fff')).toBe(1)
