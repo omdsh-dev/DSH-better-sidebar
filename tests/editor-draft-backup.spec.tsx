@@ -16,7 +16,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createElement } from 'react'
 import { act } from 'react-dom/test-utils'
+import { EditorView } from '@codemirror/view'
 import { renderRoot, setupReactAct } from './test-utils.ts'
+import { SidebarApiError } from '../src/client/api.ts'
 import { TextEditor } from '../src/client/TextEditor.tsx'
 import { createSidebarStore } from '../src/client/state.ts'
 import type { FileViewerProps } from '../src/client/service.ts'
@@ -27,6 +29,7 @@ import {
   DRAFT_BACKUP_CHARS,
   DRAFT_BACKUP_LIMIT,
   DRAFT_BACKUP_THROTTLE_MS,
+  draftBackupBaseMtime,
   flushDraftBackups,
   readDraftBackup,
   registerDraftSource,
@@ -36,11 +39,16 @@ import {
 setupReactAct()
 
 const fsWrite = vi.fn()
+const fsRead = vi.fn()
 vi.mock('../src/client/api.ts', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/client/api.ts')>()
   return {
     ...actual,
-    api: { ...actual.api, fsWrite: (...args: unknown[]) => fsWrite(...args) },
+    api: {
+      ...actual.api,
+      fsWrite: (...args: unknown[]) => fsWrite(...args),
+      fsRead: (...args: unknown[]) => fsRead(...args),
+    },
   }
 })
 
@@ -77,10 +85,43 @@ function click(element: HTMLElement): void {
   act(() => { element.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
 }
 
+/** The editor's live CodeMirror view (the real document, draft included). */
+function viewOf(container: HTMLElement): EditorView {
+  const host = container.querySelector('.cm-editor')
+  const view = host === null ? null : EditorView.findFromDOM(host as HTMLElement)
+  if (view === null) throw new Error('the mounted editor has no CodeMirror view')
+  return view
+}
+
+/** Type through CodeMirror's own doc-change path (a keystroke). */
+function typeText(container: HTMLElement, text: string): void {
+  act(() => { viewOf(container).dispatch({ changes: { from: 0, insert: text } }) })
+}
+
+function reloadButton(container: HTMLElement): HTMLButtonElement {
+  const button = Array.from(container.querySelectorAll('button'))
+    .find(candidate => candidate.textContent === 'Reload from disk')
+  if (button === undefined) throw new Error('the conflict banner has no reload button')
+  return button as HTMLButtonElement
+}
+
+async function settle(): Promise<void> {
+  await act(async () => { await Promise.resolve() })
+  await act(async () => { await Promise.resolve() })
+}
+
+/** A body at revision 1000 that gets an edit, then goes away without a save. */
+function leaveDraftAt1000(): void {
+  const mounted = renderRoot(createElement(TextEditor, viewerProps({ content: 'base\n', mtimeMs: 1000 })))
+  typeText(mounted.container, 'draft ')
+  mounted.unmount()
+}
+
 beforeEach(() => {
   localStorage.clear()
   fsWrite.mockReset()
   fsWrite.mockResolvedValue({ ok: true, mtimeMs: 456 })
+  fsRead.mockReset()
 })
 
 afterEach(() => {
@@ -143,6 +184,17 @@ describe('editor-draft-backup store', () => {
     expect(readDraftBackup('s1', '/p/a.ts', 'same as disk')).toBeNull()
     expect(storedKeys()).toHaveLength(0)
   })
+
+  it('stores the base mtime with the draft, and reads a malformed one as absent', () => {
+    const release = registerDraftSource('s1', '/p/a.ts', () => 'typed', () => 1000)
+    scheduleDraftBackup('s1', '/p/a.ts')
+    flushDraftBackups()
+    release()
+    expect(draftBackupBaseMtime('s1', '/p/a.ts')).toBe(1000)
+    localStorage.setItem('dsh-better-sidebar:draft:s1::/p/a.ts', JSON.stringify({ text: 'typed', savedAt: 1, baseMtimeMs: 'x' }))
+    expect(draftBackupBaseMtime('s1', '/p/a.ts')).toBeUndefined()
+    expect(readDraftBackup('s1', '/p/a.ts', 'disk'), 'the draft itself is still offered').toBe('typed')
+  })
 })
 
 describe('TextEditor draft restore', () => {
@@ -187,6 +239,109 @@ describe('TextEditor draft restore', () => {
     const mounted = renderRoot(createElement(TextEditor, viewerProps()))
     try {
       expect(confirmSpy).not.toHaveBeenCalled()
+    } finally {
+      mounted.unmount()
+    }
+  })
+})
+
+describe('TextEditor draft restore: the mtime the draft was typed against', () => {
+  /** The newer revision a reopen loads: another writer moved the file on. */
+  const newer = { content: 'rewritten elsewhere\n', mtimeMs: 2000 }
+  const refusedByHost = new SidebarApiError('fs-conflict', 'changed on disk')
+
+  beforeEach(() => {
+    vi.stubGlobal('confirm', vi.fn().mockReturnValue(true))
+  })
+
+  it('saves a restored draft against its own base, not the mtime just loaded', async () => {
+    leaveDraftAt1000()
+    const mounted = renderRoot(createElement(TextEditor, viewerProps(newer)))
+    try {
+      click(saveButton(mounted.container))
+      await settle()
+      expect(fsWrite).toHaveBeenCalledTimes(1)
+      expect(fsWrite.mock.calls[0]![2]).toBe('draft base\n')
+      expect(fsWrite.mock.calls[0]![3]).toBe(1000)
+    } finally {
+      mounted.unmount()
+    }
+  })
+
+  it('takes the conflict path when the host refuses it: the draft stays, and the banner does not resolve in place', async () => {
+    // The host's own rule: only the file's current mtime passes.
+    fsWrite.mockImplementation((_scope: unknown, _path: unknown, _text: unknown, expected: unknown) => (
+      expected === newer.mtimeMs ? Promise.resolve({ ok: true, mtimeMs: 3000 }) : Promise.reject(refusedByHost)
+    ))
+    // The disk equals what this mount loaded, which is exactly what must not
+    // read as "only the mtime moved": the draft was typed on other bytes.
+    fsRead.mockResolvedValue({ kind: 'text', content: newer.content, size: newer.content.length, mtimeMs: newer.mtimeMs })
+    leaveDraftAt1000()
+    const onReload = vi.fn()
+    const mounted = renderRoot(createElement(TextEditor, viewerProps({ ...newer, onReload })))
+    try {
+      click(saveButton(mounted.container))
+      await settle()
+      expect(mounted.container.textContent ?? '').toContain('changed on disk since it was loaded')
+      expect(viewOf(mounted.container).state.doc.toString()).toBe('draft base\n')
+      expect(readDraftBackup('s1', '/p/a.ts', newer.content), 'a refused save keeps the backup').toBe('draft base\n')
+      click(reloadButton(mounted.container))
+      await settle()
+      expect(onReload, 'the reload defers to the host and its unsaved-edits guard').toHaveBeenCalledTimes(1)
+      click(saveButton(mounted.container))
+      await settle()
+      expect(fsWrite.mock.calls[1]![3], 'the probe did not move the baseline').toBe(1000)
+    } finally {
+      mounted.unmount()
+    }
+  })
+
+  it('keeps the original base across further edits of a restored draft', async () => {
+    leaveDraftAt1000()
+    const edited = renderRoot(createElement(TextEditor, viewerProps(newer)))
+    typeText(edited.container, 'more ')
+    edited.unmount()
+    const mounted = renderRoot(createElement(TextEditor, viewerProps(newer)))
+    try {
+      click(saveButton(mounted.container))
+      await settle()
+      expect(fsWrite.mock.calls[0]![2]).toBe('more draft base\n')
+      expect(fsWrite.mock.calls[0]![3]).toBe(1000)
+    } finally {
+      mounted.unmount()
+    }
+  })
+
+  it('treats an entry without a base as before: the save carries the mtime just loaded', async () => {
+    localStorage.setItem('dsh-better-sidebar:draft:s1::/p/a.ts', JSON.stringify({ text: 'older entry\n', savedAt: 1 }))
+    const mounted = renderRoot(createElement(TextEditor, viewerProps(newer)))
+    try {
+      click(saveButton(mounted.container))
+      await settle()
+      expect(fsWrite.mock.calls[0]![2]).toBe('older entry\n')
+      expect(fsWrite.mock.calls[0]![3]).toBe(newer.mtimeMs)
+    } finally {
+      mounted.unmount()
+    }
+  })
+
+  it('leaves a draft whose file did not move on the normal path: a touch still resolves in place (#1059)', async () => {
+    leaveDraftAt1000()
+    const onReload = vi.fn()
+    const mounted = renderRoot(createElement(TextEditor, viewerProps({ content: 'base\n', mtimeMs: 1000, onReload })))
+    try {
+      fsWrite.mockRejectedValueOnce(refusedByHost)
+      click(saveButton(mounted.container))
+      await settle()
+      expect(fsWrite.mock.calls[0]![3]).toBe(1000)
+      fsRead.mockResolvedValue({ kind: 'text', content: 'base\n', size: 5, mtimeMs: 3000 })
+      click(reloadButton(mounted.container))
+      await settle()
+      expect(onReload).not.toHaveBeenCalled()
+      expect(mounted.container.textContent ?? '').not.toContain('changed on disk since it was loaded')
+      click(saveButton(mounted.container))
+      await settle()
+      expect(fsWrite.mock.calls[1]![3]).toBe(3000)
     } finally {
       mounted.unmount()
     }
