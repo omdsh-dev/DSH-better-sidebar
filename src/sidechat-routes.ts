@@ -21,15 +21,15 @@
  * - a cold thread (DSH restart, or a closed thread) is resumed with
  *   AgentRegistry.resume, composing the preset the child recorded.
  */
+import type { ImageAttachmentRef, StoredImageAttachment } from '@deepseek-ai/dsh-attachment'
+import { parseSidechatPrompt, sidechatAdmissionError, sidechatAttachments, sidechatImageLimits } from './sidechat-image-admission.ts'
 import { randomUUID } from 'node:crypto'
 import { createUserMessage, ReasoningEffortId, type ContentBlock, type UserMessage } from '@deepseek-ai/dsh-llm'
 import type { MessageId } from '@deepseek-ai/dsh-llm/brand'
 import {
-  installModelSelection,
   type Agent,
   type AgentSetup,
   type CreateAgentOptions,
-  type ModelSelectionRef,
   type ResumeAgentOptions,
 } from '@deepseek-ai/dsh-agent'
 import { snapshotSubagentDescriptor } from '@deepseek-ai/dsh-subagent'
@@ -43,6 +43,7 @@ import type {
 } from './context-types.ts'
 import {
   boundaryDelivered,
+  coldPendingMessages,
   buildSidechatInheritance,
   effectiveModelSelection,
   inheritedPendingIds,
@@ -112,7 +113,7 @@ export interface SidechatRoutes {
    *  boundary + snapshot and earns the thread its real label. */
   'sidechat.start'(payload: unknown): Promise<{ childId: string }>
   /** Deliver one follow-up message to a thread (live, or cold-resumed). */
-  'sidechat.prompt'(payload: unknown): Promise<{ accepted: true }>
+  'sidechat.prompt'(payload: unknown): Promise<{ accepted: true; messageId: string }>
   /** Abort the thread's running turn (queued work is preserved). */
   'sidechat.cancel'(payload: unknown): Promise<{ accepted: true }>
   /** Release the thread's live agent (session and history stay persisted). */
@@ -164,14 +165,14 @@ const threadDisposers = new Map<string, () => Promise<void>>()
  *  prompt is then delivered alone, a logged degradation). */
 const pendingSnapshots = new Map<string, string>()
 
-/** Per-thread model-selection refs installed on the live agent. The host's
- *  own composer commits a model switch by appending `model/selection` AND
- *  installing this agent-scoped ref (`SessionController.selectForNextRequest`);
- *  the ref is what prompt assembly and request routing actually read, because
- *  the controller caches one selection object per agent and never re-reads the
- *  projection. A subagent-origin thread never passes through the controller's
- *  fence, so the plugin installs the same seam itself. */
-const threadModelRefs = new Map<string, ModelSelectionRef>()
+/** One live agent's model seam (`agent.model`). DSH 0.2.2 replaced the
+ *  installable `ModelSelectionRef` with an agent-owned `AgentModel` whose
+ *  `select()` records the choice durably and applies it to the next step, so
+ *  the plugin no longer installs anything: it holds the agent's own handle.
+ *  The map only remembers which threads this module has already claimed, so a
+ *  resumed thread is not re-seeded from a stale log every route. */
+type AgentModelHandle = Agent['model']
+const threadModelRefs = new Map<string, AgentModelHandle>()
 
 /** The host model catalog service's structural face (dsh-api-session-controller
  *  is not a plugin peer; only `modelCatalog()` is read, and its shape is
@@ -183,6 +184,7 @@ interface SidebarModelCatalogService {
 /** The host LLM service's structural face: the same call-config resolution the
  *  controller's own `selectModel` validates with. */
 interface SidebarLlmService {
+  resolveModelInfo?(provider: string, model: string): Promise<{ inputModalities?: readonly string[] }>
   resolveCallConfig?(request: {
     provider: string
     model: string
@@ -218,7 +220,7 @@ async function composePersistedSetup(
   if (persistence === undefined) {
     return () => Promise.resolve()
   }
-  const inspected = await readPersistedSession(persistence, childId)
+  const inspected = await readColdThreadSession(persistence, childId)
   const presetId = resolvePresetId(inspected.header, inspected.events)
   const presets = ctx.get('agentPresets') as SidebarAgentPresetsService | undefined
   if (presets === undefined || presetId === undefined) {
@@ -233,10 +235,16 @@ function textPrompt(text: string): ContentBlock[] {
   return [{ type: 'text', text }]
 }
 
+function tryRenameThread(ctx: Context, agent: Agent, label: string): void {
+  const titles = ctx.get('sessionTitle') as SidebarSessionTitleService | undefined
+  try { titles?.rename(agent.session, label) } catch { return }
+}
+
 /** Admit one user message to a live agent through the stock followup path. */
-function admitFollowup(agent: Agent, blocks: ContentBlock[]): void {
+function admitFollowup(agent: Agent, blocks: ContentBlock[]): string {
   const message: UserMessage = createUserMessage({ content: blocks, source: { kind: 'user' } })
   agent.followup(message)
+  return message.id
 }
 
 /**
@@ -253,12 +261,15 @@ function admitFollowup(agent: Agent, blocks: ContentBlock[]): void {
  * is structural; its text still opens with SIDE_BOUNDARY_PREFIX, keeping
  * boundaryDelivered intact.
  */
-function admitFirstContact(agent: Agent, injectionText: string, question: string): void {
-  agent.inject(createUserMessage({
-    content: textPrompt(injectionText),
-    source: { kind: SIDE_INJECTION_SOURCE_KIND },
-  }))
-  admitFollowup(agent, textPrompt(question))
+function admitFirstContact(agent: Agent, injectionText: string, content: string | ContentBlock[]): string {
+  const boundary = createUserMessage({ content: textPrompt(injectionText), source: { kind: SIDE_INJECTION_SOURCE_KIND } })
+  agent.inject(boundary)
+  try {
+    return admitFollowup(agent, typeof content === 'string' ? textPrompt(content) : content)
+  } catch (error) {
+    agent.inbox.remove(boundary.id)
+    throw error
+  }
 }
 
 /** The live thread agent, or undefined (cold — the caller resumes). */
@@ -281,60 +292,48 @@ interface SidebarStoredSessionStat {
   readonly sizeBytes?: number
 }
 
-/**
- * Cold-thread log memo: how many THREADS keep their decoded log. The
- * transcript polls `sidechat.events` per open thread (15 s fallback, plus one
- * pull per push frame), so a handful of threads is the whole working set.
- */
+type ColdThreadSnapshot = Awaited<ReturnType<typeof readPersistedSession>>
+interface ColdThreadCache {
+  memo: Map<string, { identity: string; snapshot: ColdThreadSnapshot }>
+  flights: Map<string, Promise<ColdThreadSnapshot>>
+}
 const COLD_LOG_MEMO_MAX = 16
-const coldLogMemo = new Map<string, readonly SidechatLogEvent[]>()
+const coldThreadCaches = new WeakMap<SidebarSessionPersistenceService, ColdThreadCache>()
 
-/**
- * Read one COLD thread's persisted log, memoized by the stored artifact's
- * IDENTITY: `childId` plus the host's change token (dev/ino/size/mtimeNs/
- * ctimeNs) and the physical size.
- *
- * Why: a cold thread is re-read on every poll, and each read opens the handle,
- * decodes the ENTIRE persisted log and scans it back to `session/end-seed` —
- * O(thread history) per tick for an answer that only changes when the artifact
- * does. With the memo a repeat poll costs one `stat`.
- *
- * Only the RESULT is memoized, never the handle:
- * {@link readPersistedSession} still opens and closes it (its `finally`), so a
- * concurrent writer is unaffected. A host without `stat`, or a session whose
- * stat is unreadable, reads uncached — the read itself then reports the real
- * error (404 for a gone thread) exactly as before.
- */
-async function readColdThreadLog(
-  persistence: SidebarSessionPersistenceService,
-  childId: string,
-): Promise<readonly SidechatLogEvent[]> {
+async function readColdThreadSession(persistence: SidebarSessionPersistenceService, childId: string): Promise<ColdThreadSnapshot> {
+  let cache = coldThreadCaches.get(persistence)
+  if (cache === undefined) {
+    cache = { memo: new Map(), flights: new Map() }
+    coldThreadCaches.set(persistence, cache)
+  }
   const identity = await storedIdentityOf(persistence, childId)
-  if (identity === undefined) {
-    return (await readPersistedSession(persistence, childId)).events as unknown as readonly SidechatLogEvent[]
+  const hit = cache.memo.get(childId)
+  if (identity !== undefined && hit?.identity === identity) {
+    cache.memo.delete(childId)
+    cache.memo.set(childId, hit)
+    return hit.snapshot
   }
-  const key = `${childId}\0${identity}`
-  const hit = coldLogMemo.get(key)
-  if (hit !== undefined) {
-    // Refresh recency (the memo is a bounded LRU).
-    coldLogMemo.delete(key)
-    coldLogMemo.set(key, hit)
-    return hit
-  }
-  const events = (await readPersistedSession(persistence, childId)).events as unknown as readonly SidechatLogEvent[]
-  // One thread owns at most one entry: a changed artifact replaces the old
-  // version instead of pinning a second copy of a potentially huge log.
-  const prefix = `${childId}\0`
-  for (const existing of coldLogMemo.keys()) {
-    if (existing.startsWith(prefix)) coldLogMemo.delete(existing)
-  }
-  coldLogMemo.set(key, events)
-  while (coldLogMemo.size > COLD_LOG_MEMO_MAX) {
-    const oldest = coldLogMemo.keys().next().value
-    if (oldest === undefined) break
-    coldLogMemo.delete(oldest)
-  }
-  return events
+  const key = `${childId}\0${identity ?? ''}`
+  const pending = cache.flights.get(key)
+  if (pending !== undefined) return pending
+  const promise = readPersistedSession(persistence, childId).then(snapshot => {
+    if (identity !== undefined) {
+      cache.memo.delete(childId)
+      cache.memo.set(childId, { identity, snapshot })
+      while (cache.memo.size > COLD_LOG_MEMO_MAX) {
+        const oldest = cache.memo.keys().next().value
+        if (oldest === undefined) break
+        cache.memo.delete(oldest)
+      }
+    }
+    return snapshot
+  }).finally(() => { cache.flights.delete(key) })
+  cache.flights.set(key, promise)
+  return promise
+}
+
+async function readColdThreadLog(persistence: SidebarSessionPersistenceService, childId: string): Promise<readonly SidechatLogEvent[]> {
+  return (await readColdThreadSession(persistence, childId)).events as unknown as readonly SidechatLogEvent[]
 }
 
 /** The stored artifact's change identity, or undefined when unavailable. */
@@ -485,30 +484,30 @@ function brandedSelection(selection: SidechatModelSelection): {
 }
 
 /**
- * Hand the agent the model-selection seam, once per live agent: the ref prompt
- * assembly snapshots and request routing applies. Seeded from the thread's
- * recorded selection, so a resumed thread keeps the model the user picked
- * instead of reverting to the deployment default.
+ * Claim the thread's model seam once per live agent. DSH 0.2.2 hands every agent
+ * its own `AgentModel` (`agent.model`), whose `select()` records the choice in
+ * the log AND applies it to the next step — there is nothing to install, only a
+ * handle to remember. Claiming SEEDS it from the thread's recorded selection so
+ * a resumed thread keeps the model the user picked instead of reverting to the
+ * deployment default; `select()` is a no-op when that choice is already the
+ * recorded one, so re-seeding never appends a duplicate.
  * @param agent - the live thread agent.
- * @param childId - thread identity (the ref's key).
- * @returns the installed (or already installed) ref.
+ * @param childId - thread identity (the map key).
+ * @returns the agent's model handle.
  */
-function ensureModelSelection(agent: Agent, childId: string): ModelSelectionRef {
+function ensureModelSelection(agent: Agent, childId: string): AgentModelHandle {
   const existing = threadModelRefs.get(childId)
   if (existing !== undefined) return existing
+  const model = agent.model
   const selection = selectionOf(agent)
-  const ref: ModelSelectionRef = {
-    current: selection === undefined ? undefined : brandedSelection(selection),
-    assembled: undefined,
-  }
-  installModelSelection(agent.ctx, ref)
-  threadModelRefs.set(childId, ref)
-  return ref
+  if (selection !== undefined) model.select(brandedSelection(selection))
+  threadModelRefs.set(childId, model)
+  return model
 }
 
 /** Resolve the thread's live agent, cold-resuming the persisted session under
  *  its recorded composition. Every context-delivering route shares this. */
-async function ensureLiveThread(ctx: Context, childId: string): Promise<Agent> {
+async function resumeThread(ctx: Context, childId: string, cancelled: () => boolean): Promise<Agent> {
   const live = liveThreadAgent(ctx, childId)
   if (live !== undefined) return live
   const agents = ctx.get('agents') as
@@ -520,6 +519,10 @@ async function ensureLiveThread(ctx: Context, childId: string): Promise<Agent> {
   const setup = await composePersistedSetup(ctx, childId)
   try {
     const handle = await agents.resume({ resumeSessionId: childId as SessionId, setup })
+    if (cancelled()) {
+      await handle.dispose()
+      throw new SidebarError('sidechat-error', 'Thread was closed while resuming', 409)
+    }
     threadDisposers.set(childId, () => handle.dispose())
     // A cold resume rebuilds the runtime inbox by folding the full log, so an
     // inherited prefix can resurrect the parent's already-claimed input here
@@ -536,6 +539,37 @@ async function ensureLiveThread(ctx: Context, childId: string): Promise<Agent> {
       500,
     )
   }
+}
+
+interface ThreadResume { promise: Promise<Agent>; cancel(): void }
+const resuming = new WeakMap<Context, Map<string, ThreadResume>>()
+async function ensureLiveThread(ctx: Context, childId: string): Promise<Agent> {
+  const live = liveThreadAgent(ctx, childId)
+  if (live !== undefined) return live
+  let flights = resuming.get(ctx)
+  if (flights === undefined) { flights = new Map(); resuming.set(ctx, flights) }
+  const pending = flights.get(childId)
+  if (pending !== undefined) return pending.promise
+  let cancelled = false
+  const promise = resumeThread(ctx, childId, () => cancelled).finally(() => { flights.delete(childId) })
+  flights.set(childId, { promise, cancel() { cancelled = true } })
+  return promise
+}
+
+async function assertImageModel(ctx: Context, agent: Agent): Promise<string | undefined> {
+  const llm = ctx.get('llm') as SidebarLlmService | undefined
+  if (llm?.resolveModelInfo === undefined) return JSON.stringify(selectionOf(agent))
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const selection = selectionOf(agent)
+    if (selection === undefined) return
+    const info = await llm.resolveModelInfo(selection.provider, selection.model)
+    if (JSON.stringify(selection) !== JSON.stringify(selectionOf(agent))) continue
+    if (info.inputModalities !== undefined && !info.inputModalities.includes('image')) {
+      throw new SidebarError('bad-request', 'The selected model does not accept images')
+    }
+    return JSON.stringify(selection)
+  }
+  throw new SidebarError('sidechat-error', 'Model selection changed during image admission; try again', 409)
 }
 
 /** Reject a wire selection the deployment cannot route. Mirrors the
@@ -605,7 +639,11 @@ async function modelCatalogOf(ctx: Context): Promise<SidechatModelCatalog> {
  *  @param ctx - host plugin context.
  *  @param live - the live assistant stream buffer; absent only in tests that
  *    never exercise streaming (then every `live` response is empty). */
-export function buildSidechatApi(ctx: Context, live?: AssistantLiveBuffer): SidechatRoutes {
+export function buildSidechatApi(ctx: Context, live?: AssistantLiveBuffer, signal?: AbortSignal): SidechatRoutes {
+  const admissions = new Map<string, Set<{ disposed: boolean }>>()
+  signal?.addEventListener('abort', () => {
+    for (const flight of resuming.get(ctx)?.values() ?? []) flight.cancel()
+  }, { once: true })
   return {
     'sidechat.start': async (payload: unknown) => {
       const sessionId = requireString(payload, 'sessionId')
@@ -773,36 +811,44 @@ export function buildSidechatApi(ctx: Context, live?: AssistantLiveBuffer): Side
     },
 
     'sidechat.prompt': async (payload: unknown) => {
-      const childId = requireString(payload, 'childId')
-      const text = requireString(payload, 'text').trim()
-      if (text === '') {
-        throw new SidebarError('bad-request', 'text is required')
-      }
-      // Cold thread: resume the persisted session under its recorded
-      // composition, sweep the inherited ghosts, then deliver the follow-up.
-      const agent = await ensureLiveThread(ctx, childId)
-      if (boundaryDelivered(agent.session.snapshotEvents() as unknown as readonly SidechatLogEvent[])
-        || boundaryPending(agent)) {
-        admitFollowup(agent, textPrompt(text))
-      } else {
-        // First message of an immediately-created thread: it carries the
-        // boundary (+ the snapshot parked at creation, if still around)
-        // and earns the thread its real label.
-        const parts = [SIDE_BOUNDARY_PROMPT]
-        const snapshot = pendingSnapshots.get(childId)
-        pendingSnapshots.delete(childId)
-        if (snapshot !== undefined) parts.push(snapshot)
-        admitFirstContact(agent, parts.join('\n\n'), text)
-        const titles = ctx.get('sessionTitle') as SidebarSessionTitleService | undefined
-        if (titles !== undefined) {
-          try {
-            titles.rename(agent.session, sideLabel(text))
-          } catch {
-            // Keep the placeholder title; the thread stays usable.
+      if (signal?.aborted) throw new SidebarError('unavailable', 'Side Chat is unavailable', 503)
+      const { childId, text, content, hasImages } = parseSidechatPrompt(payload, sidechatImageLimits(ctx))
+      const activation = { disposed: false }
+      let attempts = admissions.get(childId)
+      if (attempts === undefined) { attempts = new Set(); admissions.set(childId, attempts) }
+      attempts.add(activation)
+      try {
+        if (hasImages) await ownedThread(ctx, childId)
+        const agent = await ensureLiveThread(ctx, childId)
+        let blocks: ContentBlock[] = content as ContentBlock[]
+        if (hasImages) {
+          await assertImageModel(ctx, agent)
+          const attachments = sidechatAttachments(ctx)!
+          try { blocks = await attachments.admitPromptContent(content) as ContentBlock[] }
+          // Host attachment failures are machine-coded: an oversized image
+          // (pixel/dimension budgets the plugin cannot pre-check) is 413; a
+          // storage fault is a server failure, never the caller's 400.
+          catch (error) { throw sidechatAdmissionError(attachments, error) }
+          const validatedSelection = await assertImageModel(ctx, agent)
+          if (validatedSelection !== JSON.stringify(selectionOf(agent))) {
+            throw new SidebarError('sidechat-error', 'Model selection changed during image admission; try again', 409)
           }
         }
+        if (signal?.aborted || activation.disposed) throw new SidebarError('sidechat-error', 'Thread was closed while sending', 409)
+        const first = !boundaryDelivered(agent.session.snapshotEvents() as unknown as readonly SidechatLogEvent[]) && !boundaryPending(agent)
+        const snapshot = pendingSnapshots.get(childId)
+        const messageId = first
+          ? admitFirstContact(agent, [SIDE_BOUNDARY_PROMPT, ...(snapshot === undefined ? [] : [snapshot])].join('\n\n'), blocks)
+          : admitFollowup(agent, blocks)
+        if (first) {
+          pendingSnapshots.delete(childId)
+          tryRenameThread(ctx, agent, sideLabel(text || 'Image'))
+        }
+        return { accepted: true as const, messageId }
+      } finally {
+        attempts.delete(activation)
+        if (attempts.size === 0) admissions.delete(childId)
       }
-      return { accepted: true as const }
     },
 
     'sidechat.cancel': async (payload: unknown) => {
@@ -816,6 +862,8 @@ export function buildSidechatApi(ctx: Context, live?: AssistantLiveBuffer): Side
 
     'sidechat.dispose': async (payload: unknown) => {
       const childId = requireString(payload, 'childId')
+      for (const attempt of admissions.get(childId) ?? []) attempt.disposed = true
+      resuming.get(ctx)?.get(childId)?.cancel()
       pendingSnapshots.delete(childId)
       threadModelRefs.delete(childId)
       const dispose = threadDisposers.get(childId)
@@ -832,12 +880,15 @@ export function buildSidechatApi(ctx: Context, live?: AssistantLiveBuffer): Side
 
     'sidechat.info': async (payload: unknown) => {
       const childId = requireString(payload, 'childId')
+      const limits = sidechatImageLimits(ctx)
+      const images = { available: limits !== undefined, ...(limits === undefined ? {} : { limits }) }
       const agent = liveThreadAgent(ctx, childId)
       if (agent !== undefined) {
         const preset = agent.session.header.agentPreset
         const selection = selectionOf(agent)
         return {
           live: true,
+          images,
           status: agent.status,
           ...(selection === undefined ? {} : selectionFields(selection)),
           ...(preset === undefined ? {} : { preset }),
@@ -848,11 +899,12 @@ export function buildSidechatApi(ctx: Context, live?: AssistantLiveBuffer): Side
       const persistence = ctx.get('sessionPersistence') as SidebarSessionPersistenceService | undefined
       if (persistence !== undefined) {
         try {
-          const inspected = await readPersistedSession(persistence, childId)
+          const inspected = await readColdThreadSession(persistence, childId)
           const preset = resolvePresetId(inspected.header, inspected.events)
           const selection = effectiveModelSelection(inspected.events as unknown as readonly SidechatLogEvent[])
           return {
             live: false,
+            images,
             ...(preset === undefined ? {} : { preset }),
             ...(selection === undefined ? {} : selectionFields(selection)),
           }
@@ -860,7 +912,7 @@ export function buildSidechatApi(ctx: Context, live?: AssistantLiveBuffer): Side
           // Unknown/gone session: report a bare cold info.
         }
       }
-      return { live: false }
+      return { live: false, images }
     },
 
     'sidechat.events': async (payload: unknown) => {
@@ -875,6 +927,7 @@ export function buildSidechatApi(ctx: Context, live?: AssistantLiveBuffer): Side
       const fresh = rawAfter === undefined ? own : own.filter(event => event.seq > rawAfter)
       const tailSeq = own.at(-1)?.seq ?? -1
       const agent = liveThreadAgent(ctx, childId)
+      const cold = agent === undefined ? coldPendingMessages(events) : undefined
       return {
         events: fresh.length > EVENTS_CAP ? fresh.slice(fresh.length - EVENTS_CAP) : fresh,
         // The live rows ride every poll: they are process-local, so there is
@@ -882,8 +935,10 @@ export function buildSidechatApi(ctx: Context, live?: AssistantLiveBuffer): Side
         live: liveEventsOf(live?.chunksFor(childId) ?? [], tailSeq),
         // Accepted-but-unclaimed input, so the transcript can show it as
         // pending (with a dequeue affordance) instead of looking dead until a
-        // claim logs the durable `user/message`. A cold thread has none.
-        pending: agent === undefined ? [] : pendingOf(agent),
+        // claim logs the durable `user/message`. A cold thread has no RUNTIME
+        // queue, so its rows are folded from the persisted log and are not
+        // removable.
+        pending: agent === undefined ? pendingInputs(cold!.nextStep, cold!.nextTurn).map(row => ({ ...row, removable: false })) : pendingOf(agent),
       }
     },
 
@@ -922,14 +977,52 @@ export function buildSidechatApi(ctx: Context, live?: AssistantLiveBuffer): Side
       }
       const selection = await normalizeSelection(ctx, requested)
       const agent = await ensureLiveThread(ctx, childId)
-      // The host's own commit shape (`SessionController.selectForNextRequest`):
-      // the durable intent lands in the log, and the agent-scoped ref is what
-      // prompt assembly and request routing read for the NEXT step.
-      agent.session.append('model/selection', brandedSelection(selection))
-      ensureModelSelection(agent, childId).current = brandedSelection(selection)
+      // `AgentModel.select()` IS the host's commit shape in 0.2.2: it appends
+      // `model/selection` when the choice differs and applies it to the next
+      // step (a no-op for the same choice). Appending here as well would record
+      // every switch twice — the 0.2.1 installable ref needed both calls, this
+      // one does not.
+      ensureModelSelection(agent, childId).select(brandedSelection(selection))
       return { accepted: true as const, selection }
     },
   }
+}
+
+async function ownedThread(ctx: Context, childId: string): Promise<{ events: readonly SidechatLogEvent[]; inheritedEventCount: number }> {
+  const agent = liveThreadAgent(ctx, childId)
+  const persistence = ctx.get('sessionPersistence') as SidebarSessionPersistenceService | undefined
+  const record = agent === undefined
+    ? (persistence === undefined ? undefined : await readColdThreadSession(persistence, childId))
+    : { header: agent.session.header, events: agent.session.snapshotEvents(), inheritedEventCount: Number(agent.session.inheritedEventCount) }
+  if (record === undefined) throw new SidebarError('not-found', 'Thread is unavailable', 404)
+  const events = record.events as unknown as readonly SidechatLogEvent[]
+  const creation = events[record.inheritedEventCount - 1]
+  const descriptor = creation?.type === 'subagent/descriptor' ? creation : threadOwnLogEvents(events).find(event => event.type === 'subagent/descriptor')
+  const data = descriptor?.data as { provider?: string; mode?: string } | undefined
+  if (record.header.origin !== 'subagent' || typeof record.header.parentSession !== 'string' || data?.provider !== 'sidechat' || data.mode !== 'continuable') {
+    throw new SidebarError('forbidden', 'Image operations require a side conversation', 403)
+  }
+  return { events, inheritedEventCount: record.inheritedEventCount }
+}
+
+export async function readSidechatImage(ctx: Context, childId: string, messageId: string, blockIndex: number): Promise<StoredImageAttachment> {
+  if (!Number.isSafeInteger(blockIndex) || blockIndex < 0) throw new SidebarError('bad-request', 'Invalid image block index')
+  const store = sidechatAttachments(ctx)
+  if (store === undefined) throw new SidebarError('unavailable', 'Image attachments are unavailable', 503)
+  const record = await ownedThread(ctx, childId)
+  const agent = liveThreadAgent(ctx, childId)
+  const events = agent === undefined ? record.events : agent.session.snapshotEvents() as unknown as readonly SidechatLogEvent[]
+  const inheritedEventCount = agent === undefined ? record.inheritedEventCount : Number(agent.session.inheritedEventCount)
+  const inbox = agent === undefined ? coldPendingMessages(events, inheritedEventCount) : agent.inbox
+  const own = events.slice(inheritedEventCount).filter(event => event.type === 'user/message').map(event => event.data)
+  const ghosts = new Set(inheritedPendingIds(events, inheritedEventCount))
+  const queued = [...inbox.nextStep, ...inbox.nextTurn] as { id?: string }[]
+  const messages = [...own, ...queued.filter(message => !ghosts.has(message.id ?? ''))] as { id?: string; content?: unknown; source?: { kind?: string } }[]
+  const message = messages.find(item => item.id === messageId && item.source?.kind === 'user')
+  const block = Array.isArray(message?.content) ? message.content[blockIndex] as { type?: string; attachment?: ImageAttachmentRef } | undefined : undefined
+  if (block?.type !== 'image' || block.attachment === undefined) throw new SidebarError('not-found', 'Image is not in this conversation', 404)
+  try { return await store.readImage(block.attachment) }
+  catch { throw new SidebarError('not-found', 'Image bytes are unavailable', 404) }
 }
 
 /** The wire fields of one model selection (shared by info's live/cold arms). */

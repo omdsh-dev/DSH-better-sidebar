@@ -124,9 +124,8 @@ export interface PaneTab {
  * A compact tab strip — a real tablist with roving focus: the active tab is
  * the only tab stop, and Left/Right/Home/End move focus AND selection (the
  * standard automatic-activation model). Born as the bottom pane's strip
- * (details / diff); the changes tab's header reuses it for the lens switcher
- * so the page's two switchers read as one component. Rendered only when the
- * caller hosts more than one view, so a diff-only preview never grows a strip.
+ * (details / diff). Rendered only when the caller hosts more than one view,
+ * so a diff-only preview never grows a strip.
  */
 export function PaneTabStrip(props: { tabs: readonly PaneTab[]; active: string; onSelect(id: string): void; className?: string; label?: string }) {
   const buttons = useRef<(HTMLButtonElement | null)[]>([])
@@ -308,6 +307,11 @@ export function DiffPane({ target, ctx, scope, height, onHeightCommit, onClose, 
   const [gitContent, setGitContent] = useState<
     { status: 'idle' | 'loading' | 'binary' | 'large' } | { status: 'text'; text: string } | { status: 'error'; error: string }
   >({ status: 'idle' })
+  // The pane owns the refresh GESTURE: the header button bumps this, and both
+  // loaders reload on it. The scope is stable, so a plain re-render no longer
+  // re-reads the file as a side effect — without this the content tab would
+  // keep bytes read before the file changed, and it has no other reload path.
+  const [refreshSeq, setRefreshSeq] = useState(0)
   useEffect(() => {
     if (gitWorktree === null) { setGitContent({ status: 'idle' }); return }
     // Deferred until the content view is the one on screen: opening a file to
@@ -327,7 +331,7 @@ export function DiffPane({ target, ctx, scope, height, onHeightCommit, onClose, 
         setGitContent({ status: 'error', error: reason instanceof Error ? reason.message : String(reason) })
       })
     return () => { controller.abort() }
-  }, [gitWorktree, scope, active])
+  }, [gitWorktree, scope, active, refreshSeq])
 
   // ── Op target material (pure snapshots; the prior content came with the
   //    target so a running op shows what is already known). ────────────────
@@ -430,18 +434,27 @@ export function DiffPane({ target, ctx, scope, height, onHeightCommit, onClose, 
     [htmlOp, scope, contentAbs],
   )
 
-  // Header stats for git targets come off the parsed patch text.
-  const gitStats = useMemo(() => {
+  /**
+   * ONE parse of the patch per target: the header stats and the file rows both
+   * read it. Parsing an ≤8MB patch twice on the UI thread (once here for the
+   * stats, once inside DiffFiles) was visible when a large commit was opened.
+   */
+  const gitParsed = useMemo(() => {
     if (target.kind !== 'git' || diffText === null || diffText === '') return null
+    return parseUnifiedDiff(diffText)
+  }, [target.kind, diffText])
+  // Header stats for git targets come off that shared parse.
+  const gitStats = useMemo(() => {
+    if (gitParsed === null) return null
     let added = 0
     let deleted = 0
-    for (const file of parseUnifiedDiff(diffText).files) {
+    for (const file of gitParsed.files) {
       const stats = diffStats(unifiedSegments(file))
       added += stats.added
       deleted += stats.deleted
     }
     return { added, deleted }
-  }, [target, diffText])
+  }, [gitParsed])
 
   // ── Resize: drag the top handle; commit on release (persisted by the
   //    shell). Arrow keys resize by a step for keyboard users. ────────────
@@ -580,7 +593,12 @@ export function DiffPane({ target, ctx, scope, height, onHeightCommit, onClose, 
               icon={<IconRefreshOutlineRegular size={14} />}
               label={t('refresh')}
               disabled={loading}
-              onClick={refresh}
+              onClick={() => {
+                // Both views reload: the patch (refresh) and the whole-file
+                // content tab, which read its bytes through its own fs.read.
+                refresh()
+                setRefreshSeq(sequence => sequence + 1)
+              }}
             />
             <IconButton
               size="sm"
@@ -662,6 +680,7 @@ export function DiffPane({ target, ctx, scope, height, onHeightCommit, onClose, 
                       {((diffText !== null && diffText !== '') || untracked !== undefined) && (
                         <DiffFiles
                           diff={diffText ?? ''}
+                          parsed={untracked === undefined ? gitParsed ?? undefined : undefined}
                           resolveFold={resolveFold}
                           untrackedPath={untracked !== undefined && target.ref.kind === 'worktree' ? target.ref.path : undefined}
                           untrackedContent={untracked}

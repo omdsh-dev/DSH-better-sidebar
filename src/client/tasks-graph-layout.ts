@@ -204,77 +204,93 @@ function bands(children: readonly TasksNode[], cols: number): TasksNode[][] {
 export function layoutTasksGraph(nodes: readonly TasksNode[], options: LayoutOptions = {}): GraphLayout {
   const cols = Math.max(1, options.maxBandCols ?? 4)
   const stride = rowStrideFor(nodes)
-  const ids = new Set(nodes.map(node => node.id))
-  const roots = nodes.filter(node => node.parentId === undefined || !ids.has(node.parentId))
+  const nodeById = new Map(nodes.map(node => [node.id, node]))
+  const roots = nodes.filter(node => node.parentId === undefined || !nodeById.has(node.parentId))
   const childrenOf = new Map<string, TasksNode[]>()
   for (const edge of tasksEdges(nodes)) {
-    const child = nodes.find(node => node.id === edge.to)
+    const child = nodeById.get(edge.to)
     if (child === undefined) continue
     const list = childrenOf.get(edge.from)
     if (list === undefined) childrenOf.set(edge.from, [child])
     else list.push(child)
   }
 
-  /** Post-order: the width of the subtree rooted at `node`. */
-  const subtreeWidth = (node: TasksNode): number => {
+  // Collect an explicit traversal, then visit it backwards so every child's
+  // dimensions are available before its parent, even if input is not pre-order.
+  const order: TasksNode[] = []
+  const pending = roots.slice()
+  while (pending.length > 0) {
+    const node = pending.pop()!
+    order.push(node)
+    for (const child of childrenOf.get(node.id) ?? []) pending.push(child)
+  }
+  const subtrees = new Map<string, { width: number; rows: number }>()
+  for (let index = order.length - 1; index >= 0; index -= 1) {
+    const node = order[index]!
+    let width = GRAPH_NODE_W
+    let rows = 1
     const children = childrenOf.get(node.id) ?? []
-    if (children.length === 0) return GRAPH_NODE_W
-    let widest = GRAPH_NODE_W
     for (const band of bands(children, cols)) {
-      const width = band.reduce((sum, child) => sum + subtreeWidth(child), 0)
-        + GRAPH_GAP_X * (band.length - 1)
-      widest = Math.max(widest, width)
+      let bandWidth = GRAPH_GAP_X * (band.length - 1)
+      let bandRows = 0
+      for (const child of band) {
+        const subtree = subtrees.get(child.id)!
+        bandWidth += subtree.width
+        bandRows = Math.max(bandRows, subtree.rows)
+      }
+      width = Math.max(width, bandWidth)
+      rows += bandRows
     }
-    return widest
+    subtrees.set(node.id, { width, rows })
   }
 
   const boxes = new Map<string, GraphBox>()
-  /**
-   * Place `node` centered on `centerX` at row `row`; returns the LAST row its
-   * subtree occupies. Wrapped bands advance to the row after the deepest row
-   * of the previous band, so a sibling's children can never land on top of
-   * the next band (the overlap a naive +1 counter produced).
-   */
-  const place = (node: TasksNode, centerX: number, row: number): number => {
-    boxes.set(node.id, {
+  // Cached subtree row counts let each wrapped band start below the deepest
+  // previous band without waiting for recursive placement to return.
+  const placements: { node: TasksNode; centerX: number; row: number }[] = []
+  let offset = GRAPH_PAD
+  for (const root of roots) {
+    const width = subtrees.get(root.id)!.width
+    placements.push({ node: root, centerX: offset + width / 2, row: 0 })
+    offset += width + GRAPH_GAP_X
+  }
+  placements.reverse()
+  let width = GRAPH_PAD * 2 + GRAPH_NODE_W
+  let height = GRAPH_PAD * 2 + GRAPH_AGENT_NODE_H
+  while (placements.length > 0) {
+    const { node, centerX, row } = placements.pop()!
+    const box = {
       id: node.id,
       x: Math.round(centerX - GRAPH_NODE_W / 2),
       y: GRAPH_PAD + row * stride,
       w: GRAPH_NODE_W,
       h: nodeHeight(node),
-    })
+    }
+    boxes.set(node.id, box)
+    width = Math.max(width, box.x + box.w + GRAPH_PAD)
+    height = Math.max(height, box.y + box.h + GRAPH_PAD)
     const children = childrenOf.get(node.id) ?? []
-    if (children.length === 0) return row
-    let deepest = row
+    const next: typeof placements = []
     let bandRow = row + 1
     for (const band of bands(children, cols)) {
-      const bandWidth = band.reduce((sum, child) => sum + subtreeWidth(child), 0)
-        + GRAPH_GAP_X * (band.length - 1)
-      let cursor = centerX - bandWidth / 2
-      let bandDeepest = bandRow
+      let bandWidth = GRAPH_GAP_X * (band.length - 1)
+      let bandRows = 0
       for (const child of band) {
-        const width = subtreeWidth(child)
-        bandDeepest = Math.max(bandDeepest, place(child, cursor + width / 2, bandRow))
-        cursor += width + GRAPH_GAP_X
+        const subtree = subtrees.get(child.id)!
+        bandWidth += subtree.width
+        bandRows = Math.max(bandRows, subtree.rows)
       }
-      deepest = Math.max(deepest, bandDeepest)
-      bandRow = bandDeepest + 1
+      let cursor = centerX - bandWidth / 2
+      for (const child of band) {
+        const childWidth = subtrees.get(child.id)!.width
+        next.push({ node: child, centerX: cursor + childWidth / 2, row: bandRow })
+        cursor += childWidth + GRAPH_GAP_X
+      }
+      bandRow += bandRows
     }
-    return deepest
+    // Preserve the original depth-first box insertion order as well as pixels.
+    for (let index = next.length - 1; index >= 0; index -= 1) placements.push(next[index]!)
   }
-
-  // Single-root forest in practice (the topology root); the loop stays so a
-  // defensive orphan still lands inside the canvas extent.
-  let offset = GRAPH_PAD
-  for (const root of roots) {
-    const width = subtreeWidth(root)
-    place(root, offset + width / 2, 0)
-    offset += width + GRAPH_GAP_X
-  }
-
-  const allBoxes = [...boxes.values()]
-  const width = Math.max(GRAPH_PAD * 2 + GRAPH_NODE_W, ...allBoxes.map(box => box.x + box.w + GRAPH_PAD))
-  const height = Math.max(GRAPH_PAD * 2 + GRAPH_AGENT_NODE_H, ...allBoxes.map(box => box.y + box.h + GRAPH_PAD))
   return { boxes, width, height }
 }
 
@@ -312,18 +328,27 @@ export function layoutTasksGraphForWidth(
 ): GraphLayout {
   const budget = containerWidth <= 0 ? Number.POSITIVE_INFINITY : (containerWidth - 24) / minScale
   const widest = bandColsFor(containerWidth <= 0 ? 360 : containerWidth)
+  const layouts = new Map<number, GraphLayout>()
+  const layoutFor = (cols: number): GraphLayout => {
+    let layout = layouts.get(cols)
+    if (layout === undefined) {
+      layout = layoutTasksGraph(nodes, { maxBandCols: cols })
+      layouts.set(cols, layout)
+    }
+    return layout
+  }
   // Pass 1: the least-tall arrangement that FITS the readability budget at
   // two or more columns (below two the graph degenerates into a ladder).
   for (let cols = widest; cols >= 2; cols -= 1) {
-    const layout = layoutTasksGraph(nodes, { maxBandCols: cols })
+    const layout = layoutFor(cols)
     if (layout.width <= budget) return layout
   }
   // Pass 2: nothing flat fits — accept a slight horizontal overflow (the
   // reader pans a little) rather than stacking every child vertically.
   const tolerant = budget * 1.2
   for (let cols = widest; cols >= 2; cols -= 1) {
-    const layout = layoutTasksGraph(nodes, { maxBandCols: cols })
+    const layout = layoutFor(cols)
     if (layout.width <= tolerant) return layout
   }
-  return layoutTasksGraph(nodes, { maxBandCols: 1 })
+  return layoutFor(1)
 }

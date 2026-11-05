@@ -31,6 +31,9 @@ const MAIN = 'C:/repo/main'
 
 /** The unstage artwork the SCM rows draw (the horizontal half of the host's Plus). */
 const MINUS_GLYPH = 'M2 8H14'
+/** The host's own Plus, a document-sprite reference since DSH 0.2.2 (it used
+ *  to be inline `<path>` artwork, so only the sprite id identifies it now). */
+const PLUS_ICON = '#dsw-icon-plus-outline-regular'
 
 /** One synthetic tool/call + tool/result pair (write of one file). */
 function writeEvents(seq: number, path: string): Array<{ type: string; seq: number; time: number; data: Record<string, unknown> }> {
@@ -77,7 +80,7 @@ function mockGit(entries: GitStatusEntry[]): void {
   vi.spyOn(api, 'gitLog').mockResolvedValue([])
 }
 
-/** One lens tab of the header's official conversation Tabs. */
+/** One lens tab rendered by the header's public SegmentedControl. */
 function lensTab(container: HTMLElement, label: string): HTMLButtonElement | undefined {
   return [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')]
     .find(tab => tab.textContent === label)
@@ -192,7 +195,7 @@ afterEach(() => {
 })
 
 describe('ChangesTab', () => {
-  it('uses the official underline Tabs with keyboard navigation, persisted lens and refresh', async () => {
+  it('uses the public SegmentedControl with keyboard navigation, persisted lens and refresh', async () => {
     mockGit([])
     const ops = vi.spyOn(api, 'changesOps').mockResolvedValue({ events: [], lastSeq: 0 })
     const updateTab = vi.fn()
@@ -207,13 +210,12 @@ describe('ChangesTab', () => {
       const tabs = container.querySelector<HTMLElement>('[role="tablist"]')!
       const git = lensTab(container, t('changesGitLens'))!
       const session = lensTab(container, t('changesSessionLens'))!
-      expect(tabs.classList.contains('wSkVaW_tabs')).toBe(true)
       expect(tabs.getAttribute('aria-label')).toBe(t('changes'))
-      expect(git.classList.contains('wSkVaW_tab')).toBe(true)
+      expect(tabs.className).not.toContain('wSkVaW')
       const panels = (): HTMLElement[] => [...container.querySelectorAll<HTMLElement>('[role="tabpanel"]')]
       const selected = (button: HTMLButtonElement): void => {
-        expect(button.classList.contains('wSkVaW_tabActive')).toBe(true)
         expect(button.getAttribute('aria-selected')).toBe('true')
+        expect(button.getAttribute('aria-controls')).toBe(`${button.id}-panel`)
         expect(button.tabIndex).toBe(0)
         // Both lenses own a panel (they stay mounted and swap `hidden`), so the
         // tab points at ITS panel, that panel points back, and exactly one of
@@ -234,7 +236,6 @@ describe('ChangesTab', () => {
       await key(session, 'ArrowRight') // wraps to the first tab
       selected(git)
       expect(document.activeElement).toBe(git)
-      expect(session.classList.contains('wSkVaW_tabActive')).toBe(false)
       expect(session.getAttribute('aria-selected')).toBe('false')
       expect(updateTab).toHaveBeenLastCalledWith('git', { meta: { lens: 'git', previewH: 240 } }, 'session')
       await key(git, 'ArrowLeft') // wraps to the last tab
@@ -249,8 +250,10 @@ describe('ChangesTab', () => {
       await act(async () => { container.querySelector<HTMLButtonElement>(`button[aria-label="${t('refresh')}"]`)!.click() })
       await flushEffects()
       expect(ops).toHaveBeenCalledTimes(calls + 1)
+      const source = readFileSync('src/client/changes/ChangesTab.tsx', 'utf8')
       const sheet = readFileSync('src/client/changes/changes.module.css', 'utf8')
-      expect(sheet).toMatch(/\.head :global\(\.wSkVaW_tabs\) \{ gap: 24px; \}/)
+      expect(source).not.toContain('wSkVaW')
+      expect(sheet).not.toContain('wSkVaW')
     } finally {
       act(() => { root.unmount() })
       container.remove()
@@ -635,13 +638,13 @@ describe('ChangesTab', () => {
       }
       // A stage affordance that drew the unstage glyph is the #941 regression:
       // the two directions must not share artwork (vscode: $(add) vs $(remove)).
-      // Unstage is the horizontal half alone; staging adds the vertical stroke
-      // (the host's Plus) — the two directions must not share one glyph.
+      // Unstage is the plugin's own horizontal half; staging is the host's Plus
+      // sprite — the two directions must not share one glyph.
       const stage = iconOf(t('stage'))
       const unstage = iconOf(t('unstage'))
       expect(unstage).toContain(MINUS_GLYPH)
-      expect(unstage).not.toContain('M8 2V14')
-      expect(stage).toContain('M8 2V14')
+      expect(unstage).not.toContain(PLUS_ICON)
+      expect(stage).toContain(PLUS_ICON)
     } finally {
       act(() => { root.unmount() })
       container.remove()

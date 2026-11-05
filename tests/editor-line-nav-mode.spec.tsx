@@ -14,14 +14,17 @@
  * see any of this: the host is what decides when a navigation is spent.
  */
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createElement } from 'react'
 import { act } from 'react-dom/test-utils'
+import { EditorView } from '@codemirror/view'
+import type { TransactionSpec } from '@codemirror/state'
 import { renderRoot, setupReactAct } from './test-utils.ts'
 import type { Context } from '../src/context-types.ts'
 import { EditorHost } from '../src/client/EditorHost.tsx'
 import { TextEditor } from '../src/client/TextEditor.tsx'
 import { createBetterSidebarService } from '../src/client/service.ts'
+import { quoteFlashEffect } from '../src/client/quote-flash.ts'
 import { allLeaves, createSidebarStore, type SidebarStore, type SidebarTab } from '../src/client/state.ts'
 
 setupReactAct()
@@ -229,6 +232,87 @@ describe('a spent line must not ride along to the next file', () => {
       await settle()
 
       expect(editing(view.container)).toBe(false)
+    } finally {
+      view.unmount()
+    }
+  })
+})
+
+/** Landings (selection dispatches) and quote flashes the editor applied. */
+const landings: number[] = []
+const flashes: { from: number; to: number }[] = []
+const originalDispatch = EditorView.prototype.dispatch
+
+describe('clicking the same chip twice lands and flashes both times', () => {
+  beforeEach(() => {
+    landings.length = 0
+    flashes.length = 0
+    vi.spyOn(EditorView.prototype, 'dispatch').mockImplementation(function (
+      this: EditorView,
+      transaction: TransactionSpec,
+    ) {
+      const spec = transaction as { selection?: { anchor?: number }; effects?: unknown }
+      if (spec.selection?.anchor !== undefined) landings.push(spec.selection.anchor)
+      const effects = Array.isArray(spec.effects) ? spec.effects : spec.effects === undefined ? [] : [spec.effects]
+      for (const effect of effects as { is?: (type: unknown) => boolean; value?: unknown }[]) {
+        if (effect?.is?.(quoteFlashEffect) === true) flashes.push(effect.value as { from: number; to: number })
+      }
+      return originalDispatch.call(this, transaction)
+    })
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('a second click on the same lines navigates and flashes again', async () => {
+    const { ctx, store, tabOf } = harness()
+    const scope = { sessionId: SESSION, cwd: '/tmp' }
+    const host = (tab: SidebarTab): ReturnType<typeof createElement> => createElement(EditorHost, {
+      ctx,
+      store,
+      scope,
+      tab,
+      visible: true,
+      expanded: [],
+      revealed: [],
+      onToggleDir: () => {},
+      onReferenceFile: () => {},
+    })
+    // Chip click #1: the open arms the quoted range BEFORE the tab renders.
+    ctx.betterSidebar.openFile(scope, '/tmp/readme.md', undefined, { line: 3, lineEnd: 5 })
+    const tab = tabOf('/tmp/readme.md', 3)
+    const view = mount(ctx, tab, store)
+    try {
+      await settle()
+      expect(editing(view.container)).toBe(true)
+      expect(landings).toHaveLength(1)
+      expect(flashes).toHaveLength(1)
+
+      // Leave the editor so the second landing is observable as a mode flip,
+      // not just as a redundant dispatch on an already-edited file.
+      click(modeButton(view.container, 'Preview'))
+      await settle()
+      expect(editing(view.container)).toBe(false)
+
+      // Chip click #2 on the SAME lines. The host's navigation does not move
+      // (`params.line === existing.tab.line`, so its adapter patches nothing),
+      // which is why the nonce from line-target.ts is what makes the editor
+      // treat this as a fresh navigation. Without it neither the jump nor the
+      // flash happened — and the arm left behind could flash a later ordinary
+      // open of the same line.
+      ctx.betterSidebar.openFile(scope, '/tmp/readme.md', undefined, { line: 3, lineEnd: 5 })
+      view.rerender(host(tab))
+      await settle()
+
+      expect(editing(view.container)).toBe(true)
+      expect(landings).toHaveLength(2)
+      expect(flashes).toHaveLength(2)
+      // Both clicks flashed the SAME quoted span, starting where the caret
+      // landed.
+      expect(flashes[1]).toEqual(flashes[0])
+      expect(flashes[0]?.from).toBe(landings[0])
+      expect(flashes[1]?.from).toBe(landings[1])
     } finally {
       view.unmount()
     }

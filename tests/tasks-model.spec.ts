@@ -1,7 +1,7 @@
 /**
  * Unit tests for the unified Tasks view model (buildTasksModel / tasksEdges):
  * catalog walking, workflow run attachment + member re-parenting, team
- * enrichment, and the per-parent settled-leaf fold.
+ * enrichment, and per-parent settled subtree / idle folds.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { attachLocale } from '../src/client/locales.ts'
@@ -198,7 +198,7 @@ describe('buildTasksModel', () => {
     expect(model.map(node => node.id)).toEqual(['root', 'mate'])
   })
 
-  it('folds settled leaves per parent and keeps running/teammate/current rows', () => {
+  it('folds settled leaves per parent and keeps running/idle/unknown branches', () => {
     const model = buildTasksModel(input({
       catalogs: {
         root: catalog([
@@ -210,7 +210,8 @@ describe('buildTasksModel', () => {
         'done-2': catalog([]),
         'live': catalog([]),
         'mate': catalog([]),
-        // `parent` has a child of its own, so it keeps its whole branch.
+        // Its descendant catalog is unknown: keep the branch reachable. A fully
+        // known settled branch now folds under the independent branch rule.
         parent: catalog([child('grandchild')]),
       },
       byId: {
@@ -420,7 +421,7 @@ describe('buildTasksModel', () => {
       }],
     })
     const base = input({
-      catalogs: { root: catalog([child('m1')]), m1: catalog([]) },
+      catalogs: { root: catalog([child('m1')]), m1: catalog([]), m2: catalog([]) },
       byId: { root: summary('root'), m1: summary('m1') },
       runs: [audit],
     })
@@ -445,6 +446,252 @@ describe('buildTasksModel', () => {
     // bar then falls back to the state word instead of inventing copy.
     expect(agents(buildTasksModel(input({ live: {} }))).find(candidate => candidate.id === 'root')?.live)
       .toBeUndefined()
+  })
+})
+
+describe('buildTasksModel: settled branches', () => {
+  const branch = (): TasksModelInput => input({
+    catalogs: { root: catalog([child('a')]), a: catalog([child('b')]), b: catalog([]) },
+  })
+
+  it('builds and folds a deep chain without exhausting the call stack', () => {
+    const catalogs: Record<string, SubagentCatalogView> = {}
+    const size = 12000
+    for (let index = 0; index < size; index += 1) {
+      catalogs[index === 0 ? 'root' : `n${index}`] = catalog([child(`n${index + 1}`)])
+    }
+    catalogs[`n${size}`] = catalog([])
+    const base = input({ catalogs })
+    const opened = buildTasksModel({ ...base, folded: false })
+    expect(opened).toHaveLength(12001)
+    expect(opened.at(-1)).toMatchObject({ id: 'n12000', depth: 12000 })
+    expect(buildTasksModel(base)).toMatchObject([
+      { id: 'root' }, { id: 'fold:root', count: 12000 },
+    ])
+    expect(buildTasksModel({ ...base, expandedGroups: new Set(['fold:n11999']) }))
+      .toHaveLength(12001)
+  })
+
+  it('aggregates all hidden agents and restores each level when groups expand', () => {
+    const base = branch()
+    expect(buildTasksModel(base)).toMatchObject([
+      { id: 'root' }, { id: 'fold:root', count: 2, doneCount: 2, memberIds: ['a', 'b'] },
+    ])
+    expect(buildTasksModel({ ...base, expandedGroups: new Set(['fold:root']) }).map(node => node.id))
+      .toEqual(['root', 'a', 'fold:a'])
+    expect(buildTasksModel({ ...base, expandedGroups: new Set(['fold:root', 'fold:a']) }).map(node => node.id))
+      .toEqual(['root', 'a', 'b'])
+  })
+
+  it('keeps an expanded descendant group visible after its running ancestor settles', () => {
+    const base = branch()
+    expect(buildTasksModel({ ...base, live: running('a') }).map(node => node.id))
+      .toEqual(['root', 'a', 'fold:a'])
+    const opened = { ...base, expandedGroups: new Set(['fold:a']) }
+    expect(buildTasksModel({ ...opened, live: running('a') }).map(node => node.id))
+      .toEqual(['root', 'a', 'b'])
+    expect(buildTasksModel(opened).map(node => node.id)).toEqual(['root', 'a', 'b'])
+  })
+
+  it('keeps every settled ancestor of an expanded group visible', () => {
+    const base = input({
+      catalogs: {
+        root: catalog([child('a'), child('sibling')]), a: catalog([child('b')]),
+        b: catalog([child('c')]), c: catalog([]), sibling: catalog([]),
+      },
+      expandedGroups: new Set(['fold:b']),
+    })
+    expect(buildTasksModel(base).map(node => node.id))
+      .toEqual(['root', 'a', 'b', 'c', 'fold:root'])
+    expect(buildTasksModel(base).find(node => node.kind === 'fold'))
+      .toMatchObject({ memberIds: ['sibling'] })
+  })
+
+  it('lets an explicitly revealed descendant fold back without losing its ancestor', () => {
+    const base = { ...branch(), expandedGroups: new Set(['fold:a']), foldedIds: new Set(['b']) }
+    expect(buildTasksModel(base).map(node => node.id)).toEqual(['root', 'a', 'fold:a'])
+    expect(buildTasksModel(base).find(node => node.kind === 'fold'))
+      .toMatchObject({ memberIds: ['b'] })
+  })
+
+  it.each([true, false])('lets a manual ancestor fold override a descendant expansion (auto %s)', (folded) => {
+    const model = buildTasksModel({
+      ...branch(), folded, expandedGroups: new Set(['fold:a']), foldedIds: new Set(['a']),
+    })
+    expect(model.map(node => node.id)).toEqual(['root', 'fold:root'])
+    expect(model.at(-1)).toMatchObject({ memberIds: ['a', 'b'], count: 2 })
+  })
+
+  it.each(['running', 'current', 'unknown', 'error', 'idle', 'provisioning'])(
+    'keeps a branch reachable with a %s descendant', (guard) => {
+      const base = branch()
+      if (guard === 'running') base.live = running('b')
+      if (guard === 'current') base.currentSessionId = 'b'
+      if (guard === 'unknown') base.catalogs = { ...base.catalogs, b: undefined }
+      if (guard === 'error') base.catalogs = { ...base.catalogs, b: { entries: [], state: 'error', error: { message: 'unavailable' } } }
+      if (guard === 'idle') base.teamMembers = [member({ id: 'b', status: 'idle' })]
+      if (guard === 'provisioning') base.teamMembers = [member({ id: 'b', phase: 'provisioning', status: 'provisioning' })]
+      expect(buildTasksModel(base).map(node => node.id)).toEqual(['root', 'a', 'b'])
+    },
+  )
+
+  it('releases an automatic branch fold as soon as a descendant runs', () => {
+    const base = branch()
+    expect(buildTasksModel(base).map(node => node.id)).toEqual(['root', 'fold:root'])
+    expect(buildTasksModel({ ...base, live: running('b') }).map(node => node.id)).toEqual(['root', 'a', 'b'])
+  })
+
+  it('controls settled leaves, settled branches and idle members independently', () => {
+    const base = branch()
+    expect(buildTasksModel({ ...base, autoFoldBranches: false }).map(node => node.id))
+      .toEqual(['root', 'a', 'fold:a'])
+    expect(buildTasksModel({ ...base, autoFoldSettled: false }).map(node => node.id))
+      .toEqual(['root', 'fold:root'])
+    expect(buildTasksModel({ ...base, folded: false }).map(node => node.id)).toEqual(['root', 'a', 'b'])
+    const mates = ['m1', 'm2', 'm3']
+    const idle = input({
+      catalogs: { root: catalog(mates.map(id => child(id))), ...Object.fromEntries(mates.map(id => [id, catalog([])])) },
+      teamMembers: mates.map(id => member({ id, status: 'idle' })),
+      autoFoldSettled: false, autoFoldBranches: false,
+    })
+    expect(buildTasksModel(idle).map(node => node.id)).toEqual(['root', 'fold:root:idle'])
+    expect(buildTasksModel({ ...idle, autoFoldIdle: false }).map(node => node.id)).toEqual(['root', ...mates])
+  })
+
+  it('keeps idle branches visible even when the roster reaches the idle threshold', () => {
+    const mates = ['m1', 'm2', 'm3']
+    const base = input({
+      catalogs: {
+        root: catalog(mates.map(id => child(id))), m1: catalog([child('b')]),
+        m2: catalog([]), m3: catalog([]), b: catalog([]),
+      },
+      teamMembers: mates.map(id => member({ id, status: 'idle' })),
+    })
+    expect(buildTasksModel(base).map(node => node.id))
+      .toEqual(['root', 'm1', 'fold:m1', 'fold:root:idle'])
+  })
+
+  it.each(['done', 'idle'] as const)(
+    'keeps synthesized workflow sessions visible while their catalog is unknown (%s)', (state) => {
+      const base = input({
+        catalogs: { root: catalog([]) },
+        runs: [run({ phases: [{ members: [{ seq: 1, label: 'm', childId: 'm', outcome: 'completed' }] }] })],
+        teamMembers: state === 'idle' ? [member({ id: 'm', status: 'idle' })] : [],
+      })
+      const model = buildTasksModel(base)
+      expect(model.map(node => node.id)).toEqual(['root', 'run:run-1', 'm'])
+      expect(model.at(-1)).toMatchObject({
+        synthesized: true, state, childAddress: { childSessionId: 'm' },
+      })
+      const aggregateId = state === 'idle' ? 'fold:run:run-1:idle' : 'fold:run:run-1'
+      expect(buildTasksModel({ ...base, catalogs: { ...base.catalogs, m: catalog([]) } })
+        .map(node => node.id)).toEqual(['root', 'run:run-1', aggregateId])
+      expect(buildTasksModel({ ...base, folded: false, foldedIds: new Set(['m']) })
+        .map(node => node.id)).toEqual(['root', 'run:run-1', aggregateId])
+    },
+  )
+
+  it.each(['done', 'idle'] as const)('still aggregates a pure workflow placeholder without a session (%s)', (state) => {
+    const base = input({
+      catalogs: { root: catalog([]) },
+      runs: [run({ phases: [{ members: [{ seq: 1, label: 'placeholder', childId: '', outcome: 'completed' }] }] })],
+      teamMembers: state === 'idle' ? [member({ id: 'wfmember:run-1:1', status: 'idle' })] : [],
+    })
+    const model = buildTasksModel(base)
+    expect(model.map(node => node.id)).toEqual([
+      'root', 'run:run-1', state === 'idle' ? 'fold:run:run-1:idle' : 'fold:run:run-1',
+    ])
+    expect(model.at(-1)).toMatchObject({ count: 1, memberIds: ['wfmember:run-1:1'] })
+    const opened = buildTasksModel({ ...base, folded: false })
+    expect(opened.at(-1)).toMatchObject({ id: 'wfmember:run-1:1', synthesized: true, state })
+    expect(agents(opened).at(-1)?.childAddress).toBeUndefined()
+  })
+
+  it('keeps settled ancestors of a workflow member with an unknown real session reachable', () => {
+    const base = input({
+      catalogs: { root: catalog([child('a')]), a: catalog([]) },
+      runs: [run({ originSessionId: 'a', status: 'completed', phases: [{ members: [
+        { seq: 1, label: 'm', childId: 'm', outcome: 'completed' },
+      ] }] })],
+    })
+    expect(buildTasksModel(base).map(node => node.id)).toEqual(['root', 'a', 'run:run-1', 'm'])
+    expect(buildTasksModel({ ...base, catalogs: { ...base.catalogs, m: catalog([]) } }).at(-1))
+      .toMatchObject({ id: 'fold:root', count: 2, memberIds: ['a', 'm'] })
+  })
+
+  it('keeps ancestors reachable through an expanded workflow group', () => {
+    const base = input({
+      catalogs: { root: catalog([child('a')]), a: catalog([]), m: catalog([]) },
+      runs: [run({ originSessionId: 'a', status: 'completed', phases: [{ members: [
+        { seq: 1, label: 'm', childId: 'm', outcome: 'completed' },
+      ] }] })],
+      expandedGroups: new Set(['fold:run:run-1']),
+    })
+    expect(buildTasksModel(base).map(node => node.id)).toEqual(['root', 'a', 'run:run-1', 'm'])
+    expect(buildTasksModel({ ...base, foldedIds: new Set(['a']) }).at(-1))
+      .toMatchObject({ id: 'fold:root', count: 2, memberIds: ['a', 'm'] })
+  })
+
+  it('walks descendants of retained and synthesized workflow members', () => {
+    const base = input({
+      catalogs: { root: catalog([child('m')]), m: catalog([child('b')]), b: catalog([]) },
+      runs: [run({ phases: [{ members: [{ seq: 1, label: 'm', childId: 'm', outcome: 'completed' }] }] })],
+      live: running('b'),
+    })
+    expect(buildTasksModel(base).map(node => node.id)).toEqual(['root', 'run:run-1', 'm', 'b'])
+    const synth = { ...base, catalogs: { ...base.catalogs, root: catalog([]) } }
+    expect(buildTasksModel(synth).map(node => node.id)).toEqual(['root', 'run:run-1', 'm', 'b'])
+  })
+
+  it('preserves workflow member subtrees, guards and hidden agent tallies', () => {
+    const base = input({
+      catalogs: { root: catalog([child('m')]), m: catalog([child('b')]), b: catalog([]) },
+      teamMembers: [member({ id: 'b', phase: 'failed', status: 'failed' })],
+      runs: [run({ status: 'completed', phases: [{ members: [
+        { seq: 1, label: 'm', childId: 'm', outcome: 'completed' },
+        { seq: 2, label: 'duplicate', childId: 'm', outcome: 'completed' },
+      ] }] })],
+    })
+    expect(buildTasksModel(base)).toMatchObject([
+      { id: 'root' }, { id: 'run:run-1' },
+      { id: 'fold:run:run-1', count: 2, doneCount: 1, errorCount: 1, memberIds: ['m', 'b'] },
+    ])
+    const opened = buildTasksModel({ ...base, folded: false })
+    expect(opened.map(node => node.id)).toEqual(['root', 'run:run-1', 'm', 'b'])
+    expect(agents(opened).find(node => node.id === 'b')).toMatchObject({ parentId: 'm', depth: 3 })
+    expect(tasksEdges(opened).map(edge => [edge.from, edge.to])).toEqual([
+      ['root', 'run:run-1'], ['run:run-1', 'm'], ['m', 'b'],
+    ])
+    expect(buildTasksModel({ ...base, currentSessionId: 'b' }).map(node => node.id))
+      .toEqual(['root', 'run:run-1', 'm', 'b'])
+    expect(buildTasksModel({ ...base, catalogs: { ...base.catalogs, b: undefined } }).map(node => node.id))
+      .toEqual(['root', 'run:run-1', 'm', 'b'])
+    expect(buildTasksModel({ ...base, live: running('b') }).map(node => node.id))
+      .toEqual(['root', 'run:run-1', 'm', 'b'])
+  })
+
+  it('reports all hidden descendants so expansion can release their manual folds', () => {
+    const base = branch()
+    const manuallyFolded = new Set(['a', 'b'])
+    const folded = buildTasksModel({ ...base, foldedIds: manuallyFolded, expandedGroups: new Set(['fold:root']) })
+    const aggregate = folded.find(node => node.kind === 'fold')!
+    expect(aggregate.memberIds).toEqual(['a', 'b'])
+    for (const id of aggregate.memberIds) manuallyFolded.delete(id)
+    expect(buildTasksModel({ ...base, foldedIds: manuallyFolded, expandedGroups: new Set(['fold:root', 'fold:a']) }).map(node => node.id))
+      .toEqual(['root', 'a', 'b'])
+  })
+
+  it('requires associated workflows to settle and counts agents only', () => {
+    const base = branch()
+    base.catalogs = { ...base.catalogs, m: catalog([]) }
+    base.runs = [run({ originSessionId: 'a', phases: [{ members: [{ seq: 1, label: 'm', childId: 'm', outcome: 'completed' }] }] })]
+    expect(buildTasksModel(base).map(node => node.id)).toEqual(['root', 'a', 'fold:a', 'run:run-1', 'fold:run:run-1'])
+    const settled = { ...base, runs: base.runs.map(item => ({ ...item, status: 'completed' as const })) }
+    expect(buildTasksModel(settled)).toMatchObject([
+      { id: 'root' }, { id: 'fold:root', count: 3, memberIds: ['a', 'b', 'm'] },
+    ])
+    expect(buildTasksModel({ ...settled, folded: false }).map(node => node.id))
+      .toEqual(['root', 'a', 'b', 'run:run-1', 'm'])
   })
 })
 

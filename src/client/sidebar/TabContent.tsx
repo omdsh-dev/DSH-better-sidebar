@@ -8,6 +8,7 @@ import { createElement, memo } from 'react'
 import type { Context } from '../../context-types.ts'
 import type { SidebarState, SidebarStore, SidebarTab } from '../state.ts'
 import type { SessionScope } from '../api.ts'
+import { useSessionScope } from '../session-scope.ts'
 import { OrphanedTab } from '../OrphanedTab.tsx'
 import { RenderBoundary } from '../RenderBoundary.tsx'
 import { tabContentCompare, type TabContentMemoKey } from '../tab-content-memo.ts'
@@ -34,7 +35,13 @@ interface TabContentProps extends TabContentMemoKey {
 /** Render the content of one tab (dispatched by type). */
 export const TabContent = memo(function TabContent(props: TabContentProps) {
   const { tab, sessionId, cwd, expanded, revealed, onToggleDir, onReferenceFile, ctx, store, visible, onSubagentJump, onOpenDiff } = props
-  const scope = { sessionId, cwd }
+  // Stable by content (see session-scope.ts): a tab body keys its memos and
+  // effects off this object, so rebuilding it per render made every such
+  // dependency look changed whenever a COMPARED field moved — a directory
+  // toggle (`expanded`), a reveal, a locale switch. The diff preview then
+  // re-ran its whole-document rewrite and its content tab re-issued a
+  // whole-file `fs.read`, flashing its loading row.
+  const scope = useSessionScope(sessionId, cwd)
   const descriptor = ctx.get('betterSidebar')?.getTab(tab.type)
   if (descriptor === undefined) {
     return <OrphanedTab ctx={ctx} store={store} scope={scope} tab={tab} visible={visible} />

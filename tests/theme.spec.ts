@@ -172,6 +172,19 @@ describe('skin contract: the plugin owns no color of its own', () => {
     }
   })
 
+  it('tag ref pills take the neutral label token instead of a lane-palette slot', () => {
+    // The graph's ref pills are painted by lane slot (`data-color` → the five
+    // `--dsw-alias-state-*` colours); a tag is a decoration, not a lane, so its
+    // rule must resolve to a NEUTRAL label token and keep the text marker
+    // legible with a dashed outline.
+    const styles = readFileSync(resolve(ROOT, 'src/client/changes/graph.module.css'), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+    const block = /\.ref\[data-tone="tag"\] \{([^}]*)\}/.exec(styles)?.[1]
+    if (block === undefined) throw new Error('the tag ref pill rule must exist in graph.module.css')
+    expect(block).toContain('color: var(--dsw-alias-label-secondary)')
+    expect(block).toContain('border-style: dashed')
+  })
+
   it('the graph viewport fills its container without a viewport-relative height cap', () => {
     const sheet = document.createElement('style')
     sheet.textContent = readFileSync(resolve(ROOT, 'src/client/changes/changes.module.css'), 'utf8')
@@ -277,6 +290,23 @@ describe('skin contract: the plugin owns no color of its own', () => {
     }
     expect(block).not.toContain('--dsw-alias-bg-l1')
     expect(block).not.toContain('--dsw-alias-bg-l2')
+  })
+
+  it('sidechat image previews fit the transcript and keep the host border token', () => {
+    const sheet = document.createElement('style')
+    sheet.textContent = readFileSync(resolve(ROOT, 'src/client/SideChatView.module.css'), 'utf8')
+    document.head.append(sheet)
+    try {
+      const rules = Array.from(sheet.sheet!.cssRules).filter((rule): rule is CSSStyleRule => 'selectorText' in rule)
+      const image = rules.find(rule => rule.selectorText === '.sidechatImage')!.style
+      expect(image.getPropertyValue('object-fit')).toBe('contain')
+      expect(image.getPropertyValue('max-width')).not.toBe('')
+      expect(image.getPropertyValue('max-height')).not.toBe('')
+      const preview = rules.find(rule => rule.selectorText === '.sidechatImagePreview')!.style
+      expect(preview.getPropertyValue('border')).toMatch(/var\(--dsw-alias-/)
+    } finally {
+      sheet.remove()
+    }
   })
 
   it('no icon dataset is shipped as a lazy chunk', () => {

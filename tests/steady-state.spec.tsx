@@ -263,14 +263,15 @@ const TIMER_LEDGER: Array<{ file: string; gate: string; why: string }> = [
   },
 ]
 
-/** `src/client` 下的 .ts/.tsx（跳过惰性 chunk 目录：它们不是常驻面）。 */
+/** `src/client` 下的 .ts/.tsx（跳过惰性 chunk 目录：它们不是常驻面；跳过
+ * `*.generated.ts`：构建产出的资产（如内联的 mermaid UMD）不是手写源码）。 */
 function clientSources(dir: string, out: string[] = []): string[] {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const path = join(dir, entry.name)
     if (entry.isDirectory()) {
       if (entry.name === 'chunks') continue
       clientSources(path, out)
-    } else if (/\.tsx?$/.test(entry.name)) {
+    } else if (/\.tsx?$/.test(entry.name) && !entry.name.endsWith('.generated.ts')) {
       out.push(path)
     }
   }

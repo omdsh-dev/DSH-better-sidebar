@@ -211,6 +211,9 @@ export function FloatingWindow(props: FloatingWindowProps): ReactNode {
   }, [])
 
   /** Drag the window by its title bar (buttons inside it keep working). */
+  const dragBatcher = useRef(createFrameBatcher()).current
+  const pendingDragRef = useRef<WindowBox | null>(null)
+  useEffect(() => () => { dragBatcher.dispose() }, [dragBatcher])
   const onTitlePointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>): void => {
     if (event.button !== 0) return
     const target = event.target as HTMLElement
@@ -222,21 +225,30 @@ export function FloatingWindow(props: FloatingWindowProps): ReactNode {
     const startX = event.clientX
     const startY = event.clientY
     const onMove = (move: PointerEvent): void => {
-      setBox({
+      // A pointer stream outruns the display; compose the latest box here and
+      // commit it once per frame, not once per event (see ./frame-batcher.ts).
+      pendingDragRef.current = {
         ...start,
         left: clampOrigin(start.left + (move.clientX - startX), start.width, window.innerWidth),
         top: clampOrigin(start.top + (move.clientY - startY), start.height, window.innerHeight),
+      }
+      dragBatcher.schedule(() => {
+        const pending = pendingDragRef.current
+        if (pending === null) return
+        pendingDragRef.current = null
+        setBox(pending)
       })
     }
     const onUp = (): void => {
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
       window.removeEventListener('pointercancel', onUp)
+      dragBatcher.flushNow()
     }
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
     window.addEventListener('pointercancel', onUp)
-  }, [])
+  }, [dragBatcher])
 
   /** Resize from one edge handle: `axis` picks which dimension the handle owns. */
   const resizeBatcher = useRef(createFrameBatcher()).current

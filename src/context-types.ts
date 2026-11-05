@@ -501,6 +501,20 @@ export interface SidebarSessionTitleService {
  */
 export interface SidebarSessionPersistenceService {
   open(sessionId: string, access: 'read' | 'write'): Promise<SidebarSessionHandle>
+  /**
+   * Header-only snapshot of ONE stored session (revision + immutable header).
+   * The cold cwd resolver reads the stored header through this: it is the one
+   * persistence call that never decodes the log. Absent on a host without it —
+   * every caller must degrade to a client hint.
+   */
+  stat?(sessionId: string): Promise<{
+    /** Immutable stored header (cwd / agentPreset live here). */
+    header: { cwd?: string; agentPreset?: string } & Record<string, unknown>
+    /** Opaque change token of the stored artifact. */
+    revision?: unknown
+    /** Physical artifact size in bytes, when the backend can provide it. */
+    sizeBytes?: number
+  } | undefined>
 }
 
 /** One open channel onto a stored session (the fields this plugin reads). */
@@ -660,14 +674,75 @@ export interface SidebarLocaleService {
   register(ns: string, locale: string, dict: Record<string, string>): () => void
 }
 
+/**
+ * One reference chip's footprint in the draft, in clipboard-projection
+ * coordinates: the chip covers `[offset, offset + length)`. Read straight off
+ * the host's published `InputState.occurrences`.
+ */
+export interface SidebarSessionOccurrence {
+  /** Start offset in the clipboard projection (the same plane as `draft`). */
+  offset: number
+  /** Length in the clipboard projection (the chip's whole `clipboardText`). */
+  length: number
+}
+
+/** One structured reference chip's insertion payload (mirror of the host's
+ *  `ReferenceInsert`). */
+export interface SidebarReferenceInsert {
+  /** Trigger source id; `'reference'` for a programmatic insert. */
+  source: string
+  /** What the model receives on send — the chip's full serialized form. */
+  ref: string
+  /** What the composer shows in place of `ref`. */
+  label: string
+  /** Chip icon family; the host picks its own default when omitted. */
+  appearance?: 'session' | 'file' | 'folder'
+  /** The text this chip occupies in the draft projection. */
+  clipboardText: string
+}
+
 /** The composer draft face the sidebar reaches through `ctx.conversation.input`. */
 export interface SidebarSessionInput {
   /** The live input store (draft read for append). `draftRev` is the machine's
-   *  span-CAS revision — required to mint a structured file-reference chip. */
+   *  span-CAS revision — required to mint a structured reference chip. */
   state: {
-    getSnapshot(): { draft: string; draftRev?: number }
+    getSnapshot(): {
+      draft: string
+      draftRev?: number
+      /**
+       * The editor's reference chips as footprints in `draft` coordinates:
+       * `[offset, offset + length)` per chip, sorted by offset. The host's
+       * insert/replace spans live in the *editor* projection instead (one
+       * placeholder character per chip), so a span derived from a `draft`
+       * offset must fold through these first (`foldClipboardOffset`).
+       * Absent on hosts without the chip channel.
+       */
+      occurrences?: readonly SidebarSessionOccurrence[]
+      /**
+       * Admission phase. `claimed` means a command chip (`/goal`) heads the
+       * draft; `adjudicating`/`submitting` freeze every write. A command chip
+       * is NOT in `occurrences` (the host only collects reference chips), yet
+       * it still collapses to one character in the detect projection — so a
+       * span derived from `draft` is wrong whenever `phase === 'claimed'`.
+       */
+      phase?: 'plain' | 'adjudicating' | 'claimed' | 'submitting'
+      /**
+       * The claimed command's spelling with its trailing separator (`/goal `),
+       * present exactly while `phase` is `claimed`/`submitting`. The host
+       * treats it as one chip covering this exact draft prefix.
+       */
+      claim?: { readonly token: string }
+    }
   }
-  /** Replace the draft text (the input machine's single public write path). */
+  /**
+   * Replace the trigger span with one reference chip (span-CAS'd). Absent on
+   * hosts without the chip channel.
+   */
+  insertReference?(
+    ref: SidebarReferenceInsert,
+    span: { start: number; end: number; draftRev: number },
+  ): boolean
+  /** Replace the draft text — flattens every existing chip into its text. */
   setDraft(text: string): void
 }
 
@@ -676,6 +751,19 @@ export interface SidebarConversation {
   input: {
     for(actx: Context): SidebarSessionInput
   }
+}
+
+/**
+ * The client input-trigger registry face this plugin consumes
+ * (`ctx.inputTriggers`, provided by @deepseek-ai/dsh-client-ui-input-trigger,
+ * DSH 0.2.1+). Only the registration the quote chip needs is mirrored here —
+ * the source shape itself is declared structurally in
+ * `./client/selection-quote.ts`. Optional on {@link SidebarContextShape} so
+ * older hosts and test fakes simply hide the feature.
+ */
+export interface SidebarInputTriggerServiceFace {
+  /** Register one trigger source; `(trigger, name)` must be unique (duplicates throw). */
+  registerSource(src: object): () => void
 }
 
 /** Read-only subset of api-workspace-controller's public IWorkspaces.list. */
@@ -798,14 +886,6 @@ export interface SidebarContextShape {
     readonly defaultDirectory?: string
     get(session: { header: SidebarSessionHeader }): string
   }
-  /** Host-owned live/prepared observation, including cold-session projections. */
-  sessionQuery: {
-    observeSession(id: string, options: { projectionMode: 'all' }): Promise<{
-      header: SidebarSessionHeader
-      projections?: { values: { workingDirectory?: string | null } }
-      [Symbol.dispose](): void
-    }>
-  }
   /** Native host request admission and client transport recovery. */
   connection: SidebarConnectionService
   /** The client slot registry (register/inject). */
@@ -846,6 +926,13 @@ export interface SidebarContextShape {
   sessionPersistence: SidebarSessionPersistenceService
   /** The composer draft face (client ui-conversation, lazy `ctx.get` probe). */
   conversation: SidebarConversation
+  /**
+   * The client input-trigger registry (DSH 0.2.1+, optional so older hosts and
+   * test fakes hide it): the quote chip registers a source here so its clicks
+   * open the quoted lines and its send-time serialization expands the fence
+   * (see `./client/selection-quote.ts`).
+   */
+  inputTriggers?: SidebarInputTriggerServiceFace
   /** Host-authoritative workspace membership; resolved lazily at reference insertion. */
   workspaces?: SidebarWorkspacesService
   /**

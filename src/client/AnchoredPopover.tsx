@@ -20,6 +20,7 @@ import {
   type PointerEvent as ReactPointerEvent, type ReactNode,
 } from 'react'
 import { createPortal } from 'react-dom'
+import { createFrameBatcher } from './frame-batcher.ts'
 
 /** The popover's default visual width (viewport-clamped). */
 const POP_WIDTH = 264
@@ -53,6 +54,10 @@ export function AnchoredPopover(props: AnchoredPopoverProps): ReactNode {
   const [offset, setOffset] = useState({ x: 0, y: 0 })
   const offsetRef = useRef(offset)
   offsetRef.current = offset
+  /** Drag moves land at most once per frame (see ./frame-batcher.ts). */
+  const dragBatcher = useRef(createFrameBatcher()).current
+  const pendingDragRef = useRef<{ offset: { x: number; y: number }; pos: { left: number; top: number } } | null>(null)
+  useEffect(() => () => { dragBatcher.dispose() }, [dragBatcher])
   /** The anchored baseline: a drag always starts from the measured position. */
   const baseRef = useRef({ left: 0, top: 0 })
 
@@ -101,18 +106,28 @@ export function AnchoredPopover(props: AnchoredPopoverProps): ReactNode {
         Math.max(start.y + (move.clientY - startY), VIEWPORT_MARGIN - base.top),
         Math.max(VIEWPORT_MARGIN - base.top, window.innerHeight - 48 - base.top),
       )
-      setOffset({ x: nextX, y: nextY })
-      setPos({ left: base.left + nextX, top: base.top + nextY })
+      pendingDragRef.current = {
+        offset: { x: nextX, y: nextY },
+        pos: { left: base.left + nextX, top: base.top + nextY },
+      }
+      dragBatcher.schedule(() => {
+        const pending = pendingDragRef.current
+        if (pending === null) return
+        pendingDragRef.current = null
+        setOffset(pending.offset)
+        setPos(pending.pos)
+      })
     }
     const onUp = (): void => {
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
       window.removeEventListener('pointercancel', onUp)
+      dragBatcher.flushNow()
     }
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
     window.addEventListener('pointercancel', onUp)
-  }, [draggable, cardWidth])
+  }, [cardWidth, dragBatcher, draggable])
 
   // Global dismissal (see the file header for the contract).
   useEffect(() => {

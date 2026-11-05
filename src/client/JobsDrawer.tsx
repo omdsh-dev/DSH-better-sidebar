@@ -117,6 +117,8 @@ export interface JobsDrawerProps {
   observed: SidebarObservedJob | undefined
   /** Agent count of the tree (root included) — the auto-collapse signal. */
   agentCount: number
+  /** Follow the agent-count collapse rule unless the reader overrides it. */
+  autoCollapse?: boolean
   /** Open the output popover of one row (anchor = the row's main button). */
   onOpenOutput(row: TreeJob, anchor: HTMLElement): void
   /** The job whose output popover is currently open (row highlight). */
@@ -128,8 +130,8 @@ export interface JobsDrawerProps {
 }
 
 export function JobsDrawer(props: JobsDrawerProps): ReactNode {
-  const { rows, agentCount, jobs, onOpenOutput, openJobId, visible = true } = props
-  const autoOpen = agentCount < JOBS_DRAWER_COLLAPSE_AT
+  const { rows, agentCount, jobs, onOpenOutput, openJobId, visible = true, autoCollapse = true } = props
+  const autoOpen = !autoCollapse || agentCount < JOBS_DRAWER_COLLAPSE_AT
   /** Manual override; undefined = follow the auto rule. */
   const [manualOpen, setManualOpen] = useState<boolean | undefined>(undefined)
   const open = manualOpen ?? autoOpen

@@ -247,6 +247,38 @@ describe('sidebar state', () => {
     expect(after.tabs).toHaveLength(2)
   })
 
+  /** 同一分栏窗格内的唯一标签经过各放回入口后仍保留原窗格。 */
+  it.each(['center', 'strip', 'chip'] as const)('keeps the only tab when dropped on its own %s', (destination) => {
+    let s = state()
+    s = openTabInBottomPane(s, { id: 'keep', type: 'editor', title: 'keep' })
+    s = openTabInBottomPane(s, { id: 'draft', type: 'editor', title: 'draft' })
+    const rootPane = (s.bottomSplits as { id: string }).id
+    s = moveTabToEdge(s, rootPane, 'draft', rootPane, 'right')
+    const pane = allLeaves(s.bottomSplits).find(leaf => leaf.tabs.some(tab => tab.id === 'draft'))!
+
+    const after = destination === 'center'
+      ? moveTabToEdge(s, pane.id, 'draft', pane.id, 'center')
+      : moveTab(s, pane.id, 'draft', pane.id, destination === 'chip' ? 0 : -1)
+
+    expect(after.bottomSplits).toEqual(s.bottomSplits)
+    expect(after.activePane).toBe(pane.id)
+    expect(allLeaves(after.bottomSplits).find(leaf => leaf.id === pane.id)?.active).toBe('draft')
+  })
+
+  /** 标签按钮提供原顺序中的目标位置，同窗格重排需保留目标标签之前的语义。 */
+  it('reorders a tab before another tab in the same pane', () => {
+    let s = state()
+    for (const id of ['first', 'middle', 'last']) {
+      s = openTabInBottomPane(s, { id, type: 'editor', title: id })
+    }
+    const paneId = (s.bottomSplits as { id: string }).id
+
+    const after = moveTab(s, paneId, 'first', paneId, 2)
+
+    expect(allLeaves(after.bottomSplits)[0]!.tabs.map(tab => tab.id)).toEqual(['middle', 'first', 'last'])
+    expect(after.activePane).toBe(paneId)
+  })
+
   it('dragging a pane\'s only tab onto its own edge splits in place instead of losing the tab', () => {
     let s = state()
     s = openTabInBottomPane(s, { id: 'git', type: 'git', title: 'Git' })

@@ -69,7 +69,137 @@ test.skip(VARIANT === undefined, 'requires the dedicated Context integration pro
 /** The lane's workspace (the script owns the directory). */
 const WORKSPACE_PATH = process.env.DSH_E2E_WORKSPACE ?? join(tmpdir(), 'dsh-e2e-context-workspace')
 
-let api: APIRequestContext
+/** Optional scale lane; normal Context integration runs keep their fixture size. */
+const SCALE_AGENTS = process.env.DSH_E2E_CONTEXT_AGENTS === undefined
+  ? undefined : Number(process.env.DSH_E2E_CONTEXT_AGENTS)
+
+// Measure the same expansion on both tarballs without the baseline's known pan
+// click bug preventing the measurement. Normal runs retain the full regression.
+const TASKS_MEASURE_ONLY = process.env.DSH_E2E_TASKS_MEASURE_ONLY === '1'
+
+test('tasks graph: many agents paint and remain clickable after background pans', async ({ page }) => {
+  test.skip(SCALE_AGENTS === undefined, 'set DSH_E2E_CONTEXT_AGENTS to opt into the scale fixture')
+  const count = SCALE_AGENTS!
+  expect(Number.isSafeInteger(count) && count > 1, 'scale lane requires at least two agents').toBe(true)
+  test.setTimeout(180_000)
+  const { pageErrors, consoleErrors } = watchFrame(page)
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await boot(page)
+  await mountSession(page, PARENT_SESSION_ID)
+  await openGuideEntry(page, 'subagent')
+  const owner = sessionOwner(page, PARENT_SESSION_ID)
+  const graph = owner.getByRole('group', { name: /^(Workflow graph|工作流图)$/ })
+  const switchGraph = owner.getByRole('button', { name: /^(Switch to the workflow graph|切换为工作流图)$/ })
+  if (await switchGraph.isVisible()) await switchGraph.click()
+  await expect(graph).toBeVisible({ timeout: 60_000 })
+  const aggregate = graph.locator('[data-graph-node]:has([data-card-kind="fold"])')
+  // Waiting for the full tally prevents measuring an incompletely hydrated catalog.
+  await expect(aggregate).toHaveCount(1, { timeout: 90_000 })
+  await expect(aggregate).toHaveAccessibleName(new RegExp(`(^|\\D)${count}(\\D|$)`), { timeout: 90_000 })
+  await expect(graph.locator('[data-graph-node]')).toHaveCount(2)
+
+  const pan = async (): Promise<void> => {
+    const inner = graph.locator(':scope > div[style*="transform"]')
+    const before = await inner.getAttribute('style')
+    const point = await graph.evaluate(element => {
+      const rect = element.getBoundingClientRect()
+      for (let y = rect.top + 20; y < rect.bottom - 60; y += 24) {
+        for (let x = rect.left + 20; x < rect.right - 40; x += 24) {
+          const hit = document.elementFromPoint(x, y)
+          if (hit !== null && element.contains(hit) && hit.closest('[data-graph-node], [data-graph-controls]') === null) {
+            return { x, y }
+          }
+        }
+      }
+      throw new Error('no graph background point available for a real pan')
+    })
+    await page.mouse.move(point.x, point.y)
+    await page.mouse.down()
+    await page.mouse.move(point.x + 18, point.y + 14, { steps: 6 })
+    await page.mouse.up()
+    await expect(inner).not.toHaveAttribute('style', before!)
+  }
+  const clickCard = async (card: ReturnType<Page['locator']>): Promise<void> => {
+    const position = await card.evaluate(element => {
+      const rect = element.getBoundingClientRect()
+      const x = rect.left + rect.width / 2
+      const y = rect.top + rect.height / 3
+      const hit = document.elementFromPoint(x, y)
+      if (hit === null || !element.contains(hit)) throw new Error('graph card is not hit-testable after pan')
+      return { x, y }
+    })
+    await page.mouse.click(position.x, position.y)
+  }
+
+  if (!TASKS_MEASURE_ONLY) await pan()
+  // Install the clock before the real pointer event. Completion is the first
+  // full card population followed by two animation frames, not a wall-clock gate.
+  await aggregate.evaluate((element, expected) => {
+    const canvas = element.closest('[role="group"]')!
+    type Measurement = { elapsedMs: number; cards: number; longTasks: { startTime: number; duration: number }[]; longTasksSupported: boolean }
+    const state = window as typeof window & { __tasksGraphPaint?: Promise<Measurement> }
+    state.__tasksGraphPaint = new Promise(resolve => {
+      let started = 0
+      let finishing = false
+      const longTasks: { startTime: number; duration: number }[] = []
+      const supported = PerformanceObserver.supportedEntryTypes.includes('longtask')
+      const record = (entries: PerformanceEntry[]): void => {
+        for (const entry of entries) if (entry.startTime >= started) longTasks.push({ startTime: entry.startTime, duration: entry.duration })
+      }
+      const observer = supported ? new PerformanceObserver(list => { record(list.getEntries()) }) : undefined
+      const mutation = new MutationObserver(() => {
+        if (started === 0 || finishing || canvas.querySelectorAll('[data-graph-node]').length !== expected) return
+        finishing = true
+        requestAnimationFrame(() => { requestAnimationFrame(() => {
+          const ended = performance.now()
+          if (observer !== undefined) record(observer.takeRecords())
+          observer?.disconnect()
+          mutation.disconnect()
+          resolve({ elapsedMs: ended - started, cards: canvas.querySelectorAll('[data-graph-node]').length,
+            longTasks: longTasks.filter(entry => entry.startTime < ended), longTasksSupported: supported })
+        }) })
+      })
+      element.addEventListener('pointerdown', () => {
+        started = performance.now()
+        observer?.observe({ type: 'longtask' })
+        mutation.observe(canvas, { childList: true, subtree: true })
+      }, { once: true })
+    })
+  }, count + 1)
+  await clickCard(aggregate)
+  await expect(graph.locator('[data-graph-node]')).toHaveCount(count + 1, { timeout: 60_000 })
+  const measurement = await page.evaluate(async () => {
+    const state = window as typeof window & { __tasksGraphPaint?: Promise<unknown> }
+    const result = await state.__tasksGraphPaint
+    delete state.__tasksGraphPaint
+    return result
+  })
+  await test.info().attach('tasks-graph-paint.json', { body: JSON.stringify({ agents: count, measurement }, null, 2), contentType: 'application/json' })
+  console.log(`[tasks graph] ${JSON.stringify({ agents: count, measurement })}`)
+  if (TASKS_MEASURE_ONLY) {
+    expect(pageErrors, 'uncaught page errors').toEqual([])
+    expect(consoleErrors, 'console errors').toEqual([])
+    return
+  }
+
+  await pan()
+  const childCard = graph.locator(`[data-graph-node="${CHILD_SESSION_ID}"]`)
+  await clickCard(childCard)
+  const details = page.getByRole('dialog').filter({ hasText: CHILD_LABEL })
+  await expect(details).toBeVisible({ timeout: 30_000 })
+  await page.keyboard.press('Escape')
+  await expect(details).toHaveCount(0)
+  const fold = childCard.getByRole('button', { name: /^(Fold into completed|收进已完成聚合)$/ })
+  await expect(fold).toBeVisible()
+  await fold.click()
+  await expect(childCard).toHaveCount(0)
+  await expect(graph.locator('[data-graph-node]:has([data-card-kind="fold"])')).toHaveCount(1)
+  await expect(graph.locator('[data-graph-node]')).toHaveCount(count + 1)
+  expect(pageErrors, 'uncaught page errors').toEqual([])
+  expect(consoleErrors, 'console errors').toEqual([])
+})
+
+let api: APIRequestContext | undefined
 
 test.beforeAll(async () => {
   api = await createHostApi()

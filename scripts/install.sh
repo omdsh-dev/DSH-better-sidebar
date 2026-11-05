@@ -24,7 +24,7 @@
 # 环境（均可省略，脚本会自动探测）：
 #   DSH_HOME    默认 ~/.dsh（Windows Git Bash 下回退 $USERPROFILE/.dsh）
 #   REGISTRY    默认 https://registry.npmjs.org（发布源；装依赖仍走 pnpm 配置）
-#   DSH_CMD     默认优先用 PATH 上的 `dsh`，缺省回退 npx -y --package @deepseek-ai/dsh@0.2.1-rc.1
+#   DSH_CMD     默认优先用 PATH 上的 `dsh`，缺省回退 npx -y --package @deepseek-ai/dsh@0.2.2-rc.1
 #
 # 说明：
 # - pnpm 11 的 minimumReleaseAge 会拒绝发布 <24h 的新版本。脚本会预写
@@ -140,7 +140,7 @@ dsh_cli() {
   if command -v "$DSH_CMD" >/dev/null 2>&1; then
     printf '%s' "$DSH_CMD"
   elif command -v npx >/dev/null 2>&1; then
-    printf 'npx -y --package @deepseek-ai/dsh@0.2.1-rc.1 dsh'
+    printf 'npx -y --package @deepseek-ai/dsh@0.2.2-rc.1 dsh'
   else
     die "未找到 dsh 或 npx。请先安装 DSH（并确保 Node/npm 可用），或用 DSH_CMD 指定 dsh 路径。"
   fi
@@ -160,8 +160,9 @@ if [ "$DRY_RUN" = true ]; then
   say "[dry-run] 步骤 1：确保 $WS_YML 含 minimumReleaseAgeExclude（${PKG}）"
   say "[dry-run] 步骤 2：执行 $CLI plugin --profile $PROFILE_NAME add $PKG@${SPEC}（安装 + bundle 自动注册）"
   say "[dry-run] 步骤 3：校验 dsh.profile.bundles 含 $PKG"
-  say "[dry-run] 步骤 4：幂等移除 $PATCH_YML 里旧的 better-sidebar 手动挂载行（避免双挂载）"
-  if [ "$RESTART" = true ]; then say "[dry-run] 步骤 5：pm2 restart dsh-web"; else say "[dry-run] 步骤 5：提示用户手动重启 DSH"; fi
+  say "[dry-run] 步骤 4：校验 profile 自带的 @deepseek-ai 宿主包配对（混版会让宿主启动即崩）"
+  say "[dry-run] 步骤 5：幂等移除 $PATCH_YML 里旧的 better-sidebar 手动挂载行（避免双挂载）"
+  if [ "$RESTART" = true ]; then say "[dry-run] 步骤 6：pm2 restart dsh-web"; else say "[dry-run] 步骤 6：提示用户手动重启 DSH"; fi
   exit 0
 fi
 
@@ -190,7 +191,23 @@ if ! node -e '
 fi
 say "bundle 已注册：dsh.profile.bundles 包含 ${PKG}（下次启动自动挂载）"
 
-# 步骤 3：幂等移除旧的 manual 挂载行（避免与 bundle 双挂载）
+# 步骤 4：校验 profile 自带的宿主包配对（#1107）。profile 里的 @deepseek-ai
+# 副本会抢在宿主安装之前被加载（DSH 的 profile 解析把 profile 内副本排在
+# 安装副本之前），本插件静态 import 的 dsh-subagent 因此绑到混搭版本；混版
+# 缺导出时宿主只报 DesktopHostFatalError / required plugins did not activate，
+# 看不到是哪个包缺了什么。判据用 dsh-subagent 精确声明的 dsh-attachment peer。
+# 检查脚本随包发布，用刚装好的那份运行。
+HOST_TREE_CHECK="$PROFILE_DIR/node_modules/$PKG/scripts/check-profile-host-tree.mjs"
+if [ -f "$HOST_TREE_CHECK" ]; then
+  if ! node "$HOST_TREE_CHECK" "$PROFILE_DIR"; then
+    warn "profile 自带的 @deepseek-ai 宿主包混版：重启后本插件无法激活（宿主启动失败）。按上面的提示修好后重跑本脚本。"
+    exit 1
+  fi
+else
+  warn "未找到 ${HOST_TREE_CHECK}（该插件版本未携带宿主包配对检查），跳过。"
+fi
+
+# 步骤 5：幂等移除旧的 manual 挂载行（避免与 bundle 双挂载）
 MOUNT_RESULT="$(node -e '
 const fs = require("fs");
 const p = process.argv[1];
@@ -231,7 +248,7 @@ if (!removed) {
 
 say "安装完成：$PKG@$SPEC"
 
-# 步骤 4：重启提示
+# 步骤 6：重启提示
 if [ "$RESTART" = true ]; then
   if command -v pm2 >/dev/null 2>&1; then
     say "重启 dsh-web（pm2）..."

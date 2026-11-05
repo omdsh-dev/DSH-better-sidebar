@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { rewriteLocalImageUrls } from '../src/client/markdown-images.ts'
+import { rewriteLocalImageUrls, rewriteProseLocalImageUrls } from '../src/client/markdown-images.ts'
+import { rewriteLocalMarkdownLinks } from '../src/client/markdown-navigation.ts'
 import type { SessionScope } from '../src/client/api.ts'
 
 const ORIGIN = 'http://127.0.0.1:3080'
@@ -125,5 +126,102 @@ describe('rewriteLocalImageUrls', () => {
     expect(out).not.toMatch(/\[docs\]:.*\/sidebar\/file/)
     // The image-referenced definition IS rewritten.
     expect(out).toMatch(/\[pic-def\]:.*\/sidebar\/file/)
+  })
+})
+
+describe('rewriteLocalImageUrls: CommonMark angle destinations and titles (N7)', () => {
+  const MEDIA = (path: string): string => `${ORIGIN}/sidebar/file?sessionId=abc&path=${encodeURIComponent(path)}&cwd=%2Frepo`
+
+  it('rewrites an angle-delimited destination, including its space', () => {
+    const out = rewriteLocalImageUrls('![a](<./cat image.png>)', scope, '/repo/readme.md', ORIGIN)
+    // The delimiters are preserved; the URL-encoded path carries the space.
+    expect(out).toBe(`![a](<${ORIGIN}/sidebar/file?sessionId=abc&path=%2Frepo%2Fcat+image.png&cwd=%2Frepo>)`)
+  })
+
+  it('preserves an optional double-quoted title while rewriting the destination', () => {
+    const out = rewriteLocalImageUrls('![a](./x.png "the title")', scope, '/repo/readme.md', ORIGIN)
+    expect(out).toBe(`![a](${MEDIA('/repo/x.png')} "the title")`)
+  })
+
+  it('preserves a multi-line double-quoted title', () => {
+    const md = '![a](./x.png "line one\nline two")'
+    const out = rewriteLocalImageUrls(md, scope, '/repo/readme.md', ORIGIN)
+    expect(out).toBe(`![a](${MEDIA('/repo/x.png')} "line one\nline two")`)
+  })
+
+  it('preserves a single-quoted title (it would otherwise not be rewritten at all)', () => {
+    const out = rewriteLocalImageUrls("![a](./x.png 'the title')", scope, '/repo/readme.md', ORIGIN)
+    expect(out).toBe(`![a](${MEDIA('/repo/x.png')} 'the title')`)
+  })
+
+  it('combines an angle destination with a title', () => {
+    const out = rewriteLocalImageUrls('![a](<./cat image.png> "the title")', scope, '/repo/readme.md', ORIGIN)
+    expect(out).toBe(`![a](<${ORIGIN}/sidebar/file?sessionId=abc&path=%2Frepo%2Fcat+image.png&cwd=%2Frepo> "the title")`)
+  })
+
+  it('leaves a remote angle destination and its title untouched', () => {
+    const md = '![a](<https://example.com/x y.png> "remote")'
+    expect(rewriteLocalImageUrls(md, scope, '/repo/readme.md', ORIGIN)).toBe(md)
+  })
+
+  it('rewrites a reference definition with an angle destination, keeping its delimiters and title', () => {
+    const md = '![logo][logo]\n\n[logo]: <./logo mark.svg> "the logo"'
+    const out = rewriteLocalImageUrls(md, scope, '/repo/readme.md', ORIGIN)
+    expect(out).toContain(`[logo]: <${ORIGIN}/sidebar/file?sessionId=abc&path=%2Frepo%2Flogo+mark.svg&cwd=%2Frepo> "the logo"`)
+  })
+})
+
+describe('rewriteProseLocalImageUrls', () => {
+  const proseScope: SessionScope = { sessionId: 'abc', cwd: '/repo' }
+  const FILE_URL = (path: string, cwd = '/repo'): string =>
+    `${ORIGIN}/sidebar/file?sessionId=abc&path=${encodeURIComponent(path)}&cwd=${encodeURIComponent(cwd)}`
+
+  it('resolves a relative destination against the prose cwd (the row is not a file)', () => {
+    const out = rewriteProseLocalImageUrls('![a](./cat.png)', proseScope, '/repo', ORIGIN)
+    expect(out).toBe(`![a](${FILE_URL('/repo/cat.png')})`)
+  })
+
+  it('leaves relative destinations untouched when the cwd is unknown', () => {
+    const md = '![a](./cat.png)\n![b](cat.png)'
+    expect(rewriteProseLocalImageUrls(md, { sessionId: 'abc' }, undefined, ORIGIN)).toBe(md)
+  })
+
+  it('still serves an absolute local image when the cwd is unknown (no cwd param)', () => {
+    const out = rewriteProseLocalImageUrls('![a](/abs/cat.png)', { sessionId: 'abc' }, undefined, ORIGIN)
+    expect(out).toBe(`![a](${ORIGIN}/sidebar/file?sessionId=abc&path=%2Fabs%2Fcat.png)`)
+  })
+
+  it('tolerates a trailing separator on the cwd', () => {
+    const out = rewriteProseLocalImageUrls('![a](./cat.png)', proseScope, '/repo/', ORIGIN)
+    expect(out).toBe(`![a](${FILE_URL('/repo/cat.png')})`)
+    // Repeated separators collapse the same way.
+    const repeated = rewriteProseLocalImageUrls('![a](./cat.png)', proseScope, '/repo///', ORIGIN)
+    expect(repeated).toBe(`![a](${FILE_URL('/repo/cat.png')})`)
+  })
+
+  it('resolves a relative destination against a Windows cwd', () => {
+    const out = rewriteProseLocalImageUrls('![a](./cat.png)', { sessionId: 'abc', cwd: 'C:\\repo' }, 'C:\\repo\\', ORIGIN)
+    // A Windows root keeps its drive and backslash spelling after normalization.
+    expect(decodeURIComponent(out.replace(/\+/g, ' '))).toContain('C:\\repo\\cat.png')
+  })
+
+  it('rewrites a prose reference-style image against the cwd', () => {
+    const md = '![logo][logo]\n\n[logo]: ./logo.svg'
+    const out = rewriteProseLocalImageUrls(md, proseScope, '/repo', ORIGIN)
+    expect(out).toContain(`[logo]: ${FILE_URL('/repo/logo.svg')}`)
+    expect(out).toContain('![logo][logo]')
+  })
+
+  it('composes with the local-link rewrite: image first, then the link inside its label', () => {
+    const md = '[![badge](./badge.svg)](./doc.md#intro)\n\n![cat](./cat.png)'
+    const out = rewriteLocalMarkdownLinks(
+      rewriteProseLocalImageUrls(md, proseScope, '/repo', ORIGIN),
+      undefined,
+      '/repo',
+    )
+    // The image destination became a media URL and the enclosing `.md` link is
+    // still claimed (its heading fragment survives as %23).
+    expect(out).toContain(`[![badge](${FILE_URL('/repo/badge.svg')})](./doc.md%23intro)`)
+    expect(out).toContain(`![cat](${FILE_URL('/repo/cat.png')})`)
   })
 })

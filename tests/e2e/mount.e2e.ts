@@ -31,7 +31,7 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, expect, type APIRequestContext } from '@playwright/test'
-import { PAGE_URL, createHostApi, dismissOnboarding, gotoPage, hostRpc, sendFirstMessage, sidebarApi } from './host'
+import { PAGE_URL, composerEditable, createHostApi, dismissOnboarding, gotoPage, hostRpc, sendFirstMessage, sidebarApi } from './host'
 
 /** Workspace the sidebar renders against (created by the lane's seeding). */
 const WORKSPACE_PATH = process.env.DSH_E2E_WORKSPACE ?? join(tmpdir(), 'dsh-e2e-workspace')
@@ -526,8 +526,12 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   const mdRow = pane.locator(`[role="button"][title$="${SEEDED_MD_FILE}"]:visible`)
   await expect(mdRow, `the seeded "${SEEDED_MD_FILE}" file must appear in the plugin's explorer`).toHaveCount(1, { timeout: 30_000 })
   await mdRow.click({ position: { x: 8, y: 8 } })
+  // The editor tab keeps its CodeMirror host mounted and hides it in preview
+  // mode; whether CodeMirror has virtualized the document's last line by now is
+  // a matter of when its hidden view was measured, so the matching element is
+  // not stable. Only the VISIBLE copy is the preview this assertion is about.
   await expect(
-    pane.getByText('tail text'),
+    pane.getByText('tail text').filter({ visible: true }),
     'the markdown preview must render the seeded document',
   ).toHaveCount(1, { timeout: 30_000 })
   await mermaidChunk
@@ -575,6 +579,58 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   expect(modalRegions.button, 'its buttons must stay no-drag').toBe('no-drag')
   await page.keyboard.press('Escape')
   await expect(modal, 'Esc must close the zoom modal').toHaveCount(0, { timeout: 10_000 })
+  await assertNoCrash()
+
+  // Selection references commit as CHIPS, not quoted blocks: select a line in
+  // the markdown preview, click the floating "add to conversation" button, and
+  // require the composer to hold one reference chip whose label is
+  // `path:lines` — with no fenced body anywhere in the draft. This is the
+  // whole point of the chip path: a host that ignores the reference-insert
+  // event degrades to plain text and fails right here.
+  // Seed the draft with a word that does NOT end in whitespace: the host's
+  // chip insert only adds a space after the chip, so without the plugin's own
+  // leading separator the chip would read `hello` + chip with no gap.
+  const composer = composerEditable(page)
+  await composer.click()
+  await page.keyboard.type('hello')
+  const previewLine = pane.locator('p', { hasText: 'tail text' }).first()
+  // A real drag selects the text and fires mouseup with the selection still
+  // live; a synthetic triple-click can clear it before mouseup reaches the
+  // preview container's handler.
+  const lineBox = await previewLine.boundingBox()
+  expect(lineBox, 'the preview line must have a measurable box').not.toBeNull()
+  await page.mouse.move(lineBox!.x + 1, lineBox!.y + lineBox!.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(lineBox!.x + lineBox!.width - 1, lineBox!.y + lineBox!.height / 2, { steps: 8 })
+  await page.mouse.up()
+  const addToChat = page.locator('button', { hasText: /添加到对话|Add to conversation/ }).first()
+  await expect(addToChat, 'selecting preview text must raise the add-to-conversation button')
+    .toBeVisible({ timeout: 10_000 })
+  await addToChat.click()
+  // `data-composer-chip` is the host's own anchor for a composer chip (its
+  // JSDoc names e2e as the reason it exists) — a bare `[class*="reference"]`
+  // match could land on any element whose hashed class happens to contain it.
+  //
+  // The chip's VISIBLE label is the localized `quoteChip` string ("引用 …" /
+  // "Quote …") carrying the file name and line range; the compact `path:line`
+  // form is the chip's clipboard text, not its face (#1111). Match the file
+  // name, not the separator, and require exactly one chip so a duplicated
+  // insert still fails.
+  const chip = page.locator('[data-composer-chip]').filter({ hasText: SEEDED_MD_FILE })
+  await expect(chip, 'the selection must land in the composer as a reference chip')
+    .toHaveCount(1, { timeout: 10_000 })
+  // A selection chip's `ref` is a fenced block, not a path: the host must not
+  // mark it openable, or a click would hand that block to the file opener.
+  await expect(chip, 'a selection chip must not advertise itself as openable')
+    .not.toHaveClass(/openable/u)
+  const composerText = await composer.innerText()
+  expect(composerText, 'the draft must not carry the quoted body the chip replaced')
+    .not.toContain('```')
+  // The chip must not fuse with the word typed before it. The exact separator
+  // is the composer's business (Lexical may render it as a line break rather
+  // than a space), so assert the boundary, not the character.
+  expect(composerText, 'the chip must not stick to the word typed before it')
+    .toMatch(/hello\s/u)
   await assertNoCrash()
 
   // README-style markdown (raw-HTML runs + TOC): open the seeded file and
@@ -896,3 +952,159 @@ test('the custom-CSS escape hatch injects the user stylesheet live', async ({ pa
     await api.post(sidebarApi('settings.update'), { data: { patch: { customCss: '' } } })
   }
 })
+
+/**
+ * The explorer's @-reference button, twice in a row, against a real composer.
+ *
+ * The shipped regression this pins: the plugin's insert used to rewrite the
+ * whole draft through DSH's `setDraft`, whose contract is "replace the whole
+ * draft with plain text, removing inline reference chips" — so the second
+ * click flattened the first chip into `@dir/file` text (which the host then
+ * decorates as `@dir/` plus an undecorated file name, i.e. the "two-piece"
+ * mention). A chip-free second insert is what the host's own picker does; the
+ * composer must therefore hold exactly two chips and no plain-text reference.
+ */
+test('the explorer @-reference button keeps earlier chips (no whole-draft rewrite)', async ({ page }) => {
+  const pageErrors: string[] = []
+  page.on('pageerror', (error) => pageErrors.push(String(error)))
+
+  // One workspace directory for the folder-reference half of this test; it is
+  // created before the page loads so the tree's first listing already has it.
+  const refDir = 'refs'
+  mkdirSync(join(WORKSPACE_PATH, refDir), { recursive: true })
+
+  await gotoPage(page)
+  await dismissOnboarding(page)
+  // A session with content: the native sidebar's entry point and the composer
+  // both need one.
+  await sendFirstMessage(page)
+
+  // Chips exist only in the composer, so the marker itself is the anchor
+  // (locale-proof, unlike the composer's aria-label).
+  const chips = page.locator('[data-composer-chip]')
+
+  // The plugin's explorer, through the host's own right sidebar.
+  const pane = page.locator('[data-sidebar-right-panel]')
+  await page.locator('[data-sidebar-right-expand]').first().click()
+  await expect(pane).toBeVisible({ timeout: 30_000 })
+  if (await page.locator('[data-sidebar-right-guide]').count() === 0) {
+    await page.locator('[data-dockkit-add-tab]').first().click()
+  }
+  await page.locator('[data-sidebar-right-guide-entry="files"]').click()
+
+  /** Reveal and click one row's @-reference action (hover-revealed at the row end). */
+  const referenceRow = async (file: string): Promise<void> => {
+    const row = pane.locator(`[role="button"][title$="${file}"]:visible`)
+    await expect(row, `the seeded "${file}" file must appear in the plugin's explorer`).toHaveCount(1, { timeout: 30_000 })
+    await row.hover()
+    // "@file" (en) / "@文件" (zh) — match the leading trigger instead of a locale.
+    await row.getByRole('button', { name: /^@/ }).click({ timeout: 10_000 })
+  }
+
+  await referenceRow(SEEDED_FILE)
+  await expect(
+    chips,
+    'the explorer @-reference must reach the composer as one chip',
+  ).toHaveCount(1, { timeout: 15_000 })
+
+  await referenceRow(SEEDED_MD_FILE)
+  await expect(
+    chips,
+    'the second @-reference must leave the first chip intact (a whole-draft rewrite would flatten it)',
+  ).toHaveCount(2, { timeout: 15_000 })
+  await expect(
+    chips.first(),
+    'the first chip must still carry its own file, not the flattened mention text',
+  ).toContainText(SEEDED_FILE, { timeout: 10_000 })
+  await expect(
+    page.locator('[data-composer-text-ref]'),
+    'no mention may degrade into plain decorated text',
+  ).toHaveCount(0)
+
+  // The folder branch stays on purpose the host's plain-text insert (its own
+  // folder-drill path): one folder reference must land as DSH's decorated
+  // `@refs/` token — and it must not disturb the chips.
+  const dirRow = pane.locator(`[class*="explorerDir"]:has([class*="explorerName"]:text-is("${refDir}"))`)
+  await expect(dirRow, `the seeded "${refDir}" directory must be listed`).toHaveCount(1, { timeout: 30_000 })
+  await dirRow.hover()
+  await dirRow.getByRole('button', { name: /^@/ }).click({ timeout: 10_000 })
+  await expect(
+    page.locator('[data-composer-text-ref]'),
+    'the folder insert must reach the composer as the host-decorated plain-text token',
+  ).toHaveCount(1, { timeout: 15_000 })
+  await expect(chips, 'the folder insert must leave both chips intact').toHaveCount(2)
+
+  // Text typed BETWEEN two references must not change how either insert
+  // behaves: the next reference still lands as its own chip, and the earlier
+  // ones stay chips (the flattened-draft bug used to eat them on any insert).
+  const composer = chips.first().locator('xpath=ancestor::*[@contenteditable="true"][1]')
+  const typeInComposer = async (text: string): Promise<void> => {
+    await composer.click()
+    await page.keyboard.press('End')
+    await page.keyboard.type(text)
+  }
+
+  await typeInComposer('prose between mentions ')
+  await expect(chips, 'typing must not touch the chips').toHaveCount(2)
+  await referenceRow(SEEDED_README_FILE)
+  await expect(
+    chips,
+    'a reference inserted after interleaved prose must add its own chip and keep the rest',
+  ).toHaveCount(3, { timeout: 15_000 })
+  await expect(chips.first(), 'the first chip must still carry its own file').toContainText(SEEDED_FILE)
+  await expect(
+    page.locator('[data-composer-text-ref]'),
+    'the folder token stays the only plain-text reference',
+  ).toHaveCount(1)
+
+  // The viewer's selection popup: its payload is a fenced MULTI-LINE string
+  // that rides the same plain-text insert. It must arrive verbatim (newlines
+  // included) and leave every chip alone.
+  const mdRow = pane.locator(`[role="button"][title$="${SEEDED_MD_FILE}"]:visible`)
+  await expect(mdRow).toHaveCount(1, { timeout: 30_000 })
+  await mdRow.click({ position: { x: 8, y: 8 } }) // open the file (not the @ action)
+  // Same hidden-CodeMirror copy as above: the preview is the visible one.
+  await expect(
+    pane.getByText('tail text').filter({ visible: true }),
+    'the markdown preview must render the seeded document exactly once',
+  ).toHaveCount(1, { timeout: 30_000 })
+  // A multi-line selection in the code viewer (CodeMirror): the editor path
+  // raises the same popup with a fenced payload carrying the file and its line
+  // range — the multi-line shape this module has to hand over verbatim.
+  // The preview keeps a hidden CodeMirror host mounted (unsaved edits), so
+  // every locator here has to filter for the VISIBLE copy.
+  const heading = pane.getByText('Diagram', { exact: true }).filter({ visible: true }).first()
+  const tail = pane.getByText('tail text', { exact: true }).filter({ visible: true }).first()
+  const headingBox = await heading.boundingBox()
+  const tailBox = await tail.boundingBox()
+  expect(headingBox, 'the visible preview heading must be laid out').not.toBeNull()
+  expect(tailBox, 'the visible preview line must be laid out').not.toBeNull()
+  await page.mouse.move(headingBox!.x + 2, headingBox!.y + headingBox!.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(tailBox!.x + tailBox!.width - 2, tailBox!.y + tailBox!.height / 2, { steps: 8 })
+  await page.mouse.up()
+
+  const quoteButton = page.getByRole('button', { name: /Add to conversation|添加到对话/ })
+  await expect(quoteButton, 'the selection popup must offer the quote').toHaveCount(1, { timeout: 10_000 })
+  await quoteButton.click()
+  // Since the selection-to-chat rework (#1052) the quote lands as its own
+  // reference CHIP — the fenced body is serialized only when the draft is
+  // sent — so the chip count grows to four and the three earlier chips stay
+  // intact. `buildSelectionInsert` in the unit suite pins the verbatim payload
+  // (fences + newlines); the DOM only carries the compact `path:lines` label.
+  await expect(
+    chips,
+    'the multi-line quote must land as its own chip and leave every earlier chip intact',
+  ).toHaveCount(4, { timeout: 15_000 })
+  await expect(
+    chips.last(),
+    'the quote chip must carry the file its selection came from',
+  ).toContainText(SEEDED_MD_FILE, { timeout: 10_000 })
+  await expect(
+    page.locator('[data-composer-text-ref]'),
+    'the quote must not degrade into decorated plain text',
+  ).toHaveCount(1)
+
+  expect(pageErrors, 'no page error while inserting references').toEqual([])
+})
+

@@ -61,6 +61,29 @@ function dyingChunks(text: string): AsyncIterable<string | Uint8Array> {
 }
 
 /**
+ * A body that is only COMPLETE once `parties` uploads have reached its end.
+ *
+ * A concurrency case that merely starts its uploads together proves nothing:
+ * each spends its time in the write stream, and they may well reach their
+ * renames milliseconds apart — the case then passes while never exercising the
+ * race it names. Holding every body at the end until the whole set is there forces
+ * the renames into the same instant, which is the overlap the case is about.
+ */
+function bodiesThatMeet(parties: number) {
+  let arrived = 0
+  let release!: () => void
+  const allArrived = new Promise<void>((resolve) => { release = resolve })
+  const chunks = (text: string): AsyncIterable<string | Uint8Array> => ({
+    async *[Symbol.asyncIterator]() {
+      for (let i = 0; i < text.length; i += 2) yield text.slice(i, i + 2)
+      if (++arrived >= parties) release()
+      await allArrived
+    },
+  })
+  return chunks
+}
+
+/**
  * A temp project whose root directory carries letters, so a lowercase variant
  * of its path is a real spelling of the SAME directory (the win32 cases) and a
  * link to it stands for the project itself.
@@ -196,14 +219,29 @@ describe('writeWorkspaceUpload', () => {
 
   it('keeps concurrent uploads to the same target independent', async () => {
     const target = join(root, 'race.txt')
-    await Promise.all([
-      writeWorkspaceUpload({ cwd: root, dir: root, relativePath: 'race.txt', chunks: chunksOf('first') }),
-      writeWorkspaceUpload({ cwd: root, dir: root, relativePath: 'race.txt', chunks: chunksOf('second') }),
-    ])
-    // Both renames succeed (unique temp names, no EEXIST cross-talk); the last
-    // rename wins and the losers leave nothing behind.
-    expect(['first', 'second']).toContain(readFileSync(target, 'utf8'))
-    expect(tmpLeftovers(root)).toEqual([])
+    // Eight parties on purpose. With two, a bare rename loses the collision in
+    // roughly one round out of ten; with eight EVERY round has losers (measured:
+    // 1–5 of them, and never zero), so a dropped retry cannot slip through on
+    // luck.
+    const parties = 8
+    const rounds = 4
+    for (let round = 0; round < rounds; round++) {
+      // Every body is held open until ALL of them are complete, so the eight
+      // renames land on the target at the same instant (see bodiesThatMeet).
+      const meet = bodiesThatMeet(parties)
+      const bodies = Array.from({ length: parties }, (_, index) => `body-${round}-${index}`)
+      await Promise.all(bodies.map(body => writeWorkspaceUpload({
+        cwd: root, dir: root, relativePath: 'race.txt', chunks: meet(body),
+      })))
+      // Every upload SUCCEEDS. Unique temp names keep the bodies from crossing
+      // — but they do not make the renames independent: renames naming the same
+      // target in the same instant are mutually exclusive on Windows, and every
+      // rename that does not win is refused. Losing must cost the caller a
+      // retry, not the upload. The last rename to land wins, and no party
+      // leaves a temp file behind.
+      expect(bodies).toContain(readFileSync(target, 'utf8'))
+      expect(tmpLeftovers(root)).toEqual([])
+    }
   })
 
   it('does not overwrite an existing file when a retry dies mid-stream', async () => {

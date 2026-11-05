@@ -17,8 +17,9 @@ import { api } from '../src/client/api.ts'
 import type { Context } from '../src/context-types.ts'
 import type { SessionScope } from '../src/client/api.ts'
 import type { SidebarDiffRef } from '../src/client/state.ts'
+import { t } from '../src/client/locales.ts'
 
-import { setupReactAct } from './test-utils.ts'
+import { setupReactAct, renderRoot } from './test-utils.ts'
 setupReactAct()
 
 const SCOPE: SessionScope = { sessionId: 's1', cwd: '/p' }
@@ -120,6 +121,55 @@ describe('useGitDiffTarget through the inline preview pane (DiffPane)', () => {
       container.remove()
     }
   })
+
+  /**
+   * The `content` tab holds bytes from its OWN `fs.read`, not from the patch
+   * the rest of the pane shows. The header's refresh button only bumps the
+   * diff loader's counter, so unless the content effect listens to that
+   * counter the tab keeps serving bytes read before the file changed — and it
+   * has no other reload path (the scope is stable, so re-renders no longer
+   * re-read as a side effect).
+   */
+  it('re-reads the content tab on the header refresh button', async () => {
+    const worktree: SidebarDiffRef = { kind: 'worktree', path: 'src/a.ts', staged: false }
+    vi.spyOn(api, 'gitDiff').mockResolvedValue({ diff: STAGED_PATCH })
+    const read = vi.spyOn(api, 'fsRead')
+      .mockResolvedValueOnce({ kind: 'text', content: 'first-bytes', size: 11 })
+      .mockResolvedValue({ kind: 'text', content: 'second-bytes', size: 12 })
+
+    // The pane hosts its own tab state only through `onSelectTab`; without it
+    // the strip renders but `onSelect` is a no-op, so the test drives the
+    // selection the way the changes tab does.
+    const mounted = renderRoot(createElement(DiffPane, {
+      target: { kind: 'git', ref: worktree },
+      ctx: {} as Context,
+      scope: SCOPE,
+      height: 300,
+      activeTab: 'content',
+      onSelectTab: () => {},
+      onHeightCommit: () => {},
+      onClose: () => {},
+      onExpand: () => {},
+    }))
+    try {
+      await flushEffects()
+
+      // The content tab loads lazily, only while on screen.
+      expect(mounted.container.textContent).toContain('first-bytes')
+
+      // The refresh button must reload it, since nothing else can. Selected by
+      // the locale-aware label the rest of this suite uses.
+      const refreshButton = mounted.container.querySelector<HTMLButtonElement>(`button[aria-label="${t('refresh')}"]`)
+      expect(refreshButton).not.toBeNull()
+      await act(async () => { refreshButton!.click() })
+      await flushEffects()
+
+      expect(read.mock.calls.length).toBeGreaterThanOrEqual(2)
+      expect(mounted.container.textContent).toContain('second-bytes')
+    } finally {
+      mounted.unmount()
+    }
+  })
 })
 
 describe('useGitDiffTarget through the dedicated diff tab (DiffTab)', () => {
@@ -132,8 +182,7 @@ describe('useGitDiffTarget through the dedicated diff tab (DiffTab)', () => {
     try {
       act(() => {
         root.render(createElement(DiffTab, {
-          sessionId: 's1',
-          cwd: '/p',
+          scope: SCOPE,
           diff: { kind: 'commit', hash: 'abc1234', hashFull: 'a'.repeat(40), subject: 'subject' },
         }))
       })
@@ -156,8 +205,7 @@ describe('useGitDiffTarget through the dedicated diff tab (DiffTab)', () => {
     try {
       act(() => {
         root.render(createElement(DiffTab, {
-          sessionId: 's1',
-          cwd: '/p',
+          scope: SCOPE,
           diff: { kind: 'worktree', path: 'src/a.ts', staged: false },
         }))
       })
