@@ -24,6 +24,7 @@
  */
 import type { ReactNode } from 'react'
 import type { Context } from '../../context-types.ts'
+import { visibleNativePanel } from './visible-panel.ts'
 import { closeAllIcon, closeLeftIcon, closeOthersIcon, closeRightIcon } from '../close-family-icons.tsx'
 import { t } from '../locales.ts'
 import css from '../sidebar.module.css'
@@ -53,14 +54,17 @@ export interface NativeTabMenuDeps {
  *   inside a distinguishable strip (the rows then render nothing).
  */
 export function stripOrderOf(tabId: string): string[] | undefined {
-  const chips = [...document.querySelectorAll<HTMLElement>('[data-dockkit-tab]')]
-  const chip = chips.find(node => node.getAttribute('data-dockkit-tab') === tabId)
-  const strip = chip?.closest('[data-dockkit-strip-tabs]')
-  if (chip === undefined || strip === null || strip === undefined) return undefined
+  const panel = visibleNativePanel(document)
+  if (panel === undefined) return undefined
+  const chips = [...panel.querySelectorAll<HTMLElement>('[data-dockkit-tab]')]
+    .filter(node => node.getAttribute('data-dockkit-tab') === tabId)
+  if (chips.length !== 1) return undefined
+  const strip = chips[0]?.closest('[data-dockkit-strip-tabs]')
+  if (strip == null || !panel.contains(strip)) return undefined
   const ids = [...strip.querySelectorAll<HTMLElement>('[data-dockkit-tab]')]
     .map(node => node.getAttribute('data-dockkit-tab'))
-    .filter((id): id is string => id !== null && id !== '')
-  return ids.includes(tabId) ? ids : undefined
+  if (ids.some(id => id === null || id === '') || new Set(ids).size !== ids.length) return undefined
+  return ids as string[]
 }
 
 /**
@@ -98,8 +102,15 @@ function row(
  * @returns the rows, or `null` when the strip cannot be resolved.
  */
 export function NativeTabMenuItems(props: NativeTabMenuOwner & NativeTabMenuDeps): ReactNode {
+  const panel = visibleNativePanel(document)
+  const session = panel?.getAttribute('data-sidebar-right-session')
   const ids = stripOrderOf(props.tab.id)
-  if (ids === undefined) return null
+  if (panel === undefined || ids === undefined) return null
+  const source = [...panel.querySelectorAll<HTMLElement>('[data-dockkit-tab]')]
+    .find(chip => chip.getAttribute('data-dockkit-tab') === props.tab.id)
+    ?.closest('[data-dockkit-strip-tabs]')
+  const pane = source?.getAttribute('data-dockkit-strip-tabs')
+  if (pane == null || pane === '') return null
   const index = ids.indexOf(props.tab.id)
   const others = ids.filter(id => id !== props.tab.id)
   const left = index > 0 ? ids.slice(0, index) : []
@@ -107,8 +118,35 @@ export function NativeTabMenuItems(props: NativeTabMenuOwner & NativeTabMenuDeps
   // Dismiss BEFORE closing: the menu belongs to the kit, and a row that leaves
   // it open leaves a menu floating over content the close may have replaced.
   const run = (targets: readonly string[]): void => {
+    const valid = (): boolean => visibleNativePanel(document) === panel
+      && panel.getAttribute('data-sidebar-right-session') === session
+    // Dismiss and close handlers are synchronous extension points: either can
+    // move tabs, replace strips or switch sessions. Resolve original pane identity
+    // after each callback, not a stale element or just an unchanged tab order.
+    const originalPane = (): HTMLElement | undefined => {
+      if (!valid()) return undefined
+      const strips = [...panel.querySelectorAll<HTMLElement>('[data-dockkit-strip-tabs]')]
+        .filter(strip => strip.getAttribute('data-dockkit-strip-tabs') === pane)
+      return strips.length === 1 ? strips[0] : undefined
+    }
+    const belongs = (id: string, strip: HTMLElement): boolean => {
+      const chips = [...panel.querySelectorAll<HTMLElement>('[data-dockkit-tab]')]
+        .filter(chip => chip.getAttribute('data-dockkit-tab') === id)
+      return chips.length === 1 && chips[0]?.closest('[data-dockkit-strip-tabs]') === strip
+    }
     props.dismiss()
-    for (const id of targets) props.close(id)
+    const current = stripOrderOf(props.tab.id)
+    const strip = originalPane()
+    if (strip === undefined || !belongs(props.tab.id, strip)
+      || current === undefined || current.length !== ids.length
+      || !current.every((id, index) => id === ids[index])) return
+    for (const id of targets) {
+      const live = originalPane()
+      if (live === undefined) break
+      // Expected removals are allowed; a pending target moved to a sibling is
+      // not. Skip it rather than following its id across pane boundaries.
+      if (belongs(id, live)) props.close(id)
+    }
   }
   return (
     <>

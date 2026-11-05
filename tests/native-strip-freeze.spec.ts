@@ -7,7 +7,7 @@
  * run of closes turns into a chase. The host gives no API for this, and it
  * REBUILDS the strip's DOM on every close (measured on a real mount: the
  * `[data-dockkit-strip]` node is replaced), so the pin cannot live on the
- * strip. It lives on `<html>`:
+ * strip. The controller transfers its pane-local marker to replacement DOM:
  *
  *  - armed by the close GESTURE (pointerdown on the kit's close control, or a
  *    middle-button press on a chip), which measures the width BEFORE the
@@ -17,7 +17,7 @@
  *    node was removed / the window was left) is confirmed by a hit test on the
  *    next task, and a `pointerover` elsewhere releases too.
  */
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { FROZEN_ATTR, FROZEN_VAR, installNativeStripFreeze } from '../src/client/tab-strip-freeze.ts'
 
 const disposers: Array<() => void> = []
@@ -56,7 +56,15 @@ function strip(count: number, paneId = 'pane1'): KitStrip {
   const control = document.createElement('button')
   control.type = 'button'
   line.append(row, tail, control)
-  document.body.append(line)
+  let panel = document.querySelector('[data-sidebar-right-panel]')
+  if (panel === null) {
+    panel = document.createElement('div')
+    panel.setAttribute('data-sidebar-right-panel', 'push')
+    panel.setAttribute('data-sidebar-right-session', 'session1')
+    panel.setAttribute('data-sidebar-right-open', '')
+    document.body.append(panel)
+  }
+  panel.append(line)
   return { line, row }
 }
 
@@ -80,8 +88,8 @@ function install(): void {
   disposers.push(installNativeStripFreeze({ measure: () => 120 }))
 }
 
-const frozen = (): boolean => document.documentElement.hasAttribute(FROZEN_ATTR)
-const frozenVar = (): string => document.documentElement.style.getPropertyValue(FROZEN_VAR)
+const frozen = (): boolean => document.querySelector(`[${FROZEN_ATTR}]`) !== null
+const frozenVar = (): string => document.querySelector<HTMLElement>(`[${FROZEN_ATTR}]`)?.style.getPropertyValue(FROZEN_VAR) ?? ''
 const closeOf = (kit: KitStrip, index: number): Element =>
   kit.row.children[index]?.querySelector('[data-dockkit-tab-close]') as Element
 
@@ -113,17 +121,20 @@ describe('native strip width freeze', () => {
     expect(frozen()).toBe(false)
   })
 
-  it('survives the host rebuilding the strip DOM on the close', () => {
+  it('survives the host rebuilding the strip DOM on the close', async () => {
     const kit = strip(3)
     install()
     fire('pointerdown', closeOf(kit, 0), { button: 0 })
     expect(frozen()).toBe(true)
 
-    // The host replaces the whole strip node (real behavior); the pin is on
-    // <html>, so it is still there for the rebuilt chips.
+    // The host replaces the whole strip node; the observer transfers the pin
+    // within the same microtask checkpoint, so the next paint stays frozen.
     kit.line.remove()
     const rebuilt = strip(2, 'pane1')
+    await settle()
     expect(frozen()).toBe(true)
+    expect(rebuilt.line.hasAttribute(FROZEN_ATTR)).toBe(true)
+    expect(kit.line.hasAttribute(FROZEN_ATTR)).toBe(false)
     expect(rebuilt.line.getAttribute('data-dockkit-strip')).toBe('pane1')
   })
 
@@ -210,4 +221,109 @@ describe('native strip width freeze', () => {
     fire('pointerdown', close, { button: 0 })
     expect(frozen()).toBe(false)
   })
+  it('pins only one of two unequal-width panes, never html or the sibling', () => {
+    const left = strip(3, 'left')
+    const right = strip(2, 'right')
+    disposers.push(installNativeStripFreeze({ measure: (_chip, line) => line === left.line ? 110 : 190 }))
+    fire('pointerdown', closeOf(left, 0))
+    expect(left.line.style.getPropertyValue(FROZEN_VAR)).toBe('110px')
+    expect(right.line.hasAttribute(FROZEN_ATTR)).toBe(false)
+    expect(right.line.style.getPropertyValue(FROZEN_VAR)).toBe('')
+    expect(document.documentElement.hasAttribute(FROZEN_ATTR)).toBe(false)
+    fire('pointerover', right.line)
+    fire('pointerdown', closeOf(right, 0))
+    expect(right.line.style.getPropertyValue(FROZEN_VAR)).toBe('190px')
+    expect(left.line.hasAttribute(FROZEN_ATTR)).toBe(false)
+  })
+
+  it('rejects hidden duplicate panes and clears a pin on session switch without pointer movement', async () => {
+    const old = strip(3)
+    const panel = old.line.parentElement as HTMLElement
+    const hidden = panel.cloneNode(true) as HTMLElement
+    hidden.hidden = true
+    document.body.prepend(hidden)
+    install()
+    fire('pointerdown', hidden.querySelector('[data-dockkit-tab-close]') as Element)
+    expect(frozen()).toBe(false)
+    fire('pointerdown', closeOf(old, 0))
+    expect(old.line.hasAttribute(FROZEN_ATTR)).toBe(true)
+    panel.hidden = true
+    hidden.hidden = false
+    await settle()
+    expect(old.line.hasAttribute(FROZEN_ATTR)).toBe(false)
+    expect(hidden.querySelector(`[${FROZEN_ATTR}]`)).toBeNull()
+  })
+
+  it('fails closed on ambiguous visible panels or duplicate pane identities', () => {
+    const kit = strip(3)
+    const duplicate = kit.line.cloneNode(true)
+    kit.line.parentElement?.append(duplicate)
+    install()
+    fire('pointerdown', closeOf(kit, 0))
+    expect(frozen()).toBe(false)
+    duplicate.parentNode?.removeChild(duplicate)
+    document.body.append((kit.line.parentElement as HTMLElement).cloneNode(true))
+    fire('pointerdown', closeOf(kit, 0))
+    expect(frozen()).toBe(false)
+  })
+
+  it('ignores body chat churn and own strip style writes while the pointer is parked', async () => {
+    const kit = strip(3)
+    const chat = document.createElement('section')
+    document.body.append(chat)
+    const measure = vi.fn(() => 120)
+    const dispose = installNativeStripFreeze({ measure })
+    disposers.push(dispose)
+    fire('pointerdown', closeOf(kit, 0))
+    await settle()
+    measure.mockClear()
+    const styles = vi.spyOn(window, 'getComputedStyle')
+    for (let i = 0; i < 10; i += 1) {
+      const chunk = document.createElement('span')
+      chunk.textContent = 'streaming'
+      chat.append(chunk)
+      chat.style.color = i % 2 === 0 ? 'red' : 'blue'
+    }
+    kit.line.style.setProperty('--unrelated', '1')
+    kit.row.append(document.createTextNode('unrelated text'))
+    fire('pointerout', chat)
+    await settle()
+    expect(styles).not.toHaveBeenCalled()
+    expect(measure).not.toHaveBeenCalled()
+    styles.mockRestore()
+    expect(kit.line.hasAttribute(FROZEN_ATTR)).toBe(true)
+  })
+
+  it('clears a pin when an ancestor containing the panel is removed', async () => {
+    const kit = strip(3)
+    const wrapper = document.createElement('div')
+    const panel = kit.line.parentElement as HTMLElement
+    panel.replaceWith(wrapper)
+    wrapper.append(panel)
+    install()
+    fire('pointerdown', closeOf(kit, 0))
+    wrapper.remove()
+    await settle()
+    expect(kit.line.hasAttribute(FROZEN_ATTR)).toBe(false)
+  })
+
+  it('disposes markers, observers, listeners and pending leave checks', async () => {
+    vi.useFakeTimers()
+    try {
+      const kit = strip(3)
+      const dispose = installNativeStripFreeze({ measure: () => 120 })
+      fire('pointerdown', closeOf(kit, 0))
+      fire('pointerout', kit.line)
+      expect(vi.getTimerCount()).toBe(1)
+      dispose()
+      expect(vi.getTimerCount()).toBe(0)
+      expect(kit.line.hasAttribute(FROZEN_ATTR)).toBe(false)
+      expect(kit.line.style.getPropertyValue(FROZEN_VAR)).toBe('')
+      kit.line.replaceWith(kit.line.cloneNode(true))
+      await Promise.resolve()
+      fire('pointerdown', document.querySelector('[data-dockkit-tab-close]') as Element)
+      expect(frozen()).toBe(false)
+    } finally { vi.useRealTimers() }
+  })
+
 })

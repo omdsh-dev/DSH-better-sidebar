@@ -163,9 +163,9 @@ body[data-dsh-sidebar-submenu~="left"] div[role="menu"] div[role="menu"]::before
 /* Frozen widths for the HOST strip: while a close gesture is in flight and the
    pointer stays on the strip, its tabs keep the width they had when the run of
    closes started — so the next × never moves out from under the pointer (the
-   mechanism lives in `tab-strip-freeze.ts`). The pin sits on `<html>` on
-   purpose: the host rebuilds the strip's DOM on a close, so an attribute on
-   the strip itself would be thrown away exactly when it is needed. */
-html[data-dsh-tabs-frozen] [data-sidebar-right-panel] [data-dockkit-tab] {
+   mechanism lives in `tab-strip-freeze.ts`). Only the pinned pane carries the
+   marker and width; the controller transfers them to replacement strip DOM
+   before paint. Never share a measured width across split panes/sessions. */
+[data-sidebar-right-panel] [data-dockkit-strip][data-dsh-tabs-frozen] [data-dockkit-tab] {
   flex: 0 0 var(--dsh-tab-frozen-width);
 }

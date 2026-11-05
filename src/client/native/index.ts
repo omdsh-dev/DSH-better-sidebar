@@ -583,8 +583,9 @@ export function registerNativeSurface(deps: NativeSurfaceDeps): () => void {
   })
   // The host strip keeps its widths while the pointer is inside it, so a run of
   // closes never moves the next × (see tab-strip-freeze.ts). Installed once
-  // with the native surface: it is a document-level pointer + MutationObserver
-  // pair, not per session.
+  // with the native surface: document-level gesture listeners, with a temporary
+  // observer only while a pane is pinned. Hidden/session-switched panels release
+  // the pin and pending leave check; disposal tears down all three.
   const disposeStripFreeze = installNativeStripFreeze()
   return () => {
     disposeStripFreeze()

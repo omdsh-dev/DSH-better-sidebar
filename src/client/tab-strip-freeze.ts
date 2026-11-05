@@ -1,62 +1,25 @@
 /**
- * Freeze the native strip's tab widths while a close is happening, so the
- * survivors do not re-lay-out under the cursor.
- *
- * Equal-width chips are the point, but they also mean every close widens the
- * rest — so closing a run of tabs turns into a chase for the next ×. Chrome
- * pins the strip's widths for as long as the pointer stays on it and
- * re-lays-out when the pointer leaves. This module reproduces that for the
- * HOST's native right-sidebar strip, which the plugin does not render:
- *
- *  - ARM on the close gesture, not on the mutation. A `pointerdown` on the
- *    kit's close control (`[data-dockkit-tab-close]`), or a middle-button press
- *    on a chip, pins the width a chip has right now — measured BEFORE the
- *    close, which is the whole point.
- *  - PIN globally, on `<html>`. The host REBUILDS the strip's DOM on a close
- *    (measured: the `[data-dockkit-strip]` node is replaced, so a per-element
- *    attribute or observer would be discarded exactly when it is needed). An
- *    attribute plus a custom property on the root survive that rebuild, and
- *    the stylesheet's `html[data-dsh-tabs-frozen] [data-sidebar-right-panel]
- *    [data-dockkit-tab]` rule applies to whatever chips exist next.
- *  - RELEASE when the pointer is no longer on that strip: a `pointerout`
- *    whose related target is outside it releases immediately; one with no
- *    related target (the node under the pointer was removed, or the window was
- *    left) is confirmed by a hit test on the next task, so the close itself
- *    cannot release the pin. A `pointerover` anywhere else releases too.
- *
- * Only closing arms it: opening a tab, dragging, or just clicking around keeps
- * the normal equal-share reflow. Failure is silent — a host that renames its
- * attributes simply never arms.
+ * Pin only the closing pane's native strip. The host replaces strip DOM on
+ * close: retain the panel/session + pane identity in this controller and move
+ * the marker to its replacement in a MutationObserver microtask, before paint.
+ * Hidden sessions, unknown markup and ambiguous panes are never eligible.
  */
+import { visibleNativePanel } from './native/visible-panel.ts'
 
-/** Chip of the host's docking kit. */
 const CHIP = '[data-dockkit-tab]'
-/** The kit's close control inside a chip. */
 const CLOSE = '[data-dockkit-tab-close]'
-/** The kit's whole strip line (chips row + empty tail + controls). */
 const STRIP = '[data-dockkit-strip]'
-/** Root attribute the stylesheet keys the pinned widths on. */
+/** Attribute and width live on exactly one strip, never on html or the panel. */
 export const FROZEN_ATTR = 'data-dsh-tabs-frozen'
-/** Root custom property holding the pinned content-box width, in px. */
 export const FROZEN_VAR = '--dsh-tab-frozen-width'
 
-/** What the installer needs; both halves are injectable so jsdom can test it. */
 export interface StripFreezeOptions {
-  /**
-   * Measure one chip's content-box width, in px (`flex-basis` on a content-box
-   * element is a content size, not the border box the rect reports).
-   * @returns the width, or `undefined` when it cannot be measured yet.
-   */
+  /** Optional content-box measurer for DOM tests. */
   readonly measure?: (chip: HTMLElement, strip: HTMLElement) => number | undefined
-  /** Document to bind (tests pass jsdom's). */
   readonly doc?: Document
 }
 
-/**
- * One chip's content-box width, in px.
- * @param chip - the chip to measure.
- * @returns the content width, or `undefined` while it has no box yet.
- */
+/** Measure the content box expected by the host's flex-basis. */
 export function contentWidthOf(chip: HTMLElement): number | undefined {
   const rect = chip.getBoundingClientRect().width
   if (!(rect > 0)) return undefined
@@ -67,96 +30,147 @@ export function contentWidthOf(chip: HTMLElement): number | undefined {
   return Math.max(0, rect - inner)
 }
 
-/**
- * Install the freeze for the host's native tab strips.
- * @param options - measurer/document overrides (tests).
- * @returns the disposer (removes listeners and any pin).
- */
+/** Install gesture listeners; observers exist only for an active close run. */
 export function installNativeStripFreeze(options: StripFreezeOptions = {}): () => void {
   const doc = options.doc ?? document
-  const root = doc.documentElement
   const measure = options.measure ?? contentWidthOf
-  /** The strip we pinned, by its stable pane id; `null` while released. */
-  let pinned: { readonly paneId: string; readonly width: number } | null = null
+  type Pin = { panel: HTMLElement; session: string; pane: string; width: number; strip: HTMLElement }
+  let pinned: Pin | undefined
+  let observer: MutationObserver | undefined
+  let leaveTimer: ReturnType<typeof setTimeout> | undefined
+  let disposed = false
 
-  const stripOf = (target: EventTarget | null): HTMLElement | null =>
-    (target as Element | null)?.closest?.(STRIP) as HTMLElement | null | undefined ?? null
-
-  /** The live strip with that pane id (the host rebuilds the node on close). */
-  const resolve = (paneId: string): HTMLElement | null =>
-    [...doc.querySelectorAll<HTMLElement>(STRIP)].find(el => el.getAttribute('data-dockkit-strip') === paneId) ?? null
-
+  const clearTimer = (): void => {
+    if (leaveTimer !== undefined) clearTimeout(leaveTimer)
+    leaveTimer = undefined
+  }
+  const unmark = (strip: HTMLElement): void => {
+    strip.removeAttribute(FROZEN_ATTR)
+    strip.style.removeProperty(FROZEN_VAR)
+  }
   const release = (): void => {
-    pinned = null
-    root.removeAttribute(FROZEN_ATTR)
-    root.style.removeProperty(FROZEN_VAR)
+    observer?.disconnect()
+    observer = undefined
+    clearTimer()
+    if (pinned !== undefined) unmark(pinned.strip)
+    pinned = undefined
   }
-
-  const pin = (strip: HTMLElement): void => {
-    if (pinned !== null) return
-    const chip = strip.querySelector<HTMLElement>(CHIP)
-    const paneId = strip.getAttribute('data-dockkit-strip')
-    if (chip === null || paneId === null) return
-    const width = measure(chip, strip)
-    if (width === undefined || !(width > 0)) return
-    pinned = { paneId, width }
-    root.style.setProperty(FROZEN_VAR, `${width}px`)
-    root.setAttribute(FROZEN_ATTR, '')
+  const resolve = (): HTMLElement | undefined => {
+    const pin = pinned
+    if (pin === undefined || visibleNativePanel(doc) !== pin.panel
+      || pin.panel.getAttribute('data-sidebar-right-session') !== pin.session) return undefined
+    const strips = [...pin.panel.querySelectorAll<HTMLElement>(STRIP)]
+      .filter(strip => strip.getAttribute('data-dockkit-strip') === pin.pane)
+    return strips.length === 1 ? strips[0] : undefined
   }
+  const sync = (): void => {
+    const pin = pinned
+    if (pin === undefined) return
+    const strip = resolve()
+    if (strip === undefined) { release(); return }
+    if (pin.strip !== strip) {
+      unmark(pin.strip)
+      pin.strip = strip
+    }
+    const value = `${pin.width}px`
+    if (strip.style.getPropertyValue(FROZEN_VAR) !== value) strip.style.setProperty(FROZEN_VAR, value)
+    if (!strip.hasAttribute(FROZEN_ATTR)) strip.setAttribute(FROZEN_ATTR, '')
+  }
+  const stripOf = (target: EventTarget | null): HTMLElement | undefined =>
+    (target as Element | null)?.closest?.<HTMLElement>(STRIP) ?? undefined
 
   const onPointerDown = (event: Event): void => {
+    if (disposed) return
+    // Validate a stale pin even if no mutation microtask has run yet.
+    if (pinned !== undefined && resolve() === undefined) release()
     const target = event.target as Element | null
     const strip = stripOf(target)
-    if (strip === null) return
-    const middle = (event as MouseEvent).button === 1
-    const onClose = target?.closest?.(CLOSE) != null
-    if (middle || onClose) pin(strip)
-  }
-
-  /** Whether the pointer is still over the pinned strip (hit test). */
-  const stillInside = (x: number, y: number): boolean => {
-    if (pinned === null) return false
-    const strip = resolve(pinned.paneId)
-    if (strip === null) return false
-    try {
-      const under = doc.elementFromPoint(x, y)
-      return under !== null && strip.contains(under)
-    } catch {
-      // No hit testing on this document (jsdom): treat it as a leave.
-      return false
+    const panel = visibleNativePanel(doc)
+    if (strip === undefined || panel === undefined || !panel.contains(strip)) return
+    const chip = target?.closest<HTMLElement>(CHIP)
+    const mouse = event as MouseEvent
+    if (chip == null || !strip.contains(chip)
+      || !(mouse.button === 1 || (mouse.button === 0 && target?.closest(CLOSE) != null))) return
+    if (pinned !== undefined) return
+    const pane = strip.getAttribute('data-dockkit-strip')
+    const session = panel.getAttribute('data-sidebar-right-session')
+    if (pane === null || pane === '' || session === null) return
+    const width = measure(chip, strip)
+    if (width === undefined || !Number.isFinite(width) || width <= 0) return
+    pinned = { panel, session, pane, width, strip }
+    if (resolve() !== strip) { release(); return }
+    sync()
+    // The ancestor hidden flag is how the SDK parks retained sessions. Watch
+    // only while pinned, and cancel both observation and deferred work on hide.
+    const Observer = doc.defaultView?.MutationObserver
+    if (Observer !== undefined) {
+      observer = new Observer(records => {
+        const pin = pinned
+        if (pin === undefined) return
+        const relevant = records.some(record => {
+          if (record.type === 'attributes') {
+            if (record.attributeName === 'data-dockkit-strip') return true
+            return record.target === pin.panel || (record.target as Node).contains(pin.panel)
+          }
+          // Ignore text/chip-body streaming. Only strip/panel structure matters.
+          return [...record.addedNodes, ...record.removedNodes].some(node => {
+            if (node === pin.panel || node.contains(pin.panel)) return true
+            if (node.nodeType !== 1) return false
+            const element = node as Element
+            return element.matches(STRIP) || element.querySelector(STRIP) !== null
+          })
+        })
+        if (relevant) sync()
+      })
+      // Session parking/collapse lives on the panel and its ancestors. Observe
+      // those attributes directly, never body subtree style/chat mutations.
+      for (let ancestor: HTMLElement | null = panel; ancestor !== null; ancestor = ancestor.parentElement) {
+        observer.observe(ancestor, { childList: true, attributes: true,
+          attributeFilter: ['hidden', 'aria-hidden', 'style', 'class', 'data-sidebar-right-session', 'data-sidebar-right-open'] })
+      }
+      // observe() replaces options for an already observed node: include the
+      // panel's subtree again while excluding our own strip style writes.
+      observer.observe(panel, { subtree: true, childList: true, attributes: true,
+        attributeFilter: ['hidden', 'aria-hidden', 'style', 'class', 'data-sidebar-right-session', 'data-sidebar-right-open', 'data-dockkit-strip'] })
     }
   }
-
   const onPointerOut = (event: Event): void => {
-    const current = pinned
-    if (current === null) return
+    const pin = pinned
+    if (pin === undefined) return
+    // Ignore unrelated document pointerout traffic. The detached old strip is
+    // also accepted so host replacement can still use the deferred hit test.
+    const source = stripOf(event.target)
+    if (source !== pin.strip && source?.getAttribute('data-dockkit-strip') !== pin.pane) return
     const pointer = event as PointerEvent
-    const strip = resolve(current.paneId)
-    const related = pointer.relatedTarget as Element | null
-    if (strip !== null && related !== null && strip.contains(related)) return
-    // Ambiguous (removal under the pointer / window leave): confirm next task.
-    setTimeout(() => {
-      if (pinned === current && !stillInside(pointer.clientX, pointer.clientY)) release()
+    const strip = resolve()
+    if (strip !== undefined && pointer.relatedTarget !== null && strip.contains(pointer.relatedTarget as Node)) return
+    clearTimer()
+    leaveTimer = setTimeout(() => {
+      leaveTimer = undefined
+      if (pinned !== pin) return
+      const live = resolve()
+      let under: Element | null = null
+      try { under = doc.elementFromPoint(pointer.clientX, pointer.clientY) } catch { /* no hit test: release */ }
+      if (live === undefined || under === null || !live.contains(under)) release()
     }, 0)
   }
-
   const onPointerOver = (event: Event): void => {
-    if (pinned === null) return
-    const strip = resolve(pinned.paneId)
-    const target = event.target as Element | null
-    if (strip !== null && target !== null && strip.contains(target)) return
-    // The pointer is over something that is not the pinned strip any more.
+    if (pinned === undefined) return
+    const strip = resolve()
+    if (strip !== undefined && event.target !== null && strip.contains(event.target as Node)) return
     release()
   }
-
+  const onBlur = (): void => { release() }
   doc.addEventListener('pointerdown', onPointerDown, true)
   doc.addEventListener('pointerout', onPointerOut, true)
   doc.addEventListener('pointerover', onPointerOver, true)
-
+  doc.defaultView?.addEventListener('blur', onBlur)
   return () => {
+    disposed = true
+    release()
     doc.removeEventListener('pointerdown', onPointerDown, true)
     doc.removeEventListener('pointerout', onPointerOut, true)
     doc.removeEventListener('pointerover', onPointerOver, true)
-    if (pinned !== null) release()
+    doc.defaultView?.removeEventListener('blur', onBlur)
   }
 }

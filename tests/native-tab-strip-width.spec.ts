@@ -91,7 +91,8 @@ describe('native tab strip width', () => {
     const frozen = panelRules.filter(rule => rule.decls.get('flex')?.includes('var(--dsh-tab-frozen-width)'))
     expect(frozen.length).toBeGreaterThanOrEqual(1)
     for (const rule of frozen) {
-      expect(rule.selector).toContain('[data-dsh-tabs-frozen]')
+      expect(rule.selector).toContain('[data-dockkit-strip][data-dsh-tabs-frozen]')
+      expect(rule.selector).not.toContain('html')
     }
   })
 

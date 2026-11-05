@@ -118,6 +118,17 @@ export function TabBar(props: {
   const [frozenWidth, setFrozenWidth] = useState<number | null>(null)
   const frozenWidthRef = useRef<number | null>(null)
   const hoveredRef = useRef(false)
+  const leaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const clearLeaveTimer = (): void => {
+    if (leaveTimerRef.current !== null) clearTimeout(leaveTimerRef.current)
+    leaveTimerRef.current = null
+  }
+  const releaseFreeze = (): void => {
+    hoveredRef.current = false
+    frozenWidthRef.current = null
+    setFrozenWidth(null)
+  }
+  useEffect(() => () => { clearLeaveTimer() }, [])
   const listRef = useRef<HTMLDivElement>(null)
   // The context target's index in the render-time tab snapshot; -1 when the
   // tab disappeared since the menu opened (the menu hides then).
@@ -228,11 +239,25 @@ export function TabBar(props: {
       className={clsx(css.tabBar, dragOver && css.tabBarDrop)}
       data-frozen={frozenWidth === null ? undefined : ''}
       style={frozenWidth === null ? undefined : { ['--dsh-tab-frozen-width' as string]: `${frozenWidth}px` }}
-      onPointerEnter={() => { hoveredRef.current = true }}
-      onPointerLeave={() => {
-        hoveredRef.current = false
-        frozenWidthRef.current = null
-        setFrozenWidth(null)
+      onPointerEnter={() => { clearLeaveTimer(); hoveredRef.current = true }}
+      onPointerLeave={(event) => {
+        clearLeaveTimer()
+        const bar = event.currentTarget
+        // React promotes a removed hovered chip's pointerout(null) to a leave
+        // of this bar. Its synthetic relatedTarget is then Window; inspect the
+        // native event and confirm that ambiguous boundary after DOM settles.
+        const related = event.nativeEvent.relatedTarget
+        if (related !== null) {
+          releaseFreeze()
+          return
+        }
+        const { clientX, clientY } = event
+        leaveTimerRef.current = setTimeout(() => {
+          leaveTimerRef.current = null
+          let under: Element | null = null
+          try { under = bar.ownerDocument.elementFromPoint(clientX, clientY) } catch { /* unavailable hit test: release */ }
+          if (!bar.isConnected || under === null || !bar.contains(under)) releaseFreeze()
+        }, 0)
       }}
       onDragOver={(event) => {
         // The strip owns drops on itself (merge into this pane); stopping

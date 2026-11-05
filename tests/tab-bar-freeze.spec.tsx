@@ -88,6 +88,7 @@ afterEach(() => {
   for (const root of roots.splice(0)) act(() => { root.unmount() })
   document.body.replaceChildren()
   vi.restoreAllMocks()
+  vi.useRealTimers()
 })
 
 describe('tab strip width freeze', () => {
@@ -141,6 +142,65 @@ describe('tab strip width freeze', () => {
     act(() => { tab.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 1 })) })
     act(() => { tab.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, button: 1 })) })
     expect(bar.hasAttribute('data-frozen')).toBe(true)
+  })
+
+  it.each([true, false])('confirms removal pointerout(null) with hit inside=%s', (inside) => {
+    vi.useFakeTimers()
+    stubGeometry()
+    const { container, bar, rerender } = mount(makeTabs(3))
+    const button = closeButton(container, 2)
+    hover(button)
+    act(() => { button.click() })
+    expect(bar.hasAttribute('data-frozen')).toBe(true)
+    // Emit the browser's boundary event while the closing chip is still
+    // connected (so React receives it), then commit its removal before the
+    // deferred hit test. No artificial pointerleave on the bar itself.
+    const hit = vi.fn(() => inside ? closeButton(container, 0) : document.body)
+    Object.defineProperty(document, 'elementFromPoint', { configurable: true, value: hit })
+    try {
+      act(() => {
+        button.dispatchEvent(new MouseEvent('pointerout', {
+          bubbles: true, relatedTarget: null, clientX: 42, clientY: 12,
+        }))
+      })
+      rerender(makeTabs(2))
+      expect(button.isConnected).toBe(false)
+      expect(bar.hasAttribute('data-frozen')).toBe(true)
+      expect(hit).not.toHaveBeenCalled()
+      act(() => { vi.runOnlyPendingTimers() })
+      expect(hit).toHaveBeenCalledWith(42, 12)
+      expect(bar.hasAttribute('data-frozen')).toBe(inside)
+      expect(bar.style.getPropertyValue('--dsh-tab-frozen-width')).toBe(inside ? '120px' : '')
+    } finally { Reflect.deleteProperty(document, 'elementFromPoint') }
+  })
+
+  it('cancels an ambiguous leave check when the pointer reenters', () => {
+    vi.useFakeTimers()
+    stubGeometry()
+    const { container, bar } = mount(makeTabs(3))
+    const button = closeButton(container, 0)
+    hover(button)
+    act(() => { button.click() })
+    act(() => { button.dispatchEvent(new MouseEvent('pointerout', { bubbles: true, relatedTarget: null })) })
+    expect(vi.getTimerCount()).toBe(1)
+    hover(bar)
+    expect(vi.getTimerCount()).toBe(0)
+    expect(bar.hasAttribute('data-frozen')).toBe(true)
+  })
+
+  it('cancels deferred hit testing on unmount', () => {
+    vi.useFakeTimers()
+    stubGeometry()
+    const { container } = mount(makeTabs(3))
+    const button = closeButton(container, 0)
+    hover(button)
+    act(() => { button.click() })
+    act(() => { button.dispatchEvent(new MouseEvent('pointerout', { bubbles: true, relatedTarget: null })) })
+    expect(vi.getTimerCount()).toBe(1)
+    const root = roots.pop()
+    if (root === undefined) throw new Error('missing root')
+    act(() => { root.unmount() })
+    expect(vi.getTimerCount()).toBe(0)
   })
 
   it('releases the pin on pointer leave, restoring the equal share', () => {

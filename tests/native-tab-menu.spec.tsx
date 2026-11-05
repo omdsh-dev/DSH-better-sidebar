@@ -47,7 +47,15 @@ function filmstrip(ids: readonly string[], paneId: string): void {
     chip.setAttribute('data-dockkit-tab', id)
     strip.append(chip)
   }
-  document.body.append(strip)
+  let panel = document.querySelector('[data-sidebar-right-panel]')
+  if (panel === null) {
+    panel = document.createElement('div')
+    panel.setAttribute('data-sidebar-right-panel', 'push')
+    panel.setAttribute('data-sidebar-right-session', 'session1')
+    panel.setAttribute('data-sidebar-right-open', '')
+    document.body.append(panel)
+  }
+  panel.append(strip)
 }
 
 const roots: Root[] = []
@@ -184,4 +192,100 @@ describe('native tab menu rows', () => {
     expect(stripOrderOf('q1')).toEqual(['q1'])
     expect(stripOrderOf('nope')).toBeUndefined()
   })
+  it('ignores retained hidden session duplicate ids before the visible session', () => {
+    filmstrip(['t1', 'hidden-neighbor'], 'same-pane')
+    const hidden = document.querySelector('[data-sidebar-right-panel]') as HTMLElement
+    const seat = document.createElement('div')
+    seat.hidden = true
+    seat.setAttribute('data-sidebar-right-session', 'old')
+    hidden.remove()
+    filmstrip(['t1', 'visible-neighbor'], 'same-pane')
+    seat.append(hidden)
+    document.body.prepend(seat)
+    const { container, close } = mount('t1')
+    click(row(container, 'closeOthers'))
+    expect(close.mock.calls.map(call => call[0])).toEqual(['visible-neighbor'])
+  })
+
+  it('fails closed on duplicate visible ids or multiple visible panels', () => {
+    filmstrip(['t1', 't2'], 'left')
+    filmstrip(['t1', 't3'], 'right')
+    expect(stripOrderOf('t1')).toBeUndefined()
+    const panel = document.querySelector('[data-sidebar-right-panel]') as HTMLElement
+    document.body.append(panel.cloneNode(true))
+    expect(stripOrderOf('t2')).toBeUndefined()
+  })
+
+  it('does not close a new session through a menu opened before the switch', () => {
+    filmstrip(['t1', 't2'], 'left')
+    const { container, close, dismiss } = mount('t1')
+    const panel = document.querySelector('[data-sidebar-right-panel]') as HTMLElement
+    panel.setAttribute('data-sidebar-right-session', 'new-session')
+    click(row(container, 'closeAll'))
+    expect(dismiss).toHaveBeenCalledOnce()
+    expect(close).not.toHaveBeenCalled()
+  })
+
+  it('does not resolve collapsed or CSS-hidden session panels', () => {
+    filmstrip(['t1', 't2'], 'left')
+    const panel = document.querySelector('[data-sidebar-right-panel]') as HTMLElement
+    panel.removeAttribute('data-sidebar-right-open')
+    expect(stripOrderOf('t1')).toBeUndefined()
+    panel.setAttribute('data-sidebar-right-open', '')
+    panel.setAttribute('aria-hidden', 'true')
+    expect(stripOrderOf('t1')).toBeUndefined()
+    panel.removeAttribute('aria-hidden')
+    panel.style.display = 'none'
+    expect(stripOrderOf('t1')).toBeUndefined()
+    panel.style.display = ''
+    expect(stripOrderOf('t1')).toEqual(['t1', 't2'])
+  })
+
+  it('revalidates pane membership after synchronous dismiss', () => {
+    filmstrip(['t1', 't2'], 'left')
+    filmstrip(['s1'], 'right')
+    const { container, close, dismiss } = mount('t1')
+    dismiss.mockImplementation(() => {
+      const strips = document.querySelectorAll('[data-dockkit-strip-tabs]')
+      strips[1]?.append(document.querySelector('[data-dockkit-tab="t2"]') as Element)
+    })
+    click(row(container, 'closeAll'))
+    expect(close).not.toHaveBeenCalled()
+  })
+
+  it('does not follow a pending target moved by an earlier close callback', () => {
+    filmstrip(['t1', 't2', 't3'], 'left')
+    filmstrip(['s1'], 'right')
+    const { container, close } = mount('t1')
+    close.mockImplementation((id: string) => {
+      document.querySelector(`[data-dockkit-tab="${id}"]`)?.remove()
+      if (id === 't1') document.querySelector('[data-dockkit-strip-tabs="right"]')
+        ?.append(document.querySelector('[data-dockkit-tab="t2"]') as Element)
+    })
+    click(row(container, 'closeAll'))
+    expect(close.mock.calls.map(call => call[0])).toEqual(['t1', 't3'])
+  })
+
+  it('rejects the entire unchanged source group moved into a different pane', () => {
+    filmstrip(['t1', 't2'], 'left')
+    filmstrip(['s1'], 'right')
+    const { container, close, dismiss } = mount('t1')
+    dismiss.mockImplementation(() => {
+      const source = document.querySelector('[data-dockkit-strip-tabs="left"]') as Element
+      const sibling = document.querySelector('[data-dockkit-strip-tabs="right"]') as Element
+      sibling.replaceChildren(...source.children)
+    })
+    click(row(container, 'closeAll'))
+    expect(close).not.toHaveBeenCalled()
+  })
+
+  it('rejects a stale menu after the source strip changes order', () => {
+    filmstrip(['t1', 't2'], 'left')
+    const { container, close } = mount('t1')
+    const strip = document.querySelector('[data-dockkit-strip-tabs]') as HTMLElement
+    strip.prepend(strip.lastElementChild as Element)
+    click(row(container, 'closeAll'))
+    expect(close).not.toHaveBeenCalled()
+  })
+
 })
