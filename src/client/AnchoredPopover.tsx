@@ -80,7 +80,8 @@ export function AnchoredPopover(props: AnchoredPopoverProps): ReactNode {
     }
     // The anchor itself may sit in the band (a row near the top edge): opening
     // just below it still leaves our own header under the native controls.
-    top = Math.max(topFloor, top)
+    // With no band, keep the historical placement byte-for-byte.
+    if (topFloor > VIEWPORT_MARGIN) top = Math.max(topFloor, top)
     const left = Math.min(
       Math.max(VIEWPORT_MARGIN, rect.left),
       Math.max(VIEWPORT_MARGIN, window.innerWidth - cardWidth - VIEWPORT_MARGIN),

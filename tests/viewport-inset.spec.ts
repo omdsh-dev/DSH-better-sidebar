@@ -5,7 +5,7 @@
  *
  * Every unusable shape collapses to 0 so plain browsers keep their exact
  * behaviour: no API, a `visible: false` ghost interface (headless Chromium,
- * some macOS builds), a zero-height band (full screen), and a throwing read.
+ * some macOS builds), a zero-height band, and a throwing read.
  */
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -59,67 +59,92 @@ afterEach(() => {
 
 describe('viewport inset: the shape of the native control band', () => {
   it('is zero without the Window Controls Overlay API', () => {
-    expect(getViewportInset().top).toBe(0)
+    expect(getViewportInset()).toBe(0)
   })
 
   it('reads the band height', () => {
     setViewportInsetSourceForTests(overlay({ x: 0, y: 0, width: 1_000, height: 36 }).source)
-    expect(getViewportInset().top).toBe(36)
+    expect(getViewportInset()).toBe(36)
   })
 
   it('rounds a fractional height', () => {
     setViewportInsetSourceForTests(overlay({ x: 0, y: 0, width: 1_000, height: 35.6 }).source)
-    expect(getViewportInset().top).toBe(36)
+    expect(getViewportInset()).toBe(36)
   })
 
   it('uses the rect bottom edge, not the raw height', () => {
     // A shell that insets the band: the page may start at y + height.
     setViewportInsetSourceForTests(overlay({ x: 0, y: 4, width: 1_000, height: 32 }).source)
-    expect(getViewportInset().top).toBe(36)
+    expect(getViewportInset()).toBe(36)
   })
 
   it('treats a non-visible overlay as absent (ghost interface)', () => {
     setViewportInsetSourceForTests(overlay({ x: 0, y: 0, width: 1_000, height: 44 }, false).source)
-    expect(getViewportInset().top).toBe(0)
+    expect(getViewportInset()).toBe(0)
   })
 
-  it('treats a zero-height band as no band (full screen)', () => {
+  it('treats a zero-height band as no band', () => {
     setViewportInsetSourceForTests(overlay({ x: 0, y: 0, width: 1_000, height: 0 }).source)
-    expect(getViewportInset().top).toBe(0)
+    expect(getViewportInset()).toBe(0)
   })
 
   it('does not throw when the geometry read races the layout', () => {
     const fake = overlay({ x: 0, y: 0, width: 1_000, height: 44 })
     setViewportInsetSourceForTests(fake.source)
-    expect(getViewportInset().top).toBe(44)
+    expect(getViewportInset()).toBe(44)
     fake.boom()
     expect(() => { fake.emit() }).not.toThrow()
-    expect(getViewportInset().top).toBe(0)
+    expect(getViewportInset()).toBe(0)
   })
 })
 
 describe('viewport inset: live geometry', () => {
-  it('notifies subscribers when the band changes', () => {
+  it('notifies subscribers only when the band actually changes', () => {
     const fake = overlay({ x: 0, y: 0, width: 1_000, height: 0 })
     setViewportInsetSourceForTests(fake.source)
     let calls = 0
     const dispose = subscribeViewportInset(() => { calls += 1 })
-    expect(getViewportInset().top).toBe(0)
+    expect(getViewportInset()).toBe(0)
 
     fake.set({ height: 36 })
     fake.emit()
-    expect(getViewportInset().top).toBe(36)
+    expect(getViewportInset()).toBe(36)
+    expect(calls).toBe(1)
 
     // A later event with the same geometry must not wake React again.
+    fake.emit()
+    expect(calls).toBe(1)
+
     fake.set({ height: 0 })
     fake.emit()
-    expect(getViewportInset().top).toBe(0)
+    expect(getViewportInset()).toBe(0)
     expect(calls).toBe(2)
 
     dispose()
     fake.set({ height: 36 })
     fake.emit()
     expect(calls).toBe(2)
+  })
+
+  it('re-reads on window resize (the maximize / restore fallback)', () => {
+    // Some Electron builds expose the overlay without firing geometrychange.
+    const fake = overlay({ x: 0, y: 0, width: 1_000, height: 0 })
+    setViewportInsetSourceForTests(fake.source)
+    fake.set({ height: 36 })
+    window.dispatchEvent(new Event('resize'))
+    expect(getViewportInset()).toBe(36)
+  })
+
+  it('drops and restores the inset when visibility flips at runtime', () => {
+    const fake = overlay({ x: 0, y: 0, width: 1_000, height: 36 })
+    setViewportInsetSourceForTests(fake.source)
+    expect(getViewportInset()).toBe(36)
+    fake.setVisible(false)
+    fake.emit()
+    expect(getViewportInset()).toBe(0)
+    fake.setVisible(true)
+    fake.emit()
+    expect(getViewportInset()).toBe(36)
   })
 
   it('detaches the previous source when tests swap it', () => {
@@ -129,6 +154,6 @@ describe('viewport inset: live geometry', () => {
     const second = overlay({ x: 0, y: 0, width: 1_000, height: 44 })
     setViewportInsetSourceForTests(second.source)
     expect(first.listenerCount()).toBe(0)
-    expect(getViewportInset().top).toBe(44)
+    expect(getViewportInset()).toBe(44)
   })
 })

@@ -72,12 +72,14 @@ function renderWindow(props: {
   bodyRef?: RefObject<HTMLDivElement>
   footer?: boolean
   actions?: boolean
+  initialSize?: { width: number; height: number }
 } = {}) {
   const rendered = renderRoot(createElement(FloatingWindow, {
     title: 'bash-1',
     onClose: () => { closed += 1 },
     ...(props.anchor === undefined ? {} : { anchor: props.anchor }),
     ...(props.bodyRef === undefined ? {} : { bodyRef: props.bodyRef }),
+    ...(props.initialSize === undefined ? {} : { initialSize: props.initialSize }),
     ...(props.footer === true ? { footer: createElement('button', { type: 'button' }, 'stop') } : {}),
     ...(props.actions === true ? { actions: createElement('button', { type: 'button' }, 'copy') } : {}),
     children: createElement('div', null, 'line 1'),
@@ -328,6 +330,18 @@ describe('FloatingWindow keeps its title bar out of the native control band', ()
     expect(box().top).toBe(52)
     act(() => { band.set(0); band.emit() })
     expect(box().top).toBe(52)
+    unmount()
+  })
+
+  it('caps the height so a tall window still clears the band', () => {
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 400 })
+    setViewportInsetSourceForTests(overlayBand(44).source)
+    const { unmount } = renderWindow({ initialSize: { width: 600, height: 500 } })
+    const current = box()
+    // Asked for 500 but only 400 - 52 (band) - 8 (margin) fits.
+    expect(current.height).toBe(340)
+    expect(current.top).toBe(52)
+    expect(current.top + current.height).toBe(392)
     unmount()
   })
 
