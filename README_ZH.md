@@ -120,7 +120,7 @@ dsh plugin --profile web add dsh-better-sidebar@latest
 
 ## 🔌 插件生态
 
-`ctx.betterSidebar` 向所有插件开放 `registerTab` / `registerFileViewer` 两个扩展点，内置 6 tab + 4 viewer 与第三方插件走同一套 API。GitHub topic [`dsh-better-sidebar`](https://github.com/topics/dsh-better-sidebar) 下已有 **30+ 生态插件**；完整接入文档见 **[docs/external-plugin-guide.md](./docs/external-plugin-guide.md)**。
+`ctx.betterSidebar` 向所有插件开放 `registerTab` / `registerFileViewer` / `registerFileIcon` / `registerFileAction` 四个扩展点，内置 6 tab + 4 viewer 与第三方插件走同一套 API。GitHub topic [`dsh-better-sidebar`](https://github.com/topics/dsh-better-sidebar) 下已有 **30+ 生态插件**；完整接入文档见 **[docs/external-plugin-guide.md](./docs/external-plugin-guide.md)**。
 
 ```ts
 import type {} from 'dsh-better-sidebar'  // 触发 ctx.betterSidebar 类型合并

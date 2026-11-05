@@ -1048,6 +1048,40 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   color: var(--dsw-alias-label-tertiary);
 }
 
+/* Externally registered row actions (feature `fileActions`, `row: true`):
+   glyph buttons beside the reference button, revealed with it on hover or
+   focus. The trailing affordances ride the reference button's auto margin,
+   so a second and third button simply follow it. */
+.explorerAction {
+  flex: none;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  cursor: pointer;
+}
+
+.explorerAction:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.explorerAction:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 1px;
+}
+
+.explorerRow:hover .explorerAction,
+.explorerRow:focus-within .explorerAction {
+  display: inline-flex;
+}
+
 .explorerError {
   font: var(--dsw-font-xxs-12);
   color: var(--dsw-alias-state-error-primary);
