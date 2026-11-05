@@ -16,6 +16,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createElement } from 'react'
 import { act } from 'react-dom/test-utils'
+import { undo } from '@codemirror/commands'
 import { EditorView } from '@codemirror/view'
 import { renderRoot, setupReactAct } from './test-utils.ts'
 import { SidebarApiError } from '../src/client/api.ts'
@@ -185,6 +186,17 @@ describe('editor-draft-backup store', () => {
     expect(storedKeys()).toHaveLength(0)
   })
 
+  it('drops an entry that differs from the bytes on disk by line endings alone', () => {
+    seedDraft('s1', '/p/a.ts', 'a\nb\n')
+    expect(readDraftBackup('s1', '/p/a.ts', 'a\r\nb\r\n')).toBeNull()
+    expect(storedKeys()).toHaveLength(0)
+  })
+
+  it('still offers a draft of a CRLF file whose content really differs', () => {
+    seedDraft('s1', '/p/a.ts', 'a\nchanged\n')
+    expect(readDraftBackup('s1', '/p/a.ts', 'a\r\nb\r\n')).toBe('a\nchanged\n')
+  })
+
   it('stores the base mtime with the draft, and reads a malformed one as absent', () => {
     const release = registerDraftSource('s1', '/p/a.ts', () => 'typed', () => 1000)
     scheduleDraftBackup('s1', '/p/a.ts')
@@ -230,6 +242,24 @@ describe('TextEditor draft restore', () => {
       expect(readDraftBackup('s1', '/p/a.ts', 'const a = 1\n')).toBeNull()
     } finally {
       mounted.unmount()
+    }
+  })
+
+  it('does not prompt for a CRLF file whose edit was undone', () => {
+    const confirmSpy = vi.fn().mockReturnValue(true)
+    vi.stubGlobal('confirm', confirmSpy)
+    const crlf = viewerProps({ content: 'a\r\nb\r\n' })
+    const edited = renderRoot(createElement(TextEditor, crlf))
+    typeText(edited.container, 'x')
+    act(() => { undo(viewOf(edited.container)) })
+    edited.unmount()
+    expect(storedKeys(), 'the closed tab left its LF copy behind').toHaveLength(1)
+    const reopened = renderRoot(createElement(TextEditor, crlf))
+    try {
+      expect(confirmSpy).not.toHaveBeenCalled()
+      expect(storedKeys()).toHaveLength(0)
+    } finally {
+      reopened.unmount()
     }
   })
 

@@ -215,9 +215,19 @@ export function scheduleDraftBackup(sessionId: string, path: string): void {
   }, DRAFT_BACKUP_THROTTLE_MS)
 }
 
+/** Whether two spellings are the SAME document — byte-equal, or equal once
+ *  line endings are normalized CRLF/CR → LF. Line endings are not content:
+ *  CodeMirror keeps every document with `\n` endings whatever the file used,
+ *  so the live document of a freshly opened CRLF file differs from the bytes
+ *  it was loaded from by line endings alone. */
+export function sameDocument(a: string, b: string): boolean {
+  return a === b || a.replace(/\r\n?/g, '\n') === b.replace(/\r\n?/g, '\n')
+}
+
 /**
  * The pending draft of one file, if its content differs from the bytes on
- * disk; otherwise the stale entry is dropped.
+ * disk (line endings aside, see {@link sameDocument}); otherwise the stale
+ * entry is dropped.
  * @param sessionId - the session owning the tab.
  * @param path - the file the draft belongs to.
  * @param content - the bytes just loaded from disk.
@@ -226,7 +236,7 @@ export function scheduleDraftBackup(sessionId: string, path: string): void {
 export function readDraftBackup(sessionId: string, path: string, content: string): string | null {
   const entry = readStored(keyOf(sessionId, path))
   if (entry === undefined) return null
-  if (entry.text === content) {
+  if (sameDocument(entry.text, content)) {
     clearDraftBackup(sessionId, path)
     return null
   }

@@ -36,7 +36,7 @@ import { rewriteLocalMarkdownLinks } from './markdown-navigation.ts'
 import { languageForPath } from './lang.ts'
 import { cmSurfaceTheme, CmThemeCompartment } from './cm-themes.ts'
 import { cmSearchExtensions, CmSearchPhrases } from './cm-search.ts'
-import { clearDraftBackup, draftBackupBaseMtime, flushDraftBackups, readDraftBackup, registerDraftSource, scheduleDraftBackup } from './editor-draft-backup.ts'
+import { clearDraftBackup, draftBackupBaseMtime, flushDraftBackups, readDraftBackup, registerDraftSource, sameDocument, scheduleDraftBackup } from './editor-draft-backup.ts'
 import { flashQuoteLines, quoteFlashField, quoteFlashHighlight } from './quote-flash.ts'
 import { isDarkScheme, subscribeColorScheme } from './theme.ts'
 import { SandboxStatusBar } from './SandboxStatusBar.tsx'
@@ -147,15 +147,6 @@ function rememberEditScroll(scope: { sessionId: string }, path: string, top: num
 /** The remembered edit offset of one document (0 = none: open it at the top). */
 function editScrollOf(scope: { sessionId: string }, path: string): number {
   return editScrollMemory.get(previewScrollKey(scope, path)) ?? 0
-}
-
-/** Whether two spellings are the SAME document — byte-equal, or equal once
- *  line endings are normalized CRLF/CR → LF. Line endings are not content:
- *  CodeMirror keeps every document with `\n` endings whatever the file used,
- *  so the live document of a freshly opened CRLF file differs from the bytes
- *  it was loaded from by line endings alone. */
-function sameDocument(a: string, b: string): boolean {
-  return a === b || a.replace(/\r\n?/g, '\n') === b.replace(/\r\n?/g, '\n')
 }
 
 export function TextEditor(props: FileViewerProps) {
