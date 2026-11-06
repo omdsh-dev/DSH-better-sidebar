@@ -144,6 +144,43 @@ export interface SidebarPrefs {
   pluginSettings: Record<string, Record<string, unknown>>
 }
 
+// ── Side-chat composer preferences ──────────────────────────────────────────
+//
+// The composer's submit gesture is a FEATURE-scoped preference, so it rides the
+// feature's own plugin-owned settings blob
+// (`pluginSettings['sidechat']`) instead of adding a top-level field: that is
+// the seam the settings page already renders for a tab descriptor
+// (`settings.pluginToggles`) and persists through the same settings route, with
+// no host PrefsSchema field needed. The vocabulary lives here (and not in the
+// client keymap module) because `prefs.ts` validates it — see
+// `parseSidechatSubmitKey` and `parsePrefs`.
+
+/** The side-chat tab descriptor id; also the key of its settings blob. */
+export const SIDECHAT_PREFS_ID = 'sidechat'
+
+/** The plugin-owned setting key holding the composer's submit gesture. */
+export const SIDECHAT_SUBMIT_KEY_SETTING = 'submitKey'
+
+/** Which gesture submits a side-chat message. */
+export type SidechatSubmitKey = 'enter' | 'mod-enter'
+
+/** The submit key every document that never chose one gets (host semantics). */
+export const SIDECHAT_SUBMIT_KEY_DEFAULT: SidechatSubmitKey = 'enter'
+
+/** Every accepted submit-key mode (the settings dropdown's value set). */
+export const SIDECHAT_SUBMIT_KEYS: readonly SidechatSubmitKey[] = ['enter', 'mod-enter']
+
+/**
+ * Validate one stored submit-key value. Anything that is not a known mode (an
+ * absent value, a legacy string, a hand-edited document) falls back to the
+ * default, so a bad preference can never wedge the composer.
+ * @param value - the raw stored value.
+ * @returns a known submit-key mode.
+ */
+export function parseSidechatSubmitKey(value: unknown): SidechatSubmitKey {
+  return value === 'mod-enter' ? 'mod-enter' : SIDECHAT_SUBMIT_KEY_DEFAULT
+}
+
 /** The stock exclude list (VS Code ships a similar files.exclude default). */
 export const EXPLORER_EXCLUDE_DEFAULTS: readonly string[] = ['.DS_Store', 'Thumbs.db']
 

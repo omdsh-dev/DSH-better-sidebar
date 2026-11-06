@@ -57,18 +57,31 @@ import {
   Menu,
   MarkdownDelegateProvider,
   ReadBlock,
+  SearchBlock,
   StateDot,
   TerminalBlock,
   Tooltip,
+  WebBlock,
   classifyFileType,
   type DiffBlockLabels,
+  type MarkdownFileMentions,
   type MenuEntry,
   type ReadBlockLabels,
+  type SearchBlockLabels,
   type TerminalBlockLabels,
+  type WebBlockLabels,
 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { markdownLabels, markdownTextProps } from './markdown-labels.tsx'
+import { producedFilePaths, resolveProducedPath } from './sidechat-mentions.ts'
+import {
+  foldsSettledTurns,
+  showsLiveProcessDetail,
+  useSidechatWorkDetails,
+} from './sidechat-work-details.ts'
+import { COMPOSITION_END_GRACE_MS, compositionPhase, isGuardedKeydown, isSubmitGesture } from './composer-keymap.ts'
 import { SIDECHAT_IMAGE_MEDIA_TYPES } from '../sidechat-images.ts'
-import { markdownTextProps } from './markdown-labels.tsx'
 import { SidechatAssistantRow, type SidechatRowSurfaceBinding } from './SidechatAssistantRow.tsx'
+import { SidechatAttachments } from './SidechatAttachments.tsx'
 import { rewriteProseLocalImageUrls } from './markdown-images.ts'
 import { hostTransportBase } from './desktop-env.ts'
 import { baseName, resolveSidebarPath } from './paths.ts'
@@ -76,6 +89,7 @@ import { openSidebarFile } from './sidebar-file.ts'
 import { useMarkdownSurface } from './use-markdown-surface.ts'
 import { IconHistoryOutline16, IconSaveOutline16 } from './icons.tsx'
 import type { Context, SidebarHistoryEntry, SidebarSessionEvent } from '../context-types.ts'
+import type { SidechatForkPoint } from '../sidechat-core.ts'
 import {
   SIDE_LABEL_PREFIX,
   SIDE_NEW_THREAD_TITLE,
@@ -95,6 +109,7 @@ import {
   toolArgsSummary,
   transcriptRows,
   sidechatRowKey,
+  type SidechatAttachment,
   type SidechatToolCard,
   type SidechatTranscriptRow,
 } from './sidechat-transcript.ts'
@@ -104,6 +119,7 @@ import { useSidechatPush } from './use-sidechat-push.ts'
 import { t } from './locales.ts'
 import type { SessionScope } from './api.ts'
 import type { SidebarTab } from './state.ts'
+import { SIDECHAT_SUBMIT_KEY_DEFAULT, type SidechatSubmitKey } from '../prefs-shared.ts'
 import css from './SideChatView.module.css'
 
 /**
@@ -119,6 +135,36 @@ const POLL_MS = 15_000
 const PUSH_DEBOUNCE_MS = 80
 /** Textarea auto-grow ceiling (px) — the composer scrolls beyond it. */
 const COMPOSER_MAX_HEIGHT = 132
+/** Transcript rows MOUNTED at once. The mapping still produces every row (see
+ *  `transcriptRows`); only the DOM is bounded — a long thread used to mount
+ *  every code card, table and image it ever contained. */
+const TRANSCRIPT_WINDOW_MAX = 50
+/** How many more rows one "reveal earlier" activation mounts. */
+const TRANSCRIPT_REVEAL_STEP = 25
+/** Declared height of ONE hidden row in the top spacer (px). jsdom performs no
+ *  layout and a measured height would read 0 there, so the spacer carries its
+ *  height inline; the contract only needs it to be linear in the hidden row
+ *  count, because a revealed row takes back exactly the height it frees. */
+const TRANSCRIPT_HIDDEN_ROW_PX = 28
+/** The host's own near-bottom rule: within this distance of the bottom offset
+ *  (scrollHeight - clientHeight - scrollTop) the reader is following the tail. */
+const TRANSCRIPT_FOLLOW_THRESHOLD_PX = 24
+
+/**
+ * Run one callback on the next animation frame, or on the next macrotask when
+ * the environment has no `requestAnimationFrame` (jsdom without a visual
+ * timer). Returns the cancel handle.
+ * @param callback - the deferred work.
+ * @returns the disposer that cancels a still-pending frame.
+ */
+function nextFrame(callback: () => void): () => void {
+  if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+    const handle = window.requestAnimationFrame(() => { callback() })
+    return () => { window.cancelAnimationFrame(handle) }
+  }
+  const handle = window.setTimeout(callback, 0)
+  return () => { window.clearTimeout(handle) }
+}
 
 /** The thread a tab is bound to (durable in tab.meta across refreshes). */
 export function sidechatThreadIdOf(tab: SidebarTab): string | undefined {
@@ -245,6 +291,12 @@ interface ThreadCache {
   live: SidechatLiveEvent[]
   /** The thread's unclaimed inbox as of the last pull (replaced, never merged). */
   pending: SidechatPendingInput[]
+  /** The FIRST pull of this thread was answered from a capped (tail-sliced)
+   *  log: the transcript opens mid-history and has to say so. */
+  truncated: boolean
+  /** Where the FIRST pull said this thread forked off its parent conversation
+   *  (the route's additive `fork`); absent for an unseeded thread. */
+  fork?: SidechatForkPoint
 }
 
 /** The catalog row of one route: the model picker reads its reasoning efforts
@@ -277,6 +329,11 @@ interface RowLabels {
   terminal: TerminalBlockLabels
   diff: DiffBlockLabels
   read: ReadBlockLabels
+  /** The host search card (grep / glob results). */
+  search: SearchBlockLabels
+  /** The host web card (web_search / web_fetch results), whose answer is
+   *  rendered as markdown and therefore carries its own markdown chrome. */
+  web: WebBlockLabels
 }
 
 /** The host services this view reaches for archiving. Neither face lives on
@@ -437,6 +494,119 @@ function CollapsibleRow(props: {
   )
 }
 
+/** Whether a row is a WORK-DETAIL row: the only rows a Turn fold wraps (a
+ *  question, an answer, a delivery or an attachment is content, not work). */
+function isWorkRow(
+  row: SidechatTranscriptRow,
+): row is Extract<SidechatTranscriptRow, { kind: 'reasoning' | 'tool' }> {
+  return row.kind === 'reasoning' || row.kind === 'tool'
+}
+
+/** Longest live-detail snippet a running Turn's line carries. */
+const RUNNING_LINE_MAX = 80
+
+/**
+ * What a RUNNING turn's control line says beyond its label (host
+ * `liveProcessDetail`): the running tool with its one-line arguments, or the
+ * first line of the reasoning being streamed.
+ * @param row - the latest work row of the running turn.
+ * @returns the detail, or undefined when the row has nothing to quote.
+ */
+function runningProcessLine(
+  row: Extract<SidechatTranscriptRow, { kind: 'reasoning' | 'tool' }>,
+): string | undefined {
+  if (row.kind === 'tool') {
+    const summary = toolArgsSummary(row.args)
+    return summary === '' ? row.name : `${row.name} · ${summary}`
+  }
+  const first = row.text.split('\n', 1)[0]?.trim() ?? ''
+  return first === '' ? undefined : first.slice(0, RUNNING_LINE_MAX)
+}
+
+/**
+ * One Turn's work-detail disclosure (the host's `foldCompletedTurns`): the
+ * line is the localized label (plus live detail while the turn runs), and its
+ * WORK rows live in the body. Question and answer rows never enter it.
+ */
+function TurnFold(props: {
+  /** The line's copy: the host's own turn-process vocabulary (took / done /
+   *  running), localized by the planner that knows the measured duration. */
+  label: string
+  rows: React.ReactNode[]
+  liveDetail: string | undefined
+  open: boolean
+}): React.ReactNode {
+  return (
+    <details className={css.sidechatTurnFold} data-sidechat-turn-fold="" open={props.open}>
+      {/* The live detail rides the line's TITLE, not its text: the line stays
+          the reader's fixed anchor while a turn runs, and a tool name in the
+          summary text would collide with every "find the row for tool X"
+          lookup that keys on summary text. */}
+      <summary
+        className={css.sidechatTurnFoldLine}
+        {...(props.liveDetail === undefined ? {} : { title: props.liveDetail })}
+      >
+        <span className={css.sidechatRowChevron}>
+          <IconChevronRightOutlineRegular size={12} />
+        </span>
+        <span className={css.sidechatRowLabel}>{props.label}</span>
+      </summary>
+      <div className={css.sidechatTurnFoldBody}>{props.rows}</div>
+    </details>
+  )
+}
+
+/**
+ * The pre-fork context, rendered as the conversation it was.
+ *
+ * The reader's verdict on the card that shipped first was that this should not
+ * be a card at all: two matching divider lines bracket the block — the first
+ * says where it came from, the last where the inherited context stops — and the
+ * parent's last exchange between them looks exactly like the messages under it:
+ * the question as this thread's own user bubble, the answer as its own assistant
+ * prose, both through the same markdown renderer (and the same prose pass) the
+ * rows use, both carried verbatim. Nothing here expands or collapses.
+ */
+function ForkBlock(props: {
+  /** The parent's last question, verbatim. */
+  user: string | undefined
+  /** The parent's last answer, verbatim; absent when there is none. */
+  answer: string | undefined
+  /** Markdown chrome, the same label bag the transcript rows thread through. */
+  labels: RowLabels
+  /** The view's row prose pass (image destinations, then local links). */
+  rewrite: (text: string) => string
+}): React.ReactNode {
+  return (
+    <div className={css.sidechatForkPoint} data-sidechat-fork-point="">
+      <div className={css.sidechatForkDivider} data-sidechat-fork-divider="">
+        {t('sideChatForkDivider')}
+      </div>
+      {props.user === undefined
+        ? null
+        : (
+          // The same presentation block a user row renders, so the inherited
+          // question can never drift from the thread's own bubbles.
+          <div className={css.sidechatUser} data-sidechat-fork-question="">
+            <MarkdownText {...markdownTextProps(props.rewrite(props.user), props.labels)} />
+          </div>
+        )}
+      {props.answer === undefined || props.answer === ''
+        ? null
+        : (
+          <div className={css.sidechatAssistant}>
+            <MarkdownText {...markdownTextProps(props.rewrite(props.answer), props.labels)} />
+          </div>
+        )}
+      {/* The same line closes the block: the inherited context stops here, so
+          what follows reads as this thread's own conversation again. */}
+      <div className={css.sidechatForkDivider} data-sidechat-fork-divider-end="">
+        {t('sideChatForkDividerEnd')}
+      </div>
+    </div>
+  )
+}
+
 /** The host Block body for a structured tool card (main-conversation atoms:
  *  terminal surface, diff hunks, line-numbered read window). */
 function toolCardBody(card: SidechatToolCard, executing: boolean, labels: RowLabels): React.ReactNode {
@@ -455,6 +625,12 @@ function toolCardBody(card: SidechatToolCard, executing: boolean, labels: RowLab
   }
   if (card.type === 'diff') {
     return <DiffBlock diffs={card.diffs} labels={labels.diff} />
+  }
+  if (card.type === 'search') {
+    return <SearchBlock {...card.card} labels={labels.search} />
+  }
+  if (card.type === 'web') {
+    return <WebBlock {...card.card} labels={labels.web} />
   }
   return <ReadBlock label={card.label} lines={card.lines} totalLines={card.totalLines} lang={card.lang} labels={labels.read} />
 }
@@ -499,6 +675,13 @@ interface RowSurface {
   /** The absolute spelling of one delivered path (the row's title tooltip;
    *  call-argument paths arrive relative to the session cwd). */
   resolvePath: (path: string) => string
+  /** Inline-code file-mention vocabulary: the paths THIS thread produced (see
+   *  sidechat-mentions.ts). Undefined when the thread has produced nothing, so
+   *  the renderer keeps every token inert code. */
+  mentions: MarkdownFileMentions | undefined
+  /** Render one row's `image` / `file` blocks (D13); the read is bound to the
+   *  thread that owns the referencing log. */
+  attachments: (list: readonly SidechatAttachment[]) => React.ReactNode
 }
 
 /** One row renderer (React keys ride the source event seq). `surface` is the
@@ -514,22 +697,50 @@ function renderRow(row: SidechatTranscriptRow, labels: RowLabels, surface: RowSu
     case 'user':
       return (
         <div key={key} className={css.sidechatUser}>
-          {row.text !== '' && <MarkdownText {...markdownTextProps(surface.rewrite(row), labels)} />}
+          {row.text !== '' && <MarkdownText {...markdownTextProps(surface.rewrite(row), labels, surface.mentions)} />}
           <SidechatImages visible={genui.visible} childId={genui.threadId} messageId={row.messageId} images={row.images} />
+          {row.attachments === undefined || row.attachments.every(a => a.kind !== 'file')
+            ? null
+            : surface.attachments(row.attachments.filter(a => a.kind === 'file'))}
+        </div>
+      )
+    case 'attachment':
+      // One `image` / `file` content block of an assistant message, kept in
+      // block order as its own row (D13). User-message images do NOT land here
+      // — the user bubble draws them through the upstream `SidechatImages`
+      // surface, and the bubble keeps only its `file` blocks on this path.
+      return (
+        <div key={key} className={css.sidechatAttachmentRow}>
+          {surface.attachments([row.attachment])}
         </div>
       )
     case 'assistant':
       return (
-        <SidechatAssistantRow key={key} row={row} labels={labels} rewrite={surface.rewrite} surface={genui} />
+        <SidechatAssistantRow
+          key={key}
+          row={row}
+          labels={labels}
+          rewrite={surface.rewrite}
+          fileMentions={surface.mentions}
+          surface={genui}
+        />
       )
     case 'reasoning':
+      // Reasoning is PROSE from a model that writes markdown (emphatic lists,
+      // inline code, file references). It renders through the host renderer —
+      // the same component (and the same delegate surface) as the assistant
+      // row, so emphasis/lists/code become elements and a local link is
+      // claimed by the host instead of showing its literal syntax. The
+      // collapsed summary reports how much thinking there is; no duration is
+      // available for a reasoning row, so none is invented.
       return (
         <CollapsibleRow
           key={key}
           label={labels.thinkLabel}
+          meta={t('sideChatReasoningSummary', { chars: row.text.length })}
           streaming={!row.settled}
         >
-          <div className={css.sidechatRowProse}>{row.text}</div>
+          <MarkdownText {...markdownTextProps(surface.rewrite(row), labels, surface.mentions)} />
         </CollapsibleRow>
       )
     case 'injection':
@@ -545,6 +756,44 @@ function renderRow(row: SidechatTranscriptRow, labels: RowLabels, surface: RowSu
         <div key={key} className={css.sidechatErrorRow}>
           {t('sideChatRunError', { message: row.text })}
         </div>
+      )
+    case 'terminal':
+      // The turn ended without a normal completion: say which way (the reader
+      // stopped it vs the output limit cut it), because the next thing the
+      // reader does differs — resend, or continue in a fresh turn.
+      return (
+        <div key={key} className={css.sidechatTerminal}>
+          {t(row.reason === 'max-tokens' ? 'sideChatTerminalMaxTokens' : 'sideChatTerminalAborted')}
+        </div>
+      )
+    case 'compaction': {
+      // The row LINE is a label plus the counts it has; the summary body (when
+      // the thread still has it) lives behind the disclosure, because a
+      // compacted summary is a page of prose, not a line.
+      const meta = [
+        row.shadowedItemCount === null ? '' : t('sideChatCompactionItems', { count: row.shadowedItemCount }),
+        row.shadowedTokenCount === null ? '' : t('sideChatCompactionTokens', { tokens: row.shadowedTokenCount }),
+      ].filter(part => part !== '').join(' · ')
+      return (
+        <CollapsibleRow
+          key={key}
+          label={t('sideChatCompactionSummary')}
+          {...(meta === '' ? {} : { meta })}
+        >
+          {row.text === '' ? undefined : <div className={css.sidechatRowProse}>{row.text}</div>}
+        </CollapsibleRow>
+      )
+    }
+    case 'retry':
+      // One quiet line per retry CHAIN: how many attempts, and why the model
+      // call failed. The provider's own failure text is the reason, so it rides
+      // the meta slot rather than a sentence the plugin invents.
+      return (
+        <CollapsibleRow
+          key={key}
+          label={t('sideChatRetryAttempt', { retry: row.retry })}
+          {...(row.failureMessage === undefined ? {} : { meta: row.failureMessage })}
+        />
       )
     case 'turnSummary': {
       // Quiet turn-tail metrics: token usage + wall duration, main-pane
@@ -604,14 +853,38 @@ function renderRow(row: SidechatTranscriptRow, labels: RowLabels, surface: RowSu
       )
     }
     case 'tool': {
-      const body = row.card !== undefined
-        ? toolCardBody(row.card, row.executing === true, labels)
-        : (
-          <>
-            {row.args !== undefined && <pre className={css.sidechatRowCode}>{row.args}</pre>}
-            {row.resultText !== undefined && <pre className={css.sidechatRowCode}>{row.resultText}</pre>}
-          </>
-        )
+      // A tool WITHOUT a structured card (grep/glob/web_search and every host
+      // tool this view does not know): the collapsed line carries the one-line
+      // argument summary, and the disclosed body splits into two LABELLED
+      // sections — raw arguments, then raw output — so a reader who expands
+      // always knows which block is which (two unlabelled <pre>s of JSON next
+      // to raw output was a wall of escaped quotes).
+      const resultAttachments = row.resultAttachments === undefined || row.resultAttachments.length === 0
+        ? null
+        : surface.attachments(row.resultAttachments)
+      const body = (
+        <>
+          {row.card !== undefined
+            ? toolCardBody(row.card, row.executing === true, labels)
+            : (
+              <>
+                {row.args !== undefined && (
+                  <>
+                    <div className={css.sidechatToolSectionLabel}>{t('sideChatToolArguments')}</div>
+                    <pre className={css.sidechatRowCode}>{row.args}</pre>
+                  </>
+                )}
+                {row.resultText !== undefined && (
+                  <>
+                    <div className={css.sidechatToolSectionLabel}>{t('sideChatToolResult')}</div>
+                    <pre className={css.sidechatRowCode}>{row.resultText}</pre>
+                  </>
+                )}
+              </>
+            )}
+          {resultAttachments}
+        </>
+      )
       return (
         <CollapsibleRow
           key={key}
@@ -621,7 +894,8 @@ function renderRow(row: SidechatTranscriptRow, labels: RowLabels, surface: RowSu
           mono
           streaming={row.executing === true}
           failed={row.failed}
-          {...(row.args === undefined && row.resultText === undefined && row.card === undefined ? {} : { children: body })}
+          {...(row.args === undefined && row.resultText === undefined && row.card === undefined
+            && resultAttachments === null ? {} : { children: body })}
         />
       )
     }
@@ -634,8 +908,19 @@ export function SideChatView(props: {
   scope: SessionScope
   tab: SidebarTab
   visible: boolean
+  /** Which gesture submits the draft: a plain `Enter` (the default, host
+   *  semantics) or exactly `Cmd+Enter` / `Ctrl+Enter`. The side card settings
+   *  page feeds it from the side-chat feature's own preferences (see
+   *  `sidechatSubmitKeyOf` in prefs.ts); absent reads the default, which keeps
+   *  every existing composition unchanged. */
+  submitKey?: SidechatSubmitKey
 }): React.ReactNode {
   const { ctx, scope, tab, visible } = props
+  const submitKey = props.submitKey ?? SIDECHAT_SUBMIT_KEY_DEFAULT
+  /** The main conversation's work-details preference, read live (see
+   *  sidechat-work-details.ts): the two transcripts of one conversation must
+   *  agree about how much process detail to show. */
+  const workDetails = useSidechatWorkDetails(ctx)
   const rowLabels = useMemo<RowLabels>(() => {
     // Shared Block chrome: copy buttons reuse the sidebar's copy pair, the
     // collapse/expand family is common to every Block kind.
@@ -676,8 +961,73 @@ export function SideChatView(props: {
       },
       diff: { ...shared, ...codeCard },
       read: { ...shared, ...codeCard, window: (shown: number, total: number) => t('sideChatBlockWindow', { shown, total }) },
+      // The host cards' summaries are FUNCTIONS (the shown/total pair folds
+      // into one clause), so the two count pairs stay separate keys rather than
+      // a template with six placeholders. `noResults` is shared: an empty grep
+      // and an empty web search say the same thing to the reader.
+      search: {
+        ...shared,
+        pathsSummary: (shown: number, total: number, truncated: boolean) => t(
+          truncated ? 'sideChatSearchPathsTruncated' : 'sideChatSearchPaths',
+          { shown, total },
+        ),
+        matchesSummary: (shown: number, total: number, files: number, truncated: boolean) => t(
+          truncated ? 'sideChatSearchMatchesTruncated' : 'sideChatSearchMatches',
+          { shown, total, files },
+        ),
+        noResults: t('sideChatSearchNoResults'),
+      },
+      web: {
+        noResults: t('sideChatSearchNoResults'),
+        sourcesTruncated: t('sideChatWebSourcesTruncated'),
+        http: t('sideChatWebHttp'),
+        contentTruncated: t('sideChatWebContentTruncated'),
+        // The card renders the provider's answer as markdown of its own, so it
+        // needs the same nested chrome (and the cached identity) as the rows.
+        markdown: markdownLabels({ copyLabel: t('copy'), copiedLabel: t('copied'), ...codeCard }),
+      },
     }
   }, [])
+  /**
+   * Remote-image previews: the host's `MarkdownImage` wraps an `<img>` in its
+   * preview button and mounts `ImageLightbox` ONLY when the surrounding
+   * `MarkdownDelegateProvider` supplies `fileImages` — the main conversation
+   * always did, the side chat never did, so the same screenshot enlarged in the
+   * main pane and did nothing here.
+   *
+   * `resolve` declines on purpose. It is the LOCAL-image vocabulary (a decoded
+   * workspace path → displayable URL); the transcript already rewrites local
+   * destinations into session media URLs before rendering (markdown-images.ts),
+   * and the host only grows a hover preview card on an image LINK when
+   * `resolve` answers with a URL — declining is what keeps a `[shot](a.png)`
+   * link a plain file button.
+   *
+   * Identity matters: the provider memoizes its delegate on this object, and a
+   * fresh one per render would push a new context value through every memoized
+   * markdown row on every keystroke.
+   *
+   * `fileDrag` (DSH 0.2.2) is the handle the host's `useImageDrag` asks before
+   * it starts a drag. The side chat owns no file transport of its own — a drag
+   * out of this transcript is the browser's own image drag — so `start` answers
+   * `true` WITHOUT writing a transfer payload (the contract's "browser dragging"
+   * branch) and there is never a prepared resource to release. `reportFailure`
+   * reuses the transcript's existing image-error surface, so a refused
+   * preparation is visible instead of silent.
+   */
+  const fileImages = useMemo(() => ({
+    fileDrag: {
+      prepare: async () => ({ start: () => true, release: () => {} }),
+      reportFailure: () => { setError(t('sideChatImageFailed')) },
+    },
+    resolve: (): string | undefined => undefined,
+    labels: {
+      open: t('sideChatImageOpen'),
+      loading: t('sideChatImageLoading'),
+      failed: t('sideChatImageFailed'),
+      dialog: t('sideChatImageDialog'),
+      close: t('sideChatImageClose'),
+    },
+  }), [])
 
   // The session list feed: thread rows (the composer-bar thread menu) + running states.
   const list = useSyncExternalStore(
@@ -723,9 +1073,21 @@ export function SideChatView(props: {
   const [menuOpen, setMenuOpen] = useState(false)
   const [modelMenuOpen, setModelMenuOpen] = useState(false)
   const [catalog, setCatalog] = useState<SidechatModelCatalog | null>(null)
+  /** Rows the reader explicitly revealed above the tail window (one
+   *  {@link TRANSCRIPT_REVEAL_STEP} per activation). */
+  const [revealedRows, setRevealedRows] = useState(0)
+  /** Whether the reader is following the tail (the host's near-bottom rule,
+   *  re-read from the scroller's own `scroll` events). It is an INTENT: the
+   *  stream pins the scroller only while it holds, so a reader who scrolled up
+   *  to re-read an answer is not yanked back by the next host push. */
+  const [followingTail, setFollowingTail] = useState(true)
+  /** Local echo of the message just sent: shown until the host reports it
+   *  pending or logs it durably (see the drop effect below). The echo is
+   *  retired by the host-assigned `messageId`, so an OLDER identical message
+   *  cannot retire it. */
   const [echo, setEcho] = useState<{ text: string; messageId: string; hasImages: boolean } | null>(null)
 
-  const cacheRef = useRef<ThreadCache>({ entries: [], live: [], pending: [] })
+  const cacheRef = useRef<ThreadCache>({ entries: [], live: [], pending: [], truncated: false })
   // The previous poll's rows (see the mapping's reuse pass below).
   const prevRowsRef = useRef<SidechatTranscriptRow[]>([])
   const controllerRef = useRef<AbortController | null>(null)
@@ -801,23 +1163,28 @@ export function SideChatView(props: {
    *  (the call-argument copy is cwd-relative; the event copy is already
    *  absolute and passes through unchanged). */
   const deliverableTitlePath = useCallback((path: string): string => resolveSidebarPath(scope.cwd, path), [scope.cwd])
-  const rowSurface = useMemo<RowSurface>(
-    () => ({
-      rewrite: rewriteRow,
-      openFile: openDeliveredFile,
-      media: deliverableMediaUrl,
-      resolvePath: deliverableTitlePath,
-    }),
-    [rewriteRow, openDeliveredFile, deliverableMediaUrl, deliverableTitlePath],
-  )
   const transcriptRef = useCallback((element: HTMLDivElement | null) => {
     scrollRef.current = element
     chatSurfaceRef(element)
   }, [chatSurfaceRef])
   const composerRef = useRef<HTMLTextAreaElement | null>(null)
+  /** The IME guard's live composition flag (tracked from the textarea's own
+   *  composition events: some engines only signal a composition there). */
+  const composingRef = useRef(false)
+  /** When the composition-end grace window closes (see
+   *  {@link COMPOSITION_END_GRACE_MS}: Safari delivers the composition-closing
+   *  keydown AFTER `compositionend`). */
+  const composingUntilRef = useRef(0)
 
   const summary = threadId === undefined ? undefined : list.byId[threadId]
   const running = summary?.running === true
+  /** The fork point the first pull reported — only when the parent prefix had
+   *  something to summarise (a `cutSeq`-only field draws no banner). */
+  const forkReport = cacheRef.current.fork
+  const forkPoint = forkReport !== undefined
+    && (forkReport.user !== undefined || forkReport.assistant !== undefined)
+    ? forkReport
+    : undefined
   /**
    * Whether the host's own session list can ever show the bound session again
    * after archiving it. It cannot for a subagent-origin row: the host's
@@ -932,7 +1299,7 @@ export function SideChatView(props: {
     controllerRef.current = controller
     try {
       const afterSeq = cache.entries.at(-1)?.event.seq
-      const { events, live, pending } = await api.sidechatEvents(childId, afterSeq, controller.signal)
+      const { events, live, pending, truncated, fork } = await api.sidechatEvents(childId, afterSeq, controller.signal)
       if (controller.signal.aborted || cacheRef.current !== cache) return
       // The live set is the CURRENT attempt, so it replaces whatever the
       // previous pull held; a settled step drops out of the host buffer and
@@ -940,6 +1307,15 @@ export function SideChatView(props: {
       // inbox is a snapshot too (replaced, never merged).
       cache.live = live ?? []
       cache.pending = pending ?? []
+      // Only the FIRST pull of a binding answers from the whole log, so only it
+      // can report a capped head; a poll must not clear a flag the first pull
+      // established.
+      if (afterSeq === undefined) {
+        cache.truncated = truncated === true
+        // The fork point is answered by the first pull only; a poll must not
+        // clear what it established.
+        cache.fork = fork
+      }
       if (events.length > 0) {
         // Wire events arrive as parsed JSON; the mirror narrows data to the
         // record the mapping reads.
@@ -966,7 +1342,7 @@ export function SideChatView(props: {
   // Reset the transcript cache whenever the binding changes, then focus
   // the composer — it owns the first message of a fresh thread.
   useEffect(() => {
-    cacheRef.current = { threadId, entries: [], live: [], pending: [] }
+    cacheRef.current = { threadId, entries: [], live: [], pending: [], truncated: false }
     prevRowsRef.current = []
     controllerRef.current?.abort()
     if (invalidateRef.current !== undefined) {
@@ -1080,6 +1456,73 @@ export function SideChatView(props: {
     [threadId, revision],
   )
 
+  /** The tail window: at most {@link TRANSCRIPT_WINDOW_MAX} rows are MOUNTED,
+   *  plus whatever the reader revealed by hand. `rows` itself keeps every
+   *  mapped row — the window bounds the DOM, never the model of the thread. */
+  const mountedRowCount = Math.min(rows.length, TRANSCRIPT_WINDOW_MAX + revealedRows)
+  /** How many mapped rows the window leaves out (0 = nothing hidden). */
+  const hiddenRowCount = rows.length - mountedRowCount
+  const visibleRows = useMemo(() => rows.slice(hiddenRowCount), [rows, hiddenRowCount])
+
+  /**
+   * Inline-code file mentions (D12): the vocabulary is the thread's OWN
+   * produced paths — `tool/call` arguments plus `deliverables` rows — so a
+   * token resolves without a single lookup request, and a token outside the set
+   * (or an ambiguous basename) stays inert code.
+   *
+   * Both memos key on the vocabulary's CONTENT, never on the row array: the
+   * array is a fresh value on every poll (the row objects inside it are reused)
+   * and `MarkdownText` memoizes its parse on the resolver's identity, so a
+   * resolver rebuilt per pull would re-parse every row's markdown every 2 s.
+   */
+  const producedPaths = useMemo(() => producedFilePaths(rows), [rows])
+  /** Content key for {@link producedPaths} (a path carries no newline). */
+  const producedMentionKey = producedPaths.join('\n')
+  const fileMentions = useMemo<MarkdownFileMentions | undefined>(() => {
+    if (producedPaths.length === 0) return undefined
+    return {
+      resolve: (token: string) => {
+        const path = resolveProducedPath(producedPaths, token)
+        if (path === undefined) return undefined
+        // The RESOLVED spelling is what the tooltip and the accessible name
+        // carry: the reader is told which FILE opens, not which token the
+        // model happened to write.
+        const title = deliverableTitlePath(path)
+        return {
+          open: () => { openDeliveredFile(path) },
+          label: t('sideChatMentionOpen', { path: title }),
+          title,
+        }
+      },
+    }
+  },
+    // `producedMentionKey` IS `producedPaths`' content; see above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [producedMentionKey, deliverableTitlePath, openDeliveredFile])
+
+  /** Render one row's `image` / `file` blocks. The byte read is addressed to
+   *  the THREAD whose log references the attachment (a side thread is not a
+   *  retained scope, so the chat image cache cannot serve it). */
+  const renderAttachments = useCallback(
+    (list: readonly SidechatAttachment[]): React.ReactNode => (
+      threadId === undefined
+        ? null
+        : <SidechatAttachments ctx={ctx} sessionId={threadId} attachments={list} />
+    ),
+    [ctx, threadId],
+  )
+  const rowSurface = useMemo<RowSurface>(
+    () => ({
+      rewrite: rewriteRow,
+      openFile: openDeliveredFile,
+      media: deliverableMediaUrl,
+      resolvePath: deliverableTitlePath,
+      mentions: fileMentions,
+      attachments: renderAttachments,
+    }),
+    [rewriteRow, openDeliveredFile, deliverableMediaUrl, deliverableTitlePath, fileMentions, renderAttachments],
+  )
+
   /** The unclaimed inbox rows that still need a bubble: a pending message the
    *  host already logged durably (the claim raced the read) must not render
    *  twice, so it is matched by the durable message id. */
@@ -1118,13 +1561,71 @@ export function SideChatView(props: {
   const hasOutputRow = rows.some(row => row.kind === 'assistant' || row.kind === 'reasoning')
   const showThinking = threadId !== undefined && (running || ((echo !== null || busy === 'sending') && !hasOutputRow))
 
-  // Follow the stream: stick to the bottom while the log — or the pending
-  // tail — grows.
+  // Follow the stream: while the reader is at (or near) the bottom, growth
+  // pins the scroller to the BOTTOM OFFSET (scrollHeight - clientHeight) — the
+  // raw scrollHeight is a browser-clamped over-scroll that hides the offset
+  // arithmetic. A reader who scrolled away is never moved: the host pushes an
+  // invalidation every ~250 ms while a turn streams, so an unconditional write
+  // made re-reading the middle of an answer impossible.
   useEffect(() => {
     const scroller = scrollRef.current
+    if (scroller === null || !followingTail) return
+    scroller.scrollTop = scroller.scrollHeight - scroller.clientHeight
+  }, [followingTail, rows.length, pendingRows.length, echoText, threadId])
+
+  // A different thread starts at its own tail with nothing revealed — both the
+  // window and the follow intent are per transcript, not per tab.
+  useEffect(() => {
+    setRevealedRows(0)
+    setFollowingTail(true)
+  }, [threadId])
+
+  /** Re-read the follow intent from the scroller itself (the only source a real
+   *  user scroll emits). */
+  const handleTranscriptScroll = (event: React.UIEvent<HTMLDivElement>): void => {
+    const scroller = event.currentTarget
+    const distance = scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop
+    const next = distance <= TRANSCRIPT_FOLLOW_THRESHOLD_PX
+    setFollowingTail(current => (current === next ? current : next))
+  }
+
+  /** Return to the tail: re-pin immediately (the click IS the reader's intent)
+   *  and keep following from then on. */
+  const returnToLatest = (): void => {
+    const scroller = scrollRef.current
+    if (scroller !== null) scroller.scrollTop = scroller.scrollHeight - scroller.clientHeight
+    setFollowingTail(true)
+  }
+
+  /** The content height captured when the reader asked for more history (see
+   *  {@link revealEarlier}): the layout effect below corrects the scroll offset
+   *  by the height the commit added ABOVE the viewport. */
+  const revealAnchorRef = useRef<number | null>(null)
+
+  /** Mount one more step of hidden history, keeping the reader's line in place. */
+  const revealEarlier = (): void => {
+    revealAnchorRef.current = scrollRef.current?.scrollHeight ?? null
+    setRevealedRows(value => value + TRANSCRIPT_REVEAL_STEP)
+  }
+
+  // The rows a reveal mounts sit ABOVE the viewport, so the browser keeps
+  // `scrollTop` while the content above grows and the line the reader was
+  // reading slides down by the inserted height. Correcting the offset by the
+  // height DELTA after the commit is what holds that line still; a reader who
+  // is following the tail is instead pinned to the bottom offset of the NEW
+  // geometry, so they stay at the newest content rather than trailing behind.
+  useLayoutEffect(() => {
+    const before = revealAnchorRef.current
+    if (before === null) return
+    revealAnchorRef.current = null
+    const scroller = scrollRef.current
     if (scroller === null) return
-    scroller.scrollTop = scroller.scrollHeight
-  }, [rows.length, pendingRows.length, echoText, threadId])
+    if (followingTail) {
+      scroller.scrollTop = scroller.scrollHeight - scroller.clientHeight
+      return
+    }
+    scroller.scrollTop += scroller.scrollHeight - before
+  }, [revealedRows, followingTail])
 
   /** Open a NEW thread tab: the thread is created FIRST and parked for the
    *  descriptor's createTab, so the tab that opens is already bound to it —
@@ -1253,12 +1754,32 @@ export function SideChatView(props: {
     }
   }
 
-  const growComposer = (): void => {
+  /** Fit the textarea to its draft (up to the ceiling). Reading `scrollHeight`
+   *  forces a synchronous layout flush, so this only ever runs from a frame
+   *  scheduled by {@link scheduleComposerGrow}, never inline in a keystroke. */
+  const growComposer = useCallback((): void => {
     const field = composerRef.current
     if (field === null) return
     field.style.height = '0px'
     field.style.height = `${Math.min(field.scrollHeight, COMPOSER_MAX_HEIGHT)}px`
-  }
+  }, [])
+  /** The cancel handle of the pending auto-grow frame (coalesced: one frame
+   *  per burst of keystrokes). */
+  const growCancelRef = useRef<(() => void) | undefined>(undefined)
+  /** Schedule one auto-grow on the next frame: the keystroke that changed the
+   *  draft must not pay for the layout flush. A keystroke arriving before the
+   *  frame is coalesced into that frame, which reads the LATEST draft. */
+  const scheduleComposerGrow = useCallback((): void => {
+    if (growCancelRef.current !== undefined) return
+    growCancelRef.current = nextFrame(() => {
+      growCancelRef.current = undefined
+      growComposer()
+    })
+  }, [growComposer])
+  useEffect(() => () => {
+    growCancelRef.current?.()
+    growCancelRef.current = undefined
+  }, [])
 
   // Capture a binding generation, not a mutable "current session" fallback.
   // A deferred slider action from an old row must fail even after A → B → A.
@@ -1284,9 +1805,102 @@ export function SideChatView(props: {
       throw cause
     }
   }, [surfaceBinding, fetchThread, fetchInfo])
-  const genuiRowSurface: SidechatRowSurfaceBinding = {
-    service: ctx.get('betterSidebar'), threadId, visible, sendPrompt: sendSurfacePrompt,
-  }
+  /** The GenUI binding every transcript row shares (identity matters: the row
+   *  memo below must not rebuild a row for an unchanged thread/visibility). */
+  const genuiRowSurface = useMemo<SidechatRowSurfaceBinding>(
+    () => ({ service: ctx.get('betterSidebar'), threadId, visible, sendPrompt: sendSurfacePrompt }),
+    [ctx, threadId, visible, sendSurfacePrompt],
+  )
+  /**
+   * The MOUNTED transcript. Memoized by its inputs (`rows` are reused by object
+   * identity across pushes and the window only moves on a reveal), so an
+   * unrelated state change — a composer keystroke above all — reuses the same
+   * React elements: React bails out of an identical element, and no row
+   * renderer (`toolArgsSummary`'s JSON parse, `formatTokens`, the markdown
+   * pass) runs again for a row that did not change.
+   *
+   * Each mounted row sits in its own `display: contents` mount box: the box is
+   * the stable test/DOM hook (`data-sidechat-transcript-row`) and keeps a row
+   * that renders NOTHING (a turn tail with no metrics) countable, while taking
+   * no part in the flex layout, so the rows keep their own alignment and the
+   * scroller's gap.
+   */
+  const rowNodes = useMemo(() => {
+    /** One row in its mount box (the scroller's `gap` still separates rows). */
+    const mount = (row: SidechatTranscriptRow): React.ReactNode => (
+      <div
+        key={`${threadId ?? 'unbound'}:${sidechatRowKey(row)}`}
+        className={css.sidechatRowMount}
+        data-sidechat-transcript-row=""
+      >
+        {renderRow(row, rowLabels, rowSurface, genuiRowSurface)}
+      </div>
+    )
+    if (!foldsSettledTurns(workDetails.mode)) return visibleRows.map(mount)
+    /** The newest turn whose `turn/end` landed: the one `next-input` keeps open. */
+    let newestCompletedTurn: number | undefined
+    /** turn → the wall time its `turn/end` measured (the tail metrics row). */
+    const turnDurations = new Map<number, number>()
+    for (const row of rows) {
+      if (isWorkRow(row) && row.turnEnded === true) newestCompletedTurn = row.turn
+      if (row.kind === 'turnSummary' && row.turn !== undefined && row.durationMs !== undefined) {
+        turnDurations.set(row.turn, row.durationMs)
+      }
+    }
+    const nodes: React.ReactNode[] = []
+    let index = 0
+    while (index < visibleRows.length) {
+      const row = visibleRows[index]
+      if (row === undefined) {
+        index += 1
+        continue
+      }
+      if (!isWorkRow(row) || row.turn === undefined) {
+        nodes.push(mount(row))
+        index += 1
+        continue
+      }
+      // One contiguous run of THIS turn's work rows: a turn whose work is split
+      // by an answered question would draw one control per run, which keeps the
+      // answer readable instead of hiding it inside the fold.
+      const turn = row.turn
+      const run: SidechatTranscriptRow[] = []
+      while (index < visibleRows.length) {
+        const candidate = visibleRows[index]
+        if (candidate === undefined || !isWorkRow(candidate) || candidate.turn !== turn) break
+        run.push(candidate)
+        index += 1
+      }
+      const settled = run.some(entry => isWorkRow(entry) && entry.turnEnded === true)
+      const open = !settled
+        || (workDetails.collapseTiming === 'next-input' && turn === newestCompletedTurn)
+      // The host labels this same control from its turn-process vocabulary: a
+      // settled turn says how long it took (its own measured tail duration, the
+      // one the usage line below already printed), a settled turn without a
+      // measurement says done, and a running one says so.
+      const duration = turnDurations.get(turn)
+      const label = settled
+        ? (duration === undefined
+          ? t('sideChatTurnDone')
+          : t('sideChatTurnTook', { duration: formatDurationMs(duration) }))
+        : t('sideChatTurnRunning')
+      const last = run.at(-1)
+      const liveDetail = !settled && showsLiveProcessDetail(workDetails.mode) && last !== undefined && isWorkRow(last)
+        ? runningProcessLine(last)
+        : undefined
+      const first = run[0]
+      nodes.push(
+        <TurnFold
+          key={`fold:${threadId ?? 'unbound'}:${String(turn)}:${first === undefined ? '' : sidechatRowKey(first)}`}
+          open={open}
+          label={label}
+          liveDetail={liveDetail}
+          rows={run.map(mount)}
+        />,
+      )
+    }
+    return nodes
+  }, [visibleRows, rows, threadId, rowLabels, rowSurface, genuiRowSurface, workDetails])
 
   const addImages = (files: readonly File[]): void => {
     try { draft.add(files, info?.images?.available === true ? info.images.limits : undefined); setError(null) }
@@ -1309,6 +1923,7 @@ export function SideChatView(props: {
       void fetchThread(childId)
       void fetchInfo(childId)
     } catch (cause) {
+      draft.abandon(attempt)
       if (attempt.owner.active) setError(cause instanceof SidebarApiError && cause.code === 'network'
         ? t('sideChatSendUncertain')
         : cause instanceof Error ? cause.message : String(cause))
@@ -1445,12 +2060,70 @@ export function SideChatView(props: {
           onReconnect={() => { ctx.connection?.reconnect() }}
         />
       )}
-      <div ref={transcriptRef} className={css.sidechatScroll} data-genui-surface="dsh-better-sidebar/sidechat">
+      {/* The transcript box: the scroller PLUS the floating controls that must
+          not scroll with it. It is the positioning context for the
+          back-to-latest pill, so the pill is anchored to the edge of the
+          transcript (never to a magic offset), and the composer stays a sibling
+          below — the pill can never cover the input. */}
+      <div className={css.sidechatTranscript}>
+        <div
+          ref={transcriptRef}
+          className={css.sidechatScroll}
+          data-genui-surface="dsh-better-sidebar/sidechat"
+          onScroll={handleTranscriptScroll}
+        >
+        {/* The route caps a very long log at its newest events, so this
+            transcript may OPEN mid-history: say so above the first row instead
+            of letting the first answer read like the thread's beginning. It is
+            chrome, not conversation — no row hook, no row count. */}
+        {cacheRef.current.truncated && (
+          <div className={css.sidechatTruncatedNotice} data-sidechat-truncated-notice="">
+            {t('sideChatTruncatedNotice')}
+          </div>
+        )}
+        {/* Where this thread forked off the parent conversation: the cut the
+            route performs is otherwise invisible, so the reader could not tell
+            which main-pane question they were asking. Chrome, not
+            conversation — no row hook, no row count. */}
+        {forkPoint !== undefined && (
+          <ForkBlock
+            user={forkPoint.user?.text}
+            answer={forkPoint.assistant?.text}
+            labels={rowLabels}
+            rewrite={rewriteChatText}
+          />
+        )}
+        {/* The hidden head of the thread: the spacer holds the scroll space the
+            unmounted rows used to occupy (their DECLARED height — jsdom has no
+            layout, and a revealed row gives back exactly the height it frees),
+            and the control mounts one more step of history at a time. Neither
+            is rendered while the whole transcript is mounted, so a short thread
+            has no chrome at all. */}
+        {hiddenRowCount > 0 && (
+          <>
+            <div
+              className={css.sidechatSpacer}
+              data-sidechat-spacer=""
+              aria-hidden="true"
+              style={{ height: `${hiddenRowCount * TRANSCRIPT_HIDDEN_ROW_PX}px` }}
+            />
+            <button
+              type="button"
+              className={css.sidechatRevealEarlier}
+              data-sidechat-reveal-earlier=""
+              onClick={revealEarlier}
+            >
+              {t('sideChatRevealEarlier', { hidden: hiddenRowCount })}
+            </button>
+          </>
+        )}
         {/* The host delegate is what makes a local markdown link in a row
             clickable at all (see use-markdown-surface), scoped to this
-            transcript so nothing outside it is claimed. */}
-        <MarkdownDelegateProvider openFile={openChatFile}>
-          {rows.map(row => renderRow(row, rowLabels, rowSurface, genuiRowSurface))}
+            transcript so nothing outside it is claimed. `fileImages` is the
+            preview vocabulary that turns an image into the host's lightbox
+            button; `resolve` declines (see the view's `fileImages` memo). */}
+        <MarkdownDelegateProvider openFile={openChatFile} fileImages={fileImages}>
+          {rowNodes}
           {/* The unclaimed inbox: accepted messages whose claim has not logged
               them yet. The same bubble surface (and markdown pass) as a
               durable user row, plus the state word and the dequeue button. */}
@@ -1490,6 +2163,23 @@ export function SideChatView(props: {
             </div>
           )}
         </MarkdownDelegateProvider>
+        </div>
+        {/* Only while the reader is AWAY from the tail: one tap returns to the
+            newest content and resumes following. It is not rendered at the tail
+            (nothing to return to). The slot is zero-height, so it never takes
+            space from the transcript. */}
+        {!followingTail && (
+          <div className={css.sidechatToLatestSlot}>
+            <button
+              type="button"
+              className={css.sidechatToLatest}
+              data-sidechat-to-bottom=""
+              onClick={returnToLatest}
+            >
+              {t('sideChatToLatest')}
+            </button>
+          </div>
+        )}
       </div>
       {showThinking && (
         <div className={css.sidechatStatus}>
@@ -1525,7 +2215,12 @@ export function SideChatView(props: {
           rows={1}
           onChange={event => {
             setComposer(event.target.value)
-            growComposer()
+            scheduleComposerGrow()
+          }}
+          onCompositionStart={() => { composingRef.current = true }}
+          onCompositionEnd={() => {
+            composingRef.current = false
+            composingUntilRef.current = Date.now() + COMPOSITION_END_GRACE_MS
           }}
           onPaste={event => {
             const files = Array.from(event.clipboardData.items).filter(item => item.kind === 'file' && item.type.startsWith('image/')).flatMap(item => { const file = item.getAsFile(); return file === null ? [] : [file] })
@@ -1535,9 +2230,62 @@ export function SideChatView(props: {
             addImages(files)
           }}
           onKeyDown={event => {
-            if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return
-            event.preventDefault()
-            void handleSend()
+            // The submit contract (and the guards that outrank it) live in
+            // composer-keymap.ts; the legacy signals and the modifier queries
+            // only exist on the native event.
+            const native = event.nativeEvent
+            const gesture = {
+              key: event.key,
+              shiftKey: event.shiftKey,
+              metaKey: event.metaKey,
+              ctrlKey: event.ctrlKey,
+              altKey: native.altKey,
+              altGraph: native.getModifierState('AltGraph'),
+              repeat: native.repeat,
+              isComposing: native.isComposing,
+              keyCode: native.keyCode,
+            }
+            // A LIVE composition owns every key outright: no submit and no
+            // consumption, not even when the event also carries Alt or is a
+            // held-key repeat — those belong to the IME's candidate picker.
+            // (The composition-CLOSING window is a different case: see below.)
+            const phase = compositionPhase(gesture, composingRef.current, composingUntilRef.current)
+            if (phase === 'active') return
+            if (isSubmitGesture(
+              gesture,
+              submitKey,
+              composingRef.current,
+              composingUntilRef.current,
+            )) {
+              event.preventDefault()
+              // A held key repeats the gesture it first pressed: the repeat is
+              // consumed (no stacking newlines) but only the first press sends.
+              if (gesture.repeat !== true) void handleSend()
+              return
+            }
+            if (gesture.key !== 'Enter') return
+            // A shortcut / layout chord (Alt, AltGraph, Ctrl+Meta, Shift with
+            // Ctrl/Meta) is not a composer gesture: it must neither send nor
+            // leave a newline behind. The host keymap
+            // stops its fallback line break at CRITICAL priority for exactly
+            // these keys; a plain textarea has only the one lever. A repeat is
+            // NOT handled here — it is judged by the gesture it repeats, so a
+            // repeated newline gesture (Shift+Enter, or the bare Enter of
+            // 'mod-enter' mode) keeps its native line break.
+            if (isGuardedKeydown(gesture)) {
+              event.preventDefault()
+              return
+            }
+            // Safari delivers the composition-closing Enter AFTER
+            // `compositionend`, i.e. with no composition flag: the guard
+            // already refused to submit, and the textarea would now insert a
+            // line break on its own. The host's composer "neither submits nor
+            // breaks the line" for that key, so consume it. A LIVE composition
+            // key is left untouched (the IME owns it — that case returned
+            // above), and Shift+Enter keeps its native newline in every state.
+            if (phase === 'closing' && !gesture.shiftKey) {
+              event.preventDefault()
+            }
           }}
         />
         <div className={css.sidechatComposerBar}>
@@ -1633,10 +2381,16 @@ export function SideChatView(props: {
               dense
             />
           </ComposerTip>
-          {running ? (
+          {/* Stopping and sending are TWO actions, not one ternary: while a turn
+              runs the reader can still queue a follow-up (the host accepts it
+              into the thread's inbox — the keyboard path always could), so the
+              send action stays mounted beside an independent stop control.
+              Their availability is decided per control: the draft only gates
+              sending, and `busy` alone gates both. The stop control exists only
+              while the thread runs. */}
+          {running && (
             <ComposerTip label={t('sideChatCancelTitle')}>
               <button
-                key="stop"
                 type="button"
                 className={css.sidechatSendBtn}
                 onClick={() => void handleCancel()}
@@ -1646,7 +2400,7 @@ export function SideChatView(props: {
                 <IconStopFillRegular />
               </button>
             </ComposerTip>
-          ) : (
+                    )}
             <ComposerTip label={t('sideChatSend')}>
               <button
                 key="send"
@@ -1659,7 +2413,6 @@ export function SideChatView(props: {
                 <IconSendOutlineRegular size={16} />
               </button>
             </ComposerTip>
-          )}
         </div>
       </div>
     </div>

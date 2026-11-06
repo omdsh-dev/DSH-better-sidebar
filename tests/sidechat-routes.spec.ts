@@ -139,7 +139,7 @@ function ev(type: string, seq: number, data: Record<string, unknown> = {}): { ty
 }
 
 describe('sidechat.start', () => {
-  it('creates a sidechat in the current execution directory, not the original header cwd', async () => {
+  it('creates a sidechat at the parent HEADER cwd (the workspace path), while the seed stamp keeps the live cwd', async () => {
     const parent = agent('parent')
     const services = happyServices(parent, agent('child'))
     const get = vi.fn((session: unknown) => {
@@ -148,7 +148,12 @@ describe('sidechat.start', () => {
     })
     const api = buildSidechatApi(ctxWith({ ...services, workingDirectory: { get } }))
     await api['sidechat.start']({ sessionId: 'parent', question: 'current project' })
-    expect(services.create.mock.calls[0]![0]).toMatchObject({ meta: { cwd: '/current-execution-directory' } })
+    // The Host attaches a session to the workspace its HEADER cwd names
+    // (packages/workspace/workspace/src/entity.ts:136), so a live cwd that had
+    // `cd`-ed elsewhere must not become meta.cwd: it made the fork fail with
+    // session/workspace-attach-failed. The live cwd still reaches the child
+    // through the seeded working-directory/change stamp.
+    expect(services.create.mock.calls[0]![0]).toMatchObject({ meta: { cwd: '/p' } })
     expect(get).toHaveBeenCalledOnce()
   })
 
@@ -209,7 +214,9 @@ describe('sidechat.start', () => {
     const child = Session.create(options.sessionId, options.seed, {
       ...options.meta, id: options.sessionId, version: SESSION_FORMAT_VERSION, createdAt: Date.now(), isSeeded: true,
     }, SessionLogOffset(options.inheritedEventCount))
-    expect(child.header.cwd).toBe(current)
+    // The attach cwd is the parent HEADER cwd (the workspace path); the STAMP
+    // is what carries the live cwd into the child's projection below.
+    expect(child.header.cwd).toBe(original)
     expect(options.seed.every((event, index) => event.seq === index)).toBe(true)
     expect(child.ownEvents()[0]?.type).toBe('session/end-seed')
     expect(workingDirectory.get(child)).toBe(current)

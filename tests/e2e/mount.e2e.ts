@@ -654,7 +654,11 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
     pane.locator('script'),
     'the embedded <script> must be sanitized away',
   ).toHaveCount(0)
-  const details = pane.locator('details')
+  // Scoped by the authored summary, not by the whole panel: the Side Chat tab
+  // keeps its own <details> controls (and their nested tool/reasoning rows)
+  // mounted in the same column, so a bare `pane.locator('details')` counts
+  // those too.
+  const details = pane.locator('details:has(summary:has-text("Steps"))')
   await expect(details, 'the details run must render as a real element').toHaveCount(1, { timeout: 30_000 })
   await expect(details.locator('summary'), 'the details summary must render').toHaveCount(1)
   // Direct child, not merely a descendant: HTML only honors a summary there,

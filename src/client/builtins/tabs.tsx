@@ -19,6 +19,7 @@
  * own. See docs/plans/2026-10-05-bottom-terminal-tab.md.
  */
 import { IconCodeOutlineRegular, IconPanelLeftOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
+import { useCallback, useSyncExternalStore } from 'react'
 import {
   changesTabIcon, filesTabIcon, sidechatTabIcon, tasksTabIcon, terminalTabIcon,
 } from './tab-icons.tsx'
@@ -34,8 +35,10 @@ import { consumeSidechatSeed, SideChatView, sidechatThreadIdOf } from '../SideCh
 import { LazyTerminalBottom } from '../terminal-lazy.tsx'
 import { INSTANCE_FIELD, closeBottomTerminal, webTerminals } from '../terminal-client.ts'
 import { api } from '../api.ts'
+import { sidechatSubmitKeyOf } from '../prefs.ts'
+import { SIDECHAT_SUBMIT_KEY_DEFAULT, SIDECHAT_SUBMIT_KEY_SETTING } from '../../prefs-shared.ts'
 import type { Context } from '../../context-types.ts'
-import type { TabDescriptor } from '../service.ts'
+import type { TabComponentProps, TabDescriptor } from '../service.ts'
 
 /** Host session surface (`ctx.get('uiWorkspace')`). Archive is optional. */
 interface ArchiveSessionFace {
@@ -67,6 +70,35 @@ function releaseSidechat(ctx: Context, threadId: string): void {
       dispose()
     }
   })()
+}
+
+/**
+ * The side-chat tab body.
+ *
+ * The composer's submit gesture is a user preference, so it must not be frozen
+ * at mount: this body subscribes to the sidebar store's prefs snapshot (its
+ * identity only changes on a settings write) and hands the resolved mode to
+ * the view, which makes flipping the setting in the Side card settings page
+ * reach an ALREADY MOUNTED tab. The value itself lives in the side-chat
+ * feature's own plugin-owned settings blob (see `prefs-shared.ts`).
+ * @param props - the composed tab props (ctx / store / scope / tab / visible).
+ * @returns the side-chat view bound to the live submit-key preference.
+ */
+function SideChatTab(props: TabComponentProps) {
+  const { ctx, store, scope, tab, visible } = props
+  const prefs = useSyncExternalStore(
+    useCallback((notify: () => void) => store.subscribe(notify), [store]),
+    useCallback(() => store.getSnapshot().prefs, [store]),
+  )
+  return (
+    <SideChatView
+      ctx={ctx}
+      scope={scope}
+      tab={tab}
+      visible={visible}
+      submitKey={sidechatSubmitKeyOf(prefs)}
+    />
+  )
 }
 
 /** The 6 built-in tab descriptors (the host owns the right-Sidebar terminal and browser). */
@@ -283,9 +315,35 @@ export function builtinTabs(ctx: Context): readonly TabDescriptor[] {
         const threadId = sidechatThreadIdOf(tab)
         if (threadId !== undefined) releaseSidechat(ctx, threadId)
       },
-      component: ({ ctx, scope, tab, visible }) => (
-        <SideChatView ctx={ctx} scope={scope} tab={tab} visible={visible} />
-      ),
+      // The composer's submit gesture (Enter vs Cmd/Ctrl+Enter) is a
+      // plugin-owned setting: a select row under the side-chat card's gear in
+      // the Side card settings page, persisted in
+      // `pluginSettings.sidechat` — the feature-scoped seam, so no host
+      // PrefsSchema field is involved. `SideChatTab` reads it live, and
+      // `defaultValue` keeps the row honest before the first write (a fresh
+      // document has no blob, while the composer already sends on Enter).
+      settings: {
+        pluginToggles: [{
+          key: SIDECHAT_SUBMIT_KEY_SETTING,
+          type: 'select',
+          defaultValue: SIDECHAT_SUBMIT_KEY_DEFAULT,
+          title: () => t('settingsSidechatSubmitKeyTitle'),
+          desc: () => t('settingsSidechatSubmitKeyDesc'),
+          options: [
+            {
+              value: 'enter',
+              title: () => t('settingsSidechatSubmitEnter'),
+              desc: () => t('settingsSidechatSubmitEnterDesc'),
+            },
+            {
+              value: 'mod-enter',
+              title: () => t('settingsSidechatSubmitModEnter'),
+              desc: () => t('settingsSidechatSubmitModEnterDesc'),
+            },
+          ],
+        }],
+      },
+      component: SideChatTab,
     },
     {
       // The bottom workbench's terminal (#774). NOT the host's right-Sidebar

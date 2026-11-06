@@ -31,6 +31,13 @@ export {
 export interface SidebarConfig {
   /** Explorer row bound of one level. */
   listLimit?: number
+  /** Budget of ONE side-thread creation, milliseconds.
+   *
+   *  Creating a thread seeds it with the parent's whole log, so a large parent
+   *  makes this expensive and the old hard-coded 15 s aborted a legitimate
+   *  creation ("thread creation failed: The operation was aborted due to
+   *  timeout"). A deployment raises it when its histories are large. */
+  createTimeoutMs?: number
 }
 
 /**
@@ -50,11 +57,17 @@ export interface SidebarConfig {
  */
 const LimitsSchema = z.object({
   listLimit: z.number().step(1).min(1).default(1000),
+  // Five seconds is below any real creation and ten minutes is the point where
+  // a stuck creation is better cancelled than waited on; an out-of-range or
+  // fractional value is a CONFIG ERROR, never a silent clamp.
+  createTimeoutMs: z.number().step(1).min(5_000).max(600_000).default(120_000),
 })
 
 /** Fully defaulted sidebar host settings. */
 export interface ResolvedSidebarConfig {
   listLimit: number
+  /** Budget of ONE side-thread creation, milliseconds. */
+  createTimeoutMs: number
 }
 
 /**
@@ -66,6 +79,7 @@ export interface ResolvedSidebarConfig {
 export function resolveSidebarConfig(config: SidebarConfig | undefined): ResolvedSidebarConfig {
   return {
     listLimit: config?.listLimit ?? 1000,
+    createTimeoutMs: config?.createTimeoutMs ?? 120_000,
   }
 }
 

@@ -39,7 +39,7 @@ function harness(signal?: AbortSignal) {
     llm: { resolveModelInfo: vi.fn(async (_provider: string, _model: string): Promise<{ inputModalities?: string[] }> => ({ inputModalities: ['text', 'image'] })) },
   }
   const ctx = { get: (key: string) => services[key as keyof typeof services] } as unknown as Context
-  return { ctx, services, agent, inbox, events, api: buildSidechatApi(ctx, undefined, signal), cold: () => { live = false } }
+  return { ctx, services, agent, inbox, events, api: buildSidechatApi(ctx, undefined, undefined, signal), cold: () => { live = false } }
 }
 
 describe('sidechat image admission and owned reads', () => {

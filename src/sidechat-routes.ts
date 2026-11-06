@@ -64,9 +64,12 @@ import {
   type SidechatModelSelection,
   type SidechatPendingInput,
   type SidechatThreadInfo,
+  sidechatForkPoint,
   threadOwnLogEvents,
+  type SidechatForkPoint,
 } from './sidechat-core.ts'
 import type { AssistantLiveBuffer } from './assistant-live.ts'
+import { resolveSidebarConfig, type ResolvedSidebarConfig } from './config.ts'
 import { requireString, SidebarError } from './wire.ts'
 import { readPersistedSession } from './session-store.ts'
 
@@ -132,6 +135,9 @@ export interface SidechatRoutes {
     events: SidechatLogEvent[]
     live: SidechatLiveEvent[]
     pending: SidechatPendingInput[]
+    /** The FIRST pull of a seeded thread also says where it forked off the
+     *  parent conversation (the tail the route cut away). Additive. */
+    fork?: SidechatForkPoint
   }>
   /** Drop one unclaimed inbox message, or the whole queue when `messageId` is
    *  omitted. A cold thread has nothing live to drop and answers `removed: 0`. */
@@ -145,10 +151,6 @@ export interface SidechatRoutes {
    *  composer. */
   'sidechat.model'(payload: unknown): Promise<{ accepted: true; selection: SidechatModelSelection }>
 }
-
-/** Timeout guarding the create call (the registry detaches it before the
- *  handle becomes visible, so the child is never cancelled by it). */
-const CREATE_TIMEOUT_MS = 15_000
 
 /** Head cap of one `sidechat.events` response (the ceiling the old
  *  client-side walk could load: 40 pages × 200 events). A pathological
@@ -276,6 +278,46 @@ function admitFirstContact(agent: Agent, injectionText: string, content: string 
 function liveThreadAgent(ctx: Context, childId: string): Agent | undefined {
   const agents = ctx.get('agents') as { get(id: string): Agent | undefined } | undefined
   return agents?.get(childId)
+}
+
+/**
+ * The host's session-controller face, read STRUCTURALLY (the plugin never
+ * imports host types): `resolveAgent` resumes a stored session into a live
+ * agent, or reports a Session-domain failure instead of throwing.
+ */
+interface SessionControllerFace {
+  resolveAgent?: (sessionId: string) => Promise<{ agent?: unknown; error?: unknown } | undefined>
+}
+
+/**
+ * The parent agent a side thread inherits from.
+ *
+ * A stored conversation opened from the sidebar has history but no live agent —
+ * no turn has run since the process started — and "absent from the LIVE
+ * registry" is not "not running": the host can resume it, and that is exactly
+ * what the session controller exposes. So the live registry stays the fast path
+ * (and is never second-guessed when it answers), and only a miss asks the
+ * controller. Anything short of `{ agent }` — a composition with no controller,
+ * a resume that throws, or a Session-domain `{ error }` — is reported as "not
+ * running", the failure this path has always produced.
+ * @param ctx - host plugin context.
+ * @param sessionId - the parent session the thread forks from.
+ * @returns the parent agent, or undefined when it cannot be obtained.
+ */
+async function parentAgentOf(ctx: Context, sessionId: string): Promise<Agent | undefined> {
+  const live = liveThreadAgent(ctx, sessionId)
+  if (live !== undefined) return live
+  const controller = ctx.get('sessionController') as SessionControllerFace | undefined
+  const resolve = controller?.resolveAgent
+  if (typeof resolve !== 'function') return undefined
+  try {
+    const resolved = await resolve(sessionId)
+    const agent = resolved?.agent
+    return agent === undefined || agent === null ? undefined : agent as Agent
+  } catch {
+    // A resume failure is not an agent: keep the honest "not running".
+    return undefined
+  }
 }
 
 /**
@@ -639,7 +681,12 @@ async function modelCatalogOf(ctx: Context): Promise<SidechatModelCatalog> {
  *  @param ctx - host plugin context.
  *  @param live - the live assistant stream buffer; absent only in tests that
  *    never exercise streaming (then every `live` response is empty). */
-export function buildSidechatApi(ctx: Context, live?: AssistantLiveBuffer, signal?: AbortSignal): SidechatRoutes {
+export function buildSidechatApi(
+  ctx: Context,
+  live?: AssistantLiveBuffer,
+  resolved: ResolvedSidebarConfig = resolveSidebarConfig(undefined),
+  signal?: AbortSignal,
+): SidechatRoutes {
   const admissions = new Map<string, Set<{ disposed: boolean }>>()
   signal?.addEventListener('abort', () => {
     for (const flight of resuming.get(ctx)?.values() ?? []) flight.cancel()
@@ -649,13 +696,24 @@ export function buildSidechatApi(ctx: Context, live?: AssistantLiveBuffer, signa
       const sessionId = requireString(payload, 'sessionId')
       const rawQuestion = (payload as { question?: unknown }).question
       const question = typeof rawQuestion === 'string' ? rawQuestion.trim() : ''
-      const parent = liveThreadAgent(ctx, sessionId)
+      // The parent may be a COLD stored conversation (opened from the sidebar
+      // after a restart): ask the host to resume it before refusing.
+      const parent = await parentAgentOf(ctx, sessionId)
       if (parent === undefined) {
         throw new SidebarError('sidechat-error', `parent session "${sessionId}" is not running`, 409)
       }
       const parentSession = parent.session
       const workingDirectory = ctx.get('workingDirectory')
-      const parentCwd = workingDirectory?.get(parentSession) ?? parentSession.header.cwd
+      // Two different questions, two different answers. The Host's workspace
+      // attach requires the child's HEADER cwd to EQUAL the workspace path
+      // (packages/workspace/workspace/src/entity.ts), so `meta.cwd` comes from
+      // the parent HEADER. The live cwd — where the reader `cd`-ed to — is
+      // still what the child's tools must run in, and it reaches the child
+      // through the seeded `working-directory/change` stamp below.
+      const headerCwd = parentSession.header.cwd
+      const liveCwd = workingDirectory?.get(parentSession)
+      const attachCwd = headerCwd ?? liveCwd
+      const stampCwd = liveCwd ?? headerCwd
       // The parent's CURRENT model route. agent.options freezes the
       // creation-time deployment default — a composer model switch rides
       // `model/selection` events + the session-local selection and never
@@ -694,13 +752,14 @@ export function buildSidechatApi(ctx: Context, live?: AssistantLiveBuffer, signa
       // A truncated inheritance can end before the parent's last directory
       // change. Header cwd alone cannot win: the host projection replays seed
       // working-directory/change events over it. Stamp the committed directory
-      // at the seed boundary, using the host-owned event rather than refolding
-      // its history or asking set() to enqueue a synthetic user notice.
+      // (the parent's LIVE cwd) at the seed boundary, using the host-owned event
+      // rather than refolding its history or asking set() to enqueue a
+      // synthetic user notice.
       const directorySeed: SeedEvent[] = workingDirectory === undefined ? [] : [{
         type: 'working-directory/change',
         seq: inheritance.seed.length,
         time: Date.now(),
-        data: { cwd: parentCwd },
+        data: { cwd: stampCwd },
       }]
       const descriptorEvent: SeedEvent = {
         type: 'subagent/descriptor',
@@ -735,7 +794,7 @@ export function buildSidechatApi(ctx: Context, live?: AssistantLiveBuffer, signa
       const options: CreateAgentOptions = {
         sessionId: childId,
         meta: {
-          ...(parentCwd === undefined ? {} : { cwd: parentCwd }),
+          ...(attachCwd === undefined ? {} : { cwd: attachCwd }),
           parentSession: parentSession.id,
           isSeeded: true,
           origin: 'subagent',
@@ -751,7 +810,11 @@ export function buildSidechatApi(ctx: Context, live?: AssistantLiveBuffer, signa
         inheritedEventCount: seed.length as SessionLogOffset,
         agentOptions: childAgentOptions,
         setup,
-        signal: AbortSignal.timeout(CREATE_TIMEOUT_MS),
+        // Budget of the create call, from the deployment's own settings: the
+        // seed copies the parent's whole log, so a large parent needs more than
+        // any constant can guess. The registry detaches the handle before it
+        // becomes visible, so the child is never cancelled by this.
+        signal: AbortSignal.timeout(resolved.createTimeoutMs),
       }
       const agents = ctx.get('agents') as { create(options: CreateAgentOptions): Promise<{ agent: Agent; dispose(): Promise<void> }> } | undefined
       if (agents?.create === undefined) {
@@ -924,12 +987,29 @@ export function buildSidechatApi(ctx: Context, live?: AssistantLiveBuffer, signa
       }
       const events = await threadLogEvents(ctx, childId)
       const own = threadOwnLogEvents(events)
+      // The fork point is read from the FULL log (the parent prefix is what the
+      // cut removed); a DELTA pull never carries it — the client caches it from
+      // the first pull only.
+      const fork = rawAfter === undefined ? sidechatForkPoint(events) : undefined
       const fresh = rawAfter === undefined ? own : own.filter(event => event.seq > rawAfter)
       const tailSeq = own.at(-1)?.seq ?? -1
       const agent = liveThreadAgent(ctx, childId)
+      // The cap keeps the NEWEST events; when it fires the response is a TAIL
+      // slice of the thread's own log, and the client cannot otherwise tell
+      // that from "this is where the thread begins". The flag is additive: an
+      // older client ignores it and parses `events`/`live`/`pending` as before.
+      //
+      // `truncated` describes the THREAD, not this response: it is true when the
+      // thread's own log already exceeds the cap, i.e. the reader is looking at
+      // an incomplete history. Keying it off the request's own slice would let a
+      // small poll against an over-cap log report "complete" (and an over-cap
+      // poll report a cut head it did not have).
+      const capped = fresh.length > EVENTS_CAP
       const cold = agent === undefined ? coldPendingMessages(events) : undefined
       return {
-        events: fresh.length > EVENTS_CAP ? fresh.slice(fresh.length - EVENTS_CAP) : fresh,
+        events: capped ? fresh.slice(fresh.length - EVENTS_CAP) : fresh,
+        truncated: own.length > EVENTS_CAP,
+        ...(fork === undefined ? {} : { fork }),
         // The live rows ride every poll: they are process-local, so there is
         // no durable seq to page them by. An idle thread has none.
         live: liveEventsOf(live?.chunksFor(childId) ?? [], tailSeq),

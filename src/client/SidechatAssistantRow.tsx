@@ -1,7 +1,7 @@
 /** Keep the host Markdown renderer as the default; a registered consumer may
  * enhance only this real row root while it is visible and durably identified. */
 import { useLayoutEffect, useRef } from 'react'
-import { MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
+import { MarkdownText, type MarkdownFileMentions } from '@deepseek-ai/dsh-client-ui-primitives'
 import { markdownTextProps, type MarkdownCopyLabels } from './markdown-labels.tsx'
 import { attachSidechatSurface, isSidechatSurfaceIdentity } from './sidechat-surface.ts'
 import type { SidechatTranscriptRow } from './sidechat-transcript.ts'
@@ -20,10 +20,13 @@ export function SidechatAssistantRow(props: {
   /** The view's row-level prose pass (image destinations first, then local
    *  links) — takes the ROW so an unchanged row reuses its cached rewrite. */
   rewrite: (row: Extract<SidechatTranscriptRow, { text: string }>) => string
+  /** The thread's inline-code file-mention vocabulary (see
+   *  sidechat-mentions.ts); absent leaves every token inert code. */
+  fileMentions?: MarkdownFileMentions | undefined
   surface: SidechatRowSurfaceBinding
 }): React.ReactNode {
   const rootRef = useRef<HTMLDivElement | null>(null)
-  const { row, labels, rewrite, surface } = props
+  const { row, labels, rewrite, fileMentions, surface } = props
   const { service, threadId, visible, sendPrompt } = surface
   const renderedText = rewrite(row)
   useLayoutEffect(() => {
@@ -47,7 +50,7 @@ export function SidechatAssistantRow(props: {
           instead of restarting it; only the durable (settled) message is
           the final parse. It rides the row's own flag so a superseded
           live row never claims to be settled. */}
-      <MarkdownText {...markdownTextProps(renderedText, labels)} streaming={!row.settled} />
+      <MarkdownText {...markdownTextProps(renderedText, labels, fileMentions)} streaming={!row.settled} />
     </div>
   )
 }

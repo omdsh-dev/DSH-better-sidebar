@@ -5,6 +5,7 @@ import { act } from 'react-dom/test-utils'
 import { createElement } from 'react'
 import { installSidechatHarness, type SidechatHarness } from './helpers/sidechat-view-harness.tsx'
 import { SideChatView } from '../src/client/SideChatView.tsx'
+import { clearSavedSidechatDrafts } from '../src/client/sidechat-draft.ts'
 import type { Context } from '../src/context-types.ts'
 import type { RenderedRoot } from './test-utils.ts'
 
@@ -20,6 +21,7 @@ const revokeUrl = vi.fn()
 const response = (value: unknown) => ({ ok: true, status: 200, json: async () => ({ ok: true, value }) }) as Response
 const image = (name = 'shot.png') => new File(['abc'], name, { type: 'image/png' })
 
+beforeEach(() => { clearSavedSidechatDrafts() })
 beforeEach(() => {
   calls = []; imageReads = []; hold = undefined; rejectSend = false; createUrl.mockClear(); revokeUrl.mockClear()
   harness = installSidechatHarness({ info: { live: true, images: { available: true, limits } } })
