@@ -814,6 +814,12 @@ export function TextEditor(props: FileViewerProps) {
     // external editor). `null` = the file did not exist when loaded.
     api.fsWrite(scope, path, text, mtimeRef.current ?? null).then((result) => {
       savingRef.current = false
+      // A file switch during the write destroys `view` and re-seats viewRef on
+      // the NEW document. This result then belongs to the OLD file: write
+      // nothing else, or A's text / save state / mtime leak into B. The save
+      // lock is already released above so B can still save.
+      const liveView = viewRef.current
+      if (liveView === null || liveView !== view) return
       // Adopt the fresh baseline the host reports (absent on a stat failure —
       // keep the old one, the next save just re-checks).
       if (typeof result.mtimeMs === 'number') mtimeRef.current = result.mtimeMs
@@ -821,7 +827,8 @@ export function TextEditor(props: FileViewerProps) {
       setConflict(false)
       // Keystrokes during the write are NOT the bytes on disk: keep the tab
       // dirty and its durable backup, or the next close/quit drops them.
-      const live = view.state.doc.toString()
+      // Read the LIVE view, never the closure's possibly-destroyed one.
+      const live = liveView.state.doc.toString()
       if (live !== text) {
         setDraft(live)
         setSaveState('idle')
@@ -839,6 +846,9 @@ export function TextEditor(props: FileViewerProps) {
       setGitRevision(value => value + 1)
     }).catch((error: unknown) => {
       savingRef.current = false
+      // Same expiry guard as the success path: an error from the OLD file must
+      // not raise B's conflict banner or mark B's save failed.
+      if (viewRef.current !== view) return
       if (error instanceof SidebarApiError && error.code === 'fs-conflict') {
         setConflict(true)
         setSaveState('idle')

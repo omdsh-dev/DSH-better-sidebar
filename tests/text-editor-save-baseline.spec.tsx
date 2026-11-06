@@ -17,6 +17,13 @@
  * was sent are NOT the bytes on disk, so the tab must stay dirty and keep its
  * durable backup instead of declaring itself saved (which would let the next
  * close/quit drop those edits silently).
+ *
+ * The fourth case is the cross-file save race (#3): a save sent for file A is
+ * still in flight when the viewer switches to file B — the [content, path]
+ * effect destroys A's view and points viewRef at B's. An expired result may
+ * only release the save lock (and adopt the server's mtime): it must not write
+ * A's text / save state into B's draft, while typing during a save of the
+ * CURRENT file still keeps that tab dirty (the third case above).
  */
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -49,6 +56,10 @@ vi.mock('../src/client/editor-draft-backup.ts', async (importOriginal) => {
 
 const CONTENT = 'const a = 1\n'
 const NEXT_CONTENT = 'const a = 2\n'
+// Distinct markdown headings: the preview renders whichever document `draft`
+// currently holds, so a leaked draft from file A is visible in the DOM.
+const A_CONTENT = '# A-source-heading\n'
+const B_CONTENT = '# B-clean-heading\n'
 
 function viewerProps(overrides: Partial<FileViewerProps> = {}): FileViewerProps {
   return {
@@ -200,6 +211,86 @@ describe('TextEditor save baseline (#1059)', () => {
       await act(async () => { await Promise.resolve() })
       expect(fsWrite.mock.calls[1]![2]).toBe('// typed during save\n// first\n' + CONTENT)
       expect(fsWrite.mock.calls[1]![3]).toBe(999)
+    } finally {
+      editor.unmount()
+    }
+  })
+
+  it('lets an in-flight save from the previous file expire without touching the new file', async () => {
+    let finish: ((value: { ok: true; mtimeMs: number }) => void) | undefined
+    fsWrite.mockImplementation(() => new Promise<{ ok: true; mtimeMs: number }>((resolve) => { finish = resolve }))
+    const editor = mountEditor()
+    try {
+      clearDraftBackup.mockClear()
+      const view = editor.view()
+      type(view, '// first\n')
+      await act(async () => { editor.controls().save() })
+      expect(editor.state().saveState).toBe('saving')
+      // A genuinely different document: the file-switch effect destroys the
+      // view the save captured and re-seats a clean one for NEXT_CONTENT.
+      editor.rerender({ content: NEXT_CONTENT, mtimeMs: 400 })
+      expect(editor.view().state.doc.toString()).toBe(NEXT_CONTENT)
+      expect(editor.state()).toMatchObject({ mode: 'preview', dirty: false, saveState: 'idle' })
+      clearDraftBackup.mockClear()
+      await act(async () => {
+        finish?.({ ok: true, mtimeMs: 999 })
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+      // The result belongs to A: it must not declare B saved, drop B's
+      // durable backup, or move B's dirty/draft state.
+      expect(editor.state()).toMatchObject({ dirty: false, saveState: 'idle' })
+      expect(clearDraftBackup).not.toHaveBeenCalled()
+      // The save lock was released, so B can still save normally.
+      fsWrite.mockResolvedValue({ ok: true, mtimeMs: 1000 })
+      await act(async () => { editor.controls().save() })
+      await act(async () => { await Promise.resolve() })
+      expect(fsWrite).toHaveBeenCalledTimes(2)
+      expect(fsWrite.mock.calls[1]![2]).toBe(NEXT_CONTENT)
+    } finally {
+      editor.unmount()
+    }
+  })
+
+  it('does not publish the old file text as the new file draft when a save expires', async () => {
+    let finish: ((value: { ok: true; mtimeMs: number }) => void) | undefined
+    fsWrite.mockImplementation(() => new Promise<{ ok: true; mtimeMs: number }>((resolve) => { finish = resolve }))
+    const editor = mountEditor({
+      viewerId: 'markdown', path: '/p/a.md', title: 'a.md',
+      content: A_CONTENT, mtimeMs: 100,
+    })
+    try {
+      clearDraftBackup.mockClear()
+      act(() => { editor.controls().setMode('edit') })
+      const view = editor.view()
+      type(view, 'LEAK-FROM-A\n')
+      await act(async () => { editor.controls().save() })
+      expect(editor.state().saveState).toBe('saving')
+      // More keystrokes while the write is in flight: the old view's live
+      // document no longer equals the bytes that were sent, which is the
+      // branch that used to call setDraft(live).
+      type(view, 'MORE-FROM-A\n')
+      editor.rerender({ content: B_CONTENT, mtimeMs: 400 })
+      expect(editor.view().state.doc.toString()).toBe(B_CONTENT)
+      expect(editor.container.textContent).toContain('B-clean-heading')
+      expect(editor.state()).toMatchObject({ mode: 'preview', dirty: false, saveState: 'idle' })
+      clearDraftBackup.mockClear()
+      await act(async () => {
+        finish?.({ ok: true, mtimeMs: 999 })
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+      // The preview still renders B's own content, not A's leaked text.
+      expect(editor.container.textContent).toContain('B-clean-heading')
+      expect(editor.container.textContent).not.toContain('MORE-FROM-A')
+      expect(editor.state()).toMatchObject({ dirty: false, saveState: 'idle' })
+      expect(clearDraftBackup).not.toHaveBeenCalled()
+      // The save lock was released, so B can still save normally.
+      fsWrite.mockResolvedValue({ ok: true, mtimeMs: 1000 })
+      await act(async () => { editor.controls().save() })
+      await act(async () => { await Promise.resolve() })
+      expect(fsWrite).toHaveBeenCalledTimes(2)
+      expect(fsWrite.mock.calls[1]![2]).toBe(B_CONTENT)
     } finally {
       editor.unmount()
     }
