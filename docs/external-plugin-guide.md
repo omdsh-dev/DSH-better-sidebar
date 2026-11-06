@@ -746,6 +746,9 @@ interface BetterSidebarService {
   registerFileIcon(descriptor: FileIconDescriptor): () => void
   /** 往文件树行菜单加一项（v0.31.0+，features 含 'fileActions'）；返回 disposer */
   registerFileAction(descriptor: FileActionDescriptor): () => void
+  /** 编辑器头部的外部按钮（§7.4） */
+  registerTabAction(descriptor: TabActionDescriptor): () => void
+  getTabActions(): readonly TabActionDescriptor[]
   /** 当前已注册的 tab 描述符快照（同步，供 useSyncExternalStore 用；含被设置页禁用的类型） */
   getTabs(): readonly TabDescriptor[]
   /** 当前已注册的 file viewer 描述符快照（含被设置页禁用的 viewer） */
@@ -1158,6 +1161,78 @@ if (ctx.betterSidebar.features.includes('fileActions')) {
 
 - **树不替你做确认**。危险动作（覆盖、删除、超限上传）的二次确认在 `run` 里自己做。
 - **宿主路由的路径由你负责校验**。`path` 是树给的绝对路径，安全边界（是否在工作区内、大小限制）不在这层——见 §10 的平台约束。
+
+---
+
+### 7.4 编辑器头部动作（tabActions，v0.32.0+）
+
+文件 tab 的头部原本只有插件自己的按钮（预览 / 编辑 / 保存 / 刷新 / 文件树）。`registerTabAction` 让外部插件在刷新与文件树按钮右侧再加自己的按钮——**同样只管入口，不管动作**：头部不替你上传或解析任何东西，它只把 tab 的事实交给你、把你的失败原样显示出来。
+
+为什么需要它：宿主的 `sidebar.right.tab.document.actions` 插槽属于**宿主自己的**文档预览面。本插件用 `editor` / `code` 类型接管了 `dsh-resource://file/**`，文件不再进宿主的预览，那个插槽也就没有人渲染了——「上传到云端」「存到云盘」「在 App 中打开」这类按钮会整体消失。要让它们在这一面继续存在，就得有这一面的扩展点。
+
+```ts
+interface TabActionDescriptor {
+  /** 唯一 id（'my-plugin:upload'）；重复注册同一个 id 会抛错 */
+  id: string
+  /** 按钮文案（接受 thunk）。空串 = 只画图标 */
+  label: string | (() => string)
+  /** tooltip / 无障碍名；缺省用 label */
+  title?: string | (() => string)
+  /** 按钮图标；`(size) => ReactNode` 形式会收到尺寸 */
+  icon?: ReactNode | ((size: number) => ReactNode)
+  /** 外部动作之间的排序（升序，默认 0）；内置按钮不受影响 */
+  order?: number
+  /** 只对部分 tab 出现；每次头部渲染调一次，必须廉价且无副作用。
+   *  抛错 = 该注册自己隐藏，不会打断头部 */
+  when?: (context: Omit<TabActionContext, 'fail'>) => boolean
+  /** 真正干活。抛错或 reject 会以 error.message 落进编辑器上方的错误条；
+   *  resolve 则静默（成功提示由注册方自己给）。同一 (id, tabId) 在飞行中
+   *  的重复点击会被忽略 */
+  run: (context: TabActionContext) => void | Promise<void>
+}
+
+/** `when` / `run` 看到的 tab 事实 */
+interface TabActionContext {
+  tabId: string
+  tabType: string        // 'editor' / 'terminal' / …
+  sessionId: string
+  path: string           // 文件 tab 的路径；无路径的 Files 窗口是 ''
+  isDir: boolean
+  title: string
+  fail(message: string): void   // 仅 `run` 有
+}
+```
+
+**用法**（把同一份上传动作同时挂到文件树行菜单和编辑器头部）：
+
+```ts
+if (ctx.betterSidebar.features.includes('tabActions')) {
+  ctx.effect(() =>
+    ctx.betterSidebar.registerTabAction({
+      id: 'my-plugin:upload',
+      label: () => t('uploadToCloud'),
+      icon: size => <IconCloudArrowUp size={size} />,
+      order: 10,
+      when: tab => tab.path !== '' && !tab.isDir,
+      run: async ({ path, fail }) => {
+        const answer = await fetch('/my-plugin/api/upload', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ path }),
+        })
+        if (!answer.ok) fail(await answer.text())
+      },
+    })
+  )
+}
+```
+
+**渲染位置**：编辑器头部最右侧——保存状态、刷新、文件树开关之后，`order` 升序（同序按注册序）。有 `label` 的按钮用与「预览 / 编辑」一致的文本按钮样式，空 `label` 用图标按钮样式。头部只在文件 tab 上渲染，所以无路径的 Files 窗口不会被塞进一排按钮（`when` 仍会看到 `path: ''`）。
+
+**两条约定**：
+
+- **头部不替你做确认**。危险动作的二次确认在 `run` 里自己做。
+- **`path` 的安全边界由你负责**。头部给的是 tab 的路径原文，是否在工作区内、大小限制如何，不在这层——见 §10 的平台约束。
 
 ---
 
