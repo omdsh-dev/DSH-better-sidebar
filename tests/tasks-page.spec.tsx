@@ -27,7 +27,6 @@ import type {
   SidebarSessionSummary,
   SidebarSubagentAddress,
   SidebarSubagentCatalogEntry,
-  SidebarTeamMemberProjection,
   SidebarTeamProjection,
   SidebarTeamTaskView,
 } from '../src/context-types.ts'
@@ -175,6 +174,8 @@ function jsonError(status: number, code: string, message: string): Response {
 
 /** The Lead Session's `agentTeam` projection the board reads (undefined = none). */
 let teamProjection: SidebarTeamProjection | undefined
+/** Agent names the current test's catalog rows carry (see {@link withTeam}). */
+let catalogNames: string[] = []
 const teamMutations: Array<{ method: string; body: Record<string, unknown> }> = []
 const fetchedMethods: string[] = []
 /** The `subagents.live` payload the stub answers with (session id → live view). */
@@ -282,7 +283,10 @@ function snapshotWithChildren(count: number): SidebarSessionList {
   for (let index = 0; index < count; index += 1) {
     const id = `child-${index}`
     byId[id] = { id, displayTitle: id, origin: 'subagent', parentId: 'root', running: false }
-    entries.push({ id, createdAt: 1_000 + index, mode: 'one-shot', label: `子代理 ${index}` })
+    entries.push({
+      id, createdAt: 1_000 + index, mode: 'one-shot', label: `子代理 ${index}`,
+      name: catalogNames[index],
+    })
     projectionsBySession[id] = { values: { subagentCatalog: [] }, state: 'ready', error: null }
   }
   projectionsBySession.root = {
@@ -518,23 +522,25 @@ describe('Tasks page interactions', () => {
 })
 
 /**
- * The Lead Session's projection for one test run: members + tasks, or absent
- * (`withTeam(null)`) when the tree leads no team. A task omitted from `tasks`
- * is not on the board at all.
+ * The Lead Session's projection for one test run: the mode flag plus tasks, or
+ * absent (`withTeam(null)`) when the tree leads no team. The roster is NOT part
+ * of that value — members are the Lead's `subagentCatalog` rows — so a test
+ * that needs NAMED members pins them with `names`, which the snapshots below
+ * write onto those rows. A task omitted from `tasks` is not on the board at all.
  */
 function withTeam(input: {
-  members?: SidebarTeamMemberProjection[]
+  enabled?: boolean
   tasks?: SidebarTeamTaskView[]
+  names?: readonly string[]
 } | null = {}): void {
   if (input === null) {
     teamProjection = undefined
+    catalogNames = []
     return
   }
+  catalogNames = [...(input.names ?? [])]
   teamProjection = {
-    members: input.members ?? [
-      { id: 'root', name: 'lead', role: 'lead', phase: 'active' },
-      { id: 'child-0', name: 'writer', role: 'teammate', phase: 'active' },
-    ],
+    enabled: input.enabled ?? true,
     tasks: input.tasks ?? [],
   }
 }
@@ -775,7 +781,7 @@ describe('Tasks page graph interactions and team board', () => {
   })
 
   it('shows the team board without any click when the root leads a team', async () => {
-    withTeam({ tasks: [teamTask()] })
+    withTeam({ names: ['writer'], tasks: [teamTask()] })
     const store = makeStore(snapshotWithChildren(1))
     const { container, unmount } = renderRoot(
       createElement(SubagentView, { sessionId: 'root', active: true, ctx: makeCtx(store) }),
@@ -807,6 +813,7 @@ describe('Tasks page: owned tasks, host-primitive controls, draggable output', (
   /** A board whose two tasks are both owned by the child agent. */
   function teamWithOwnedTask(): void {
     withTeam({
+      names: ['writer'],
       tasks: [
         teamTask({ subject: '收窄卡片与图标化', ownerName: 'writer' }),
         teamTask({
@@ -930,6 +937,7 @@ describe('Tasks page: owned tasks, host-primitive controls, draggable output', (
 describe('Tasks page: the shared task window', () => {
   it('opens from an agent node task line and saves a multi-line edit', async () => {
     withTeam({
+      names: ['writer'],
       tasks: [teamTask({
         revision: 4, description: '第一行\n\n- 第二行', ownerName: 'writer',
       })],
@@ -969,11 +977,7 @@ describe('Tasks page: the shared task window', () => {
 
   it('reassigns the owner straight from the window (CAS on the current revision)', async () => {
     withTeam({
-      members: [
-        { id: 'root', name: 'lead', role: 'lead', phase: 'active' },
-        { id: 'child-0', name: 'writer', role: 'teammate', phase: 'active' },
-        { id: 'child-1', name: 'reviewer', role: 'teammate', phase: 'active' },
-      ],
+      names: ['writer', 'reviewer'],
       tasks: [teamTask({ revision: 7, description: '', status: 'pending', ownerName: 'writer' })],
     })
     const store = makeStore(snapshotWithChildren(2))
@@ -1236,10 +1240,7 @@ describe('Tasks page: the shared task window', () => {
     // of their OWN: the finished work keeps its "✓ N 已完成" badge and the
     // waiting members count themselves on the badge, instead of hiding inside
     // a ✓ count.
-    const mate = (index: number): SidebarTeamMemberProjection => ({
-      id: `child-${index}`, name: `mate-${index}`, role: 'teammate', phase: 'active',
-    })
-    withTeam({ members: [{ id: 'root', name: 'lead', role: 'lead', phase: 'active' }, ...[0, 1, 2].map(mate)] })
+    withTeam()
     const store = makeStore(snapshotWithChildren(3))
     const { container, unmount } = renderRoot(
       createElement(SubagentView, { sessionId: 'root', active: true, ctx: makeCtx(store) }),
@@ -1260,10 +1261,7 @@ describe('Tasks page: the shared task window', () => {
   it('offers a WAITING card its own fold chevron (idle is foldable by hand)', async () => {
     // Below the idle head count nothing folds automatically; each waiting card
     // still carries the chevron, which is what "点击没反应" was about.
-    const mate = (index: number): SidebarTeamMemberProjection => ({
-      id: `child-${index}`, name: `mate-${index}`, role: 'teammate', phase: 'active',
-    })
-    withTeam({ members: [{ id: 'root', name: 'lead', role: 'lead', phase: 'active' }, ...[0, 1].map(mate)] })
+    withTeam()
     const store = makeStore(snapshotWithChildren(2))
     const { container, unmount } = renderRoot(
       createElement(SubagentView, { sessionId: 'root', active: true, ctx: makeCtx(store) }),
@@ -1551,33 +1549,28 @@ describe('Tasks page: the node status line and per-group expansion', () => {
     unmount()
   })
 
-  it('expands ONE aggregate group per click; the cluster still folds the page', async () => {
-    // Two settled subagents (the `done` group) plus three waiting teammates
-    // (the `idle` group): both aggregates exist at once, which is exactly what
-    // makes "one click unfolded everything" observable.
-    const mate = (index: number): SidebarTeamMemberProjection => ({
-      id: `child-${index}`, name: `mate-${index}`, role: 'teammate', phase: 'active',
-    })
-    withTeam({
-      members: [{ id: 'root', name: 'lead', role: 'lead', phase: 'active' }, ...[2, 3, 4].map(mate)],
-    })
+  it('expands the waiting aggregate by one click; the cluster still folds the page', async () => {
+    // Every direct child of the Lead is a team member, and a member reads as
+    // WAITING until its own turn runs — so this tree folds into exactly ONE
+    // group. A `done` group needs finished children that are NOT members, which
+    // the catalog-driven roster cannot express under a single parent; the
+    // team-less tree is the surface that folds finished work.
+    withTeam()
     const store = makeStore(snapshotWithChildren(5))
     const { container, unmount } = renderRoot(
       createElement(SubagentView, { sessionId: 'root', active: true, ctx: makeCtx(store) }),
     )
     await flushJobs()
-    expect(container.querySelector('[data-graph-node="fold:root"]')).not.toBeNull()
     expect(container.querySelector('[data-graph-node="fold:root:idle"]')).not.toBeNull()
+    expect(container.querySelector('[data-graph-node="fold:root"]')).toBeNull()
 
-    // One click on the finished group reveals ITS members only.
+    // One click on the aggregate reveals the members it swallowed.
     await act(async () => {
-      (container.querySelector('[data-graph-node="fold:root"]') as HTMLElement).click()
+      (container.querySelector('[data-graph-node="fold:root:idle"]') as HTMLElement).click()
     })
     expect(container.querySelector('[data-graph-node="child-0"]')).not.toBeNull()
-    expect(container.querySelector('[data-graph-node="child-1"]')).not.toBeNull()
-    expect(container.querySelector('[data-graph-node="fold:root"]')).toBeNull()
-    expect(container.querySelector('[data-graph-node="fold:root:idle"]')).not.toBeNull()
-    expect(container.querySelector('[data-graph-node="child-2"]')).toBeNull()
+    expect(container.querySelector('[data-graph-node="child-2"]')).not.toBeNull()
+    expect(container.querySelector('[data-graph-node="fold:root:idle"]')).toBeNull()
 
     // The cluster keeps the page-level switch: unfolding the page shows every
     // node, and collapsing it re-folds every group — including the one the
@@ -1589,7 +1582,6 @@ describe('Tasks page: the node status line and per-group expansion', () => {
     await act(async () => {
       (container.querySelector('button[aria-label="折叠已完成的节点"]') as HTMLButtonElement).click()
     })
-    expect(container.querySelector('[data-graph-node="fold:root"]')).not.toBeNull()
     expect(container.querySelector('[data-graph-node="fold:root:idle"]')).not.toBeNull()
     expect(container.querySelector('[data-graph-node="child-0"]')).toBeNull()
     unmount()

@@ -26,7 +26,6 @@ import type {
   SidebarSessionSummary,
   SidebarSubagentAddress,
   SidebarSubagentCatalogEntry,
-  SidebarTeamMemberProjection,
   SidebarTeamTaskView,
 } from '../context-types.ts'
 import type { SidebarChildLiveView } from '../context-types.ts'
@@ -72,11 +71,8 @@ export interface TasksAgentNode {
   team?: {
     role: 'lead' | 'teammate'
     name: string
-    /** Durable lifecycle of the roster row (`provisioning | active | failed`). */
-    phase: SidebarTeamMemberProjection['phase']
     /** The member's derived display status (see ./team-projection.ts). */
     status: TeamMemberRow['status']
-    diagnostics: string[]
   }
   /**
    * Tree depth (the root is 0). Drives the card's GROUP COLOUR: every node of
@@ -281,16 +277,11 @@ function foldNode(
 
 /**
  * Map a team member's derived status onto the node display state. The status
- * already folds in the durable phase (./team-projection.ts), so this is a
- * vocabulary translation and nothing more.
+ * already folds in the session's own run bit (./team-projection.ts), so this
+ * is a vocabulary translation and nothing more.
  */
 function teamState(status: TeamMemberRow['status']): TasksNodeState {
-  switch (status) {
-    case 'running': return 'running'
-    case 'provisioning': return 'running'
-    case 'failed': return 'error'
-    case 'idle': return 'idle'
-  }
+  return status === 'running' ? 'running' : 'idle'
 }
 
 /** The workflow member's display state from its outcome (undefined = live). */
@@ -320,6 +311,9 @@ export function buildTasksModel(input: TasksModelInput): TasksNode[] {
   /** Owner display name → node id (the board assigns by member name). */
   const nodeByOwner = new Map<string, string>()
   for (const member of teamMembers) nodeByOwner.set(member.name, member.id)
+  // The Lead's own agent path is the EMPTY string, while its roster name is
+  // `lead`; the board spells the same owner both ways.
+  nodeByOwner.set('', rootId)
   const tasksByNode = new Map<string, TasksNodeTask[]>()
   for (const task of teamTasks) {
     if (task.status === 'deleted' || task.ownerName === undefined) continue
@@ -343,7 +337,7 @@ export function buildTasksModel(input: TasksModelInput): TasksNode[] {
     const member = teamById.get(id)
     return member === undefined
       ? undefined
-      : { role: member.role, name: member.name, phase: member.phase, status: member.status, diagnostics: member.diagnostics }
+      : { role: member.role, name: member.name, status: member.status }
   }
 
   const out: (TasksAgentNode | TasksWorkflowNode)[] = []

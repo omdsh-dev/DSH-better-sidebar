@@ -55,7 +55,7 @@ function run(over: Partial<WorkflowRunView> = {}): WorkflowRunView {
 
 /** A derived roster row (the shape ./team-projection.ts hands the model). */
 function member(over: Partial<TeamMemberRow> = {}): TeamMemberRow {
-  return { id: 'x', name: 'n', role: 'teammate', phase: 'active', status: 'running', diagnostics: [], ...over }
+  return { id: 'x', name: 'n', role: 'teammate', status: 'running', ...over }
 }
 
 /** A base input; override per test. */
@@ -141,21 +141,12 @@ describe('buildTasksModel', () => {
       byId: { root: summary('root'), w: summary('w') },
       teamMembers: [
         member({ id: 'root', name: 'lead', role: 'lead' }),
-        member({ id: 'w', name: 'writer', phase: 'active', status: 'idle' }),
+        member({ id: 'w', name: 'writer', status: 'idle' }),
       ],
     }))
     expect(agents(model).find(node => node.id === 'root')?.team?.role).toBe('lead')
     const w = agents(model).find(node => node.id === 'w')
-    expect(w?.team).toMatchObject({ role: 'teammate', name: 'writer', phase: 'active', status: 'idle' })
-  })
-
-  it('gives a provisioning teammate the running node state', () => {
-    const model = buildTasksModel(input({
-      catalogs: { root: catalog([child('w')]) },
-      byId: { root: summary('root'), w: summary('w') },
-      teamMembers: [member({ id: 'w', phase: 'provisioning', status: 'provisioning' })],
-    }))
-    expect(agents(model).find(node => node.id === 'w')?.state).toBe('running')
+    expect(w?.team).toMatchObject({ role: 'teammate', name: 'writer', status: 'idle' })
   })
 
   it('folds a settled team member when the READER folds it by hand', () => {
@@ -167,13 +158,13 @@ describe('buildTasksModel', () => {
     const model = buildTasksModel(input({
       catalogs: { root: catalog([child('mate'), child('sub')]), sub: catalog([]) },
       byId: { root: summary('root'), mate: summary('mate'), sub: summary('sub') },
-      teamMembers: [member({ id: 'mate', phase: 'failed', status: 'failed' })],
+      teamMembers: [member({ id: 'mate', status: 'idle' })],
       folded: false,
       foldedIds: new Set(['mate', 'sub']),
     }))
-    expect(model.map(node => node.id)).toEqual(['root', 'fold:root'])
-    expect(model.find(node => node.kind === 'fold')).toMatchObject({
-      count: 2, memberIds: ['mate', 'sub'],
+    expect(model.map(node => node.id)).toEqual(['root', 'fold:root', 'fold:root:idle'])
+    expect(model.find(node => node.kind === 'fold' && node.foldKind === 'idle')).toMatchObject({
+      count: 1, memberIds: ['mate'],
     })
   })
 
@@ -181,7 +172,7 @@ describe('buildTasksModel', () => {
     const model = buildTasksModel(input({
       catalogs: { root: catalog([child('mate'), child('sub')]), sub: catalog([]) },
       byId: { root: summary('root'), mate: summary('mate'), sub: summary('sub') },
-      teamMembers: [member({ id: 'mate', phase: 'failed', status: 'failed' })],
+      teamMembers: [member({ id: 'mate', status: 'idle' })],
       folded: true,
     }))
     expect(model.map(node => node.id)).toEqual(['root', 'mate', 'fold:root'])
@@ -191,7 +182,7 @@ describe('buildTasksModel', () => {
     const model = buildTasksModel(input({
       catalogs: { root: catalog([child('mate')]) },
       byId: { root: summary('root'), mate: summary('mate') },
-      teamMembers: [member({ id: 'mate', phase: 'active', status: 'running' })],
+      teamMembers: [member({ id: 'mate', status: 'running' })],
       folded: false,
       foldedIds: new Set(['mate']),
     }))
@@ -303,25 +294,24 @@ describe('buildTasksModel', () => {
   it('keeps the finished and the waiting members in SEPARATE rows', () => {
     const model = buildTasksModel(input({
       catalogs: {
-        root: catalog([child('m1'), child('m2'), child('m3'), child('done-1'), child('failed-1')]),
+        root: catalog([child('m1'), child('m2'), child('m3'), child('done-1')]),
         ...Object.fromEntries(
-          ['m1', 'm2', 'm3', 'done-1', 'failed-1'].map(id => [id, catalog([])]),
+          ['m1', 'm2', 'm3', 'done-1'].map(id => [id, catalog([])]),
         ),
       },
       byId: Object.fromEntries(
-        [['root', summary('root')], ...['m1', 'm2', 'm3', 'done-1', 'failed-1'].map(id => [id, summary(id)])],
+        [['root', summary('root')], ...['m1', 'm2', 'm3', 'done-1'].map(id => [id, summary(id)])],
       ),
       teamMembers: [
         ...['m1', 'm2', 'm3'].map(id => member({ id, name: id, status: 'idle' })),
-        member({ id: 'failed-1', name: 'failed-1', phase: 'failed', status: 'failed' }),
       ],
     }))
     const folders = model.filter(node => node.kind === 'fold')
     expect(folders.map(node => node.id)).toEqual(['fold:root', 'fold:root:idle'])
-    // finished work + the failure, with the failure called out beside the ✓
+    // finished work — a child that is NOT a roster member — in its own row
     expect(folders[0]).toMatchObject({
-      foldKind: 'done', count: 2, doneCount: 1, idleCount: 0, errorCount: 1,
-      memberIds: ['done-1', 'failed-1'],
+      foldKind: 'done', count: 1, doneCount: 1, idleCount: 0, errorCount: 0,
+      memberIds: ['done-1'],
     })
     // …and the waiting members in their own row, which claims no completion
     expect(folders[1]).toMatchObject({
@@ -362,26 +352,26 @@ describe('buildTasksModel', () => {
   })
 
   it('expands ONE group per reader click, leaving the sibling aggregate folded', () => {
-    // Two groups of one parent at once: finished work (`done-1` / `failed-1`)
-    // and three waiting teammates. Opening the finished group must reveal those
-    // two nodes and NOTHING else — the page used to clear every fold it had.
+    // Two groups of one parent at once: finished work (`done-1`, a child that
+    // is NOT a roster member) and three waiting teammates. Opening the finished
+    // group must reveal that node and NOTHING else — the page used to clear
+    // every fold it had.
     const base = input({
       catalogs: {
-        root: catalog([child('m1'), child('m2'), child('m3'), child('done-1'), child('failed-1')]),
+        root: catalog([child('m1'), child('m2'), child('m3'), child('done-1')]),
         ...Object.fromEntries(
-          ['m1', 'm2', 'm3', 'done-1', 'failed-1'].map(id => [id, catalog([])]),
+          ['m1', 'm2', 'm3', 'done-1'].map(id => [id, catalog([])]),
         ),
       },
       byId: Object.fromEntries(
-        [['root', summary('root')], ...['m1', 'm2', 'm3', 'done-1', 'failed-1'].map(id => [id, summary(id)])],
+        [['root', summary('root')], ...['m1', 'm2', 'm3', 'done-1'].map(id => [id, summary(id)])],
       ),
       teamMembers: [
         ...['m1', 'm2', 'm3'].map(id => member({ id, name: id, status: 'idle' })),
-        member({ id: 'failed-1', name: 'failed-1', phase: 'failed', status: 'failed' }),
       ],
     })
     expect(buildTasksModel({ ...base, expandedGroups: new Set(['fold:root']) })
-      .map(node => node.id)).toEqual(['root', 'done-1', 'failed-1', 'fold:root:idle'])
+      .map(node => node.id)).toEqual(['root', 'done-1', 'fold:root:idle'])
     // …and the idle group's own opening leaves the finished one folded. Kept
     // children keep the catalog order; the aggregates trail whatever stays
     // folded (the model's one ordering rule).
@@ -522,7 +512,7 @@ describe('buildTasksModel: settled branches', () => {
     expect(model.at(-1)).toMatchObject({ memberIds: ['a', 'b'], count: 2 })
   })
 
-  it.each(['running', 'current', 'unknown', 'error', 'idle', 'provisioning'])(
+  it.each(['running', 'current', 'unknown', 'error', 'idle'])(
     'keeps a branch reachable with a %s descendant', (guard) => {
       const base = branch()
       if (guard === 'running') base.live = running('b')
@@ -530,7 +520,6 @@ describe('buildTasksModel: settled branches', () => {
       if (guard === 'unknown') base.catalogs = { ...base.catalogs, b: undefined }
       if (guard === 'error') base.catalogs = { ...base.catalogs, b: { entries: [], state: 'error', error: { message: 'unavailable' } } }
       if (guard === 'idle') base.teamMembers = [member({ id: 'b', status: 'idle' })]
-      if (guard === 'provisioning') base.teamMembers = [member({ id: 'b', phase: 'provisioning', status: 'provisioning' })]
       expect(buildTasksModel(base).map(node => node.id)).toEqual(['root', 'a', 'b'])
     },
   )
@@ -646,7 +635,6 @@ describe('buildTasksModel: settled branches', () => {
   it('preserves workflow member subtrees, guards and hidden agent tallies', () => {
     const base = input({
       catalogs: { root: catalog([child('m')]), m: catalog([child('b')]), b: catalog([]) },
-      teamMembers: [member({ id: 'b', phase: 'failed', status: 'failed' })],
       runs: [run({ status: 'completed', phases: [{ members: [
         { seq: 1, label: 'm', childId: 'm', outcome: 'completed' },
         { seq: 2, label: 'duplicate', childId: 'm', outcome: 'completed' },
@@ -654,7 +642,7 @@ describe('buildTasksModel: settled branches', () => {
     })
     expect(buildTasksModel(base)).toMatchObject([
       { id: 'root' }, { id: 'run:run-1' },
-      { id: 'fold:run:run-1', count: 2, doneCount: 1, errorCount: 1, memberIds: ['m', 'b'] },
+      { id: 'fold:run:run-1', count: 2, doneCount: 2, errorCount: 0, memberIds: ['m', 'b'] },
     ])
     const opened = buildTasksModel({ ...base, folded: false })
     expect(opened.map(node => node.id)).toEqual(['root', 'run:run-1', 'm', 'b'])
