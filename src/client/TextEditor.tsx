@@ -805,7 +805,8 @@ export function TextEditor(props: FileViewerProps) {
     if (view === null || savingRef.current) return
     // The bytes this request writes: the same string becomes the baseline text
     // once the host accepts it (the draft may keep changing while in flight).
-    const text = view.state.doc.toString()
+    const sentDoc = view.state.doc
+    const text = sentDoc.toString()
     savingRef.current = true
     setSaveState('saving')
     // Optimistic concurrency: the draft was based on the bytes read at
@@ -818,8 +819,7 @@ export function TextEditor(props: FileViewerProps) {
       // the NEW document. This result then belongs to the OLD file: write
       // nothing else, or A's text / save state / mtime leak into B. The save
       // lock is already released above so B can still save.
-      const liveView = viewRef.current
-      if (liveView === null || liveView !== view) return
+      if (viewRef.current !== view) return
       // Adopt the fresh baseline the host reports (absent on a stat failure —
       // keep the old one, the next save just re-checks).
       if (typeof result.mtimeMs === 'number') mtimeRef.current = result.mtimeMs
@@ -827,8 +827,10 @@ export function TextEditor(props: FileViewerProps) {
       setConflict(false)
       // Keystrokes during the write are NOT the bytes on disk: keep the tab
       // dirty and its durable backup, or the next close/quit drops them.
-      // Read the LIVE view, never the closure's possibly-destroyed one.
-      const live = liveView.state.doc.toString()
+      // CM's `Text` is immutable: an unchanged doc is the same object, so
+      // `text` can be reused instead of stringifying the document again.
+      const liveDoc = view.state.doc
+      const live = liveDoc === sentDoc ? text : liveDoc.toString()
       if (live !== text) {
         setDraft(live)
         setSaveState('idle')
