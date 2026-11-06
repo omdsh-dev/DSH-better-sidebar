@@ -541,7 +541,7 @@ export function runGit(cwd: string, args: string[], timeoutMs = 30_000, options:
 /** 路径是用户给的字面文件名：不加这个全局选项，git 会把 `a[1].txt` 里的
  *  `[1]` 当 pathspec 通配符，连 `a1.txt` 一起丢弃/暂存（改动不可恢复）。
  *  选项必须前置在子命令前才是 git 全局选项。 */
-function literalPathspec(path: string | undefined): string[] {
+function literalPathspec(path: string | readonly string[] | undefined): string[] {
   return path === undefined ? [] : ['--literal-pathspecs']
 }
 
@@ -896,7 +896,7 @@ export async function status(cwd: string, selected?: string): Promise<GitStatusR
   // to the whole-repo diff); `[]` = no tracked change at all, so both diffs are
   // known empty and neither process is spawned.
   if (pathspec === undefined || pathspec.length > 0) {
-    const literal = pathspec === undefined ? [] : ['--literal-pathspecs']
+    const literal = literalPathspec(pathspec)
     const paths = pathspec === undefined ? [] : ['--', ...pathspec]
     const [unstaged, staged] = await Promise.all([
       runGit(root, [...literal, 'diff', '--numstat', '-z', ...paths]).catch(() => ''),
