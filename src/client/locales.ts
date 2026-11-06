@@ -677,6 +677,8 @@ export const zh = {
   pluginAudioName: '音频预览插件',
   pluginTurnOutlineName: 'dsh-turn-outline 轮次轨迹',
   pluginTurnOutlineDesc: '把会话按用户轮次折叠成「输入 + 工具步骤 + 输出」摘要，点击任意步骤一键跳回对话原位；零 LLM 调用、只读',
+  pluginZoteroWorkspaceName: 'dsh-zotero-workspace Zotero 文献工作台',
+  pluginZoteroWorkspaceDesc: '把 Zotero 文库搬进右侧栏：集合树 + 条目列表/详情、服务端检索，直接读渲染版 PDF 与解析后的 Markdown，一键把文献引用与文件路径带入当前对话；只读本地 API、不依赖 MCP',
   pluginDshMemoryDeltaName: 'dsh-memory-delta 记忆',
 }
 
@@ -1334,6 +1336,8 @@ export const en: Record<keyof typeof zh, string> = {
   pluginAudioName: 'Audio Preview',
   pluginTurnOutlineName: 'dsh-turn-outline Turn Outline',
   pluginTurnOutlineDesc: 'Fold the session into user turns (input + tool steps + output) and click any step to jump back to its exact spot in the conversation — no LLM calls, read-only',
+  pluginZoteroWorkspaceName: 'dsh-zotero-workspace Zotero Workspace',
+  pluginZoteroWorkspaceDesc: 'Bring the Zotero library into the right sidebar: collection tree, item list/detail and server-side search, read the rendered PDF and parsed Markdown in place, and put the citation plus file paths into the current conversation; read-only local API, no MCP',
   pluginDshMemoryDeltaName: 'dsh-memory-delta Memory',
 }
 
