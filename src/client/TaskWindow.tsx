@@ -240,6 +240,10 @@ export function TaskWindow(props: TaskWindowProps): ReactNode {
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState<string | undefined>(undefined)
   const [armedDelete, setArmedDelete] = useState(false)
+  /** Revision the draft was opened against: the projection keeps delivering
+   *  new revisions while the window stays open, and saving with the live one
+   *  would silently overwrite a teammate's write. */
+  const editRevisionRef = useRef<number | undefined>(task?.revision)
 
   // Re-seed the draft when the caller swaps the subject task: the projection
   // hands us fresh revisions, and unsaved text must not leak across tasks.
@@ -309,7 +313,7 @@ export function TaskWindow(props: TaskWindowProps): ReactNode {
       ? api.teamsTaskCreate(rootId, { subject: nextSubject, description: description.trim() })
       : api.teamsTaskUpdate(rootId, {
         taskId: task.id,
-        expectedRevision: task.revision,
+        expectedRevision: editRevisionRef.current ?? task.revision,
         action: 'edit',
         subject: nextSubject,
         description: description.trim(),
@@ -378,7 +382,7 @@ export function TaskWindow(props: TaskWindowProps): ReactNode {
                   variant="outline"
                   size="sm"
                   icon={<IconEditOutlineRegular size={12} />}
-                  onClick={() => { setEditing(true) }}
+                  onClick={() => { editRevisionRef.current = task.revision; setEditing(true) }}
                 >
                   {t('teamTaskEdit')}
                 </Button>
