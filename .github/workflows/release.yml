@@ -25,12 +25,15 @@ name: Release
 on:
   release:
     types: [published]
+  # Manual runs default to dry-run: a real publish from workflow_dispatch must
+  # be an explicit opt-in, because the tag/version guard below only runs for
+  # `release` events.
   workflow_dispatch:
     inputs:
       dry_run:
-        description: Pack and verify everything, but do not publish
+        description: Pack and verify everything, but do not publish (default)
         type: boolean
-        default: false
+        default: true
 
 permissions:
   contents: read
