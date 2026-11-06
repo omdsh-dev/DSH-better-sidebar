@@ -39,6 +39,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act } from 'react-dom/test-utils'
 import { installSidechatHarness, type SidechatHarness } from './helpers/sidechat-view-harness.tsx'
 import { t } from '../src/client/locales.ts'
+import { clearSavedSidechatDrafts } from '../src/client/sidechat-draft.ts'
 import type { Context, SidebarSessionList } from '../src/context-types.ts'
 
 /** Every route the view asked for, in order (method names only). */
@@ -115,6 +116,7 @@ function isOffered(button: HTMLButtonElement | undefined): boolean {
 let harness: SidechatHarness
 let store: RunningStore
 
+beforeEach(() => { clearSavedSidechatDrafts() })
 beforeEach(() => {
   routes = []
   harness = installSidechatHarness()
