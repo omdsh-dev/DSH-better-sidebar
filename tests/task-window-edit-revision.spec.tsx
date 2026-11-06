@@ -109,4 +109,56 @@ describe('TaskWindow edit revision snapshot', () => {
       expectedRevision: 3,
     }))
   })
+
+  it('re-bases after a conflict so the next Save commits, keeping the draft', async () => {
+    await render(taskView(1, 'First'))
+    act(() => { button('Edit').click() })
+
+    // The reader types a real draft into both fields.
+    await act(async () => {
+      const subject = document.querySelector<HTMLInputElement>('input[aria-label="Subject"]')!
+      const subjectSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set
+      subjectSetter?.call(subject, 'My draft')
+      subject.dispatchEvent(new Event('input', { bubbles: true }))
+
+      const area = document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Description"]')!
+      const areaSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set
+      areaSetter?.call(area, 'draft body')
+      area.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+
+    // A teammate's write lands while the draft is open: projection → rev2.
+    await render(taskView(2, 'Changed elsewhere'))
+
+    // First Save carries the stale rev1 snapshot → rejected (409 team-conflict,
+    // which does NOT advance the revision). Second Save must use rev2 → ok.
+    teamsTaskUpdate
+      .mockImplementationOnce(async () => ({ ok: false, code: 'team-conflict', message: 'stale' }))
+      .mockImplementationOnce(async () => ({ ok: true }))
+
+    await act(async () => { button('Save').click() })
+    expect(teamsTaskUpdate).toHaveBeenNthCalledWith(1, 'root-1', expect.objectContaining({
+      action: 'edit',
+      expectedRevision: 1,
+      subject: 'My draft',
+      description: 'draft body',
+    }))
+    // The conflict is reported, but the draft is NOT discarded and editing is
+    // NOT left (the only exit used to throw away unsaved text): the textarea
+    // is still here with the reader's text, not the task's current content.
+    expect(document.body.textContent).toContain('The task changed elsewhere; refreshed')
+    const kept = document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Description"]')!
+    expect(kept.value).toBe('draft body')
+
+    // Second Save now submits against the re-based rev2 and succeeds (the
+    // window returns to the read-only view, i.e. the Edit button is back).
+    await act(async () => { button('Save').click() })
+    expect(teamsTaskUpdate).toHaveBeenNthCalledWith(2, 'root-1', expect.objectContaining({
+      action: 'edit',
+      expectedRevision: 2,
+      subject: 'My draft',
+      description: 'draft body',
+    }))
+    expect(button('Edit')).toBeDefined()
+  })
 })

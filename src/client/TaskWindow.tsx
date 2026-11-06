@@ -244,6 +244,11 @@ export function TaskWindow(props: TaskWindowProps): ReactNode {
    *  new revisions while the window stays open, and saving with the live one
    *  would silently overwrite a teammate's write. */
   const editRevisionRef = useRef<number | undefined>(task?.revision)
+  /** Render-time mirror of the projection's latest revision: `mutate`'s
+   *  closure captures the `task` of the render that began the save, which can
+   *  be stale by the time a conflict comes back. */
+  const latestRevisionRef = useRef<number | undefined>(task?.revision)
+  latestRevisionRef.current = task?.revision
 
   // Re-seed the draft when the caller swaps the subject task: the projection
   // hands us fresh revisions, and unsaved text must not leak across tasks.
@@ -291,6 +296,15 @@ export function TaskWindow(props: TaskWindowProps): ReactNode {
         // projection, so a committed revision lands in this window's props
         // by itself.
       } else {
+        if (result.code === CONFLICT_CODE) {
+          // A stale-revision write is rejected WITHOUT advancing the revision,
+          // so the snapshot is still behind. Re-base it to the projection's
+          // latest revision: the conflict note stays up, the draft and editing
+          // stay put, and the reader's NEXT Save submits against the new base
+          // (an explicit "overwrite anyway"). Exiting here would lose the draft.
+          // Read the render-time mirror, not the `task` this closure captured.
+          editRevisionRef.current = latestRevisionRef.current
+        }
         setNote(result.code === CONFLICT_CODE
           ? t('teamTaskConflict')
           : t('teamTaskError', { message: result.message }))
