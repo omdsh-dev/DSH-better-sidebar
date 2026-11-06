@@ -25,6 +25,7 @@
  */
 import type { ComponentProps } from 'react'
 import { MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
+import type { MarkdownFileMentions } from '@deepseek-ai/dsh-client-ui-primitives'
 
 /** The code-card chrome the plugin threads through its own props (e.g.
  *  MermaidMarkdownProps.codeLabels — the chunk contract carries the same
@@ -42,7 +43,6 @@ export interface MarkdownCopyLabels {
 
 /** The nested `labels` prop the host renderer takes. */
 type HostMarkdownLabels = ComponentProps<typeof MarkdownText>['labels']
-
 /**
  * How many distinct label sets the identity cache keeps. The plugin renders
  * one label set per locale revision (zh/en plus the better-locale override,
@@ -88,10 +88,32 @@ function cachedLabels(labels: MarkdownCopyLabels): HostMarkdownLabels {
   return built
 }
 
-/** MarkdownText props carrying the nested chrome labels. */
-export function markdownTextProps(text: string, labels: MarkdownCopyLabels): ComponentProps<typeof MarkdownText> {
+/**
+ * The identity-stable nested host `labels` for one label-value set — the same
+ * object {@link markdownTextProps} threads into `MarkdownText`, exported for the
+ * host cards that render markdown of their OWN (the web card renders the
+ * provider's answer through `MarkdownText` and takes these labels directly).
+ * @param labels - the flat plugin label bag.
+ * @returns the nested host label object (cached by value).
+ */
+export function markdownLabels(labels: MarkdownCopyLabels): HostMarkdownLabels {
+  return cachedLabels(labels)
+}
+
+/** MarkdownText props carrying the nested chrome labels, plus — for a surface
+ *  whose transcript knows which files the thread produced — the inline-code
+ *  file-mention vocabulary (`MarkdownText` links a token only through it;
+ *  omitting it leaves every token inert code). The resolver's IDENTITY is a
+ *  render-cache key inside `MarkdownText`, so callers memoize it per vocabulary
+ *  CONTENT instead of rebuilding it on every render. */
+export function markdownTextProps(
+  text: string,
+  labels: MarkdownCopyLabels,
+  fileMentions?: MarkdownFileMentions,
+): ComponentProps<typeof MarkdownText> {
   return {
     text,
     labels: cachedLabels(labels),
+    ...(fileMentions === undefined ? {} : { fileMentions }),
   }
 }

@@ -58,7 +58,7 @@
   gap: 8px;
   padding: 5px 12px;
   color: var(--dsw-alias-label-secondary, var(--dsw-alias-label-primary));
-  background: var(--dsw-alias-bg-l2);
+  background: var(--dsw-alias-bg-layer-2);
 }
 
 .noticeBlock {
@@ -87,7 +87,7 @@
   padding: 10px 12px;
   overflow-wrap: anywhere;
   color: var(--dsw-alias-label-primary);
-  background: var(--dsw-alias-bg-l2);
+  background: var(--dsw-alias-bg-layer-2);
 }
 
 .action {
@@ -101,5 +101,5 @@
 }
 
 .action:hover {
-  background: var(--dsw-alias-bg-l2);
+  background: var(--dsw-alias-bg-layer-2);
 }

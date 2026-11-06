@@ -192,6 +192,7 @@ interface SettingRow {
     icon?: ReactNode | ((size: number) => ReactNode)
   }[]
   multi?: boolean                          // select 多选（缺省 false；存 value 数组，按 options 顺序提交）
+  defaultValue?: unknown                   // pluginToggles 行在用户写入前的显示/生效值（见 §8）
 }
 // text/number 行 blur/Enter 提交；select 任一项带 icon 时渲染大图标选项卡，否则单行文本。
 
@@ -1087,7 +1088,7 @@ registerSidechatSurfaceAdapter(adapter: SidechatSurfaceAdapter): () => void
 - 持久化：开关写入 `SidebarPrefs.tabsEnabled / viewersEnabled`（开放 map，**缺省 = 启用**，显式 `false` 才禁用；`hidden` 类型的键被忽略）。
 - 关闭语义：tab 从 `+` 菜单消失、`openTab` 拒绝新开（`console.warn`）、派生流程（子代理自动展开、agent 终端自动补 tab）停止，**已打开的 tab 保留**；viewer 被 `matchFileViewer` 跳过，文件落到下一个匹配。
 - `settings.toggles`（可选）：在卡片行下追加**嵌套设置行**（仅父级启用时显示），绑定 `SidebarPrefs` 字段；通过卡片底部「功能设置」条在原生弹窗中编辑。行控件形状见 §4.1 的 `SettingRow`：`type: 'switch' | 'text' | 'number'`（v0.11.0+；text/number 行 blur/Enter 提交，number 行按 min/max 钳制，unit 渲染单位后缀）与 `type: 'select'`（v0.13.0+；`options` 支持 value/title/desc/icon，`multi` 多选存数组并按 options 顺序提交；任一项带 icon 时渲染大图标选项卡）与 `type: 'patterns'`（可编辑字符串数组——chips + 删除钮 + 常驻添加输入框，add/remove 均原子提交整表，占位符走 `patternsPlaceholder`，值必须存 `string[]`；能力 gate `settingPatterns`）。内置示例：subagent tab 的 `autoOpenSubagent`、editor tab 的 `editorExplorer` 图标化下拉（工作区路径围栏与它的开关已移除，见 §8.1）与 `explorerExclude` 排除模式行。
-- `settings.pluginToggles`（可选，v0.12.0+）：**插件自有设置行**，行控件与 toggles 相同，但 key 是插件局部的——持久化在 prefs 文档的 `pluginSettings[<descriptor id>]`（开放 map，无需宿主 schema 字段）。tab 与 viewer 都可用（v0.12.0 起 viewer 卡片也有设置条）。
+- `settings.pluginToggles`（可选，v0.12.0+）：**插件自有设置行**，行控件与 toggles 相同，但 key 是插件局部的——持久化在 prefs 文档的 `pluginSettings[<descriptor id>]`（开放 map，无需宿主 schema 字段）。tab 与 viewer 都可用（v0.12.0 起 viewer 卡片也有设置条）。**默认值要显式声明**：用户在写入前该 blob 是空的，行读不到值就会显示「—」（switch 行恰好读成关闭，看似正常；select 行则直接不显示当前生效值）。声明 `defaultValue`（JSON 可序列化，与 `options[].value` 同类）后，行在你第一次写入前就显示并返回该值——它表达的是「功能本来就在用的默认」，不是「预填一个待保存的值」；写入后存储值优先。
 - `settings.render`（可选，v0.12.0+）：**自定义设置面板**——追加渲染在行列表之后，可单独存在。props 含 store/service/prefs、本 descriptor 的 `pluginSettings` blob、`updatePluginSetting(key, value)` 与 `close()`；抛错会被吞掉并显示内联错误。
 
 ```ts
@@ -1111,6 +1112,7 @@ ctx.effect(() =>
         min: 1,
         max: 100,
         unit: 'rows',
+        defaultValue: 20,   // 用户写入前就显示（并代表功能实际在用的默认）
       }],
       // 或完全自定义面板（追加在行列表之后）
       render: ({ store, service, prefs, pluginSettings, updatePluginSetting, close }) => (
@@ -1232,6 +1234,8 @@ interface SettingsDescriptor {
 
 > better-sidebar 所有视觉值消费 DSH 的 `--dsw-alias-*` / `--dsw-font-*` / `--ds-*` 令牌（无硬编码颜色），**不做每皮肤适配**。已与 dsh-web-ui 皮肤中心兼容（10 款皮肤全覆盖 `--dsw-alias-*` 层；`tests/theme.spec.ts` 守护）。你的 tab/viewer 组件遵循同样的令牌规则即可自动兼容全部皮肤。
 >
+> **文字尺寸是这条规则的延长线，不是例外**：文本的字号与行高读宿主的「内容字号」设置轴 `--dsh-content-font-size(-secondary)` / `--dsh-content-font-delta(-secondary)`（宿主 `ui-theme` 在 `body` 上定义；`--dsw-font-markdown-base-font-size` 是它对同一轴的另一种拼写）。这些 `--dsh-content-font-*` 变量**只准出现在 `font` / `font-size` / `line-height` 声明里**，绝不能拿去当颜色、边框或间距——它们是读者设置的数字，不是皮肤令牌。`tests/sidechat-typography-contract.spec.tsx` 守护这条边界。
+>
 > **没有任何豁免面**：文件与文件夹图标是 **DSH 官方的 `FileTypeIcon` 图形**（宿主自己
 > 的调色板，插件不画像素也不存数据），插件画的每个 glyph（含内置 tab 的彩色图标）颜色
 > 都来自 `--dsw-alias-*`——`tests/theme.spec.ts` 同时守护「图标模块零颜色字面量」与
@@ -1241,6 +1245,7 @@ interface SettingsDescriptor {
 
 ### 12.1 规则
 
+- **文字尺寸跟随宿主的「内容字号」**：转录正文（用户气泡、助手叙述、队列气泡）用主字号轴 `font-size: var(--dsh-content-font-size, 14px)` + `line-height: calc(22px + var(--dsh-content-font-delta, 0px))`；转录 chrome（工具/思考行、原始工具文本、用量尾行、交付卡标题与行、提示行、错误条与失败行、队列 meta）用次级轴 `-secondary` 那一对（基准 13px / 18px）。**不再用固定 12/13/14px 的 `--dsw-font-*` 组合令牌**表达转录文字尺寸：那一族写死了像素与行高，读者把内容字号调大时只有 markdown 正文变大、周边 chrome 不变，层级与节奏就会散掉。**固定的控件档位是例外**（浮标 `--dsw-font-xs-13`、运行状态行 `--dsw-font-xxs-12`、hero 主按钮）：它们是控件，不随内容字号缩放。**字号声明里只准出现宿主真实定义的令牌**——`--dsw-font-s-12` / `-s-13` 这类名字在宿主里零定义，`font:` 简写引用未定义变量会让整条声明在计算值阶段被丢弃（元素退回继承字号）；同理 `--dsw-font-mono` 也不存在，等宽场景要写兜底 `var(--dsw-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace)`，不要裸引。`tests/sidechat-typography-contract.spec.tsx` 与 `tests/sidechat-pill-typography.spec.tsx` 分别守护字号轴与「令牌必须真实存在」这两条（颜色/间距/气泡几何另有逐条快照）。
 - **面板表面**：右/底面板背景 = `var(--dsw-alias-bg-layer-1)`。**绝不消费 `--dsw-specific-sidebar-fill`**（宿主左导航专属，皮肤按左导航语义覆盖它，面板消费会失去填充）。换面板表面 = 覆写 `--dsw-alias-bg-layer-1`。
 - **终端/编辑器表面**：`effectiveTokenValue` 读 `--dsw-alias-bg-base`——`transparent` 与 alpha < 0.9 的半透明值回退不透明底色（文字不叠背景画，issue #90）；≥ 0.9 放行。
 - **根锚点**：宿主 div 带 `data-dsh-better-sidebar`（append 到 body）；其内**面板宿主层** `[data-dsh-panel-host]`（`fixed; inset:0; height:100vh 兜底 + 100dvh; z-25; pointer-events:none; overflow:hidden+clip`，v0.13.1+），面板/开关簇 absolute 定位，免疫中间层 transform 劫持；页面级 transform 触发 `data-dsh-panel-host-degraded` 降级。显式高度同样**契约**（`tests/panel-host-css.spec.ts` 守护）：不得依赖包含块（`100%` / `auto`，issue #616）；`dvh` 必须排在 `vh` 之后——`vh` 取的是大视口，手机地址栏展开时该层高于布局视口，会误触发挂载自检、把宿主降级成 `absolute` 并撑高文档（issue #1014）。`overflow` 级联是**契约**（`hidden` 兜底 + `clip` 收尾，`tests/panel-host-css.spec.ts` 守护）：`hidden` 盒子仍是滚动容器，脚本滚动或浏览器 scroll-into-view 修正（焦点移入视口外区域、嵌套 iframe/工作台加载时抢焦点、面板滑出动画中 focus() 落点）会沿最近可滚祖先滚走整层——面板与开关簇集体偏离视口角（computed left/right 仍"正确"，偏移藏在盒子自身 scroll offset 里）；`clip` 裁剪语义相同但不产生滚动盒，任何路径都滚不动这层。皮肤作用域覆盖限定在 `[data-dsh-better-sidebar]` 内。
