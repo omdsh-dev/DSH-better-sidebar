@@ -232,9 +232,9 @@ export const builtinTabPlugins: readonly PluginEntry[] = [
   },
   {
     id: 'dsh-zotero-workspace',
-    name: 'Zotero 文献工作台',
+    name: () => t('pluginZoteroWorkspaceName'),
     url: 'https://github.com/hudsonhou/dsh-zotero-workspace',
-    description: 'Zotero library in the DSH right sidebar: collection tree, item list/detail, rendered PDF and parsed Markdown in place, one-click citation plus PDF/MD paths into the current conversation. Read-only (local Zotero API, no MCP); registers a native DSH right-sidebar tab and reuses better-sidebar file preview when installed.',
+    description: () => t('pluginZoteroWorkspaceDesc'),
     // Standalone plugin (no better-sidebar peer): it registers through the
     // host's native right-Sidebar tab registry because its tab needs the
     // session-level inputActions to put the citation into the composer; when
