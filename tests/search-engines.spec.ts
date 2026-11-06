@@ -581,6 +581,27 @@ describe('probe cache and failure handling', () => {
     await Promise.allSettled(calls)
     expect((await usableEngines()).map(probe => probe.engine)).toEqual(['fd', 'rg'])
   })
+
+  // Disabling is not permanent: without the cooldown the only way back is a
+  // process restart, which is how a transient cause (a replaced binary, one
+  // EMFILE burst) used to cost the fast path for the rest of the session.
+  it('retries a disabled engine once the cooldown elapses', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(0)
+      setEngineHooks({ prober: async () => [fdProbe, rgProbe] })
+      setEngineHooks({ runner: async () => { throw new Error('boom') } })
+      for (let i = 0; i < 3; i += 1) {
+        await runEngine(fdProbe, '/w', 'x', 10).catch(() => {})
+      }
+      expect((await usableEngines()).map(probe => probe.engine)).toEqual(['rg'])
+
+      vi.setSystemTime(60_000)
+      expect((await usableEngines()).map(probe => probe.engine)).toEqual(['fd', 'rg'])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })
 
 /**

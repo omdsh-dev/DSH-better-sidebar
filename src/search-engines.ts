@@ -16,8 +16,11 @@
  *
  * Repeated consecutive failures disable that engine (a broken binary must not
  * slow every later search); a single bad query or a timeout only degrades THAT
- * one search, and a timeout breaks the failure streak. A success recovers the
- * engine. Hooks are swappable for tests (setEngineHooks).
+ * one search, and a timeout breaks the failure streak. A disabled engine is
+ * retried after a cooldown — a transient cause (a replaced binary, one EMFILE
+ * burst) must not cost the fast path for the rest of the session — and a
+ * success recovers it immediately. Hooks are swappable for tests
+ * (setEngineHooks).
  */
 import { spawn, type ChildProcess } from 'node:child_process'
 import { createInterface } from 'node:readline'
@@ -513,10 +516,13 @@ export type EngineSpawner = (
 /** Child spawn behind runChild — injectable so tests can drive the real
  *  orchestration with scripted children (event order, stream timing). */
 let spawner: EngineSpawner = spawn
-/** Engines disabled after repeated failures; cleared on the next success. */
-const broken = new Set<Engine>()
+/** Engines disabled after repeated failures → the moment each may be retried;
+ *  a success clears the entry outright. */
+const broken = new Map<Engine, number>()
 /** Streak length that disables an engine (failure policy: see module header). */
 const BROKEN_AFTER = 3
+/** Cooldown before a disabled engine gets one more attempt. */
+const BROKEN_RETRY_MS = 60_000
 const failures = new Map<Engine, number>()
 let probePromise: Promise<readonly EngineProbe[]> | null = null
 
@@ -568,7 +574,7 @@ export async function runEngine(
       failures.set(probe.engine, count)
       const why = error instanceof Error ? error.message : String(error)
       if (count >= BROKEN_AFTER) {
-        broken.add(probe.engine)
+        broken.set(probe.engine, Date.now() + BROKEN_RETRY_MS)
         debugLog(`[dsh-search] engine ${probe.engine} failed ${String(count)} times in a row, disabled: ${why}`)
       } else {
         debugLog(`[dsh-search] engine ${probe.engine} query failed (${String(count)}/${String(BROKEN_AFTER)}), will retry: ${why}`)
@@ -578,10 +584,20 @@ export async function runEngine(
   }
 }
 
-/** The engines a caller may actually try (verified, not broken). */
+/** The engines a caller may actually try (verified, and not inside a disable
+ *  cooldown). */
 export async function usableEngines(): Promise<readonly EngineProbe[]> {
   const probes = await probeEngines()
-  return probes.filter((probe) => !broken.has(probe.engine))
+  const now = Date.now()
+  return probes.filter((probe) => {
+    const retryAt = broken.get(probe.engine)
+    if (retryAt === undefined) return true
+    if (now < retryAt) return false
+    // Probation: one attempt. A failure re-arms the cooldown, a success lifts
+    // the mark entirely (runEngine).
+    broken.delete(probe.engine)
+    return true
+  })
 }
 
 /** Test seam: replace the probe / child-runner / spawn implementations. */
