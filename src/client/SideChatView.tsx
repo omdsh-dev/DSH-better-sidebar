@@ -1923,6 +1923,7 @@ export function SideChatView(props: {
       void fetchThread(childId)
       void fetchInfo(childId)
     } catch (cause) {
+      draft.abandon(attempt)
       if (attempt.owner.active) setError(cause instanceof SidebarApiError && cause.code === 'network'
         ? t('sideChatSendUncertain')
         : cause instanceof Error ? cause.message : String(cause))

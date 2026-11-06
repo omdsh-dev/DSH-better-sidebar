@@ -17,13 +17,10 @@
  * another thread's name.
  * 1. Re-binding the tab to another thread shows an EMPTY composer (the previous
  *    thread's text must not follow the binding).
- * 2. MERGED BEHAVIOUR (v0.30.x): the text does NOT survive a rebind back. The
- *    owner — text included — is released with the binding, so returning to a
- *    thread starts from an empty composer. This REPLACES the pre-merge
- *    per-tab draft map (`draftsRef` / `draftKeyOf`), which restored each
- *    thread's words verbatim; the upstream owner isolates per thread but does
- *    not persist across a switch. Asserted below so the difference is visible,
- *    not silent.
+ * 2. A draft belongs to its THREAD: re-binding to a thread that was left with
+ *    words brings them back (the saved draft, see `sidechat-draft.ts`), while
+ *    another thread never inherits them. A draft whose prompt went out does
+ *    not come back.
  * 3. A successful send clears the sending thread's composer, and the draft
  *    reaches exactly that thread.
  * 4. `openNewThread` (the "+" control) creates the thread through
@@ -44,6 +41,7 @@ import { act } from 'react-dom/test-utils'
 import { renderRoot, type RenderedRoot } from './test-utils.ts'
 import { installSidechatHarness, type SidechatHarness } from './helpers/sidechat-view-harness.tsx'
 import { SideChatView } from '../src/client/SideChatView.tsx'
+import { clearSavedSidechatDrafts } from '../src/client/sidechat-draft.ts'
 import { t } from '../src/client/locales.ts'
 import type { Context, SidebarSessionList } from '../src/context-types.ts'
 import type { SidebarTab } from '../src/client/state.ts'
@@ -91,6 +89,7 @@ function tabFor(threadId: string): SidebarTab {
 let harness: SidechatHarness
 let ctx: Context
 
+beforeEach(() => { clearSavedSidechatDrafts() })
 beforeEach(() => {
   harness = installSidechatHarness()
   harness.wire.events = [
@@ -171,7 +170,7 @@ describe('per-thread composer drafts (D8)', () => {
     }
   })
 
-  it('releases the draft with the binding instead of restoring it on the way back', async () => {
+  it('restores a thread’s draft when the binding comes back, without leaking it to the other', async () => {
     const view = render('t1')
     try {
       await flush()
@@ -182,17 +181,15 @@ describe('per-thread composer drafts (D8)', () => {
       await flush(2)
       expect(composerOf(view).value, 'thread two holds its own words').toBe('draft B')
 
-      // Merged behaviour: the owner (text included) is released with the
-      // binding, so the earlier thread comes back empty — isolation without
-      // persistence (see the header's contract 2).
+      // The words belong to the thread, so coming back restores them (contract 2).
       await bind(view, 't1')
-      expect(composerOf(view).value, 'a rebind starts from an empty composer').toBe('')
+      expect(composerOf(view).value, 'the earlier thread gets its own words back').toBe('draft A')
     } finally {
       view.unmount()
     }
   })
 
-  it('clears the sending thread and leaves the other thread’s composer empty on the way back', async () => {
+  it('clears the sent draft and keeps the other thread’s draft on the way back', async () => {
     const view = render('t1')
     try {
       await flush()
@@ -209,7 +206,7 @@ describe('per-thread composer drafts (D8)', () => {
       expect(composerOf(view).value, 'a sent draft leaves an empty composer').toBe('')
 
       await bind(view, 't2')
-      expect(composerOf(view).value, 'the other thread never inherits it either').toBe('')
+      expect(composerOf(view).value, 'the other thread keeps its own draft').toBe('draft B')
       await bind(view, 't1')
       expect(composerOf(view).value, 'the sent thread is still empty').toBe('')
     } finally {
@@ -237,9 +234,9 @@ describe('per-thread composer drafts (D8)', () => {
       expect(composerOf(view).value, 'a brand-new thread has no draft').toBe('')
 
       await bind(view, 't1')
-      expect(composerOf(view).value, 'and nothing is carried back to the old thread').toBe('')
+      expect(composerOf(view).value, 'the old thread still owns its words').toBe('draft A')
       await bind(view, 't2')
-      expect(composerOf(view).value, 'nor to an untouched one').toBe('')
+      expect(composerOf(view).value, 'nor does an untouched thread gain any').toBe('')
     } finally {
       view.unmount()
     }
