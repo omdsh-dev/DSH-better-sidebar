@@ -478,6 +478,61 @@ export interface FileActionRow {
   isDir: boolean
 }
 
+/** What a tab action is handed when it runs. */
+export interface TabActionContext {
+  /** The tab whose header drew the button. */
+  tabId: string
+  /** The tab's type (`editor`, `terminal`, …). */
+  tabType: string
+  /** The session the tab belongs to. */
+  sessionId: string
+  /** The tab's file path; `''` for a path-less tab (the Files home). */
+  path: string
+  /** Whether the tab shows a directory instead of a file. */
+  isDir: boolean
+  /** The tab's current title. */
+  title: string
+  /**
+   * Show a message in the sidebar's own error strip. Use it for anything the
+   * user must read; an exception thrown by `run` reaches the same strip as
+   * `error.message`.
+   */
+  fail: (message: string) => void
+}
+
+/**
+ * Describes one external tab action (feature `tabActions`): a button in the
+ * editor's header, right of the built-in save / reload / tree controls.
+ *
+ * The callback runs CLIENT-SIDE only — the plugin that registers it owns the
+ * work (its own routes, its own toasts). The header contributes the entry
+ * point and the error strip; it never uploads, copies or moves anything.
+ */
+export interface TabActionDescriptor {
+  /** Unique id (`'my-plugin:upload'`). Re-registering the same id throws. */
+  id: string
+  /** Button label (i18n-friendly: string or a thunk). Empty = glyph only. */
+  label: string | (() => string)
+  /** Tooltip / accessible name; defaults to the label. */
+  title?: string | (() => string)
+  /** Leading glyph for the button. */
+  icon?: ReactNode | ((size: number) => ReactNode)
+  /** Order among external actions; ascending, default 0. */
+  order?: number
+  /**
+   * Whether the action applies to one tab. Called once per header render, so
+   * it must be cheap and side-effect free. Omitted = every editor tab.
+   */
+  when?: (context: Omit<TabActionContext, 'fail'>) => boolean
+  /**
+   * Do the work. A rejected promise is reported as `error.message` in the
+   * sidebar's error strip; a resolved one says nothing (the owner reports its
+   * own outcome). Runs are guarded per (id, tabId): a second press while the
+   * first is in flight is ignored.
+   */
+  run: (context: TabActionContext) => void | Promise<void>
+}
+
 /** What a file action is handed when it runs. */
 export interface FileActionContext extends FileActionRow {
   /**
@@ -707,11 +762,19 @@ export interface BetterSidebarService {
    * reference button. The registration is disposed with the plugin fiber.
    */
   registerFileAction(descriptor: FileActionDescriptor): () => void
+  /**
+   * Contribute a button to the editor's header (feature `tabActions`).
+   * Buttons appear right of the built-in controls, in `order` (then
+   * registration) order. The registration is disposed with the plugin fiber.
+   */
+  registerTabAction(descriptor: TabActionDescriptor): () => void
   getTabs(): readonly TabDescriptor[]
   getFileViewers(): readonly FileViewerDescriptor[]
   getFileIcons(): readonly FileIconDescriptor[]
   /** Every registered file action, in the order the tree renders them. */
   getFileActions(): readonly FileActionDescriptor[]
+  /** Every registered tab action, in the order the header renders them. */
+  getTabActions(): readonly TabActionDescriptor[]
   /**
    * Find a SPECIFIC registered file icon for a path (priority desc, then
    * registration order): a `names` match first, then an `exts` match.
@@ -962,6 +1025,10 @@ export const SIDEBAR_SERVICE_VERSION = '0.30.1'
  *   contributions to the file tree's row menu (and, with `row: true`, a
  *   hover button on the row). The callback is client-side only: the tree
  *   supplies the entry point and the error strip, the owner does the work.
+ * - 'tabActions' (v0.32.0): registerTabAction/getTabActions — external buttons
+ *   in the editor header (right of save/reload/tree). Same contract as
+ *   `fileActions`: the header supplies the entry point, the owner does the
+ *   work.
  *
  * v0.19.0 REMOVED 'floatWindows': the free-window feature is gone (DSH 0.1.5
  * owns the right column, so the plugin keeps only its bottom workbench).
@@ -983,6 +1050,7 @@ export const SIDEBAR_FEATURES = [
   'settingPatterns',
   'hostRouteUrl',
   'fileActions',
+  'tabActions',
 ] as const
 
 /** Run one plugin callback; a throw is logged and never breaks the caller. */
@@ -1004,6 +1072,7 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
   const viewers = new Map<string, FileViewerDescriptor>()
   const fileIcons = new Map<string, FileIconDescriptor>()
   const fileActions = new Map<string, FileActionDescriptor>()
+  const tabActions = new Map<string, TabActionDescriptor>()
   const listeners = new Set<() => void>()
   /** The native right-Sidebar write face, installed by the client half. */
   let surface: SidebarSurface | undefined
@@ -1099,6 +1168,24 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
    */
   const getFileActions = (): readonly FileActionDescriptor[] =>
     Array.from(fileActions.values()).sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+
+  const registerTabAction = (descriptor: TabActionDescriptor): (() => void) => {
+    if (tabActions.has(descriptor.id)) {
+      throw new Error(`[dsh-better-sidebar] tab action "${descriptor.id}" already registered`)
+    }
+    tabActions.set(descriptor.id, descriptor)
+    notify()
+    return () => {
+      if (tabActions.get(descriptor.id) === descriptor) {
+        tabActions.delete(descriptor.id)
+        notify()
+      }
+    }
+  }
+
+  /** External tab actions in render order — same ranking as the file rows. */
+  const getTabActions = (): readonly TabActionDescriptor[] =>
+    Array.from(tabActions.values()).sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
 
   // Registrations in ranking order: priority desc, stable for equal
   // priorities (insertion order) — the same ranking `matchFileViewer` uses.
@@ -1594,10 +1681,12 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
     registerFileViewer,
     registerFileIcon,
     registerFileAction,
+    registerTabAction,
     getTabs,
     getFileViewers,
     getFileIcons,
     getFileActions,
+    getTabActions,
     matchFileIcon,
     matchFolderIcon,
     fileIcon,
