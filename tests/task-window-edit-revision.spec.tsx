@@ -110,6 +110,46 @@ describe('TaskWindow edit revision snapshot', () => {
     }))
   })
 
+  it('re-seeds the draft when Edit is reopened after the task changed', async () => {
+    await render(taskView(1, 'First'))
+    // A teammate's write lands while the window sits in the read-only view.
+    await render(taskView(2, 'Changed elsewhere'))
+    act(() => { button('Edit').click() })
+
+    // The edit box must show what the view shows: the draft and the CAS base
+    // have to describe the same read, or Save overwrites the teammate silently.
+    expect(document.querySelector<HTMLInputElement>('input[aria-label="Subject"]')!.value)
+      .toBe('Changed elsewhere')
+    await act(async () => { button('Save').click() })
+    expect(teamsTaskUpdate).toHaveBeenCalledWith('root-1', expect.objectContaining({
+      expectedRevision: 2,
+      subject: 'Changed elsewhere',
+    }))
+  })
+
+  it('waits for the projection before re-basing after a conflict', async () => {
+    await render(taskView(1, 'First'))
+    act(() => { button('Edit').click() })
+    teamsTaskUpdate
+      .mockImplementationOnce(async () => ({ ok: false, code: 'team-conflict', message: 'stale' }))
+      .mockImplementationOnce(async () => ({ ok: true }))
+
+    // The conflict comes back BEFORE the teammate's write reaches this window,
+    // so there is no newer revision to re-base onto yet.
+    await act(async () => { button('Save').click() })
+    expect(teamsTaskUpdate).toHaveBeenNthCalledWith(1, 'root-1', expect.objectContaining({
+      expectedRevision: 1,
+    }))
+
+    // The projection catches up; the next Save must use the new revision
+    // instead of re-submitting the one the server just rejected.
+    await render(taskView(2, 'Changed elsewhere'))
+    await act(async () => { button('Save').click() })
+    expect(teamsTaskUpdate).toHaveBeenNthCalledWith(2, 'root-1', expect.objectContaining({
+      expectedRevision: 2,
+    }))
+  })
+
   it('re-bases after a conflict so the next Save commits, keeping the draft', async () => {
     await render(taskView(1, 'First'))
     act(() => { button('Edit').click() })
