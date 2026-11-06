@@ -597,8 +597,16 @@ export function SettingsBody(props: {
   // Plugin rows read their values from the descriptor's OWN blob through
   // an explicit value source — no projection onto the prefs face, so a
   // plugin key can never collide with (or silently read) a host pref of
-  // the same name.
+  // the same name. A key the user never wrote falls back to the row's own
+  // declared `defaultValue` (filled in when the descriptor was registered):
+  // without it a fresh document shows "no value" for a feature that already
+  // behaves as its default.
   const pluginBlob = prefs.pluginSettings[feature.id] ?? {}
+  const readPluginValue = (key: string): unknown => {
+    const stored = pluginBlob[key]
+    if (stored !== undefined) return stored
+    return pluginToggles.find(row => row.key === key)?.defaultValue
+  }
   return (
     <div>
       {(toggles.length > 0 || pluginToggles.length > 0) && (
@@ -621,7 +629,7 @@ export function SettingsBody(props: {
               onCommit={onPluginCommit}
               onSelectValue={onPluginSelectValue}
               onPatterns={onPluginPatterns}
-              valueSource={(key) => pluginBlob[key]}
+              valueSource={readPluginValue}
             />
           )}
         </div>

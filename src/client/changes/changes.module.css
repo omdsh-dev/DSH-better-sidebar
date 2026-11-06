@@ -588,7 +588,7 @@
 /* ── Shared preview pane ───────────────────────────────────────────────── */
 
 .redactBanner { flex: none; font: var(--dsw-font-xxxs-strong-11); padding: 2px 8px; border-radius: 2px; color: var(--dsw-alias-state-warn-primary); background: var(--dsw-alias-interactive-bg-hover); white-space: nowrap; }
-.mdBody { padding: 12px 16px 20px; font: var(--dsw-font-xs-regular-13); line-height: 1.6; min-height: 0; overflow-y: auto; }
+.mdBody { padding: 12px 16px 20px; font: var(--dsw-font-xs-13); line-height: 1.6; min-height: 0; overflow-y: auto; }
 .htmlPane { flex: 1; min-height: 0; display: flex; }
 .htmlFrame { flex: 1; width: 100%; border: none; background: var(--dsw-alias-bg-base); }
 

@@ -127,6 +127,6 @@
   padding-top: 8px;
   border-top: 1px solid var(--dsw-alias-border-l1);
   color: var(--dsw-alias-label-primary);
-  font: var(--dsw-font-xs-regular-13);
+  font: var(--dsw-font-xs-13);
   line-height: 1.6;
 }

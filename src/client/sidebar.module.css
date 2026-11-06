@@ -518,7 +518,7 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   height: 6px;
   margin-left: 6px;
   border-radius: 50%;
-  background: var(--dsw-alias-danger);
+  background: var(--dsw-alias-state-error-primary);
   vertical-align: middle;
 }
 
@@ -527,7 +527,7 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: var(--dsw-alias-danger);
+  background: var(--dsw-alias-state-error-primary);
 }
 
 /* One tab's mounted content; inactive tabs stay mounted but hidden so

@@ -106,6 +106,19 @@ export interface SidebarSettingToggle {
   /** Whether a `type: 'select'` row allows picking several options (the
    *  stored value is then an array of option values); defaults to false. */
   multi?: boolean
+  /**
+   * The value the row SHOWS (and the feature acts on) before the user ever
+   * wrote it (v0.12.0+ `pluginToggles` rows). Those rows read their value from
+   * the descriptor's own `pluginSettings[id]` blob, which is EMPTY on a fresh
+   * document — and unlike a host pref, a plugin value has no schema default to
+   * lean on, so a select row would render its "no value" placeholder while the
+   * feature already behaves as its default. Declaring the initial value here
+   * keeps the row honest without the user having to re-pick it.
+   *
+   * Ignored by `toggles` rows: their host pref already resolves the schema
+   * default, and the settings seam drops keys that are not PrefsSchema fields.
+   */
+  defaultValue?: unknown
 }
 
 /** Props of a descriptor's custom settings panel (`settings.render`). */

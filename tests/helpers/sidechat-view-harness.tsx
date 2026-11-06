@@ -99,6 +99,17 @@ export interface SidechatHarness {
   /** Mutable wire values; set them before mount(). */
   wire: SidechatWire
   host: SidechatHost
+  /** Payloads of every `sidechat.prompt` request the view issued (a keyboard
+   *  gesture that "sends" is exactly one of these). */
+  promptCalls: Record<string, unknown>[]
+  /** Extra view props merged over the defaults at mount() — the seam for the
+   *  view's configurable behavior (`submitKey`). Set before mount(). */
+  extraProps: Record<string, unknown>
+  /** A promise the `sidechat.prompt` route awaits before it answers, or null
+   *  for an immediate answer. Settable at any time: a spec holds a send IN
+   *  FLIGHT (the promise is what makes the request outlive the interaction),
+   *  then resolves it to land the response on a possibly re-bound view. */
+  promptGate: Promise<void> | null
   /** Render the real SideChatView bound to thread 't1' under session 'root'. */
   mount: () => RenderedRoot
   /** Flush React work + the stub's resolved promises (default two rounds). */
@@ -135,8 +146,19 @@ export function installSidechatHarness(overrides: Partial<SidechatWire> = {}): S
   FakeSocket.instances = []
   vi.stubGlobal('WebSocket', FakeSocket)
 
-  vi.stubGlobal('fetch', async (url: string | URL) => {
+  const promptCalls: Record<string, unknown>[] = []
+  /** Held by {@link SidechatHarness.promptGate}; read when a prompt arrives. */
+  let promptGate: Promise<void> | null = null
+
+  vi.stubGlobal('fetch', async (url: string | URL, init?: RequestInit) => {
     const method = String(url).split('/').pop()
+    if (method === 'sidechat.prompt') {
+      // Recorded, never rejected: a keyboard gesture either reaches this route
+      // (it submitted) or it does not.
+      promptCalls.push(init?.body === undefined ? {} : JSON.parse(String(init.body)) as Record<string, unknown>)
+      if (promptGate !== null) await promptGate
+      return jsonResponse({ ok: true, value: { accepted: true } })
+    }
     if (method === 'sidechat.events') {
       return jsonResponse({ ok: true, value: { events: wire.events, live: wire.live, pending: wire.pending } })
     }
@@ -171,6 +193,8 @@ export function installSidechatHarness(overrides: Partial<SidechatWire> = {}): S
 
   const tab: SidebarTab = { id: 'tab1', type: 'sidechat', title: '线程一', meta: { threadId: 't1' } }
   const props = { ctx, scope: { sessionId: 'root', cwd: '/p' }, tab, visible: true }
+  /** View props a spec overrides before mount() (the configurable seams). */
+  const extraProps: Record<string, unknown> = {}
 
   let mounted: RenderedRoot | null = null
   const composer = (): HTMLTextAreaElement => {
@@ -182,8 +206,12 @@ export function installSidechatHarness(overrides: Partial<SidechatWire> = {}): S
   return {
     wire,
     host,
+    promptCalls,
+    extraProps,
+    get promptGate(): Promise<void> | null { return promptGate },
+    set promptGate(value: Promise<void> | null) { promptGate = value },
     mount: () => {
-      mounted = renderRoot(createElement(SideChatView, props))
+      mounted = renderRoot(createElement(SideChatView, { ...props, ...extraProps }))
       return mounted
     },
     flush: async (rounds = 2) => {
