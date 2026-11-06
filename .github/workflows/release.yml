@@ -112,8 +112,8 @@ jobs:
         if: github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run != 'false'
         run: pnpm publish --dry-run --no-git-checks
 
-      # Only an explicit opt-in or a real release publishes. `!= 'true'` would
-      # fail open on an empty / missing input — match `'false'` exactly instead.
+      # Match 'false' exactly: `!= 'true'` would fail open on an empty / missing
+      # input (see the dry_run input comment above).
       - name: Publish to npm
         if: github.event_name == 'release' || github.event.inputs.dry_run == 'false'
         run: |

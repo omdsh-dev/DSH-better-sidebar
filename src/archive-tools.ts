@@ -25,8 +25,8 @@
  * Nothing in this module runs a shell: `spawn` takes an argv array, and every
  * path is data. A path is never interpolated into a command string, so a
  * filename with `;` or `$(...)` in it is a filename. A name starting with `-`
- * is still refused by `planArchive`: the bytes are safe, but the tool itself
- * would parse it as an option.
+ * is still refused by `planArchive` (verified on GNU tar 1.35): the bytes are
+ * safe, but the tool itself would parse it as an option.
  *
  * The spawn/probe functions are injectable so the test suite never depends on
  * a real `zip` being installed (AGENTS §6) — the same pattern `open-external`
@@ -206,8 +206,7 @@ export function planArchive(selections: readonly string[], spec: ArchiveToolSpec
   if (args.some(name => name === '' || name === '..' || name.startsWith('../'))) {
     throw new SidebarError('bad-request', 'selection is not below the archive root')
   }
-  // A leading '-' lands in option position for both tools (verified on GNU
-  // tar 1.35 with two such names). Refuse it rather than try to quote it.
+  // Refused, not quoted — see the module header.
   if (args.some(name => name.startsWith('-'))) {
     throw new SidebarError('bad-request', 'archive entry name may not start with "-"')
   }

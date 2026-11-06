@@ -515,8 +515,7 @@ export type EngineSpawner = (
 let spawner: EngineSpawner = spawn
 /** Engines disabled after repeated failures; cleared on the next success. */
 const broken = new Set<Engine>()
-/** Consecutive runtime failures per engine. A single bad query (or a timeout)
- *  is not evidence of a dead binary, so only repeated failures disable it. */
+/** Streak length that disables an engine (failure policy: see module header). */
 const BROKEN_AFTER = 3
 const failures = new Map<Engine, number>()
 let probePromise: Promise<readonly EngineProbe[]> | null = null
@@ -543,10 +542,8 @@ export function probeEngines(): Promise<readonly EngineProbe[]> {
   return probePromise
 }
 
-/** Run one engine and get capped, normalized matches. A single runtime
- *  failure (bad query) or a timeout only degrades THIS search; a timeout also
- *  breaks the failure streak. Only repeated consecutive failures disable the
- *  engine, and the next success re-enables it. */
+/** Run one engine and get capped, normalized matches. Failure policy: see
+ *  the module header. */
 export async function runEngine(
   probe: EngineProbe,
   root: string,
