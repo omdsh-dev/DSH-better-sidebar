@@ -192,7 +192,11 @@ describe('planArchive', () => {
     const ws = join(PLAN_ROOT, 'ws')
     const plan = planArchive([join(ws, 'src', 'index.ts'), join(ws, 'lib', 'util.ts')], spec)
     expect(plan.cwd).toBe(ws)
+    expect(plan.args.slice(0, spec.flags.length)).toEqual([...spec.flags])
+    expect(plan.args).not.toContain('--')
     expect(plan.args.slice(spec.flags.length)).toEqual(['./src/index.ts', './lib/util.ts'])
+    // The `-` stdout archive name must stay in flags, ahead of every operand.
+    expect(plan.args[spec.flags.length - 1]).toBe('-')
     // The separator is normalized whatever the platform produced: the tool
     // gets in-archive names, not host paths.
     expect(plan.args.every(arg => !arg.includes('\\'))).toBe(true)
@@ -214,6 +218,7 @@ describe('planArchive', () => {
     const spec = await specOf('tar')
     const plan = planArchive([join(PLAN_ROOT, 'ws', 'notes.md')], spec)
     expect(plan.args).toEqual(['-czf', '-', '--', 'notes.md'])
+    expect(plan.args.indexOf('--')).toBe(spec.flags.length)
     expect(plan.spec.ext).toBe('.tar.gz')
   })
 
@@ -257,23 +262,6 @@ describe('planArchive', () => {
     expect(thrown).toMatchObject({ code: 'bad-request' })
   })
 
-  it('pins the tar argv shape: `--` between flags and operands', async () => {
-    const spec = await specOf('tar')
-    const plan = planArchive([join(PLAN_ROOT, 'ws', 'notes.md')], spec)
-    expect(plan.args).toEqual(['-czf', '-', '--', 'notes.md'])
-    expect(plan.args.indexOf('--')).toBe(spec.flags.length)
-  })
-
-  it('pins the zip argv shape: `./` operands, no `--` (zip 3.0 has no portable `--`)', async () => {
-    const spec = await specOf('zip')
-    const ws = join(PLAN_ROOT, 'ws')
-    const plan = planArchive([join(ws, 'src', 'index.ts'), join(ws, 'lib', 'util.ts')], spec)
-    expect(plan.args.slice(0, spec.flags.length)).toEqual([...spec.flags])
-    expect(plan.args).not.toContain('--')
-    expect(plan.args.slice(spec.flags.length)).toEqual(['./src/index.ts', './lib/util.ts'])
-    // The `-` stdout archive name must stay in flags, ahead of every operand.
-    expect(plan.args[spec.flags.length - 1]).toBe('-')
-  })
 })
 
 describe('archiveFileName', () => {
