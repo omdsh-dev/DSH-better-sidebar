@@ -55,6 +55,7 @@
 better-sidebar 从 v0.4.0 起把自己改造成一个**注册表服务**：
 
 - **新页面（tab）**：注册一种新的侧边栏 tab 类型，出现在侧边栏 `+` 菜单里，用户点击后在自己的分栏里打开你的 React 页面；
+- **文件树行内动作（file action，v0.31.0+）**：往文件树的右键菜单里加一项（可选再加一个行内悬停按钮），拿到的是行的**绝对路径**——适合「上传到云端」「在 X 里打开」这类由你的插件自己完成动作的入口；
 - **文件预览器（file viewer）**：注册一种文件类型预览器，让用户在侧边栏打开文件时走你的渲染组件（覆盖或补充内置的 markdown/html/code）。**宿主自己也有文档预览**——DSH 0.1.7 的 `ui-sidebar-documentpreview` 拿走了表格 / PDF / 图片 / Office 等只读格式，本插件因此**拒绝**认领那些扩展名，你的 viewer 也接不到它们（清单与原因见 §5.4）。
 
 内置的 6 个 tab（editor / git——「Git」统一 tab（Source Control 视角 + 本轮文件视角，Git 视角内含只读提交图）/ subagent / sidechat / terminal-bottom / diff）和 4 个 viewer（markdown / html / jsonl / code）**自己也是通过同一套 API 注册的**（吃自己的狗粮），所以外部插件的能力与内置功能完全对等。**不再内置 terminal / browser 两个 tab 类型**：DSH 0.1.6 自带右列终端（`ui-sidebar-terminal`、kind `terminal`），浏览器是 0.1.6 的 `ui-sidebar-browser`（kind `browser`，**0.1.7 起只在 desktop profile 挂载**，Web profile 没有这个 kind）；插件的同名类型会让读者看到两份实现。同理，0.1.7 的 `ui-sidebar-documentpreview` 让插件的 image / pdf / Office / 表格预览失去意义，那三个 viewer 描述符（image / pdf / binary-download）已删除。
@@ -743,12 +744,20 @@ interface BetterSidebarService {
   registerFileViewer(descriptor: FileViewerDescriptor): () => void
   /** 注册自定义文件树/文件 tab 图标（v0.19.0+，features 含 'fileIcons'）；返回 disposer */
   registerFileIcon(descriptor: FileIconDescriptor): () => void
+  /** 往文件树行菜单加一项（v0.31.0+，features 含 'fileActions'）；返回 disposer */
+  registerFileAction(descriptor: FileActionDescriptor): () => void
+  /** 编辑器头部的外部按钮（§7.4） */
+  registerTabAction(descriptor: TabActionDescriptor): () => void
+  getTabActions(): readonly TabActionDescriptor[]
   /** 当前已注册的 tab 描述符快照（同步，供 useSyncExternalStore 用；含被设置页禁用的类型） */
   getTabs(): readonly TabDescriptor[]
   /** 当前已注册的 file viewer 描述符快照（含被设置页禁用的 viewer） */
   getFileViewers(): readonly FileViewerDescriptor[]
   /** 当前已注册的文件图标描述符快照（v0.19.0+） */
   getFileIcons(): readonly FileIconDescriptor[]
+  /** 当前已注册的文件动作快照（v0.31.0+），按渲染顺序：
+   *  order 升序，同 order 按注册序 */
+  getFileActions(): readonly FileActionDescriptor[]
   /** 按 path 匹配**具体**注册（priority 降序、注册序）：先 names 文件名，再
    *  具体扩展名；不查 catch-all 与 folder 保留值。消费方一般直接用
    *  fileIcon/folderIcon 全链解析器。 */
@@ -813,7 +822,7 @@ interface BetterSidebarService {
    *  'badge' | 'tabLifecycle' | 'updateTab' | 'openFile' | 'targetedOpen' |
    *  'stateSubscription' | 'tabMeta' | 'pluginSettings' | 'urlTarget' |
    *  'settingSelect' | 'fileIcons' | 'rightActions' | 'settingPatterns' |
-   *  'hostRouteUrl'
+   *  'hostRouteUrl' | 'fileActions'
    *  ——用 `features.includes('xxx')` 按能力 gate。 */
   readonly features: readonly string[]
   /** 当前快照：激活 sessionId + 其状态（面板几何/打开的 tabs/展开集）+ prefs。
@@ -1076,6 +1085,154 @@ registerSidechatSurfaceAdapter(adapter: SidechatSurfaceAdapter): () => void
 **点击回跳**
 
 `openReference` 校验 chip 的 `sessionId` 与当前会话一致（否则拒绝：换了会话 cwd 可能不同，会打开错文件），然后 `ctx.betterSidebar.openFile(scope, path, undefined, { line, lineEnd })`；内置编辑器定位到 `line` 并把 `line`–`lineEnd` 整段闪 2.4 s（皮肤令牌 `--dsw-alias-interactive-bg-hover-accent`，`prefers-reduced-motion` 下减弱）。`lineEnd` 与「本次导航的 nonce」都走**插件的模块级一次性旁路**（`src/client/line-target.ts`，key = path + line；arm 时自增 nonce，编辑器按 nonce 判重、读后即消费），不写进宿主导航参数。nonce 是「同一个 chip 连点两次」仍能再次跳转/闪光的关键：宿主对没移动的 `line` 不重发导航，只比较 path + line 会把二次点击误判成已消费，残留的 arm 还可能让之后同 path + line 的普通打开误闪。**底部工作台没有该入口**：chip 只打开右侧栏，底部 `TabContent → EditorHost` 虽是同一组件、同样消费 `line`，但本功能未在底部真机验证。**行号漂移**：记录的是划选时的行号，文件之后被编辑，点击会落到同一行号（可能已偏移）；不做锚点搜索或内容定位。
+
+---
+
+### 7.3 文件树行内动作（fileActions，v0.31.0+）
+
+文件树的行菜单原本只由插件自己组装（打开方式 / 下载 / 上传到此目录 / 复制 / 重命名 / 删除）。`registerFileAction` 让外部插件在里面加自己的项，并且**只管入口，不管动作**：树不替你上传、复制或移动任何东西，它只把行的事实交给你、把你的失败原样显示出来。
+
+```ts
+interface FileActionDescriptor {
+  /** 唯一 id（'my-plugin:upload'）；重复注册同一个 id 会抛错 */
+  id: string
+  /** 菜单与行按钮的文案（接受 thunk，随界面语言实时解析） */
+  label: string | (() => string)
+  /** 菜单行与行按钮的图标；`(size) => ReactNode` 形式会收到尺寸 */
+  icon?: ReactNode | ((size: number) => ReactNode)
+  /** 外部动作之间的排序（升序，默认 0）；内置菜单项不受影响 */
+  order?: number
+  /** 除了菜单项，还要在行上渲染一个悬停按钮（默认 false）。
+   *  行按钮要求同时提供 icon：没有图标的注册只进菜单 */
+  row?: boolean
+  /** 是否也认领目录行（默认 false）。`run` 里仍可从 isDir 自行再判断 */
+  dirs?: boolean
+  /** 只对部分行出现；每行渲染与每次开菜单各调一次，必须廉价且无副作用。
+   *  抛错 = 该注册自己隐藏，不会打断文件树 */
+  when?: (row: FileActionRow) => boolean
+  /** 真正干活。抛错或 reject 会以 error.message 落进文件树的错误条；
+   *  resolve 则静默（成功提示由注册方自己给）。同一 (id, path) 在飞行中
+   *  的重复点击会被忽略 */
+  run: (context: FileActionContext) => void | Promise<void>
+}
+
+/** `when` 看到的行事实 */
+interface FileActionRow {
+  path: string          // 行的**绝对路径**
+  root: string | undefined  // 这棵树的 workspace 根
+  sessionId?: string    // 拥有这棵树的主会话
+  isDir: boolean
+}
+
+/** `run` 收到的上下文 = 行事实 + 一个报错出口 */
+interface FileActionContext extends FileActionRow {
+  fail(message: string): void  // 同一条错误条（不带「失败：」前缀）
+}
+```
+
+**用法**（一个「上传到云端」动作，宿主侧另有自己的上传路由）：
+
+```ts
+if (ctx.betterSidebar.features.includes('fileActions')) {
+  ctx.effect(() =>
+    ctx.betterSidebar.registerFileAction({
+      id: 'my-plugin:upload',
+      label: () => t('uploadToCloud'),
+      icon: size => <IconCloudArrowUp size={size} />,
+      row: true,                       // 行上也放一个按钮
+      order: 10,                       // 排在内置菜单项之后、按注册序
+      when: row => !row.path.endsWith('.log'), // 例：日志不给传
+      run: async ({ path, fail }) => {
+        const answer = await fetch('/my-plugin/api/upload', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ path }),
+        })
+        if (!answer.ok) fail(await answer.text())   // 用户能读到的原文
+      },
+    })
+  )
+}
+```
+
+**渲染位置**：菜单里排在内置「打开方式 / 新标签打开 / 侧栏打开 / 下载 / 上传到此目录 / 新建」之后、「打包下载 / 复制路径 / 重命名 / 删除」之前，多条外部动作之间**不加**分隔线，第一个外部动作前有一条；`row: true` 的按钮出现在行右侧「引用」按钮之后，随行悬停 / 键盘聚焦显隐。
+
+**两条约定**：
+
+- **树不替你做确认**。危险动作（覆盖、删除、超限上传）的二次确认在 `run` 里自己做。
+- **宿主路由的路径由你负责校验**。`path` 是树给的绝对路径，安全边界（是否在工作区内、大小限制）不在这层——见 §10 的平台约束。
+
+---
+
+### 7.4 编辑器头部动作（tabActions，v0.32.0+）
+
+文件 tab 的头部原本只有插件自己的按钮（预览 / 编辑 / 保存 / 刷新 / 文件树）。`registerTabAction` 让外部插件在刷新与文件树按钮右侧再加自己的按钮——**同样只管入口，不管动作**：头部不替你上传或解析任何东西，它只把 tab 的事实交给你、把你的失败原样显示出来。
+
+为什么需要它：宿主的 `sidebar.right.tab.document.actions` 插槽属于**宿主自己的**文档预览面。本插件用 `editor` / `code` 类型接管了 `dsh-resource://file/**`，文件不再进宿主的预览，那个插槽也就没有人渲染了——「上传到云端」「存到云盘」「在 App 中打开」这类按钮会整体消失。要让它们在这一面继续存在，就得有这一面的扩展点。
+
+```ts
+interface TabActionDescriptor {
+  /** 唯一 id（'my-plugin:upload'）；重复注册同一个 id 会抛错 */
+  id: string
+  /** 按钮文案（接受 thunk）。空串 = 只画图标 */
+  label: string | (() => string)
+  /** tooltip / 无障碍名；缺省用 label */
+  title?: string | (() => string)
+  /** 按钮图标；`(size) => ReactNode` 形式会收到尺寸 */
+  icon?: ReactNode | ((size: number) => ReactNode)
+  /** 外部动作之间的排序（升序，默认 0）；内置按钮不受影响 */
+  order?: number
+  /** 只对部分 tab 出现；每次头部渲染调一次，必须廉价且无副作用。
+   *  抛错 = 该注册自己隐藏，不会打断头部 */
+  when?: (context: Omit<TabActionContext, 'fail'>) => boolean
+  /** 真正干活。抛错或 reject 会以 error.message 落进编辑器上方的错误条；
+   *  resolve 则静默（成功提示由注册方自己给）。同一 (id, tabId) 在飞行中
+   *  的重复点击会被忽略 */
+  run: (context: TabActionContext) => void | Promise<void>
+}
+
+/** `when` / `run` 看到的 tab 事实 */
+interface TabActionContext {
+  tabId: string
+  tabType: string        // 'editor' / 'terminal' / …
+  sessionId: string
+  path: string           // 文件 tab 的路径；无路径的 Files 窗口是 ''
+  isDir: boolean
+  title: string
+  fail(message: string): void   // 仅 `run` 有
+}
+```
+
+**用法**（把同一份上传动作同时挂到文件树行菜单和编辑器头部）：
+
+```ts
+if (ctx.betterSidebar.features.includes('tabActions')) {
+  ctx.effect(() =>
+    ctx.betterSidebar.registerTabAction({
+      id: 'my-plugin:upload',
+      label: () => t('uploadToCloud'),
+      icon: size => <IconCloudArrowUp size={size} />,
+      order: 10,
+      when: tab => tab.path !== '' && !tab.isDir,
+      run: async ({ path, fail }) => {
+        const answer = await fetch('/my-plugin/api/upload', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ path }),
+        })
+        if (!answer.ok) fail(await answer.text())
+      },
+    })
+  )
+}
+```
+
+**渲染位置**：编辑器头部最右侧——保存状态、刷新、文件树开关之后，`order` 升序（同序按注册序）。有 `label` 的按钮用与「预览 / 编辑」一致的文本按钮样式，空 `label` 用图标按钮样式。头部只在文件 tab 上渲染，所以无路径的 Files 窗口不会被塞进一排按钮（`when` 仍会看到 `path: ''`）。
+
+**两条约定**：
+
+- **头部不替你做确认**。危险动作的二次确认在 `run` 里自己做。
+- **`path` 的安全边界由你负责**。头部给的是 tab 的路径原文，是否在工作区内、大小限制如何，不在这层——见 §10 的平台约束。
 
 ---
 

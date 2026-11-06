@@ -45,9 +45,32 @@ import { consumeLineTarget, peekLineTarget } from './line-target.ts'
 import { relativeTo } from './paths.ts'
 import { resolveSidebarPath } from './paths.ts'
 import { clearRetargetedPath, closePathTabs, consumeRetargetedPath, pathTabKey, retargetPathTabs } from './tree-mutations.ts'
-import type { EditorToolbarControls, EditorToolbarState, FileViewerDescriptor } from './service.ts'
+import type { EditorToolbarControls, EditorToolbarState, FileViewerDescriptor, TabActionDescriptor } from './service.ts'
 import { firstLeaf, insertLeafAt, leafWithTab, mintTabId, type SidebarStore, type SidebarTab } from './state.ts'
 import css from './sidebar.module.css'
+
+/**
+ * Resolve a descriptor's `string | (() => string)` text, first non-empty wins.
+ * A throwing thunk is logged and skipped: one broken label must not take the
+ * whole header down.
+ */
+function textOf(...values: Array<string | (() => string) | undefined>): string {
+  for (const value of values) {
+    if (value === undefined) continue
+    if (typeof value === 'string') {
+      if (value !== '') return value
+      continue
+    }
+    try {
+      const text = value()
+      if (typeof text === 'string' && text !== '') return text
+    }
+    catch (error) {
+      console.error('[dsh-better-sidebar] tab action label error:', error)
+    }
+  }
+  return ''
+}
 
 /** One landing navigation the editor host has read from the side channel. */
 interface LineNav { key: string; nonce: number | null; end?: number }
@@ -152,6 +175,28 @@ export function EditorHost(props: {
   // Manual refresh (issue #167): bumping the sequence re-runs the load effect
   // with the same path/scope — the only reload entry besides open/close.
   const [reloadSeq, setReloadSeq] = useState(0)
+
+  /**
+   * External header buttons (feature `tabActions`). The registry lives on the
+   * client service, so the header subscribes to it instead of receiving the
+   * list as a prop: an editor tab renders inside the host's tree, and the
+   * plugins that contribute buttons activate AFTER this component mounted.
+   */
+  const tabActionService = ctx.get('betterSidebar')
+  const [tabActions, setTabActions] = useState<readonly TabActionDescriptor[]>(
+    () => tabActionService?.getTabActions() ?? [],
+  )
+  useEffect(() => {
+    if (tabActionService === undefined) return
+    const sync = (): void => { setTabActions(tabActionService.getTabActions()) }
+    sync()
+    return tabActionService.subscribe(sync)
+  }, [tabActionService])
+
+  /** A failure reported by an external action; cleared on the next reload. */
+  const [actionError, setActionError] = useState<string | null>(null)
+  /** Runs in flight, keyed `actionId:tabId`, so a double press is ignored. */
+  const runningActions = useRef(new Set<string>())
 
   // The reference's landing line, SPENT once per open (#826).
   //
@@ -649,6 +694,43 @@ export function EditorHost(props: {
     )
   }
 
+  /**
+   * The buttons this tab shows: `when` runs once per render and a throwing
+   * predicate drops its own button rather than the whole header.
+   */
+  const visibleTabActions = tabActions.filter((action) => {
+    if (action.when === undefined) return true
+    try {
+      return action.when({ tabId: tab.id, tabType: tab.type, sessionId: scope.sessionId, path, isDir, title })
+    }
+    catch (error) {
+      console.error('[dsh-better-sidebar] tab action predicate error:', error)
+      return false
+    }
+  })
+
+  /** Run one external action; the header owns the in-flight guard. */
+  const runTabAction = (action: TabActionDescriptor): void => {
+    if (!visible) return
+    const key = `${action.id}:${tab.id}`
+    if (runningActions.current.has(key)) return
+    runningActions.current.add(key)
+    setActionError(null)
+    const fail = (message: string): void => { setActionError(`${textOf(action.title, action.label, action.id)}: ${message}`) }
+    try {
+      const outcome = action.run({ tabId: tab.id, tabType: tab.type, sessionId: scope.sessionId, path, isDir, title, fail })
+      if (outcome !== undefined) {
+        void outcome.catch((error: unknown) => { fail(error instanceof Error ? error.message : String(error)) })
+      }
+    }
+    catch (error) {
+      fail(error instanceof Error ? error.message : String(error))
+    }
+    finally {
+      runningActions.current.delete(key)
+    }
+  }
+
   return (
     <div className={css.editor}>
       <div className={css.editorHeader}>
@@ -716,9 +798,27 @@ export function EditorHost(props: {
         >
           <IconFolderOpenRegular size={14} />
         </button>
+        {visibleTabActions.map((action) => {
+          const label = textOf(action.label)
+          const glyph = typeof action.icon === 'function' ? action.icon(14) : action.icon
+          return (
+            <button
+              key={action.id}
+              type="button"
+              className={label === '' ? css.iconButton : css.editorModeButton}
+              aria-label={textOf(action.title, label, action.id)}
+              title={textOf(action.title, label, action.id)}
+              onClick={() => { runTabAction(action) }}
+            >
+              {glyph}
+              {label !== '' && <span>{label}</span>}
+            </button>
+          )
+        })}
       </div>
       <div className={css.editorBody}>
         <div className={css.editorMain}>
+          {actionError !== null && <div className={css.editorError}>{actionError}</div>}
           {showEmpty && <div className={css.editorPlaceholder}>{t('editorEmptyHint')}</div>}
           {!showEmpty && load.status === 'loading' && <div className={css.editorPlaceholder}>{t('loading')}</div>}
           {!showEmpty && load.status === 'error' && <div className={css.editorError}>{load.message}</div>}
