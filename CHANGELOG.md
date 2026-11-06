@@ -4,6 +4,13 @@
 
 ### 未发布
 
+- 🐞 **任务管理页在 DSH 0.2.2 线上不再整页崩在 `Cannot read properties of undefined (reading 'map')`**：0.2.2 的 `agentTeam` Session 投影不再携带 `members`（上游 Team 包迁移 `122dc3af42` 把名册移出投影，wire 只剩 `enabled` / `tasks` / `failure`），而本插件仍按 0.1.7 的形状读 `team.members.map(...)` —— `members` 是 `undefined` 时这里直接抛 `TypeError`，被面板级错误边界接住，于是「任务管理」整页只剩一行红字和一个永远无效的「重试」。
+  - **影响面**：DSH **0.2.2** 线（凡带 Team 包迁移的宿主，含 0.2.2-rc.1 之后）上，只要该会话启用了 Team 模式（`agentTeam` 投影存在），打开「任务管理」即触发；与工作区、会话内容、插件配置无关。重试不会好 —— 投影的形状不会变。0.1.7 / 0.2.1 线不受影响，那些宿主的 `agentTeam` 仍然带 `members`。
+  - **修复**：名册改由 **Lead 的 `subagentCatalog`** 重建。0.2.2 的成员真源就是它 —— 团队成员即 Lead 的直接 subagent，catalog 一行一个。实现为「Lead 行 + catalog 行」，名字取 `name ?? label ?? id`；投影新增 `enabled`：为 `false` 时不画团队板，**旧宿主没有该字段时视为启用**，因此这次改动对 0.1.7 / 0.2.1 线向后兼容。
+  - **随之消失的两项**（上游已不再提供，不是本次取舍）：roster 的 `phase`（`provisioning` / `failed`）与 per-member `error`。成员状态只剩「运行中 / 待命」；一次失败的 spawn 不会在 catalog 里留下行，名册上没有它的位置。
+  - **另一个可观察变化**：团队模式下**所有**直接子 agent 都是成员，不再存在"部分成员"，所以「已完成」折叠组只在**无团队**的树里出现（成员恒为待命），同一父节点下不会再有 done / idle 两个组并存。
+  - 🧪 测试：`tests/team-projection.spec.ts` 重写为 catalog 驱动的名册（`enabled:false` 隐藏、旧宿主无 `enabled` 仍显示、Summary 的 run 位优先于 live 驻留）；`tests/tasks-model.spec.ts` 与 `tests/tasks-page.spec.tsx` 改用 catalog 名构造成员，并把"同父下 done/idle 不再共存"写进用例注释。
+
 - 🎯 **设置页「侧边卡片」的导航图标不再叠成两个**：插件此前按"宿主设置导航还没有图标通道"的老假设，用 CSS 把兜底齿轮藏起来、再画自己的图标；宿主早已提供按 section id 寻址的 `settings.section.icon` 插槽，而且图标的 DOM 外面多了一层 span，老选择器失效后兜底 SVG 露了出来，与插件图标并排显示。现在改为**走宿主插槽**提供图标，删掉标记 + CSS 遮罩那一套（顺带去掉了一个监听整个 document 的 MutationObserver）。
   - 🧪 测试：`tests/settings-nav-icon.spec.tsx` 钉住图标按宿主给的 `size` 缩放、只用 `currentColor`；真实宿主上用无头浏览器确认导航行只剩一个 `svg`、无残留标记。
 
