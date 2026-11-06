@@ -32,6 +32,7 @@ import { isDarkScheme, subscribeColorScheme } from './theme.ts'
 import { markdownTextProps } from './markdown-labels.tsx'
 import { t } from './locales.ts'
 import { sanitizeSvg } from './mermaid-sanitize.ts'
+import { useViewportInsetTop } from './viewport-inset.ts'
 import type { MermaidMarkdownProps } from './mermaid-blocks.ts'
 import { splitMermaidBlocks } from './mermaid-blocks.ts'
 import { renderMermaidDiagram, type MermaidTheme } from './mermaid-frame.ts'
@@ -192,6 +193,8 @@ function MermaidZoomModal({ svg, onClose }: { svg: SVGSVGElement; onClose: () =>
   const svgRef = useRef<SVGSVGElement | null>(null)
   const dragRef = useRef({ active: false, startX: 0, startY: 0 })
   const zoomRef = useRef({ scale: 1, tx: 0, ty: 0 })
+  /** The shell's native window-control band: it eats pointer events (#805). */
+  const insetTop = useViewportInsetTop()
 
   const applyTransform = (): void => {
     const node = svgRef.current
@@ -298,7 +301,11 @@ function MermaidZoomModal({ svg, onClose }: { svg: SVGSVGElement; onClose: () =>
 
   return createPortal(
     <div className={css.mermaidModal} data-mermaid-modal ref={overlayRef}>
-      <div className={css.mermaidModalToolbar}>
+      <div
+        className={css.mermaidModalToolbar}
+        data-mermaid-toolbar
+        style={{ top: 16 + insetTop }}
+      >
         <button
           type="button"
           className={css.mermaidModalButton}

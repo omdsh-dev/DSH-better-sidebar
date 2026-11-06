@@ -538,6 +538,13 @@ export function runGit(cwd: string, args: string[], timeoutMs = 30_000, options:
   })
 }
 
+/** 路径是用户给的字面文件名：不加这个全局选项，git 会把 `a[1].txt` 里的
+ *  `[1]` 当 pathspec 通配符，连 `a1.txt` 一起丢弃/暂存（改动不可恢复）。
+ *  选项必须前置在子命令前才是 git 全局选项。 */
+function literalPathspec(path: string | readonly string[] | undefined): string[] {
+  return path === undefined ? [] : ['--literal-pathspecs']
+}
+
 /** One parsed `git blame --porcelain` row (the editor's hover blame). */
 export interface GitBlameLine {
   /** 1-based line number in the file as it exists in the worktree. */
@@ -633,7 +640,7 @@ export async function blame(
   try {
     const root = await repoRoot(cwd, selected)
     const output = await runGit(root, [
-      'blame', '--porcelain', '-L', `${String(startLine)},${String(endLine)}`, '--', path,
+      ...literalPathspec(path), 'blame', '--porcelain', '-L', `${String(startLine)},${String(endLine)}`, '--', path,
     ])
     return parseBlamePorcelain(output)
   } catch {
@@ -860,9 +867,7 @@ function numstatPathsof(porcelainZ: string): string[] | undefined {
  * both numstat diffs: the counts only ever ride rows the status read itself
  * reports, and limiting the diffs to those paths is what keeps an unignored
  * nested `node_modules` (59 631 entries / 9.24 MB of numstat) out of the two
- * whole-repo walks. `--literal-pathspecs` is required: porcelain paths are
- * literal file names, and without it a name like `:colon.txt` is parsed as
- * pathspec magic and silently loses its counts.
+ * whole-repo walks. 两条 numstat 也要字面 pathspec，理由见 literalPathspec()。
  *
  * Each side's reading lands on its own field of the entry
  * ({@link GitStatusEntry} documents why the two are never summed).
@@ -891,10 +896,7 @@ export async function status(cwd: string, selected?: string): Promise<GitStatusR
   // to the whole-repo diff); `[]` = no tracked change at all, so both diffs are
   // known empty and neither process is spawned.
   if (pathspec === undefined || pathspec.length > 0) {
-    // `--literal-pathspecs` must precede the subcommand (`git <flag> diff …`).
-    // Porcelain paths are literal file names, and without it a name like
-    // `:colon.txt` is parsed as pathspec magic and silently loses its counts.
-    const literal = pathspec === undefined ? [] : ['--literal-pathspecs']
+    const literal = literalPathspec(pathspec)
     const paths = pathspec === undefined ? [] : ['--', ...pathspec]
     const [unstaged, staged] = await Promise.all([
       runGit(root, [...literal, 'diff', '--numstat', '-z', ...paths]).catch(() => ''),
@@ -1009,7 +1011,7 @@ export async function resolveWorktree(cwd: string, requested?: string): Promise<
 /** Diff text of the worktree (unstaged) or the index (staged). */
 export async function diff(cwd: string, path: string | undefined, staged: boolean, selected?: string): Promise<string> {
   const root = await repoRoot(cwd, selected)
-  const args = ['diff', '--no-ext-diff', '--no-color', '-U3']
+  const args = [...literalPathspec(path), 'diff', '--no-ext-diff', '--no-color', '-U3']
   if (staged) args.push('--cached')
   if (path !== undefined) args.push('--', path)
   return runGit(root, args)
@@ -1027,22 +1029,27 @@ export async function diff(cwd: string, path: string | undefined, staged: boolea
  */
 export async function diffHead(cwd: string, path: string | undefined, selected?: string): Promise<string> {
   const root = await repoRoot(cwd, selected)
+  const literal = literalPathspec(path)
   const tail = path !== undefined ? ['--', path] : []
   try {
-    return await runGit(root, ['diff', '--no-ext-diff', '--no-color', '-U3', 'HEAD', ...tail])
+    return await runGit(root, [...literal, 'diff', '--no-ext-diff', '--no-color', '-U3', 'HEAD', ...tail])
   } catch {
-    return runGit(root, ['diff', '--no-ext-diff', '--no-color', '-U3', '--cached', ...tail])
+    return runGit(root, [...literal, 'diff', '--no-ext-diff', '--no-color', '-U3', '--cached', ...tail])
   }
 }
 
 /** Stage paths (all when path is undefined). */
 export async function stage(cwd: string, path: string | undefined, selected?: string): Promise<void> {
-  await runGit(await repoRoot(cwd, selected), ['add', '-A', ...(path !== undefined ? ['--', path] : [])])
+  await runGit(await repoRoot(cwd, selected), [
+    ...literalPathspec(path), 'add', '-A', ...(path !== undefined ? ['--', path] : []),
+  ])
 }
 
 /** Unstage paths (all when path is undefined). */
 export async function unstage(cwd: string, path: string | undefined, selected?: string): Promise<void> {
-  await runGit(await repoRoot(cwd, selected), ['reset', '-q', ...(path !== undefined ? ['--', path] : [])])
+  await runGit(await repoRoot(cwd, selected), [
+    ...literalPathspec(path), 'reset', '-q', ...(path !== undefined ? ['--', path] : []),
+  ])
 }
 
 /** Commit the staged changes with a message (global identity untouched). */
@@ -1110,7 +1117,7 @@ export async function commitDiff(cwd: string, hash: string, selected?: string): 
 
 /** Discard the worktree changes of one path (`git checkout -- <path>`; the index is untouched). */
 export async function discard(cwd: string, path: string, selected?: string): Promise<void> {
-  await runGit(await repoRoot(cwd, selected), ['checkout', '--', path])
+  await runGit(await repoRoot(cwd, selected), [...literalPathspec(path), 'checkout', '--', path])
 }
 
 /** Revert one commit onto the current branch with an auto-generated message.
