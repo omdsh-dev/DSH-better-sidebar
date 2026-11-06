@@ -14,11 +14,10 @@
  * whose name matches (no file path carries it, so rg cannot see it; fd and
  * the walk both report it).
  *
- * A runtime failure disables that engine for the rest of the process (a
- * broken binary must not slow every later search); the caller falls back to
- * the plain walk. A timeout is NOT a failure: it means this tree was too
- * large, so it must not strip every other root of the engine. Hooks are
- * swappable for tests (setEngineHooks).
+ * Repeated runtime failures disable that engine for the rest of the process
+ * (a broken binary must not slow every later search); a single bad query or a
+ * timeout only degrades THAT one search, so the next one retries the engine.
+ * Hooks are swappable for tests (setEngineHooks).
  */
 import { spawn, type ChildProcess } from 'node:child_process'
 import { createInterface } from 'node:readline'
@@ -204,7 +203,7 @@ function verify(binary: string): Promise<boolean> {
 
 /** Escape glob metacharacters so a query matches literally inside -g.
  *  Braces are metacharacters too ({a,b} alternation): an unbalanced '{'
- *  makes rg fail to parse the glob (exit 2 → the engine looks broken), and
+ *  makes rg fail to parse the glob (exit 2 → the run fails), and
  *  a balanced one silently matches a DIFFERENT literal ('a{b}' searches
  *  'ab'). Verified against rg 15: '\{' is a valid brace escape. */
 export function escapeGlob(query: string): string {
@@ -359,14 +358,16 @@ export function normalizeEnginePaths(lines: readonly string[], separator: string
  *  pinned, and --max-results one ABOVE the stream sentinel (cap + 1) so a
  *  full result set overflows into the same truncation detected for rg
  *  (see runChild). Directory matches are read from a second invocation
- *  (`type: 'd'`, see runChild) because fd cannot label its matches. */
+ *  (`type: 'd'`, see runChild) because fd cannot label its matches.
+ *  `--` ends option parsing BEFORE the query: a `-`-leading pattern must stay
+ *  a positional, not become an fd option. */
 export function fdArgv(cap: number, query: string, type?: 'd'): string[] {
   return [
     '--hidden', '--no-ignore',
     ...SKIP_DIR_NAMES.flatMap(name => ['--exclude', name]),
     '--fixed-strings', '--ignore-case',
     ...(type === undefined ? [] : ['--type', type]),
-    '--path-separator', '/', '--max-results', String(cap + 1), query, '.',
+    '--path-separator', '/', '--max-results', String(cap + 1), '--', query, '.',
   ]
 }
 
@@ -481,8 +482,8 @@ function runChild(
   return Promise.all([
     streamLines(child, cap),
     // The directory run's failure is NOT swallowed (#883): a rejected dirs
-    // stream rejects the whole engine call, so runEngine marks the engine
-    // broken and this one search falls back to the plain walk — exactly
+    // stream rejects the whole engine call, so runEngine records the failure
+    // and this one search falls back to the plain walk — exactly
     // the main run's failure handling. The old swallow-catch degraded the
     // failure into "zero directories", invisible in every environment.
     streamLines(dirChild, cap),
@@ -514,6 +515,10 @@ export type EngineSpawner = (
 let spawner: EngineSpawner = spawn
 /** Engines failed at runtime: skipped for the rest of this process. */
 const broken = new Set<Engine>()
+/** Consecutive runtime failures per engine. A single bad query (or a timeout)
+ *  is not evidence of a dead binary, so only repeated failures disable it. */
+const BROKEN_AFTER = 3
+const failures = new Map<Engine, number>()
 let probePromise: Promise<readonly EngineProbe[]> | null = null
 
 /** Probe once per process (lazy): each engine's first working candidate. */
@@ -538,12 +543,10 @@ export function probeEngines(): Promise<readonly EngineProbe[]> {
   return probePromise
 }
 
-/** Run one engine and get capped, normalized matches; a runtime failure
- *  disables that engine for the rest of the process (a broken binary must
- *  not slow every later search) — but a TIMEOUT does not: a timeout means
- *  THIS tree was too big, while the broken-set is per-engine, so disabling
- *  here would strip every other (small) root of the engine over one huge
- *  directory. */
+/** Run one engine and get capped, normalized matches. A single runtime
+ *  failure (bad query) or a timeout only degrades THIS search — the engine
+ *  stays usable so the next one retries it; only repeated consecutive
+ *  failures disable the engine for the rest of the process. */
 export async function runEngine(
   probe: EngineProbe,
   root: string,
@@ -551,13 +554,22 @@ export async function runEngine(
   maxMatches: number,
 ): Promise<EngineResult> {
   try {
-    return await runner(probe, root, query, maxMatches)
+    const result = await runner(probe, root, query, maxMatches)
+    failures.delete(probe.engine)
+    return result
   } catch (error) {
     if (error instanceof EngineTimeoutError) {
       debugLog(`[dsh-search] engine ${probe.engine} timed out (tree too large), falling back`)
     } else {
-      broken.add(probe.engine)
-      debugLog(`[dsh-search] engine ${probe.engine} failed at runtime, disabled: ${error instanceof Error ? error.message : String(error)}`)
+      const count = (failures.get(probe.engine) ?? 0) + 1
+      failures.set(probe.engine, count)
+      const why = error instanceof Error ? error.message : String(error)
+      if (count >= BROKEN_AFTER) {
+        broken.add(probe.engine)
+        debugLog(`[dsh-search] engine ${probe.engine} failed ${String(count)} times in a row, disabled: ${why}`)
+      } else {
+        debugLog(`[dsh-search] engine ${probe.engine} query failed (${String(count)}/${String(BROKEN_AFTER)}), will retry: ${why}`)
+      }
     }
     throw error
   }
@@ -576,10 +588,11 @@ export function setEngineHooks(next: { prober?: typeof prober; runner?: typeof r
   if (next.spawner !== undefined) spawner = next.spawner
 }
 
-/** Reset probe cache, broken-set and hooks (test isolation). */
+/** Reset probe cache, failure state and hooks (test isolation). */
 export function resetEngines(): void {
   probePromise = null
   broken.clear()
+  failures.clear()
   prober = (): Promise<readonly EngineProbe[]> => probeOnce()
   runner = runChild
   spawner = spawn

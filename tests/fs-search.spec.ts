@@ -642,13 +642,14 @@ describe('fs-search dispatch', () => {
         runner: async () => { throw new Error('engine exploded') },
       })
       expect(await searchFiles(dir, 'util')).toEqual({ matches: ['src/util.ts'], dirs: [], truncated: false })
-      // The failed engine is disabled for the rest of the process.
+      // A single failure must NOT disable the engine: the next search retries
+      // it instead of permanently degrading to the slow walk.
       let attempts = 0
       setEngineHooks({
-        runner: async () => { attempts += 1; return { paths: [], dirs: [], truncated: false } },
+        runner: async () => { attempts += 1; throw new Error('engine exploded again') },
       })
       expect(await searchFiles(dir, 'util')).toEqual({ matches: ['src/util.ts'], dirs: [], truncated: false })
-      expect(attempts).toBe(0)
+      expect(attempts).toBe(1)
     } finally {
       removeTree(dir)
     }

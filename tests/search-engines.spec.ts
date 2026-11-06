@@ -1,8 +1,9 @@
 /**
  * search-engines: the native-engine probe and runner behind fs.search.
- * The probe is process-cached (verified binaries only); a runtime failure
- * disables one engine without disturbing the others, while a TIMEOUT only
- * degrades that one search. `normalizeEnginePaths` re-bases raw stdout lines
+ * The probe is process-cached (verified binaries only); a single runtime
+ * failure (or a timeout) only degrades that one search, so the next one can
+ * retry the engine — only repeated consecutive failures disable it, without
+ * disturbing the others. `normalizeEnginePaths` re-bases raw stdout lines
  * onto the walk contract (root-relative, '/'-separated, no './' prefix) and
  * `deriveRgMatches` supplies the directory hits `rg --files` cannot report.
  * Child processes are exercised entirely through injected hooks — CI
@@ -212,9 +213,9 @@ describe('escapeGlob', () => {
   })
 
   // '{' is globset alternation syntax: unbalanced it breaks the glob parse
-  // (rg exits 2 → the engine looks broken and gets disabled process-wide),
-  // balanced 'a{b}' silently searches 'ab' instead of the literal. Both
-  // verified against real rg 15; '\{' is the accepted escape.
+  // (rg exits 2 → that engine run fails), balanced 'a{b}' silently searches
+  // 'ab' instead of the literal. Both verified against real rg 15; '\{' is the
+  // accepted escape.
   it('escapes braces so alternation syntax cannot hijack a literal query', () => {
     expect(escapeGlob('a{b}')).toBe('a\\{b\\}')
     expect(escapeGlob('{')).toBe('\\{')
@@ -243,6 +244,32 @@ describe('engine argv symmetry', () => {
     expect(argv).toContain('/')
     expect(argv[argv.length - 2]).toBe('a*b') // literal, unescaped
     expect(argv[argv.length - 1]).toBe('.')
+  })
+
+  // Regression: `fd ... -foo .` made fd parse the query as an option. `--`
+  // must sit AFTER all options (and their values) and BEFORE the query, with
+  // the trailing `.` path still a positional.
+  it('fd argv puts `--` immediately before the query', () => {
+    const argv = fdArgv(10, '-foo')
+    const dash = argv.indexOf('--')
+    expect(dash).toBe(argv.length - 3)
+    expect(argv[dash + 1]).toBe('-foo') // literal, unescaped
+    expect(argv[dash + 2]).toBe('.')
+    // The last option's value precedes the separator; nothing after it is an option.
+    expect(argv[dash - 1]).toBe('11')
+    expect(argv.slice(0, dash)).toContain('--fixed-strings')
+  })
+
+  it('a `--`-leading query stays positional too', () => {
+    const argv = fdArgv(10, '--hidden')
+    expect(argv[argv.indexOf('--') + 1]).toBe('--hidden')
+    expect(argv[argv.length - 1]).toBe('.')
+  })
+
+  it('the `--type d` invocation keeps `--` before the pattern', () => {
+    const argv = fdArgv(10, '-foo', 'd')
+    expect(argv[argv.indexOf('--') + 1]).toBe('-foo')
+    expect(argv.indexOf('--type')).toBeLessThan(argv.indexOf('--'))
   })
 
   // fd cannot label its matches, so the directory subset comes from a second
@@ -437,7 +464,7 @@ describe('bundledRgCandidates', () => {
   })
 })
 
-describe('probe cache and broken-disable', () => {
+describe('probe cache and failure handling', () => {
   afterEach(() => {
     resetEngines()
   })
@@ -449,16 +476,51 @@ describe('probe cache and broken-disable', () => {
     expect(calls).toBe(1)
   })
 
-  it('usableEngines hides engines broken at runtime', async () => {
+  // Regression: one bad query used to add fd to the broken set forever, so
+  // every later search silently fell back to the slow plain walk.
+  it('a single runtime failure leaves the engine usable for the next search', async () => {
     setEngineHooks({ prober: async () => [fdProbe, rgProbe] })
+    let calls = 0
     setEngineHooks({
-      runner: async () => { throw new Error('boom') },
+      runner: async () => { calls += 1; throw new Error('boom') },
     })
     await runEngine(fdProbe, '/w', 'x', 10).catch(() => {
       /* the failing runner above */
     })
-    const usable = await usableEngines()
-    expect(usable.map(probe => probe.engine)).toEqual(['rg'])
+    expect((await usableEngines()).map(probe => probe.engine)).toEqual(['fd', 'rg'])
+    // The caller can actually try it again instead of being locked to the walk.
+    await runEngine(fdProbe, '/w', 'x', 10).catch(() => {})
+    expect(calls).toBe(2)
+  })
+
+  it('repeated consecutive failures still disable the engine', async () => {
+    setEngineHooks({ prober: async () => [fdProbe, rgProbe] })
+    setEngineHooks({ runner: async () => { throw new Error('boom') } })
+    // BROKEN_AFTER = 3: a genuinely dead binary must not slow every search,
+    // while a single failure (above) must not disable one.
+    for (let i = 0; i < 3; i += 1) {
+      await runEngine(fdProbe, '/w', 'x', 10).catch(() => {})
+    }
+    expect((await usableEngines()).map(probe => probe.engine)).toEqual(['rg'])
+  })
+
+  it('a successful run clears the consecutive-failure streak', async () => {
+    setEngineHooks({ prober: async () => [fdProbe] })
+    let fail = true
+    setEngineHooks({
+      runner: async () => {
+        if (fail) throw new Error('boom')
+        return { paths: [], dirs: [], truncated: false }
+      },
+    })
+    await runEngine(fdProbe, '/w', 'x', 10).catch(() => {})
+    await runEngine(fdProbe, '/w', 'x', 10).catch(() => {})
+    fail = false
+    await runEngine(fdProbe, '/w', 'x', 10)
+    // Two failures, a success, then one more: only one in a row, still usable.
+    fail = true
+    await runEngine(fdProbe, '/w', 'x', 10).catch(() => {})
+    expect((await usableEngines()).map(probe => probe.engine)).toEqual(['fd'])
   })
 
   // A timeout means THIS tree was too big — the broken-set is per-engine,
@@ -519,7 +581,7 @@ describe('real engines (only when installed)', () => {
       // (verified against real rg 15.2.0: unescaped '*a[b]*' returns
       // 'ab.ts', escaped '*a\[b\]*' returns 'a[b].ts'). Deliberately NOT an
       // UNCLOSED 'a[b': rg refuses the glob outright ("unclosed character
-      // class", exit 2), the engine gets dropped as broken and the plain-walk
+      // class", exit 2), that engine run fails and the plain-walk
       // fallback satisfies the assertion by accident.
       const meta = process.platform === 'win32'
         ? { file: 'a[b].ts', decoy: 'ab.ts', query: 'a[b]' }
@@ -652,9 +714,10 @@ describe('streamLines settles on close, not exit', () => {
     first.emit('exit', 0)
     first.emit('close', 0)
     // The --type d run dies: a rejection, which must reach runEngine's
-    // broken-marking instead of degrading into "zero directories".
+    // failure handling instead of degrading into "zero directories".
     second.emit('error', new Error('fd dirs stream exploded'))
     await expect(call).rejects.toThrow('fd dirs stream exploded')
-    expect((await usableEngines()).map(probe => probe.engine)).toEqual([])
+    // One failed run must not permanently drop fd: the next search can retry.
+    expect((await usableEngines()).map(probe => probe.engine)).toEqual(['fd'])
   })
 })
