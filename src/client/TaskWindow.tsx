@@ -314,15 +314,11 @@ export function TaskWindow(props: TaskWindowProps): ReactNode {
         // by itself.
       } else {
         if (result.code === CONFLICT_CODE) {
-          // A stale-revision write is rejected WITHOUT advancing the revision,
-          // so the snapshot is still behind. Re-base it to the projection's
-          // latest revision only when that has already moved past the rejected
-          // one (read the render-time mirror, not the `task` this closure
-          // captured); otherwise leave the mark for the effect above, which
-          // takes the projection's next revision. The conflict note stays up,
-          // the draft and editing stay put, and the reader's NEXT Save submits
-          // against the new base (an explicit "overwrite anyway"). Exiting here
-          // would lose the draft.
+          // A stale write is rejected WITHOUT advancing the revision. Use the
+          // mirror once it has overtaken the rejected one; until then the effect
+          // above takes the projection's next revision. The note, the draft and
+          // editing stay put (exiting would lose the draft), and the next Save
+          // submits against the new base — an explicit "overwrite anyway".
           const submitted = editRevisionRef.current ?? task?.revision
           const latest = latestRevisionRef.current
           if (submitted !== undefined) {
@@ -422,13 +418,9 @@ export function TaskWindow(props: TaskWindowProps): ReactNode {
                   size="sm"
                   icon={<IconEditOutlineRegular size={12} />}
                   onClick={() => {
-                    // Draft and CAS base must come from the SAME read: the
-                    // projection may have moved on while this window sat in the
-                    // view, and saving the older text against the newer base is
-                    // the silent overwrite this snapshot exists to prevent.
+                    // Draft and CAS base from the same read (see editRevisionRef),
+                    // so a pending conflict re-base has nothing left to correct.
                     editRevisionRef.current = task.revision
-                    // Re-opening seeds the draft from the same read, so a
-                    // pending conflict re-base has nothing left to correct.
                     staleFromRef.current = undefined
                     setSubject(task.subject)
                     setDescription(task.description)

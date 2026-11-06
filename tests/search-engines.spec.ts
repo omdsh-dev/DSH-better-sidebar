@@ -466,6 +466,7 @@ describe('bundledRgCandidates', () => {
 
 describe('probe cache and failure handling', () => {
   afterEach(() => {
+    vi.useRealTimers()
     resetEngines()
   })
 
@@ -587,20 +588,16 @@ describe('probe cache and failure handling', () => {
   // EMFILE burst) used to cost the fast path for the rest of the session.
   it('retries a disabled engine once the cooldown elapses', async () => {
     vi.useFakeTimers()
-    try {
-      vi.setSystemTime(0)
-      setEngineHooks({ prober: async () => [fdProbe, rgProbe] })
-      setEngineHooks({ runner: async () => { throw new Error('boom') } })
-      for (let i = 0; i < 3; i += 1) {
-        await runEngine(fdProbe, '/w', 'x', 10).catch(() => {})
-      }
-      expect((await usableEngines()).map(probe => probe.engine)).toEqual(['rg'])
-
-      vi.setSystemTime(60_000)
-      expect((await usableEngines()).map(probe => probe.engine)).toEqual(['fd', 'rg'])
-    } finally {
-      vi.useRealTimers()
+    vi.setSystemTime(0)
+    setEngineHooks({ prober: async () => [fdProbe, rgProbe] })
+    setEngineHooks({ runner: async () => { throw new Error('boom') } })
+    for (let i = 0; i < 3; i += 1) {
+      await runEngine(fdProbe, '/w', 'x', 10).catch(() => {})
     }
+    expect((await usableEngines()).map(probe => probe.engine)).toEqual(['rg'])
+
+    vi.setSystemTime(60_000)
+    expect((await usableEngines()).map(probe => probe.engine)).toEqual(['fd', 'rg'])
   })
 })
 
