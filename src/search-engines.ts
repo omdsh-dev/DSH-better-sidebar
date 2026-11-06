@@ -14,10 +14,10 @@
  * whose name matches (no file path carries it, so rg cannot see it; fd and
  * the walk both report it).
  *
- * Repeated runtime failures disable that engine for the rest of the process
- * (a broken binary must not slow every later search); a single bad query or a
- * timeout only degrades THAT one search, so the next one retries the engine.
- * Hooks are swappable for tests (setEngineHooks).
+ * Repeated consecutive failures disable that engine (a broken binary must not
+ * slow every later search); a single bad query or a timeout only degrades THAT
+ * one search, and a timeout breaks the failure streak. A success recovers the
+ * engine. Hooks are swappable for tests (setEngineHooks).
  */
 import { spawn, type ChildProcess } from 'node:child_process'
 import { createInterface } from 'node:readline'
@@ -513,7 +513,7 @@ export type EngineSpawner = (
 /** Child spawn behind runChild — injectable so tests can drive the real
  *  orchestration with scripted children (event order, stream timing). */
 let spawner: EngineSpawner = spawn
-/** Engines failed at runtime: skipped for the rest of this process. */
+/** Engines disabled after repeated failures; cleared on the next success. */
 const broken = new Set<Engine>()
 /** Consecutive runtime failures per engine. A single bad query (or a timeout)
  *  is not evidence of a dead binary, so only repeated failures disable it. */
@@ -544,9 +544,9 @@ export function probeEngines(): Promise<readonly EngineProbe[]> {
 }
 
 /** Run one engine and get capped, normalized matches. A single runtime
- *  failure (bad query) or a timeout only degrades THIS search — the engine
- *  stays usable so the next one retries it; only repeated consecutive
- *  failures disable the engine for the rest of the process. */
+ *  failure (bad query) or a timeout only degrades THIS search; a timeout also
+ *  breaks the failure streak. Only repeated consecutive failures disable the
+ *  engine, and the next success re-enables it. */
 export async function runEngine(
   probe: EngineProbe,
   root: string,
@@ -555,10 +555,16 @@ export async function runEngine(
 ): Promise<EngineResult> {
   try {
     const result = await runner(probe, root, query, maxMatches)
+    // Success is recovery: clear the streak and lift any `broken` mark, so a
+    // late in-flight success cannot leave the engine filtered out forever.
     failures.delete(probe.engine)
+    broken.delete(probe.engine)
     return result
   } catch (error) {
     if (error instanceof EngineTimeoutError) {
+      // A timeout breaks the streak like a success: a huge tree is not a dead
+      // binary, so its count must not roll into the next search.
+      failures.delete(probe.engine)
       debugLog(`[dsh-search] engine ${probe.engine} timed out (tree too large), falling back`)
     } else {
       const count = (failures.get(probe.engine) ?? 0) + 1

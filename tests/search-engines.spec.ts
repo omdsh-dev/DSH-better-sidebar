@@ -536,6 +536,51 @@ describe('probe cache and failure handling', () => {
     })
     expect((await usableEngines()).map(probe => probe.engine)).toEqual(['fd'])
   })
+
+  // A timeout must break the consecutive-failure streak like a success:
+  // otherwise the residual count from two earlier failures rolls into the
+  // next one and "fail, fail, timeout, fail" disables a healthy engine,
+  // contradicting "only repeated consecutive failures".
+  it('a timeout breaks the streak (fail, fail, timeout, fail does not disable)', async () => {
+    setEngineHooks({ prober: async () => [fdProbe, rgProbe] })
+    const outcomes = ['fail', 'fail', 'timeout', 'fail'] as const
+    let step = 0
+    setEngineHooks({
+      runner: async () => {
+        const outcome = outcomes[step]
+        step += 1
+        if (outcome === 'timeout') throw new EngineTimeoutError('search engine timed out')
+        throw new Error('boom')
+      },
+    })
+    for (let i = 0; i < outcomes.length; i += 1) {
+      await runEngine(fdProbe, '/w', 'x', 10).catch(() => {})
+    }
+    expect((await usableEngines()).map(probe => probe.engine)).toEqual(['fd', 'rg'])
+  })
+
+  // Concurrency: three failures can add `broken` while a fourth, in-flight
+  // request later succeeds. The success clears `failures` — it must also lift
+  // `broken`, or usableEngines() keeps filtering out an engine that recovered.
+  it('a success after the streak tripped BROKEN_AFTER re-enables the engine', async () => {
+    setEngineHooks({ prober: async () => [fdProbe, rgProbe] })
+    let call = 0
+    setEngineHooks({
+      runner: async () => {
+        call += 1
+        if (call <= 3) throw new Error('boom')
+        return { paths: [], dirs: [], truncated: false }
+      },
+    })
+    const calls = [
+      runEngine(fdProbe, '/w', 'x', 10),
+      runEngine(fdProbe, '/w', 'x', 10),
+      runEngine(fdProbe, '/w', 'x', 10),
+      runEngine(fdProbe, '/w', 'x', 10),
+    ]
+    await Promise.allSettled(calls)
+    expect((await usableEngines()).map(probe => probe.engine)).toEqual(['fd', 'rg'])
+  })
 })
 
 /**
