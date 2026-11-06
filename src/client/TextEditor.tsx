@@ -818,13 +818,21 @@ export function TextEditor(props: FileViewerProps) {
       // keep the old one, the next save just re-checks).
       if (typeof result.mtimeMs === 'number') mtimeRef.current = result.mtimeMs
       savedTextRef.current = text
-      setDraft(null)
-      setDirty(false)
       setConflict(false)
-      setSaveState('saved')
-      // Saved: nothing is unsaved any more, so the durable backup must not
-      // offer itself back on the next open.
-      clearDraftBackup(scope.sessionId, path)
+      // Keystrokes during the write are NOT the bytes on disk: keep the tab
+      // dirty and its durable backup, or the next close/quit drops them.
+      const live = view.state.doc.toString()
+      if (live !== text) {
+        setDraft(live)
+        setSaveState('idle')
+      } else {
+        setDraft(null)
+        setDirty(false)
+        setSaveState('saved')
+        // Saved: nothing is unsaved any more, so the durable backup must not
+        // offer itself back on the next open.
+        clearDraftBackup(scope.sessionId, path)
+      }
       // The saved bytes are a new revision of the uncommitted diff: re-read
       // the change set (the file's XY status code usually stays the same, so
       // the status store alone would never wake the gutter up again).

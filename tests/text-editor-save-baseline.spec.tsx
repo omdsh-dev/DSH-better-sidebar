@@ -12,6 +12,11 @@
  * The second case pins the other side of the contract: a genuinely different
  * document must still run the original file-switch reset (preview mode, no
  * draft, clean editor, conflict cleared, new baseline) unchanged.
+ *
+ * The third case is a save still in flight: keystrokes made after the write
+ * was sent are NOT the bytes on disk, so the tab must stay dirty and keep its
+ * durable backup instead of declaring itself saved (which would let the next
+ * close/quit drop those edits silently).
  */
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -34,6 +39,12 @@ vi.mock('../src/client/api.ts', async (importOriginal) => {
     ...actual,
     api: { ...actual.api, fsWrite: (...args: unknown[]) => fsWrite(...args) },
   }
+})
+
+const { clearDraftBackup } = vi.hoisted(() => ({ clearDraftBackup: vi.fn() }))
+vi.mock('../src/client/editor-draft-backup.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/client/editor-draft-backup.ts')>()
+  return { ...actual, clearDraftBackup: (...args: unknown[]) => clearDraftBackup(...args) }
 })
 
 const CONTENT = 'const a = 1\n'
@@ -112,6 +123,7 @@ function type(view: EditorView, insert: string): void {
 beforeEach(() => {
   fsWrite.mockReset()
   fsWrite.mockResolvedValue({ ok: true, mtimeMs: 999 })
+  clearDraftBackup.mockClear()
 })
 
 afterEach(() => {
@@ -156,6 +168,38 @@ describe('TextEditor save baseline (#1059)', () => {
       expect(fsWrite).toHaveBeenCalledTimes(1)
       expect(fsWrite.mock.calls[0]![2]).toBe(NEXT_CONTENT)
       expect(fsWrite.mock.calls[0]![3]).toBe(400)
+    } finally {
+      editor.unmount()
+    }
+  })
+
+  it('keeps typing done while the write is in flight unsaved', async () => {
+    let finish: ((value: { ok: true; mtimeMs: number }) => void) | undefined
+    fsWrite.mockImplementation(() => new Promise<{ ok: true; mtimeMs: number }>((resolve) => { finish = resolve }))
+    const editor = mountEditor()
+    try {
+      // Mount may decline a leftover draft backup (jsdom's confirm is a no-op);
+      // only the save callback's clear is under test here.
+      clearDraftBackup.mockClear()
+      const view = editor.view()
+      type(view, '// first\n')
+      await act(async () => { editor.controls().save() })
+      expect(editor.state().saveState).toBe('saving')
+      type(view, '// typed during save\n')
+      await act(async () => {
+        finish?.({ ok: true, mtimeMs: 999 })
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+      expect(editor.state().dirty).toBe(true)
+      expect(editor.state().saveState).toBe('idle')
+      expect(clearDraftBackup).not.toHaveBeenCalled()
+      // The next save re-sends the live document against the NEW baseline.
+      fsWrite.mockResolvedValue({ ok: true, mtimeMs: 1000 })
+      await act(async () => { editor.controls().save() })
+      await act(async () => { await Promise.resolve() })
+      expect(fsWrite.mock.calls[1]![2]).toBe('// typed during save\n// first\n' + CONTENT)
+      expect(fsWrite.mock.calls[1]![3]).toBe(999)
     } finally {
       editor.unmount()
     }
