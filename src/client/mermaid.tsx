@@ -298,7 +298,7 @@ function MermaidZoomModal({ svg, onClose }: { svg: SVGSVGElement; onClose: () =>
 
   return createPortal(
     <div className={css.mermaidModal} data-mermaid-modal ref={overlayRef}>
-      <div className={css.mermaidModalToolbar}>
+      <div className={css.mermaidModalToolbar} data-mermaid-modal-toolbar>
         <button
           type="button"
           className={css.mermaidModalButton}
