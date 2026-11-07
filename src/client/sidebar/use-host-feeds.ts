@@ -16,9 +16,24 @@ import { clientJobs, useJobsSnapshot } from '../jobs-client.ts'
 import { mountedSessionId } from '../native/surface.ts'
 import { t } from '../locales.ts'
 
-/** How many consecutive reconnect failures stop the agent-opens push loop
- * (the loop restarts on session switch). */
-const FAILURE_LIMIT = 3
+/**
+ * Application-level heartbeat interval (ms) for the agent-opens socket. The
+ * browser WebSocket API cannot emit protocol-level pings and an idle socket
+ * carries no bytes at all, so a load balancer's idle/send timeout closes it
+ * (ALB: 60 s by default, 300 s ceiling). A data frame well below those
+ * thresholds keeps the connection alive; the host registers no `message`
+ * listener, so an unknown frame is ignored.
+ */
+const HEARTBEAT_INTERVAL_MS = 20_000
+
+/** Heartbeat payload: `kind` is not file/folder/url, so the host ignores it. */
+const HEARTBEAT_FRAME = '{"kind":"ping"}'
+
+/** First reconnect delay (ms); doubles per consecutive failure. */
+const RECONNECT_BASE_MS = 2_000
+
+/** Ceiling for the exponential reconnect backoff (ms). */
+const RECONNECT_MAX_MS = 30_000
 
 /**
  * Subagent auto-open debounce (ms). The host delivers a new child's origin
@@ -145,11 +160,15 @@ export function useHostFeeds(feeds: {
    * The host pushes one JSON request per open; the sidebar routes it to the
    * matching built-in tab: a file opens in the editor (per-path dedupe), a
    * folder opens a file window whose tree is rooted at the folder
-   * (`meta.dir`), and a URL opens in DSH's own browser tab type. A disconnected socket
-   * retries with a short backoff (mirror of the agent-terminals loop): the
-   * host queue keeps undelivered requests and replays them on the first
-   * attach, so a refresh or a session switch lands the opens the model
-   * queued while no view was connected.
+   * (`meta.dir`), and a URL opens in DSH's own browser tab type. The effect
+   * owns the connection for as long as the session is shown: an application
+   * heartbeat keeps an idle socket alive past a load balancer's idle/send
+   * timeout, and a dropped socket reconnects forever with a bounded
+   * exponential backoff. A connection that stays up (or delivers a frame) ends
+   * the consecutive-failure series, so unrelated drops never accumulate into a
+   * permanent stop. The host queue keeps undelivered requests and replays them
+   * on the first attach, so a refresh or a session switch lands the opens the
+   * model queued while no view was connected.
    * While the side-card setting is off, pushes are ignored as a defensive
    * gate — the host already unregisters the tool and drains the queue.
    */
@@ -157,14 +176,31 @@ export function useHostFeeds(feeds: {
     if (sessionId === undefined) return
     let socket: WebSocket | null = null
     let retry: number | undefined
+    let heartbeat: number | undefined
+    let openedAt: number | undefined
     let closed = false
     let failures = 0
+    const stopHeartbeat = (): void => {
+      window.clearInterval(heartbeat)
+      heartbeat = undefined
+    }
     const connect = (): void => {
       if (closed) return
       const url = hostWebSocketUrl('sidebar/ws/agent-opens')
       url.search = new URLSearchParams({ sessionId }).toString()
       socket = new WebSocket(url.toString())
+      socket.onopen = () => {
+        openedAt = Date.now()
+        stopHeartbeat()
+        heartbeat = window.setInterval(() => {
+          if (socket?.readyState === WebSocket.OPEN) socket.send(HEARTBEAT_FRAME)
+        }, HEARTBEAT_INTERVAL_MS)
+      }
       socket.onmessage = (event) => {
+        // A frame from the host proves the socket is live, so it ends the
+        // consecutive-failure series even if the socket drops right after.
+        failures = 0
+        openedAt = undefined
         if (typeof event.data !== 'string') return
         try {
           const request = JSON.parse(event.data) as { kind?: unknown; target?: unknown; title?: unknown }
@@ -200,18 +236,24 @@ export function useHostFeeds(feeds: {
       }
       socket.onclose = () => {
         if (closed) return
-        failures += 1
-        if (failures >= FAILURE_LIMIT) {
-          console.error('[dsh-better-sidebar] agent-opens connection failed; stopping reconnect loop', sessionId)
-          return
-        }
-        retry = window.setTimeout(connect, 2000)
+        stopHeartbeat()
+        // A socket that stayed up past the base delay was a real connection:
+        // its drop restarts the series at the base delay instead of inheriting
+        // earlier failures, which is what accumulated into a permanent stop.
+        const stable = openedAt !== undefined && Date.now() - openedAt >= RECONNECT_BASE_MS
+        openedAt = undefined
+        failures = stable ? 1 : failures + 1
+        // Never permanently stop: a bounded exponential backoff keeps retrying
+        // through a long outage instead of requiring a page reload.
+        const delay = Math.min(RECONNECT_BASE_MS * 2 ** (failures - 1), RECONNECT_MAX_MS)
+        retry = window.setTimeout(connect, delay)
       }
       socket.onerror = () => { socket?.close() }
     }
     connect()
     return () => {
       closed = true
+      stopHeartbeat()
       window.clearTimeout(retry)
       socket?.close()
     }
