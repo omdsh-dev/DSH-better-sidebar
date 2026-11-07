@@ -20,7 +20,7 @@ import { once } from 'node:events'
 import type { ServerResponse } from 'node:http'
 import { pipeline } from 'node:stream/promises'
 import type { SidebarHttpResponse } from './context-types.ts'
-import { SidebarError } from './wire.ts'
+import { fileReadError } from './fs-read-error.ts'
 
 /**
  * Stream one file into the response with the given headers.
@@ -53,11 +53,7 @@ export async function streamFileToResponse(
     await once(stream, 'open')
   } catch (error: unknown) {
     stream.destroy()
-    throw new SidebarError(
-      'fs-error',
-      `cannot read "${path}": ${error instanceof Error ? error.message : String(error)}`,
-      400,
-    )
+    throw fileReadError(path, error)
   }
   res.writeHead(200, { ...headers, 'content-length': String(size) })
   try {

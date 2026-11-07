@@ -21,6 +21,8 @@
   - **另一个可观察变化**：团队模式下**所有**直接子 agent 都是成员，不再存在"部分成员"，所以「已完成」折叠组只在**无团队**的树里出现（成员恒为待命），同一父节点下不会再有 done / idle 两个组并存。
   - 🧪 测试：`tests/team-projection.spec.ts` 重写为 catalog 驱动的名册（`enabled:false` 隐藏、旧宿主无 `enabled` 仍显示、Summary 的 run 位优先于 live 驻留）；`tests/tasks-model.spec.ts` 与 `tests/tasks-page.spec.tsx` 改用 catalog 名构造成员，并把"同父下 done/idle 不再共存"写进用例注释。
 
+- **Markdown 文件链接错误恢复**：Windows 路径因转义丢失分隔符时，侧栏会检查有限数量的候选路径；唯一命中时自动打开，多个命中时提供选择。文件不存在时显示可读提示，并提供复制路径、文件管理器打开和重试操作。
+
 ### v0.30.1
 
 - 🎯 **设置页「侧边卡片」的导航图标不再叠成两个**：插件此前按"宿主设置导航还没有图标通道"的老假设，用 CSS 把兜底齿轮藏起来、再画自己的图标；宿主早已提供按 section id 寻址的 `settings.section.icon` 插槽，而且图标的 DOM 外面多了一层 span，老选择器失效后兜底 SVG 露了出来，与插件图标并排显示。现在改为**走宿主插槽**提供图标，删掉标记 + CSS 遮罩那一套（顺带去掉了一个监听整个 document 的 MutationObserver）。
