@@ -12,6 +12,8 @@
 
 - **目录目标不再按文件读取**（[#1029](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1029)，同一根因覆盖 [#933](https://github.com/omdsh-dev/DSH-better-sidebar/issues/933)）：打开路径是文件夹时（会话里的目录链接、`sidebar_open` 目录、编辑器地址栏粘贴目录），`fs.read` / `fs.readPage` 返回专用错误码 `fs-directory`；`EditorHost` 捕获后把当前页签升级为文件夹窗口（`meta.dir: true` + 文件树），不再把原始 `"…" is a directory` 错误画成页签内容。升级时先把相对目标按会话工作区解析成**平台原生绝对路径**（Windows 分隔符规整、去尾部分隔符，见 `resolveNativeSidebarPath`）再作为文件夹根——host 返回的层级路径是 `path.resolve` 后的绝对路径，而 FileTree 按请求的根路径缓存层级；根是相对路径或混合斜杠时两者键不一致，文件树会永远停在「加载中」占位。
 
+- 🐞 **侧栏不再被钉死在已删除的 linked worktree 上**（[#960](https://github.com/omdsh-dev/DSH-better-sidebar/issues/960)）：worktree 被外部删除（`git worktree remove`、或直接删目录）后，进程级的路径/顶层缓存仍会把它当作活跃根目录返回，文件树报「文件夹不存在」、git 面板报「不是 git 仓库」，主仓库完好却只能重启恢复。现在缓存命中时会校验目标目录是否仍在（一次 `stat()`，相比它要避免的 ~7ms git 进程开销可忽略），已消失即失效并回落到会话 cwd 对应的仓库顶层。
+
 ### v0.30.1
 
 - 🎯 **设置页「侧边卡片」的导航图标不再叠成两个**：插件此前按"宿主设置导航还没有图标通道"的老假设，用 CSS 把兜底齿轮藏起来、再画自己的图标；宿主早已提供按 section id 寻址的 `settings.section.icon` 插槽，而且图标的 DOM 外面多了一层 span，老选择器失效后兜底 SVG 露了出来，与插件图标并排显示。现在改为**走宿主插槽**提供图标，删掉标记 + CSS 遮罩那一套（顺带去掉了一个监听整个 document 的 MutationObserver）。

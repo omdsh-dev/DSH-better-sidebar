@@ -170,6 +170,24 @@ function pathKeyOf(value: string): string {
   return value.replace(/[\\/]+/g, '/').replace(/\/+$/, '').toLowerCase()
 }
 
+/**
+ * Whether a cached path is still there, as a THREE-way answer.
+ *
+ * Only ENOENT / ENOTDIR prove the directory is gone. Any other failure — EACCES /
+ * EPERM / EBUSY / EIO / EMFILE: a locked handle, an antivirus pass holding the
+ * directory, a hung SMB/UNC worktree — says nothing about existence. Treating those
+ * as "gone" would re-root the sidebar because of one transient error, which is worse
+ * than the stale answer this whole check exists to remove (issue #960 review).
+ */
+async function directoryPresence(path: string): Promise<'live' | 'gone' | 'unknown'> {
+  try {
+    return (await stat(path)).isDirectory() ? 'live' : 'gone'
+  } catch (error) {
+    const code = String((error as { code?: unknown } | null)?.code ?? '')
+    return code === 'ENOENT' || code === 'ENOTDIR' ? 'gone' : 'unknown'
+  }
+}
+
 /** Whether `target` is `base` itself or lives under it. */
 function pathUnderOf(base: string, target: string): boolean {
   const b = pathKeyOf(base)
@@ -282,9 +300,29 @@ async function topOfActivePath(value: string): Promise<string | undefined> {
     const cached = pathTopCache.get(key)
     // A cached `undefined` ("not in a repository") is the answer that keeps a
     // non-repo session cheap, so it is re-inserted like any other hit — which
-    // also refreshes its recency in the bounded LRU.
-    cachePut(pathTopCache, key, cached, PATH_TOP_CACHE_MAX)
-    return cached
+    // also refreshes its recency in the bounded LRU. A cached PATH is only
+    // reusable while the directory is still there: a followed worktree the user
+    // deletes would otherwise be handed to every route forever (issue #960).
+    if (cached === undefined) {
+      cachePut(pathTopCache, key, cached, PATH_TOP_CACHE_MAX)
+      return cached
+    }
+    if (await directoryPresence(cached) !== 'gone') {
+      cachePut(pathTopCache, key, cached, PATH_TOP_CACHE_MAX)
+      return cached
+    }
+    // Gone for real: drop the entry and probe again. A NEGATIVE from this
+    // re-probe is deliberately NOT cached — `pathTopCache` has no TTL, so a
+    // negative produced by a disappearance would pin the session away from a
+    // path that can come back (`git worktree add` again, a restored folder).
+    // Both the deletion and the re-creation are then self-healing.
+    pathTopCache.delete(key)
+    const again = await topLevelOf(value)
+    const top = again === undefined ? await topLevelOf(dirname(value)) : again
+    if (top === undefined) return undefined
+    const result = requireAbsolute(top)
+    cachePut(pathTopCache, key, result, PATH_TOP_CACHE_MAX)
+    return result
   }
   let top = await topLevelOf(value)
   if (top === undefined) top = await topLevelOf(dirname(value))
@@ -481,7 +519,11 @@ export async function activeWorktreeRootOf(ctx: Context, sessionId: string, base
   const liveSeq = ctx.sessions.get(sessionId)?.seq
   const cached = activeWorktreeRootCache.get(sessionId)
   if (cached !== undefined && cached.base === base && cached.directoryEpoch === directoryEpoch) {
-    if (cached.expires > Date.now()) {
+    // A served root must still exist: a followed worktree the user deleted
+    // would otherwise stay pinned for another TTL window (issue #960).
+    // `root === base` is the one case with nothing better to fall back to.
+    const liveRoot = cached.root === base || await directoryPresence(cached.root) !== 'gone'
+    if (cached.expires > Date.now() && liveRoot) {
       cachePut(activeWorktreeRootCache, sessionId, cached, ACTIVE_ROOT_CACHE_MAX)
       return cached.root
     }
@@ -489,13 +531,14 @@ export async function activeWorktreeRootOf(ctx: Context, sessionId: string, base
     // repository: nothing this resolver reads can have changed, so re-arm the
     // entry. Negative/failed answers keep the wall-clock re-probe (see the
     // entry doc), and so does a host with no cursor.
-    if (cached.gitResolved && liveSeq !== undefined && cached.eventSeq === liveSeq) {
+    if (liveRoot && cached.gitResolved && liveSeq !== undefined && cached.eventSeq === liveSeq) {
       cachePut(activeWorktreeRootCache, sessionId, {
         ...cached,
         expires: Date.now() + ACTIVE_ROOT_TTL_MS,
       }, ACTIVE_ROOT_CACHE_MAX)
       return cached.root
     }
+    if (!liveRoot) activeWorktreeRootCache.delete(sessionId)
   }
   const flightKey = `${sessionId}\0${base}\0${directoryEpoch ?? ''}`
   const pending = activeRootInFlight.get(flightKey)
