@@ -37,6 +37,7 @@ import { createPortal } from 'react-dom'
 import { Button, IconCloseFillRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import { createFrameBatcher } from './frame-batcher.ts'
 import { t } from './locales.ts'
+import { useViewportInsetTop } from './viewport-inset.ts'
 import css from './FloatingWindow.module.css'
 
 /** Default share of the viewport a fresh window takes. */
@@ -105,11 +106,22 @@ function clamp(value: number, min: number, max: number): number {
  * title bar / its right edge) reachable": a window that hangs off the bottom
  * edge hides its own resize corner, which is exactly how the first real-host
  * check lost it.
+ *
+ * `minStart` is the lowest the origin may go; callers pass the top edge raised
+ * past the shell's native window-control band, which takes pointer events
+ * before the page sees them (./viewport-inset.ts). The overflow branch keeps
+ * its old shape: there the title bar is already off-screen, so raising the
+ * floor would only push the window's bottom further out.
  */
-function clampOrigin(start: number, size: number, viewport: number): number {
+function clampOrigin(
+  start: number,
+  size: number,
+  viewport: number,
+  minStart = VIEWPORT_MARGIN,
+): number {
   const fullyInside = viewport - size - VIEWPORT_MARGIN
-  return fullyInside >= VIEWPORT_MARGIN
-    ? clamp(start, VIEWPORT_MARGIN, fullyInside)
+  return fullyInside >= minStart
+    ? clamp(start, minStart, fullyInside)
     : clamp(start, KEEP_ON_SCREEN - size, viewport - KEEP_ON_SCREEN)
 }
 
@@ -119,7 +131,9 @@ function initialBox(
   size: { width: number; height: number } | undefined,
   min: { width: number; height: number },
   viewport: { width: number; height: number },
+  insetTop: number,
 ): WindowBox {
+  const topFloor = VIEWPORT_MARGIN + insetTop
   const width = clamp(
     size?.width ?? viewport.width * DEFAULT_WIDTH_RATIO,
     min.width,
@@ -128,15 +142,15 @@ function initialBox(
   const height = clamp(
     size?.height ?? viewport.height * DEFAULT_HEIGHT_RATIO,
     min.height,
-    Math.max(min.height, viewport.height - VIEWPORT_MARGIN * 2),
+    Math.max(min.height, viewport.height - topFloor - VIEWPORT_MARGIN),
   )
   const rect = anchor?.getBoundingClientRect()
   const left = rect === undefined
     ? (viewport.width - width) / 2
     : clamp(rect.left, VIEWPORT_MARGIN, viewport.width - width - VIEWPORT_MARGIN)
   const top = rect === undefined
-    ? Math.max(VIEWPORT_MARGIN, (viewport.height - height) / 2)
-    : clamp(rect.bottom + 6, VIEWPORT_MARGIN, viewport.height - height - VIEWPORT_MARGIN)
+    ? Math.max(topFloor, (viewport.height - height) / 2)
+    : clamp(rect.bottom + 6, topFloor, viewport.height - height - VIEWPORT_MARGIN)
   return {
     left: Math.round(left),
     top: Math.round(top),
@@ -158,6 +172,9 @@ export function FloatingWindow(props: FloatingWindowProps): ReactNode {
     width: minSize?.width ?? DEFAULT_MIN_WIDTH,
     height: minSize?.height ?? DEFAULT_MIN_HEIGHT,
   }), [minSize?.width, minSize?.height])
+  /** The shell's native window-control band: pointer events die in it. */
+  const insetTop = useViewportInsetTop()
+  const topFloor = VIEWPORT_MARGIN + insetTop
   const frameRef = useRef<HTMLDivElement>(null)
   const onCloseRef = useRef(onClose)
   onCloseRef.current = onClose
@@ -174,8 +191,10 @@ export function FloatingWindow(props: FloatingWindowProps): ReactNode {
     setBox(initialBox(anchor, initialSize, min, {
       width: window.innerWidth,
       height: window.innerHeight,
-    }))
-    // Mount-only on purpose: see the comment above.
+    }, insetTop))
+    // Mount-only on purpose: see the comment above. The inset is read
+    // synchronously at module evaluation, so this first box already clears the
+    // shell band; a later change is handled by the re-clamp effect below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -185,21 +204,27 @@ export function FloatingWindow(props: FloatingWindowProps): ReactNode {
       const current = boxRef.current
       if (current === null) return
       const width = clamp(current.width, min.width, Math.max(min.width, window.innerWidth - VIEWPORT_MARGIN * 2))
-      const height = clamp(
-        current.height,
-        min.height,
-        Math.max(min.height, window.innerHeight - MIN_VIEWPORT_HEIGHT),
+      // Old cap ("leave room for the title bar below") AND the new top floor:
+      // a band that grew while the window sat near the top would otherwise
+      // leave its title bar under the native controls.
+      const heightCap = Math.min(
+        window.innerHeight - MIN_VIEWPORT_HEIGHT,
+        window.innerHeight - topFloor - VIEWPORT_MARGIN,
       )
+      const height = clamp(current.height, min.height, Math.max(min.height, heightCap))
       setBox({
         width,
         height,
         left: clampOrigin(current.left, width, window.innerWidth),
-        top: clampOrigin(current.top, height, window.innerHeight),
+        top: clampOrigin(current.top, height, window.innerHeight, topFloor),
       })
     }
     window.addEventListener('resize', onResize)
+    // The band changed under an already-placed window: lift it out, never
+    // push it back down (that would move a window the reader placed).
+    onResize()
     return () => { window.removeEventListener('resize', onResize) }
-  }, [min.width, min.height])
+  }, [min.width, min.height, topFloor])
 
   // Escape only: no outside-click, no blur, no anchor observer (see the header).
   useEffect(() => {
@@ -230,7 +255,7 @@ export function FloatingWindow(props: FloatingWindowProps): ReactNode {
       pendingDragRef.current = {
         ...start,
         left: clampOrigin(start.left + (move.clientX - startX), start.width, window.innerWidth),
-        top: clampOrigin(start.top + (move.clientY - startY), start.height, window.innerHeight),
+        top: clampOrigin(start.top + (move.clientY - startY), start.height, window.innerHeight, topFloor),
       }
       dragBatcher.schedule(() => {
         const pending = pendingDragRef.current
@@ -248,7 +273,7 @@ export function FloatingWindow(props: FloatingWindowProps): ReactNode {
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
     window.addEventListener('pointercancel', onUp)
-  }, [dragBatcher])
+  }, [dragBatcher, topFloor])
 
   /** Resize from one edge handle: `axis` picks which dimension the handle owns. */
   const resizeBatcher = useRef(createFrameBatcher()).current

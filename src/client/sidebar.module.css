@@ -2055,9 +2055,10 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   backdrop-filter: blur(2px);
 }
 
+/* `top` is written inline by mermaid.tsx (it has to clear the shell's native
+   window-control band, #805). */
 .mermaidModalToolbar {
   position: absolute;
-  top: 16px;
   right: 16px;
   display: flex;
   gap: 8px;
