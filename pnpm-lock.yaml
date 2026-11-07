@@ -72,8 +72,8 @@ importers:
         specifier: ^6.43.8
         version: 6.43.9
       '@deepseek-ai/schemastery':
-        specifier: ~3.18.5
-        version: 3.18.5
+        specifier: '>=3.18.5 <4'
+        version: 3.19.0
       '@formkit/auto-animate':
         specifier: ^0.10.0
         version: 0.10.0
@@ -182,7 +182,7 @@ importers:
         version: 0.2.2-rc.1(@deepseek-ai/cordis@4.0.5)(@deepseek-ai/dsh-session@0.2.2-rc.1(@deepseek-ai/cordis@4.0.5)(@deepseek-ai/dsh-scope@0.2.2-rc.1(@deepseek-ai/cordis@4.0.5)))
       '@deepseek-ai/dsh-settings':
         specifier: 0.2.2-rc.1
-        version: 0.2.2-rc.1(@deepseek-ai/cordis-plugin-include@1.0.10)(@deepseek-ai/cordis@4.0.5)(@deepseek-ai/dsh-app-boot@0.2.2-rc.1(@deepseek-ai/cordis-plugin-group@1.1.0(@deepseek-ai/cordis-plugin-loader@1.1.0)(@deepseek-ai/cordis@4.0.5))(@deepseek-ai/cordis-plugin-include@1.0.10)(@deepseek-ai/cordis-plugin-loader@1.1.0)(@deepseek-ai/cordis@4.0.5)(@deepseek-ai/dsh-home-paths@0.2.2-rc.1(@deepseek-ai/cordis@4.0.5))(@deepseek-ai/dsh-launch-environment@0.2.2-rc.1(@deepseek-ai/cordis@4.0.5)))(@deepseek-ai/dsh-brand@0.2.2-rc.1(@deepseek-ai/cordis@4.0.5))(@deepseek-ai/dsh-session@0.2.2-rc.1(@deepseek-ai/cordis@4.0.5)(@deepseek-ai/dsh-scope@0.2.2-rc.1(@deepseek-ai/cordis@4.0.5)))(@deepseek-ai/schemastery@3.18.5)(node-addon-require-builtin@0.1.9)
+        version: 0.2.2-rc.1(@deepseek-ai/cordis-plugin-include@1.0.10)(@deepseek-ai/cordis@4.0.5)(@deepseek-ai/dsh-app-boot@0.2.2-rc.1(@deepseek-ai/cordis-plugin-group@1.1.0(@deepseek-ai/cordis-plugin-loader@1.1.0)(@deepseek-ai/cordis@4.0.5))(@deepseek-ai/cordis-plugin-include@1.0.10)(@deepseek-ai/cordis-plugin-loader@1.1.0)(@deepseek-ai/cordis@4.0.5)(@deepseek-ai/dsh-home-paths@0.2.2-rc.1(@deepseek-ai/cordis@4.0.5))(@deepseek-ai/dsh-launch-environment@0.2.2-rc.1(@deepseek-ai/cordis@4.0.5)))(@deepseek-ai/dsh-brand@0.2.2-rc.1(@deepseek-ai/cordis@4.0.5))(@deepseek-ai/dsh-session@0.2.2-rc.1(@deepseek-ai/cordis@4.0.5)(@deepseek-ai/dsh-scope@0.2.2-rc.1(@deepseek-ai/cordis@4.0.5)))(@deepseek-ai/schemastery@3.19.0)(node-addon-require-builtin@0.1.9)
       '@deepseek-ai/dsh-subagent':
         specifier: 0.2.2-rc.1
         version: 0.2.2-rc.1(5278d2d2fdad745dd123e1df8c692c60)
@@ -908,9 +908,6 @@ packages:
       '@deepseek-ai/dsh-session': 0.2.2-rc.1
       '@deepseek-ai/dsh-session-projection': 0.2.2-rc.1
       '@deepseek-ai/dsh-system-prompt': 0.2.2-rc.1
-
-  '@deepseek-ai/schemastery@3.18.5':
-    resolution: {integrity: sha512-Mnobvqf9rHsZYv4g5edj5ddxS1oF1kIdSlz0DunUgnY3LWG5F26MqvH3YOOsSaodCgyzJ16OMN9O99/s5Crtdw==}
 
   '@deepseek-ai/schemastery@3.19.0':
     resolution: {integrity: sha512-bDXoYQa7ghAhmdYD5VPlzKxEzJV/aKkz5l4V5h1u06z8GAPN1ROewSjvR9WiXhpa52E9fng8lpH5QdCRIQgnyQ==}
@@ -4038,7 +4035,7 @@ snapshots:
       '@deepseek-ai/dsh-scope': 0.2.2-rc.1(@deepseek-ai/cordis@4.0.5)
       '@deepseek-ai/dsh-util-values': 0.2.2-rc.1(@deepseek-ai/cordis@4.0.5)
 
-  '@deepseek-ai/dsh-settings@0.2.2-rc.1(@deepseek-ai/cordis-plugin-include@1.0.10)(@deepseek-ai/cordis@4.0.5)(@deepseek-ai/dsh-app-boot@0.2.2-rc.1(@deepseek-ai/cordis-plugin-group@1.1.0(@deepseek-ai/cordis-plugin-loader@1.1.0)(@deepseek-ai/cordis@4.0.5))(@deepseek-ai/cordis-plugin-include@1.0.10)(@deepseek-ai/cordis-plugin-loader@1.1.0)(@deepseek-ai/cordis@4.0.5)(@deepseek-ai/dsh-home-paths@0.2.2-rc.1(@deepseek-ai/cordis@4.0.5))(@deepseek-ai/dsh-launch-environment@0.2.2-rc.1(@deepseek-ai/cordis@4.0.5)))(@deepseek-ai/dsh-brand@0.2.2-rc.1(@deepseek-ai/cordis@4.0.5))(@deepseek-ai/dsh-session@0.2.2-rc.1(@deepseek-ai/cordis@4.0.5)(@deepseek-ai/dsh-scope@0.2.2-rc.1(@deepseek-ai/cordis@4.0.5)))(@deepseek-ai/schemastery@3.18.5)(node-addon-require-builtin@0.1.9)':
+  '@deepseek-ai/dsh-settings@0.2.2-rc.1(@deepseek-ai/cordis-plugin-include@1.0.10)(@deepseek-ai/cordis@4.0.5)(@deepseek-ai/dsh-app-boot@0.2.2-rc.1(@deepseek-ai/cordis-plugin-group@1.1.0(@deepseek-ai/cordis-plugin-loader@1.1.0)(@deepseek-ai/cordis@4.0.5))(@deepseek-ai/cordis-plugin-include@1.0.10)(@deepseek-ai/cordis-plugin-loader@1.1.0)(@deepseek-ai/cordis@4.0.5)(@deepseek-ai/dsh-home-paths@0.2.2-rc.1(@deepseek-ai/cordis@4.0.5))(@deepseek-ai/dsh-launch-environment@0.2.2-rc.1(@deepseek-ai/cordis@4.0.5)))(@deepseek-ai/dsh-brand@0.2.2-rc.1(@deepseek-ai/cordis@4.0.5))(@deepseek-ai/dsh-session@0.2.2-rc.1(@deepseek-ai/cordis@4.0.5)(@deepseek-ai/dsh-scope@0.2.2-rc.1(@deepseek-ai/cordis@4.0.5)))(@deepseek-ai/schemastery@3.19.0)(node-addon-require-builtin@0.1.9)':
     dependencies:
       '@deepseek-ai/cordis': 4.0.5(@deepseek-ai/cordis-plugin-include@1.0.10)(@deepseek-ai/cordis-plugin-loader@1.1.0)
       '@deepseek-ai/cordis-plugin-loader': 1.1.0(@deepseek-ai/cordis@4.0.5)(node-addon-require-builtin@0.1.9)
@@ -4047,7 +4044,7 @@ snapshots:
       '@deepseek-ai/dsh-config-editor': 0.2.2-rc.1(@deepseek-ai/cordis-plugin-include@1.0.10)(@deepseek-ai/cordis-plugin-loader@1.1.0)(@deepseek-ai/cordis@4.0.5)(@deepseek-ai/dsh-app-boot@0.2.2-rc.1(@deepseek-ai/cordis-plugin-group@1.1.0(@deepseek-ai/cordis-plugin-loader@1.1.0)(@deepseek-ai/cordis@4.0.5))(@deepseek-ai/cordis-plugin-include@1.0.10)(@deepseek-ai/cordis-plugin-loader@1.1.0)(@deepseek-ai/cordis@4.0.5)(@deepseek-ai/dsh-home-paths@0.2.2-rc.1(@deepseek-ai/cordis@4.0.5))(@deepseek-ai/dsh-launch-environment@0.2.2-rc.1(@deepseek-ai/cordis@4.0.5)))
       '@deepseek-ai/dsh-session': 0.2.2-rc.1(@deepseek-ai/cordis@4.0.5)(@deepseek-ai/dsh-scope@0.2.2-rc.1(@deepseek-ai/cordis@4.0.5))
       '@deepseek-ai/dsh-util-values': 0.2.2-rc.1(@deepseek-ai/cordis@4.0.5)
-      '@deepseek-ai/schemastery': 3.18.5
+      '@deepseek-ai/schemastery': 3.19.0
       yaml: 2.9.1
     transitivePeerDependencies:
       - '@deepseek-ai/cordis-plugin-include'
@@ -4156,11 +4153,6 @@ snapshots:
       '@deepseek-ai/dsh-system-prompt': 0.2.2-rc.1(@deepseek-ai/cordis@4.0.5)(@deepseek-ai/dsh-llm@0.2.2-rc.1(@deepseek-ai/cordis@4.0.5))(@deepseek-ai/dsh-scope@0.2.2-rc.1(@deepseek-ai/cordis@4.0.5))
       '@deepseek-ai/schemastery': 3.19.0
       zod: 4.4.3
-
-  '@deepseek-ai/schemastery@3.18.5':
-    dependencies:
-      '@deepseek-ai/cosmokit': 1.8.6
-      '@standard-schema/spec': 1.1.0
 
   '@deepseek-ai/schemastery@3.19.0':
     dependencies:
