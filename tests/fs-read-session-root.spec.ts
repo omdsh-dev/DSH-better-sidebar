@@ -58,7 +58,11 @@ for (const subdirectory of ['sub-en', '社媒运营']) {
         expect(await read(route, 'tools/a.md')).toMatchObject({ ok: true, value: { content: 'session file\n' } })
         const missing = await read(route, 'root-only.md')
         expect(missing.ok).toBe(false)
-        expect(missing.error?.message).toContain(join(cwd, 'root-only.md'))
+        // Windows spells the same temp directory as either RUNNER~1 or
+        // runneradmin depending on who resolved it; the assertion is about the
+        // session-relative tail, not the user-profile spelling.
+        const message = (missing.error?.message ?? '').replace(/\\/g, '/')
+        expect(message).toContain(['repo', subdirectory, 'root-only.md'].join('/'))
         expect(readFileSync(join(repo, 'root-only.md'), 'utf8')).toBe('wrong repository-root file\n')
         expect(await read(route, join(cwd, 'tools', 'a.md'))).toMatchObject({ ok: true, value: { content: 'session file\n' } })
         expect(await read(route, outside)).toMatchObject({ ok: true, value: { content: 'outside file\n' } })
