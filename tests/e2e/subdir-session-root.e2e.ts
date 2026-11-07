@@ -21,8 +21,8 @@ import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { expect, test, type APIRequestContext, type Page } from '@playwright/test'
-import { createHostApi, gotoPage, hostRpc, sendFirstMessage, sidebarApi } from './host'
+import { expect, test, type APIRequestContext } from '@playwright/test'
+import { createHostApi, dismissOnboarding, gotoPage, hostRpc, sendFirstMessage, sidebarApi } from './host'
 
 /** This spec's own scratch tree; removed in afterAll. */
 const SCRATCH = mkdtempSync(join(tmpdir(), 'dsh-e2e-subdir-root-'))
@@ -46,38 +46,6 @@ let sessionDirReal: string
 
 let api: APIRequestContext
 let sessionId: string
-
-/**
- * Dismiss the keyless boot's onboarding takeovers, which mask the shell: a
- * welcome notice ("Continue") and, once acknowledged, a provider dialog
- * ("Configure later"). A DSH build without onboarding proceeds straight on.
- * @param page - the lane's page.
- */
-async function dismissOnboarding(page: Page): Promise<void> {
-  try {
-    await expect
-      .poll(() => page.getByRole('button', { name: /^(Continue|Configure later)$/ }).count(), { timeout: 60_000 })
-      .toBeGreaterThan(0)
-  } catch {
-    console.warn('[e2e] no onboarding takeover appeared; proceeding without dismissal')
-  }
-  for (let round = 0; round < 8; round++) {
-    let dismissed = false
-    for (const name of ['Continue', 'Configure later']) {
-      const button = page.getByRole('button', { name, exact: true }).first()
-      if ((await button.count()) === 0) continue
-      try {
-        await button.click({ timeout: 4_000 })
-        dismissed = true
-        await page.waitForTimeout(1_000)
-      } catch {
-        // Masked by the takeover stacked above it; the next round tries the
-        // other button first.
-      }
-    }
-    if (!dismissed) break
-  }
-}
 
 test.beforeAll(async () => {
   mkdirSync(join(SESSION_DIR, 'tools', 'prompts'), { recursive: true })
@@ -154,9 +122,14 @@ test('the explorer stays under the session cwd and a relative link opens the fil
     .toHaveCount(1, { timeout: 30_000 })
   await link.click()
 
+  // The viewer may keep more than one surface mounted (preview + source), so
+  // the marker can legitimately appear more than once; what matters is that the
+  // linked file rendered at all, from the session cwd.
+  // The viewer keeps both surfaces mounted; the hidden CodeMirror line is not
+  // the one the reader sees. Assert the VISIBLE rendering.
   await expect(
-    pane.getByText(MARKER),
+    pane.getByText(MARKER).filter({ visible: true }).first(),
     'the linked file must render from the session cwd, not from the repository root',
-  ).toHaveCount(1, { timeout: 30_000 })
+  ).toBeVisible({ timeout: 30_000 })
   expect(pageErrors, 'pageerrors while opening the relative link').toEqual([])
 })
