@@ -94,6 +94,7 @@
   "license": "MIT",
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.5",
+    "@deepseek-ai/schemastery": ">=3.18.5 <4",
     "@deepseek-ai/dsh-agent": "^0.2.2-rc.1",
     "@deepseek-ai/dsh-client-locale": "^0.2.2-rc.1",
     "@deepseek-ai/dsh-client-ui-conversation": "^0.2.2-rc.1",
@@ -142,7 +143,6 @@
     "@codemirror/search": "^6.7.1",
     "@codemirror/state": "^6.7.1",
     "@codemirror/view": "^6.43.8",
-    "@deepseek-ai/schemastery": "~3.18.5",
     "@formkit/auto-animate": "^0.10.0",
     "@lezer/highlight": "^1.2.3",
     "@xterm/addon-fit": "^0.11.0",
