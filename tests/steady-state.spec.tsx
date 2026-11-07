@@ -261,6 +261,11 @@ const TIMER_LEDGER: Array<{ file: string; gate: string; why: string }> = [
     gate: 'enabled',
     why: '全插件唯一的轮询引擎：每个调用点都以 enabled 表达可见性',
   },
+  {
+    file: 'sidebar/use-host-feeds.ts',
+    gate: 'stopHeartbeat',
+    why: 'agent-opens 心跳：每次连接 onopen 建表，onclose / effect cleanup 停表（断线 2s 起指数退避重连）',
+  },
 ]
 
 /** `src/client` 下的 .ts/.tsx（跳过惰性 chunk 目录：它们不是常驻面；跳过
