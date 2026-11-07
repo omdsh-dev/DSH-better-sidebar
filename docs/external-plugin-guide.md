@@ -1164,7 +1164,7 @@ if (ctx.betterSidebar.features.includes('fileActions')) {
 
 ---
 
-### 7.4 编辑器头部动作（tabActions，v0.32.0+）
+### 7.4 编辑器头部动作（tabActions，v0.31.0+）
 
 文件 tab 的头部原本只有插件自己的按钮（预览 / 编辑 / 保存 / 刷新 / 文件树）。`registerTabAction` 让外部插件在刷新与文件树按钮右侧再加自己的按钮——**同样只管入口，不管动作**：头部不替你上传或解析任何东西，它只把 tab 的事实交给你、把你的失败原样显示出来。
 

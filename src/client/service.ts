@@ -1025,7 +1025,7 @@ export const SIDEBAR_SERVICE_VERSION = '0.30.1'
  *   contributions to the file tree's row menu (and, with `row: true`, a
  *   hover button on the row). The callback is client-side only: the tree
  *   supplies the entry point and the error strip, the owner does the work.
- * - 'tabActions' (v0.32.0): registerTabAction/getTabActions — external buttons
+ * - 'tabActions' (v0.31.0): registerTabAction/getTabActions — external buttons
  *   in the editor header (right of save/reload/tree). Same contract as
  *   `fileActions`: the header supplies the entry point, the owner does the
  *   work.
