@@ -152,6 +152,36 @@ describe('sidechat.start', () => {
     expect(get).toHaveBeenCalledOnce()
   })
 
+  it('installs the model-switch listener in the create and cold-resume setups (#1134)', async () => {
+    // 0.2.2 kept the `[model changed: …]` notice in `installModelSelection`'s
+    // `agent/pre-step` listener even though routing moved onto `AgentModel`.
+    // The host installs it in every setup; a side thread that skips it leaves
+    // the next model unaware that the turns above used another route.
+    const services = happyServices(agent('parent'), agent('child'))
+    const api = buildSidechatApi(ctxWith(services))
+    await api['sidechat.start']({ sessionId: 'parent', question: 'q' })
+    const createSetup = (services.create.mock.calls[0] as unknown as [
+      { setup: (ctx: unknown) => Promise<void> },
+    ])[0].setup
+    const on = vi.fn((_event: string) => () => {})
+    await createSetup({ on })
+    expect(on.mock.calls.filter(([type]) => type === 'agent/pre-step')).toHaveLength(1)
+
+    // Cold resume builds its own setup from the persisted record; that branch
+    // must install the listener too.
+    const child = agent('child-resume')
+    const resumed = happyServices(undefined, child)
+    resumed.agents.get = vi.fn((_id: unknown) => undefined)
+    const resumeApi = buildSidechatApi(ctxWith(resumed))
+    await resumeApi['sidechat.model']({ childId: 'child-resume', provider: 'p3', model: 'm3' })
+    const resumeSetup = (resumed.resume.mock.calls[0] as unknown as [
+      { setup: (ctx: unknown) => Promise<void> },
+    ])[0].setup
+    const onResume = vi.fn((_event: string) => () => {})
+    await resumeSetup({ on: onResume })
+    expect(onResume.mock.calls.filter(([type]) => type === 'agent/pre-step')).toHaveLength(1)
+  })
+
   it('stamps current cwd after a truncated seed so the real working-directory projection cannot restore an older cwd', async () => {
     const original = resolve('/original-project')
     const previous = resolve('/previous-execution')
