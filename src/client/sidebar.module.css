@@ -2122,10 +2122,12 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
    selection in the preview/code viewers. Portalled to document.body and
    position:fixed, so the editor's overflow clips cannot crop it; flat
    chrome like the rest of the sidebar (hairline border, no shadow).
-   Fills come from the menu/overlay pair, not the layer/hover pair: this
-   button floats over text with no panel behind it, while skins make the
-   layer tokens translucent (~0.45) and interactive-bg-hover a bare
-   0.06-0.08 tint, neither of which is readable over the text beneath. */
+   Fills come from the host's floating-button pair, the same one DSH's own
+   selection quote action uses (`--dsw-alias-button-floating-fill/hover` in
+   @deepseek-ai/dsh-message-quotes' QuoteSelectionAction): its opaque
+   defaults read the same over any surface. Never go back to the menu/layer
+   tokens (translucent by default) or `interactive-bg-hover` (a bare
+   0.06-0.08 tint, unreadable over text). */
 .selectionPopup {
   position: fixed;
   z-index: 60;
@@ -2136,15 +2138,18 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   padding: 0 10px;
   border: 1px solid var(--dsw-alias-border-l1);
   border-radius: 6px;
-  background: var(--dsw-specific-menu);
+  background: var(--dsw-alias-button-floating-fill);
   color: var(--dsw-alias-label-primary);
   font: var(--dsw-font-xxxs-strong-11);
   white-space: nowrap;
   cursor: pointer;
 }
 
-.selectionPopup:hover {
-  background: var(--dsw-alias-interactive-bg-hover-solid);
+/* Keyboard focus takes the hover step so the chip stays visible when
+   tabbed to; a button this small otherwise looks unchanged while focused. */
+.selectionPopup:hover,
+.selectionPopup:focus-visible {
+  background: var(--dsw-alias-button-floating-hover);
 }
 
 .editorPdf {

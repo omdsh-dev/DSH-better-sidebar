@@ -4,6 +4,9 @@
 
 ### v0.30.1
 
+- 🎨 **「添加到对话」悬浮按钮改用宿主的浮动按钮令牌，不再透出底色**：此前取的是默认主题下带透明度的**菜单**令牌 `--dsw-specific-menu`，在 Markdown 预览里看着正常，到代码/文本视图（CodeMirror 透明底）就整块发虚。现在与宿主自己的选区引用动作（`@deepseek-ai/dsh-message-quotes`）用同一对令牌：常态 `--dsw-alias-button-floating-fill`、悬停与键盘聚焦 `--dsw-alias-button-floating-hover`；几何与扁平边框不变。
+  - 🧪 测试：`tests/theme.spec.ts` 新增 1 例钉住 `.selectionPopup` 的两个填充值，并禁止退回菜单令牌与 `interactive-bg-hover`。
+
 - 🎯 **设置页「侧边卡片」的导航图标不再叠成两个**：插件此前按"宿主设置导航还没有图标通道"的老假设，用 CSS 把兜底齿轮藏起来、再画自己的图标；宿主早已提供按 section id 寻址的 `settings.section.icon` 插槽，而且图标的 DOM 外面多了一层 span，老选择器失效后兜底 SVG 露了出来，与插件图标并排显示。现在改为**走宿主插槽**提供图标，删掉标记 + CSS 遮罩那一套（顺带去掉了一个监听整个 document 的 MutationObserver）。
   - 🧪 测试：`tests/settings-nav-icon.spec.tsx` 钉住图标按宿主给的 `size` 缩放、只用 `currentColor`；真实宿主上用无头浏览器确认导航行只剩一个 `svg`、无残留标记。
 

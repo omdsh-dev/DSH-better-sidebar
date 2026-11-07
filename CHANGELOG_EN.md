@@ -6,6 +6,9 @@
 
 ### v0.30.1
 
+- 🎨 **The "Add to conversation" floating chip now paints from the host's floating-button pair instead of a translucent menu fill**: the old fill (a menu token that is translucent by default) looked white over the Markdown preview but washed out over the code viewer's transparent CodeMirror. It now shares the pair behind DSH's own selection quote action (`@deepseek-ai/dsh-message-quotes`): `--dsw-alias-button-floating-fill` at rest and `--dsw-alias-button-floating-hover` on hover and keyboard focus. Geometry and the flat hairline border are unchanged.
+  - 🧪 `tests/theme.spec.ts` gains a case pinning both `.selectionPopup` fills; returning to the menu token or `interactive-bg-hover` now fails the exact-value assertion.
+
 - 🎯 **The "Side card" settings row no longer shows two icons**: the plugin still assumed the settings navigation had no icon channel, so it hid the fallback gear with CSS and painted its own glyph. The shell has long since exposed a `settings.section.icon` slot addressed by section id, and it now wraps the nav icon in a span — the stale `> svg:first-child` rule stopped hiding the fallback, so both glyphs rendered side by side. The row now contributes its icon **through the slot**, and the marker + CSS-mask apparatus is gone (along with a document-wide MutationObserver).
   - 🧪 `tests/settings-nav-icon.spec.tsx` pins the glyph to the slot-provided `size` and `currentColor`; a headless pass against a real host confirms one `svg` in the row and no leftover marker.
 
