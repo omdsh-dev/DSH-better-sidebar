@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { describe, expect, it } from 'vitest'
 import { parseUnifiedDiff } from '../src/client/diff/rows.ts'
-import { branches, checkout, currentBranch, log, parseLogLines, parseNumstat, parsePorcelainZ, parseStatusPorcelainV2Z, repoRoots, status } from '../src/git.ts'
+import { branches, checkout, currentBranch, diff, discard, log, parseLogLines, parseNumstat, parsePorcelainZ, parseStatusPorcelainV2Z, repoRoots, stage, status, unstage } from '../src/git.ts'
 import { removeTree } from './temp-tree.ts'
 
 const execFileAsync = promisify(execFile)
@@ -680,6 +680,94 @@ describe('numstat line counts (#131)', () => {
       // The reading the panel must never print: the sum of two diffs that saw
       // the same line.
       expect(JSON.stringify(result.entries)).not.toContain('"additions":2')
+    } finally {
+      removeTree(root)
+    }
+  })
+})
+
+/**
+ * 数据防误伤：`a[1].txt` 与 `a1.txt` 在 Windows / Linux 都是合法文件名，而
+ * git 默认把前者里的 `[1]` 当 pathspec 通配符，后者会被一起选中。丢弃改动
+ * 不可恢复，所以这里用真实 git 钉住「只动目标文件」。
+ */
+describe('字面 pathspec 不误伤同名文件', () => {
+  function repo(): string {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-git-literal-'))
+    execFileSync('git', ['init', '-q'], { cwd: root })
+    execFileSync('git', ['config', 'user.email', 't@t'], { cwd: root })
+    execFileSync('git', ['config', 'user.name', 't'], { cwd: root })
+    // Windows 上默认 autocrlf 会把 checkout 回来的内容换成 CRLF。
+    execFileSync('git', ['config', 'core.autocrlf', 'false'], { cwd: root })
+    writeFileSync(join(root, 'a[1].txt'), 'base-A\n')
+    writeFileSync(join(root, 'a1.txt'), 'base-B\n')
+    execFileSync('git', ['add', '-A'], { cwd: root })
+    execFileSync('git', ['commit', '-q', '-m', 'base'], { cwd: root })
+    return root
+  }
+
+  const statusLines = (root: string): string => execFileSync(
+    'git', ['-c', 'core.quotePath=false', 'status', '--porcelain=v1'], { cwd: root, encoding: 'utf8' },
+  )
+
+  it('discard 只还原 a[1].txt，a1.txt 的改动保留', async () => {
+    const root = repo()
+    try {
+      writeFileSync(join(root, 'a[1].txt'), 'EDIT-A\n')
+      writeFileSync(join(root, 'a1.txt'), 'EDIT-B\n')
+
+      await discard(root, 'a[1].txt')
+
+      expect(readFileSync(join(root, 'a[1].txt'), 'utf8')).toBe('base-A\n')
+      expect(readFileSync(join(root, 'a1.txt'), 'utf8')).toBe('EDIT-B\n')
+    } finally {
+      removeTree(root)
+    }
+  })
+
+  it('stage 只暂存 a[1].txt', async () => {
+    const root = repo()
+    try {
+      writeFileSync(join(root, 'a[1].txt'), 'EDIT-A\n')
+      writeFileSync(join(root, 'a1.txt'), 'EDIT-B\n')
+
+      await stage(root, 'a[1].txt')
+
+      const rows = statusLines(root)
+      expect(rows).toContain('M  a[1].txt')
+      expect(rows).toContain(' M a1.txt')
+    } finally {
+      removeTree(root)
+    }
+  })
+
+  it('unstage 只取消 a[1].txt 的暂存', async () => {
+    const root = repo()
+    try {
+      writeFileSync(join(root, 'a[1].txt'), 'EDIT-A\n')
+      writeFileSync(join(root, 'a1.txt'), 'EDIT-B\n')
+      execFileSync('git', ['add', '-A'], { cwd: root })
+
+      await unstage(root, 'a[1].txt')
+
+      const rows = statusLines(root)
+      expect(rows).toContain(' M a[1].txt')
+      expect(rows).toContain('M  a1.txt')
+    } finally {
+      removeTree(root)
+    }
+  })
+
+  it('diff 只输出 a[1].txt 的补丁', async () => {
+    const root = repo()
+    try {
+      writeFileSync(join(root, 'a[1].txt'), 'EDIT-A\n')
+      writeFileSync(join(root, 'a1.txt'), 'EDIT-B\n')
+
+      const patch = await diff(root, 'a[1].txt', false)
+
+      expect(patch).toContain('a[1].txt')
+      expect(patch).not.toContain('a1.txt')
     } finally {
       removeTree(root)
     }

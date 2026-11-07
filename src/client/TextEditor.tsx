@@ -816,7 +816,8 @@ export function TextEditor(props: FileViewerProps) {
     if (view === null || savingRef.current) return
     // The bytes this request writes: the same string becomes the baseline text
     // once the host accepts it (the draft may keep changing while in flight).
-    const text = view.state.doc.toString()
+    const sentDoc = view.state.doc
+    const text = sentDoc.toString()
     savingRef.current = true
     setSaveState('saving')
     // Optimistic concurrency: the draft was based on the bytes read at
@@ -825,23 +826,42 @@ export function TextEditor(props: FileViewerProps) {
     // external editor). `null` = the file did not exist when loaded.
     api.fsWrite(scope, path, text, mtimeRef.current ?? null).then((result) => {
       savingRef.current = false
+      // A file switch during the write destroys `view` and re-seats viewRef on
+      // the NEW document. This result then belongs to the OLD file: write
+      // nothing else, or A's text / save state / mtime leak into B. The save
+      // lock is already released above so B can still save.
+      if (viewRef.current !== view) return
       // Adopt the fresh baseline the host reports (absent on a stat failure —
       // keep the old one, the next save just re-checks).
       if (typeof result.mtimeMs === 'number') mtimeRef.current = result.mtimeMs
       savedTextRef.current = text
-      setDraft(null)
-      setDirty(false)
       setConflict(false)
-      setSaveState('saved')
-      // Saved: nothing is unsaved any more, so the durable backup must not
-      // offer itself back on the next open.
-      clearDraftBackup(scope.sessionId, path)
+      // Keystrokes during the write are NOT the bytes on disk: keep the tab
+      // dirty and its durable backup, or the next close/quit drops them.
+      // CM's `Text` is immutable: an unchanged doc is the same object, so
+      // `text` can be reused instead of stringifying the document again.
+      const liveDoc = view.state.doc
+      const live = liveDoc === sentDoc ? text : liveDoc.toString()
+      if (live !== text) {
+        setDraft(live)
+        setSaveState('idle')
+      } else {
+        setDraft(null)
+        setDirty(false)
+        setSaveState('saved')
+        // Saved: nothing is unsaved any more, so the durable backup must not
+        // offer itself back on the next open.
+        clearDraftBackup(scope.sessionId, path)
+      }
       // The saved bytes are a new revision of the uncommitted diff: re-read
       // the change set (the file's XY status code usually stays the same, so
       // the status store alone would never wake the gutter up again).
       setGitRevision(value => value + 1)
     }).catch((error: unknown) => {
       savingRef.current = false
+      // Same expiry guard as the success path: an error from the OLD file must
+      // not raise B's conflict banner or mark B's save failed.
+      if (viewRef.current !== view) return
       if (error instanceof SidebarApiError && error.code === 'fs-conflict') {
         setConflict(true)
         setSaveState('idle')
