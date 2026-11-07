@@ -69,6 +69,22 @@ describe('teams.taskCreate route', () => {
     )
   })
 
+  it('re-reads the layer per request so a late mount is picked up (#1148)', async () => {
+    // The routes are built once at plugin apply; the experimental layer is a
+    // separate plugin that can mount afterwards. Capturing `ctx.get('agentTeams')`
+    // at build time pins the 503 forever even though the service is live by the
+    // time the user submits the form.
+    const mounted: { teams?: { tryMembership: (agent: unknown) => unknown; createTask: (agent: unknown, req: unknown) => Promise<unknown> } } = {}
+    const ctx = {
+      get: (key: string) => (key === 'agentTeams' ? mounted.teams : key === 'agents' ? agentsWithRoot() : undefined),
+    } as unknown as Context
+    const api = buildTeamsApi(ctx)
+    const created = task({ id: 'task-late' })
+    mounted.teams = { tryMembership: vi.fn(() => ({ role: 'lead' })), createTask: vi.fn(async () => created) }
+    await expect(api.taskCreate({ rootSessionId: 'root', subject: '晚挂载' }))
+      .resolves.toEqual({ ok: true, value: created })
+  })
+
   it('degrades to 404 when the root agent is not live in this process', async () => {
     const teams = { tryMembership: vi.fn(() => ({ role: 'lead' })), createTask: vi.fn() }
     const api = buildTeamsApi(ctxWith(teams, { get: () => undefined }))
