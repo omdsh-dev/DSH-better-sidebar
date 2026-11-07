@@ -1259,6 +1259,8 @@ interface SettingsDescriptor {
 
 - **Context 诊断入口与提示**：图标沿用宿主 `Button` 与 `IconContextInjectionOutlineRegular`，标题栏为固定宽度按钮。跨会话错误通过 `shell.overlay` 展示一条可关闭提示，背景取 `--dsw-alias-bg-layer-3`、边框与图标取 `--dsw-alias-state-warn-primary`、正文取 label 令牌；宽度受视口约束，目标名与错误文案允许任意位置换行。能力中途消失时仍保留本次错误，不依赖来源弹层继续挂载。
 
+- **页签条与关闭菜单**：底部工作台与原生右栏 chip 按打开数量等宽分配，保留各自上下限和横向滚动。原生增强仅锚定面板内 `data-dockkit-*` 语义属性，不依赖宿主哈希类名；宿主改名后退回原样。冻结宽度只写触发关闭的 strip（`data-dsh-tabs-frozen` + `--dsh-tab-frozen-width`），不写根节点、不影响另一分栏；隐藏/折叠、离开或卸载即释放。原生批量关闭菜单通过公开槽贡献，图标沿用 `currentColor`，背景/分隔线/禁用文字都走现有令牌；只解析唯一可见会话面板，身份或顺序歧义时不提供动作。相关约束由 `tests/native-tab-strip-width.spec.ts`、`tests/native-tab-menu.spec.tsx`、`tests/native-strip-freeze.spec.ts` 与主题门禁共同守护。
+
 ### 12.2 注意事项
 
 - 类名是 CSS Modules 哈希，**不是契约**；精确命中用 `[data-dsh-better-sidebar]` + 子串类名（`[class*='panel']`）或 DOM 结构。

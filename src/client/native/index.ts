@@ -32,6 +32,8 @@ import { parseFileAddress } from '../resource-address.ts'
 import type { ContextDiagnostics } from '../context-diagnostics.ts'
 import type { BetterSidebarService, TabDescriptor } from '../service.ts'
 import type { SidebarStore } from '../state.ts'
+import { installNativeStripFreeze } from '../tab-strip-freeze.ts'
+import { registerNativeTabMenu } from './tab-menu.tsx'
 import {
   NativeTabBody,
   NativeTabTitle,
@@ -550,6 +552,23 @@ export function registerNativeSurface(deps: NativeSurfaceDeps): () => void {
       }
     }
 
+    // The native tab menu's close-family rows (close others / left / right /
+    // all). Contributed through the host's public menu seat, so the kit's own
+    // "Close" row stays and ours render inside its menu; the rows resolve the
+    // right-clicked tab's STRIP from the kit's chips, because the seat hands
+    // over the tab record only (see tab-menu.tsx).
+    //
+    // Failure here must not take the whole native surface down: this runs on
+    // every seat activation, and a plugin reload delivers notifications to an
+    // already-inactive context (`ctx.effect` inside `slots.inject` throws).
+    // The rows are optional UI, so the seat reports and carries on — the next
+    // activation re-registers them.
+    let disposeTabMenu: () => void = () => {}
+    try {
+      disposeTabMenu = registerNativeTabMenu(ctx)
+    } catch (error) {
+      reportFailure?.('register tab menu', error)
+    }
     const disposeSubscriptions = [service.subscribe(sync), store.subscribe(sync)]
     sync()
     return () => {
@@ -557,11 +576,19 @@ export function registerNativeSurface(deps: NativeSurfaceDeps): () => void {
         disposeSafely(() => registration.dispose(), 'a native tab registration')
       }
       live.clear()
+      disposeSafely(disposeTabMenu, 'the native tab menu rows')
       for (const dispose of disposeSubscriptions.reverse()) disposeSafely(dispose, 'a native tab subscription')
       if (disposeClose !== undefined) disposeSafely(disposeClose, 'the editor close handler')
     }
   })
+  // The host strip keeps its widths while the pointer is inside it, so a run of
+  // closes never moves the next × (see tab-strip-freeze.ts). Installed once
+  // with the native surface: document-level gesture listeners, with a temporary
+  // observer only while a pane is pinned. Hidden/session-switched panels release
+  // the pin and pending leave check; disposal tears down all three.
+  const disposeStripFreeze = installNativeStripFreeze()
   return () => {
+    disposeStripFreeze()
     void seat.dispose()
   }
 }
