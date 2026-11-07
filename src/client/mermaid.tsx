@@ -561,7 +561,7 @@ function isMermaidBlock(block: HTMLElement, bodies: ReadonlySet<string>): boolea
  * Only mounted when the source contains at least one mermaid fence (see
  * TextEditor.tsx).
  */
-export function MermaidMarkdown({ text, codeLabels }: MermaidMarkdownProps): React.ReactNode {
+export function MermaidMarkdown({ text, codeLabels, pathImages }: MermaidMarkdownProps): React.ReactNode {
   const containerRef = useRef<HTMLDivElement>(null)
   const mountsRef = useRef(new Map<HTMLElement, MermaidMount>())
   /** Visibility gate shared by every diagram of this document. */
@@ -677,7 +677,7 @@ export function MermaidMarkdown({ text, codeLabels }: MermaidMarkdownProps): Rea
 
   return (
     <div className={css.mermaidMarkdown} ref={containerRef}>
-      <MarkdownText {...markdownTextProps(text, codeLabels)} />
+      <MarkdownText {...markdownTextProps(text, codeLabels, pathImages)} />
     </div>
   )
 }
