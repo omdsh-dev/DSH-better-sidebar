@@ -2,7 +2,7 @@
 
 > 从 `AGENTS.md` §3 移出的深度参考（原 §3.4 第 1–13 条与 0.1.5–0.1.7 历史线中仍然生效的部分）。
 > **编号保持不变**：代码、测试与文档里写的「AGENTS.md §3.4 第 N 条」就是本文第 N 条。
-> 历史版本已不在支持线内（当前基线 DSH 0.2.2-rc.1，见 [AGENTS.md](../AGENTS.md) §3）；逐条适配过程见 [docs/plans/](plans/) 与 [CHANGELOG.md](../CHANGELOG.md)。
+> 历史版本已不在支持线内（当前基线 DSH 0.2.2-rc.1，见 [docs/dsh-version-adaptation.md](dsh-version-adaptation.md)）；逐条适配过程见 [docs/plans/](plans/) 与 [CHANGELOG.md](../CHANGELOG.md)。
 
 当前适配约束：HTTP/WS 均由 `ctx.connection.requestRejection(req)` 裁决 Host/Origin 与浏览器认证，只有 `undefined` 放行，不读取已删除的 `webRuntime`。alpha.5 同时移除了 `@deepseek-ai/dsh-invariants`、`ctx.invariants` 和上游 `/invariant` 子路径；本插件不再发布 invariant companion。
 
