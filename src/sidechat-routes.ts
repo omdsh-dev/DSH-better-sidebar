@@ -27,6 +27,7 @@ import { randomUUID } from 'node:crypto'
 import { createUserMessage, ReasoningEffortId, type ContentBlock, type UserMessage } from '@deepseek-ai/dsh-llm'
 import type { MessageId } from '@deepseek-ai/dsh-llm/brand'
 import {
+  installModelSelection,
   type Agent,
   type AgentSetup,
   type CreateAgentOptions,
@@ -192,21 +193,38 @@ interface SidebarLlmService {
   }): Promise<unknown>
 }
 
+/** Build the setup every side thread shares: mount the preset (when one
+ *  resolved) and install the host's model-selection pre-step listener.
+ *
+ *  0.2.2 moved ROUTING onto the agent's own `AgentModel`, but the
+ *  `[model changed: …]` notice is still appended by the listener
+ *  `installModelSelection` registers, and the host installs it in every one of
+ *  its own setups (`api-session-controller`'s composeAgent, `dsh-acp`,
+ *  `dsh-headless`). The 0.2.2 adaptation dropped it here (#1134), so the next
+ *  model kept answering as if the turns above had used its own route. Install
+ *  once per agent, before `presets.mount` — the host's order. */
+function threadSetup(mount?: (agentCtx: CordisContext) => Promise<void>): AgentSetup {
+  return async (agentCtx: CordisContext) => {
+    installModelSelection(agentCtx)
+    if (mount !== undefined) await mount(agentCtx)
+  }
+}
+
 /** Resolve the parent's preset and build the child's composition setup
- *  (mirror of api-proxy's composeAgent minus the model-selection install —
- *  the child carries the parent's provider/model in agentOptions). */
+ *  (mirror of api-proxy's composeAgent: preset mount + model-selection install,
+ *  while the child carries the parent's provider/model in agentOptions). */
 async function composeChildSetup(
   ctx: Context,
   presetId: string | undefined,
 ): Promise<{ agentPreset?: string; setup: AgentSetup }> {
   const presets = ctx.get('agentPresets') as SidebarAgentPresetsService | undefined
   if (presets === undefined) {
-    return { setup: () => Promise.resolve() }
+    return { setup: threadSetup() }
   }
   const resolved = await presets.resolve(presetId)
   return {
     agentPreset: resolved.id,
-    setup: async (agentCtx: CordisContext) => { await presets.mount(agentCtx, resolved.id) },
+    setup: threadSetup(async (agentCtx) => { await presets.mount(agentCtx, resolved.id) }),
   }
 }
 
@@ -218,16 +236,16 @@ async function composePersistedSetup(
 ): Promise<AgentSetup> {
   const persistence = ctx.get('sessionPersistence') as SidebarSessionPersistenceService | undefined
   if (persistence === undefined) {
-    return () => Promise.resolve()
+    return threadSetup()
   }
   const inspected = await readColdThreadSession(persistence, childId)
   const presetId = resolvePresetId(inspected.header, inspected.events)
   const presets = ctx.get('agentPresets') as SidebarAgentPresetsService | undefined
   if (presets === undefined || presetId === undefined) {
-    return () => Promise.resolve()
+    return threadSetup()
   }
   const resolved = await presets.resolve(presetId)
-  return async (agentCtx: CordisContext) => { await presets.mount(agentCtx, resolved.id) }
+  return threadSetup(async (agentCtx) => { await presets.mount(agentCtx, resolved.id) })
 }
 
 /** One text-block prompt (the thread boundary + question, or a follow-up). */
