@@ -417,28 +417,18 @@ export interface SidebarTeamMemberView {
 }
 
 /**
- * One durable roster row of the Lead Session's `agentTeam` projection. Phase
- * is the DURABLE lifecycle (the Lead row is always `active`); turn activity is
- * overlaid from the session's own status (see ./client/team-projection.ts).
- */
-export interface SidebarTeamMemberProjection {
-  /** The member's session id (the teammate's child session under the lead). */
-  id: string
-  name: string
-  role: 'lead' | 'teammate'
-  phase: 'provisioning' | 'active' | 'failed'
-  /** The provisioning failure, when the durable row records one. */
-  error?: string
-}
-
-/**
- * The Lead Session's published team state: durable roster identities and
- * phases, member errors, the non-deleted task views (0.1.6's `TeamView` shape,
- * enriched per task exactly like the service's own views), and the first
- * rejected Team record when the board had to stop at its last valid state.
+ * The Lead Session's published team state: the durable mode selection, the
+ * non-deleted task views, and the first rejected Team record when the board had
+ * to stop at its last valid state.
+ *
+ * The roster is NOT part of this value. Since the Team package migration the
+ * wire value carries no `members`; a team member is a direct subagent of the
+ * Lead and is read from the Lead's `subagentCatalog` instead (see
+ * ./client/team-projection.ts).
  */
 export interface SidebarTeamProjection {
-  members: readonly SidebarTeamMemberProjection[]
+  /** The durable Team-mode selection; `false` means this session runs no team. */
+  enabled?: boolean
   tasks: readonly SidebarTeamTaskView[]
   failure?: string
 }
@@ -606,6 +596,12 @@ export interface SidebarSubagentCatalogEntry {
   mode: 'one-shot' | 'continuable' | 'unknown'
   /** Mode-specific label; continuable children always carry one. */
   label?: string
+  /**
+   * The child's agent name, unique among its siblings (catalog payload v3).
+   * Absent on entries recorded before names existed, and on modes that never
+   * carried one.
+   */
+  name?: string
 }
 
 /** The client sessions service face (only the list feed is needed). */

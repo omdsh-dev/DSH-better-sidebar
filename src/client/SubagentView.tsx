@@ -326,8 +326,16 @@ export function SubagentView(props: {
     [list.projectionsBySession, rootId],
   )
   const teamMembers = useMemo(
-    () => teamMembersOf(team, live, byId),
-    [team, live, byId],
+    // A team member IS a direct subagent of the Lead, so the roster comes from
+    // the same catalog rows the topology below already draws.
+    () => teamMembersOf(
+      team,
+      rootId,
+      rootId === undefined ? [] : catalogs[rootId]?.entries ?? [],
+      live,
+      byId,
+    ),
+    [team, rootId, catalogs, live, byId],
   )
 
   // The default view mode comes from the side card prefs (settings select);
