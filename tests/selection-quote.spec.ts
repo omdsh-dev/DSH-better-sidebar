@@ -4,7 +4,8 @@
  * (record + localStorage persistence, structured reference minted through the
  * #1052 composer facade), the codec (send-time serialization back to the
  * fenced block, header-line clipboard text), and the click-through (open back
- * at the selection's line span, session-scoped).
+ * at the selection's line span, session-scoped), and the store shared by
+ * several pages of one origin.
  *
  * Everything under test lives in a module with cross-test state (the
  * registry, the record store), so every test pulls a FRESH module instance
@@ -309,6 +310,56 @@ describe('lifecycle self-heal (a disposed fiber must not kill the feature silent
     expect(editor.insertQuoteChip(ctx, 's1', SELECTION)).toBe(true)
     expect(triggers.captured).toHaveLength(1)
     expect(triggers.captured[0]?.name).toBe(editor.QUOTE_SOURCE)
+  })
+})
+
+describe('several pages of one origin (one shared store, one memory per page)', () => {
+  /** One browser tab: its own module instance and host, the same localStorage. */
+  async function openPage() {
+    const mod = await freshModule()
+    const triggers = fakeTriggers()
+    const composer = fakeComposer()
+    const ctx = fakeCtx({ triggers, composer })
+    /** Commit one selection and return the ref of the chip it minted. */
+    const quote = (): string => {
+      expect(mod.insertQuoteChip(ctx, 's1', SELECTION)).toBe(true)
+      return (composer.insertReference.mock.calls.at(-1)?.[0] as { ref: string }).ref
+    }
+    return { mod, triggers, ctx, quote }
+  }
+
+  it('keeps the other page\'s records when a page rewrites the store (a chip must never go dead)', async () => {
+    const pageA = await openPage()
+    const pageB = await openPage()
+    const refs = [pageA.quote(), pageB.quote(), pageA.quote(), pageB.quote()]
+
+    const stored = storedJson(pageA.mod) as { id: string; n: number }[]
+    expect(stored.map(record => record.id)).toEqual(refs)
+    // The numbering keeps growing across pages instead of colliding.
+    expect(stored.map(record => record.n)).toEqual([1, 2, 3, 4])
+
+    // A reloaded page has nothing but the store: every chip must still send.
+    const reloaded = await openPage()
+    reloaded.mod.registerQuoteSource(reloaded.ctx)
+    const codec = reloaded.triggers.captured[0]?.codec
+    for (const ref of refs) {
+      await expect(codec?.serialize(ref, new AbortController().signal)).resolves.toBe(
+        '```src/a.ts:2-3\nconst x = 1\n```',
+      )
+    }
+  })
+
+  it('still caps the merged store FIFO', async () => {
+    const pageA = await openPage()
+    const pageB = await openPage()
+    const oldest = pageA.quote()
+    for (let i = 0; i < pageB.mod.QUOTE_STORE_CAP; i++) pageB.quote()
+    const newest = pageA.quote()
+
+    const ids = (storedJson(pageA.mod) as { id: string }[]).map(record => record.id)
+    expect(ids).toHaveLength(pageA.mod.QUOTE_STORE_CAP)
+    expect(ids).not.toContain(oldest)
+    expect(ids.at(-1)).toBe(newest)
   })
 })
 
