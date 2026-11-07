@@ -817,7 +817,9 @@ describe('Tasks page: owned tasks, host-primitive controls, draggable output', (
     ['in_progress', false, '进行中'],
     ['completed', false, '已完成'],
   ] as const)('keeps the board, task line and tooltip consistent for %s (ready: %s)', async (status, ready, label) => {
-    withTeam({ tasks: [teamTask({ status, ready, ownerName: 'writer' })] })
+    // The roster is catalog-driven after #1139: the owner name must exist on a
+    // catalog row for the task to attach to that child's line.
+    withTeam({ names: ['writer'], tasks: [teamTask({ status, ready, ownerName: 'writer' })] })
     const store = makeStore(snapshotWithChildren(1))
     const { container, unmount } = renderRoot(
       createElement(SubagentView, { sessionId: 'root', active: true, ctx: makeCtx(store) }),
