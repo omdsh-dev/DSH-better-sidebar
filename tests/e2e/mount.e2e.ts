@@ -160,6 +160,54 @@ test.afterAll(async () => {
   await api?.dispose()
 })
 
+test('sidechat multi-instance: both plus buttons preserve independent tabs across reload', async ({ page }) => {
+  // Real host layout/registration/React, deterministic sidechat transport: no
+  // provider credentials, no model calls, no production sessions touched.
+  let starts = 0
+  const pulls: string[] = []
+  await page.route('**/sidebar/api/sidechat.*', async route => {
+    const method = route.request().url().split('/').pop()
+    const body = route.request().postDataJSON() as { childId?: string }
+    let value: unknown = { accepted: true }
+    if (method === 'sidechat.start') value = { childId: `test-thread-${++starts}` }
+    if (method === 'sidechat.info') value = { live: false, preset: 'test' }
+    if (method === 'sidechat.models') value = { available: false, groups: [], failures: [] }
+    if (method === 'sidechat.events') {
+      pulls.push(body.childId ?? '')
+      value = { events: [], live: [], pending: [] }
+    }
+    await route.fulfill({ json: { ok: true, value } })
+  })
+  await page.goto(PAGE_URL, { waitUntil: 'domcontentloaded' })
+  await expect(page.locator('[data-dsh-better-sidebar]')).toBeAttached({ timeout: 90_000 })
+  await dismissOnboarding(page)
+  await sendFirstMessage(page)
+  await page.locator('[data-sidebar-right-expand]').first().click()
+  await page.locator('[data-sidebar-right-guide-entry="sidechat"]').click()
+  await expect.poll(() => starts).toBe(1)
+  await expect.poll(() => pulls.includes('test-thread-1')).toBe(true)
+  const tabs = page.locator('[data-sidebar-right-panel] [role="tab"]')
+  const initial = await tabs.count()
+  await page.locator('[data-dockkit-add-tab]').first().click()
+  await page.locator('[data-sidebar-right-guide-entry="sidechat"]').click()
+  await expect.poll(() => starts).toBe(2)
+  await expect(tabs).toHaveCount(initial + 1)
+  await expect.poll(() => pulls.includes('test-thread-2')).toBe(true)
+  await page.locator('[data-dsh-native-tab-host]:visible button[aria-label="新建对话"], [data-dsh-native-tab-host]:visible button[aria-label="New thread"]').click()
+  await expect.poll(() => starts).toBe(3)
+  await expect(tabs).toHaveCount(initial + 2)
+  await expect.poll(() => pulls.includes('test-thread-3')).toBe(true)
+  const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('dsh-sidebar:v1:native-sidechat-bindings') ?? '[]') as Array<{ threadId: string }>)
+  expect(saved.map(row => row.threadId).sort()).toEqual(['test-thread-1', 'test-thread-2', 'test-thread-3'])
+  pulls.length = 0
+  await page.reload({ waitUntil: 'domcontentloaded' })
+  await expect(page.locator('[data-dsh-better-sidebar]')).toBeAttached({ timeout: 90_000 })
+  await expect(tabs).toHaveCount(initial + 2, { timeout: 30_000 })
+  for (let index = 0; index < await tabs.count(); index++) await tabs.nth(index).click()
+  await expect.poll(() => new Set(pulls).size).toBe(3)
+  expect(starts, 'reload must not create replacement threads').toBe(3)
+})
+
 test('plugin mounts into the DSH shell and survives a built-in tab sweep', async ({ page }) => {
   const pageErrors: string[] = []
   const consoleErrors: string[] = []

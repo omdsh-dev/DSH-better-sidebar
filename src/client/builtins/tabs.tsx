@@ -243,6 +243,7 @@ export function builtinTabs(ctx: Context): readonly TabDescriptor[] {
     },
     {
       id: 'sidechat',
+      multiple: true,
       title: () => t('sideChat'),
       description: () => t('guideDescSidechat'),
       icon: sidechatTabIcon,
