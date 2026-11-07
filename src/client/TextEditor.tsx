@@ -36,7 +36,7 @@ import { rewriteLocalMarkdownLinks } from './markdown-navigation.ts'
 import { languageForPath } from './lang.ts'
 import { cmSurfaceTheme, CmThemeCompartment } from './cm-themes.ts'
 import { cmSearchExtensions, CmSearchPhrases } from './cm-search.ts'
-import { clearDraftBackup, flushDraftBackups, readDraftBackup, registerDraftSource, scheduleDraftBackup } from './editor-draft-backup.ts'
+import { clearDraftBackup, draftBackupBaseMtime, flushDraftBackups, readDraftBackup, registerDraftSource, sameDocument, scheduleDraftBackup } from './editor-draft-backup.ts'
 import { flashQuoteLines, quoteFlashField, quoteFlashHighlight } from './quote-flash.ts'
 import { isDarkScheme, subscribeColorScheme } from './theme.ts'
 import { SandboxStatusBar } from './SandboxStatusBar.tsx'
@@ -149,15 +149,6 @@ function editScrollOf(scope: { sessionId: string }, path: string): number {
   return editScrollMemory.get(previewScrollKey(scope, path)) ?? 0
 }
 
-/** Whether two spellings are the SAME document — byte-equal, or equal once
- *  line endings are normalized CRLF/CR → LF. Line endings are not content:
- *  CodeMirror keeps every document with `\n` endings whatever the file used,
- *  so the live document of a freshly opened CRLF file differs from the bytes
- *  it was loaded from by line endings alone. */
-function sameDocument(a: string, b: string): boolean {
-  return a === b || a.replace(/\r\n?/g, '\n') === b.replace(/\r\n?/g, '\n')
-}
-
 export function TextEditor(props: FileViewerProps) {
   const { ctx, scope, path, viewerId, content, size, largeFile, line } = props
   const [mode, setMode] = useState<ViewMode>('preview')
@@ -176,13 +167,15 @@ export function TextEditor(props: FileViewerProps) {
   /** The mtime the draft is based on (`null` = the file did not exist yet).
    *  Seeded from the load, re-based whenever a fresh load reports a new mtime
    *  (a reload may return the SAME text — see the effect below), refreshed by
-   *  every successful save, and reset by the file-switch effect. */
+   *  every successful save, reset by the file-switch effect, and moved back to
+   *  a restored draft's own base (see restoreDraftBackup). */
   const mtimeRef = useRef<number | null>(props.mtimeMs ?? null)
   /** The bytes the save baseline belongs to: the last loaded document,
    *  advanced by every successful save (an edit-mode save never reloads, so
    *  `props.content` alone can lag behind disk). The conflict banner's reload
    *  compares the disk read against THIS — never the live draft, which is
-   *  expected to differ because it holds the unsaved edit. */
+   *  expected to differ because it holds the unsaved edit. `null` = not known:
+   *  a restored draft based on an older revision, whose bytes are not kept. */
   const savedTextRef = useRef<string | null>(content ?? null)
   /** The theme compartment of the current view (reconfigured on scheme flip). */
   const themeCompRef = useRef<CmThemeCompartment | null>(null)
@@ -364,6 +357,14 @@ export function TextEditor(props: FileViewerProps) {
    * quit can drop the tab without a prompt, so the draft is kept in storage.
    * Declining drops it; accepting makes it the live draft, which the normal
    * dirty path then owns.
+   *
+   * The draft was typed against the file as it was when the backup was written,
+   * not against the bytes just loaded. Accepting therefore also restores that
+   * base mtime, so a file that moved while the tab was gone is refused
+   * (fs-conflict) instead of overwritten. The baseline text goes with it: the
+   * banner's reload would otherwise find the disk equal to this load and resolve
+   * the conflict in place, as if only the mtime had moved. An entry without a
+   * base keeps the mtime of this load.
    */
   const restoreDraftBackup = (): string | null => {
     if (content === undefined) return null
@@ -373,6 +374,11 @@ export function TextEditor(props: FileViewerProps) {
     if (!confirmed) {
       clearDraftBackup(scope.sessionId, path)
       return null
+    }
+    const base = draftBackupBaseMtime(scope.sessionId, path)
+    if (base !== undefined && base !== mtimeRef.current) {
+      mtimeRef.current = base
+      savedTextRef.current = null
     }
     return backup
   }
@@ -487,7 +493,12 @@ export function TextEditor(props: FileViewerProps) {
     })
     const view = new CodeMirrorView({ state, parent: host })
     viewRef.current = view
-    const releaseDraft = registerDraftSource(scope.sessionId, path, () => viewRef.current?.state.doc.toString() ?? null)
+    const releaseDraft = registerDraftSource(
+      scope.sessionId,
+      path,
+      () => viewRef.current?.state.doc.toString() ?? null,
+      () => mtimeRef.current,
+    )
     if (restored !== null) {
       setDirty(true)
       setDraft(restored)
