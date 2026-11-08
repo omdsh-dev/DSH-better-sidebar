@@ -4,6 +4,8 @@
 
 ### 未发布
 
+- 🧵 **fork 块改成默认折叠的原生 disclosure：折叠时只剩那条「分支前的主会话」分割线，展开才看到继承的问答**：`data-sidechat-fork-point` 现在是受控的 `<details>`（默认 closed），`<summary>` 就是开头那条分割线（`sideChatForkDivider` 文案 + 展开 chevron，不含任何继承正文），body 展开后仍是原顺序「提问 → 回答 → 结尾分割线」，没有回答时只有提问与结尾线；折叠/展开不改变转录行数，块内除 summary 外没有任何 `button` / `a`。
+  - 🧪 测试：`tests/sidechat-fork-point.spec.tsx`（默认 closed 且位于首行之上、summary 只有分割线文案与 chevron、展开顺序、无回答时不出 assistant 块、行数不变、块内无 button/a）。
 - 📝 **草稿属于线程，不再属于「这一次绑定」——切走再切回，写了一半的问题和截图都还在**：上游的 `useSidechatDraft(childId)` 在卸载时丢掉文字并 `revoke` 每张预览，读者换去别的线程再回来就两手空空。现在卸载时按 `childId` 把草稿存进模块级缓存，重新挂载同一个线程原样取回（同一个 `File`、同一个 preview URL，不重新 mint）；缓存上限 **8 个线程**、按最近保存顺序 LRU 淘汰，被淘汰那份的每张 preview 逐个 `URL.revokeObjectURL`；`childId === undefined` 不保存；`accept()`（发送成功）之后该线程不再留持久化副本，发送还没落地时切走也不保存（免得已经发出去的文字复活再发一次）；`remove(id)` 仍只 revoke 那一张，缓存副本里也不会留已 revoke 的 URL。
   - 🧪 测试：`tests/sidechat-draft-persistence.spec.tsx`（往返恢复同一 id / `File` / preview、重复挂载不重 mint、两个线程互不串、未绑定不持久化、LRU 上限与淘汰 revoke、accept 后重挂为空、remove 只 revoke 一张）。
 - 🧭 **侧边对话的子会话按父会话的 workspace 路径 attach，工具仍在读者当前目录里运行**：宿主的 workspace attach 要求子会话 **header 的 cwd 严格等于 workspace 路径**（`packages/workspace/workspace/src/entity.ts`），而 `sidechat.start` 此前用同一个 `parentCwd`（取 `workingDirectory.get()`，即实时工作目录）同时喂 `meta.cwd` 与种子里的 `working-directory/change` 戳——读者在主会话里 `cd` 到 workspace 之外后再新建侧边对话，子会话 header cwd 就成了那个外部路径，fork 直接失败（`session/workspace-attach-failed … its cwd resolves to '…'`）。现在两个问题各用各的答案：`meta.cwd` 取**父会话的 header cwd**（workspace 路径，供 attach），种子末尾的 `working-directory/change` 戳仍取**实时 cwd**（工具真正运行的位置）；父会话没有 header cwd 时两者都回落实时 cwd，组合里没有 `workingDirectory` 服务时两者都用 header cwd，两者都没有时不发明 cwd。`directorySeed` 的生成条件不变。

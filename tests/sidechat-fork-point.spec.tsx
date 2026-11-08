@@ -1,68 +1,61 @@
 // @vitest-environment jsdom
 /**
- * R2 (client half) — the transcript shows the pre-fork context the way the user
- * asked for it: the parent's last exchange rendered as ORDINARY conversation,
- * opened by one divider line that says where it came from. Design basis: the
- * field report on the card that shipped first (`/tmp/bsb-parity/forkpoint-recon.md`
- * §Q3/§Q4 introduced the field; the presentation changed twice after review).
+ * R2 (client half) — the pre-fork context is TUCKED AWAY behind one divider
+ * line: the reader sees "the main session before the fork" and expands it only
+ * if they want the inherited exchange. Design basis: the fork-point recon
+ * (`/tmp/bsb-parity/forkpoint-recon.md` §Q3/§Q4) plus the reader's verdict on
+ * the previous two presentations (a card, then a permanently open exchange).
  *
  * Why this spec exists: a side thread opens on the side question, as if the
- * conversation began there — yet it was forked to continue a main-pane exchange.
- * The first attempt drew a card (a disclosure with a caption and a body); the
- * reader's verdict was that it should not be a card at all: the inherited
- * question and answer should look exactly like the messages below them, with
- * one divider marking the boundary.
+ * conversation began there — the inherited exchange explains where it came from,
+ * but rendered permanently open it pushes the reader's own question off the
+ * first screen and reads as if THIS thread had asked it. It is context, not
+ * conversation: one collapsed line, expandable on demand.
  *
  * ============================ CONTRACT ============================
- * 1. PLACEMENT, NO CARD. When the first pull carries `fork` with something to
- *    show, the transcript renders ONE block inside its scroll container, ABOVE
- *    the first mounted transcript row. `[data-sidechat-fork-point]` is a plain
- *    container: it holds NO `<details>` and NO `<summary>` — nothing about the
- *    fork block is expandable.
- * 2. TWO DIVIDERS BRACKET THE EXCHANGE. The block OPENS with a divider row
- *    carrying `data-sidechat-fork-divider` and the localized
- *    `t('sideChatForkDivider')` ("the main session before the fork"), and it
- *    CLOSES with the matching row carrying `data-sidechat-fork-divider-end` and
- *    `t('sideChatForkDividerEnd')` ("… ends here"), so the reader can see where
- *    the inherited context stops. Both are the SAME line: same element kind,
- *    a shared style class (one composable), never a button/link/control, and
- *    never a transcript row. The hairline itself is CSS; the hooks and the copy
- *    are what the DOM pins.
- * 3. THEN THE INHERITED QUESTION, presented like a user message of THIS thread:
- *    the same `sidechatUser` presentation block, markdown-rendered, carrying
- *    `data-sidechat-fork-question`, in FULL (the route no longer caps it — no
- *    ellipsis, no client-side shortening).
- * 4. THEN THE INHERITED ANSWER, presented like a normal assistant message: the
- *    same `sidechatAssistant` presentation block and the same markdown
- *    renderer (emphasis becomes `<strong>`, a code span becomes `<code>`), in
- *    FULL and never truncated.
- * 5. NO ANSWER = no assistant block: with `assistant` absent the block is the
- *    opening divider, the question, and the CLOSING divider; nothing pretends an
- *    answer exists.
- * 6. NOTHING TO SAY = NO BLOCK: without the field, or with a field carrying
- *    neither `user` nor `assistant` (an empty seed), the transcript renders no
- *    fork block at all.
- * 7. CHROME, NOT CONVERSATION: the block carries no
- *    `data-sidechat-transcript-row` and changes neither the number nor the
- *    content of the mounted transcript rows.
+ * 1. COLLAPSED BY DEFAULT. `[data-sidechat-fork-point]` is a native
+ *    `<details>` inside the transcript's scroll container, ABOVE the first
+ *    mounted transcript row, and it starts CLOSED — no `open` attribute, and
+ *    `details.open === false` after the first render.
+ * 2. THE LINE IS THE OPENING DIVIDER. Its `<summary>` carries the divider copy
+ *    `t('sideChatForkDivider')` (the same divider styling as the closing line)
+ *    and the expand chevron. The summary holds NO inherited text: neither the
+ *    question nor the answer may appear inside it.
+ * 3. EXPANDED ORDER: the inherited question (presented like a user message of
+ *    this thread — the same `sidechatUser` block, markdown, `data-sidechat-fork-question`,
+ *    verbatim) → the inherited answer (the same `sidechatAssistant` block and
+ *    renderer, verbatim) → the closing divider `data-sidechat-fork-divider-end`
+ *    with `t('sideChatForkDividerEnd')`.
+ * 4. NO ANSWER: expanded, the block is the question plus the closing divider;
+ *    nothing pretends an answer exists.
+ * 5. CHROME, NOT CONVERSATION: the block is not a transcript row and changes
+ *    neither the number nor the content of the mounted rows — and expanding or
+ *    collapsing it does not change that count either.
+ * 6. NOTHING INTERACTIVE BEYOND THE SUMMARY: the summary is the disclosure's own
+ *    control; the dividers add no button, link or focusable row of their own.
+ * 7. NOTHING TO SAY = NO BLOCK: without the field, or with a field carrying
+ *    neither `user` nor `assistant` (an empty seed), no block renders at all.
  *
  * Locale keys this contract needs (every shipped dictionary, not just zh/en):
- *   `sideChatForkDivider`    — the opening divider's copy
+ *   `sideChatForkDivider`    — the opening divider's (and the summary's) copy
  *   `sideChatForkDividerEnd` — the closing divider's copy ("… ends here")
- * (`sideChatForkBanner` / `sideChatForkAnswer` belonged to the retired card and
- * leave with it.)
  * ==================================================================
  *
  * The harness's fetch stub answers `sidechat.events` from `wire`, which owns no
  * `fork` field; this spec wraps the stub (the harness is untouched) to inject
  * it into the envelope, exactly as the host route does — the same technique the
  * truncation notice spec uses for `truncated`.
+ *
+ * jsdom toggles `details.open` on a summary click but fires no `toggle` event,
+ * so {@link expand} drives BOTH: the click covers a native/`onClick`
+ * implementation, the dispatched `toggle` covers the `onToggle` one.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { act } from 'react-dom/test-utils'
 import { installSidechatHarness, type SidechatHarness } from './helpers/sidechat-view-harness.tsx'
 import { t } from '../src/client/locales.ts'
 
-/** The opening divider's copy. */
+/** The opening divider's (and the summary's) copy. */
 const DIVIDER_KEY = 'sideChatForkDivider'
 /** The closing divider's copy ("… ends here"). */
 const END_DIVIDER_KEY = 'sideChatForkDividerEnd'
@@ -185,6 +178,23 @@ function presentedAs(node: HTMLElement, kind: 'sidechatUser' | 'sidechatAssistan
   return node.closest(`[class*="${kind}"]`) !== null
 }
 
+/** The block's always-visible line. */
+function summaryOf(block: HTMLElement): HTMLElement | null {
+  return block.querySelector('summary')
+}
+
+/**
+ * Expand the block the way a reader does: click the summary (which is what a
+ * browser toggles on) and fire the `toggle` event jsdom does not emit.
+ * @param block - the fork block.
+ */
+function expand(block: HTMLElement): void {
+  act(() => {
+    summaryOf(block)?.click()
+    block.dispatchEvent(new Event('toggle'))
+  })
+}
+
 let harness: SidechatHarness
 
 beforeEach(() => {
@@ -203,6 +213,14 @@ async function mountTranscript() {
   return rendered
 }
 
+/** Mount, expand the fork block, and hand it back. */
+async function mountExpanded() {
+  const rendered = await mountTranscript()
+  expand(blockOf(rendered.container) as HTMLElement)
+  await harness.flush(4)
+  return rendered
+}
+
 describe('fork point block (R2)', () => {
   it('defines both divider copies in the dictionaries', () => {
     for (const key of [DIVIDER_KEY, END_DIVIDER_KEY]) {
@@ -210,7 +228,7 @@ describe('fork point block (R2)', () => {
     }
   })
 
-  it('renders a plain, non-expandable block above the transcript', async () => {
+  it('starts collapsed above the transcript', async () => {
     reportFork({ cutSeq: 0, user: { seq: 3, text: PARENT_QUESTION }, assistant: { seq: 4, text: PARENT_ANSWER } })
     const rendered = await mountTranscript()
     try {
@@ -218,35 +236,94 @@ describe('fork point block (R2)', () => {
       const block = blockOf(container)
       expect(block, 'the fork point is shown').not.toBeNull()
       const forkBlock = block as HTMLElement
+      expect(forkBlock.tagName, 'the block is a native disclosure').toBe('DETAILS')
+      expect(forkBlock.hasAttribute('open'), 'and it starts closed').toBe(false)
+      expect((forkBlock as HTMLDetailsElement).open, 'details.open is false').toBe(false)
       expect(scrollerOf(container).contains(forkBlock), 'it lives in the transcript chrome region').toBe(true)
 
       const rows = mountedRows(container)
       expect(rows.length, 'the transcript itself still renders').toBeGreaterThan(0)
       expect(precedes(forkBlock, rows[0] as Element), 'it sits above the first row').toBe(true)
 
-      // Not a card: nothing about the fork block opens or closes.
-      expect(forkBlock.querySelectorAll('details'), 'no disclosure').toHaveLength(0)
-      expect(forkBlock.querySelectorAll('summary'), 'no summary line').toHaveLength(0)
-      expect(container.textContent ?? '', 'the side thread itself still renders').toContain('SIDE-QUESTION')
+      const line = summaryOf(forkBlock)
+      expect(line, 'the collapsed line is the summary').not.toBeNull()
+      expect(line?.textContent ?? '', 'and says what it hides').toContain(copy(DIVIDER_KEY))
+      expect(
+        line?.querySelector('svg, [class*="sidechatRowChevron"]') ?? null,
+        'the line carries the expand chevron',
+      ).not.toBeNull()
     } finally {
       rendered.unmount()
     }
   })
 
-  it('opens with the divider, then the inherited question', async () => {
+  it('keeps the collapsed line to the divider copy', async () => {
     reportFork({ cutSeq: 0, user: { seq: 3, text: PARENT_QUESTION }, assistant: { seq: 4, text: PARENT_ANSWER } })
     const rendered = await mountTranscript()
     try {
-      const block = blockOf(rendered.container) as HTMLElement
-      expect(block, 'the fork point is shown').not.toBeNull()
+      const container = rendered.container
+      const block = blockOf(container) as HTMLElement
+      const line = summaryOf(block) as HTMLElement
+      expect(line, 'the collapsed line is the summary').not.toBeNull()
+      expect(
+        line.textContent ?? '',
+        'the inherited question never shows on the collapsed line',
+      ).not.toContain(PARENT_QUESTION)
+      expect(
+        line.textContent ?? '',
+        'and neither does the inherited answer',
+      ).not.toContain(PARENT_ANSWER)
+      expect(line.querySelector('[data-sidechat-fork-question]'), 'no question node in the line').toBeNull()
+      expect(line.querySelector('[class*="sidechatAssistant"]'), 'no answer block in the line').toBeNull()
 
-      const divider = block.querySelector<HTMLElement>('[data-sidechat-fork-divider]')
-      expect(divider, 'the block opens with a divider row').not.toBeNull()
-      expect(divider?.textContent ?? '', 'the divider says what follows').toContain(copy(DIVIDER_KEY))
+      // Whatever the body holds, it belongs to the disclosure — never to a
+      // sibling that would render as conversation.
+      const question = container.querySelector('[data-sidechat-fork-question]')
+      if (question !== null) {
+        expect(block.contains(question), 'the body lives inside the disclosure').toBe(true)
+      }
+    } finally {
+      rendered.unmount()
+    }
+  })
+
+  it('reveals the inherited exchange only after it is expanded', async () => {
+    reportFork({ cutSeq: 0, user: { seq: 3, text: PARENT_QUESTION }, assistant: { seq: 4, text: PARENT_ANSWER } })
+    const rendered = await mountTranscript()
+    try {
+      const container = rendered.container
+      const block = blockOf(container) as HTMLElement
+      const line = summaryOf(block) as HTMLElement
+      expect(line, 'the collapsed line is the summary').not.toBeNull()
+
+      expand(block)
+      await harness.flush(4)
+      expect((block as HTMLDetailsElement).open, 'the disclosure is open').toBe(true)
 
       const question = block.querySelector<HTMLElement>('[data-sidechat-fork-question]')
+      const answer = partOf(block, 'PARENT-ANSWER with')?.closest<HTMLElement>('[class*="sidechatAssistant"]')
+      const end = block.querySelector<HTMLElement>('[data-sidechat-fork-divider-end]')
+      expect(question, 'the question is revealed').not.toBeNull()
+      expect(answer, 'and the answer').not.toBeNull()
+      expect(end, 'and the closing divider').not.toBeNull()
+      expect(line.contains(question as HTMLElement), 'the question is in the body, not the line').toBe(false)
+      expect(precedes(line, question as HTMLElement), 'order: the line first').toBe(true)
+      expect(precedes(question as HTMLElement, answer as HTMLElement), 'then the question').toBe(true)
+      expect(precedes(answer as HTMLElement, end as HTMLElement), 'then the answer').toBe(true)
+      expect(end?.textContent ?? '', 'the closing line says the context ends')
+        .toContain(copy(END_DIVIDER_KEY))
+    } finally {
+      rendered.unmount()
+    }
+  })
+
+  it('presents the inherited question like a user message of this thread', async () => {
+    reportFork({ cutSeq: 0, user: { seq: 3, text: PARENT_QUESTION }, assistant: { seq: 4, text: PARENT_ANSWER } })
+    const rendered = await mountExpanded()
+    try {
+      const block = blockOf(rendered.container) as HTMLElement
+      const question = block.querySelector<HTMLElement>('[data-sidechat-fork-question]')
       expect(question, 'the inherited question carries its own hook').not.toBeNull()
-      expect(precedes(divider as HTMLElement, question as HTMLElement), 'the divider comes first').toBe(true)
       expect(question?.textContent, 'the question is quoted verbatim').toBe(PARENT_QUESTION)
       expect(
         presentedAs(question as HTMLElement, 'sidechatUser'),
@@ -257,9 +334,9 @@ describe('fork point block (R2)', () => {
     }
   })
 
-  it('renders the inherited answer like a normal assistant message', async () => {
+  it('presents the inherited answer like a normal assistant message', async () => {
     reportFork({ cutSeq: 0, user: { seq: 3, text: PARENT_QUESTION }, assistant: { seq: 4, text: PARENT_ANSWER } })
-    const rendered = await mountTranscript()
+    const rendered = await mountExpanded()
     try {
       const block = blockOf(rendered.container) as HTMLElement
       const answer = partOf(block, 'PARENT-ANSWER with')
@@ -281,65 +358,13 @@ describe('fork point block (R2)', () => {
     }
   })
 
-  it('closes with the end divider after the inherited exchange', async () => {
-    reportFork({ cutSeq: 0, user: { seq: 3, text: PARENT_QUESTION }, assistant: { seq: 4, text: PARENT_ANSWER } })
-    const rendered = await mountTranscript()
-    try {
-      const block = blockOf(rendered.container) as HTMLElement
-      const start = block.querySelector<HTMLElement>('[data-sidechat-fork-divider]')
-      const question = block.querySelector<HTMLElement>('[data-sidechat-fork-question]')
-      const answer = partOf(block, 'PARENT-ANSWER with')?.closest<HTMLElement>('[class*="sidechatAssistant"]')
-      const end = block.querySelector<HTMLElement>('[data-sidechat-fork-divider-end]')
-      expect(start, 'the block still opens with a divider').not.toBeNull()
-      expect(end, 'and now closes with one').not.toBeNull()
-      expect(end?.textContent ?? '', 'the closing line says the inherited context ends')
-        .toContain(copy(END_DIVIDER_KEY))
-      expect(end?.textContent ?? '', 'the closing copy is translated, not a raw key')
-        .not.toContain(END_DIVIDER_KEY)
-      expect(precedes(start as HTMLElement, question as HTMLElement), 'order: opening divider').toBe(true)
-      expect(precedes(question as HTMLElement, answer as HTMLElement), 'then the question').toBe(true)
-      expect(
-        precedes(answer as HTMLElement, end as HTMLElement),
-        'then the answer, then the closing divider',
-      ).toBe(true)
-    } finally {
-      rendered.unmount()
-    }
-  })
-
-  it('renders both dividers as the same non-interactive line', async () => {
-    reportFork({ cutSeq: 0, user: { seq: 3, text: PARENT_QUESTION }, assistant: { seq: 4, text: PARENT_ANSWER } })
-    const rendered = await mountTranscript()
-    try {
-      const block = blockOf(rendered.container) as HTMLElement
-      const start = block.querySelector<HTMLElement>('[data-sidechat-fork-divider]')
-      const end = block.querySelector<HTMLElement>('[data-sidechat-fork-divider-end]')
-      expect(start, 'the opening divider exists').not.toBeNull()
-      expect(end, 'the closing divider exists').not.toBeNull()
-      expect(end?.tagName, 'both dividers are the same element kind').toBe(start?.tagName)
-      const shared = classTokens(end as Element).filter(token => classTokens(start as Element).includes(token))
-      expect(
-        shared.length,
-        'both dividers share the line style (one composable, same level)',
-      ).toBeGreaterThan(0)
-      for (const divider of [start as HTMLElement, end as HTMLElement]) {
-        expect(divider.closest('button, a'), 'a divider is never wrapped in a control').toBeNull()
-        expect(divider.getAttribute('role'), 'and never claims a control role').not.toBe('button')
-        expect(divider.getAttribute('tabindex'), 'and is not focusable').toBeNull()
-        expect(divider.querySelector('button, a'), 'and contains no control').toBeNull()
-      }
-    } finally {
-      rendered.unmount()
-    }
-  })
-
   it('carries the inherited question and answer in full, with no truncation mark', async () => {
     reportFork({
       cutSeq: 0,
       user: { seq: 3, text: LONG_QUESTION },
       assistant: { seq: 4, text: LONG_ANSWER },
     })
-    const rendered = await mountTranscript()
+    const rendered = await mountExpanded()
     try {
       const block = blockOf(rendered.container) as HTMLElement
       const question = block.querySelector<HTMLElement>('[data-sidechat-fork-question]')
@@ -355,20 +380,48 @@ describe('fork point block (R2)', () => {
     }
   })
 
-  it('renders the divider and the question only when there is no answer', async () => {
-    reportFork({ cutSeq: 0, user: { seq: 3, text: PARENT_QUESTION } })
-    const rendered = await mountTranscript()
+  it('renders both dividers as the same line, with no extra controls', async () => {
+    reportFork({ cutSeq: 0, user: { seq: 3, text: PARENT_QUESTION }, assistant: { seq: 4, text: PARENT_ANSWER } })
+    const rendered = await mountExpanded()
     try {
       const block = blockOf(rendered.container) as HTMLElement
-      expect(block, 'a fork summarised with just the question still renders').not.toBeNull()
-      expect(block.querySelector('[data-sidechat-fork-divider]'), 'the divider is there').not.toBeNull()
-      expect(block.querySelector('[data-sidechat-fork-question]'), 'and the question').not.toBeNull()
+      const line = summaryOf(block)
+      expect(line, 'the collapsed line is the summary').not.toBeNull()
+      const start = block.querySelector<HTMLElement>('[data-sidechat-fork-divider]')
       const end = block.querySelector<HTMLElement>('[data-sidechat-fork-divider-end]')
-      expect(end, 'and it still closes with the end divider').not.toBeNull()
+      expect(start, 'the opening divider exists').not.toBeNull()
+      expect(end, 'the closing divider exists').not.toBeNull()
+      // The opening line IS the summary (or lives inside it).
       expect(
-        precedes(block.querySelector('[data-sidechat-fork-question]') as HTMLElement, end as HTMLElement),
-        'after the question',
+        start === line || (line?.contains(start as HTMLElement) ?? false),
+        'the opening divider is the collapsed line',
       ).toBe(true)
+      const shared = classTokens(end as Element).filter(token => classTokens(start as Element).includes(token))
+      expect(shared.length, 'both dividers share the divider style').toBeGreaterThan(0)
+      // The summary is the only control; neither divider adds another one.
+      expect(
+        (start as HTMLElement).querySelector('button, a'),
+        'the opening line adds no button/link of its own',
+      ).toBeNull()
+      expect((end as HTMLElement).querySelector('button, a'), 'the closing line adds no control').toBeNull()
+      expect(end?.getAttribute('role'), 'the closing line claims no role').toBeNull()
+      expect(end?.getAttribute('tabindex'), 'and is not focusable').toBeNull()
+      expect(block.querySelectorAll('button, a'), 'the block adds no buttons or links').toHaveLength(0)
+    } finally {
+      rendered.unmount()
+    }
+  })
+
+  it('renders the question and the closing divider only when there is no answer', async () => {
+    reportFork({ cutSeq: 0, user: { seq: 3, text: PARENT_QUESTION } })
+    const rendered = await mountExpanded()
+    try {
+      const block = blockOf(rendered.container) as HTMLElement
+      const question = block.querySelector<HTMLElement>('[data-sidechat-fork-question]')
+      const end = block.querySelector<HTMLElement>('[data-sidechat-fork-divider-end]')
+      expect(question, 'the question is revealed').not.toBeNull()
+      expect(end, 'and the closing divider').not.toBeNull()
+      expect(precedes(question as HTMLElement, end as HTMLElement), 'after the question').toBe(true)
       expect(
         block.querySelector('[class*="sidechatAssistant"]'),
         'but nothing pretends an answer exists',
@@ -399,7 +452,7 @@ describe('fork point block (R2)', () => {
     }
   })
 
-  it('keeps the block out of the conversation rows', async () => {
+  it('keeps the block out of the conversation rows, collapsed or expanded', async () => {
     const plain = await mountTranscript()
     const baseline = mountedRows(plain.container).length
     plain.unmount()
@@ -411,15 +464,16 @@ describe('fork point block (R2)', () => {
       expect(block, 'the block exists for this comparison').not.toBeNull()
       expect(block.closest('[data-sidechat-transcript-row]'), 'the block is not a transcript row').toBeNull()
       expect(block.querySelector('[data-sidechat-transcript-row]'), 'and contains none').toBeNull()
-      for (const selector of ['[data-sidechat-fork-divider]', '[data-sidechat-fork-divider-end]']) {
-        expect(
-          block.querySelector(selector)?.closest('[data-sidechat-transcript-row]') ?? null,
-          `${selector} never counts as a transcript row`,
-        ).toBeNull()
-      }
       expect(
         mountedRows(rendered.container).length,
         'it does not change how many rows mount',
+      ).toBe(baseline)
+
+      expand(block)
+      await harness.flush(4)
+      expect(
+        mountedRows(rendered.container).length,
+        'expanding it does not add conversation rows either',
       ).toBe(baseline)
     } finally {
       rendered.unmount()

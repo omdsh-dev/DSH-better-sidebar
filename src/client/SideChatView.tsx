@@ -557,15 +557,14 @@ function TurnFold(props: {
 }
 
 /**
- * The pre-fork context, rendered as the conversation it was.
+ * The pre-fork context, tucked behind one divider line.
  *
- * The reader's verdict on the card that shipped first was that this should not
- * be a card at all: two matching divider lines bracket the block — the first
- * says where it came from, the last where the inherited context stops — and the
- * parent's last exchange between them looks exactly like the messages under it:
- * the question as this thread's own user bubble, the answer as its own assistant
- * prose, both through the same markdown renderer (and the same prose pass) the
- * rows use, both carried verbatim. Nothing here expands or collapses.
+ * A side thread opens on the side question, as if the conversation began there;
+ * the inherited exchange is CONTEXT, not conversation — rendered permanently
+ * open it pushes the reader's own question off the first screen and reads as if
+ * THIS thread had asked it. So the block is a native disclosure: collapsed it is
+ * one line of divider chrome, expanded it is the parent's last exchange between
+ * the opening and closing divider lines.
  */
 function ForkBlock(props: {
   /** The parent's last question, verbatim. */
@@ -577,33 +576,57 @@ function ForkBlock(props: {
   /** The view's row prose pass (image destinations, then local links). */
   rewrite: (text: string) => string
 }): React.ReactNode {
+  // `<details>` is controlled: React would otherwise reset the DOM's own
+  // `open` on the next render (the transcript re-renders on every poll), so the
+  // toggle event — the only reliable report of a native open/close — is the
+  // single source of truth.
+  const [open, setOpen] = useState(false)
   return (
-    <div className={css.sidechatForkPoint} data-sidechat-fork-point="">
-      <div className={css.sidechatForkDivider} data-sidechat-fork-divider="">
+    <details
+      className={css.sidechatForkPoint}
+      data-sidechat-fork-point=""
+      open={open}
+      onToggle={event => setOpen(event.currentTarget.open)}
+    >
+      {/* The collapsed line IS the opening divider: the same hairline-and-copy
+          chrome as the closing one, plus the disclosure's own chevron. It never
+          carries inherited text — the line says where the context came from,
+          not what was said in it. */}
+      <summary
+        className={clsx(css.sidechatForkDivider, css.sidechatForkPointLine)}
+        data-sidechat-fork-divider=""
+      >
         {t('sideChatForkDivider')}
+        <span className={css.sidechatRowChevron}>
+          <IconChevronRightOutlineRegular size={12} />
+        </span>
+      </summary>
+      {/* The body stays mounted (a closed `<details>` hides it natively), so
+          expanding costs no refetch and the exchange is already there. */}
+      <div className={css.sidechatForkPointBody}>
+        {props.user === undefined
+          ? null
+          : (
+            // The same presentation block a user row renders, so the inherited
+            // question can never drift from the thread's own bubbles.
+            <div className={css.sidechatUser} data-sidechat-fork-question="">
+              <MarkdownText {...markdownTextProps(props.rewrite(props.user), props.labels)} />
+            </div>
+          )}
+        {props.answer === undefined || props.answer === ''
+          ? null
+          : (
+            <div className={css.sidechatAssistant}>
+              <MarkdownText {...markdownTextProps(props.rewrite(props.answer), props.labels)} />
+            </div>
+          )}
+        {/* The same line closes the block: the inherited context stops here, so
+            what follows reads as this thread's own conversation again. */}
+        <div className={css.sidechatForkDivider} data-sidechat-fork-divider-end="">
+          {t('sideChatForkDividerEnd')}
+        </div>
       </div>
-      {props.user === undefined
-        ? null
-        : (
-          // The same presentation block a user row renders, so the inherited
-          // question can never drift from the thread's own bubbles.
-          <div className={css.sidechatUser} data-sidechat-fork-question="">
-            <MarkdownText {...markdownTextProps(props.rewrite(props.user), props.labels)} />
-          </div>
-        )}
-      {props.answer === undefined || props.answer === ''
-        ? null
-        : (
-          <div className={css.sidechatAssistant}>
-            <MarkdownText {...markdownTextProps(props.rewrite(props.answer), props.labels)} />
-          </div>
-        )}
-      {/* The same line closes the block: the inherited context stops here, so
-          what follows reads as this thread's own conversation again. */}
-      <div className={css.sidechatForkDivider} data-sidechat-fork-divider-end="">
-        {t('sideChatForkDividerEnd')}
-      </div>
-    </div>
+    </details>
   )
 }
 
