@@ -51,17 +51,16 @@ interface EmittedReference {
   ref: string
   label: string
   appearance: string
+  clipboardText: string
 }
 
 /**
- * A fake ctx exposing the three faces `referenceInChat` uses: the host's
+ * A fake ctx exposing the faces `referenceInChat` uses: the host's
  * `workspaces` snapshot (the token is projected against `WorkspaceView.path`,
  * matched by session membership — issue #479's base-path gap), the plain
- * `setDraft` path (folders and file fallback) and the host's
- * `slash/input-insert-reference` event. The fake models the host's chip
- * faithfully enough for the draft to be readable — the chip's plain-text
- * projection is the mention itself (`ReferenceChipNode.getTextContent()`
- * returns the chip's `clipboardText`, which the plugin sets to the mention);
+ * `setDraft` path (folders and file fallback) and the `insertReference`
+ * facade. The fake models the host's chip faithfully enough for the draft to
+ * be readable — the chip's plain-text projection is its `clipboardText`, and
  * the separating space the composer adds next to a chip is not part of the
  * reference, so it is left out.
  */
@@ -81,16 +80,14 @@ function fakeComposer(initial = ''): {
       text = next
       drafts.push(next)
     },
-  }
-  const scope = {
-    emit: (name: string, payload: unknown): void => {
-      if (name !== 'slash/input-insert-reference') return
-      const { reference } = payload as { reference: EmittedReference }
+    insertReference: (reference: EmittedReference): boolean => {
       emitted.push(reference)
-      text += reference.ref
+      text += reference.clipboardText
       draftRev += 1
+      return true
     },
   }
+  const scope = { emit: (): void => undefined }
   const workspaces = {
     list: {
       getSnapshot: (): unknown => ({ phase: 'ready', state: 'idle', items: [{ path: '/w', sessionIds: ['s1'] }] }),

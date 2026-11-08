@@ -7,7 +7,7 @@
  * Mounted by {@link GitLens} on the repo/worktree target the lens has already
  * selected; it owns its own bounded page (`git.graph`) and reports the
  * selected commit upward for the tab's bottom pane (`details` tab). */
-import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
 import {
   Button, IconBranchOutlineRegular, IconCheckOutlineRegular, IconGlobeOutlineRegular,
 } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -17,6 +17,8 @@ import { relativeTime, t } from '../locales.ts'
 import { Notice } from '../ui/index.ts'
 import { AnchoredPopover } from '../AnchoredPopover.tsx'
 import { edgePath, layoutGraph } from './graph-layout.ts'
+import { createFrameBatcher } from '../frame-batcher.ts'
+import { windowedRange } from './git-graph-windowing.ts'
 import css from './graph.module.css'
 
 type GraphPage = Awaited<ReturnType<typeof api.gitGraph>>
@@ -69,10 +71,23 @@ function remoteRefNames(branches: readonly Branch[]): ReadonlySet<string> {
   return new Set(branches.filter(item => item.ref.startsWith('refs/remotes/')).map(item => item.name))
 }
 
-/** HEAD is the local-current marker; remote refs read muted, local ones brand.
- *  Exported for {@link CommitDetails}, which renders the same pills. */
-export function refTone(ref: string, remotes: ReadonlySet<string>): 'head' | 'remote' | 'local' {
+/** The server's tag decoration prefix. A tag is the one ref kind that may share
+ *  its name with a branch, so the kind rides the name itself (`tag: v1`) rather
+ *  than a parallel map — and Git forbids spaces/colons in ref names, so the
+ *  prefix cannot collide with a real branch. */
+const TAG_PREFIX = 'tag: '
+
+/** Whether a decoration is a tag (`tag: ` prefix) rather than a branch/HEAD. */
+function isTagRef(ref: string): boolean {
+  return ref.startsWith(TAG_PREFIX)
+}
+
+/** HEAD is the local-current marker; remote refs read muted, local ones brand,
+ *  tags take their own neutral rung (never a lane colour). Exported for
+ *  {@link CommitDetails}, which renders the same pills. */
+export function refTone(ref: string, remotes: ReadonlySet<string>): 'head' | 'remote' | 'local' | 'tag' {
   if (ref === 'HEAD') return 'head'
+  if (isTagRef(ref)) return 'tag'
   return remotes.has(ref) ? 'remote' : 'local'
 }
 
@@ -80,7 +95,7 @@ export function refTone(ref: string, remotes: ReadonlySet<string>): 'head' | 're
  *  carries the "currently checked out" check. */
 export interface RefPillModel {
   readonly name: string
-  readonly tone: 'head' | 'remote' | 'local'
+  readonly tone: 'head' | 'remote' | 'local' | 'tag'
   readonly current: boolean
 }
 
@@ -88,11 +103,13 @@ export interface RefPillModel {
  *  `HEAD` never becomes a pill of its own — it folds into the current local
  *  branch's pill as a leading check, the convention every graph tool shares
  *  (GitLens, GitKraken, …); only a DETACHED head renders it standalone. The
- *  current branch's pill takes the emphasised `head` tone. */
+ *  current branch's pill takes the emphasised `head` tone. Tags are skipped by
+ *  that fold: they are decorations, not the checked-out branch (a tag may even
+ *  share a branch's name). */
 export function refPills(refs: readonly string[], remotes: ReadonlySet<string>): RefPillModel[] {
   const atHead = refs.includes('HEAD')
   const named = refs.filter(ref => ref !== 'HEAD')
-  const current = atHead ? named.find(ref => !remotes.has(ref)) : undefined
+  const current = atHead ? named.find(ref => !isTagRef(ref) && !remotes.has(ref)) : undefined
   const pills = named.map(name => ({
     name,
     tone: (name === current ? 'head' : refTone(name, remotes)) as RefPillModel['tone'],
@@ -106,12 +123,15 @@ export function refPills(refs: readonly string[], remotes: ReadonlySet<string>):
  *  leading check when this is the branch the worktree stands on. `slot` paints
  *  the pill in the commit's LANE colour (the same palette mapping the edges
  *  and the node dot resolve through), so a branch head is recognisable by
- *  colour alone. Shared by the graph rows, the hover card and the details
- *  card so a ref reads the same everywhere. */
+ *  colour alone. A tag is not a lane painter: it paints the neutral label rung,
+ *  carries no glyph, and the server's `tag: ` name prefix is its kind marker.
+ *  Shared by the graph rows, the hover card and the details card so a ref reads
+ *  the same everywhere. */
 export function RefPill({ pill, slot }: { pill: RefPillModel; slot?: number }) {
-  return <span className={css.ref} data-tone={pill.tone} data-color={slot} data-current={pill.current || undefined}>
+  const tag = pill.tone === 'tag'
+  return <span className={css.ref} data-tone={pill.tone} data-color={tag ? undefined : slot} data-current={pill.current || undefined}>
     {pill.current && <IconCheckOutlineRegular size={11} />}
-    {pill.tone === 'remote' ? <IconGlobeOutlineRegular size={11} /> : <IconBranchOutlineRegular size={11} />}
+    {!tag && (pill.tone === 'remote' ? <IconGlobeOutlineRegular size={11} /> : <IconBranchOutlineRegular size={11} />)}
     <span className={css.refName}>{pill.name}</span>
   </span>
 }
@@ -120,6 +140,7 @@ export function GitGraphSection({ scope, worktree, visible, refreshTick = 0, onP
   const [branch, setBranch] = useState('')
   const [page, setPage] = useState<GraphPage | null>(null)
   const [branches, setBranches] = useState<GraphPage['branches']>([])
+  const [linearFallback, setLinearFallback] = useState(false)
   const selectionRef = useRef(selectedRef)
   selectionRef.current = selectedRef
   const clearPreviewRef = useRef(onClearPreview)
@@ -138,6 +159,47 @@ export function GitGraphSection({ scope, worktree, visible, refreshTick = 0, onP
   const appending = useRef(false)
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const sentinelRef = useRef<HTMLDivElement | null>(null)
+  /**
+   * The scroll container's measured viewport, and the per-frame coalescer that
+   * keeps it in step with a scroll stream (a trackpad fires several scroll
+   * events per display frame; one commit per frame is enough to move the
+   * window, and each commit reads layout once).
+   */
+  const [view, setView] = useState({ scrollTop: 0, height: 0 })
+  const scrollBatcher = useRef(createFrameBatcher()).current
+  const syncWindow = useCallback((): void => {
+    const node = scrollRef.current
+    if (node === null) return
+    const scrollTop = node.scrollTop
+    const height = node.clientHeight
+    setView(current => (current.scrollTop === scrollTop && current.height === height
+      ? current
+      : { scrollTop, height }))
+  }, [])
+  // A page append/shrink changes the content under the scroll position; the
+  // browser clamps a stale scrollTop only after the DOM commit, so re-read it
+  // in the layout phase. The pure range function clamps anyway.
+  useLayoutEffect(() => { syncWindow() }, [syncWindow, page?.entries.length])
+  // A panel resize (the details pane opening, a window resize, the sidebar
+  // width drag) changes how many rows fit: re-measure so the mounted window
+  // still covers the viewport instead of leaving a blank band. A HIDDEN
+  // section holds no observer (AGENTS steady-state rule) — the effect depends
+  // on `visible`, re-measures on the way back, and drops any frame it had
+  // queued.
+  useEffect(() => {
+    if (!visible) return
+    const node = scrollRef.current
+    if (node === null) return
+    syncWindow()
+    if (typeof ResizeObserver === 'undefined') return () => { scrollBatcher.dispose() }
+    const observer = new ResizeObserver(() => { syncWindow() })
+    observer.observe(node)
+    return () => {
+      scrollBatcher.dispose()
+      observer.disconnect()
+    }
+  }, [scrollBatcher, syncWindow, visible])
+  useEffect(() => () => { scrollBatcher.dispose() }, [scrollBatcher])
   /** Row hover preview: the middle information rung between the one-line row
    *  (pills + subject) and the details card (everything). It opens only after
    *  a short dwell so scrolling past rows never flashes cards; the pointer
@@ -162,11 +224,27 @@ export function GitGraphSection({ scope, worktree, visible, refreshTick = 0, onP
     setError(null)
     setStale(false)
     try {
-      const result = await api.gitGraph(scope, {
-        branch: branch || undefined, count: 50,
-        cursor: append ? previous?.nextCursor : undefined,
-      }, worktree, controller.signal)
+      let result: GraphPage
+      let fallback = linearFallback
+      if (append && linearFallback) {
+        const history = await api.gitHistory(scope, { count: 50, cursor: previous?.nextCursor }, worktree, controller.signal)
+        result = { ...history, branches: [] }
+      } else {
+        try {
+          result = await api.gitGraph(scope, {
+            branch: branch || undefined, count: 50,
+            cursor: append ? previous?.nextCursor : undefined,
+          }, worktree, controller.signal)
+          fallback = false
+        } catch (reason) {
+          if (append || !(reason instanceof SidebarApiError) || reason.code !== 'graph-limit') throw reason
+          const history = await api.gitHistory(scope, { count: 50 }, worktree, controller.signal)
+          result = { ...history, branches: [] }
+          fallback = true
+        }
+      }
       if (controller.signal.aborted || gen !== generation.current) return
+      if (!append) setLinearFallback(fallback)
       const next = append && previous ? {
         ...result,
         entries: [...previous.entries, ...result.entries.filter(entry => !previous.entries.some(old => old.hashFull === entry.hashFull))],
@@ -199,6 +277,7 @@ export function GitGraphSection({ scope, worktree, visible, refreshTick = 0, onP
     setPage(null)
     setBranch('')
     setBranches([])
+    setLinearFallback(false)
   }, [scope.sessionId, scope.cwd, scope.repoRoot, worktree])
   useEffect(() => {
     if (visible) void request(false)
@@ -227,6 +306,12 @@ export function GitGraphSection({ scope, worktree, visible, refreshTick = 0, onP
 
   const rows = useMemo(() => layoutGraph(page?.entries ?? []), [page?.entries])
   const width = Math.max(28, ...rows.map(row => laneX(row.laneCount) + 2))
+  const range = windowedRange({
+    count: page?.entries.length ?? 0,
+    rowHeight: ROW_HEIGHT,
+    scrollTop: view.scrollTop,
+    viewportHeight: view.height,
+  })
   const remotes = useMemo(() => remoteRefNames(branches), [branches])
   const selectedIndex = selectedRef?.kind === 'commit'
     && selectedRef.worktree === worktree
@@ -262,23 +347,32 @@ export function GitGraphSection({ scope, worktree, visible, refreshTick = 0, onP
     setPage(null)
   }
 
-  return <section className={css.root} aria-label={t('gitGraph')} data-git-graph>
+  return <section className={css.root} aria-label={t('gitGraph')} data-git-graph
+    data-graph-count={page?.entries.length ?? 0}>
     <div className={css.toolbar}>
-      <select className={css.select} aria-label={t('graphBranchFilter')}
+      {linearFallback && <div role="status">{t('graphLinearFallback')}</div>}
+      {!linearFallback && <select className={css.select} aria-label={t('graphBranchFilter')}
         value={branch} onChange={event => { chooseBranch(event.target.value) }}>
         <option value="">{t('graphAllBranches')}</option>
         {branches.map(item => <option key={item.ref} value={item.ref}>{item.name}</option>)}
         {branch && !branches.some(item => item.ref === branch) && <option value={branch}>{branch}</option>}
-      </select>
+      </select>}
     </div>
-    <div className={css.scroll} aria-busy={loading} ref={scrollRef}>
+    <div className={css.scroll} aria-busy={loading} ref={scrollRef} data-graph-scroll
+      onScroll={() => {
+        // The window may unmount the row the hover card is anchored to.
+        if (hover !== null || hoverTimer.current !== null) cancelHover()
+        scrollBatcher.schedule(syncWindow)
+      }}>
       {error !== null && <div className={css.notice} role="alert">
         <Notice kind="warn">{stale ? t('graphStale') : t('graphLoadError')}{!stale && `: ${error}`}</Notice>
         <Button onClick={() => { if (stale || !failedAppend.current) setRetry(value => value + 1); else void request(true) }}>{t('retry')}</Button>
       </div>}
       {loading && <div className={css.notice} role="status">{t('loading')}</div>}
       {!loading && !error && page !== null && page.entries.length === 0 && <div className={css.notice}>{t(page.isRepo ? 'graphEmpty' : 'notRepo')}</div>}
-      {page?.entries.map((entry, index) => {
+      {range.top > 0 && <div aria-hidden="true" data-graph-spacer="top" style={{ height: range.top }} />}
+      {page?.entries.slice(range.start, range.end).map((entry, offset) => {
+        const index = range.start + offset
         const row = rows[index]!
         const slot = colorSlot(row.colorIndex)
         return <button key={entry.hashFull} type="button" className={css.row}
@@ -291,17 +385,18 @@ export function GitGraphSection({ scope, worktree, visible, refreshTick = 0, onP
           onMouseLeave={cancelHover}
           onClick={() => { cancelHover(); select(entry) }}
           onContextMenu={onContextMenu === undefined ? undefined : (event) => { onContextMenu(event, entry) }}>
-          <svg width={width} height={ROW_HEIGHT} viewBox={`0 0 ${width} ${ROW_HEIGHT}`} preserveAspectRatio="none" className={css.graph} aria-hidden="true">
+          {!linearFallback && <svg width={width} height={ROW_HEIGHT} viewBox={`0 0 ${width} ${ROW_HEIGHT}`} preserveAspectRatio="none" className={css.graph} aria-hidden="true">
             {row.segments.map((edge, i) => <path key={i} data-color={colorSlot(edge.colorIndex)}
               d={edgePath(edge, laneX, ROW_HEIGHT)} />)}
             <circle cx={laneX(row.lane)} cy={ROW_HEIGHT / 2} r={3} data-color={slot} />
-          </svg>
+          </svg>}
           {entry.refs.length > 0 && <span className={css.refs}>
             {refPills(entry.refs, remotes).map(pill => <RefPill key={pill.name} pill={pill} slot={slot} />)}
           </span>}
           <span className={css.subject}>{entry.subject}</span>
         </button>
       })}
+      {range.bottom > 0 && <div aria-hidden="true" data-graph-spacer="bottom" style={{ height: range.bottom }} />}
       {page?.hasMore && !stale && <div className={css.notice} ref={sentinelRef} data-graph-sentinel>
         <Button disabled={loading} onClick={() => { void request(true) }}>{t('graphLoadMore')}</Button>
       </div>}

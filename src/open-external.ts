@@ -86,6 +86,27 @@ function windowsExecutableOf(path: string): string {
   return wslPath('-u', path)
 }
 
+/** The only escapes Explorer's `/select,` URL parser needs: the escape
+ * character itself, the multi-target separator, and the fragment marker.
+ * Non-ASCII stays literal on purpose — Explorer decodes only ASCII percent
+ * escapes there, so encoding a Chinese path into UTF-8 escapes makes it
+ * silently fall back to the default folder. */
+const EXPLORER_SELECT_ESCAPES: Record<string, string> = { '%': '%25', ',': '%2C', '#': '%23' }
+
+/**
+ * Turn a Windows path into the file URL Explorer's `/select,` accepts.
+ *
+ * A bare path cannot be used: when it contains a space Node quotes the whole
+ * `/select,<path>` token, which Explorer's parser does not accept. Passing
+ * `/select,` and the URL as TWO argv elements avoids that, and encoding only
+ * the syntax characters keeps spaces and non-ASCII readable.
+ */
+export function explorerSelectTarget(windowsPath: string): string {
+  const slashed = windowsPath.replace(/\\/gu, '/')
+  const url = slashed.startsWith('//') ? `file:${slashed}` : `file:///${slashed}`
+  return url.replace(/[%,#]/gu, char => EXPLORER_SELECT_ESCAPES[char] ?? char)
+}
+
 /** Reveal/select a path in the OS file manager. On plain Linux there is no
  * common select protocol — the containing directory is opened instead.
  * Under WSL the desktop file manager is Windows Explorer. */
@@ -97,10 +118,11 @@ export function revealCommand(
   switch (platform) {
     case 'darwin':
       return { command: 'open', args: ['-R', path] }
-    // Explorer expects `/select,<path>` as one argument. Keep the spawn
-    // shell-free: a command shell would reinterpret valid path characters.
+    // Two argv elements: the switch and the file URL. Keeping them separate
+    // stops Node from quoting the whole `/select,<path>` token when the path
+    // contains a space (see explorerSelectTarget).
     case 'win32':
-      return { command: 'explorer.exe', args: [`/select,${path}`] }
+      return { command: 'explorer.exe', args: ['/select,', explorerSelectTarget(path)] }
     // Termux (the dominant Node runtime reporting platform "android") has no
     // desktop file manager and no xdg-open; `termux-open` hands the path to
     // Android's system open-with chooser. Fall through to the parent dir like
@@ -115,7 +137,7 @@ export function revealCommand(
         const windowsExecutable = options.windowsExecutable ?? windowsExecutableOf
         return {
           command: windowsExecutable('C:\\Windows\\explorer.exe'),
-          args: [`/select,${toWindowsPath(path)}`],
+          args: ['/select,', explorerSelectTarget(toWindowsPath(path))],
         }
       }
       const parent = parentOf(path)

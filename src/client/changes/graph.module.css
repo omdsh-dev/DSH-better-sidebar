@@ -63,20 +63,27 @@
 /* The shared "nothing here" dash (the details card's empty parents list). */
 .dash { color: var(--dsw-alias-label-tertiary); font: var(--dsw-font-xxxs-11); }
 
-/* The lane palette: five theme slots, shared by every painter — the graph
-   edges and node dots and the ref pills. Colours follow the LANE, never the
-   branch: a colour says "a different line", not "a unique branch" (lanes can
-   outlive the branches that opened them), which is why there is deliberately
-   NO legend — the ref pills on the rows are the only branch key, the
-   convention every graph tool shares. The five are all STATE colours: they
+/* The lane palette: five theme slots, shared by every LANE painter — the graph
+   edges and node dots and the branch/remote ref pills. Colours follow the LANE,
+   never the branch: a colour says "a different line", not "a unique branch"
+   (lanes can outlive the branches that opened them), which is why there is
+   deliberately NO legend — the ref pills on the rows are the only branch key,
+   the convention every graph tool shares. The five are all STATE colours: they
    are the tokens designed to stay legible as thin lines and small text on
    both theme families — `brand-primary` is a surface-scale navy that reads as
-   a hole on the dark theme, so it is deliberately NOT a lane colour. */
+   a hole on the dark theme, so it is deliberately NOT a lane colour. Tag pills
+   are NOT lane painters: see the neutral rule below the palette. */
 .graph [data-color="0"], .ref[data-color="0"] { color: var(--dsw-alias-state-business-primary, var(--dsw-alias-label-primary)); }
 .graph [data-color="1"], .ref[data-color="1"] { color: var(--dsw-alias-state-success-primary, var(--dsw-alias-label-primary)); }
 .graph [data-color="2"], .ref[data-color="2"] { color: var(--dsw-alias-state-warn-primary, var(--dsw-alias-label-primary)); }
 .graph [data-color="3"], .ref[data-color="3"] { color: var(--dsw-alias-state-error-primary, var(--dsw-alias-label-primary)); }
 .graph [data-color="4"], .ref[data-color="4"] { color: var(--dsw-alias-label-secondary); }
+
+/* A tag is a decoration, not a lane: it never takes a palette slot (the
+   component omits `data-color` for it) and paints the neutral label rung with
+   a dashed outline, so it stays distinct on both theme families. The server's
+   `tag: ` name prefix is the kind marker; no glyph is added. */
+.ref[data-tone="tag"] { color: var(--dsw-alias-label-secondary); border-style: dashed; }
 
 /* ── Commit details ──────────────────────────────────────────────────────
    Rendered as the changes tab's bottom-pane `details` tab (CommitDetails),

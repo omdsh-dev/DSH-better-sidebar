@@ -269,6 +269,49 @@ describe('graph toolbar', () => {
       expect(detachedPills.map(pill => pill.getAttribute('data-color'))).toEqual(['1', '1'])
     } finally { mounted.unmount() }
   })
+
+  it('renders tag refs as neutral pills that never become the current branch or a lane colour', async () => {
+    // The server decorates a tag with a `tag: ` prefix (a branch and a tag may
+    // share a name). The pill keeps that literal text marker, takes the
+    // neutral tone and never occupies a lane-palette slot; a tag is never
+    // folded into HEAD as "the current branch" either.
+    const branches = [
+      { ref: 'refs/heads/main', name: 'main', hashFull: HASH_A },
+      { ref: 'refs/remotes/origin/main', name: 'origin/main', hashFull: HASH_A },
+    ]
+    const rows = [
+      commit(HASH_A, ['HEAD', 'tag: v1', 'main', 'origin/main']),
+      // A tag named like the local branch must not steal the fold: this
+      // detached HEAD has no local branch, so HEAD stands alone and both the
+      // tag and the remote stay their own kind.
+      commit(HASH_B, ['HEAD', 'tag: main', 'origin/main'], [HASH_A]),
+    ]
+    vi.spyOn(api, 'gitGraph').mockResolvedValue(graphPage(rows, branches))
+    const mounted = renderRoot(createElement(GitGraphSection, defaults))
+    try {
+      await flush()
+      const tip = mounted.container.querySelector<HTMLElement>(`[data-graph-commit="${HASH_A}"]`)!
+      const pills = [...tip.querySelectorAll<HTMLElement>('[data-tone]')]
+      expect(pills.map(pill => [pill.textContent, pill.getAttribute('data-tone'), pill.getAttribute('data-current')])).toEqual([
+        ['tag: v1', 'tag', null],
+        ['main', 'head', 'true'],
+        ['origin/main', 'remote', null],
+      ])
+      // Tag pills wear the neutral tone; only branch/remote pills take the
+      // row's lane slot.
+      expect(pills.map(pill => pill.getAttribute('data-color'))).toEqual([null, '0', '0'])
+      // The literal `tag: ` prefix is the kind marker — no branch or remote glyph.
+      expect(pills[0]!.querySelectorAll('svg')).toHaveLength(0)
+      const detached = mounted.container.querySelector<HTMLElement>(`[data-graph-commit="${HASH_B}"]`)!
+      const detachedPills = [...detached.querySelectorAll<HTMLElement>('[data-tone]')]
+      expect(detachedPills.map(pill => [pill.textContent, pill.getAttribute('data-tone'), pill.getAttribute('data-current')])).toEqual([
+        ['HEAD', 'head', 'true'],
+        ['tag: main', 'tag', null],
+        ['origin/main', 'remote', null],
+      ])
+      expect(detachedPills[1]!.getAttribute('data-color')).toBeNull()
+    } finally { mounted.unmount() }
+  })
 })
 
 describe('graph commit rows and details', () => {
@@ -439,6 +482,28 @@ describe('graph commit rows and details', () => {
       expect(pills.map(pill => pill.getAttribute('data-color'))).toEqual(['3', '3'])
     } finally { mounted.unmount() }
   })
+
+  it('renders the tag pill in the details card without stealing the same-named branch\'s HEAD fold', async () => {
+    // The details card is the other surface the user reads refs on, so a tag
+    // must render there too. Same name on purpose: `tag: main` and the local
+    // `main` are distinct, HEAD folds into the BRANCH, and the tag keeps the
+    // neutral tone with no lane slot.
+    const selected = commit(HASH_A, ['HEAD', 'tag: main', 'main'])
+    const mounted = renderRoot(createElement(CommitDetails, { entry: selected, slot: 2 }))
+    try {
+      const details = mounted.container.querySelector<HTMLElement>(`section[aria-label="${t('graphDetails')}"]`)!
+      const pills = [...details.querySelectorAll<HTMLElement>('[data-tone]')]
+      expect(pills.map(pill => [pill.textContent, pill.getAttribute('data-tone'), pill.getAttribute('data-current')])).toEqual([
+        ['tag: main', 'tag', null],
+        ['main', 'head', 'true'],
+      ])
+      expect(pills.map(pill => pill.getAttribute('data-color'))).toEqual([null, '2'])
+      // The tag's literal `tag: ` text marker is its kind glyph; the current
+      // branch still carries the check + branch icons.
+      expect(pills[0]!.querySelectorAll('svg')).toHaveLength(0)
+      expect(pills[1]!.querySelectorAll('svg')).toHaveLength(2)
+    } finally { mounted.unmount() }
+  })
 })
 
 describe('graph end-sentinel auto-load', () => {
@@ -505,5 +570,98 @@ describe('graph end-sentinel auto-load', () => {
       expect(graph).toHaveBeenCalledTimes(2)
       expect(graph.mock.calls.every(call => call[1]?.cursor === undefined)).toBe(true)
     } finally { hidden.unmount(); io.restore() }
+  })
+})
+
+/** One spacer's pixel height (absent spacer = 0). */
+function spacerHeight(scroll: HTMLElement, which: 'top' | 'bottom'): number {
+  const node = scroll.querySelector<HTMLElement>(`[data-graph-spacer="${which}"]`)
+  return node === null ? 0 : Number.parseFloat(node.style.height)
+}
+
+/** jsdom ships no ResizeObserver: install a recording fake for the gate test. */
+interface FakeResizeObserver {
+  targets: Element[]
+  disconnected: boolean
+}
+function installResizeObserver(): { observers: FakeResizeObserver[]; restore: () => void } {
+  const original = (globalThis as Record<string, unknown>).ResizeObserver
+  const observers: FakeResizeObserver[] = []
+  class Fake {
+    targets: Element[] = []
+    disconnected = false
+    constructor(public callback: ResizeObserverCallback) { observers.push(this) }
+    observe(target: Element): void { this.targets.push(target) }
+    unobserve(): void {}
+    disconnect(): void { this.disconnected = true }
+  }
+  ;(globalThis as Record<string, unknown>).ResizeObserver = Fake
+  return {
+    observers,
+    restore: () => {
+      if (original === undefined) delete (globalThis as Record<string, unknown>).ResizeObserver
+      else (globalThis as Record<string, unknown>).ResizeObserver = original
+    },
+  }
+}
+
+describe('graph visibility gate', () => {
+  it('holds its viewport observer only while visible', async () => {
+    const ro = installResizeObserver()
+    vi.spyOn(api, 'gitGraph').mockResolvedValue(graphPage([entry(HASH_A)]))
+    const hidden = renderRoot(createElement(GitGraphSection, { ...defaults, visible: false }))
+    try {
+      await flush()
+      expect(ro.observers, 'a hidden graph holds no observer').toHaveLength(0)
+    } finally { hidden.unmount() }
+
+    const shown = renderRoot(createElement(GitGraphSection, defaults))
+    try {
+      await flush()
+      expect(ro.observers).toHaveLength(1)
+      expect(ro.observers[0]!.targets).toHaveLength(1)
+    } finally { shown.unmount(); ro.restore() }
+    expect(ro.observers[0]!.disconnected, 'unmount disconnects').toBe(true)
+  })
+})
+
+describe('graph history windowing', () => {
+  it('mounts only the viewport window and keeps the spacers in step with the scroll position', async () => {
+    // The host caps the walk at 10000 rows; 200 is already enough that the DOM
+    // used to grow with the history instead of the viewport.
+    const many = Array.from({ length: 200 }, (_, index) => entry(`${index.toString(16).padStart(8, '0')}${'f'.repeat(32)}`))
+    vi.spyOn(api, 'gitGraph').mockResolvedValue(graphPage(many))
+    const mounted = renderRoot(createElement(GitGraphSection, defaults))
+    try {
+      await flush()
+      const graph = mounted.container.querySelector<HTMLElement>('[data-git-graph]')!
+      const scroll = mounted.container.querySelector<HTMLElement>('[data-graph-scroll]')!
+      expect(scroll).not.toBeNull()
+      expect(graph.getAttribute('data-graph-count')).toBe('200')
+      // The row height is the component's own constant: read it off the rail
+      // so the test cannot drift from it.
+      const rowHeight = Number(scroll.querySelector('svg')!.getAttribute('height'))
+      expect(rowHeight).toBeGreaterThan(0)
+
+      // jsdom has no layout: clientHeight is 0, so one row plus the 8-row
+      // overscan band on each side mounts, and the spacers keep the height.
+      expect(mounted.container.querySelectorAll('[data-graph-commit]')).toHaveLength(17)
+      expect(spacerHeight(scroll, 'top')).toBe(0)
+      expect(spacerHeight(scroll, 'bottom')).toBe((200 - 17) * rowHeight)
+
+      // Scroll five pages down: only the viewport (20 rows) plus overscan mounts.
+      Object.defineProperty(scroll, 'clientHeight', { configurable: true, value: 20 * rowHeight })
+      scroll.scrollTop = 50 * rowHeight
+      await act(async () => {
+        scroll.dispatchEvent(new Event('scroll'))
+        await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+      })
+      const rendered = [...mounted.container.querySelectorAll('[data-graph-commit]')]
+      expect(rendered).toHaveLength(36)
+      expect(rendered[0]!.getAttribute('data-graph-commit')).toBe(many[42]!.hashFull)
+      expect(rendered.at(-1)!.getAttribute('data-graph-commit')).toBe(many[77]!.hashFull)
+      expect(spacerHeight(scroll, 'top')).toBe(42 * rowHeight)
+      expect(spacerHeight(scroll, 'bottom')).toBe((200 - 78) * rowHeight)
+    } finally { mounted.unmount() }
   })
 })

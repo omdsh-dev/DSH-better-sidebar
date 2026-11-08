@@ -207,17 +207,12 @@ export function agentChip(node: TasksAgentNode): string | undefined {
   if (node.parentId === undefined) return undefined
   const mode = modeLabel(node.mode)
   if (mode !== undefined) return mode
-  if (node.team === undefined) return undefined
-  if (node.team.phase === 'provisioning') return t('tasksStateProvisioning')
-  if (node.team.phase === 'failed') return t('tasksStateError')
   return undefined
 }
 
 /** The roster row's own identity word (the fallback for a modelless teammate). */
 function teamRoleLabel(team: NonNullable<TasksAgentNode['team']>): string | undefined {
   if (team.role === 'lead') return undefined
-  if (team.phase === 'provisioning') return t('tasksStateProvisioning')
-  if (team.phase === 'failed') return t('tasksStateError')
   return t('tasksKindTeammate')
 }
 
@@ -269,7 +264,7 @@ export function TaskLine(props: {
       role="button"
       tabIndex={0}
       className={css.taskLine}
-      title={tasks.map(task => `${task.subject}（${t(taskStatusKey(task.status))}）`).join('\n')}
+      title={tasks.map(task => `${task.subject}（${taskStatusLabel(task)}）`).join('\n')}
       onClick={(event) => {
         event.stopPropagation()
         props.onOpenTask(primary.id, event.currentTarget)
@@ -283,7 +278,7 @@ export function TaskLine(props: {
     >
       <span className={css.taskGlyph} aria-hidden="true"><IconChecklistOutlineRegular size={9} /></span>
       <span className={css.taskSubject}>{primary.subject}</span>
-      <span className={css.taskState}>{t(taskStatusKey(primary.status))}</span>
+      <span className={css.taskState}>{taskStatusLabel(primary)}</span>
       {tasks.length > 1 && <span className={css.taskMore}>{`+${tasks.length - 1}`}</span>}
     </span>
   )

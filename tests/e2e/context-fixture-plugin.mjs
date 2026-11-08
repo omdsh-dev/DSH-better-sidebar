@@ -39,6 +39,12 @@ const PARENT_ID = 'session-e2e-context-parent'
 /** The fixture child session (visible to the host's subagent catalog). */
 const CHILD_ID = 'session-e2e-context-child'
 
+/** Optional scale fixture; the default preserves the original single child. */
+const CHILD_COUNT = Number(process.env.DSH_E2E_CONTEXT_AGENTS ?? 1)
+if (!Number.isSafeInteger(CHILD_COUNT) || CHILD_COUNT < 1) {
+  throw new Error('DSH_E2E_CONTEXT_AGENTS must be a positive safe integer')
+}
+
 /** The child's descriptor label — deliberately NOT the 'Side: ' prefix, which
  *  the plugin's topology filters out as a side-chat thread. */
 const CHILD_LABEL = 'Context fixture child'
@@ -76,26 +82,34 @@ async function seed(ctx) {
   if (parent === undefined) return false
 
   const cwd = process.env.DSH_E2E_CONTEXT_WORKSPACE ?? parent.session?.header?.cwd
-  const descriptor = {
-    version: SUBAGENT_DESCRIPTOR_VERSION,
-    mode: 'one-shot',
-    provider: 'e2e-context-fixture',
-    label: CHILD_LABEL,
-  }
   const message = (id, text) => ({ id, role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text }] })
   const parentMarker = 'E2E_PARENT_CONTEXT_MARKER'
   const childMarker = 'E2E_CHILD_CONTEXT_MARKER'
   if (!parent.session.snapshotEvents().some(event => event.type === 'user/message' && event.data.id === 'fixture-parent-message')) {
     parent.session.append('user/message', message('fixture-parent-message', parentMarker), { surfaceOp: 'append' })
   }
-  const seedEvents = [
-    { type: 'subagent/descriptor', seq: 0, time: Date.now(), data: descriptor },
-    { type: 'user/message', seq: 1, time: Date.now(), data: message('fixture-child-message', childMarker), surfaceOp: 'append' },
-  ]
 
-  if (agents.get(CHILD_ID) === undefined) {
+  for (let index = 0; index < CHILD_COUNT; index += 1) {
+    const childId = index === 0 ? CHILD_ID : `${CHILD_ID}-${index}`
+    if (agents.get(childId) !== undefined) continue
+    const label = index === 0 ? CHILD_LABEL : `${CHILD_LABEL} ${index + 1}`
+    const descriptor = {
+      version: SUBAGENT_DESCRIPTOR_VERSION,
+      mode: 'one-shot',
+      provider: 'e2e-context-fixture',
+      label,
+    }
+    const seedEvents = [
+      { type: 'subagent/descriptor', seq: 0, time: Date.now(), data: descriptor },
+      {
+        type: 'user/message', seq: 1, time: Date.now(),
+        data: message(index === 0 ? 'fixture-child-message' : `fixture-child-message-${index}`,
+          index === 0 ? childMarker : `${childMarker}_${index}`),
+        surfaceOp: 'append',
+      },
+    ]
     const handle = await agents.create({
-      sessionId: CHILD_ID,
+      sessionId: childId,
       meta: {
         ...(typeof cwd === 'string' && cwd !== '' ? { cwd } : {}),
         parentSession: PARENT_ID,
@@ -117,9 +131,9 @@ async function seed(ctx) {
       childId: header.id,
       childCreatedAt: header.createdAt,
       mode: 'one-shot',
-      label: CHILD_LABEL,
+      label,
     })
-    log(`seeded child session ${CHILD_ID} under ${PARENT_ID}`)
+    log(`seeded child session ${childId} under ${PARENT_ID}`)
   }
 
   const jobs = ctx.get('jobs')

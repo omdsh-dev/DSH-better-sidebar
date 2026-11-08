@@ -49,8 +49,8 @@ export function useGitDiffTarget(ref: SidebarDiffRef | null, scope: SessionScope
   // land on the wrong contents).
   const [effectiveStaged, setEffectiveStaged] = useState<boolean | null>(null)
 
-  // Granular scope fields: the scope object's identity churns, only these
-  // three gate the target (the same rule the sibling call sites used).
+  // Granular scope fields: only these three gate the target (this hook also
+  // accepts a caller-assembled scope).
   const sessionId = scope.sessionId
   const cwd = scope.cwd
   const repoRoot = ref?.repoRoot

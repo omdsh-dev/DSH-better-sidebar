@@ -13,6 +13,9 @@
  * own scroll offset). `overflow: clip` declared AFTER `hidden` keeps the
  * `hidden` fallback for engines without clip support and removes the
  * scrollability everywhere else; the cascade order is part of the contract.
+ *
+ * The rule's explicit viewport height is the other half of the contract
+ * (issues #616 / #1014) — see the height test below.
  */
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
@@ -37,7 +40,7 @@ describe('panel host layer css', () => {
     expect(hostRule).toMatch(/inset:\s*0/)
   })
 
-  it('pins an explicit viewport height, never a containing-block derivation (#616)', () => {
+  it('pins an explicit viewport height, never a containing-block derivation (#616), dynamic unit last (#1014)', () => {
     // `inset: 0` alone sizes a fixed box from its CONTAINING BLOCK, and a
     // page-level `filter` / `backdrop-filter` / `transform` — exactly what a
     // glass skin puts on the shell wrapper or on <body> itself — REPLACES
@@ -45,16 +48,29 @@ describe('panel host layer css', () => {
     // content is itself fixed/viewport-sized, so that box is zero-height: the
     // host collapses to 0px and the entire native right sidebar goes
     // invisible while its DOM (and every panel inside) is fully present.
-    // `vh` resolves against the viewport, so the explicit height survives the
-    // swap; `auto` / `100%` do not, which is what this pin rejects.
+    // Viewport units resolve against the viewport, so the explicit height
+    // survives the swap; `auto` / `100%` do not, which is what this pin
+    // rejects.
+    //
+    // CASCADE ORDER is the rest of the contract (#1014): `vh` measures the
+    // LARGE viewport, so on a mobile browser whose URL bar is showing the
+    // layer is taller than the layout viewport (`innerHeight`). The mount
+    // self-check (src/client/index.tsx, `rect.height - innerHeight` beyond
+    // 8px) reads that mismatch as a page-level transform, flips degraded mode
+    // (`position: absolute`) — and an absolute oversized layer DOES
+    // contribute to document height, so the whole page becomes scrollable.
+    // `dvh` tracks the dynamic viewport (what `innerHeight` reports), so it
+    // is declared LAST and wins; `vh` stays FIRST as the no-dvh fallback
+    // (those engines keep today's #616 fix and simply ignore the `dvh` line).
     expect(hostRule, 'the [data-dsh-panel-host] rule must exist').toBeDefined()
     const heights = stripComments(hostRule!).match(/(?:^|[;{])\s*height\s*:\s*[^;}]+/g) ?? []
-    // Pin the WHOLE list, not the first hit: a second, later `height`
-    // (`auto` / `100%`) would win the cascade and silently restore the
-    // collapse. Sub-properties (`max-height`, `line-height`) do not match.
+    // Pin the WHOLE list, not the first hit: a later `height` (`auto` /
+    // `100%`) would win the cascade and silently restore the collapse, and a
+    // dropped `dvh` silently restores the mobile whole-page scroll.
+    // Sub-properties (`max-height`, `line-height`) do not match.
     expect(
       heights.map((declaration) => declaration.replace(/^[;{]\s*/, '').replace(/\s+/g, ' ').trim()),
-    ).toEqual(['height: 100vh'])
+    ).toEqual(['height: 100vh', 'height: 100dvh'])
   })
 
   it('does not reintroduce overflow on the degraded (absolute) layer', () => {
@@ -100,5 +116,46 @@ describe('panel host layer css', () => {
     for (const excluded of ['selectionPopup']) {
       expect(resetSelectors, `${excluded} must not opt out of app-region`).not.toContain(excluded)
     }
+  })
+})
+
+/**
+ * The mermaid zoom modal's surface must stay on the FIXED viewport, never on
+ * the element the modal transforms (issue #683).
+ *
+ * The white card used to be painted on the diagram's own `<svg>`, and the
+ * modal scales exactly that element — so every wheel step grew the white area
+ * together with the diagram and the content:viewport ratio never changed
+ * ("跟没有缩放没区别"). `mermaid.tsx` now transforms the content only; these
+ * assertions pin the CSS half, which is the half that silently regresses when
+ * someone moves the paint back for a cosmetic reason.
+ */
+describe('mermaid zoom modal surface css (issue #683)', () => {
+  /** Body of one rule, up to the un-indented closing brace. */
+  const ruleBody = (selector: string): string | undefined =>
+    new RegExp(`${selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} \\{([\\s\\S]*?)\\n\\}`)
+      .exec(stripComments(css))?.[1]
+
+  it('paints the card on the stage (the fixed viewport)', () => {
+    const stage = ruleBody('.mermaidModalStage')
+    expect(stage, 'the .mermaidModalStage rule must exist').toBeDefined()
+    expect(stage, 'the viewport owns the surface').toMatch(/background:\s*var\(--dsw-alias-/)
+    expect(stage, 'and the ring that survives zooming').toMatch(/padding:\s*16px/)
+  })
+
+  it('leaves the transformed svg with no surface of its own', () => {
+    const svg = ruleBody('.mermaidModalStage :global(svg)')
+    expect(svg, 'the .mermaidModalStage svg rule must exist').toBeDefined()
+    for (const paint of ['background', 'padding', 'border-radius']) {
+      expect(svg, `the transformed svg must not carry ${paint} (issue #683)`).not.toContain(paint)
+    }
+    expect(svg, 'the content still scales about its own centre').toMatch(/transform-origin:\s*center center/)
+  })
+
+  it('clips the transformed svg inside the padding ring', () => {
+    const viewport = ruleBody('.mermaidViewport')
+    expect(viewport, 'the .mermaidViewport rule must exist').toBeDefined()
+    expect(viewport).toMatch(/overflow:\s*hidden/)
+    expect(viewport).toMatch(/cursor:\s*grab/)
   })
 })

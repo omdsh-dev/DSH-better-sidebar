@@ -14,6 +14,23 @@
  */
 import type { FileViewerDescriptor } from './service.ts'
 
+/**
+ * Whether one `fs.read` failure means the target is a DIRECTORY.
+ *
+ * The host answers a directory with the dedicated `fs-directory` wire code
+ * (`readText` in src/index.ts). That answer is not an error to show: the
+ * editor host promotes the tab to the plugin's folder window instead, so a
+ * chat folder link, a `sidebar_open` folder open whose seed lost `meta.dir`,
+ * and a directory pasted into the address bar all land on the tree. The test
+ * is structural on purpose — the jsdom fixtures model the wire error as a
+ * plain `{ code, message }` object, and the code is the whole contract.
+ */
+export function isDirectoryReadError(error: unknown): boolean {
+  return typeof error === 'object'
+    && error !== null
+    && (error as { code?: unknown }).code === 'fs-directory'
+}
+
 /** One host fs.read result (mirror of the wire; `head` present when binary
  *  or when the file was too large to hand over as a document). */
 export type FsReadOutcome =

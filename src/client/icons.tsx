@@ -26,6 +26,19 @@ export const IconTerminalOutline16 = ({ size = 16, className }: IconProps) => (
   </svg>
 )
 
+/**
+ * Settings-navigation glyph for the "Side card" section. The shell asks for a
+ * square edge and tints the SVG with `currentColor`, so this stays a plain
+ * two-tone outline mark: the side panel plus the two rails it docks against.
+ */
+export const IconSideCardNav = ({ size = 16, className }: IconProps) => (
+  <svg width={size} height={size} className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M2 7v10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M6 5v14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    <rect x="10" y="3" width="12" height="18" rx="2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+)
+
 /** Diff glyph in the app's outline style: a file frame with a plus and a minus row. */
 export const IconDiffOutline16 = ({ size = 16, className }: IconProps) => (
   <svg width={size} height={size} className={className} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">

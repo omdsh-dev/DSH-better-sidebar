@@ -18,14 +18,21 @@ import type { FileViewerProps } from '../src/client/service.ts'
 setupReactAct()
 
 const fsWrite = vi.fn()
+const fsReadProbe = vi.fn()
 vi.mock('../src/client/api.ts', async (importOriginal) => {
   // The real error class: TextEditor narrows the failure with instanceof.
   const actual = await importOriginal<typeof import('../src/client/api.ts')>()
   return {
     ...actual,
-    // The real api object with only the save call replaced: TextEditor also
-    // reads the shared git status store in the code viewer.
-    api: { ...actual.api, fsWrite: (...args: unknown[]) => fsWrite(...args) },
+    // The real api object with only the two calls the editor owns replaced:
+    // the save, and the banner's on-disk probe (a reload whose bytes match the
+    // loaded text is resolved in place, see #1059 — a failed probe defers to
+    // the host's reload, which is what this spec asserts).
+    api: {
+      ...actual.api,
+      fsWrite: (...args: unknown[]) => fsWrite(...args),
+      fsRead: (...args: unknown[]) => fsReadProbe(...args),
+    },
   }
 })
 
@@ -56,6 +63,10 @@ function click(element: HTMLElement): void {
 
 beforeEach(() => {
   fsWrite.mockReset()
+  fsReadProbe.mockReset()
+  // The probe cannot read the file in this spec: the banner must fall back to
+  // the host's reload.
+  fsReadProbe.mockRejectedValue(new Error('unreadable'))
 })
 
 afterEach(() => {
@@ -90,6 +101,10 @@ describe('TextEditor save conflict', () => {
         .find(button => button.textContent === 'Reload from disk')
       expect(reload).toBeDefined()
       click(reload!)
+      // The banner probes the disk first; the host's reload is the fallback,
+      // one microtask later (a probe that matches the loaded text resolves in
+      // place instead — see text-editor-save-baseline / editor-conflict-reload).
+      await act(async () => { await Promise.resolve() })
       expect(onReload).toHaveBeenCalledTimes(1)
     } finally {
       mounted.unmount()

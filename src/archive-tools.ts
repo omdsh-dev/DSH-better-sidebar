@@ -24,7 +24,9 @@
  *
  * Nothing in this module runs a shell: `spawn` takes an argv array, and every
  * path is data. A path is never interpolated into a command string, so a
- * filename with `;` or `$(...)` in it is a filename.
+ * filename with `;` or `$(...)` in it is a filename. A name starting with `-`
+ * is still refused by `planArchive` (verified on GNU tar 1.35): the bytes are
+ * safe, but the tool itself would parse it as an option.
  *
  * The spawn/probe functions are injectable so the test suite never depends on
  * a real `zip` being installed (AGENTS §6) — the same pattern `open-external`
@@ -182,7 +184,8 @@ function toArchiveName(path: string): string {
  * @param selections - absolute paths, already fenced by the caller.
  * @param spec - the resolved tool.
  * @returns the plan to spawn.
- * @throws {SidebarError} bad-request when a selection has no usable name.
+ * @throws {SidebarError} bad-request when a selection has no usable name or
+ *  starts with `-`.
  */
 export function planArchive(selections: readonly string[], spec: ArchiveToolSpec): ArchivePlan {
   if (selections.length === 0) {
@@ -203,7 +206,17 @@ export function planArchive(selections: readonly string[], spec: ArchiveToolSpec
   if (args.some(name => name === '' || name === '..' || name.startsWith('../'))) {
     throw new SidebarError('bad-request', 'selection is not below the archive root')
   }
-  return { spec, cwd: base, args: [...spec.flags, ...args] }
+  // Refused, not quoted — see the module header.
+  if (args.some(name => name.startsWith('-'))) {
+    throw new SidebarError('bad-request', 'archive entry name may not start with "-"')
+  }
+  // GNU/bsdtar honor `--` as end-of-options. Info-ZIP zip 3.0 has no portable
+  // bare `--` (3.1 rejects it before the archive name), so zip operands get a
+  // `./` prefix instead — a name can then never be read as an option.
+  const operands = spec.tool === 'zip'
+    ? args.map(name => `./${name}`)
+    : ['--', ...args]
+  return { spec, cwd: base, args: [...spec.flags, ...operands] }
 }
 
 /**

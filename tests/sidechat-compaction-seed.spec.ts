@@ -216,6 +216,69 @@ function midSpanLog(): SidebarSessionEvent[] {
   return events
 }
 
+/** One DeepSeek log-ledger marker: the host appends it after the model request
+ *  that confirmed the upload through `throughSeq` — an ABSOLUTE seq, and the
+ *  host's v4 reader requires it to precede its own marker. */
+function deliveryMarker(seq: number, throughSeq: number): SidebarSessionEvent {
+  return lo('session-log-deepseek/delivery-accepted', seq, {
+    sessionId: 'session-parent',
+    sessionFormatVersion: SESSION_FORMAT_VERSION,
+    throughSeq,
+  })
+}
+
+/**
+ * Rebuild any fixture with one delivery marker after every message-producing
+ * event (the real host appends one per accepted model request), renumbering
+ * `seq === index` and following every absolute seq reference the fixture
+ * carries — surface ranges, citations and compaction spans. The result is the
+ * shape a real parent log has: the plugin creates these markers only when
+ * copying a parent log, never itself.
+ */
+function withDeliveries(events: readonly SidebarSessionEvent[]): SidebarSessionEvent[] {
+  const layout: Array<{ event: SidebarSessionEvent } | { after: number }> = []
+  for (const event of events) {
+    layout.push({ event })
+    if (event.type === 'assistant/message' || event.type === 'tool/result') {
+      layout.push({ after: event.seq })
+    }
+  }
+  const mapping = new Map<number, number>()
+  for (const [index, slot] of layout.entries()) {
+    if ('event' in slot) mapping.set(slot.event.seq, index)
+  }
+  const rebaseSeq = (value: unknown): number => {
+    const mapped = typeof value === 'number' ? mapping.get(value) : undefined
+    if (mapped === undefined) throw new Error(`fixture cites seq ${String(value)}, which does not exist`)
+    return mapped
+  }
+  return layout.map((slot, index) => {
+    if ('after' in slot) return deliveryMarker(index, rebaseSeq(slot.after))
+    const copy = JSON.parse(JSON.stringify(slot.event)) as SidebarSessionEvent & {
+      surfaceOp?: unknown
+      sourceEventSeqs?: number[]
+    }
+    copy.seq = index
+    copy.time = index * 1000
+    const op = copy.surfaceOp as { op?: unknown; startSeq?: unknown; endSeq?: unknown } | undefined
+    if (op !== undefined && op.op === 'replace') {
+      op.startSeq = rebaseSeq(op.startSeq)
+      op.endSeq = rebaseSeq(op.endSeq)
+    }
+    if (Array.isArray(copy.sourceEventSeqs)) copy.sourceEventSeqs = copy.sourceEventSeqs.map(rebaseSeq)
+    const data = copy.data as {
+      shadowedRange?: { start?: unknown; end?: unknown }
+      shadowedSeqs?: number[]
+    }
+    if (data.shadowedRange !== undefined) {
+      data.shadowedRange.start = rebaseSeq(data.shadowedRange.start)
+      data.shadowedRange.end = rebaseSeq(data.shadowedRange.end)
+    }
+    if (Array.isArray(data.shadowedSeqs)) data.shadowedSeqs = data.shadowedSeqs.map(rebaseSeq)
+    return copy
+  })
+}
+
 /**
  * The automatic-compaction shape: the group fires INSIDE a still-open turn
  * (that turn's skeleton and first message sit BEFORE the cut), and the log
@@ -506,6 +569,195 @@ describe('buildSidechatInheritance compaction tail', () => {
     expectAcceptedSeed(seed)
   })
 
+  it('trims when a model switch rewrites the protected head after the compaction', () => {
+    // Host shape: the model switch injects a new system/message LATER in the
+    // session, replacing the protected head node (seq 2) with a replace op.
+    // The replacement sits after the checkpoint in the log but ahead of it on
+    // the surface, so the child must carry the LATEST prompt in the head slot
+    // and drop the chain — the switched model only saw the same
+    // post-compaction surface as the original one.
+    const events = [...compactedLog()]
+    const at = events.length
+    events.push(
+      lo('turn/start', at, { turn: 5 }),
+      lo('step/start', at + 1, { turn: 5, step: 1 }),
+      {
+        ...sf('system/message', at + 2, {
+          turn: 5, step: 1,
+          message: { id: 'm-sys-switched', role: 'system', content: [{ type: 'text', text: 'switched prompt' }], source: { kind: 'system-prompt' } },
+        }),
+        surfaceOp: { op: 'replace', startSeq: 2, endSeq: 2 },
+        sourceEventSeqs: [2],
+      } as SidebarSessionEvent,
+      sf('user/message', at + 3, userMessage('m-q5', 'q5')),
+      sf('assistant/message', at + 4, { turn: 5, step: 1, message: assistantMessage('a5'), stream: [] }),
+      lo('step/end', at + 5, { turn: 5, step: 1 }),
+      lo('turn/end', at + 6, { turn: 5, reason: { kind: 'completed' } }),
+    )
+    const { seed, snapshot } = buildSidechatInheritance(events)
+    expect(snapshot).toBeNull()
+    expect(seed.length).toBeLessThan(events.length)
+    // The switched prompt is the surviving head; the original prompt is gone.
+    expect(seed.some(event => JSON.stringify(event).includes('switched prompt'))).toBe(true)
+    expect(seed.some(event => JSON.stringify(event).includes('system prompt'))).toBe(false)
+    const head = seed.find(event => event.type === 'system/message') as { data?: { turn?: number; step?: number } } | undefined
+    expect(head?.data?.turn).toBe(1)
+    expect(head?.data?.step).toBe(1)
+    expect(visibleSequence(seed)).toEqual(visibleSequence(events))
+    expectContiguous(seed)
+    expectAcceptedSeed(seed)
+  })
+
+  it('carries only the latest prompt when the head was rewritten twice', () => {
+    // A second model switch replaces the first switch's node; the chain is
+    // resolved to the original protected head and only the latest prompt
+    // survives in the child.
+    const events = [...compactedLog()]
+    const first = events.length
+    events.push(
+      lo('turn/start', first, { turn: 5 }),
+      lo('step/start', first + 1, { turn: 5, step: 1 }),
+      {
+        ...sf('system/message', first + 2, {
+          turn: 5, step: 1,
+          message: { id: 'm-sys-switch-1', role: 'system', content: [{ type: 'text', text: 'first switch' }], source: { kind: 'system-prompt' } },
+        }),
+        surfaceOp: { op: 'replace', startSeq: 2, endSeq: 2 },
+        sourceEventSeqs: [2],
+      } as SidebarSessionEvent,
+      sf('user/message', first + 3, userMessage('m-q5', 'q5')),
+      lo('step/end', first + 4, { turn: 5, step: 1 }),
+      lo('turn/end', first + 5, { turn: 5, reason: { kind: 'completed' } }),
+    )
+    const second = events.length
+    events.push(
+      lo('turn/start', second, { turn: 6 }),
+      lo('step/start', second + 1, { turn: 6, step: 1 }),
+      {
+        ...sf('system/message', second + 2, {
+          turn: 6, step: 1,
+          message: { id: 'm-sys-switch-2', role: 'system', content: [{ type: 'text', text: 'second switch' }], source: { kind: 'system-prompt' } },
+        }),
+        surfaceOp: { op: 'replace', startSeq: first + 2, endSeq: first + 2 },
+        sourceEventSeqs: [first + 2],
+      } as SidebarSessionEvent,
+      sf('user/message', second + 3, userMessage('m-q6', 'q6')),
+      sf('assistant/message', second + 4, { turn: 6, step: 1, message: assistantMessage('a6'), stream: [] }),
+      lo('step/end', second + 5, { turn: 6, step: 1 }),
+      lo('turn/end', second + 6, { turn: 6, reason: { kind: 'completed' } }),
+    )
+    const { seed } = buildSidechatInheritance(events)
+    expect(seed.length).toBeLessThan(events.length)
+    expect(seed.some(event => JSON.stringify(event).includes('second switch'))).toBe(true)
+    expect(seed.some(event => JSON.stringify(event).includes('first switch'))).toBe(false)
+    expect(seed.some(event => JSON.stringify(event).includes('system prompt'))).toBe(false)
+    expect(visibleSequence(seed)).toEqual(visibleSequence(events))
+    expectAcceptedSeed(seed)
+  })
+
+  it('trims a multi-hop prompt rewrite whose intermediate is inside the declared span', () => {
+    // v2->v3 shape from the real store: a pre-cut head rewrite (7 -> 2) sits
+    // numerically inside the checkpoint's declared [3,13] range but is NOT one
+    // of the entries the checkpoint actually removed; a post-cut switch then
+    // replaces 7. Membership in the fold's recorded shadowed set, not the
+    // declared numeric range, decides whether the chain is representable.
+    const events: SidebarSessionEvent[] = [
+      lo('turn/start', 0, { turn: 1 }),
+      lo('step/start', 1, { turn: 1, step: 1 }),
+      sf('system/message', 2, { turn: 1, step: 1, message: { id: 'm-sys', role: 'system', content: [{ type: 'text', text: 'original prompt' }], source: { kind: 'system-prompt' } } }),
+      sf('user/message', 3, userMessage('m-q1', 'q1')),
+      sf('assistant/message', 4, { turn: 1, step: 1, message: assistantMessage('a1'), stream: [] }),
+      lo('step/end', 5, { turn: 1, step: 1 }),
+      lo('step/start', 6, { turn: 1, step: 2 }),
+      {
+        ...sf('system/message', 7, {
+          turn: 1, step: 2,
+          message: { id: 'm-sys-rewrite', role: 'system', content: [{ type: 'text', text: 'pre-cut rewrite' }], source: { kind: 'system-prompt' } },
+        }),
+        surfaceOp: { op: 'replace', startSeq: 2, endSeq: 2 },
+        sourceEventSeqs: [2],
+      } as SidebarSessionEvent,
+      lo('step/end', 8, { turn: 1, step: 2 }),
+      lo('turn/end', 9, { turn: 1, reason: { kind: 'completed' } }),
+      lo('turn/start', 10, { turn: 2 }),
+      lo('step/start', 11, { turn: 2, step: 1 }),
+      sf('user/message', 12, userMessage('m-q2', 'q2')),
+      sf('assistant/message', 13, { turn: 2, step: 1, message: assistantMessage('a2'), stream: [] }),
+      lo('step/end', 14, { turn: 2, step: 1 }),
+      lo('turn/end', 15, { turn: 2, reason: { kind: 'completed' } }),
+    ]
+    events.push(...compactionGroup(events.length, [3, 4, 12, 13], { id: 'cp-v2v3' }))
+    events.push(...turn(events.length, 3, { callId: 'c-tail', result: 'tail result' }).events)
+    const at = events.length
+    events.push(
+      lo('turn/start', at, { turn: 4 }),
+      lo('step/start', at + 1, { turn: 4, step: 1 }),
+      {
+        ...sf('system/message', at + 2, {
+          turn: 4, step: 1,
+          message: { id: 'm-sys-switch', role: 'system', content: [{ type: 'text', text: 'post-cut switch' }], source: { kind: 'system-prompt' } },
+        }),
+        surfaceOp: { op: 'replace', startSeq: 7, endSeq: 7 },
+        sourceEventSeqs: [7],
+      } as SidebarSessionEvent,
+      sf('user/message', at + 3, userMessage('m-q4', 'q4')),
+      sf('assistant/message', at + 4, { turn: 4, step: 1, message: assistantMessage('a4'), stream: [] }),
+      lo('step/end', at + 5, { turn: 4, step: 1 }),
+      lo('turn/end', at + 6, { turn: 4, reason: { kind: 'completed' } }),
+    )
+    const { seed } = buildSidechatInheritance(events)
+    expect(seed.length).toBeLessThan(events.length)
+    expect(seed.some(event => JSON.stringify(event).includes('post-cut switch'))).toBe(true)
+    expect(seed.some(event => JSON.stringify(event).includes('pre-cut rewrite'))).toBe(false)
+    expect(visibleSequence(seed)).toEqual(visibleSequence(events))
+    expectAcceptedSeed(seed)
+  })
+
+  it('falls back when a model-switch head replacement targets a range', () => {
+    // Valid range replacement of non-head-0 surface nodes: the head is
+    // [system 2, user 3, user 4], the checkpoint removes only node 5, and the
+    // post-cut switch targets [3,4]. The parent folds, and the slot is not a
+    // single node, so the builder must keep the full copy. A range that
+    // touched a checkpoint-shadowed node would throw in the parent fold and
+    // exercise the wrong fallback.
+    const events: SidebarSessionEvent[] = [
+      lo('turn/start', 0, { turn: 1 }),
+      lo('step/start', 1, { turn: 1, step: 1 }),
+      sf('system/message', 2, { turn: 1, step: 1, message: { id: 'm-sys', role: 'system', content: [{ type: 'text', text: 'system prompt' }], source: { kind: 'system-prompt' } } }),
+      sf('user/message', 3, userMessage('m-q1', 'q1')),
+      sf('user/message', 4, userMessage('m-q2', 'q2')),
+      sf('assistant/message', 5, { turn: 1, step: 1, message: assistantMessage('a1'), stream: [] }),
+      lo('step/end', 6, { turn: 1, step: 1 }),
+      lo('turn/end', 7, { turn: 1, reason: { kind: 'completed' } }),
+    ]
+    events.push(...turn(8, 2, { callId: 'c-keep', result: 'keep result' }).events)
+    events.push(...compactionGroup(events.length, [5], { id: 'cp-range' }))
+    events.push(...turn(events.length, 3, { callId: 'c-tail', result: 'tail result' }).events)
+    const at = events.length
+    events.push(
+      lo('turn/start', at, { turn: 4 }),
+      lo('step/start', at + 1, { turn: 4, step: 1 }),
+      {
+        ...sf('system/message', at + 2, {
+          turn: 4, step: 1,
+          message: { id: 'm-range', role: 'system', content: [{ type: 'text', text: 'range switch' }], source: { kind: 'system-prompt' } },
+        }),
+        surfaceOp: { op: 'replace', startSeq: 3, endSeq: 4 },
+        sourceEventSeqs: [3, 4],
+      } as SidebarSessionEvent,
+      sf('user/message', at + 3, userMessage('m-q4', 'q4')),
+      sf('assistant/message', at + 4, { turn: 4, step: 1, message: assistantMessage('a4'), stream: [] }),
+      lo('step/end', at + 5, { turn: 4, step: 1 }),
+      lo('turn/end', at + 6, { turn: 4, reason: { kind: 'completed' } }),
+    )
+    // A valid parent log, not a malformed one that trips the fold's fallback.
+    expect(visibleSequence(events).length).toBeGreaterThan(0)
+    const { seed } = buildSidechatInheritance(events)
+    expect(seed).toHaveLength(events.length)
+    expect(seed[0]?.seq).toBe(0)
+    expect(seed[seed.length - 1]?.seq).toBe(events.length - 1)
+  })
+
   it('trims when the pruner rewrote a keep-window tool result mid-turn', () => {
     // Host shape: the tool-result-pruner appends a tool/result REPLACEMENT
     // between steps, carrying the ORIGINAL turn/step and a replace op over
@@ -758,5 +1010,60 @@ describe('buildSidechatInheritance compaction tail', () => {
     // never sees them, and they keep the parent's metering history honest).
     expect(seed.length).toBeLessThan(events.length)
     expect(seed.some(event => JSON.stringify(event).includes('old result'))).toBe(false)
+  })
+
+  /**
+   * Regression (#1109): a side thread opened while the parent was mid-turn was
+   * seeded from a COMPACTED parent, whose rebase renumbers every seq. The
+   * inherited `session-log-deepseek/delivery-accepted` watermark is an
+   * absolute seq and was left pointing at its parent position, so the child
+   * shipped a marker whose `throughSeq` did not precede it. The host's v4
+   * reader rejects such a log outright ("delivery throughSeq must precede its
+   * marker") and the child became permanently unreadable — taking the parent's
+   * `includeDescendants` export down with it. The invariant is checked here
+   * on the seed itself: every surviving marker must cite the same EARLIER
+   * event the parent marked, and a marker whose watermark the trim dropped
+   * must not survive at all.
+   */
+  it('rebases inherited delivery watermarks into the seed seq space', () => {
+    // The mid-span fixture keeps nodes on both sides of the cut, so the seed
+    // carries markers whose watermark survived AND markers whose watermark
+    // was shadowed — the remap and the drop branch in one parent log.
+    const events = withDeliveries(midSpanLog())
+    const { seed } = buildSidechatInheritance(events)
+    expect(seed.length).toBeLessThan(events.length)
+    const markersOf = (log: readonly SidebarSessionEvent[]): SidebarSessionEvent[] =>
+      log.filter(event => event.type === 'session-log-deepseek/delivery-accepted')
+    const parentMarkers = markersOf(events)
+    const seedMarkers = markersOf(seed)
+    expect(parentMarkers.length).toBeGreaterThan(0)
+    expect(seedMarkers.length).toBeGreaterThan(0)
+    const byTime = new Map(parentMarkers.map(marker => [marker.time, marker]))
+    let remapped = 0
+    for (const marker of seedMarkers) {
+      const parent = byTime.get(marker.time)
+      expect(parent).toBeDefined()
+      const throughSeq = (marker.data as { throughSeq: number }).throughSeq
+      const cited = (parent as SidebarSessionEvent).data as { throughSeq: number }
+      // The host's rule, verbatim: the watermark precedes its own marker.
+      expect(throughSeq).toBeLessThan(marker.seq)
+      // ... and it still names the very event the parent's request confirmed,
+      // not a neighbour that happens to sit at the old absolute position.
+      expect(seed[throughSeq]?.type).toBe(events[cited.throughSeq]?.type)
+      expect(seed[throughSeq]?.time).toBe(events[cited.throughSeq]?.time)
+      remapped += 1
+    }
+    // A watermark the trim dropped has no child-side equivalent: the record
+    // itself must drop rather than claim a delivery it cannot name.
+    const orphaned = parentMarkers.filter(marker => {
+      const cited = events[(marker.data as { throughSeq: number }).throughSeq]
+      return !seed.some(event => event.type === cited?.type && event.time === cited?.time)
+    })
+    expect(remapped).toBeGreaterThan(0)
+    expect(orphaned.length).toBeGreaterThan(0)
+    for (const marker of orphaned) {
+      expect(seedMarkers.some(event => event.time === marker.time)).toBe(false)
+    }
+    expectAcceptedSeed(seed)
   })
 })

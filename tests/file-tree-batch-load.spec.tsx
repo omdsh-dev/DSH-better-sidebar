@@ -84,16 +84,16 @@ class FakeSocket {
 
 interface Harness {
   container: HTMLDivElement
-  /** Re-render with a new expansion set; `refreshTick` only when bumping it. */
-  rerender: (expanded: string[], refreshTick?: number) => void
+  /** Re-render with a new expansion set; `refreshTick`/`visible` only when changed. */
+  rerender: (expanded: string[], refreshTick?: number, visible?: boolean) => void
   unmount: () => void
 }
 
-function mountTree(expanded: string[] = DIRS, refreshTick = 0): Harness {
+function mountTree(expanded: string[] = DIRS, refreshTick = 0, visible = true): Harness {
   const container = document.createElement('div')
   document.body.append(container)
   const root: Root = createRoot(container)
-  const render = (dirs: string[], tick: number): void => {
+  const render = (dirs: string[], tick: number, shown: boolean): void => {
     root.render(createElement(FileTree, {
       sessionId: 's1',
       cwd: '/tmp',
@@ -105,15 +105,18 @@ function mountTree(expanded: string[] = DIRS, refreshTick = 0): Harness {
       refreshTick: tick,
       onUploadRequest: () => {},
       busy: false,
+      visible: shown,
     }))
   }
   let tick = refreshTick
-  act(() => { render(expanded, tick) })
+  let shown = visible
+  act(() => { render(expanded, tick, shown) })
   return {
     container,
-    rerender: (dirs: string[], nextTick?: number) => {
+    rerender: (dirs: string[], nextTick?: number, nextVisible?: boolean) => {
       if (nextTick !== undefined) tick = nextTick
-      act(() => { render(dirs, tick) })
+      if (nextVisible !== undefined) shown = nextVisible
+      act(() => { render(dirs, tick, shown) })
     },
     unmount: () => { act(() => { root.unmount() }); container.remove() },
   }
@@ -230,6 +233,71 @@ describe('FileTree level loading is batched', () => {
     await flush()
     expect(fsTrees).toHaveBeenCalledTimes(1)
     expect(batchPaths(0)).toEqual(['/tmp', ...DIRS].sort())
+  })
+
+  it('does no work while parked, then re-lists the watched set in ONE request when shown', async () => {
+    // The host keeps every visited tab body mounted. A parked tree must not
+    // answer refresh ticks or expansion changes (they are other tabs' work),
+    // and coming back must not fire one request per watched directory.
+    harness = mountTree(DIRS, 0, false)
+    await flush()
+    expect(fsTrees).not.toHaveBeenCalled()
+
+    // Another tab of the same session expands a directory while this one is
+    // parked: the change is dropped, and the same expansion array is handed
+    // back when the tab returns (the shell keeps the session state's identity).
+    const parkedExpanded = [...DIRS, '/tmp/d9']
+    harness.rerender(parkedExpanded, 1, false)
+    await flush()
+    expect(fsTrees).not.toHaveBeenCalled()
+
+    harness.rerender(parkedExpanded, 1, true)
+    await flush()
+    expect(fsTrees).toHaveBeenCalledTimes(1)
+    expect(batchPaths(0)).toEqual(['/tmp', ...DIRS, '/tmp/d9'].sort())
+    expect(fsTree).not.toHaveBeenCalled()
+  })
+
+  it('stops the compact fold-chain preload while parked', async () => {
+    // A fold chain is preloaded link by link: each level that lands reveals the
+    // next one. When an in-flight level returns AFTER the tab was parked, the
+    // chain used to keep walking off screen (up to MAX_COMPACT_DEPTH levels).
+    const dir = (path: string, compact: boolean): Record<string, unknown> => ({
+      name: path.slice(path.lastIndexOf('/') + 1), path, isDir: true, hidden: false, compact,
+    })
+    const compactLevel = (path: string): Record<string, unknown> => {
+      if (path === '/tmp') return { path, entries: [dir('/tmp/a', true)], truncated: false }
+      if (path === '/tmp/a') return { path, entries: [dir('/tmp/b', true)], truncated: false }
+      if (path === '/tmp/b') return { path, entries: [{ name: 'file.ts', path: '/tmp/b/file.ts', isDir: false }], truncated: false }
+      return { path, entries: [], truncated: false }
+    }
+    let release: (() => void) | undefined
+    fsTrees.mockImplementation(async (_scope: unknown, paths: readonly string[]) => {
+      // Hold the first fold link open so it can land after the park.
+      if (paths.length === 1 && paths[0] === '/tmp/a') {
+        await new Promise<void>(resolve => { release = resolve })
+      }
+      return { levels: paths.map(path => compactLevel(path)) }
+    })
+
+    harness = mountTree([], 0)
+    await flush()
+    // Root + the first fold link (`/tmp/a`, held open).
+    expect(fsTrees).toHaveBeenCalledTimes(2)
+    expect(release).toBeDefined()
+
+    harness.rerender([], 0, false)
+    await act(async () => { release!() })
+    await flush()
+    const parkedCalls = fsTrees.mock.calls.length
+    expect(fsTrees.mock.calls.some(call => (call[1] as string[]).includes('/tmp/b')),
+      'a parked tree must not walk the next fold link').toBe(false)
+
+    // Coming back resumes the chain (the root re-list re-reveals the frontier).
+    harness.rerender([], 0, true)
+    await flush()
+    expect(fsTrees.mock.calls.length).toBeGreaterThan(parkedCalls)
+    expect(fsTrees.mock.calls.some(call => (call[1] as string[]).includes('/tmp/b'))).toBe(true)
   })
 
   it('re-lists ONLY the stale level when the directory watcher reports one', async () => {

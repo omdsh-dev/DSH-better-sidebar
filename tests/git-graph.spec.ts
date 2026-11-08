@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process'
 import { mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { gitGraph } from '../src/git-graph.ts'
+import { gitGraph, gitHistory } from '../src/git-graph.ts'
 
 const dirs: string[] = []
 // macOS tmpdir() keeps the /var symlink while git reports the resolved
@@ -70,6 +70,51 @@ describe('read-only Git graph', () => {
     expect(filtered.entries.map(e => e.hashFull)).toEqual([topic, base])
   })
 
+  it('decorates commits with lightweight and annotated tags without treating tags as branches', async () => {
+    const dir = repo()
+    const base = commit(dir, 'base')
+    const head = commit(dir, 'head')
+    git(dir, '-c', 'tag.gpgsign=false', 'tag', 'release/light', base)
+    git(dir, '-c', 'tag.gpgsign=false', 'tag', '-a', 'release/annotated', '-m', 'Release', head)
+    const before = files(dir)
+    const graph = await gitGraph(dir)
+    expect(graph.entries.find(entry => entry.hashFull === base)?.refs).toContain('tag: release/light')
+    expect(graph.entries.find(entry => entry.hashFull === head)?.refs).toEqual(['HEAD', 'main', 'tag: release/annotated'])
+    expect(graph.branches.map(branch => branch.ref)).toEqual(['refs/heads/main'])
+    expect(files(dir)).toEqual(before)
+  })
+
+  it('invalidates graph pages when tags are created, moved or deleted', async () => {
+    const dir = repo()
+    const base = commit(dir, 'base')
+    const head = commit(dir, 'head')
+    let first = await gitGraph(dir, { count: 1 })
+    git(dir, '-c', 'tag.gpgsign=false', 'tag', 'release', base)
+    await expect(gitGraph(dir, { cursor: first.nextCursor })).rejects.toMatchObject({ code: 'graph-stale' })
+    first = await gitGraph(dir, { count: 1 })
+    git(dir, '-c', 'tag.gpgsign=false', 'tag', '-f', 'release', head)
+    await expect(gitGraph(dir, { cursor: first.nextCursor })).rejects.toMatchObject({ code: 'graph-stale' })
+    first = await gitGraph(dir, { count: 1 })
+    git(dir, 'tag', '-d', 'release')
+    await expect(gitGraph(dir, { cursor: first.nextCursor })).rejects.toMatchObject({ code: 'graph-stale' })
+  })
+
+  it('truncates tags at their own limit while preserving branch capacity', async () => {
+    const dir = repo()
+    const head = commit(dir, 'head')
+    const refs = [
+      ...Array.from({ length: 999 }, (_, i) => `create refs/heads/branch-${i} ${head}`),
+      ...Array.from({ length: 5001 }, (_, i) => `create refs/tags/release-${String(i).padStart(4, '0')} ${head}`),
+    ].join('\n') + '\n'
+    execFileSync('git', ['-C', dir, 'update-ref', '--stdin'], { input: refs, env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1' } })
+    const graph = await gitGraph(dir)
+    expect(graph.branches).toHaveLength(1000)
+    const decorations = graph.entries[0]!.refs
+    expect(decorations.filter(ref => ref.startsWith('tag: '))).toHaveLength(5000)
+    expect(decorations).toContain('tag: release-4999')
+    expect(decorations).not.toContain('tag: release-5000')
+  })
+
   it('includes detached HEAD but excludes stash-only history', async () => {
     const dir = repo()
     commit(dir, 'base')
@@ -84,6 +129,44 @@ describe('read-only Git graph', () => {
     const graph = await gitGraph(dir)
     expect(graph.entries[0]?.hashFull).toBe(detached)
     expect(graph.entries.some(e => e.hashFull === stash)).toBe(false)
+    expect((await gitHistory(dir)).entries.some(e => e.hashFull === stash)).toBe(false)
+  })
+
+  it('uses bounded graph inventory but offers snapshot-validated history across all refs', async () => {
+    const dir = repo()
+    const base = commit(dir, 'base')
+    commit(dir, 'head')
+    const first = await gitHistory(dir, { count: 1 })
+    expect(first.entries[0]?.subject).toBe('head')
+    const second = await gitHistory(dir, { count: 1, cursor: first.nextCursor })
+    expect(second.entries[0]?.hashFull).toBe(base)
+    expect(second.snapshot).toBe(first.snapshot)
+    git(dir, 'tag', 'history-tag', base)
+    await expect(gitHistory(dir, { count: 1, cursor: first.nextCursor })).rejects.toMatchObject({ code: 'graph-stale' })
+
+    const generatedRefs = Array.from({ length: 999 }, (_, i) => `create refs/heads/generated-${String(i).padStart(4, '0')} ${base}`).join('\n') + '\n'
+    execFileSync('git', ['-C', dir, 'update-ref', '--stdin'], { input: generatedRefs, env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1' } })
+    expect((await gitGraph(dir, { count: 1 })).branches).toHaveLength(1000)
+    git(dir, 'update-ref', 'refs/heads/generated-0999', base)
+    await expect(gitGraph(dir)).rejects.toMatchObject({ code: 'graph-limit' })
+    expect((await gitHistory(dir, { count: 1 })).entries[0]?.subject).toBe('head')
+  })
+
+  it('detects detached HEAD movement and shallow-boundary changes between history pages', async () => {
+    const dir = repo()
+    const firstCommit = commit(dir, 'first')
+    const second = commit(dir, 'second')
+    git(dir, 'checkout', '--detach', second)
+    const firstPage = await gitHistory(dir, { count: 1 })
+    const detachedOnly = commit(dir, 'detached-only')
+    expect((await gitHistory(dir, { count: 1 })).entries[0]?.hashFull).toBe(detachedOnly)
+    await expect(gitHistory(dir, { count: 1, cursor: firstPage.nextCursor })).rejects.toMatchObject({ code: 'graph-stale' })
+
+    const shallow = join(dir, '.git', 'shallow')
+    writeFileSync(shallow, `${second}\n`)
+    const shallowPage = await gitHistory(dir, { count: 1 })
+    writeFileSync(shallow, `${second}\n${firstCommit}\n`)
+    await expect(gitHistory(dir, { count: 1, cursor: shallowPage.nextCursor })).rejects.toMatchObject({ code: 'graph-stale' })
   })
 
   it('rejects stale pages when refs move or the filter changes', async () => {

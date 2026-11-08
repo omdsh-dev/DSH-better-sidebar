@@ -1,72 +1,70 @@
 /**
- * The plugin's view of DSH 0.1.7's `agentTeam` Session projection — the Lead
- * Session's team board, read straight off the client snapshot.
+ * The plugin's view of the host's `agentTeam` Session projection — the Lead
+ * Session's shared task board — plus the roster the board draws beside it.
  *
- * 0.1.6 exposed the board through the experimental service's Remote vocabulary
- * (`agentTeams.remoteView`, reached over the wire) and the page had to poll it
- * every 5s. 0.1.7 deleted that trio and publishes the same state as a Session
- * projection instead: `SessionListState.projectionsBySession[leadId].values
- * .agentTeam`, loaded once per connection like every other projection. This
- * module is therefore a pure adapter — no request, no poller, no observer —
- * exactly like ./subagent-catalog.ts for the catalog.
+ * DSH 0.2.2 reshaped that projection: the wire value is now
+ * `{ enabled, tasks, failure? }` and no longer carries `members`
+ * (upgrade-guide v0.2.1-rc.2 "agentTeam.members is removed"; the Team package
+ * migration 122dc3af42 moved the roster out of the Team projection for good).
+ * A team member IS a direct subagent of the Lead, so the roster this module
+ * publishes is the Lead's `subagentCatalog` — the projection
+ * ./subagent-catalog.ts already folds for the topology — with the Lead row
+ * prepended.
  *
- * Two facts the durable projection does not carry are DERIVED, not invented:
+ * Two facts the projection used to carry are genuinely gone, and this module
+ * does not fake them:
  *
- * - TURN ACTIVITY. A projection row is `{ id, name, role, phase, error? }`
- *   where `phase` is the durable lifecycle (`provisioning | active | failed`,
- *   the Lead row always `active`). Whether a member is running right now comes
- *   from the session's own status — upstream's own web UI "reads the shared
- *   Session projections and overlays activity from Session status" — and this
- *   plugin already has that overlay: `subagents.live` reports EVERY tree child
- *   with an explicit `running` flag (see ./subagent-catalog.ts's `childLive`),
- *   with the session list's own coarse `running` as the fallback for the Lead.
- * - `diagnostics`, the 0.1.6 view's array of provisioning notes, collapses to
- *   the projection's single durable `error` string.
+ * - there is no durable `phase`: `provisioning` / `failed` were the old roster
+ *   lifecycle, and a spawn that never produced a catalog entry has no row to
+ *   draw at all;
+ * - there is no per-member `error`: the only failure left is the board-wide
+ *   `failure` string, which the board itself reports.
  *
- * What is genuinely gone is the member's `model` (and `description` /
- * `provider` / `context`): the wire view never carried them, so the node
- * detail no longer has a model row to show. See the design note
- * docs/plans/2026-09-27-agent-teams-dsh-0.1.7-adaptation.md.
+ * Turn activity is derived, not invented: the session list's `running` bit is
+ * authoritative, the live channel's flag is the catalog's RESIDENCY and only
+ * stands in when the summaries do not carry the field (issue #800 — a retained
+ * session reads `running` in the live map while no agent drives it).
  */
 import type {
   SidebarChildLiveView,
   SidebarSessionList,
   SidebarSessionSummary,
-  SidebarTeamMemberProjection,
+  SidebarSubagentCatalogEntry,
   SidebarTeamProjection,
 } from '../context-types.ts'
 
 /**
- * One roster row as this page consumes it: the projection's durable half plus
- * the derived runtime status. A THIRD type next to the host service's
- * `SidebarTeamMemberView` on purpose — that one is the 0.1.6 `listMembers`
- * shape (status/description/provider/model) this plugin no longer reads, and
- * conflating the two is exactly how the field drift that broke the board went
- * unnoticed.
+ * The root agent's fixed name (the host's `ROOT_AGENT_NAME`). Named here
+ * rather than imported: a client bundle may not value-import the host's
+ * subagent package, and the Lead is the only row whose name is not a catalog
+ * entry.
  */
+const ROOT_AGENT_NAME = 'lead'
+
+/** One roster row as this page consumes it: identity plus the derived runtime status. */
 export interface TeamMemberRow {
-  /** The member's session id (the teammate's child session under the lead). */
+  /** The member's session id (the Lead itself, or a direct child under it). */
   id: string
+  /** The member's agent name: `lead` at the root, the catalog name below it. */
   name: string
   role: 'lead' | 'teammate'
-  /** Durable lifecycle, as the projection publishes it. */
-  phase: SidebarTeamMemberProjection['phase']
-  /** Derived display status: durable phase wins, else the live activity flag. */
-  status: 'running' | 'idle' | 'provisioning' | 'failed'
-  /** The durable provisioning error as a one-item list (see the header). */
-  diagnostics: string[]
+  /** Derived display status: the session's own run bit, live flag as the fallback. */
+  status: 'running' | 'idle'
 }
 
 /**
  * The team board led by `rootId`, or undefined when that session leads none.
  *
  * ABSENT MEANS NO TEAM, and there are three ways to get there: the deployment
- * never mounted the experimental layer (no projection key at all), the root is
- * a teammate rather than the Lead, or the session simply has no team. All
- * three collapse into "the page draws no Teams block" — the same silent
- * degradation the 0.1.6 route expressed as `{available:false}` (layer absent)
- * and `{team:null}` (root leads none), with one lookup instead of two states
- * the page had to distinguish and never did.
+ * never mounted the Team layer (no projection key at all), the session leads no
+ * team (`enabled: false` — the durable mode selection), or the root is a
+ * teammate rather than the Lead. All three collapse into "the page draws no
+ * Teams block", which is the same silent degradation the 0.1.6 route expressed
+ * as `{available:false}` and `{team:null}`.
+ *
+ * A host that still publishes the pre-0.2.2 value carries no `enabled` flag;
+ * that reads as enabled, which keeps the board visible exactly where it used
+ * to be.
  *
  * @param projections - `SessionListState.projectionsBySession`.
  * @param rootId - the tree's root session (the only session that can be Lead).
@@ -76,52 +74,40 @@ export function teamProjectionOf(
   rootId: string | undefined,
 ): SidebarTeamProjection | undefined {
   if (rootId === undefined) return undefined
-  return projections?.[rootId]?.values.agentTeam
+  const team = projections?.[rootId]?.values.agentTeam
+  return team?.enabled === false ? undefined : team
 }
 
 /**
- * Overlay runtime activity onto the durable roster.
+ * Build the roster: the Lead, then the Lead's direct children from its catalog.
  *
- * Status precedence is deliberately narrow: the durable phase wins for the two
- * states it owns (`failed` never becomes "running" because a retry is in
- * flight, `provisioning` is not yet a turn), and only an `active` member asks
- * the live channel whether it is running right now. A member the channel does
- * not mention yet (the first poll of a freshly rooted tree) reads as `idle`,
- * which is the safe direction: it never claims work that is not happening.
+ * The catalog is the ONLY roster source now (see the module header), so a child
+ * that the catalog does not list is not a member — there is no second list to
+ * disagree with, which is what kept the old `members` drift invisible.
  *
  * @param team - the Lead's projection ({@link teamProjectionOf}).
+ * @param rootId - the tree's root session id.
+ * @param entries - the Lead's `subagentCatalog` rows, in catalog order.
  * @param live - the `subagents.live` map (`session id → live view`).
  * @param byId - the session list by id (the Lead's own running flag lives here).
  */
 export function teamMembersOf(
   team: SidebarTeamProjection | undefined,
+  rootId: string | undefined,
+  entries: readonly SidebarSubagentCatalogEntry[],
   live: Readonly<Record<string, SidebarChildLiveView | undefined>>,
   byId: Readonly<Record<string, SidebarSessionSummary | undefined>>,
 ): TeamMemberRow[] {
-  if (team === undefined) return []
-  return team.members.map(member => ({
-    id: member.id,
-    name: member.name,
-    role: member.role,
-    phase: member.phase,
-    status: memberStatus(member, live, byId),
-    diagnostics: member.error === undefined ? [] : [member.error],
-  }))
-}
-
-/** One member's runtime status (see {@link teamMembersOf} for the rule). */
-function memberStatus(
-  member: SidebarTeamMemberProjection,
-  live: Readonly<Record<string, SidebarChildLiveView | undefined>>,
-  byId: Readonly<Record<string, SidebarSessionSummary | undefined>>,
-): TeamMemberRow['status'] {
-  if (member.phase === 'failed') return 'failed'
-  if (member.phase === 'provisioning') return 'provisioning'
-  // The summary's `running` is the authoritative run bit; the live channel's
-  // flag is the catalog's RESIDENCY, which reads `running` for a retained
-  // session that no agent is driving (a crash-restart — issue #800). Same rule
-  // as the task tree: authoritative wins, the live flag only stands in when the
-  // host's summaries do not carry the field.
-  const running = byId[member.id]?.running ?? live[member.id]?.running
-  return running === true ? 'running' : 'idle'
+  if (team === undefined || rootId === undefined) return []
+  const statusOf = (id: string): TeamMemberRow['status'] =>
+    (byId[id]?.running ?? live[id]?.running) === true ? 'running' : 'idle'
+  return [
+    { id: rootId, name: ROOT_AGENT_NAME, role: 'lead', status: statusOf(rootId) },
+    ...entries.map(entry => ({
+      id: entry.id,
+      name: entry.name ?? entry.label ?? entry.id,
+      role: 'teammate' as const,
+      status: statusOf(entry.id),
+    })),
+  ]
 }

@@ -21,6 +21,7 @@
  * - layout state is memory-only, so a queued open is not durable either.
  */
 import type { Context } from '../../context-types.ts'
+import { addressBaseOf } from '../address-base.ts'
 import { fileAddressFor } from '../resource-address.ts'
 import type { NativePathTab, NativeTabParams, SidebarSurface } from '../service.ts'
 import type { NativeTabRecords } from './tab-adapter.tsx'
@@ -257,7 +258,15 @@ export function createNativeSurface(ctx: Context, records: NativeTabRecords): Na
       enqueue({ kind: 'resource', sessionId, address, line, revealIfOpened, preferNewPane: preferNewPane === true })
     },
     fileAddress(sessionId, cwd, path) {
-      return fileAddressFor(sessionId, cwd, path)
+      // The address's base is the session's stored header cwd — the value the
+      // HOST builds and reads its own addresses with — not whatever root the
+      // caller holds: `service.openTab` passes the scope the caller had, which
+      // after #802 is usually the ACTIVE worktree, and an address built on
+      // that base neither dedupes against the chat's own address for the same
+      // file nor re-resolves the same way. See `src/client/address-base.ts`;
+      // the caller's cwd stays as the fallback for a session whose cwd the
+      // list does not know.
+      return fileAddressFor(sessionId, addressBaseOf(ctx, sessionId) ?? cwd, path)
     },
     tabTypeOf(sessionId, tabId) {
       // Read through the SESSION, like `close` above: one native id names a

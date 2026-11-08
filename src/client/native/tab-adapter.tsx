@@ -23,7 +23,7 @@
  * Nothing here is a singleton: the registry is created once per client
  * activation and handed to every registration.
  */
-import { createElement, useEffect, useMemo, useSyncExternalStore } from 'react'
+import { createElement, useEffect, useSyncExternalStore } from 'react'
 import type { ComponentType, ReactNode } from 'react'
 import type { Context } from '../../context-types.ts'
 import type { SessionScope } from '../api.ts'
@@ -33,6 +33,7 @@ import { ContextDiagnosticsHost } from '../context-diagnostics-ui.tsx'
 import type { ContextDiagnostics } from '../context-diagnostics.ts'
 import { referenceInChat } from '../reference-in-chat.ts'
 import { useSessionRoot } from '../use-session-root.ts'
+import { useSessionScope } from '../session-scope.ts'
 import type { BetterSidebarService, NativePathTab } from '../service.ts'
 import { t } from '../locales.ts'
 import { isUnread, toggleExpanded } from '../state.ts'
@@ -361,6 +362,10 @@ export function createNativeTabRecords(): NativeTabRecords {
             cwd: entry.scope.cwd,
             id: entry.tab.id,
             path,
+            // The chip's title travels with the row: the rename
+            // reconciliation retitles a page only when that title was
+            // derived from the file name (see tree-mutations).
+            title: entry.tab.title,
           })
         }
       }
@@ -496,7 +501,7 @@ export function NativeTabBody(props: NativeBodyInjected & NativeBodyFrameworkPro
   // visited tab body mounted, so an un-gated 5 s `session.cwd` per body is one
   // host-side `git` spawn per tab per tick, forever.
   const cwd = useSessionRoot(ctx, scopeSessionId, { visible: nativeTab.visible })
-  const scope = useMemo((): SessionScope => ({ sessionId: scopeSessionId, cwd }), [scopeSessionId, cwd])
+  const scope = useSessionScope(scopeSessionId, cwd)
   // `version` is not read: it only forces this render when the record changed.
   void version
   const derived = props.paramsOf?.(info)
@@ -624,11 +629,16 @@ export function NativeTabTitle(props: NativeTitleInjected & NativeBodyFrameworkP
     () => records.versionOf(sessionId, nativeTab.id),
   )
   const record = records.get(sessionId, nativeTab.id)
-  const title = record?.tab.title ?? nativeTab.title
   // `version` is read so a title/path/meta mutation re-renders the chip; the
   // icon itself is derived from the record, never stored.
   void version
   const descriptor = service.getTab(descriptorId) ?? service.getTab(record?.tab.type ?? nativeTab.kind)
+  // A single page's title is its type's, read from the registry at render
+  // time: an open tab follows a renamed panel instead of keeping the title
+  // captured when it opened (the record and native tab both store that one).
+  const title = descriptor?.single === true
+    ? (typeof descriptor.title === 'function' ? descriptor.title() : descriptor.title)
+    : record?.tab.title ?? nativeTab.title
   // The record's own path wins (an in-place switch stores it there, and the
   // native address of a page kind cannot carry it); the address-derived path
   // is what keeps the glyph correct when the record is not there YET (the tab

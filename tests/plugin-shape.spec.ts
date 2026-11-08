@@ -50,6 +50,22 @@ describe('dsh-better-sidebar plugin export shape', () => {
     expect(legacy.listLimit).toBe(1000)
   })
 
+  it('keeps automatic task folding and jobs collapse boolean, default-on, and volatile', async () => {
+    const { PrefsSchema, Config } = await import('../src/config.ts')
+    const resolve = PrefsSchema as unknown as (input: Record<string, unknown>) => Record<string, unknown>
+    const keys = ['tasksAutoFoldSettled', 'tasksAutoFoldBranches', 'tasksAutoFoldIdle', 'jobsAutoCollapse'] as const
+    for (const key of keys) {
+      expect(resolve({})[key], key).toBe(true)
+      expect(resolve({ [key]: false })[key], key).toBe(false)
+      expect(resolve({ [key]: true })[key], key).toBe(true)
+      for (const malformed of ['false', 0, [], {}]) {
+        expect(() => resolve({ [key]: malformed }), key).toThrow()
+      }
+      expect(Config.dict?.[key]?.meta.volatile, key).toBe(true)
+    }
+    expect(Config.dict?.listLimit?.meta.volatile).not.toBe(true)
+  })
+
   it('registers the side card preferences schema with the documented defaults', async () => {
     const { PrefsSchema, SIDEBAR_PREFS_NS, SIDEBAR_PREFS_DEFAULTS } = await import('../src/config.ts')
     expect(SIDEBAR_PREFS_NS).toBe('dsh-better-sidebar')

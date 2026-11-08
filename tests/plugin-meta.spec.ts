@@ -63,9 +63,10 @@ describe('DSH plugin presentation metadata', () => {
     expect(pkg.files!).toContain(`${LOCALE_DIR}/*.json`)
   })
 
-  it('exposes the locale documents and the manifest through exports', () => {
-    // `${name}/locale/<file>` is how readPluginMeta resolves a translation,
-    // and `${name}/package.json` is how it reads the icon declaration.
+  it('exposes the icon, locale documents and manifest through exports', () => {
+    // DSH 通过 `${name}/locale/<file>` 读取翻译，并通过 `${name}/package.json` 读取图标声明。
+    // 其他消费者可以通过 `${name}/icon` 获取插件图标。
+    expect(pkg.exports?.['./icon'], 'exports["./icon"]').toBe('./icon.svg')
     expect(pkg.exports?.['./locale/*.json'], 'exports["./locale/*.json"]').toBe('./locale/*.json')
     expect(pkg.exports?.['./package.json'], 'exports["./package.json"]').toBe('./package.json')
   })
