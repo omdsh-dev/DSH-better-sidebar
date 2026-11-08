@@ -35,6 +35,10 @@ describe('side card preferences', () => {
         autoOpenSubagent: false,
         autoOpenJobs: true,
         tasksViewMode: 'graph',
+        tasksAutoFoldSettled: true,
+        tasksAutoFoldBranches: true,
+        tasksAutoFoldIdle: true,
+        jobsAutoCollapse: true,
         mobileNoAutoOpen: true,
         mobileDefaultTree: true,
         agentOpenTools: true,
@@ -56,6 +60,10 @@ describe('side card preferences', () => {
         autoOpenSubagent: true,
         autoOpenJobs: true,
         tasksViewMode: 'graph',
+        tasksAutoFoldSettled: true,
+        tasksAutoFoldBranches: true,
+        tasksAutoFoldIdle: true,
+        jobsAutoCollapse: true,
         mobileNoAutoOpen: true,
         mobileDefaultTree: true,
         agentOpenTools: false,
@@ -77,6 +85,10 @@ describe('side card preferences', () => {
         autoOpenSubagent: true,
         autoOpenJobs: true,
         tasksViewMode: 'graph',
+        tasksAutoFoldSettled: true,
+        tasksAutoFoldBranches: true,
+        tasksAutoFoldIdle: true,
+        jobsAutoCollapse: true,
         mobileNoAutoOpen: true,
         mobileDefaultTree: true,
         agentOpenTools: false,
@@ -104,6 +116,17 @@ describe('side card preferences', () => {
       .toBe(true)
     expect((await loadPrefs(wire({ autoOpenJobs: false }))).autoOpenJobs)
       .toBe(false)
+  })
+
+  it('defaults automatic task folding and jobs collapse to on and preserves explicit booleans', async () => {
+    for (const key of ['tasksAutoFoldSettled', 'tasksAutoFoldBranches', 'tasksAutoFoldIdle', 'jobsAutoCollapse'] as const) {
+      expect(SIDEBAR_PREFS_DEFAULTS[key], key).toBe(true)
+      for (const malformed of [undefined, null, 'false', 0, [], {}]) {
+        expect((await loadPrefs(wire({ [key]: malformed })))[key], key).toBe(true)
+      }
+      expect((await loadPrefs(wire({ [key]: false })))[key], key).toBe(false)
+      expect((await loadPrefs(wire({ [key]: true })))[key], key).toBe(true)
+    }
   })
 
   it('defaults both mobile adaptations to on; only an explicit false disarms one', async () => {

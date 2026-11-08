@@ -17,11 +17,11 @@
  * the pane is byte-for-byte the strip-less preview of before.
  */
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
-import { IconCloseOutlineRegular, IconRefreshOutlineRegular, IconRightUpOutlineRegular, MarkdownDelegateProvider, MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconCloseOutlineRegular, IconFolderOpenOutlineRegular, IconRefreshOutlineRegular, IconRightUpOutlineRegular, IconShareOutlineRegular, MarkdownDelegateProvider, MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context } from '../../context-types.ts'
 import type { SessionScope } from '../api.ts'
 import { api, htmlUrl } from '../api.ts'
-import { hostTransportBase } from '../desktop-env.ts'
+import { hostHttpBase } from '../desktop-env.ts'
 import { t } from '../locales.ts'
 import { baseName } from '../paths.ts'
 import { resolveSidebarPath } from '../paths.ts'
@@ -36,8 +36,9 @@ import { buildDiffSegments, diffLines, diffStats, parseUnifiedDiff, unifiedSegme
 import { useGitDiffTarget } from '../diff/use-git-diff.ts'
 import { parseReadContent, parseReadLines, type FileOp } from './ops.ts'
 import { redactText } from '../redact.ts'
-import { rewriteLocalImageUrls } from '../markdown-images.ts'
+import { createMarkdownPathImages } from '../markdown-images.ts'
 import { markdownTextProps } from '../markdown-labels.tsx'
+import { createOpenInApp } from '../open-in-app.ts'
 import { useMarkdownSurface } from '../use-markdown-surface.ts'
 import { splitMermaidBlocks } from '../mermaid-blocks.ts'
 import { LazyMermaidMarkdown } from '../mermaid-lazy.tsx'
@@ -124,9 +125,8 @@ export interface PaneTab {
  * A compact tab strip — a real tablist with roving focus: the active tab is
  * the only tab stop, and Left/Right/Home/End move focus AND selection (the
  * standard automatic-activation model). Born as the bottom pane's strip
- * (details / diff); the changes tab's header reuses it for the lens switcher
- * so the page's two switchers read as one component. Rendered only when the
- * caller hosts more than one view, so a diff-only preview never grows a strip.
+ * (details / diff). Rendered only when the caller hosts more than one view,
+ * so a diff-only preview never grows a strip.
  */
 export function PaneTabStrip(props: { tabs: readonly PaneTab[]; active: string; onSelect(id: string): void; className?: string; label?: string }) {
   const buttons = useRef<(HTMLButtonElement | null)[]>([])
@@ -164,16 +164,17 @@ export function PaneTabStrip(props: { tabs: readonly PaneTab[]; active: string; 
 }
 
 /** The reading-mode body of one markdown op target: the shared MarkdownText
- *  pass (local image destinations already rewritten to the media route by
- *  the caller). Mermaid fences render through the same chunk-resident
- *  renderer the editor preview uses (one MarkdownText pass with the fences
- *  lifted out); the plain path stays byte-for-byte for documents without
- *  any.
+ *  pass. Mermaid fences render through the same chunk-resident renderer the
+ *  editor preview uses (one MarkdownText pass with the fences lifted out); the
+ *  plain path stays byte-for-byte for documents without any.
  *
  *  The body is also a markdown SURFACE: heading slugs, anchor jumps and `.md`
  *  link claiming, with relative targets resolved against the previewed file's
- *  own directory (see use-markdown-surface). */
-function MdReadingView(props: { text: string; ctx: Context; scope: SessionScope; path: string }) {
+ *  own directory (see use-markdown-surface). Local images resolve through the
+ *  owner's `pathImages` vocabulary, based on the PAGE base — the same shape the
+ *  editor preview uses (see markdown-images.ts): a transport-origin http URL
+ *  would be cross-site and rejected from the desktop shell's page. */
+function MdReadingView(props: { text: string; ctx: Context; scope: SessionScope; path: string; filePath: string }) {
   const codeLabels = {
     copyLabel: t('copy'),
     copiedLabel: t('copied'),
@@ -187,8 +188,9 @@ function MdReadingView(props: { text: string; ctx: Context; scope: SessionScope;
     cwd: props.scope.cwd,
     path: props.path,
   })
-  // The caller already rewrote local IMAGE destinations; this pass is the link
-  // half (and is idempotent, so the two can be composed in either order).
+  const pathImages = createMarkdownPathImages(props.scope, props.filePath, hostHttpBase())
+  // The caller's link pass (surface.rewrite) is idempotent and leaves image
+  // destinations to the vocabulary above.
   const text = surface.rewrite(props.text)
   const hasMermaid = splitMermaidBlocks(text).some((block) => block.kind === 'mermaid')
   return (
@@ -196,8 +198,8 @@ function MdReadingView(props: { text: string; ctx: Context; scope: SessionScope;
       <div className={css.mdBody}>
         <MarkdownDelegateProvider openFile={surface.openFile}>
           {hasMermaid
-            ? <LazyMermaidMarkdown text={text} codeLabels={codeLabels} />
-            : <MarkdownText {...markdownTextProps(text, codeLabels)} />}
+            ? <LazyMermaidMarkdown text={text} codeLabels={codeLabels} pathImages={pathImages} />
+            : <MarkdownText {...markdownTextProps(text, codeLabels, pathImages)} />}
         </MarkdownDelegateProvider>
       </div>
     </div>
@@ -257,6 +259,25 @@ export function DiffPane({ target, ctx, scope, height, onHeightCommit, onClose, 
    *  content view, and the only one carrying a `path`). */
   const gitWorktree = gitRef !== null && gitRef.kind === 'worktree' ? gitRef : null
   const { loading, error, diffText, untracked, refresh, resolveFold } = useGitDiffTarget(gitRef, scope)
+  /** The host's "open / reveal outside the GUI" capability. Probed once per
+   *  pane: a desktop-less deployment hides the two exits instead of offering
+   *  dead buttons. */
+  const openInApp = useMemo(() => createOpenInApp(ctx), [ctx])
+  const [appReady, setAppReady] = useState(() => openInApp.available() === true)
+  useEffect(() => {
+    const known = openInApp.available()
+    if (known !== null) {
+      setAppReady(known)
+      return
+    }
+    let cancelled = false
+    void openInApp.probe().then((ok) => {
+      if (!cancelled) setAppReady(ok)
+    }).catch(() => {
+      if (!cancelled) setAppReady(false)
+    })
+    return () => { cancelled = true }
+  }, [openInApp])
 
   // ── The pane's views, resolved BEFORE anything loads: which tabs exist and
   //    which one is on screen. Computed from raw target facts (`kind` and
@@ -308,6 +329,11 @@ export function DiffPane({ target, ctx, scope, height, onHeightCommit, onClose, 
   const [gitContent, setGitContent] = useState<
     { status: 'idle' | 'loading' | 'binary' | 'large' } | { status: 'text'; text: string } | { status: 'error'; error: string }
   >({ status: 'idle' })
+  // The pane owns the refresh GESTURE: the header button bumps this, and both
+  // loaders reload on it. The scope is stable, so a plain re-render no longer
+  // re-reads the file as a side effect — without this the content tab would
+  // keep bytes read before the file changed, and it has no other reload path.
+  const [refreshSeq, setRefreshSeq] = useState(0)
   useEffect(() => {
     if (gitWorktree === null) { setGitContent({ status: 'idle' }); return }
     // Deferred until the content view is the one on screen: opening a file to
@@ -327,7 +353,7 @@ export function DiffPane({ target, ctx, scope, height, onHeightCommit, onClose, 
         setGitContent({ status: 'error', error: reason instanceof Error ? reason.message : String(reason) })
       })
     return () => { controller.abort() }
-  }, [gitWorktree, scope, active])
+  }, [gitWorktree, scope, active, refreshSeq])
 
   // ── Op target material (pure snapshots; the prior content came with the
   //    target so a running op shows what is already known). ────────────────
@@ -419,29 +445,39 @@ export function DiffPane({ target, ctx, scope, height, onHeightCommit, onClose, 
     () => (contentSrc === '' ? [] : contentSrc.split('\n').map((text, index) => ({ line: index + 1, text }))),
     [contentSrc],
   )
+  /** Reading mode receives the source as authored: local images resolve
+   *  through the surface's `pathImages` vocabulary in `MdReadingView` (the
+   *  source rewrite below cannot vouch for them from the desktop shell). */
   const contentText = useMemo(
-    () => (mdOp && !contentRaw && contentSrc !== ''
-      ? rewriteLocalImageUrls(contentSrc, scope, contentPath, hostTransportBase())
-      : ''),
-    [mdOp, contentRaw, contentSrc, scope, contentPath],
+    () => (mdOp && !contentRaw ? contentSrc : ''),
+    [mdOp, contentRaw, contentSrc],
   )
   const htmlRenderSrc = useMemo(
     () => (htmlOp && contentAbs !== '' ? htmlUrl(scope, contentAbs) : ''),
     [htmlOp, scope, contentAbs],
   )
 
-  // Header stats for git targets come off the parsed patch text.
-  const gitStats = useMemo(() => {
+  /**
+   * ONE parse of the patch per target: the header stats and the file rows both
+   * read it. Parsing an ≤8MB patch twice on the UI thread (once here for the
+   * stats, once inside DiffFiles) was visible when a large commit was opened.
+   */
+  const gitParsed = useMemo(() => {
     if (target.kind !== 'git' || diffText === null || diffText === '') return null
+    return parseUnifiedDiff(diffText)
+  }, [target.kind, diffText])
+  // Header stats for git targets come off that shared parse.
+  const gitStats = useMemo(() => {
+    if (gitParsed === null) return null
     let added = 0
     let deleted = 0
-    for (const file of parseUnifiedDiff(diffText).files) {
+    for (const file of gitParsed.files) {
       const stats = diffStats(unifiedSegments(file))
       added += stats.added
       deleted += stats.deleted
     }
     return { added, deleted }
-  }, [target, diffText])
+  }, [gitParsed])
 
   // ── Resize: drag the top handle; commit on release (persisted by the
   //    shell). Arrow keys resize by a step for keyboard users. ────────────
@@ -530,7 +566,7 @@ export function DiffPane({ target, ctx, scope, height, onHeightCommit, onClose, 
       : contentView === 'html'
         ? <HtmlRenderPreview src={htmlRenderSrc} title={title} />
         : contentView === 'md'
-          ? <MdReadingView text={contentText} ctx={ctx} scope={scope} path={contentPath} />
+          ? <MdReadingView text={contentText} ctx={ctx} scope={scope} path={contentPath} filePath={contentAbs !== '' ? contentAbs : contentPath} />
           : gitWorktree !== null
             ? (gitContent.status === 'loading' || gitContent.status === 'idle'
               ? <div className={css.paneBody}><Notice kind="loading" tone="page">{t('loading')}</Notice></div>
@@ -580,13 +616,34 @@ export function DiffPane({ target, ctx, scope, height, onHeightCommit, onClose, 
               icon={<IconRefreshOutlineRegular size={14} />}
               label={t('refresh')}
               disabled={loading}
-              onClick={refresh}
+              onClick={() => {
+                // Both views reload: the patch (refresh) and the whole-file
+                // content tab, which read its bytes through its own fs.read.
+                refresh()
+                setRefreshSeq(sequence => sequence + 1)
+              }}
             />
             <IconButton
               size="sm"
               icon={<IconRightUpOutlineRegular size={14} />}
               label={t('changesOpenDiffTab')}
               onClick={onExpand}
+            />
+          </>
+        )}
+        {contentAbs !== '' && appReady && (
+          <>
+            <IconButton
+              size="sm"
+              icon={<IconFolderOpenOutlineRegular size={14} />}
+              label={t('editorOpenInFileManager')}
+              onClick={() => { void openInApp.reveal(contentAbs) }}
+            />
+            <IconButton
+              size="sm"
+              icon={<IconShareOutlineRegular size={14} />}
+              label={t('openWithMenu')}
+              onClick={() => { void openInApp.open(contentAbs) }}
             />
           </>
         )}
@@ -662,6 +719,7 @@ export function DiffPane({ target, ctx, scope, height, onHeightCommit, onClose, 
                       {((diffText !== null && diffText !== '') || untracked !== undefined) && (
                         <DiffFiles
                           diff={diffText ?? ''}
+                          parsed={untracked === undefined ? gitParsed ?? undefined : undefined}
                           resolveFold={resolveFold}
                           untrackedPath={untracked !== undefined && target.ref.kind === 'worktree' ? target.ref.path : undefined}
                           untrackedContent={untracked}

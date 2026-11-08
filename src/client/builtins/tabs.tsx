@@ -37,6 +37,38 @@ import { api } from '../api.ts'
 import type { Context } from '../../context-types.ts'
 import type { TabDescriptor } from '../service.ts'
 
+/** Host session surface (`ctx.get('uiWorkspace')`). Archive is optional. */
+interface ArchiveSessionFace {
+  archiveSession?: (sessionId: string, options: { stopActivity: boolean }) => Promise<void>
+}
+
+/**
+ * Hide a closed Side Chat thread, then release its live agent.
+ *
+ * `stopActivity` settles a running turn before the session leaves the list.
+ * The workspace service is optional: a missing service or a rejected archive
+ * still disposes, and the close path itself never rejects. An unbound tab
+ * never reaches here.
+ */
+function releaseSidechat(ctx: Context, threadId: string): void {
+  const dispose = (): void => {
+    void api.sidechatDispose(threadId).catch(() => {})
+  }
+  void (async () => {
+    try {
+      const service = ctx.get('uiWorkspace') as unknown as ArchiveSessionFace | undefined
+      // Method call: an unbound `archiveSession` would lose the service as `this`.
+      if (service?.archiveSession !== undefined) {
+        await service.archiveSession(threadId, { stopActivity: true })
+      }
+    } catch {
+      // Archive is best-effort. Dispose still runs in finally.
+    } finally {
+      dispose()
+    }
+  })()
+}
+
 /** The 6 built-in tab descriptors (the host owns the right-Sidebar terminal and browser). */
 export function builtinTabs(ctx: Context): readonly TabDescriptor[] {
   return [
@@ -141,7 +173,7 @@ export function builtinTabs(ctx: Context): readonly TabDescriptor[] {
           scope={scope}
           tab={tab}
           visible={visible}
-          onOpenFile={(path) => { openSidebarFile(ctx, scope.sessionId, path) }}
+          onOpenFile={(path) => { openSidebarFile(ctx, scope.sessionId, path, { cwd: scope.cwd }) }}
           onOpenDiff={onOpenDiff}
         />
       ),
@@ -153,8 +185,8 @@ export function builtinTabs(ctx: Context): readonly TabDescriptor[] {
       icon: tasksTabIcon,
       order: 30,
       single: true,
-      // Declarative settings: the auto-open switches render under this row in
-      // the Side card settings page (the Tasks page's related settings).
+      // Declarative settings: auto-open, default view, task folding, and the
+      // jobs drawer switches share the existing Tasks card's settings gear.
       settings: {
         toggles: [{
           key: 'autoOpenSubagent',
@@ -181,6 +213,22 @@ export function builtinTabs(ctx: Context): readonly TabDescriptor[] {
               desc: () => t('settingsViewModeTreeDesc'),
             },
           ],
+        }, {
+          key: 'tasksAutoFoldSettled',
+          title: () => t('settingsTasksAutoFoldSettledTitle'),
+          desc: () => t('settingsTasksAutoFoldSettledDesc'),
+        }, {
+          key: 'tasksAutoFoldBranches',
+          title: () => t('settingsTasksAutoFoldBranchesTitle'),
+          desc: () => t('settingsTasksAutoFoldBranchesDesc'),
+        }, {
+          key: 'tasksAutoFoldIdle',
+          title: () => t('settingsTasksAutoFoldIdleTitle'),
+          desc: () => t('settingsTasksAutoFoldIdleDesc'),
+        }, {
+          key: 'jobsAutoCollapse',
+          title: () => t('settingsJobsAutoCollapseTitle'),
+          desc: () => t('settingsJobsAutoCollapseDesc'),
         }],
       },
       component: ({ ctx, store, scope, visible, onSubagentJump }) => (
@@ -227,13 +275,13 @@ export function builtinTabs(ctx: Context): readonly TabDescriptor[] {
       // One tab per thread: an already-open thread focuses instead of
       // duplicating; unbound fresh tabs never dedupe (each mints its own).
       dedupeKey: (tab) => sidechatThreadIdOf(tab),
-      // Closing the tab releases the thread's live agent; the session and
-      // its history stay persisted (reopen from any thread's header menu).
+      // A bound thread is archived on close, then its live agent is released.
+      // Saving a copy first is the header's existing "save as new session";
+      // that action (and the explicit archive control) is unchanged. An
+      // unbound fresh tab has no session, so close cleans nothing up.
       onClose: (tab) => {
         const threadId = sidechatThreadIdOf(tab)
-        if (threadId !== undefined) {
-          void api.sidechatDispose(threadId).catch(() => {})
-        }
+        if (threadId !== undefined) releaseSidechat(ctx, threadId)
       },
       component: ({ ctx, scope, tab, visible }) => (
         <SideChatView ctx={ctx} scope={scope} tab={tab} visible={visible} />
@@ -302,7 +350,7 @@ export function builtinTabs(ctx: Context): readonly TabDescriptor[] {
       dedupeKey: (tab) => tab.id,
       component: ({ scope, tab }) => (
         tab.diff === undefined ? null
-          : <DiffTab sessionId={scope.sessionId} cwd={scope.cwd} diff={tab.diff} />
+          : <DiffTab scope={scope} diff={tab.diff} />
       ),
     },
   ]

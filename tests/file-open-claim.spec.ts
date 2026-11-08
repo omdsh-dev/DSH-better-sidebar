@@ -119,7 +119,7 @@ describe('openSidebarFile', () => {
     // present only when the open came from `#L42` / `a.c:42`.
     const harness = makeCtx({ candidates: () => [{ kind: 'editor' }] })
 
-    openSidebarFile(harness.ctx, 'session-1', 'out/notes.md', 42)
+    openSidebarFile(harness.ctx, 'session-1', 'out/notes.md', { line: 42 })
 
     expect(harness.opened).toEqual([
       { type: 'editor', title: 'notes.md', path: '/ws/out/notes.md', id: 'editor:/ws/out/notes.md', line: 42 },

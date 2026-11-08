@@ -9,6 +9,10 @@
  * - the browser unload (refresh / close tab / navigate away) through a
  *   `beforeunload` guard.
  *
+ * A confirmed discard also drops the file's durable draft backup
+ * (`editor-draft-backup.ts`): that backup is the same draft and must not be
+ * offered back on the next open.
+ *
  * Module-level and keyed by `sessionId::tabId`: a tab id is unique only WITHIN
  * one session — the native right column counts its own `tab1`…, and the bottom
  * workbench reuses `editor:<path>` for the same file in every session. Keyed by
@@ -21,9 +25,12 @@
  * stale entry can never keep a guard armed.
  */
 
-/** One registered draft: the id it was recorded under and the file. */
+import { clearDraftBackup } from './editor-draft-backup.ts'
+
+/** One registered draft: the id it was recorded under, its session, and the file. */
 interface DirtyEntry {
   tabId: string
+  sessionId: string
   path: string
 }
 
@@ -55,7 +62,7 @@ export function setEditorDirty(tabId: string, dirty: boolean, sessionId: string,
   }
   const previous = dirtyTabs.get(key)
   if (previous !== undefined && previous.path === path) return
-  dirtyTabs.set(key, { tabId, path })
+  dirtyTabs.set(key, { tabId, sessionId, path })
   notify()
 }
 
@@ -118,13 +125,23 @@ export function editorDirtyRevision(): number {
  * it one commit later anyway.
  *
  * Shared by the sidebar's tab close and the file tree's close-on-delete so
- * both paths warn exactly once, with the same copy.
+ * both paths warn exactly once, with the same copy, and drop the durable
+ * backup of every discarded draft.
  * @param sessionId - the owning session (see {@link isEditorDirty} for the
  *  omitted case).
  */
 export function confirmDiscardDraft(tabId: string, message: string, sessionId?: string): boolean {
-  if (!isEditorDirty(tabId, sessionId)) return true
+  const matches = [...dirtyTabs.entries()].filter(([key, entry]) =>
+    entry.tabId === tabId && (sessionId === undefined || key === keyOf(sessionId, tabId)))
+  if (matches.length === 0) return true
   const confirmed = typeof window.confirm === 'function' ? window.confirm(message) : true
-  if (confirmed) clearEditorDirty(tabId, sessionId)
-  return confirmed
+  if (!confirmed) return false
+  for (const [key, entry] of matches) {
+    dirtyTabs.delete(key)
+    // The durable backup is the same draft: a confirmed discard must not be
+    // offered back on the next open.
+    clearDraftBackup(entry.sessionId, entry.path)
+  }
+  notify()
+  return true
 }

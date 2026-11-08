@@ -66,7 +66,11 @@ export function hasTranscriptAside(ctx: Context): boolean {
  *   to the main-view jump (no such tab type, no right column, or the host threw
  *   because no session seat is mounted).
  */
-export function openTranscriptAside(ctx: Context, address: SidebarSubagentAddress): boolean {
+export function openTranscriptAside(
+  ctx: Context,
+  address: SidebarSubagentAddress,
+  preferNewPane = false,
+): boolean {
   if (!hasTranscriptAside(ctx)) return false
   try {
     const right = ctx.get('sidebarRight') as unknown as SidebarRightFace
@@ -75,7 +79,10 @@ export function openTranscriptAside(ctx: Context, address: SidebarSubagentAddres
     // pane when splitting is not allowed.
     right.openResource?.(subagentChatAddress(address), {
       kind: SUBAGENT_CHAT_KIND,
-      preferNewPane: true,
+      // The default is the SAME right-sidebar pane: a transcript jump must not
+      // silently split the column. The explicit "open to the side" gesture
+      // passes true.
+      ...(preferNewPane ? { preferNewPane: true } : {}),
     })
     return true
   } catch (error) {

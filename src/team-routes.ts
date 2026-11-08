@@ -85,17 +85,20 @@ function errorCodeOf(error: unknown): string | undefined {
  * @param ctx - host plugin context.
  */
 export function buildTeamsApi(ctx: Context): SidebarTeamsRoutes {
-  const teams = ctx.get('agentTeams') as SidebarAgentTeamsService | undefined
-  const agents = ctx.get('agents') as SidebarAgentsService | undefined
-
   /**
    * The live lead agent of the requested tree plus its membership check.
    * Throws 503 when the experimental layer is absent and 404 when the root
    * simply leads no team (a normal page state, but never for a mutation).
+   *
+   * Both services are read per request, not captured when the routes are
+   * built: the experimental layer is a separate plugin and can mount after
+   * this one, and a captured `undefined` would pin the 503 forever (#1148).
    */
   const membershipOf = async (
     payload: unknown,
   ): Promise<{ svc: SidebarAgentTeamsService; agent: unknown }> => {
+    const teams = ctx.get('agentTeams') as SidebarAgentTeamsService | undefined
+    const agents = ctx.get('agents') as SidebarAgentsService | undefined
     if (teams === undefined) {
       throw new SidebarError('team-error', 'the agent-teams layer is not mounted in this deployment', 503)
     }

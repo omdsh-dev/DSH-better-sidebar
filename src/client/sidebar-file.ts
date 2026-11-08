@@ -24,7 +24,7 @@
  * editor path verbatim for every other file.
  */
 import type { Context } from '../context-types.ts'
-import { resolveSidebarPath } from './paths.ts'
+import { addressBaseOf, resolveAddressPath } from './address-base.ts'
 import { fileAddressFor } from './resource-address.ts'
 
 /** The kind this plugin's own file editor registers its tab type under. */
@@ -82,20 +82,23 @@ export function claimingNativeKind(ctx: Context, address: string): string | unde
  * Open one file through the native surface when a type other than this
  * plugin's editor claims it.
  *
- * The address is built WITH the session cwd (the same spelling the host's
- * conversation file links produce), so a claimed file opened here dedupes
- * against the tab the chat path already opened for the same file.
+ * The address is built WITH the session's stored header cwd — the base the
+ * host builds and reads its own addresses with, see
+ * `src/client/address-base.ts` — so a claimed file opened here dedupes against
+ * the tab the chat path already opened for the same file, and the address
+ * resolves the same way wherever it is read.
  *
  * @param ctx - client context (`sidebarRightTabs` for the probe,
  * `sidebarRight` for the open).
  * @param sessionId - the session whose workspace the path resolves in.
- * @param cwd - that session's workspace root, when known.
+ * @param cwd - that session's workspace root, when known; used only when the
+ * session list cannot answer for `sessionId`.
  * @param path - absolute or session-relative file path.
  * @returns true when the claiming type was handed the file; false leaves the
  * caller on its editor path (unclaimed file, no registry, or no surface).
  */
 export function openClaimedNativeFile(ctx: Context, sessionId: string, cwd: string | undefined, path: string): boolean {
-  const address = fileAddressFor(sessionId, cwd, path)
+  const address = fileAddressFor(sessionId, addressBaseOf(ctx, sessionId) ?? cwd, path)
   if (claimingNativeKind(ctx, address) === undefined) return false
   let opener: NativeResourceOpener | undefined
   try {
@@ -119,18 +122,34 @@ export function openClaimedNativeFile(ctx: Context, sessionId: string, cwd: stri
  *
  * Routes through the sidebar service so the editor descriptor's dedupeKey
  * (per-path) applies; the id is path-derived so multiple editors coexist.
+ *
+ * A RELATIVE path resolves against the caller's live workspace root when it
+ * has one (`options.cwd`, what every internal caller takes from
+ * `useSessionRoot`), and only falls back to the session list's stored cwd: the
+ * stored value is the session HEADER cwd, which the agent may have left for a
+ * linked worktree, and resolving an intended-relative path against it while
+ * the file tree, the editor's own path input and every route resolve against
+ * the worktree is exactly the "same relative path, two files, no error"
+ * divergence of #950. An ABSOLUTE path is unaffected by either base.
+ *
  * @param ctx - client context carrying `betterSidebar`.
- * @param sessionId - the session whose cwd resolves a relative path.
+ * @param sessionId - the session whose workspace resolves a relative path.
  * @param path - absolute or session-relative file path.
- * @param line - the 1-based line a file reference named (`a.c#L131`, #826).
- * Omitted on an ordinary open. It rides the open as a transient navigation:
- * the editor lands on it once (leaving preview, which renders no source
- * lines) and the record forgets it afterwards.
+ * @param options - `line`: the 1-based line a file reference named
+ * (`a.c#L131`, #826), omitted on an ordinary open — it rides the open as a
+ * transient navigation, the editor lands on it once (leaving preview, which
+ * renders no source lines) and the record forgets it afterwards; `cwd`: the
+ * caller's live workspace root for a relative path.
  * @returns nothing.
  */
-export function openSidebarFile(ctx: Context, sessionId: string, path: string, line?: number): void {
+export function openSidebarFile(
+  ctx: Context,
+  sessionId: string,
+  path: string,
+  options: { line?: number; cwd?: string } = {},
+): void {
   const summary = ctx.sessions.list.getSnapshot().byId[sessionId]
-  const absolute = resolveSidebarPath(summary?.cwd, path)
+  const absolute = resolveAddressPath(options.cwd ?? summary?.cwd, path)
   // A type that explicitly claims this file owns it: hand the address to the
   // native surface so that type's registered tab body renders instead of this
   // plugin's editor (#695). Every other file falls through to the editor.
@@ -142,6 +161,6 @@ export function openSidebarFile(ctx: Context, sessionId: string, path: string, l
     title,
     path: absolute,
     id: `editor:${absolute}`,
-    ...(line === undefined ? {} : { line }),
+    ...(options.line === undefined ? {} : { line: options.line }),
   })
 }

@@ -47,10 +47,14 @@ export interface DirectoryWatchOptions {
    */
   visible?: boolean
   /**
-   * A directory whose listing is stale.
-   * @param dir - absolute directory path, exactly the form the tree keys levels by.
+   * Directories whose listings are stale.
+   *
+   * A watch notice names one directory. The parked→visible re-arm names the
+   * WHOLE watched set at once: the caller re-lists it in one batch request
+   * instead of firing one request per directory.
+   * @param dirs - absolute directory paths, exactly the form the tree keys levels by.
    */
-  onStale: (dir: string) => void
+  onStale: (dirs: readonly string[]) => void
 }
 
 /** How long to wait before re-opening a dropped socket; failures back off to the cap. */
@@ -146,7 +150,7 @@ export function useDirectoryWatch(options: DirectoryWatchOptions): void {
           watching.add(frame.dir)
           return
         }
-        if (frame.ok === undefined) staleRef.current(frame.dir)
+        if (frame.ok === undefined) staleRef.current([frame.dir])
       }
       socket.onclose = () => {
         if (closed) return
@@ -175,13 +179,14 @@ export function useDirectoryWatch(options: DirectoryWatchOptions): void {
    * Re-armed after being parked: the socket is brand new (the old one's
    * notices are gone with it), so nothing the host saw while the tree was
    * hidden was delivered. Re-list every watched directory once instead of
-   * showing a listing that may be minutes old.
+   * showing a listing that may be minutes old — as ONE batch (the caller
+   * re-lists the set in a single `fs.trees` request), not one per directory.
    */
   const wasArmedRef = useRef(armed)
   useEffect(() => {
     const previous = wasArmedRef.current
     wasArmedRef.current = armed
     if (!armed || previous) return
-    for (const dir of wantedRef.current) staleRef.current(dir)
+    if (wantedRef.current.length > 0) staleRef.current(wantedRef.current)
   }, [armed])
 }

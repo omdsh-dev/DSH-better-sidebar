@@ -7,6 +7,7 @@
  * is still hydrating at page load (a detached session would otherwise fail the
  * request). Failures surface as {@link SidebarApiError} with the wire code.
  */
+import type { SidechatImageUpload } from '../sidechat-images.ts'
 import { encodeHtmlUrl } from '../html-route.ts'
 import { hostRouteUrl } from './host-route-url.ts'
 import { resolveSidebarPath } from './paths.ts'
@@ -564,6 +565,9 @@ export const api = {
   /** Read-only topological history; stale cursors require a fresh first page. */
   gitGraph: (scope: SessionScope, options: GitGraphOptions = {}, worktree?: string, signal?: AbortSignal) =>
     call<GitGraphResult>('git.graph', gitPayload(scope, worktree, { ...options }), signal),
+  /** 图形界面超过分支上限时读取经状态指纹校验的分页历史。 */
+  gitHistory: (scope: SessionScope, options: { count?: number; cursor?: string } = {}, worktree?: string, signal?: AbortSignal) =>
+    call<{ isRepo: boolean; root?: string; entries: GitGraphResult['entries']; hasMore: boolean; nextCursor?: string; snapshot: string }>('git.history', gitPayload(scope, worktree, options), signal),
   /** Recent commit history, lazily pageable (skip/count; defaults 0/30). */
   gitLog: (scope: SessionScope, count?: number, skip?: number, worktree?: string, signal?: AbortSignal) =>
     call<GitLogEntry[]>('git.log', gitPayload(scope, worktree, {
@@ -635,8 +639,8 @@ export const api = {
   sidechatStart: (sessionId: string, question?: string) =>
     call<{ childId: string }>('sidechat.start', { sessionId, question: question ?? '' }),
   /** Deliver one follow-up message to a Side Chat thread. */
-  sidechatPrompt: (childId: string, text: string) =>
-    call<{ accepted: true }>('sidechat.prompt', { childId, text }),
+  sidechatPrompt: (childId: string, text: string, images?: readonly SidechatImageUpload[]) =>
+    call<{ accepted: true; messageId: string }>('sidechat.prompt', { childId, text, ...(images === undefined || images.length === 0 ? {} : { images }) }),
   /** Abort a Side Chat thread's running turn (queued work is preserved). */
   sidechatCancel: (childId: string) =>
     call<{ accepted: true }>('sidechat.cancel', { childId }),

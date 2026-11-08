@@ -4,11 +4,13 @@
  * reservation that stops a wrapped band from landing on a sibling's
  * children), the PER-SHAPE card height (the mode chip's badge row and the
  * shared-task row a card renders are reserved, so a card never renders outside
- * its box), and the width-aware solver.
+ * its box), exact coordinates and order for nested bands, large sibling sets,
+ * a 6000-node chain, and width-aware solver candidate reuse within one call.
  */
 import { describe, expect, it } from 'vitest'
 import {
   GRAPH_AGENT_NODE_H,
+  GRAPH_GAP_X,
   GRAPH_GAP_Y,
   GRAPH_NODE_H,
   GRAPH_NODE_W,
@@ -169,7 +171,101 @@ describe('layout: card heights', () => {
   })
 })
 
+describe('layout: scale and traversal', () => {
+  it('preserves exact coordinates and depth-first order for nested bands and an orphan', () => {
+    // Deliberately not pre-order: child dimensions must be resolved from edges.
+    const nodes = [
+      agent('a1', 'a'), agent('root'), agent('a', 'root'), agent('b', 'root'),
+      agent('c', 'root'), agent('a2', 'a'), agent('a3', 'a'), agent('b1', 'b'),
+      agent('orphan', 'missing'),
+    ]
+    const layout = layoutTasksGraph(nodes, { maxBandCols: 2 })
+    const stride = rowStrideFor(nodes)
+    expect([...layout.boxes.values()]).toEqual([
+      ['root', 234, 0], ['a', 125, 1], ['a1', 16, 2], ['a2', 234, 2],
+      ['a3', 125, 3], ['b', 452, 1], ['b1', 452, 2], ['c', 234, 4],
+      ['orphan', 670, 0],
+    ].map(([id, x, row]) => ({
+      id, x, y: GRAPH_PAD + Number(row) * stride, w: GRAPH_NODE_W, h: GRAPH_AGENT_NODE_H,
+    })))
+    expect(layout.width).toBe(876)
+    expect(layout.height).toBe(2 * GRAPH_PAD + 4 * stride + GRAPH_AGENT_NODE_H)
+  })
+
+  it('lays out 2000 siblings in ordered, non-overlapping bands inside the extent', () => {
+    const nodes = [agent('root'), ...Array.from({ length: 2000 }, (_, i) => agent(`c${i}`, 'root'))]
+    const layout = layoutTasksGraph(nodes, { maxBandCols: 4 })
+    const stride = rowStrideFor(nodes)
+    expect(layout.boxes.size).toBe(nodes.length)
+    for (let i = 0; i < 2000; i += 1) {
+      expect(layout.boxes.get(`c${i}`)).toEqual({
+        id: `c${i}`, x: GRAPH_PAD + (i % 4) * (GRAPH_NODE_W + GRAPH_GAP_X),
+        y: GRAPH_PAD + (1 + Math.floor(i / 4)) * stride,
+        w: GRAPH_NODE_W, h: GRAPH_AGENT_NODE_H,
+      })
+    }
+    expect(layout.width).toBe(2 * GRAPH_PAD + 4 * GRAPH_NODE_W + 3 * GRAPH_GAP_X)
+    expect(layout.height).toBe(2 * GRAPH_PAD + 500 * stride + GRAPH_AGENT_NODE_H)
+  })
+
+  it('places every node in a 6000-node chain without recursive stack growth', () => {
+    const nodes = Array.from({ length: 6000 }, (_, i) => agent(`n${i}`, i === 0 ? undefined : `n${i - 1}`))
+    const stride = rowStrideFor(nodes)
+    for (const layout of [layoutTasksGraph(nodes), layoutTasksGraphForWidth(nodes, 360)]) {
+      expect(layout.boxes.size).toBe(nodes.length)
+      for (let i = 0; i < nodes.length; i += 1) {
+        expect(layout.boxes.get(`n${i}`)).toEqual({
+          id: `n${i}`, x: GRAPH_PAD, y: GRAPH_PAD + i * stride,
+          w: GRAPH_NODE_W, h: GRAPH_AGENT_NODE_H,
+        })
+      }
+      expect(layout.width).toBe(2 * GRAPH_PAD + GRAPH_NODE_W)
+      expect(layout.height).toBe(2 * GRAPH_PAD + (nodes.length - 1) * stride + GRAPH_AGENT_NODE_H)
+    }
+  })
+})
+
 describe('bandColsFor / layoutTasksGraphForWidth', () => {
+  it('reuses the two-column candidate in the tolerant pass, but refreshes on the next call', () => {
+    let reads = 0
+    let text = ''
+    const root = agent('root')
+    Object.defineProperty(root, 'live', { get: () => {
+      reads += 1
+      return { running: true, text }
+    } })
+    const nodes = [root, ...Array.from({ length: 6 }, (_, i) => agent(`c${i}`, 'root'))]
+    const first = layoutTasksGraphForWidth(nodes, 360)
+    // One layout reads the root height twice: stride measurement and placement.
+    // 440px exceeds the strict budget, but fits its tolerant second pass.
+    expect(first.width).toBe(440)
+    expect(reads).toBe(2)
+    text = 'x'
+    const second = layoutTasksGraphForWidth(nodes, 360)
+    expect(reads).toBe(4)
+    expect(second.boxes.get('root')!.h).toBe(first.boxes.get('root')!.h + 15)
+    expect(second.boxes).not.toBe(first.boxes)
+  })
+
+  it('evaluates each column count once when every multi-column candidate overflows', () => {
+    let reads = 0
+    const root = agent('root')
+    Object.defineProperty(root, 'live', { get: () => { reads += 1; return undefined } })
+    const nodes = [root]
+    let level = [root]
+    for (let depth = 0; depth < 3; depth += 1) {
+      const next = level.flatMap(parent => Array.from({ length: 4 }, (_, i) => agent(`${parent.id}-${i}`, parent.id)))
+      nodes.push(...next)
+      level = next
+    }
+    const layout = layoutTasksGraphForWidth(nodes, 720)
+    // Four candidates (4, 3, 2, 1), each measuring and placing the root once.
+    expect(reads).toBe(8)
+    expect(layout.width).toBe(2 * GRAPH_PAD + GRAPH_NODE_W)
+    expect(layout.boxes.size).toBe(nodes.length)
+    expect(layout).toEqual(layoutTasksGraph(nodes, { maxBandCols: 1 }))
+  })
+
   it('derives the column count from the container width', () => {
     // The budget is measured at the READABILITY FLOOR, not at 1:1: the fit may
     // scale the canvas down to 0.78 and stay readable, so a 360px panel keeps

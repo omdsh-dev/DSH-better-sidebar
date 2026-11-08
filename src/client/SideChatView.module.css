@@ -378,6 +378,92 @@
   user-select: none;
 }
 
+/* ── present deliverables card ────────────────────────────────────────
+ * One card per `present` call (or per event-only delivery), one row per
+ * delivered file: image thumbnail (through the media route) or type glyph,
+ * basename, optional description, and a click that opens the file. The
+ * quietest possible surface — a hairline box around ink-weight rows: the
+ * main pane's delivery card at side-chat scale. */
+.sidechatDeliverables {
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 8px;
+}
+
+.sidechatDeliverablesHead {
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-tertiary);
+  user-select: none;
+}
+
+.sidechatDeliverablesList {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sidechatDeliverableItem {
+  min-width: 0;
+}
+
+.sidechatDeliverable {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  padding: 3px 4px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-secondary);
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 100ms ease-out, color 100ms ease-out;
+}
+
+.sidechatDeliverable:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+/* An image deliverable leads with its own pixels, so the reader recognizes
+ * the artifact before reading the name. */
+.sidechatDeliverableThumb {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 4px;
+  object-fit: cover;
+  background: var(--dsw-alias-bg-base);
+}
+
+.sidechatDeliverableName {
+  flex: none;
+  max-width: 55%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--dsw-alias-label-primary);
+}
+
+.sidechatDeliverableDesc {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--dsw-alias-label-tertiary);
+}
+
 /* Shimmer sweep text: generating (streaming row labels, creating hero). */
 .sidechatShimmerText {
   background-image: linear-gradient(
@@ -558,4 +644,24 @@
   .sidechatRowChevron {
     transition: none;
   }
+}
+
+.sidechatImages {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px;
+}
+.sidechatImagePreview {
+  display: flex;
+  align-items: flex-start;
+  border: 1px solid var(--dsw-alias-hairline);
+  border-radius: 8px;
+}
+.sidechatImage {
+  display: block;
+  max-width: 180px;
+  max-height: 140px;
+  object-fit: contain;
+  border-radius: 6px;
 }

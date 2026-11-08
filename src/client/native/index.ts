@@ -23,6 +23,8 @@
  * absent from the native guide and `openTab` refuses it.
  */
 import type { Context } from '../../context-types.ts'
+import { addressBaseOf, resolveAddressPath } from '../address-base.ts'
+import { flushDraftBackups } from '../editor-draft-backup.ts'
 import { t } from '../locales.ts'
 import { splitTrailingLineSpec } from '../path-line.ts'
 import { baseName } from '../paths.ts'
@@ -82,6 +84,16 @@ function hostOwnedPath(path: string): boolean {
   const name = path.slice(path.lastIndexOf('/') + 1)
   const dot = name.lastIndexOf('.')
   return dot > 0 && HOST_OWNED_EXTS.has(name.slice(dot + 1).toLowerCase())
+}
+
+/**
+ * The close-hook slice of `ctx.sidebarRight`: `registerCloseHandler` lives on
+ * the concrete controller, not on `ISidebarRight`, so it is probed
+ * structurally (same shape the host's own terminal tab uses).
+ */
+interface CloseHandlerHost {
+  /** Run one kind's cleanup before its record is removed; a throw vetoes the close. */
+  registerCloseHandler(kind: string, handler: (sessionId: string, tab: { kind: string }) => void): () => void
 }
 
 /** The native tab-type registry face (`ctx.sidebarRightTabs`). */
@@ -179,14 +191,29 @@ interface Registration {
  * {@link NativeTabParams.line}. The range end and the column are deliberately
  * dropped: {@link splitTrailingLineSpec} parses them, and a start line is all
  * the editor has anywhere to put a cursor.
+ *
+ * `base` is where an address-relative path is resolved, and it must be the
+ * base the ADDRESS was built with — the session's stored header cwd, see
+ * `src/client/address-base.ts` — never the tab body's worktree root. Without
+ * it the seed stays relative and every downstream reader (the viewer's
+ * `fs.read`, the editor, the directory watch) re-bases it on the ACTIVE
+ * worktree: a chat link to `<repo>/frontend/.worktrees/wt/a.md` arrives as
+ * `frontend/.worktrees/wt/a.md` and is joined onto the worktree root a second
+ * time (#947), or silently reads the same-named file of another checkout
+ * (#950). Omitted (a caller with no session context) keeps the historical
+ * relative seed.
  * @param info - the native tab record the body is drawing.
+ * @param base - the address's own base, when the caller knows it.
  * @returns the seed, or `undefined` when the tab is not a file address.
  */
-export function fileParamsOf(info: NativeTabInfo): NativeTabParams | undefined {
+export function fileParamsOf(info: NativeTabInfo, base?: string): NativeTabParams | undefined {
   const address = parseFileAddress(info.tab.contentId)
   if (address === undefined) return undefined
-  const spec = splitTrailingLineSpec(address.path)
-  if (spec === undefined) return { path: address.path }
+  // Resolve BEFORE the trailing line spec is split off: the spec belongs to
+  // the file name, and a base can only be prepended to the path.
+  const path = base === undefined ? address.path : resolveAddressPath(base, address.path)
+  const spec = splitTrailingLineSpec(path)
+  if (spec === undefined) return { path }
   return { path: spec.path, title: baseName(spec.path), line: spec.line }
 }
 
@@ -267,10 +294,29 @@ export function registerNativeSurface(deps: NativeSurfaceDeps): () => void {
   // `sidebarRightTabs` undefined, and the registry appeared a moment later.
   // `ctx.inject` re-runs this body whenever the service appears/reappears,
   // which is the lifecycle the registrations need.
-  const seat = ctx.inject(['sidebarRightTabs'], (injected) => {
+  //
+  // The close handler below needs `sidebarRight` as well; both services are
+  // provided by the same host package, so waiting for both changes nothing
+  // about WHEN the types register.
+  const seat = ctx.inject(['sidebarRightTabs', 'sidebarRight'], (injected) => {
     const tabs = injected.get('sidebarRightTabs') as unknown as NativeTabRegistry | undefined
     if (tabs === undefined) return
+    const right = injected.get('sidebarRight') as unknown as CloseHandlerHost | undefined
     const live = new Map<string, Registration>()
+
+    // The host runs this hook before removing a record (the strip's ×, its
+    // context menu, `page.close`, and a `replaceTab`). Flush the throttled
+    // draft here so the keystrokes of the last second survive the body's
+    // unmount; the hook is a synchronous cleanup, not a veto, so it cannot
+    // ask first (see editor-draft-backup.ts).
+    let disposeClose: (() => void) | undefined
+    if (typeof right?.registerCloseHandler === 'function') {
+      try {
+        disposeClose = right.registerCloseHandler(EDITOR_KIND, () => { flushDraftBackups() })
+      } catch (error) {
+        reportFailure?.('register editor close handler', error)
+      }
+    }
 
     const fileSessionIdOf = (info: NativeTabInfo): string | undefined => {
       const address = parseFileAddress(info.tab.contentId)
@@ -394,7 +440,14 @@ export function registerNativeSurface(deps: NativeSurfaceDeps): () => void {
         slots = registerSlots(
           id,
           { ctx, store, service, records, descriptorId: descriptor.id },
-          isEditor ? { paramsOf: fileParamsOf, sessionIdOf: fileSessionIdOf } : {},
+          isEditor
+            ? {
+              // The address's own session, not the seat's: a file address
+              // carries the session whose workspace resolves its path.
+              paramsOf: (info: NativeTabInfo) => fileParamsOf(info, addressBaseOf(ctx, fileSessionIdOf(info))),
+              sessionIdOf: fileSessionIdOf,
+            }
+            : {},
         )
       } catch (error) {
         disposeSafely(disposeType, `native tab type "${id}"`)
@@ -505,6 +558,7 @@ export function registerNativeSurface(deps: NativeSurfaceDeps): () => void {
       }
       live.clear()
       for (const dispose of disposeSubscriptions.reverse()) disposeSafely(dispose, 'a native tab subscription')
+      if (disposeClose !== undefined) disposeSafely(disposeClose, 'the editor close handler')
     }
   })
   return () => {

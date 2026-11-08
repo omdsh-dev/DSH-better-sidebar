@@ -6,7 +6,7 @@ const { spawnMock } = vi.hoisted(() => ({ spawnMock: vi.fn() }))
 
 vi.mock('node:child_process', () => ({ spawn: spawnMock }))
 
-import { currentBranch, isGitRepo, refusedRepository, runGit, worktrees } from '../src/git.ts'
+import { currentBranch, isGitRepo, refusedRepository, runGit, worktrees, wslLaunch } from '../src/git.ts'
 
 afterEach(() => {
   spawnMock.mockReset()
@@ -273,5 +273,79 @@ describe('git output caps', () => {
     await expect(runGit('/repo', ['log'], 30_000, { maxBytes: 32 }))
       .rejects.toThrow(/output exceeded 32 bytes/)
     expect(child.kill).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('git inside a WSL distribution', () => {
+  it('reads the distribution and path out of a UNC workspace cwd', () => {
+    expect(wslLaunch(String.raw`\\wsl.localhost\Ubuntu\home\me\repo`))
+      .toEqual({ distro: 'Ubuntu', path: '/home/me/repo' })
+    // The legacy `\\wsl$\` share and the forward-slash spelling name the same
+    // tree, and a POSIX-ish caller hands over either one.
+    expect(wslLaunch(String.raw`\\wsl$\Ubuntu\home\me\repo`))
+      .toEqual({ distro: 'Ubuntu', path: '/home/me/repo' })
+    expect(wslLaunch('//wsl.localhost/Ubuntu/home/me/repo'))
+      .toEqual({ distro: 'Ubuntu', path: '/home/me/repo' })
+    // The distribution root itself, with and without a trailing separator.
+    expect(wslLaunch(String.raw`\\wsl.localhost\Ubuntu`))
+      .toEqual({ distro: 'Ubuntu', path: '/' })
+    expect(wslLaunch('//wsl.localhost/Ubuntu/'))
+      .toEqual({ distro: 'Ubuntu', path: '/' })
+  })
+
+  it('leaves every ordinary Windows and POSIX cwd alone', () => {
+    expect(wslLaunch('C:\\repo')).toBeUndefined()
+    expect(wslLaunch('/srv/site/wp-content')).toBeUndefined()
+    // A directory that merely has `wsl` in its name is not the share.
+    expect(wslLaunch(String.raw`\\server\share\wsl.localhost\Ubuntu`)).toBeUndefined()
+    expect(wslLaunch('')).toBeUndefined()
+  })
+
+  it('runs git through wsl.exe with the -C prefix replaced by --cd', async () => {
+    spawnMock.mockImplementation(() => fakeGit('true\n'))
+
+    await isGitRepo(String.raw`\\wsl.localhost\Ubuntu\home\me\repo`)
+
+    // `-e`, never `--`: the `--` form re-parses the tail as a shell command
+    // line, which mangles `%(refname:short)` and anything else with `()`/`[]`
+    // in it; `-e` execs the argv verbatim.
+    expect(spawnMock).toHaveBeenCalledWith(
+      'wsl.exe',
+      [
+        '-d', 'Ubuntu', '--cd', '/home/me/repo', '-e', 'git',
+        '--no-pager', '-c', 'color.ui=false', '-c', 'core.quotePath=false',
+        'rev-parse', '--is-inside-work-tree',
+      ],
+      expect.objectContaining({ windowsHide: true }),
+    )
+  })
+
+  it('carries the child environment across the boundary, which wsl.exe does not', async () => {
+    spawnMock.mockImplementation(() => fakeGit('true\n'))
+
+    await isGitRepo('//wsl.localhost/Ubuntu/home/me/repo')
+
+    // Only the names listed in WSLENV cross into the distribution; without it
+    // the C locale and the no-locks flag silently stayed on the Windows side.
+    expect(spawnMock).toHaveBeenCalledWith(
+      'wsl.exe',
+      expect.anything(),
+      expect.objectContaining({
+        env: expect.objectContaining({
+          GIT_OPTIONAL_LOCKS: '0',
+          LC_ALL: 'C',
+          WSLENV: 'LC_ALL:GIT_OPTIONAL_LOCKS',
+        }),
+      }),
+    )
+  })
+
+  it('still spawns plain git for a Windows cwd', async () => {
+    spawnMock.mockImplementation(() => fakeGit('true\n'))
+
+    await isGitRepo('C:\\repo')
+
+    expect(spawnMock).toHaveBeenCalledWith('git', expect.anything(), expect.anything())
+    expect(spawnMock.mock.calls.every(call => call[0] === 'git')).toBe(true)
   })
 })

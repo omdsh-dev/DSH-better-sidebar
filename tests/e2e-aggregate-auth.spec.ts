@@ -36,7 +36,9 @@ curl() {
 }
 ${script.slice(start)}
 `], {
-      encoding: 'utf8', timeout: 5_000,
+      // A ceiling, not a budget: the script is fast, but a loaded Windows
+      // runner can take seconds just to start bash (status: null on timeout).
+      encoding: 'utf8', timeout: 15_000,
       env: { ...process.env, ROOT: root, SCRATCH: scratch, TEST_LAUNCH_URL: launch },
     })
     expect(result.stderr).toBe('')

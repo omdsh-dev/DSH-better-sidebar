@@ -33,15 +33,10 @@ import css from './tasks-graph.module.css'
 
 /**
  * The status dot of one roster row: the member's derived status (see
- * ./team-projection.ts — durable phase first, live activity second).
+ * ./team-projection.ts — the session's own run bit).
  */
-function memberDotState(status: TeamMemberRow['status']): 'ongoing' | 'idle' | 'error' {
-  switch (status) {
-    case 'running': return 'ongoing'
-    case 'provisioning': return 'ongoing'
-    case 'failed': return 'error'
-    case 'idle': return 'idle'
-  }
+function memberDotState(status: TeamMemberRow['status']): 'ongoing' | 'idle' {
+  return status === 'running' ? 'ongoing' : 'idle'
 }
 
 /**

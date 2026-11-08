@@ -53,6 +53,7 @@ import {
   bottomTerminalContentId, nextTerminalMeta, terminalInstanceOf, terminalRunOf, webTerminals,
   type HostTerminalEnvironment, type HostTerminalView, type HostTerminalViewState,
 } from './terminal-client.ts'
+import { terminalClipboardKey } from './terminal-clipboard.ts'
 import css from './terminal.module.css'
 
 /** The props the bottom terminal view consumes from its tab descriptor. */
@@ -228,6 +229,11 @@ function TerminalScreen({ model, state, visible, scheme, label }: TerminalScreen
     xterm.loadAddon(addon)
     xterm.open(node)
     xterm.textarea?.setAttribute('aria-label', label)
+    // Ctrl/Cmd+C copies only when a selection exists (no selection stays the
+    // shell's SIGINT); Ctrl/Cmd+V pastes. The policy lives in a pure helper
+    // because jsdom cannot construct a real xterm.
+    xterm.attachCustomKeyEventHandler((event) =>
+      terminalClipboardKey(event, xterm, navigator.clipboard))
     emulator.current = xterm
     fit.current = addon
     lastRevision.current = 0

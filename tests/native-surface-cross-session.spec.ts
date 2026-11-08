@@ -11,7 +11,7 @@
  *
  * The queueing contract this file locks down is already the documented one:
  * `docs/external-plugin-guide.md` (§0 「跨会话打开」: 目标会话的右侧栏 store
- * 未挂载时，打开会排队到该会话上屏后重放) and AGENTS.md §3.10.
+ * 未挂载时，打开会排队到该会话上屏后重放).
  */
 import { describe, expect, it, vi } from 'vitest'
 import { createNativeSurface } from '../src/client/native/surface.ts'

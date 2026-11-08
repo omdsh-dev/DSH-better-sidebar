@@ -17,8 +17,11 @@
  *   source lines directly, so it reverse-searches the selected text in the
  *   source and only reports lines on an unambiguous hit (see
  *   {@link linesOfSelection}).
+ *
+ * The two halves travel separately (see {@link PendingReference}).
  */
 import { relativeTo } from './paths.ts'
+import type { PendingReference } from './conversation-draft.ts'
 
 /** Max inserted selection length (UTF-16 code units, i.e. JS `.length`). */
 export const SELECTION_LIMIT = 500
@@ -41,19 +44,33 @@ export function headerOf(path: string, cwd: string | undefined, lines?: Selectio
 }
 
 /**
- * The full text appended to the composer draft for one selection.
- * Over the limit the content is dropped: the plain path line is the whole
- * payload (an empty fenced block would just occupy the draft).
+ * The chip label's identity: `file Lstart[-end]` — the file's basename plus
+ * the line span, mirroring the header's line variants (a single line keeps
+ * just `Lstart`; unknown lines drop the `L` part). Deliberately NO sequence
+ * number: file+lines IS the identity, so deleting a chip from the draft can
+ * never leave a numbering gap — the next quote simply names itself again.
+ */
+export function whereOf(path: string, lines?: SelectionLines): string {
+  const file = path.replace(/\\/g, '/').split('/').at(-1) ?? path
+  if (lines === undefined) return file
+  if (lines.end > lines.start) return `${file} L${lines.start}-${lines.end}`
+  return `${file} L${lines.start}`
+}
+
+/**
+ * The composer payload for one selection: the chip label and the model text.
+ * Over the limit the content is dropped and both halves are the plain path
+ * line (an empty fenced block would just occupy the draft).
  */
 export function buildSelectionInsert(
   path: string,
   cwd: string | undefined,
   lines: SelectionLines | undefined,
   selected: string,
-): string {
+): PendingReference {
   const header = headerOf(path, cwd, lines)
-  if (selected.length > SELECTION_LIMIT) return header
-  return `\`\`\`${header}\n${selected}\n\`\`\``
+  if (selected.length > SELECTION_LIMIT) return { label: header, text: header }
+  return { label: header, text: `\`\`\`${header}\n${selected}\n\`\`\`` }
 }
 
 /** 1-based line number of a character index in a text. */

@@ -309,8 +309,8 @@ export function useFileOpStream(scope: SessionScope, enabled: boolean): FileOpSt
     }
   }, [enabled, sessionId])
 
-  // Granular scope fields: the scope object's identity churns every render,
-  // only its sessionId / cwd gate the request target.
+  // Granular scope fields: only these two gate the request target (callers
+  // may assemble a scope object themselves).
   const cwd = scope.cwd
   const pull = useCallback(async (signal: AbortSignal): Promise<void> => {
     await pullStream(streamOf(sessionId), { sessionId, cwd }, signal)

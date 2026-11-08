@@ -7,6 +7,7 @@ import { EventEmitter } from 'node:events'
 import { dirname, resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import {
+  explorerSelectTarget,
   launchExternal,
   revealCommand,
   urlCommands,
@@ -28,11 +29,17 @@ describe('revealCommand', () => {
     expect(revealCommand('/a/b.txt', 'darwin')).toEqual({ command: 'open', args: ['-R', '/a/b.txt'] })
   })
 
-  it('win32: passes /select,<path> as one shell-free Explorer argument', () => {
+  it('win32: passes the switch and a file URL as separate Explorer arguments', () => {
     expect(revealCommand('C:\\work\\two words\\a.txt', 'win32')).toEqual({
       command: 'explorer.exe',
-      args: ['/select,C:\\work\\two words\\a.txt'],
+      args: ['/select,', 'file:///C:/work/two words/a.txt'],
     })
+  })
+
+  it('win32: escapes only %, comma and # so spaces and non-ASCII survive', () => {
+    expect(explorerSelectTarget('C:\\work\\a,b#c% d.txt')).toBe('file:///C:/work/a%2Cb%23c%25 d.txt')
+    expect(explorerSelectTarget('C:\\用户\\中 文,a.txt')).toBe('file:///C:/用户/中 文%2Ca.txt')
+    expect(explorerSelectTarget('\\\\server\\share\\a b.txt')).toBe('file://server/share/a b.txt')
   })
 
   it('linux: `xdg-open` opens the containing directory (no common select protocol)', () => {
@@ -48,7 +55,7 @@ describe('revealCommand', () => {
   it('wsl: translates the path and selects it with an absolute Windows Explorer command', () => {
     expect(revealCommand('/a/b.txt', 'linux', wslCommands)).toEqual({
       command: '/windows/explorer.exe',
-      args: ['/select,C:\\a\\b.txt'],
+      args: ['/select,', 'file:///C:/a/b.txt'],
     })
   })
 })

@@ -262,6 +262,9 @@ describe('SubagentView topology (projectionsBySession)', () => {
       },
     })
     const { container, unmount } = await renderPage(store)
+    await act(async () => {
+      (container.querySelector('button[aria-label="展开已完成的节点"]') as HTMLButtonElement).click()
+    })
     expect(container.textContent).toContain('Worker')
     expect(container.textContent).toContain('Grandchild')
     expect(container.textContent).toContain('可续接')

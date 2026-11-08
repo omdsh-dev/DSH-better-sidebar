@@ -31,12 +31,15 @@
  * session, archive) lives in the COMPOSER BAR, not a top header — the reader's
  * attention is on the input, and a header's actions went unnoticed.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { SidechatImages } from './SidechatImages.tsx'
+import { useSidechatDraft, encodeSidechatImages } from './sidechat-draft.ts'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useSyncExternalStore } from 'react'
 import clsx from 'clsx'
 import {
   ConnectionIndicator,
   DiffBlock,
+  FileTypeIcon,
   IconApiOutlineRegular,
   IconArchiveOutlineRegular,
   IconBrowseOutlineRegular,
@@ -44,6 +47,7 @@ import {
   IconCloseFillRegular,
   IconEditOutlineRegular,
   IconNewChatOutlineRegular,
+  IconPaperclipOutlineRegular,
   IconPlusOutlineRegular,
   IconSearchOutlineRegular,
   IconSendOutlineRegular,
@@ -56,12 +60,19 @@ import {
   StateDot,
   TerminalBlock,
   Tooltip,
+  classifyFileType,
   type DiffBlockLabels,
   type MenuEntry,
   type ReadBlockLabels,
   type TerminalBlockLabels,
 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { SIDECHAT_IMAGE_MEDIA_TYPES } from '../sidechat-images.ts'
 import { markdownTextProps } from './markdown-labels.tsx'
+import { SidechatAssistantRow, type SidechatRowSurfaceBinding } from './SidechatAssistantRow.tsx'
+import { rewriteProseLocalImageUrls } from './markdown-images.ts'
+import { hostTransportBase } from './desktop-env.ts'
+import { baseName, resolveSidebarPath } from './paths.ts'
+import { openSidebarFile } from './sidebar-file.ts'
 import { useMarkdownSurface } from './use-markdown-surface.ts'
 import { IconHistoryOutline16, IconSaveOutline16 } from './icons.tsx'
 import type { Context, SidebarHistoryEntry, SidebarSessionEvent } from '../context-types.ts'
@@ -83,10 +94,11 @@ import {
   formatTokens,
   toolArgsSummary,
   transcriptRows,
+  sidechatRowKey,
   type SidechatToolCard,
   type SidechatTranscriptRow,
 } from './sidechat-transcript.ts'
-import { api } from './api.ts'
+import { api, mediaUrl, SidebarApiError } from './api.ts'
 import { usePolling } from './use-polling.ts'
 import { useSidechatPush } from './use-sidechat-push.ts'
 import { t } from './locales.ts'
@@ -226,6 +238,8 @@ function rememberSidechatThread(sessionId: string, threadId: string): void {
 /** Per-thread transcript cache: thread-own events merged by seq (polls ride
  * the afterSeq delta and never re-download what they already hold). */
 interface ThreadCache {
+  /** Rows must never be rebound to a different child while a reset is pending. */
+  threadId?: string
   entries: SidebarHistoryEntry[]
   /** The CURRENT attempt's live deltas (replaced every pull, never merged). */
   live: SidechatLiveEvent[]
@@ -469,27 +483,49 @@ function toolLeading(name: string, failed: boolean): React.ReactNode {
   }
 }
 
-/** One row renderer (React keys ride the source event seq). `rewrite` is the
- *  surface's markdown link pass — the rows are model prose, so a relative link
- *  resolves against the session cwd (see use-markdown-surface). */
-function renderRow(row: SidechatTranscriptRow, labels: RowLabels, rewrite: (text: string) => string): React.ReactNode {
+/** The per-view helpers every row renderer needs, collected in one stable
+ *  object so a row body never rebuilds them per render. */
+interface RowSurface {
+  /** The row's prose pass: local image destinations become session media URLs
+   *  first, then the surface's local-link pass runs (see the view's wiring).
+   *  Takes the ROW (not its text) so the view can reuse an unchanged row's
+   *  rewrite result by object identity. Only prose rows (user / assistant)
+   *  carry `text`; the other kinds never run this pass. */
+  rewrite: (row: Extract<SidechatTranscriptRow, { text: string }>) => string
+  /** Open one delivered file through the plugin's own open path. */
+  openFile: (path: string) => void
+  /** The session-scoped media URL of one image deliverable. */
+  media: (path: string) => string
+  /** The absolute spelling of one delivered path (the row's title tooltip;
+   *  call-argument paths arrive relative to the session cwd). */
+  resolvePath: (path: string) => string
+}
+
+/** One row renderer (React keys ride the source event seq). `surface` is the
+ *  markdown prose pass the rows run before rendering — the rows are model
+ *  prose, so a relative destination resolves against the session cwd (see
+ *  use-markdown-surface) — plus the delivered-file open and media helpers.
+ *  `genui` binds the rows to the owning child thread: the key remounts every
+ *  row when the tab switches threads, and a registered GenUI consumer may
+ *  claim a visible, settled assistant row (see SidechatAssistantRow). */
+function renderRow(row: SidechatTranscriptRow, labels: RowLabels, surface: RowSurface, genui: SidechatRowSurfaceBinding): React.ReactNode {
+  const key = `${genui.threadId ?? 'unbound'}:${sidechatRowKey(row)}`
   switch (row.kind) {
     case 'user':
       return (
-        <div key={`${row.kind}:${row.seq}`} className={css.sidechatUser}>
-          <MarkdownText {...markdownTextProps(rewrite(row.text), labels)} />
+        <div key={key} className={css.sidechatUser}>
+          {row.text !== '' && <MarkdownText {...markdownTextProps(surface.rewrite(row), labels)} />}
+          <SidechatImages visible={genui.visible} childId={genui.threadId} messageId={row.messageId} images={row.images} />
         </div>
       )
     case 'assistant':
       return (
-        <div key={`${row.kind}:${row.seq}`} className={css.sidechatAssistant}>
-          <MarkdownText {...markdownTextProps(rewrite(row.text), labels)} />
-        </div>
+        <SidechatAssistantRow key={key} row={row} labels={labels} rewrite={surface.rewrite} surface={genui} />
       )
     case 'reasoning':
       return (
         <CollapsibleRow
-          key={`${row.kind}:${row.seq}`}
+          key={key}
           label={labels.thinkLabel}
           streaming={!row.settled}
         >
@@ -498,7 +534,7 @@ function renderRow(row: SidechatTranscriptRow, labels: RowLabels, rewrite: (text
       )
     case 'injection':
       return (
-        <CollapsibleRow key={`${row.kind}:${row.seq}`} label={labels.injectionLabel}>
+        <CollapsibleRow key={key} label={labels.injectionLabel}>
           <div className={css.sidechatRowProse}>{row.text}</div>
         </CollapsibleRow>
       )
@@ -506,7 +542,7 @@ function renderRow(row: SidechatTranscriptRow, labels: RowLabels, rewrite: (text
       // A provider/agent failure: rendered plainly (never markdown) so a raw
       // provider message with odd punctuation survives verbatim.
       return (
-        <div key={`${row.kind}:${row.seq}`} className={css.sidechatErrorRow}>
+        <div key={key} className={css.sidechatErrorRow}>
           {t('sideChatRunError', { message: row.text })}
         </div>
       )
@@ -520,8 +556,50 @@ function renderRow(row: SidechatTranscriptRow, labels: RowLabels, rewrite: (text
       if (row.durationMs !== undefined) parts.push(formatDurationMs(row.durationMs))
       if (parts.length === 0) return null
       return (
-        <div key={`${row.kind}:${row.seq}`} className={css.sidechatTurnSummary}>
+        <div key={key} className={css.sidechatTurnSummary}>
           {parts.join(' · ')}
+        </div>
+      )
+    }
+    case 'deliverables': {
+      return (
+        <div key={`${row.kind}:${row.seq}`} className={css.sidechatDeliverables}>
+          <div className={css.sidechatDeliverablesHead}>{t('sideChatDeliverables')}</div>
+          <ul className={css.sidechatDeliverablesList}>
+            {row.files.map((file, index) => {
+              const name = baseName(file.path)
+              // The visible description is part of the button's accessible
+              // name too: an `Open {name}` label alone would hide it from
+              // assistive tech while sighted readers see it.
+              const openLabel = file.description === undefined
+                ? t('sideChatDeliverableOpen', { name })
+                : `${t('sideChatDeliverableOpen', { name })}: ${file.description}`
+              return (
+                <li key={`${String(index)}:${file.path}`} className={css.sidechatDeliverableItem}>
+                  {/* One row per delivered file: the type glyph (and an image's
+                      own thumbnail) plus the basename, the description, and a
+                      click that opens the file through the plugin's editor
+                      path — the same open the transcript's file links use. */}
+                  <button
+                    type="button"
+                    className={css.sidechatDeliverable}
+                    title={surface.resolvePath(file.path)}
+                    aria-label={openLabel}
+                    onClick={() => { surface.openFile(file.path) }}
+                  >
+                    {classifyFileType(file.path) === 'image'
+                      ? <img className={css.sidechatDeliverableThumb} src={surface.media(file.path)} alt="" loading="lazy" />
+                      : null}
+                    <FileTypeIcon path={file.path} size={16} />
+                    <span className={css.sidechatDeliverableName}>{name}</span>
+                    {file.description !== undefined && (
+                      <span className={css.sidechatDeliverableDesc}>{file.description}</span>
+                    )}
+                  </button>
+                </li>
+              )
+            })}
+          </ul>
         </div>
       )
     }
@@ -536,7 +614,7 @@ function renderRow(row: SidechatTranscriptRow, labels: RowLabels, rewrite: (text
         )
       return (
         <CollapsibleRow
-          key={`${row.kind}:${row.seq}`}
+          key={key}
           label={row.name}
           meta={toolArgsSummary(row.args)}
           icon={toolLeading(row.name, row.failed)}
@@ -633,7 +711,10 @@ export function SideChatView(props: {
   const threadId = sidechatThreadIdOf(tab)
   const autoCreate = (tab.meta as { autoCreate?: unknown } | undefined)?.autoCreate === true
 
-  const [composer, setComposer] = useState('')
+  const draft = useSidechatDraft(threadId)
+  const composer = draft.owner.text
+  const setComposer = draft.setText
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
   const [busy, setBusy] = useState<'starting' | 'sending' | 'saving' | 'archiving' | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
@@ -642,11 +723,7 @@ export function SideChatView(props: {
   const [menuOpen, setMenuOpen] = useState(false)
   const [modelMenuOpen, setModelMenuOpen] = useState(false)
   const [catalog, setCatalog] = useState<SidechatModelCatalog | null>(null)
-  /** Local echo of the message just sent: shown until the host reports it
-   *  pending or logs it durably (see the drop effect below). `seq` is the
-   *  transcript tail at send time, so an OLDER identical message cannot
-   *  retire the echo. */
-  const [echo, setEcho] = useState<{ text: string; seq: number } | null>(null)
+  const [echo, setEcho] = useState<{ text: string; messageId: string; hasImages: boolean } | null>(null)
 
   const cacheRef = useRef<ThreadCache>({ entries: [], live: [], pending: [] })
   // The previous poll's rows (see the mapping's reuse pass below).
@@ -655,14 +732,84 @@ export function SideChatView(props: {
   /** The pending push-driven pull (one per burst of host frames). */
   const invalidateRef = useRef<number | undefined>(undefined)
   const scrollRef = useRef<HTMLDivElement | null>(null)
-  /** Heading slugs, anchor jumps and `.md` link claiming for the transcript (a
+  /** Heading slugs, anchor jumps and local file links for the transcript (a
    *  prose surface: it renders no file of its own, so a relative link target
    *  resolves against the session cwd). */
-  const { surfaceRef: chatSurfaceRef, openFile: openChatFile, rewrite: rewriteChatText } = useMarkdownSurface({
+  const { surfaceRef: chatSurfaceRef, openFile: openChatFile, rewrite: rewriteChatLinks } = useMarkdownSurface({
     ctx,
     sessionId: scope.sessionId,
     cwd: scope.cwd,
+    allLocalFiles: true,
   })
+  /**
+   * The prose pass every row runs before rendering: LOCAL image destinations
+   * become absolute `/sidebar/file` media URLs FIRST (the host renderer only
+   * draws absolute http(s) image sources, and a row is not a file, so relative
+   * destinations resolve against the session cwd), and the surface's local-link
+   * pass runs second — it must never see a raw image destination (see
+   * markdown-navigation.ts). Both passes mask code regions, so a fenced
+   * example stays literal.
+   */
+  const rewriteChatText = useCallback(
+    (text: string): string => rewriteChatLinks(
+      rewriteProseLocalImageUrls(text, scope, scope.cwd, hostTransportBase()),
+    ),
+    [rewriteChatLinks, scope],
+  )
+  /** The media URL base the rewrite bakes into image destinations. */
+  const transportBase = hostTransportBase()
+  /**
+   * The row-level prose pass, memoized by ROW OBJECT: the transcript reuses an
+   * unchanged row's object across updates (`sidechat-transcript.ts`), so a
+   * composer keystroke or a streaming push must not re-run two regex passes
+   * over every unchanged row's text. The cache is rebuilt when the inputs the
+   * pass resolves against change (session, cwd, transport base); the row's own
+   * text is compared too, so a row mutated in place never serves a stale
+   * rewrite.
+   */
+  const rewriteCache = useMemo(() => {
+    // The cache is keyed by rows, but its RESULTS were resolved against the
+    // session cwd and the transport base, so it must not outlive either. The
+    // reads below make the dependency real to the hook linter (the repo's
+    // `void wantedKey` idiom).
+    void scope.sessionId
+    void scope.cwd
+    void transportBase
+    return new WeakMap<object, { text: string; out: string }>()
+  }, [scope.sessionId, scope.cwd, transportBase])
+  const rewriteRow = useCallback((row: Extract<SidechatTranscriptRow, { text: string }>): string => {
+    const cached = rewriteCache.get(row)
+    if (cached !== undefined && cached.text === row.text) return cached.out
+    const out = rewriteChatText(row.text)
+    rewriteCache.set(row, { text: row.text, out })
+    return out
+  }, [rewriteCache, rewriteChatText])
+  /** Open one delivered file: the plugin's own editor path, session-scoped
+   *  like every other open in this view (a relative path resolves against the
+   *  session cwd). */
+  const openDeliveredFile = useCallback((path: string): void => {
+    try {
+      openSidebarFile(ctx, scope.sessionId, path)
+    } catch (error) {
+      console.error('[dsh-better-sidebar] side chat deliverable open failed', error)
+    }
+  }, [ctx, scope.sessionId])
+  /** The session-scoped media URL of one image deliverable (the card's
+   *  thumbnail; the same route the markdown image pass produces). */
+  const deliverableMediaUrl = useCallback((path: string): string => mediaUrl(scope, path), [scope])
+  /** The absolute spelling of one delivered path for the card's title tooltip
+   *  (the call-argument copy is cwd-relative; the event copy is already
+   *  absolute and passes through unchanged). */
+  const deliverableTitlePath = useCallback((path: string): string => resolveSidebarPath(scope.cwd, path), [scope.cwd])
+  const rowSurface = useMemo<RowSurface>(
+    () => ({
+      rewrite: rewriteRow,
+      openFile: openDeliveredFile,
+      media: deliverableMediaUrl,
+      resolvePath: deliverableTitlePath,
+    }),
+    [rewriteRow, openDeliveredFile, deliverableMediaUrl, deliverableTitlePath],
+  )
   const transcriptRef = useCallback((element: HTMLDivElement | null) => {
     scrollRef.current = element
     chatSurfaceRef(element)
@@ -671,6 +818,24 @@ export function SideChatView(props: {
 
   const summary = threadId === undefined ? undefined : list.byId[threadId]
   const running = summary?.running === true
+  /**
+   * Whether the host's own session list can ever show the bound session again
+   * after archiving it. It cannot for a subagent-origin row: the host's
+   * `sessionVisible()` returns false for `origin === 'subagent'` BEFORE the
+   * archived filter runs, and the only "unarchive" control lives on that list,
+   * so archiving a side thread is a one-way door (issue #949). Every thread
+   * this view binds is such a row; an absent summary is treated the same way —
+   * this view must not archive a session it cannot classify. The composer tip
+   * says why the action is disabled.
+   */
+  const archiveBlocked = summary === undefined || summary.origin === 'subagent'
+  /** The archive control's hover text: the blocked reason wins over the
+   *  running hint — stopping the thread would not make archiving recoverable. */
+  const archiveTip = archiveBlocked
+    ? t('sideChatArchiveBlocked')
+    : running
+      ? t('sideChatArchiveRunning')
+      : t('sideChatArchive')
 
   // Connection recovery state (DSH 0.1.2-alpha.2+): drives the disconnect
   // banner and an immediate catch-up pull when the wire comes back. The poll
@@ -725,14 +890,14 @@ export function SideChatView(props: {
   // loadLastThreads) reattaches to the thread the session was last in instead
   // of leaving yet another orphan "Side: New thread" session behind.
   useEffect(() => {
-    if (threadId !== undefined || !autoCreate || !visible) return
+    if (threadId !== undefined || !visible) return
     const reattach = reattachTarget()
     if (reattach !== undefined) {
       // Name the seat session: the same native id names a tab in every session.
       ctx.get('betterSidebar')?.updateTab(tab.id, { meta: { threadId: reattach } }, scope.sessionId)
       return
     }
-    void startThread()
+    if (autoCreate) void startThread()
   }, [threadId, autoCreate, visible, startThread, reattachTarget, ctx, tab.id, scope.sessionId])
 
   // Remember the thread this tab holds, so reopening the panel (or a restart)
@@ -760,13 +925,15 @@ export function SideChatView(props: {
    *  (first attach = the whole seed-cut slice; polls = afterSeq deltas),
    *  merged by seq. */
   const fetchThread = useCallback(async (childId: string): Promise<void> => {
+    const cache = cacheRef.current
+    if (cache.threadId !== childId) return
     controllerRef.current?.abort()
     const controller = new AbortController()
     controllerRef.current = controller
     try {
-      const cache = cacheRef.current
       const afterSeq = cache.entries.at(-1)?.event.seq
       const { events, live, pending } = await api.sidechatEvents(childId, afterSeq, controller.signal)
+      if (controller.signal.aborted || cacheRef.current !== cache) return
       // The live set is the CURRENT attempt, so it replaces whatever the
       // previous pull held; a settled step drops out of the host buffer and
       // its durable assistant/message takes over in the mapping. The pending
@@ -788,7 +955,9 @@ export function SideChatView(props: {
   /** The composer-bar badge pull (live state + preset/model identity). */
   const fetchInfo = useCallback(async (childId: string): Promise<void> => {
     try {
-      setInfo(await api.sidechatInfo(childId))
+      const cache = cacheRef.current
+      const result = await api.sidechatInfo(childId)
+      if (cache === cacheRef.current && cache.threadId === childId) setInfo(result)
     } catch {
       // The badge is decorative; a wire failure keeps the last value.
     }
@@ -797,7 +966,7 @@ export function SideChatView(props: {
   // Reset the transcript cache whenever the binding changes, then focus
   // the composer — it owns the first message of a fresh thread.
   useEffect(() => {
-    cacheRef.current = { entries: [], live: [], pending: [] }
+    cacheRef.current = { threadId, entries: [], live: [], pending: [] }
     prevRowsRef.current = []
     controllerRef.current?.abort()
     if (invalidateRef.current !== undefined) {
@@ -808,6 +977,7 @@ export function SideChatView(props: {
     setSaved(false)
     setInfo(null)
     setEcho(null)
+    setBusy(null)
     if (threadId !== undefined) {
       void fetchInfo(threadId)
       window.setTimeout(() => composerRef.current?.focus(), 0)
@@ -900,7 +1070,8 @@ export function SideChatView(props: {
     const live = cache.live
       .filter(event => !settled.has(`${String(event.data.turn)}:${String(event.data.step)}`))
       .map(event => ({ event: event as SidebarSessionEvent }))
-    const next = threadId === undefined ? [] : transcriptRows([...cache.entries, ...live], prevRowsRef.current)
+    const next = threadId === undefined || cache.threadId !== threadId
+      ? [] : transcriptRows([...cache.entries, ...live], prevRowsRef.current)
     prevRowsRef.current = next
     return next
   },
@@ -924,25 +1095,18 @@ export function SideChatView(props: {
     [threadId, revision, rows],
   )
 
-  // Retire the local echo once the host accounts for the message it carries:
-  // either the unclaimed inbox lists it (the claim has not happened yet) or a
-  // durable user row NEWER than the send logged it (the claim already ran).
-  // An identical older message cannot retire the echo — the seq gate.
   const echoText = echo?.text ?? ''
   useEffect(() => {
     if (echo === null || busy === 'sending') return
-    if (pendingRows.some(item => item.text === echo.text)) {
+    if (pendingRows.some(item => item.id === echo.messageId)) {
       setEcho(null)
       return
     }
-    if (rows.some(row => row.kind === 'user' && row.seq > echo.seq && row.text === echo.text)) {
+    if (rows.some(row => row.kind === 'user' && row.messageId === echo.messageId)) {
       setEcho(null)
     }
   }, [echo, busy, pendingRows, rows])
-  /** The echo is hidden the moment the inbox already carries the same text
-   *  (the retire effect above then drops the state) so the message never shows
-   *  twice for a frame. */
-  const showEcho = echo !== null && !pendingRows.some(item => item.text === echo.text)
+  const showEcho = echo !== null && !pendingRows.some(item => item.id === echo.messageId) && !rows.some(row => row.kind === 'user' && row.messageId === echo.messageId)
 
   const canSave = threadId !== undefined && threadHasCompletedTurn(cacheRef.current.entries)
   const trailingPending = threadId !== undefined && threadTrailingPending(cacheRef.current.entries)
@@ -952,7 +1116,7 @@ export function SideChatView(props: {
    *  reports it running. A RUNNING thread keeps the row regardless (the
    *  long-tool-call window has no streaming text to show progress). */
   const hasOutputRow = rows.some(row => row.kind === 'assistant' || row.kind === 'reasoning')
-  const showThinking = threadId !== undefined && (running || (echo !== null && !hasOutputRow))
+  const showThinking = threadId !== undefined && (running || ((echo !== null || busy === 'sending') && !hasOutputRow))
 
   // Follow the stream: stick to the bottom while the log — or the pending
   // tail — grows.
@@ -1096,29 +1260,60 @@ export function SideChatView(props: {
     field.style.height = `${Math.min(field.scrollHeight, COMPOSER_MAX_HEIGHT)}px`
   }
 
+  // Capture a binding generation, not a mutable "current session" fallback.
+  // A deferred slider action from an old row must fail even after A → B → A.
+  const surfaceBinding = useMemo(() => ({ childId: threadId, active: visible }), [threadId, visible])
+  useLayoutEffect(() => {
+    surfaceBinding.active = visible
+    return () => { surfaceBinding.active = false }
+  }, [surfaceBinding, visible])
+  const sendSurfacePrompt = useCallback(async (text: string): Promise<void> => {
+    try {
+      const childId = surfaceBinding.childId
+      if (!surfaceBinding.active || childId === undefined || childId.trim() === '' || text.trim() === '') {
+        throw new Error('Sidechat surface is no longer active or the prompt is empty')
+      }
+      setError(null)
+      await api.sidechatPrompt(childId, text)
+      if (surfaceBinding.active) {
+        void fetchThread(childId)
+        void fetchInfo(childId)
+      }
+    } catch (cause) {
+      if (surfaceBinding.active) setError(cause instanceof Error ? cause.message : String(cause))
+      throw cause
+    }
+  }, [surfaceBinding, fetchThread, fetchInfo])
+  const genuiRowSurface: SidechatRowSurfaceBinding = {
+    service: ctx.get('betterSidebar'), threadId, visible, sendPrompt: sendSurfacePrompt,
+  }
+
+  const addImages = (files: readonly File[]): void => {
+    try { draft.add(files, info?.images?.available === true ? info.images.limits : undefined); setError(null) }
+    catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)) }
+  }
+
   const handleSend = async (): Promise<void> => {
-    const text = composer.trim()
-    if (text === '' || threadId === undefined || busy !== null) return
+    const attempt = draft.capture()
+    const childId = attempt.owner.childId
+    if ((attempt.text === '' && attempt.images.length === 0) || childId === undefined || busy !== null) return
     setBusy('sending')
     setError(null)
-    // Local echo: the host accepts a message into the child's inbox and only
-    // LOGS it when a step claims it, so between those moments the message used
-    // to be invisible ("sent, nothing happened"). The bubble shows at once and
-    // is retired once the inbox or the log carries the message.
-    setEcho({ text, seq: cacheRef.current.entries.at(-1)?.event.seq ?? 0 })
     try {
-      await api.sidechatPrompt(threadId, text)
-      setComposer('')
-      const field = composerRef.current
-      if (field !== null) field.style.height = ''
-      void fetchThread(threadId)
-      void fetchInfo(threadId)
+      const images = await encodeSidechatImages(attempt)
+      if (!attempt.owner.active) return
+      const result = await api.sidechatPrompt(childId, attempt.text, images)
+      if (!attempt.owner.active) return
+      setEcho({ text: attempt.text, messageId: result.messageId, hasImages: images.length > 0 })
+      draft.accept(attempt)
+      void fetchThread(childId)
+      void fetchInfo(childId)
     } catch (cause) {
-      // Nothing reached the host: drop the echo and say why.
-      setEcho(null)
-      setError(cause instanceof Error ? cause.message : String(cause))
+      if (attempt.owner.active) setError(cause instanceof SidebarApiError && cause.code === 'network'
+        ? t('sideChatSendUncertain')
+        : cause instanceof Error ? cause.message : String(cause))
     } finally {
-      setBusy(null)
+      if (attempt.owner.active) setBusy(null)
     }
   }
 
@@ -1182,11 +1377,14 @@ export function SideChatView(props: {
 
   /** Archive the bound thread on the host (the same capability the session
    *  list's own archive action uses; `stopActivity` settles a running agent
-   *  first). The tab then moves to another live thread: leaving it bound to an
-   *  archived session would dead-end the panel, because the host refuses to
-   *  open archived sessions. */
+   *  first). Disabled for a side thread: the host session list never lists a
+   *  subagent-origin row, so no "unarchive" entry could ever recover it (issue
+   *  #949) — the guard below makes that a hard rule, not just a disabled
+   *  styling. For a recoverable binding the tab then moves to another live
+   *  thread: leaving it bound to an archived session would dead-end the panel,
+   *  because the host refuses to open archived sessions. */
   const handleArchive = async (): Promise<void> => {
-    if (threadId === undefined || busy !== null) return
+    if (threadId === undefined || busy !== null || archiveBlocked) return
     setBusy('archiving')
     setError(null)
     setSaved(false)
@@ -1247,19 +1445,20 @@ export function SideChatView(props: {
           onReconnect={() => { ctx.connection?.reconnect() }}
         />
       )}
-      <div ref={transcriptRef} className={css.sidechatScroll}>
+      <div ref={transcriptRef} className={css.sidechatScroll} data-genui-surface="dsh-better-sidebar/sidechat">
         {/* The host delegate is what makes a local markdown link in a row
             clickable at all (see use-markdown-surface), scoped to this
             transcript so nothing outside it is claimed. */}
         <MarkdownDelegateProvider openFile={openChatFile}>
-          {rows.map(row => renderRow(row, rowLabels, rewriteChatText))}
+          {rows.map(row => renderRow(row, rowLabels, rowSurface, genuiRowSurface))}
           {/* The unclaimed inbox: accepted messages whose claim has not logged
               them yet. The same bubble surface (and markdown pass) as a
               durable user row, plus the state word and the dequeue button. */}
           {pendingRows.map(item => (
             <div key={`pending:${item.id}`} className={css.sidechatPending}>
               <div className={css.sidechatPendingText}>
-                <MarkdownText {...markdownTextProps(rewriteChatText(item.text), rowLabels)} />
+                {item.text !== '' && <MarkdownText {...markdownTextProps(rewriteChatText(item.text), rowLabels)} />}
+                <SidechatImages visible={visible} childId={threadId} messageId={item.id} images={item.images} />
               </div>
               <div className={css.sidechatPendingMeta}>
                 <StateDot state="ongoing" size={8} />
@@ -1268,6 +1467,7 @@ export function SideChatView(props: {
                   type="button"
                   className={css.sidechatDequeueBtn}
                   onClick={() => void handleDequeue(item.id)}
+                  disabled={item.removable === false}
                   title={t('sideChatDequeue')}
                   aria-label={t('sideChatDequeue')}
                 >
@@ -1280,7 +1480,8 @@ export function SideChatView(props: {
           {showEcho && echo !== null && (
             <div className={css.sidechatPending}>
               <div className={css.sidechatPendingText}>
-                <MarkdownText {...markdownTextProps(rewriteChatText(echo.text), rowLabels)} />
+                {echo.text !== '' && <MarkdownText {...markdownTextProps(rewriteChatText(echo.text), rowLabels)} />}
+                {echo.hasImages && <span role="status">{t('sideChatImageLoading')}</span>}
               </div>
               <div className={css.sidechatPendingMeta}>
                 <StateDot state="ongoing" size={8} />
@@ -1306,6 +1507,16 @@ export function SideChatView(props: {
       {saved && <div className={css.sidechatHint}>{t('sideChatSaved')}</div>}
       {error !== null && <div className={css.sidechatError}>{t('sideChatError', { message: error })}</div>}
       <div className={css.sidechatComposer}>
+        <input ref={fileInputRef} type="file" accept={SIDECHAT_IMAGE_MEDIA_TYPES.join(',')} multiple hidden
+          aria-label={t('sideChatAddImages')} onChange={event => { addImages(Array.from(event.target.files ?? [])); event.target.value = '' }} />
+        {draft.owner.images.length > 0 && <div className={css.sidechatImages}>
+          {draft.owner.images.map(image => <div className={css.sidechatImagePreview} key={image.id}>
+            <img className={css.sidechatImage} src={image.preview} alt={image.file.name} />
+            <button type="button" className={css.sidechatIconBtn} aria-label={t('sideChatRemoveImage', { name: image.file.name })}
+              onClick={() => { draft.remove(image.id) }}><IconCloseFillRegular size={14} /></button>
+          </div>)}
+        </div>}
+        {busy === 'sending' && <span role="status">{t('sideChatSending')}</span>}
         <textarea
           ref={composerRef}
           className={css.sidechatComposerInput}
@@ -1315,6 +1526,13 @@ export function SideChatView(props: {
           onChange={event => {
             setComposer(event.target.value)
             growComposer()
+          }}
+          onPaste={event => {
+            const files = Array.from(event.clipboardData.items).filter(item => item.kind === 'file' && item.type.startsWith('image/')).flatMap(item => { const file = item.getAsFile(); return file === null ? [] : [file] })
+            if (files.length === 0) return
+            event.preventDefault()
+            event.stopPropagation()
+            addImages(files)
           }}
           onKeyDown={event => {
             if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return
@@ -1329,6 +1547,10 @@ export function SideChatView(props: {
               a hover bubble (ComposerTip) so its meaning is readable without
               leaving the input. */}
           <div className={css.sidechatComposerTools}>
+            <ComposerTip label={info?.images?.available === true ? t('sideChatAddImages') : t('sideChatImagesDisabled')}>
+              <button type="button" className={css.sidechatIconBtn} aria-label={t('sideChatAddImages')}
+                disabled={info?.images?.available !== true} onClick={() => { fileInputRef.current?.click() }}><IconPaperclipOutlineRegular size={16} /></button>
+            </ComposerTip>
             <ComposerTip label={t('sideChatNew')}>
               <button
                 type="button"
@@ -1373,12 +1595,12 @@ export function SideChatView(props: {
                 <IconSaveOutline16 />
               </button>
             </ComposerTip>
-            <ComposerTip label={running ? t('sideChatArchiveRunning') : t('sideChatArchive')}>
+            <ComposerTip label={archiveTip}>
               <button
                 type="button"
                 className={css.sidechatIconBtn}
                 onClick={() => void handleArchive()}
-                disabled={running || busy !== null}
+                disabled={archiveBlocked || running || busy !== null}
                 aria-label={t('sideChatArchive')}
               >
                 <IconArchiveOutlineRegular size={16} />
@@ -1431,7 +1653,7 @@ export function SideChatView(props: {
                 type="button"
                 className={css.sidechatSendBtn}
                 onClick={() => void handleSend()}
-                disabled={composer.trim() === '' || busy !== null}
+                disabled={(composer.trim() === '' && draft.owner.images.length === 0) || busy !== null}
                 aria-label={t('sideChatSend')}
               >
                 <IconSendOutlineRegular size={16} />
