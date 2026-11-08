@@ -48,6 +48,8 @@
 
 - 🧭 **空白会话 + 右栏收起时，备用「展开底部面板」不再压住主题左上角按钮**（[#1157](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1157)）：主题把锚点隐藏后仍留在 DOM 里、rect 全为 0，旧逻辑把它当成真实位置并撞上 macOS 红绿灯下限；现在零尺寸锚点按不存在处理，退回右上角兜底。
 
+- 🪟 **Windows「在资源管理器中打开」对含空格 / 逗号 / # / % 的路径不再打开错误目录**（[#513](https://github.com/omdsh-dev/DSH-better-sidebar/issues/513)）：Explorer 改收 `/select,` + file URL 两个参数，URL 只转义 `%`、`,`、`#`，空格与非 ASCII 原样保留；不再让 Node 把整个 `/select,<path>` 加引号。
+
 ### v0.30.1
 
 - 🎯 **设置页「侧边卡片」的导航图标不再叠成两个**：插件此前按"宿主设置导航还没有图标通道"的老假设，用 CSS 把兜底齿轮藏起来、再画自己的图标；宿主早已提供按 section id 寻址的 `settings.section.icon` 插槽，而且图标的 DOM 外面多了一层 span，老选择器失效后兜底 SVG 露了出来，与插件图标并排显示。现在改为**走宿主插槽**提供图标，删掉标记 + CSS 遮罩那一套（顺带去掉了一个监听整个 document 的 MutationObserver）。

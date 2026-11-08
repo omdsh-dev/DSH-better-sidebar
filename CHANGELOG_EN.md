@@ -48,6 +48,8 @@
 
 - 🧭 **A blank session with the right column collapsed no longer puts the fallback bottom-panel toggle on top of the theme's top-left button** ([#1157](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1157)): a theme can leave the anchor in the DOM with an all-zero rect, and the old code treated that as a real position and hit the macOS traffic-light floor; a zero-sized anchor is now treated as absent and uses the top-right fallback.
 
+- 🪟 **Windows "reveal in file manager" no longer opens the wrong folder for paths containing spaces / commas / # / %** ([#513](https://github.com/omdsh-dev/DSH-better-sidebar/issues/513)): Explorer now receives `/select,` plus a file URL as two arguments; the URL escapes only `%`, `,` and `#`, leaving spaces and non-ASCII literal, so Node cannot quote the whole `/select,<path>` token.
+
 ### v0.30.1
 
 - 🎯 **The "Side card" settings row no longer shows two icons**: the plugin still assumed the settings navigation had no icon channel, so it hid the fallback gear with CSS and painted its own glyph. The shell has long since exposed a `settings.section.icon` slot addressed by section id, and it now wraps the nav icon in a span — the stale `> svg:first-child` rule stopped hiding the fallback, so both glyphs rendered side by side. The row now contributes its icon **through the slot**, and the marker + CSS-mask apparatus is gone (along with a document-wide MutationObserver).
