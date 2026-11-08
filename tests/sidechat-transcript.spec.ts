@@ -14,6 +14,7 @@ import {
   formatTokens,
   toolArgsSummary,
   transcriptRows,
+  sidechatRowKey,
   type SidechatTranscriptRow,
 } from '../src/client/sidechat-transcript.ts'
 
@@ -57,10 +58,10 @@ function toolRoleResultMessage(callId: string, text: string, isError = false): R
 }
 
 describe('transcriptRows', () => {
-  it('cuts the inherited seed at the last end-seed and renders the boundary as an injection row', () => {
+  it('cuts the inherited seed at the last tagged end-seed and renders the boundary as an injection row', () => {
     const entries = [
       entry(ev('user/message', 0, { content: textBlocks('inherited'), source: { kind: 'user' } })),
-      entry(ev('session/end-seed', 1)),
+      entry(ev('session/end-seed', 1, { inherited: true })),
       entry(ev('user/message', 2, { content: textBlocks(`${SIDE_BOUNDARY_PREFIX}\n\nmode`), source: { kind: SIDE_INJECTION_SOURCE_KIND } })),
       entry(ev('user/message', 3, { content: textBlocks('the side question'), source: { kind: 'user' } })),
     ]
@@ -220,6 +221,99 @@ describe('transcriptRows', () => {
     ]
     rows = transcriptRows(orphan)
     expect(rows[0]).toMatchObject({ kind: 'tool', failed: true, resultText: 'boom' })
+  })
+})
+
+describe('failure rows', () => {
+  it('renders a turn/end error through the reason message', () => {
+    const entries = [
+      entry(ev('session/end-seed', 0)),
+      entry(ev('turn/start', 1, { turn: 1 })),
+      entry(ev('turn/end', 2, { turn: 1, reason: { kind: 'error', error: { message: 'provider exploded', code: 'X' } } })),
+    ]
+    const rows = transcriptRows(entries)
+    // The visible failure comes first, the turn's duration tail after it.
+    expect(rows[0]).toEqual({ kind: 'error', seq: 2, text: 'provider exploded' })
+    expect(rows[1]).toMatchObject({ kind: 'turnSummary', seq: 2 })
+  })
+
+  it('falls back to a string rendering when the reason carries no message', () => {
+    const entries = [
+      entry(ev('session/end-seed', 0)),
+      entry(ev('turn/end', 1, { turn: 1, reason: { kind: 'error' } })),
+    ]
+    // Never blank, never a thrown mapping.
+    expect(transcriptRows(entries)[0]).toEqual({ kind: 'error', seq: 1, text: '[object Object]' })
+  })
+
+  it('renders a failed assistant/attempt from its terminal finish chunk', () => {
+    const entries = [
+      entry(ev('session/end-seed', 0)),
+      entry(ev('turn/start', 1, { turn: 1 })),
+      entry(ev('assistant/attempt', 2, {
+        turn: 1,
+        step: 1,
+        stream: [
+          { type: 'text-chunks', time0: 0, index: 0, dt: [], texts: ['partial'] },
+          // The adapter-failure shape dsh-llm's `adapterFailureChunk` writes.
+          { type: 'chunk', time: 1, chunk: { type: 'finish', reason: { kind: 'error', failure: { message: 'quota exceeded', code: 'QUOTA' } } } },
+        ],
+      })),
+    ]
+    expect(transcriptRows(entries)[0]).toEqual({ kind: 'error', seq: 2, text: 'quota exceeded' })
+  })
+
+  it('renders ONE error row when the failed attempt is followed by its turn/end', () => {
+    const entries = [
+      entry(ev('session/end-seed', 0)),
+      entry(ev('turn/start', 1, { turn: 1 })),
+      entry(ev('assistant/attempt', 2, {
+        turn: 1,
+        step: 1,
+        stream: [{ type: 'chunk', time: 1, chunk: { type: 'finish', reason: { kind: 'error', failure: { message: 'quota exceeded', code: 'QUOTA' } } } }],
+      })),
+      // The agent loop repeats the same failure as the turn's own reason: the
+      // attempt's row already covers it.
+      entry(ev('turn/end', 3, { turn: 1, reason: { kind: 'error', error: { message: 'quota exceeded', code: 'QUOTA' } } })),
+    ]
+    const errors = transcriptRows(entries).filter(row => row.kind === 'error')
+    expect(errors).toEqual([{ kind: 'error', seq: 2, text: 'quota exceeded' }])
+  })
+
+  it('renders nothing for an attempt that finished without an error', () => {
+    const entries = [
+      entry(ev('session/end-seed', 0)),
+      entry(ev('assistant/attempt', 1, {
+        turn: 1,
+        step: 1,
+        stream: [{ type: 'chunk', time: 1, chunk: { type: 'finish', reason: { kind: 'stop' } } }],
+      })),
+    ]
+    expect(transcriptRows(entries)).toEqual([])
+  })
+
+  it('keeps an error row\'s identity across pulls (reuse pass)', () => {
+    const entries = [
+      entry(ev('session/end-seed', 0)),
+      entry(ev('turn/end', 1, { turn: 1, reason: { kind: 'error', error: { message: 'boom' } } })),
+    ]
+    const first = transcriptRows(entries)
+    const second = transcriptRows(entries, first)
+    expect(second[0]).toBe(first[0])
+  })
+})
+
+describe('user row identity', () => {
+  it('carries the durable message id and leaves older logs without one', () => {
+    const entries = [
+      entry(ev('session/end-seed', 0)),
+      entry(ev('user/message', 1, { id: 'msg-1', content: textBlocks('the question'), source: { kind: 'user' } })),
+      entry(ev('user/message', 2, { content: textBlocks('a legacy row'), source: { kind: 'user' } })),
+    ]
+    expect(transcriptRows(entries)).toEqual([
+      { kind: 'user', seq: 1, text: 'the question', messageId: 'msg-1' },
+      { kind: 'user', seq: 2, text: 'a legacy row' },
+    ])
   })
 })
 
@@ -384,6 +478,149 @@ describe('tool cards', () => {
   })
 })
 
+describe('present deliverables rows', () => {
+  /** The `present` tool's arguments: paths relative to the session cwd. */
+  const PRESENT_ARGS = JSON.stringify({
+    files: [
+      { path: 'report.pdf', description: 'the report' },
+      { path: 'chart.png' },
+    ],
+  })
+  /** The authoritative event copy: absolute paths + model descriptions. */
+  const EVENT_FILES = [
+    { path: '/p/report.pdf', description: 'event copy' },
+    { path: '/p/chart.png', description: 'the chart' },
+  ]
+
+  const seed = entry(ev('session/end-seed', 0))
+
+  const presentCall = (seq: number, callId = 'cp', args = PRESENT_ARGS): SidebarHistoryEntry =>
+    entry(ev('tool/call', seq, { turn: 1, step: 1, callId, name: 'present', arguments: args }))
+
+  const presentResult = (
+    seq: number,
+    callId = 'cp',
+    text = 'Presented /p/report.pdf',
+    extra: Record<string, unknown> = {},
+  ): SidebarHistoryEntry =>
+    entry(ev('tool/result', seq, { turn: 1, step: 1, message: toolRoleResultMessage(callId, text), ...extra }))
+
+  const presentedEvent = (seq: number, callId = 'cp', files: readonly unknown[] = EVENT_FILES): SidebarHistoryEntry =>
+    entry(ev('deliverables/presented', seq, { turn: 1, callId, files }))
+
+  it('keeps the card when the present result succeeds (the result row stays hidden)', () => {
+    expect(transcriptRows([seed, presentCall(1), presentResult(2)])).toEqual([
+      { kind: 'deliverables', seq: 1, callId: 'cp', files: [{ path: 'report.pdf', description: 'the report' }, { path: 'chart.png' }] },
+    ])
+  })
+
+  it('replaces the card with the generic failed tool row when the present call fails (M1a)', () => {
+    // The tool ran and reported an error (FS_NOT_FOUND and friends): nothing
+    // was delivered, so the successful-looking card must give way to the
+    // generic failed row — and the error text must not be dropped.
+    const rows = transcriptRows([
+      seed,
+      presentCall(1),
+      presentResult(2, 'cp', 'ENOENT: report.pdf', { error: { name: 'FS_NOT_FOUND', code: 'FS_NOT_FOUND' } }),
+    ])
+    expect(rows).toEqual([{
+      kind: 'tool',
+      seq: 1,
+      name: 'present',
+      failed: true,
+      args: PRESENT_ARGS,
+      resultText: 'ENOENT: report.pdf',
+      executing: false,
+    }])
+  })
+
+  it('omits an empty result text on the failed present row', () => {
+    const rows = transcriptRows([
+      seed,
+      presentCall(1),
+      presentResult(2, 'cp', '', { error: { name: 'FS_NOT_FOUND', code: 'FS_NOT_FOUND' } }),
+    ])
+    expect(rows).toEqual([{
+      kind: 'tool',
+      seq: 1,
+      name: 'present',
+      failed: true,
+      args: PRESENT_ARGS,
+      executing: false,
+    }])
+  })
+
+  it('keeps ONE event card when the event precedes a malformed present call', () => {
+    const malformed = presentCall(2, 'cp', JSON.stringify({ files: [{ path: 7 }] }))
+    expect(transcriptRows([seed, presentedEvent(1), malformed])).toEqual([
+      { kind: 'deliverables', seq: 1, callId: 'cp', files: EVENT_FILES },
+    ])
+  })
+
+  it('keeps ONE card when the presented event precedes its call (event-first, M1b)', () => {
+    // The events route caps the window's head, so the authoritative event can
+    // be served before (or without) the call it belongs to.
+    expect(transcriptRows([seed, presentedEvent(1), presentCall(2)])).toEqual([
+      { kind: 'deliverables', seq: 1, callId: 'cp', files: EVENT_FILES },
+    ])
+  })
+
+  it('keeps ONE card when the presented event follows its call (event data authoritative)', () => {
+    const call = presentCall(1, 'cp', JSON.stringify({ files: [{ path: 'from-args.pdf', description: 'args copy' }] }))
+    expect(transcriptRows([seed, call, presentedEvent(2)])).toEqual([
+      { kind: 'deliverables', seq: 1, callId: 'cp', files: EVENT_FILES },
+    ])
+  })
+
+  it('renders an event-only delivery whose call row is outside the window', () => {
+    expect(transcriptRows([seed, presentedEvent(1)])).toEqual([
+      { kind: 'deliverables', seq: 1, callId: 'cp', files: EVENT_FILES },
+    ])
+  })
+
+  it('updates the SAME card when a second presented event names one callId', () => {
+    const rows = transcriptRows([
+      seed,
+      presentCall(1),
+      presentedEvent(2),
+      presentedEvent(3, 'cp', [{ path: '/p/final.pdf' }]),
+    ])
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ kind: 'deliverables', seq: 1, callId: 'cp' })
+    expect((rows[0] as Extract<SidechatTranscriptRow, { kind: 'deliverables' }>).files).toEqual([{ path: '/p/final.pdf' }])
+  })
+
+  it('cuts inherited present calls and deliveries with the fork seed', () => {
+    const rows = transcriptRows([
+      presentCall(0, 'c-seed'),
+      presentedEvent(1, 'c-seed', [{ path: '/p/inherited.pdf' }]),
+      entry(ev('session/end-seed', 2, { inherited: true })),
+      presentedEvent(3, 'c-own', [{ path: '/p/own.pdf' }]),
+    ])
+    expect(rows).toEqual([{ kind: 'deliverables', seq: 3, callId: 'c-own', files: [{ path: '/p/own.pdf' }] }])
+  })
+
+  it('leaves malformed or empty call files on the generic tool row', () => {
+    for (const args of [JSON.stringify({ files: [] }), JSON.stringify({ files: [{ path: 7 }] })]) {
+      expect(transcriptRows([seed, presentCall(1, 'cp', args)])).toEqual([
+        { kind: 'tool', seq: 1, name: 'present', failed: false, args, executing: true },
+      ])
+    }
+  })
+
+  it('re-adopts a deliverables card across pulls and rebuilds it when its files change', () => {
+    const entries = [seed, presentCall(1), presentedEvent(2)]
+    const first = transcriptRows(entries)
+    const second = transcriptRows(entries, first)
+    expect(second).toEqual(first)
+    expect(second[0]).toBe(first[0])
+
+    const changed = transcriptRows([...entries, presentedEvent(3, 'cp', [{ path: '/p/final.pdf' }])], first)
+    expect(changed).toHaveLength(1)
+    expect(changed[0]).not.toBe(first[0])
+  })
+})
+
 describe('usage formatting', () => {
   it('formatTokens mirrors the main conversation K/M compaction', () => {
     expect(formatTokens(517)).toBe('517')
@@ -492,5 +729,46 @@ describe('transcriptRows row reuse (newer row kinds)', () => {
     const after = transcriptRows([entry(ev('session/end-seed', 0)), call, result], before)
     expect(after[0]).not.toBe(before[0])
     expect(after[0]).toMatchObject({ kind: 'tool', executing: false })
+  })
+})
+
+
+describe('sidechat content-block identity', () => {
+  it('keeps original indexes through text, skipped, empty and reasoning blocks', () => {
+    const rows = transcriptRows([entry(ev('assistant/message', 17, { message: { content: [
+      { type: 'text', text: 'first' },
+      { type: 'image', url: 'synthetic' },
+      { type: 'text', text: '' },
+      null,
+      { type: 'text', text: 'second' },
+      { type: 'reasoning', text: 'reason one' },
+      { type: 'reasoning', text: 'reason two' },
+    ] } }))])
+    expect(rows.map(row => 'contentBlockIndex' in row ? row.contentBlockIndex : undefined)).toEqual([0, 4, 5, 6])
+    expect(rows.map(sidechatRowKey)).toEqual(['assistant:17:0', 'assistant:17:4', 'reasoning:17:5', 'reasoning:17:6'])
+    expect(new Set(rows.map(sidechatRowKey)).size).toBe(rows.length)
+  })
+
+  it('does not reuse a prior row when its block index changed', () => {
+    const first = transcriptRows([entry(ev('assistant/message', 17, { message: { content: textBlocks('same text') } }))])
+    const changed = transcriptRows([entry(ev('assistant/message', 17, { message: { content: [null, ...textBlocks('same text')] } }))], first)
+    expect(changed[0]).not.toBe(first[0])
+    expect(changed[0]).toMatchObject({ contentBlockIndex: 1 })
+    const unchanged = transcriptRows([entry(ev('assistant/message', 17, { message: { content: [null, ...textBlocks('same text')] } }))], changed)
+    expect(unchanged[0]).toBe(changed[0])
+  })
+
+  it('keeps missing and invalid streaming block indexes unavailable rather than guessing zero', () => {
+    for (const index of [undefined, -1, 0.5, '0']) {
+      const rows = transcriptRows([entry(ev('assistant/live-chunk', 20, { turn: 1, step: 1,
+        chunk: { type: 'text-delta', text: 'incomplete', ...(index === undefined ? {} : { index }) },
+      }))])
+      expect(rows[0]).toMatchObject({ kind: 'assistant', settled: false })
+      expect(rows[0]).not.toHaveProperty('contentBlockIndex')
+    }
+    const rows = transcriptRows([entry(ev('assistant/live-chunk', 20, { turn: 1, step: 1,
+      chunk: { type: 'text-delta', text: 'incomplete', index: 3 },
+    }))])
+    expect(rows[0]).toMatchObject({ contentBlockIndex: 3, settled: false })
   })
 })

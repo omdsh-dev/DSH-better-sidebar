@@ -19,6 +19,8 @@ import {
 } from '../src/client/service.ts'
 import type {
   BetterSidebarService,
+  SidechatSurface,
+  SidechatSurfaceAdapter,
   FileFetchStrategy,
   FileIconDescriptor,
   FileViewerDescriptor,
@@ -97,8 +99,8 @@ const viewer: FileViewerDescriptor = {
   },
   settings: { pluginToggles: [{ key: 'delimiter', title: 'Delimiter', type: 'text', placeholder: ',' }] },
   component: (props: FileViewerProps) => {
-    const { customData, content, truncated, mediaUrl, viewerId, path, title } = props
-    void customData; void content; void truncated; void mediaUrl; void viewerId; void path; void title
+    const { customData, content, size, largeFile, mediaUrl, viewerId, path, title } = props
+    void customData; void content; void size; void largeFile; void mediaUrl; void viewerId; void path; void title
     return null
   },
 }
@@ -165,3 +167,18 @@ const features: readonly string[] = SIDEBAR_FEATURES
 void version; void features
 const strategy: FileFetchStrategy = 'mediaUrl'
 void diff; void prefs; void store; void declaration; void typeName; void strategy
+
+
+/** Proposed sidechat adapter: browser-only types, no host implementation import. */
+const sidechatAdapter: SidechatSurfaceAdapter = {
+  id: 'my-plugin:sidechat',
+  mount: (surface: SidechatSurface) => {
+    const source: 'dsh-better-sidebar/sidechat' = surface.source
+    const root: HTMLElement = surface.root
+    const identity: [string, number, number] = [surface.threadId, surface.eventSeq, surface.contentBlockIndex]
+    const send: (text: string) => Promise<void> = surface.sendPrompt
+    void source; void root; void identity; void send
+    return () => {}
+  },
+}
+service.registerSidechatSurfaceAdapter(sidechatAdapter)()

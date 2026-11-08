@@ -1,5 +1,5 @@
 /**
- * Built-in registration tests: the plugin registers 6 tabs and 3 file
+ * Built-in registration tests: the plugin registers 6 tabs and 4 file
  * viewers through the same service external plugins use (dogfooding);
  * the catch-all `code` viewer and the html sandbox settings pin the
  * registry's behavior. The read-only previews (image / pdf /
@@ -14,16 +14,18 @@
  * terminal, which is `bottomOnly` and therefore contributes no native tab
  * type. It is the one built-in whose carrier surface is asserted here.
  */
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ReactElement } from 'react'
 import { VscCommentDiscussion, VscGitCommit, VscLayers } from 'react-icons/vsc'
 // First import: browser globals before the xterm-carrying builtin graph loads.
 import './browser-globals.ts'
 
 import type { Context } from '../src/context-types.ts'
+import { api } from '../src/client/api.ts'
 import { createBetterSidebarService } from '../src/client/service.ts'
 import { planFsReadOutcome } from '../src/client/editor-load.ts'
 import { createSidebarStore } from '../src/client/state.ts'
+import { builtinTabs } from '../src/client/builtins/tabs.tsx'
 import { registerBuiltins } from '../src/client/builtins/index.ts'
 import { parkSidechatReopen } from '../src/client/SideChatView.tsx'
 
@@ -65,6 +67,7 @@ describe('built-in tab registrations', () => {
   it('the git (changes) tab is a single-instance badge-carrying visible tab', () => {
     const { service } = setup()
     const changes = service.getTab('git')
+    expect(typeof changes?.title === 'function' ? changes.title() : changes?.title).toBe('Git')
     expect(changes?.single).toBe(true)
     expect(changes?.hidden).not.toBe(true)
     expect(changes?.badge).toBeDefined()
@@ -161,14 +164,20 @@ describe('built-in tab registrations', () => {
     expect(sidechat?.dedupeKey?.(first!.tab)).toBeUndefined()
   })
 
-  it('the subagent tab declares its auto-open related settings', () => {
+  it('the subagent tab declares its auto-open, view, folding, and jobs settings', () => {
     const { service } = setup()
     const toggles = service.getTab('subagent')?.settings?.toggles ?? []
-    expect(toggles.map(t => t.key)).toEqual(['autoOpenSubagent', 'autoOpenJobs', 'tasksViewMode'])
+    expect(toggles.map(t => t.key)).toEqual(['autoOpenSubagent', 'autoOpenJobs', 'tasksViewMode',
+      'tasksAutoFoldSettled', 'tasksAutoFoldBranches', 'tasksAutoFoldIdle', 'jobsAutoCollapse'])
     // The default-view row is a graph/tree select (values are strings).
     const viewMode = toggles[2]
     expect(viewMode?.type).toBe('select')
     expect((viewMode?.options ?? []).map(o => o.value)).toEqual(['graph', 'tree'])
+    for (const toggle of toggles.slice(3)) {
+      expect(toggle.type ?? 'switch', toggle.key).toBe('switch')
+      expect(typeof toggle.title === 'function' ? toggle.title() : toggle.title, toggle.key).toBeTruthy()
+      expect(typeof toggle.desc === 'function' ? toggle.desc() : toggle.desc, toggle.key).toBeTruthy()
+    }
   })
 
   it('the editor tab declares its merged-mode (embedded file tree) and exclude-pattern settings', () => {
@@ -230,16 +239,100 @@ describe('built-in tab registrations', () => {
   })
 })
 
+describe('side chat close archives the bound thread', () => {
+  const scope = { sessionId: 'parent' }
+
+  function bound(threadId: string) {
+    return { id: `sidechat:${threadId}`, type: 'sidechat', title: 'Side Chat', meta: { threadId } }
+  }
+
+  function ctxWithArchive(
+    archiveSession?: (sessionId: string, options: { stopActivity: boolean }) => Promise<void>,
+  ): Context {
+    return {
+      get: (name: string) => (
+        name === 'uiWorkspace' && archiveSession !== undefined ? { archiveSession } : undefined
+      ),
+    } as unknown as Context
+  }
+
+  function sidechatClose(ctx: Context) {
+    return builtinTabs(ctx).find(tab => tab.id === 'sidechat')?.onClose
+  }
+
+  afterEach(() => { vi.restoreAllMocks() })
+
+  it('archives a bound thread with stopActivity, then disposes the live agent', async () => {
+    const order: string[] = []
+    let settle!: () => void
+    const gate = new Promise<void>(resolve => { settle = resolve })
+    const archiveSession = vi.fn(async (sessionId: string) => {
+      order.push(`archive:${sessionId}`)
+      await gate
+    })
+    const dispose = vi.spyOn(api, 'sidechatDispose').mockImplementation(async (childId) => {
+      order.push(`dispose:${childId}`)
+      return { accepted: true }
+    })
+    sidechatClose(ctxWithArchive(archiveSession))?.(bound('child-1'), scope)
+    expect(archiveSession).toHaveBeenCalledWith('child-1', { stopActivity: true })
+    expect(dispose).not.toHaveBeenCalled()
+    settle()
+    await vi.waitFor(() => {
+      expect(order).toEqual(['archive:child-1', 'dispose:child-1'])
+    })
+  })
+
+  it('still disposes when archive is unavailable or rejects, with no unhandled rejection', async () => {
+    const rejections: unknown[] = []
+    const onRejection = (reason: unknown): void => { rejections.push(reason) }
+    process.on('unhandledRejection', onRejection)
+    const dispose = vi.spyOn(api, 'sidechatDispose').mockResolvedValue({ accepted: true })
+    try {
+      sidechatClose(ctxWithArchive())?.(bound('child-missing'), scope)
+      const throwing = {
+        get: () => { throw new Error('no workspace service') },
+      } as unknown as Context
+      sidechatClose(throwing)?.(bound('child-throw'), scope)
+      const archiveSession = vi.fn(() => Promise.reject(new Error('archive failed')))
+      sidechatClose(ctxWithArchive(archiveSession))?.(bound('child-reject'), scope)
+      await vi.waitFor(() => {
+        expect(dispose.mock.calls.map(call => call[0])).toEqual(['child-missing', 'child-throw', 'child-reject'])
+      })
+      expect(archiveSession).toHaveBeenCalledWith('child-reject', { stopActivity: true })
+      await new Promise(resolve => { setTimeout(resolve, 0) })
+      expect(rejections).toEqual([])
+    } finally {
+      process.off('unhandledRejection', onRejection)
+    }
+  })
+
+  it('does not archive or dispose an unbound autoCreate tab', async () => {
+    const archiveSession = vi.fn(async () => {})
+    const dispose = vi.spyOn(api, 'sidechatDispose').mockResolvedValue({ accepted: true })
+    sidechatClose(ctxWithArchive(archiveSession))?.({
+      id: 'sidechat:new-1',
+      type: 'sidechat',
+      title: 'Untitled',
+      meta: { autoCreate: true },
+    }, scope)
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(archiveSession).not.toHaveBeenCalled()
+    expect(dispose).not.toHaveBeenCalled()
+  })
+})
+
 describe('built-in file viewer registrations', () => {
-  it('registers the 3 built-in file viewers (the read-only previews yielded to the host)', () => {
+  it('registers the 5 built-in file viewers (the read-only previews yielded to the host)', () => {
     const { service } = setup()
     expect(service.getFileViewers().map(v => v.id).sort()).toEqual(
-      ['code', 'html', 'markdown'],
+      ['code', 'html', 'jsonl', 'markdown', 'media'],
     )
     // The yielded ids are gone: the host's own document preview
     // (ui-sidebar-documentpreview) owns images, pdf, spreadsheets, office
-    // and plain text; the plugin keeps only markdown / html / the editable
-    // code catch-all.
+    // and plain text; the plugin keeps only markdown / html / the JSONL
+    // record preview / the media player / the editable code catch-all.
     for (const id of ['image', 'pdf', 'binary-download']) {
       expect(service.getFileViewers().map(v => v.id), `${id} must not be built in`).not.toContain(id)
     }
@@ -289,6 +382,37 @@ describe('built-in file viewer registrations', () => {
     expect(service.matchFileViewer('index.HTML')?.id).toBe('html')
   })
 
+  it('jsonl claims jsonl/ndjson before the catch-all', () => {
+    const { service } = setup()
+    // Newline-delimited JSON has its own record-per-row preview (and the
+    // JSONL editor behind the mode toggle) instead of the code catch-all's
+    // one-long-document surface. Plain `.json` stays with the catch-all.
+    expect(service.matchFileViewer('events.jsonl')?.id).toBe('jsonl')
+    expect(service.matchFileViewer('events.ndjson')?.id).toBe('jsonl')
+    expect(service.matchFileViewer('events.JSONL')?.id).toBe('jsonl')
+    expect(service.matchFileViewer('package.json')?.id).toBe('code')
+  })
+
+  it('media claims the video/audio containers through the media URL strategy', () => {
+    const { service } = setup()
+    const media = service.getFileViewers().find(v => v.id === 'media')
+    expect(media?.fetchStrategy).toBe('mediaUrl')
+    // The player is a bare <video>/<audio> on the file route: no document read,
+    // no Blob copy. `fsRead` here would classify these as binary and land on
+    // the download pane, which is exactly the regression this viewer removes.
+    expect(media?.exts).toEqual(expect.arrayContaining(['mp4', 'webm', 'mov', 'mp3', 'm4a', 'wav']))
+    expect(service.matchFileViewer('clip.mp4')?.id).toBe('media')
+    expect(service.matchFileViewer('CLIP.MP4')?.id).toBe('media')
+    expect(service.matchFileViewer('clip.webm')?.id).toBe('media')
+    expect(service.matchFileViewer('take.mov')?.id).toBe('media')
+    expect(service.matchFileViewer('voice.mp3')?.id).toBe('media')
+    expect(service.matchFileViewer('voice.m4a')?.id).toBe('media')
+    // A text/unknown file keeps the catch-all: the media viewer must not
+    // over-claim its way to the top of a `.txt` or a `.zip`.
+    expect(service.matchFileViewer('notes.txt')?.id).toBe('code')
+    expect(service.matchFileViewer('archive.zzz')?.id).toBe('code')
+  })
+
   it('the html viewer declares its sandbox and default-unsafe related settings', () => {
     const { service } = setup()
     const toggles = service.getFileViewers().find(v => v.id === 'html')?.settings?.toggles ?? []
@@ -299,13 +423,24 @@ describe('built-in file viewer registrations', () => {
     expect(toggles[1]?.desc).toBeDefined()
   })
 
+  it('the jsonl viewer carries the code viewer\'s single git-gutter toggle', () => {
+    const { service } = setup()
+    const toggles = (id: string): string[] =>
+      (service.getFileViewers().find(v => v.id === id)?.settings?.toggles ?? []).map(t => t.key)
+    // The viewer is new; its declarative settings row must be the same ONE
+    // switch the editable code surface carries — no per-part switches.
+    expect(toggles('jsonl')).toEqual(['editorGitGutter'])
+    expect(toggles('jsonl')).toEqual(toggles('code'))
+  })
+
   it('no built-in viewer claims the yielded extensions (the host document preview does)', () => {
     const { service } = setup()
     // The spreadsheet / pdf / image / office set yielded to the host: the
     // only plugin-side match left is the catch-all code viewer, so the
     // `editor` type can hand these addresses over (see native/index.ts's
     // canOpen). Legacy doc/xls/ppt were previously claimed by the removed
-    // `binary-download` viewer and are now the host's too.
+    // `binary-download` viewer and are now the host's too. None of them is a
+    // JSONL file, so the `jsonl` viewer is correctly absent from this set.
     for (const path of [
       'book.xlsx', 'legacy.xls', 'macro.xlsb', 'sheet.xlt', 'template.xltx', 'macro.xltm',
       'flat.ods', 'flat.ots', 'flat.fods', 'data.csv', 'data.tsv',
@@ -331,9 +466,8 @@ describe('built-in file viewer registrations', () => {
     expect(service.matchFileViewer('blob.zzz', new Uint8Array([0x01, 0x00, 0x02]))?.id).toBe('code')
     const code = service.getFileViewers().find(v => v.id === 'code')
     expect(planFsReadOutcome(code!, {
-      binary: true,
-      content: '',
-      truncated: false,
+      kind: 'binary',
+      size: 3,
       head: Buffer.from([0x01, 0x00, 0x02]).toString('base64'),
     }, (head) => service.matchFileViewer('blob.zzz', head), () => '/media')).toEqual({ kind: 'binary' })
   })

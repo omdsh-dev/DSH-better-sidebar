@@ -26,8 +26,16 @@ import { referenceHeadingIds, referenceSlug, scanDocumentAnchors } from './helpe
 
 const REPO_ROOT = process.cwd()
 
-/** The repo's own READMEs: the two documents whose anchors this batch must fix. */
-const README_FILES = ['README.md', 'README_EN.md']
+/** The repo's own READMEs: real documents whose headings feed the parity case. */
+const README_FILES = ['README.md', 'README_ZH.md']
+
+/**
+ * The anchor-resolution fixture: a GitHub-style table of contents coupled to
+ * emoji headings. The READMEs carried this shape until they dropped their
+ * TOCs; the fixture keeps the regression guard (0/16 anchors resolved before
+ * the slug fix) alive.
+ */
+const TOC_FIXTURE = 'tests/fixtures/github-toc-anchors.md'
 
 function readme(name: string): string {
   return readFileSync(join(REPO_ROOT, name), 'utf8')
@@ -116,6 +124,7 @@ describe('githubHeadingSlug', () => {
     // variation selectors are excluded on purpose — see `vs16Free` below.)
     const samples = [
       ...README_FILES.flatMap(name => scanDocumentAnchors(readme(name)).headings.map(vs16Free)),
+      ...scanDocumentAnchors(readme(TOC_FIXTURE)).headings.map(vs16Free),
       'Hello, World!',
       '  Mixed   CASE  ',
       'API 参考 (v2)',
@@ -135,15 +144,15 @@ describe('githubHeadingSlug', () => {
       '已核实的事实',
     ]
 
-    // Every README heading and every sample above must slug identically.
+    // Every fixture/README heading and every sample above must slug identically.
     for (const sample of samples) {
       expect(githubHeadingSlug(sample), sample).toBe(referenceSlug(sample))
     }
     // Guard the guard: the list really did carry the interesting scripts, and
-    // the README headings really were in it.
+    // the fixture headings really were in it.
     expect(samples).toContain('认领文件链接：在侧栏打开')
     expect(samples).toContain('Cafe\u0301 au lait')
-    // The README headings were in the list too, emoji stripped (the emoji case
+    // The fixture headings were in the list too, emoji stripped (the emoji case
     // is pinned separately below).
     const stripped = vs16Free('🖼️ 特性巡礼')
     expect(stripped).toBe('🖼 特性巡礼')
@@ -177,28 +186,25 @@ describe('githubHeadingSlug', () => {
   })
 })
 
-describe('the repos\u2019 own READMEs', () => {
-  for (const name of README_FILES) {
-    it(`${name}: every in-document anchor resolves against a real heading id`, () => {
-      const { headings, anchors } = scanDocumentAnchors(readme(name))
-      // The ids the PREVIEW actually puts on the headings — the plugin's own
-      // slugger, run over the parser's own heading list, exactly as
-      // `assignHeadingIds` does it in the DOM.
-      const ids = new Set(headings.map(heading => githubHeadingSlug(heading)).filter(id => id !== ''))
-      const unresolved = anchors.filter(anchor => !ids.has(decodeURIComponent(anchor.slice(1))))
-      // The regression this guards: `0/16 resolved` before this batch (the old
-      // slugger trimmed and collapsed whitespace, so `🚀 安装` got the id `安装`
-      // while its table of contents pointed at `#-安装`).
-      expect(anchors.length).toBeGreaterThanOrEqual(15)
-      expect(unresolved).toEqual([])
-      // Guard the other direction: resolution is not vacuous — the ids really
-      // are the emoji-stripped GitHub spellings, and an anchor no heading
-      // produces would still fail.
-      const expectsChinese = name === 'README.md'
-      expect(ids.has('-特性巡礼')).toBe(expectsChinese)
-      expect(ids.has('\uFE0F-特性巡礼')).toBe(false)
-      expect(ids.has('-preview-plugins-file-previewers')).toBe(false)
-      expect([...ids].filter(id => id.includes('\uFE0F'))).toEqual([])
-    })
-  }
+describe('the GitHub-style table of contents fixture', () => {
+  it('every in-document anchor resolves against a real heading id', () => {
+    const { headings, anchors } = scanDocumentAnchors(readme(TOC_FIXTURE))
+    // The ids the PREVIEW actually puts on the headings — the plugin's own
+    // slugger, run over the parser's own heading list, exactly as
+    // `assignHeadingIds` does it in the DOM.
+    const ids = new Set(headings.map(heading => githubHeadingSlug(heading)).filter(id => id !== ''))
+    const unresolved = anchors.filter(anchor => !ids.has(decodeURIComponent(anchor.slice(1))))
+    // The regression this guards: `0/16 resolved` before this batch (the old
+    // slugger trimmed and collapsed whitespace, so `🚀 安装` got the id `安装`
+    // while its table of contents pointed at `#-安装`).
+    expect(anchors.length).toBeGreaterThanOrEqual(15)
+    expect(unresolved).toEqual([])
+    // Guard the other direction: resolution is not vacuous — the ids really
+    // are the emoji-stripped GitHub spellings, and an anchor no heading
+    // produces would still fail.
+    expect(ids.has('-特性巡礼')).toBe(true)
+    expect(ids.has('\uFE0F-特性巡礼')).toBe(false)
+    expect(ids.has('-preview-plugins-file-previewers')).toBe(false)
+    expect([...ids].filter(id => id.includes('\uFE0F'))).toEqual([])
+  })
 })

@@ -42,4 +42,11 @@ export const builtinViewerPlugins: readonly PluginEntry[] = [
     description: () => t('pluginVideoPreviewDesc'),
     install: 'cd ~/.dsh && dsh plugin --profile web add dsh-video-preview',
   },
+  {
+    id: '@huanlin/dsh-plugin-better-sidebar-plugin-audio',
+    name: () => t('pluginAudioName'),
+    url: 'https://github.com/HuanLinOTO/dsh-plugin-better-sidebar-plugin-audio',
+    description: () => t('pluginAudioDesc'),
+    install: 'cd ~/.dsh && dsh plugin --profile web add @huanlin/dsh-plugin-better-sidebar-plugin-audio',
+  },
 ]

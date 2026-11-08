@@ -31,6 +31,9 @@ import { hostRouteUrl as resolveHostRoute } from './host-route-url.ts'
 import { builtinFileIcon, builtinFolderIcon } from './file-icons.tsx'
 import type { SessionScope } from './api.ts'
 import type { SidebarPrefs } from '../prefs-shared.ts'
+import { bindSidechatSurfaces, type SidechatSurfaceAdapter } from './sidechat-surface.ts'
+import { armLineEnd } from './line-target.ts'
+export type { SidechatSurface, SidechatSurfaceAdapter } from './sidechat-surface.ts'
 
 /**
  * Public state vocabulary re-exported for consumers (type-only; the values
@@ -313,9 +316,33 @@ export interface FileViewerProps {
    *  positions the reader there once, on arrival; every other viewer ignores
    *  it. Absent on an ordinary open. */
   line?: number
-  /** fsRead text content (fetchStrategy='fsRead'). */
+  /** The last 1-based line of the landing RANGE, with {@link
+   *  FileViewerProps.line} — a quote chip's click-through carries the quoted
+   *  span, and the text viewer flashes `line..lineEnd` so the span is visible
+   *  at a glance rather than a caret somewhere. It rides the plugin's own
+   *  side channel (`line-target.ts`), not the host's resource parameters,
+   *  which declare `line` only. Absent = a single-line landing. */
+  lineEnd?: number
+  /** The viewer reports that it has APPLIED the `line` it was handed (or that
+   *  the line does not apply to it), and the host stops handing it out: the
+   *  line is one navigation, not a mode of the file. The host has to own that
+   *  memory — a reload remounts the viewer, so a viewer that only remembers
+   *  the line inside itself would receive it again after every refresh (for
+   *  markdown/html that means re-forcing the editor open, and the reader could
+   *  never return to preview). Optional: absent means "keep handing it out". */
+  onLineConsumed?: () => void
+  /** fsRead text content (fetchStrategy='fsRead'). Absent when the file is
+   *  above the editable threshold — see {@link largeFile}. */
   content?: string
-  truncated?: boolean
+  /** The file's size in bytes, as the host measured it for this read. */
+  size?: number
+  /**
+   * Present when the host refused to hand the document over because the file
+   * exceeds the editable threshold. The viewer renders a read-only paged
+   * preview instead of an editor: CodeMirror has to hold the whole document in
+   * the browser, which is exactly what a file this size makes impossible.
+   */
+  largeFile?: { size: number }
   /** Last-modified time (ms) of the loaded bytes — the built-in text editor's
    *  save baseline (a file that changed on disk since refuses the write).
    *  Absent for viewers/loads that carry no baseline. */
@@ -329,6 +356,10 @@ export interface FileViewerProps {
    *  fed through the two callbacks below. Viewers that ignore these fields
    *  render exactly as before. */
   toolbar?: 'self' | 'host'
+  /** Internal: whether this tab is the ACTIVE one with its panel open. Native
+   *  tabs stay mounted while parked, so an over-limit preview must know to
+   *  stop reading pages for a tab nobody is looking at. Absent = visible. */
+  visible?: boolean
   /** Internal: the viewer reports its toolbar state (mode/dirty/save). */
   onToolbarState?: (state: EditorToolbarState) => void
   /** Internal: the viewer registers its toolbar commands on mount (null on
@@ -340,16 +371,17 @@ export interface FileViewerProps {
 
 /** The toolbar state a text editor reports to the host's merged-mode header. */
 export interface EditorToolbarState {
-  /** Whether the preview/edit mode toggle applies (markdown/html). */
+  /** Whether the preview/edit mode toggle applies (markdown / html / jsonl). */
   modes: boolean
   mode: 'preview' | 'edit'
   dirty: boolean
-  /** Whether saving applies (text content loaded). */
+  /** Whether saving applies (an editable document was loaded). */
   editable: boolean
-  /** Whether the loaded text was truncated at readLimit — the editor is
-   *  read-only and saving is disabled (issue #732: saving partial content
-   *  would overwrite and destroy the tail of the file). */
-  truncated?: boolean
+  /** Whether the viewer is showing the read-only paged preview for an
+   *  over-limit file. Nothing can be edited or saved in that state, so the
+   *  header drops the save button and the viewer's own notice carries the
+   *  size and the download escape hatch. */
+  largeFile?: boolean
   saveState: 'idle' | 'saving' | 'saved' | 'failed'
 }
 
@@ -434,6 +466,126 @@ export interface FileIconDescriptor {
   icon: (path: string, size: number, open?: boolean) => ReactNode
 }
 
+/** The row a file action is asked about — everything `when` sees. */
+export interface FileActionRow {
+  /** ABSOLUTE path of the row the action was invoked on. */
+  path: string
+  /** The tree's workspace root (absolute), when the tree knows one. */
+  root: string | undefined
+  /** The host session whose conversation owns this tree. */
+  sessionId?: string
+  /** Whether the target is a directory row. */
+  isDir: boolean
+}
+
+/** What a tab action is handed when it runs. */
+export interface TabActionContext {
+  /** The tab whose header drew the button. */
+  tabId: string
+  /** The tab's type (`editor`, `terminal`, …). */
+  tabType: string
+  /** The session the tab belongs to. */
+  sessionId: string
+  /** The tab's file path; `''` for a path-less tab (the Files home). */
+  path: string
+  /** Whether the tab shows a directory instead of a file. */
+  isDir: boolean
+  /** The tab's current title. */
+  title: string
+  /**
+   * Show a message in the sidebar's own error strip. Use it for anything the
+   * user must read; an exception thrown by `run` reaches the same strip as
+   * `error.message`.
+   */
+  fail: (message: string) => void
+}
+
+/**
+ * Describes one external tab action (feature `tabActions`): a button in the
+ * editor's header, right of the built-in save / reload / tree controls.
+ *
+ * The callback runs CLIENT-SIDE only — the plugin that registers it owns the
+ * work (its own routes, its own toasts). The header contributes the entry
+ * point and the error strip; it never uploads, copies or moves anything.
+ */
+export interface TabActionDescriptor {
+  /** Unique id (`'my-plugin:upload'`). Re-registering the same id throws. */
+  id: string
+  /** Button label (i18n-friendly: string or a thunk). Empty = glyph only. */
+  label: string | (() => string)
+  /** Tooltip / accessible name; defaults to the label. */
+  title?: string | (() => string)
+  /** Leading glyph for the button. */
+  icon?: ReactNode | ((size: number) => ReactNode)
+  /** Order among external actions; ascending, default 0. */
+  order?: number
+  /**
+   * Whether the action applies to one tab. Called once per header render, so
+   * it must be cheap and side-effect free. Omitted = every editor tab.
+   */
+  when?: (context: Omit<TabActionContext, 'fail'>) => boolean
+  /**
+   * Do the work. A rejected promise is reported as `error.message` in the
+   * sidebar's error strip; a resolved one says nothing (the owner reports its
+   * own outcome). Runs are guarded per (id, tabId): a second press while the
+   * first is in flight is ignored.
+   */
+  run: (context: TabActionContext) => void | Promise<void>
+}
+
+/** What a file action is handed when it runs. */
+export interface FileActionContext extends FileActionRow {
+  /**
+   * Show a message in the file tree's own error strip (the same strip a failed
+   * rename or open-in-app lands in). Use it for anything the user must read;
+   * an exception thrown by `run` reaches the same strip as `error.message`.
+   */
+  fail: (message: string) => void
+}
+
+/**
+ * Describes one external file action (feature `fileActions`): a row-menu item,
+ * and optionally a hover button on the row itself.
+ *
+ * The callback runs CLIENT-SIDE only — the plugin that registers it owns the
+ * work (its own routes, its own toasts). The tree contributes the entry point
+ * and the failure strip; it never uploads, copies or moves anything itself.
+ */
+export interface FileActionDescriptor {
+  /** Unique id (`'my-plugin:upload'`). Re-registering the same id throws. */
+  id: string
+  /** Menu and hover label (i18n-friendly: string or a thunk). */
+  label: string | (() => string)
+  /** Leading glyph for the menu row and the hover button. */
+  icon?: ReactNode | ((size: number) => ReactNode)
+  /** Order among external actions; ascending, default 0 (built-ins are unaffected). */
+  order?: number
+  /**
+   * Render a hover button on the row as well as the menu item (default
+   * false: menu only). The button shows the same label through `title` /
+   * `aria-label`, so a glyph-only affordance stays readable.
+   */
+  row?: boolean
+  /**
+   * Claim DIRECTORY rows too (default false). The action gets `isDir` in its
+   * context either way, so it can refine the decision itself.
+   */
+  dirs?: boolean
+  /**
+   * Whether the action applies to one row. Called per row render (for `row`)
+   * and once per menu open, so it must be cheap and side-effect free. Omitted
+   * = every row this descriptor's `dirs` setting allows.
+   */
+  when?: (row: FileActionRow) => boolean
+  /**
+   * Do the work. A rejected promise is reported as `error.message` in the
+   * tree's error strip; a resolved one says nothing (the owner reports its
+   * own outcome). Runs are guarded per (id, path): a second press while the
+   * first is in flight is ignored.
+   */
+  run: (context: FileActionContext) => void | Promise<void>
+}
+
 /**
  * Reserved `exts` values that claim DIRECTORY rows instead of file
  * extensions: `'folder'` matches a closed directory, `'folder-open'` an
@@ -459,6 +611,17 @@ export interface OpenTabSeed {
   path?: string
   /** A diff reference (the diff tab's content seed). */
   diff?: SidebarTab['diff']
+  /**
+   * The 1-based line a file reference named, for the `editor` kind (`#826`).
+   * Transient like the record's own `line`: it rides the open as a navigation
+   * the editor applies once (leaving preview, which renders no source lines)
+   * and the record forgets it right after.
+   *
+   * It is applied on a CREATE and on a native re-navigation; a store-branch
+   * FOCUS of an already-open tab (a host with no native surface) keeps the tab
+   * as it is — the same limitation the `diff` seed has.
+   */
+  line?: SidebarTab['line']
   /** Explicit tab id (defaults to the type). */
   id?: string
   /** A URL the tab navigates to on mount (the browser tab's seed). */
@@ -509,6 +672,33 @@ export interface NativeTabParams {
 }
 
 /**
+ * One native tab that carries a file path, as {@link SidebarSurface.pathTabs}
+ * reports it. The right column's records live in the native adapter and are
+ * invisible to the store, so this is the only handle on its open files.
+ */
+export interface NativePathTab {
+  /** The SEAT session the tab is drawn in (native tab ids restart per session,
+   *  so this is what tells two same-numbered tabs apart). */
+  sessionId: string
+  /** The session the tab's CONTENT belongs to — the `scope.sessionId` its
+   *  editor runs with. */
+  scopeSessionId: string
+  /** That session's workspace root, for resolving `path` when the address
+   *  stored it workspace-relative (a chat link does). */
+  cwd: string | undefined
+  /** The native tab id. */
+  id: string
+  /** The path the tab is bound to — a file path, or a browser tab's address
+   *  (a url seed is stored on the same field). */
+  path: string
+  /** The chip's current title. The rename reconciliation reads it to tell a
+   *  title the tree DERIVED from the file name (the basename it wrote on open)
+   *  from one its author chose — a model-driven open names its own title, and
+   *  that is not the tree's to rewrite. */
+  title: string
+}
+
+/**
  * The plugin's write face over DSH's native right Sidebar.
  *
  * Installed by the client half ({@link ./native/surface.ts}) so the service —
@@ -532,6 +722,13 @@ export interface SidebarSurface {
    * itself, and a tab id is not a type.
    */
   tabTypeOf?(sessionId: string, tabId: string): string | undefined
+  /**
+   * Every native tab bound to a path. The file tree's rename/delete
+   * reconciliation walks BOTH tab spaces — the bottom workbench's splits come
+   * from the store, and the right column exists only here. A surface that
+   * cannot enumerate them omits this.
+   */
+  pathTabs?(): NativePathTab[]
   /** Close one native tab; the closed record's type/title/meta, or undefined when the id is not native. */
   close(sessionId: string, tabId: string): { type: string; title: string; meta?: unknown } | undefined
   /**
@@ -552,12 +749,32 @@ export interface SidebarSurface {
  * The registry service published as `ctx.betterSidebar`.
  */
 export interface BetterSidebarService {
+  /** Proposed opt-in bridge for settled assistant Markdown in sidechat only. */
+  registerSidechatSurfaceAdapter(adapter: SidechatSurfaceAdapter): () => void
   registerTab(descriptor: TabDescriptor): () => void
   registerFileViewer(descriptor: FileViewerDescriptor): () => void
   registerFileIcon(descriptor: FileIconDescriptor): () => void
+  /**
+   * Contribute an action to the file tree's row menu (feature `fileActions`).
+   * Menu items appear in `order` (then registration) order, after the
+   * built-in open/download rows and before the copy/mutation rows the tree
+   * owns; `row: true` also puts a hover button on the row next to the
+   * reference button. The registration is disposed with the plugin fiber.
+   */
+  registerFileAction(descriptor: FileActionDescriptor): () => void
+  /**
+   * Contribute a button to the editor's header (feature `tabActions`).
+   * Buttons appear right of the built-in controls, in `order` (then
+   * registration) order. The registration is disposed with the plugin fiber.
+   */
+  registerTabAction(descriptor: TabActionDescriptor): () => void
   getTabs(): readonly TabDescriptor[]
   getFileViewers(): readonly FileViewerDescriptor[]
   getFileIcons(): readonly FileIconDescriptor[]
+  /** Every registered file action, in the order the tree renders them. */
+  getFileActions(): readonly FileActionDescriptor[]
+  /** Every registered tab action, in the order the header renders them. */
+  getTabActions(): readonly TabActionDescriptor[]
   /**
    * Find a SPECIFIC registered file icon for a path (priority desc, then
    * registration order): a `names` match first, then an `exts` match.
@@ -605,6 +822,13 @@ export interface BetterSidebarService {
    * `tabsEnabled[id]` entry means enabled — only an explicit `false`
    * disables the type (hidden from the + menu, `openTab` refuses, and
    * derived flows gate on it).
+   *
+   * A `hidden: true` type is ALWAYS enabled: it has no + menu row and no
+   * native guide entry, so the side-card inventory offers no switch for it —
+   * and none of the paths that open it (a diff's "expand to page", a remote
+   * plugin's file open) has a visible state the user could read. The entry is
+   * ignored rather than honoured so a value written by an older build cannot
+   * keep silently refusing those opens (#1009).
    */
   isTabEnabled(id: string): boolean
   /** Whether a file viewer is enabled (absent `viewersEnabled[id]` = enabled). */
@@ -642,6 +866,11 @@ export interface BetterSidebarService {
    * strict no-op (no state churn, no callbacks). `scope` (v0.12.0+) rides
    * to the callback (its optional cwd included); absent, the callback gets
    * `{ sessionId }` of the active session.
+   *
+   * v0.26.0+: a scope naming a session that is **not the one on screen** closes
+   * the row in THAT session's layout through the targeted channel (no publish,
+   * no notify), which is how the file tree's delete reconciliation reaches a
+   * background conversation's pages. Without a scope nothing changes.
    */
   closeTab(tabId: string, scope?: SessionScope): void
   /** Subscribe to registry changes (register/dispose). */
@@ -664,11 +893,22 @@ export interface BetterSidebarService {
   /** Subscribe to snapshot changes (session switch, state changes, prefs changes). Returns the disposer. */
   subscribeState(listener: () => void): () => void
   /**
-   * Update an open tab's display fields (title / path / meta); a missing tab id
-   * is a no-op. `sessionId` names the seat session the tab lives in — native
-   * ids restart per session and several sessions' tabs stay mounted at once,
-   * so a component that knows its scope should pass it; omitted, a native id
-   * resolves against the mounted seat.
+   * Update the display fields of one open tab (title / path / meta) without
+   * re-opening it; a missing tab id is a no-op. `sessionId` names the seat
+   * session the tab lives in — native ids restart per session and several
+   * sessions' tabs stay mounted at once, so a component that knows its scope
+   * should pass it; omitted, a native id resolves against the mounted seat.
+   * A **path change is a new open**: the transient landing line a reference
+   * carried (#826) is dropped with it, because that line belongs to the
+   * navigation that delivered the file — an in-place switch or a rename that
+   * kept it would send the next file to the previous file's line.
+   *
+   * v0.26.0+: a `sessionId` that is **not the session on screen** patches that
+   * session's own layout through the targeted channel (no publish, no notify —
+   * the same route a targeted `openTab(seed, scope)` takes), so the file tree's
+   * rename reconciliation reaches a background conversation's pages instead of
+   * resolving them against the active session. The active session keeps the
+   * publishing path, and an omitted `sessionId` behaves exactly as before.
    */
   updateTab(tabId: string, patch: { title?: string; path?: string; meta?: unknown }, sessionId?: string): void
   /**
@@ -677,8 +917,13 @@ export interface BetterSidebarService {
    * (v0.12.0+) rides to the callback like `closeTab`'s.
    */
   activateTab(tabId: string, scope?: SessionScope): void
-  /** Open a file in the sidebar editor of `scope`'s session (title defaults to the file name). */
-  openFile(scope: SessionScope, path: string, title?: string): void
+  /**
+   * Open a file in the sidebar editor of `scope`'s session (title defaults to
+   * the file name). `options.line` lands the viewer on that 1-based source
+   * line (a quote chip's click-through); `options.lineEnd` extends the
+   * landing flash through that line, so the quoted span reads at a glance.
+   */
+  openFile(scope: SessionScope, path: string, title?: string, options?: { line?: number; lineEnd?: number }): void
   /**
    * Resolve one of the plugin's own host routes (`sidebar/api/fs.read`) into
    * an absolute URL the page can fetch even when the GUI is served under a
@@ -707,6 +952,13 @@ export interface BetterSidebarService {
    * @internal Called once by the client half; not part of the consumer API.
    */
   setSurface(surface: SidebarSurface | undefined): void
+  /**
+   * Every native tab bound to a path (empty when no native surface is
+   * installed).
+   * @internal The file tree's rename/delete reconciliation; not part of the
+   * consumer API.
+   */
+  nativePathTabs(): NativePathTab[]
 }
 
 /** The file name of a path (both separators). */
@@ -746,7 +998,7 @@ export function matchUrlTarget(tabs: readonly TabDescriptor[], url: URL): TabDes
  * The plugin version this service instance reports. Keep in lockstep with
  * `package.json`'s version — `tests/service.spec.ts` asserts the pair.
  */
-export const SIDEBAR_SERVICE_VERSION = '0.24.1'
+export const SIDEBAR_SERVICE_VERSION = '0.30.1'
 
 /**
  * Monotonic capability list consumers use to gate new API usage (features
@@ -769,6 +1021,14 @@ export const SIDEBAR_SERVICE_VERSION = '0.24.1'
  *   right-aligned action area rendered at the tab strip's right end.
  * - 'settingPatterns': SidebarSettingToggle type 'patterns' (editable
  *   string-list row, committed as one string[] value).
+ * - 'fileActions' (v0.31.0): registerFileAction/getFileActions — external
+ *   contributions to the file tree's row menu (and, with `row: true`, a
+ *   hover button on the row). The callback is client-side only: the tree
+ *   supplies the entry point and the error strip, the owner does the work.
+ * - 'tabActions' (v0.31.0): registerTabAction/getTabActions — external buttons
+ *   in the editor header (right of save/reload/tree). Same contract as
+ *   `fileActions`: the header supplies the entry point, the owner does the
+ *   work.
  *
  * v0.19.0 REMOVED 'floatWindows': the free-window feature is gone (DSH 0.1.5
  * owns the right column, so the plugin keeps only its bottom workbench).
@@ -789,6 +1049,8 @@ export const SIDEBAR_FEATURES = [
   'rightActions',
   'settingPatterns',
   'hostRouteUrl',
+  'fileActions',
+  'tabActions',
 ] as const
 
 /** Run one plugin callback; a throw is logged and never breaks the caller. */
@@ -809,6 +1071,8 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
   const tabs = new Map<string, TabDescriptor>()
   const viewers = new Map<string, FileViewerDescriptor>()
   const fileIcons = new Map<string, FileIconDescriptor>()
+  const fileActions = new Map<string, FileActionDescriptor>()
+  const tabActions = new Map<string, TabActionDescriptor>()
   const listeners = new Set<() => void>()
   /** The native right-Sidebar write face, installed by the client half. */
   let surface: SidebarSurface | undefined
@@ -882,6 +1146,46 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
       }
     }
   }
+
+  const registerFileAction = (descriptor: FileActionDescriptor): (() => void) => {
+    if (fileActions.has(descriptor.id)) {
+      throw new Error(`[dsh-better-sidebar] file action "${descriptor.id}" already registered`)
+    }
+    fileActions.set(descriptor.id, descriptor)
+    notify()
+    return () => {
+      if (fileActions.get(descriptor.id) === descriptor) {
+        fileActions.delete(descriptor.id)
+        notify()
+      }
+    }
+  }
+
+  /**
+   * External actions in render order: `order` ascending, then registration
+   * order (Map insertion is stable, and `Array#sort` is stable, so equal
+   * orders keep the order they registered in).
+   */
+  const getFileActions = (): readonly FileActionDescriptor[] =>
+    Array.from(fileActions.values()).sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+
+  const registerTabAction = (descriptor: TabActionDescriptor): (() => void) => {
+    if (tabActions.has(descriptor.id)) {
+      throw new Error(`[dsh-better-sidebar] tab action "${descriptor.id}" already registered`)
+    }
+    tabActions.set(descriptor.id, descriptor)
+    notify()
+    return () => {
+      if (tabActions.get(descriptor.id) === descriptor) {
+        tabActions.delete(descriptor.id)
+        notify()
+      }
+    }
+  }
+
+  /** External tab actions in render order — same ranking as the file rows. */
+  const getTabActions = (): readonly TabActionDescriptor[] =>
+    Array.from(tabActions.values()).sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
 
   // Registrations in ranking order: priority desc, stable for equal
   // priorities (insertion order) — the same ranking `matchFileViewer` uses.
@@ -973,8 +1277,12 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
   }
 
   // The enable switches come from the user's side card prefs (the shared
-  // store the service is bound to): an absent key means enabled.
-  const isTabEnabled = (id: string): boolean => store.getPrefs().tabsEnabled[id] !== false
+  // store the service is bound to): an absent key means enabled. A hidden
+  // type is exempt — it has no side-card card (SideCardSection skips it), so
+  // its prefs entry can only be a leftover from an older build and must not
+  // keep refusing the programmatic opens it exists for (#1009).
+  const isTabEnabled = (id: string): boolean =>
+    tabs.get(id)?.hidden === true || store.getPrefs().tabsEnabled[id] !== false
   const isViewerEnabled = (id: string): boolean => store.getPrefs().viewersEnabled[id] !== false
 
   const matchFileViewer = (path: string, head?: Uint8Array): FileViewerDescriptor | undefined => {
@@ -1071,6 +1379,7 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
         title,
         ...(componentPath === undefined ? {} : { path: componentPath }),
         ...(seed.diff === undefined ? {} : { diff: seed.diff }),
+        ...(seed.line === undefined ? {} : { line: seed.line }),
         ...(seed.meta === undefined && minted?.tab.meta === undefined ? {} : { meta: seed.meta ?? minted?.tab.meta }),
       }
       if (seed.type === 'editor') {
@@ -1086,6 +1395,9 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
             sessionId: targetSessionId,
             address: surface.fileAddress(targetSessionId, scope?.cwd, seed.path),
             revealIfOpened: reveal,
+            // The reference's landing line, when the open came from one
+            // (`a.c#L131` — #826). Transient: the record spends it on arrival.
+            ...(seed.line === undefined ? {} : { line: seed.line }),
             ...(side ? { preferNewPane: true } : {}),
           })
         } else {
@@ -1147,6 +1459,9 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
           title: seed.title ?? (typeof descriptor.title === 'function' ? descriptor.title() : descriptor.title),
           ...(seed.path !== undefined ? { path: seed.path } : {}),
           ...(seed.diff !== undefined ? { diff: seed.diff } : {}),
+          // The landing line, when this open came from a file reference
+          // (`a.c#L131` — #826); the editor spends it on arrival.
+          ...(seed.line !== undefined ? { line: seed.line } : {}),
           ...(seed.meta !== undefined ? { meta: seed.meta } : {}),
         }
         next = applyDedupe(state, tab, descriptor, land)
@@ -1210,6 +1525,23 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
     else if (activated !== undefined) safeCall(() => descriptor.onActivate?.(activated!, callbackScope))
   }
 
+  /**
+   * Apply a store mutation in the session it names.
+   *
+   * A session that is not on screen takes the TARGETED channel (`reduceFor`),
+   * the same one a targeted `openTab(seed, scope)` uses: it writes that
+   * session's own state and persists it without touching the published
+   * snapshot. The publishing channel cannot stand in for it — the row is not in
+   * the ACTIVE session's tree, so the reduce is a silent no-op at best, and
+   * patching a same-numbered row of the active session is the other possible
+   * outcome. The active session keeps the publishing path so the shell
+   * re-renders with the new title/path.
+   */
+  const reduceInSession = (sessionId: string, reducer: (state: SidebarState) => SidebarState): void => {
+    if (sessionId === store.getSnapshot().sessionId) store.reduce(reducer)
+    else store.reduceFor(sessionId, reducer)
+  }
+
   const closeTab = (tabId: string, scope?: SessionScope): void => {
     const sessionId = scope?.sessionId ?? store.getSnapshot().sessionId
     if (surface !== undefined && sessionId !== undefined) {
@@ -1231,7 +1563,7 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
       }
     }
     let closed: SidebarTab | undefined
-    store.reduce((state) => {
+    const closeOne = (state: SidebarState): SidebarState => {
       // Unknown tab ids are a strict no-op: no state churn, no notify, no
       // pointless localStorage rewrite (mirrors updateTab's short-circuit).
       if (!tabOpenIn(state, tabId)) return state
@@ -1239,7 +1571,11 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
       const leaf = leafWithTab(state.bottomSplits, tabId)
       closed = leaf?.tabs.find(tab => tab.id === tabId)
       return closeTabReducer(state, paneId, tabId)
-    })
+    }
+    // The row lives in ITS session's tree: an explicit scope that is not on
+    // screen has to close it there (see `reduceInSession`).
+    if (sessionId === undefined) store.reduce(closeOne)
+    else reduceInSession(sessionId, closeOne)
     if (closed !== undefined) {
       const sessionId = scope?.sessionId ?? store.getSnapshot().sessionId
       if (sessionId !== undefined) {
@@ -1263,11 +1599,17 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
     sessionId?: string,
   ): void => {
     if (surface?.update(tabId, patch, sessionId) === true) return
-    store.reduce((state) => patchTab(state, tabId, {
+    const patchOne = (state: SidebarState): SidebarState => patchTab(state, tabId, {
       ...(patch.title !== undefined ? { title: patch.title } : {}),
       ...(patch.path !== undefined ? { path: patch.path } : {}),
       ...(patch.meta !== undefined ? { meta: patch.meta } : {}),
-    }))
+    })
+    // A named session that is not on screen is patched in ITS own state (a
+    // background conversation's file page under a rename — see
+    // `reduceInSession`); without one the current session keeps the publishing
+    // path it always had.
+    if (sessionId === undefined) store.reduce(patchOne)
+    else reduceInSession(sessionId, patchOne)
   }
 
   /** Activate an open tab (the tab-bar activation path; fires onActivate). */
@@ -1315,18 +1657,36 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
    *  a third-party type registered with a more specific pattern (a `.drawio`
    *  canvas, say) renders its own tab, and the plugin's editor only takes
    *  files nobody else claims. (This module holds no ctx, so the probe used
-   *  by the tree's own carriers lives in sidebar-file.ts instead.) */
-  const openFile = (scope: SessionScope, path: string, title?: string): void => {
-    openTab({ type: 'editor', title: title ?? baseNameOf(path), path, id: `editor:${path}` }, scope)
+   *  by the tree's own carriers lives in sidebar-file.ts instead.)
+   *
+   *  `options.line` rides the seed's own landing line (#826) and
+   *  `options.lineEnd` arms the landing flash's span through the side channel
+   *  in line-target.ts — the host's resource parameter map declares `line`
+   *  only, and smuggling a second key through host-owned params would work
+   *  exactly until upstream tightened that shape. */
+  const openFile = (scope: SessionScope, path: string, title?: string, options?: { line?: number; lineEnd?: number }): void => {
+    if (options?.line !== undefined) armLineEnd(path, options.line, options.lineEnd)
+    openTab({
+      type: 'editor',
+      title: title ?? baseNameOf(path),
+      path,
+      id: `editor:${path}`,
+      ...(options?.line === undefined ? {} : { line: options.line }),
+    }, scope)
   }
 
-  return {
+  const service: BetterSidebarService = {
+    registerSidechatSurfaceAdapter: adapter => registerSidechatSurfaceAdapter(adapter),
     registerTab,
     registerFileViewer,
     registerFileIcon,
+    registerFileAction,
+    registerTabAction,
     getTabs,
     getFileViewers,
     getFileIcons,
+    getFileActions,
+    getTabActions,
     matchFileIcon,
     matchFolderIcon,
     fileIcon,
@@ -1347,8 +1707,11 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
     openFile,
     hostRouteUrl: (path: string): string => resolveHostRoute(path).href,
     setSurface: (next: SidebarSurface | undefined) => { surface = next },
+    nativePathTabs: () => surface?.pathTabs?.() ?? [],
     clearUnread: clearUnreadFor,
   }
+  const registerSidechatSurfaceAdapter = bindSidechatSurfaces(service)
+  return service
 }
 
 /**

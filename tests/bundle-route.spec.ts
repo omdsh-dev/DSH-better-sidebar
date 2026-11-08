@@ -6,11 +6,12 @@
  * re-downloading.
  */
 import { describe, expect, it } from 'vitest'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { CHUNK_NAMES, createBundleRouteHandler } from '../src/bundle-route.ts'
+import { removeTree } from './temp-tree.ts'
 
 interface FakeRes {
   status: number
@@ -44,7 +45,7 @@ function setup(): { handler: (req: IncomingMessage, res: ServerResponse) => Prom
   const dir = mkdtempSync(join(tmpdir(), 'bundle-route-'))
   writeFileSync(join(dir, 'client-editor.js'), 'window.__ModuleLoader__ && 0;')
   const handler = createBundleRouteHandler(() => true, dir)
-  return { handler, dir, cleanup: () => { rmSync(dir, { recursive: true, force: true }) } }
+  return { handler, dir, cleanup: () => { removeTree(dir) } }
 }
 
 describe('/sidebar/bundle route', () => {
@@ -58,6 +59,25 @@ describe('/sidebar/bundle route', () => {
       expect(res.headers['cache-control']).toBe('no-cache')
       expect(res.headers.etag).toMatch(/^"[0-9a-f]{12}"$/)
       expect(res.body).toContain('window.__ModuleLoader__')
+    } finally {
+      cleanup()
+    }
+  })
+
+  it('answers HEAD with the headers only, without materializing the chunk', async () => {
+    // The client HEADs every loaded chunk when the sidebar re-activates (and
+    // once after each lazy load) to read the ETag. Reading the multi-MB body
+    // for a request whose body Node discards is pure waste.
+    const { handler, cleanup } = setup()
+    try {
+      const res = fakeRes()
+      await handler(req('HEAD', '/sidebar/bundle/editor.js'), res as unknown as ServerResponse)
+      expect(res.status).toBe(200)
+      expect(res.headers['content-type']).toBe('text/javascript; charset=utf-8')
+      expect(res.headers['cache-control']).toBe('no-cache')
+      expect(res.headers.etag).toMatch(/^"[0-9a-f]{12}"$/)
+      expect(res.headers['content-length']).toBe(String('window.__ModuleLoader__ && 0;'.length))
+      expect(res.body, 'HEAD must not read the chunk body').toBe('')
     } finally {
       cleanup()
     }
@@ -145,7 +165,7 @@ describe('/sidebar/bundle route', () => {
       await handler(req('GET', '/sidebar/bundle/editor.js'), res as unknown as ServerResponse)
       expect(res.status).toBe(403)
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 

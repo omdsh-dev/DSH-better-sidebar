@@ -18,11 +18,11 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createElement } from 'react'
+import { createElement, type ReactNode } from 'react'
 import { act } from 'react-dom/test-utils'
 import { EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
-import type { GitStatusResult } from '../src/client/api.ts'
+import type { GitStatusResult, SessionScope } from '../src/client/api.ts'
 
 const { gitStatus, gitDiffHead, gitBlame } = vi.hoisted(() => ({
   gitStatus: vi.fn(),
@@ -53,6 +53,7 @@ import {
   gitGutterExtensions,
   gitLineKinds,
   loadBlameLine,
+  useEditorGitGutter,
   type GitLineKind,
 } from '../src/client/editor-git-gutter.ts'
 import { TextEditor } from '../src/client/TextEditor.tsx'
@@ -419,6 +420,122 @@ describe('TextEditor wiring (code viewer only, one switch)', () => {
       expect(mounted.container.querySelector(`.${GIT_BAR_GUTTER_CLASS}`)).toBeNull()
       act(() => { store.setPrefs({ ...store.getPrefs(), editorGitGutter: true }) })
       expect(mounted.container.querySelector(`.${GIT_BAR_GUTTER_CLASS}`)).not.toBeNull()
+    } finally {
+      mounted.unmount()
+    }
+  })
+})
+
+/**
+ * The gutter must not OWN the shared git status poll (#212 follow-up).
+ *
+ * Opening a `code` / `jsonl` file used to subscribe the editor as a POLLING
+ * consumer — the feature switch was passed where the visibility flag belongs —
+ * so from the first opened file onward the plugin ran a full
+ * `git status --untracked-files=all` (plus two whole-repo `--numstat` diffs)
+ * every cadence for the rest of the page's life, megabytes of output at a time
+ * on a repository with an unignored nested `node_modules`. These cases pin the
+ * fix: no timer, no subscription at all while the tab is parked, and exactly
+ * one re-read per new question (a different file, or the same file after a
+ * save).
+ */
+describe('gutter poll ownership and visibility', () => {
+  /** A fresh sessionId mints a fresh status slot, so cases never share one. */
+  const pollScope = (id: string): SessionScope => ({ sessionId: id, cwd: '/p' })
+
+  const GUTTER_PATCH = patch('a.ts', '@@ -1,2 +1,3 @@\n one\n+inserted\n two\n')
+  /** `a.ts` modified: enough for the gutter to engage. */
+  const MODIFIED: GitStatusResult = { isRepo: true, root: '/p', entries: [{ path: 'a.ts', xy: ' M' }] }
+
+  function viewerProps(id: string, overrides: Partial<FileViewerProps> = {}): FileViewerProps {
+    return {
+      ctx: {} as FileViewerProps['ctx'],
+      store: createSidebarStore(),
+      scope: pollScope(id),
+      path: '/p/a.ts',
+      title: 'a.ts',
+      viewerId: 'code',
+      content: 'one\ntwo\nthree\n',
+      ...overrides,
+    }
+  }
+
+  /** A minimal host for the hook alone, to drive `path` / `revision`. */
+  function GutterProbe(props: { scope: SessionScope; path: string; revision: number }): ReactNode {
+    useEditorGitGutter({
+      enabled: true,
+      visible: true,
+      scope: props.scope,
+      path: props.path,
+      content: 'one\ntwo\nthree\n',
+      revision: props.revision,
+    })
+    return createElement('span')
+  }
+
+  /** Flush the store's fetch chain inside act(). */
+  async function settle(): Promise<void> {
+    await act(async () => {
+      for (let round = 0; round < 5; round += 1) await Promise.resolve()
+    })
+  }
+
+  it('keeps no git status poll running for an open editor', async () => {
+    vi.useFakeTimers()
+    gitStatus.mockResolvedValue(MODIFIED)
+    gitDiffHead.mockResolvedValue({ diff: GUTTER_PATCH })
+    const mounted = renderRoot(createElement(TextEditor, viewerProps('gutter-open')))
+    try {
+      await settle()
+      // The one reading a `poll: false` consumer is entitled to.
+      expect(gitStatus).toHaveBeenCalledTimes(1)
+      // Two old cadences' worth of idling: nothing may ask git again.
+      await act(async () => { await vi.advanceTimersByTimeAsync(120_000) })
+      expect(gitStatus).toHaveBeenCalledTimes(1)
+    } finally {
+      mounted.unmount()
+      vi.useRealTimers()
+    }
+  })
+
+  it('subscribes to nothing at all while the editor tab is hidden', async () => {
+    vi.useFakeTimers()
+    gitStatus.mockResolvedValue(MODIFIED)
+    gitDiffHead.mockResolvedValue({ diff: GUTTER_PATCH })
+    const mounted = renderRoot(createElement(TextEditor, viewerProps('gutter-hidden', { visible: false })))
+    try {
+      await act(async () => { await vi.advanceTimersByTimeAsync(120_000) })
+      expect(gitStatus).not.toHaveBeenCalled()
+      expect(gitDiffHead).not.toHaveBeenCalled()
+    } finally {
+      mounted.unmount()
+      vi.useRealTimers()
+    }
+  })
+
+  it('re-reads the status once per new question, not once per render', async () => {
+    gitStatus.mockResolvedValue(MODIFIED)
+    gitDiffHead.mockResolvedValue({ diff: GUTTER_PATCH })
+    const scope = pollScope('gutter-ask')
+    const view = (path: string, revision: number): ReactNode =>
+      createElement(GutterProbe, { scope, path, revision })
+    const mounted = renderRoot(view('/p/a.ts', 0))
+    try {
+      await settle()
+      expect(gitStatus).toHaveBeenCalledTimes(1)
+
+      // Same question (a re-render): no extra scan.
+      mounted.rerender(view('/p/a.ts', 0))
+      await settle()
+      expect(gitStatus).toHaveBeenCalledTimes(1)
+
+      // A save, then a different file: one scan each.
+      mounted.rerender(view('/p/a.ts', 1))
+      await settle()
+      expect(gitStatus).toHaveBeenCalledTimes(2)
+      mounted.rerender(view('/p/b.ts', 1))
+      await settle()
+      expect(gitStatus).toHaveBeenCalledTimes(3)
     } finally {
       mounted.unmount()
     }

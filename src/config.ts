@@ -29,29 +29,31 @@ export {
 
 /** Tunable sidebar host limits (every field optional; defaults fill in). */
 export interface SidebarConfig {
-  /** Read cap of one text file (bytes); larger files return truncated. */
-  readLimit?: number
-  /** Media route cap (bytes); larger binaries are refused. */
-  mediaLimit?: number
-  /** Upload route cap (bytes); larger files are refused without touching disk. */
-  uploadLimit?: number
   /** Explorer row bound of one level. */
   listLimit?: number
 }
 
-/** Schemastery schema for the deployment-provided host limits. */
+/**
+ * Schemastery schema for the deployment-provided host limits.
+ *
+ * The three transfer/read caps this schema used to carry (`readLimit` /
+ * `mediaLimit` / `uploadLimit`) are gone: upload, download and the HTML
+ * preview route all stream now, so there is nothing left for a byte cap to
+ * protect and a large file is simply a large file. What replaced `readLimit`
+ * is {@link MAX_EDITABLE_BYTES} — not a transfer cap but the size above which
+ * a text file gets a read-only paged preview instead of an editor, because
+ * CodeMirror has to hold the whole document in the browser.
+ *
+ * Old profiles that still write the retired keys are harmless: schemastery
+ * tolerates unknown keys (the same property that keeps a legacy
+ * `workspaceFence` field in an old profile from being fatal).
+ */
 const LimitsSchema = z.object({
-  readLimit: z.number().step(1).min(1).default(512 * 1024),
-  mediaLimit: z.number().step(1).min(1).default(20 * 1024 * 1024),
-  uploadLimit: z.number().step(1).min(1).default(128 * 1024 * 1024),
   listLimit: z.number().step(1).min(1).default(1000),
 })
 
 /** Fully defaulted sidebar host settings. */
 export interface ResolvedSidebarConfig {
-  readLimit: number
-  mediaLimit: number
-  uploadLimit: number
   listLimit: number
 }
 
@@ -63,9 +65,6 @@ export interface ResolvedSidebarConfig {
  */
 export function resolveSidebarConfig(config: SidebarConfig | undefined): ResolvedSidebarConfig {
   return {
-    readLimit: config?.readLimit ?? 512 * 1024,
-    mediaLimit: config?.mediaLimit ?? 20 * 1024 * 1024,
-    uploadLimit: config?.uploadLimit ?? 128 * 1024 * 1024,
     listLimit: config?.listLimit ?? 1000,
   }
 }
@@ -88,6 +87,10 @@ export const PrefsSchema: z<SidebarPrefs> = z.object({
   autoOpenSubagent: z.boolean().default(true),
   autoOpenJobs: z.boolean().default(true),
   tasksViewMode: z.union([z.const('graph'), z.const('tree')]).default('graph'),
+  tasksAutoFoldSettled: z.boolean().default(true),
+  tasksAutoFoldBranches: z.boolean().default(true),
+  tasksAutoFoldIdle: z.boolean().default(true),
+  jobsAutoCollapse: z.boolean().default(true),
   mobileNoAutoOpen: z.boolean().default(true),
   mobileDefaultTree: z.boolean().default(true),
   agentOpenTools: z.boolean().default(false),

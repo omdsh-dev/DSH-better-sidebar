@@ -1,0 +1,218 @@
+import { afterEach, describe, expect, it } from 'vitest'
+import { execFileSync } from 'node:child_process'
+import { mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
+import { gitGraph, gitHistory } from '../src/git-graph.ts'
+
+const dirs: string[] = []
+// macOS tmpdir() keeps the /var symlink while git reports the resolved
+// /private/var prefix, and on Windows TEMP is often the 8.3 short form
+// (C:\Users\RUNNER~1\...) while git reports the long path. The NATIVE realpath
+// resolves both aliasings (libuv's GetFinalPathNameByHandle expands 8.3 names),
+// so every fixture path this suite hands to git is spelled the way git answers
+// back — the reader selects a checkout root by platform path identity.
+function temp() { const dir = realpathSync.native(mkdtempSync(join(tmpdir(), 'sidebar-graph-'))); dirs.push(dir); return dir }
+function git(dir: string, ...args: string[]) {
+  return execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8', env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0' } }).trim()
+}
+function repo() {
+  const dir = temp()
+  git(dir, 'init', '-b', 'main')
+  git(dir, 'config', 'user.name', 'Graph Tester')
+  git(dir, 'config', 'user.email', 'graph@example.test')
+  git(dir, 'config', 'commit.gpgsign', 'false')
+  return dir
+}
+function commit(dir: string, message: string) { git(dir, 'commit', '--allow-empty', '-m', message); return git(dir, 'rev-parse', 'HEAD') }
+afterEach(() => {
+  const root = realpathSync.native(tmpdir())
+  for (const dir of dirs.splice(0)) { if (resolve(dir).startsWith(root + '/') || resolve(dir).startsWith(root + '\\')) rmSync(dir, { recursive: true, force: true }) }
+})
+function files(dir: string): Record<string, string> {
+  const result: Record<string, string> = {}
+  function visit(path: string) { for (const name of readdirSync(path)) { const full = join(path, name); if (statSync(full).isDirectory()) visit(full); else result[full] = readFileSync(full).toString('base64') } }
+  visit(dir)
+  return result
+}
+
+describe('read-only Git graph', () => {
+  it('distinguishes non-repositories, unborn repositories and real failures', async () => {
+    expect(await gitGraph(temp())).toMatchObject({ isRepo: false, entries: [] })
+    expect(await gitGraph(repo())).toMatchObject({ isRepo: true, entries: [], hasMore: false })
+    await expect(gitGraph(join(temp(), 'missing'))).rejects.toMatchObject({ code: 'git-error' })
+  })
+
+  it('returns merge parents, branch decorations, full messages and stable pages without writes', async () => {
+    const dir = repo()
+    const base = commit(dir, 'base')
+    git(dir, 'checkout', '-b', 'topic')
+    const topic = commit(dir, 'topic\n\nBody with unicode 日本語 and separators \x1e\x1f')
+    git(dir, 'checkout', 'main')
+    commit(dir, 'main change')
+    git(dir, 'merge', '--no-ff', 'topic', '-m', 'merge')
+    git(dir, 'update-ref', 'refs/remotes/origin/topic', topic)
+    writeFileSync(join(dir, 'untracked'), 'leave alone')
+    const before = files(dir)
+    const all = await gitGraph(dir)
+    expect(all.entries[0]!.parents).toHaveLength(2)
+    expect(all.entries.find(e => e.hashFull === topic)?.message).toContain('Body with unicode 日本語 and separators \x1e\x1f')
+    expect(all.entries.find(e => e.hashFull === topic)?.refs).toContain('origin/topic')
+    expect(all.entries.at(-1)?.hashFull).toBe(base)
+    const page1 = await gitGraph(dir, { count: 2 })
+    const page2 = await gitGraph(dir, { count: 2, cursor: page1.nextCursor })
+    expect([...page1.entries, ...page2.entries]).toEqual(all.entries)
+    expect(page2.hasMore).toBe(false)
+    expect(page2.nextCursor).toBeUndefined()
+    expect(page2.snapshot).toBe(page1.snapshot)
+    expect(files(dir)).toEqual(before)
+    const filtered = await gitGraph(dir, { branch: 'refs/remotes/origin/topic' })
+    expect(filtered.entries.map(e => e.hashFull)).toEqual([topic, base])
+  })
+
+  it('decorates commits with lightweight and annotated tags without treating tags as branches', async () => {
+    const dir = repo()
+    const base = commit(dir, 'base')
+    const head = commit(dir, 'head')
+    git(dir, '-c', 'tag.gpgsign=false', 'tag', 'release/light', base)
+    git(dir, '-c', 'tag.gpgsign=false', 'tag', '-a', 'release/annotated', '-m', 'Release', head)
+    const before = files(dir)
+    const graph = await gitGraph(dir)
+    expect(graph.entries.find(entry => entry.hashFull === base)?.refs).toContain('tag: release/light')
+    expect(graph.entries.find(entry => entry.hashFull === head)?.refs).toEqual(['HEAD', 'main', 'tag: release/annotated'])
+    expect(graph.branches.map(branch => branch.ref)).toEqual(['refs/heads/main'])
+    expect(files(dir)).toEqual(before)
+  })
+
+  it('invalidates graph pages when tags are created, moved or deleted', async () => {
+    const dir = repo()
+    const base = commit(dir, 'base')
+    const head = commit(dir, 'head')
+    let first = await gitGraph(dir, { count: 1 })
+    git(dir, '-c', 'tag.gpgsign=false', 'tag', 'release', base)
+    await expect(gitGraph(dir, { cursor: first.nextCursor })).rejects.toMatchObject({ code: 'graph-stale' })
+    first = await gitGraph(dir, { count: 1 })
+    git(dir, '-c', 'tag.gpgsign=false', 'tag', '-f', 'release', head)
+    await expect(gitGraph(dir, { cursor: first.nextCursor })).rejects.toMatchObject({ code: 'graph-stale' })
+    first = await gitGraph(dir, { count: 1 })
+    git(dir, 'tag', '-d', 'release')
+    await expect(gitGraph(dir, { cursor: first.nextCursor })).rejects.toMatchObject({ code: 'graph-stale' })
+  })
+
+  it('truncates tags at their own limit while preserving branch capacity', async () => {
+    const dir = repo()
+    const head = commit(dir, 'head')
+    const refs = [
+      ...Array.from({ length: 999 }, (_, i) => `create refs/heads/branch-${i} ${head}`),
+      ...Array.from({ length: 5001 }, (_, i) => `create refs/tags/release-${String(i).padStart(4, '0')} ${head}`),
+    ].join('\n') + '\n'
+    execFileSync('git', ['-C', dir, 'update-ref', '--stdin'], { input: refs, env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1' } })
+    const graph = await gitGraph(dir)
+    expect(graph.branches).toHaveLength(1000)
+    const decorations = graph.entries[0]!.refs
+    expect(decorations.filter(ref => ref.startsWith('tag: '))).toHaveLength(5000)
+    expect(decorations).toContain('tag: release-4999')
+    expect(decorations).not.toContain('tag: release-5000')
+  })
+
+  it('includes detached HEAD but excludes stash-only history', async () => {
+    const dir = repo()
+    commit(dir, 'base')
+    writeFileSync(join(dir, 'tracked'), 'a')
+    git(dir, 'add', '.')
+    commit(dir, 'tracked')
+    writeFileSync(join(dir, 'tracked'), 'b')
+    git(dir, 'stash')
+    const stash = git(dir, 'rev-parse', 'refs/stash')
+    git(dir, 'checkout', '--detach')
+    const detached = commit(dir, 'detached')
+    const graph = await gitGraph(dir)
+    expect(graph.entries[0]?.hashFull).toBe(detached)
+    expect(graph.entries.some(e => e.hashFull === stash)).toBe(false)
+    expect((await gitHistory(dir)).entries.some(e => e.hashFull === stash)).toBe(false)
+  })
+
+  it('uses bounded graph inventory but offers snapshot-validated history across all refs', async () => {
+    const dir = repo()
+    const base = commit(dir, 'base')
+    commit(dir, 'head')
+    const first = await gitHistory(dir, { count: 1 })
+    expect(first.entries[0]?.subject).toBe('head')
+    const second = await gitHistory(dir, { count: 1, cursor: first.nextCursor })
+    expect(second.entries[0]?.hashFull).toBe(base)
+    expect(second.snapshot).toBe(first.snapshot)
+    git(dir, 'tag', 'history-tag', base)
+    await expect(gitHistory(dir, { count: 1, cursor: first.nextCursor })).rejects.toMatchObject({ code: 'graph-stale' })
+
+    const generatedRefs = Array.from({ length: 999 }, (_, i) => `create refs/heads/generated-${String(i).padStart(4, '0')} ${base}`).join('\n') + '\n'
+    execFileSync('git', ['-C', dir, 'update-ref', '--stdin'], { input: generatedRefs, env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1' } })
+    expect((await gitGraph(dir, { count: 1 })).branches).toHaveLength(1000)
+    git(dir, 'update-ref', 'refs/heads/generated-0999', base)
+    await expect(gitGraph(dir)).rejects.toMatchObject({ code: 'graph-limit' })
+    expect((await gitHistory(dir, { count: 1 })).entries[0]?.subject).toBe('head')
+  })
+
+  it('detects detached HEAD movement and shallow-boundary changes between history pages', async () => {
+    const dir = repo()
+    const firstCommit = commit(dir, 'first')
+    const second = commit(dir, 'second')
+    git(dir, 'checkout', '--detach', second)
+    const firstPage = await gitHistory(dir, { count: 1 })
+    const detachedOnly = commit(dir, 'detached-only')
+    expect((await gitHistory(dir, { count: 1 })).entries[0]?.hashFull).toBe(detachedOnly)
+    await expect(gitHistory(dir, { count: 1, cursor: firstPage.nextCursor })).rejects.toMatchObject({ code: 'graph-stale' })
+
+    const shallow = join(dir, '.git', 'shallow')
+    writeFileSync(shallow, `${second}\n`)
+    const shallowPage = await gitHistory(dir, { count: 1 })
+    writeFileSync(shallow, `${second}\n${firstCommit}\n`)
+    await expect(gitHistory(dir, { count: 1, cursor: shallowPage.nextCursor })).rejects.toMatchObject({ code: 'graph-stale' })
+  })
+
+  it('rejects stale pages when refs move or the filter changes', async () => {
+    const dir = repo()
+    commit(dir, 'one'); commit(dir, 'two')
+    const first = await gitGraph(dir, { count: 1 })
+    await expect(gitGraph(dir, { cursor: first.nextCursor, branch: 'refs/heads/main' })).rejects.toMatchObject({ code: 'graph-stale' })
+    git(dir, 'branch', 'new-decoration')
+    await expect(gitGraph(dir, { cursor: first.nextCursor })).rejects.toMatchObject({ code: 'graph-stale' })
+    const second = await gitGraph(dir, { count: 1, branch: 'refs/heads/new-decoration' })
+    git(dir, 'branch', '-D', 'new-decoration')
+    await expect(gitGraph(dir, { cursor: second.nextCursor, branch: 'refs/heads/new-decoration' })).rejects.toMatchObject({ code: 'graph-stale' })
+  })
+
+  it('uses selected container repositories and linked worktree HEADs', async () => {
+    const container = temp()
+    for (const name of ['a', 'b']) {
+      git(container, 'init', '-b', 'main', name)
+      git(join(container, name), 'config', 'user.name', 'Graph Tester')
+      git(join(container, name), 'config', 'user.email', 'graph@example.test')
+      git(join(container, name), 'config', 'commit.gpgsign', 'false')
+      commit(join(container, name), name)
+    }
+    expect((await gitGraph(container, {}, join(container, 'b'))).entries[0]?.subject).toBe('b')
+    const linked = join(temp(), 'linked')
+    git(join(container, 'b'), 'worktree', 'add', '--detach', linked)
+    const head = commit(linked, 'linked only')
+    expect((await gitGraph(linked, {}, join(container, 'b'))).entries[0]?.hashFull).toBe(head)
+  })
+
+  it('fails visibly instead of truncating oversized full messages', async () => {
+    const dir = repo()
+    const message = join(dir, 'message')
+    writeFileSync(message, 'large message\n\n' + 'x'.repeat(9 * 1024 * 1024))
+    git(dir, 'commit', '--allow-empty', '-F', message)
+    await expect(gitGraph(dir)).rejects.toMatchObject({ code: 'git-error' })
+  })
+
+  it('rejects option injection, unknown refs and malformed or unbounded cursors', async () => {
+    const dir = repo(); commit(dir, 'one')
+    for (const branch of ['--all', 'HEAD', 'main', 'refs/heads/main --all', 'refs/heads/main~1', 'refs/tags/v1', 'refs/heads/main\0']) {
+      await expect(gitGraph(dir, { branch })).rejects.toMatchObject({ code: 'bad-request' })
+    }
+    for (const cursor of ['', '!', 'a'.repeat(513), Buffer.from(JSON.stringify({ version: 1, fingerprint: 'a'.repeat(64), offset: 10001 })).toString('base64url')]) {
+      await expect(gitGraph(dir, { cursor })).rejects.toMatchObject({ code: 'bad-request' })
+    }
+    for (const count of [0, -1, NaN, 1.5]) await expect(gitGraph(dir, { count })).rejects.toMatchObject({ code: 'bad-request' })
+  })
+})

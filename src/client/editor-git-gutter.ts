@@ -7,10 +7,12 @@
  * end-of-line author widget, no badges, no animation, no gradient.
  *
  * Three rules shape the wiring:
- *  - ONE git status source. `useGitStatus` (the plugin's shared store, also
- *    behind the file tree's ink) decides WHICH files changed and whether a
- *    file is untracked; this module never starts a second poller. The line
- *    map itself comes from `git diff --no-color` through the existing
+ *  - ONE git status source, and it is READ-ONLY here: `useGitStatus` (the
+ *    plugin's shared store, also behind the file tree's ink) decides WHICH
+ *    files changed and whether a file is untracked; this module never starts a
+ *    second poller AND never owns the shared one — it subscribes with
+ *    `poll: false` and refreshes on its own events (a file open, a save). The
+ *    line map itself comes from `git diff --no-color` through the existing
  *    unified-diff parser (`diff/rows.ts`), so a line's class is git's own
  *    answer — context rows are never marked.
  *  - Only the `code` viewer carries the extensions (the caller passes null
@@ -24,7 +26,7 @@
  *    and a vanished diff (the file was committed or discarded) must not leave
  *    the pre-commit line answering the next hover.
  */
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { RangeSet, Compartment, StateEffect, StateField, type EditorState, type Extension } from '@codemirror/state'
 import { EditorView, GutterMarker, gutter, gutterLineClass, hoverTooltip, type Tooltip } from '@codemirror/view'
 import { api, type GitBlameLine, type SessionScope } from './api.ts'
@@ -293,8 +295,14 @@ function blameTooltipDom(entry: GitBlameLine): HTMLElement {
 
 /** Everything the gutter needs from the editor component. */
 export interface EditorGitGutterOptions {
-  /** False for every viewer but `code`, and when the setting is off. */
+  /** False for every viewer but `code` / `jsonl`, and when the setting is off. */
   enabled: boolean
+  /**
+   * Whether the editor's tab is actually on screen. Native tabs are kept
+   * MOUNTED while parked, which is not the same as staying subscribed: a
+   * hidden editor must not hold any git work.
+   */
+  visible: boolean
   scope: SessionScope
   path: string
   /** The loaded text; a reload re-reads the change set. */
@@ -310,7 +318,7 @@ export interface EditorGitGutterOptions {
  * the disabled state all resolve to an empty map — no decoration.
  */
 export function useEditorGitGutter(options: EditorGitGutterOptions): ReadonlyMap<number, GitLineKind> {
-  const { enabled, path, content, revision } = options
+  const { enabled, visible, path, content, revision } = options
   const sessionId = options.scope.sessionId
   const cwd = options.scope.cwd
   const repoRoot = options.scope.repoRoot
@@ -318,9 +326,34 @@ export function useEditorGitGutter(options: EditorGitGutterOptions): ReadonlyMap
     () => ({ sessionId, cwd, ...(repoRoot !== undefined ? { repoRoot } : {}) }),
     [sessionId, cwd, repoRoot],
   )
-  const status = useGitStatus(scope, { visible: enabled })
-  const entry = enabled ? status.statusOf(path) : undefined
+  const active = enabled && visible
+  // `poll: false` — the gutter reads the shared answer but NEVER owns the
+  // timer. Passing the feature switch as `visible` (what this did before) meant
+  // that opening any file kept a `git status --untracked-files=all` running for
+  // the rest of the page's life, cadence after cadence, while the user was
+  // simply typing — megabytes of output per scan on a repository with an
+  // unignored nested `node_modules` or package-manager store. The gutter is
+  // allowed to lag; the file listing and the rest of the page are not.
+  const status = useGitStatus(scope, { visible: active, poll: false })
+  const entry = active ? status.statusOf(path) : undefined
   const [kinds, setKinds] = useState<ReadonlyMap<number, GitLineKind>>(EMPTY_KINDS)
+  const refresh = status.refresh
+
+  /**
+   * One event-driven re-read when the gutter's question changes: a DIFFERENT
+   * file, or the SAME file after a save. Deliberately not on mount — when no
+   * other surface holds the status, `retain` has already fetched one answer,
+   * and a second request in the same commit would only duplicate that scan.
+   */
+  const lastAsk = useRef<string | null>(null)
+  useEffect(() => {
+    if (!active) return
+    const ask = `${path}\u0000${String(revision)}`
+    const previous = lastAsk.current
+    lastAsk.current = ask
+    if (previous === null || previous === ask) return
+    refresh()
+  }, [active, path, revision, refresh])
 
   useEffect(() => {
     // A fresh change set invalidates the file's blame memo (the lines that
@@ -330,7 +363,7 @@ export function useEditorGitGutter(options: EditorGitGutterOptions): ReadonlyMap
     // the enabled branch would never run and the next hover would be answered
     // with the pre-commit line (the '[Not Committed Yet]' placeholder too).
     forgetBlame(scope.sessionId, path)
-    if (!enabled || entry === undefined) {
+    if (!active || entry === undefined) {
       setKinds(EMPTY_KINDS)
       return undefined
     }
@@ -344,7 +377,7 @@ export function useEditorGitGutter(options: EditorGitGutterOptions): ReadonlyMap
       () => { if (!cancelled) setKinds(EMPTY_KINDS) },
     )
     return () => { cancelled = true }
-  }, [enabled, scope, path, content, revision, entry])
+  }, [active, scope, path, content, revision, entry])
 
   return kinds
 }

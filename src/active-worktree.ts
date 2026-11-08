@@ -1,10 +1,11 @@
 /**
  * Follow the linked git worktree a session is ACTUALLY working in.
  *
- * The explorer is rooted at the session's stored header cwd, which never
- * changes. A session can move into a linked git worktree (`git worktree add`)
+ * The explorer starts from the host's committed workingDirectory, which can
+ * change independently of the immutable header. It can also follow a linked
+ * git worktree (`git worktree add`)
  * during its life  including a worktree of a repository that is not the one
- * the header cwd points at  and the sidebar should follow it.
+ * the current directory points at  and the sidebar should follow it.
  *
  * The active root is derived from the session's own `tool/call` arguments:
  * absolute paths are collected newest-event-first (structured `cwd` / `workdir`
@@ -13,26 +14,54 @@
  * `git rev-parse --show-toplevel` (falling back to its directory for files),
  * and only top levels whose `--absolute-git-dir` differs from their
  * `--git-common-dir` (i.e. real LINKED worktrees, not the main checkout and
- * not submodules) are adopted. The highest-scoring linked worktree of the
- * newest event that has one wins; when there is no evidence the session cwd is
- * kept (lifted to the repository top level for subdirectory sessions).
+ * not submodules) are adopted. A linked worktree that sits INSIDE the session
+ * workspace is adopted only when it belongs to the SAME repository — a
+ * `git worktree add .worktrees/x` of the session's own repo is the session
+ * moving, while a nested repository's worktree is ordinary content of the
+ * workspace: re-rooting the explorer into it hides every sibling directory
+ * (#952). Outside the workspace any linked worktree is adopted, which is PR
+ * #802's cross-repository case. The highest-scoring adoptable worktree of the
+ * newest event that has one wins, but only evidence after the last committed
+ * working-directory/change is eligible. With no such evidence the session cwd
+ * itself is kept, a session living in a subdirectory of its repository
+ * included: the repository top level is never a root on its own.
  *
- * Resolutions are cached process-wide, so the client's periodic re-ask is
- * cheap after the first scan.
+ * Resolutions are cached process-wide ({@link ACTIVE_ROOT_TTL_MS}), concurrent
+ * callers share one in-flight resolution AND one in-flight base probe, and
+ * every cache is bounded — so the client's periodic re-ask, the debounced
+ * fs-watch frames and the route handlers that funnel through `cwdOf()` are
+ * answered without a process spawn after the first scan. A DETACHED session is
+ * answered with its base (the workspace address) and never folds the stored
+ * log — see {@link activeWorktreeRootOf}.
  */
-import { stat } from 'node:fs/promises'
+import { realpath, stat } from 'node:fs/promises'
 import { dirname, isAbsolute, join, sep } from 'node:path'
 import type { Context, SidebarSessionEvent } from './context-types.ts'
 import { requireAbsolute } from './fs-tree.ts'
-import { runGitRaw } from './git.ts'
+import { runGit } from './git.ts'
 import { readPersistedSessionOf } from './session-store.ts'
 
-/** How long one computed root is reused before the event log is scanned again. */
-const ACTIVE_ROOT_TTL_MS = 3_000
+/**
+ * How long one computed root is reused before the event log is scanned again.
+ *
+ * 15 s, deliberately longer than the client's per-tab 5 s poll: at 3 s every
+ * poll was a cache miss (one `git rev-parse --show-toplevel` spawn plus up to
+ * 4 000 events of backlog scanning per ask, measured 9.6–44.7 ms), which is
+ * the opposite of what this cache is for. The semantic cost of the longer TTL
+ * is that a session which MOVES into a linked worktree is followed within at
+ * most 15 s of the move (was 3 s) — every event-driven re-ask (fs-watch
+ * frames, route calls, editor opens) is served from the cache in the meantime
+ * and no refresh path is turned off.
+ */
+const ACTIVE_ROOT_TTL_MS = 15_000
 /** Only the newest slice of the event log is considered. */
 const ACTIVE_ROOT_MAX_EVENTS = 4_000
 /** Upper bound on git probes per scan (cache misses are what cost). */
 const ACTIVE_ROOT_MAX_PROBES = 24
+/** Bounds of the three process-wide caches below (LRU, oldest evicted first). */
+const PATH_TOP_CACHE_MAX = 512
+const GIT_IDENTITY_CACHE_MAX = 512
+const ACTIVE_ROOT_CACHE_MAX = 256
 /** Explicit override, mainly for tests and manual pinning. */
 const ACTIVE_ROOT_OVERRIDE_ENV = 'DSH_SIDEBAR_WORKTREE_ROOT'
 /** Keys whose string values describe where a tool actually ran. */
@@ -47,10 +76,87 @@ const ACTIVE_ROOT_PATH_PATTERN = /[A-Za-z]:(?:\\|\/)[^\\/\s"'\x60,;|)<>*?]+(?:[\
  * (measured ~7 ms), and the repeated asks  every debounced watch frame, every
  * route call, the client's 5 s poll  are exactly what the TTL exists to keep
  * free.
+ *
+ * `eventSeq` is the live session cursor observed when the entry was computed,
+ * and `gitResolved` says whether the base probe actually found a repository.
+ * A TTL expiry alone means only that wall time passed; when the log has not
+ * moved since, nothing the EVENT SCAN reads can have changed, so a resolved
+ * entry is re-armed instead of snapshotting the log and scanning up to 4000
+ * events again (measured 9.6–44.7 ms per miss — the idle 5 s poll landed on
+ * one every third ask). A negative/failed base probe is NOT re-armed: `git
+ * init` in a parent, a transient spawn failure, or a mount coming back are
+ * invisible to the event log, so those keep the wall-clock re-probe. A moved
+ * cursor (or a host with no `seq`) also keeps the old meaning.
+ *
+ * All three maps are BOUNDED: a long-lived host (and a `keepMounted` right
+ * sidebar that keeps asking about every session it has ever shown) would
+ * otherwise grow them forever. `pathTopCache` caches negative answers too
+ * (`undefined` = "no git top level here"), which is what keeps a non-repo
+ * session cheap; `gitIdentityCache` does the same for "not in a repository",
+ * and `activeWorktreeRootCache` the same for a session with no evidence —
+ * those entries are evictable like any other.
  */
-const activeWorktreeRootCache = new Map<string, { root: string; base: string; expires: number }>()
+const activeWorktreeRootCache = new Map<string, { root: string; base: string; directoryEpoch: number | undefined; eventSeq: number | undefined; gitResolved: boolean; expires: number }>()
 const pathTopCache = new Map<string, string | undefined>()
-const linkedWorktreeCache = new Map<string, boolean>()
+const gitIdentityCache = new Map<string, GitIdentity | undefined>()
+
+/**
+ * In-flight de-duplication, mirroring `git.ts`'s `repoRootsInFlight`.
+ *
+ * `activeRootInFlight` collapses a burst of asks for the SAME (session, base)
+ * into one resolution (one base spawn, one event scan); `topLevelInFlight`
+ * collapses the base probe across DIFFERENT sessions that share a base (N tabs
+ * of one workspace would otherwise spawn N `git rev-parse` processes at once).
+ * Both delete their entry on the resolved AND the rejected path, so a failure
+ * never poisons the map.
+ */
+const activeRootInFlight = new Map<string, Promise<string>>()
+const topLevelInFlight = new Map<string, Promise<string | undefined>>()
+
+/**
+ * Insert or refresh one cache entry, evicting the least recently used entry
+ * once the cache holds more than `max`. Map iteration order is insertion
+ * order, so deleting before setting moves the key to the young end — which is
+ * what makes a HIT refresh recency (this is the repo's bounded-cache style
+ * from `fs-tree.ts`'s `directoryCache`, with the recency touch added).
+ */
+function cachePut<K, V>(map: Map<K, V>, key: K, value: V, max: number): void {
+  map.delete(key)
+  map.set(key, value)
+  while (map.size > max) {
+    const oldest = map.keys().next().value
+    if (oldest === undefined) break
+    map.delete(oldest)
+  }
+}
+
+/** Latest committed directory change, observed incrementally per live Session. */
+const directoryEpochs = new WeakMap<object, { through: number; epoch: number }>()
+
+/**
+ * Cache identity must notice explicit cd even when its resulting base equals
+ * the old base (an old tool may have temporarily selected a linked worktree).
+ * Indexed reads inspect only newly appended events, with zero snapshot copies;
+ * unchanged live cursors cost O(1). A first read only needs the same bounded
+ * history window used by the worktree evidence scan.
+ */
+function directoryEpochOf(ctx: Context, sessionId: string): number | undefined {
+  const session = ctx.sessions.get(sessionId)
+  if (session?.seq === undefined || session.eventAt === undefined) return undefined
+  const end = session.seq
+  const previous = directoryEpochs.get(session)
+  if (previous?.through === end) return previous.epoch
+  const start = previous?.through ?? Math.max(0, end - ACTIVE_ROOT_MAX_EVENTS)
+  let epoch = previous?.epoch ?? -1
+  for (let index = end - 1; index >= start; index -= 1) {
+    const event = session.eventAt(index)
+    if (event?.type !== 'working-directory/change') continue
+    epoch = event.seq
+    break
+  }
+  directoryEpochs.set(session, { through: end, epoch })
+  return epoch
+}
 
 /**
  * Normalized IDENTITY of a path (case- and separator-insensitive), for
@@ -62,6 +168,24 @@ const linkedWorktreeCache = new Map<string, boolean>()
  */
 function pathKeyOf(value: string): string {
   return value.replace(/[\\/]+/g, '/').replace(/\/+$/, '').toLowerCase()
+}
+
+/**
+ * Whether a cached path is still there, as a THREE-way answer.
+ *
+ * Only ENOENT / ENOTDIR prove the directory is gone. Any other failure — EACCES /
+ * EPERM / EBUSY / EIO / EMFILE: a locked handle, an antivirus pass holding the
+ * directory, a hung SMB/UNC worktree — says nothing about existence. Treating those
+ * as "gone" would re-root the sidebar because of one transient error, which is worse
+ * than the stale answer this whole check exists to remove (issue #960 review).
+ */
+async function directoryPresence(path: string): Promise<'live' | 'gone' | 'unknown'> {
+  try {
+    return (await stat(path)).isDirectory() ? 'live' : 'gone'
+  } catch (error) {
+    const code = String((error as { code?: unknown } | null)?.code ?? '')
+    return code === 'ENOENT' || code === 'ENOTDIR' ? 'gone' : 'unknown'
+  }
 }
 
 /** Whether `target` is `base` itself or lives under it. */
@@ -76,10 +200,33 @@ async function gitTopLevelOf(cwd: string): Promise<string | undefined> {
   if (cwd === '' || !isAbsolute(cwd)) return undefined
   try {
     if (!(await stat(cwd)).isDirectory()) return undefined
-    return (await runGitRaw(cwd, ['rev-parse', '--show-toplevel'])).trim()
+    return (await runGit(cwd, ['rev-parse', '--show-toplevel'])).trim()
   } catch {
     return undefined
   }
+}
+
+/**
+ * {@link gitTopLevelOf} with in-flight sharing per path identity: concurrent
+ * asks for one directory (a route burst, or several sessions rooted in the
+ * same repository) spawn ONE git process between them.
+ */
+function topLevelOf(cwd: string): Promise<string | undefined> {
+  const key = pathKeyOf(cwd)
+  const pending = topLevelInFlight.get(key)
+  if (pending !== undefined) return pending
+  const promise = gitTopLevelOf(cwd).then(
+    (top) => {
+      topLevelInFlight.delete(key)
+      return top
+    },
+    (error: unknown) => {
+      topLevelInFlight.delete(key)
+      throw error
+    },
+  )
+  topLevelInFlight.set(key, promise)
+  return promise
 }
 
 /** Collapse duplicated separators without destroying a UNC prefix. */
@@ -149,37 +296,140 @@ function collectActivePaths(value: unknown, map: Map<string, ActivePathEntry>, s
 /** git top level for one path (its directory when the path names a file). */
 async function topOfActivePath(value: string): Promise<string | undefined> {
   const key = pathKeyOf(value)
-  if (pathTopCache.has(key)) return pathTopCache.get(key)
-  let top = await gitTopLevelOf(value)
-  if (top === undefined) top = await gitTopLevelOf(dirname(value))
+  if (pathTopCache.has(key)) {
+    const cached = pathTopCache.get(key)
+    // A cached `undefined` ("not in a repository") is the answer that keeps a
+    // non-repo session cheap, so it is re-inserted like any other hit — which
+    // also refreshes its recency in the bounded LRU. A cached PATH is only
+    // reusable while the directory is still there: a followed worktree the user
+    // deletes would otherwise be handed to every route forever (issue #960).
+    if (cached === undefined) {
+      cachePut(pathTopCache, key, cached, PATH_TOP_CACHE_MAX)
+      return cached
+    }
+    if (await directoryPresence(cached) !== 'gone') {
+      cachePut(pathTopCache, key, cached, PATH_TOP_CACHE_MAX)
+      return cached
+    }
+    // Gone for real: drop the entry and probe again. A NEGATIVE from this
+    // re-probe is deliberately NOT cached — `pathTopCache` has no TTL, so a
+    // negative produced by a disappearance would pin the session away from a
+    // path that can come back (`git worktree add` again, a restored folder).
+    // Both the deletion and the re-creation are then self-healing.
+    pathTopCache.delete(key)
+    const again = await topLevelOf(value)
+    const top = again === undefined ? await topLevelOf(dirname(value)) : again
+    if (top === undefined) return undefined
+    const result = requireAbsolute(top)
+    cachePut(pathTopCache, key, result, PATH_TOP_CACHE_MAX)
+    return result
+  }
+  let top = await topLevelOf(value)
+  if (top === undefined) top = await topLevelOf(dirname(value))
   const result = top === undefined ? undefined : requireAbsolute(top)
-  pathTopCache.set(key, result)
+  cachePut(pathTopCache, key, result, PATH_TOP_CACHE_MAX)
   return result
+}
+
+/**
+ * The git identity of one checkout, as `git rev-parse` reports it: the
+ * checkout's OWN git dir and the COMMON dir every checkout of that repository
+ * shares. Two paths belong to the same repository exactly when their common
+ * dirs match, which is the only reliable way to tell "the session moved into a
+ * worktree of its own repo" from "the workspace contains another repo's
+ * worktree" (#952) — a bare repo's checkouts and a container workspace's
+ * sub-projects are indistinguishable by path alone.
+ *
+ * `main checkout: gitDir === commonDir === <repo>/.git`; `linked worktree:
+ * gitDir = <repo>/.git/worktrees/<name>, commonDir = <repo>/.git`; `submodule:
+ * both are <super>/.git/modules/<name>`.
+ */
+interface GitIdentity {
+  /** The checkout's own git dir (`--absolute-git-dir`). */
+  gitDir: string
+  /** The repository's shared git dir (`--git-common-dir`). */
+  commonDir: string
+}
+
+/**
+ * `git rev-parse` identity of one directory, cached process-wide (a probe is a
+ * spawn). `undefined` for a directory that is not in a repository, or whose
+ * answer is unusable — callers treat that as "no identity", never as a match.
+ * @param dir - an existing directory (or any path inside one).
+ * @returns the identity, or undefined.
+ */
+async function gitIdentityOf(dir: string): Promise<GitIdentity | undefined> {
+  const key = pathKeyOf(dir)
+  if (gitIdentityCache.has(key)) {
+    const cached = gitIdentityCache.get(key)
+    // A cached `undefined` ("not in a repository") is a real answer that keeps
+    // a subdirectory session from re-probing the same directory, so a hit is
+    // re-inserted like any other — which also refreshes its LRU recency.
+    cachePut(gitIdentityCache, key, cached, GIT_IDENTITY_CACHE_MAX)
+    return cached
+  }
+  let identity: GitIdentity | undefined
+  try {
+    const out = (await runGit(dir, ['rev-parse', '--absolute-git-dir', '--git-common-dir'])).trim().split(/\r?\n/)
+    const gitDir = out[0]
+    const commonRaw = out[1] ?? ''
+    if (gitDir !== undefined && gitDir !== '' && commonRaw !== '') {
+      // The common dir comes back relative when the checkout is the main one
+      // (`.git`); resolve it against the probed directory, not the process cwd.
+      identity = {
+        gitDir: requireAbsolute(gitDir),
+        commonDir: requireAbsolute(isAbsolute(commonRaw) ? commonRaw : join(dir, commonRaw)),
+      }
+    }
+  } catch {
+    identity = undefined
+  }
+  cachePut(gitIdentityCache, key, identity, GIT_IDENTITY_CACHE_MAX)
+  return identity
 }
 
 /**
  * Whether a git top level is a LINKED worktree: its git dir lives under the
  * common dir (`<main>/.git/worktrees/<name>`) instead of being it. Submodules
  * report the same dir for both, so they are excluded.
+ *
+ * Both questions are answered from ONE {@link gitIdentityOf} probe: the same
+ * identity also names the repository a checkout belongs to, which is what
+ * {@link isAdoptableTop} compares against the session workspace.
  */
 async function isLinkedWorktree(top: string): Promise<boolean> {
-  const key = pathKeyOf(top)
-  const cached = linkedWorktreeCache.get(key)
-  if (cached !== undefined) return cached
-  let linked = false
-  try {
-    const out = (await runGitRaw(top, ['rev-parse', '--absolute-git-dir', '--git-common-dir'])).trim().split(/\r?\n/)
-    const gitDir = out[0]
-    const commonRaw = out[1] ?? ''
-    if (gitDir !== undefined && gitDir !== '' && commonRaw !== '') {
-      const common = isAbsolute(commonRaw) ? commonRaw : join(top, commonRaw)
-      linked = pathKeyOf(requireAbsolute(gitDir)) !== pathKeyOf(requireAbsolute(common))
-    }
-  } catch {
-    linked = false
-  }
-  linkedWorktreeCache.set(key, linked)
-  return linked
+  const identity = await gitIdentityOf(top)
+  return identity !== undefined && pathKeyOf(identity.gitDir) !== pathKeyOf(identity.commonDir)
+}
+
+/**
+ * Whether a linked worktree is the session MOVING there, rather than ordinary
+ * content of the workspace it already roots (#952).
+ *
+ * Outside the workspace any linked worktree counts — that is exactly PR #802's
+ * case (the session's header cwd points at one repository and the agent works
+ * in a worktree of another). Inside the workspace the answer depends on the
+ * repository: `.worktrees/<branch>` of the session's OWN repo is the session
+ * working on a branch, which the explorer should follow; the linked worktrees
+ * of a repository NESTED in the workspace (a bare repo's checkouts, a
+ * container workspace's sub-projects) are ordinary content, and adopting one
+ * re-roots the explorer into that single subdirectory and hides every sibling
+ * — the reported 20-of-27-sessions bug.
+ *
+ * @param top - a candidate's `git rev-parse --show-toplevel`.
+ * @param base - the session's effective workspace root.
+ * @returns whether the candidate may become the active root.
+ */
+async function isAdoptableTop(top: string, base: string): Promise<boolean> {
+  if (!(await isLinkedWorktree(top))) return false
+  // A base of `/` (or of another filesystem root) puts everything "inside";
+  // keeping the check would switch the whole feature off, so treat it as no
+  // workspace at all.
+  if (pathKeyOf(base) === '' || !pathUnderOf(base, top)) return true
+  const candidate = await gitIdentityOf(top)
+  const workspace = await gitIdentityOf(base)
+  return candidate !== undefined && workspace !== undefined
+    && pathKeyOf(candidate.commonDir) === pathKeyOf(workspace.commonDir)
 }
 
 /** The newest linked worktree the session's tool/call paths resolve to. */
@@ -190,6 +440,9 @@ async function activeRootFromEvents(events: readonly SidebarSessionEvent[], base
   let probes = 0
   for (let index = events.length - 1; index >= start; index -= 1) {
     const event = events[index]
+    // An explicit directory transition is the authority boundary. Older tool
+    // paths belong to the previous execution context and must not override it.
+    if (event?.type === 'working-directory/change') break
     if (event === undefined || event.type !== 'tool/call') continue
     const weights = new Map<string, ActivePathEntry>()
     collectActivePaths(event.data, weights, false)
@@ -203,7 +456,7 @@ async function activeRootFromEvents(events: readonly SidebarSessionEvent[], base
       if (top === undefined) continue
       const topKey = pathKeyOf(top)
       if (topKey === baseKey) continue
-      if (!(await isLinkedWorktree(top))) continue
+      if (!(await isAdoptableTop(top, base))) continue
       const entry = scores.get(topKey)
       if (entry === undefined) scores.set(topKey, { top, score: candidate.score })
       else entry.score += candidate.score
@@ -237,32 +490,112 @@ async function sessionEventsOf(ctx: Context, sessionId: string): Promise<readonl
 
 /**
  * The directory the sidebar should treat as the session's root.
+ *
+ * The cache is consulted BEFORE the probe, and concurrent asks for the same
+ * (session, base) share ONE in-flight resolution: twelve route handlers funnel
+ * through `cwdOf()`, so a burst of parallel `/sidebar/*` calls used to spawn a
+ * `git rev-parse` process per call.
  * @param ctx - host plugin context.
  * @param sessionId - session whose tool calls are inspected.
  * @param base - the authoritative session cwd (already resolved by the caller).
- * @returns the active linked worktree, the repository top level, or `base`.
+ * @returns the linked worktree the session moved into, or the session cwd's
+ *   own (real) path — never the repository top level.
  */
 export async function activeWorktreeRootOf(ctx: Context, sessionId: string, base: string): Promise<string> {
   if (base === '') return base
   const override = (process.env[ACTIVE_ROOT_OVERRIDE_ENV] ?? '').trim()
   if (override !== '' && isAbsolute(override)) return requireAbsolute(override)
-  // The cache is consulted BEFORE the probe: doing it afterwards still pays the
-  // spawn on every ask, which is the whole cost the TTL is there to avoid. The
-  // comparison is on the raw base, so a session whose caller switched base (the
-  // `/sidebar/*` routes pass the client's own) never reuses the other one's root.
+  // A detached session has no live event log, and folding its STORED one means
+  // decoding the whole artifact (39 MB here) for a follow-the-agent nicety the
+  // workspace address already answers: while cold, the session's header cwd IS
+  // the root. Attaching the session re-enables the fold on the next ask.
+  if (ctx.sessions.get(sessionId) === undefined) return base
+  // The comparison is on the raw base, so a session whose caller switched base
+  // (a committed working_directory change) never reuses the other
+  // one's root.
+  const directoryEpoch = directoryEpochOf(ctx, sessionId)
+  // The live cursor is O(1) (a number on the session face); it is what makes a
+  // TTL expiry free when nothing was appended.
+  const liveSeq = ctx.sessions.get(sessionId)?.seq
   const cached = activeWorktreeRootCache.get(sessionId)
-  if (cached !== undefined && cached.expires > Date.now() && cached.base === base) return cached.root
-  const top = await gitTopLevelOf(base)
+  if (cached !== undefined && cached.base === base && cached.directoryEpoch === directoryEpoch) {
+    // A served root must still exist: a followed worktree the user deleted
+    // would otherwise stay pinned for another TTL window (issue #960).
+    // `root === base` is the one case with nothing better to fall back to.
+    const liveRoot = cached.root === base || await directoryPresence(cached.root) !== 'gone'
+    if (cached.expires > Date.now() && liveRoot) {
+      cachePut(activeWorktreeRootCache, sessionId, cached, ACTIVE_ROOT_CACHE_MAX)
+      return cached.root
+    }
+    // Expired, but the event log has not moved AND the base probe found a
+    // repository: nothing this resolver reads can have changed, so re-arm the
+    // entry. Negative/failed answers keep the wall-clock re-probe (see the
+    // entry doc), and so does a host with no cursor.
+    if (liveRoot && cached.gitResolved && liveSeq !== undefined && cached.eventSeq === liveSeq) {
+      cachePut(activeWorktreeRootCache, sessionId, {
+        ...cached,
+        expires: Date.now() + ACTIVE_ROOT_TTL_MS,
+      }, ACTIVE_ROOT_CACHE_MAX)
+      return cached.root
+    }
+    if (!liveRoot) activeWorktreeRootCache.delete(sessionId)
+  }
+  const flightKey = `${sessionId}\0${base}\0${directoryEpoch ?? ''}`
+  const pending = activeRootInFlight.get(flightKey)
+  if (pending !== undefined) return pending
+  const promise = resolveActiveWorktreeRoot(ctx, sessionId, base, directoryEpoch).then(
+    (root) => {
+      activeRootInFlight.delete(flightKey)
+      return root
+    },
+    (error: unknown) => {
+      activeRootInFlight.delete(flightKey)
+      throw error
+    },
+  )
+  activeRootInFlight.set(flightKey, promise)
+  return promise
+}
+
+/**
+ * The session cwd as the filesystem spells it, without ever substituting the
+ * repository top level.
+ *
+ * This value is the base a relative link path resolves against, so lifting a
+ * subdirectory session to `<repo>` would resolve `<subdir>/tools/a.md` as
+ * `<repo>/tools/a.md` (#1024 / #1080). Canonicalizing instead of returning the
+ * caller's spelling keeps the value comparable with the canonical paths
+ * `git rev-parse` reports: the workspace-containment decision in
+ * {@link isAdoptableTop} must still see a nested worktree as INSIDE the
+ * workspace when the cwd was reached through a symlink (macOS's `/var` vs
+ * `/private/var` is the #952 layout).
+ */
+async function sessionRootOf(base: string): Promise<string> {
+  try {
+    return await realpath(base)
+  } catch {
+    // A cwd deleted between the git probe and this syscall keeps its spelling;
+    // that answer is no worse than the pre-existing one.
+    return base
+  }
+}
+
+/** One uncached resolution (see {@link activeWorktreeRootOf}). */
+async function resolveActiveWorktreeRoot(ctx: Context, sessionId: string, base: string, directoryEpoch: number | undefined): Promise<string> {
+  // Read the cursor BEFORE the scan: if an event lands mid-resolution the
+  // stored seq is the older one, so the next expiry still sees a moved cursor
+  // and re-scans (conservative — never caches a cursor the scan did not see).
+  const eventSeq = ctx.sessions.get(sessionId)?.seq
+  const top = await topLevelOf(base)
   if (top === undefined) {
     // "Not inside a repository" is an answer too (the base itself), and caching
     // it is what keeps a non-repo session from re-probing on every ask.
-    activeWorktreeRootCache.set(sessionId, { root: base, base, expires: Date.now() + ACTIVE_ROOT_TTL_MS })
+    cachePut(activeWorktreeRootCache, sessionId, { root: base, base, directoryEpoch, eventSeq, gitResolved: false, expires: Date.now() + ACTIVE_ROOT_TTL_MS }, ACTIVE_ROOT_CACHE_MAX)
     return base
   }
-  const canonicalTop = requireAbsolute(top)
-  const effectiveBase = pathUnderOf(base, canonicalTop) ? base : canonicalTop
-  const active = await activeRootFromEvents(await sessionEventsOf(ctx, sessionId), effectiveBase)
-  const root = active ?? effectiveBase
-  activeWorktreeRootCache.set(sessionId, { root, base, expires: Date.now() + ACTIVE_ROOT_TTL_MS })
+  const canonicalBase = await sessionRootOf(base)
+  const active = await activeRootFromEvents(await sessionEventsOf(ctx, sessionId), canonicalBase)
+  const root = active ?? canonicalBase
+  cachePut(activeWorktreeRootCache, sessionId, { root, base, directoryEpoch, eventSeq, gitResolved: true, expires: Date.now() + ACTIVE_ROOT_TTL_MS }, ACTIVE_ROOT_CACHE_MAX)
   return root
 }

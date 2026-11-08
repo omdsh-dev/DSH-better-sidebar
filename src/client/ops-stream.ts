@@ -2,11 +2,13 @@
  * The session's live FILE-OPERATION stream — the signal the editor's
  * auto-refresh rides (#855).
  *
- * The model's file tools leave their calls in the session event log, and the
- * plugin's own `changes.ops` route ships that log's `tool/call` +
- * `tool/result` rows as a `seq > afterSeq` delta (see `src/index.ts`). This
- * module folds those deltas into "which file did the model just write or
- * edit", which is the whole question an open preview has to answer.
+ * The model's file tools leave their calls in the session event log — as a
+ * plain `tool/call` + `tool/result` pair, or as a PTC pair
+ * (`tool/ptc-dispatch-start` / `tool/ptc-dispatch`) when the call ran inside
+ * `<code>` — and the plugin's own `changes.ops` route ships those rows as a
+ * `seq > afterSeq` delta (see `src/index.ts`). This module folds those deltas
+ * into "which file did the model just write or edit", which is the whole
+ * question an open preview has to answer.
  *
  * Design constraints it exists to honour:
  *
@@ -21,9 +23,11 @@
  *   a per-tab poll would multiply the same request by the number of mounted
  *   editors. Requests ride `use-polling.ts` (the sidebar's one polling loop)
  *   on the changes tab's own 2.5s cadence, and stop entirely while no editor
- *   of the session is on screen. The plugin's OWN saves go through
- *   `/sidebar/file` and leave no session event, so a reload can never
- *   re-trigger itself.
+ *   of the session is on screen. A primed stream asks the host to WAIT for the
+ *   next tool event (25s ceiling) instead of re-reading an unchanged window,
+ *   so an idle session costs one parked request rather than a full replay. The
+ *   plugin's OWN saves go through `/sidebar/file` and leave no session event,
+ *   so a reload can never re-trigger itself.
  * - **Settled successes only.** A `write`/`edit` call fires once its result
  *   landed without an error, so a half-written file never reaches a preview
  *   and a failed call never triggers a pointless reload.
@@ -37,7 +41,12 @@
  * The stream record outlives its members (only the poller stops): a tab that
  * becomes visible again re-joins, the leader resumes from the persisted `seq`
  * cursor, and the missed delta is folded then — so a file the model rewrote
- * while the tab was parked is still seen as touched.
+ * while the tab was parked is still seen as touched. What it does NOT do is
+ * live for the page: the record map is bounded and least-recently-joined
+ * first (see {@link STREAM_CAP}). A session evicted after that many newer ones
+ * re-joins as a FRESH stream, which re-baselines exactly like a page reload
+ * (see {@link pullStream}) — the only state a returner can lose, and only
+ * after the bound was actually reached.
  */
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react'
 import type { SidebarSessionEvent } from '../context-types.ts'
@@ -67,6 +76,17 @@ const IDLE_EVENT_WINDOW = 32
 
 /** Touched paths remembered per session (oldest insertion evicted past this). */
 const TOUCH_WINDOW = 256
+
+/**
+ * How many session records the store holds. The record already shrinks to what
+ * a re-join needs once its last member goes ({@link IDLE_EVENT_WINDOW} events
+ * plus the published touches), but the MAP itself was "alive for the page":
+ * every session an editor tab had ever watched kept its cursor, baseline and
+ * touch table forever. A session still inside this window resumes from its
+ * cursor and folds the delta it missed; the oldest record that nobody is
+ * watching is what a new mint evicts.
+ */
+const STREAM_CAP = 32
 
 /** The op kinds that changed a file's bytes. */
 export type FileOpTouchKind = 'write' | 'edit'
@@ -129,7 +149,7 @@ interface Stream {
   listeners: Set<() => void>
   members: Set<Member>
   leader: Member | undefined
-  /** The delivered cursor (`0` = no cursor yet, so the next pull is the baseline). */
+  /** The delivered cursor (`-1` includes an eventual first event at seq 0). */
   seq: number
   /** Whether the baseline pull completed (only then may a delta publish). */
   primed: boolean
@@ -140,27 +160,44 @@ interface Stream {
   cwd: string | undefined
 }
 
-/** Every session's stream, alive for the page (only its poller stops). */
+/** Every session's stream, bounded by {@link STREAM_CAP} (see `streamOf`). */
 const streams = new Map<string, Stream>()
 
 /** The stream record of one session, created on first use. */
 function streamOf(sessionId: string): Stream {
-  let stream = streams.get(sessionId)
-  if (stream === undefined) {
-    stream = {
-      state: EMPTY_STATE,
-      listeners: new Set(),
-      members: new Set(),
-      leader: undefined,
-      seq: 0,
-      primed: false,
-      events: [],
-      published: new Set(),
-      cwd: undefined,
+  const existing = streams.get(sessionId)
+  if (existing !== undefined) return existing
+  // Bound the store before minting: a session nobody is watching is what goes.
+  // A record WITH members is never evicted — it owns the leader election and
+  // the members' published state — so the cap is soft while many sessions are
+  // genuinely open.
+  if (streams.size >= STREAM_CAP) {
+    for (const [key, candidate] of streams) {
+      if (candidate.members.size > 0) continue
+      streams.delete(key)
+      if (streams.size < STREAM_CAP) break
     }
-    streams.set(sessionId, stream)
   }
+  const stream: Stream = {
+    state: EMPTY_STATE,
+    listeners: new Set(),
+    members: new Set(),
+    leader: undefined,
+    seq: -1,
+    primed: false,
+    events: [],
+    published: new Set(),
+    cwd: undefined,
+  }
+  streams.set(sessionId, stream)
   return stream
+}
+
+/** Move one session's record to the back of the eviction order (LRU). */
+function touchStream(sessionId: string, stream: Stream): void {
+  if (streams.get(sessionId) !== stream) return
+  streams.delete(sessionId)
+  streams.set(sessionId, stream)
 }
 
 /** Publish one delta's settled write/edit ops to every member of the stream. */
@@ -212,7 +249,7 @@ function fold(stream: Stream, events: readonly SidebarSessionEvent[], baseline: 
 
 /** One leader's delta pull: advance the cursor, then fold (or baseline) it. */
 async function pullStream(stream: Stream, scope: SessionScope, signal: AbortSignal): Promise<void> {
-  const { events, lastSeq } = await api.changesOps(scope, stream.seq, signal)
+  const { events, lastSeq } = await api.changesOps(scope, stream.primed ? stream.seq : undefined, signal, stream.primed)
   // A torn-down run's answer must never publish state: the transport may
   // deliver an aborted response anyway.
   if (signal.aborted === true) return
@@ -243,6 +280,9 @@ export function useFileOpStream(scope: SessionScope, enabled: boolean): FileOpSt
       return
     }
     const stream = streamOf(sessionId)
+    // The session that just joined is the most recently used, so an ACTIVE
+    // session is never the record a later mint evicts.
+    touchStream(sessionId, stream)
     const member: Member = { lead: (value: boolean) => { setLeading(value) } }
     stream.members.add(member)
     if (stream.leader === undefined) {
@@ -269,8 +309,8 @@ export function useFileOpStream(scope: SessionScope, enabled: boolean): FileOpSt
     }
   }, [enabled, sessionId])
 
-  // Granular scope fields: the scope object's identity churns every render,
-  // only its sessionId / cwd gate the request target.
+  // Granular scope fields: only these two gate the request target (callers
+  // may assemble a scope object themselves).
   const cwd = scope.cwd
   const pull = useCallback(async (signal: AbortSignal): Promise<void> => {
     await pullStream(streamOf(sessionId), { sessionId, cwd }, signal)

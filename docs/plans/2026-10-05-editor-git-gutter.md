@@ -58,6 +58,17 @@
   问题，不是产品回归。
 - **`tests/prefs.spec.ts` 三个「整份 prefs 深比较」补上 `editorGitGutter: true`**：
   新增 schema 字段的既有约定动作。
+- **收尾（2026-10-13）：gutter 不再持有共享轮询。** 上面「行映射只有一个来源」
+  那条只做对了一半——它确实没起第二个轮询器，但**把功能开关当成了可见性**
+  （`useGitStatus(scope, { visible: enabled })`），而 `visible` 正是启动 2.5 s
+  定时器的那把开关，且原生页签 `keepMounted` 让编辑器切走也不卸载。于是从打开
+  第一个 `code` / `jsonl` 文件起，整页生命周期里每 2.5 s 跑一次
+  `git status --untracked-files=all`（外加两条全仓库 `--numstat`）——在未忽略的
+  嵌套 `node_modules` / 包管理器 store 上是 9.24 MB、0.131 s 一次（真机实测），
+  用户侧的观感就是后台 CPU 与风扇。现在改为 `{ visible: active, poll: false }`：
+  编辑器只读共享答案、只在**换文件或保存**时各重读一次，**永不拥有定时器**；页签
+  不可见时连订阅都不建立。共享轮询的节奏与降频阶梯见
+  [2026-10-13-git-poll-ladder-and-idle-notify.md](2026-10-13-git-poll-ladder-and-idle-notify.md)。
 
 ## 验收
 

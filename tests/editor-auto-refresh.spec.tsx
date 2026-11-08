@@ -237,7 +237,9 @@ beforeEach(() => {
   fsRead.mockReset()
   // Every read answers a NEW body: a re-read is visible in the DOM, and a
   // non-re-read keeps the previous one.
-  fsRead.mockImplementation(async () => ({ kind: 'text', content: `body-${++contentVersion}`, truncated: false }))
+  // `size` is part of the text result now (`truncated` is gone): a mock that
+  // omits it feeds `undefined` into the viewer's size field.
+  fsRead.mockImplementation(async () => ({ kind: 'text', content: `body-${++contentVersion}`, size: 1 }))
   changesOps.mockReset()
   changesOps.mockResolvedValue(delta([], 0))
 })

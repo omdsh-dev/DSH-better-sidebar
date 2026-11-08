@@ -20,9 +20,13 @@ export interface CompactLevel {
 }
 
 /**
- * Safety cap on one fold chain. Real directories cannot cycle, so this is
- * never reached on a healthy cache — it bounds the chain when a stale cache
- * lies about a level's contents.
+ * Cap on one fold chain, shared by what the row RENDERS and what the preload
+ * loads ahead of it ({@link compactLoadTargets}) so a chain never pays for
+ * links the breadcrumb would not show. A legitimate deep singleton chain
+ * (a Java package path, a chain of single-child project folders) does reach
+ * this; past it the breadcrumb stops folding and the next link appears as its
+ * own row on expansion. The stale-cache cycle guard is {@link compactChain}'s
+ * `visited` set, not this.
  */
 export const MAX_COMPACT_DEPTH = 32
 
@@ -58,19 +62,47 @@ export function compactChain(entry: FsEntry, levelOf: (path: string) => CompactL
 
 /**
  * The collapsed singleton directories whose levels still need loading, so
- * fold chains can extend past what the user has expanded. Scans every
- * LOADED level once; each arrival may reveal the next link, so the caller
- * re-runs this after every cache update. Chains cannot cycle (host never
- * marks symlink children), so the walk terminates at the chain's real end.
+ * fold chains can extend past what the user has expanded. Walks down from the
+ * RENDERED levels (`roots` — the workspace root plus every expanded
+ * directory) along the very same {@link compactChain} the row renderer builds
+ * its label with, so the walk inherits that chain's
+ * {@link MAX_COMPACT_DEPTH} cap: past the cap the breadcrumb stops folding and
+ * the preload stops asking for links the renderer would never draw. (The
+ * previous every-loaded-level scan kept pulling link 33, 34, … for a chain
+ * the row had already stopped folding at 32 — one serial POST plus one
+ * whole-tree render per wasted link.)
+ *
+ * Each arrival may reveal the next link, so the caller re-runs this after
+ * every cache update. `visited` dedupes that walk and keeps it terminating:
+ * chains cannot cycle (the host never marks symlink children).
+ * @param levels - the tree's level cache, keyed by absolute path.
+ * @param roots - the levels the tree actually renders, in any order.
+ * @returns the absolute paths of the frontier links still to load.
  */
-export function compactLoadTargets(levels: Record<string, CompactLevel>): string[] {
+export function compactLoadTargets(levels: Record<string, CompactLevel>, roots: readonly string[]): string[] {
   const targets = new Set<string>()
-  for (const level of Object.values(levels)) {
-    if (level.entries === undefined) continue
+  const visited = new Set<string>()
+  // A work list, not recursion: a deep expanded tree must not grow the stack.
+  const pending = [...roots]
+  while (pending.length > 0) {
+    const dir = pending.pop()!
+    if (visited.has(dir)) continue
+    visited.add(dir)
+    const level = levels[dir]
+    // Unloaded, in-flight (`{}`) or failed level: nothing to scan here.
+    if (level?.entries === undefined) continue
     for (const entry of level.entries) {
-      if (entry.isDir && entry.compact === true && levels[entry.path] === undefined) {
-        targets.add(entry.path)
+      if (!entry.isDir) continue
+      const chain = compactChain(entry, path => levels[path])
+      const tail = chain[chain.length - 1]!
+      // The chain's frontier: its tail still folds but that level is unloaded.
+      if (tail.compact === true && levels[tail.path] === undefined) {
+        targets.add(tail.path)
+        continue
       }
+      // Tail already loaded: descend for the next frontier link — but stop at
+      // the render cap, which is exactly where the label stops extending.
+      if (chain.length < MAX_COMPACT_DEPTH) pending.push(tail.path)
     }
   }
   return [...targets]

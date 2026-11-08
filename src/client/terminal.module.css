@@ -26,7 +26,10 @@
   padding: 8px;
   overflow: hidden;
   color: var(--dsw-alias-label-primary);
-  background: var(--dsw-alias-bg-base);
+  /* No fill of its own: the terminal sits inside the workbench and must read
+     as part of its surface. Painting a token here drew a second rectangle
+     inside the panel. */
+  background: transparent;
   font-family: var(--ds-font-family-code, monospace);
 }
 
@@ -34,8 +37,18 @@
   height: 100%;
 }
 
-.screen .xterm-viewport {
-  background: var(--dsw-alias-bg-base);
+/* xterm owns these classes, so they MUST be wrapped in `:global()`: CSS
+   Modules would otherwise hash them into `.o8IiwG_xterm-viewport` and match
+   nothing in the real DOM.
+
+   The extra `.xterm` in the selector is NOT redundant either. xterm.css ships
+   `.xterm .xterm-viewport { background-color: #000 }` at specificity 0,2,0
+   and injects that sheet when `open()` runs — after this module. Matching its
+   specificity would therefore lose on source order every time; reaching 0,3,0
+   is what wins. Measured in Chromium: 0,2,0 → `rgb(0, 0, 0)` (still black),
+   0,3,0 → `rgba(0, 0, 0, 0)` (transparent). */
+.screen :global(.xterm .xterm-viewport) {
+  background: transparent;
 }
 
 .status {

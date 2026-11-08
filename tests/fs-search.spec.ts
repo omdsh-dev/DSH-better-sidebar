@@ -14,13 +14,14 @@
  * cases below inject fake engines so no machine binary is required.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join, resolve as resolvePath } from 'node:path'
 import { compileExcludePatterns } from '../src/exclude-patterns.ts'
 import { searchFiles, searchFilesPlain } from '../src/fs-search.ts'
 import type { EngineProbe } from '../src/search-engines.ts'
 import { resetEngines, setEngineHooks } from '../src/search-engines.ts'
+import { removeTree } from './temp-tree.ts'
 
 /**
  * Symlink creation needs extra privileges on Windows; the symlink case skips
@@ -34,7 +35,7 @@ const canSymlink = (() => {
   } catch {
     return false
   } finally {
-    rmSync(dir, { recursive: true, force: true })
+    removeTree(dir)
   }
 })()
 
@@ -52,7 +53,7 @@ const canBackslashName = (() => {
   } catch {
     return false
   } finally {
-    rmSync(dir, { recursive: true, force: true })
+    removeTree(dir)
   }
 })()
 
@@ -98,7 +99,7 @@ describe('fs-search', () => {
         expect(match).not.toContain('\\')
       }
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 
@@ -115,7 +116,7 @@ describe('fs-search', () => {
       expect(dirHit).toEqual({ matches: ['src'], dirs: ['src'], truncated: false })
       expect((await searchFilesPlain(dir, 'util')).dirs).toEqual([])
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 
@@ -127,7 +128,7 @@ describe('fs-search', () => {
       expect((await searchFilesPlain(dir, 'config')).matches).toEqual([])
       expect((await searchFilesPlain(dir, '.git')).matches).toEqual([])
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 
@@ -143,7 +144,7 @@ describe('fs-search', () => {
       expect(await searchFilesPlain(dir, '.git')).toEqual({ matches: [], dirs: [], truncated: false })
       expect((await searchFilesPlain(dir, 'util')).matches).toEqual(['util.ts'])
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 
@@ -167,7 +168,7 @@ describe('fs-search', () => {
         .toEqual(['src/index.ts', 'third_party/index.ts', 'third_party/pkg/index.ts'])
       expect((await searchFiles(dir, 'third_party')).dirs).toEqual(['third_party'])
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 
@@ -188,7 +189,7 @@ describe('fs-search', () => {
       expect((await searchFilesPlain(dir, 'node_modules')).matches).toEqual([])
       expect((await searchFilesPlain(dir, 'dist')).matches).toEqual([])
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 
@@ -209,7 +210,7 @@ describe('fs-search', () => {
       expect((await searchFilesPlain(dir, 'target')).matches).toEqual([])
       expect((await searchFilesPlain(dir, 'venv')).matches).toEqual([])
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 
@@ -237,7 +238,7 @@ describe('fs-search', () => {
       writeFileSync(join(dir, 'node_modules', 'records', 'exp1.txt'), 'dep')
       expect((await searchFilesPlain(dir, 'records/exp1')).matches).toEqual(['deep/records/exp1.txt'])
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 
@@ -253,7 +254,7 @@ describe('fs-search', () => {
       expect((await searchFilesPlain(dir, 'back\\slash')).matches).toEqual(['back\\slash.ts'])
       expect((await searchFilesPlain(dir, 'slash')).matches).toEqual(['back\\slash.ts'])
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 
@@ -263,7 +264,7 @@ describe('fs-search', () => {
       expect(await searchFilesPlain(dir, '')).toEqual({ matches: [], dirs: [], truncated: false })
       expect(await searchFilesPlain(dir, '   ')).toEqual({ matches: [], dirs: [], truncated: false })
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 
@@ -277,7 +278,7 @@ describe('fs-search', () => {
       const result = await searchFilesPlain(dir, 'util')
       expect(result).toEqual({ matches: ['src/util.ts'], dirs: [], truncated: false })
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 
@@ -294,7 +295,7 @@ describe('fs-search', () => {
       symlinkSync(join(dir, 'gone'), join(dir, 'dangling-link'))
       expect(await searchFilesPlain(dir, 'dangling-link')).toEqual({ matches: ['dangling-link'], dirs: [], truncated: false })
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 
@@ -308,7 +309,7 @@ describe('fs-search', () => {
       expect(result.truncated).toBe(true)
       expect(result.matches.length).toBe(2)
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 
@@ -323,7 +324,7 @@ describe('fs-search', () => {
       expect(result.truncated).toBe(true)
       expect(result.matches).toEqual([])
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 
@@ -333,7 +334,7 @@ describe('fs-search', () => {
       const missing = join(dir, 'does-not-exist')
       expect(await searchFilesPlain(missing, 'x')).toEqual({ matches: [], dirs: [], truncated: false })
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 })
@@ -424,7 +425,7 @@ describe('fs-search dispatch', () => {
       expect(await searchFiles(dir, folder)).toEqual({ matches: [folder], dirs: [folder], truncated: false })
       expect(probed).toBe(false)
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 
@@ -442,7 +443,7 @@ describe('fs-search dispatch', () => {
       expect(await searchFiles(dir, join(dir, 'gone.md'), { maxVisited: 1 })).toEqual({ matches: [], dirs: [], truncated: false })
       expect(probed).toBe(false)
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 
@@ -485,7 +486,7 @@ describe('fs-search dispatch', () => {
       // A missing `~`-anchored target is the same immediate empty.
       expect(await searchFiles(dir, '~/dsh-sidebar-no-such-entry')).toEqual({ matches: [], dirs: [], truncated: false })
     } finally {
-      rmSync(parent, { recursive: true, force: true })
+      removeTree(parent)
     }
   })
 
@@ -517,7 +518,7 @@ describe('fs-search dispatch', () => {
       expect((await searchFiles(dir, '~$lock')).matches).toEqual(['~$lock.docx'])
       expect((await searchFiles(dir, '.env')).matches).toEqual(['.env'])
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 
@@ -536,7 +537,7 @@ describe('fs-search dispatch', () => {
       expect((await searchFiles(dir, 'docs/guide')).matches).toEqual(['docs/guide.md'])
       expect(probed).toBe(false)
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 
@@ -556,7 +557,7 @@ describe('fs-search dispatch', () => {
       expect((await searchFiles(dir, 'back\\slash')).matches).toEqual(['back\\slash.ts'])
       expect(probed).toBe(true)
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 
@@ -576,7 +577,7 @@ describe('fs-search dispatch', () => {
       expect((await searchFiles(dir, '.\\notes')).matches).toEqual(['.\\notes.md'])
       expect(probed).toBe(true)
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 
@@ -641,15 +642,16 @@ describe('fs-search dispatch', () => {
         runner: async () => { throw new Error('engine exploded') },
       })
       expect(await searchFiles(dir, 'util')).toEqual({ matches: ['src/util.ts'], dirs: [], truncated: false })
-      // The failed engine is disabled for the rest of the process.
+      // A single failure must NOT disable the engine: the next search retries
+      // it instead of permanently degrading to the slow walk.
       let attempts = 0
       setEngineHooks({
-        runner: async () => { attempts += 1; return { paths: [], dirs: [], truncated: false } },
+        runner: async () => { attempts += 1; throw new Error('engine exploded again') },
       })
       expect(await searchFiles(dir, 'util')).toEqual({ matches: ['src/util.ts'], dirs: [], truncated: false })
-      expect(attempts).toBe(0)
+      expect(attempts).toBe(1)
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 
@@ -659,7 +661,7 @@ describe('fs-search dispatch', () => {
       setEngineHooks({ prober: async () => [] })
       expect(await searchFiles(dir, 'util')).toEqual({ matches: ['src/util.ts'], dirs: [], truncated: false })
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 })

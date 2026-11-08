@@ -17,7 +17,7 @@ describe('dsh-better-sidebar plugin export shape', () => {
     const unwrapped = loader.unwrapExports(sidebar) as Record<string, unknown>
     expect(unwrapped).toBe(sidebar)
     expect(unwrapped.name).toBe('dsh-better-sidebar')
-    expect(unwrapped.inject).toEqual(['webServer', 'sessions', 'webRuntime', 'tools'])
+    expect(unwrapped.inject).toEqual(['webServer', 'sessions', 'connection', 'tools'])
     expect(unwrapped.Config).toBeDefined()
     expect(typeof unwrapped.apply).toBe('function')
   })
@@ -29,13 +29,41 @@ describe('dsh-better-sidebar plugin export shape', () => {
     const resolved = (schema as unknown as {
       (input: Record<string, unknown> | undefined): Record<string, unknown>
     })(undefined)
-    expect(resolved.readLimit).toBe(512 * 1024)
-    expect(resolved.mediaLimit).toBe(20 * 1024 * 1024)
     expect(resolved.listLimit).toBe(1000)
+    // The three transfer/read caps are GONE: upload, every download and the
+    // html preview route all stream now, so there is nothing left for a byte
+    // cap to protect. `readLimit`'s replacement is MAX_EDITABLE_BYTES, which
+    // is a client-visible editing threshold rather than a deployment knob.
+    expect(resolved.readLimit).toBeUndefined()
+    expect(resolved.mediaLimit).toBeUndefined()
+    expect(resolved.uploadLimit).toBeUndefined()
     const configured = (schema as unknown as {
       (input: Record<string, unknown> | undefined): Record<string, unknown>
-    })({ readLimit: 1024 })
-    expect(configured.readLimit).toBe(1024)
+    })({ listLimit: 42 })
+    expect(configured.listLimit).toBe(42)
+    // A profile still carrying a retired key is tolerated, not fatal: the
+    // schema strips it and the plugin boots with defaults (the same property
+    // that keeps a legacy `workspaceFence` harmless).
+    const legacy = (schema as unknown as {
+      (input: Record<string, unknown> | undefined): Record<string, unknown>
+    })({ readLimit: 1024, mediaLimit: 5, uploadLimit: 6 })
+    expect(legacy.listLimit).toBe(1000)
+  })
+
+  it('keeps automatic task folding and jobs collapse boolean, default-on, and volatile', async () => {
+    const { PrefsSchema, Config } = await import('../src/config.ts')
+    const resolve = PrefsSchema as unknown as (input: Record<string, unknown>) => Record<string, unknown>
+    const keys = ['tasksAutoFoldSettled', 'tasksAutoFoldBranches', 'tasksAutoFoldIdle', 'jobsAutoCollapse'] as const
+    for (const key of keys) {
+      expect(resolve({})[key], key).toBe(true)
+      expect(resolve({ [key]: false })[key], key).toBe(false)
+      expect(resolve({ [key]: true })[key], key).toBe(true)
+      for (const malformed of ['false', 0, [], {}]) {
+        expect(() => resolve({ [key]: malformed }), key).toThrow()
+      }
+      expect(Config.dict?.[key]?.meta.volatile, key).toBe(true)
+    }
+    expect(Config.dict?.listLimit?.meta.volatile).not.toBe(true)
   })
 
   it('registers the side card preferences schema with the documented defaults', async () => {

@@ -202,6 +202,30 @@ describe('useGitStatus', () => {
     await unmount()
   })
 
+  it('publishes metadata-only changes while sharing the unchanged file rows', async () => {
+    gitStatus.mockResolvedValue(snapshot({ upstream: 'origin/main', ahead: 0, behind: 0, detached: false }))
+    let view: GitStatusView | undefined
+    const { unmount } = await mount(createElement(Probe, {
+      scope: { sessionId: 's-metadata' }, onView: (next) => { view = next },
+    }))
+    try {
+      const updates: Partial<GitStatusResult>[] = [
+        { upstream: 'origin/review' }, { ahead: 1 }, { behind: 2 }, { detached: true },
+        { operation: 'merge' }, { operation: 'rebase' }, { operation: undefined },
+      ]
+      for (const update of updates) {
+        const before = view!.snapshot!
+        const next = { ...before, ...update }
+        gitStatus.mockResolvedValue(next)
+        await act(async () => { view?.refresh(); await Promise.resolve(); await Promise.resolve() })
+        expect(view!.snapshot).toBe(next)
+        expect(view!.snapshot!.entries).toBe(before.entries)
+      }
+    } finally {
+      await unmount()
+    }
+  })
+
   it('invalidateGitStatus re-reads every live key of one session', async () => {
     gitStatus.mockResolvedValue(snapshot())
     const { unmount } = await mount(createElement(Probe, { scope: { sessionId: 's6' }, onView: () => {} }))

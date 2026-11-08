@@ -10,7 +10,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import clsx from 'clsx'
 import { t } from '../locales.ts'
-import { diffStats, displayPath, parseUnifiedDiff, unifiedSegments, untrackedFile, type DiffFile, type DiffRow, type FoldSegment } from './rows.ts'
+import { diffStats, displayPath, parseUnifiedDiff, unifiedSegments, untrackedFile, type DiffFile, type DiffRow, type FoldSegment, type ParsedDiff } from './rows.ts'
 import { langOfPath } from './highlight.ts'
 import { DiffRows } from './DiffRows.tsx'
 import css from './diff.module.css'
@@ -20,16 +20,32 @@ const DOC_PATH = /(^|\/)(?:docs?|documentation)(?:\/|$)|(^|\/)(?:readme|changelo
 const GENERATED_PATH = /(^|\/)(?:dist|build|coverage|generated|vendor|node_modules)(?:\/|$)|(^|\/)(?:package-lock\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb?|composer\.lock|cargo\.lock|poetry\.lock)$/i
 const SOURCE_PATH = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts|py|pyw|rb|php|java|kt|kts|scala|go|rs|swift|c|h|cc|cpp|cxx|hpp|hh|hxx|cs|fs|fsx|vb|dart|lua|r|ex|exs|erl|hrl|clj|cljs|cljc|groovy|sh|bash|zsh|fish|ps1|sql|vue|svelte|astro|html|htm|css|scss|sass|less)$/i
 
+/**
+ * How many changed lines the default expansion may mount.
+ *
+ * Source files open by default, but a commit that rewrites a dozen of them
+ * used to mount every row at once (each file renders through DiffRows, capped
+ * at 600 rows). The budget keeps the first screen useful without paying for
+ * the whole patch: the FIRST source file always opens (an all-folded pane
+ * reads as empty), and everything past the budget stays folded with its +/−
+ * stats still on the header, one click away.
+ */
+const DEFAULT_EXPANDED_LINE_BUDGET = 2_000
+
 /** Source files open by default; tests, docs, generated files and unknown types stay folded. */
 function defaultExpandedFiles(files: readonly DiffFile[]): Set<number> {
   const expanded = new Set<number>()
+  let budget = 0
   files.forEach((file, index) => {
     const path = displayPath(file.newPath === '/dev/null' ? file.oldPath : file.newPath)
-    if (!file.binary && file.hunks.length > 0
+    const isSource = !file.binary && file.hunks.length > 0
       && !TEST_PATH.test(path) && !DOC_PATH.test(path) && !GENERATED_PATH.test(path)
-      && SOURCE_PATH.test(path)) {
-      expanded.add(index)
-    }
+      && SOURCE_PATH.test(path)
+    if (!isSource) return
+    const changedLines = file.hunks.reduce((total, hunk) => total + hunk.lines.length, 0)
+    if (expanded.size > 0 && budget + changedLines > DEFAULT_EXPANDED_LINE_BUDGET) return
+    expanded.add(index)
+    budget += changedLines
   })
   return expanded
 }
@@ -48,6 +64,12 @@ function fileTag(file: DiffFile): string | null {
 export interface DiffFilesProps {
   /** Unified diff text (`git.diff` or `git.commit-diff` payloads). */
   diff: string
+  /** A parse the caller ALREADY did for its own header stats: rendering the
+   *  same ≤8MB patch twice on the UI thread was visible on large commits. The
+   *  component trusts it as-is (the changes pane passes the parse it just
+   *  summarized); omit it to parse `diff` here. Ignored for untracked files,
+   *  whose synthetic full-file addition comes from their content. */
+  parsed?: ParsedDiff
   /** Untracked-file content: when present, renders as a full-file addition instead of parsing. */
   untrackedPath?: string
   untrackedContent?: string
@@ -58,13 +80,13 @@ export interface DiffFilesProps {
   resolveFold?: (file: DiffFile, segment: FoldSegment) => Promise<readonly DiffRow[]>
 }
 
-export function DiffFiles({ diff, untrackedPath, untrackedContent, resolveFold }: DiffFilesProps) {
+export function DiffFiles({ diff, parsed: provided, untrackedPath, untrackedContent, resolveFold }: DiffFilesProps) {
   const parsed = useMemo(() => {
     if (untrackedPath !== undefined) {
       return { files: [untrackedFile(untrackedPath, untrackedContent ?? '')] }
     }
-    return parseUnifiedDiff(diff)
-  }, [diff, untrackedPath, untrackedContent])
+    return provided ?? parseUnifiedDiff(diff)
+  }, [provided, diff, untrackedPath, untrackedContent])
   const [expandedFiles, setExpandedFiles] = useState<Set<number>>(() => defaultExpandedFiles(parsed.files))
   useEffect(() => { setExpandedFiles(defaultExpandedFiles(parsed.files)) }, [parsed])
 

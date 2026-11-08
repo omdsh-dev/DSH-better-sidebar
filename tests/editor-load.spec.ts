@@ -3,7 +3,7 @@
  * editor host runs (planFirstMatch / planFsReadOutcome / decodeHead).
  */
 import { describe, expect, it } from 'vitest'
-import { decodeHead, planFirstMatch, planFsReadOutcome } from '../src/client/editor-load.ts'
+import { decodeHead, isDirectoryReadError, planFirstMatch, planFsReadOutcome } from '../src/client/editor-load.ts'
 import type { FileViewerDescriptor } from '../src/client/service.ts'
 
 const viewer = (over: Partial<FileViewerDescriptor>): FileViewerDescriptor => ({
@@ -47,21 +47,27 @@ describe('planFsReadOutcome', () => {
     if (head.includes(0)) return viewer({ id: 'binary-download', fetchStrategy: 'binary-download' })
     return undefined
   }
+  /** No sniffer claims the head bytes (the built-in registry carries no detect). */
+  const unclaimed = (): FileViewerDescriptor | undefined => undefined
+  /** The head a NUL probe (and any byte sniffer) matches. */
+  const NUL_HEAD = 'AAAAAA=='
+  const LARGE = 6 * 1024 * 1024
 
-  it('text result renders with content, same viewer', () => {
+  it('text result renders with content and size, same viewer', () => {
     const v = viewer({ id: 'code' })
-    const action = planFsReadOutcome(v, { binary: false, content: 'hello', truncated: true }, rematch, () => '/m')
-    expect(action).toEqual({ kind: 'render', viewer: v, content: 'hello', truncated: true })
+    const action = planFsReadOutcome(v, { kind: 'text', content: 'hello', size: 5 }, rematch, () => '/m')
+    expect(action).toEqual({ kind: 'render', viewer: v, content: 'hello', size: 5 })
   })
 
-  it('binary without head bytes → binary', () => {
-    expect(planFsReadOutcome(viewer({}), { binary: true, content: '', truncated: false }, rematch, () => '/m')).toEqual({ kind: 'binary' })
+  it('binary whose head re-matches no viewer → binary', () => {
+    const action = planFsReadOutcome(viewer({}), { kind: 'binary', size: 3, head: NUL_HEAD }, unclaimed, () => '/m')
+    expect(action).toEqual({ kind: 'binary' })
   })
 
   it('binary whose NUL head re-matches nothing renderable → binary', () => {
     const action = planFsReadOutcome(
       viewer({}),
-      { binary: true, content: '', truncated: false, head: 'AAAAAA==' }, // 0x00 bytes
+      { kind: 'binary', size: 3, head: NUL_HEAD }, // 0x00 bytes
       rematch,
       () => '/m',
     )
@@ -73,7 +79,7 @@ describe('planFsReadOutcome', () => {
     const sniffer = viewer({ id: 'my:raw', fetchStrategy: 'custom', load: async () => ({}) })
     const action = planFsReadOutcome(
       viewer({}),
-      { binary: true, content: '', truncated: false, head: 'AAAAAA==' },
+      { kind: 'binary', size: 3, head: NUL_HEAD },
       () => sniffer,
       () => '/m',
     )
@@ -84,11 +90,48 @@ describe('planFsReadOutcome', () => {
     const media = viewer({ id: 'my:binimg', fetchStrategy: 'mediaUrl' })
     const action = planFsReadOutcome(
       viewer({}),
-      { binary: true, content: '', truncated: false, head: 'AAAAAA==' },
+      { kind: 'binary', size: 3, head: NUL_HEAD },
       () => media,
       () => '/m?x=1',
     )
     expect(action).toEqual({ kind: 'render', viewer: media, mediaUrl: '/m?x=1' })
+  })
+
+  it('too-large whose head re-matches a custom viewer → customLoad (the head is honored)', () => {
+    const sniffer = viewer({ id: 'my:raw', fetchStrategy: 'custom', load: async () => ({}) })
+    const action = planFsReadOutcome(
+      viewer({ id: 'code' }),
+      { kind: 'too-large', size: LARGE, head: NUL_HEAD },
+      () => sniffer,
+      () => '/m',
+    )
+    expect(action).toEqual({ kind: 'customLoad', viewer: sniffer })
+  })
+
+  it('too-large whose head re-matches a mediaUrl viewer → render the claim with the media URL', () => {
+    const media = viewer({ id: 'my:binimg', fetchStrategy: 'mediaUrl' })
+    const action = planFsReadOutcome(
+      viewer({ id: 'code' }),
+      { kind: 'too-large', size: LARGE, head: NUL_HEAD },
+      () => media,
+      () => '/m?x=1',
+    )
+    expect(action).toEqual({ kind: 'render', viewer: media, mediaUrl: '/m?x=1' })
+  })
+
+  it('too-large with no claim renders the matched fsRead viewer as the paged preview', () => {
+    const v = viewer({ id: 'code' })
+    const action = planFsReadOutcome(v, { kind: 'too-large', size: LARGE, head: 'e30=' }, unclaimed, () => '/m')
+    expect(action).toEqual({ kind: 'render', viewer: v, size: LARGE, largeFile: { size: LARGE } })
+    // The document is NOT handed over — the whole point of the shape: the
+    // viewer gets the size (to page by) and nothing that looks savable.
+    expect(action).not.toHaveProperty('content')
+  })
+
+  it('too-large whose matched viewer is not an fsRead viewer → binary', () => {
+    const custom = viewer({ id: 'my:csv', fetchStrategy: 'custom', load: async () => ({}) })
+    const action = planFsReadOutcome(custom, { kind: 'too-large', size: LARGE, head: 'e30=' }, unclaimed, () => '/m')
+    expect(action).toEqual({ kind: 'binary' })
   })
 })
 
@@ -96,5 +139,20 @@ describe('decodeHead', () => {
   it('decodes base64 to the exact bytes', () => {
     const head = decodeHead('AP//AA==')
     expect(Array.from(head)).toEqual([0x00, 0xff, 0xff, 0x00])
+  })
+})
+
+describe('isDirectoryReadError', () => {
+  it('recognizes the dedicated directory wire code', () => {
+    expect(isDirectoryReadError({ code: 'fs-directory', message: '"/work/src" is a directory' })).toBe(true)
+    // The real wire failure class also exposes `code` (api.ts SidebarApiError).
+    expect(isDirectoryReadError(Object.assign(new Error('"/work/src" is a directory'), { code: 'fs-directory' }))).toBe(true)
+  })
+
+  it('leaves every other failure to the error face', () => {
+    expect(isDirectoryReadError({ code: 'fs-error', message: 'boom' })).toBe(false)
+    expect(isDirectoryReadError(new Error('boom'))).toBe(false)
+    expect(isDirectoryReadError(null)).toBe(false)
+    expect(isDirectoryReadError(undefined)).toBe(false)
   })
 })

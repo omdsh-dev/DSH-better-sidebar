@@ -6,10 +6,11 @@
  * otherwise fold forever).
  */
 import { describe, expect, it } from 'vitest'
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { listDirectory } from '../src/fs-tree.ts'
+import { removeTree } from './temp-tree.ts'
 
 /** Mirror of the symlink spec's capability probe (symlinks need privileges on Windows). */
 const canSymlink = (() => {
@@ -20,7 +21,7 @@ const canSymlink = (() => {
   } catch {
     return false
   } finally {
-    rmSync(dir, { recursive: true, force: true })
+    removeTree(dir)
   }
 })()
 
@@ -55,7 +56,7 @@ describe('fs-tree compact marking', () => {
       const levelC = await listDirectory(join(dir, 'a', 'b', 'c'))
       expect(levelC.entries.find(entry => entry.name === 'leaf.txt')?.compact).toBeUndefined()
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 
@@ -73,7 +74,7 @@ describe('fs-tree compact marking', () => {
       const mixed = await listDirectory(join(dir, 'mixed'))
       expect(mixed.entries.find(entry => entry.name === 'note.txt')?.compact).toBeUndefined()
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 
@@ -87,7 +88,7 @@ describe('fs-tree compact marking', () => {
       expect(listing.entries.find(entry => entry.name === 'link')).toMatchObject({ isDir: true, isSymlink: true })
       expect(listing.entries.find(entry => entry.name === 'link')?.compact).toBeUndefined()
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 
@@ -121,7 +122,7 @@ describe('fs-tree compact marking', () => {
       const chain = await listDirectory(join(dir, 'chain'))
       expect(chain.entries.find(entry => entry.name === '.DS_Store')).toMatchObject({ isDir: false, hidden: true })
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 })

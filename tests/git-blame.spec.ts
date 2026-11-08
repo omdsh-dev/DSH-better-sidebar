@@ -13,17 +13,18 @@
  * time and summary must be carried forward from the first line of that commit.
  */
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { blame, diff, diffHead, parseBlamePorcelain } from '../src/git.ts'
 import { gitLineKinds } from '../src/client/editor-git-gutter.ts'
+import { removeTree } from './temp-tree.ts'
 
 const created: string[] = []
 
 afterEach(() => {
-  for (const dir of created.splice(0)) rmSync(dir, { recursive: true, force: true })
+  for (const dir of created.splice(0)) removeTree(dir)
 })
 
 /** A fresh temporary directory (removed after the test). */

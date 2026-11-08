@@ -74,6 +74,25 @@ describe('the landing line on a native tab record (#826)', () => {
     expect(bare.tab.line).toBeUndefined()
   })
 
+  it('DROPS the line when an updateTab retarget moves the record to another file', () => {
+    // The plugin's own writers (`updateTab`: an in-place path switch, a rename)
+    // are not host navigations, so they never passed through the clearing rule
+    // above. A path change is a new open all the same: the reader asked for
+    // that other file, not for line 131 of it.
+    const seeded = ensure({ path: 'a.ts', line: 131 }, 1)
+    records.update('seat-1', 'tab-1', { path: 'b.ts', title: 'b.ts' })
+    const retargeted = records.get('seat-1', 'tab-1')!.tab
+    expect(retargeted.path).toBe('b.ts')
+    expect(retargeted.line).toBeUndefined()
+    expect(seeded.line).toBe(131)
+  })
+
+  it('keeps the line when updateTab patches only the title (same file)', () => {
+    ensure({ path: 'a.ts', line: 7 }, 1)
+    records.update('seat-1', 'tab-1', { title: 'renamed.ts' })
+    expect(records.get('seat-1', 'tab-1')!.tab.line).toBe(7)
+  })
+
   it('keeps the record identity when the navigation repeats unchanged', () => {
     // The host re-delivers the last navigation on every store notification;
     // an unchanged line must not mint a new record (a new object identity is

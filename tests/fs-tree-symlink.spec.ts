@@ -5,10 +5,11 @@
  * only entries that are actually symlinks are stat'ed.
  */
 import { describe, expect, it } from 'vitest'
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { listDirectory } from '../src/fs-tree.ts'
+import { removeTree } from './temp-tree.ts'
 
 /**
  * Symlink creation needs extra privileges on Windows; skip the suite there
@@ -22,7 +23,7 @@ const canSymlink = (() => {
   } catch {
     return false
   } finally {
-    rmSync(dir, { recursive: true, force: true })
+    removeTree(dir)
   }
 })()
 
@@ -45,7 +46,7 @@ describe.skipIf(!canSymlink)('fs-tree symlink listing', () => {
       const row = listing.entries.find(entry => entry.name === 'link-to-dir')
       expect(row).toMatchObject({ isDir: true, isSymlink: true, broken: false })
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 
@@ -56,7 +57,7 @@ describe.skipIf(!canSymlink)('fs-tree symlink listing', () => {
       const row = listing.entries.find(entry => entry.name === 'link-to-file')
       expect(row).toMatchObject({ isDir: false, isSymlink: true, broken: false })
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 
@@ -67,7 +68,7 @@ describe.skipIf(!canSymlink)('fs-tree symlink listing', () => {
       const row = listing.entries.find(entry => entry.name === 'broken-link')
       expect(row).toMatchObject({ isDir: false, isSymlink: true, broken: true })
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 
@@ -83,7 +84,7 @@ describe.skipIf(!canSymlink)('fs-tree symlink listing', () => {
       const dirs = listing.entries.filter(entry => entry.isDir).map(entry => entry.name)
       expect(dirs).toEqual(['link-to-dir', 'real-dir'])
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 
@@ -107,7 +108,7 @@ describe.skipIf(!canSymlink)('fs-tree symlink listing', () => {
           .toMatchObject({ isDir: false, isSymlink: true, broken: false })
       }
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 })

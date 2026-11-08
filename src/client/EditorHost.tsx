@@ -22,15 +22,17 @@
  * The strategy dispatch is pure (planFirstMatch / planFsReadOutcome in
  * editor-load.ts); this component only wires it to the host APIs.
  */
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { createElement } from 'react'
 import clsx from 'clsx'
-import { IconCheckOutlineRegular, IconFolderOpenRegular, IconRefreshOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconCheckOutlineRegular, IconFolderOpenRegular, IconRefreshOutlineRegular, writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context } from '../context-types.ts'
-import { api, mediaUrl, type SessionScope } from './api.ts'
+import { api, mediaUrl, SidebarApiError, type SessionScope } from './api.ts'
 import { BinaryDownload } from './binary-download.tsx'
-import { planFirstMatch, planFsReadOutcome, type EditorLoadAction } from './editor-load.ts'
-import { clearEditorDirty, setEditorDirty } from './editor-dirty.ts'
+import { isDirectoryReadError, planFirstMatch, planFsReadOutcome, type EditorLoadAction } from './editor-load.ts'
+import { isWindowsAbsolutePath, markdownPathRepairCandidates } from './markdown-path-repair.ts'
+import { clearDraftBackup } from './editor-draft-backup.ts'
+import { clearEditorDirty, isEditorDirty, setEditorDirty } from './editor-dirty.ts'
 import { baseName } from './FileTree.tsx'
 import { createFrameBatcher } from './frame-batcher.ts'
 import { openClaimedNativeFile, openSidebarFile } from './sidebar-file.ts'
@@ -40,17 +42,44 @@ import { updatePluginSettings } from './plugin-settings.ts'
 import { createOpenInApp } from './open-in-app.ts'
 import { TreePanel } from './TreePanel.tsx'
 import { t } from './locales.ts'
+import { consumeLineTarget, peekLineTarget } from './line-target.ts'
 import { relativeTo } from './paths.ts'
-import { resolveSidebarPath } from './paths.ts'
-import { closePathTabs, retargetPathTabs } from './tree-mutations.ts'
-import type { EditorToolbarControls, EditorToolbarState, FileViewerDescriptor } from './service.ts'
+import { resolveNativeSidebarPath, resolveSidebarPath } from './paths.ts'
+import { clearRetargetedPath, closePathTabs, consumeRetargetedPath, pathTabKey, retargetPathTabs } from './tree-mutations.ts'
+import type { EditorToolbarControls, EditorToolbarState, FileViewerDescriptor, TabActionDescriptor } from './service.ts'
 import { firstLeaf, insertLeafAt, leafWithTab, mintTabId, type SidebarStore, type SidebarTab } from './state.ts'
 import css from './sidebar.module.css'
 
+/**
+ * Resolve a descriptor's `string | (() => string)` text, first non-empty wins.
+ * A throwing thunk is logged and skipped: one broken label must not take the
+ * whole header down.
+ */
+function textOf(...values: Array<string | (() => string) | undefined>): string {
+  for (const value of values) {
+    if (value === undefined) continue
+    if (typeof value === 'string') {
+      if (value !== '') return value
+      continue
+    }
+    try {
+      const text = value()
+      if (typeof text === 'string' && text !== '') return text
+    }
+    catch (error) {
+      console.error('[dsh-better-sidebar] tab action label error:', error)
+    }
+  }
+  return ''
+}
+
+/** One landing navigation the editor host has read from the side channel. */
+interface LineNav { key: string; nonce: number | null; end?: number }
+
 type EditorLoad =
   | { status: 'loading' }
-  | { status: 'error'; message: string }
-  | { status: 'ready'; viewer: FileViewerDescriptor; content?: string; truncated?: boolean; mtimeMs?: number; mediaUrl?: string; customData?: unknown }
+  | { status: 'error'; message: string; fileNotFound?: boolean; windowsAbsolutePath?: boolean; repairStatus?: 'searching' | 'done'; repairMatches?: string[]; repairError?: string }
+  | { status: 'ready'; viewer: FileViewerDescriptor; content?: string; size?: number; largeFile?: { size: number }; mtimeMs?: number; mediaUrl?: string; customData?: unknown }
   | { status: 'binary' }
 
 /** The docked tree panel's width bounds (drag-resize clamps into them). */
@@ -113,6 +142,14 @@ function accepted(pending: Promise<unknown>): Promise<boolean> {
   )
 }
 
+/** Ask before a reload/switch drops a draft. A host without confirm blocks
+ *  the action: refusing is recoverable, while silently discarding is not.
+ *  (The tab-close guard intentionally proceeds instead — an unclosable tab
+ *  is worse than one skipped prompt.) */
+function confirmDiscard(message: string): boolean {
+  return typeof window.confirm === 'function' ? window.confirm(message) : false
+}
+
 export function EditorHost(props: {
   ctx: Context
   store: SidebarStore
@@ -136,19 +173,107 @@ export function EditorHost(props: {
   // the viewer loading flow (a directory is not a file).
   const isDir = metaOf(tab).dir === true
   const [load, setLoad] = useState<EditorLoad>({ status: 'loading' })
+  const [fileErrorAction, setFileErrorAction] = useState<string | null>(null)
   // Manual refresh (issue #167): bumping the sequence re-runs the load effect
   // with the same path/scope — the only reload entry besides open/close.
   const [reloadSeq, setReloadSeq] = useState(0)
 
+  /**
+   * External header buttons (feature `tabActions`). The registry lives on the
+   * client service, so the header subscribes to it instead of receiving the
+   * list as a prop: an editor tab renders inside the host's tree, and the
+   * plugins that contribute buttons activate AFTER this component mounted.
+   */
+  const tabActionService = ctx.get('betterSidebar')
+  const [tabActions, setTabActions] = useState<readonly TabActionDescriptor[]>(
+    () => tabActionService?.getTabActions() ?? [],
+  )
+  useEffect(() => {
+    if (tabActionService === undefined) return
+    const sync = (): void => { setTabActions(tabActionService.getTabActions()) }
+    sync()
+    return tabActionService.subscribe(sync)
+  }, [tabActionService])
+
+  /** A failure reported by an external action; cleared on the next reload. */
+  const [actionError, setActionError] = useState<string | null>(null)
+  /** Runs in flight, keyed `actionId:tabId`, so a double press is ignored. */
+  const runningActions = useRef(new Set<string>())
+
+  // The reference's landing line, SPENT once per open (#826).
+  //
+  // `tab.line` is one navigation, but the record keeps it for as long as the
+  // tab is open (the host re-delivers its navigation on every notification).
+  // The viewer cannot own that memory: a reload REMOUNTS it — this host swaps
+  // in the loading row — and a fresh instance starts at preview mode with an
+  // empty journal, so it would apply the same line again. For markdown/html
+  // that means re-forcing the file into the editor, and since the preview
+  // button reloads by design (#167 part B), the reader could never get back to
+  // preview. This host survives every reload, so the spent line is remembered
+  // here; the key carries the line, so a NEW reference re-arms it, and a file
+  // switch drops it (coming back to a file is a fresh open).
+  //
+  // The identity is (key, nonce), not just the key: a SECOND click on the same
+  // chip names the same `path#line`, and the host's navigation drops it (its
+  // adapter only patches a `line` that moved), so the key alone would read as
+  // "already spent" and the second click would neither jump nor flash. The
+  // nonce rides the side channel (line-target.ts) and is bumped on every arm
+  // of that key, so a re-click is a fresh navigation and no arm outlives it.
+  const [spentLine, setSpentLine] = useState<LineNav | null>(null)
+  const lineKey = tab.line === undefined ? null : `${path}#${tab.line}`
+  // The pending range/identity for this landing. The peek is a PURE read on
+  // purpose: React may render twice, and a discarded render must not eat the
+  // arm the committed one still needs (the arm is consumed by the layout
+  // effect below, after commit).
+  const peeked = tab.line === undefined ? undefined : peekLineTarget(path, tab.line)
+  // The navigation this host took for `lineKey`, kept across the renders in
+  // between: the first commit shows the loading row (no viewer yet), so the
+  // viewer's render must reuse the arm this host already read — otherwise the
+  // flash range would be gone by the time the viewer exists.
+  const lineNavRef = useRef<LineNav | null>(null)
+  const previous = lineNavRef.current
+  const nav = useMemo<LineNav | null>(() => {
+    if (lineKey === null) return null
+    if (peeked !== undefined) {
+      return { key: lineKey, nonce: peeked.nonce, ...(peeked.end === undefined ? {} : { end: peeked.end }) }
+    }
+    return previous !== null && previous.key === lineKey ? previous : null
+  }, [lineKey, peeked, previous])
+  const isFreshLine = lineKey !== null && (
+    spentLine === null
+    || spentLine.key !== lineKey
+    || (nav !== null && nav.nonce !== spentLine.nonce)
+  )
+  const lineEnd = isFreshLine ? nav?.end : undefined
+  // The navigation this commit actually hands to the viewer, so the viewer's
+  // consumption marks exactly that one spent (and not a newer arm).
+  const handedLineRef = useRef<{ key: string; nonce: number | null } | null>(null)
+  useLayoutEffect(() => {
+    if (isFreshLine && lineKey !== null) {
+      // A plain line open (no arm) still hands a navigation; its identity has
+      // a null nonce, so the viewer can spend it like any other.
+      lineNavRef.current = nav ?? { key: lineKey, nonce: null }
+      handedLineRef.current = { key: lineKey, nonce: lineNavRef.current.nonce }
+      // One shot per handed navigation: an ordinary open of the same line
+      // later must not inherit this flash.
+      if (tab.line !== undefined) consumeLineTarget(path, tab.line)
+      return
+    }
+    handedLineRef.current = null
+    if (nav === null) lineNavRef.current = null
+  }, [nav, isFreshLine, lineKey, path, tab.line])
+  const onLineConsumed = useCallback(() => {
+    if (handedLineRef.current !== null) setSpentLine(handedLineRef.current)
+  }, [])
+  useEffect(() => { setSpentLine(null) }, [path])
+
   // Manual refresh (issue #167 + PR #228): a dirty draft is dropped by the
   // reload (the editor instance remounts), so confirm before discarding it.
   const refreshFile = (): void => {
-    if (toolbar?.dirty === true) {
-      const confirmed = typeof window.confirm === 'function'
-        ? window.confirm(t('refreshUnsavedConfirm'))
-        : false
-      if (!confirmed) return
-    }
+    if (toolbar?.dirty === true && !confirmDiscard(t('refreshUnsavedConfirm'))) return
+    // The confirmed reload discards the live draft: its durable backup must
+    // not offer the discarded bytes back on the next open.
+    if (toolbar?.dirty === true) clearDraftBackup(scope.sessionId, path)
     setReloadSeq(sequence => sequence + 1)
   }
 
@@ -212,17 +337,28 @@ export function EditorHost(props: {
    */
   const openFile = (absolute: string): void => {
     if (inPlace) {
-      if (!openClaimedNativeFile(ctx, scope.sessionId, scope.cwd, absolute)) {
-        ctx.get('betterSidebar')?.updateTab(tab.id, { path: absolute, title: baseName(absolute) }, scope.sessionId)
+      // A native tab type claims the file: it opens elsewhere and THIS editor
+      // keeps its draft, so there is nothing to confirm.
+      if (openClaimedNativeFile(ctx, scope.sessionId, scope.cwd, absolute)) return
+      // An in-place switch remounts the viewer, and the draft lives only in
+      // that instance — ask before dropping it, reading the same dirty
+      // registry the tab close uses. Re-opening the current path is not a
+      // switch.
+      if (absolute !== path && isEditorDirty(tab.id, scope.sessionId)) {
+        if (!confirmDiscard(t('switchUnsavedConfirm'))) return
+        // The confirmed switch discards the live draft: drop its durable
+        // backup too, or the next open would offer the discarded bytes back.
+        clearDraftBackup(scope.sessionId, path)
       }
+      ctx.get('betterSidebar')?.updateTab(tab.id, { path: absolute, title: baseName(absolute) }, scope.sessionId)
     } else {
-      openSidebarFile(ctx, scope.sessionId, absolute)
+      openSidebarFile(ctx, scope.sessionId, absolute, { cwd: scope.cwd })
     }
   }
 
   /** The context menu's explicit "new tab" escape (per-path dedupe). */
   const openFileNewTab = (absolute: string): void => {
-    openSidebarFile(ctx, scope.sessionId, absolute)
+    openSidebarFile(ctx, scope.sessionId, absolute, { cwd: scope.cwd })
   }
 
   /**
@@ -328,7 +464,7 @@ export function EditorHost(props: {
   useEffect(() => {
     if (path === '' || isDir) return
     setEditorDirty(tab.id, toolbar?.dirty === true, scope.sessionId, path)
-    return () => { clearEditorDirty(tab.id) }
+    return () => { clearEditorDirty(tab.id, scope.sessionId) }
   }, [tab.id, toolbar?.dirty, scope.sessionId, path, isDir])
 
   // The docked panel's drag-resize: pointer capture on the handle itself
@@ -373,7 +509,35 @@ export function EditorHost(props: {
     if (finalWidth !== treeWidthOf(tab)) patchMeta(ctx, tab, scope.sessionId, { treeWidth: finalWidth })
   }
 
+  /** The rename-marker key for this tab (see `pathTabKey`): the session this
+   *  editor reads and writes in, plus the tab id. */
+  const retargetKey = pathTabKey(scope.sessionId, tab.id)
+  /** The path this editor last loaded (or was mounted on) — the rename retarget
+   *  announces itself as a move away from it. */
+  const loadedPathRef = useRef(path)
+  // A mounted editor is the only thing that can claim a retarget: once it is
+  // gone the announcement can never be applied, so it must not sit in the map
+  // for the rest of the page's life. A remount loads the record's current path
+  // either way, which is exactly what the marker would have preserved.
+  useEffect(() => () => { clearRetargetedPath(retargetKey) }, [retargetKey])
   useEffect(() => {
+    // A rename moved the file, not its bytes: the tab follows the new name
+    // (tree-mutations' retargetPathTabs) while the loaded document — and an
+    // unsaved draft, which lives only in the editor instance — stays put.
+    // Reloading here would swap the content for the very same bytes and drop
+    // the draft with it, so the retarget is consumed instead; the next save
+    // simply lands on the new name. A path that moved WITHOUT that marker is a
+    // real switch to another file, which must load as usual.
+    //
+    // This runs BEFORE the toolbar reset below: nothing reloads, so the viewer
+    // keeps reporting the state it already has — clearing it here dropped the
+    // dirty mark (and with it the close guard) of a draft that was still
+    // unsaved.
+    const previousPath = loadedPathRef.current
+    const pathChanged = previousPath !== path
+    loadedPathRef.current = path
+    if (pathChanged && consumeRetargetedPath(retargetKey, previousPath, path)) return
+    if (!pathChanged) clearRetargetedPath(retargetKey)
     // A (re)load or a path-less tab clears any hoisted toolbar state — the
     // fresh viewer re-registers its own.
     setToolbar(null)
@@ -386,6 +550,7 @@ export function EditorHost(props: {
     // closed, path changed, session switched) or re-matches the viewer.
     const controller = new AbortController()
     setLoad({ status: 'loading' })
+    setFileErrorAction(null)
     const mediaUrlOf = (): string => mediaUrl(scope, path)
     const apply = (action: EditorLoadAction): void => {
       if (cancelled) return
@@ -398,7 +563,8 @@ export function EditorHost(props: {
             status: 'ready',
             viewer: action.viewer,
             content: action.content,
-            truncated: action.truncated,
+            size: action.size,
+            largeFile: action.largeFile,
             mediaUrl: action.mediaUrl,
             customData: action.customData,
           })
@@ -415,28 +581,106 @@ export function EditorHost(props: {
         case 'fetchFsRead':
           api.fsRead(scope, path).then((result) => {
             if (cancelled) return
-            // Binary reads carry the head bytes for the detect re-match.
-            const outcome = planFsReadOutcome(action.viewer, {
-              binary: result.kind === 'binary',
-              content: result.kind === 'text' ? result.content : '',
-              truncated: result.truncated,
-              head: result.kind === 'binary' ? result.head : undefined,
-            }, (head) => ctx.get('betterSidebar')?.matchFileViewer(path, head), mediaUrlOf)
+            // The host answers one of three shapes; binary and too-large both
+            // carry the head bytes for the detect re-match (see editor-load.ts).
+            const outcome = planFsReadOutcome(action.viewer, result, (head) => ctx.get('betterSidebar')?.matchFileViewer(path, head), mediaUrlOf)
             // Carry the read's mtime into the rendered viewer: the text
             // editor uses it as the save baseline (fs-conflict on drift).
             if (outcome.kind === 'render') setLoad({ ...outcome, status: 'ready', mtimeMs: result.mtimeMs })
             else apply(outcome)
-          }).catch((error: unknown) => {
+          }).catch(async (error: unknown) => {
             if (cancelled) return
-            setLoad({ status: 'error', message: error instanceof Error ? error.message : String(error) })
+            const message = error instanceof Error ? error.message : String(error)
+            if (isDirectoryReadError(error)) {
+              // A path that resolves to a DIRECTORY is not a failed read: the
+              // editor tab must become the plugin's folder window instead of
+              // showing the host's raw `"<path>" is a directory`. This is the
+              // path a chat folder link takes (the tab carries no meta.dir), a
+              // `sidebar_open` folder takes when its seed meta was dropped on the
+              // native resource route, and a directory pasted into this tab's
+              // address bar takes (#933 / #1029).
+              //
+              // The root MUST be the platform-native absolute path: every
+              // listing answer is keyed by the host's `path.resolve`'d spelling,
+              // while FileTree keys its level cache by the REQUESTED root path.
+              // A session-relative, forward-slash-only root (the chat address
+              // spelling) therefore lands in another cache key and the tree
+              // stays on its loading placeholder forever. `ctx.sessions` carries
+              // the workspace root the file address grammar is relative to;
+              // scope.cwd is the fallback (a stripped ctx may not expose the
+              // list). `resolveNativeSidebarPath` also normalizes separators to
+              // that root's dialect (#1029 follow-up).
+              const sessionCwd = ctx.sessions?.list?.getSnapshot?.()?.byId?.[scope.sessionId]?.cwd ?? scope.cwd
+              const absolute = resolveNativeSidebarPath(sessionCwd, path)
+              ctx.get('betterSidebar')?.updateTab(tab.id, {
+                path: absolute,
+                title: baseName(absolute),
+                meta: { ...metaOf(tab), dir: true },
+              }, scope.sessionId)
+              return
+            }
+            const fileNotFound = error instanceof SidebarApiError
+              && error.code === 'fs-error'
+              && message.startsWith('File not found: ')
+            if (!fileNotFound) {
+              setLoad({ status: 'error', message })
+              return
+            }
+
+            const candidates = markdownPathRepairCandidates(path)
+            setLoad({
+              status: 'error',
+              message,
+              fileNotFound: true,
+              windowsAbsolutePath: isWindowsAbsolutePath(path),
+              ...(candidates.length > 0 ? { repairStatus: 'searching' as const } : {}),
+            })
+            if (candidates.length === 0) return
+
+            const matches = new Set<string>()
+            try {
+              for (let offset = 0; offset < candidates.length; offset += 8) {
+                const batch = candidates.slice(offset, offset + 8)
+                const results = await Promise.all(batch.map(candidate => api.fsSearch(scope, candidate, undefined, controller.signal)))
+                for (const result of results) {
+                  const directories = new Set(result.dirs)
+                  for (const match of result.matches) {
+                    if (!directories.has(match)) matches.add(match)
+                  }
+                }
+              }
+            } catch (repairError: unknown) {
+              if (cancelled) return
+              setLoad({
+                status: 'error',
+                message,
+                fileNotFound: true,
+                windowsAbsolutePath: true,
+                repairStatus: 'done',
+                repairError: repairError instanceof Error ? repairError.message : String(repairError),
+              })
+              return
+            }
+
+            if (cancelled) return
+            const repairMatches = [...matches]
+            if (repairMatches.length === 1) {
+              const repairedPath = repairMatches[0]!
+              const betterSidebar = ctx.get('betterSidebar')
+              if (betterSidebar?.updateTab !== undefined) {
+                betterSidebar.updateTab(tab.id, { path: repairedPath, title: baseName(repairedPath) }, scope.sessionId)
+                return
+              }
+            }
+            setLoad({ status: 'error', message, fileNotFound: true, windowsAbsolutePath: true, repairStatus: 'done', repairMatches })
           })
           return
       }
     }
     apply(planFirstMatch(ctx.get('betterSidebar')?.matchFileViewer(path), mediaUrlOf))
     return () => { cancelled = true; controller.abort() }
-    // The deps are deliberately granular: the scope object's identity churns,
-    // only its sessionId / cwd fields gate the (re)fetch.
+    // Granular deps: only these two fields gate the (re)fetch (see
+    // session-scope.ts for why the object itself is no longer a signal).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scope.sessionId, scope.cwd, path, ctx, showEmpty, isDir, reloadSeq])
 
@@ -488,8 +732,7 @@ export function EditorHost(props: {
     // button stays the explicit escape hatch in both cases.
     if (toolbar?.dirty === true || toolbar?.mode === 'edit') return
     setReloadSeq(sequence => sequence + 1)
-    // Granular deps: the scope object's identity churns, so only its
-    // sessionId / cwd fields gate this decision.
+    // Granular deps: only the two scope fields gate this decision.
   }, [ops, path, scope.sessionId, scope.cwd, toolbar?.dirty, toolbar?.mode])
 
   const treeOpen = treeOpenOf(tab)
@@ -536,6 +779,45 @@ export function EditorHost(props: {
     )
   }
 
+  /**
+   * The buttons this tab shows: `when` runs once per render and a throwing
+   * predicate drops its own button rather than the whole header.
+   */
+  const visibleTabActions = tabActions.filter((action) => {
+    if (action.when === undefined) return true
+    try {
+      return action.when({ tabId: tab.id, tabType: tab.type, sessionId: scope.sessionId, path, isDir, title })
+    }
+    catch (error) {
+      console.error('[dsh-better-sidebar] tab action predicate error:', error)
+      return false
+    }
+  })
+
+  /** Run one external action; the header owns the in-flight guard. */
+  const runTabAction = (action: TabActionDescriptor): void => {
+    if (!visible) return
+    const key = `${action.id}:${tab.id}`
+    if (runningActions.current.has(key)) return
+    runningActions.current.add(key)
+    setActionError(null)
+    const fail = (message: string): void => { setActionError(`${textOf(action.title, action.label, action.id)}: ${message}`) }
+    try {
+      const outcome = action.run({ tabId: tab.id, tabType: tab.type, sessionId: scope.sessionId, path, isDir, title, fail })
+      if (outcome === undefined) {
+        runningActions.current.delete(key)
+        return
+      }
+      void outcome
+        .catch((error: unknown) => { fail(error instanceof Error ? error.message : String(error)) })
+        .finally(() => { runningActions.current.delete(key) })
+    }
+    catch (error) {
+      runningActions.current.delete(key)
+      fail(error instanceof Error ? error.message : String(error))
+    }
+  }
+
   return (
     <div className={css.editor}>
       <div className={css.editorHeader}>
@@ -568,7 +850,7 @@ export function EditorHost(props: {
           </div>
         )}
         {toolbar?.dirty === true && <span className={css.dirtyDot} title={t('unsaved')} />}
-        {toolbar?.editable === true && toolbar?.truncated !== true && (
+        {toolbar?.editable === true && toolbar?.largeFile !== true && (
           <button
             type="button"
             className={css.iconButton}
@@ -603,27 +885,97 @@ export function EditorHost(props: {
         >
           <IconFolderOpenRegular size={14} />
         </button>
+        {visibleTabActions.map((action) => {
+          const label = textOf(action.label)
+          const glyph = typeof action.icon === 'function' ? action.icon(14) : action.icon
+          return (
+            <button
+              key={action.id}
+              type="button"
+              className={label === '' ? css.iconButton : css.editorModeButton}
+              aria-label={textOf(action.title, label, action.id)}
+              title={textOf(action.title, label, action.id)}
+              onClick={() => { runTabAction(action) }}
+            >
+              {glyph}
+              {label !== '' && <span>{label}</span>}
+            </button>
+          )
+        })}
       </div>
       <div className={css.editorBody}>
         <div className={css.editorMain}>
+          {actionError !== null && <div className={css.editorError}>{actionError}</div>}
           {showEmpty && <div className={css.editorPlaceholder}>{t('editorEmptyHint')}</div>}
           {!showEmpty && load.status === 'loading' && <div className={css.editorPlaceholder}>{t('loading')}</div>}
-          {!showEmpty && load.status === 'error' && <div className={css.editorError}>{load.message}</div>}
+          {!showEmpty && load.status === 'error' && (
+            <div className={css.editorError} role="alert">
+              <div>{load.fileNotFound ? t('editorFileNotFound', { path }) : load.message}</div>
+              {load.fileNotFound && load.windowsAbsolutePath && (
+                <div className={css.editorErrorHint}>{t('editorMarkdownPathHint')}</div>
+              )}
+              {load.repairStatus === 'searching' && <div className={css.editorErrorHint}>{t('editorPathRepairSearching')}</div>}
+              {load.repairStatus === 'done' && load.repairMatches?.length === 0 && (
+                <div className={css.editorErrorHint}>{t('editorPathRepairNone')}</div>
+              )}
+              {load.repairMatches !== undefined && load.repairMatches.length > 0 && (
+                <div className={css.editorErrorCandidates}>
+                  <div>{t('editorPathRepairChoices')}</div>
+                  {load.repairMatches.map(candidate => (
+                    <Button key={candidate} variant="outline" onClick={() => {
+                      ctx.get('betterSidebar')?.updateTab(tab.id, { path: candidate, title: baseName(candidate) }, scope.sessionId)
+                    }}>
+                      {candidate}
+                    </Button>
+                  ))}
+                </div>
+              )}
+              {load.repairError !== undefined && (
+                <div className={css.editorErrorHint}>{t('editorPathRepairFailed', { message: load.repairError })}</div>
+              )}
+              <div className={css.editorErrorActions}>
+                <Button variant="outline" onClick={() => {
+                  void writeClipboard(path).then((copied) => {
+                    setFileErrorAction(copied ? null : t('editorCopyPathFailed'))
+                  })
+                }}>
+                  {t('editorCopyPath')}
+                </Button>
+                <Button variant="outline" onClick={() => {
+                  void openInApp.reveal(path).then((opened) => {
+                    setFileErrorAction(opened ? null : t('editorRevealPathFailed'))
+                  })
+                }}>
+                  {t('editorOpenInFileManager')}
+                </Button>
+                <Button variant="outline" onClick={refreshFile}>{t('retry')}</Button>
+              </div>
+              {fileErrorAction !== null && <div className={css.editorErrorHint} role="status">{fileErrorAction}</div>}
+            </div>
+          )}
           {!showEmpty && load.status === 'binary' && <BinaryDownload scope={scope} path={path} />}
           {!showEmpty && load.status === 'ready' && createElement(load.viewer.component, {
             ctx, store, scope, path, title,
             viewerId: load.viewer.id,
-            // The reference's landing line, if the address carried one (#826).
-            // Only the text viewer acts on it; a markdown/html/image viewer
-            // gets the field and ignores it.
-            line: tab.line,
+            // The reference's landing line, if the address carried one (#826)
+            // AND this open has not spent it yet. Only the text viewer acts on
+            // it; a markdown/html/image viewer gets the field and ignores it.
+            line: isFreshLine ? tab.line : undefined,
+            // The quoted span's end, when the open armed one (the landing
+            // flash). Viewers without a flash ignore it.
+            lineEnd,
+            onLineConsumed,
             content: load.content,
-            truncated: load.truncated,
+            size: load.size,
+            largeFile: load.largeFile,
             mtimeMs: load.mtimeMs,
             mediaUrl: load.mediaUrl,
             customData: load.customData,
             // The viewer's toolbar always hoists into this host's header.
             toolbar: 'host',
+            // Native tabs stay mounted while parked; an over-limit preview
+            // reads pages only while somebody is looking (see FileViewerProps).
+            visible,
             onToolbarState,
             onToolbarControls,
             onReload: refreshFile,

@@ -100,7 +100,7 @@ describe('Markdown manual refresh', () => {
     vi.useFakeTimers()
     let disk = 'before'
     const read = vi.spyOn(api, 'fsRead').mockImplementation(async () => ({
-      kind: 'text', content: disk, truncated: false,
+      kind: 'text', content: disk, size: disk.length,
     }))
     const { store, ctx, tab } = setup()
     const view = mount(ctx, store, tab)
@@ -132,7 +132,7 @@ describe('Markdown manual refresh', () => {
   it('protects dirty content until the user confirms manual refresh', async () => {
     let disk = 'before'
     const read = vi.spyOn(api, 'fsRead').mockImplementation(async () => ({
-      kind: 'text', content: disk, truncated: false,
+      kind: 'text', content: disk, size: disk.length,
     }))
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
     const { store, ctx, tab } = setup()

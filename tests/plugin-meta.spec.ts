@@ -14,11 +14,12 @@
  * present on disk but not listed, both look fine in the source tree).
  */
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, readdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
+import { removeTree } from './temp-tree.ts'
 
 const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)))
 
@@ -62,9 +63,10 @@ describe('DSH plugin presentation metadata', () => {
     expect(pkg.files!).toContain(`${LOCALE_DIR}/*.json`)
   })
 
-  it('exposes the locale documents and the manifest through exports', () => {
-    // `${name}/locale/<file>` is how readPluginMeta resolves a translation,
-    // and `${name}/package.json` is how it reads the icon declaration.
+  it('exposes the icon, locale documents and manifest through exports', () => {
+    // DSH 通过 `${name}/locale/<file>` 读取翻译，并通过 `${name}/package.json` 读取图标声明。
+    // 其他消费者可以通过 `${name}/icon` 获取插件图标。
+    expect(pkg.exports?.['./icon'], 'exports["./icon"]').toBe('./icon.svg')
     expect(pkg.exports?.['./locale/*.json'], 'exports["./locale/*.json"]').toBe('./locale/*.json')
     expect(pkg.exports?.['./package.json'], 'exports["./package.json"]').toBe('./package.json')
   })
@@ -126,7 +128,7 @@ describe('DSH plugin presentation metadata', () => {
         expect(files, `${LOCALE_DIR}/${name} must be published`).toContain(`package/${LOCALE_DIR}/${name}`)
       }
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   }, 120_000)
 })

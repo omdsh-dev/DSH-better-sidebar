@@ -13,9 +13,13 @@ import {
   boundaryDelivered,
   buildOpenTurnSnapshot,
   buildSidechatInheritance,
+  effectiveModelSelection,
   hasDanglingToolCall,
+  inheritedPendingIds,
   isContextInjectionMessage,
   parentModelSelection,
+  pendingIdsInLog,
+  pendingInputs,
   resolvePresetId,
   sideLabel,
   sideThreadRows,
@@ -520,5 +524,83 @@ describe('parentModelSelection', () => {
       ev('request/header', 3, {}),
       ev('model/selection', 4, { provider: 'p3', model: 'm3' }),
     ])).toEqual({ provider: 'p3', model: 'm3' })
+  })
+})
+
+describe('pending inbox folding', () => {
+  const message = (id: string, text: string): Record<string, unknown> => ({
+    id,
+    content: [{ type: 'text', text }],
+  })
+  const splice = (seq: number, target: string, start: number, removed: number, inserted: unknown[]) =>
+    ev('agent/inbox/spliced', seq, {
+      target,
+      start,
+      ...(removed === 0 ? {} : { removedCount: removed }),
+      inserted,
+    })
+
+  it('projects an inbox in claim order (next-step before next-turn)', () => {
+    expect(pendingInputs(
+      [message('s1', 'steering')],
+      [message('t1', 'turn one'), message('t2', 'turn two')],
+    )).toEqual([
+      { id: 's1', target: 'next-step', text: 'steering' },
+      { id: 't1', target: 'next-turn', text: 'turn one' },
+      { id: 't2', target: 'next-turn', text: 'turn two' },
+    ])
+  })
+
+  it('skips messages without an identity (they could not be dequeued)', () => {
+    expect(pendingInputs([], [{ content: [{ type: 'text', text: 'no id' }] }])).toEqual([])
+  })
+
+  it('flattens multi-block content and tolerates a missing content array', () => {
+    expect(pendingInputs([], [
+      { id: 'm1', content: [{ type: 'text', text: 'a' }, { type: 'image' }, { type: 'text', text: 'b' }] },
+      { id: 'm2' },
+    ])).toEqual([
+      { id: 'm1', target: 'next-turn', text: 'a\nb' },
+      { id: 'm2', target: 'next-turn', text: '' },
+    ])
+  })
+
+  it('folds splices to the messages still pending', () => {
+    const log = [
+      splice(0, 'next-turn', 0, 0, [message('a', 'first')]),
+      splice(1, 'next-turn', 0, 1, []),
+      splice(2, 'next-turn', 0, 0, [message('b', 'second')]),
+      splice(3, 'next-step', 0, 0, [message('c', 'steering')]),
+    ]
+    expect(pendingIdsInLog(log)).toEqual(['c', 'b'])
+  })
+
+  it('honours the fold limit for the inherited prefix', () => {
+    const log = [
+      splice(0, 'next-turn', 0, 0, [message('ghost', 'already claimed by the parent')]),
+      ev('session/end-seed', 1, { inherited: true }),
+      splice(2, 'next-turn', 0, 1, []),
+      splice(3, 'next-turn', 0, 0, [message('mine', 'queued in the thread')]),
+    ]
+    // Whole log: the ghost was claimed inside the child's own history.
+    expect(pendingIdsInLog(log)).toEqual(['mine'])
+    // Inherited prefix only: the ghost is exactly what the resume sweep drops.
+    expect(inheritedPendingIds(log, 2)).toEqual(['ghost'])
+  })
+
+  it('ignores malformed splices instead of throwing', () => {
+    const log = [
+      ev('agent/inbox/spliced', 0, { target: 'nope', start: 0, inserted: [message('x', 'x')] }),
+      ev('agent/inbox/spliced', 1, { target: 'next-turn', start: 'garbage', inserted: 'not-an-array' }),
+      ev('agent/inbox/spliced', 2, { target: 'next-turn', start: 99, inserted: [message('y', 'y')] }),
+    ]
+    expect(pendingIdsInLog(log)).toEqual(['y'])
+  })
+
+  it('reads the effective headline selection through the shared helper', () => {
+    expect(effectiveModelSelection([
+      ev('request/header', 0, { header: { config: { provider: 'p1', model: 'm1' } } }),
+      ev('model/selection', 1, { provider: 'p2', model: 'm2' }),
+    ])).toEqual({ provider: 'p2', model: 'm2' })
   })
 })

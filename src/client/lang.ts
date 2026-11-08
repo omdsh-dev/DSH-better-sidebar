@@ -6,6 +6,7 @@
 import { Language, LanguageSupport, StreamLanguage } from '@codemirror/language'
 import { javascript, jsxLanguage, typescriptLanguage, tsxLanguage } from '@codemirror/lang-javascript'
 import { json } from '@codemirror/lang-json'
+import { jsonlLanguage } from './lang-jsonl.ts'
 import { markdown } from '@codemirror/lang-markdown'
 import { python } from '@codemirror/lang-python'
 import { html } from '@codemirror/lang-html'
@@ -63,6 +64,11 @@ export function languageKeyForExt(ext: string): string | null {
     case 'ts': case 'mts': case 'cts': return 'ts'
     case 'tsx': return 'tsx'
     case 'json': case 'jsonc': return 'json'
+    // Newline-delimited JSON: one record per line, each an independent
+    // document — hence its own per-line language rather than `json`, whose
+    // grammar treats every record after the first as an error (see
+    // lang-jsonl.ts).
+    case 'jsonl': case 'ndjson': return 'jsonl'
     case 'md': case 'markdown': return 'md'
     case 'py': case 'pyw': return 'python'
     case 'html': case 'htm': return 'html'
@@ -131,6 +137,7 @@ const FACTORIES: Record<string, () => Language | LanguageSupport> = {
   ts: () => javascript({ typescript: true }),
   tsx: () => javascript({ typescript: true, jsx: true }),
   json: () => json(),
+  jsonl: () => jsonlLanguage,
   md: () => markdown(),
   python: () => python(),
   html: () => html(),

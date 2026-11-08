@@ -56,16 +56,34 @@ const NODE_TITLE_LINES = 2
 const NODE_META_H = 14 + 2
 /** The state bar — `.cardBar`'s fixed height (its top border sits inside it). */
 const NODE_BAR_H = 22
+/** One line of the card's text tail — `.cardText`'s 10px/1.3 box. */
+const NODE_TEXT_LINE_H = 13
+/** The text tail's lead above the first line (`margin-top` in `.cardText`). */
+const NODE_TEXT_LEAD_H = 2
+/** Lines the text tail may show at most. */
+export const NODE_TEXT_MAX_LINES = 3
+/** The most a card's text tail can add to its height. */
+export const GRAPH_TEXT_MAX_H = NODE_TEXT_MAX_LINES * NODE_TEXT_LINE_H + NODE_TEXT_LEAD_H
 /** The shared-task row: its 10px/1.3 line plus the 3px lead, sized for the
  *  `+N` chip's own 1px outline (the tallest shape the row can take). */
 const NODE_TASK_H = 15 + 3
 
-/** Badges + TWO title lines + the mono meta line + the state bar: long agent
- *  names are clamped to two lines instead of ellipsizing to a couple of
- *  characters (see `.cardName` in tasks-graph.module.css), so the reserve
- *  covers that second line. */
-export const GRAPH_NODE_H = NODE_CHROME_H + NODE_PAD_TOP + NODE_BADGE_H
-  + NODE_TITLE_LINES * NODE_TITLE_LINE_H + NODE_META_H + NODE_PAD_BOTTOM + NODE_BAR_H
+/**
+ * An AGENT card: badges + TWO title lines + the state bar. Long agent names are
+ * clamped to two lines instead of ellipsizing to a couple of characters (see
+ * `.cardName` in tasks-graph.module.css), so the reserve covers that second
+ * line. The mode word moved into the badge row, so an agent card carries no
+ * mono meta line — reserving one left a visible 16px hole above the bar.
+ */
+export const GRAPH_AGENT_NODE_H = NODE_CHROME_H + NODE_PAD_TOP + NODE_BADGE_H
+  + NODE_TITLE_LINES * NODE_TITLE_LINE_H + NODE_PAD_BOTTOM + NODE_BAR_H
+/**
+ * The tallest card on the canvas: a workflow RUN keeps its mono meta line
+ * (status · member tally), which no badge can express. {@link rowStrideFor}
+ * narrows the row pitch back to {@link GRAPH_AGENT_NODE_H} for a model without
+ * runs, so agent-only trees do not grow 16px of empty gutter per row.
+ */
+export const GRAPH_NODE_H = GRAPH_AGENT_NODE_H + NODE_META_H
 /** Extra height of an agent node carrying a shared-task line (team members). */
 export const GRAPH_TASK_H = NODE_TASK_H
 
@@ -78,9 +96,23 @@ export const GRAPH_FIT_MIN_SCALE = 0.78
 export const GRAPH_GAP_X = 28
 export const GRAPH_GAP_Y = 53
 export const GRAPH_PAD = 16
-/** The row stride (one row of cards plus the vertical gutter). Every card
- *  shape must fit inside it — see {@link nodeHeight} for the tallest one. */
+/** The tallest row stride (the run card plus the vertical gutter). */
 export const GRAPH_ROW_STRIDE = GRAPH_NODE_H + GRAPH_GAP_Y
+
+/**
+ * The row pitch one model actually needs: the tallest card it draws plus the
+ * gutter. Card heights differ by kind and by content (a run keeps its meta line;
+ * an agent may add a task row and up to {@link NODE_TEXT_MAX_LINES} lines of text
+ * tail), so the pitch is measured from the model instead of hard-picked — a card
+ * taller than the pitch would overlap the row below it and its phase frame.
+ *
+ * @param nodes - the model's node list.
+ */
+export function rowStrideFor(nodes: readonly TasksNode[]): number {
+  let tallest = GRAPH_AGENT_NODE_H
+  for (const node of nodes) tallest = Math.max(tallest, nodeHeight(node))
+  return tallest + GRAPH_GAP_Y
+}
 
 /** One laid-out node. */
 export interface GraphBox {
@@ -105,13 +137,48 @@ export interface LayoutOptions {
 }
 
 /**
- * The display height of one node: the base card plus the shared-task row a
- * team member renders. Nothing else varies — the merged activity lives in the
- * state bar that every card renders, whatever its state.
+ * The display height of one node: the base card, plus the text-tail lines a
+ * running/settled child renders under its name, plus the shared-task row a team
+ * member renders. The merged activity lives in the state bar every card draws,
+ * so it costs no height.
+ *
+ * The tail's reservation is computed from the TEXT, not fixed at the maximum:
+ * a card that reserved three lines to show one would wear a 26px hole above its
+ * bar (the reader's own "空荡荡" report, in a different place), so the estimate
+ * is deliberately conservative — it floors the wrapped line count, which means
+ * a long tail is clamped one line short rather than overflowing the box.
  */
 function nodeHeight(node: TasksNode): number {
   if (node.kind !== 'agent') return GRAPH_NODE_H
-  return (node.tasks?.length ?? 0) > 0 ? GRAPH_NODE_H + GRAPH_TASK_H : GRAPH_NODE_H
+  const base = GRAPH_AGENT_NODE_H
+  const lines = textTailLines(node.live?.text)
+  const text = lines * NODE_TEXT_LINE_H + (lines === 0 ? 0 : NODE_TEXT_LEAD_H)
+  return base + text + ((node.tasks?.length ?? 0) > 0 ? GRAPH_TASK_H : 0)
+}
+
+/**
+ * How many lines a card's text tail takes, 0 when the node has none.
+ *
+ * An ESTIMATE by character width, because the layout runs before the browser
+ * wraps anything: CJK reads at the font's full size and latin at a bit over
+ * half of it, over the card's inner width. Floored on purpose (see
+ * {@link nodeHeight}), and capped at {@link NODE_TEXT_MAX_LINES}.
+ *
+ * @param text - the child's newest assistant text (flattened by the caller).
+ * @param cardWidth - the card's outer width (defaults to the graph's).
+ */
+export function textTailLines(text: string | undefined, cardWidth: number = GRAPH_NODE_W): number {
+  if (text === undefined || text === '') return 0
+  // `.cardTop`'s 8px left + 10px right padding, minus the tail's own lead.
+  const usable = Math.max(40, cardWidth - 18)
+  // 10px font: a CJK glyph is ~10px wide, latin ~5.5px (measured against the
+  // page's own stack; the ×0.9 keeps the estimate from cutting a line short).
+  let units = 0
+  for (const char of text) {
+    units += /[\u3000-\u9fff\uff00-\uffef]/.test(char) ? 10 : 5.5
+  }
+  const lines = Math.ceil((units * 0.9) / usable)
+  return Math.max(1, Math.min(NODE_TEXT_MAX_LINES, lines))
 }
 
 /**
@@ -136,77 +203,94 @@ function bands(children: readonly TasksNode[], cols: number): TasksNode[][] {
  */
 export function layoutTasksGraph(nodes: readonly TasksNode[], options: LayoutOptions = {}): GraphLayout {
   const cols = Math.max(1, options.maxBandCols ?? 4)
-  const ids = new Set(nodes.map(node => node.id))
-  const roots = nodes.filter(node => node.parentId === undefined || !ids.has(node.parentId))
+  const stride = rowStrideFor(nodes)
+  const nodeById = new Map(nodes.map(node => [node.id, node]))
+  const roots = nodes.filter(node => node.parentId === undefined || !nodeById.has(node.parentId))
   const childrenOf = new Map<string, TasksNode[]>()
   for (const edge of tasksEdges(nodes)) {
-    const child = nodes.find(node => node.id === edge.to)
+    const child = nodeById.get(edge.to)
     if (child === undefined) continue
     const list = childrenOf.get(edge.from)
     if (list === undefined) childrenOf.set(edge.from, [child])
     else list.push(child)
   }
 
-  /** Post-order: the width of the subtree rooted at `node`. */
-  const subtreeWidth = (node: TasksNode): number => {
+  // Collect an explicit traversal, then visit it backwards so every child's
+  // dimensions are available before its parent, even if input is not pre-order.
+  const order: TasksNode[] = []
+  const pending = roots.slice()
+  while (pending.length > 0) {
+    const node = pending.pop()!
+    order.push(node)
+    for (const child of childrenOf.get(node.id) ?? []) pending.push(child)
+  }
+  const subtrees = new Map<string, { width: number; rows: number }>()
+  for (let index = order.length - 1; index >= 0; index -= 1) {
+    const node = order[index]!
+    let width = GRAPH_NODE_W
+    let rows = 1
     const children = childrenOf.get(node.id) ?? []
-    if (children.length === 0) return GRAPH_NODE_W
-    let widest = GRAPH_NODE_W
     for (const band of bands(children, cols)) {
-      const width = band.reduce((sum, child) => sum + subtreeWidth(child), 0)
-        + GRAPH_GAP_X * (band.length - 1)
-      widest = Math.max(widest, width)
+      let bandWidth = GRAPH_GAP_X * (band.length - 1)
+      let bandRows = 0
+      for (const child of band) {
+        const subtree = subtrees.get(child.id)!
+        bandWidth += subtree.width
+        bandRows = Math.max(bandRows, subtree.rows)
+      }
+      width = Math.max(width, bandWidth)
+      rows += bandRows
     }
-    return widest
+    subtrees.set(node.id, { width, rows })
   }
 
   const boxes = new Map<string, GraphBox>()
-  /**
-   * Place `node` centered on `centerX` at row `row`; returns the LAST row its
-   * subtree occupies. Wrapped bands advance to the row after the deepest row
-   * of the previous band, so a sibling's children can never land on top of
-   * the next band (the overlap a naive +1 counter produced).
-   */
-  const place = (node: TasksNode, centerX: number, row: number): number => {
-    boxes.set(node.id, {
-      id: node.id,
-      x: Math.round(centerX - GRAPH_NODE_W / 2),
-      y: GRAPH_PAD + row * GRAPH_ROW_STRIDE,
-      w: GRAPH_NODE_W,
-      h: nodeHeight(node),
-    })
-    const children = childrenOf.get(node.id) ?? []
-    if (children.length === 0) return row
-    let deepest = row
-    let bandRow = row + 1
-    for (const band of bands(children, cols)) {
-      const bandWidth = band.reduce((sum, child) => sum + subtreeWidth(child), 0)
-        + GRAPH_GAP_X * (band.length - 1)
-      let cursor = centerX - bandWidth / 2
-      let bandDeepest = bandRow
-      for (const child of band) {
-        const width = subtreeWidth(child)
-        bandDeepest = Math.max(bandDeepest, place(child, cursor + width / 2, bandRow))
-        cursor += width + GRAPH_GAP_X
-      }
-      deepest = Math.max(deepest, bandDeepest)
-      bandRow = bandDeepest + 1
-    }
-    return deepest
-  }
-
-  // Single-root forest in practice (the topology root); the loop stays so a
-  // defensive orphan still lands inside the canvas extent.
+  // Cached subtree row counts let each wrapped band start below the deepest
+  // previous band without waiting for recursive placement to return.
+  const placements: { node: TasksNode; centerX: number; row: number }[] = []
   let offset = GRAPH_PAD
   for (const root of roots) {
-    const width = subtreeWidth(root)
-    place(root, offset + width / 2, 0)
+    const width = subtrees.get(root.id)!.width
+    placements.push({ node: root, centerX: offset + width / 2, row: 0 })
     offset += width + GRAPH_GAP_X
   }
-
-  const allBoxes = [...boxes.values()]
-  const width = Math.max(GRAPH_PAD * 2 + GRAPH_NODE_W, ...allBoxes.map(box => box.x + box.w + GRAPH_PAD))
-  const height = Math.max(GRAPH_PAD * 2 + GRAPH_NODE_H, ...allBoxes.map(box => box.y + box.h + GRAPH_PAD))
+  placements.reverse()
+  let width = GRAPH_PAD * 2 + GRAPH_NODE_W
+  let height = GRAPH_PAD * 2 + GRAPH_AGENT_NODE_H
+  while (placements.length > 0) {
+    const { node, centerX, row } = placements.pop()!
+    const box = {
+      id: node.id,
+      x: Math.round(centerX - GRAPH_NODE_W / 2),
+      y: GRAPH_PAD + row * stride,
+      w: GRAPH_NODE_W,
+      h: nodeHeight(node),
+    }
+    boxes.set(node.id, box)
+    width = Math.max(width, box.x + box.w + GRAPH_PAD)
+    height = Math.max(height, box.y + box.h + GRAPH_PAD)
+    const children = childrenOf.get(node.id) ?? []
+    const next: typeof placements = []
+    let bandRow = row + 1
+    for (const band of bands(children, cols)) {
+      let bandWidth = GRAPH_GAP_X * (band.length - 1)
+      let bandRows = 0
+      for (const child of band) {
+        const subtree = subtrees.get(child.id)!
+        bandWidth += subtree.width
+        bandRows = Math.max(bandRows, subtree.rows)
+      }
+      let cursor = centerX - bandWidth / 2
+      for (const child of band) {
+        const childWidth = subtrees.get(child.id)!.width
+        next.push({ node: child, centerX: cursor + childWidth / 2, row: bandRow })
+        cursor += childWidth + GRAPH_GAP_X
+      }
+      bandRow += bandRows
+    }
+    // Preserve the original depth-first box insertion order as well as pixels.
+    for (let index = next.length - 1; index >= 0; index -= 1) placements.push(next[index]!)
+  }
   return { boxes, width, height }
 }
 
@@ -244,18 +328,27 @@ export function layoutTasksGraphForWidth(
 ): GraphLayout {
   const budget = containerWidth <= 0 ? Number.POSITIVE_INFINITY : (containerWidth - 24) / minScale
   const widest = bandColsFor(containerWidth <= 0 ? 360 : containerWidth)
+  const layouts = new Map<number, GraphLayout>()
+  const layoutFor = (cols: number): GraphLayout => {
+    let layout = layouts.get(cols)
+    if (layout === undefined) {
+      layout = layoutTasksGraph(nodes, { maxBandCols: cols })
+      layouts.set(cols, layout)
+    }
+    return layout
+  }
   // Pass 1: the least-tall arrangement that FITS the readability budget at
   // two or more columns (below two the graph degenerates into a ladder).
   for (let cols = widest; cols >= 2; cols -= 1) {
-    const layout = layoutTasksGraph(nodes, { maxBandCols: cols })
+    const layout = layoutFor(cols)
     if (layout.width <= budget) return layout
   }
   // Pass 2: nothing flat fits — accept a slight horizontal overflow (the
   // reader pans a little) rather than stacking every child vertically.
   const tolerant = budget * 1.2
   for (let cols = widest; cols >= 2; cols -= 1) {
-    const layout = layoutTasksGraph(nodes, { maxBandCols: cols })
+    const layout = layoutFor(cols)
     if (layout.width <= tolerant) return layout
   }
-  return layoutTasksGraph(nodes, { maxBandCols: 1 })
+  return layoutFor(1)
 }

@@ -79,6 +79,9 @@ describe('editor language mapping', () => {
       ['js', 'js'], ['mjs', 'js'], ['cjs', 'js'], ['jsx', 'jsx'],
       ['ts', 'ts'], ['mts', 'ts'], ['cts', 'ts'], ['tsx', 'tsx'],
       ['json', 'json'], ['jsonc', 'json'], ['md', 'md'], ['markdown', 'md'],
+      // Newline-delimited JSON has its own per-line language (a `json()` mapping
+      // would report every record after the first as a parse error).
+      ['jsonl', 'jsonl'], ['ndjson', 'jsonl'],
       ['py', 'python'], ['pyw', 'python'], ['html', 'html'], ['htm', 'html'],
       ['css', 'css'], ['xml', 'xml'], ['xsl', 'xml'], ['yaml', 'yaml'],
       ['yml', 'yaml'], ['sql', 'sql'], ['java', 'java'], ['cs', 'csharp'],

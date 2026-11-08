@@ -53,9 +53,18 @@ let container: HTMLDivElement | undefined
 const anchors: number[] = []
 
 const originalDispatch = EditorView.prototype.dispatch
+const originalFocus = EditorView.prototype.focus
+/** Whether the landing showed the caret (CodeMirror draws it only when the
+ *  editor has focus, so an unfocused jump reads as "opened somewhere"). */
+const focus = vi.fn()
 
 beforeEach(() => {
   anchors.length = 0
+  focus.mockClear()
+  vi.spyOn(EditorView.prototype, 'focus').mockImplementation(function (this: EditorView) {
+    focus()
+    return originalFocus.call(this)
+  })
   // Record the selections the component dispatches, and let the real dispatch
   // run: the reveal reads the document back out of the view right after
   // writing to it.
@@ -125,5 +134,60 @@ const render = (overrides: Partial<FileViewerProps> = {}): HTMLDivElement => {
     act(() => { root!.render(createElement(TextEditor, base({ line: 2 }))) })
     expect(anchors.length).toBe(after)
     expect(el.querySelector('.cm-content')).not.toBeNull()
+  })
+
+  it('reports the navigation spent once, and only after the jump', () => {
+    // The host has to know when to stop handing the line out: it owns that
+    // memory, because a reload REMOUNTS this component (see
+    // tests/editor-line-nav-mode.spec.tsx). Reporting on the forced flip would
+    // spend it before the line ever landed.
+    const consumed = vi.fn()
+    render({ viewerId: 'markdown', path: '/workspace/readme.md', line: 2, onLineConsumed: consumed })
+    expect(consumed).toHaveBeenCalledTimes(1)
+  })
+
+  it('reports nothing on an ordinary open', () => {
+    const consumed = vi.fn()
+    render({ onLineConsumed: consumed })
+    expect(consumed).not.toHaveBeenCalled()
+  })
+
+  it('focuses the editor so the caret is visible where it landed', () => {
+    // Without focus CodeMirror paints no cursor at all and a zero-length
+    // selection paints nothing either, so the reader could not tell where the
+    // reference put them (reported from the first manual test).
+    render({ line: 3 })
+    expect(focus).toHaveBeenCalled()
+    expect(anchors).toContain(8)
+  })
+
+  it('does not steal focus on an ordinary open', () => {
+    render()
+    expect(focus).not.toHaveBeenCalled()
+  })
+
+  it('focuses after a markdown file is flipped out of preview (the editor is display:none until then)', () => {
+    render({ viewerId: 'markdown', path: '/workspace/readme.md', line: 2 })
+    expect(focus).toHaveBeenCalled()
+  })
+
+  it('a line reference beats the preview reading position it was scrolled to', () => {
+    // The flip's "enter edit where the reader was" effect is declared AFTER the
+    // landing and re-dispatches the preview-derived position, so a reader who
+    // had scrolled the preview first got their jump silently undone (the
+    // scroller was restored to where they came from).
+    const el = render({ viewerId: 'markdown', path: '/workspace/readme.md' })
+    const preview = el.querySelector('[data-dsh-md-surface]')!
+    Object.defineProperty(preview, 'scrollHeight', { configurable: true, value: 1000 })
+    Object.defineProperty(preview, 'clientHeight', { configurable: true, value: 100 })
+    Object.defineProperty(preview, 'scrollTop', { configurable: true, value: 810, writable: true })
+    // 90% down the preview: the proportional fallback alone would land on the
+    // LAST line (offset 14) — a different place from line 3 (offset 8).
+    act(() => { preview.dispatchEvent(new Event('scroll')) })
+
+    act(() => {
+      root!.render(createElement(TextEditor, base({ viewerId: 'markdown', path: '/workspace/readme.md', line: 3 })))
+    })
+    expect(anchors.at(-1)).toBe(8)
   })
 })

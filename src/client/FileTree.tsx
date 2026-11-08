@@ -53,7 +53,7 @@ import {
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { SiCursor, SiZedindustries } from 'react-icons/si'
 import { VscFolderOpened, VscLinkExternal, VscPin, VscPinned } from 'react-icons/vsc'
-import { api, archiveBuild, archiveDownloadUrl, archiveStatus, downloadUrl, type FsEntry, type FsLevel } from './api.ts'
+import { api, archiveBuild, archiveDownloadUrl, archiveStatus, downloadUrl, SidebarApiError, type FsEntry, type FsLevel } from './api.ts'
 import { compactChain, compactLoadTargets } from './file-tree-compact.ts'
 import { DEFAULT_FILE_TREE_SORT, sortEntries, type FileTreeSort } from './file-tree-sort.ts'
 import { FS_TREES_MAX_PATHS } from '../fs-batch.ts'
@@ -65,7 +65,7 @@ import type { OpenInApp, OpenInAppEntry } from './open-in-app.ts'
 import type { OpenWithTarget } from './open-with.ts'
 import { relativeTo } from './paths.ts'
 import { t } from './locales.ts'
-import type { BetterSidebarService } from './service.ts'
+import type { BetterSidebarService, FileActionDescriptor, FileActionRow } from './service.ts'
 import {
   Chip, ConfirmDialog, IconButton, Notice, StatusBadge, useGitStatus,
   type GitTone, type StatusTone,
@@ -124,6 +124,14 @@ function isFileDrag(event: DragEvent): boolean {
 /** How long the row's "copied" label stays after a successful write. */
 const COPIED_MS = 1200
 
+/**
+ * How many per-path open-with listings one tree keeps. The host answers from
+ * the machine's own application registry, so a handful covers any realistic
+ * menu session; the cap is what keeps the map from growing for the life of the
+ * page (the host keeps every visited tab body mounted).
+ */
+const APPS_CACHE_MAX = 32
+
 /** One changed row's tooltip word (the badge's status vocabulary). */
 function gitToneLabel(tone: GitTone): string {
   switch (tone) {
@@ -142,12 +150,6 @@ function gitToneLabel(tone: GitTone): string {
 /** The badge tone for one git tone (the kit has no separate 'copied' ink). */
 function badgeToneOf(tone: GitTone): StatusTone {
   return tone === 'copied' ? 'added' : tone
-}
-
-/** The archive progress line's percentage (`0/0` — an empty selection — is 0%). */
-function archivePercent(progress: { done: number; total: number }): number {
-  if (progress.total <= 0) return 0
-  return Math.min(100, Math.round((progress.done / progress.total) * 100))
 }
 
 /**
@@ -215,8 +217,59 @@ interface RowActions {
   activate(event: ActivateModifiers, path: string, isDir: boolean, chain?: readonly FsEntry[]): void
   contextMenu(event: MouseEvent<HTMLDivElement>, path: string, isDir: boolean): void
   reference(path: string, isDir: boolean): void
+  /** Run one externally registered file action (feature `fileActions`). */
+  fileAction(id: string, path: string, isDir: boolean): void
   dragOver(event: DragEvent<HTMLDivElement>, dir: string): void
   drop(event: DragEvent<HTMLDivElement>, path: string, isDir: boolean): void
+}
+
+/** One external action's label, resolved (a thunk re-reads the live locale). */
+function actionLabelOf(action: FileActionDescriptor): string {
+  if (typeof action.label === 'string') return action.label
+  try {
+    return action.label()
+  } catch (error) {
+    console.error(`[dsh-better-sidebar] file action "${action.id}" label() threw:`, error)
+    return action.id
+  }
+}
+
+/** One external action's glyph at `size` (a factory gets the size). */
+function actionIconOf(action: FileActionDescriptor, size: number): ReactNode {
+  if (typeof action.icon === 'function') return action.icon(size)
+  return action.icon
+}
+
+/**
+ * The external actions claiming one row, in registry order. `when` is
+ * crash-isolated: a throwing predicate hides its own row instead of breaking
+ * the tree (the registries' `fileIcon` follows the same policy).
+ *
+ * Directories are excluded unless the descriptor opts in with `dirs: true`;
+ * `hoverOnly` keeps just the descriptors that asked for a row button.
+ */
+function applicableFileActions(
+  actions: readonly FileActionDescriptor[],
+  row: FileActionRow,
+  options: { hoverOnly: boolean },
+): FileActionDescriptor[] {
+  const applicable: FileActionDescriptor[] = []
+  for (const action of actions) {
+    if (options.hoverOnly && action.row !== true) continue
+    if (row.isDir && action.dirs !== true) continue
+    if (action.when !== undefined) {
+      let claims: boolean
+      try {
+        claims = action.when(row) === true
+      } catch (error) {
+        console.error(`[dsh-better-sidebar] file action "${action.id}" when() threw:`, error)
+        claims = false
+      }
+      if (!claims) continue
+    }
+    applicable.push(action)
+  }
+  return applicable
 }
 
 /** One open-in-app entry's leading glyph: the host's icon route / data URL,
@@ -249,14 +302,27 @@ interface FileRowProps {
    */
   gitTone: GitTone | undefined
   gitLetter: string | undefined
+  /** External actions (registry order) — the row's `when` sees its own facts. */
+  fileActions: readonly FileActionDescriptor[]
+  /** The tree's workspace root (absolute), for `when`. */
+  root: string | undefined
+  /** The host session owning this tree, for `when`. */
+  sessionId: string
   actions: RowActions
 }
 
 const FileRow = memo(function FileRow(props: FileRowProps): ReactNode {
-  const { entry, depth, iconsVersion, service, selected, revealed, dropTarget, copied, gitTone, gitLetter, actions } = props
+  const { entry, depth, iconsVersion, service, selected, revealed, dropTarget, copied, gitTone, gitLetter, fileActions, root, sessionId, actions } = props
   // Referenced so a registry change re-renders the row with its new icon.
   void iconsVersion
   const icon = service !== undefined ? service.fileIcon(entry.path, 14) : builtinFileIcon(entry.path, 14)
+  // Row buttons only exist for actions that asked for one AND brought a glyph:
+  // a text button per registration would crowd the name out of the row.
+  const rowButtons = applicableFileActions(
+    fileActions,
+    { path: entry.path, root, sessionId, isDir: false },
+    { hoverOnly: true },
+  ).filter(action => action.icon !== undefined)
   return (
     <div
       role="button"
@@ -307,6 +373,21 @@ const FileRow = memo(function FileRow(props: FileRowProps): ReactNode {
             {t('referenceFile')}
           </button>
         )}
+      {rowButtons.map(action => (
+        <button
+          key={action.id}
+          type="button"
+          className={css.explorerAction}
+          aria-label={actionLabelOf(action)}
+          title={actionLabelOf(action)}
+          onClick={(event) => {
+            event.stopPropagation()
+            actions.fileAction(action.id, entry.path, false)
+          }}
+        >
+          {actionIconOf(action, 14)}
+        </button>
+      ))}
     </div>
   )
 })
@@ -585,6 +666,9 @@ export function FileTree(props: {
   /** The live props for the stable callbacks below (identity churns per render). */
   const propsRef = useRef(props)
   propsRef.current = props
+  /** Live visibility for the load effects: a parked tree fetches nothing. */
+  const visibleRef = useRef(visible !== false)
+  visibleRef.current = visible !== false
   const [data, setData] = useState<Record<string, LevelData>>({})
   /**
    * Registry revision for the file-icon feature: bumps on ANY registry
@@ -597,6 +681,16 @@ export function FileTree(props: {
     () => service?.subscribe(() => { setIconsVersion(version => version + 1) }),
     [service],
   )
+  /**
+   * The external file actions in render order. Re-read on every registry
+   * change (`iconsVersion` IS that revision — one listener set for tabs,
+   * viewers, icons and actions) and memoized because the memoized rows take it
+   * as a prop: a fresh array per render would defeat `memo()`.
+   */
+  const fileActions = useMemo(() => {
+    void iconsVersion
+    return service?.getFileActions() ?? []
+  }, [service, iconsVersion])
   /** One directory's leading glyph for the surfaces WITHOUT a memoized row
    *  (the inline rename and new-folder editors). */
   const dirRowIcon = (path: string, open: boolean): ReactNode =>
@@ -633,6 +727,8 @@ export function FileTree(props: {
   const [deletingSelected, setDeletingSelected] = useState(false)
   /** The last mutation failure (dismissable strip above the tree). */
   const [actionError, setActionError] = useState<string | null>(null)
+  /** External action runs in flight (`id\u0000path`): a double press fires once. */
+  const runningFileActionsRef = useRef(new Set<string>())
   /** A failed re-list that kept the previous rows on screen (hint line). */
   const [loadError, setLoadError] = useState<string | null>(null)
   /** The multi-selection (absolute paths) and its Shift anchor. */
@@ -751,6 +847,45 @@ export function FileTree(props: {
   }, [])
 
   /**
+   * Which in-flight request owns each `{}` placeholder in the level cache.
+   *
+   * The placeholder is the tree's "Loading…" state for a level, and only the
+   * call that wrote it may settle it. Without this bookkeeping a DROPPED answer
+   * (the generation guard in `loadLevels`) left the placeholder behind forever:
+   * every later load treats a cached level as loaded — the empty `{}` marker
+   * included — so the level was never re-requested and that subtree sat on its
+   * loading row for the rest of the mount. Reproduced locally 2026-10-12 (the
+   * drop path fires on a refresh tick, an exclude change and unmount), and the
+   * shape matches the same day's CI failure: the listing answers arrived,
+   * `names=[]`, and no row rendered even 5s later.
+   */
+  const pendingRef = useRef(new Map<string, number>())
+
+  /**
+   * Drop the `{}` placeholders `generation` still owns, so the levels they cover
+   * become retryable again. Levels that already carry a listing (or an error)
+   * are left alone — a dropped answer must not blank rows that are on screen.
+   * @returns the paths actually released (empty when nothing was left pending).
+   */
+  const releasePlaceholders = useCallback((generation: number, paths: readonly string[]): string[] => {
+    const released: string[] = []
+    let next: Record<string, LevelData> | null = null
+    for (const path of paths) {
+      if (pendingRef.current.get(path) !== generation) continue
+      pendingRef.current.delete(path)
+      const level = dataRef.current[path]
+      if (level === undefined || level.entries !== undefined || level.error !== undefined) continue
+      next = { ...(next ?? dataRef.current) }
+      delete next[path]
+      released.push(path)
+    }
+    if (next === null) return released
+    dataRef.current = next
+    setData(next)
+    return released
+  }, [])
+
+  /**
    * The exclude list by VALUE. The caller owns the array identity (the prefs
    * store hands out one stable reference per document), but the level cache,
    * the request payload and the reload effect all key on the CONTENT: a
@@ -781,6 +916,12 @@ export function FileTree(props: {
    * path — while leaving their current rows untouched until the answer lands.
    */
   const loadLevels = useCallback((paths: readonly string[], options?: { force?: boolean }) => {
+    // A PARKED tree must not fetch, whoever asked: the visible-set effect and
+    // the fold-chain preload are gated at their call sites, but an answer that
+    // lands after the tab was hidden can still re-enter here (the preload's
+    // next link, or the dropped-answer self-heal below). The un-park re-arm
+    // runs with `visible` already true, so it is unaffected.
+    if (visibleRef.current === false) return
     const force = options?.force === true
     const wanted = force
       ? [...new Set(paths)]
@@ -801,7 +942,7 @@ export function FileTree(props: {
     // A FORCED re-list (a refresh tick) keeps the listing on screen until the
     // fresh one arrives: no blank frame, and a failed refresh degrades to the
     // previous listing plus a hint instead of an empty tree.
-    if (!force) for (const path of wanted) storeLevel(path, {})
+    if (!force) for (const path of wanted) { pendingRef.current.set(path, generation); storeLevel(path, {}) }
     // The host rows ONE `fs.trees` request at FS_TREES_MAX_PATHS and refuses a
     // larger one OUTRIGHT (`too many paths`), which used to blank the WHOLE
     // tree for a session whose persisted expansion set reached the cap. Split
@@ -814,6 +955,8 @@ export function FileTree(props: {
     }
     // The route takes no signal: the GENERATION counter is the staleness guard
     // (a refresh tick or an unmount bumps it, so a late answer is dropped).
+    // `retried` bounds the self-heal below to one extra request per call.
+    let retried = false
     type BatchOutcome =
       | { batch: string[]; ok: true; levels: FsLevel[] }
       | { batch: string[]; ok: false; message: string }
@@ -824,7 +967,20 @@ export function FileTree(props: {
         return { batch, ok: false, message: error instanceof Error ? error.message : String(error) }
       }
     })).then((settled) => {
-      if (generation !== generationRef.current) return
+      if (generation !== generationRef.current) {
+        // The DATA is stale and is dropped — but the `{}` placeholders this call
+        // wrote are not stale at all: publishing them away is what keeps a
+        // dropped answer from freezing the level on "Loading…" forever (see
+        // pendingRef). Release what this call still owns and ask once more, so
+        // the drop self-heals instead of waiting for another refresh tick.
+        const released = releasePlaceholders(generation, wanted)
+        if (released.length > 0 && !retried) {
+          retried = true
+          loadLevels(released)
+        }
+        return
+      }
+      for (const path of wanted) pendingRef.current.delete(path)
       setLoadError(null)
       let failure = ''
       let keptListing = false
@@ -853,7 +1009,7 @@ export function FileTree(props: {
       // fresher. With nothing to keep, the per-level rows already say it.
       if (failure !== '') setLoadError(keptListing ? failure : null)
     })
-  }, [sessionId, cwd, excludeKey, storeLevel])
+  }, [sessionId, cwd, excludeKey, storeLevel, releasePlaceholders])
 
   /**
    * Re-list one directory in place (a watch notice, or the parent of a landed
@@ -869,6 +1025,11 @@ export function FileTree(props: {
    */
   const retryDir = useCallback((dir: string) => {
     loadLevels([dir], { force: true })
+  }, [loadLevels])
+
+  /** Re-list a SET of directories in ONE batch (the parked→visible re-arm). */
+  const retryDirs = useCallback((dirs: readonly string[]) => {
+    if (dirs.length > 0) loadLevels([...dirs], { force: true })
   }, [loadLevels])
 
   /**
@@ -924,6 +1085,10 @@ export function FileTree(props: {
   useEffect(() => {
     if (lastTick.current === refreshTick) return
     lastTick.current = refreshTick
+    // A parked tree drops the tick outright: the watcher's re-arm re-lists the
+    // whole watched set when the tab comes back, so forcing a load here would
+    // only duplicate that batch (and do it off screen).
+    if (visibleRef.current === false) return
     generationRef.current += 1
     forceNextLoad.current = true
   }, [refreshTick])
@@ -946,8 +1111,13 @@ export function FileTree(props: {
     // Load the visible set in ONE batch request; already-loaded levels (kept
     // in the cache) are not refetched, so this asks only for what is new — a
     // refresh tick re-lists root + every expanded directory in one POST.
+    //
+    // A PARKED tree issues nothing: nobody can see the rows, and the watcher's
+    // re-arm re-lists the whole watched set once on the way back. Visibility is
+    // read through a ref, NOT a dependency — making it one would fire a second
+    // batch alongside that re-arm.
     const root = cwd
-    if (root === undefined) return
+    if (root === undefined || visibleRef.current === false) return
     const force = forceNextLoad.current
     forceNextLoad.current = false
     loadLevels([root, ...expanded], { force })
@@ -958,9 +1128,20 @@ export function FileTree(props: {
     // levels are loaded ahead of any expansion (without them the breadcrumb
     // label would grow one segment at a time as the user clicks). Each arrival
     // can reveal the next link, hence the rescan on every cache update;
-    // loadLevels skips what is already loaded, so this settles.
-    if (cwd === undefined) return
-    loadLevels(compactLoadTargets(dataRef.current))
+    // loadLevels skips what is already loaded, so this settles. The roots are
+    // read LIVE through `propsRef`, keeping this effect's dependencies at
+    // [cwd, data, loadLevels]: the level cache is the real trigger (an arrival
+    // reveals the next link), and an expansion is always accompanied by the
+    // visible-set effect above loading (or having loaded) that level. The walk
+    // itself stops at the render cap, so a chain the row stopped folding at
+    // MAX_COMPACT_DEPTH never keeps pulling deeper levels.
+    //
+    // A PARKED tree skips the walk too: an in-flight level can land after the
+    // tab was hidden, and without this guard the preload would keep pulling
+    // the next link off screen. Un-parking re-lists the root (watcher re-arm),
+    // and that data change resumes the chain from the frontier.
+    if (cwd === undefined || visibleRef.current === false) return
+    loadLevels(compactLoadTargets(dataRef.current, [cwd, ...propsRef.current.expanded]))
   }, [cwd, data, loadLevels])
 
   // A torn-down tree must not write the answer of an in-flight batch into a
@@ -970,12 +1151,16 @@ export function FileTree(props: {
   // Live refresh: the host watches the folders this tree has expanded and
   // names the one that changed, so exactly that level is dropped and
   // re-listed instead of the whole tree. Without it a folder listed once when
-  // it was opened stayed stale for the rest of the session.
+  // it was opened stayed stale for the rest of the session. A PARKED tree
+  // (the host keeps every visited tab body mounted) closes the socket — and
+  // with it the host's `fs.watch` handles — and re-lists the watched levels
+  // once (ONE batch) when it comes back.
   useDirectoryWatch({
     sessionId,
     root: cwd,
     dirs: expanded,
-    onStale: retryDir,
+    visible: visible !== false,
+    onStale: retryDirs,
   })
 
   // Bring a "Show in folder" reveal into view: the ancestors expand above
@@ -1201,13 +1386,44 @@ export function FileTree(props: {
     propsRef.current.onReferenceFile(path, isDir)
   }, [])
 
+  /**
+   * Run one external file action. The registry is read LIVE rather than off
+   * the rendered list: a plugin can register between the menu opening and the
+   * click, and a disposed one must not run its stale closure.
+   *
+   * The failure policy is the strip's: a throw or a rejection lands as
+   * `error.message`, a resolution reports nothing (the owner shows its own
+   * outcome). Runs are guarded per (id, path), so a double press while the
+   * first is still in flight cannot fire the work twice.
+   */
+  const handleFileAction = useCallback((id: string, path: string, isDir: boolean): void => {
+    const current = propsRef.current
+    const action = current.service?.getFileActions().find(candidate => candidate.id === id)
+    if (action === undefined) return
+    const key = `${id}\u0000${path}`
+    if (runningFileActionsRef.current.has(key)) return
+    runningFileActionsRef.current.add(key)
+    setActionError(null)
+    const fail = (message: string): void => { setActionError(message) }
+    try {
+      const pending = action.run({ path, root: current.cwd, sessionId: current.sessionId, isDir, fail })
+      void Promise.resolve(pending)
+        .catch((error: unknown) => { fail(error instanceof Error ? error.message : String(error)) })
+        .finally(() => { runningFileActionsRef.current.delete(key) })
+    } catch (error) {
+      runningFileActionsRef.current.delete(key)
+      fail(error instanceof Error ? error.message : String(error))
+    }
+  }, [])
+
   const actions = useMemo<RowActions>(() => ({
     activate: handleActivate,
     contextMenu: handleContextMenu,
     reference: handleReference,
+    fileAction: handleFileAction,
     dragOver: handleRowDragOver,
     drop: handleDrop,
-  }), [handleActivate, handleContextMenu, handleReference, handleRowDragOver, handleDrop])
+  }), [handleActivate, handleContextMenu, handleReference, handleFileAction, handleRowDragOver, handleDrop])
 
   // ── New folder ─────────────────────────────────────────────────────────
   const newFolderRef = useRef(newFolder)
@@ -1397,7 +1613,9 @@ export function FileTree(props: {
    * the machine + the path, so reopening the same row's menu is instant: no
    * request, no disabled "Loading…" frame. A newly installed application shows
    * up on the next tree mount — the alternative (re-probing per open) is the
-   * churn the menu was reported for.
+   * churn the menu was reported for. The cache is bounded (LRU): the host
+   * keeps every visited tab body mounted, so an unbounded per-tree map of
+   * paths would live for the life of the page.
    */
   const appsCacheRef = useRef(new Map<string, readonly OpenInAppEntry[]>())
   useEffect(() => {
@@ -1408,6 +1626,9 @@ export function FileTree(props: {
     if (cached !== undefined) {
       // Already answered for this path: publish it without a null frame (the
       // submenu never flashes its disabled "Loading…" row on a reopen).
+      // Re-inserted so the LRU below evicts the least recently opened path.
+      appsCacheRef.current.delete(key)
+      appsCacheRef.current.set(key, cached)
       setApps({ path, entries: cached })
       return
     }
@@ -1415,7 +1636,15 @@ export function FileTree(props: {
     const listing = isDir ? openInApp.directoryApps() : openInApp.fileApps(path)
     void listing.then((entries) => {
       if (cancelled) return
-      if (entries !== null) appsCacheRef.current.set(key, entries)
+      if (entries !== null) {
+        appsCacheRef.current.set(key, entries)
+        if (appsCacheRef.current.size > APPS_CACHE_MAX) {
+          for (const oldest of appsCacheRef.current.keys()) {
+            appsCacheRef.current.delete(oldest)
+            break
+          }
+        }
+      }
       setApps({ path, entries })
       if (entries === null) reportOpenFailure(path)
     }).catch(() => {
@@ -1603,6 +1832,33 @@ export function FileTree(props: {
    * LONE directory archives its own subtree. A lone FILE is skipped — it would
    * only duplicate the plain download row.
    */
+  /**
+   * External file actions as menu entries (feature `fileActions`), preceded by
+   * a separator when any apply. The tree renders them after its open/download
+   * rows and before the copy/mutation block it owns.
+   */
+  const fileActionEntries = (target: { path: string; isDir: boolean }): MenuEntry[] => {
+    const applicable = applicableFileActions(
+      propsRef.current.service?.getFileActions() ?? [],
+      {
+        path: target.path,
+        root: propsRef.current.cwd,
+        sessionId: propsRef.current.sessionId,
+        isDir: target.isDir,
+      },
+      { hoverOnly: false },
+    )
+    if (applicable.length === 0) return []
+    return [
+      { id: 'file-action-sep', type: 'separator' } as MenuEntry,
+      ...applicable.map((action): MenuItem => ({
+        id: `file-action:${action.id}`,
+        label: actionLabelOf(action),
+        ...(action.icon === undefined ? {} : { icon: actionIconOf(action, 14) }),
+      })),
+    ]
+  }
+
   const zipEntries = (target: { path: string; isDir: boolean }): MenuEntry[] => {
     const count = selected.size
     if (count >= 2) {
@@ -1632,20 +1888,19 @@ export function FileTree(props: {
   /**
    * Zip the selection through the host's ASYNC archive route:
    *
-   *   archiveBuild(scope, paths, name) → { id, entries }
+   *   archiveBuild(scope, paths, stem) → { id, name }
    *   → poll archiveStatus(id) every 250ms (self-scheduling: one request in
-   *     flight) while the job builds, driving the `zipProgress` line
-   *   → state 'ready' → fetch(archiveDownloadUrl(scope, id)) → blob → hidden
-   *     `<a download>` (the bytes are fetched explicitly because a bare anchor
-   *     would save the route's JSON error envelope as a broken .zip)
-   *   → any failure (build / status / download) → `zipFailed` in the strip.
+   *     flight) while the system's zip/tar packs into a temp file; the strip
+   *     shows a plain "packing" line, because a child process reports no
+   *     per-entry progress
+   *   → state 'ready' → a plain `<a download>` on the route URL, which the
+   *     browser streams to disk (see saveArchive for why it is not a blob)
+   *   → any failure (tool missing / build / status) → `zipFailed` in the strip.
    *
-   * `archiveBusyRef` keeps a repeated pick from starting a second job (the
-   * visible progress line is the feedback), and `archiveProgress` carries the
-   * live `done/total` for the line and its percentage.
+   * `archiveBusyRef` keeps a repeated pick from starting a second job — the
+   * visible packing line is the feedback.
    */
   const [archiveBusy, setArchiveBusy] = useState(false)
-  const [archiveProgress, setArchiveProgress] = useState<{ done: number; total: number } | null>(null)
   const archiveBusyRef = useRef(false)
   /** The job being polled (state so the poller starts/stops with it). */
   const [archiveJobId, setArchiveJobId] = useState<string | null>(null)
@@ -1663,7 +1918,6 @@ export function FileTree(props: {
     archiveHandedOffRef.current = false
     setArchiveJobId(null)
     setArchiveBusy(false)
-    setArchiveProgress(null)
   }, [])
 
   // A session/cwd swap abandons the archive job with it — the progress strip
@@ -1680,37 +1934,33 @@ export function FileTree(props: {
     settleArchive()
   }, [settleArchive])
 
-  /** Save the finished archive as `name` through a hidden anchor. */
+  /**
+   * Save the finished archive through a plain anchor on the route URL.
+   *
+   * Deliberately NOT `fetch → blob → objectURL` any more, which is what the
+   * flow used to do: a Blob holds the whole archive in the TAB's memory, so a
+   * multi-gigabyte selection would kill the page — the very thing the host
+   * side was just changed to stop doing. A plain anchor hands the URL to the
+   * browser's download machinery, which streams it to disk.
+   *
+   * The cost, stated plainly: the route's JSON error envelope can no longer be
+   * inspected, so a failure at this point saves a JSON body under the archive's
+   * name. Everything that realistically fails — no tool installed, an
+   * unreadable selection, a tool that exited non-zero — is caught by the
+   * `archive.status` poll BEFORE this runs, so what is left is an
+   * already-consumed or expired task between the poll and the click.
+   */
   const saveArchive = useCallback((id: string, name: string): void => {
-    void fetch(archiveDownloadUrl({ sessionId, cwd }, id))
-      .then(async (response) => {
-        if (!response.ok) {
-          const envelope: { error?: { message?: string } } | null = await response.json().catch(() => null)
-          throw new Error(envelope?.error?.message ?? `HTTP ${response.status}`)
-        }
-        return await response.blob()
-      })
-      .then((blob) => {
-        setActionError(null)
-        const objectUrl = URL.createObjectURL(blob)
-        const anchor = document.createElement('a')
-        anchor.href = objectUrl
-        anchor.download = name
-        anchor.style.display = 'none'
-        document.body.appendChild(anchor)
-        anchor.click()
-        anchor.remove()
-        // Revoke on the next task, not synchronously: some engines have not
-        // committed the download when click() returns, and revoking the URL
-        // under them loses the file. One tick is enough and keeps the blob
-        // from outliving the download.
-        window.setTimeout(() => { URL.revokeObjectURL(objectUrl) }, 0)
-        settleArchive()
-      })
-      .catch((error: unknown) => {
-        failArchive(error instanceof Error ? error.message : String(error))
-      })
-  }, [cwd, failArchive, sessionId, settleArchive])
+    setActionError(null)
+    const anchor = document.createElement('a')
+    anchor.href = archiveDownloadUrl({ sessionId, cwd }, id)
+    anchor.download = name
+    anchor.style.display = 'none'
+    document.body.appendChild(anchor)
+    anchor.click()
+    anchor.remove()
+    settleArchive()
+  }, [cwd, sessionId, settleArchive])
 
   /** The poller's callbacks, read through a ref so the polling TASK stays
    *  identity-stable (a churned task restarts the loop every render). */
@@ -1727,7 +1977,6 @@ export function FileTree(props: {
       // The transport may deliver a response after teardown; the signal is the
       // only reliable staleness guard (the route call takes no signal).
       if (signal.aborted) return
-      setArchiveProgress({ done: status.done, total: status.total })
       if (status.state === 'error') {
         archiveHandlersRef.current.fail(status.error ?? `HTTP ${status.state}`)
         return
@@ -1750,21 +1999,30 @@ export function FileTree(props: {
 
   const downloadArchive = (paths: readonly string[]): void => {
     if (archiveBusyRef.current) return
-    const name = paths.length === 1 ? `${baseName(paths[0]!)}.zip` : 'archive.zip'
+    // The client names a STEM, not a file name: the host picks the extension
+    // from the tool it actually has (a host with only `tar` produces a real
+    // .tar.gz), and returns the final name with the build id.
+    const stem = paths.length === 1 ? baseName(paths[0]!) : 'archive'
     const generation = scopeGenRef.current
     archiveBusyRef.current = true
     archiveHandedOffRef.current = false
     setArchiveBusy(true)
-    setArchiveProgress(null)
-    void archiveBuild({ sessionId, cwd }, paths, name)
-      .then(({ id, entries }) => {
+    void archiveBuild({ sessionId, cwd }, paths, stem)
+      .then(({ id, name }) => {
         if (generation !== scopeGenRef.current) return
+        setActionError(null)
         archiveJobRef.current = { id, name }
-        setArchiveProgress({ done: 0, total: entries })
         setArchiveJobId(id)
       })
       .catch((error: unknown) => {
         if (generation !== scopeGenRef.current) return
+        // `unavailable` is its own sentence: "this machine has neither zip nor
+        // tar" is something the user can act on, and the host's English wire
+        // message is not the place to say it.
+        if (error instanceof SidebarApiError && error.code === 'unavailable') {
+          failArchive(t('archiveToolMissing'))
+          return
+        }
         failArchive(error instanceof Error ? error.message : String(error))
       })
   }
@@ -1800,6 +2058,25 @@ export function FileTree(props: {
     }
   }, [data])
 
+  /**
+   * One level's rows in the caller's chosen order, resolved ONCE per
+   * level-cache revision and reused by both walkers below: `renderLevel` draws
+   * them and {@link visibleRows} ranges over them, so re-sorting per render
+   * would both repeat the comparison and hand the memoized rows a fresh array.
+   * `sortEntries` copies (the level cache keeps the host's own order and is
+   * never reordered in place).
+   */
+  const entriesFor = useMemo(() => {
+    const cache = new Map<string, readonly FsEntry[]>()
+    return (dir: string): readonly FsEntry[] => {
+      const cached = cache.get(dir)
+      if (cached !== undefined) return cached
+      const sorted = sortEntries(data[dir]?.entries ?? [], sort)
+      cache.set(dir, sorted)
+      return sorted
+    }
+  }, [data, sort])
+
   // The Shift range walks the rows the user can actually see: the level's
   // rows in the SAME order `renderLevel` draws them (the sort choice), then
   // depth-first, expanded state decides. Recomputed with the level cache,
@@ -1809,7 +2086,7 @@ export function FileTree(props: {
     const walk = (dir: string): void => {
       const level = data[dir]
       if (level?.entries === undefined) return
-      for (const entry of sortEntries(level.entries, sort)) {
+      for (const entry of entriesFor(dir)) {
         // A folded row IS one row: its identity is the chain head (the level
         // entry the walk is on), and it descends into the chain TAIL — the
         // same shape `renderLevel` draws, so a Shift range covers what the
@@ -1822,7 +2099,7 @@ export function FileTree(props: {
     }
     if (root !== undefined) walk(root)
     return rows
-  }, [chainFor, data, expandedSet, root, sort])
+  }, [chainFor, data, entriesFor, expandedSet, root])
   visibleRowsRef.current = visibleRows
 
   /**
@@ -1870,13 +2147,15 @@ export function FileTree(props: {
           if (isLikelyImeKey(event)) return
           if (event.key === 'Enter') {
             event.preventDefault()
-            commitRename(entry.path, renaming?.value ?? '')
+            // A folded row renders at the chain HEAD while its menu addressed
+            // the TAIL: commit the path the editor was opened for.
+            commitRename(renaming?.path ?? entry.path, renaming?.value ?? '')
           } else if (event.key === 'Escape') {
             event.preventDefault()
             setRenaming(null)
           }
         }}
-        onBlur={() => { commitRename(entry.path, renaming?.value ?? '') }}
+        onBlur={() => { commitRename(renaming?.path ?? entry.path, renaming?.value ?? '') }}
       />
     </div>
   )
@@ -1986,9 +2265,8 @@ export function FileTree(props: {
         </>
       )
     }
-    // The ORDER is the caller's choice (the header's sort control); the level
-    // cache keeps the host's own order and is never reordered in place.
-    const entries = sortEntries(level.entries ?? [], sort)
+    // The ORDER is the caller's choice (the header's sort control).
+    const entries = entriesFor(dir)
     return (
       <>
         {head}
@@ -2045,6 +2323,9 @@ export function FileTree(props: {
               gitTone={git?.tone}
               gitLetter={git?.letter}
               copied={copiedPath === entry.path}
+              fileActions={fileActions}
+              root={cwd}
+              sessionId={sessionId}
               actions={actions}
             />
           )
@@ -2102,11 +2383,7 @@ export function FileTree(props: {
             <Notice kind="warn" tone="inline">{loadError}</Notice>
           )}
           {archiveBusy && (
-            <Notice kind="loading" tone="inline" role="status">
-              {archiveProgress === null
-                ? t('loading')
-                : `${t('zipProgress', { done: archiveProgress.done, total: archiveProgress.total })} · ${archivePercent(archiveProgress)}%`}
-            </Notice>
+            <Notice kind="loading" tone="inline" role="status">{t('loading')}</Notice>
           )}
           <RootRow
             path={root}
@@ -2230,6 +2507,8 @@ export function FileTree(props: {
           ...(rowMenu?.isDir === true
             ? [{ id: 'new-file', label: t('newFile'), icon: <IconCodeOutlineRegular size={14} /> }]
             : []),
+          // 4b: externally registered file actions (feature `fileActions`).
+          ...(rowMenu === null ? [] : fileActionEntries(rowMenu)),
           // 5: ZIP of the current selection (≥2 rows, or one lone directory).
           ...(rowMenu === null ? [] : zipEntries(rowMenu)),
           // 6: copy, then the mutations (never on the workspace root row).
@@ -2265,6 +2544,10 @@ export function FileTree(props: {
           }
           // The plugin's own targets share one id space (pinned rows and
           // submenu children alike), so the caller gets the target id + path.
+          if (id.startsWith('file-action:')) {
+            handleFileAction(id.slice('file-action:'.length), target.path, target.isDir)
+            return
+          }
           if (id.startsWith('open-with:')) {
             // The caller owns the launch and answers whether it was accepted;
             // a refusal (or a rejection) means nothing opened, so the failure

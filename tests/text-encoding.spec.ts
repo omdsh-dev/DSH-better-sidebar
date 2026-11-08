@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from 'vitest'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import {
@@ -10,6 +10,7 @@ import {
   restoreEol,
   type TextEncoding,
 } from '../src/text-encoding.ts'
+import { removeTree } from './temp-tree.ts'
 
 const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-encoding-'))
 
@@ -25,7 +26,7 @@ const ROUND_TRIPS: [TextEncoding, string][] = [
 ]
 
 afterAll(() => {
-  rmSync(root, { recursive: true, force: true })
+  removeTree(root)
 })
 
 describe('text encoding', () => {
@@ -48,6 +49,23 @@ describe('text encoding', () => {
 
   it('keeps NUL-heavy non-Unicode data binary', () => {
     expect(decodeTextBytes(Buffer.from([0x89, 0x50, 0x00, 0x01, 0x02, 0x03]))).toBeNull()
+  })
+
+  it('keeps 16-bit little-endian data binary instead of reading it as UTF-16 text', () => {
+    // A raw uint16 table leaves the high byte 0 for every value below 256 —
+    // exactly the NUL lane BOM-less UTF-16 has — but its code units are C0/C1
+    // control runs, not text. Read as text it opened a binary file in the
+    // editor, and a save rewrote it as UTF-16 (an odd length also lost its
+    // trailing byte).
+    const samples = Buffer.alloc(4096)
+    for (let index = 0; index < 2048; index += 1) samples.writeUInt16LE(100 + (index % 100), index * 2)
+    expect(decodeTextBytes(samples)).toBeNull()
+    expect(decodeTextBytes(Buffer.concat([samples, Buffer.from([0x7f])]))).toBeNull()
+    expect(decodeTextBytes(Buffer.concat([Buffer.from('RIFF....WAVEfmt data'), samples.subarray(0, 4000)]))).toBeNull()
+    // The same NUL lane spelled as text still reads as UTF-16: the lane vote
+    // alone must not decide.
+    expect(decodeTextBytes(Buffer.from('echo off\n', 'utf16le')))
+      .toEqual({ content: 'echo off\n', encoding: 'utf16le' })
   })
 
   it('keeps a capped UTF-8 read UTF-8 when the cap cuts a character', () => {

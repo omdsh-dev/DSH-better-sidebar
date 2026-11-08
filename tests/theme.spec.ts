@@ -117,6 +117,17 @@ function moduleStylesheets(): string[] {
 }
 
 describe('skin contract: the plugin owns no color of its own', () => {
+  it('keeps Context diagnostics feedback themed and bounded on narrow viewports', () => {
+    const source = readFileSync(resolve(ROOT, 'src/client/context-diagnostics.module.css'), 'utf8')
+    expect(source).toContain('var(--dsw-alias-bg-layer-3)')
+    expect(source).toContain('var(--dsw-alias-state-warn-primary)')
+    expect(source).toContain('calc(100vw - 24px)')
+    expect(source).toContain('overflow-wrap: anywhere')
+    const tokens = [...source.matchAll(/var\((--[\w-]+)/g)].map(match => match[1])
+    expect(tokens.length).toBeGreaterThan(0)
+    for (const token of tokens) expect(token).toMatch(/^--(?:dsw-alias-|dsw-font-|ds-)/)
+  })
+
   it('the icon modules carry no color literals', () => {
     for (const file of ['src/client/file-icons.tsx', 'src/client/icons.tsx']) {
       const source = readFileSync(resolve(ROOT, file), 'utf8')
@@ -158,6 +169,67 @@ describe('skin contract: the plugin owns no color of its own', () => {
         expect(tokens.length, `${file}: color: ${value}`).toBeGreaterThan(0)
         for (const name of tokens) expect(isThemeToken(name), `${file}: color: ${value}`).toBe(true)
       }
+    }
+  })
+
+  it('tag ref pills take the neutral label token instead of a lane-palette slot', () => {
+    // The graph's ref pills are painted by lane slot (`data-color` → the five
+    // `--dsw-alias-state-*` colours); a tag is a decoration, not a lane, so its
+    // rule must resolve to a NEUTRAL label token and keep the text marker
+    // legible with a dashed outline.
+    const styles = readFileSync(resolve(ROOT, 'src/client/changes/graph.module.css'), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+    const block = /\.ref\[data-tone="tag"\] \{([^}]*)\}/.exec(styles)?.[1]
+    if (block === undefined) throw new Error('the tag ref pill rule must exist in graph.module.css')
+    expect(block).toContain('color: var(--dsw-alias-label-secondary)')
+    expect(block).toContain('border-style: dashed')
+  })
+
+  it('the graph viewport fills its container without a viewport-relative height cap', () => {
+    const sheet = document.createElement('style')
+    sheet.textContent = readFileSync(resolve(ROOT, 'src/client/changes/changes.module.css'), 'utf8')
+    document.head.append(sheet)
+    try {
+      const rules = Array.from(sheet.sheet!.cssRules).filter((rule): rule is CSSStyleRule => 'selectorText' in rule)
+      const graph = rules.find(rule => rule.selectorText === '.graphArea')!.style
+      expect(graph.getPropertyValue('flex-grow')).toBe('1')
+      expect(graph.getPropertyValue('height')).toBe('')
+      expect(graph.getPropertyValue('max-height')).toBe('')
+      expect(Number.parseFloat(graph.getPropertyValue('min-height'))).toBe(0)
+      const section = rules.find(rule => rule.selectorText === '.graphSection')!.style
+      expect(section.getPropertyValue('min-height')).toBe('248px')
+      expect(section.getPropertyValue('max-height')).toBe('')
+    } finally {
+      sheet.remove()
+    }
+  })
+
+  it('selected change rows keep their layout and separate their accent from indent guides', () => {
+    const sheet = document.createElement('style')
+    sheet.textContent = readFileSync(resolve(ROOT, 'src/client/changes/changes.module.css'), 'utf8')
+    document.head.append(sheet)
+    try {
+      const rules = Array.from(sheet.sheet!.cssRules).filter((rule): rule is CSSStyleRule => 'selectorText' in rule)
+      for (const name of ['row', 'opRow']) {
+        const selector = `.${name}[data-selected='true']`
+        const selected = rules.filter(rule => rule.selectorText.split(',').some(part => part.trim() === selector))
+        expect(selected).toHaveLength(1)
+        const style = selected[0]!.style
+        expect(style.getPropertyValue('position')).toBe('')
+        expect(style.getPropertyValue('width')).toBe('')
+        expect(style.getPropertyValue('border-left')).toBe('')
+        expect(style.getPropertyValue('background')).toBe('var(--dsw-alias-interactive-bg-active)')
+        const marker = rules.find(rule => rule.selectorText.split(',').some(part => part.trim() === `${selector}::before`))!
+        expect(marker.style.getPropertyValue('width')).toBe('2px')
+        expect(marker.style.getPropertyValue('top')).toBe('4px')
+        expect(marker.style.getPropertyValue('bottom')).toBe('4px')
+        expect(marker.style.getPropertyValue('background')).toBe('var(--dsw-alias-state-business-primary)')
+      }
+      const guide = rules.find(rule => rule.selectorText === '.guide')!
+      expect(guide.style.getPropertyValue('position')).toBe('absolute')
+      expect(guide.style.getPropertyValue('border-left')).toBe('1px solid var(--dsw-alias-border-l1)')
+    } finally {
+      sheet.remove()
     }
   })
 
@@ -218,6 +290,54 @@ describe('skin contract: the plugin owns no color of its own', () => {
     }
     expect(block).not.toContain('--dsw-alias-bg-l1')
     expect(block).not.toContain('--dsw-alias-bg-l2')
+  })
+
+  it('the floating selection action paints from the host floating-button pair', () => {
+    // The chip floats over live text; the menu fill it used before is
+    // translucent by design and washed out over the code viewer. Scan the
+    // parsed CSSOM, not raw text, so a later duplicate rule cannot win the
+    // cascade behind this test's back.
+    const sheet = document.createElement('style')
+    sheet.textContent = readFileSync(resolve(ROOT, 'src/client/sidebar.module.css'), 'utf8')
+    document.head.append(sheet)
+    try {
+      const rules = Array.from(sheet.sheet!.cssRules).filter((rule): rule is CSSStyleRule => 'selectorText' in rule)
+      const base = rules.filter(rule => rule.selectorText.trim() === '.selectionPopup')
+      expect(base).toHaveLength(1)
+      expect(base[0]!.style.getPropertyValue('background')).toBe('var(--dsw-alias-button-floating-fill)')
+
+      // Either selector alone would let a later plain :hover rule override
+      // the pair, so accept both spellings only when they share one rule.
+      const hover = rules.filter(rule => {
+        const selectors = rule.selectorText.split(',').map(selector => selector.trim())
+        return selectors.includes('.selectionPopup:hover') || selectors.includes('.selectionPopup:focus-visible')
+      })
+      expect(hover).toHaveLength(1)
+      expect(hover[0]!.selectorText.split(',').map(selector => selector.trim()).sort()).toEqual([
+        '.selectionPopup:focus-visible',
+        '.selectionPopup:hover',
+      ])
+      expect(hover[0]!.style.getPropertyValue('background')).toBe('var(--dsw-alias-button-floating-hover)')
+    } finally {
+      sheet.remove()
+    }
+  })
+
+  it('sidechat image previews fit the transcript and keep the host border token', () => {
+    const sheet = document.createElement('style')
+    sheet.textContent = readFileSync(resolve(ROOT, 'src/client/SideChatView.module.css'), 'utf8')
+    document.head.append(sheet)
+    try {
+      const rules = Array.from(sheet.sheet!.cssRules).filter((rule): rule is CSSStyleRule => 'selectorText' in rule)
+      const image = rules.find(rule => rule.selectorText === '.sidechatImage')!.style
+      expect(image.getPropertyValue('object-fit')).toBe('contain')
+      expect(image.getPropertyValue('max-width')).not.toBe('')
+      expect(image.getPropertyValue('max-height')).not.toBe('')
+      const preview = rules.find(rule => rule.selectorText === '.sidechatImagePreview')!.style
+      expect(preview.getPropertyValue('border')).toMatch(/var\(--dsw-alias-/)
+    } finally {
+      sheet.remove()
+    }
   })
 
   it('no icon dataset is shipped as a lazy chunk', () => {

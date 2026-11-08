@@ -1,14 +1,25 @@
 /**
  * FileTree "zip and download" over the host's ASYNC archive route.
  *
- * The menu row starts a job (`api.archiveBuild`), the tree polls
- * `api.archiveStatus` while it builds and shows the `zipProgress` line
- * (`done/total` + percentage), then a `ready` status downloads
- * `api.archiveDownloadUrl(id)` as a blob and saves it through a hidden
- * `<a download={name}>`. Every failure path — build rejection, a status
- * `error` state, a status rejection, the download's HTTP envelope — lands in
- * the error strip with `zipFailed`, and a repeated pick while one job runs
- * never starts a second job.
+ * The menu row starts a job (`api.archiveBuild(scope, paths, stem)` →
+ * `{id, name, entries}`), the tree polls `api.archiveStatus` every 250ms while
+ * the host's system `zip`/`tar` packs the selection into a temp file, and a
+ * `ready` status clicks a plain `<a download href={archiveDownloadUrl}>` on the
+ * route URL, which the browser streams straight to disk. The client names a
+ * STEM and uses the FINAL name the host returned — the host appends the
+ * extension of the tool it actually has (a tar-only host really does produce a
+ * `.tar.gz`), so building the name locally would lie. Deliberately NOT
+ * `fetch → blob → objectURL` any more: a Blob holds the whole archive in the
+ * tab's memory, which is exactly what the host change removed. There is no
+ * per-entry progress either (a child process reports none), so the strip shows
+ * the plain `loading` line and nothing else.
+ *
+ * Every failure path lands in the error strip with `zipFailed`: a build
+ * rejection, a status `error` state, a status rejection. The ONE exception is a
+ * build refused with the wire code `unavailable` — neither `zip` nor `tar` is
+ * installed — which renders `archiveToolMissing`, the sentence the user can act
+ * on, instead of the host's English wire message. A repeated pick while one job
+ * runs never starts a second job.
  *
  * Appearance gates stay as they were: ≥2 selected rows archive together, a
  * LONE directory archives its own subtree, a lone FILE shows no archive row
@@ -20,6 +31,7 @@ import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
 import { FileTree } from '../src/client/FileTree.tsx'
+import { t } from '../src/client/locales.ts'
 
 import { setupReactAct } from './test-utils.ts'
 setupReactAct()
@@ -29,11 +41,15 @@ beforeAll(() => {
   Object.defineProperty(window.navigator, 'language', { value: 'en-US', configurable: true })
 })
 
-const { archiveBuild, archiveStatus, fetchMock } = vi.hoisted(() => ({
-  archiveBuild: vi.fn(),
-  archiveStatus: vi.fn(),
-  fetchMock: vi.fn(),
-}))
+const { archiveBuild, archiveStatus, SidebarApiError } = vi.hoisted(() => {
+  /** The wire error FileTree narrows on (`code === 'unavailable'`). */
+  class SidebarApiError extends Error {
+    constructor(readonly code: string, message: string) {
+      super(message)
+    }
+  }
+  return { archiveBuild: vi.fn(), archiveStatus: vi.fn(), SidebarApiError }
+})
 
 vi.mock('../src/client/api.ts', () => ({
   api: {
@@ -54,27 +70,9 @@ vi.mock('../src/client/api.ts', () => ({
   archiveBuild,
   archiveStatus,
   archiveDownloadUrl: (_scope: unknown, id: string) => `/sidebar/archive/${id}`,
+  SidebarApiError,
   isOutsideWorkspaceMessage: () => false,
 }))
-
-/** jsdom implements neither object-URL helper; these ARE the download probe. */
-const createdUrls: Blob[] = []
-const revokedUrls: string[] = []
-beforeAll(() => {
-  Object.defineProperty(URL, 'createObjectURL', {
-    configurable: true,
-    writable: true,
-    value: (blob: Blob) => {
-      createdUrls.push(blob)
-      return `blob:mock-${createdUrls.length}`
-    },
-  })
-  Object.defineProperty(URL, 'revokeObjectURL', {
-    configurable: true,
-    writable: true,
-    value: (url: string) => { revokedUrls.push(url) },
-  })
-})
 
 /** The poll cadence the tree uses; advancing less than this must not poll. */
 const POLL_MS = 250
@@ -143,12 +141,13 @@ function clickMenuitem(label: string): void {
   act(() => { item.click() })
 }
 
-/** The progress line (a `Notice kind="loading"` live region). */
+/** The packing line (a `Notice kind="loading"` live region) — the whole
+ *  progress UI now: the host's zip/tar reports no per-entry counts. */
 function progressLine(container: HTMLElement): HTMLElement | null {
   return container.querySelector<HTMLElement>('[data-kind="loading"]')
 }
 
-/** Flush the pending promise chain (build / status / download). */
+/** Flush the pending promise chain (build / status / hand-off). */
 async function flush(): Promise<void> {
   await act(async () => {
     await Promise.resolve()
@@ -167,11 +166,9 @@ async function poll(): Promise<void> {
   })
 }
 
-/** A `ready` status row. */
-function readyStatus(done: number, total: number): {
-  state: 'ready'; done: number; total: number; bytes: number
-} {
-  return { state: 'ready', done, total, bytes: 128 }
+/** A `ready` status row (`bytes` only — no `done`/`total` any more). */
+function readyStatus(bytes = 128): { state: 'ready'; bytes: number } {
+  return { state: 'ready', bytes }
 }
 
 let harness: Harness
@@ -183,20 +180,11 @@ const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementati
 
 beforeEach(() => {
   vi.useFakeTimers()
-  vi.stubGlobal('fetch', fetchMock)
-  fetchMock.mockReset()
-  fetchMock.mockResolvedValue({
-    ok: true,
-    status: 200,
-    blob: async () => new Blob(['zip-bytes'], { type: 'application/zip' }),
-  } as unknown as Response)
   archiveBuild.mockReset()
-  archiveBuild.mockResolvedValue({ id: 'job-1', entries: 2 })
+  archiveBuild.mockResolvedValue({ id: 'job-1', name: 'archive.zip', entries: 2 })
   archiveStatus.mockReset()
-  archiveStatus.mockResolvedValue(readyStatus(2, 2))
+  archiveStatus.mockResolvedValue(readyStatus())
   downloads.length = 0
-  createdUrls.length = 0
-  revokedUrls.length = 0
   clickSpy.mockClear()
 })
 
@@ -204,17 +192,16 @@ afterEach(() => {
   harness.unmount()
   document.body.innerHTML = ''
   vi.useRealTimers()
-  vi.unstubAllGlobals()
 })
 
 describe('FileTree zip and download', () => {
-  it('starts a job, shows done/total progress, then downloads the ready archive', async () => {
-    // The first status is held open so the "build phase" (total known, no
-    // progress yet) is observable: the poller runs its first tick immediately.
-    let releaseStatus: (status: { state: 'building'; done: number; total: number; bytes: number }) => void = () => {}
+  it('starts a job with a stem, shows the packing line, then downloads the ready archive', async () => {
+    // The first status is held open so the packing phase is observable: the
+    // poller runs its first tick immediately.
+    let releaseStatus: (status: { state: 'building'; bytes: number }) => void = () => {}
     archiveStatus
-      .mockImplementationOnce(async () => await new Promise<{ state: 'building'; done: number; total: number; bytes: number }>(resolve => { releaseStatus = resolve }))
-      .mockResolvedValueOnce(readyStatus(2, 2))
+      .mockImplementationOnce(async () => await new Promise<{ state: 'building'; bytes: number }>(resolve => { releaseStatus = resolve }))
+      .mockResolvedValueOnce(readyStatus())
     harness = await mountTree()
     click(rowByName(harness.container, 'a.ts'), { ctrlKey: true })
     click(rowByName(harness.container, 'b.ts'), { ctrlKey: true })
@@ -223,34 +210,34 @@ describe('FileTree zip and download', () => {
     clickMenuitem('Zip and download (2 items)')
     await flush()
 
-    // The job was started for the whole selection…
-    expect(archiveBuild).toHaveBeenCalledWith({ sessionId: 's1', cwd: '/tmp' }, ['/tmp/a.ts', '/tmp/b.ts'], 'archive.zip')
-    // …the build phase shows the total it already knows…
-    expect(progressLine(harness.container)?.textContent).toBe('Archiving 0/2 · 0%')
-    // …the first poll advances the line…
+    // The job was started for the whole selection, named by a STEM: the host
+    // picks the extension of the tool it has and answers with the final name.
+    expect(archiveBuild).toHaveBeenCalledWith({ sessionId: 's1', cwd: '/tmp' }, ['/tmp/a.ts', '/tmp/b.ts'], 'archive')
+    // …the packing line is up while the job runs…
+    expect(progressLine(harness.container)?.textContent).toBe(t('loading'))
+    // …a first poll that is still `building` keeps it, with no counts to show…
     await act(async () => {
-      releaseStatus({ state: 'building', done: 1, total: 2, bytes: 0 })
+      releaseStatus({ state: 'building', bytes: 0 })
       await Promise.resolve()
       await Promise.resolve()
     })
-    expect(progressLine(harness.container)?.textContent).toBe('Archiving 1/2 · 50%')
+    expect(progressLine(harness.container)?.textContent).toBe(t('loading'))
 
-    // …and the next poll reports ready: the download runs and the line clears.
+    // …and the next poll reports ready: the anchor hands the route URL to the
+    // browser (which streams it to disk) and the line clears.
     await poll()
     await flush()
-    expect(fetchMock).toHaveBeenCalledWith('/sidebar/archive/job-1')
-    expect(downloads).toEqual(['blob:mock-1|archive.zip'])
+    expect(downloads).toEqual(['/sidebar/archive/job-1|archive.zip'])
     expect(progressLine(harness.container)).toBeNull()
     // The poll carries the session scope: the host requires BOTH keys on
     // `archive.status`, so a bare `{ id }` is refused with a 400.
     expect(archiveStatus).toHaveBeenCalledWith({ sessionId: 's1', cwd: '/tmp' }, 'job-1')
-    // The object URL is released on the next task.
-    await act(async () => { await vi.advanceTimersByTimeAsync(1) })
-    expect(revokedUrls).toEqual(['blob:mock-1'])
   })
 
-  it('archives a lone directory under its own name', async () => {
-    archiveBuild.mockResolvedValue({ id: 'job-dir', entries: 3 })
+  it('archives a lone directory under its own stem, saved under the host name', async () => {
+    // A tar-only host: it appends ITS extension, so the anchor's `download`
+    // must be the returned name — a client-built `sub.zip` would be a lie.
+    archiveBuild.mockResolvedValue({ id: 'job-dir', name: 'sub.tar.gz', entries: 3 })
     harness = await mountTree()
     rightClick(rowByName(harness.container, 'sub'))
     expect(menuLabels()).toContain('Zip and download')
@@ -258,18 +245,20 @@ describe('FileTree zip and download', () => {
     await flush()
     await poll()
     await flush()
-    expect(archiveBuild).toHaveBeenCalledWith({ sessionId: 's1', cwd: '/tmp' }, ['/tmp/sub'], 'sub.zip')
-    expect(downloads).toEqual(['blob:mock-1|sub.zip'])
+    expect(archiveBuild).toHaveBeenCalledWith({ sessionId: 's1', cwd: '/tmp' }, ['/tmp/sub'], 'sub')
+    expect(downloads).toEqual(['/sidebar/archive/job-dir|sub.tar.gz'])
   })
 
   it('archives the workspace root row (a lone directory too)', async () => {
+    archiveBuild.mockResolvedValue({ id: 'job-root', name: 'tmp.zip', entries: 5 })
     harness = await mountTree()
     rightClick(rowByName(harness.container, 'tmp'))
     clickMenuitem('Zip and download')
     await flush()
     await poll()
     await flush()
-    expect(archiveBuild).toHaveBeenCalledWith({ sessionId: 's1', cwd: '/tmp' }, ['/tmp'], 'tmp.zip')
+    expect(archiveBuild).toHaveBeenCalledWith({ sessionId: 's1', cwd: '/tmp' }, ['/tmp'], 'tmp')
+    expect(downloads).toEqual(['/sidebar/archive/job-root|tmp.zip'])
   })
 
   it('offers nothing for a lone FILE (the download row already covers it)', async () => {
@@ -293,8 +282,36 @@ describe('FileTree zip and download', () => {
     expect(downloads).toEqual([])
   })
 
+  it('explains a host with neither zip nor tar instead of echoing the wire message', async () => {
+    // `unavailable` is the ONE code with its own sentence: "no archive command
+    // is installed" is something the user can act on.
+    archiveBuild.mockRejectedValue(new SidebarApiError('unavailable', 'spawn zip ENOENT'))
+    harness = await mountTree()
+    rightClick(rowByName(harness.container, 'sub'))
+    clickMenuitem('Zip and download')
+    await flush()
+    const alert = harness.container.querySelector('[role="alert"]')?.textContent ?? ''
+    expect(alert).toContain(t('archiveToolMissing'))
+    expect(alert).not.toContain('spawn zip ENOENT')
+    expect(progressLine(harness.container)).toBeNull()
+    expect(archiveStatus).not.toHaveBeenCalled()
+    expect(downloads).toEqual([])
+  })
+
+  it('keeps the wire message for a build failure that is not `unavailable`', async () => {
+    archiveBuild.mockRejectedValue(new SidebarApiError('bad-request', 'selection contains a socket'))
+    harness = await mountTree()
+    rightClick(rowByName(harness.container, 'sub'))
+    clickMenuitem('Zip and download')
+    await flush()
+    expect(harness.container.querySelector('[role="alert"]')?.textContent)
+      .toContain('Archive failed: selection contains a socket')
+    expect(progressLine(harness.container)).toBeNull()
+    expect(downloads).toEqual([])
+  })
+
   it('reports a status error state with the route message', async () => {
-    archiveStatus.mockResolvedValue({ state: 'error', done: 1, total: 2, bytes: 0, error: 'archive too large' })
+    archiveStatus.mockResolvedValue({ state: 'error', bytes: 0, error: 'archive too large' })
     harness = await mountTree()
     rightClick(rowByName(harness.container, 'sub'))
     clickMenuitem('Zip and download')
@@ -318,48 +335,12 @@ describe('FileTree zip and download', () => {
     expect(downloads).toEqual([])
   })
 
-  it('reports a download refused by the route envelope', async () => {
-    fetchMock.mockResolvedValue({
-      ok: false,
-      status: 413,
-      json: async () => ({ ok: false, error: { code: 'bad-request', message: 'archive would exceed 64 MB' } }),
-    } as unknown as Response)
-    harness = await mountTree()
-    rightClick(rowByName(harness.container, 'sub'))
-    clickMenuitem('Zip and download')
-    await flush()
-    await poll()
-    await flush()
-    expect(harness.container.querySelector('[role="alert"]')?.textContent)
-      .toContain('Archive failed: archive would exceed 64 MB')
-    expect(downloads).toEqual([])
-    expect(createdUrls).toEqual([])
-  })
-
-  it('falls back to the status when the download carries no JSON body', async () => {
-    fetchMock.mockResolvedValue({
-      ok: false,
-      status: 500,
-      json: async () => { throw new Error('not json') },
-    } as unknown as Response)
-    harness = await mountTree()
-    rightClick(rowByName(harness.container, 'sub'))
-    clickMenuitem('Zip and download')
-    await flush()
-    await poll()
-    await flush()
-    expect(harness.container.querySelector('[role="alert"]')?.textContent)
-      .toContain('Archive failed: HTTP 500')
-    expect(downloads).toEqual([])
-  })
-
   it('hands a ready job to the download exactly once, and stops polling first', async () => {
-    // The download is held open, so the 250ms poller would tick again while the
-    // GET is still in flight; `archiveStatus` keeps answering `ready`. The GET
-    // CONSUMES the task, so a second hand-off either double-downloads or reads a
-    // 404 and paints `zipFailed` beside a file that actually landed.
-    let releaseDownload: (response: Response) => void = () => {}
-    fetchMock.mockImplementation(async () => await new Promise<Response>(resolve => { releaseDownload = resolve }))
+    // The download route CONSUMES the task, so a second hand-off would either
+    // click the anchor twice or read a 404 and paint `zipFailed` beside a file
+    // that actually landed. The poller must therefore stop BEFORE the anchor
+    // runs — the three extra intervals below are the proof that it has.
+    archiveBuild.mockResolvedValue({ id: 'job-1', name: 'sub.zip', entries: 3 })
     harness = await mountTree()
     rightClick(rowByName(harness.container, 'sub'))
     clickMenuitem('Zip and download')
@@ -367,31 +348,23 @@ describe('FileTree zip and download', () => {
     await poll()
     await flush()
     expect(archiveStatus).toHaveBeenCalledTimes(1)
-    expect(fetchMock).toHaveBeenCalledTimes(1)
-    expect(downloads).toEqual([])
+    expect(downloads).toEqual(['/sidebar/archive/job-1|sub.zip'])
 
-    // Three more poll intervals: no second download, no bogus failure strip.
+    // Three more poll intervals: no second poll, no second download, and no
+    // bogus failure strip.
     await poll()
     await poll()
     await poll()
     expect(archiveStatus).toHaveBeenCalledTimes(1)
-    expect(fetchMock).toHaveBeenCalledTimes(1)
-    expect(harness.container.querySelector('[role="alert"]')).toBeNull()
-
-    await act(async () => {
-      releaseDownload({ ok: true, status: 200, blob: async () => new Blob(['zip-bytes']) } as unknown as Response)
-      await Promise.resolve()
-      await Promise.resolve()
-    })
-    expect(downloads).toEqual(['blob:mock-1|sub.zip'])
+    expect(downloads).toEqual(['/sidebar/archive/job-1|sub.zip'])
     expect(harness.container.querySelector('[role="alert"]')).toBeNull()
   })
 
   it('builds once while a job is in flight (double click guard)', async () => {
-    let release: (job: { id: string; entries: number }) => void = () => {}
-    archiveBuild.mockImplementation(async () => await new Promise<{ id: string; entries: number }>(resolve => { release = resolve }))
+    let release: (job: { id: string; name: string; entries: number }) => void = () => {}
+    archiveBuild.mockImplementation(async () => await new Promise<{ id: string; name: string; entries: number }>(resolve => { release = resolve }))
     // Stay in the building state until the test says otherwise.
-    archiveStatus.mockResolvedValue({ state: 'building', done: 0, total: 1, bytes: 0 })
+    archiveStatus.mockResolvedValue({ state: 'building', bytes: 0 })
     harness = await mountTree()
     const pick = (): void => {
       rightClick(rowByName(harness.container, 'sub'))
@@ -406,9 +379,9 @@ describe('FileTree zip and download', () => {
     expect(archiveBuild).toHaveBeenCalledTimes(1)
     expect(archiveStatus).not.toHaveBeenCalled()
 
-    await act(async () => { release({ id: 'job-2', entries: 1 }) })
+    await act(async () => { release({ id: 'job-2', name: 'sub.zip', entries: 1 }) })
     await flush()
-    expect(progressLine(harness.container)?.textContent).toBe('Archiving 0/1 · 0%')
+    expect(progressLine(harness.container)?.textContent).toBe(t('loading'))
     await poll()
     // Still building: the line stays and the guard still holds.
     expect(progressLine(harness.container)).not.toBeNull()
@@ -417,23 +390,24 @@ describe('FileTree zip and download', () => {
     expect(archiveBuild).toHaveBeenCalledTimes(1)
 
     // Finish the job: the download runs, the line clears, the guard releases.
-    archiveStatus.mockResolvedValue(readyStatus(1, 1))
+    archiveStatus.mockResolvedValue(readyStatus())
     await poll()
     await flush()
-    expect(downloads).toEqual(['blob:mock-1|sub.zip'])
-    archiveBuild.mockResolvedValue({ id: 'job-3', entries: 1 })
+    expect(downloads).toEqual(['/sidebar/archive/job-2|sub.zip'])
+    archiveBuild.mockResolvedValue({ id: 'job-3', name: 'sub.zip', entries: 1 })
     pick()
     await flush()
     expect(archiveBuild).toHaveBeenCalledTimes(2)
     await poll()
     await flush()
+    expect(downloads).toEqual(['/sidebar/archive/job-2|sub.zip', '/sidebar/archive/job-3|sub.zip'])
   })
 
   it('does not resurrect a build that was still starting when the scope changed', async () => {
     // The swap settles the archive. A build answering only afterwards used to
     // pump its job id back in, restarting the poller in a project that never
     // asked for a zip — and reporting the failure there.
-    let resolveBuild!: (value: { id: string; entries: number }) => void
+    let resolveBuild!: (value: { id: string; name: string; entries: number }) => void
     archiveBuild.mockImplementationOnce(() => new Promise((resolve) => { resolveBuild = resolve }))
 
     harness = await mountTree()
@@ -448,7 +422,7 @@ describe('FileTree zip and download', () => {
     await flush()
 
     // The build answers only now.
-    await act(async () => { resolveBuild({ id: 'job-stale', entries: 2 }) })
+    await act(async () => { resolveBuild({ id: 'job-stale', name: 'archive.zip', entries: 2 }) })
     await flush()
     await poll()
 

@@ -20,6 +20,8 @@ import {
   type PointerEvent as ReactPointerEvent, type ReactNode,
 } from 'react'
 import { createPortal } from 'react-dom'
+import { createFrameBatcher } from './frame-batcher.ts'
+import { useViewportInsetTop } from './viewport-inset.ts'
 
 /** The popover's default visual width (viewport-clamped). */
 const POP_WIDTH = 264
@@ -53,10 +55,16 @@ export function AnchoredPopover(props: AnchoredPopoverProps): ReactNode {
   const [offset, setOffset] = useState({ x: 0, y: 0 })
   const offsetRef = useRef(offset)
   offsetRef.current = offset
+  /** Drag moves land at most once per frame (see ./frame-batcher.ts). */
+  const dragBatcher = useRef(createFrameBatcher()).current
+  const pendingDragRef = useRef<{ offset: { x: number; y: number }; pos: { left: number; top: number } } | null>(null)
+  useEffect(() => () => { dragBatcher.dispose() }, [dragBatcher])
   /** The anchored baseline: a drag always starts from the measured position. */
   const baseRef = useRef({ left: 0, top: 0 })
 
   const cardWidth = Math.min(width, window.innerWidth - VIEWPORT_MARGIN * 2)
+  /** The shell's native window-control band: pointer events die in it. */
+  const topFloor = VIEWPORT_MARGIN + useViewportInsetTop()
 
   // Measure + position once the card is in the DOM (and whenever the anchor
   // or content changes size). layout effect: no visible jump.
@@ -68,15 +76,19 @@ export function AnchoredPopover(props: AnchoredPopoverProps): ReactNode {
     const height = card.offsetHeight
     let top = rect.bottom + 6
     if (top + height > window.innerHeight - VIEWPORT_MARGIN) {
-      top = Math.max(VIEWPORT_MARGIN, rect.top - height - 6)
+      top = Math.max(topFloor, rect.top - height - 6)
     }
+    // The anchor itself may sit in the band (a row near the top edge): opening
+    // just below it still leaves our own header under the native controls.
+    // With no band, keep the historical placement byte-for-byte.
+    if (topFloor > VIEWPORT_MARGIN) top = Math.max(topFloor, top)
     const left = Math.min(
       Math.max(VIEWPORT_MARGIN, rect.left),
       Math.max(VIEWPORT_MARGIN, window.innerWidth - cardWidth - VIEWPORT_MARGIN),
     )
     baseRef.current = { left, top }
     setPos({ left: left + offsetRef.current.x, top: top + offsetRef.current.y })
-  }, [anchor, children, cardWidth])
+  }, [anchor, children, cardWidth, topFloor])
 
   // A new anchor starts a fresh placement (never inherit another node's drag).
   useEffect(() => { setOffset({ x: 0, y: 0 }) }, [anchor])
@@ -98,21 +110,31 @@ export function AnchoredPopover(props: AnchoredPopoverProps): ReactNode {
         Math.max(VIEWPORT_MARGIN - base.left, window.innerWidth - cardWidth - VIEWPORT_MARGIN - base.left),
       )
       const nextY = Math.min(
-        Math.max(start.y + (move.clientY - startY), VIEWPORT_MARGIN - base.top),
-        Math.max(VIEWPORT_MARGIN - base.top, window.innerHeight - 48 - base.top),
+        Math.max(start.y + (move.clientY - startY), topFloor - base.top),
+        Math.max(topFloor - base.top, window.innerHeight - 48 - base.top),
       )
-      setOffset({ x: nextX, y: nextY })
-      setPos({ left: base.left + nextX, top: base.top + nextY })
+      pendingDragRef.current = {
+        offset: { x: nextX, y: nextY },
+        pos: { left: base.left + nextX, top: base.top + nextY },
+      }
+      dragBatcher.schedule(() => {
+        const pending = pendingDragRef.current
+        if (pending === null) return
+        pendingDragRef.current = null
+        setOffset(pending.offset)
+        setPos(pending.pos)
+      })
     }
     const onUp = (): void => {
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
       window.removeEventListener('pointercancel', onUp)
+      dragBatcher.flushNow()
     }
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
     window.addEventListener('pointercancel', onUp)
-  }, [draggable, cardWidth])
+  }, [cardWidth, dragBatcher, draggable, topFloor])
 
   // Global dismissal (see the file header for the contract).
   useEffect(() => {

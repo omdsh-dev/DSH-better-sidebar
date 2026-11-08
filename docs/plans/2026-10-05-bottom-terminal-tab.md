@@ -2,6 +2,11 @@
 
 > 状态：已实现（`feat/774-terminal-tab`）。范围刻意收窄为「**底部能开一个终端 + 刷新后按 terminalId 恢复**」，
 > 不含「首次展开自动开终端」（`bottomPanelAutoTerminal`）一类的联动。
+>
+> **后续（v0.26.0，PR [#926](https://github.com/omdsh-dev/DSH-better-sidebar/pull/926)）：上面那条「一个终端」的限制已放开**——
+> 底部工作台可以同时开多个终端 tab，每个 tab 在 `meta.terminalInstance` 里带自己的实例，身份（宿主出现键与内容身份）
+> 变成 `dsh-better-sidebar:terminal-bottom:<instance>[#run]`；**没有实例的旧 tab 读出来仍是 `undefined`，身份与本文描述的形态逐字节相同**。
+> 因此第 2 条决策里「与右列终端相互独立」「不做自动开终端」不变，只有「一个」这个数量限制被移除；「新建终端」这条动作仍然只换掉本 tab 的进程（`terminalRun + 1`，实例必须一起带过去）。
 
 ## 1. 问题
 

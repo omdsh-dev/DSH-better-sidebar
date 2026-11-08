@@ -37,6 +37,7 @@ export function blockLabels(): BlockLabels {
 
 /** The `TerminalBlockLabels` shape (structural mirror; the host owns the type). */
 export interface TerminalLabels {
+  commandLine: (line: number) => string
   signal: (signal: string) => string
   exitCode: (exitCode: number) => string
   noExitCode: string
@@ -56,6 +57,7 @@ export interface TerminalLabels {
 export function terminalBlockLabels(): TerminalLabels {
   return {
     ...blockLabels(),
+    commandLine: (line: number) => t('sideChatBlockCommandLine', { line }),
     signal: (signal: string) => t('sideChatBlockSignal', { signal }),
     exitCode: (exitCode: number) => t('sideChatBlockExitCode', { code: exitCode }),
     // DSH 0.1.6-alpha.2 added this pill text: a settle the view cannot

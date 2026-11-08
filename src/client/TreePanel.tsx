@@ -19,7 +19,7 @@
  * drop over the file window uploads here and never reaches DSH's chat
  * intake.
  */
-import { useEffect, useRef, useState, type InputHTMLAttributes } from 'react'
+import { useEffect, useMemo, useRef, useState, type InputHTMLAttributes } from 'react'
 import clsx from 'clsx'
 import { IconChevronsUpDownOutlineRegular, IconFolderOpenRegular, IconRefreshOutlineRegular, Menu } from '@deepseek-ai/dsh-client-ui-primitives'
 import { api } from './api.ts'
@@ -118,7 +118,13 @@ export function TreePanel(props: {
   // refresh click. Re-focusing the window bumps the tick automatically, and
   // integrations can force a refresh by dispatching a bubbling
   // `dsh-sidebar:refresh-files` event on `window`.
+  //
+  // A PARKED panel (the host keeps every visited tab body mounted) listens to
+  // neither: a focus bump would force a full re-list of a tree nobody can see.
+  // It catches up through the directory watcher's one batched refresh when it
+  // becomes visible again (see FileTree's `visibleRef`).
   useEffect(() => {
+    if (visible === false) return
     const bump = (): void => { setRefreshTick(tick => tick + 1) }
     window.addEventListener('focus', bump)
     window.addEventListener('dsh-sidebar:refresh-files', bump)
@@ -126,7 +132,7 @@ export function TreePanel(props: {
       window.removeEventListener('focus', bump)
       window.removeEventListener('dsh-sidebar:refresh-files', bump)
     }
-  }, [])
+  }, [visible])
   /** One-line upload status under the search row ('' hides the hint). */
   const [uploadStatus, setUploadStatus] = useState('')
   /** Whether the status line is a failure/cancel (error color, stays visible). */
@@ -220,7 +226,7 @@ export function TreePanel(props: {
   const busy = upload !== null
   /** Directory hits (the host reports them separately): a click navigates the
    *  tree for those rows instead of opening them as files. */
-  const dirHits = new Set(results?.dirs)
+  const dirHits = useMemo(() => new Set(results?.dirs), [results])
 
   /**
    * Jump to a DIRECTORY hit in the tree. Results include directories (they

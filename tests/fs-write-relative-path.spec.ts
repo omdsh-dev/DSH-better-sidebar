@@ -1,11 +1,12 @@
-import { mkdirSync, rmSync } from 'node:fs'
+import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, describe, expect, it } from 'vitest'
 import { ensureWorkspaceWritePath } from '../src/path-security.ts'
+import { removeTree } from './temp-tree.ts'
 
 const dirs: string[] = []
-afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }) })
+afterEach(() => { for (const d of dirs.splice(0)) removeTree(d) })
 
 describe('fs.write resolves session-relative paths (#646)', () => {
   it('resolves a relative write path against the session cwd', async () => {

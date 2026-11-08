@@ -107,7 +107,7 @@ function click(button: HTMLButtonElement): void {
 
 beforeEach(() => {
   fsRead.mockReset()
-  fsRead.mockResolvedValue({ kind: 'text', content: 'hello', truncated: false })
+  fsRead.mockResolvedValue({ kind: 'text', content: 'hello', size: 5 })
 })
 
 describe('EditorHost refresh (issue #167)', () => {

@@ -49,6 +49,18 @@ export function parsePrefs(value: unknown): SidebarPrefs {
     tasksViewMode: record.tasksViewMode === 'tree' || record.tasksViewMode === 'graph'
       ? record.tasksViewMode
       : SIDEBAR_PREFS_DEFAULTS.tasksViewMode,
+    tasksAutoFoldSettled: typeof record.tasksAutoFoldSettled === 'boolean'
+      ? record.tasksAutoFoldSettled
+      : SIDEBAR_PREFS_DEFAULTS.tasksAutoFoldSettled,
+    tasksAutoFoldBranches: typeof record.tasksAutoFoldBranches === 'boolean'
+      ? record.tasksAutoFoldBranches
+      : SIDEBAR_PREFS_DEFAULTS.tasksAutoFoldBranches,
+    tasksAutoFoldIdle: typeof record.tasksAutoFoldIdle === 'boolean'
+      ? record.tasksAutoFoldIdle
+      : SIDEBAR_PREFS_DEFAULTS.tasksAutoFoldIdle,
+    jobsAutoCollapse: typeof record.jobsAutoCollapse === 'boolean'
+      ? record.jobsAutoCollapse
+      : SIDEBAR_PREFS_DEFAULTS.jobsAutoCollapse,
     mobileNoAutoOpen: typeof record.mobileNoAutoOpen === 'boolean'
       ? record.mobileNoAutoOpen
       : SIDEBAR_PREFS_DEFAULTS.mobileNoAutoOpen,

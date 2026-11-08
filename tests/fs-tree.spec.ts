@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve, sep } from 'node:path'
 import { compareEntries, isWithin, invalidateDirectoryCache, listDirectory, parentOf, requireAbsolute, rootLabel } from '../src/fs-tree.ts'
 import { isWin32 } from './platform.ts'
+import { removeTree } from './temp-tree.ts'
 
 describe('fs-tree', () => {
   it('sorts directories first, then names case-insensitively', () => {
@@ -108,7 +109,7 @@ describe('listDirectory (capped rows + cache)', () => {
   }
   afterEach(() => {
     invalidateDirectoryCache()
-    while (roots.length > 0) rmSync(roots.pop()!, { recursive: true, force: true })
+    while (roots.length > 0) removeTree(roots.pop()!)
   })
 
   it('caps the rows and flags truncated', async () => {

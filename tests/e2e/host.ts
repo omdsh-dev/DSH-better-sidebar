@@ -117,6 +117,41 @@ export async function gotoPage(page: Page, extra: Record<string, string> = {}): 
   await page.goto(pageUrl(extra), { waitUntil: 'domcontentloaded' })
 }
 
+/** Dismiss keyless onboarding before interacting with the shell. */
+export async function dismissOnboarding(page: Page): Promise<void> {
+  // alpha.5's Close belongs to Get started, not to another panel or dialog.
+  const getStarted = page.getByRole('dialog', { name: 'Get started', exact: true })
+  const buttons = [
+    getStarted.getByRole('button', { name: 'Close', exact: true }),
+    page.getByRole('button', { name: 'Continue', exact: true }),
+    page.getByRole('button', { name: 'Configure later', exact: true }),
+  ]
+  try {
+    await expect.poll(async () => {
+      const counts = await Promise.all(buttons.map(button => button.count()))
+      return counts.reduce((total, count) => total + count, 0)
+    }, { timeout: 60_000 }).toBeGreaterThan(0)
+  } catch {
+    // A previously acknowledged onboarding may not appear again.
+    return
+  }
+  for (let round = 0; round < 8; round++) {
+    let dismissed = false
+    for (const button of buttons) {
+      if (await button.count() === 0) continue
+      try {
+        await button.click({ timeout: 4_000 })
+        dismissed = true
+        await page.waitForTimeout(1_000)
+      } catch {
+        // A stacked welcome notice can mask another onboarding step.
+      }
+    }
+    if (!dismissed) break
+  }
+  await expect(getStarted).not.toBeVisible()
+}
+
 /** Authenticated request context for host RPC seeding (cookie attached). */
 export async function createHostApi(): Promise<APIRequestContext> {
   return request.newContext({
@@ -166,6 +201,28 @@ export async function hostRpc<T = unknown>(
 }
 
 /**
+ * The host composer's editable. Role+name: the placeholder label only exists
+ * on the empty composer, so this is for the first-message path — once the
+ * session has content the accessible name changes.
+ * @param page - the lane's page.
+ */
+export function composerLocator(page: Page) {
+  return page.getByRole('textbox', { name: /^(Describe what you want to build|描述你想要构建)/ })
+}
+
+/**
+ * The composer's editable once the session already has content — the
+ * placeholder name is gone by then. Anchored on the host's composer slot
+ * rather than a bare `[contenteditable]` match: the plugin's own CodeMirror
+ * surface is also contenteditable and stays in the DOM (merely hidden) in
+ * preview mode.
+ * @param page - the lane's page.
+ */
+export function composerEditable(page: Page) {
+  return page.locator('[data-slot="conversation.composer.bar"] [contenteditable="true"]').first()
+}
+
+/**
  * Send one message in the session the shell opened, so the conversation header
  * (and the native right Sidebar's corner control) exists: DSH renders the
  * header only for a session with content, while a freshly seeded blank
@@ -177,7 +234,7 @@ export async function hostRpc<T = unknown>(
  * @param page - the lane's page.
  */
 export async function sendFirstMessage(page: Page): Promise<void> {
-  const composer = page.getByRole('textbox', { name: /^(Describe what you want to build|描述你想要构建)/ })
+  const composer = composerLocator(page)
   await expect(composer).toBeVisible({ timeout: 60_000 })
   await composer.click()
   await page.keyboard.type('mount lane smoke')

@@ -26,7 +26,6 @@ const out = join(root, 'registry')
 const files = [
   'dsh.plugin.json',
   'lib/index.js',
-  'lib/invariant.js',
   'lib/client-registry.js',
   'lib/client-registry.js.map',
   // Lazy chunks: the client fetches these from the host's /sidebar/bundle

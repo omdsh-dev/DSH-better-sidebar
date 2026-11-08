@@ -10,7 +10,10 @@ import reactHooks from 'eslint-plugin-react-hooks'
 import tseslint from 'typescript-eslint'
 
 export default tseslint.config(
-  // 构建产物 / 工具目录不参与 lint（node_modules 与点开头目录默认也不进）。
+  // 构建产物 / 工具目录不参与 lint（node_modules 默认不进，但**点开头目录
+  // 并不自动排除**——`.worktrees/`、`.delta/`、`.agents/worktrees/` 都必须
+  // 显式列出，否则 ESLint 会走进那些陈旧检出，把别的分支的错误报成我们的：
+  // 实测一次 1115 errors）。`.agents/skills/` 仍要 lint，不能整个忽略 `.agents/`。
   {
     ignores: [
       'lib/',
@@ -21,6 +24,8 @@ export default tseslint.config(
       'test-results/',
       'node_modules/',
       '.worktrees/',
+      '.delta/',
+      '.agents/worktrees/',
     ],
   },
 

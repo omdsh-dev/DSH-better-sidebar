@@ -41,13 +41,10 @@ e2e_require_cmd() {
 # PATH 上的 dsh 优先，否则 npx 拉官方包（同 scripts/install.sh）。DSH_CMD
 # 缺省值（`dsh`）由调用方从环境变量取好传入。
 #
-# 回退的 npx 版本是显式钉死的：不钉就会解析 npm 的 `latest` dist-tag，而
-# 0.2.0 线目前只有预发布（`latest` 仍是 0.1.7-rc.2，0.2.0-rc.1 走 `next`），
-# 冒烟会静静地挂到一个插件已不支持的宿主上。**必须写精确版本，不能写
-# `@next`/`@alpha` 之类的 dist-tag**：0.1.7-rc.1 上线时 `alpha` 指的是
-# 0.1.7-alpha.2，0.2.0-rc.1 又只挂在 `next` 上。钉版必须与 package.json 的
-# peer 下限同步（caret 跨 minor 不成立：`^0.1.7-rc.1` 实测不满足 0.2.0-rc.1）。
-DSH_NPX_SPEC="${DSH_NPX_SPEC:-@deepseek-ai/dsh@0.2.0-rc.1}"
+# 回退的 npx 版本是显式钉死的：不钉就会解析 npm 的 dist-tag，可能静默挂到
+# 插件不支持的宿主上。**必须写精确版本，不能写 `@next`/`@alpha` 等 dist-tag**。
+# 该版本必须与 package.json 的 DSH peer 基线同步。
+DSH_NPX_SPEC="${DSH_NPX_SPEC:-@deepseek-ai/dsh@0.2.2-rc.1}"
 e2e_resolve_dsh_cmd() {
   local explicit="${DSH_CMD}"
   if ! command -v "$DSH_CMD" >/dev/null 2>&1; then
@@ -69,7 +66,7 @@ e2e_resolve_dsh_cmd() {
 # 己在挂什么），只告警。
 e2e_check_dsh_version() {
   local explicit="$1" actual expected
-  expected="${DSH_EXPECT_VERSION:-0.2.0-rc.1}"
+  expected="${DSH_EXPECT_VERSION:-0.2.2-rc.1}"
   # `dsh --version` 冷启动要走 npx，给足预算；拿不到版本就只告警。
   actual="$($DSH_CMD --version 2>/dev/null | tr -d '[:space:]' | head -c 64 || true)"
   case "$actual" in
@@ -166,13 +163,16 @@ EOF
 
 # ── dsh web 启动 + 就绪轮询 ──────────────────────────────────────────────────
 # 后台启动 dsh web（--port 0 = OS 分配，避免端口冲突；keyless 可起）。
+# `--no-open` 是必须的：宿主默认会在启动后打开系统浏览器，本地反复跑这条
+# lane 会不断弹窗（CI 是无头环境不受影响，本地开发机不是）。基线宿主
+# 0.2.2-rc.1 的 web app 已提供该 flag（@deepseek-ai/dsh-web-app/lib/startup.js）。
 # $1 = stdout 日志；$2 = stderr 日志（缺省合并进 $1：mount lane 单文件，
 # aggregate lane 分 out/err 两个文件）。写入全局 SERVER_PID。
 e2e_start_dsh_web() {
   if [ $# -ge 2 ]; then
-    $DSH_CMD web --port "$PORT" >"$1" 2>"$2" &
+    $DSH_CMD web --port "$PORT" --no-open >"$1" 2>"$2" &
   else
-    $DSH_CMD web --port "$PORT" >"$1" 2>&1 &
+    $DSH_CMD web --port "$PORT" --no-open >"$1" 2>&1 &
   fi
   SERVER_PID=$!
 }

@@ -5,11 +5,12 @@
  * row or an overflow slot, and never block a breadcrumb fold.
  */
 import { describe, expect, it } from 'vitest'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { compileExcludePatterns } from '../src/exclude-patterns.ts'
 import { listDirectory } from '../src/fs-tree.ts'
+import { removeTree } from './temp-tree.ts'
 
 /** A scratch tree exercising name, path-anchored and deep patterns. */
 function makeFixture(): string {
@@ -48,7 +49,7 @@ describe('fs-tree exclude filtering', () => {
       const chain = await listDirectory(join(dir, 'chain'), 1000, exclude)
       expect(chain.entries.map(entry => entry.name)).toEqual(['inner'])
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 
@@ -65,7 +66,7 @@ describe('fs-tree exclude filtering', () => {
       const src = await listDirectory(join(dir, 'src'), 1000, exclude)
       expect(src.entries.map(entry => entry.name)).toEqual(['out'])
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 
@@ -80,7 +81,7 @@ describe('fs-tree exclude filtering', () => {
       const nested = await listDirectory(join(dir, 'nested'), 1000, exclude)
       expect(nested.entries.map(entry => entry.name)).toEqual(['keep.txt'])
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 
@@ -98,7 +99,7 @@ describe('fs-tree exclude filtering', () => {
       expect(unfiltered.entries.find(entry => entry.name === 'chain')?.compact).toBeUndefined()
       expect(unfiltered.entries.find(entry => entry.name === 'terminal')?.compact).toBeUndefined()
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 
@@ -115,7 +116,7 @@ describe('fs-tree exclude filtering', () => {
       // Same level without the probe: the cap trips.
       expect((await listDirectory(dir, 2)).truncated).toBe(true)
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 
@@ -126,7 +127,7 @@ describe('fs-tree exclude filtering', () => {
       expect(names).toContain('.DS_Store')
       expect(names).toContain('node_modules')
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 
@@ -149,7 +150,7 @@ describe('fs-tree exclude filtering', () => {
       // And the unfiltered level stays reachable under its own key.
       expect(await listDirectory(dir, 1000)).toBe(unfiltered)
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(dir)
     }
   })
 })

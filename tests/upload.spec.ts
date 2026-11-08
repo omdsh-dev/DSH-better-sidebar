@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { api, SidebarApiError, type SessionScope } from '../src/client/api.ts'
 import {
-  MAX_UPLOAD_BYTES, summarizeResults, uploadHintText, uploadItemsFromDrop, uploadItemsFromFiles,
+  summarizeResults, uploadHintText, uploadItemsFromDrop, uploadItemsFromFiles,
   uploadToDir, type UploadItem,
 } from '../src/client/upload.ts'
 
@@ -169,13 +169,17 @@ describe('uploadToDir', () => {
     ])
   })
 
-  it('pre-checks the client cap without calling the route', async () => {
-    const spy = vi.spyOn(api, 'uploadFile')
+  it('sends a very large file straight to the route (there is no client-side cap)', async () => {
+    const spy = vi.spyOn(api, 'uploadFile').mockResolvedValueOnce({ path: '/ws/big.bin', size: 1 })
     const big = fileOf('big.bin')
-    Object.defineProperty(big, 'size', { value: MAX_UPLOAD_BYTES + 1 })
+    // The client used to refuse anything past 128 MiB before the request; the
+    // route is the only size authority now, so the File goes over as-is.
+    Object.defineProperty(big, 'size', { value: 512 * 1024 * 1024 })
+    expect(big.size).toBe(512 * 1024 * 1024)
     const results = await uploadToDir(scope, '/ws', [{ file: big, relativePath: 'big.bin' }])
-    expect(results).toEqual([{ relativePath: 'big.bin', ok: false, code: 'too-large' }])
-    expect(spy).not.toHaveBeenCalled()
+    expect(results).toEqual([{ relativePath: 'big.bin', ok: true, path: '/ws/big.bin' }])
+    expect(spy).toHaveBeenCalledTimes(1)
+    expect(spy).toHaveBeenCalledWith(scope, '/ws', 'big.bin', big, undefined)
   })
 
   it('keeps the wire error code from the route', async () => {

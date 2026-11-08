@@ -1,0 +1,83 @@
+/**
+ * The diagnostics chrome: ONE header control, and the frame-wide error alert.
+ *
+ * Both surfaces ride existing scale and tokens only (skin contract, guide §12):
+ * the control is a host `Button sm` (28px) whose box is fixed so it can never
+ * squeeze the header's own row at the sidebar's narrow width, and the alert is
+ * a small card on the floating layer (`shell.overlay`), painted like the
+ * plugin's other floating surfaces, with a warning-token edge.
+ *
+ * The alert is also its own layer contract: the overlay seat is click-through,
+ * so this root opts back into pointer events for itself only.
+ */
+
+/* ── The header control ────────────────────────────────────────────────── */
+
+/* `flex: none` + a fixed box: the header row gives up width before this
+   control does, and it never wraps onto a second line. */
+.headerButton {
+  flex: none;
+  width: 28px;
+  padding: 0;
+}
+
+/* ── The frame-wide error alert ────────────────────────────────────────── */
+
+/* Bottom-center, clear of the composer and of the sidebar columns. The seat
+   is click-through; the card itself is not. */
+.alertLayer {
+  position: fixed;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  z-index: 40;
+  display: flex;
+  justify-content: center;
+  /* Never wider than the viewport it floats over. */
+  max-width: min(420px, calc(100vw - 24px));
+  pointer-events: auto;
+}
+
+.alert {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 8px 8px 10px;
+  background: var(--dsw-alias-bg-layer-3);
+  border: 1px solid var(--dsw-alias-state-warn-primary);
+  border-radius: 8px;
+  font: var(--dsw-font-xxs-12);
+}
+
+.alertIcon {
+  display: inline-flex;
+  flex: none;
+  margin-top: 2px;
+  color: var(--dsw-alias-state-warn-primary);
+}
+
+.alertText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.alertTitle {
+  color: var(--dsw-alias-label-primary);
+  overflow-wrap: anywhere;
+}
+
+/* The reason line, in the plugin's micro voice. */
+.alertReason {
+  color: var(--dsw-alias-label-tertiary);
+  overflow-wrap: anywhere;
+}
+
+.alertClose {
+  flex: none;
+  width: 24px;
+  padding: 0;
+}

@@ -1,20 +1,22 @@
 /**
  * Line counts in the change tree (#131).
  *
- * The status answer carries each path's added/deleted lines; the tree keeps
- * them on its leaves so a row prints its own numbers, and a group's header
- * total is the sum of exactly those leaves. Binary rows and rows without
- * counts (untracked files — git diffs nothing for them) contribute NOTHING:
- * the alternative, counting them as 0, would make the header disagree with the
- * numbers printed under it.
+ * The status answer carries each path's added/deleted lines PER SIDE; the tree
+ * is built once per band and keeps that band's reading on its leaves, so a row
+ * prints its own numbers and a band's header total is the sum of exactly those
+ * leaves. Binary rows and rows without counts (untracked files — git diffs
+ * nothing for them) contribute NOTHING: the alternative, counting them as 0,
+ * would make the header disagree with the numbers printed under it.
  */
 import { describe, expect, it } from 'vitest'
-import { buildChangeTree, sumLineCounts } from '../src/client/changes/change-tree.ts'
-import type { GitStatusEntry } from '../src/client/api.ts'
+import { buildChangeTree, sumLineCounts, type ChangeSide } from '../src/client/changes/change-tree.ts'
+import type { GitLineCounts, GitStatusEntry } from '../src/client/api.ts'
 
-/** One status entry with counts. */
-function entry(path: string, xy: string, counts?: GitStatusEntry['counts']): GitStatusEntry {
-  return counts === undefined ? { path, xy } : { path, xy, counts }
+/** One status entry carrying a reading on ONE side (the worktree by default).
+ *  `xy` decides which bands the entry lands in; each band's tree reads its own
+ *  side off the entry. */
+function entry(path: string, xy: string, counts?: GitLineCounts, side: ChangeSide = 'unstaged'): GitStatusEntry {
+  return counts === undefined ? { path, xy } : { path, xy, [side]: counts }
 }
 
 describe('change tree line counts', () => {
@@ -23,7 +25,7 @@ describe('change tree line counts', () => {
       entry('src/a.ts', ' M', { additions: 4, deletions: 2 }),
       entry('src/deep/b.ts', ' M', { binary: true }),
       entry('new.txt', '??'),
-    ])
+    ], 'unstaged')
     const src = tree.find(node => node.kind === 'dir' && node.path === 'src')!
     expect(src.kind).toBe('dir')
     const leaves = src.kind === 'dir' ? src.children : []
@@ -38,12 +40,33 @@ describe('change tree line counts', () => {
     expect(untracked.kind === 'file' && 'counts' in untracked).toBe(false)
   })
 
+  it('reads ONLY the band\'s own side off a path that changed on both sides', () => {
+    // The double-count regression (#131): the two diffs have different bases,
+    // so `MM` carries two readings. Each band's tree must print its own, not
+    // the sum — summing reported the same edited line as `+2 −2` in BOTH bands.
+    // The two readings differ, so a band reading the WRONG side fails too.
+    const both: GitStatusEntry = {
+      path: 'a.txt',
+      xy: 'MM',
+      staged: { additions: 1, deletions: 1 },
+      unstaged: { additions: 5, deletions: 0 },
+    }
+    expect(sumLineCounts(buildChangeTree([both], 'staged')))
+      .toEqual({ additions: 1, deletions: 1, files: 1 })
+    expect(sumLineCounts(buildChangeTree([both], 'unstaged')))
+      .toEqual({ additions: 5, deletions: 0, files: 1 })
+    // A side with no reading stays count-less in that band only.
+    const stagedOnly = entry('b.txt', 'M ', { additions: 3, deletions: 0 }, 'staged')
+    expect(buildChangeTree([stagedOnly], 'unstaged')[0]).not.toHaveProperty('counts')
+    expect(buildChangeTree([stagedOnly], 'staged')[0]).toMatchObject({ counts: { additions: 3, deletions: 0 } })
+  })
+
   it('sums a group to exactly the numbers its members carry', () => {
     const tree = buildChangeTree([
       entry('src/a.ts', ' M', { additions: 4, deletions: 2 }),
       entry('src/b.ts', ' M', { additions: 1, deletions: 0 }),
       entry('docs/c.md', ' M', { additions: 3, deletions: 3 }),
-    ])
+    ], 'unstaged')
     expect(sumLineCounts(tree)).toEqual({ additions: 8, deletions: 5, files: 3 })
   })
 
@@ -52,12 +75,13 @@ describe('change tree line counts', () => {
       entry('src/a.ts', ' M', { additions: 4, deletions: 2 }),
       entry('blob.bin', ' M', { binary: true }),
       entry('new.txt', '??'),
-    ])
+    ], 'unstaged')
     // 4/2 — not 4/2 plus a fabricated zero from either count-less row.
     expect(sumLineCounts(tree)).toEqual({ additions: 4, deletions: 2, files: 1 })
     // A group with nothing to sum reports zero files, so its header stays bare.
-    expect(sumLineCounts(buildChangeTree([entry('blob.bin', ' M', { binary: true }), entry('n.txt', '??')])))
-      .toEqual({ additions: 0, deletions: 0, files: 0 })
+    expect(sumLineCounts(buildChangeTree([
+      entry('blob.bin', ' M', { binary: true }), entry('n.txt', '??'),
+    ], 'unstaged'))).toEqual({ additions: 0, deletions: 0, files: 0 })
   })
 
   it('counts only the rows that PRINT numbers: a 0/0 rename has none to sum (#131)', () => {
@@ -65,15 +89,17 @@ describe('change tree line counts', () => {
     // reads the same way): its row prints nothing at all, so it must not make
     // a group's total claim it contributed numbers — otherwise a group holding
     // nothing but renames renders an empty `+N −M` cluster in its header.
-    expect(sumLineCounts(buildChangeTree([entry('renamed.ts', 'R ', { additions: 0, deletions: 0 })])))
-      .toEqual({ additions: 0, deletions: 0, files: 0 })
-    expect(sumLineCounts(buildChangeTree([entry('mode-only.ts', ' M', { additions: 0, deletions: 0 })])))
-      .toEqual({ additions: 0, deletions: 0, files: 0 })
+    expect(sumLineCounts(buildChangeTree([
+      entry('renamed.ts', 'R ', { additions: 0, deletions: 0 }, 'staged'),
+    ], 'staged'))).toEqual({ additions: 0, deletions: 0, files: 0 })
+    expect(sumLineCounts(buildChangeTree([
+      entry('mode-only.ts', ' M', { additions: 0, deletions: 0 }),
+    ], 'unstaged'))).toEqual({ additions: 0, deletions: 0, files: 0 })
     // A rename that DID move lines keeps contributing them...
     expect(sumLineCounts(buildChangeTree([
-      entry('edited.ts', 'R ', { additions: 2, deletions: 1 }),
-      entry('renamed.ts', 'R ', { additions: 0, deletions: 0 }),
-    ]))).toEqual({ additions: 2, deletions: 1, files: 1 })
+      entry('edited.ts', 'R ', { additions: 2, deletions: 1 }, 'staged'),
+      entry('renamed.ts', 'R ', { additions: 0, deletions: 0 }, 'staged'),
+    ], 'staged'))).toEqual({ additions: 2, deletions: 1, files: 1 })
   })
 
   it('counts every member regardless of how deep the directory chain folds', () => {
@@ -82,7 +108,7 @@ describe('change tree line counts', () => {
     const tree = buildChangeTree([
       entry('src/client/changes/a.ts', ' M', { additions: 2, deletions: 1 }),
       entry('src/client/changes/b.ts', ' M', { additions: 5, deletions: 0 }),
-    ])
+    ], 'unstaged')
     expect(tree).toHaveLength(1)
     expect(tree[0]).toMatchObject({ kind: 'dir', name: 'src/client/changes' })
     expect(sumLineCounts(tree)).toEqual({ additions: 7, deletions: 1, files: 2 })

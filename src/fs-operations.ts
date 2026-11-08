@@ -27,7 +27,19 @@ import { access, lstat, mkdir, rename, rm, stat, unlink, writeFile } from 'node:
 import { basename, dirname, join } from 'node:path'
 import { invalidateDirectoryCache, requireAbsolute } from './fs-tree.ts'
 import { ensureWorkspaceWritePath, resolveTarget } from './path-security.ts'
+import { encodeText, fileFormatOf, restoreEol } from './text-encoding.ts'
 import { SidebarError } from './wire.ts'
+
+/**
+ * The name SHAPE every file mutation shares: one path segment, no separators,
+ * no `.`/`..`. Shared by rename, mkdir and the new-file rule so the three
+ * entries refuse the same inputs with the same sentence.
+ */
+function assertSingleSegmentName(name: string): void {
+  if (name === '' || name === '.' || name === '..' || name.includes('/') || name.includes('\\')) {
+    throw new SidebarError('bad-request', 'name must be a single path segment', 400)
+  }
+}
 
 /** Inputs of one upload: the session scope plus the request body stream. */
 export interface WorkspaceUploadInput {
@@ -39,10 +51,68 @@ export interface WorkspaceUploadInput {
   relativePath: string
   /** The request body stream (raw bytes). */
   chunks: AsyncIterable<string | Uint8Array>
-  /** Byte cap; an oversized upload is refused without touching the target. */
-  limit: number
   /** @deprecated IGNORED — containment was removed. Do not pass it. */
   fence?: boolean
+}
+
+/**
+ * Windows refuses a rename with one of these codes when another rename is
+ * landing on the same destination at that instant. The refusal says nothing
+ * about the destination — it is contention, not a verdict — and it is
+ * transient: every refused rename in the measurements below landed on the very
+ * next attempt.
+ */
+const RENAME_CONTENTION = new Set(['EPERM', 'EACCES', 'EBUSY'])
+
+/**
+ * How many refusals ONE upload absorbs before the failure is reported.
+ *
+ * The losers of one instant retry into each other, so this has to be a budget
+ * rather than a single retry. Measured on Windows with barrier-started renames
+ * onto a single destination (UV_THREADPOOL_SIZE=64, so they really run in
+ * parallel):
+ *
+ *   simultaneous renames   losers per round
+ *   2                      at most 1
+ *   8                      1–5, never 0
+ *   32                     19–31, never 0
+ *
+ * At 8 parties 5 attempts already sufficed (500/500 rounds clean); at 32
+ * parties 5 was NOT enough (197/200 rounds still reported a failure) while 10
+ * was (200/200 rounds clean, the worst single upload absorbing 8 refusals in a
+ * row). 10 is sized for far more contention than this seam can meet in
+ * practice — the client uploads through `uploadToDir` one file at a time, so
+ * same-target contention comes from separate clients and stays in the low
+ * single digits.
+ */
+const RENAME_ATTEMPT_LIMIT = 10
+
+/**
+ * Rename `from` onto `to`, retrying ONLY the contention refusals above.
+ *
+ * A unique temp name keeps concurrent uploads from crossing each other, but it
+ * does not make their renames independent: renames naming the same destination
+ * at the same instant are mutually exclusive on Windows, and every rename that
+ * does not win is refused rather than queued. Retrying here is what keeps the
+ * seam's promise ("the last rename wins") for the caller. Every other errno —
+ * ENOENT, EXDEV, EROFS… — is a real answer and propagates on the first throw.
+ *
+ * The retry is bounded, so a destination that is genuinely held (rather than
+ * contended for a moment) still fails the upload instead of hanging it.
+ */
+async function renameIntoPlace(from: string, to: string): Promise<void> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      await rename(from, to)
+      return
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code
+      if (attempt >= RENAME_ATTEMPT_LIMIT || code === undefined || !RENAME_CONTENTION.has(code)) throw error
+      // Yield to the loop: the competing renames are already in flight and
+      // only need to finish landing.
+      await new Promise<void>((resolve) => { setImmediate(resolve) })
+    }
+  }
 }
 
 /**
@@ -50,14 +120,19 @@ export interface WorkspaceUploadInput {
  * sibling receives the bytes, then is renamed over the target. The parent
  * directory is created on demand (recursive), so folder uploads work before
  * any level exists. The unique temp name keeps concurrent uploads to the same
- * target independent (each writes and renames its own file; the last rename
- * wins) and never blocks later uploads after a crashed process.
+ * target from crossing each other — each writes its own file, the last rename
+ * to land wins — and never blocks later uploads after a crashed process. The
+ * renames themselves are not independent (see {@link renameIntoPlace}).
  *
- * @throws SidebarError with a wire code for shape and size failures; the temp
- * file is always removed on failure.
+ * There is NO size cap: the bytes flow through a bounded write stream, so a
+ * 100 GB upload costs the host the same memory as a 1 KB one. A failed or
+ * aborted upload still leaves neither a partial target nor a temp file.
+ *
+ * @throws SidebarError with a wire code for shape failures; the temp file is
+ * always removed on failure.
  */
 export async function writeWorkspaceUpload(input: WorkspaceUploadInput): Promise<{ path: string; size: number }> {
-  const { cwd, dir, relativePath, chunks, limit } = input
+  const { cwd, dir, relativePath, chunks } = input
   // The shared resolution contract: an absolute `dir` normalizes, a
   // session-relative one joins the cwd, `~` expands against the home (#713).
   const base = resolveTarget(cwd, dir)
@@ -76,7 +151,6 @@ export async function writeWorkspaceUpload(input: WorkspaceUploadInput): Promise
   // Resolves once the stream fully closes; created up front so a stream that
   // already closed (successful end, later failure) cannot leave the wait hanging.
   const closed = new Promise<void>((resolve) => { stream.once('close', () => resolve()) })
-  let size = 0
   let streamError: unknown
   // A permanent 'error' listener keeps a failing disk from crashing the host:
   // every await below surfaces the failure through the promise chain instead.
@@ -84,8 +158,6 @@ export async function writeWorkspaceUpload(input: WorkspaceUploadInput): Promise
   try {
     for await (const chunk of chunks) {
       const buffer = Buffer.from(chunk)
-      size += buffer.length
-      if (size > limit) throw new SidebarError('too-large', `upload exceeds the ${limit} byte limit`, 413)
       if (!stream.write(buffer)) await once(stream, 'drain')
       if (streamError !== undefined) throw streamError
     }
@@ -93,7 +165,7 @@ export async function writeWorkspaceUpload(input: WorkspaceUploadInput): Promise
       stream.end((error?: Error | null) => (error === undefined || error === null ? resolve() : reject(error)))
     })
     if (streamError !== undefined) throw streamError
-    await rename(tmp, safeTarget)
+    await renameIntoPlace(tmp, safeTarget)
     const info = await stat(safeTarget)
     // The target's level (and, for a new folder, its parent) is now stale.
     invalidateDirectoryCache(dirname(safeTarget))
@@ -106,6 +178,87 @@ export async function writeWorkspaceUpload(input: WorkspaceUploadInput): Promise
     await rm(tmp, { force: true }).catch(() => {})
     throw error
   }
+}
+
+/** Inputs of one editor save. */
+export interface WorkspaceWriteInput {
+  /** The session workspace root (the base of session-relative targets). */
+  cwd: string
+  /** Target path as the editor addresses it (absolute, session-relative, or `~`-relative). */
+  path: string
+  /** The document to store, with LF line endings (CodeMirror has no other line model). */
+  content: string
+  /**
+   * The mtime the draft was based on. A file that changed on disk since is
+   * REFUSED with `fs-conflict` instead of silently clobbering whatever wrote
+   * it — and so is a file that is GONE: a numeric baseline proves it was read
+   * from a file that existed, so "no stat" is a change the user made rather
+   * than permission to re-create the path. `undefined` = no gate (a brand-new
+   * file has no baseline — creating one is a different intent with its own
+   * entry points, `fs.createFile` and the upload writer).
+   */
+  expectedMtimeMs?: number
+}
+
+/**
+ * Write one editor document to disk, preserving the file's own byte encoding
+ * and line ending.
+ *
+ * Two guarantees ride together here, and both are about NOT rewriting what the
+ * user did not touch:
+ *
+ * - **line endings** — the client transports an LF document, so writing it
+ *   verbatim would turn one edited line into a whole-file diff on every CRLF
+ *   checkout (#871). The EOL detected at read time is restored before encoding.
+ * - **byte encoding** — GBK / UTF-16 / BOM'd UTF-8 files stay in their own
+ *   encoding instead of being rewritten as UTF-8 (#523).
+ *
+ * The write is atomic (uniquely named temp sibling + rename) and the temp file
+ * is removed on every failure path.
+ *
+ * @throws {SidebarError} fs-conflict (409) when `expectedMtimeMs` no longer
+ *  matches the file OR the file is no longer there at all, fs-error when the
+ *  write itself fails.
+ */
+export async function writeWorkspaceText(input: WorkspaceWriteInput): Promise<{ mtimeMs?: number }> {
+  const { cwd, path, content, expectedMtimeMs } = input
+  const absolute = await ensureWorkspaceWritePath(cwd, path)
+  // Detect the byte encoding AND the line ending BEFORE the temp write, so the
+  // save round-trips what the file already used.
+  const { encoding, eol } = await fileFormatOf(absolute)
+  if (expectedMtimeMs !== undefined) {
+    const current = await stat(absolute).then(info => info.mtimeMs).catch(() => undefined)
+    // A NUMERIC baseline can only come from a successful read of a file that
+    // existed, so "no stat" is not "nothing to compare" — it means the path was
+    // removed (or renamed away) while the draft was open. Reading that as "no
+    // gate" wrote the draft back over the user's own deletion and re-created
+    // the file (and its parent directory) with no prompt. Creating a file is a
+    // different intent with its own entry points (`fs.createFile`, the upload
+    // writer), so refusing here costs nothing.
+    if (current !== expectedMtimeMs) {
+      const why = current === undefined
+        ? `no longer exists on disk (expected mtime ${expectedMtimeMs})`
+        : `changed on disk since it was loaded (expected mtime ${expectedMtimeMs}, found ${current})`
+      throw new SidebarError('fs-conflict', `"${absolute}" ${why}`, 409)
+    }
+  }
+  // Per-request temp name (same pattern as writeWorkspaceUpload): a
+  // pid-suffixed name is shared by every concurrent save to the same path,
+  // letting two writers interleave into one temp file — and the failure-path
+  // rm could delete the other writer's in-flight temp.
+  const tmp = join(dirname(absolute), `.${basename(absolute)}.dsh-sidebar-tmp-${randomUUID()}.tmp`)
+  try {
+    await mkdir(dirname(absolute), { recursive: true })
+    await writeFile(tmp, encodeText(restoreEol(content, eol), encoding), { flag: 'wx' })
+    await rename(tmp, absolute)
+  } catch (error) {
+    await rm(tmp, { force: true }).catch(() => {})
+    throw new SidebarError('fs-error', `cannot write "${absolute}": ${error instanceof Error ? error.message : String(error)}`, 400)
+  }
+  invalidateDirectoryCache(dirname(absolute))
+  // The fresh baseline the client adopts after a successful save.
+  const mtimeMs = await stat(absolute).then(info => info.mtimeMs).catch(() => undefined)
+  return { ...(mtimeMs !== undefined ? { mtimeMs } : {}) }
 }
 
 /** Inputs of one tree-row rename. */
@@ -208,9 +361,7 @@ async function pathExists(target: string): Promise<boolean> {
  */
 export async function renameWorkspaceEntry(input: WorkspaceRenameInput): Promise<{ path: string }> {
   const { cwd, path, name } = input
-  if (name === '' || name === '.' || name === '..' || name.includes('/') || name.includes('\\')) {
-    throw new SidebarError('bad-request', 'name must be a single path segment', 400)
-  }
+  assertSingleSegmentName(name)
   const { absolute, realCwd } = resolveEntry(cwd, path)
   if (await isWorkspaceRoot(absolute, realCwd)) {
     throw new SidebarError('fs-error', 'cannot rename the workspace root', 400)
@@ -253,9 +404,7 @@ export interface WorkspaceMkdirInput {
  */
 export async function mkdirWorkspaceEntry(input: WorkspaceMkdirInput): Promise<{ path: string }> {
   const { cwd, path, name } = input
-  if (name === '' || name === '.' || name === '..' || name.includes('/') || name.includes('\\')) {
-    throw new SidebarError('bad-request', 'name must be a single path segment', 400)
-  }
+  assertSingleSegmentName(name)
   const { absolute } = resolveEntry(cwd, path)
   const destination = await ensureWorkspaceWritePath(cwd, join(absolute, name))
   if (await pathExists(destination)) {
@@ -305,8 +454,8 @@ const RESERVED_FILE_NAMES = new Set([
 ])
 
 /**
- * The NEW FILE name rule: one path segment (the shared rename/mkdir rule) plus
- * the two Windows-only refusals — illegal characters and reserved device
+ * The NEW FILE name rule: one path segment ({@link assertSingleSegmentName})
+ * plus the two Windows-only refusals — illegal characters and reserved device
  * names. Refusing them HERE, as a shape error, is what lets the inline editor
  * say which rule was broken instead of surfacing a bare `EPERM` from the
  * filesystem on one platform and nothing at all on the others.
@@ -314,9 +463,7 @@ const RESERVED_FILE_NAMES = new Set([
  * @throws SidebarError with a wire code of `bad-request` for every refusal.
  */
 function assertCreatableFileName(name: string): void {
-  if (name === '' || name === '.' || name === '..' || name.includes('/') || name.includes('\\')) {
-    throw new SidebarError('bad-request', 'name must be a single path segment', 400)
-  }
+  assertSingleSegmentName(name)
   const illegal = firstIllegalNameChar(name)
   if (illegal !== undefined) {
     throw new SidebarError('bad-request', `name contains a character that is not allowed in a file name: ${JSON.stringify(illegal)}`, 400)

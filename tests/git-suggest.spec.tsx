@@ -5,7 +5,7 @@
  * (`git-suggest-empty`) so the panel can say "nothing to summarize" instead
  * of a generic generation failure.
  *
- * The commit bar only exists once the git status says the directory is a
+ * The message box only exists once the git status says the directory is a
  * repository, and the shared status store subscribes only while the lens is
  * VISIBLE — so the harness mounts a visible lens and waits for that first
  * answer (the model tooltip rides the same mount, its route read fires on
@@ -33,7 +33,7 @@ function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
 }
 
 function pendingStatus(): GitStatusResult {
-  return { isRepo: true, branch: 'main', entries: [{ path: 'src/app.ts', xy: ' M' }] }
+  return { isRepo: true, branch: 'main', entries: [{ path: 'src/app.ts', xy: 'M ' }] }
 }
 
 async function mount(options: {
@@ -79,7 +79,7 @@ function suggestButton(container: HTMLElement): HTMLButtonElement {
 }
 
 function commitInput(container: HTMLElement): HTMLTextAreaElement {
-  const input = container.querySelector<HTMLTextAreaElement>('textarea')
+  const input = container.querySelector<HTMLTextAreaElement>('[data-message-box] textarea')
   if (input === null) throw new Error('the commit input is missing')
   return input
 }

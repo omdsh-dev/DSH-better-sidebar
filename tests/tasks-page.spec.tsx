@@ -2,15 +2,23 @@
  * Tasks page interaction tests (jsdom): the jobs drawer's auto-collapse at
  * the agent-count threshold, the graph/tree view toggle visible in BOTH
  * modes, node click → transcript jump, ⓘ → anchored popover, and the
- * settled-leaf fold aggregate expanding on click.
+ * settled-leaf fold aggregate expanding on click. Owned task lines and
+ * tooltips must use the same blocked-status rule as the team board.
  */
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createElement } from 'react'
+import { createElement, type ReactElement } from 'react'
 import { act } from 'react-dom/test-utils'
 import { renderRoot } from './test-utils.ts'
 import { SubagentView } from '../src/client/SubagentView.tsx'
 import { createSidebarStore } from '../src/client/state.ts'
+import { attachLocale } from '../src/client/locales.ts'
+import { ContextDiagnosticsHost } from '../src/client/context-diagnostics-ui.tsx'
+import type {
+  ContextDiagnosticTarget,
+  ContextDiagnostics,
+  ContextDiagnosticsSnapshot,
+} from '../src/client/context-diagnostics.ts'
 import type {
   Context,
   SidebarClientJobsService,
@@ -20,10 +28,39 @@ import type {
   SidebarSessionSummary,
   SidebarSubagentAddress,
   SidebarSubagentCatalogEntry,
-  SidebarTeamMemberProjection,
   SidebarTeamProjection,
   SidebarTeamTaskView,
 } from '../src/context-types.ts'
+
+/**
+ * A diagnostics controller double: the snapshot is driven by the test, and
+ * every `open` is recorded so the page's addressing can be asserted.
+ */
+function makeController(initial: ContextDiagnosticsSnapshot) {
+  let snapshot = initial
+  const listeners = new Set<() => void>()
+  const opens: ContextDiagnosticTarget[] = []
+  const controller: ContextDiagnostics = {
+    getSnapshot: () => snapshot,
+    subscribe: (listener: () => void) => {
+      listeners.add(listener)
+      return () => { listeners.delete(listener) }
+    },
+    open: (target: ContextDiagnosticTarget) => { opens.push(target) },
+    dismissError: () => {},
+    dispose: () => {},
+  }
+  return {
+    controller,
+    opens,
+    publish: (next: ContextDiagnosticsSnapshot): void => {
+      snapshot = next
+      for (const listener of [...listeners]) listener()
+    },
+  }
+}
+
+type ControllerFake = ReturnType<typeof makeController>
 
 /** A subscribable sessions-list snapshot (mirror of the runtime list feed). */
 function makeStore(initial: SidebarSessionList) {
@@ -84,8 +121,19 @@ function makeJobsService() {
 /** The jobs service the page reads (rebuilt per test in beforeEach). */
 let jobsFake: ReturnType<typeof makeJobsService>
 
+/**
+ * The host's native right column, as the page writes to it: the tab registry
+ * probe (`sidebarRightTabs.get`) plus the `openResource` write face. `undefined`
+ * models a deployment without `ui-subagent` — the transcript then has nowhere
+ * to open but the main window.
+ */
+interface AsideSpy {
+  opened: string[]
+  options: Array<{ kind?: string; preferNewPane?: boolean } | undefined>
+}
+
 /** The client context face SubagentView touches. */
-function makeCtx(store: Store, navigation?: NavigationSpy): Context {
+function makeCtx(store: Store, navigation?: NavigationSpy, aside?: AsideSpy): Context {
   return {
     sessions: {
       list: store,
@@ -95,6 +143,19 @@ function makeCtx(store: Store, navigation?: NavigationSpy): Context {
       if (name === 'jobs') return jobsFake.service
       if (name === 'uiWorkspace' && navigation !== undefined) {
         return { openSession: (target: SidebarSubagentAddress | string) => { navigation.opened.push(target) } }
+      }
+      if (name === 'sidebarRightTabs' && aside !== undefined) {
+        // The page probes for the host's own `subagentchat` tab type before it
+        // writes; a host without it must not be called.
+        return { get: (kind: string) => (kind === 'subagentchat' ? { kind } : undefined) }
+      }
+      if (name === 'sidebarRight' && aside !== undefined) {
+        return {
+          openResource: (address: string, options?: { kind?: string; preferNewPane?: boolean }) => {
+            aside.opened.push(address)
+            aside.options.push(options)
+          },
+        }
       }
       return undefined
     },
@@ -114,6 +175,8 @@ function jsonError(status: number, code: string, message: string): Response {
 
 /** The Lead Session's `agentTeam` projection the board reads (undefined = none). */
 let teamProjection: SidebarTeamProjection | undefined
+/** Agent names the current test's catalog rows carry (see {@link withTeam}). */
+let catalogNames: string[] = []
 const teamMutations: Array<{ method: string; body: Record<string, unknown> }> = []
 const fetchedMethods: string[] = []
 /** The `subagents.live` payload the stub answers with (session id → live view). */
@@ -122,6 +185,44 @@ let livePayload: Record<string, unknown> = {}
 let runsPayload: unknown[] = []
 /** A write rejection the stub answers `teams.taskUpdate` with (undefined = ok). */
 let writeRejection: { status: number; code: string; message: string } | undefined
+
+/**
+ * The host's `chat` namespace, as the plugin reads it through `chatT`. The
+ * Tasks page deliberately borrows the HOST's wording for the merged activity
+ * (see process-labels.ts), so a suite that asserts the bar's copy has to serve
+ * those keys — without this the wording falls back to the call's own detail and
+ * the assertions would pin the fallback instead of the contract.
+ *
+ * The subset is the host's real zh copy, plus the separator key the labels
+ * join with; `active: 'zh'` keeps the plugin's own dictionaries on the zh
+ * chain the rest of this file asserts against.
+ */
+class FakeChatLocale {
+  active = 'zh'
+  private readonly dicts: Record<string, Record<string, string>> = {
+    chat: {
+      'message.turnProcess.separator': ' · ',
+      'message.stepProcess.thinking': '正在分析请求',
+      'message.stepProcess.read': '正在读取文件',
+      'message.stepProcess.commands': '正在运行命令',
+      'message.stepProcess.prepare.read': '准备读取文件',
+      'message.stepProcess.done.read': '已读取文件',
+      'message.stepProcess.done.thinking': '已完成分析',
+    },
+  }
+  getSnapshot(): { active: string } {
+    return { active: this.active }
+  }
+  bind(ns: string): (key: string) => string {
+    const dict = this.dicts[ns] ?? {}
+    return (key: string) => dict[key] ?? key
+  }
+}
+
+/** Attach the host `chat` wording for one test. */
+function attachChatLocale(): void {
+  attachLocale(new FakeChatLocale())
+}
 
 beforeEach(() => {
   teamProjection = undefined
@@ -163,6 +264,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  attachLocale(undefined)
   vi.unstubAllGlobals()
   for (const el of document.querySelectorAll('body > div')) el.remove()
 })
@@ -182,7 +284,10 @@ function snapshotWithChildren(count: number): SidebarSessionList {
   for (let index = 0; index < count; index += 1) {
     const id = `child-${index}`
     byId[id] = { id, displayTitle: id, origin: 'subagent', parentId: 'root', running: false }
-    entries.push({ id, createdAt: 1_000 + index, mode: 'one-shot', label: `子代理 ${index}` })
+    entries.push({
+      id, createdAt: 1_000 + index, mode: 'one-shot', label: `子代理 ${index}`,
+      name: catalogNames[index],
+    })
     projectionsBySession[id] = { values: { subagentCatalog: [] }, state: 'ready', error: null }
   }
   projectionsBySession.root = {
@@ -252,6 +357,52 @@ describe('Tasks page interactions', () => {
     expect(bar.getAttribute('aria-expanded')).toBe('false')
     await act(async () => { bar.click() })
     expect(container.textContent).toContain('sleep 300')
+    unmount()
+  })
+
+  it.each(['graph', 'tree'] as const)('follows automatic fold preferences in %s and keeps manual actions above them', async (mode) => {
+    const sidebar = createSidebarStore()
+    sidebar.setPrefs({ ...sidebar.getPrefs(), tasksViewMode: mode, mobileDefaultTree: false,
+      tasksAutoFoldSettled: false, tasksAutoFoldBranches: false, tasksAutoFoldIdle: false,
+    })
+    const { container, unmount } = renderRoot(createElement(SubagentView, {
+      sessionId: 'root', active: true, ctx: makeCtx(makeStore(snapshotWithChildren(2))), store: sidebar,
+    }))
+    const node = (id: string): Element | null => container.querySelector(`[data-graph-node="${id}"], [data-tree-node="${id}"]`)
+    expect(node('child-0')).not.toBeNull()
+    expect(node('fold:root')).toBeNull()
+    await act(async () => { sidebar.setPrefs({ ...sidebar.getPrefs(), tasksAutoFoldSettled: true }) })
+    expect(node('fold:root')).not.toBeNull()
+    await act(async () => { (node('fold:root') as HTMLElement).click() })
+    expect(node('child-0')).not.toBeNull()
+    // A subsequent preference update cannot close the group the reader opened.
+    await act(async () => { sidebar.setPrefs({ ...sidebar.getPrefs(), tasksAutoFoldSettled: false }) })
+    await act(async () => { sidebar.setPrefs({ ...sidebar.getPrefs(), tasksAutoFoldSettled: true }) })
+    expect(node('child-0')).not.toBeNull()
+    await act(async () => {
+      (container.querySelector('[data-graph-controls] button:nth-child(2)') as HTMLButtonElement).click()
+    })
+    // The global manual expand remains above all later automatic settings.
+    await act(async () => { sidebar.setPrefs({ ...sidebar.getPrefs(), tasksAutoFoldBranches: true, tasksAutoFoldIdle: true }) })
+    expect(node('child-0')).not.toBeNull()
+    unmount()
+  })
+
+  it('disables drawer auto-collapse live without overwriting a manual drawer choice', async () => {
+    const sidebar = createSidebarStore()
+    const { container, unmount } = renderRoot(createElement(SubagentView, {
+      sessionId: 'root', active: true, ctx: makeCtx(makeStore(snapshotWithChildren(8))), store: sidebar,
+    }))
+    await flushJobs()
+    const bar = container.querySelector('button[aria-expanded]') as HTMLButtonElement
+    expect(bar.getAttribute('aria-expanded')).toBe('false')
+    await act(async () => { sidebar.setPrefs({ ...sidebar.getPrefs(), jobsAutoCollapse: false }) })
+    expect(bar.getAttribute('aria-expanded')).toBe('true')
+    expect(container.textContent).toContain('sleep 300')
+    await act(async () => { bar.click() })
+    await act(async () => { sidebar.setPrefs({ ...sidebar.getPrefs(), jobsAutoCollapse: true }) })
+    await act(async () => { sidebar.setPrefs({ ...sidebar.getPrefs(), jobsAutoCollapse: false }) })
+    expect(bar.getAttribute('aria-expanded')).toBe('false')
     unmount()
   })
 
@@ -372,23 +523,25 @@ describe('Tasks page interactions', () => {
 })
 
 /**
- * The Lead Session's projection for one test run: members + tasks, or absent
- * (`withTeam(null)`) when the tree leads no team. A task omitted from `tasks`
- * is not on the board at all.
+ * The Lead Session's projection for one test run: the mode flag plus tasks, or
+ * absent (`withTeam(null)`) when the tree leads no team. The roster is NOT part
+ * of that value — members are the Lead's `subagentCatalog` rows — so a test
+ * that needs NAMED members pins them with `names`, which the snapshots below
+ * write onto those rows. A task omitted from `tasks` is not on the board at all.
  */
 function withTeam(input: {
-  members?: SidebarTeamMemberProjection[]
+  enabled?: boolean
   tasks?: SidebarTeamTaskView[]
+  names?: readonly string[]
 } | null = {}): void {
   if (input === null) {
     teamProjection = undefined
+    catalogNames = []
     return
   }
+  catalogNames = [...(input.names ?? [])]
   teamProjection = {
-    members: input.members ?? [
-      { id: 'root', name: 'lead', role: 'lead', phase: 'active' },
-      { id: 'child-0', name: 'writer', role: 'teammate', phase: 'active' },
-    ],
+    enabled: input.enabled ?? true,
     tasks: input.tasks ?? [],
   }
 }
@@ -402,6 +555,188 @@ function teamTask(over: Partial<SidebarTeamTaskView> = {}): SidebarTeamTaskView 
 }
 
 describe('Tasks page graph interactions and team board', () => {
+  it('expands an aggregate and opens its agent after separate background pans', async () => {
+    const store = makeStore(snapshotWithChildren(2))
+    const { container, unmount } = renderRoot(
+      createElement(SubagentView, { sessionId: 'root', active: true, ctx: makeCtx(store) }),
+    )
+    const canvas = container.querySelector('[role="group"]') as HTMLElement
+    const pan = (): void => {
+      canvas.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, clientX: 5, clientY: 5 }))
+      window.dispatchEvent(new MouseEvent('pointermove', { bubbles: true, clientX: 80, clientY: 70 }))
+      window.dispatchEvent(new MouseEvent('pointerup', { bubbles: true }))
+    }
+    const tap = (element: HTMLElement): void => {
+      element.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, clientX: 10, clientY: 10 }))
+      window.dispatchEvent(new MouseEvent('pointerup', { bubbles: true }))
+      element.click()
+    }
+    await act(async () => { pan() })
+    await act(async () => { tap(container.querySelector('[data-graph-node="fold:root"]') as HTMLElement) })
+    const child = container.querySelector('[data-graph-node="child-0"]') as HTMLElement
+    expect(child).not.toBeNull()
+    await act(async () => { pan() })
+    await act(async () => { tap(child) })
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull()
+    unmount()
+  })
+
+  it('coalesces background pans into one update per animation frame and flushes on release', async () => {
+    const store = makeStore(snapshotWithChildren(2))
+    const { container, unmount } = renderRoot(
+      createElement(SubagentView, { sessionId: 'root', active: true, ctx: makeCtx(store) }),
+    )
+    const canvas = container.querySelector('[role="group"]') as HTMLElement
+    const inner = canvas.querySelector('div[style*="transform"]') as HTMLElement
+    expect(inner).not.toBeNull()
+    // Let the mount-time fit (and any glide frame) settle before measuring.
+    await act(async () => { await new Promise<void>(resolve => requestAnimationFrame(() => resolve())) })
+    const settled = inner.getAttribute('style')
+
+    // A high-report-rate mouse delivers many moves between two frames. None of
+    // them may commit on its own: one batched update owns the whole frame.
+    await act(async () => {
+      canvas.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, clientX: 5, clientY: 5 }))
+      for (let step = 1; step <= 20; step += 1) {
+        window.dispatchEvent(new MouseEvent('pointermove', {
+          bubbles: true, clientX: 5 + step * 10, clientY: 5 + step * 10,
+        }))
+      }
+    })
+    expect(inner.getAttribute('style'), 'no commit before the frame').toBe(settled)
+
+    await act(async () => { await new Promise<void>(resolve => requestAnimationFrame(() => resolve())) })
+    const afterFrame = inner.getAttribute('style')
+    expect(afterFrame, 'the frame applies the batch').not.toBe(settled)
+
+    // Release before the next frame must still apply the LAST position (back to
+    // the gesture origin, unclamped — distinct from the framed position).
+    await act(async () => {
+      window.dispatchEvent(new MouseEvent('pointermove', {
+        bubbles: true, clientX: 5, clientY: 5,
+      }))
+      window.dispatchEvent(new MouseEvent('pointerup', { bubbles: true }))
+    })
+    expect(inner.getAttribute('style'), 'release flushes the pending move').not.toBe(afterFrame)
+    unmount()
+  })
+
+  it('coalesces wheel zooms into one update per animation frame without losing steps', async () => {
+    const store = makeStore(snapshotWithChildren(2))
+    const { container, unmount } = renderRoot(
+      createElement(SubagentView, { sessionId: 'root', active: true, ctx: makeCtx(store) }),
+    )
+    const canvas = container.querySelector('[role="group"]') as HTMLElement
+    const inner = canvas.querySelector('div[style*="transform"]') as HTMLElement
+    const scaleOf = (style: string | null): number => Number(/scale\(([\d.]+)\)/.exec(style ?? '')?.[1] ?? NaN)
+    await act(async () => { await new Promise<void>(resolve => requestAnimationFrame(() => resolve())) })
+    const settled = inner.getAttribute('style')
+    const baseScale = scaleOf(settled)
+
+    // A trackpad reports several wheel events between two frames. None may
+    // commit on its own, and the frame must apply the SUM of the deltas (the
+    // old code re-read the drawn transform for every event, so only one step
+    // survived).
+    const steps = 5
+    await act(async () => {
+      for (let step = 0; step < steps; step += 1) {
+        canvas.dispatchEvent(new WheelEvent('wheel', {
+          deltaY: -10, clientX: 100, clientY: 100, bubbles: true, cancelable: true,
+        }))
+      }
+    })
+    expect(inner.getAttribute('style'), 'no commit before the frame').toBe(settled)
+
+    await act(async () => { await new Promise<void>(resolve => requestAnimationFrame(() => resolve())) })
+    const afterFrame = scaleOf(inner.getAttribute('style'))
+    expect(afterFrame, 'the frame applies the batch').not.toBe(baseScale)
+    // One event per frame would give base * e^0.014; the coalesced frame gives
+    // base * e^(0.014 * steps).
+    expect(afterFrame).toBeCloseTo(baseScale * Math.exp(0.014 * steps), 3)
+    unmount()
+  })
+
+  /** The canvas transform as numbers (the style is `translate(x, y) scale(k)`). */
+  function transformOf(style: string | null): { x: number; y: number; k: number } {
+    const match = /translate\(([-\d.]+)px, ([-\d.]+)px\) scale\(([\d.]+)\)/.exec(style ?? '')
+    return { x: Number(match?.[1]), y: Number(match?.[2]), k: Number(match?.[3]) }
+  }
+
+  it('makes a coalesced wheel frame equivalent to rendering each step', async () => {
+    const store = makeStore(snapshotWithChildren(2))
+    const settle = async (): Promise<void> => {
+      await act(async () => { await new Promise<void>(resolve => requestAnimationFrame(() => resolve())) })
+    }
+    const wheel = (canvas: HTMLElement, deltaY: number): void => {
+      canvas.dispatchEvent(new WheelEvent('wheel', {
+        deltaY, clientX: 200, clientY: 200, bubbles: true, cancelable: true,
+      }))
+    }
+    const mount = (): { canvas: HTMLElement; inner: HTMLElement; unmount: () => void } => {
+      const rendered = renderRoot(
+        createElement(SubagentView, { sessionId: 'root', active: true, ctx: makeCtx(store) }),
+      )
+      const canvas = rendered.container.querySelector('[role="group"]') as HTMLElement
+      const inner = canvas.querySelector('div[style*="transform"]') as HTMLElement
+      return { canvas, inner, unmount: rendered.unmount }
+    }
+
+    // One event per frame: the reference the coalesced frame must match.
+    const sequential = mount()
+    await settle()
+    // Zoom out far enough that the first step hits the pan bound (PAN_KEEP=72
+    // with a zero-width jsdom canvas), then zoom back in around the same point.
+    await act(async () => { wheel(sequential.canvas, 990) })
+    await settle()
+    await act(async () => { wheel(sequential.canvas, -290) })
+    await settle()
+    const stepwise = transformOf(sequential.inner.getAttribute('style'))
+    sequential.unmount()
+
+    // Both events in one frame must compose to the SAME transform. Clamping
+    // only the final value (instead of each step) lands elsewhere once the
+    // intermediate transform hit a pan bound.
+    const batched = mount()
+    await settle()
+    await act(async () => { wheel(batched.canvas, 990); wheel(batched.canvas, -290) })
+    await settle()
+    const composed = transformOf(batched.inner.getAttribute('style'))
+    batched.unmount()
+
+    expect(composed.k).toBeCloseTo(stepwise.k, 5)
+    expect(composed.x).toBeCloseTo(stepwise.x, 5)
+    expect(composed.y).toBeCloseTo(stepwise.y, 5)
+  })
+
+  it('lets a background pan own the gesture: a wheel mid-drag is ignored', async () => {
+    const store = makeStore(snapshotWithChildren(2))
+    const { container, unmount } = renderRoot(
+      createElement(SubagentView, { sessionId: 'root', active: true, ctx: makeCtx(store) }),
+    )
+    const canvas = container.querySelector('[role="group"]') as HTMLElement
+    const inner = canvas.querySelector('div[style*="transform"]') as HTMLElement
+    await act(async () => { await new Promise<void>(resolve => requestAnimationFrame(() => resolve())) })
+
+    await act(async () => {
+      canvas.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, clientX: 5, clientY: 5 }))
+      window.dispatchEvent(new MouseEvent('pointermove', { bubbles: true, clientX: 205, clientY: 205 }))
+    })
+    await act(async () => { await new Promise<void>(resolve => requestAnimationFrame(() => resolve())) })
+    const dragged = inner.getAttribute('style')
+
+    await act(async () => {
+      canvas.dispatchEvent(new WheelEvent('wheel', {
+        deltaY: -200, clientX: 100, clientY: 100, bubbles: true, cancelable: true,
+      }))
+    })
+    await act(async () => { await new Promise<void>(resolve => requestAnimationFrame(() => resolve())) })
+    expect(inner.getAttribute('style'), 'the pan gesture owns the transform').toBe(dragged)
+
+    await act(async () => { window.dispatchEvent(new MouseEvent('pointerup', { bubbles: true })) })
+    expect(inner.getAttribute('style')).toBe(dragged)
+    unmount()
+  })
+
   it('activates a graph node after a background pointerdown (no click theft)', async () => {
     const navigation: NavigationSpy = { opened: [] }
     const store = makeStore(snapshotWithChildren(1))
@@ -447,7 +782,7 @@ describe('Tasks page graph interactions and team board', () => {
   })
 
   it('shows the team board without any click when the root leads a team', async () => {
-    withTeam({ tasks: [teamTask()] })
+    withTeam({ names: ['writer'], tasks: [teamTask()] })
     const store = makeStore(snapshotWithChildren(1))
     const { container, unmount } = renderRoot(
       createElement(SubagentView, { sessionId: 'root', active: true, ctx: makeCtx(store) }),
@@ -476,9 +811,34 @@ describe('Tasks page graph interactions and team board', () => {
 })
 
 describe('Tasks page: owned tasks, host-primitive controls, draggable output', () => {
+  it.each([
+    ['pending', false, '阻塞'],
+    ['pending', true, '待办'],
+    ['in_progress', false, '进行中'],
+    ['completed', false, '已完成'],
+  ] as const)('keeps the board, task line and tooltip consistent for %s (ready: %s)', async (status, ready, label) => {
+    // The roster is catalog-driven after #1139: the owner name must exist on a
+    // catalog row for the task to attach to that child's line.
+    withTeam({ names: ['writer'], tasks: [teamTask({ status, ready, ownerName: 'writer' })] })
+    const store = makeStore(snapshotWithChildren(1))
+    const { container, unmount } = renderRoot(
+      createElement(SubagentView, { sessionId: 'root', active: true, ctx: makeCtx(store) }),
+    )
+    try {
+      await act(async () => { await Promise.resolve() })
+      expect(container.querySelector('[data-team-board]')?.textContent).toContain(label)
+      const taskLine = container.querySelector('[data-graph-node="child-0"] [role="button"]')
+      expect(taskLine?.textContent).toContain(label)
+      expect(taskLine?.getAttribute('title')).toBe(`收窄卡片（${label}）`)
+    } finally {
+      unmount()
+    }
+  })
+
   /** A board whose two tasks are both owned by the child agent. */
   function teamWithOwnedTask(): void {
     withTeam({
+      names: ['writer'],
       tasks: [
         teamTask({ subject: '收窄卡片与图标化', ownerName: 'writer' }),
         teamTask({
@@ -502,6 +862,8 @@ describe('Tasks page: owned tasks, host-primitive controls, draggable output', (
     expect(node.textContent).toContain('收窄卡片与图标化')
     expect(node.textContent).toContain('进行中')
     expect(node.textContent).toContain('+1')
+    expect(node.querySelector('[role="button"]')?.getAttribute('title'))
+      .toBe('收窄卡片与图标化（进行中）\n补点击回归（阻塞）')
     unmount()
   })
 
@@ -602,6 +964,7 @@ describe('Tasks page: owned tasks, host-primitive controls, draggable output', (
 describe('Tasks page: the shared task window', () => {
   it('opens from an agent node task line and saves a multi-line edit', async () => {
     withTeam({
+      names: ['writer'],
       tasks: [teamTask({
         revision: 4, description: '第一行\n\n- 第二行', ownerName: 'writer',
       })],
@@ -641,11 +1004,7 @@ describe('Tasks page: the shared task window', () => {
 
   it('reassigns the owner straight from the window (CAS on the current revision)', async () => {
     withTeam({
-      members: [
-        { id: 'root', name: 'lead', role: 'lead', phase: 'active' },
-        { id: 'child-0', name: 'writer', role: 'teammate', phase: 'active' },
-        { id: 'child-1', name: 'reviewer', role: 'teammate', phase: 'active' },
-      ],
+      names: ['writer', 'reviewer'],
       tasks: [teamTask({ revision: 7, description: '', status: 'pending', ownerName: 'writer' })],
     })
     const store = makeStore(snapshotWithChildren(2))
@@ -894,7 +1253,9 @@ describe('Tasks page: the shared task window', () => {
     expect(aggregate).not.toBeNull()
     expect(aggregate.textContent).toContain('1')
 
-    // Clicking the aggregate expands EVERYTHING (manual + global folds).
+    // Clicking the aggregate reveals THAT group: the manual fold is released
+    // (the reader asked to see these nodes) while every other group keeps its
+    // own state.
     await act(async () => { aggregate.click() })
     expect(container.querySelector('[data-graph-node="child-0"]')).not.toBeNull()
     expect(container.querySelector('[data-graph-node="fold:root"]')).toBeNull()
@@ -904,11 +1265,9 @@ describe('Tasks page: the shared task window', () => {
   it('gives the waiting members their own aggregate row, and folds one by its chevron', async () => {
     // Three idle teammates meet the idle head count, so they fold — into a row
     // of their OWN: the finished work keeps its "✓ N 已完成" badge and the
-    // waiting members say "N 个待命" instead of hiding inside a ✓ count.
-    const mate = (index: number): SidebarTeamMemberProjection => ({
-      id: `child-${index}`, name: `mate-${index}`, role: 'teammate', phase: 'active',
-    })
-    withTeam({ members: [{ id: 'root', name: 'lead', role: 'lead', phase: 'active' }, ...[0, 1, 2].map(mate)] })
+    // waiting members count themselves on the badge, instead of hiding inside
+    // a ✓ count.
+    withTeam()
     const store = makeStore(snapshotWithChildren(3))
     const { container, unmount } = renderRoot(
       createElement(SubagentView, { sessionId: 'root', active: true, ctx: makeCtx(store) }),
@@ -916,7 +1275,10 @@ describe('Tasks page: the shared task window', () => {
     await flushJobs()
     const aggregate = container.querySelector('[data-graph-node="fold:root:idle"]') as HTMLElement
     expect(aggregate).not.toBeNull()
-    expect(aggregate.textContent).toContain('3 待命')
+    // The badge carries the REAL count (it used to print the literal copy "N"),
+    // and the bar carries the ACTION instead of repeating it.
+    expect(aggregate.querySelector('[data-card-kind="fold"]')?.textContent).toBe('3 个待命')
+    expect(aggregate.querySelector('[data-card-bar]')?.textContent).toBe('展开')
     expect(aggregate.textContent).not.toContain('已完成')
     // The finished group is a DIFFERENT row (empty here: nothing is done).
     expect(container.querySelector('[data-graph-node="fold:root"]')).toBeNull()
@@ -926,10 +1288,7 @@ describe('Tasks page: the shared task window', () => {
   it('offers a WAITING card its own fold chevron (idle is foldable by hand)', async () => {
     // Below the idle head count nothing folds automatically; each waiting card
     // still carries the chevron, which is what "点击没反应" was about.
-    const mate = (index: number): SidebarTeamMemberProjection => ({
-      id: `child-${index}`, name: `mate-${index}`, role: 'teammate', phase: 'active',
-    })
-    withTeam({ members: [{ id: 'root', name: 'lead', role: 'lead', phase: 'active' }, ...[0, 1].map(mate)] })
+    withTeam()
     const store = makeStore(snapshotWithChildren(2))
     const { container, unmount } = renderRoot(
       createElement(SubagentView, { sessionId: 'root', active: true, ctx: makeCtx(store) }),
@@ -943,9 +1302,9 @@ describe('Tasks page: the shared task window', () => {
     await act(async () => { chevron.click() })
     const aggregate = container.querySelector('[data-graph-node="fold:root:idle"]') as HTMLElement
     expect(aggregate).not.toBeNull()
-    expect(aggregate.textContent).toContain('1 待命')
+    expect(aggregate.textContent).toContain('1 个待命')
     // The aggregate's badge says 待命 too, so the row never reads as finished.
-    expect(aggregate.querySelector('[data-card-kind="fold"]')?.textContent).toBe('N 个待命')
+    expect(aggregate.querySelector('[data-card-kind="fold"]')?.textContent).toBe('1 个待命')
     expect(container.querySelector('[data-graph-node="child-0"]')).toBeNull()
     unmount()
   })
@@ -964,7 +1323,9 @@ describe('Tasks page: the shared task window', () => {
     // same expand glyph the aggregate card's bar does.
     const expandGlyph = glyph('button[aria-label="展开已完成的节点"]')
     expect(expandGlyph).not.toBe('')
-    expect(glyph('[data-graph-node^="fold:"] [data-card-bar]')).toBe(expandGlyph)
+    // The aggregate's bar now opens with the GROUP glyph and closes with the
+    // expand chevron: the chevron is the cell that must match the cluster.
+    expect(glyph('[data-graph-node^="fold:"] [data-card-bar] > span:last-child')).toBe(expandGlyph)
 
     // Unfold: the cards' own control COLLAPSES one node, and it must not share
     // the expand glyph (the reader's report was that both looked identical).
@@ -1014,7 +1375,7 @@ describe('Tasks page: the shared task window', () => {
     unmount()
   })
 
-  it('never auto-folds a RE-PARENTED run member that is a real branch (issue #784)', async () => {
+  it('never auto-folds a RE-PARENTED run member with a running descendant (issue #784)', async () => {
     // A run member is usually a real catalog node re-parented under the run —
     // not the synthetic leaf the old rule assumed — so the page-level fold used
     // to take its whole subtree with it.
@@ -1045,7 +1406,7 @@ describe('Tasks page: the shared task window', () => {
       },
       m1c: { values: { subagentCatalog: [] }, state: 'ready', error: null },
     }
-    snapshot.byId['m1c'] = { id: 'm1c', displayTitle: 'm1c', origin: 'subagent', parentId: 'm1', running: false }
+    snapshot.byId['m1c'] = { id: 'm1c', displayTitle: 'm1c', origin: 'subagent', parentId: 'm1', running: true }
     const store = makeStore(snapshot)
     const { container, unmount } = renderRoot(
       createElement(SubagentView, { sessionId: 'root', active: true, ctx: makeCtx(store) }),
@@ -1092,5 +1453,703 @@ describe('Tasks page: the shared task window', () => {
     expect(second.textContent).toContain('复核')
     expect(first.getAttribute('data-depth')).toBe('2')
     unmount()
+  })
+})
+
+/**
+ * The bar and the node detail read the SAME merged-activity rule, and that
+ * rule follows the node's own state: a running node prints the host's live
+ * wording in place of the state word, a settled one prints the completed
+ * wording, and a node the live channel says nothing about falls back to its
+ * state word instead of claiming to be analysing a request.
+ */
+describe('Tasks page: the node status line and per-group expansion', () => {
+  /** Render the page and unfold the page-level rule, so cards are on screen. */
+  async function renderUnfolded(snapshot: SidebarSessionList): Promise<{
+    container: HTMLElement
+    unmount(): void
+  }> {
+    const store = makeStore(snapshot)
+    const rendered = renderRoot(
+      createElement(SubagentView, { sessionId: 'root', active: true, ctx: makeCtx(store) }),
+    )
+    await flushJobs()
+    const foldToggle = rendered.container.querySelector(
+      'button[aria-label="展开已完成的节点"]',
+    ) as HTMLButtonElement | null
+    if (foldToggle !== null) await act(async () => { foldToggle.click() })
+    return rendered
+  }
+
+  it('prints the running native status instead of the state word', async () => {
+    attachChatLocale()
+    livePayload = {
+      'child-0': {
+        running: true,
+        summary: { counts: [{ kind: 'read', count: 2 }], running: 'read', runningDetail: 'main.ts' },
+      },
+    }
+    const snapshot = snapshotWithChildren(2)
+    snapshot.byId['child-0']!.running = true
+    const { container, unmount } = await renderUnfolded(snapshot)
+    const bar = container.querySelector('[data-graph-node="child-0"] [data-card-bar]') as HTMLElement
+    expect(bar.getAttribute('data-running')).toBe('true')
+    expect(bar.textContent).toBe('正在读取文件 · main.ts')
+    expect(bar.textContent).not.toContain('运行中')
+    // The settled sibling keeps its word: it has no summary to speak with.
+    const settled = container.querySelector('[data-graph-node="child-1"] [data-card-bar]') as HTMLElement
+    expect(settled.textContent).toBe('已完成')
+    unmount()
+  })
+
+  it('falls back to the state word when the node has no activity data at all', async () => {
+    attachChatLocale()
+    // The live channel reports the node as running but folds nothing for it:
+    // the bar must not invent "正在分析请求" out of the host's thinking wording.
+    livePayload = { 'child-0': { running: true } }
+    const snapshot = snapshotWithChildren(2)
+    snapshot.byId['child-0']!.running = true
+    const { container, unmount } = await renderUnfolded(snapshot)
+    const bar = container.querySelector('[data-graph-node="child-0"] [data-card-bar]') as HTMLElement
+    expect(bar.textContent).toBe('运行中')
+    unmount()
+  })
+
+  it('prints a settled node the completed wording, and the ROOT its own live status', async () => {
+    attachChatLocale()
+    livePayload = {
+      // The root's fold is computed by the live route like every child's; the
+      // page used to drop it, so the main agent's card read the fallback text
+      // whatever the session was doing.
+      root: {
+        summary: { counts: [{ kind: 'commands', count: 1 }], running: 'commands', runningDetail: 'npm run build' },
+      },
+      'child-0': {
+        running: false,
+        summary: { counts: [{ kind: 'read', count: 1 }], runningDetail: '' },
+      },
+    }
+    const { container, unmount } = await renderUnfolded(snapshotWithChildren(2))
+    const rootBar = container.querySelector('[data-graph-node="root"] [data-card-bar]') as HTMLElement
+    expect(rootBar.textContent).toBe('正在运行命令 · npm run build')
+    const settledBar = container.querySelector('[data-graph-node="child-0"] [data-card-bar]') as HTMLElement
+    expect(settledBar.textContent).toBe('已读取文件')
+    expect(settledBar.textContent).not.toContain('已完成')
+    unmount()
+  })
+
+  it('sets the node detail activity under the title, and claims nothing without data', async () => {
+    attachChatLocale()
+    livePayload = {
+      'child-0': {
+        running: true,
+        text: 'half-finished line',
+        summary: { counts: [{ kind: 'read', count: 1 }], running: 'read', runningDetail: 'main.ts' },
+      },
+    }
+    const snapshot = snapshotWithChildren(2)
+    snapshot.byId['child-0']!.running = true
+    const { container, unmount } = await renderUnfolded(snapshot)
+
+    await act(async () => {
+      (container.querySelector('[data-graph-node="child-0"]') as HTMLElement).click()
+    })
+    const dialog = document.querySelector('[role="dialog"]') as HTMLElement
+    // The label row is gone: the position under the title says what it is.
+    expect(dialog.textContent).not.toContain('最近活动')
+    const block = dialog.querySelector('[data-node-activity]') as HTMLElement
+    expect(block.textContent).toContain('正在读取文件 · main.ts')
+    expect(block.textContent).toContain('half-finished line')
+    // …and it sits directly under the title, above the key/value grid.
+    const card = dialog.firstElementChild as HTMLElement
+    const parts = Array.from(card.children)
+    expect(parts.indexOf(block)).toBeLessThan(parts.indexOf(card.querySelector('dl') as Element))
+
+    // A node with no live data shows no activity block at all — the detail used
+    // to print "正在分析请求" for every node in the tree.
+    await act(async () => {
+      (container.querySelector('[data-graph-node="child-1"]') as HTMLElement).click()
+    })
+    const settledDialog = document.querySelector('[role="dialog"]') as HTMLElement
+    expect(settledDialog.querySelector('[data-node-activity]')).toBeNull()
+    expect(settledDialog.textContent).not.toContain('正在分析请求')
+    unmount()
+  })
+
+  it('expands the waiting aggregate by one click; the cluster still folds the page', async () => {
+    // Every direct child of the Lead is a team member, and a member reads as
+    // WAITING until its own turn runs — so this tree folds into exactly ONE
+    // group. A `done` group needs finished children that are NOT members, which
+    // the catalog-driven roster cannot express under a single parent; the
+    // team-less tree is the surface that folds finished work.
+    withTeam()
+    const store = makeStore(snapshotWithChildren(5))
+    const { container, unmount } = renderRoot(
+      createElement(SubagentView, { sessionId: 'root', active: true, ctx: makeCtx(store) }),
+    )
+    await flushJobs()
+    expect(container.querySelector('[data-graph-node="fold:root:idle"]')).not.toBeNull()
+    expect(container.querySelector('[data-graph-node="fold:root"]')).toBeNull()
+
+    // One click on the aggregate reveals the members it swallowed.
+    await act(async () => {
+      (container.querySelector('[data-graph-node="fold:root:idle"]') as HTMLElement).click()
+    })
+    expect(container.querySelector('[data-graph-node="child-0"]')).not.toBeNull()
+    expect(container.querySelector('[data-graph-node="child-2"]')).not.toBeNull()
+    expect(container.querySelector('[data-graph-node="fold:root:idle"]')).toBeNull()
+
+    // The cluster keeps the page-level switch: unfolding the page shows every
+    // node, and collapsing it re-folds every group — including the one the
+    // reader had opened by hand.
+    await act(async () => {
+      (container.querySelector('button[aria-label="展开已完成的节点"]') as HTMLButtonElement).click()
+    })
+    expect(container.querySelector('[data-graph-node="child-2"]')).not.toBeNull()
+    await act(async () => {
+      (container.querySelector('button[aria-label="折叠已完成的节点"]') as HTMLButtonElement).click()
+    })
+    expect(container.querySelector('[data-graph-node="fold:root:idle"]')).not.toBeNull()
+    expect(container.querySelector('[data-graph-node="child-0"]')).toBeNull()
+    unmount()
+  })
+
+  it('drops the per-group openings when the CLUSTER collapses the page', async () => {
+    // The polarity that matters: a group opened from its aggregate must not
+    // survive the reader asking the whole page to collapse. Driven from the
+    // unfolded state, where a fold could otherwise be remembered as "opened"
+    // while every sibling folds around it.
+    const store = makeStore(snapshotWithChildren(3))
+    const { container, unmount } = renderRoot(
+      createElement(SubagentView, { sessionId: 'root', active: true, ctx: makeCtx(store) }),
+    )
+    await flushJobs()
+    // Unfold the page, fold ONE card back in, then open that aggregate.
+    await act(async () => {
+      (container.querySelector('button[aria-label="展开已完成的节点"]') as HTMLButtonElement).click()
+    })
+    await act(async () => {
+      (container.querySelector(
+        '[data-graph-node="child-0"] button[aria-label="收进已完成聚合"]',
+      ) as HTMLButtonElement).click()
+    })
+    await act(async () => {
+      (container.querySelector('[data-graph-node="fold:root"]') as HTMLElement).click()
+    })
+    expect(container.querySelector('[data-graph-node="child-0"]')).not.toBeNull()
+
+    // Now collapse the page from the cluster: the opened group goes with it.
+    await act(async () => {
+      (container.querySelector('button[aria-label="折叠已完成的节点"]') as HTMLButtonElement).click()
+    })
+    expect(container.querySelector('[data-graph-node="child-0"]')).toBeNull()
+    const aggregate = container.querySelector('[data-graph-node="fold:root"]') as HTMLElement
+    expect(aggregate).not.toBeNull()
+    expect(aggregate.textContent).toContain('✓ 3 已完成')
+    unmount()
+  })
+
+  it('folds one member back from inside an open group (the card chevron stays live)', async () => {
+    // The reader's report: after opening an aggregate, clicking a card's own
+    // chevron did nothing. The manual fold is the newest intent and must beat
+    // the group's expansion, so the node returns to a NEW aggregate holding it
+    // while its siblings stay visible.
+    const store = makeStore(snapshotWithChildren(3))
+    const { container, unmount } = renderRoot(
+      createElement(SubagentView, { sessionId: 'root', active: true, ctx: makeCtx(store) }),
+    )
+    await flushJobs()
+    await act(async () => {
+      (container.querySelector('[data-graph-node="fold:root"]') as HTMLElement).click()
+    })
+    expect(container.querySelector('[data-graph-node="child-0"]')).not.toBeNull()
+    expect(container.querySelector('[data-graph-node="fold:root"]')).toBeNull()
+
+    await act(async () => {
+      (container.querySelector(
+        '[data-graph-node="child-0"] button[aria-label="收进已完成聚合"]',
+      ) as HTMLButtonElement).click()
+    })
+    expect(container.querySelector('[data-graph-node="child-0"]')).toBeNull()
+    expect(container.querySelector('[data-graph-node="child-1"]')).not.toBeNull()
+    const aggregate = container.querySelector('[data-graph-node="fold:root"]') as HTMLElement
+    expect(aggregate).not.toBeNull()
+    expect(aggregate.textContent).toContain('✓ 1 已完成')
+    unmount()
+  })
+})
+
+/**
+ * The detail window's two extra facts (token usage + turn timing) and the
+ * transcript jump: the child opens in the host's OWN right-sidebar tab by
+ * default, and the caret beside it offers the main window.
+ */
+describe('Tasks page: node metrics and the sidebar transcript jump', () => {
+  /** A snapshot whose child carries the host's metric projections. */
+  function snapshotWithMetrics(): SidebarSessionList {
+    const list = snapshotWithChildren(1)
+    Object.assign(list.projectionsBySession ?? {}, {
+      'child-0': {
+        values: {
+          subagentCatalog: [],
+          tokenUsage: {
+            uncachedInputTokens: 1_000, outputTokens: 4_000, cacheReadTokens: 20_000, cacheWriteTokens: 500,
+          },
+          subagentTiming: { settledMs: 162_000 },
+        },
+        state: 'ready',
+        error: null,
+      },
+    })
+    return list
+  }
+
+  /** Render, unfold the page and open the first child's detail window. */
+  async function openDetail(ctx: Context): Promise<{ unmount(): void, dialog: HTMLElement }> {
+    const { container, unmount } = renderRoot(
+      createElement(SubagentView, { sessionId: 'root', active: true, ctx }),
+    )
+    await flushJobs()
+    await act(async () => {
+      (container.querySelector('button[aria-label="展开已完成的节点"]') as HTMLButtonElement).click()
+    })
+    await act(async () => {
+      (container.querySelector('[data-graph-node="child-0"]') as HTMLElement).click()
+    })
+    return { unmount, dialog: document.querySelector('[role="dialog"]') as HTMLElement }
+  }
+
+  it('shows what the node spent and how long it worked', async () => {
+    const { unmount, dialog } = await openDetail(makeCtx(makeStore(snapshotWithMetrics())))
+    // 25.5K total, formatted the page's own way (517 / 12.2K / 1.2M).
+    expect(dialog.textContent).toContain('Token 用量')
+    expect(dialog.textContent).toContain('25.5K')
+    // 162s = 2 分 42 秒, in the same shape (and copy) the job rows use.
+    expect(dialog.textContent).toContain('耗时')
+    expect(dialog.textContent).toContain('2 分 42 秒')
+    unmount()
+  })
+
+  it('hides both rows when the host published no measurements', async () => {
+    const { unmount, dialog } = await openDetail(makeCtx(makeStore(snapshotWithChildren(1))))
+    expect(dialog.textContent).not.toContain('Token 用量')
+    expect(dialog.textContent).not.toContain('耗时')
+    unmount()
+  })
+
+  it('opens the child transcript in the native sidebar, and the main window from the caret', async () => {
+    const navigation: NavigationSpy = { opened: [] }
+    const aside: AsideSpy = { opened: [], options: [] }
+    const { unmount, dialog } = await openDetail(makeCtx(makeStore(snapshotWithChildren(1)), navigation, aside))
+
+    // The primary action hands the child to the host's `subagentchat` tab: the
+    // address carries parent + mode, and the main column is left alone.
+    await act(async () => {
+      ([...dialog.querySelectorAll('button')].find(button => button.textContent?.includes('查看转录')) as HTMLButtonElement).click()
+    })
+    expect(aside.opened).toEqual([
+      'dsh-resource://subagentchat/session/child-0?parent=root&mode=one-shot',
+    ])
+    // The primary action lands in the CURRENT right-sidebar pane: no split.
+    expect(aside.options[0]).toEqual({ kind: 'subagentchat' })
+    expect(navigation.opened).toEqual([])
+
+    // The caret keeps the explicit split as a secondary gesture.
+    aside.opened.length = 0
+    aside.options.length = 0
+    const { dialog: splitDialog, unmount: unmountSplit } = await openDetail(
+      makeCtx(makeStore(snapshotWithChildren(1)), navigation, aside),
+    )
+    const splitCaret = [...splitDialog.querySelectorAll('button')]
+      .find(button => button.getAttribute('aria-label') === '在主窗口中打开') as HTMLButtonElement
+    await act(async () => { splitCaret.click() })
+    const splitItem = [...document.querySelectorAll('[role="menuitem"]')]
+      .find(node => node.textContent?.includes('在侧边打开')) as HTMLButtonElement
+    expect(splitItem).toBeDefined()
+    await act(async () => { splitItem.click() })
+    expect(aside.options[0]).toEqual({ kind: 'subagentchat', preferNewPane: true })
+    expect(navigation.opened).toEqual([])
+    unmountSplit()
+
+    // The caret's other alternative: the main view, through the workspace
+    // face the shell owns (the old behavior).
+    const { dialog: second } = await openDetail(makeCtx(makeStore(snapshotWithChildren(1)), navigation, aside))
+    const caret = [...second.querySelectorAll('button')]
+      .find(button => button.getAttribute('aria-label') === '在主窗口中打开') as HTMLButtonElement
+    expect(caret).toBeDefined()
+    await act(async () => { caret.click() })
+    const item = [...document.querySelectorAll('[role="menuitem"]')]
+      .find(node => node.textContent?.includes('在主窗口中打开')) as HTMLButtonElement
+    expect(item).toBeDefined()
+    await act(async () => { item.click() })
+    expect(navigation.opened).toEqual([
+      { parentSessionId: 'root', childSessionId: 'child-0', mode: 'one-shot' },
+    ])
+    unmount()
+  })
+
+  it('offers no sidebar alternative on a host without the subagent-chat tab', async () => {
+    const navigation: NavigationSpy = { opened: [] }
+    const { unmount, dialog } = await openDetail(makeCtx(makeStore(snapshotWithChildren(1)), navigation))
+    expect(dialog.querySelector('[aria-label="在主窗口中打开"]')).toBeNull()
+    await act(async () => {
+      ([...dialog.querySelectorAll('button')].find(button => button.textContent?.includes('查看转录')) as HTMLButtonElement).click()
+    })
+    expect(navigation.opened).toEqual([
+      { parentSessionId: 'root', childSessionId: 'child-0', mode: 'one-shot' },
+    ])
+    unmount()
+  })
+
+  it('rides the node mode on the badge row instead of a mono meta line', async () => {
+    const { unmount, container } = (() => {
+      const rendered = renderRoot(createElement(SubagentView, {
+        sessionId: 'root', active: true, ctx: makeCtx(makeStore(snapshotWithChildren(1))),
+      }))
+      return rendered
+    })()
+    await flushJobs()
+    await act(async () => {
+      (container.querySelector('button[aria-label="展开已完成的节点"]') as HTMLButtonElement).click()
+    })
+    const card = container.querySelector('[data-graph-node="child-0"]') as HTMLElement
+    // The chip is a child of the badge row, not a row of its own.
+    const badges = card.querySelector('[data-card-kind="subagent"]')?.parentElement as HTMLElement
+    expect(badges.textContent).toBe('子代理一次性')
+    unmount()
+  })
+})
+
+/**
+ * The card's text tail (the newest assistant text under the name) and the tree
+ * row's chip: both surfaces now say the same two things the same way.
+ */
+describe('Tasks page: the card text tail and the tree chip', () => {
+  it('sets the newest assistant text on the card, clamped to the reserved lines', async () => {
+    livePayload = {
+      'child-0': {
+        running: true,
+        text: '我把目录数了一遍：60 个条目，其中包含若干工作树与软链接。',
+        summary: { counts: [{ kind: 'commands', count: 1 }], running: 'commands', runningDetail: 'ls -la' },
+      },
+    }
+    const snapshot = snapshotWithChildren(2)
+    snapshot.byId['child-0']!.running = true
+    const store = makeStore(snapshot)
+    const { container, unmount } = renderRoot(
+      createElement(SubagentView, { sessionId: 'root', active: true, ctx: makeCtx(store) }),
+    )
+    await flushJobs()
+    await act(async () => {
+      (container.querySelector('button[aria-label="展开已完成的节点"]') as HTMLButtonElement).click()
+    })
+    const card = container.querySelector('[data-graph-node="child-0"]') as HTMLElement
+    // The class name is hashed by the CSS module, so the tail is addressed by
+    // its inline clamp (the line count the layout reserved for it).
+    const clamped = [...card.querySelectorAll('span')].find(span => span.style.webkitLineClamp !== '')
+    expect(clamped).toBeDefined()
+    expect(clamped?.textContent).toBe('我把目录数了一遍：60 个条目，其中包含若干工作树与软链接。')
+    expect(Number(clamped?.style.webkitLineClamp)).toBeGreaterThanOrEqual(1)
+    expect(Number(clamped?.style.webkitLineClamp)).toBeLessThanOrEqual(3)
+    // The bar still carries the merged activity: the two lines answer different
+    // questions and neither is dropped.
+    expect(card.querySelector('[data-card-bar]')?.textContent).toContain('ls -la')
+    unmount()
+  })
+
+  it('draws the mode chip on a tree row and stops repeating it in the mono line', async () => {
+    const store = makeStore(snapshotWithChildren(2))
+    const { container, unmount } = renderRoot(
+      createElement(SubagentView, { sessionId: 'root', active: true, ctx: makeCtx(store) }),
+    )
+    await flushJobs()
+    await act(async () => {
+      (container.querySelector('button[aria-label="切换为树状图"]') as HTMLButtonElement).click()
+    })
+    // The tree opens with the page-level fold ON: reveal the child rows first.
+    await act(async () => {
+      (container.querySelector('button[aria-label="展开已完成的节点"]') as HTMLButtonElement).click()
+    })
+    const row = container.querySelector('[data-tasks-row]') as HTMLElement
+    // The root row keeps its identity line (no chip for the root), and the child
+    // row carries the mode beside its name with the state alone underneath.
+    const childRow = [...container.querySelectorAll('[data-tasks-row]')]
+      .find(candidate => candidate.textContent?.includes('子代理 0')) as HTMLElement
+    expect(childRow.textContent).toContain('子代理 0一次性')
+    expect(childRow.textContent).toContain('已完成')
+    expect(row).not.toBeNull()
+    unmount()
+  })
+})
+
+/**
+ * The tree's own disclosure axis: one row's children, every row's children, and
+ * back again. It sits BESIDE the settled-leaf fold rule, so a reader can shrink
+ * a big topology without folding work away.
+ */
+describe('Tasks page: the tree disclosure', () => {
+  /** A snapshot with a nested child: root → child-0 → grandchild. */
+  function snapshotWithGrandchild(): SidebarSessionList {
+    const list = snapshotWithChildren(2)
+    const projections = list.projectionsBySession as Record<string, SidebarProjectionSnapshot>
+    const grandchild: SidebarSubagentCatalogEntry = {
+      id: 'grand-0', createdAt: 9, mode: 'one-shot', label: '孙代理 0',
+    }
+    // Each child belongs to one parent's catalog; grand-0 is only under child-0.
+    list.byId['grand-0'] = {
+      id: 'grand-0', displayTitle: 'grand-0', origin: 'subagent', parentId: 'child-0', running: false,
+    }
+    projections['child-0'] = {
+      values: { subagentCatalog: [grandchild] },
+      state: 'ready',
+      error: null,
+    }
+    projections['grand-0'] = { values: { subagentCatalog: [] }, state: 'ready', error: null }
+    return list
+  }
+
+  /** Render the page in TREE mode with the page-level fold unfolded. */
+  async function renderTree(snapshot: SidebarSessionList): Promise<{ container: HTMLElement, unmount(): void }> {
+    const rendered = renderRoot(createElement(SubagentView, {
+      sessionId: 'root', active: true, ctx: makeCtx(makeStore(snapshot)),
+    }))
+    await flushJobs()
+    await act(async () => {
+      (rendered.container.querySelector('button[aria-label="切换为树状图"]') as HTMLButtonElement).click()
+    })
+    await act(async () => {
+      (rendered.container.querySelector('button[aria-label="展开已完成的节点"]') as HTMLButtonElement).click()
+    })
+    return rendered
+  }
+
+  it('folds ONE row\'s subtree from its own control, and unfolds it again', async () => {
+    const { container, unmount } = await renderTree(snapshotWithGrandchild())
+    expect(container.textContent).toContain('孙代理 0')
+    const row = [...container.querySelectorAll('[data-tasks-row]')]
+      .find(candidate => candidate.textContent?.includes('子代理 0')) as HTMLElement
+    expect(row.getAttribute('aria-expanded')).toBe('true')
+    const control = row.querySelector('button[aria-label^="收起子级"]') as HTMLButtonElement
+    expect(control).not.toBeNull()
+    await act(async () => { control.click() })
+    expect(container.textContent).not.toContain('孙代理 0')
+    expect(row.getAttribute('aria-expanded')).toBe('false')
+    const reopen = row.querySelector('button[aria-label^="展开子级"]') as HTMLButtonElement
+    await act(async () => { reopen.click() })
+    expect(container.textContent).toContain('孙代理 0')
+    unmount()
+  })
+
+  it('offers no disclosure on a leaf row', async () => {
+    const { container, unmount } = await renderTree(snapshotWithChildren(1))
+    const row = [...container.querySelectorAll('[data-tasks-row]')]
+      .find(candidate => candidate.textContent?.includes('子代理 0')) as HTMLElement
+    expect(row.querySelector('button[aria-label^="收起子级"]')).toBeNull()
+    expect(row.getAttribute('aria-expanded')).toBeNull()
+    unmount()
+  })
+
+  it('collapses and expands EVERY subtree from the cluster', async () => {
+    const { container, unmount } = await renderTree(snapshotWithGrandchild())
+    expect(container.textContent).toContain('孙代理 0')
+    await act(async () => {
+      (container.querySelector('button[aria-label="全部收起"]') as HTMLButtonElement).click()
+    })
+    // Only the topology root is left: every parent folded its children away.
+    const remaining = [...container.querySelectorAll('[data-tasks-row]')]
+    expect(remaining).toHaveLength(1)
+    expect(remaining[0]?.textContent).toContain('主会话')
+    await act(async () => {
+      (container.querySelector('button[aria-label="全部展开"]') as HTMLButtonElement).click()
+    })
+    expect(container.textContent).toContain('孙代理 0')
+    unmount()
+  })
+
+  it('opens a folded row with ArrowRight and closes it with ArrowLeft', async () => {
+    const { container, unmount } = await renderTree(snapshotWithGrandchild())
+    const rows = [...container.querySelectorAll('[data-tasks-row]')] as HTMLElement[]
+    const row = rows.find(candidate => candidate.textContent?.includes('子代理 0')) as HTMLElement
+    row.focus()
+    await act(async () => { row.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true })) })
+    expect(container.textContent).not.toContain('孙代理 0')
+    await act(async () => { row.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })) })
+    expect(container.textContent).toContain('孙代理 0')
+    unmount()
+  })
+})
+
+/**
+ * The optional dsh-context diagnostics entry points on this page: the agent
+ * node's detail card and a job's output window. Both are gated on the
+ * controller `SubagentView` reaches through the provider, and both address the
+ * conversation through the TREE MODEL — never through the jobs roster's
+ * `ownerSessionId`, which names the session a job was watched under rather than
+ * the session that owns it.
+ */
+describe('Tasks page: the context diagnostics entry points', () => {
+  /** A controller double plus the provider-wrapped page under test. */
+  function pageWithDiagnostics(
+    content: (ctx: Context) => ReactElement,
+    snapshot: ContextDiagnosticsSnapshot = { available: true, busy: false },
+  ): { controller: ControllerFake; container: HTMLDivElement; unmount: () => void } {
+    const controller = makeController(snapshot)
+    const store = makeStore(snapshotWithChildren(1))
+    const rendered = renderRoot(createElement(
+      ContextDiagnosticsHost,
+      { controller: controller.controller },
+      content(makeCtx(store)),
+    ))
+    return { controller, container: rendered.container, unmount: rendered.unmount }
+  }
+
+  /** The page element for one context. */
+  function page(ctx: Context): ReactElement {
+    return createElement(SubagentView, { sessionId: 'root', active: true, ctx })
+  }
+
+  it('offers NO entry point on a page without a controller', async () => {
+    const store = makeStore(snapshotWithChildren(1))
+    const { container, unmount } = renderRoot(page(makeCtx(store)))
+    const foldToggle = container.querySelector('button[aria-label="展开已完成的节点"]') as HTMLButtonElement
+    await act(async () => { foldToggle.click() })
+    await act(async () => { (container.querySelector('[data-graph-node="child-0"]') as HTMLElement).click() })
+    expect(document.querySelector('[data-dsh-ctx-entry="agent"]')).toBeNull()
+    await act(async () => { unmount() })
+  })
+
+  it("opens a CHILD node's conversation from its card, addressed by the tree model", async () => {
+    const rendered = pageWithDiagnostics(page)
+    const { container } = rendered
+    const foldToggle = container.querySelector('button[aria-label="展开已完成的节点"]') as HTMLButtonElement
+    await act(async () => { foldToggle.click() })
+    await act(async () => { (container.querySelector('[data-graph-node="child-0"]') as HTMLElement).click() })
+
+    const button = document.querySelector('[data-dsh-ctx-entry="agent"]') as HTMLButtonElement
+    expect(button).not.toBeNull()
+    expect(button.getAttribute('aria-busy')).toBeNull()
+    await act(async () => { button.click() })
+    // The node's OWN address (parent + child + mode), never a guess from the
+    // rendered label.
+    expect(rendered.controller.opens).toEqual([{
+      sessionId: 'child-0',
+      label: '子代理 0',
+      address: { parentSessionId: 'root', childSessionId: 'child-0', mode: 'one-shot' },
+    }])
+    expect(button.isConnected, 'the source overlay must close after dispatch').toBe(false)
+    await act(async () => { rendered.unmount() })
+  })
+
+  it('addresses the ROOT node by its session id (the root has no child address)', async () => {
+    const rendered = pageWithDiagnostics(page)
+    await act(async () => {
+      (rendered.container.querySelector('[data-graph-node="root"]') as HTMLElement).click()
+    })
+    const button = document.querySelector('[data-dsh-ctx-entry="agent"]') as HTMLButtonElement
+    expect(button).not.toBeNull()
+    await act(async () => { button.click() })
+    expect(rendered.controller.opens).toEqual([{ sessionId: 'root', label: '主会话' }])
+    await act(async () => { rendered.unmount() })
+  })
+
+  it('addresses a job by its OWNER resolved in the tree, never by the watched roster key', async () => {
+    // The roster announces the job under `root` (the watched session) while the
+    // job's owner is `child-0`: the button must target the owner's node —
+    // addressed by the model — and the roster key must not leak into it.
+    jobsFake.emit({
+      rows: {
+        root: [{
+          id: 'bash-9', kind: 'bash', label: 'echo owned', status: 'running', startedAt: 1_000, owner: 'child-0',
+        }],
+      },
+    })
+    const rendered = pageWithDiagnostics(page)
+    await flushJobs()
+    // The owner node has to be ON the page: a folded-away node is not part of
+    // the model, and the page never addresses a conversation it does not show.
+    await act(async () => {
+      (rendered.container.querySelector('button[aria-label="展开已完成的节点"]') as HTMLButtonElement).click()
+    })
+    const row = rendered.container.querySelector('button[aria-label*="echo owned"]') as HTMLButtonElement
+    await act(async () => { row.click() })
+
+    const button = document.querySelector('[data-dsh-ctx-entry="job"]') as HTMLButtonElement
+    expect(button).not.toBeNull()
+    await act(async () => { button.click() })
+    expect(rendered.controller.opens).toEqual([{
+      sessionId: 'child-0',
+      label: '子代理 0',
+      address: { parentSessionId: 'root', childSessionId: 'child-0', mode: 'one-shot' },
+    }])
+    expect(button.isConnected, 'the source overlay must close after dispatch').toBe(false)
+    await act(async () => { rendered.unmount() })
+  })
+
+  it('offers no job entry point while the owning node is not on the page', async () => {
+    // The owner is a real tree member, but FOLDED away: the model has no node
+    // for it, so the window has nothing to address. Unfolding the node brings
+    // the control back — the entry point follows the model, not the roster.
+    jobsFake.emit({
+      rows: {
+        root: [{
+          id: 'bash-8', kind: 'bash', label: 'folded owner job', status: 'running', startedAt: 1_000, owner: 'child-0',
+        }],
+      },
+    })
+    const rendered = pageWithDiagnostics(page)
+    await flushJobs()
+    const row = rendered.container.querySelector('button[aria-label*="folded owner job"]') as HTMLButtonElement
+    await act(async () => { row.click() })
+    expect(document.querySelector('[data-dsh-ctx-entry="job"]')).toBeNull()
+    expect(rendered.controller.opens).toEqual([])
+
+    const foldToggle = rendered.container.querySelector('button[aria-label="展开已完成的节点"]') as HTMLButtonElement
+    await act(async () => { foldToggle.click() })
+    const button = document.querySelector('[data-dsh-ctx-entry="job"]') as HTMLButtonElement
+    expect(button, 'the owner is on the page now').not.toBeNull()
+    await act(async () => { button.click() })
+    expect(rendered.controller.opens).toEqual([{
+      sessionId: 'child-0',
+      label: '子代理 0',
+      address: { parentSessionId: 'root', childSessionId: 'child-0', mode: 'one-shot' },
+    }])
+    expect(button.isConnected, 'the source overlay must close after dispatch').toBe(false)
+    await act(async () => { rendered.unmount() })
+  })
+
+  it('never diagnoses the watching session for an unowned job', async () => {
+    const rendered = pageWithDiagnostics(page)
+    await flushJobs()
+    const row = rendered.container.querySelector('button[aria-label*="sleep 300"]') as HTMLButtonElement
+    await act(async () => { row.click() })
+    expect(document.querySelector('[data-dsh-ctx-entry="job"]')).toBeNull()
+    expect(rendered.controller.opens).toEqual([])
+    expect(jobsFake.observations).toContainEqual({ sessionId: 'root', jobId: 'bash-1' })
+    await act(async () => { rendered.unmount() })
+  })
+
+  it('hides the job entry point while the controller reports the capability unavailable', async () => {
+    jobsFake.emit({ rows: { root: [{ id: 'bash-1', kind: 'bash', label: 'sleep 300', status: 'running', startedAt: 1_000, owner: 'root' }] } })
+    const rendered = pageWithDiagnostics(page, { available: false, busy: false })
+    await flushJobs()
+    const row = rendered.container.querySelector('button[aria-label*="sleep 300"]') as HTMLButtonElement
+    await act(async () => { row.click() })
+    expect(document.querySelector('[data-dsh-ctx-entry="job"]')).toBeNull()
+    await act(async () => { rendered.unmount() })
+  })
+
+  it('disables every entry point while an open is in flight', async () => {
+    jobsFake.emit({ rows: { root: [{ id: 'bash-1', kind: 'bash', label: 'sleep 300', status: 'running', startedAt: 1_000, owner: 'root' }] } })
+    const rendered = pageWithDiagnostics(page, { available: true, busy: true })
+    await flushJobs()
+    const row = rendered.container.querySelector('button[aria-label*="sleep 300"]') as HTMLButtonElement
+    await act(async () => { row.click() })
+    const button = document.querySelector('[data-dsh-ctx-entry="job"]') as HTMLButtonElement
+    expect(button).not.toBeNull()
+    expect(button.disabled).toBe(true)
+    expect(button.getAttribute('aria-busy')).toBe('true')
+    await act(async () => { button.click() })
+    expect(rendered.controller.opens).toEqual([])
+    await act(async () => { rendered.unmount() })
   })
 })

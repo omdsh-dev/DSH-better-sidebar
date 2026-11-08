@@ -280,6 +280,11 @@ const LANGS: Readonly<Record<string, LangConfig>> = {
   cts: C_FAMILY(TS_WORDS),
   jsonc: CONFIG_LANG,
   json5: CONFIG_LANG,
+  // Newline-delimited JSON diffs with the JSON config highlighter: the diff
+  // renderer works line by line already, so the JSONL editor's own per-line
+  // tokenizer would add nothing here.
+  jsonl: CONFIG_LANG,
+  ndjson: CONFIG_LANG,
   html: MARKUP_LANG,
   htm: MARKUP_LANG,
   xml: MARKUP_LANG,

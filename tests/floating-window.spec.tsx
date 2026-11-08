@@ -15,6 +15,10 @@ import { createElement, createRef, type RefObject } from 'react'
 import { act } from 'react-dom/test-utils'
 import { renderRoot, setupReactAct } from './test-utils.ts'
 import { FloatingWindow } from '../src/client/FloatingWindow.tsx'
+import {
+  setViewportInsetSourceForTests,
+  type WindowControlsOverlayLike,
+} from '../src/client/viewport-inset.ts'
 
 setupReactAct()
 
@@ -57,6 +61,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  setViewportInsetSourceForTests(undefined)
   vi.unstubAllGlobals()
   for (const el of document.querySelectorAll('body > div')) el.remove()
 })
@@ -67,12 +72,14 @@ function renderWindow(props: {
   bodyRef?: RefObject<HTMLDivElement>
   footer?: boolean
   actions?: boolean
+  initialSize?: { width: number; height: number }
 } = {}) {
   const rendered = renderRoot(createElement(FloatingWindow, {
     title: 'bash-1',
     onClose: () => { closed += 1 },
     ...(props.anchor === undefined ? {} : { anchor: props.anchor }),
     ...(props.bodyRef === undefined ? {} : { bodyRef: props.bodyRef }),
+    ...(props.initialSize === undefined ? {} : { initialSize: props.initialSize }),
     ...(props.footer === true ? { footer: createElement('button', { type: 'button' }, 'stop') } : {}),
     ...(props.actions === true ? { actions: createElement('button', { type: 'button' }, 'copy') } : {}),
     children: createElement('div', null, 'line 1'),
@@ -239,6 +246,112 @@ describe('FloatingWindow gestures', () => {
     })
     expect(box().left).toBe(before.left)
     expect(box().top).toBe(before.top)
+    unmount()
+  })
+})
+
+/** A controllable Window Controls Overlay: the shell's native control band. */
+function overlayBand(height: number, visible = true): {
+  source: WindowControlsOverlayLike
+  set(next: number): void
+  emit(): void
+} {
+  let band = height
+  const listeners = new Set<() => void>()
+  return {
+    source: {
+      get visible() { return visible },
+      getTitlebarAreaRect: () => ({ x: 0, y: 0, width: 1_000, height: band }),
+      addEventListener: (_type, listener) => { listeners.add(listener) },
+      removeEventListener: (_type, listener) => { listeners.delete(listener) },
+    },
+    set(next) { band = next },
+    emit() { for (const listener of listeners) listener() },
+  }
+}
+
+/** Drag the title bar into the top-left corner (the clamp's tightest case). */
+function dragToTopLeft(): void {
+  const handle = frame().querySelector('[data-window-handle]') as HTMLElement
+  act(() => {
+    pointer(handle, 'pointerdown', 500, 100)
+    pointer(window, 'pointermove', -5_000, -5_000)
+    pointer(window, 'pointerup', -5_000, -5_000)
+  })
+}
+
+/**
+ * The desktop shell paints its native window controls OVER the viewport's top
+ * band and the page never sees those pointer events (issue #805 measured it).
+ * A floating window whose title bar lands there reads as unclosable: the Tasks
+ * detail window's × was the report that started this.
+ */
+describe('FloatingWindow keeps its title bar out of the native control band', () => {
+  it('lifts an anchored window below the band', () => {
+    setViewportInsetSourceForTests(overlayBand(44).source)
+    const anchor = document.createElement('button')
+    document.body.append(anchor)
+    anchor.getBoundingClientRect = () => ({
+      left: 100, top: 0, right: 200, bottom: 20, width: 100, height: 20,
+      x: 100, y: 0, toJSON: () => ({}),
+    }) as DOMRect
+    const { unmount } = renderWindow({ anchor })
+    // Without the band the anchor would place it at 26; the floor is 8 + 44.
+    expect(box().top).toBe(52)
+    unmount()
+  })
+
+  it('never drags the window into the band', () => {
+    setViewportInsetSourceForTests(overlayBand(44).source)
+    const { unmount } = renderWindow()
+    dragToTopLeft()
+    expect(box().top).toBe(52)
+    unmount()
+  })
+
+  it('lifts an already-placed window when the band appears', () => {
+    const band = overlayBand(0)
+    setViewportInsetSourceForTests(band.source)
+    const { unmount } = renderWindow()
+    dragToTopLeft()
+    expect(box().top).toBe(8)
+    act(() => { band.set(44); band.emit() })
+    expect(box().top).toBe(52)
+    unmount()
+  })
+
+  it('does not pull the window back up when the band disappears', () => {
+    // Deliberate: a window the reader placed must not jump on maximize/restore;
+    // the floor only ever guarantees "not inside the band".
+    const band = overlayBand(44)
+    setViewportInsetSourceForTests(band.source)
+    const { unmount } = renderWindow()
+    dragToTopLeft()
+    expect(box().top).toBe(52)
+    act(() => { band.set(0); band.emit() })
+    expect(box().top).toBe(52)
+    unmount()
+  })
+
+  it('caps the height so a tall window still clears the band', () => {
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 400 })
+    setViewportInsetSourceForTests(overlayBand(44).source)
+    const { unmount } = renderWindow({ initialSize: { width: 600, height: 500 } })
+    const current = box()
+    // Asked for 500 but only 400 - 52 (band) - 8 (margin) fits.
+    expect(current.height).toBe(340)
+    expect(current.top).toBe(52)
+    expect(current.top + current.height).toBe(392)
+    unmount()
+  })
+
+  it('leaves plain browsers untouched when the overlay is a ghost', () => {
+    // Headless Chromium and some macOS builds expose the interface with
+    // `visible: false`: no band, so the old 8px floor must stay exact.
+    setViewportInsetSourceForTests(overlayBand(44, false).source)
+    const { unmount } = renderWindow()
+    dragToTopLeft()
+    expect(box().top).toBe(8)
     unmount()
   })
 })

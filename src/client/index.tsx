@@ -13,6 +13,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import type { Context } from '../context-types.ts'
 import { createSidebarStore } from './state.ts'
 import { createBetterSidebarService, matchUrlTarget } from './service.ts'
+import { disposeSidechatSurfaces } from './sidechat-surface.ts'
 import { revalidateChunksOnReactivate, setChunkModuleSystem } from './chunk-loader.ts'
 import { registerBuiltins } from './builtins/index.ts'
 import { Sidebar } from './Sidebar.tsx'
@@ -20,10 +21,13 @@ import { RenderBoundary } from './RenderBoundary.tsx'
 import { createNativeTabRecords } from './native/tab-adapter.tsx'
 import { registerNativeSurface } from './native/index.ts'
 import { registerBottomToggle } from './sidebar/bottom-toggle.tsx'
+import { ContextDiagnosticsHost, createContextDiagnosticsHost, registerContextDiagnosticsUI } from './context-diagnostics-ui.tsx'
 import { createNativeSurface } from './native/surface.ts'
 import { isTargetAvailable, openInterceptedLink, registerLinkInterception, shouldTakeOverLink } from './link-intercept.ts'
 import { registerImeGuard } from './ime-guard.ts'
-import { registerSettingsNavIcon } from './settings-nav-icon.ts'
+import { registerQuoteSource } from './selection-quote.ts'
+import { IconSideCardNav } from './icons.tsx'
+import type { SettingsSectionIconOwnerProps } from '@deepseek-ai/dsh-client-ui-settings/client'
 import { loadBootDecision } from './prefs.ts'
 import { SideCardSection } from './SideCardSection.tsx'
 import { api } from './api.ts'
@@ -169,6 +173,7 @@ export function apply(ctx: Context): void {
   // are ready by the time the sidebar renders.
   const service = createBetterSidebarService(sidebarStore)
   ctx.provide('betterSidebar', service)
+  ctx.effect(() => () => { disposeSidechatSurfaces(service) }, 'dsh-better-sidebar: sidechat surface adapters')
   // The native right-Sidebar surface: the plugin's content is registered as
   // DSH tab types (one per descriptor) and every open routes there, so the
   // right column belongs to the host and only the bottom workbench stays
@@ -176,9 +181,17 @@ export function apply(ctx: Context): void {
   const nativeRecords = createNativeTabRecords()
   const nativeSurface = createNativeSurface(ctx, nativeRecords)
   service.setSurface(nativeSurface)
+  // The optional dsh-context diagnostics: ONE controller per activation. It
+  // re-proves the optional runtime faces itself, so the plugin needs no new
+  // inject entry; it is threaded explicitly into the three consumers (the two
+  // host slots by closure, the plugin's own React tree through the provider,
+  // and the native tab bodies through the native surface's deps). On a
+  // deployment without dsh-context it reports `available: false` and every
+  // entry point stays absent.
+  const diagnostics = createContextDiagnosticsHost(ctx)
   ctx.effect(
     () => registerNativeSurface({
-      ctx, store: sidebarStore, service, records: nativeRecords,
+      ctx, store: sidebarStore, service, records: nativeRecords, diagnostics,
       reportFailure: (phase, error) => { fail(`native ${phase}`, error) },
     }),
     'dsh-better-sidebar: native right-Sidebar registrations',
@@ -193,12 +206,28 @@ export function apply(ctx: Context): void {
     () => () => { nativeSurface.dispose(); service.setSurface(undefined) },
     'dsh-better-sidebar: native right-Sidebar surface',
   )
+  ctx.effect(
+    () => registerContextDiagnosticsUI(ctx, diagnostics),
+    'dsh-better-sidebar: context diagnostics surfaces',
+  )
+  // The controller holds a child fiber (its runtime-face integration) and a
+  // pending-open timer; releasing both is what keeps a disabled plugin — and a
+  // hot reload that activates a fresh one — from leaving the old one behind.
+  ctx.effect(() => () => { diagnostics.dispose() }, 'dsh-better-sidebar: context diagnostics controller')
   // Register the plugin's own built-in tabs and viewers through the same
   // service (eating our own dogfood). The disposer unregisters them on
   // fiber disposal (HMR-safe).
   ctx.effect(
     () => registerBuiltins(ctx, service),
     'dsh-better-sidebar: register built-in tabs and viewers',
+  )
+  // The quote chip's input-trigger source ("add selection to conversation"):
+  // it answers chip clicks (open the quoted lines) and send-time
+  // serialization. Waits briefly for the host's input-trigger service; without
+  // it the popup keeps #1052's plain reference chip.
+  ctx.effect(
+    () => registerQuoteSource(ctx),
+    'dsh-better-sidebar: quote-chip input-trigger source',
   )
   try {
     // rc.8+ exposes the client module system as the `ctx.modules` service;
@@ -254,9 +283,20 @@ export function apply(ctx: Context): void {
           hostCheckFrame = null
           const layer = host?.querySelector<HTMLElement>('[data-dsh-panel-host]')
           if (layer === null || layer === undefined) return
+          // Viewport height units are scaled by CSS zoom even though the
+          // fixed inset width still fits the viewport. Only normalize that
+          // expected height; rect/offset ratios would also hide real transforms.
+          const expectedHeight = (): number => {
+            let zoom = 1
+            for (let node: HTMLElement | null = layer; node !== null; node = node.parentElement) {
+              const value = Number.parseFloat(getComputedStyle(node).zoom)
+              if (Number.isFinite(value) && value > 0) zoom *= value
+            }
+            return window.innerHeight * zoom
+          }
           const rect = layer.getBoundingClientRect()
           const mismatched = Math.abs(rect.left) > 8 || Math.abs(rect.top) > 8
-            || Math.abs(rect.width - window.innerWidth) > 8 || Math.abs(rect.height - window.innerHeight) > 8
+            || Math.abs(rect.width - window.innerWidth) > 8 || Math.abs(rect.height - expectedHeight()) > 8
           if (!mismatched) {
             layer.removeAttribute('data-dsh-panel-host-degraded')
             layer.style.transform = ''
@@ -275,7 +315,7 @@ export function apply(ctx: Context): void {
             const rawLeft = r.left - applied.x
             const rawTop = r.top - applied.y
             if (Math.abs(rawLeft) <= 1 && Math.abs(rawTop) <= 1
-              && Math.abs(r.width - window.innerWidth) <= 1 && Math.abs(r.height - window.innerHeight) <= 1) {
+              && Math.abs(r.width - window.innerWidth) <= 1 && Math.abs(r.height - expectedHeight()) <= 1) {
               layer.removeAttribute('data-dsh-panel-host-degraded')
               layer.style.transform = ''
               return
@@ -297,7 +337,15 @@ export function apply(ctx: Context): void {
           host.setAttribute('data-dsh-better-sidebar', '')
           document.body.appendChild(host)
           root = createRoot(host)
-          root.render(createElement(RenderBoundary, { className: css.boundaryError }, createElement(Sidebar, { ctx, store: sidebarStore })))
+          root.render(createElement(
+            RenderBoundary,
+            { className: css.boundaryError },
+            createElement(
+              ContextDiagnosticsHost,
+              { controller: diagnostics },
+              createElement(Sidebar, { ctx, store: sidebarStore }),
+            ),
+          ))
           mounted = true
           guardAnchor()
           scheduleHostCheck()
@@ -415,15 +463,19 @@ export function apply(ctx: Context): void {
       'dsh-better-sidebar: IME composition guard',
     )
 
-    // DSH 0.1.x does not yet carry an icon through the settings.section
-    // registration contract: its shell renders a generic gear for every
-    // external section. Mark only this plugin's localized nav row so
-    // layout.css can paint the requested Side card SVG; the disposer clears
-    // the marker for HMR / plugin disable.
-    ctx.effect(
-      () => registerSettingsNavIcon(() => t('settingsNav')),
-      'dsh-better-sidebar: settings navigation icon',
-    )
+    // The settings nav icon, contributed through the shell's own slot. The
+    // contract addresses an icon by the section id (an unmatched id never
+    // renders) and says the shell keeps its default glyph when none is
+    // registered — so filling the slot REPLACES the fallback. The old
+    // marker-and-CSS-mask replacement is gone with it: under the current shell
+    // the nav icon is wrapped in a span, the stale `> svg:first-child` rule
+    // stopped hiding the fallback and the row painted two glyphs.
+    ctx.slots.inject('settings.section.icon', () => ctx.slots.register({
+      name: 'settings.section.icon',
+      id: 'better-sidebar',
+      order: 100,
+      label: () => t('settingsNav'),
+    }, ({ size }: SettingsSectionIconOwnerProps) => createElement(IconSideCardNav, { size })))
 
     // The "Side card" settings section: appears in the DSH Settings shell
     // once the shell's declaration is on the ledger (slots.inject waits for

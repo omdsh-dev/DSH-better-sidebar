@@ -25,8 +25,19 @@
 
 /** A backtick or tilde fence: three or more, at up to three spaces of indent. */
 const FENCE_RE = /^ {0,3}(`{3,}|~{3,})([^\n]*)$/gm
-/** An inline code span: a backtick run, then the next run of the SAME length. */
-const CODE_SPAN_RE = /(`+)[\s\S]*?\1/g
+/**
+ * An inline code span: a backtick run, then the next run of the SAME length.
+ *
+ * A span is INLINE, so it may wrap a line ending but never a blank line — that
+ * ends the paragraph. Without the bound, one stray backtick paired with a run
+ * half a document later: the "span" then covered whole sections (and, after
+ * the fence pass, the fence placeholders inside them), so the image/link
+ * rewrites skipped every destination in that region — and a single-pass
+ * restore could not put the swallowed fences back (see
+ * {@link maskCodeRegions}). CRLF documents spell the blank line `\r\n\r\n`,
+ * so the `\r` is allowed too.
+ */
+const CODE_SPAN_RE = /(`+)(?:(?!\n[ \t\r]*\n)[\s\S])*?\1/g
 
 /** A masked region's placeholder: NUL + index + NUL. */
 // eslint-disable-next-line no-control-regex -- NUL is the deliberate mask sentinel (cannot appear in source markdown)
@@ -51,7 +62,7 @@ function fenceRun(line: string): { marker: string; length: number } | null {
  *  The tail may carry a CRLF terminator: `\r` is the line's ending, not
  *  content, and reading it as content left every fence in a CRLF document
  *  unclosed — the masked region then ran to the end of the file and the link /
- *  image passes skipped everything after the first fence. */
+ *  rewrite passes skipped everything after the first fence. */
 function closesFence(line: string, marker: string, length: number): boolean {
   if (line.charAt(0) !== marker) return false
   let run = 0
@@ -131,6 +142,22 @@ export function maskCodeRegions(text: string): MaskedCodeRegions {
 
   return {
     masked,
-    restore: (value: string): string => value.replace(MASK_RE, (_m, index: string) => masks[Number(index)] ?? ''),
+    // Masks can NEST: the inline-span pass scans the already fence-masked
+    // text, so a span that wraps a fence placeholder captures it, and
+    // restoring that span puts the inner placeholder back into the output.
+    // `String#replace` never rescans its own output, so a single pass left
+    // those placeholders in the text — a NUL that reaches the renderer is
+    // swallowed by the markdown parser as U+FFFD, which is how a previewed
+    // document lost whole code blocks to literal `�17�` placeholders.
+    // Each pass unwraps one nesting level; depth is bounded by the mask count.
+    restore: (value: string): string => {
+      let restored = value
+      for (let pass = 0; pass <= masks.length; pass += 1) {
+        const next = restored.replace(MASK_RE, (_m, index: string) => masks[Number(index)] ?? '')
+        if (next === restored) return restored
+        restored = next
+      }
+      return restored
+    },
   }
 }
