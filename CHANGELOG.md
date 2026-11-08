@@ -42,6 +42,8 @@
 - 🧪 测试：`tests/file-stream-route.spec.ts` 新增 Range 真机用例（窗口 / 后缀 / 越界钳制 / 416 / 回退 200 / 视频 MIME）与 `byteRangeOf` 单测；`tests/builtins.spec.ts` 钉住 `media` 的认领面与 `mediaUrl` 策略；`tests/smoke.spec.ts` 钉住媒体 MIME 表；`tests/locales.spec.ts` 的 21 种语言键集对齐覆盖新增 `viewerMedia` / `mediaUnplayable`。
 
 
+- 🧭 **Diff/内容视图补上「在资源管理器中定位 / 在应用中打开」出口**（[#1092](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1092)）：从对话 diff 卡片进入的文件视图不再是死胡同；宿主可打开本地路径时，页头在刷新/展开旁提供这两个入口，不可用的部署不显示死按钮。
+
 ### v0.30.1
 
 - 🎯 **设置页「侧边卡片」的导航图标不再叠成两个**：插件此前按"宿主设置导航还没有图标通道"的老假设，用 CSS 把兜底齿轮藏起来、再画自己的图标；宿主早已提供按 section id 寻址的 `settings.section.icon` 插槽，而且图标的 DOM 外面多了一层 span，老选择器失效后兜底 SVG 露了出来，与插件图标并排显示。现在改为**走宿主插槽**提供图标，删掉标记 + CSS 遮罩那一套（顺带去掉了一个监听整个 document 的 MutationObserver）。

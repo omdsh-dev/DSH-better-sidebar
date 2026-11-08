@@ -17,7 +17,7 @@
  * the pane is byte-for-byte the strip-less preview of before.
  */
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
-import { IconCloseOutlineRegular, IconRefreshOutlineRegular, IconRightUpOutlineRegular, MarkdownDelegateProvider, MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconCloseOutlineRegular, IconFolderOpenOutlineRegular, IconRefreshOutlineRegular, IconRightUpOutlineRegular, IconShareOutlineRegular, MarkdownDelegateProvider, MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context } from '../../context-types.ts'
 import type { SessionScope } from '../api.ts'
 import { api, htmlUrl } from '../api.ts'
@@ -38,6 +38,7 @@ import { parseReadContent, parseReadLines, type FileOp } from './ops.ts'
 import { redactText } from '../redact.ts'
 import { createMarkdownPathImages } from '../markdown-images.ts'
 import { markdownTextProps } from '../markdown-labels.tsx'
+import { createOpenInApp } from '../open-in-app.ts'
 import { useMarkdownSurface } from '../use-markdown-surface.ts'
 import { splitMermaidBlocks } from '../mermaid-blocks.ts'
 import { LazyMermaidMarkdown } from '../mermaid-lazy.tsx'
@@ -258,6 +259,25 @@ export function DiffPane({ target, ctx, scope, height, onHeightCommit, onClose, 
    *  content view, and the only one carrying a `path`). */
   const gitWorktree = gitRef !== null && gitRef.kind === 'worktree' ? gitRef : null
   const { loading, error, diffText, untracked, refresh, resolveFold } = useGitDiffTarget(gitRef, scope)
+  /** The host's "open / reveal outside the GUI" capability. Probed once per
+   *  pane: a desktop-less deployment hides the two exits instead of offering
+   *  dead buttons. */
+  const openInApp = useMemo(() => createOpenInApp(ctx), [ctx])
+  const [appReady, setAppReady] = useState(() => openInApp.available() === true)
+  useEffect(() => {
+    const known = openInApp.available()
+    if (known !== null) {
+      setAppReady(known)
+      return
+    }
+    let cancelled = false
+    void openInApp.probe().then((ok) => {
+      if (!cancelled) setAppReady(ok)
+    }).catch(() => {
+      if (!cancelled) setAppReady(false)
+    })
+    return () => { cancelled = true }
+  }, [openInApp])
 
   // ── The pane's views, resolved BEFORE anything loads: which tabs exist and
   //    which one is on screen. Computed from raw target facts (`kind` and
@@ -608,6 +628,22 @@ export function DiffPane({ target, ctx, scope, height, onHeightCommit, onClose, 
               icon={<IconRightUpOutlineRegular size={14} />}
               label={t('changesOpenDiffTab')}
               onClick={onExpand}
+            />
+          </>
+        )}
+        {contentAbs !== '' && appReady && (
+          <>
+            <IconButton
+              size="sm"
+              icon={<IconFolderOpenOutlineRegular size={14} />}
+              label={t('editorOpenInFileManager')}
+              onClick={() => { void openInApp.reveal(contentAbs) }}
+            />
+            <IconButton
+              size="sm"
+              icon={<IconShareOutlineRegular size={14} />}
+              label={t('openWithMenu')}
+              onClick={() => { void openInApp.open(contentAbs) }}
             />
           </>
         )}

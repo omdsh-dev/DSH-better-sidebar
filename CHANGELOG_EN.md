@@ -42,6 +42,8 @@
 - 🧪 Tests: `tests/file-stream-route.spec.ts` gains real-server Range cases (window / suffix / clamp / 416 / 200 fallback / video MIME) plus `byteRangeOf` unit tests; `tests/builtins.spec.ts` pins the `media` claim surface and its `mediaUrl` strategy; `tests/smoke.spec.ts` pins the media MIME table; the 21-language key-set equality in `tests/locales.spec.ts` covers the new `viewerMedia` / `mediaUnplayable` keys.
 
 
+- 🧭 **The Diff/content view now offers reveal-in-file-manager and open-in-app exits** ([#1092](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1092)): a file reached from a chat diff card is no longer a dead end. When the host can open workspace paths, the pane header shows both controls next to refresh/expand; desktop-less deployments hide them instead of offering dead buttons.
+
 ### v0.30.1
 
 - 🎯 **The "Side card" settings row no longer shows two icons**: the plugin still assumed the settings navigation had no icon channel, so it hid the fallback gear with CSS and painted its own glyph. The shell has long since exposed a `settings.section.icon` slot addressed by section id, and it now wraps the nav icon in a span — the stale `> svg:first-child` rule stopped hiding the fallback, so both glyphs rendered side by side. The row now contributes its icon **through the slot**, and the marker + CSS-mask apparatus is gone (along with a document-wide MutationObserver).
