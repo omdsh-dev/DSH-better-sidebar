@@ -416,7 +416,7 @@ describe('/sidebar/write route', () => {
       const firstLine = 'a'.repeat(5000)
       writeFileSync(target, `${firstLine}\r\nb\r\n`)
       const route = mountApi(workspace)
-      const result = await invoke(route, 'fs.write', {
+      const result = await invokeWrite(route, {
         sessionId: 's',
         path: target,
         content: `${firstLine}\nb edited\n`,
@@ -426,7 +426,7 @@ describe('/sidebar/write route', () => {
       expect(written).toBe(`${firstLine}\nb edited\n`)
       expect(written).not.toContain('\r')
     } finally {
-      rmSync(root, { recursive: true, force: true })
+      removeTree(root)
     }
   })
 
