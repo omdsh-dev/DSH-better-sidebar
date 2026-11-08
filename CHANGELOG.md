@@ -32,7 +32,7 @@
 - 🔍 **mermaid 放大视图只缩放图内容**（[#829](https://github.com/omdsh-dev/DSH-better-sidebar/pull/829)）：白卡固定在视口、打开即适配，滚轮与拖拽不再连白边一起放大。
 
 - 🧩 **编辑器头部也能挂外部按钮了（`registerTabAction`，新能力 `'tabActions'`）**：文件 tab 进的是本插件的 `editor` / `code` 视图，宿主的 `sidebar.right.tab.document.actions` 插槽属于**宿主自己的**文档预览面，于是「上传到云端」「存到云盘」「在 App 中打开」这类由宿主插槽承载的按钮会整体消失（用户实测：禁用本插件后按钮才出现）。现在 `ctx.betterSidebar.registerTabAction({ id, label, title, icon, order, when, run })` 在刷新与文件树开关右侧加按钮：回调拿到 `tabId / tabType / sessionId / path / isDir / title` 与一个 `fail` 出口，失败落进编辑器上方的错误条，同一 (id, tabId) 在飞行中的重复点击被忽略，`when` 抛错只隐藏该注册。说明与「这一面为什么需要自己的扩展点」写进[指南 §7.4](docs/external-plugin-guide.md)。
-  - 🧪 测试：新增 `tests/tab-actions.spec.tsx`（9 例：能力声明与初始为空、注册序 = order 升序 + 注册序、重复 id 抛错、旧 disposer 不能拆掉新注册、dispose 清表、头部渲染与 run 上下文、挂载后注册的按钮会补上、`when` 过滤与抛错隔离、失败进错误条）。
+  - 🧪 测试：新增 `tests/tab-actions.spec.tsx`（10 例：能力声明与初始为空、注册序 = order 升序 + 注册序、重复 id 抛错、旧 disposer 不能拆掉新注册、dispose 清表、头部渲染与 run 上下文、挂载后注册的按钮会补上、`when` 过滤与抛错隔离、异步执行中重复点击被忽略、失败进错误条）。
 
 - 🧩 **插件可以往文件树的行菜单里加自己的动作（`registerFileAction`，新能力 `'fileActions'`）**：此前文件树的右键菜单完全由插件自己组装（打开方式 / 下载 / 上传到此目录 / 复制 / 重命名 / 删除），外部插件没有任何位置能加一项——「把这个文件传到我的云端」这类入口只能另开界面。现在 `ctx.betterSidebar.registerFileAction({ id, label, icon, row, dirs, order, when, run })` 注册的项排在内置打开/下载行之后、复制/重命名之前；`row: true` 再在行右侧「引用」按钮旁加一个悬停按钮（要求同时给 `icon`）。回调拿到的是行的**绝对路径**加上这棵树的根与会话，失败按既有策略落进文件树的错误条（`run` 抛错即 `error.message`），**树只提供入口，不替注册方上传、复制或移动任何东西**；同一 (id, path) 在飞行中的重复点击会被忽略。`when` 抛错只隐藏该注册，不打断文件树。接入面与两条约定写进[指南 §7.3](docs/external-plugin-guide.md)。
   - 🧪 测试：新增 `tests/file-actions.spec.tsx`（12 例：注册序 = order 升序 + 注册序、重复 id 抛错、旧 disposer 不能拆掉新注册、菜单位置、绝对路径/根/会话、目录默认不认领、`when` 判定与抛错隔离、悬停按钮与 `title`/`aria-label`、无图标只进菜单、reject 落错误条且成功静默）。

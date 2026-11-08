@@ -120,7 +120,7 @@ If something fails, check the FAQ table in https://github.com/omdsh-dev/DSH-bett
 
 ## 🔌 Plugin Ecosystem
 
-`ctx.betterSidebar` offers five extension points to every plugin — `registerTab` / `registerFileViewer` / `registerFileIcon` / `registerFileAction` / `registerTabAction`; the built-in 6 tabs + 4 viewers use the very same API. The GitHub topic [`dsh-better-sidebar`](https://github.com/topics/dsh-better-sidebar) already lists **30+ ecosystem plugins**; the full integration guide is at **[docs/external-plugin-guide.md](./docs/external-plugin-guide.md)**.
+`ctx.betterSidebar` offers five extension points to every plugin — `registerTab` / `registerFileViewer` / `registerFileIcon` / `registerFileAction` / `registerTabAction`; the built-in 6 tabs + 5 viewers use the very same API. The GitHub topic [`dsh-better-sidebar`](https://github.com/topics/dsh-better-sidebar) already lists **30+ ecosystem plugins**; the full integration guide is at **[docs/external-plugin-guide.md](./docs/external-plugin-guide.md)**.
 
 ```ts
 import type {} from 'dsh-better-sidebar'  // triggers the ctx.betterSidebar type merge
