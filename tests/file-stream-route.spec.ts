@@ -167,7 +167,7 @@ describe('/sidebar/file streams without a size cap', () => {
     expect(response.headers.get('referrer-policy')).toBe('no-referrer')
   })
 
-  it.each(['html', 'htm', 'HTML', 'bin'])('keeps arbitrary file previews in an opaque origin (%s)', async extension => {
+  it.each(['html', 'htm', 'HTML'])('keeps scriptable file previews in an opaque origin (%s)', async extension => {
     const ws = workspace('opaque-preview')
     const target = join(ws, `preview.${extension}`)
     writeFileSync(target, '<script>window.fixture = true</script>')
@@ -180,6 +180,22 @@ describe('/sidebar/file streams without a size cap', () => {
     expect(response.headers.get('x-content-type-options')).toBe('nosniff')
     expect(response.headers.get('referrer-policy')).toBe('no-referrer')
     expect(await response.text()).toContain('window.fixture')
+  })
+
+  it.each(['png', 'bin'])('keeps an inert preview free of the CSP sandbox (%s)', async extension => {
+    // The guard is scoped to scriptable documents: a PNG/unknown binary must
+    // not gain a sandbox directive (nothing to sandbox, and it would be a
+    // behaviour change for existing image previews). nosniff is the real
+    // protection there, and it stays on every response.
+    const ws = workspace('inert-preview')
+    const target = join(ws, `preview.${extension}`)
+    writeFileSync(target, '<script>window.fixture = true</script>')
+    const { origin } = await serve(ws)
+    const response = await fetch(fileUrl(origin, ws, target))
+    expect(response.status).toBe(200)
+    expect(response.headers.get('content-security-policy')).toBeNull()
+    expect(response.headers.get('x-content-type-options')).toBe('nosniff')
+    expect(response.headers.get('referrer-policy')).toBe('no-referrer')
   })
 
   it('answers the JSON error envelope when the file cannot be opened', async () => {

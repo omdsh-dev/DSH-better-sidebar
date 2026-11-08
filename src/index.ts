@@ -1846,22 +1846,21 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
         const type = mediaTypeForPath(path)
         // Raw bytes either way (binary-safe); ?download=1 switches the
         // disposition so the browser saves the file instead of showing it.
+        // Only scriptable DOCUMENT types get an opaque-origin CSP. An inert
+        // image/binary keeps its existing response surface: the CSP sandbox
+        // does nothing for an <img>, and a directly opened image must not gain
+        // a needless behaviour change. nosniff + no-referrer are safe everywhere.
+        const documentType = type === 'text/html' || type === 'application/xhtml+xml' || type === 'image/svg+xml'
         const headers: Record<string, string> = {
           'content-type': type,
           'cache-control': 'no-cache',
-          'content-security-policy': "sandbox allow-scripts allow-popups allow-downloads allow-modals; object-src 'none'",
           'x-content-type-options': 'nosniff',
           'referrer-policy': 'no-referrer',
         }
-        // An SVG is a scriptable DOCUMENT, not an inert image: navigating to
-        // this URL directly would run its <script> in the GUI's origin, with
-        // same-origin access to /sidebar/api/*. The sibling html route already
-        // sandboxes for exactly this reason; mirror it here. The CSP applies
-        // to the document, so <img src> embedding is unaffected.
-        if (type === 'image/svg+xml') {
-          headers['content-security-policy'] = "sandbox; object-src 'none'"
-          headers['x-content-type-options'] = 'nosniff'
-          headers['referrer-policy'] = 'no-referrer'
+        if (documentType) {
+          headers['content-security-policy'] = type === 'image/svg+xml'
+            ? "sandbox; object-src 'none'"
+            : "sandbox allow-scripts allow-popups allow-downloads allow-modals; object-src 'none'"
         }
         if (url.searchParams.get('download') === '1') {
           headers['content-disposition'] = `attachment; filename*=UTF-8''${encodeURIComponent(basename(path))}`
