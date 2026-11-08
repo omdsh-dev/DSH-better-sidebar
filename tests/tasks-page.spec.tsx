@@ -1750,10 +1750,28 @@ describe('Tasks page: node metrics and the sidebar transcript jump', () => {
     expect(aside.opened).toEqual([
       'dsh-resource://subagentchat/session/child-0?parent=root&mode=one-shot',
     ])
-    expect(aside.options[0]).toEqual({ kind: 'subagentchat', preferNewPane: true })
+    // The primary action lands in the CURRENT right-sidebar pane: no split.
+    expect(aside.options[0]).toEqual({ kind: 'subagentchat' })
     expect(navigation.opened).toEqual([])
 
-    // The caret opens the alternative: the main view, through the workspace
+    // The caret keeps the explicit split as a secondary gesture.
+    aside.opened.length = 0
+    aside.options.length = 0
+    const { dialog: splitDialog, unmount: unmountSplit } = await openDetail(
+      makeCtx(makeStore(snapshotWithChildren(1)), navigation, aside),
+    )
+    const splitCaret = [...splitDialog.querySelectorAll('button')]
+      .find(button => button.getAttribute('aria-label') === '在主窗口中打开') as HTMLButtonElement
+    await act(async () => { splitCaret.click() })
+    const splitItem = [...document.querySelectorAll('[role="menuitem"]')]
+      .find(node => node.textContent?.includes('在侧边打开')) as HTMLButtonElement
+    expect(splitItem).toBeDefined()
+    await act(async () => { splitItem.click() })
+    expect(aside.options[0]).toEqual({ kind: 'subagentchat', preferNewPane: true })
+    expect(navigation.opened).toEqual([])
+    unmountSplit()
+
+    // The caret's other alternative: the main view, through the workspace
     // face the shell owns (the old behavior).
     const { dialog: second } = await openDetail(makeCtx(makeStore(snapshotWithChildren(1)), navigation, aside))
     const caret = [...second.querySelectorAll('button')]
