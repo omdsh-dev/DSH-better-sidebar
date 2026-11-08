@@ -44,6 +44,8 @@
 
 - 🧭 **The Diff/content view now offers reveal-in-file-manager and open-in-app exits** ([#1092](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1092)): a file reached from a chat diff card is no longer a dead end. When the host can open workspace paths, the pane header shows both controls next to refresh/expand; desktop-less deployments hide them instead of offering dead buttons.
 
+- ⌨️ **The terminal now supports Ctrl/Cmd+C and Ctrl/Cmd+V copy/paste** ([#1103](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1103)): Ctrl+C copies the selection (and clears it); with no selection it still reaches the shell as SIGINT. Ctrl+V pastes, Ctrl+Shift+C/V works too, and macOS Cmd+C/V follows the same path.
+
 ### v0.30.1
 
 - 🎯 **The "Side card" settings row no longer shows two icons**: the plugin still assumed the settings navigation had no icon channel, so it hid the fallback gear with CSS and painted its own glyph. The shell has long since exposed a `settings.section.icon` slot addressed by section id, and it now wraps the nav icon in a span — the stale `> svg:first-child` rule stopped hiding the fallback, so both glyphs rendered side by side. The row now contributes its icon **through the slot**, and the marker + CSS-mask apparatus is gone (along with a document-wide MutationObserver).

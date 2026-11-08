@@ -44,6 +44,8 @@
 
 - 🧭 **Diff/内容视图补上「在资源管理器中定位 / 在应用中打开」出口**（[#1092](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1092)）：从对话 diff 卡片进入的文件视图不再是死胡同；宿主可打开本地路径时，页头在刷新/展开旁提供这两个入口，不可用的部署不显示死按钮。
 
+- ⌨️ **终端支持 Ctrl/Cmd+C 与 Ctrl/Cmd+V 复制粘贴**（[#1103](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1103)）：有选区时 Ctrl+C 复制并清空选区，没有选区时仍把 Ctrl+C 交给 shell（SIGINT）；Ctrl+V 粘贴，Ctrl+Shift+C/V 同样可用。macOS 的 Cmd+C/V 走同一条路径。
+
 ### v0.30.1
 
 - 🎯 **设置页「侧边卡片」的导航图标不再叠成两个**：插件此前按"宿主设置导航还没有图标通道"的老假设，用 CSS 把兜底齿轮藏起来、再画自己的图标；宿主早已提供按 section id 寻址的 `settings.section.icon` 插槽，而且图标的 DOM 外面多了一层 span，老选择器失效后兜底 SVG 露了出来，与插件图标并排显示。现在改为**走宿主插槽**提供图标，删掉标记 + CSS 遮罩那一套（顺带去掉了一个监听整个 document 的 MutationObserver）。
