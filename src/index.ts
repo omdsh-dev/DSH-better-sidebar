@@ -50,7 +50,7 @@ import { createAssistantLiveBuffer, type AssistantLiveBuffer } from './assistant
 import { readSidechatImage } from './sidechat-routes.ts'
 import { SIDECHAT_METADATA_BYTES, sidechatPromptBodyLimit } from './sidechat-image-admission.ts'
 import { readJsonBody, readTextBody, requireString, SidebarError, writeError, writeJson, writeOk } from './wire.ts'
-import { streamFileToResponse } from './file-stream.ts'
+import { byteRangeOf, streamFileToResponse } from './file-stream.ts'
 import { fileReadError } from './fs-read-error.ts'
 import { createChangesOpsApi } from './changes-ops.ts'
 import { BlockAssembler, createUserMessage, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
@@ -138,6 +138,23 @@ const MEDIA_TYPES: Record<string, string> = {
   '.ttf': 'font/ttf',
   '.otf': 'font/otf',
   '.wasm': 'application/wasm',
+  // Media containers: `<video>` / `<audio>` pick their demuxer from this
+  // header, so a media file answered as octet-stream is a coin flip even when
+  // the browser can decode it. `.ogg` is audio on purpose — a Theora video in
+  // Ogg is vanishingly rare next to Vorbis/Opus audio.
+  '.mp4': 'video/mp4',
+  '.m4v': 'video/mp4',
+  '.webm': 'video/webm',
+  '.ogv': 'video/ogg',
+  '.mov': 'video/quicktime',
+  '.mp3': 'audio/mpeg',
+  '.m4a': 'audio/mp4',
+  '.aac': 'audio/aac',
+  '.wav': 'audio/wav',
+  '.flac': 'audio/flac',
+  '.ogg': 'audio/ogg',
+  '.oga': 'audio/ogg',
+  '.opus': 'audio/ogg',
 }
 
 /** Content type served by /sidebar/file and /sidebar/html; unknowns use a binary-safe fallback. */
@@ -1854,6 +1871,10 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
         const headers: Record<string, string> = {
           'content-type': type,
           'cache-control': 'no-cache',
+          // Advertised on every media response: a media element asks for
+          // `bytes=0-` first, and only a 206 tells it that seeking is a byte
+          // question rather than "download the rest and hope".
+          'accept-ranges': 'bytes',
           'x-content-type-options': 'nosniff',
           'referrer-policy': 'no-referrer',
         }
@@ -1865,9 +1886,21 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
         if (url.searchParams.get('download') === '1') {
           headers['content-disposition'] = `attachment; filename*=UTF-8''${encodeURIComponent(basename(path))}`
         }
+        // A byte window is honoured for ANY file — the media route is the one
+        // place a browser talks HTTP range against this plugin (downloads
+        // resume through it too). Unsatisfiable means the header named a window
+        // past EOF: 416 with `bytes */size` is the RFC 7233 answer, and the
+        // response carries no body.
+        const rawRange = req.headers.range
+        const range = byteRangeOf(typeof rawRange === 'string' ? rawRange : undefined, info.size)
+        if (range === 'unsatisfiable') {
+          res.writeHead(416, { ...headers, 'content-range': `bytes */${info.size}` })
+          res.end()
+          return
+        }
         // Streamed, not buffered: there is no size gate left, and the host's
         // memory stays flat whatever the file weighs (see file-stream.ts).
-        await streamFileToResponse(path, info.size, res, headers)
+        await streamFileToResponse(path, info.size, res, headers, range)
       } catch (error) {
         writeError(res, error)
       }

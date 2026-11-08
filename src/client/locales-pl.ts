@@ -394,6 +394,8 @@ export const pl: Record<string, string> = {
   viewerCode: 'Kod',
   viewerHtml: 'HTML',
   viewerJsonl: 'JSONL',
+  viewerMedia: 'Multimedia',
+  mediaUnplayable: 'Nie można odtworzyć tego pliku (nieobsługiwany kodek lub uszkodzony plik)',
   browser: 'Przeglądarka',
   browserPlaceholder: 'Wpisz adres URL, np. example.com',
   browserGo: 'Przejdź',

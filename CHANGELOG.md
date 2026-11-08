@@ -38,6 +38,10 @@
   - 🧪 测试：新增 `tests/file-actions.spec.tsx`（12 例：注册序 = order 升序 + 注册序、重复 id 抛错、旧 disposer 不能拆掉新注册、菜单位置、绝对路径/根/会话、目录默认不认领、`when` 判定与抛错隔离、悬停按钮与 `title`/`aria-label`、无图标只进菜单、reject 落错误条且成功静默）。
 
 
+- 🎬 **侧边栏内置音视频预览**：`.mp4` / `.m4v` / `.webm` / `.ogv` / `.mov` / `.mp3` / `.m4a` / `.aac` / `.wav` / `.flac` / `.ogg` 等容器不再落进 `code` 兜底、被判二进制后只剩「下载查看」。新增内置 `media` viewer（`fetchStrategy: 'mediaUrl'`：音频走 `<audio>`、视频走 `<video>`，`preload="metadata"` 不预下整片，解码失败或地址缺失时仍保留下载链接）；`/sidebar/file` 同步补齐媒体 MIME 表与 HTTP **Range**——单段请求答 206 + `content-range`（后缀区间、越界钳制、越界起点答 416 + `bytes */size`），多段 / 非 `bytes` 头回退整份 200。播放器因此可拖时间轴、不必等整份下载；`?download=1` 的续传同样受益。
+- 🧪 测试：`tests/file-stream-route.spec.ts` 新增 Range 真机用例（窗口 / 后缀 / 越界钳制 / 416 / 回退 200 / 视频 MIME）与 `byteRangeOf` 单测；`tests/builtins.spec.ts` 钉住 `media` 的认领面与 `mediaUrl` 策略；`tests/smoke.spec.ts` 钉住媒体 MIME 表；`tests/locales.spec.ts` 的 21 种语言键集对齐覆盖新增 `viewerMedia` / `mediaUnplayable`。
+
+
 ### v0.30.1
 
 - 🎯 **设置页「侧边卡片」的导航图标不再叠成两个**：插件此前按"宿主设置导航还没有图标通道"的老假设，用 CSS 把兜底齿轮藏起来、再画自己的图标；宿主早已提供按 section id 寻址的 `settings.section.icon` 插槽，而且图标的 DOM 外面多了一层 span，老选择器失效后兜底 SVG 露了出来，与插件图标并排显示。现在改为**走宿主插槽**提供图标，删掉标记 + CSS 遮罩那一套（顺带去掉了一个监听整个 document 的 MutationObserver）。
