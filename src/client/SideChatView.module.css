@@ -759,12 +759,40 @@
 }
 
 /* ── motion vocabulary (crossfade only, ≤200ms; loops reduced-motion off) */
-/* The pre-fork context. NOT a card: a divider line, then the parent's last
- * exchange rendered as this thread's own messages (the `sidechatUser` bubble
- * and the `sidechatAssistant` prose carry their own look), so the block only
- * spaces the pieces and cannot drift from the conversation below it. */
+/* The pre-fork context. NOT a card: a native disclosure whose collapsed line is
+ * the opening divider, and whose body is the parent's last exchange rendered as
+ * this thread's own messages (the `sidechatUser` bubble and the
+ * `sidechatAssistant` prose carry their own look), so the block only spaces the
+ * pieces and cannot drift from the conversation below it. */
 .sidechatForkPoint {
   flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* The disclosure's line: the divider's hairline-and-copy chrome (see below)
+ * plus the chevron instead of the marker, so the closed block reads as one
+ * boundary line and nothing else. */
+.sidechatForkPointLine {
+  padding: 1px 0;
+  list-style: none;
+  cursor: pointer;
+}
+
+.sidechatForkPointLine::-webkit-details-marker {
+  display: none;
+}
+
+.sidechatForkPoint[open] .sidechatForkPointLine .sidechatRowChevron {
+  transform: rotate(90deg);
+}
+
+/* The expanded body: the inherited exchange at the rhythm the block has always
+ * used (8px between the pieces), inside the disclosure so a closed block hides
+ * it natively. */
+.sidechatForkPointBody {
   display: flex;
   flex-direction: column;
   gap: 8px;
