@@ -73,4 +73,5 @@
 
 - 测试契约写在每个 spec 的头注释里；子系统到 spec 的映射与跨平台三规则在 [docs/development.md](docs/development.md)。
 - Issue / PR 分诊：[.agents/skills/issue-triage/SKILL.md](.agents/skills/issue-triage/SKILL.md)（脚本在同目录）。
+- 外部 PR 合入 / 贡献者署名：[.agents/skills/external-pr-integration/SKILL.md](.agents/skills/external-pr-integration/SKILL.md)。
 - 用户可见变更：CHANGELOG.md（中文权威）+ CHANGELOG_EN.md。
