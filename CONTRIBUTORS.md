@@ -15,6 +15,7 @@ dsh-better-sidebar is built with the community. This file records the PR authors
 | @BBleae | Restored drafts keep their mtime baseline; same-origin quote records no longer overwrite each other | [#1131](https://github.com/omdsh-dev/DSH-better-sidebar/pull/1131), [#1132](https://github.com/omdsh-dev/DSH-better-sidebar/pull/1132) |
 | @UNscientific-9 | Data-safety audit: literal pathspecs, archive option fencing, save races, CAS, release dry-run | [#1146](https://github.com/omdsh-dev/DSH-better-sidebar/pull/1146) |
 | @PerryLink | Tasks re-read optional services per request; side-chat model-selection notice | [#1149](https://github.com/omdsh-dev/DSH-better-sidebar/pull/1149), [#1152](https://github.com/omdsh-dev/DSH-better-sidebar/pull/1152) |
+| @NolanHo | Side-chat alignment with the main pane: fork point, windowed transcript, composer guards, per-thread drafts, attachments, work-details rows | [#1147](https://github.com/omdsh-dev/DSH-better-sidebar/pull/1147) |
 | @feigo313 | Built-in audio/video preview and HTTP Range on the file route | [#1027](https://github.com/omdsh-dev/DSH-better-sidebar/pull/1027) |
 | @evgyur | Preview sandbox hardening, archive capacity, bundled KaTeX security update | [#1123](https://github.com/omdsh-dev/DSH-better-sidebar/pull/1123) |
 | @stallenlu | Run git inside the WSL distribution for `\\wsl.localhost` workspaces | [#1135](https://github.com/omdsh-dev/DSH-better-sidebar/pull/1135) |
