@@ -256,6 +256,8 @@ Windows / Linux / macOS 三平台适配（macOS 日常验证，其余经单元�
   <img src="https://contrib.rocks/image?repo=omdsh-dev/DSH-better-sidebar" alt="贡献者" />
 </a>
 
+当前未发布批次的文字清单：[CONTRIBUTORS.md](./CONTRIBUTORS.md)。
+
 ## 🔗 友情链接
 
 - [dsh-tianshu-tui](https://github.com/huiliyi37/dsh-tianshu-tui)：DeepSeek Harness 交互式终端 UI 插件，增加 TDD 与证据门等工作流

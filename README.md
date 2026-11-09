@@ -256,6 +256,8 @@ QQ group: 577011007
   <img src="https://contrib.rocks/image?repo=omdsh-dev/DSH-better-sidebar" alt="Contributors" />
 </a>
 
+Text list for the current unreleased cycle: [CONTRIBUTORS.md](./CONTRIBUTORS.md).
+
 ## 🔗 Friends
 
 - [dsh-tianshu-tui](https://github.com/huiliyi37/dsh-tianshu-tui): interactive terminal UI plugin for DeepSeek Harness with TDD and evidence-gate workflows
