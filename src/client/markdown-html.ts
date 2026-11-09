@@ -20,6 +20,7 @@
  */
 
 import { CLOSE_FENCE_RE, OPEN_FENCE_RE, fenceInfo } from './mermaid-blocks.ts'
+import { maskCodeRegions } from './markdown-code.ts'
 
 /** A run of raw HTML lines lifted out of the markdown stream. */
 export interface HtmlSegment {
@@ -307,13 +308,19 @@ const REFERENCE_DEF_RE = /^ {0,3}\[((?:[^\][]|\[[^\]]*\])*)\]:\s*(?:<([^<>]*)>|(
 /**
  * Collect the reference definitions of every markdown run (HTML runs cannot
  * define them), in document order, newline-joined for appending.
+ *
+ * Code regions are quoted text, not definitions: a fenced block that
+ * demonstrates `[label]: destination` (a PowerShell `[Type]::Method()` line, a
+ * regex example) must not be hoisted to the end of the document, so the code
+ * mask the source rewriters already share is applied before the line scan.
  */
 export function collectReferenceDefinitions(segments: readonly MdHtmlSegment[]): string {
   const defs: string[] = []
   for (const segment of segments) {
     if (segment.kind !== 'markdown') continue
-    for (const line of segment.text.split('\n')) {
-      if (REFERENCE_DEF_RE.test(line)) defs.push(line)
+    const { masked, restore } = maskCodeRegions(segment.text)
+    for (const line of masked.split('\n')) {
+      if (REFERENCE_DEF_RE.test(line)) defs.push(restore(line))
     }
   }
   return defs.join('\n')
