@@ -64,6 +64,25 @@ describe('/sidebar/bundle route', () => {
     }
   })
 
+  it('answers HEAD with the headers only, without materializing the chunk', async () => {
+    // The client HEADs every loaded chunk when the sidebar re-activates (and
+    // once after each lazy load) to read the ETag. Reading the multi-MB body
+    // for a request whose body Node discards is pure waste.
+    const { handler, cleanup } = setup()
+    try {
+      const res = fakeRes()
+      await handler(req('HEAD', '/sidebar/bundle/editor.js'), res as unknown as ServerResponse)
+      expect(res.status).toBe(200)
+      expect(res.headers['content-type']).toBe('text/javascript; charset=utf-8')
+      expect(res.headers['cache-control']).toBe('no-cache')
+      expect(res.headers.etag).toMatch(/^"[0-9a-f]{12}"$/)
+      expect(res.headers['content-length']).toBe(String('window.__ModuleLoader__ && 0;'.length))
+      expect(res.body, 'HEAD must not read the chunk body').toBe('')
+    } finally {
+      cleanup()
+    }
+  })
+
   it('revalidates with a 304 when If-None-Match matches (no re-download)', async () => {
     const { handler, cleanup } = setup()
     try {

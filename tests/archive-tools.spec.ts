@@ -5,7 +5,9 @@
  * reader is gone with it — there is nothing of OURS left to inflate. What is
  * worth pinning is the PLAN (where the tool runs and what argv it gets), the
  * NAME the client ends up with, the tool PROBE (which binary answers), and how
- * ONE run reports success, failure and stderr.
+ * ONE run reports success, failure and stderr. The plan also guards against
+ * option injection: `-`-leading entry names are refused, tar separates its
+ * operands with `--`, and zip (which has no portable `--`) prefixes with `./`.
  *
  * Every case here injects the spawn face: `zip` does not exist on Windows
  * (bsdtar does), the ubuntu runner is not guaranteed either, and a spec that
@@ -180,7 +182,8 @@ describe('planArchive', () => {
     expect(plan.cwd).toBe(join(PLAN_ROOT, 'ws'))
     // `-y` is not decoration: without it Info-ZIP FOLLOWS symlinks, and a
     // `loop -> .` in the tree then recurses until the process is killed.
-    expect(plan.args).toEqual(['-r', '-q', '-X', '-y', '-', 'src'])
+    // `./` keeps the operand out of option position — zip 3.0 has no `--`.
+    expect(plan.args).toEqual(['-r', '-q', '-X', '-y', '-', './src'])
     expect(plan.spec).toBe(spec)
   })
 
@@ -189,7 +192,11 @@ describe('planArchive', () => {
     const ws = join(PLAN_ROOT, 'ws')
     const plan = planArchive([join(ws, 'src', 'index.ts'), join(ws, 'lib', 'util.ts')], spec)
     expect(plan.cwd).toBe(ws)
-    expect(plan.args.slice(spec.flags.length)).toEqual(['src/index.ts', 'lib/util.ts'])
+    expect(plan.args.slice(0, spec.flags.length)).toEqual([...spec.flags])
+    expect(plan.args).not.toContain('--')
+    expect(plan.args.slice(spec.flags.length)).toEqual(['./src/index.ts', './lib/util.ts'])
+    // The `-` stdout archive name must stay in flags, ahead of every operand.
+    expect(plan.args[spec.flags.length - 1]).toBe('-')
     // The separator is normalized whatever the platform produced: the tool
     // gets in-archive names, not host paths.
     expect(plan.args.every(arg => !arg.includes('\\'))).toBe(true)
@@ -203,14 +210,15 @@ describe('planArchive', () => {
     const plan = planArchive([join(ws, 'src'), join(ws, 'src', 'index.ts')], spec)
     expect(plan.cwd).toBe(ws)
     const names = plan.args.slice(spec.flags.length)
-    expect(names).toEqual(['src', 'src/index.ts'])
+    expect(names).toEqual(['./src', './src/index.ts'])
     expect(names.every(name => name !== '')).toBe(true)
   })
 
   it('uses the tar invocation for a tar-only host', async () => {
     const spec = await specOf('tar')
     const plan = planArchive([join(PLAN_ROOT, 'ws', 'notes.md')], spec)
-    expect(plan.args).toEqual(['-czf', '-', 'notes.md'])
+    expect(plan.args).toEqual(['-czf', '-', '--', 'notes.md'])
+    expect(plan.args.indexOf('--')).toBe(spec.flags.length)
     expect(plan.spec.ext).toBe('.tar.gz')
   })
 
@@ -230,6 +238,30 @@ describe('planArchive', () => {
     expect(thrown).toMatchObject({ code: 'bad-request' })
     expect((thrown as Error).message).toMatch(/no paths/)
   })
+
+  // Regression: two `-`-leading names made GNU tar 1.35 execute them as
+  // options instead of operands. The guard is tool-independent.
+  it('refuses an entry name starting with "-" on both tools', async () => {
+    for (const tool of ['zip', 'tar'] as const) {
+      const spec = await specOf(tool)
+      const ws = join(PLAN_ROOT, 'ws')
+      for (const name of ['-dash.txt', '--long.txt']) {
+        const thrown = capture(() => planArchive([join(ws, name)], spec))
+        expect(thrown).toBeInstanceOf(SidebarError)
+        expect(thrown).toMatchObject({ code: 'bad-request' })
+        expect((thrown as Error).message).toMatch(/start with/)
+      }
+    }
+  })
+
+  it('refuses a leading-dash entry in a multi-selection too', async () => {
+    const spec = await specOf('tar')
+    const ws = join(PLAN_ROOT, 'ws')
+    const thrown = capture(() => planArchive([join(ws, '-dash.txt'), join(ws, 'ok.txt')], spec))
+    expect(thrown).toBeInstanceOf(SidebarError)
+    expect(thrown).toMatchObject({ code: 'bad-request' })
+  })
+
 })
 
 describe('archiveFileName', () => {

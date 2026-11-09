@@ -65,7 +65,7 @@ import type { OpenInApp, OpenInAppEntry } from './open-in-app.ts'
 import type { OpenWithTarget } from './open-with.ts'
 import { relativeTo } from './paths.ts'
 import { t } from './locales.ts'
-import type { BetterSidebarService } from './service.ts'
+import type { BetterSidebarService, FileActionDescriptor, FileActionRow } from './service.ts'
 import {
   Chip, ConfirmDialog, IconButton, Notice, StatusBadge, useGitStatus,
   type GitTone, type StatusTone,
@@ -217,8 +217,59 @@ interface RowActions {
   activate(event: ActivateModifiers, path: string, isDir: boolean, chain?: readonly FsEntry[]): void
   contextMenu(event: MouseEvent<HTMLDivElement>, path: string, isDir: boolean): void
   reference(path: string, isDir: boolean): void
+  /** Run one externally registered file action (feature `fileActions`). */
+  fileAction(id: string, path: string, isDir: boolean): void
   dragOver(event: DragEvent<HTMLDivElement>, dir: string): void
   drop(event: DragEvent<HTMLDivElement>, path: string, isDir: boolean): void
+}
+
+/** One external action's label, resolved (a thunk re-reads the live locale). */
+function actionLabelOf(action: FileActionDescriptor): string {
+  if (typeof action.label === 'string') return action.label
+  try {
+    return action.label()
+  } catch (error) {
+    console.error(`[dsh-better-sidebar] file action "${action.id}" label() threw:`, error)
+    return action.id
+  }
+}
+
+/** One external action's glyph at `size` (a factory gets the size). */
+function actionIconOf(action: FileActionDescriptor, size: number): ReactNode {
+  if (typeof action.icon === 'function') return action.icon(size)
+  return action.icon
+}
+
+/**
+ * The external actions claiming one row, in registry order. `when` is
+ * crash-isolated: a throwing predicate hides its own row instead of breaking
+ * the tree (the registries' `fileIcon` follows the same policy).
+ *
+ * Directories are excluded unless the descriptor opts in with `dirs: true`;
+ * `hoverOnly` keeps just the descriptors that asked for a row button.
+ */
+function applicableFileActions(
+  actions: readonly FileActionDescriptor[],
+  row: FileActionRow,
+  options: { hoverOnly: boolean },
+): FileActionDescriptor[] {
+  const applicable: FileActionDescriptor[] = []
+  for (const action of actions) {
+    if (options.hoverOnly && action.row !== true) continue
+    if (row.isDir && action.dirs !== true) continue
+    if (action.when !== undefined) {
+      let claims: boolean
+      try {
+        claims = action.when(row) === true
+      } catch (error) {
+        console.error(`[dsh-better-sidebar] file action "${action.id}" when() threw:`, error)
+        claims = false
+      }
+      if (!claims) continue
+    }
+    applicable.push(action)
+  }
+  return applicable
 }
 
 /** One open-in-app entry's leading glyph: the host's icon route / data URL,
@@ -251,14 +302,27 @@ interface FileRowProps {
    */
   gitTone: GitTone | undefined
   gitLetter: string | undefined
+  /** External actions (registry order) — the row's `when` sees its own facts. */
+  fileActions: readonly FileActionDescriptor[]
+  /** The tree's workspace root (absolute), for `when`. */
+  root: string | undefined
+  /** The host session owning this tree, for `when`. */
+  sessionId: string
   actions: RowActions
 }
 
 const FileRow = memo(function FileRow(props: FileRowProps): ReactNode {
-  const { entry, depth, iconsVersion, service, selected, revealed, dropTarget, copied, gitTone, gitLetter, actions } = props
+  const { entry, depth, iconsVersion, service, selected, revealed, dropTarget, copied, gitTone, gitLetter, fileActions, root, sessionId, actions } = props
   // Referenced so a registry change re-renders the row with its new icon.
   void iconsVersion
   const icon = service !== undefined ? service.fileIcon(entry.path, 14) : builtinFileIcon(entry.path, 14)
+  // Row buttons only exist for actions that asked for one AND brought a glyph:
+  // a text button per registration would crowd the name out of the row.
+  const rowButtons = applicableFileActions(
+    fileActions,
+    { path: entry.path, root, sessionId, isDir: false },
+    { hoverOnly: true },
+  ).filter(action => action.icon !== undefined)
   return (
     <div
       role="button"
@@ -309,6 +373,21 @@ const FileRow = memo(function FileRow(props: FileRowProps): ReactNode {
             {t('referenceFile')}
           </button>
         )}
+      {rowButtons.map(action => (
+        <button
+          key={action.id}
+          type="button"
+          className={css.explorerAction}
+          aria-label={actionLabelOf(action)}
+          title={actionLabelOf(action)}
+          onClick={(event) => {
+            event.stopPropagation()
+            actions.fileAction(action.id, entry.path, false)
+          }}
+        >
+          {actionIconOf(action, 14)}
+        </button>
+      ))}
     </div>
   )
 })
@@ -587,6 +666,9 @@ export function FileTree(props: {
   /** The live props for the stable callbacks below (identity churns per render). */
   const propsRef = useRef(props)
   propsRef.current = props
+  /** Live visibility for the load effects: a parked tree fetches nothing. */
+  const visibleRef = useRef(visible !== false)
+  visibleRef.current = visible !== false
   const [data, setData] = useState<Record<string, LevelData>>({})
   /**
    * Registry revision for the file-icon feature: bumps on ANY registry
@@ -599,6 +681,16 @@ export function FileTree(props: {
     () => service?.subscribe(() => { setIconsVersion(version => version + 1) }),
     [service],
   )
+  /**
+   * The external file actions in render order. Re-read on every registry
+   * change (`iconsVersion` IS that revision — one listener set for tabs,
+   * viewers, icons and actions) and memoized because the memoized rows take it
+   * as a prop: a fresh array per render would defeat `memo()`.
+   */
+  const fileActions = useMemo(() => {
+    void iconsVersion
+    return service?.getFileActions() ?? []
+  }, [service, iconsVersion])
   /** One directory's leading glyph for the surfaces WITHOUT a memoized row
    *  (the inline rename and new-folder editors). */
   const dirRowIcon = (path: string, open: boolean): ReactNode =>
@@ -635,6 +727,8 @@ export function FileTree(props: {
   const [deletingSelected, setDeletingSelected] = useState(false)
   /** The last mutation failure (dismissable strip above the tree). */
   const [actionError, setActionError] = useState<string | null>(null)
+  /** External action runs in flight (`id\u0000path`): a double press fires once. */
+  const runningFileActionsRef = useRef(new Set<string>())
   /** A failed re-list that kept the previous rows on screen (hint line). */
   const [loadError, setLoadError] = useState<string | null>(null)
   /** The multi-selection (absolute paths) and its Shift anchor. */
@@ -822,6 +916,12 @@ export function FileTree(props: {
    * path — while leaving their current rows untouched until the answer lands.
    */
   const loadLevels = useCallback((paths: readonly string[], options?: { force?: boolean }) => {
+    // A PARKED tree must not fetch, whoever asked: the visible-set effect and
+    // the fold-chain preload are gated at their call sites, but an answer that
+    // lands after the tab was hidden can still re-enter here (the preload's
+    // next link, or the dropped-answer self-heal below). The un-park re-arm
+    // runs with `visible` already true, so it is unaffected.
+    if (visibleRef.current === false) return
     const force = options?.force === true
     const wanted = force
       ? [...new Set(paths)]
@@ -927,6 +1027,11 @@ export function FileTree(props: {
     loadLevels([dir], { force: true })
   }, [loadLevels])
 
+  /** Re-list a SET of directories in ONE batch (the parked→visible re-arm). */
+  const retryDirs = useCallback((dirs: readonly string[]) => {
+    if (dirs.length > 0) loadLevels([...dirs], { force: true })
+  }, [loadLevels])
+
   /**
    * Settle the tree after one rename/delete landed at `prefix`: drop every
    * cached level at or under the old path, collapse the now-stale expanded
@@ -980,6 +1085,10 @@ export function FileTree(props: {
   useEffect(() => {
     if (lastTick.current === refreshTick) return
     lastTick.current = refreshTick
+    // A parked tree drops the tick outright: the watcher's re-arm re-lists the
+    // whole watched set when the tab comes back, so forcing a load here would
+    // only duplicate that batch (and do it off screen).
+    if (visibleRef.current === false) return
     generationRef.current += 1
     forceNextLoad.current = true
   }, [refreshTick])
@@ -1002,8 +1111,13 @@ export function FileTree(props: {
     // Load the visible set in ONE batch request; already-loaded levels (kept
     // in the cache) are not refetched, so this asks only for what is new — a
     // refresh tick re-lists root + every expanded directory in one POST.
+    //
+    // A PARKED tree issues nothing: nobody can see the rows, and the watcher's
+    // re-arm re-lists the whole watched set once on the way back. Visibility is
+    // read through a ref, NOT a dependency — making it one would fire a second
+    // batch alongside that re-arm.
     const root = cwd
-    if (root === undefined) return
+    if (root === undefined || visibleRef.current === false) return
     const force = forceNextLoad.current
     forceNextLoad.current = false
     loadLevels([root, ...expanded], { force })
@@ -1021,7 +1135,12 @@ export function FileTree(props: {
     // visible-set effect above loading (or having loaded) that level. The walk
     // itself stops at the render cap, so a chain the row stopped folding at
     // MAX_COMPACT_DEPTH never keeps pulling deeper levels.
-    if (cwd === undefined) return
+    //
+    // A PARKED tree skips the walk too: an in-flight level can land after the
+    // tab was hidden, and without this guard the preload would keep pulling
+    // the next link off screen. Un-parking re-lists the root (watcher re-arm),
+    // and that data change resumes the chain from the frontier.
+    if (cwd === undefined || visibleRef.current === false) return
     loadLevels(compactLoadTargets(dataRef.current, [cwd, ...propsRef.current.expanded]))
   }, [cwd, data, loadLevels])
 
@@ -1035,13 +1154,13 @@ export function FileTree(props: {
   // it was opened stayed stale for the rest of the session. A PARKED tree
   // (the host keeps every visited tab body mounted) closes the socket — and
   // with it the host's `fs.watch` handles — and re-lists the watched levels
-  // once when it comes back.
+  // once (ONE batch) when it comes back.
   useDirectoryWatch({
     sessionId,
     root: cwd,
     dirs: expanded,
     visible: visible !== false,
-    onStale: retryDir,
+    onStale: retryDirs,
   })
 
   // Bring a "Show in folder" reveal into view: the ancestors expand above
@@ -1267,13 +1386,44 @@ export function FileTree(props: {
     propsRef.current.onReferenceFile(path, isDir)
   }, [])
 
+  /**
+   * Run one external file action. The registry is read LIVE rather than off
+   * the rendered list: a plugin can register between the menu opening and the
+   * click, and a disposed one must not run its stale closure.
+   *
+   * The failure policy is the strip's: a throw or a rejection lands as
+   * `error.message`, a resolution reports nothing (the owner shows its own
+   * outcome). Runs are guarded per (id, path), so a double press while the
+   * first is still in flight cannot fire the work twice.
+   */
+  const handleFileAction = useCallback((id: string, path: string, isDir: boolean): void => {
+    const current = propsRef.current
+    const action = current.service?.getFileActions().find(candidate => candidate.id === id)
+    if (action === undefined) return
+    const key = `${id}\u0000${path}`
+    if (runningFileActionsRef.current.has(key)) return
+    runningFileActionsRef.current.add(key)
+    setActionError(null)
+    const fail = (message: string): void => { setActionError(message) }
+    try {
+      const pending = action.run({ path, root: current.cwd, sessionId: current.sessionId, isDir, fail })
+      void Promise.resolve(pending)
+        .catch((error: unknown) => { fail(error instanceof Error ? error.message : String(error)) })
+        .finally(() => { runningFileActionsRef.current.delete(key) })
+    } catch (error) {
+      runningFileActionsRef.current.delete(key)
+      fail(error instanceof Error ? error.message : String(error))
+    }
+  }, [])
+
   const actions = useMemo<RowActions>(() => ({
     activate: handleActivate,
     contextMenu: handleContextMenu,
     reference: handleReference,
+    fileAction: handleFileAction,
     dragOver: handleRowDragOver,
     drop: handleDrop,
-  }), [handleActivate, handleContextMenu, handleReference, handleRowDragOver, handleDrop])
+  }), [handleActivate, handleContextMenu, handleReference, handleFileAction, handleRowDragOver, handleDrop])
 
   // ── New folder ─────────────────────────────────────────────────────────
   const newFolderRef = useRef(newFolder)
@@ -1682,6 +1832,33 @@ export function FileTree(props: {
    * LONE directory archives its own subtree. A lone FILE is skipped — it would
    * only duplicate the plain download row.
    */
+  /**
+   * External file actions as menu entries (feature `fileActions`), preceded by
+   * a separator when any apply. The tree renders them after its open/download
+   * rows and before the copy/mutation block it owns.
+   */
+  const fileActionEntries = (target: { path: string; isDir: boolean }): MenuEntry[] => {
+    const applicable = applicableFileActions(
+      propsRef.current.service?.getFileActions() ?? [],
+      {
+        path: target.path,
+        root: propsRef.current.cwd,
+        sessionId: propsRef.current.sessionId,
+        isDir: target.isDir,
+      },
+      { hoverOnly: false },
+    )
+    if (applicable.length === 0) return []
+    return [
+      { id: 'file-action-sep', type: 'separator' } as MenuEntry,
+      ...applicable.map((action): MenuItem => ({
+        id: `file-action:${action.id}`,
+        label: actionLabelOf(action),
+        ...(action.icon === undefined ? {} : { icon: actionIconOf(action, 14) }),
+      })),
+    ]
+  }
+
   const zipEntries = (target: { path: string; isDir: boolean }): MenuEntry[] => {
     const count = selected.size
     if (count >= 2) {
@@ -2146,6 +2323,9 @@ export function FileTree(props: {
               gitTone={git?.tone}
               gitLetter={git?.letter}
               copied={copiedPath === entry.path}
+              fileActions={fileActions}
+              root={cwd}
+              sessionId={sessionId}
               actions={actions}
             />
           )
@@ -2327,6 +2507,8 @@ export function FileTree(props: {
           ...(rowMenu?.isDir === true
             ? [{ id: 'new-file', label: t('newFile'), icon: <IconCodeOutlineRegular size={14} /> }]
             : []),
+          // 4b: externally registered file actions (feature `fileActions`).
+          ...(rowMenu === null ? [] : fileActionEntries(rowMenu)),
           // 5: ZIP of the current selection (≥2 rows, or one lone directory).
           ...(rowMenu === null ? [] : zipEntries(rowMenu)),
           // 6: copy, then the mutations (never on the workspace root row).
@@ -2362,6 +2544,10 @@ export function FileTree(props: {
           }
           // The plugin's own targets share one id space (pinned rows and
           // submenu children alike), so the caller gets the target id + path.
+          if (id.startsWith('file-action:')) {
+            handleFileAction(id.slice('file-action:'.length), target.path, target.isDir)
+            return
+          }
           if (id.startsWith('open-with:')) {
             // The caller owns the launch and answers whether it was accepted;
             // a refusal (or a rejection) means nothing opened, so the failure

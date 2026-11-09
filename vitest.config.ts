@@ -54,6 +54,9 @@ export default defineConfig({
       // list is the only thing vitest reads. Left out, `pnpm test` collects
       // those stale copies and reports THEIR failures as ours.
       '**/.delta/**',
+      // Same for the agent worktree lanes (and the reason `pnpm lint` needs
+      // the matching ignore): their spec copies would double-collect.
+      '**/.agents/worktrees/**',
       '**/node_modules/**',
       '**/dist/**',
       '**/cypress/**',

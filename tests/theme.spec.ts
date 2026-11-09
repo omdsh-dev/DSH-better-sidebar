@@ -172,6 +172,19 @@ describe('skin contract: the plugin owns no color of its own', () => {
     }
   })
 
+  it('tag ref pills take the neutral label token instead of a lane-palette slot', () => {
+    // The graph's ref pills are painted by lane slot (`data-color` → the five
+    // `--dsw-alias-state-*` colours); a tag is a decoration, not a lane, so its
+    // rule must resolve to a NEUTRAL label token and keep the text marker
+    // legible with a dashed outline.
+    const styles = readFileSync(resolve(ROOT, 'src/client/changes/graph.module.css'), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+    const block = /\.ref\[data-tone="tag"\] \{([^}]*)\}/.exec(styles)?.[1]
+    if (block === undefined) throw new Error('the tag ref pill rule must exist in graph.module.css')
+    expect(block).toContain('color: var(--dsw-alias-label-secondary)')
+    expect(block).toContain('border-style: dashed')
+  })
+
   it('the graph viewport fills its container without a viewport-relative height cap', () => {
     const sheet = document.createElement('style')
     sheet.textContent = readFileSync(resolve(ROOT, 'src/client/changes/changes.module.css'), 'utf8')
@@ -277,6 +290,54 @@ describe('skin contract: the plugin owns no color of its own', () => {
     }
     expect(block).not.toContain('--dsw-alias-bg-l1')
     expect(block).not.toContain('--dsw-alias-bg-l2')
+  })
+
+  it('the floating selection action paints from the host floating-button pair', () => {
+    // The chip floats over live text; the menu fill it used before is
+    // translucent by design and washed out over the code viewer. Scan the
+    // parsed CSSOM, not raw text, so a later duplicate rule cannot win the
+    // cascade behind this test's back.
+    const sheet = document.createElement('style')
+    sheet.textContent = readFileSync(resolve(ROOT, 'src/client/sidebar.module.css'), 'utf8')
+    document.head.append(sheet)
+    try {
+      const rules = Array.from(sheet.sheet!.cssRules).filter((rule): rule is CSSStyleRule => 'selectorText' in rule)
+      const base = rules.filter(rule => rule.selectorText.trim() === '.selectionPopup')
+      expect(base).toHaveLength(1)
+      expect(base[0]!.style.getPropertyValue('background')).toBe('var(--dsw-alias-button-floating-fill)')
+
+      // Either selector alone would let a later plain :hover rule override
+      // the pair, so accept both spellings only when they share one rule.
+      const hover = rules.filter(rule => {
+        const selectors = rule.selectorText.split(',').map(selector => selector.trim())
+        return selectors.includes('.selectionPopup:hover') || selectors.includes('.selectionPopup:focus-visible')
+      })
+      expect(hover).toHaveLength(1)
+      expect(hover[0]!.selectorText.split(',').map(selector => selector.trim()).sort()).toEqual([
+        '.selectionPopup:focus-visible',
+        '.selectionPopup:hover',
+      ])
+      expect(hover[0]!.style.getPropertyValue('background')).toBe('var(--dsw-alias-button-floating-hover)')
+    } finally {
+      sheet.remove()
+    }
+  })
+
+  it('sidechat image previews fit the transcript and keep the host border token', () => {
+    const sheet = document.createElement('style')
+    sheet.textContent = readFileSync(resolve(ROOT, 'src/client/SideChatView.module.css'), 'utf8')
+    document.head.append(sheet)
+    try {
+      const rules = Array.from(sheet.sheet!.cssRules).filter((rule): rule is CSSStyleRule => 'selectorText' in rule)
+      const image = rules.find(rule => rule.selectorText === '.sidechatImage')!.style
+      expect(image.getPropertyValue('object-fit')).toBe('contain')
+      expect(image.getPropertyValue('max-width')).not.toBe('')
+      expect(image.getPropertyValue('max-height')).not.toBe('')
+      const preview = rules.find(rule => rule.selectorText === '.sidechatImagePreview')!.style
+      expect(preview.getPropertyValue('border')).toMatch(/var\(--dsw-alias-/)
+    } finally {
+      sheet.remove()
+    }
   })
 
   it('no icon dataset is shipped as a lazy chunk', () => {

@@ -25,12 +25,16 @@ name: Release
 on:
   release:
     types: [published]
+  # Manual runs default to dry-run. A real publish from workflow_dispatch must
+  # be an explicit opt-in (exact `dry_run == 'false'`); empty / missing / any
+  # other value stays on the dry-run path, since the tag/version guard below
+  # only runs for `release` events.
   workflow_dispatch:
     inputs:
       dry_run:
-        description: Pack and verify everything, but do not publish
+        description: Pack and verify everything, but do not publish (default)
         type: boolean
-        default: false
+        default: true
 
 permissions:
   contents: read
@@ -105,11 +109,13 @@ jobs:
         run: pnpm check:consumer-types
 
       - name: Dry-run publish (validation only)
-        if: github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'true'
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run != 'false'
         run: pnpm publish --dry-run --no-git-checks
 
+      # Match 'false' exactly: `!= 'true'` would fail open on an empty / missing
+      # input (see the dry_run input comment above).
       - name: Publish to npm
-        if: github.event_name == 'release' || github.event.inputs.dry_run != 'true'
+        if: github.event_name == 'release' || github.event.inputs.dry_run == 'false'
         run: |
           TAG=$(node -p "require('./package.json').version.includes('-') ? 'alpha' : 'latest'")
           echo "publishing to npm dist-tag: ${TAG}"

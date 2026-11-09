@@ -32,6 +32,20 @@ const markdownRenders = vi.hoisted(() => ({
   calls: [] as Array<{ text: string; streaming: boolean | undefined }>,
 }))
 
+/** How many times the session-scoped prose pass ran (one call per row rewritten). */
+const rewriteCalls = vi.hoisted(() => ({ count: 0 }))
+
+vi.mock('../src/client/markdown-images.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/client/markdown-images.ts')>()
+  return {
+    ...actual,
+    rewriteProseLocalImageUrls: (...args: Parameters<typeof actual.rewriteProseLocalImageUrls>) => {
+      rewriteCalls.count += 1
+      return actual.rewriteProseLocalImageUrls(...args)
+    },
+  }
+})
+
 vi.mock('@deepseek-ai/dsh-client-ui-primitives', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@deepseek-ai/dsh-client-ui-primitives')>()
   const react = await import('react')
@@ -153,6 +167,26 @@ describe('SideChatView markdown re-parse (C3)', () => {
     for (const text of Object.values(ROWS)) {
       expect(countOf(text), `${text} was re-parsed by an unrelated composer keystroke`).toBe(baseline.get(text))
     }
+
+    view.unmount()
+  })
+
+  it('does not re-run the prose rewrite for unchanged rows on a composer keystroke', async () => {
+    harness.wire.events = settledConversation()
+    const view = harness.mount()
+    await harness.flush()
+
+    // Guard: the rewrite really ran for the mounted rows (a mock that never
+    // applied would make the zero-delta assertion vacuous).
+    expect(rewriteCalls.count).toBeGreaterThan(0)
+    rewriteCalls.count = 0
+
+    harness.typeComposer('a')
+    await harness.flush()
+    harness.typeComposer('ab')
+    await harness.flush()
+    expect(harness.composerValue()).toBe('ab')
+    expect(rewriteCalls.count, 'a composer keystroke re-ran the prose rewrite for unchanged rows').toBe(0)
 
     view.unmount()
   })

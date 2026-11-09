@@ -358,33 +358,63 @@ export function TasksGraph(props: TasksGraphProps): ReactNode {
     return () => { observer.disconnect() }
   }, [fit])
 
+  /**
+   * Wheel zoom is applied at most once per animation frame, for the same
+   * reason the pan is: a trackpad (and a high-report-rate mouse) delivers
+   * several wheel events per display frame, and every one of them
+   * used to commit a full canvas re-render. Each event chains off the PENDING
+   * transform rather than the last drawn one, so coalescing never loses a zoom
+   * step — the old code re-read `tfRef` for every event and only one step
+   * survived the frame.
+   */
+  const wheelBatcher = useRef(createFrameBatcher()).current
+  const pendingWheelRef = useRef<{ x: number; y: number; k: number } | null>(null)
+  /**
+   * A background pan gesture owns the transform from pointerdown to release.
+   * Wheel zoom and the pan both commit a WHOLE transform, so a wheel mid-drag
+   * would be overwritten by the pan's next frame (or vice versa); the wheel is
+   * ignored while the gesture is live instead.
+   */
+  const panActiveRef = useRef(false)
+
   // Wheel-zoom to cursor (non-passive: the page must not scroll).
   useEffect(() => {
     const container = containerRef.current
     if (container === null) return
     const onWheel = (event: WheelEvent): void => {
       event.preventDefault()
+      if (panActiveRef.current) return
       const rect = container.getBoundingClientRect()
       const mx = event.clientX - rect.left
       const my = event.clientY - rect.top
-      const { x, y, k } = tfRef.current
+      const base = pendingWheelRef.current ?? tfRef.current
       // Wheel deltas arrive in pixels, lines or pages depending on the device;
       // normalise first, or a line-scrolling mouse zooms 30× slower than a
       // trackpad (and a trackpad pinch, which reports ctrlKey, feels stuck).
       const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? 100 : 1
-      const next = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, k * Math.exp(-event.deltaY * unit * 0.0014)))
-      if (next === k) return
+      const next = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, base.k * Math.exp(-event.deltaY * unit * 0.0014)))
+      if (next === base.k) return
       touchedRef.current = true
       stopGlide()
-      setTf(clampTf({
-        x: mx - (mx - x) * (next / k),
-        y: my - (my - y) * (next / k),
+      // Clamp EACH composed step, not just the frame's final value: the old
+      // one-event-per-frame code clamped every step, and a later step's anchor
+      // math must start from the in-bounds transform the earlier one would
+      // have shown (otherwise coalescing changes where the zoom lands).
+      pendingWheelRef.current = clampTf({
+        x: mx - (mx - base.x) * (next / base.k),
+        y: my - (my - base.y) * (next / base.k),
         k: next,
-      }))
+      })
+      wheelBatcher.schedule(() => {
+        const pending = pendingWheelRef.current
+        if (pending === null) return
+        pendingWheelRef.current = null
+        setTf(clampTf(pending))
+      })
     }
     container.addEventListener('wheel', onWheel, { passive: false })
     return () => { container.removeEventListener('wheel', onWheel) }
-  }, [clampTf, stopGlide])
+  }, [clampTf, stopGlide, wheelBatcher])
 
   const zoomBy = useCallback((factor: number): void => {
     const container = containerRef.current
@@ -428,7 +458,10 @@ export function TasksGraph(props: TasksGraphProps): ReactNode {
   const panBatcher = useRef(createFrameBatcher()).current
   const pendingPanRef = useRef<{ x: number; y: number; k: number } | null>(null)
   const draggingRef = useRef(false)
-  useEffect(() => () => { panBatcher.dispose() }, [panBatcher])
+  useEffect(() => () => {
+    panBatcher.dispose()
+    wheelBatcher.dispose()
+  }, [panBatcher, wheelBatcher])
 
   const onPointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>): void => {
     if (event.button !== 0) return
@@ -441,6 +474,7 @@ export function TasksGraph(props: TasksGraphProps): ReactNode {
     if (target.closest('[data-graph-controls]') !== null) return
     const startX = event.clientX
     const startY = event.clientY
+    panActiveRef.current = true
     const { x, y } = tfRef.current
     const onMove = (move: globalThis.PointerEvent): void => {
       const dx = move.clientX - startX
@@ -465,6 +499,7 @@ export function TasksGraph(props: TasksGraphProps): ReactNode {
       window.removeEventListener('pointerup', onUp)
       window.removeEventListener('pointercancel', onUp)
       panBatcher.flushNow()
+      panActiveRef.current = false
       draggingRef.current = false
       setDragging(false)
     }

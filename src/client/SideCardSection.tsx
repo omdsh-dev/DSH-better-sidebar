@@ -11,7 +11,11 @@
  *  - 侧边栏内容: one SMALL CARD per REGISTERED tab type (built-ins and
  *    external plugins alike), laid out in a responsive grid that wraps
  *    several cards per row — icon chip + title + type id, clicked to toggle
- *    the switch persisted in `prefs.tabsEnabled[id]`.
+ *    the switch persisted in `prefs.tabsEnabled[id]`. Programmatic-only
+ *    types (`hidden: true`, e.g. the built-in diff page or dsh-remote's
+ *    `dsh-remote:file`) are NOT listed: they have no + menu row and no
+ *    native guide entry, so a switch could only break their opens without
+ *    hiding anything (#1009).
  *  - 文件预览: one SMALL CARD per REGISTERED file viewer — icon chip + title
  *    + the extensions it covers, clicked to toggle `prefs.viewersEnabled[id]`.
  *
@@ -97,10 +101,17 @@ function iconOf(icon: ReactNode | ((size: number) => ReactNode) | undefined, siz
   return typeof icon === 'function' ? icon(size) : icon
 }
 
-/** Tab inventory order: hidden types (editor/diff) last, then + menu order. */
-function tabOrder(a: TabDescriptor, b: TabDescriptor): number {
-  if (a.hidden !== b.hidden) return a.hidden === true ? 1 : -1
-  return (a.order ?? 100) - (b.order ?? 100)
+/**
+ * The tab inventory: the types that actually reach the side card, in + menu
+ * order. `hidden` types are programmatic-only (no + menu row, no native
+ * guide entry), so they have no side-card presence to switch — listing them
+ * produced switches whose only observable effect was to refuse their own
+ * opens (#1009).
+ * @param tabs - the service's whole registry.
+ * @returns a sorted copy without the hidden types.
+ */
+function tabInventory(tabs: readonly TabDescriptor[]): TabDescriptor[] {
+  return tabs.filter(tab => tab.hidden !== true).sort((a, b) => (a.order ?? 100) - (b.order ?? 100))
 }
 
 /** Viewer inventory order: priority desc (the catch-all `code` comes last). */
@@ -586,8 +597,16 @@ export function SettingsBody(props: {
   // Plugin rows read their values from the descriptor's OWN blob through
   // an explicit value source — no projection onto the prefs face, so a
   // plugin key can never collide with (or silently read) a host pref of
-  // the same name.
+  // the same name. A key the user never wrote falls back to the row's own
+  // declared `defaultValue` (filled in when the descriptor was registered):
+  // without it a fresh document shows "no value" for a feature that already
+  // behaves as its default.
   const pluginBlob = prefs.pluginSettings[feature.id] ?? {}
+  const readPluginValue = (key: string): unknown => {
+    const stored = pluginBlob[key]
+    if (stored !== undefined) return stored
+    return pluginToggles.find(row => row.key === key)?.defaultValue
+  }
   return (
     <div>
       {(toggles.length > 0 || pluginToggles.length > 0) && (
@@ -610,7 +629,7 @@ export function SettingsBody(props: {
               onCommit={onPluginCommit}
               onSelectValue={onPluginSelectValue}
               onPatterns={onPluginPatterns}
-              valueSource={(key) => pluginBlob[key]}
+              valueSource={readPluginValue}
             />
           )}
         </div>
@@ -658,10 +677,10 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
   // The declarative inventory: the registered tab types and file viewers.
   // Local state + service.subscribe (registry changes are rare — plugin
   // load/unload — so a plain effect is enough; no external-store ceremony).
-  const [tabs, setTabs] = useState<TabDescriptor[]>(() => [...service.getTabs()].sort(tabOrder))
+  const [tabs, setTabs] = useState<TabDescriptor[]>(() => tabInventory(service.getTabs()))
   const [viewers, setViewers] = useState<FileViewerDescriptor[]>(() => [...service.getFileViewers()].sort(viewerOrder))
   useEffect(() => service.subscribe(() => {
-    setTabs([...service.getTabs()].sort(tabOrder))
+    setTabs(tabInventory(service.getTabs()))
     setViewers([...service.getFileViewers()].sort(viewerOrder))
   }), [service])
 

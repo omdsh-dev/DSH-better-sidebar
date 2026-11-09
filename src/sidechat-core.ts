@@ -21,6 +21,7 @@
  * a structured text snapshot inside the boundary prompt.
  */
 import type { SidebarHistoryEntry, SidebarSessionSummary } from './context-types.ts'
+import { projectSidechatContent, type SidechatImageLimits, type SidechatImageOccurrence } from './sidechat-images.ts'
 import type { AssistantLiveChunk } from './assistant-live.ts'
 import { foldSurface, isSurfaceEligibleType } from '@deepseek-ai/dsh-session/surface'
 
@@ -980,6 +981,19 @@ function rebaseEvent(
       shadowedSeqs: mapped as number[],
     }
   }
+  // The DeepSeek log ledger cites an ABSOLUTE watermark: `throughSeq` is
+  // the last event whose upload a request confirmed, and the host's v4 reader
+  // requires it to precede its own marker. Renumbering without it ships a
+  // seed the reader rejects outright ("delivery throughSeq must precede its
+  // marker") — the child then stays permanently unreadable. Carry the
+  // watermark through the same map; one that names an event inside the
+  // dropped span has no child-side equivalent, so the record drops rather
+  // than citing a delivery that never happened.
+  if (event.type === 'session-log-deepseek/delivery-accepted' && typeof sourceData.throughSeq === 'number') {
+    const mapped = rebase.get(sourceData.throughSeq)
+    if (mapped === undefined) return DROPPED
+    seed.data = { ...seed.data, throughSeq: mapped }
+  }
   const headerSeq = sourceData.headerSeq
   if (event.type === 'developer/message' && typeof headerSeq === 'number') {
     const mapped = rebase.get(headerSeq)
@@ -1284,6 +1298,7 @@ export function isContextInjectionMessage(data: Record<string, unknown>): boolea
 
 /** The info the thread header shows (live runtime state + agent identity). */
 export interface SidechatThreadInfo {
+  images?: { available: boolean; limits?: SidechatImageLimits }
   /** A live agent drives the thread right now (false = cold/persisted). */
   live: boolean
   /** Live lifecycle state; absent on cold threads. */
@@ -1306,6 +1321,8 @@ export interface SidechatThreadInfo {
  * invisible until a claim logs it as a durable `user/message`.
  */
 export interface SidechatPendingInput {
+  images?: SidechatImageOccurrence[]
+  removable?: boolean
   /** Durable message identity — the `sidechat.dequeue` key. */
   id: string
   /** Which boundary will claim it; `next-step` entries are claimed first. */
@@ -1351,20 +1368,6 @@ export interface SidechatModelCatalog {
   failures: readonly { id: string; name?: string; message: string }[]
 }
 
-/** Flatten one pending message's content into the text the bubble shows. */
-function pendingText(message: unknown): string {
-  const content = (message as { content?: unknown } | undefined)?.content
-  if (typeof content === 'string') return content
-  if (!Array.isArray(content)) return ''
-  const parts: string[] = []
-  for (const block of content) {
-    if (block === null || typeof block !== 'object') continue
-    const item = block as { type?: unknown; text?: unknown }
-    if (item.type === 'text' && typeof item.text === 'string') parts.push(item.text)
-  }
-  return parts.join('\n')
-}
-
 /** The identity one inbox message carries (`MessageId`, a branded string). */
 export function pendingInputId(message: unknown): string | undefined {
   const id = (message as { id?: unknown } | undefined)?.id
@@ -1385,7 +1388,7 @@ export function pendingInputs(
   const add = (message: unknown, target: SidechatPendingInput['target']): void => {
     const id = pendingInputId(message)
     if (id === undefined) return
-    rows.push({ id, target, text: pendingText(message) })
+    rows.push({ id, target, ...projectSidechatContent((message as { content?: unknown }).content) })
   }
   for (const message of nextStep) add(message, 'next-step')
   for (const message of nextTurn) add(message, 'next-turn')
@@ -1407,7 +1410,7 @@ export function pendingInputs(
  *   prefix length, or the whole log).
  * @returns the ids of messages still pending after the folded events.
  */
-export function pendingIdsInLog(events: readonly SidechatLogEvent[], limit?: number): string[] {
+export function inboxInLog(events: readonly SidechatLogEvent[], limit?: number): { nextStep: unknown[]; nextTurn: unknown[] } {
   const nextTurn: unknown[] = []
   const nextStep: unknown[] = []
   const end = limit === undefined ? events.length : Math.min(limit, events.length)
@@ -1422,6 +1425,11 @@ export function pendingIdsInLog(events: readonly SidechatLogEvent[], limit?: num
     const inserted = Array.isArray(data.inserted) ? data.inserted : []
     target.splice(Math.max(0, Math.min(start, target.length)), Math.max(0, removed), ...inserted)
   }
+  return { nextStep, nextTurn }
+}
+
+export function pendingIdsInLog(events: readonly SidechatLogEvent[], limit?: number): string[] {
+  const { nextStep, nextTurn } = inboxInLog(events, limit)
   const ids: string[] = []
   for (const message of [...nextStep, ...nextTurn]) {
     const id = pendingInputId(message)
@@ -1447,6 +1455,14 @@ export function inheritedPendingIds(
   return pendingIdsInLog(events, Math.max(0, Math.trunc(inheritedEventCount)))
 }
 
+export function coldPendingMessages(events: readonly SidechatLogEvent[], inheritedEventCount?: number): { nextStep: unknown[]; nextTurn: unknown[] } {
+  const boundary = inheritedEventCount ?? events.findLastIndex(event => event.type === 'session/end-seed' && (event.data as { inherited?: boolean }).inherited === true)
+  const ghosts = new Set(inheritedPendingIds(events, Math.max(0, boundary)))
+  const inbox = inboxInLog(events)
+  const owned = (message: unknown): boolean => !ghosts.has(pendingInputId(message) ?? '')
+  return { nextStep: inbox.nextStep.filter(owned), nextTurn: inbox.nextTurn.filter(owned) }
+}
+
 /**
  * The thread's effective model selection: `pending ?? lastUsed` of its own
  * `model/selection` / `request/header` fold (see {@link parentModelSelection},
@@ -1459,14 +1475,126 @@ export function effectiveModelSelection(
   return parentModelSelection(events)
 }
 
-/** The events a thread produced itself: everything after the LAST
- *  `session/end-seed` marker (the fork-seed boundary). A log with no marker
- *  (a thread created before seeding existed) is returned whole. */
-export function threadOwnLogEvents(events: readonly SidechatLogEvent[]): SidechatLogEvent[] {
+/** The index of the first event a thread produced ITSELF: its last
+ *  `session/end-seed { inherited: true }` fork boundary + 1, or 0 when the log
+ *  carries no inherited marker (an already-cut payload). Untagged markers
+ *  delimit restore/replay lifecycles, not inherited history.
+ *
+ *  Exported because the cut is not private to the transcript: the fork-point
+ *  summary reads the prefix this index excludes. */
+export function threadOwnCutIndex(events: readonly SidechatLogEvent[]): number {
   for (let index = events.length - 1; index >= 0; index--) {
-    if (events[index]?.type === 'session/end-seed') return events.slice(index + 1)
+    const event = events[index]
+    if (event?.type === 'session/end-seed' && typeof event.data === 'object' && event.data !== null
+      && 'inherited' in event.data && event.data.inherited === true) return index + 1
   }
-  return [...events]
+  return 0
+}
+
+/** The events a thread produced itself: everything after its last
+ *  `session/end-seed { inherited: true }` fork boundary. A log with no
+ *  inherited marker (including an already-cut route payload) is returned whole. */
+export function threadOwnLogEvents(events: readonly SidechatLogEvent[]): SidechatLogEvent[] {
+  return events.slice(threadOwnCutIndex(events))
+}
+
+/** What the thread forked OFF: the seq of the cut marker, plus the parent's
+ *  last exchange before it. The prefix itself never crosses the wire — only
+ *  these parts, and they travel VERBATIM: no cap, no ellipsis, because the
+ *  reader asked to read the parent's own words (the block scrolls). */
+export interface SidechatForkPoint {
+  /** Log seq of the inherited `session/end-seed` marker the transcript cuts at. */
+  cutSeq: number
+  /** The last real user message before the cut, in full. */
+  user?: { seq: number; text: string; messageId?: string }
+  /** The last assistant answer before the cut (text blocks only), in full. */
+  assistant?: { seq: number; text: string; messageId?: string }
+}
+
+/** One content list's text blocks joined (`''` when it carries none). */
+function textBlocksOf(content: unknown): string {
+  if (!Array.isArray(content)) return ''
+  const parts: string[] = []
+  for (const block of content) {
+    if (block === null || typeof block !== 'object') continue
+    const candidate = block as { type?: unknown; text?: unknown }
+    if (candidate.type === 'text' && typeof candidate.text === 'string') parts.push(candidate.text)
+  }
+  return parts.join('\n\n')
+}
+
+/** A message's durable identity (`data.id` on a `user/message`, `message.id` on
+ *  an `assistant/message`), or undefined when the log records none (older logs)
+ *  — the fork part then simply omits the field instead of carrying `''`. */
+function messageIdOf(message: unknown): string | undefined {
+  const id = (message as { id?: unknown } | undefined)?.id
+  return typeof id === 'string' && id !== '' ? id : undefined
+}
+
+/** Spread an optional message id into a fork part, keeping it ABSENT (not
+ *  `undefined`) when the log carries none. */
+function withMessageId(messageId: string | undefined): { messageId?: string } {
+  return messageId === undefined ? {} : { messageId }
+}
+
+/** Whether a `user/message` is a surface REPLACEMENT (a compaction checkpoint or
+ *  another shadowing node), never a message the reader typed. */
+function isReplacementMessage(event: SidechatLogEvent & { surfaceOp?: unknown }): boolean {
+  const op = event.surfaceOp
+  return op !== undefined && op !== 'append'
+}
+
+/**
+ * Summarise the parent conversation a seeded thread forked from.
+ *
+ * The whole point is to stay honest about the cut: the transcript shows only the
+ * tail, so the reader cannot otherwise tell which question they were asking in
+ * the main pane. Everything is read from BEFORE the cut marker — computed on the
+ * FULL log, never on the already-cut tail.
+ * @param events - the thread's complete decoded log (parent prefix + own tail).
+ * @returns the fork point, or undefined when the log carries no inherited marker.
+ */
+export function sidechatForkPoint(events: readonly SidechatLogEvent[]): SidechatForkPoint | undefined {
+  const cutIndex = threadOwnCutIndex(events)
+  if (cutIndex === 0) return undefined
+  const prefix = events.slice(0, cutIndex)
+  const fork: SidechatForkPoint = { cutSeq: events[cutIndex - 1]?.seq ?? 0 }
+  // The part describes the moment the reader branched off, so it is the last
+  // message of its kind that SAYS something before the cut — and only that one.
+  // A QUESTION with no text (an image-only prompt) leaves the part out: falling
+  // back to an earlier question would misdate the fork. An ANSWER is different:
+  // the log records one `assistant/message` per STEP, so the message right
+  // before the cut is routinely textless (a tool call, or reasoning only) — that
+  // step is SKIPPED and the scan keeps walking back, because stopping there
+  // would report "no answer" for a parent whose last exchange plainly had one.
+  //
+  // Two things that LOOK like a user message are not one, and both are skipped
+  // by CONTINUING the scan (a runtime injection routinely lands right after the
+  // reader's real question, so stopping here would put a reminder in the
+  // banner): a surface replacement (a compaction checkpoint), and a runtime
+  // context injection, whose `source.kind` is the loader's own (`time-context`,
+  // `tmux-context`, `plugin:…`) — the same predicate the transcript classifies
+  // injections by, so a log whose source is absent still counts as the reader's.
+  for (let index = prefix.length - 1; index >= 0; index--) {
+    const event = prefix[index]
+    if (event === undefined || event.type !== 'user/message') continue
+    if (isReplacementMessage(event as SidechatLogEvent & { surfaceOp?: unknown })) continue
+    if (isContextInjectionMessage(event.data as Record<string, unknown>)) continue
+    const text = textBlocksOf((event.data as { content?: unknown }).content)
+    if (text !== '') fork.user = { seq: event.seq, text, ...withMessageId(messageIdOf(event.data)) }
+    break
+  }
+  for (let index = prefix.length - 1; index >= 0; index--) {
+    const event = prefix[index]
+    if (event === undefined || event.type !== 'assistant/message') continue
+    const message = (event.data as { message?: { content?: unknown; id?: unknown } }).message
+    const text = textBlocksOf(message?.content)
+    if (text !== '') {
+      fork.assistant = { seq: event.seq, text, ...withMessageId(messageIdOf(message)) }
+      break
+    }
+  }
+  return fork
 }
 
 /** {@link threadOwnLogEvents} over history rows (the client cache shape). */

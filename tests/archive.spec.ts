@@ -268,12 +268,16 @@ beforeEach(() => {
 })
 
 afterEach(async () => {
+  // `start()` launches `pack()` detached; give its open/spawn a beat to land
+  // before dispose kills the child. Disposing first lets a late open create a
+  // temp file AFTER the cleanup below has already walked the tree.
+  await new Promise(resolve => setTimeout(resolve, 50))
   // Before the mocks go: `dispose()` kills through a fake whose `kill` is a
   // `vi.fn`, and those implementations do not survive a restore.
   for (const tasks of tables.splice(0)) tasks.dispose()
   // A killed child closes asynchronously; let the close land (and the packer
   // close its descriptor) before the directories underneath it disappear.
-  await new Promise(resolve => setTimeout(resolve, 0))
+  await new Promise(resolve => setTimeout(resolve, 50))
   for (const [key, value] of Object.entries(savedTmp)) {
     if (value === undefined) delete process.env[key]
     else process.env[key] = value
@@ -489,6 +493,27 @@ describe('archive task table (injected spawn)', () => {
     await expect(tasks.start({ sessionId: 's-1', name: 'one-too-many', paths }))
       .rejects.toMatchObject({ code: 'bad-request', status: 409 })
     expect(tasks.size()).toBe(ARCHIVE_MAX_BUILDING)
+  })
+
+  it('reserves concurrency slots before asynchronous tool resolution', async () => {
+    const { tasks } = makeTable({ behavior: { run: { hang: true } } })
+    const paths = sampleSelection()
+    const outcomes = await Promise.allSettled(Array.from({ length: 10 }, (_, index) =>
+      tasks.start({ sessionId: 's-1', name: `parallel-${index}`, paths })))
+    expect(outcomes.filter(item => item.status === 'fulfilled')).toHaveLength(ARCHIVE_MAX_BUILDING)
+    expect(outcomes.filter(item => item.status === 'rejected')).toHaveLength(10 - ARCHIVE_MAX_BUILDING)
+    expect(tasks.size()).toBe(ARCHIVE_MAX_BUILDING)
+  })
+
+  it('rejects a tool lookup that completes after disposal without spawning', async () => {
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const tasks = createArchiveTasks({ resolveTool: async () => { await gate; return { tool: 'zip', bin: 'zip', flags: [], ext: '.zip' } } })
+    const pending = tasks.start({ sessionId: 's-1', name: 'late', paths: sampleSelection() })
+    tasks.dispose()
+    release()
+    await expect(pending).rejects.toMatchObject({ status: 503 })
+    expect(tasks.size()).toBe(0)
   })
 
   it('expires a settled task after ARCHIVE_TTL_MS and deletes its file', async () => {

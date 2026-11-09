@@ -114,7 +114,7 @@ function PopTitleRow(props: { glyph: ReactNode; title: string }): ReactNode {
 function JumpActions(props: {
   node: TasksAgentNode
   asideAvailable: boolean
-  onJump(node: TasksAgentNode, place: 'side' | 'main'): void
+  onJump(node: TasksAgentNode, place: 'right' | 'side' | 'main'): void
   children?: ReactNode
 }): ReactNode {
   const { node, asideAvailable, onJump } = props
@@ -122,7 +122,7 @@ function JumpActions(props: {
   const rootRef = useRef<HTMLSpanElement>(null)
   useDismissOnOutsidePointer(rootRef, open, setOpen)
   const split = asideAvailable && node.childAddress !== undefined
-  const primaryPlace = split ? 'side' : 'main'
+  const primaryPlace = split ? 'right' : 'main'
   return (
     <>
       <Button
@@ -154,6 +154,18 @@ function JumpActions(props: {
           </Button>
           {open && (
             <MenuSurface compact className={css.jumpMenu} role="menu">
+              <Button
+                variant="ghost"
+                size="sm"
+                role="menuitem"
+                className={css.jumpMenuItem}
+                onClick={() => {
+                  setOpen(false)
+                  onJump(node, 'side')
+                }}
+              >
+                {t('openFileSide')}
+              </Button>
               <Button
                 variant="ghost"
                 size="sm"
@@ -193,7 +205,7 @@ export function AgentNodePopover(props: {
    * main-view button — the choice simply does not exist.
    */
   asideAvailable: boolean
-  onJump(node: TasksAgentNode, place: 'side' | 'main'): void
+  onJump(node: TasksAgentNode, place: 'right' | 'side' | 'main'): void
   /** Open the shared task window for one of the node's tasks. */
   onOpenTask(taskId: string, anchor: HTMLElement): void
   onClose(): void

@@ -39,7 +39,7 @@ import { createSidechatPushHub } from './sidechat-push.ts'
 import { launchExternal } from './open-external.ts'
 import { createArchiveTasks, respondArchiveDownload, type ArchiveTasks } from './archive-route.ts'
 import * as git from './git.ts'
-import { gitGraph, type GitGraphOptions } from './git-graph.ts'
+import { gitGraph, gitHistory, type GitGraphOptions, type GitHistoryOptions } from './git-graph.ts'
 import { SettingsConflictError } from '@deepseek-ai/dsh-settings'
 import { AgentOpenRegistry, registerOpenTool, type AgentOpenRequest } from './agent-opens.ts'
 import { buildSubagentLiveApi, type SidebarSubagentLiveRoutes } from './subagent-live-route.ts'
@@ -47,9 +47,11 @@ import { buildTeamsApi, type SidebarTeamsRoutes } from './team-routes.ts'
 import { buildWorkflowsApi, type SidebarWorkflowRoutes } from './workflow-routes.ts'
 import { buildSidechatApi } from './sidechat-routes.ts'
 import { createAssistantLiveBuffer, type AssistantLiveBuffer } from './assistant-live.ts'
+import { readSidechatImage } from './sidechat-routes.ts'
+import { SIDECHAT_METADATA_BYTES, sidechatPromptBodyLimit } from './sidechat-image-admission.ts'
 import { readJsonBody, readTextBody, requireString, SidebarError, writeError, writeJson, writeOk } from './wire.ts'
-import { streamFileToResponse } from './file-stream.ts'
-import { readPersistedSession } from './session-store.ts'
+import { byteRangeOf, streamFileToResponse } from './file-stream.ts'
+import { fileReadError } from './fs-read-error.ts'
 import { createChangesOpsApi } from './changes-ops.ts'
 import { BlockAssembler, createUserMessage, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import {
@@ -83,6 +85,8 @@ export type { SidebarConfig, ResolvedSidebarConfig }
 export type { Context } from './context-types.ts'
 export type {
   BetterSidebarService,
+  SidechatSurface,
+  SidechatSurfaceAdapter,
   TabDescriptor,
   TabComponentProps,
   FileViewerDescriptor,
@@ -111,7 +115,7 @@ export interface SidebarFsLevel {
 /** Services required before mounting: routes, sessions, native request admission, and tools. */
 export const inject = ['webServer', 'sessions', 'connection', 'tools']
 
-/** Content types for the media route, by extension. */
+/** Content types for media files and HTML preview resources, by extension. */
 const MEDIA_TYPES: Record<string, string> = {
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
@@ -125,56 +129,144 @@ const MEDIA_TYPES: Record<string, string> = {
   '.pdf': 'application/pdf',
   '.html': 'text/html',
   '.htm': 'text/html',
+  '.css': 'text/css',
+  '.js': 'text/javascript',
+  '.mjs': 'text/javascript',
+  '.json': 'application/json',
+  '.woff': 'font/woff',
+  '.woff2': 'font/woff2',
+  '.ttf': 'font/ttf',
+  '.otf': 'font/otf',
+  '.wasm': 'application/wasm',
+  // Media containers: `<video>` / `<audio>` pick their demuxer from this
+  // header, so a media file answered as octet-stream is a coin flip even when
+  // the browser can decode it. `.ogg` is audio on purpose — a Theora video in
+  // Ogg is vanishingly rare next to Vorbis/Opus audio.
+  '.mp4': 'video/mp4',
+  '.m4v': 'video/mp4',
+  '.webm': 'video/webm',
+  '.ogv': 'video/ogg',
+  '.mov': 'video/quicktime',
+  '.mp3': 'audio/mpeg',
+  '.m4a': 'audio/mp4',
+  '.aac': 'audio/aac',
+  '.wav': 'audio/wav',
+  '.flac': 'audio/flac',
+  '.ogg': 'audio/ogg',
+  '.oga': 'audio/ogg',
+  '.opus': 'audio/ogg',
 }
 
-/** Content type served by /sidebar/file (binary-safe fallback for unknowns). */
+/** Content type served by /sidebar/file and /sidebar/html; unknowns use a binary-safe fallback. */
 export function mediaTypeForPath(path: string): string {
   return MEDIA_TYPES[extname(path).toLowerCase()] ?? 'application/octet-stream'
 }
 
 /**
- * Resolve the committed execution directory before client or original-header
- * hints. Live reads are synchronous; detached reads use the host observation
- * lease and its revision-keyed projection cache, never a plugin-owned log fold
- * or TTL that could hide a working_directory change.
+ * Stored header cwd per session id, kept for the process lifetime.
+ *
+ * A session header is immutable, so once read the workspace address cannot
+ * change. The map is bounded and every entry is a short string; it exists so
+ * the sidebar's re-asks (every watch frame, every 5 s poll, every route) do
+ * not even pay the header read.
+ */
+const storedCwdCache = new Map<string, string>()
+/** Per-session in-flight header read (the same-key sharing for a cold burst). */
+const storedCwdInFlight = new Map<string, Promise<string | undefined>>()
+/** Bound on {@link storedCwdCache}; well above any plausible open-session set. */
+const STORED_CWD_CACHE_MAX = 256
+
+/**
+ * The workspace address of a session the host has not attached: the cwd stored
+ * in its immutable header.
+ *
+ * This is a HEADER-ONLY read (`sessionPersistence.stat` reads the first zstd
+ * frame, never the log). It is deliberately not `sessionQuery.observeSession`:
+ * that public cold-cwd API decodes the WHOLE artifact and hydrates every
+ * projection to answer with one string, and a startup burst asks dozens of
+ * times in parallel (0.28.0: 39 MB × 44 ≈ 1.7 GB, OOM). The committed
+ * working_directory is adopted again the moment the host attaches the session
+ * (see {@link sessionCwdOf}).
+ * @param ctx - host plugin context.
+ * @param sessionId - the detached session to locate.
+ * @returns the stored header cwd, or undefined when the host cannot answer.
+ */
+async function storedHeaderCwdOf(ctx: Context, sessionId: string): Promise<string | undefined> {
+  const cached = storedCwdCache.get(sessionId)
+  if (cached !== undefined) return cached
+  const pending = storedCwdInFlight.get(sessionId)
+  if (pending !== undefined) return pending
+  const promise = (async (): Promise<string | undefined> => {
+    const persistence = ctx.get('sessionPersistence')
+    if (persistence?.stat === undefined) return undefined
+    try {
+      const snapshot = await persistence.stat(sessionId)
+      const cwd = snapshot?.header.cwd
+      if (cwd === undefined || cwd === '') return undefined
+      storedCwdCache.set(sessionId, cwd)
+      while (storedCwdCache.size > STORED_CWD_CACHE_MAX) {
+        const oldest = storedCwdCache.keys().next()
+        if (oldest.done) break
+        storedCwdCache.delete(oldest.value)
+      }
+      return cwd
+    } catch (error) {
+      // A header read that fails must not take a whole route down: the client
+      // hint below is the same workspace address in every normal deployment.
+      ctx.logger.warn('dsh-better-sidebar: cannot stat stored session %s', sessionId)
+      ctx.logger.warn(error)
+      return undefined
+    }
+  })()
+  storedCwdInFlight.set(sessionId, promise)
+  try {
+    return await promise
+  } finally {
+    storedCwdInFlight.delete(sessionId)
+  }
+}
+
+/**
+ * Resolve the directory a session's file/Git routes are rooted at.
+ *
+ * An attached session answers from the host's committed working directory
+ * (following `cd` and linked worktrees), synchronously. A DETACHED session
+ * answers from its stored header — the workspace address — because the only
+ * public cold-cwd API decodes the whole log for that one string (see
+ * {@link storedHeaderCwdOf}); the committed directory takes over again on the
+ * next ask after the host attaches the session.
+ * @param ctx - host plugin context.
+ * @param sessionId - the session whose workspace is resolved.
+ * @param clientCwd - the client's summary cwd, used only when the host cannot
+ *   answer at all.
+ * @returns the absolute workspace directory.
  */
 async function sessionCwdOf(ctx: Context, sessionId: string, clientCwd?: string): Promise<string> {
   const session = ctx.sessions.get(sessionId)
-  // The immutable header is the original project, not the current execution
-  // directory. Read the host's committed value on every request (no TTL).
+  // The immutable header here is the fallback, not the authority: the host's
+  // committed value tracks `cd` and wins whenever it is available.
   if (session !== undefined) {
     const cwd = ctx.get('workingDirectory')?.get(session) ?? session.header.cwd
     if (cwd !== undefined && cwd !== '') return cwd
   }
-  const query = ctx.get('sessionQuery')
-  if (query !== undefined) {
-    const observation = await query.observeSession(sessionId, { projectionMode: 'all' })
+  const stored = await storedHeaderCwdOf(ctx, sessionId)
+  if (stored !== undefined) {
+    // A corrupt relative cwd must be refused here: resolving it against the
+    // host process cwd is exactly the "outside workspace" misclassification
+    // the header read exists to avoid.
     try {
-      const cwd = observation.projections?.values.workingDirectory
-        ?? observation.header.cwd
-        ?? ctx.get('workingDirectory')?.defaultDirectory
-      if (cwd !== undefined && cwd !== '') return requireAbsolute(cwd)
-    } finally {
-      observation[Symbol.dispose]()
+      return requireAbsolute(stored)
+    } catch {
+      throw new SidebarError('bad-request', `invalid working directory "${stored}"`)
     }
   }
+  const defaultDirectory = ctx.get('workingDirectory')?.defaultDirectory
+  if (defaultDirectory !== undefined && defaultDirectory !== '') return requireAbsolute(defaultDirectory)
   if (clientCwd !== undefined && clientCwd !== '') {
     try {
       return requireAbsolute(clientCwd)
     } catch {
       throw new SidebarError('bad-request', `invalid working directory "${clientCwd}"`)
-    }
-  }
-  const persistence = ctx.get('sessionPersistence')
-  if (persistence !== undefined) {
-    const persisted = await readPersistedSession(persistence, sessionId)
-    const metaCwd = persisted.header.cwd
-    if (metaCwd !== undefined && metaCwd !== '') {
-      try {
-        return requireAbsolute(metaCwd)
-      } catch {
-        throw new SidebarError('bad-request', `invalid working directory "${metaCwd}"`)
-      }
     }
   }
   return process.cwd()
@@ -197,12 +289,12 @@ function requireLineNumber(payload: unknown, key: string): number {
 }
 
 /**
- * Resolve a relative path an EDITOR surface carried (the file tree, the
- * editor buffer, and `fs.read`, which the untracked-diff fallback reads
- * through): the session-relative interpretation wins when it names an
- * existing path, with the repository root as the fallback. Git's
- * status/diff ROWS deliberately do NOT come through here — they are
- * repository-root-relative by construction, see {@link resolveStatusPath}.
+ * Resolve a path a GIT surface carried (git.blame, git.diff-head): the
+ * session-relative interpretation wins when it names an existing path, with
+ * the repository root as the fallback — git's own paths are repo-root
+ * relative, so the root is a real fallback here, never a silent one for a
+ * missing session file. File links do NOT come through here: `fs.read` and
+ * `fs.readPage` resolve from the session cwd only, missing is missing.
  */
 async function resolveGitPath(cwd: string, raw: string, selected?: string): Promise<string> {
   if (isAbsolute(raw)) return requireAbsolute(resolveSessionPath(cwd, raw))
@@ -405,11 +497,7 @@ const READ_HEAD_LIMIT = 4096
  */
 async function statFileForRoute(path: string): Promise<Stats> {
   return await stat(path).catch((error: unknown) => {
-    throw new SidebarError(
-      'fs-error',
-      `cannot read "${path}": ${error instanceof Error ? error.message : String(error)}`,
-      400,
-    )
+    throw fileReadError(path, error)
   })
 }
 
@@ -441,15 +529,18 @@ export type SidebarReadResult =
  */
 async function readText(path: string): Promise<SidebarReadResult> {
   const info = await stat(path).catch((error: unknown) => {
-    throw new SidebarError('fs-error', `cannot read "${path}": ${error instanceof Error ? error.message : String(error)}`, 400)
+    throw fileReadError(path, error)
   })
   if (info.isDirectory()) {
-    throw new SidebarError('fs-error', `"${path}" is a directory`, 400)
+    // A dedicated code, not a generic fs failure: the client promotes the tab
+    // to the plugin's folder window instead of rendering this as an error (a
+    // chat folder link, a sidebar_open folder, a pasted directory path).
+    throw new SidebarError('fs-directory', `"${path}" is a directory`, 400)
   }
   const size = info.size
   const oversized = size > MAX_EDITABLE_BYTES
   const handle = await open(path, 'r').catch((error: unknown) => {
-    throw new SidebarError('fs-error', `cannot read "${path}": ${error instanceof Error ? error.message : String(error)}`, 400)
+    throw fileReadError(path, error)
   })
   try {
     // An over-limit file still yields its first bytes: that is what decides
@@ -527,10 +618,10 @@ interface ReadPageResult {
  */
 async function readPage(path: string, offset: number): Promise<ReadPageResult> {
   const info = await stat(path).catch((error: unknown) => {
-    throw new SidebarError('fs-error', `cannot read "${path}": ${error instanceof Error ? error.message : String(error)}`, 400)
+    throw fileReadError(path, error)
   })
   if (info.isDirectory()) {
-    throw new SidebarError('fs-error', `"${path}" is a directory`, 400)
+    throw new SidebarError('fs-directory', `"${path}" is a directory`, 400)
   }
   const size = info.size
   if (offset >= size) {
@@ -546,7 +637,7 @@ async function readPage(path: string, offset: number): Promise<ReadPageResult> {
     }
   }
   const handle = await open(path, 'r').catch((error: unknown) => {
-    throw new SidebarError('fs-error', `cannot read "${path}": ${error instanceof Error ? error.message : String(error)}`, 400)
+    throw fileReadError(path, error)
   })
   try {
     const length = Math.min(PAGE_BYTES, size - offset)
@@ -634,12 +725,37 @@ function buildApi(
   getSettings: () => SidebarSettingsFace | undefined,
   assistantLive: AssistantLiveBuffer,
   archiveTasks: ArchiveTasks,
+  sidechatSignal: AbortSignal,
 ): Record<string, ApiMethod> {
+  /**
+   * Same-key sharing for the shared cwd path. Every file/Git route below
+   * resolves the session cwd through here, and a session switch fires them at
+   * once. Cold resolution is now a header-only read (see `storedHeaderCwdOf`),
+   * but the whole resolution still folds the active-worktree scan, so sharing
+   * one leader keeps a burst from repeating that too. Concurrent asks for the
+   * same session + client hint share ONE resolution; the hint is part of the
+   * key because it is a fallback the result depends on. No TTL: the stored
+   * header is memoized, and a live session's committed directory is re-read on
+   * every ask after this short-lived entry is dropped.
+   */
+  const cwdInFlight = new Map<string, Promise<{ sessionId: string; cwd: string }>>()
   const cwdOf = async (payload: unknown): Promise<{ sessionId: string; cwd: string }> => {
     const sessionId = requireString(payload, 'sessionId')
     const record = payload as { cwd?: unknown } | null
     const clientCwd = typeof record?.cwd === 'string' && record.cwd !== '' ? record.cwd : undefined
-    return { sessionId, cwd: await activeWorktreeRootOf(ctx, sessionId, await sessionCwdOf(ctx, sessionId, clientCwd)) }
+    const key = `${sessionId}\u0000${clientCwd ?? ''}`
+    const pending = cwdInFlight.get(key)
+    if (pending !== undefined) return pending
+    const resolved = (async (): Promise<{ sessionId: string; cwd: string }> => ({
+      sessionId,
+      cwd: await activeWorktreeRootOf(ctx, sessionId, await sessionCwdOf(ctx, sessionId, clientCwd)),
+    }))()
+    cwdInFlight.set(key, resolved)
+    try {
+      return await resolved
+    } finally {
+      cwdInFlight.delete(key)
+    }
   }
   /** Resolve the optional Git-panel checkout selector against the selected
    * session repository. Unlike `cwd`, `worktree` is never trusted directly. */
@@ -758,12 +874,11 @@ function buildApi(
     },
     'fs.read': async (payload) => {
       const { cwd } = await cwdOf(payload)
-      // Relative paths are git-derived (status/diff report repo-root-relative
-      // names; the untracked diff view reads the file through this route). A
-      // child-repo path is relative to the selected repoRoot, not the session
-      // cwd; thread it so the path resolves inside the authorized workspace.
+      // File links are session-relative. Git callers must provide an absolute
+      // path or explicitly select a repository; missing files never change base.
       const selected = selectedRepoOf(payload)
-      const path = await ensureWorkspacePath(cwd, await resolveGitPath(cwd, requireString(payload, 'path'), selected))
+      const base = selected === undefined ? cwd : await git.repoRoot(cwd, selected)
+      const path = await ensureWorkspacePath(base, requireString(payload, 'path'))
       return await readText(path)
     },
     // One byte window of a large text file, for the read-only paged preview.
@@ -773,7 +888,8 @@ function buildApi(
     'fs.readPage': async (payload) => {
       const { cwd } = await cwdOf(payload)
       const selected = selectedRepoOf(payload)
-      const path = await ensureWorkspacePath(cwd, await resolveGitPath(cwd, requireString(payload, 'path'), selected))
+      const base = selected === undefined ? cwd : await git.repoRoot(cwd, selected)
+      const path = await ensureWorkspacePath(base, requireString(payload, 'path'))
       const record = payload as { offset?: unknown } | null
       const offset = typeof record?.offset === 'number' && Number.isFinite(record.offset) && record.offset >= 0
         ? Math.floor(record.offset)
@@ -902,6 +1018,16 @@ function buildApi(
       } catch (error) {
         // The shared Git mapper collapses legacy command codes. Preserve the
         // graph cursor's refresh signal rather than reporting a generic error.
+        if (error instanceof git.GitCommandError && (error.code === 'graph-stale' || error.code === 'graph-limit' || error.code === 'bad-request')) {
+          throw new SidebarError(error.code, error.message, error.code === 'graph-stale' ? 409 : 400)
+        }
+        throw error
+      }
+    },
+    'git.history': async (payload) => {
+      const { cwd } = await gitCwdOf(payload)
+      try { return await gitHistory(cwd, payload as GitHistoryOptions, selectedRepoOf(payload)) }
+      catch (error) {
         if (error instanceof git.GitCommandError && (error.code === 'graph-stale' || error.code === 'graph-limit' || error.code === 'bad-request')) {
           throw new SidebarError(error.code, error.message, error.code === 'graph-stale' ? 409 : 400)
         }
@@ -1158,7 +1284,7 @@ function buildApi(
     // identities are fenced from the generic session RPCs (agent-lookup
     // ownership), and the thread is created with a CUSTOM seed the stock
     // fork APIs cannot express.
-    ...buildSidechatApi(ctx, assistantLive),
+    ...buildSidechatApi(ctx, assistantLive, resolved, sidechatSignal),
   }
 }
 
@@ -1376,8 +1502,33 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
       const value = viewOf().value
       return value !== null && typeof value === 'object' ? value as SidebarPrefs : SIDEBAR_PREFS_DEFAULTS
     }
+    /**
+     * The live `agentOpenTools` switch, or `undefined` when the form cannot be
+     * read right now. The host's settings service only lists entries whose
+     * fiber is ACTIVE, so a row missing from `describe()` is a NORMAL state
+     * during (re)mount and live-commit windows; a thrown read is the same
+     * unknown. `prefsOf()` maps that absence to the schema default (`false`),
+     * which is right for consumers but WRONG for this gate: it would read
+     * "unknown" as "the user turned the tool off" and unregister a live tool
+     * mid-session (issue #951). Only an explicit boolean is a user decision.
+     */
+    const openToolsSetting = (): boolean | undefined => {
+      let value: unknown
+      try {
+        value = viewOf().value
+      } catch {
+        return undefined
+      }
+      if (value === null || typeof value !== 'object') return undefined
+      const flag = (value as { agentOpenTools?: unknown }).agentOpenTools
+      return typeof flag === 'boolean' ? flag : undefined
+    }
     const syncOpenToolsGate = (): void => {
-      if (prefsOf().agentOpenTools === true) {
+      const enabled = openToolsSetting()
+      // Unknown (absent row / failed read) keeps the current registration.
+      // Explicit false unregisters once: the null guard also makes repeated
+      // syncs idempotent (no double-registration, no second disposal).
+      if (enabled === true) {
         if (openToolsDisposers === null) {
           openToolsDisposers = registerOpenTool(
             ctx,
@@ -1386,7 +1537,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
             prefsOf,
           )
         }
-      } else if (openToolsDisposers !== null) {
+      } else if (enabled === false && openToolsDisposers !== null) {
         openToolsDisposers()
         openToolsDisposers = null
         agentOpenRegistry.drainAll()
@@ -1402,6 +1553,9 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
       externalDisable,
       update: async (patch, expectedRevision) => {
         await sctx.settings.update(ns, patch, expectedRevision)
+        // The write IS the user's decision landing; re-read now instead of
+        // waiting for some later `settings.get` to happen to run (issue #951).
+        syncOpenToolsGate()
         return viewOf()
       },
     }
@@ -1415,9 +1569,15 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
     // row is not in the form list yet and the import would silently find
     // "no form" and do nothing. Upstream's own settings migration waits the
     // same way (`ctx.root.loader.await().then(...)`).
-    void Promise.resolve(ctx.loader?.await?.()).then(
-      () => importLegacyPrefs(ctx, sctx.settings, ns),
-    ).then((outcome) => {
+    void Promise.resolve(ctx.loader?.await?.()).then(async () => {
+      // The row is addressable only after the loader mounts it, so the
+      // injection-time sync above ran before the user's value could be read
+      // (issue #951: the first turn after a restart missed the tool). Re-read
+      // AFTER the import too: the imported section may carry this very switch.
+      const outcome = await importLegacyPrefs(ctx, sctx.settings, ns)
+      syncOpenToolsGate()
+      return outcome
+    }).then((outcome) => {
       if (outcome === 'no-profile-home' || outcome === 'no-form') {
         ctx.logger.warn('dsh-better-sidebar: legacy preference import could not run (%s)', outcome)
         return
@@ -1443,7 +1603,30 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   // an unmounted plugin must not leave orphan archives in the OS temp dir.
   const archiveTasks = createArchiveTasks()
   ctx.effect(() => () => { archiveTasks.dispose() }, 'dsh-better-sidebar: archive task table')
-  const api = buildApi(ctx, resolved, () => settingsFace, assistantLive, archiveTasks)
+  const sidechatLifetime = new AbortController()
+  ctx.effect(() => () => { sidechatLifetime.abort() }, 'dsh-better-sidebar: sidechat admissions')
+  const api = buildApi(ctx, resolved, () => settingsFace, assistantLive, archiveTasks, sidechatLifetime.signal)
+  // Concurrent LARGE-prompt admissions. Only a prompt body that may carry
+  // encoded images is counted: the prompt's JSON metadata is capped at
+  // SIDECHAT_METADATA_BYTES, so a body past that threshold is the only one
+  // that can hold image bytes. Pure-text prompts never reach it — an earlier
+  // counter charged EVERY `sidechat.prompt` and rejected plain text with a
+  // bogus 503 "Too many image admissions".
+  //
+  // A slot is taken from the declared `content-length` before reading, or
+  // while streaming bytes for a chunked body. Exceeding the cap answers 413
+  // `too-large` — the repo's status for an over-cap body (see readJsonBody) —
+  // instead of a retryable 503.
+  const SIDECHAT_LARGE_PROMPT_ADMISSIONS = 2
+  let largePromptAdmissions = 0
+  const reserveLargePrompt = (): (() => void) => {
+    if (largePromptAdmissions >= SIDECHAT_LARGE_PROMPT_ADMISSIONS) {
+      throw new SidebarError('too-large', 'Too many image admissions; try again', 413)
+    }
+    largePromptAdmissions++
+    let released = false
+    return () => { if (!released) { released = true; largePromptAdmissions-- } }
+  }
   ctx.effect(() => ctx.webServer.register({
     kind: 'prefix',
     path: '/sidebar/api',
@@ -1462,12 +1645,27 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
         writeError(res, new SidebarError('not-found', 'unknown sidebar API method', 404))
         return
       }
+      const imagePrompt = method === 'sidechat.prompt'
+      let releaseImagePrompt: (() => void) | undefined
+      const admitLargePrompt = (): void => { releaseImagePrompt ??= reserveLargePrompt() }
       const controller = method === 'changes.ops' ? new AbortController() : undefined
       const response = controller === undefined ? undefined : res as ServerResponse
       const abort = (): void => { controller?.abort() }
       response?.once('close', abort)
       try {
-        const payload = await readJsonBody(req)
+        // Browsers send content-length for a string-body fetch; refuse before
+        // reading when the declared size can already carry image bytes.
+        if (imagePrompt) {
+          const declared = Number(req.headers['content-length'])
+          if (Number.isFinite(declared) && declared > SIDECHAT_METADATA_BYTES) admitLargePrompt()
+        }
+        const payload = await readJsonBody(
+          req,
+          imagePrompt ? sidechatPromptBodyLimit(ctx) : undefined,
+          // A chunked (or lying-header) body is counted as soon as the bytes
+          // it delivered could hold an image.
+          imagePrompt ? total => { if (total > SIDECHAT_METADATA_BYTES) admitLargePrompt() } : undefined,
+        )
         // Own properties only. The dispatch table is an object literal, so a
         // bare lookup resolved Object.prototype members as "methods":
         // POST /sidebar/api/constructor answered 200 {}, toString answered
@@ -1482,10 +1680,30 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
       } catch (error) {
         if (controller?.signal.aborted !== true) writeError(res, error)
       } finally {
+        releaseImagePrompt?.()
         response?.off('close', abort)
       }
     },
   }), 'dsh-better-sidebar: /sidebar/api routes')
+
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'exact',
+    path: '/sidebar/sidechat-image',
+    handler: async (req, res) => {
+      if (!fence(req)) { writeError(res, new SidebarError('forbidden', 'forbidden', 403)); return }
+      if (req.method !== 'GET') { writeError(res, new SidebarError('method-error', 'method not allowed', 405)); return }
+      try {
+        const params = new URL(req.url ?? '/', 'http://dsh.internal').searchParams
+        const childId = params.get('childId')
+        const messageId = params.get('messageId')
+        const index = params.get('blockIndex')
+        if (!childId || !messageId || index === null || !/^\d+$/.test(index)) throw new SidebarError('bad-request', 'childId, messageId and blockIndex are required')
+        const image = await readSidechatImage(ctx, childId, messageId, Number(index))
+        res.writeHead(200, { 'content-type': image.ref.mediaType, 'x-content-type-options': 'nosniff', 'cache-control': 'private, no-store' })
+        res.end(image.data)
+      } catch (error) { writeError(res, error) }
+    },
+  }), 'dsh-better-sidebar: sidechat image route')
 
   // ── Raw upload route ───────────────────────────────────────────────────
   // One request writes one file without JSON/base64 inflation. Folder uploads
@@ -1645,23 +1863,44 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
         const type = mediaTypeForPath(path)
         // Raw bytes either way (binary-safe); ?download=1 switches the
         // disposition so the browser saves the file instead of showing it.
-        const headers: Record<string, string> = { 'content-type': type, 'cache-control': 'no-cache' }
-        // An SVG is a scriptable DOCUMENT, not an inert image: navigating to
-        // this URL directly would run its <script> in the GUI's origin, with
-        // same-origin access to /sidebar/api/*. The sibling html route already
-        // sandboxes for exactly this reason; mirror it here. The CSP applies
-        // to the document, so <img src> embedding is unaffected.
-        if (type === 'image/svg+xml') {
-          headers['content-security-policy'] = "sandbox; object-src 'none'"
-          headers['x-content-type-options'] = 'nosniff'
-          headers['referrer-policy'] = 'no-referrer'
+        // Only scriptable DOCUMENT types get an opaque-origin CSP. An inert
+        // image/binary keeps its existing response surface: the CSP sandbox
+        // does nothing for an <img>, and a directly opened image must not gain
+        // a needless behaviour change. nosniff + no-referrer are safe everywhere.
+        const documentType = type === 'text/html' || type === 'application/xhtml+xml' || type === 'image/svg+xml'
+        const headers: Record<string, string> = {
+          'content-type': type,
+          'cache-control': 'no-cache',
+          // Advertised on every media response: a media element asks for
+          // `bytes=0-` first, and only a 206 tells it that seeking is a byte
+          // question rather than "download the rest and hope".
+          'accept-ranges': 'bytes',
+          'x-content-type-options': 'nosniff',
+          'referrer-policy': 'no-referrer',
+        }
+        if (documentType) {
+          headers['content-security-policy'] = type === 'image/svg+xml'
+            ? "sandbox; object-src 'none'"
+            : "sandbox allow-scripts allow-popups allow-downloads allow-modals; object-src 'none'"
         }
         if (url.searchParams.get('download') === '1') {
           headers['content-disposition'] = `attachment; filename*=UTF-8''${encodeURIComponent(basename(path))}`
         }
+        // A byte window is honoured for ANY file — the media route is the one
+        // place a browser talks HTTP range against this plugin (downloads
+        // resume through it too). Unsatisfiable means the header named a window
+        // past EOF: 416 with `bytes */size` is the RFC 7233 answer, and the
+        // response carries no body.
+        const rawRange = req.headers.range
+        const range = byteRangeOf(typeof rawRange === 'string' ? rawRange : undefined, info.size)
+        if (range === 'unsatisfiable') {
+          res.writeHead(416, { ...headers, 'content-range': `bytes */${info.size}` })
+          res.end()
+          return
+        }
         // Streamed, not buffered: there is no size gate left, and the host's
         // memory stays flat whatever the file weighs (see file-stream.ts).
-        await streamFileToResponse(path, info.size, res, headers)
+        await streamFileToResponse(path, info.size, res, headers, range)
       } catch (error) {
         writeError(res, error)
       }

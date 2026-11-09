@@ -240,6 +240,19 @@ export function TaskWindow(props: TaskWindowProps): ReactNode {
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState<string | undefined>(undefined)
   const [armedDelete, setArmedDelete] = useState(false)
+  /** Revision the draft was opened against: the projection keeps delivering
+   *  new revisions while the window stays open, and saving with the live one
+   *  would silently overwrite a teammate's write. */
+  const editRevisionRef = useRef<number | undefined>(task?.revision)
+  /** Render-time mirror of the projection's latest revision: `mutate`'s
+   *  closure captures the `task` of the render that began the save, which can
+   *  be stale by the time a conflict comes back. */
+  const latestRevisionRef = useRef<number | undefined>(task?.revision)
+  latestRevisionRef.current = task?.revision
+  /** The revision a rejected Save submitted. The conflict response carries no
+   *  revision of its own, so when the mirror has not moved past it yet the true
+   *  base is the NEXT revision the projection delivers (see the effect below). */
+  const staleFromRef = useRef<number | undefined>(undefined)
 
   // Re-seed the draft when the caller swaps the subject task: the projection
   // hands us fresh revisions, and unsaved text must not leak across tasks.
@@ -266,7 +279,20 @@ export function TaskWindow(props: TaskWindowProps): ReactNode {
     // task. Carried into the next one it makes that reader's first click the
     // delete itself.
     setArmedDelete(false)
+    // A re-base mark belongs to the task that produced it.
+    staleFromRef.current = undefined
   }, [task?.id])
+
+  // A rejected Save re-bases only once the projection actually overtakes the
+  // revision that was submitted: re-basing to the render-time mirror while it
+  // still shows that same revision would just hand the stale value back and
+  // make the next Save conflict again.
+  useEffect(() => {
+    const staleFrom = staleFromRef.current
+    if (staleFrom === undefined || task?.revision === undefined || task.revision <= staleFrom) return
+    editRevisionRef.current = task.revision
+    staleFromRef.current = undefined
+  }, [task?.revision])
 
   const teammates = members.filter(member => member.role === 'teammate')
 
@@ -287,6 +313,19 @@ export function TaskWindow(props: TaskWindowProps): ReactNode {
         // projection, so a committed revision lands in this window's props
         // by itself.
       } else {
+        if (result.code === CONFLICT_CODE) {
+          // A stale write is rejected WITHOUT advancing the revision. Use the
+          // mirror once it has overtaken the rejected one; until then the effect
+          // above takes the projection's next revision. The note, the draft and
+          // editing stay put (exiting would lose the draft), and the next Save
+          // submits against the new base — an explicit "overwrite anyway".
+          const submitted = editRevisionRef.current ?? task?.revision
+          const latest = latestRevisionRef.current
+          if (submitted !== undefined) {
+            if (latest !== undefined && latest > submitted) editRevisionRef.current = latest
+            else staleFromRef.current = submitted
+          }
+        }
         setNote(result.code === CONFLICT_CODE
           ? t('teamTaskConflict')
           : t('teamTaskError', { message: result.message }))
@@ -309,7 +348,7 @@ export function TaskWindow(props: TaskWindowProps): ReactNode {
       ? api.teamsTaskCreate(rootId, { subject: nextSubject, description: description.trim() })
       : api.teamsTaskUpdate(rootId, {
         taskId: task.id,
-        expectedRevision: task.revision,
+        expectedRevision: editRevisionRef.current ?? task.revision,
         action: 'edit',
         subject: nextSubject,
         description: description.trim(),
@@ -378,7 +417,16 @@ export function TaskWindow(props: TaskWindowProps): ReactNode {
                   variant="outline"
                   size="sm"
                   icon={<IconEditOutlineRegular size={12} />}
-                  onClick={() => { setEditing(true) }}
+                  onClick={() => {
+                    // Draft and CAS base from the same read (see editRevisionRef),
+                    // so a pending conflict re-base has nothing left to correct.
+                    editRevisionRef.current = task.revision
+                    staleFromRef.current = undefined
+                    setSubject(task.subject)
+                    setDescription(task.description)
+                    setSubjectTouched(false)
+                    setEditing(true)
+                  }}
                 >
                   {t('teamTaskEdit')}
                 </Button>

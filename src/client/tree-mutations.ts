@@ -15,12 +15,18 @@
  * a delete must close every tab at or under the removed path. Both ride the
  * SERVICE paths (`updateTab`/`closeTab`) rather than direct state reducers so
  * the registered lifecycle callbacks fire like any other tab mutation.
+ *
+ * The walk covers EVERY session the store has cached, not just the one on
+ * screen: the bottom workbench is per session, and a background conversation's
+ * file page has the same next-save hazard. Each row therefore names its own
+ * session, and the writes go to that session (`updateTab`/`closeTab` take the
+ * targeted channel for a session that is not on screen).
  */
 import type { Context } from '../context-types.ts'
 import type { NativePathTab } from './service.ts'
 import { baseName, isWithinWorkspace, relativeTo, resolveSidebarPath } from './paths.ts'
 import { confirmDiscardDraft } from './editor-dirty.ts'
-import { allLeaves, type SidebarSnapshot, type SidebarStore } from './state.ts'
+import { allLeaves, type SidebarStore } from './state.ts'
 
 /** One open tab that carries a file path, and the space it lives in. */
 interface PathTab {
@@ -36,13 +42,18 @@ interface PathTab {
   absolute: string
   /** The session this tab's EDITOR reads and writes in — the `scope.sessionId`
    *  its host registers the unsaved draft under, so it is the one the close
-   *  guard has to name. Absent only for a bottom-workbench tab whose store has
-   *  no session yet (the guard then reads conservatively rather than missing
-   *  the record and closing a live draft without asking). */
+   *  guard has to name. Absent only for a native tab whose address named no
+   *  session (the guard then reads conservatively rather than missing the
+   *  record and closing a live draft without asking). */
   scopeSessionId: string | undefined
-  /** The native tab's seat session; absent for a bottom-workbench tab, whose
-   *  updates resolve against the store's current session. */
-  sessionId?: string
+  /** The tab's current title — the rename reconciliation retitles a page only
+   *  when this is the file name the tree itself wrote there. */
+  title: string
+  /** The session the tab is WRITTEN through: the native record's seat, or the
+   *  bottom-workbench row's own session — every row names its session now, so a
+   *  background conversation's pages are patched in place instead of resolving
+   *  against whatever session happens to be on screen. */
+  sessionId: string
 }
 
 /**
@@ -110,28 +121,33 @@ export function clearRetargetedPath(key: string): void {
   retargetedPaths.delete(key)
 }
 
-/** Every open tab that carries a file path, from BOTH tab spaces. */
-function pathTabsOf(snapshot: SidebarSnapshot, native: readonly NativePathTab[]): PathTab[] {
+/** Every open tab that carries a file path, from BOTH tab spaces — the bottom
+ *  workbench of EVERY cached session, and the native records. */
+function pathTabsOf(store: SidebarStore, native: readonly NativePathTab[]): PathTab[] {
   const tabs: PathTab[] = []
-  const state = snapshot.state
-  if (state !== undefined) {
-    // A bottom-workbench row resolves its scope against the store's session, so
-    // that same session is the one its editor registered its draft under — the
-    // key's `?? ''` is only the marker's spelling for "no session".
-    const session = snapshot.sessionId ?? ''
+  // Every session the store has cached, not just the one on screen: a
+  // conversation the reader is not looking at can hold file pages of its own
+  // (a `target: 'bottom'` open, a layout persisted back when files landed in
+  // the workbench), and a rename/delete has to reach them too — the first save
+  // after switching back would otherwise recreate the renamed-away file, which
+  // is the very data problem this module exists to prevent. Each row therefore
+  // carries its OWN session: it is both the identity half of the rename marker
+  // and the channel its write goes through.
+  for (const [sessionId, state] of store.getSessionStates()) {
     for (const leaf of allLeaves(state.bottomSplits)) {
       for (const tab of leaf.tabs) {
         // A bottom-workbench row carries an absolute path already, and it is the
         // same string the tree hands this module — one spelling, both fields.
-        if (tab.path !== undefined) {
-          tabs.push({
-            key: pathTabKey(session, tab.id),
-            id: tab.id,
-            path: tab.path,
-            absolute: tab.path,
-            scopeSessionId: snapshot.sessionId,
-          })
-        }
+        if (tab.path === undefined) continue
+        tabs.push({
+          key: pathTabKey(sessionId, tab.id),
+          id: tab.id,
+          path: tab.path,
+          title: tab.title,
+          absolute: tab.path,
+          scopeSessionId: sessionId,
+          sessionId,
+        })
       }
     }
   }
@@ -140,6 +156,7 @@ function pathTabsOf(snapshot: SidebarSnapshot, native: readonly NativePathTab[])
       key: pathTabKey(tab.scopeSessionId, tab.id),
       id: tab.id,
       path: tab.path,
+      title: tab.title,
       // A chat link opens its tab with the ADDRESS's path, and `fileAddressFor`
       // spells that workspace-relative whenever it knows the cwd. Comparing it
       // raw against the tree's absolute paths skipped exactly those tabs, so the
@@ -170,25 +187,37 @@ function movedPath(path: string, oldPath: string, newPath: string): string | und
   return tail === '.' ? newPath : `${newPath}/${tail}`
 }
 
-/** Retarget tabs after `oldPath` became `newPath` (title follows the new
- *  base name, matching how openFile titles editor tabs).
+/** Retarget tabs after `oldPath` became `newPath`.
  *
  *  Files and anything under a renamed DIRECTORY are retargeted — the same
- *  subtree rule the delete path uses. The move is announced through
- *  {@link markRetargetedPath} so the editor keeps its document (and an unsaved
- *  draft) instead of reloading the new name. */
+ *  subtree rule the delete path uses — in EVERY session the store has cached.
+ *  The move is announced through {@link markRetargetedPath} so the editor keeps
+ *  its document (and an unsaved draft) instead of reloading the new name.
+ *
+ *  The TITLE follows only when it was DERIVED from the file name — an editor
+ *  page opened the way the plugin opens one is titled with the basename, so a
+ *  rename has to carry it along; a title its author chose is not the tree's to
+ *  rewrite. The host's agent-opens push is the live case: the model asks for a
+ *  file with a title of its own (`use-host-feeds` → `openFile(scope, path,
+ *  title)`), and a consumer plugin may label a page itself. A directory rename
+ *  never retitles a descendant anyway (their basenames do not change), so this
+ *  is the same rule seen from the file side. */
 export function retargetPathTabs(ctx: Context, store: SidebarStore, oldPath: string, newPath: string): void {
   const service = ctx.get('betterSidebar')
   if (service === undefined) return
-  // The tabs live in the snapshot's session: native ids restart per session.
-  const snapshot = store.getSnapshot()
-  for (const tab of pathTabsOf(snapshot, service.nativePathTabs())) {
+  for (const tab of pathTabsOf(store, service.nativePathTabs())) {
     const moved = movedPath(tab.absolute, oldPath, newPath)
     if (moved === undefined) continue
     // The announcement has to match what the editor will see: it compares the
     // path it holds (the tab's own spelling) with the one written here.
     markRetargetedPath(tab.key, tab.path, moved)
-    service.updateTab(tab.id, { path: moved, title: baseName(moved) }, tab.sessionId)
+    service.updateTab(tab.id, {
+      path: moved,
+      // Only a DERIVED title follows the new name: `baseName(tab.path)` is the
+      // spelling the opener would have written, so a title that differs is one
+      // somebody chose.
+      ...(tab.title === baseName(tab.path) ? { title: baseName(moved) } : {}),
+    }, tab.sessionId)
   }
 }
 
@@ -200,17 +229,19 @@ export function retargetPathTabs(ctx: Context, store: SidebarStore, oldPath: str
  *
  *  The question is asked in the tab's OWN session: the draft registry is keyed
  *  by `sessionId::tabId`, so a bare id read would look up a same-numbered tab in
- *  some other session (or nothing at all) and close a live draft unprompted. */
+ *  some other session (or nothing at all) and close a live draft unprompted.
+ *  Every session the store has cached is walked (a background conversation's
+ *  page would otherwise come back with its next save). */
 export function closePathTabs(ctx: Context, store: SidebarStore, target: string, unsavedMessage: string): void {
   const service = ctx.get('betterSidebar')
   if (service === undefined) return
-  for (const tab of pathTabsOf(store.getSnapshot(), service.nativePathTabs())) {
+  for (const tab of pathTabsOf(store, service.nativePathTabs())) {
     // `isWithinWorkspace` is true for the target itself too, so one test covers
     // both "this exact file" and "anything under this directory".
     if (!isWithinWorkspace(target, tab.absolute)) continue
     if (!confirmDiscardDraft(tab.id, unsavedMessage, tab.scopeSessionId)) continue
     // The tab is going away: a move announced for it can never be claimed.
     clearRetargetedPath(tab.key)
-    service.closeTab(tab.id, tab.sessionId === undefined ? undefined : { sessionId: tab.sessionId })
+    service.closeTab(tab.id, { sessionId: tab.sessionId })
   }
 }

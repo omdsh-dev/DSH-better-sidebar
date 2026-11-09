@@ -57,7 +57,7 @@ class FakeSocket {
   }
 }
 
-function Probe(props: { dirs: string[]; root: string | undefined; visible: boolean; onStale: (dir: string) => void }): ReactNode {
+function Probe(props: { dirs: string[]; root: string | undefined; visible: boolean; onStale: (dirs: readonly string[]) => void }): ReactNode {
   useDirectoryWatch({
     sessionId: 's1',
     root: props.root,
@@ -76,7 +76,7 @@ interface Harness {
 }
 
 function mountProbe(
-  onStale: (dir: string) => void,
+  onStale: (dirs: readonly string[]) => void,
   options: { visible?: boolean; dirs?: string[]; root?: string | undefined } = {},
 ): Harness {
   const { visible = true, dirs = ['/tmp/a'] } = options
@@ -184,7 +184,7 @@ describe('useDirectoryWatch', () => {
     act(() => { socket.frame({ dir: '/tmp/a', ok: false }) })
     expect(onStale).not.toHaveBeenCalled()
     act(() => { socket.frame({ dir: '/tmp/a' }) })
-    expect(onStale).toHaveBeenCalledWith('/tmp/a')
+    expect(onStale).toHaveBeenCalledWith(['/tmp/a'])
     // A malformed frame is ignored outright.
     act(() => { socket.frame({ nope: 1 }) })
     expect(onStale).toHaveBeenCalledTimes(1)
@@ -244,16 +244,16 @@ describe('useDirectoryWatch', () => {
     ])
     // ...and every level is re-listed once: whatever changed while parked was
     // seen by nobody, so the parked listing may be minutes old.
-    expect(onStale.mock.calls.map(([dir]) => dir)).toEqual(['/tmp', '/tmp/a', '/tmp/a/b'])
+    expect(onStale.mock.calls.map(([dirs]) => dirs)).toEqual([['/tmp', '/tmp/a', '/tmp/a/b']])
 
     // Re-rendering the same inputs refreshes nothing again.
     harness.rerender(['/tmp/a', '/tmp/a/b'], true)
-    expect(onStale).toHaveBeenCalledTimes(3)
+    expect(onStale).toHaveBeenCalledTimes(1)
 
     // A parked-unparked cycle repeats exactly once more.
     harness.rerender(['/tmp/a', '/tmp/a/b'], false)
     harness.rerender(['/tmp/a', '/tmp/a/b'], true)
-    expect(onStale).toHaveBeenCalledTimes(6)
+    expect(onStale).toHaveBeenCalledTimes(2)
     expect(FakeSocket.instances).toHaveLength(2)
     harness.unmount()
   })
