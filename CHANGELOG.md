@@ -4,6 +4,9 @@
 
 ### 未发布
 
+- 🧭 **侧边对话创建的 seeded 子会话现在会携带父会话的 fork adoption 坐标**：侧边栏此前绕过通用 fork provider，直接用自定义种子创建子会话，只写 `parentSession` 而没有写 `forkSource`；父历史包含图片或其它 opaque 内容时，文本快照比较返回 409，适配器无法切到 raw 历史，最终把整段上下文再次送上游并触发 413。现在保留 `parentSession` 的目录与子会话语义，同时写入父会话 ID 和点击时 durable boundary，让支持 raw adoption 的上下文适配器能在首个请求前采用已有历史；自定义种子的截断、闭合与重排语义不变。
+  - 🧪 测试：`tests/sidechat-routes.spec.ts` 覆盖完整、进行中轮次与工具调用截断种子的 `forkSource` 坐标。
+
 - 🐞 **GBK 文件里的欧元符号不再被写成 ICU 拒绝的单字节 `0x80`**：改用标准两字节 `0xA2E3`，修复 Node 24.21 / ICU 78 下保存后重开变乱码；新增字面量测试钉住编码与回读。
 
 - 🧵 **fork 块改成默认折叠的原生 disclosure：折叠时只剩那条「分支前的主会话」分割线，展开才看到继承的问答**：`data-sidechat-fork-point` 现在是受控的 `<details>`（默认 closed），`<summary>` 就是开头那条分割线（`sideChatForkDivider` 文案 + 展开 chevron，不含任何继承正文），body 展开后仍是原顺序「提问 → 回答 → 结尾分割线」，没有回答时只有提问与结尾线；折叠/展开不改变转录行数，块内除 summary 外没有任何 `button` / `a`。

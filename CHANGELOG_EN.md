@@ -6,6 +6,9 @@
 
 ### Unreleased
 
+- 🧭 **Seeded side-chat children now carry the parent's fork-adoption coordinate.** The sidebar used to bypass the generic fork provider and create its custom-seeded child directly, writing `parentSession` but not `forkSource`; when the parent history contained images or other opaque content, the text snapshot returned 409, the adapter could not switch to raw history, and the full context was sent upstream again until it hit a 413. The child still keeps its `parentSession` catalog/workspace semantics, while its header now records the parent id and the durable click-time boundary so a raw-capable context adapter can adopt the existing history before the first request. Custom seed cutting, closure, and rebasing are unchanged.
+  - 🧪 `tests/sidechat-routes.spec.ts` covers the `forkSource` coordinate for complete, in-progress-turn, and executing-tool seed shapes.
+
 - 🐞 **The euro sign in a GBK file is no longer written as the single byte `0x80` that current ICU rejects**: it uses the canonical two-byte `0xA2E3` spelling, so saving and reopening no longer produces mojibake on Node 24.21 / ICU 78; a literal encoding/decoding test pins it.
 
 - 🧵 **The fork point is a native disclosure, collapsed by default: one "Before the fork" divider line until the reader expands it.** `data-sidechat-fork-point` is a controlled `<details>` (closed on first render), its `<summary>` IS the opening divider (`sideChatForkDivider` copy plus the expand chevron, no inherited text at all), and the body still reads question → answer → closing divider; with no answer it is the question and the closing divider only. Collapsing or expanding changes no transcript row, and the block holds no `button` / `a` beyond the summary.
