@@ -63,7 +63,7 @@ import { isLikelyImeKey } from './ime-guard.ts'
 import { useSubmenuFlip } from './menu-flip.ts'
 import type { OpenInApp, OpenInAppEntry } from './open-in-app.ts'
 import type { OpenWithTarget } from './open-with.ts'
-import { relativeTo } from './paths.ts'
+import { relativeTo, resolveSidebarPath } from './paths.ts'
 import { t } from './locales.ts'
 import type { BetterSidebarService, FileActionDescriptor, FileActionRow } from './service.ts'
 import {
@@ -1633,7 +1633,12 @@ export function FileTree(props: {
       return
     }
     let cancelled = false
-    const listing = isDir ? openInApp.directoryApps() : openInApp.fileApps(path)
+    // The handler listing is verified through the same desktop path check as
+    // open/reveal, so it takes the same session-absolute, canonical path.
+    const listing = isDir
+      ? openInApp.directoryApps()
+      : api.fsRealpath({ sessionId: propsRef.current.sessionId }, resolveSidebarPath(propsRef.current.cwd, path))
+        .then(real => openInApp.fileApps(real))
     void listing.then((entries) => {
       if (cancelled) return
       if (entries !== null) {
@@ -1658,14 +1663,22 @@ export function FileTree(props: {
   const openWithApp = useCallback((path: string, application?: string): void => {
     const handle = propsRef.current.openInApp
     if (handle === undefined) return
-    const call = application === undefined ? handle.open(path) : handle.open(path, application)
-    void call.then((ok) => { if (!ok) reportOpenFailure(path) }).catch(() => { reportOpenFailure(path) })
+    // The row carries a session-relative path, and the Host resolves whatever
+    // it is given against ITS OWN cwd — so make it absolute here, then take the
+    // Host's canonical spelling so a junction/symlink segment still verifies.
+    void api.fsRealpath({ sessionId: propsRef.current.sessionId }, resolveSidebarPath(propsRef.current.cwd, path))
+      .then(real => (application === undefined ? handle.open(real) : handle.open(real, application)))
+      .then((ok) => { if (!ok) reportOpenFailure(path) })
+      .catch(() => { reportOpenFailure(path) })
   }, [reportOpenFailure])
 
   const revealPath = useCallback((path: string): void => {
     const handle = propsRef.current.openInApp
     if (handle === undefined) return
-    void handle.reveal(path).then((ok) => { if (!ok) reportOpenFailure(path) }).catch(() => { reportOpenFailure(path) })
+    void api.fsRealpath({ sessionId: propsRef.current.sessionId }, resolveSidebarPath(propsRef.current.cwd, path))
+      .then(real => handle.reveal(real))
+      .then((ok) => { if (!ok) reportOpenFailure(path) })
+      .catch(() => { reportOpenFailure(path) })
   }, [reportOpenFailure])
 
   /** The menu label of one plugin open target: a locale key for the built-ins,

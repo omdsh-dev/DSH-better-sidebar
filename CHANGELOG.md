@@ -4,6 +4,9 @@
 
 ### 未发布
 
+- 🖱 **文件树右键的「用默认应用打开 / 在文件管理器中显示」不再必然失败**：这两条路（以及「打开方式」子菜单里的本机应用列表）此前把行的**会话相对路径**原样交给宿主的 `remote.session.openWorkspacePath`，宿主用 `node:path` 的 `resolve()` 解析——相对路径被拼到**宿主进程**的 cwd 而不是会话 cwd，校验必然失败，条带里只剩一句 `无法打开：<path>`。另有一层：宿主的 `verifyDesktopPath` 要求「字面 `resolve()`」**严格等于**「文件系统后端的 realpath」（`dsh-fs-local` 的 `processPath()` 返回 `realpath.native`），所以路径里只要有一段是 junction / 符号链接就同样必然失败，与文件类型、文件是否存在都无关；本仓库 `docs/` 正是指向镜像仓库的 Junction。现在三处调用点都先按会话 cwd 绝对化（复用既有的 `resolveSidebarPath`），再经新增的只读 API `fs.realpath` 取规范拼写；取不到时回落原路径，等同于修复前行为。已绝对路径（盘符 / UNC / POSIX 根）与未知 cwd 不受影响，错误条带仍显示读者右键的那条路径而不是宿主的拼写。
+  - 🧪 测试：`tests/file-tree-open-in-app-path.spec.tsx`（相对行路径先按会话 cwd 绝对化再问宿主、应用列表 / 打开 / 显示三个入口都拿到规范路径、失败条带仍显示原行路径）与 `tests/file-tree-open-in-app.spec.tsx`（原有菜单接线断言在身份化的 `fsRealpath` 下不变）。
+
 - 🐞 **GBK 文件里的欧元符号不再被写成 ICU 拒绝的单字节 `0x80`**：改用标准两字节 `0xA2E3`，修复 Node 24.21 / ICU 78 下保存后重开变乱码；新增字面量测试钉住编码与回读。
 
 - 🧵 **fork 块改成默认折叠的原生 disclosure：折叠时只剩那条「分支前的主会话」分割线，展开才看到继承的问答**：`data-sidechat-fork-point` 现在是受控的 `<details>`（默认 closed），`<summary>` 就是开头那条分割线（`sideChatForkDivider` 文案 + 展开 chevron，不含任何继承正文），body 展开后仍是原顺序「提问 → 回答 → 结尾分割线」，没有回答时只有提问与结尾线；折叠/展开不改变转录行数，块内除 summary 外没有任何 `button` / `a`。

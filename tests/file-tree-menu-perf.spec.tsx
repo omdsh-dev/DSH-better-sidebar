@@ -31,7 +31,7 @@ beforeAll(() => {
   Object.defineProperty(window.navigator, 'language', { value: 'en-US', configurable: true })
 })
 
-const { fsTree, fsTrees, gitStatus, fileApps, directoryApps, archiveBuild, archiveStatus } = vi.hoisted(() => ({
+const { fsTree, fsTrees, gitStatus, fileApps, directoryApps, archiveBuild, archiveStatus, fsRealpath } = vi.hoisted(() => ({
   fsTree: vi.fn(),
   fsTrees: vi.fn(),
   gitStatus: vi.fn(),
@@ -39,10 +39,14 @@ const { fsTree, fsTrees, gitStatus, fileApps, directoryApps, archiveBuild, archi
   directoryApps: vi.fn(),
   archiveBuild: vi.fn(),
   archiveStatus: vi.fn(),
+  // The hand-off canonicalizes the row path before listing handlers; the
+  // identity answer keeps these fixtures' absolute paths as they are, so the
+  // counters below still see exactly one listing request per open.
+  fsRealpath: vi.fn(async (_scope: unknown, path: string) => path),
 }))
 
 vi.mock('../src/client/api.ts', () => ({
-  api: { fsTree, fsTrees, gitStatus, fileApps, directoryApps, archiveBuild, archiveStatus },
+  api: { fsTree, fsTrees, gitStatus, fileApps, directoryApps, archiveBuild, archiveStatus, fsRealpath },
   downloadUrl: () => '/sidebar/file',
   archiveDownloadUrl: (id: string) => `/sidebar/archive/${id}`,
   isOutsideWorkspaceMessage: () => false,

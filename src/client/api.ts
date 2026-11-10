@@ -434,6 +434,19 @@ export const api = {
   fsTree: (scope: SessionScope, path: string, exclude?: readonly string[], signal?: AbortSignal) =>
     call<{ path: string; entries: FsEntry[]; truncated: boolean }>('fs.tree', scopePayload(scope, { path, exclude }), signal),
   /**
+   * The real (canonical) spelling of one path, for handing it to the Host
+   * desktop.
+   *
+   * The Host verifies that `path.resolve()` of the string it is given equals
+   * the filesystem backend's realpath, so a path reaching through a junction or
+   * symlink is refused ("Path has no verified Host path") even when it names a
+   * real file. The browser half cannot compute one, so this asks the Host.
+   * A failed canonicalization degrades to the input, letting the caller keep
+   * its existing failure path.
+   */
+  fsRealpath: (scope: SessionScope, path: string, signal?: AbortSignal) =>
+    call<{ path: string }>('fs.realpath', scopePayload(scope, { path }), signal).then(result => result.path).catch(() => path),
+  /**
    * Batch listing: every requested level in ONE request (the tree's mount and
    * refresh send the expanded set instead of N `fsTree` calls). A level that
    * failed carries `error` in place — the batch itself still succeeds.

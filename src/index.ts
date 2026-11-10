@@ -9,7 +9,7 @@
  * All operations are conversation-scoped: requests carry a sessionId and the
  * session's authoritative cwd comes from the session store.
  */
-import { open, readFile, stat } from 'node:fs/promises'
+import { open, readFile, realpath, stat } from 'node:fs/promises'
 import { basename, extname, isAbsolute, join, sep } from 'node:path'
 import type { Stats } from 'node:fs'
 import type { IncomingMessage, ServerResponse } from 'node:http'
@@ -802,6 +802,25 @@ function buildApi(
     'session.cwd': async (payload) => {
       const { sessionId, cwd } = await cwdOf(payload)
       return { sessionId, cwd, root: rootLabel(cwd), parent: parentOf(cwd) ?? null }
+    },
+    // The canonical (realpath) spelling of one workspace path.
+    //
+    // The Desktop verifier behind "open in app" / "reveal in file manager"
+    // requires `path.resolve()` of the string it is handed to equal the
+    // filesystem backend's realpath (`processPath()` is `realpath.native`), so
+    // any junction or symlink segment in the path is refused outright. The
+    // browser half cannot compute a realpath (the client bundle has no
+    // node:fs), so callers ask here before handing a path to `remote.session`.
+    // A target that cannot be canonicalized falls back to the resolved request;
+    // the caller keeps its own failure path for it.
+    'fs.realpath': async (payload) => {
+      const { cwd } = await cwdOf(payload)
+      const requested = await ensureWorkspacePath(cwd, requireString(payload, 'path'))
+      try {
+        return { path: await realpath(requested) }
+      } catch {
+        return { path: requested }
+      }
     },
     'fs.tree': async (payload) => {
       const { cwd } = await cwdOf(payload)
