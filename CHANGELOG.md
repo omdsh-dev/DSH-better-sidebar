@@ -2,6 +2,17 @@
 
 > 本文档收录 dsh-better-sidebar 的完整发布历史（最新版摘要见 [README](README_ZH.md)；同步发布于 [GitHub Releases](https://github.com/omdsh-dev/DSH-better-sidebar/releases)）。
 
+### 未发布
+
+- 🧭 **开始页由插件接管，支持两列自适应、可配置行数和「更多」收纳**：右侧栏展开时不再用宿主自带的单列卡片页。宽屏（≥520px）每行两张、窄屏一张；默认最多 6 行（可在设置或「调整顺序」弹窗中改为 ≥1 行），超出容量的入口收进「更多」卡片，菜单行统一为图标 + 标题，可直接打开，也可打开「调整顺序」。开始页内容默认垂直居中，可切换为靠上；设置中新增「接管开始页」开关（默认开），关闭后恢复宿主自带开始页。开始页卡片点击后用新页面替换指南页，和宿主原行为一致。
+  - 🧪 测试：`tests/guide-layout.spec.ts`（排序 / 隐藏 / 列数与容量 / More 占格 / 最小容量）、`tests/native-guide.spec.tsx`（卡片、More、终端 Shell 菜单、catalog 订阅、chain 注册与释放）。
+- 🗂 **设置里的「开始页」清单接管所有已注册到官方侧边栏的入口**：本插件、宿主终端和第三方 tab 都按 `providerId::entryId` 列出，默认显示；本插件自己的 tab 使用与「侧边栏内容」功能卡片相同的 `tabsEnabled` 功能开关（关闭即禁用并移出开始页，清单行保留以便重新打开）；宿主/第三方入口的开关只控制开始页显示，不注销 tab 类型，也不影响快捷键、资源打开或已打开页签。支持上移/下移和恢复默认顺序，排序持久化。
+  - 🧪 测试：`tests/side-card-section.spec.tsx`（原生入口清单、默认开启、顺序与隐藏状态）、`tests/prefs.spec.ts`（行数 / 顺序 / 可见性校验）。
+- 🖥 **终端卡片保留原生 Shell 菜单**：开始页的终端卡片右侧有「…」，菜单通过宿主 `webTerminals.launchShells` 读取 Shell 列表，选择后写入宿主偏好并以该 Shell 打开终端；宿主没有这些能力时卡片退化为普通入口。修复 `launchShells` / `selectShell` 丢失 `this` 导致「Shell 加载失败：Cannot read properties of undefined (reading 'remote')」的问题，并加回归测试。其他第三方自定义开始页卡片组件无法在 chain 接管页中复用，会显示为通用卡片（原因见 `docs/host-contracts.md` §9）。
+- 🧩 **「更多」保留宿主的浏览/创建插件动作**：开始页的「更多」卡片现在常驻（不再只在溢出时出现），菜单按图标 + 标题列出溢出入口，并恢复宿主原生的「浏览更多插件」与「创建你的插件」（走 `pluginNavigation.openList()` 与 `uiWorkspace.startSession(..., { agentPreset: 'cordis', whenDraftExists: 'append' })`）；服务缺失时对应行自动隐藏。
+- 🎛 **统一开始页开关**：调整顺序与开始页清单里，Better Sidebar 自己的 tab 使用和「侧边栏内容」卡片相同的功能开关（`tabsEnabled`），关闭即禁用并从开始页移除，清单行保留并可重新打开；宿主/第三方 tab 仍使用「在开始页显示」开关。同时修复开关关闭后无法再点开的问题：受控 checkbox 的异步写回会被原生 toggle 抢先重置，现改为由 label/input 的点击显式驱动、从 prop 推导下一状态。
+- 🧪 挂载冒烟新增真实宿主断言：开始页由插件接管（`data-dsh-guide-grid`）、列数跟随面板宽度、终端卡片提供 Shell 菜单；现有 guide 选择器与条目断言保持不变。
+
 ### v0.31.1
 
 - 🔗 **Markdown 里的 `file://` 图片地址也能显示了**：`file:` 不交给渲染器或 DOMPurify（前者会拒绝、后者会剥掉 src），而是先还原成绝对本地路径，再走与相对图片相同的会话媒体路由。支持 POSIX 路径、Windows 盘符（`file:///C:/...`，含百分号编码）、`localhost` 与 UNC（`file://server/share/...`）；原始 HTML 的 `<img src="file:///...">` 同样在消毒前完成映射。与 VSCode Markdown 预览的 webview 资源映射同一思路。
@@ -13,15 +24,6 @@
   - 🧪 测试：`tests/markdown-images.spec.ts`、`tests/markdown-html-render.spec.tsx`、`tests/html-preview-inline.spec.ts`。
 - 🪟 **桌面壳里开启沙箱的 HTML 预览不再空白（403）**：壳只给 origin 为 `dsh-app://app` 的子帧注入转发标记，沙箱 iframe 是不透明源，主文档导航直接被壳拒绝。现在顶层可信帧取回 HTML 与同源静态资源，内联成自包含文档后交给 sandboxed `blob:` iframe；相对 CSS/JS/图片/字体正常，iframe 仍无 `allow-same-origin`，浏览器与“关闭沙箱”路径不变。嵌套 iframe / Worker / 脚本运行时相对请求仍受壳限制。
   - 🧪 测试：`tests/html-preview-frame.spec.tsx`、`tests/html-preview-inline.spec.ts`、`tests/sandbox-views.spec.tsx`、`test:mount` 的本地图片断言。
-
-- 🧭 **开始页由插件接管，支持两列自适应、可配置行数和「更多」收纳**：右侧栏展开时不再用宿主自带的单列卡片页。宽屏（≥520px）每行两张、窄屏一张；默认最多 6 行（可在设置或「调整顺序」弹窗中改为 ≥1 行），超出容量的入口收进「更多」卡片，菜单行统一为图标 + 标题，可直接打开，也可打开「调整顺序」。开始页内容默认垂直居中，可切换为靠上；设置中新增「接管开始页」开关（默认开），关闭后恢复宿主自带开始页。开始页卡片点击后用新页面替换指南页，和宿主原行为一致。
-  - 🧪 测试：`tests/guide-layout.spec.ts`（排序 / 隐藏 / 列数与容量 / More 占格 / 最小容量）、`tests/native-guide.spec.tsx`（卡片、More、终端 Shell 菜单、catalog 订阅、chain 注册与释放）。
-- 🗂 **设置里的「开始页」清单接管所有已注册到官方侧边栏的入口**：本插件、宿主终端和第三方 tab 都按 `providerId::entryId` 列出，默认显示；开关只隐藏开始页卡片，不注销 tab 类型，也不影响快捷键、资源打开或已打开页签。Better Sidebar 自己的功能开关语义不变。支持上移/下移和恢复默认顺序，排序持久化。
-  - 🧪 测试：`tests/side-card-section.spec.tsx`（原生入口清单、默认开启、顺序与隐藏状态）、`tests/prefs.spec.ts`（行数 / 顺序 / 可见性校验）。
-- 🖥 **终端卡片保留原生 Shell 菜单**：开始页的终端卡片右侧有「…」，菜单通过宿主 `webTerminals.launchShells` 读取 Shell 列表，选择后写入宿主偏好并以该 Shell 打开终端；宿主没有这些能力时卡片退化为普通入口。修复 `launchShells` / `selectShell` 丢失 `this` 导致「Shell 加载失败：Cannot read properties of undefined (reading 'remote')」的问题，并加回归测试。其他第三方自定义开始页卡片组件无法在 chain 接管页中复用，会显示为通用卡片（原因见 `docs/host-contracts.md` §9）。
-- 🧩 **「更多」保留宿主的浏览/创建插件动作**：开始页的「更多」卡片现在常驻（不再只在溢出时出现），菜单按图标 + 标题列出溢出入口，并恢复宿主原生的「浏览更多插件」与「创建你的插件」（走 `pluginNavigation.openList()` 与 `uiWorkspace.startSession(..., { agentPreset: 'cordis', whenDraftExists: 'append' })`）；服务缺失时对应行自动隐藏。
-- 🎛 **统一开始页开关**：调整顺序与开始页清单里，Better Sidebar 自己的 tab 使用和「侧边栏内容」卡片相同的功能开关（`tabsEnabled`），关闭即禁用并从开始页移除，清单行保留并可重新打开；宿主/第三方 tab 仍使用「在开始页显示」开关。同时修复开关关闭后无法再点开的问题：受控 checkbox 的异步写回会被原生 toggle 抢先重置，现改为由 label/input 的点击显式驱动、从 prop 推导下一状态。
-- 🧪 挂载冒烟新增真实宿主断言：开始页由插件接管（`data-dsh-guide-grid`）、列数跟随面板宽度、终端卡片提供 Shell 菜单；现有 guide 选择器与条目断言保持不变。
 
 - 🐞 **GBK 文件里的欧元符号不再被写成 ICU 拒绝的单字节 `0x80`**：改用标准两字节 `0xA2E3`，修复 Node 24.21 / ICU 78 下保存后重开变乱码；新增字面量测试钉住编码与回读。
 
