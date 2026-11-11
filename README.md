@@ -44,14 +44,14 @@ dsh plugin --profile web add dsh-better-sidebar@latest
 
 Then **hard-refresh the browser** (Cmd/Ctrl+Shift+R). Requires DSH **0.2.2-rc.1+**.
 
-> **Compatibility warning — match the plugin to the host line.** As of 2026-11-04, DSH's npm `latest` is **0.2.1-rc.5** and `next` is **0.2.2-rc.1**. **v0.31.0 requires DSH 0.2.2-rc.1+**; hosts on the 0.2.1 line (**0.2.1-rc.1 ~ rc.5**, i.e. today's `latest`) must pin `dsh-better-sidebar@0.28.2` — v0.29.0 was never published to npm. DSH 0.2.1-alpha.5 users must pin `dsh-better-sidebar@0.28.0-alpha.0`, and hosts still on **0.2.0-rc.2** must pin `dsh-better-sidebar@0.26.1`. A 0.x caret never spans a minor version, so one plugin build cannot serve two host lines. The marketplace installer picks the plugin's `latest` regardless of host version, so an old host gets a version-rejection error — upgrade the host or pin the version explicitly. The two packages' `latest` tags are independent.
+> **Compatibility warning — match the plugin to the host line.** As of 2026-11-04, DSH's npm `latest` is **0.2.1-rc.5** and `next` is **0.2.2-rc.1**. **v0.31.1 requires DSH 0.2.2-rc.1+**; hosts on the 0.2.1 line (**0.2.1-rc.1 ~ rc.5**, i.e. today's `latest`) must pin `dsh-better-sidebar@0.28.2` — v0.29.0 was never published to npm. DSH 0.2.1-alpha.5 users must pin `dsh-better-sidebar@0.28.0-alpha.0`, and hosts still on **0.2.0-rc.2** must pin `dsh-better-sidebar@0.26.1`. A 0.x caret never spans a minor version, so one plugin build cannot serve two host lines. The marketplace installer picks the plugin's `latest` regardless of host version, so an old host gets a version-rejection error — upgrade the host or pin the version explicitly. The two packages' `latest` tags are independent.
 
 <details>
 <summary><b>Pick the plugin version for your DSH version</b></summary>
 
 | Your DSH version | Install command |
 | --- | --- |
-| **0.2.2-rc.1+** | `dsh plugin --profile web add dsh-better-sidebar@0.31.0` |
+| **0.2.2-rc.1+** | `dsh plugin --profile web add dsh-better-sidebar@0.31.1` |
 | **0.2.1-rc.1 ~ 0.2.1-rc.5** | `dsh plugin --profile web add dsh-better-sidebar@0.28.2` |
 | **0.2.1-alpha.5** | `dsh plugin --profile web add dsh-better-sidebar@0.28.0-alpha.0` |
 | **0.2.0-rc.2** | `dsh plugin --profile web add dsh-better-sidebar@0.26.1` |
@@ -71,12 +71,12 @@ Always pin **exact versions** for older releases (`latest` moves forward with ea
 
 ```text
 Install the dsh-better-sidebar plugin (a sidebar workbench for DSH):
-1. Confirm DSH is 0.2.2-rc.1 or newer, then run dsh plugin --profile web add dsh-better-sidebar@0.31.0
+1. Confirm DSH is 0.2.2-rc.1 or newer, then run dsh plugin --profile web add dsh-better-sidebar@0.31.1
 2. Remind me to hard-refresh the browser (Cmd/Ctrl+Shift+R) afterwards
 If something fails, check the FAQ table in https://github.com/omdsh-dev/DSH-better-sidebar README first.
 ```
 
-**One-line script** — clone this repo and run `bash scripts/install.sh 0.31.0` (macOS / Linux / Windows Git Bash; `./scripts/install.ps1 -Version 0.31.0` for native Windows). It handles installation + bundle registration.
+**One-line script** — clone this repo and run `bash scripts/install.sh 0.31.1` (macOS / Linux / Windows Git Bash; `./scripts/install.ps1 -Version 0.31.1` for native Windows). It handles installation + bundle registration.
 
 **Updating**: just re-run the install command, then hard-refresh the browser.
 
@@ -94,11 +94,15 @@ If something fails, check the FAQ table in https://github.com/omdsh-dev/DSH-bett
 | **Two sidebars** on the page | Double mounting. Remove the legacy manual mount line (`- insert: ... better-sidebar ...`) from `~/.dsh/profiles/web/cordis.patch.yml`; aggregate packages mounting this package under a different id are auto-yielded, no action needed. |
 | Settings values gone after upgrade | Since DSH 0.1.7, preferences live on this plugin's mount row in the profile (default entry id `better-sidebar`). The plugin migrates your old `settings.yaml` values once on first start and never overwrites newer values. |
 | Terminal unavailable | Terminals are provided by **DSH itself** (this plugin ships no PTY) — see DSH docs; "host provides no terminal capability" in the bottom terminal means this deployment has no terminal controller mounted. |
-| `dsh: command not found` | Install DSH first; or use `npx -y --package @deepseek-ai/dsh@0.2.2-rc.1 dsh plugin --profile web add dsh-better-sidebar@0.31.0`. |
+| `dsh: command not found` | Install DSH first; or use `npx -y --package @deepseek-ai/dsh@0.2.2-rc.1 dsh plugin --profile web add dsh-better-sidebar@0.31.1`. |
 
 </details>
 
 ## 🆕 Recent Updates
+
+**v0.31.1 — `file://` image URLs in Markdown**
+
+- **`file:///...` images now render**: a Markdown-syntax or raw-HTML `file:` URL is converted to an absolute local path and served by the same session media route as a relative image; Windows drives, `localhost`, UNC and percent-encoding are covered.
 
 **v0.31.0 — local-image and desktop-shell preview fixes**
 
@@ -109,14 +113,6 @@ If something fails, check the FAQ table in https://github.com/omdsh-dev/DSH-bett
 **v0.30.1 — settings nav icon fix**
 
 - **The "Side card" row in Settings no longer shows two icons.** The plugin used to paint its own glyph over the shell's fallback gear with a CSS mask; the shell now wraps the nav icon in a container and exposes a per-section icon slot. The row contributes its icon through that slot, and the stale marker + CSS apparatus is gone — along with a document-wide DOM observer.
-
-**v0.30.0 — DSH 0.2.2 support, side-chat images, clickable quote chips**
-
-- **DSH 0.2.2-rc.1 is the new baseline** (all 14 peer floors move to `^0.2.2-rc.1`). The host replaced the installable model-selection ref with an agent-owned `AgentModel`, so a side-chat thread's model switch now goes through `agent.model.select()` — recorded once in the log and applied to the next step. A 0.x caret never spans a minor: DSH 0.2.1 hosts (today's npm `latest`) keep pinning plugin v0.28.2.
-- **Side Chat takes images**: paste a screenshot or pick PNG / JPEG / WebP / GIF, preview or remove before sending, or send images alone; the preview survives a reload and a cold restore.
-- **Quote chips are clickable**: a passage selected with "Add to conversation" lands as a chip that jumps back to the source file and flashes the quoted lines, with a nonce so a second click jumps again; if the reference record cannot be persisted the plugin falls back to the previous built-in chip instead of landing a dead one.
-- **Drafts survive the host-owned close paths**: closing a native sidebar tab or quitting the desktop app keeps the unsaved draft and offers it back when the same file is reopened — the host exposes no cancellable close hook, so this is backup-and-restore rather than a prompt.
-- **Reliability**: a side-chat seed built from a compacted parent no longer persists an unreadable session log; page CSS zoom is no longer misread as a page transform; the bottom workbench terminal no longer paints black; container workspaces show every child repository in the Git panel; the installers refuse a profile whose `@deepseek-ai/dsh-*` copies are a mixed version pair and print the repair command.
 
 ## 🔌 Plugin Ecosystem
 

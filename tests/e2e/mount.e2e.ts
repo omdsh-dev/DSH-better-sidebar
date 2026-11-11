@@ -30,6 +30,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { test, expect, type APIRequestContext } from '@playwright/test'
 import { PAGE_URL, composerEditable, createHostApi, dismissOnboarding, gotoPage, hostRpc, sendFirstMessage, sidebarApi } from './host'
 
@@ -112,6 +113,7 @@ async function seedSession(): Promise<void> {
   // The local-image probe: the markdown preview's media route must serve the
   // relative path, and a data:image destination must render as an <img>.
   writeFileSync(join(WORKSPACE_PATH, SEEDED_PNG), Buffer.from(ONE_PIXEL_PNG, 'base64'))
+  const seededPngUrl = pathToFileURL(join(WORKSPACE_PATH, SEEDED_PNG)).href
   // The README-style probe file: raw-HTML runs (badge wall div with an
   // embedded script, a <details> nesting a fence + heading) plus inline tags
   // inside a table cell. The script must be sanitized away in the preview.
@@ -129,6 +131,8 @@ async function seedSession(): Promise<void> {
     '![local image](pic.png)',
     '',
     `![data image](data:image/png;base64,${ONE_PIXEL_PNG})`,
+    '',
+    `![file url image](${seededPngUrl})`,
     '',
     '[docs link][def]',
     '',
@@ -768,13 +772,16 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   // Local image: a relative markdown destination must resolve through the
   // plugin media route and actually decode. Data image: the vocabulary now
   // admits data:image, so it must render as an <img>, not alt text.
-  const localImage = pane.locator('img[src*="/sidebar/file"]').first()
-  await expect(localImage, 'the relative markdown image must render through the media route').toHaveCount(1, { timeout: 30_000 })
-  await localImage.scrollIntoViewIfNeeded()
-  await expect.poll(
-    () => localImage.evaluate((image) => (image as HTMLImageElement).naturalWidth),
-    { message: 'the local markdown image must decode in the real browser' },
-  ).toBeGreaterThan(0)
+  const localImages = pane.locator('img[src*="/sidebar/file"]')
+  await expect(localImages, 'the relative and file: URL markdown images must render through the media route').toHaveCount(2, { timeout: 30_000 })
+  for (let index = 0; index < 2; index += 1) {
+    const image = localImages.nth(index)
+    await image.scrollIntoViewIfNeeded()
+    await expect.poll(
+      () => image.evaluate((node) => (node as HTMLImageElement).naturalWidth),
+      { message: 'each local markdown image (relative and file: URL) must decode in the real browser' },
+    ).toBeGreaterThan(0)
+  }
   const dataImage = pane.locator('img[src^="data:image/png;base64,"]').first()
   await expect(dataImage, 'a markdown data:image must render as an <img>').toHaveCount(1, { timeout: 30_000 })
   await dataImage.scrollIntoViewIfNeeded()

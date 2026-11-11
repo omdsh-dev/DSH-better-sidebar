@@ -63,6 +63,50 @@ function imageDataUrl(destination: string): string | undefined {
 }
 
 /**
+ * The local path of an authored `file:` URL, or undefined when the
+ * destination is not a well-formed file URL. This is how a Markdown file can
+ * name a local image with the browser's own file-URL spelling
+ * (`file:///C:/pics/a.png`, `file:///home/me/a.png`) without the preview ever
+ * handing the `file:` scheme to the renderer: the path goes through the same
+ * session media route as every other local image. VSCode's Markdown preview
+ * does the equivalent through its webview resource provider.
+ *
+ * A non-empty host is a UNC path (`file://server/share/a.png` ->
+ * `//server/share/a.png`); `localhost` is the local machine. Query and hash
+ * are not part of a local filename and are dropped.
+ * @param destination - One authored image destination.
+ * @returns The local path, or undefined when this is not a file URL.
+ */
+export function fileUrlToLocalPath(destination: string): string | undefined {
+  const trimmed = destination.trim()
+  if (!/^file:/i.test(trimmed)) return undefined
+  let url: URL
+  try {
+    url = new URL(trimmed)
+  } catch {
+    return undefined
+  }
+  if (url.protocol !== 'file:' || url.username !== '' || url.password !== '') return undefined
+  let pathname: string
+  try {
+    pathname = decodeURIComponent(url.pathname)
+  } catch {
+    return undefined
+  }
+  if (pathname === '' || pathname === '/' || pathname.includes('\0')) return undefined
+  const host = url.hostname
+  if (host !== '' && host.toLowerCase() !== 'localhost') {
+    // `file://C:/x` names a drive, not a host; anything else is UNC.
+    if (/^[A-Za-z]:$/.test(host)) return normalizeLocalPath(`${host}${pathname}`)
+    return `//${host}${pathname}`
+  }
+  const local = /^\/[A-Za-z]:[\\/]/.test(pathname) ? pathname.slice(1) : pathname
+  // Keep the UNC spelling for the host resolver; everything else is normalized
+  // (Windows drive spellings become backslashes, POSIX roots stay POSIX).
+  return local.startsWith('//') ? local : normalizeLocalPath(local)
+}
+
+/**
  * Collapse `.`/`..` segments of an absolute local path, preserving its root
  * (POSIX `/`), its Windows drive (`C:\`), or its UNC `\\server\share`
  * prefix. The host's `requireAbsolute` (`path.resolve`) normalizes anyway,
@@ -195,6 +239,14 @@ export function createMarkdownPathImages(
     resolve: (destination: string): string | undefined => {
       const dataUrl = imageDataUrl(destination)
       if (dataUrl !== undefined) return dataUrl
+      // A file: URL is a local path in another spelling; never hand the scheme
+      // to the renderer (its vocabulary rejects it and a sandboxed frame cannot
+      // load it). The path goes through the same media route as a relative one.
+      const filePathFromUrl = fileUrlToLocalPath(destination)
+      if (filePathFromUrl !== undefined) {
+        if (!desktop) return markdownMediaUrl(filePathFromUrl, scope, baseUrl)
+        return desktopFileUrl(filePathFromUrl, baseUrl)
+      }
       const decoded = decodeDestination(destination)
       if (decoded === undefined) return undefined
       const target = markdownImageTarget(decoded, filePath)
@@ -230,6 +282,11 @@ export function resolveLocalMediaDest(
 ): string {
   const trimmed = dest.trim()
   if (trimmed === '' || trimmed.startsWith('#')) return dest
+  // Raw HTML may spell a local image as a file: URL. The path is served by the
+  // same plugin media route as a relative src (a plain DOM <img> in the GUI
+  // frame can load it; a raw file: URL cannot).
+  const filePathFromUrl = fileUrlToLocalPath(trimmed)
+  if (filePathFromUrl !== undefined) return markdownMediaUrl(filePathFromUrl, scope, baseUrl)
   if (isRemoteUrl(trimmed)) return dest
   const decoded = decodeDestination(trimmed)
   if (decoded === undefined) return dest
@@ -252,6 +309,12 @@ function resolveMediaDest(
 ): string {
   const trimmed = dest.trim()
   if (trimmed === '' || trimmed.startsWith('#')) return dest
+  const filePathFromUrl = fileUrlToLocalPath(trimmed)
+  if (filePathFromUrl !== undefined) {
+    const params = new URLSearchParams({ sessionId: scope.sessionId, path: filePathFromUrl })
+    if (scope.cwd !== undefined && scope.cwd !== '') params.set('cwd', scope.cwd)
+    return hostRouteUrl(`sidebar/file?${params.toString()}`, baseUrl).href
+  }
   if (isRemoteUrl(trimmed)) return dest
   const absolute = isAbsolutePath(trimmed)
   if (!absolute && directory === undefined) return dest
