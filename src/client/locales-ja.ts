@@ -131,6 +131,7 @@ export const ja: Record<string, string> = {
   newTab: '新しいタブ',
   brokenSymlink: '無効なシンボリックリンク',
   close: '閉じる',
+  closeWindow: 'ウィンドウを閉じる',
   closeOtherTabs: '他のタブを閉じる',
   tabUnread: '未読の新しいページがあります',
   closeLeftTabs: '左のタブを閉じる',

@@ -114,6 +114,7 @@ export const sv: Record<string, string> = {
   newTab: 'Ny flik',
   brokenSymlink: 'Bruten symbolisk länk',
   close: 'Stäng',
+  closeWindow: 'Stäng fönstret',
   closeOtherTabs: 'Stäng andra flikar',
   tabUnread: 'Det finns en ny sida som du inte har tittat på',
   closeLeftTabs: 'Stäng flikar till vänster',

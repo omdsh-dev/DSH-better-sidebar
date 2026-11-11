@@ -129,6 +129,7 @@ export const nl: Record<string, string> = {
   newTab: 'Nieuw tabblad',
   brokenSymlink: 'Gebroken symlink',
   close: 'Sluiten',
+  closeWindow: 'Venster sluiten',
   closeOtherTabs: 'Andere tabbladen sluiten',
   tabUnread: 'Er is een nieuwe pagina die u nog niet heeft bekeken',
   closeLeftTabs: 'Tabbladen links sluiten',

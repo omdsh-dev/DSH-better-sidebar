@@ -117,6 +117,7 @@ export const de: Record<string, string> = {
   newTab: 'Neuer Tab',
   brokenSymlink: 'Defekter Symlink',
   close: 'Schließen',
+  closeWindow: 'Fenster schließen',
   closeOtherTabs: 'Andere Tabs schließen',
   tabUnread: 'Es gibt eine neue, noch nicht angesehene Seite',
   closeLeftTabs: 'Tabs links schließen',

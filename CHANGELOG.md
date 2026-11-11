@@ -4,6 +4,9 @@
 
 ### 未发布
 
+- 🪟 **桌面版新增「一键关闭窗口」按钮：会话头右排、底部工作台开关旁边，点一下收起窗口**：宿主的关窗通道（`shortcuts.closeWindow()` → preload `window.dshDesktop.keyboard.closeWindow(revision)` → 主进程 `window.close()`）此前没有任何插件入口，而 macOS 走 `titleBarStyle: "hiddenInset"`，连原生关窗按钮都没有。控件注册进 `conversation.session.header.utilities`（`order: 30`，排在 `order: 10` 的工作台开关与 `order: 20` 的 dsh-context 诊断入口之后），只在 Electron preload 打过 `<html data-platform>` 的桌面窗口里渲染——Web 部署没有 keyboard 桥，`closeWindow()` 必然 throw，所以整个控件不出现。关窗是异步的：点击后按钮进入 `data-busy` 禁用态，失败（例如窗口没焦点）恢复可用并只打一条 `Window close failed` 控制台错误。主进程的 `window.on('close')` 是 preventDefault + hide，因此这个按钮等于「收起窗口到后台」，不退出进程——退出仍是 Cmd+Q。
+  - 🧪 测试：`tests/close-window.spec.tsx`（桌面渲染 / Web 缺席 / 点击走上宿主通道 / 失败恢复可用 / inject 把方法绑回服务本身 / `shortcuts` 缺席时报明确错误）。
+
 - 🐞 **GBK 文件里的欧元符号不再被写成 ICU 拒绝的单字节 `0x80`**：改用标准两字节 `0xA2E3`，修复 Node 24.21 / ICU 78 下保存后重开变乱码；新增字面量测试钉住编码与回读。
 
 - 🧵 **fork 块改成默认折叠的原生 disclosure：折叠时只剩那条「分支前的主会话」分割线，展开才看到继承的问答**：`data-sidechat-fork-point` 现在是受控的 `<details>`（默认 closed），`<summary>` 就是开头那条分割线（`sideChatForkDivider` 文案 + 展开 chevron，不含任何继承正文），body 展开后仍是原顺序「提问 → 回答 → 结尾分割线」，没有回答时只有提问与结尾线；折叠/展开不改变转录行数，块内除 summary 外没有任何 `button` / `a`。

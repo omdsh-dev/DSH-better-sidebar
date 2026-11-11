@@ -131,6 +131,7 @@ export const th: Record<string, string> = {
   newTab: 'Tab ใหม่',
   brokenSymlink: 'Symlink เสีย',
   close: 'ปิด',
+  closeWindow: 'ปิดหน้าต่าง',
   closeOtherTabs: 'ปิด Tab อื่น',
   tabUnread: 'มีหน้าใหม่ที่คุณยังไม่ได้ดู',
   closeLeftTabs: 'ปิด Tab ด้านซ้าย',

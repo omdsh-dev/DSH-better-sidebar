@@ -122,6 +122,7 @@ export const it: Record<string, string> = {
   newTab: 'Nuova scheda',
   brokenSymlink: 'Collegamento simbolico interrotto',
   close: 'Chiudi',
+  closeWindow: 'Chiudi finestra',
   closeOtherTabs: 'Chiudi le altre schede',
   tabUnread: 'C’è una nuova pagina non ancora visualizzata',
   closeLeftTabs: 'Chiudi le schede a sinistra',
