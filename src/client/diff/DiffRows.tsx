@@ -21,6 +21,17 @@ const FOLD_THRESHOLD = 120
 /** Rendered hunk rows per file capped at this count; expand reveals the rest. */
 const MAX_ROWS = 600
 
+/**
+ * A single row longer than this renders a bounded preview instead of its full
+ * text. The shared tokenizer is linear now, but a multi-MB minified line still
+ * costs the browser >100ms to lay out even when folded, and nobody can read it
+ * in the pane. Folded rows show {@link FOLDED_PREVIEW_CHARS}; expanding one
+ * shows {@link MAX_RENDERED_LINE_CHARS}. The full line stays available in the
+ * content tab / source file.
+ */
+const MAX_RENDERED_LINE_CHARS = 20_000
+const FOLDED_PREVIEW_CHARS = 2_000
+
 /** Token class -> CSS color class ('' inherits the row's diff color). */
 const TOKEN_CLASS: Readonly<Record<TokenType, string>> = {
   plain: '',
@@ -155,6 +166,13 @@ export function DiffRows({ segments, lang, resolveFold }: DiffRowsProps) {
     const isLong = row.text.length > FOLD_THRESHOLD
     const isFolded = isLong && !expandedLines.has(rowKey)
     const blockEntry = blockEntries.get(row) ?? false
+    // Over-budget rows skip tokenization and full-text rendering entirely:
+    // see MAX_RENDERED_LINE_CHARS. The '…' is the truncation signal both
+    // folded (CSS ellipsis beside it) and expanded (no CSS ellipsis) need.
+    const overBudget = row.text.length > MAX_RENDERED_LINE_CHARS
+    const preview = overBudget
+      ? `${row.text.slice(0, isFolded ? FOLDED_PREVIEW_CHARS : MAX_RENDERED_LINE_CHARS)}…`
+      : null
     return (
       <div
         key={rowKey}
@@ -169,28 +187,31 @@ export function DiffRows({ segments, lang, resolveFold }: DiffRowsProps) {
             return next
           })
         } : undefined}
-        title={isFolded ? row.text : undefined}
+        title={isFolded ? preview ?? row.text : undefined}
       >
         <span className={css.lineNo}>{row.oldLine !== undefined ? String(row.oldLine) : ''}</span>
         <span className={css.lineNo}>{row.newLine !== undefined ? String(row.newLine) : ''}</span>
         <span className={css.sign}>{row.kind === 'del' ? '-' : row.kind === 'add' ? '+' : row.kind === 'mod' ? '~' : ' '}</span>
         <span className={css.text} data-folded={isFolded ? 'true' : undefined}>
-          {row.kind === 'mod' && (() => {
-            const inline = inlineMap.get(row)
-            if (inline === undefined) return tokensToNodes(scanLine(row.text, lang, blockEntry).tokens)
-            // Coalesced change runs, each split into syntax tokens with
-            // block-comment state threaded across the runs of this line.
-            const side = coalesceInline(row.oldLine !== undefined ? inline.old : inline.next)
-            const nodes: ReactNode[] = []
-            let state = blockEntry
-            for (const seg of side) {
-              const scan = scanLine(seg.text, lang, state)
-              state = scan.inBlock
-              nodes.push(...tokensToNodes(scan.tokens, seg.changed))
-            }
-            return nodes
-          })()}
-          {row.kind !== 'mod' && tokensToNodes(scanLine(row.text, lang, blockEntry).tokens)}
+          {preview !== null
+            ? preview
+            : row.kind === 'mod'
+              ? (() => {
+                const inline = inlineMap.get(row)
+                if (inline === undefined) return tokensToNodes(scanLine(row.text, lang, blockEntry).tokens)
+                // Coalesced change runs, each split into syntax tokens with
+                // block-comment state threaded across the runs of this line.
+                const side = coalesceInline(row.oldLine !== undefined ? inline.old : inline.next)
+                const nodes: ReactNode[] = []
+                let state = blockEntry
+                for (const seg of side) {
+                  const scan = scanLine(seg.text, lang, state)
+                  state = scan.inBlock
+                  nodes.push(...tokensToNodes(scan.tokens, seg.changed))
+                }
+                return nodes
+              })()
+              : tokensToNodes(scanLine(row.text, lang, blockEntry).tokens)}
         </span>
       </div>
     )
