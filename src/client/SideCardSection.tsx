@@ -67,6 +67,7 @@ import type { SidebarStore } from './state.ts'
 import type { NativeGuideCatalog, NativeGuideEntry } from './native/guide-catalog.ts'
 import { orderGuideEntries } from './native/guide-layout.ts'
 import { GuideOrderList } from './native/guide-order.tsx'
+import { GuideRowsInput } from './native/guide-rows.tsx'
 import type {
   BetterSidebarService,
   FileViewerDescriptor,
@@ -771,14 +772,6 @@ export function SideCardSection({ store, service, guideCatalog }: SideCardSectio
     applyPref({ guideOrder: next })
   }
 
-  /** Commit the maximum row count; an invalid value restores the stored one. */
-  const commitGuideRows = (raw: string, input: HTMLInputElement): void => {
-    const parsed = Number(raw)
-    const next = Number.isSafeInteger(parsed) && parsed >= 1 ? parsed : prefs.guideRows
-    if (next !== prefs.guideRows) applyPref({ guideRows: next })
-    input.value = String(next)
-  }
-
   /** Flip one declaratively-declared toggle (a SidebarPrefs boolean field). */
   const onToggleSetting = (toggle: SidebarSettingToggle, next: boolean): void => {
     applyPref({ [toggle.key]: next })
@@ -1038,22 +1031,45 @@ export function SideCardSection({ store, service, guideCatalog }: SideCardSectio
         <p className={css.groupHint}>{t('settingsStartPageDesc')}</p>
         <div className={css.row}>
           <span className={css.rowText}>
+            <span className={css.title}>{t('settingsGuideTakeoverTitle')}</span>
+            <span className={css.desc}>{t('settingsGuideTakeoverDesc')}</span>
+          </span>
+          <Switch
+            label={t('settingsGuideTakeoverTitle')}
+            checked={prefs.guideTakeover}
+            onChange={(next) => { applyPref({ guideTakeover: next }) }}
+          />
+        </div>
+        <div className={css.row}>
+          <span className={css.rowText}>
             <span className={css.title}>{t('settingsGuideRowsTitle')}</span>
             <span className={css.desc}>{t('settingsGuideRowsDesc')}</span>
           </span>
-          <Input
-            key={prefs.guideRows}
-            type="number"
-            min={1}
-            step={1}
-            className={css.typedInputNumber}
-            defaultValue={String(prefs.guideRows)}
-            aria-label={t('settingsGuideRowsTitle')}
-            onBlur={event => { commitGuideRows(event.currentTarget.value, event.currentTarget) }}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') event.currentTarget.blur()
-            }}
+          <GuideRowsInput
+            value={prefs.guideRows}
+            label={t('settingsGuideRowsTitle')}
+            onCommit={(next) => { applyPref({ guideRows: next }) }}
           />
+        </div>
+        <div className={css.row}>
+          <span className={css.rowText}>
+            <span className={css.title}>{t('settingsGuideAlignTitle')}</span>
+            <span className={css.desc}>{t('settingsGuideAlignDesc')}</span>
+          </span>
+          <span className={css.segmented} role="radiogroup" aria-label={t('settingsGuideAlignTitle')}>
+            {(['center', 'top'] as const).map(value => (
+              <button
+                key={value}
+                type="button"
+                role="radio"
+                className={clsx(css.segment, prefs.guideAlign === value && css.segmentOn)}
+                aria-checked={prefs.guideAlign === value}
+                onClick={() => { applyPref({ guideAlign: value }) }}
+              >
+                {t(value === 'center' ? 'settingsGuideAlignCenter' : 'settingsGuideAlignTop')}
+              </button>
+            ))}
+          </span>
         </div>
         <div className={css.guideOrderHeader}>
           <span>{t('guideOrder')}</span>

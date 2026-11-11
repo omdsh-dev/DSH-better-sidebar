@@ -163,6 +163,18 @@ export interface SidebarPrefs {
    * and already-open tabs are untouched.
    */
   guideHidden: Record<string, boolean>
+  /**
+   * Where the start-page grid sits when it is shorter than the pane: vertically
+   * centered (default) or pinned to the top. When the grid is taller than the
+   * pane it always scrolls from the top.
+   */
+  guideAlign: 'center' | 'top'
+  /**
+   * Whether the plugin replaces the host's shipped guide body. On by default;
+   * off restores the host's own start page while every other plugin feature
+   * stays exactly as it is.
+   */
+  guideTakeover: boolean
 }
 
 // ── Side-chat composer preferences ──────────────────────────────────────────
@@ -234,4 +246,6 @@ export const SIDEBAR_PREFS_DEFAULTS: SidebarPrefs = {
   guideRows: 6,
   guideOrder: [],
   guideHidden: {},
+  guideAlign: 'center',
+  guideTakeover: true,
 }

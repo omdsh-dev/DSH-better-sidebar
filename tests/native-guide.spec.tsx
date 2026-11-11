@@ -32,6 +32,7 @@ function entry(key: string, kind = key): NativeGuideEntry {
     kind,
     title: () => key.toUpperCase(),
     description: () => key + ' description',
+    icon: ({ size }: { size?: number }) => createElement('svg', { 'data-icon': 'entry-' + key, width: size, height: size }),
   }
 }
 
@@ -83,6 +84,11 @@ describe('GuideGrid', () => {
     expect(narrow).toContain('data-guide-more="true"')
   })
 
+  it('publishes the stored vertical alignment (center by default)', () => {
+    expect(htmlOf({})).toContain('data-guide-align="center"')
+    expect(htmlOf({ prefs: { guideAlign: 'top' } })).toContain('data-guide-align="top"')
+  })
+
   it('omits hidden cards and keeps the explicit order', () => {
     const html = htmlOf({
       prefs: { guideOrder: ['c', 'a'], guideHidden: { a: true } },
@@ -105,6 +111,51 @@ describe('GuideGrid', () => {
     expect(card).not.toBeNull()
     act(() => { (card as HTMLButtonElement).click() })
     expect(onOpen).toHaveBeenCalledWith(expect.objectContaining({ key: 'a' }))
+    mounted.unmount()
+  })
+
+  it('draws the More menu rows with an icon and a title', async () => {
+    const mounted = renderRoot(createElement(GuideGrid, {
+      entries,
+      prefs: { ...SIDEBAR_PREFS_DEFAULTS, guideRows: 1 },
+      width: 600,
+      onOpen: () => {},
+    }))
+    const trigger = mounted.container.querySelector('[data-guide-more]')
+    expect(trigger).not.toBeNull()
+    await act(async () => {
+      ;(trigger as HTMLButtonElement).click()
+      await Promise.resolve()
+    })
+    const items = [...document.querySelectorAll('[role="menuitem"]')]
+    const overflow = items.find(node => node.textContent?.includes('B'))
+    expect(overflow).toBeDefined()
+    expect(overflow?.querySelector('svg[data-icon]')).not.toBeNull()
+    mounted.unmount()
+  })
+
+  it('also exposes the shared row-count control inside the reorder dialog', async () => {
+    const mounted = renderRoot(createElement(GuideGrid, {
+      entries,
+      prefs: { ...SIDEBAR_PREFS_DEFAULTS, guideRows: 1 },
+      width: 600,
+      onOpen: () => {},
+    }))
+    const trigger = mounted.container.querySelector('[data-guide-more]')
+    await act(async () => {
+      ;(trigger as HTMLButtonElement).click()
+      await Promise.resolve()
+    })
+    const reorder = [...document.querySelectorAll('[role="menuitem"]')]
+      .find(node => node.textContent?.includes('Reorder'))
+    expect(reorder).toBeDefined()
+    await act(async () => {
+      ;(reorder as HTMLElement).click()
+      await Promise.resolve()
+    })
+    const input = document.querySelector('input[aria-label="Maximum rows"]')
+    expect(input).not.toBeNull()
+    expect((input as HTMLInputElement).value).toBe('1')
     mounted.unmount()
   })
 
@@ -215,6 +266,13 @@ describe('registerNativeSurface start-page takeover', () => {
     expect(face?.catalog).toBe(catalog)
     expect(face?.store).toBe(store)
     expect(face?.shellMenu).toBeUndefined()
+    // The preference disarms the takeover and restores it without touching the
+    // tab types.
+    store.setPrefs({ ...store.getPrefs(), guideTakeover: false })
+    expect(released).toContain('slot:sidebar.right.tab.guide')
+    expect(slotRegistrations.filter(item => item.name === 'sidebar.right.tab.guide')).toHaveLength(1)
+    store.setPrefs({ ...store.getPrefs(), guideTakeover: true })
+    expect(slotRegistrations.filter(item => item.name === 'sidebar.right.tab.guide')).toHaveLength(2)
     dispose()
     expect(released).toContain('slot:sidebar.right.tab.guide')
   })

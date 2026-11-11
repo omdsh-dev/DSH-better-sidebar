@@ -316,8 +316,10 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   const startPageGeometry = await startPage.evaluate((element) => ({
     width: element.clientWidth,
     columns: element.getAttribute('data-guide-columns'),
+    align: element.getAttribute('data-guide-align'),
   }))
   expect(startPageGeometry.columns).toBe(startPageGeometry.width >= 520 ? '2' : '1')
+  expect(startPageGeometry.align).toBe('center')
   // The host's terminal card keeps its native shell menu under the takeover.
   await expect(
     page.locator('[data-sidebar-right-guide-entry="terminal"] [data-guide-shell-menu]'),

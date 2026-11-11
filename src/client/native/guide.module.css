@@ -1,11 +1,24 @@
 /* The start page: a centered, scrollable two-column card grid over the host
    guide body. Every visual value is a host token (no hardcoded colors). */
 .root {
+  display: flex;
+  flex-direction: column;
   width: 100%;
   min-height: 100%;
   box-sizing: border-box;
   padding: 24px;
   overflow-y: auto;
+}
+
+/* Vertical placement: auto block margins center the grid while it fits and
+   collapse to zero once it is taller than the pane, so scrolling still starts
+   at the first card. */
+.rootCenter .guide {
+  margin-block: auto;
+}
+
+.rootTop .guide {
+  margin-block: 0;
 }
 
 .guide {
@@ -259,6 +272,39 @@
 .orderButton:disabled {
   opacity: 0.35;
   cursor: default;
+}
+
+.rowsInput {
+  width: 76px;
+}
+
+.dialogRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 0 2px 12px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--dsw-alias-border-l2);
+}
+
+.dialogRowText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.dialogRowTitle {
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.dialogRowDesc {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 16px;
 }
 
 .dialogDone {

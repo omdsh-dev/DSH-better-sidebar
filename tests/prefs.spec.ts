@@ -54,6 +54,8 @@ describe('side card preferences', () => {
         guideRows: 6,
         guideOrder: [],
         guideHidden: {},
+        guideAlign: 'center',
+        guideTakeover: true,
       })
   })
 
@@ -82,6 +84,8 @@ describe('side card preferences', () => {
         guideRows: 6,
         guideOrder: [],
         guideHidden: {},
+        guideAlign: 'center',
+        guideTakeover: true,
       })
   })
 
@@ -110,6 +114,8 @@ describe('side card preferences', () => {
         guideRows: 6,
         guideOrder: [],
         guideHidden: {},
+        guideAlign: 'center',
+        guideTakeover: true,
       })
     expect((await loadPrefs(wire({ autoOpenSubagent: 1 }))).autoOpenSubagent)
       .toBe(true)
@@ -243,6 +249,16 @@ describe('side card preferences', () => {
     expect((await loadPrefs(wire({ guideHidden: { a: true, b: false, c: 'yes' } }))).guideHidden)
       .toEqual({ a: true, b: false })
     expect((await loadPrefs(wire({ guideHidden: [] }))).guideHidden).toEqual({})
+
+    // Vertical alignment: only the two known values survive.
+    expect((await loadPrefs(wire({ guideAlign: 'top' }))).guideAlign).toBe('top')
+    expect((await loadPrefs(wire({ guideAlign: 'center' }))).guideAlign).toBe('center')
+    expect((await loadPrefs(wire({ guideAlign: 'bottom' }))).guideAlign).toBe('center')
+
+    // Takeover is on by default; only an explicit false disarms it.
+    expect((await loadPrefs(wire({}))).guideTakeover).toBe(true)
+    expect((await loadPrefs(wire({ guideTakeover: 'no' }))).guideTakeover).toBe(true)
+    expect((await loadPrefs(wire({ guideTakeover: false }))).guideTakeover).toBe(false)
   })
 
 })

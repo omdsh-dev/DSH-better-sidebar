@@ -320,10 +320,19 @@ export function registerNativeSurface(deps: NativeSurfaceDeps): () => void {
     }
 
     // The start page: replace the host guide body with the plugin's own grid.
-    // The chain slot is declared by the host's guide type, so injection waits
-    // for that declaration; a failure leaves the shipped guide in place.
+    // Its lifetime follows the `guideTakeover` preference, so turning the
+    // switch off unregisters the chain entry and the shipped guide resumes.
     let disposeGuide: (() => void) | undefined
-    if (guideCatalog !== undefined) {
+    const syncGuide = (): void => {
+      if (guideCatalog === undefined) return
+      if (store.getPrefs().guideTakeover === false) {
+        if (disposeGuide !== undefined) {
+          disposeSafely(disposeGuide, 'the start-page guide takeover')
+          disposeGuide = undefined
+        }
+        return
+      }
+      if (disposeGuide !== undefined) return
       const catalog = guideCatalog
       try {
         disposeGuide = ctx.slots.inject('sidebar.right.tab.guide', () => {
@@ -537,6 +546,7 @@ export function registerNativeSurface(deps: NativeSurfaceDeps): () => void {
 
     /** Bring the live registrations in line with the registry + the settings. */
     const sync = (): void => {
+      syncGuide()
       const wanted = new Map<string, () => () => void>()
       for (const descriptor of service.getTabs()) {
         if (!service.isTabEnabled(descriptor.id)) continue

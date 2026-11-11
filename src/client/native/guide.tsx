@@ -10,6 +10,7 @@ import { createElement, useEffect, useLayoutEffect, useRef, useState, useSyncExt
 import type { ComponentType, ReactNode } from 'react'
 import {
   IconEllipsisOutlineRegular,
+  IconSettingsOutlineRegular,
   Menu,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import clsx from 'clsx'
@@ -20,7 +21,7 @@ import { t } from '../locales.ts'
 import type { NativeGuideCatalog, NativeGuideEntry } from './guide-catalog.ts'
 import { columnsForWidth, computeGuideLayout, orderGuideEntries } from './guide-layout.ts'
 import { GuideOrderDialog } from './guide-order.tsx'
-import { saveGuideOrder, setGuideEntryHidden } from './guide-prefs.ts'
+import { saveGuideOrder, saveGuideRows, setGuideEntryHidden } from './guide-prefs.ts'
 import css from './guide.module.css'
 
 /** The terminal service slice the card's native menu needs. */
@@ -48,12 +49,13 @@ export interface NativeGuideProps {
 /** The grid's inputs, extracted for direct rendering in tests. */
 export interface GuideGridProps {
   entries: readonly NativeGuideEntry[]
-  prefs: Pick<SidebarPrefs, 'guideOrder' | 'guideHidden' | 'guideRows'>
+  prefs: Pick<SidebarPrefs, 'guideOrder' | 'guideHidden' | 'guideRows' | 'guideAlign'>
   /** Pane width in CSS pixels. */
   width: number
   onOpen: (entry: NativeGuideEntry, params?: Record<string, unknown>) => void
   onSaveOrder?: (order: readonly string[]) => void
   onToggleHidden?: (key: string, hidden: boolean) => void
+  onSaveRows?: (rows: number) => void
   shellMenu?: GuideShellMenu | undefined
 }
 
@@ -179,7 +181,7 @@ function GuideCard(props: {
 
 /** The whole start-page grid, including the More card and the order dialog. */
 export function GuideGrid(props: GuideGridProps) {
-  const { entries, prefs, width, onOpen, onSaveOrder, onToggleHidden, shellMenu } = props
+  const { entries, prefs, width, onOpen, onSaveOrder, onToggleHidden, onSaveRows, shellMenu } = props
   const [orderOpen, setOrderOpen] = useState(false)
   const [moreOpen, setMoreOpen] = useState(false)
   const layout = computeGuideLayout(entries, {
@@ -203,9 +205,13 @@ export function GuideGrid(props: GuideGridProps) {
   }
 
   const moreItems = [
-    ...layout.overflow.map(entry => ({ id: 'open:' + entry.key, label: entry.title() })),
+    ...layout.overflow.map(entry => ({
+      id: 'open:' + entry.key,
+      label: entry.title(),
+      icon: cardIcon(entry),
+    })),
     ...(layout.overflow.length === 0 ? [] : [{ type: 'separator' as const, id: 'order-separator' }]),
-    { id: 'order', label: t('guideOrder') },
+    { id: 'order', label: t('guideOrder'), icon: <IconSettingsOutlineRegular size={14} /> },
   ]
 
   /** The grid body; the More anchor is a card-sized Menu trigger. */
@@ -252,7 +258,12 @@ export function GuideGrid(props: GuideGridProps) {
   )
 
   return (
-    <div className={css.guide} data-guide-columns={layout.columns} data-guide-rows={layout.rows}>
+    <div
+      className={css.guide}
+      data-guide-columns={layout.columns}
+      data-guide-rows={layout.rows}
+      data-guide-align={prefs.guideAlign}
+    >
       {layout.visible.length === 0 && !layout.showMore ? (
         <p className={css.empty}>{t('guideEmpty')}</p>
       ) : (
@@ -270,6 +281,8 @@ export function GuideGrid(props: GuideGridProps) {
         hidden={prefs.guideHidden}
         onMove={move}
         onToggle={(key, hidden) => { onToggleHidden?.(key, hidden) }}
+        rows={prefs.guideRows}
+        onRows={(next) => { onSaveRows?.(next) }}
       />
     </div>
   )
@@ -316,11 +329,12 @@ export function NativeGuide(props: NativeGuideProps) {
   return (
     <div
       ref={rootRef}
-      className={css.root}
+      className={clsx(css.root, prefs.guideAlign === 'top' ? css.rootTop : css.rootCenter)}
       data-sidebar-right-guide=""
       data-dsh-guide-grid="true"
       data-guide-columns={columnsForWidth(width)}
       data-guide-rows={prefs.guideRows}
+      data-guide-align={prefs.guideAlign}
     >
       <GuideGrid
         entries={entries}
@@ -329,6 +343,7 @@ export function NativeGuide(props: NativeGuideProps) {
         onOpen={open}
         onSaveOrder={(order) => { saveGuideOrder(store, order) }}
         onToggleHidden={(key, hidden) => { setGuideEntryHidden(store, key, hidden) }}
+        onSaveRows={(next) => { saveGuideRows(store, next) }}
         shellMenu={shellMenu}
       />
     </div>

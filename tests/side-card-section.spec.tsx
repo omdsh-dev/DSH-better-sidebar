@@ -110,10 +110,9 @@ describe('SideCardSection declarative inventory', () => {
     // The nested auto-open toggle is NOT an inline card (it lives in the popup).
     expect(pressedCount(html, 'true')).toBe(3)
     expect(pressedCount(html, 'false')).toBe(0)
-    // The custom switches are real checkboxes: the two mobile adaptations are
-    // on by default, agentOpenTools is not.
-    // The two mobile adaptations are on by default.
-    expect(html.match(/checked=""/g)?.length ?? 0).toBe(2)
+    // The custom switches are real checkboxes: the two mobile adaptations and
+    // the default-on start-page takeover are checked; agentOpenTools is not.
+    expect(html.match(/checked=""/g)?.length ?? 0).toBe(3)
     expect(html).not.toContain('Auto-open Subagents')
   })
 
@@ -154,6 +153,11 @@ describe('SideCardSection declarative inventory', () => {
     expect(html).toContain('Dashboard')
     expect(html).toContain('aria-label="Show on the start page: Terminal"')
     expect(html).toContain('aria-label="Maximum rows"')
+    // Takeover is on by default; vertical alignment is a two-option radio group
+    // with Center selected.
+    expect(html).toContain('aria-label="Take over the start page" checked=""')
+    expect(html).toContain('role="radiogroup" aria-label="Vertical alignment"')
+    expect(html).toContain('aria-checked="true"')
     // Explicit order puts Dashboard before Terminal, independently of catalog order.
     store.setPrefs({ ...store.getPrefs(), guideOrder: ['third::dash'] })
     html = renderSection(store, service, catalog)
@@ -178,7 +182,8 @@ describe('SideCardSection declarative inventory', () => {
     store.setPrefs({ ...store.getPrefs(), mobileNoAutoOpen: false, mobileDefaultTree: false })
     const off = renderSection(store, service)
     expect(off).toContain('>Mobile</div>')
-    expect(off).not.toContain('checked=""')
+    // Only the default-on start-page takeover switch remains checked.
+    expect(off.match(/checked=""/g)?.length ?? 0).toBe(1)
   })
 
   it('renders one small card per registered viewer: icon + title + exts', () => {
@@ -223,8 +228,8 @@ describe('SideCardSection declarative inventory', () => {
     expect(pressedCount(html, 'false')).toBe(2)
     // The explorer card stays pressed.
     expect(pressedCount(html, 'true')).toBe(1)
-    // The two mobile adaptations are on by default.
-    expect(html.match(/checked=""/g)?.length ?? 0).toBe(2)
+    // The two mobile adaptations and the takeover are on by default.
+    expect(html.match(/checked=""/g)?.length ?? 0).toBe(3)
   })
 
   it('does not list a hidden tab type: it has no sidebar presence to switch', () => {
@@ -265,11 +270,13 @@ describe('SideCardSection declarative inventory', () => {
     expect(html).toContain('aria-label="Custom CSS"')
     expect(html).toContain('data-dsh-bottom-panel')
     expect(html).not.toContain('title-bar')
-    // Three general-row switches remain (agentOpenTools off by default, plus
-    // the two mobile adaptations on) — the removed scheme row was a dropdown.
-    expect(html.match(/type="checkbox"/g)?.length).toBe(3)
-    // The two mobile adaptations are on by default (agentOpenTools is not).
-    expect(html.match(/checked=""/g)?.length ?? 0).toBe(2)
+    // Four switches remain (agentOpenTools off by default, the two mobile
+    // adaptations on, and the default-on start-page takeover) — the removed
+    // scheme row was a dropdown.
+    expect(html.match(/type="checkbox"/g)?.length).toBe(4)
+    // The two mobile adaptations and the takeover are on by default
+    // (agentOpenTools is not).
+    expect(html.match(/checked=""/g)?.length ?? 0).toBe(3)
     // The escape hatch is always reachable: no gear, no scheme gate — the
     // only gear left on the page is the Subagents card's own.
     expect(html).not.toContain('Custom CSS Feature settings')

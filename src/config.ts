@@ -131,6 +131,8 @@ export const PrefsSchema: z<SidebarPrefs> = z.object({
   guideRows: z.number().step(1).min(1).default(6),
   guideOrder: z.array(z.string()).default([]),
   guideHidden: z.dict(z.boolean()).default({}),
+  guideAlign: z.union([z.const('center'), z.const('top')]).default('center'),
+  guideTakeover: z.boolean().default(true),
 })
 
 // ── The Loader row schema ───────────────────────────────────────────────────

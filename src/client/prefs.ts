@@ -96,6 +96,12 @@ export function parsePrefs(value: unknown): SidebarPrefs {
     guideRows: positiveIntegerOf(record.guideRows, SIDEBAR_PREFS_DEFAULTS.guideRows),
     guideOrder: uniqueStringListOf(record.guideOrder),
     guideHidden: booleanMapOf(record.guideHidden),
+    guideAlign: record.guideAlign === 'top' || record.guideAlign === 'center'
+      ? record.guideAlign
+      : SIDEBAR_PREFS_DEFAULTS.guideAlign,
+    guideTakeover: typeof record.guideTakeover === 'boolean'
+      ? record.guideTakeover
+      : SIDEBAR_PREFS_DEFAULTS.guideTakeover,
   }
 }
 

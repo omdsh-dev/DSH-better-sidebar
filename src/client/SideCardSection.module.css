@@ -122,6 +122,44 @@
   line-height: 18px;
 }
 
+/* A compact two-option segmented control (vertical alignment). */
+.segmented {
+  display: inline-flex;
+  flex: none;
+  padding: 2px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-2);
+}
+
+.segment {
+  min-width: 48px;
+  padding: 4px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: 12px;
+  line-height: 18px;
+  cursor: pointer;
+}
+
+.segment:hover {
+  color: var(--dsw-alias-label-primary);
+}
+
+.segmentOn {
+  background: var(--dsw-alias-bg-layer-3);
+  color: var(--dsw-alias-label-primary);
+  box-shadow: inset 0 0 0 1px var(--dsw-alias-border-l2);
+}
+
+.segment:focus-visible {
+  outline: 2px solid var(--dsw-alias-border-l4);
+  outline-offset: 2px;
+}
+
 /* The inventory count: a soft-accent pill (the versionBadgeTag token recipe)
    so the count reads as metadata, not as part of the heading text. */
 .count {

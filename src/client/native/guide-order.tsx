@@ -13,6 +13,7 @@ import clsx from 'clsx'
 import type { NativeGuideEntry } from './guide-catalog.ts'
 import { t } from '../locales.ts'
 import { Switch } from '../Switch.tsx'
+import { GuideRowsInput } from './guide-rows.tsx'
 import css from './guide.module.css'
 
 /** The list's actions; callers own persistence. */
@@ -76,14 +77,15 @@ export function GuideOrderList({ entries, hidden, onMove, onToggle }: GuideOrder
 export function GuideOrderDialog(props: GuideOrderListProps & {
   open: boolean
   onClose: () => void
+  rows: number
+  onRows: (rows: number) => void
 }) {
-  const { open, onClose, entries, hidden, onMove, onToggle } = props
+  const { open, onClose, entries, hidden, onMove, onToggle, rows, onRows } = props
   return (
     <Modal
       open={open}
       onClose={onClose}
       title={t('guideOrder')}
-      description={t('settingsGuideRowsDesc')}
       closeLabel={t('dismiss')}
       footer={(
         <button type="button" className={css.dialogDone} onClick={onClose}>
@@ -91,6 +93,17 @@ export function GuideOrderDialog(props: GuideOrderListProps & {
         </button>
       )}
     >
+      <div className={css.dialogRow}>
+        <span className={css.dialogRowText}>
+          <span className={css.dialogRowTitle}>{t('settingsGuideRowsTitle')}</span>
+          <span className={css.dialogRowDesc}>{t('settingsGuideRowsDesc')}</span>
+        </span>
+        <GuideRowsInput
+          value={rows}
+          label={t('settingsGuideRowsTitle')}
+          onCommit={onRows}
+        />
+      </div>
       <GuideOrderList entries={entries} hidden={hidden} onMove={onMove} onToggle={onToggle} />
     </Modal>
   )
