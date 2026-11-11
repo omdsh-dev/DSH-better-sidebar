@@ -18,7 +18,8 @@
   - 🧪 测试：`tests/guide-layout.spec.ts`（排序 / 隐藏 / 列数与容量 / More 占格 / 最小容量）、`tests/native-guide.spec.tsx`（卡片、More、终端 Shell 菜单、catalog 订阅、chain 注册与释放）。
 - 🗂 **设置里的「开始页」清单接管所有已注册到官方侧边栏的入口**：本插件、宿主终端和第三方 tab 都按 `providerId::entryId` 列出，默认显示；开关只隐藏开始页卡片，不注销 tab 类型，也不影响快捷键、资源打开或已打开页签。Better Sidebar 自己的功能开关语义不变。支持上移/下移和恢复默认顺序，排序持久化。
   - 🧪 测试：`tests/side-card-section.spec.tsx`（原生入口清单、默认开启、顺序与隐藏状态）、`tests/prefs.spec.ts`（行数 / 顺序 / 可见性校验）。
-- 🖥 **终端卡片保留原生 Shell 菜单**：开始页的终端卡片右侧有「…」，菜单通过宿主 `webTerminals.launchShells` 读取 Shell 列表，选择后写入宿主偏好并以该 Shell 打开终端；宿主没有这些能力时卡片退化为普通入口。其他第三方自定义开始页卡片组件无法在 chain 接管页中复用，会显示为通用卡片（原因见 `docs/host-contracts.md` §9）。
+- 🖥 **终端卡片保留原生 Shell 菜单**：开始页的终端卡片右侧有「…」，菜单通过宿主 `webTerminals.launchShells` 读取 Shell 列表，选择后写入宿主偏好并以该 Shell 打开终端；宿主没有这些能力时卡片退化为普通入口。修复 `launchShells` / `selectShell` 丢失 `this` 导致「Shell 加载失败：Cannot read properties of undefined (reading 'remote')」的问题，并加回归测试。其他第三方自定义开始页卡片组件无法在 chain 接管页中复用，会显示为通用卡片（原因见 `docs/host-contracts.md` §9）。
+- 🧩 **「更多」保留宿主的浏览/创建插件动作**：开始页的「更多」卡片现在常驻（不再只在溢出时出现），菜单按图标 + 标题列出溢出入口，并恢复宿主原生的「浏览更多插件」与「创建你的插件」（走 `pluginNavigation.openList()` 与 `uiWorkspace.startSession(..., { agentPreset: 'cordis', whenDraftExists: 'append' })`）；服务缺失时对应行自动隐藏。
 - 🧪 挂载冒烟新增真实宿主断言：开始页由插件接管（`data-dsh-guide-grid`）、列数跟随面板宽度、终端卡片提供 Shell 菜单；现有 guide 选择器与条目断言保持不变。
 
 - 🐞 **GBK 文件里的欧元符号不再被写成 ICU 拒绝的单字节 `0x80`**：改用标准两字节 `0xA2E3`，修复 Node 24.21 / ICU 78 下保存后重开变乱码；新增字面量测试钉住编码与回读。

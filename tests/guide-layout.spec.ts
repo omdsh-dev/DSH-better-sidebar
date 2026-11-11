@@ -69,6 +69,31 @@ describe('start-page layout', () => {
     expect(one.showMore).toBe(true)
   })
 
+  it('can reserve a persistent More cell even when every card fits', () => {
+    const layout = computeGuideLayout(entries, {
+      order: [],
+      hidden: {},
+      rows: 3,
+      width: 600,
+      reserveMore: true,
+    })
+    expect(layout.capacity).toBe(6)
+    expect(layout.visible).toHaveLength(5)
+    expect(layout.overflow).toEqual([])
+    expect(layout.showMore).toBe(true)
+
+    const exact = computeGuideLayout(entries.slice(0, 2), {
+      order: [],
+      hidden: {},
+      rows: 1,
+      width: 600,
+      reserveMore: true,
+    })
+    expect(exact.visible.map(entry => entry.key)).toEqual(['a'])
+    expect(exact.overflow.map(entry => entry.key)).toEqual(['b'])
+    expect(exact.showMore).toBe(true)
+  })
+
   it('shows everything when it fits, with no More card', () => {
     const layout = computeGuideLayout(entries, { order: [], hidden: {}, rows: 6, width: 600 })
     expect(layout.capacity).toBe(12)

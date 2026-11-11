@@ -10,6 +10,8 @@ import { createElement, useEffect, useLayoutEffect, useRef, useState, useSyncExt
 import type { ComponentType, ReactNode } from 'react'
 import {
   IconEllipsisOutlineRegular,
+  IconPluginPinwheelOutlineRegular,
+  IconPlusOutlineRegular,
   IconSettingsOutlineRegular,
   Menu,
 } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -44,6 +46,10 @@ export interface NativeGuideProps {
   store: SidebarStore
   /** Present only when the host exposes both shell catalog and selection. */
   shellMenu?: GuideShellMenu | undefined
+  /** Host plugin discovery action, when the service exists. */
+  onBrowsePlugins?: () => void
+  /** Host "create your plugin" action, when the workspace can start a session. */
+  onCreatePlugin?: () => void
 }
 
 /** The grid's inputs, extracted for direct rendering in tests. */
@@ -56,6 +62,10 @@ export interface GuideGridProps {
   onSaveOrder?: (order: readonly string[]) => void
   onToggleHidden?: (key: string, hidden: boolean) => void
   onSaveRows?: (rows: number) => void
+  /** Host "Browse other plugins" action, when the navigation service exists. */
+  onBrowsePlugins?: () => void
+  /** Host "Create your plugin" action, when the workspace can start a session. */
+  onCreatePlugin?: () => void
   shellMenu?: GuideShellMenu | undefined
 }
 
@@ -181,7 +191,10 @@ function GuideCard(props: {
 
 /** The whole start-page grid, including the More card and the order dialog. */
 export function GuideGrid(props: GuideGridProps) {
-  const { entries, prefs, width, onOpen, onSaveOrder, onToggleHidden, onSaveRows, shellMenu } = props
+  const {
+    entries, prefs, width, onOpen, onSaveOrder, onToggleHidden, onSaveRows,
+    onBrowsePlugins, onCreatePlugin, shellMenu,
+  } = props
   const [orderOpen, setOrderOpen] = useState(false)
   const [moreOpen, setMoreOpen] = useState(false)
   const layout = computeGuideLayout(entries, {
@@ -189,6 +202,9 @@ export function GuideGrid(props: GuideGridProps) {
     hidden: prefs.guideHidden,
     rows: prefs.guideRows,
     width,
+    // The More card is also the home of the host's plugin discovery/creation
+    // actions, so it stays available even when every tab fits.
+    reserveMore: true,
   })
   const orderedAll = orderGuideEntries(entries, prefs.guideOrder)
 
@@ -204,13 +220,23 @@ export function GuideGrid(props: GuideGridProps) {
     onSaveOrder?.(next)
   }
 
+  const hostActions = [
+    ...(onBrowsePlugins === undefined
+      ? []
+      : [{ id: 'browse', label: t('guideBrowsePlugins'), icon: <IconPluginPinwheelOutlineRegular size={16} /> }]),
+    ...(onCreatePlugin === undefined
+      ? []
+      : [{ id: 'create', label: t('guideCreatePlugin'), icon: <IconPlusOutlineRegular size={16} /> }]),
+  ]
   const moreItems = [
     ...layout.overflow.map(entry => ({
       id: 'open:' + entry.key,
       label: entry.title(),
       icon: cardIcon(entry),
     })),
-    ...(layout.overflow.length === 0 ? [] : [{ type: 'separator' as const, id: 'order-separator' }]),
+    ...(layout.overflow.length === 0 ? [] : [{ type: 'separator' as const, id: 'overflow-separator' }]),
+    ...hostActions,
+    ...(hostActions.length === 0 ? [] : [{ type: 'separator' as const, id: 'actions-separator' }]),
     { id: 'order', label: t('guideOrder'), icon: <IconSettingsOutlineRegular size={14} /> },
   ]
 
@@ -226,6 +252,14 @@ export function GuideGrid(props: GuideGridProps) {
       items={moreItems}
       onSelect={(id) => {
         setMoreOpen(false)
+        if (id === 'browse') {
+          onBrowsePlugins?.()
+          return
+        }
+        if (id === 'create') {
+          onCreatePlugin?.()
+          return
+        }
         if (id === 'order') {
           setOrderOpen(true)
           return
@@ -306,7 +340,7 @@ function useGuideWidth(ref: { current: HTMLDivElement | null }): number {
 
 /** The chain component registered into the host's guide slot. */
 export function NativeGuide(props: NativeGuideProps) {
-  const { catalog, store, shellMenu, useTabInfo } = props
+  const { catalog, store, shellMenu, onBrowsePlugins, onCreatePlugin, useTabInfo } = props
   const entries = useSyncExternalStore(catalog.subscribe, catalog.getSnapshot, catalog.getSnapshot)
   // The store's members are methods (they read their receiver); bind them
   // through arrows or useSyncExternalStore crashes on the first render.
@@ -344,6 +378,8 @@ export function NativeGuide(props: NativeGuideProps) {
         onSaveOrder={(order) => { saveGuideOrder(store, order) }}
         onToggleHidden={(key, hidden) => { setGuideEntryHidden(store, key, hidden) }}
         onSaveRows={(next) => { saveGuideRows(store, next) }}
+        onBrowsePlugins={onBrowsePlugins}
+        onCreatePlugin={onCreatePlugin}
         shellMenu={shellMenu}
       />
     </div>

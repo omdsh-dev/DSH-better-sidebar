@@ -101,6 +101,19 @@ interface CloseHandlerHost {
   registerCloseHandler(kind: string, handler: (sessionId: string, tab: { kind: string }) => void): () => void
 }
 
+/** The optional plugin-discovery navigation face (`ctx.pluginNavigation`). */
+interface PluginNavigationFace {
+  openList?: () => void
+}
+
+/** The workspace's session starter, used by the host's "create plugin" action. */
+interface WorkspaceSessionFace {
+  startSession?: (
+    sessionId: string | undefined,
+    options: { agentPreset?: string; prompt?: string; whenDraftExists?: 'append' },
+  ) => void
+}
+
 /** The native tab-type registry face (`ctx.sidebarRightTabs`). */
 interface NativeTabRegistry {
   register(definition: {
@@ -346,15 +359,38 @@ export function registerNativeSurface(deps: NativeSurfaceDeps): () => void {
                   ? sessionId
                   : mountedSessionId(ctx)
                 const terminals = webTerminals(ctx)
-                const launchShells = terminals?.launchShells
-                const selectShell = terminals?.selectShell
-                const shellMenu = scope !== undefined && launchShells !== undefined && selectShell !== undefined
-                  ? {
-                    launchShells: (signal: AbortSignal) => launchShells(scope, signal),
-                    selectShell: (path: string) => { selectShell(path) },
+                const navigation = ctx.get('pluginNavigation') as unknown as PluginNavigationFace | undefined
+                const workspace = ctx.get('uiWorkspace') as unknown as WorkspaceSessionFace | undefined
+                const onBrowsePlugins = typeof navigation?.openList === 'function'
+                  ? () => { navigation.openList!() }
+                  : undefined
+                const onCreatePlugin = typeof workspace?.startSession === 'function'
+                  ? () => {
+                    workspace.startSession!(undefined, {
+                      agentPreset: 'cordis',
+                      prompt: t('guideCreatePrompt'),
+                      whenDraftExists: 'append',
+                    })
                   }
                   : undefined
-                return { catalog, store, ...(shellMenu === undefined ? {} : { shellMenu }) }
+                const shellMenu = scope !== undefined
+                  && terminals?.launchShells !== undefined
+                  && terminals?.selectShell !== undefined
+                  ? {
+                    // Call the methods on the SERVICE: the shell catalog reads
+                    // its own remote field, and a detached call throws
+                    // "Cannot read properties of undefined (reading 'remote')".
+                    launchShells: (signal: AbortSignal) => terminals.launchShells!(scope, signal),
+                    selectShell: (path: string) => { terminals.selectShell!(path) },
+                  }
+                  : undefined
+                return {
+                  catalog,
+                  store,
+                  ...(shellMenu === undefined ? {} : { shellMenu }),
+                  ...(onBrowsePlugins === undefined ? {} : { onBrowsePlugins }),
+                  ...(onCreatePlugin === undefined ? {} : { onCreatePlugin }),
+                }
               },
             }, NativeGuide)
           } catch (error) {

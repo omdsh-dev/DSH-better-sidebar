@@ -24,6 +24,12 @@ export interface GuideLayoutOptions {
   readonly rows: number
   /** Pane width in CSS pixels. */
   readonly width: number
+  /**
+   * Keep one cell for the "More" card even when every entry fits. The start
+   * page always offers host actions (browse/create plugins, reorder), so the
+   * card is a persistent affordance rather than overflow-only.
+   */
+  readonly reserveMore?: boolean
 }
 
 /** The settled layout one guide render uses. */
@@ -87,7 +93,7 @@ export function computeGuideLayout<T extends GuideLayoutEntry>(
   const ordered = orderGuideEntries(entries, options.order)
   const shown = ordered.filter(entry => options.hidden[entry.key] !== true)
   const capacity = rows * columns
-  if (shown.length <= capacity) {
+  if (options.reserveMore !== true && shown.length <= capacity) {
     return { columns, rows, capacity, visible: shown, overflow: [], showMore: false }
   }
   const visibleCount = Math.max(0, capacity - 1)

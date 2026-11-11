@@ -57,14 +57,15 @@ function htmlOf(props: {
 }
 
 describe('GuideGrid', () => {
-  it('draws two columns and one data entry per card when the list fits', () => {
+  it('draws two columns and one data entry per card, with the persistent More card', () => {
     const html = htmlOf({})
     expect(html).toContain('data-guide-columns="2"')
     expect(html).toContain('data-guide-rows="6"')
     for (const key of ['a', 'b', 'c', 'd', 'e']) {
       expect(html, key).toContain('data-sidebar-right-guide-entry="' + key + '"')
     }
-    expect(html).not.toContain('data-guide-more')
+    // The More card is also the host-actions entry point, so it is always there.
+    expect(html).toContain('data-guide-more')
     expect(html).toContain('a description')
   })
 
@@ -134,6 +135,41 @@ describe('GuideGrid', () => {
     mounted.unmount()
   })
 
+  it('offers the host browse/create plugin actions in the More menu', async () => {
+    const onBrowsePlugins = vi.fn()
+    const onCreatePlugin = vi.fn()
+    const mounted = renderRoot(createElement(GuideGrid, {
+      entries,
+      prefs: { ...SIDEBAR_PREFS_DEFAULTS },
+      width: 600,
+      onOpen: () => {},
+      onBrowsePlugins,
+      onCreatePlugin,
+    }))
+    const trigger = mounted.container.querySelector('[data-guide-more]')
+    await act(async () => {
+      ;(trigger as HTMLButtonElement).click()
+      await Promise.resolve()
+    })
+    const rows = [...document.querySelectorAll('[role="menuitem"]')]
+    const browse = rows.find(node => node.textContent?.includes('Browse more plugins'))
+    const create = rows.find(node => node.textContent?.includes('Create your plugin'))
+    expect(browse).toBeDefined()
+    expect(create).toBeDefined()
+    act(() => { (create as HTMLElement).click() })
+    expect(onCreatePlugin).toHaveBeenCalled()
+    // The menu closes after an action; reopen it for the second row.
+    await act(async () => {
+      ;(trigger as HTMLButtonElement).click()
+      await Promise.resolve()
+    })
+    const browseAgain = [...document.querySelectorAll('[role="menuitem"]')]
+      .find(node => node.textContent?.includes('Browse more plugins'))
+    act(() => { (browseAgain as HTMLElement).click() })
+    expect(onBrowsePlugins).toHaveBeenCalled()
+    mounted.unmount()
+  })
+
   it('also exposes the shared row-count control inside the reorder dialog', async () => {
     const mounted = renderRoot(createElement(GuideGrid, {
       entries,
@@ -162,13 +198,13 @@ describe('GuideGrid', () => {
   it('draws the terminal shell trigger only when the host offers both shell faces', () => {
     const terminal = entry('terminal')
     const without = htmlOf({ entries: [terminal] })
-    expect(without).not.toContain('aria-haspopup="menu"')
+    expect(without).not.toContain('data-guide-shell-menu')
     const shells = {
       launchShells: async () => ({ shells: [{ name: 'zsh', path: '/bin/zsh' }], selectedShell: '/bin/zsh' }),
       selectShell: () => {},
     }
     const withMenu = htmlOf({ entries: [terminal], shellMenu: shells })
-    expect(withMenu).toContain('aria-haspopup="menu"')
+    expect(withMenu).toContain('data-guide-shell-menu')
   })
 
   it('lists host shells and opens the chosen shell', async () => {
@@ -275,6 +311,78 @@ describe('registerNativeSurface start-page takeover', () => {
     expect(slotRegistrations.filter(item => item.name === 'sidebar.right.tab.guide')).toHaveLength(2)
     dispose()
     expect(released).toContain('slot:sidebar.right.tab.guide')
+  })
+})
+
+describe('host services for the start page', () => {
+  it('calls webTerminals, pluginNavigation and uiWorkspace with their receivers', async () => {
+    const store = createSidebarStore()
+    store.setSession('s1')
+    const service = createBetterSidebarService(store)
+    const records = createNativeTabRecords()
+    const catalog = { getSnapshot: () => [], subscribe: () => () => {} }
+    const shellCalls: Array<{ sessionId: string; signal: AbortSignal }> = []
+    const terminals = {
+      remote: { shells: [{ name: 'zsh', path: '/bin/zsh' }] },
+      selected: undefined as string | undefined,
+      view: () => { throw new Error('unused') },
+      close: () => {},
+      recover: async () => [],
+      launchShells(sessionId: string, signal: AbortSignal) {
+        shellCalls.push({ sessionId, signal })
+        return Promise.resolve({ shells: this.remote.shells as Array<{ name: string; path: string }> })
+      },
+      selectShell(path: string) {
+        this.selected = path
+      },
+    }
+    const navigation = { opened: false, openList() { this.opened = true } }
+    const workspace = {
+      started: undefined as { sessionId: string | undefined; options: Record<string, unknown> } | undefined,
+      startSession(sessionId: string | undefined, options: Record<string, unknown>) {
+        this.started = { sessionId, options }
+      },
+    }
+    const slotRegistrations: Array<{ name: string; options: Record<string, unknown> }> = []
+    const registry = { register: () => () => {} }
+    const ctx = {
+      inject: (_deps: readonly string[], callback: (injected: { get: (name: string) => unknown }) => unknown) => {
+        const cleanup = callback({ get: () => registry })
+        return { dispose: () => { if (typeof cleanup === 'function') cleanup() } }
+      },
+      get: (name: string) => {
+        if (name === 'webTerminals') return terminals
+        if (name === 'pluginNavigation') return navigation
+        if (name === 'uiWorkspace') return workspace
+        return undefined
+      },
+      slots: {
+        inject: (_key: string, callback: () => () => void) => callback(),
+        register: (options: Record<string, unknown>) => {
+          slotRegistrations.push({ name: String(options.name), options })
+          return () => {}
+        },
+      },
+    }
+    const dispose = registerNativeSurface({ ctx: ctx as never, store, service, records, guideCatalog: catalog })
+    const guide = slotRegistrations.find(item => item.name === 'sidebar.right.tab.guide')
+    const face = (guide?.options.inject as ((sessionId: string) => Record<string, unknown>) | undefined)?.('s1')
+    const browse = face?.onBrowsePlugins as (() => void) | undefined
+    const create = face?.onCreatePlugin as (() => void) | undefined
+    const shellMenu = face?.shellMenu as { launchShells: (signal: AbortSignal) => Promise<unknown>; selectShell: (path: string) => void } | undefined
+    browse?.()
+    expect(navigation.opened).toBe(true)
+    create?.()
+    expect(workspace.started?.sessionId).toBeUndefined()
+    expect(workspace.started?.options.agentPreset).toBe('cordis')
+    expect(workspace.started?.options.whenDraftExists).toBe('append')
+    expect(typeof workspace.started?.options.prompt).toBe('string')
+    const signal = new AbortController().signal
+    await shellMenu?.launchShells(signal)
+    expect(shellCalls).toEqual([{ sessionId: 's1', signal }])
+    shellMenu?.selectShell('/bin/zsh')
+    expect(terminals.selected).toBe('/bin/zsh')
+    dispose()
   })
 })
 
