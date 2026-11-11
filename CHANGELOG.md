@@ -13,6 +13,9 @@
 - 🎛 **统一开始页开关**：调整顺序与开始页清单里，Better Sidebar 自己的 tab 使用和「侧边栏内容」卡片相同的功能开关（`tabsEnabled`），关闭即禁用并从开始页移除，清单行保留并可重新打开；宿主/第三方 tab 仍使用「在开始页显示」开关。同时修复开关关闭后无法再点开的问题：受控 checkbox 的异步写回会被原生 toggle 抢先重置，现改为由 label/input 的点击显式驱动、从 prop 推导下一状态。
 - 🧪 挂载冒烟新增真实宿主断言：开始页由插件接管（`data-dsh-guide-grid`）、列数跟随面板宽度、终端卡片提供 Shell 菜单；现有 guide 选择器与条目断言保持不变。
 
+- ⚡ **超大单行文件的 diff 不再把界面卡死**：共用高亮器 `scanLine` 原先对每个字符都执行 `exec(line.slice(i))`，会一直向后找到下一个空白才停——压缩成单行的 JSON/JS 上就是 O(n²)（实测 618 KB 单行 1.9 s，2 MB 约 20 s），点开差异时主线程长任务直接表现为「加载中」假死。现在改为单字符空白判定，整行只线性扫描一次（2.6 MB 实测 57 ms）；同时超过 20 K 字符的行在差异面板只渲染有界纯文本预览（折叠 2 K / 展开 20 K），不再生成多 MB 的文本节点与 `title`。普通长短行行为不变；完整内容仍可在内容页或源文件查看。
+  - 🧪 测试：`tests/changes-ops.spec.ts`（1 MB minified 行线性扫描且 token 覆盖全行、长行仍推进块注释状态）、`tests/diff-fold-expand.spec.tsx`（超预算行折叠/展开均有界、500 字符行仍完整渲染）。
+
 ### v0.31.1
 
 - 🔗 **Markdown 里的 `file://` 图片地址也能显示了**：`file:` 不交给渲染器或 DOMPurify（前者会拒绝、后者会剥掉 src），而是先还原成绝对本地路径，再走与相对图片相同的会话媒体路由。支持 POSIX 路径、Windows 盘符（`file:///C:/...`，含百分号编码）、`localhost` 与 UNC（`file://server/share/...`）；原始 HTML 的 `<img src="file:///...">` 同样在消毒前完成映射。与 VSCode Markdown 预览的 webview 资源映射同一思路。

@@ -400,4 +400,19 @@ describe('ported diff/highlight engines (sanity)', () => {
     expect(code.tokens).toContainEqual({ text: '42', type: 'number' })
     expect(code.tokens).toContainEqual({ text: '// done', type: 'comment' })
   })
+
+  it('scans a minified megabyte line linearly and keeps block state', () => {
+    // The whitespace probe used to scan ahead from every character, making a
+    // minified line quadratic (618KB measured 1.9s; 1MB would be ~5s). Linear
+    // scanning must stay well under the ceiling.
+    const minified = '{' + '"k":1,'.repeat(150_000) + '}'
+    const startedAt = performance.now()
+    const scanned = scanLine(minified, 'json')
+    expect(performance.now() - startedAt).toBeLessThan(2_000)
+    // Every character is still covered: no early bail-out for long lines.
+    expect(scanned.tokens.map(token => token.text).join('')).toBe(minified)
+    // A long line that opens a block comment still threads the state onward.
+    const open = scanLine('/*' + 'x'.repeat(100_000), 'cpp')
+    expect(open.inBlock).toBe(true)
+  })
 })
