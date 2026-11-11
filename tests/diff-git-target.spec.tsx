@@ -172,6 +172,58 @@ describe('useGitDiffTarget through the inline preview pane (DiffPane)', () => {
   })
 })
 
+describe('DiffPane external exits', () => {
+  it('offers reveal/open when the host can open workspace paths', async () => {
+    const worktree: SidebarDiffRef = { kind: 'worktree', path: 'src/a.ts', staged: false }
+    vi.spyOn(api, 'gitDiff').mockResolvedValue({ diff: '' })
+    const openWorkspacePath = vi.fn(async () => ({ ok: true }))
+    const ctx = {
+      get: (name: string) => name === 'remote'
+        ? { session: {
+          canOpenWorkspacePath: async () => ({ ok: true, value: true }),
+          workspacePathApplications: async () => ({ ok: true, value: [] }),
+          openWorkspacePath,
+        } }
+        : undefined,
+    } as unknown as Context
+
+    const container = document.createElement('div')
+    document.body.append(container)
+    const root: Root = createRoot(container)
+    try {
+      act(() => {
+        root.render(createElement(DiffPane, {
+          target: { kind: 'git', ref: worktree },
+          ctx,
+          scope: SCOPE,
+          height: 300,
+          onHeightCommit: () => {},
+          onClose: () => {},
+          onExpand: () => {},
+        }))
+      })
+      await flushEffects()
+      await act(async () => { await new Promise(resolve => { setTimeout(resolve, 20) }) })
+
+      const reveal = container.querySelector(`button[aria-label="${t('editorOpenInFileManager')}"]`) as HTMLButtonElement | null
+      const open = container.querySelector(`button[aria-label="${t('openWithMenu')}"]`) as HTMLButtonElement | null
+      expect(reveal).not.toBeNull()
+      expect(open).not.toBeNull()
+
+      act(() => { reveal!.click() })
+      await flushEffects()
+      expect(openWorkspacePath).toHaveBeenCalledWith({ path: '/p/src/a.ts', action: 'reveal' })
+
+      act(() => { open!.click() })
+      await flushEffects()
+      expect(openWorkspacePath).toHaveBeenCalledWith({ path: '/p/src/a.ts' })
+    } finally {
+      act(() => { root.unmount() })
+      container.remove()
+    }
+  })
+})
+
 describe('useGitDiffTarget through the dedicated diff tab (DiffTab)', () => {
   it('loads a commit patch into the shared renderer', async () => {
     vi.spyOn(api, 'gitCommitDiff').mockResolvedValue({ diff: STAGED_PATCH })

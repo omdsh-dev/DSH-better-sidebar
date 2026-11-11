@@ -1,6 +1,9 @@
 packages:
   - .
 
+overrides:
+  'katex': 0.18.2
+
 # The @deepseek-ai/* packages declare their dsh-* siblings as peerDependencies
 # (the DSH host bundle provides them all at mount time). This repo installs
 # every peer the dev tree needs as a direct devDependency pinned to the

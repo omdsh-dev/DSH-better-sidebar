@@ -25,7 +25,7 @@
 ## 1. 硬约束
 
 - **禁止修改 DSH 源码**（官方 checkout `~/.dsh/source/current` 零写入）。缺能力时用宿主现成的只读 / 公开 API 或插件自有路由；做不到先说明取舍。
-- **非文档改动必须走分支并合入 `dev`**：外部贡献者走 `gh pr create` + review；维护者本地批量整合可以直接 `git merge --no-ff` 进 `dev`，但每批都要跑门禁。
+- **非文档改动必须走分支并合入 `dev`**：外部贡献者走 `gh pr create` + review；维护者整合贡献者 PR 时优先把对方分支 rebase 到最新 `dev` 后 `git merge --ff-only`（保留作者并让贡献提交进入 first-parent），只有无法 rebase / 必须保留合并关系时才用 `--no-ff`，并在 merge message 与发布 note 中写明贡献者；每批都要跑门禁。
 - **挂载只走 `cordis.patch.yml` + profile 机制**：插件作为独立包被 profile 引用，不反向侵入 DSH。
 - **市场受管安装约束**：`dependencies` / `peerDependencies` / `optionalDependencies` 不得出现 `cordis`；`scripts` 不得含 `preinstall` / `install` / `postinstall` / `prepare`（tests/market-manifest.spec.ts 守护）。
 
@@ -73,4 +73,5 @@
 
 - 测试契约写在每个 spec 的头注释里；子系统到 spec 的映射与跨平台三规则在 [docs/development.md](docs/development.md)。
 - Issue / PR 分诊：[.agents/skills/issue-triage/SKILL.md](.agents/skills/issue-triage/SKILL.md)（脚本在同目录）。
+- 外部 PR 合入 / 贡献者署名：[.agents/skills/external-pr-integration/SKILL.md](.agents/skills/external-pr-integration/SKILL.md)。
 - 用户可见变更：CHANGELOG.md（中文权威）+ CHANGELOG_EN.md。

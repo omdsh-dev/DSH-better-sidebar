@@ -518,7 +518,7 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   height: 6px;
   margin-left: 6px;
   border-radius: 50%;
-  background: var(--dsw-alias-danger);
+  background: var(--dsw-alias-state-error-primary);
   vertical-align: middle;
 }
 
@@ -527,7 +527,7 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: var(--dsw-alias-danger);
+  background: var(--dsw-alias-state-error-primary);
 }
 
 /* One tab's mounted content; inactive tabs stay mounted but hidden so
@@ -1048,6 +1048,40 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   color: var(--dsw-alias-label-tertiary);
 }
 
+/* Externally registered row actions (feature `fileActions`, `row: true`):
+   glyph buttons beside the reference button, revealed with it on hover or
+   focus. The trailing affordances ride the reference button's auto margin,
+   so a second and third button simply follow it. */
+.explorerAction {
+  flex: none;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  cursor: pointer;
+}
+
+.explorerAction:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.explorerAction:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 1px;
+}
+
+.explorerRow:hover .explorerAction,
+.explorerRow:focus-within .explorerAction {
+  display: inline-flex;
+}
+
 .explorerError {
   font: var(--dsw-font-xxs-12);
   color: var(--dsw-alias-state-error-primary);
@@ -1499,6 +1533,42 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   overflow-wrap: anywhere;
 }
 
+/* Inline media (video / audio) preview: the file route already serves the
+   container with its real type and honours Range, so this pane is only the
+   stage + the transport the element brings itself. The stage fill is a token
+   like every other surface — a skin restyles the letterbox with the panel. */
+.mediaPreview {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 12px;
+}
+
+.mediaPreviewVideo {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  object-fit: contain;
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-base);
+}
+
+.mediaPreviewAudio {
+  width: 100%;
+  margin: auto 0;
+}
+
+.mediaPreviewNotice {
+  padding: 16px;
+  text-align: center;
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-tertiary);
+}
+
 /* Binary / download-only files (legacy OLE .doc/.xls/.ppt, unknown binaries):
    a centered notice plus a download link — the user always gets the file. */
 .editorBinary {
@@ -1543,6 +1613,25 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   padding: 12px 16px;
   font: var(--dsw-font-xxs-12);
   color: var(--dsw-alias-state-error-primary);
+}
+
+.editorErrorHint {
+  margin-top: 8px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.editorErrorCandidates,
+.editorErrorActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.editorErrorCandidates {
+  align-items: flex-start;
+  flex-direction: column;
 }
 
 .editorBanner {
@@ -2055,9 +2144,10 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   backdrop-filter: blur(2px);
 }
 
+/* `top` is written inline by mermaid.tsx (it has to clear the shell's native
+   window-control band, #805). */
 .mermaidModalToolbar {
   position: absolute;
-  top: 16px;
   right: 16px;
   display: flex;
   gap: 8px;
@@ -2085,27 +2175,46 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 .mermaidModalStage {
   width: 90vw;
   height: 80vh;
+  box-sizing: border-box;
   overflow: hidden;
   position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
-}
-
-.mermaidModalStage :global(svg) {
-  max-width: none;
-  max-height: none;
-  cursor: grab;
-  transform-origin: center center;
-  user-select: none;
-  -webkit-user-drag: none;
+  /* The zoom modal's FIXED viewport surface. The white card used to be painted
+     on the diagram's own <svg> — the very element the modal transforms — so
+     `scale()` grew the white area together with the diagram and the
+     content:viewport ratio never changed (issue #683: "跟没有缩放没区别").
+     The paint belongs to the viewport, the transform to the content. */
   background: var(--dsw-alias-bg-layer-1);
   padding: 16px;
   border-radius: 12px;
 }
 
-.mermaidModalStage :global(svg):active {
+/* The clipping box INSIDE the padding ring: the (transformed) svg overflows
+   here, so the white ring survives any zoom, and the whole area — not just the
+   drawn diagram — is a drag surface. */
+.mermaidViewport {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: grab;
+}
+
+.mermaidViewport:active {
   cursor: grabbing;
+}
+
+.mermaidModalStage :global(svg) {
+  max-width: none;
+  max-height: none;
+  transform-origin: center center;
+  user-select: none;
+  -webkit-user-drag: none;
 }
 
 .mermaidModalHint {
@@ -2122,10 +2231,12 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
    selection in the preview/code viewers. Portalled to document.body and
    position:fixed, so the editor's overflow clips cannot crop it; flat
    chrome like the rest of the sidebar (hairline border, no shadow).
-   Fills come from the menu/overlay pair, not the layer/hover pair: this
-   button floats over text with no panel behind it, while skins make the
-   layer tokens translucent (~0.45) and interactive-bg-hover a bare
-   0.06-0.08 tint, neither of which is readable over the text beneath. */
+   Fills come from the host's floating-button pair, the same one DSH's own
+   selection quote action uses (`--dsw-alias-button-floating-fill/hover` in
+   @deepseek-ai/dsh-message-quotes' QuoteSelectionAction): its opaque
+   defaults read the same over any surface. Never go back to the menu/layer
+   tokens (translucent by default) or `interactive-bg-hover` (a bare
+   0.06-0.08 tint, unreadable over text). */
 .selectionPopup {
   position: fixed;
   z-index: 60;
@@ -2136,15 +2247,18 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   padding: 0 10px;
   border: 1px solid var(--dsw-alias-border-l1);
   border-radius: 6px;
-  background: var(--dsw-specific-menu);
+  background: var(--dsw-alias-button-floating-fill);
   color: var(--dsw-alias-label-primary);
   font: var(--dsw-font-xxxs-strong-11);
   white-space: nowrap;
   cursor: pointer;
 }
 
-.selectionPopup:hover {
-  background: var(--dsw-alias-interactive-bg-hover-solid);
+/* Keyboard focus takes the hover step so the chip stays visible when
+   tabbed to; a button this small otherwise looks unchanged while focused. */
+.selectionPopup:hover,
+.selectionPopup:focus-visible {
+  background: var(--dsw-alias-button-floating-hover);
 }
 
 .editorPdf {

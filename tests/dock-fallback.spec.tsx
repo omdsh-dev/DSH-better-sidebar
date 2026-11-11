@@ -442,6 +442,34 @@ describe('dock fallback（空白会话入口）', () => {
     }
   })
 
+  it('treats an all-zero anchor rect as absent instead of the top-left fallback', async () => {
+    phaseIs(true)
+    // A collapsed right column can leave the toggle in the DOM but display:none,
+    // which makes every rect field 0. The old code used that zero rect as a real
+    // anchor: left became -36, the macOS traffic-light floor clamped it to 88,
+    // and the entry landed exactly on the theme's top-left button.
+    const anchor = document.createElement('button')
+    anchor.setAttribute('data-sidebar-right-expand', 'true')
+    anchor.getBoundingClientRect = () => ({
+      x: 0, y: 0, left: 0, top: 0, width: 0, height: 0, right: 0, bottom: 0,
+      toJSON: () => ({}),
+    }) as DOMRect
+    document.body.append(anchor)
+    const hit = stubHitTest(() => [])
+    const { unmount } = renderDockFallback()
+    try {
+      await settle()
+      const shell = document.querySelector<HTMLElement>('[data-dsh-dock-fallback]')
+      expect(shell, '空白会话里备用入口应当在').not.toBeNull()
+      expect(shell!.style.top, '零尺寸锚点走右上角兜底').toBe('8px')
+      expect(shell!.style.left, '零尺寸锚点走右上角兜底').toBe(`${window.innerWidth - 44}px`)
+    } finally {
+      unmount()
+      hit.restore()
+      anchor.remove()
+    }
+  })
+
   it('bounds the retreat walk at 100 steps (400px)', async () => {
     phaseIs(true)
     const anchor = appendAnchor(500)

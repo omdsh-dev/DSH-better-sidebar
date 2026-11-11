@@ -139,7 +139,7 @@ function ev(type: string, seq: number, data: Record<string, unknown> = {}): { ty
 }
 
 describe('sidechat.start', () => {
-  it('creates a sidechat in the current execution directory, not the original header cwd', async () => {
+  it('creates a sidechat at the parent HEADER cwd (the workspace path), while the seed stamp keeps the live cwd', async () => {
     const parent = agent('parent')
     const services = happyServices(parent, agent('child'))
     const get = vi.fn((session: unknown) => {
@@ -148,8 +148,43 @@ describe('sidechat.start', () => {
     })
     const api = buildSidechatApi(ctxWith({ ...services, workingDirectory: { get } }))
     await api['sidechat.start']({ sessionId: 'parent', question: 'current project' })
-    expect(services.create.mock.calls[0]![0]).toMatchObject({ meta: { cwd: '/current-execution-directory' } })
+    // The Host attaches a session to the workspace its HEADER cwd names
+    // (packages/workspace/workspace/src/entity.ts:136), so a live cwd that had
+    // `cd`-ed elsewhere must not become meta.cwd: it made the fork fail with
+    // session/workspace-attach-failed. The live cwd still reaches the child
+    // through the seeded working-directory/change stamp.
+    expect(services.create.mock.calls[0]![0]).toMatchObject({ meta: { cwd: '/p' } })
     expect(get).toHaveBeenCalledOnce()
+  })
+
+  it('installs the model-switch listener in the create and cold-resume setups (#1134)', async () => {
+    // 0.2.2 kept the `[model changed: …]` notice in `installModelSelection`'s
+    // `agent/pre-step` listener even though routing moved onto `AgentModel`.
+    // The host installs it in every setup; a side thread that skips it leaves
+    // the next model unaware that the turns above used another route.
+    const services = happyServices(agent('parent'), agent('child'))
+    const api = buildSidechatApi(ctxWith(services))
+    await api['sidechat.start']({ sessionId: 'parent', question: 'q' })
+    const createSetup = (services.create.mock.calls[0] as unknown as [
+      { setup: (ctx: unknown) => Promise<void> },
+    ])[0].setup
+    const on = vi.fn((_event: string) => () => {})
+    await createSetup({ on })
+    expect(on.mock.calls.filter(([type]) => type === 'agent/pre-step')).toHaveLength(1)
+
+    // Cold resume builds its own setup from the persisted record; that branch
+    // must install the listener too.
+    const child = agent('child-resume')
+    const resumed = happyServices(undefined, child)
+    resumed.agents.get = vi.fn((_id: unknown) => undefined)
+    const resumeApi = buildSidechatApi(ctxWith(resumed))
+    await resumeApi['sidechat.model']({ childId: 'child-resume', provider: 'p3', model: 'm3' })
+    const resumeSetup = (resumed.resume.mock.calls[0] as unknown as [
+      { setup: (ctx: unknown) => Promise<void> },
+    ])[0].setup
+    const onResume = vi.fn((_event: string) => () => {})
+    await resumeSetup({ on: onResume })
+    expect(onResume.mock.calls.filter(([type]) => type === 'agent/pre-step')).toHaveLength(1)
   })
 
   it('stamps current cwd after a truncated seed so the real working-directory projection cannot restore an older cwd', async () => {
@@ -209,7 +244,9 @@ describe('sidechat.start', () => {
     const child = Session.create(options.sessionId, options.seed, {
       ...options.meta, id: options.sessionId, version: SESSION_FORMAT_VERSION, createdAt: Date.now(), isSeeded: true,
     }, SessionLogOffset(options.inheritedEventCount))
-    expect(child.header.cwd).toBe(current)
+    // The attach cwd is the parent HEADER cwd (the workspace path); the STAMP
+    // is what carries the live cwd into the child's projection below.
+    expect(child.header.cwd).toBe(original)
     expect(options.seed.every((event, index) => event.seq === index)).toBe(true)
     expect(child.ownEvents()[0]?.type).toBe('session/end-seed')
     expect(workingDirectory.get(child)).toBe(current)

@@ -25,11 +25,12 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { createElement } from 'react'
 import clsx from 'clsx'
-import { IconCheckOutlineRegular, IconFolderOpenRegular, IconRefreshOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconCheckOutlineRegular, IconFolderOpenRegular, IconRefreshOutlineRegular, writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context } from '../context-types.ts'
-import { api, mediaUrl, type SessionScope } from './api.ts'
+import { api, mediaUrl, SidebarApiError, type SessionScope } from './api.ts'
 import { BinaryDownload } from './binary-download.tsx'
-import { planFirstMatch, planFsReadOutcome, type EditorLoadAction } from './editor-load.ts'
+import { isDirectoryReadError, planFirstMatch, planFsReadOutcome, type EditorLoadAction } from './editor-load.ts'
+import { isWindowsAbsolutePath, markdownPathRepairCandidates } from './markdown-path-repair.ts'
 import { clearDraftBackup } from './editor-draft-backup.ts'
 import { clearEditorDirty, isEditorDirty, setEditorDirty } from './editor-dirty.ts'
 import { baseName } from './FileTree.tsx'
@@ -43,18 +44,41 @@ import { TreePanel } from './TreePanel.tsx'
 import { t } from './locales.ts'
 import { consumeLineTarget, peekLineTarget } from './line-target.ts'
 import { relativeTo } from './paths.ts'
-import { resolveSidebarPath } from './paths.ts'
+import { resolveNativeSidebarPath, resolveSidebarPath } from './paths.ts'
 import { clearRetargetedPath, closePathTabs, consumeRetargetedPath, pathTabKey, retargetPathTabs } from './tree-mutations.ts'
-import type { EditorToolbarControls, EditorToolbarState, FileViewerDescriptor } from './service.ts'
+import type { EditorToolbarControls, EditorToolbarState, FileViewerDescriptor, TabActionDescriptor } from './service.ts'
 import { firstLeaf, insertLeafAt, leafWithTab, mintTabId, type SidebarStore, type SidebarTab } from './state.ts'
 import css from './sidebar.module.css'
+
+/**
+ * Resolve a descriptor's `string | (() => string)` text, first non-empty wins.
+ * A throwing thunk is logged and skipped: one broken label must not take the
+ * whole header down.
+ */
+function textOf(...values: Array<string | (() => string) | undefined>): string {
+  for (const value of values) {
+    if (value === undefined) continue
+    if (typeof value === 'string') {
+      if (value !== '') return value
+      continue
+    }
+    try {
+      const text = value()
+      if (typeof text === 'string' && text !== '') return text
+    }
+    catch (error) {
+      console.error('[dsh-better-sidebar] tab action label error:', error)
+    }
+  }
+  return ''
+}
 
 /** One landing navigation the editor host has read from the side channel. */
 interface LineNav { key: string; nonce: number | null; end?: number }
 
 type EditorLoad =
   | { status: 'loading' }
-  | { status: 'error'; message: string }
+  | { status: 'error'; message: string; fileNotFound?: boolean; windowsAbsolutePath?: boolean; repairStatus?: 'searching' | 'done'; repairMatches?: string[]; repairError?: string }
   | { status: 'ready'; viewer: FileViewerDescriptor; content?: string; size?: number; largeFile?: { size: number }; mtimeMs?: number; mediaUrl?: string; customData?: unknown }
   | { status: 'binary' }
 
@@ -149,9 +173,32 @@ export function EditorHost(props: {
   // the viewer loading flow (a directory is not a file).
   const isDir = metaOf(tab).dir === true
   const [load, setLoad] = useState<EditorLoad>({ status: 'loading' })
+  const [fileErrorAction, setFileErrorAction] = useState<string | null>(null)
   // Manual refresh (issue #167): bumping the sequence re-runs the load effect
   // with the same path/scope — the only reload entry besides open/close.
   const [reloadSeq, setReloadSeq] = useState(0)
+
+  /**
+   * External header buttons (feature `tabActions`). The registry lives on the
+   * client service, so the header subscribes to it instead of receiving the
+   * list as a prop: an editor tab renders inside the host's tree, and the
+   * plugins that contribute buttons activate AFTER this component mounted.
+   */
+  const tabActionService = ctx.get('betterSidebar')
+  const [tabActions, setTabActions] = useState<readonly TabActionDescriptor[]>(
+    () => tabActionService?.getTabActions() ?? [],
+  )
+  useEffect(() => {
+    if (tabActionService === undefined) return
+    const sync = (): void => { setTabActions(tabActionService.getTabActions()) }
+    sync()
+    return tabActionService.subscribe(sync)
+  }, [tabActionService])
+
+  /** A failure reported by an external action; cleared on the next reload. */
+  const [actionError, setActionError] = useState<string | null>(null)
+  /** Runs in flight, keyed `actionId:tabId`, so a double press is ignored. */
+  const runningActions = useRef(new Set<string>())
 
   // The reference's landing line, SPENT once per open (#826).
   //
@@ -503,6 +550,7 @@ export function EditorHost(props: {
     // closed, path changed, session switched) or re-matches the viewer.
     const controller = new AbortController()
     setLoad({ status: 'loading' })
+    setFileErrorAction(null)
     const mediaUrlOf = (): string => mediaUrl(scope, path)
     const apply = (action: EditorLoadAction): void => {
       if (cancelled) return
@@ -540,9 +588,91 @@ export function EditorHost(props: {
             // editor uses it as the save baseline (fs-conflict on drift).
             if (outcome.kind === 'render') setLoad({ ...outcome, status: 'ready', mtimeMs: result.mtimeMs })
             else apply(outcome)
-          }).catch((error: unknown) => {
+          }).catch(async (error: unknown) => {
             if (cancelled) return
-            setLoad({ status: 'error', message: error instanceof Error ? error.message : String(error) })
+            const message = error instanceof Error ? error.message : String(error)
+            if (isDirectoryReadError(error)) {
+              // A path that resolves to a DIRECTORY is not a failed read: the
+              // editor tab must become the plugin's folder window instead of
+              // showing the host's raw `"<path>" is a directory`. This is the
+              // path a chat folder link takes (the tab carries no meta.dir), a
+              // `sidebar_open` folder takes when its seed meta was dropped on the
+              // native resource route, and a directory pasted into this tab's
+              // address bar takes (#933 / #1029).
+              //
+              // The root MUST be the platform-native absolute path: every
+              // listing answer is keyed by the host's `path.resolve`'d spelling,
+              // while FileTree keys its level cache by the REQUESTED root path.
+              // A session-relative, forward-slash-only root (the chat address
+              // spelling) therefore lands in another cache key and the tree
+              // stays on its loading placeholder forever. `ctx.sessions` carries
+              // the workspace root the file address grammar is relative to;
+              // scope.cwd is the fallback (a stripped ctx may not expose the
+              // list). `resolveNativeSidebarPath` also normalizes separators to
+              // that root's dialect (#1029 follow-up).
+              const sessionCwd = ctx.sessions?.list?.getSnapshot?.()?.byId?.[scope.sessionId]?.cwd ?? scope.cwd
+              const absolute = resolveNativeSidebarPath(sessionCwd, path)
+              ctx.get('betterSidebar')?.updateTab(tab.id, {
+                path: absolute,
+                title: baseName(absolute),
+                meta: { ...metaOf(tab), dir: true },
+              }, scope.sessionId)
+              return
+            }
+            const fileNotFound = error instanceof SidebarApiError
+              && error.code === 'fs-error'
+              && message.startsWith('File not found: ')
+            if (!fileNotFound) {
+              setLoad({ status: 'error', message })
+              return
+            }
+
+            const candidates = markdownPathRepairCandidates(path)
+            setLoad({
+              status: 'error',
+              message,
+              fileNotFound: true,
+              windowsAbsolutePath: isWindowsAbsolutePath(path),
+              ...(candidates.length > 0 ? { repairStatus: 'searching' as const } : {}),
+            })
+            if (candidates.length === 0) return
+
+            const matches = new Set<string>()
+            try {
+              for (let offset = 0; offset < candidates.length; offset += 8) {
+                const batch = candidates.slice(offset, offset + 8)
+                const results = await Promise.all(batch.map(candidate => api.fsSearch(scope, candidate, undefined, controller.signal)))
+                for (const result of results) {
+                  const directories = new Set(result.dirs)
+                  for (const match of result.matches) {
+                    if (!directories.has(match)) matches.add(match)
+                  }
+                }
+              }
+            } catch (repairError: unknown) {
+              if (cancelled) return
+              setLoad({
+                status: 'error',
+                message,
+                fileNotFound: true,
+                windowsAbsolutePath: true,
+                repairStatus: 'done',
+                repairError: repairError instanceof Error ? repairError.message : String(repairError),
+              })
+              return
+            }
+
+            if (cancelled) return
+            const repairMatches = [...matches]
+            if (repairMatches.length === 1) {
+              const repairedPath = repairMatches[0]!
+              const betterSidebar = ctx.get('betterSidebar')
+              if (betterSidebar?.updateTab !== undefined) {
+                betterSidebar.updateTab(tab.id, { path: repairedPath, title: baseName(repairedPath) }, scope.sessionId)
+                return
+              }
+            }
+            setLoad({ status: 'error', message, fileNotFound: true, windowsAbsolutePath: true, repairStatus: 'done', repairMatches })
           })
           return
       }
@@ -649,6 +779,45 @@ export function EditorHost(props: {
     )
   }
 
+  /**
+   * The buttons this tab shows: `when` runs once per render and a throwing
+   * predicate drops its own button rather than the whole header.
+   */
+  const visibleTabActions = tabActions.filter((action) => {
+    if (action.when === undefined) return true
+    try {
+      return action.when({ tabId: tab.id, tabType: tab.type, sessionId: scope.sessionId, path, isDir, title })
+    }
+    catch (error) {
+      console.error('[dsh-better-sidebar] tab action predicate error:', error)
+      return false
+    }
+  })
+
+  /** Run one external action; the header owns the in-flight guard. */
+  const runTabAction = (action: TabActionDescriptor): void => {
+    if (!visible) return
+    const key = `${action.id}:${tab.id}`
+    if (runningActions.current.has(key)) return
+    runningActions.current.add(key)
+    setActionError(null)
+    const fail = (message: string): void => { setActionError(`${textOf(action.title, action.label, action.id)}: ${message}`) }
+    try {
+      const outcome = action.run({ tabId: tab.id, tabType: tab.type, sessionId: scope.sessionId, path, isDir, title, fail })
+      if (outcome === undefined) {
+        runningActions.current.delete(key)
+        return
+      }
+      void outcome
+        .catch((error: unknown) => { fail(error instanceof Error ? error.message : String(error)) })
+        .finally(() => { runningActions.current.delete(key) })
+    }
+    catch (error) {
+      runningActions.current.delete(key)
+      fail(error instanceof Error ? error.message : String(error))
+    }
+  }
+
   return (
     <div className={css.editor}>
       <div className={css.editorHeader}>
@@ -716,12 +885,74 @@ export function EditorHost(props: {
         >
           <IconFolderOpenRegular size={14} />
         </button>
+        {visibleTabActions.map((action) => {
+          const label = textOf(action.label)
+          const glyph = typeof action.icon === 'function' ? action.icon(14) : action.icon
+          return (
+            <button
+              key={action.id}
+              type="button"
+              className={label === '' ? css.iconButton : css.editorModeButton}
+              aria-label={textOf(action.title, label, action.id)}
+              title={textOf(action.title, label, action.id)}
+              onClick={() => { runTabAction(action) }}
+            >
+              {glyph}
+              {label !== '' && <span>{label}</span>}
+            </button>
+          )
+        })}
       </div>
       <div className={css.editorBody}>
         <div className={css.editorMain}>
+          {actionError !== null && <div className={css.editorError}>{actionError}</div>}
           {showEmpty && <div className={css.editorPlaceholder}>{t('editorEmptyHint')}</div>}
           {!showEmpty && load.status === 'loading' && <div className={css.editorPlaceholder}>{t('loading')}</div>}
-          {!showEmpty && load.status === 'error' && <div className={css.editorError}>{load.message}</div>}
+          {!showEmpty && load.status === 'error' && (
+            <div className={css.editorError} role="alert">
+              <div>{load.fileNotFound ? t('editorFileNotFound', { path }) : load.message}</div>
+              {load.fileNotFound && load.windowsAbsolutePath && (
+                <div className={css.editorErrorHint}>{t('editorMarkdownPathHint')}</div>
+              )}
+              {load.repairStatus === 'searching' && <div className={css.editorErrorHint}>{t('editorPathRepairSearching')}</div>}
+              {load.repairStatus === 'done' && load.repairMatches?.length === 0 && (
+                <div className={css.editorErrorHint}>{t('editorPathRepairNone')}</div>
+              )}
+              {load.repairMatches !== undefined && load.repairMatches.length > 0 && (
+                <div className={css.editorErrorCandidates}>
+                  <div>{t('editorPathRepairChoices')}</div>
+                  {load.repairMatches.map(candidate => (
+                    <Button key={candidate} variant="outline" onClick={() => {
+                      ctx.get('betterSidebar')?.updateTab(tab.id, { path: candidate, title: baseName(candidate) }, scope.sessionId)
+                    }}>
+                      {candidate}
+                    </Button>
+                  ))}
+                </div>
+              )}
+              {load.repairError !== undefined && (
+                <div className={css.editorErrorHint}>{t('editorPathRepairFailed', { message: load.repairError })}</div>
+              )}
+              <div className={css.editorErrorActions}>
+                <Button variant="outline" onClick={() => {
+                  void writeClipboard(path).then((copied) => {
+                    setFileErrorAction(copied ? null : t('editorCopyPathFailed'))
+                  })
+                }}>
+                  {t('editorCopyPath')}
+                </Button>
+                <Button variant="outline" onClick={() => {
+                  void openInApp.reveal(path).then((opened) => {
+                    setFileErrorAction(opened ? null : t('editorRevealPathFailed'))
+                  })
+                }}>
+                  {t('editorOpenInFileManager')}
+                </Button>
+                <Button variant="outline" onClick={refreshFile}>{t('retry')}</Button>
+              </div>
+              {fileErrorAction !== null && <div className={css.editorErrorHint} role="status">{fileErrorAction}</div>}
+            </div>
+          )}
           {!showEmpty && load.status === 'binary' && <BinaryDownload scope={scope} path={path} />}
           {!showEmpty && load.status === 'ready' && createElement(load.viewer.component, {
             ctx, store, scope, path, title,

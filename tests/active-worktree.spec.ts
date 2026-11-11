@@ -35,6 +35,25 @@ vi.mock('../src/git.ts', async (importOriginal) => {
   }
 })
 
+/** The plugin's stat seam: fail the NEXT n stat() calls with a chosen errno. */
+const statSeam = vi.hoisted(() => ({ failNext: 0, code: 'EPERM' }))
+
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>()
+  return {
+    ...actual,
+    stat: async (...args: Parameters<typeof actual.stat>) => {
+      if (statSeam.failNext > 0) {
+        statSeam.failNext -= 1
+        const error = new Error(statSeam.code + ': injected by the spec') as NodeJS.ErrnoException
+        error.code = statSeam.code
+        throw error
+      }
+      return actual.stat(...args)
+    },
+  }
+})
+
 const IDENTITY = {
   GIT_AUTHOR_NAME: 'dsh-better-sidebar-test',
   GIT_AUTHOR_EMAIL: 'test@dsh.invalid',
@@ -156,7 +175,61 @@ describe('active worktree root', () => {
     try {
       initRepo(repo, 'a.txt')
       const ctx = sessionCtx(repo, [{ cwd: join(repo, 'src') }])
+      // The root is the session cwd with no repository-top lift; the realpath
+      // canonicalization (a macOS tmpdir's `/var` → `/private/var`) is
+      // independent of that and matches every other resolved root here.
       await expect(activeWorktreeRootOf(ctx, 's-no-worktree', repo)).resolves.toBe(realpathSync.native(repo))
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  // A relative link (`tools/a.md`) is resolved against this root, so lifting it
+  // to the repository top level opens `<repo>/tools/a.md` instead of
+  // `<repo>/<subdir>/tools/a.md`. ASCII, CJK, and CJK-in-NFD are three separate
+  // cases on purpose: they must fail TOGETHER, which is what separates a
+  // git-top-level lift from a Unicode normalization artifact — normalization
+  // could only move the non-ASCII spelling, and it could never drop a whole
+  // path segment.
+  for (const [label, sessionId, subdirectory] of [
+    ['an ASCII', 's-subdir-ascii', 'sub-en'],
+    ['a non-ASCII', 's-subdir-cjk', '社媒运营'],
+    // A name with a REAL canonical decomposition: `café` NFD is `e` + U+0301,
+    // so this case would move under normalization while the two above cannot.
+    ['a canonically decomposed (NFD) non-ASCII', 's-subdir-nfd', 'café'.normalize('NFD')],
+  ] as const) {
+    it(`keeps ${label} subdirectory session cwd instead of lifting it to the repository top level`, async () => {
+      const root = realpathSync.native(mkdtempSync(join(tmpdir(), 'dsh-active-root-')))
+      const repo = join(root, 'repo')
+      const base = join(repo, subdirectory)
+      try {
+        initRepo(repo, 'a.txt')
+        mkdirSync(join(base, 'tools'), { recursive: true })
+        writeFileSync(join(base, 'tools', 'a.md'), '# a\n')
+        const ctx = sessionCtx(base, [])
+        await expect(activeWorktreeRootOf(ctx, sessionId, base)).resolves.toBe(base)
+        // The reported symptom, asserted on the resolved path itself.
+        expect(readFileSync(join(await activeWorktreeRootOf(ctx, sessionId, base), 'tools', 'a.md'), 'utf8'))
+          .toBe('# a\n')
+      } finally {
+        rmSync(root, { recursive: true, force: true })
+      }
+    })
+  }
+
+  it('still follows a linked worktree when the session cwd is a subdirectory', async () => {
+    // The subdirectory root must not cost the worktree-following feature: a
+    // session that MOVED into a linked worktree is still followed.
+    const root = realpathSync.native(mkdtempSync(join(tmpdir(), 'dsh-active-root-')))
+    const repo = join(root, 'repo')
+    const worktree = join(root, 'worktree')
+    try {
+      initRepo(repo, 'a.txt')
+      mkdirSync(join(repo, 'src'), { recursive: true })
+      git(repo, ['worktree', 'add', '-q', '-b', 'agent', worktree])
+      const ctx = sessionCtx(join(repo, 'src'), [{ cwd: worktree, path: join(worktree, 'a.txt') }])
+      await expect(activeWorktreeRootOf(ctx, 's-subdir-worktree', join(repo, 'src')))
+        .resolves.toBe(realpathSync.native(worktree))
     } finally {
       removeTree(root)
     }
@@ -548,6 +621,97 @@ describe('active worktree root', () => {
       await expect(activeWorktreeRootOf(ctx, 's-outside', repo)).resolves.toBe(realpathSync.native(worktree))
     } finally {
       rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  /**
+   * A followed worktree can be deleted out from under a RUNNING session
+   * (`git worktree remove`, or a plain folder delete). Both process-wide maps
+   * used to answer from a cached path forever, so the sidebar stayed pinned to
+   * a directory that no longer existed — file tree "folder not found", git
+   * panel "not a git repository" — with no recovery short of a host restart
+   * (issue #960).
+   */
+  it('falls back to the repository when the followed worktree is deleted (#960)', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-active-root-'))
+    const repo = join(root, 'repo')
+    const worktree = join(root, 'worktree')
+    try {
+      initRepo(repo, 'a.txt')
+      git(repo, ['worktree', 'add', '-q', '-b', 'agent', worktree])
+      const calls = [{ cwd: worktree, path: join(worktree, 'a.txt') }]
+      const ctx = sessionCtx(repo, calls)
+      await expect(activeWorktreeRootOf(ctx, 's-deleted', repo)).resolves.toBe(realpathSync.native(worktree))
+      // The worktree disappears while the session keeps running.
+      removeTree(worktree)
+      // (1) the root TTL cache must not keep serving the dead path…
+      await expect(activeWorktreeRootOf(ctx, 's-deleted', repo)).resolves.toBe(realpathSync.native(repo))
+      // (2) …and a fresh session must not resurrect it through the inner caches.
+      await expect(activeWorktreeRootOf(ctx, 's-deleted-fresh', repo)).resolves.toBe(realpathSync.native(repo))
+    } finally {
+      removeTree(root)
+    }
+  })
+
+
+  /**
+   * Two cases the first revision of the #960 fix got wrong (found in review):
+   *
+   *  · a TRANSIENT stat failure on a directory that still exists (a locked handle,
+   *    an antivirus pass, a hung SMB/UNC worktree: EPERM/EACCES/EBUSY/EIO) must not
+   *    re-root the session — only ENOENT/ENOTDIR prove the directory is gone;
+   *  · a worktree that is deleted and then CREATED AGAIN must be followed again: a
+   *    negative produced by the invalidation re-probe must not be cached, because
+   *    `pathTopCache` has no TTL and would pin the session away for good.
+   */
+  it('a transient stat failure on a live directory does not re-root the session (#960 review)', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-active-root-'))
+    const repo = join(root, 'repo')
+    const worktree = join(root, 'worktree')
+    try {
+      initRepo(repo, 'a.txt')
+      git(repo, ['worktree', 'add', '-q', '-b', 'agent', worktree])
+      const calls = [{ cwd: worktree, path: join(worktree, 'a.txt') }]
+      const ctx = sessionCtx(repo, calls)
+      await expect(activeWorktreeRootOf(ctx, 's-flaky', repo)).resolves.toBe(realpathSync.native(worktree))
+      // The directory is still there; its stat fails for the WHOLE ask the way a locked
+      // handle, an antivirus pass or a hung SMB/UNC worktree behaves. Only
+      // ENOENT/ENOTDIR may be read as "gone": anything else must leave the session where
+      // it is, instead of re-rooting it (and, with the old rule, for good).
+      for (const code of ['EPERM', 'EBUSY', 'EACCES', 'EIO']) {
+        statSeam.code = code
+        statSeam.failNext = 50
+        await expect(activeWorktreeRootOf(ctx, 's-flaky', repo)).resolves.toBe(realpathSync.native(worktree))
+        statSeam.failNext = 0
+      }
+    } finally {
+      statSeam.failNext = 0
+      removeTree(root)
+    }
+  })
+
+  it('re-follows a worktree that comes back after being deleted (#960 review)', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-active-root-'))
+    const repo = join(root, 'repo')
+    const worktree = join(root, 'worktree')
+    try {
+      initRepo(repo, 'a.txt')
+      git(repo, ['worktree', 'add', '-q', '-b', 'agent', worktree])
+      const calls = [{ cwd: worktree, path: join(worktree, 'a.txt') }]
+      const ctx = sessionCtx(repo, calls)
+      await expect(activeWorktreeRootOf(ctx, 's-back', repo)).resolves.toBe(realpathSync.native(worktree))
+      removeTree(worktree)
+      await expect(activeWorktreeRootOf(ctx, 's-back', repo)).resolves.toBe(realpathSync.native(repo))
+      // `git worktree prune` because the directory was deleted by hand, not by git.
+      git(repo, ['worktree', 'prune'])
+      git(repo, ['worktree', 'add', '-q', '-b', 'agent2', worktree])
+      // The session that fell back keeps the repository until its 15 s TTL expires
+      // (documented behaviour), but a FRESH ask must pick the worktree up again: the
+      // invalidation re-probe deliberately does not cache its negative.
+      await expect(activeWorktreeRootOf(ctx, 's-back-fresh', repo)).resolves.toBe(realpathSync.native(worktree))
+    } finally {
+      removeTree(root)
+
     }
   })
 })

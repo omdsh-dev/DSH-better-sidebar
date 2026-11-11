@@ -327,7 +327,8 @@ describe('turnSummary rows', () => {
       entry(ev('turn/end', 4, { turn: 1, reason: 'completed' })),
     ]
     const rows = transcriptRows(entries)
-    expect(rows.at(-1)).toEqual({ kind: 'turnSummary', seq: 4, inputTokens: 160, outputTokens: 70, durationMs: 3000 })
+    // `turn` is the work-details annotation the fold line reads its duration by.
+    expect(rows.at(-1)).toEqual({ kind: 'turnSummary', seq: 4, turn: 1, inputTokens: 160, outputTokens: 70, durationMs: 3000 })
   })
 
   it('keeps a duration-only tail without usage and a usage-only tail without a turn/start', () => {
@@ -336,14 +337,14 @@ describe('turnSummary rows', () => {
       entry(ev('turn/start', 2, { turn: 1 })),
       entry(ev('turn/end', 7, { turn: 1, reason: 'cancelled' })),
     ]
-    expect(transcriptRows(cancelled).at(-1)).toEqual({ kind: 'turnSummary', seq: 7, durationMs: 5000 })
+    expect(transcriptRows(cancelled).at(-1)).toEqual({ kind: 'turnSummary', seq: 7, turn: 1, durationMs: 5000 })
 
     const seedCutStart = [
       entry(ev('session/end-seed', 0)),
       entry(ev('assistant/message', 2, { turn: 1, step: 1, message: { content: textBlocks('a') }, usage: { inputTokens: 10, outputTokens: 5 } })),
       entry(ev('turn/end', 3, { turn: 1, reason: 'completed' })),
     ]
-    expect(transcriptRows(seedCutStart).at(-1)).toEqual({ kind: 'turnSummary', seq: 3, inputTokens: 10, outputTokens: 5 })
+    expect(transcriptRows(seedCutStart).at(-1)).toEqual({ kind: 'turnSummary', seq: 3, turn: 1, inputTokens: 10, outputTokens: 5 })
   })
 
   it('skips the tail entirely when nothing is computable', () => {
@@ -602,8 +603,10 @@ describe('present deliverables rows', () => {
 
   it('leaves malformed or empty call files on the generic tool row', () => {
     for (const args of [JSON.stringify({ files: [] }), JSON.stringify({ files: [{ path: 7 }] })]) {
+      // `turn` is the work-details annotation the view folds a turn's process
+      // rows by (no `turnEnded`: this log carries no `turn/end`).
       expect(transcriptRows([seed, presentCall(1, 'cp', args)])).toEqual([
-        { kind: 'tool', seq: 1, name: 'present', failed: false, args, executing: true },
+        { kind: 'tool', seq: 1, name: 'present', failed: false, args, executing: true, turn: 1 },
       ])
     }
   })
@@ -647,11 +650,17 @@ describe('toolArgsSummary', () => {
     expect(toolArgsSummary('{"pattern":"foo","path":"/repo"}')).toBe('/repo')
   })
 
-  it('flattens and truncates raw text when no known key parses', () => {
-    expect(toolArgsSummary('{"custom":"v"}')).toBe('{"custom":"v"}')
+  it('falls back to the first field for an object without an identifying key, and to raw text for a non-object', () => {
+    expect(toolArgsSummary('{"custom":"v"}')).toBe('v')
     expect(toolArgsSummary('not json at all')).toBe('not json at all')
     expect(toolArgsSummary(`{"command":"${'x'.repeat(200)}"`)).toHaveLength(80)
     expect(toolArgsSummary(`{"command":"${'x'.repeat(200)}"`)).toMatch(/…$/)
+  })
+
+  it('never falls back to raw JSON for an object with nothing to name', () => {
+    const summary = toolArgsSummary('{"retries":3,"ok":true,"nested":{"a":1}}')
+    expect(summary).not.toContain('{')
+    expect(summary).not.toContain('"')
   })
 
   it('reads empty for missing or blank input', () => {

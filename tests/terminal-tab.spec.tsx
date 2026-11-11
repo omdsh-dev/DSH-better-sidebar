@@ -84,6 +84,7 @@ const xterm = vi.hoisted(() => {
     reset(): void { this.calls.reset += 1 }
     resize(cols: number, rows: number): void { this.calls.resize.push([cols, rows]) }
     focus(): void { /* focus bookkeeping is not asserted */ }
+    attachCustomKeyEventHandler(): void { /* policy covered by terminal-clipboard.spec.ts */ }
     dispose(): void { this.calls.dispose += 1; this.calls.disposed = true }
     onData(handler: (data: string) => void): { dispose: () => void } {
       this.calls.dataHandlers.push(handler)

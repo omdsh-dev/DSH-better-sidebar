@@ -143,8 +143,13 @@ function slotOccupiedByRect(cx: number, cy: number): boolean {
 function measure(): { top: number; left: number } {
   const anchor = document.querySelector('[data-sidebar-right-expand], [data-sidebar-right-toggle]')
   const rect = anchor?.getBoundingClientRect()
-  const top = rect === undefined ? 8 : Math.max(4, rect.top + (rect.height - BUTTON_SIZE) / 2)
-  let left = rect === undefined ? window.innerWidth - BUTTON_SIZE - GAP - 8 : rect.left - GAP - BUTTON_SIZE
+  // A collapsed right column can leave the toggle in the DOM with an all-zero
+  // rect (the theme hides the panel with display:none). Treat that exactly like
+  // a missing anchor: the zero rect would otherwise pin the entry to the
+  // top-left 88px macOS traffic-light inset and cover the theme's own button.
+  const visible = rect !== undefined && rect.width > 0 && rect.height > 0
+  const top = visible ? Math.max(4, rect.top + (rect.height - BUTTON_SIZE) / 2) : 8
+  let left = visible ? rect.left - GAP - BUTTON_SIZE : window.innerWidth - BUTTON_SIZE - GAP - 8
   // 复用宿主 preload 的平台属性；原生红绿灯不会出现在 elementsFromPoint 中。
   // 48px 高度 / 88px 左侧留白与宿主 AppFrame / fullscreen dock strip 的几何一致。
   const root = document.documentElement

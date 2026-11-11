@@ -55,6 +55,8 @@ const service = {
   subscribe: () => () => {},
   fileIcon: (path: string) => { fileIcons.push(path); return null },
   folderIcon: (path: string) => { folderIcons.push(path); return null },
+  // No external file actions in these fixtures — the counters stay the probe.
+  getFileActions: () => [],
 } as unknown as BetterSidebarService
 
 const HOST_APPS = [

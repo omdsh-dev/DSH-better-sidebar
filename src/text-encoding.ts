@@ -406,7 +406,10 @@ function getGbkEncodeMap(): Map<string, number> {
   if (gbkEncodeMap !== undefined) return gbkEncodeMap
   const map = new Map<string, number>()
   for (let byte = 0; byte <= 0x7f; byte += 1) map.set(String.fromCharCode(byte), byte)
-  map.set('€', 0x80)
+  // GBK has a legacy single-byte euro at 0x80, but WHATWG/ICU (Node 24.21's
+  // ICU 78, and current Chromium) reject it as invalid under `fatal: true`.
+  // The canonical two-byte GBK spelling decodes everywhere.
+  map.set('€', 0xa2e3)
   for (let lead = 0x81; lead <= 0xfe; lead += 1) {
     for (let trail = 0x40; trail <= 0xfe; trail += 1) {
       if (trail === 0x7f) continue

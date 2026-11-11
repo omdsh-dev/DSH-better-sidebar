@@ -215,6 +215,8 @@ export function createArchiveTasks(options: ArchiveTaskOptions = {}): ArchiveTas
   const tasks = new Map<string, ArchiveTask>()
   /** Running children, by task id (teardown kills them). */
   const children = new Map<string, { kill(): void }>()
+  let resolvingArchives = 0
+  let disposed = false
   const spawner = options.spawn ?? undefined
 
   const tempPathOf = (id: string, ext: string): string =>
@@ -245,40 +247,45 @@ export function createArchiveTasks(options: ArchiveTaskOptions = {}): ArchiveTas
       sweep(Date.now())
       let building = 0
       for (const task of tasks.values()) if (task.state === 'building') building += 1
-      if (building >= ARCHIVE_MAX_BUILDING) {
+      if (disposed) throw new SidebarError('unavailable', 'archive service disposed', 503)
+      if (building + resolvingArchives >= ARCHIVE_MAX_BUILDING) {
         throw new SidebarError('bad-request', `too many archives are being built (max ${ARCHIVE_MAX_BUILDING})`, 409)
       }
-      const resolve = options.resolveTool ?? resolveArchiveTool
-      // One call either way: `spawn` has a default, so passing `undefined`
-      // selects the real implementation without a second code path.
-      const spec = await resolve(spawner)
-      if (spec === undefined) {
-        // A NEW wire code, and deliberately its own: "this machine has no zip
-        // and no tar" is not a failure of the selection, and the client shows
-        // it as an actionable sentence rather than a raw English message.
-        throw new SidebarError(
-          'unavailable',
-          'no archive tool is available: neither zip nor tar could be run',
-          501,
-        )
-      }
-      const plan = planArchive(paths, spec)
-      const id = `ar-${randomUUID()}`
-      const finalName = archiveFileName(name, spec.ext)
-      const tempPath = tempPathOf(id, spec.ext)
-      const task: ArchiveTask = {
-        id,
-        sessionId,
-        name: finalName,
-        state: 'building',
-        bytes: 0,
-        expiresAt: Number.POSITIVE_INFINITY,
-      }
-      tasks.set(id, task)
-      // Detached on purpose: the POST answers as soon as the id exists, and the
-      // task table (not the request) owns the error from here on.
-      void pack(id, task, plan, tempPath, spawner)
-      return { id, name: finalName, entries: paths.length }
+      resolvingArchives += 1
+      try {
+        const resolve = options.resolveTool ?? resolveArchiveTool
+        // One call either way: `spawn` has a default, so passing `undefined`
+        // selects the real implementation without a second code path.
+        const spec = await resolve(spawner)
+        if (disposed) throw new SidebarError('unavailable', 'archive service disposed', 503)
+        if (spec === undefined) {
+          // A NEW wire code, and deliberately its own: "this machine has no zip
+          // and no tar" is not a failure of the selection, and the client shows
+          // it as an actionable sentence rather than a raw English message.
+          throw new SidebarError(
+            'unavailable',
+            'no archive tool is available: neither zip nor tar could be run',
+            501,
+          )
+        }
+        const plan = planArchive(paths, spec)
+        const id = `ar-${randomUUID()}`
+        const finalName = archiveFileName(name, spec.ext)
+        const tempPath = tempPathOf(id, spec.ext)
+        const task: ArchiveTask = {
+          id,
+          sessionId,
+          name: finalName,
+          state: 'building',
+          bytes: 0,
+          expiresAt: Number.POSITIVE_INFINITY,
+        }
+        tasks.set(id, task)
+        // Detached on purpose: the POST answers as soon as the id exists, and the
+        // task table (not the request) owns the error from here on.
+        void pack(id, task, plan, tempPath, spawner)
+        return { id, name: finalName, entries: paths.length }
+      } finally { resolvingArchives -= 1 }
     },
     status(id, sessionId) {
       sweep(Date.now())
@@ -302,6 +309,7 @@ export function createArchiveTasks(options: ArchiveTaskOptions = {}): ArchiveTas
       return tasks.size
     },
     dispose() {
+      disposed = true
       for (const child of children.values()) {
         try {
           child.kill()
@@ -338,17 +346,22 @@ export function createArchiveTasks(options: ArchiveTaskOptions = {}): ArchiveTas
       children.delete(id)
     }
     let handle: Awaited<ReturnType<typeof open>> | undefined
+    let ownsTemp = false
     try {
-      handle = await open(tempPath, 'w')
+      handle = await open(tempPath, 'wx')
+      ownsTemp = true
+      if (disposed) throw new Error('archive service disposed')
       const result = await runArchiveTool(plan, handle.fd, spawner, child => { children.set(id, child) })
       await handle.close()
       handle = undefined
+      if (disposed) throw new Error('archive service disposed')
       if (result.code !== 0) {
         settle(result.stderr === '' ? `${plan.spec.bin} exited with code ${result.code}` : result.stderr)
         await rm(tempPath, { force: true }).catch(() => {})
         return
       }
       const info = await stat(tempPath).catch(() => undefined)
+      if (disposed) throw new Error('archive service disposed')
       if (info === undefined) {
         settle(`${plan.spec.bin} produced no archive`)
         return
@@ -362,7 +375,7 @@ export function createArchiveTasks(options: ArchiveTaskOptions = {}): ArchiveTas
       await handle?.close().catch(() => {})
       task.bytes = await stat(tempPath).then(info => info.size).catch(() => 0)
       settle(error instanceof Error ? error.message : String(error))
-      await rm(tempPath, { force: true }).catch(() => {})
+      if (ownsTemp) await rm(tempPath, { force: true }).catch(() => {})
     }
   }
 }

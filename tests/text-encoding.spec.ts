@@ -35,6 +35,12 @@ describe('text encoding', () => {
     expect(decoded).toEqual({ content: text, encoding })
   })
 
+  it('encodes the euro sign with the two-byte GBK mapping', () => {
+    const bytes = encodeText('€', 'gbk')
+    expect(bytes.toString('hex')).toBe('a2e3')
+    expect(decodeTextBytes(bytes)).toEqual({ content: '€', encoding: 'gbk' })
+  })
+
   it('detects BOM-less UTF-16 script text, including an odd truncated read', () => {
     const text = '@echo off\r\necho 中文测试\r\n'
     const little = Buffer.from(text, 'utf16le')

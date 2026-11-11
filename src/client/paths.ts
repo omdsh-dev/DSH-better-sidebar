@@ -120,3 +120,25 @@ export function resolveSidebarPath(cwd: string | undefined, path: string): strin
   const separator = base.includes('\\') ? '\\' : '/'
   return `${base.replace(/[\\/]+$/, '')}${separator}${path}`
 }
+
+/**
+ * Resolve one client path and normalize it to the base's separator dialect.
+ *
+ * A folder window roots the shared FileTree at this value. The tree keys each
+ * level by the root it REQUESTED, while every listing answer is keyed by the
+ * host's `path.resolve`'d absolute path — on Windows a chat file address
+ * ("research/workspace-sections-campaign/x", session-relative and
+ * `/`-separated) joined onto a `C:\…` cwd used to leave MIXED separators: two
+ * different strings for one directory, so the root level waited on its
+ * loading placeholder forever (#1029 follow-up). Normalizing to the base's
+ * dialect also drops a trailing separator, exactly as `path.resolve` does
+ * (a drive root keeps it). A non-Windows base returns the plain join: on
+ * POSIX a backslash is a legal filename character.
+ */
+export function resolveNativeSidebarPath(cwd: string | undefined, path: string): string {
+  const resolved = resolveSidebarPath(cwd, path)
+  if (cwd === undefined || !cwd.includes('\\')) return resolved
+  const normalized = resolved.replace(/\//g, '\\')
+  if (/^[A-Za-z]:\\$/.test(normalized)) return normalized
+  return normalized.replace(/\\+$/, '')
+}

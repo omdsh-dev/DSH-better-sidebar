@@ -326,8 +326,16 @@ export function SubagentView(props: {
     [list.projectionsBySession, rootId],
   )
   const teamMembers = useMemo(
-    () => teamMembersOf(team, live, byId),
-    [team, live, byId],
+    // A team member IS a direct subagent of the Lead, so the roster comes from
+    // the same catalog rows the topology below already draws.
+    () => teamMembersOf(
+      team,
+      rootId,
+      rootId === undefined ? [] : catalogs[rootId]?.entries ?? [],
+      live,
+      byId,
+    ),
+    [team, rootId, catalogs, live, byId],
   )
 
   // The default view mode comes from the side card prefs (settings select);
@@ -445,15 +453,15 @@ export function SubagentView(props: {
   }, [ctx, sessions])
 
   /**
-   * Show one child session. `'side'` (the default) hands the transcript to the
-   * host's OWN right-sidebar tab and leaves the main column alone — that is the
-   * native affordance the host's subagent list uses, and it is skipped when the
-   * deployment cannot host it (no `subagentchat` type, no right column, or no
-   * mounted seat). `'main'` is the old behavior: the shell re-roots the Tasks
-   * page on the child and the main view follows.
+   * Show one child session. `'right'` (the default) hands the transcript to
+   * the host's OWN right-sidebar tab in its CURRENT pane; `'side'` asks the
+   * host to split a second pane; `'main'` is the old behavior: the shell
+   * re-roots the Tasks page on the child and the main view follows. The
+   * sidebar forms are skipped when the deployment cannot host one (no
+   * `subagentchat` type, no right column, or no mounted seat).
    */
-  const openChild = useCallback((address: SidebarSubagentAddress, place: 'side' | 'main' = 'side'): void => {
-    if (place === 'side' && openTranscriptAside(ctx, address)) return
+  const openChild = useCallback((address: SidebarSubagentAddress, place: 'right' | 'side' | 'main' = 'right'): void => {
+    if (place !== 'main' && openTranscriptAside(ctx, address, place === 'side')) return
     // Notify the shell first: the jump switches the sidebar to the child
     // session's own layout, and the shell re-opens the Tasks page on top
     // of it (the topology stays rooted at the main agent with the child
@@ -485,7 +493,7 @@ export function SubagentView(props: {
   }, [sessions])
 
   /** Jump from the detail window into the node's transcript. */
-  const jumpToNode = useCallback((node: TasksAgentNode, place: 'side' | 'main' = 'side'): void => {
+  const jumpToNode = useCallback((node: TasksAgentNode, place: 'right' | 'side' | 'main' = 'right'): void => {
     if (node.childAddress !== undefined) {
       openChild(node.childAddress, place)
       setPopover(null)

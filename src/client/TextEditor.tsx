@@ -29,14 +29,14 @@ import {
   type GitGutterHost,
 } from './editor-git-gutter.ts'
 import { api, htmlUrl, SidebarApiError } from './api.ts'
-import { hostTransportBase } from './desktop-env.ts'
+import { hostHttpBase } from './desktop-env.ts'
 import { markdownPreviewSource } from './markdown-frontmatter.ts'
-import { rewriteLocalImageUrls } from './markdown-images.ts'
+import { createMarkdownPathImages } from './markdown-images.ts'
 import { rewriteLocalMarkdownLinks } from './markdown-navigation.ts'
 import { languageForPath } from './lang.ts'
 import { cmSurfaceTheme, CmThemeCompartment } from './cm-themes.ts'
 import { cmSearchExtensions, CmSearchPhrases } from './cm-search.ts'
-import { clearDraftBackup, flushDraftBackups, readDraftBackup, registerDraftSource, scheduleDraftBackup } from './editor-draft-backup.ts'
+import { clearDraftBackup, draftBackupBaseMtime, flushDraftBackups, readDraftBackup, registerDraftSource, sameDocument, scheduleDraftBackup } from './editor-draft-backup.ts'
 import { flashQuoteLines, quoteFlashField, quoteFlashHighlight } from './quote-flash.ts'
 import { isDarkScheme, subscribeColorScheme } from './theme.ts'
 import { SandboxStatusBar } from './SandboxStatusBar.tsx'
@@ -51,7 +51,7 @@ import { useMarkdownSurface } from './use-markdown-surface.ts'
 import { MdToc } from './md-toc.tsx'
 import { splitMermaidBlocks } from './mermaid-blocks.ts'
 import { localeSignature, t } from './locales.ts'
-import { HTML_IFRAME_SANDBOX } from './html-preview.ts'
+import { HtmlPreviewFrame } from './HtmlPreviewFrame.tsx'
 import type { EditorToolbarState, FileViewerProps } from './service.ts'
 import css from './sidebar.module.css'
 
@@ -149,15 +149,6 @@ function editScrollOf(scope: { sessionId: string }, path: string): number {
   return editScrollMemory.get(previewScrollKey(scope, path)) ?? 0
 }
 
-/** Whether two spellings are the SAME document — byte-equal, or equal once
- *  line endings are normalized CRLF/CR → LF. Line endings are not content:
- *  CodeMirror keeps every document with `\n` endings whatever the file used,
- *  so the live document of a freshly opened CRLF file differs from the bytes
- *  it was loaded from by line endings alone. */
-function sameDocument(a: string, b: string): boolean {
-  return a === b || a.replace(/\r\n?/g, '\n') === b.replace(/\r\n?/g, '\n')
-}
-
 export function TextEditor(props: FileViewerProps) {
   const { ctx, scope, path, viewerId, content, size, largeFile, line } = props
   const [mode, setMode] = useState<ViewMode>('preview')
@@ -176,13 +167,15 @@ export function TextEditor(props: FileViewerProps) {
   /** The mtime the draft is based on (`null` = the file did not exist yet).
    *  Seeded from the load, re-based whenever a fresh load reports a new mtime
    *  (a reload may return the SAME text — see the effect below), refreshed by
-   *  every successful save, and reset by the file-switch effect. */
+   *  every successful save, reset by the file-switch effect, and moved back to
+   *  a restored draft's own base (see restoreDraftBackup). */
   const mtimeRef = useRef<number | null>(props.mtimeMs ?? null)
   /** The bytes the save baseline belongs to: the last loaded document,
    *  advanced by every successful save (an edit-mode save never reloads, so
    *  `props.content` alone can lag behind disk). The conflict banner's reload
    *  compares the disk read against THIS — never the live draft, which is
-   *  expected to differ because it holds the unsaved edit. */
+   *  expected to differ because it holds the unsaved edit. `null` = not known:
+   *  a restored draft based on an older revision, whose bytes are not kept. */
   const savedTextRef = useRef<string | null>(content ?? null)
   /** The theme compartment of the current view (reconfigured on scheme flip). */
   const themeCompRef = useRef<CmThemeCompartment | null>(null)
@@ -364,6 +357,14 @@ export function TextEditor(props: FileViewerProps) {
    * quit can drop the tab without a prompt, so the draft is kept in storage.
    * Declining drops it; accepting makes it the live draft, which the normal
    * dirty path then owns.
+   *
+   * The draft was typed against the file as it was when the backup was written,
+   * not against the bytes just loaded. Accepting therefore also restores that
+   * base mtime, so a file that moved while the tab was gone is refused
+   * (fs-conflict) instead of overwritten. The baseline text goes with it: the
+   * banner's reload would otherwise find the disk equal to this load and resolve
+   * the conflict in place, as if only the mtime had moved. An entry without a
+   * base keeps the mtime of this load.
    */
   const restoreDraftBackup = (): string | null => {
     if (content === undefined) return null
@@ -373,6 +374,11 @@ export function TextEditor(props: FileViewerProps) {
     if (!confirmed) {
       clearDraftBackup(scope.sessionId, path)
       return null
+    }
+    const base = draftBackupBaseMtime(scope.sessionId, path)
+    if (base !== undefined && base !== mtimeRef.current) {
+      mtimeRef.current = base
+      savedTextRef.current = null
     }
     return backup
   }
@@ -487,7 +493,12 @@ export function TextEditor(props: FileViewerProps) {
     })
     const view = new CodeMirrorView({ state, parent: host })
     viewRef.current = view
-    const releaseDraft = registerDraftSource(scope.sessionId, path, () => viewRef.current?.state.doc.toString() ?? null)
+    const releaseDraft = registerDraftSource(
+      scope.sessionId,
+      path,
+      () => viewRef.current?.state.doc.toString() ?? null,
+      () => mtimeRef.current,
+    )
     if (restored !== null) {
       setDirty(true)
       setDraft(restored)
@@ -805,7 +816,8 @@ export function TextEditor(props: FileViewerProps) {
     if (view === null || savingRef.current) return
     // The bytes this request writes: the same string becomes the baseline text
     // once the host accepts it (the draft may keep changing while in flight).
-    const text = view.state.doc.toString()
+    const sentDoc = view.state.doc
+    const text = sentDoc.toString()
     savingRef.current = true
     setSaveState('saving')
     // Optimistic concurrency: the draft was based on the bytes read at
@@ -814,23 +826,42 @@ export function TextEditor(props: FileViewerProps) {
     // external editor). `null` = the file did not exist when loaded.
     api.fsWrite(scope, path, text, mtimeRef.current ?? null).then((result) => {
       savingRef.current = false
+      // A file switch during the write destroys `view` and re-seats viewRef on
+      // the NEW document. This result then belongs to the OLD file: write
+      // nothing else, or A's text / save state / mtime leak into B. The save
+      // lock is already released above so B can still save.
+      if (viewRef.current !== view) return
       // Adopt the fresh baseline the host reports (absent on a stat failure —
       // keep the old one, the next save just re-checks).
       if (typeof result.mtimeMs === 'number') mtimeRef.current = result.mtimeMs
       savedTextRef.current = text
-      setDraft(null)
-      setDirty(false)
       setConflict(false)
-      setSaveState('saved')
-      // Saved: nothing is unsaved any more, so the durable backup must not
-      // offer itself back on the next open.
-      clearDraftBackup(scope.sessionId, path)
+      // Keystrokes during the write are NOT the bytes on disk: keep the tab
+      // dirty and its durable backup, or the next close/quit drops them.
+      // CM's `Text` is immutable: an unchanged doc is the same object, so
+      // `text` can be reused instead of stringifying the document again.
+      const liveDoc = view.state.doc
+      const live = liveDoc === sentDoc ? text : liveDoc.toString()
+      if (live !== text) {
+        setDraft(live)
+        setSaveState('idle')
+      } else {
+        setDraft(null)
+        setDirty(false)
+        setSaveState('saved')
+        // Saved: nothing is unsaved any more, so the durable backup must not
+        // offer itself back on the next open.
+        clearDraftBackup(scope.sessionId, path)
+      }
       // The saved bytes are a new revision of the uncommitted diff: re-read
       // the change set (the file's XY status code usually stays the same, so
       // the status store alone would never wake the gutter up again).
       setGitRevision(value => value + 1)
     }).catch((error: unknown) => {
       savingRef.current = false
+      // Same expiry guard as the success path: an error from the OLD file must
+      // not raise B's conflict banner or mark B's save failed.
+      if (viewRef.current !== view) return
       if (error instanceof SidebarApiError && error.code === 'fs-conflict') {
         setConflict(true)
         setSaveState('idle')
@@ -893,17 +924,14 @@ export function TextEditor(props: FileViewerProps) {
     requestAnimationFrame(() => { restoringRef.current = false })
   }, [mode, previewMdText])
 
-  /** The preview source with local image destinations rewritten to absolute
-   *  media URLs (see {@link rewriteLocalImageUrls}) and the local link
-   *  destinations prepared for the host delegate (see
-   *  {@link rewriteLocalMarkdownLinks}; the split renderer runs the same two
-   *  passes per markdown run, and both are idempotent). */
+  /** The preview source with the local link destinations prepared for the
+   *  host delegate (see {@link rewriteLocalMarkdownLinks}; the split renderer
+   *  runs the same pass per markdown run, and it is idempotent). Local IMAGE
+   *  destinations stay as authored: the owner's `pathImages` vocabulary
+   *  resolves them at render time, which is the only shape that also works
+   *  from the desktop shell's `dsh-app://` page (see markdown-images.ts). */
   const previewText = markdown
-    ? rewriteLocalMarkdownLinks(
-      rewriteLocalImageUrls(previewMdText, scope, path, hostTransportBase()),
-      path,
-      scope.cwd,
-    )
+    ? rewriteLocalMarkdownLinks(previewMdText, path, scope.cwd)
     : previewMdText
   /** md/mermaid block split for the preview (mermaid fences lift out). Split
    *  only in preview mode: edit-mode keystrokes must not re-scan the source. */
@@ -913,9 +941,8 @@ export function TextEditor(props: FileViewerProps) {
   )
   /** Raw-HTML analysis (block runs lifted out + inline gate). Non-null for
    *  every markdown preview, so the render below always takes the split
-   *  renderer — its markdown runs rewrite local image destinations internally
-   *  (see MarkdownHtml.tsx). The legacy single-pass branches (fed the
-   *  pre-rewritten `previewText`) are dead in the current wiring. */
+   *  renderer. The legacy single-pass branches are dead in the current
+   *  wiring. */
   const htmlInfo = useMemo(
     () => (markdown && mode === 'preview' ? analyzeMarkdownHtml(previewMdText) : null),
     [markdown, mode, previewMdText],
@@ -928,11 +955,19 @@ export function TextEditor(props: FileViewerProps) {
     [htmlInfo, mdBlocks],
   )
   /** The media context for the split renderer (local-src rewriting inside
-   *  sanitized HTML). Memoized on primitives: MarkdownDocument sanitizes per
-   *  `media` identity, so a fresh object per render would re-sanitize every
-   *  keystroke. */
+   *  sanitized HTML, plus the owner's `pathImages` vocabulary for markdown
+   *  runs). The PAGE base is load-bearing: in the desktop shell the transport
+   *  origin is a different site and its media request would be rejected by the
+   *  Connection fence (see markdown-images.ts). Memoized on primitives:
+   *  MarkdownDocument sanitizes per `media` identity, so a fresh object per
+   *  render would re-sanitize every keystroke. */
   const htmlMedia = useMemo<MarkdownHtmlMedia>(
-    () => ({ scope, path, baseUrl: hostTransportBase() }),
+    () => ({
+      scope,
+      path,
+      baseUrl: hostHttpBase(),
+      pathImages: createMarkdownPathImages(scope, path, hostHttpBase()),
+    }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [scope.sessionId, scope.cwd, path],
   )
@@ -1181,8 +1216,8 @@ export function TextEditor(props: FileViewerProps) {
             {htmlInfo !== null
               ? <MarkdownDocument info={htmlInfo} media={htmlMedia} codeLabels={codeLabels} />
               : hasMermaid
-                ? <LazyMermaidMarkdown text={previewText} codeLabels={codeLabels} />
-                : <MarkdownText {...markdownTextProps(previewText, codeLabels)} />}
+                ? <LazyMermaidMarkdown text={previewText} codeLabels={codeLabels} pathImages={htmlMedia.pathImages} />
+                : <MarkdownText {...markdownTextProps(previewText, codeLabels, htmlMedia.pathImages)} />}
           </MarkdownDelegateProvider>
         </div>
       )}
@@ -1195,17 +1230,17 @@ export function TextEditor(props: FileViewerProps) {
             onUnlock={() => { setLocalUnlock(true) }}
             onRestore={() => { setLocalUnlock(false) }}
           />
-          {/* Route-src (never srcdoc — a srcdoc frame inherits the parent
-              origin when unsandboxed; the route URL keeps the frame
-              cross-origin by construction). The preview shows the SAVED
-              file; the draft is only visible in edit mode. */}
-          <iframe
+          {/* Route-src on a normal web page; in the desktop shell with the
+              sandbox ON the frame is a self-contained sandboxed blob (the
+              shell rejects an opaque subframe's dsh-app requests — see
+              HtmlPreviewFrame / html-preview-inline.ts). Never srcdoc: an
+              unsandboxed srcdoc frame inherits the parent origin. The preview
+              shows the SAVED file; the draft is only visible in edit mode. */}
+          <HtmlPreviewFrame
             className={css.editorHtml}
             src={htmlUrl(scope, path)}
-            sandbox={htmlNoSandbox ? undefined : HTML_IFRAME_SANDBOX}
-            referrerPolicy="no-referrer"
-            allow=""
             title={path}
+            sandboxed={!htmlNoSandbox}
           />
         </>
       )}

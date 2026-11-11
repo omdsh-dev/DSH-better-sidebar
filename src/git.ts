@@ -395,6 +395,44 @@ export interface RunGitOptions {
   maxNulFields?: number
 }
 
+/**
+ * `\\wsl.localhost\<distro>\<path>` — the cwd of a WSL workspace session as
+ * the Windows host sees it. The legacy `\\wsl$\<distro>\…` share and the
+ * forward-slash spelling (`//wsl.localhost/…`, which a POSIX-ish caller
+ * hands over) both name the same tree, so all three are accepted.
+ */
+const WSL_UNC_ROOT = /^[/\\]{2}wsl(?:\.localhost|\$)[/\\]([^/\\]+)(?:[/\\](.*))?$/i
+
+/** Where one git command must run when the cwd lives in a distribution. */
+export interface WslLaunch {
+  /** The distribution to enter — the share's first segment. */
+  distro: string
+  /** The cwd as the distribution sees it, `/`-separated. */
+  path: string
+}
+
+/**
+ * The distribution-side launch a UNC workspace cwd calls for, or undefined
+ * when the cwd is an ordinary Windows path.
+ *
+ * The git binary named on the Windows PATH is a Windows build, and running it
+ * against a `\\wsl.localhost` tree goes through the 9P file server one `stat`
+ * per worktree file: measured on a 3 102-file repository, `status` alone did
+ * not finish in 180 s, while the SAME argv inside the distribution answered in
+ * 0.47 s. Every command that walks the worktree (`status`, `diff --numstat`)
+ * therefore timed out, the panel retried, and the retries piled up as orphaned
+ * `git.exe` processes. Entering the distribution to run its own git removes
+ * the file server from the path entirely.
+ */
+export function wslLaunch(cwd: string): WslLaunch | undefined {
+  const match = WSL_UNC_ROOT.exec(cwd)
+  if (match === null) return undefined
+  const distro = match[1]
+  if (distro === undefined || distro === '') return undefined
+  const rest = (match[2] ?? '').replace(/[/\\]+$/, '')
+  return { distro, path: rest === '' ? '/' : `/${rest.replace(/[\\/]+/g, '/')}` }
+}
+
 /** Count the NUL bytes of one stdout chunk (the `-z` field separator). */
 function countNulFields(chunk: Buffer): number {
   let count = 0
@@ -425,12 +463,23 @@ function spawnGit(
   ]
   const maxBytes = options.maxBytes ?? GIT_OUTPUT_MAX_BYTES
   const maxNulFields = options.maxNulFields
+  const launch = wslLaunch(cwd)
   return new Promise<string>((resolvePromise, reject) => {
-    const child = spawn('git', full, {
-      stdio: ['ignore', 'pipe', 'pipe'],
-      windowsHide: true,
-      env: { ...process.env, ...GIT_ENV },
-    })
+    const child = launch === undefined
+      ? spawn('git', full, {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        windowsHide: true,
+        env: { ...process.env, ...GIT_ENV },
+      })
+      : spawn('wsl.exe', ['-d', launch.distro, '--cd', launch.path, '-e', 'git', ...full.slice(2)], {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        windowsHide: true,
+        // `wsl.exe` does not forward the caller's environment: only the names
+        // listed in WSLENV cross the boundary, and `LC_ALL`/`GIT_OPTIONAL_LOCKS`
+        // are load-bearing here (a C locale keeps a refused path parseable, and
+        // the read-only panel must not take write locks).
+        env: { ...process.env, ...GIT_ENV, WSLENV: 'LC_ALL:GIT_OPTIONAL_LOCKS' },
+      })
     let stdout = ''
     let outBytes = 0
     let outFields = 0
@@ -538,6 +587,13 @@ export function runGit(cwd: string, args: string[], timeoutMs = 30_000, options:
   })
 }
 
+/** 路径是用户给的字面文件名：不加这个全局选项，git 会把 `a[1].txt` 里的
+ *  `[1]` 当 pathspec 通配符，连 `a1.txt` 一起丢弃/暂存（改动不可恢复）。
+ *  选项必须前置在子命令前才是 git 全局选项。 */
+function literalPathspec(path: string | readonly string[] | undefined): string[] {
+  return path === undefined ? [] : ['--literal-pathspecs']
+}
+
 /** One parsed `git blame --porcelain` row (the editor's hover blame). */
 export interface GitBlameLine {
   /** 1-based line number in the file as it exists in the worktree. */
@@ -633,7 +689,7 @@ export async function blame(
   try {
     const root = await repoRoot(cwd, selected)
     const output = await runGit(root, [
-      'blame', '--porcelain', '-L', `${String(startLine)},${String(endLine)}`, '--', path,
+      ...literalPathspec(path), 'blame', '--porcelain', '-L', `${String(startLine)},${String(endLine)}`, '--', path,
     ])
     return parseBlamePorcelain(output)
   } catch {
@@ -860,9 +916,7 @@ function numstatPathsof(porcelainZ: string): string[] | undefined {
  * both numstat diffs: the counts only ever ride rows the status read itself
  * reports, and limiting the diffs to those paths is what keeps an unignored
  * nested `node_modules` (59 631 entries / 9.24 MB of numstat) out of the two
- * whole-repo walks. `--literal-pathspecs` is required: porcelain paths are
- * literal file names, and without it a name like `:colon.txt` is parsed as
- * pathspec magic and silently loses its counts.
+ * whole-repo walks. 两条 numstat 也要字面 pathspec，理由见 literalPathspec()。
  *
  * Each side's reading lands on its own field of the entry
  * ({@link GitStatusEntry} documents why the two are never summed).
@@ -891,10 +945,7 @@ export async function status(cwd: string, selected?: string): Promise<GitStatusR
   // to the whole-repo diff); `[]` = no tracked change at all, so both diffs are
   // known empty and neither process is spawned.
   if (pathspec === undefined || pathspec.length > 0) {
-    // `--literal-pathspecs` must precede the subcommand (`git <flag> diff …`).
-    // Porcelain paths are literal file names, and without it a name like
-    // `:colon.txt` is parsed as pathspec magic and silently loses its counts.
-    const literal = pathspec === undefined ? [] : ['--literal-pathspecs']
+    const literal = literalPathspec(pathspec)
     const paths = pathspec === undefined ? [] : ['--', ...pathspec]
     const [unstaged, staged] = await Promise.all([
       runGit(root, [...literal, 'diff', '--numstat', '-z', ...paths]).catch(() => ''),
@@ -1009,7 +1060,7 @@ export async function resolveWorktree(cwd: string, requested?: string): Promise<
 /** Diff text of the worktree (unstaged) or the index (staged). */
 export async function diff(cwd: string, path: string | undefined, staged: boolean, selected?: string): Promise<string> {
   const root = await repoRoot(cwd, selected)
-  const args = ['diff', '--no-ext-diff', '--no-color', '-U3']
+  const args = [...literalPathspec(path), 'diff', '--no-ext-diff', '--no-color', '-U3']
   if (staged) args.push('--cached')
   if (path !== undefined) args.push('--', path)
   return runGit(root, args)
@@ -1027,22 +1078,27 @@ export async function diff(cwd: string, path: string | undefined, staged: boolea
  */
 export async function diffHead(cwd: string, path: string | undefined, selected?: string): Promise<string> {
   const root = await repoRoot(cwd, selected)
+  const literal = literalPathspec(path)
   const tail = path !== undefined ? ['--', path] : []
   try {
-    return await runGit(root, ['diff', '--no-ext-diff', '--no-color', '-U3', 'HEAD', ...tail])
+    return await runGit(root, [...literal, 'diff', '--no-ext-diff', '--no-color', '-U3', 'HEAD', ...tail])
   } catch {
-    return runGit(root, ['diff', '--no-ext-diff', '--no-color', '-U3', '--cached', ...tail])
+    return runGit(root, [...literal, 'diff', '--no-ext-diff', '--no-color', '-U3', '--cached', ...tail])
   }
 }
 
 /** Stage paths (all when path is undefined). */
 export async function stage(cwd: string, path: string | undefined, selected?: string): Promise<void> {
-  await runGit(await repoRoot(cwd, selected), ['add', '-A', ...(path !== undefined ? ['--', path] : [])])
+  await runGit(await repoRoot(cwd, selected), [
+    ...literalPathspec(path), 'add', '-A', ...(path !== undefined ? ['--', path] : []),
+  ])
 }
 
 /** Unstage paths (all when path is undefined). */
 export async function unstage(cwd: string, path: string | undefined, selected?: string): Promise<void> {
-  await runGit(await repoRoot(cwd, selected), ['reset', '-q', ...(path !== undefined ? ['--', path] : [])])
+  await runGit(await repoRoot(cwd, selected), [
+    ...literalPathspec(path), 'reset', '-q', ...(path !== undefined ? ['--', path] : []),
+  ])
 }
 
 /** Commit the staged changes with a message (global identity untouched). */
@@ -1110,7 +1166,7 @@ export async function commitDiff(cwd: string, hash: string, selected?: string): 
 
 /** Discard the worktree changes of one path (`git checkout -- <path>`; the index is untouched). */
 export async function discard(cwd: string, path: string, selected?: string): Promise<void> {
-  await runGit(await repoRoot(cwd, selected), ['checkout', '--', path])
+  await runGit(await repoRoot(cwd, selected), [...literalPathspec(path), 'checkout', '--', path])
 }
 
 /** Revert one commit onto the current branch with an auto-generated message.

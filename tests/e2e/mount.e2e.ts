@@ -50,6 +50,10 @@ const SEEDED_MD_FILE = 'diagram.md'
  *  prove raw-HTML runs render as sanitized DOM and the TOC outline works. */
 const SEEDED_README_FILE = 'readme-style.md'
 
+/** A 1×1 PNG for the markdown local-image probe. */
+const SEEDED_PNG = 'pic.png'
+const ONE_PIXEL_PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='
+
 /**
  * The plugin's crash markers. The client mounts inside an error boundary that
  * renders a strip whose text starts with these prefixes instead of crashing
@@ -105,6 +109,9 @@ async function seedSession(): Promise<void> {
     'tail text',
     '',
   ].join('\n'))
+  // The local-image probe: the markdown preview's media route must serve the
+  // relative path, and a data:image destination must render as an <img>.
+  writeFileSync(join(WORKSPACE_PATH, SEEDED_PNG), Buffer.from(ONE_PIXEL_PNG, 'base64'))
   // The README-style probe file: raw-HTML runs (badge wall div with an
   // embedded script, a <details> nesting a fence + heading) plus inline tags
   // inside a table cell. The script must be sanitized away in the preview.
@@ -118,6 +125,10 @@ async function seedSession(): Promise<void> {
     '',
     '<a id="readme-anchor"></a>',
     '## Setup',
+    '',
+    '![local image](pic.png)',
+    '',
+    `![data image](data:image/png;base64,${ONE_PIXEL_PNG})`,
     '',
     '[docs link][def]',
     '',
@@ -166,6 +177,30 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   page.on('pageerror', (error) => pageErrors.push(String(error)))
   page.on('console', (message) => {
     if (message.type() === 'error') consoleErrors.push(message.text())
+  })
+
+  // A fake Window Controls Overlay so the test can play the desktop shell's
+  // native window-control band. It starts at 0 (plain-browser behaviour, so
+  // every other assertion in this lane stays exactly as before); the mermaid
+  // section below raises it and measures the REAL layout.
+  await page.addInitScript(() => {
+    const listeners = new Set<() => void>()
+    const band = { height: 0, visible: true }
+    Object.defineProperty(navigator, 'windowControlsOverlay', {
+      configurable: true,
+      value: {
+        get visible() { return band.visible },
+        getTitlebarAreaRect: () => ({ x: 0, y: 0, width: window.innerWidth, height: band.height }),
+        addEventListener: (type: string, listener: () => void) => {
+          if (type === 'geometrychange') listeners.add(listener)
+        },
+        removeEventListener: (_type: string, listener: () => void) => { listeners.delete(listener) },
+      },
+    })
+    ;(window as unknown as { __setTitlebarBand(height: number): void }).__setTitlebarBand = (height) => {
+      band.height = height
+      for (const listener of listeners) listener()
+    }
   })
 
   // Load the shell. The app renders into #root; the plugin appends its own
@@ -555,6 +590,67 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   const modal = page.locator('[data-mermaid-modal]')
   await pane.locator('[data-mermaid-diagram] svg').first().click()
   await expect(modal, 'clicking the diagram must open the zoom modal').toHaveCount(1, { timeout: 10_000 })
+  // Issue #683: the modal must zoom the CONTENT while the painted card stays
+  // put. Measured in the real browser because this is a LAYOUT defect — jsdom
+  // reports every rect as 0 and cannot tell the two apart. The pre-fix code
+  // painted the card on the transformed <svg>, so three "+" steps grew the
+  // white sheet 1.728× together with the diagram and the content:viewport
+  // ratio never changed ("跟没有缩放没区别"); the same three steps must now
+  // leave the viewport's box byte-identical.
+  const zoomGeometry = await page.evaluate(() => {
+    const viewport = document.querySelector<HTMLElement>('[data-mermaid-viewport]')
+    const stage = viewport?.parentElement ?? null
+    const svg = viewport?.querySelector('svg') ?? null
+    const box = (element: Element | null): { width: number; height: number } => {
+      const rect = element?.getBoundingClientRect()
+      return { width: Math.round(rect?.width ?? 0), height: Math.round(rect?.height ?? 0) }
+    }
+    const scaleOf = (element: Element | null): number => {
+      const matrix = /matrix\(([-\d.]+)/.exec(element === null ? '' : getComputedStyle(element).transform)
+      return matrix === null ? 1 : Number(matrix[1])
+    }
+    const before = {
+      stage: box(stage), viewport: box(viewport), svg: box(svg), scale: scaleOf(svg),
+      stageBackground: stage === null ? '' : getComputedStyle(stage).backgroundColor,
+      svgBackground: svg === null ? '' : getComputedStyle(svg).backgroundColor,
+      svgPadding: svg === null ? '' : getComputedStyle(svg).padding,
+    }
+    const zoomIn = [...document.querySelectorAll<HTMLButtonElement>('[data-mermaid-modal] button')]
+      .find(button => button.textContent === '+')
+    for (let step = 0; step < 3; step += 1) zoomIn?.click()
+    const after = { stage: box(stage), viewport: box(viewport), svg: box(svg), scale: scaleOf(svg) }
+    return { before, after }
+  })
+  expect(
+    zoomGeometry.before.scale,
+    'the modal must open framed at or below 1:1 instead of clipping the diagram at 100%',
+  ).toBeLessThanOrEqual(1)
+  expect(
+    zoomGeometry.before.svg.height,
+    'the framed diagram must fit inside the viewport',
+  ).toBeLessThanOrEqual(zoomGeometry.before.viewport.height + 1)
+  expect(
+    zoomGeometry.after.scale,
+    'the + button must scale the content up',
+  ).toBeGreaterThan(zoomGeometry.before.scale)
+  expect(zoomGeometry.after.svg, 'the content grows').not.toEqual(zoomGeometry.before.svg)
+  expect(
+    zoomGeometry.after.viewport,
+    'the viewport must NOT scale with the content (issue #683)',
+  ).toEqual(zoomGeometry.before.viewport)
+  expect(
+    zoomGeometry.after.stage,
+    'the painted card must NOT scale with the content either',
+  ).toEqual(zoomGeometry.before.stage)
+  expect(
+    zoomGeometry.before.stageBackground,
+    'the card surface belongs to the fixed stage',
+  ).not.toBe('rgba(0, 0, 0, 0)')
+  expect(
+    zoomGeometry.before.svgBackground,
+    'the transformed svg must carry no surface of its own',
+  ).toBe('rgba(0, 0, 0, 0)')
+  expect(zoomGeometry.before.svgPadding, 'nor the padding ring').toBe('0px')
   // While it is up, the modal is the plugin's OTHER viewport-sized BODY CHILD:
   // without the app-region reset the shell's blanket `body > :not(#root)`
   // no-drag makes it cancel every window-drag strip (and the macOS
@@ -577,6 +673,25 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   })
   expect(modalRegions.modal, 'the zoom modal must opt out of app-region computation').toBe('none')
   expect(modalRegions.button, 'its buttons must stay no-drag').toBe('no-drag')
+  // Issue #805: the shell draws its native window controls OVER the page's
+  // top-right and those pointer events never reach the document, so the
+  // toolbar must sit below that band. At the reporter's 42px overlay a bare
+  // 16px inset left only the bottom 10px of each 36px button clickable while
+  // `elementFromPoint` still answered the button — the control read as dead.
+  // Play the band and measure the real layout.
+  const toolbar = page.locator('[data-mermaid-modal] [data-mermaid-toolbar]')
+  const toolbarTop = async (): Promise<number> => await toolbar.evaluate(
+    (element) => Math.round(element.getBoundingClientRect().top),
+  )
+  expect(await toolbarTop(), 'with no band the toolbar keeps its 16px inset').toBe(16)
+  await page.evaluate(() => {
+    ;(window as unknown as { __setTitlebarBand(h: number): void }).__setTitlebarBand(36)
+  })
+  await expect.poll(toolbarTop, 'a 36px band must push the toolbar clear of it').toBe(52)
+  await page.evaluate(() => {
+    ;(window as unknown as { __setTitlebarBand(h: number): void }).__setTitlebarBand(0)
+  })
+  await expect.poll(toolbarTop, 'shrinking the band must pull the toolbar back').toBe(16)
   await page.keyboard.press('Escape')
   await expect(modal, 'Esc must close the zoom modal').toHaveCount(0, { timeout: 10_000 })
   await assertNoCrash()
@@ -650,11 +765,32 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
     pane.locator('[data-dsh-html-segment] img[src*="img.shields.io"]'),
     'the badge-wall div must render its image as a real element',
   ).toHaveCount(1, { timeout: 30_000 })
+  // Local image: a relative markdown destination must resolve through the
+  // plugin media route and actually decode. Data image: the vocabulary now
+  // admits data:image, so it must render as an <img>, not alt text.
+  const localImage = pane.locator('img[src*="/sidebar/file"]').first()
+  await expect(localImage, 'the relative markdown image must render through the media route').toHaveCount(1, { timeout: 30_000 })
+  await localImage.scrollIntoViewIfNeeded()
+  await expect.poll(
+    () => localImage.evaluate((image) => (image as HTMLImageElement).naturalWidth),
+    { message: 'the local markdown image must decode in the real browser' },
+  ).toBeGreaterThan(0)
+  const dataImage = pane.locator('img[src^="data:image/png;base64,"]').first()
+  await expect(dataImage, 'a markdown data:image must render as an <img>').toHaveCount(1, { timeout: 30_000 })
+  await dataImage.scrollIntoViewIfNeeded()
+  await expect.poll(
+    () => dataImage.evaluate((image) => (image as HTMLImageElement).naturalWidth),
+    { message: 'the data:image markdown image must decode' },
+  ).toBeGreaterThan(0)
   await expect(
     pane.locator('script'),
     'the embedded <script> must be sanitized away',
   ).toHaveCount(0)
-  const details = pane.locator('details')
+  // Scoped by the authored summary, not by the whole panel: the Side Chat tab
+  // keeps its own <details> controls (and their nested tool/reasoning rows)
+  // mounted in the same column, so a bare `pane.locator('details')` counts
+  // those too.
+  const details = pane.locator('details:has(summary:has-text("Steps"))')
   await expect(details, 'the details run must render as a real element').toHaveCount(1, { timeout: 30_000 })
   await expect(details.locator('summary'), 'the details summary must render').toHaveCount(1)
   // Direct child, not merely a descendant: HTML only honors a summary there,
