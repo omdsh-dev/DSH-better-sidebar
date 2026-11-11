@@ -47,6 +47,22 @@ function isRemoteUrl(dest: string): boolean {
 }
 
 /**
+ * A `data:` image the renderer's vocabulary may show. Markdown-syntax
+ * destinations never render a bare `data:` URL (the shared renderer only
+ * shows absolute http(s) unless the owner's `pathImages` vouches for the
+ * target), but the vocabulary itself accepts `data:`. Local previews may
+ * therefore pass an image data URI through, which is also how a pasted
+ * screenshot survives a self-contained document. Only `data:image/` is
+ * admitted: `data:text/html` and friends stay inert alt text.
+ * @param destination - One authored image destination.
+ * @returns The trimmed data URI, or undefined when it is not an image data URI.
+ */
+function imageDataUrl(destination: string): string | undefined {
+  const trimmed = destination.trim()
+  return /^data:image\//i.test(trimmed) ? trimmed : undefined
+}
+
+/**
  * Collapse `.`/`..` segments of an absolute local path, preserving its root
  * (POSIX `/`), its Windows drive (`C:\`), or its UNC `\\server\share`
  * prefix. The host's `requireAbsolute` (`path.resolve`) normalizes anyway,
@@ -156,7 +172,8 @@ export function desktopFileUrl(target: string, baseUrl: string): string {
  * Build the `pathImages` vocabulary for one markdown surface: `MarkdownText`
  * asks it for an authored local image destination and gets back a displayable
  * absolute URL on the page base, so the same code works in a browser and in
- * the desktop shell.
+ * the desktop shell. An authored `data:image/` URI is passed through as-is;
+ * every other `data:` payload stays rejected.
  * @param scope - The session scope (sessionId + cwd) for the plugin media route.
  * @param filePath - The path of the opened `.md` file (may be workspace-relative).
  * @param baseUrl - The page base; defaults to `hostHttpBase()`.
@@ -176,6 +193,8 @@ export function createMarkdownPathImages(
   }
   return {
     resolve: (destination: string): string | undefined => {
+      const dataUrl = imageDataUrl(destination)
+      if (dataUrl !== undefined) return dataUrl
       const decoded = decodeDestination(destination)
       if (decoded === undefined) return undefined
       const target = markdownImageTarget(decoded, filePath)

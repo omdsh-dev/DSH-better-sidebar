@@ -156,6 +156,35 @@ describe('createMarkdownPathImages', () => {
     expect(images.resolve('./bad%E0%A4%A.png')).toBeUndefined()
   })
 
+  it('passes an image data URI through on both page bases (chat/pasted screenshots)', () => {
+    const dataUrl = 'data:image/png;base64,iVBORw0KGgo='
+    for (const baseUrl of [ORIGIN, APP]) {
+      const images = createMarkdownPathImages(scope, '/repo/docs/readme.md', baseUrl)
+      expect(images.resolve(dataUrl)).toBe(dataUrl)
+      expect(images.resolve(`  ${dataUrl}  `)).toBe(dataUrl)
+      expect(images.resolve('DATA:IMAGE/PNG;BASE64,iVBORw0KGgo=')).toBe('DATA:IMAGE/PNG;BASE64,iVBORw0KGgo=')
+    }
+  })
+
+  it('still refuses non-image data payloads (only data:image is an image)', () => {
+    const images = createMarkdownPathImages(scope, '/repo/docs/readme.md', ORIGIN)
+    expect(images.resolve('data:text/html,<h1>x</h1>')).toBeUndefined()
+    expect(images.resolve('data:application/pdf;base64,AAA')).toBeUndefined()
+  })
+
+  it('maps a relative image from a Windows absolute tab path on the browser base', () => {
+    // The reporter's platform: an absolute Windows path joined with the image's
+    // relative destination, then percent-encoded for /sidebar/file.
+    const images = createMarkdownPathImages(
+      { sessionId: 'abc', cwd: 'C:\\repo' },
+      'C:\\repo\\t\\doc.md',
+      ORIGIN,
+    )
+    expect(images.resolve('./pic.png')).toBe(
+      'http://127.0.0.1:3080/sidebar/file?sessionId=abc&path=C%3A%5Crepo%5Ct%5Cpic.png&cwd=C%3A%5Crepo',
+    )
+  })
+
   it('answers undefined for destinations it cannot serve (alt-text fallback)', () => {
     const images = createMarkdownPathImages(scope, '/repo/docs/readme.md', ORIGIN)
     expect(images.resolve('https://example.com/x.png')).toBeUndefined()

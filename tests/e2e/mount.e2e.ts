@@ -50,6 +50,10 @@ const SEEDED_MD_FILE = 'diagram.md'
  *  prove raw-HTML runs render as sanitized DOM and the TOC outline works. */
 const SEEDED_README_FILE = 'readme-style.md'
 
+/** A 1×1 PNG for the markdown local-image probe. */
+const SEEDED_PNG = 'pic.png'
+const ONE_PIXEL_PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='
+
 /**
  * The plugin's crash markers. The client mounts inside an error boundary that
  * renders a strip whose text starts with these prefixes instead of crashing
@@ -105,6 +109,9 @@ async function seedSession(): Promise<void> {
     'tail text',
     '',
   ].join('\n'))
+  // The local-image probe: the markdown preview's media route must serve the
+  // relative path, and a data:image destination must render as an <img>.
+  writeFileSync(join(WORKSPACE_PATH, SEEDED_PNG), Buffer.from(ONE_PIXEL_PNG, 'base64'))
   // The README-style probe file: raw-HTML runs (badge wall div with an
   // embedded script, a <details> nesting a fence + heading) plus inline tags
   // inside a table cell. The script must be sanitized away in the preview.
@@ -118,6 +125,10 @@ async function seedSession(): Promise<void> {
     '',
     '<a id="readme-anchor"></a>',
     '## Setup',
+    '',
+    '![local image](pic.png)',
+    '',
+    `![data image](data:image/png;base64,${ONE_PIXEL_PNG})`,
     '',
     '[docs link][def]',
     '',
@@ -754,6 +765,23 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
     pane.locator('[data-dsh-html-segment] img[src*="img.shields.io"]'),
     'the badge-wall div must render its image as a real element',
   ).toHaveCount(1, { timeout: 30_000 })
+  // Local image: a relative markdown destination must resolve through the
+  // plugin media route and actually decode. Data image: the vocabulary now
+  // admits data:image, so it must render as an <img>, not alt text.
+  const localImage = pane.locator('img[src*="/sidebar/file"]').first()
+  await expect(localImage, 'the relative markdown image must render through the media route').toHaveCount(1, { timeout: 30_000 })
+  await localImage.scrollIntoViewIfNeeded()
+  await expect.poll(
+    () => localImage.evaluate((image) => (image as HTMLImageElement).naturalWidth),
+    { message: 'the local markdown image must decode in the real browser' },
+  ).toBeGreaterThan(0)
+  const dataImage = pane.locator('img[src^="data:image/png;base64,"]').first()
+  await expect(dataImage, 'a markdown data:image must render as an <img>').toHaveCount(1, { timeout: 30_000 })
+  await dataImage.scrollIntoViewIfNeeded()
+  await expect.poll(
+    () => dataImage.evaluate((image) => (image as HTMLImageElement).naturalWidth),
+    { message: 'the data:image markdown image must decode' },
+  ).toBeGreaterThan(0)
   await expect(
     pane.locator('script'),
     'the embedded <script> must be sanitized away',

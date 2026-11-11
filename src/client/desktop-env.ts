@@ -56,3 +56,19 @@ export function hostHttpBase(): string {
   return hostTransportBase()
 }
 
+/**
+ * Whether the page is the official desktop shell, whose custom `dsh-app:`
+ * scheme makes sandboxed subframe requests a special case (see
+ * `html-preview-inline.ts`). A normal web deployment (http/https, including a
+ * reverse-proxied one) keeps the route-src iframe behavior.
+ * @param baseUrl - The page base; defaults to {@link hostHttpBase()}.
+ * @returns true for a `dsh-app:` page.
+ */
+export function isDesktopShell(baseUrl: string = hostHttpBase()): boolean {
+  try {
+    return new URL(baseUrl).protocol === 'dsh-app:'
+  } catch {
+    return false
+  }
+}
+

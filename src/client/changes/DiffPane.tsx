@@ -25,7 +25,7 @@ import { hostHttpBase } from '../desktop-env.ts'
 import { t } from '../locales.ts'
 import { baseName } from '../paths.ts'
 import { resolveSidebarPath } from '../paths.ts'
-import { HTML_IFRAME_SANDBOX } from '../html-preview.ts'
+import { HtmlPreviewFrame } from '../HtmlPreviewFrame.tsx'
 import type { SidebarDiffRef, SidebarTab } from '../state.ts'
 import { DiffRows, ReadRows } from '../diff/DiffRows.tsx'
 import { PdfView } from '../PdfView.tsx'
@@ -97,13 +97,11 @@ function diffOf(op: FileOp, prior: string | undefined): readonly DiffRow[] {
 export function HtmlRenderPreview(props: { src: string; title: string }) {
   return (
     <div className={css.htmlPane}>
-      <iframe
+      <HtmlPreviewFrame
         className={css.htmlFrame}
         title={props.title}
         src={props.src}
-        sandbox={HTML_IFRAME_SANDBOX}
-        referrerPolicy="no-referrer"
-        allow=""
+        sandboxed
       />
     </div>
   )

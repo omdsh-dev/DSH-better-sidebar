@@ -110,6 +110,15 @@ describe('MarkdownDocument (HTML leaves)', () => {
     expect(img?.getAttribute('src')).toBe('http://gui.origin/proxy/3080/sidebar/file?sessionId=s1&path=%2Fws%2Fdocs%2Fshot.png&cwd=%2Fws')
     await unmount(root)
   })
+
+  it('keeps an inline data:image through DOMPurify', async () => {
+    const dataUrl = 'data:image/png;base64,iVBORw0KGgo='
+    const { container, root } = await renderDocument(`<img src="${dataUrl}" alt="pasted"/>`)
+    const img = container.querySelector('img')
+    expect(img, 'raw HTML data:image must survive the sanitizer as <img>').not.toBeNull()
+    expect(img?.getAttribute('src')).toBe(dataUrl)
+    await unmount(root)
+  })
 })
 
 describe('MarkdownDocument (nesting + markdown runs)', () => {
@@ -378,6 +387,25 @@ describe('MarkdownDocument (local markdown images)', () => {
     const { container, root } = await renderDocument('![r](https://example.com/x.png)')
     const img = container.querySelector('img')
     expect(img?.getAttribute('src')).toBe('https://example.com/x.png')
+    await unmount(root)
+  })
+
+  it('renders a markdown-syntax image data URI (the only data: the vocabulary admits)', async () => {
+    const dataUrl = 'data:image/png;base64,iVBORw0KGgo='
+    for (const renderMedia of [media, desktopMedia]) {
+      const { container, root } = await renderDocument(`![pasted](${dataUrl})`, renderMedia)
+      const img = container.querySelector('img')
+      expect(img, 'a data:image destination must render as <img>, not alt').not.toBeNull()
+      expect(img?.getAttribute('src')).toBe(dataUrl)
+      expect(img?.getAttribute('alt')).toBe('pasted')
+      await unmount(root)
+    }
+  })
+
+  it('leaves a non-image data destination as alt text', async () => {
+    const { container, root } = await renderDocument('![x](data:text/html,<h1>nope</h1>)')
+    expect(container.querySelector('img')).toBeNull()
+    expect(container.textContent).toContain('x')
     await unmount(root)
   })
 

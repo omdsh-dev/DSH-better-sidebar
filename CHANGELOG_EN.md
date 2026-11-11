@@ -6,6 +6,11 @@
 
 ### Unreleased
 
+- 🖼 **Markdown-syntax `data:image` images now render.** The preview's image vocabulary only admitted local paths, so every `data:` destination fell back to alt text; `data:image/*` now passes straight to the host renderer (whose own allowlist already accepts `data:`), while `data:text/html` and friends stay rejected. The page-base fix for relative/absolute local images in the desktop shell (#1043) ships in this release too, so 0.30.1 users no longer see only italic alt text.
+  - 🧪 `tests/markdown-images.spec.ts`, `tests/markdown-html-render.spec.tsx`, `tests/html-preview-inline.spec.ts`.
+- 🪟 **A sandboxed HTML preview in the desktop shell no longer renders blank (403).** The shell injects its forwarding marker only into subframes whose origin is `dsh-app://app`; a sandboxed iframe is an opaque origin, so its main navigation is rejected before reaching the plugin. The trusted top frame now fetches the HTML and its same-origin static assets and frames a self-contained `blob:` document; relative CSS/JS/images/fonts work, the iframe still has no `allow-same-origin`, and the browser / explicitly-unsandboxed paths are unchanged. Nested iframes, Workers and relative requests made by previewed scripts at runtime remain subject to the shell's restriction.
+  - 🧪 `tests/html-preview-frame.spec.tsx`, `tests/html-preview-inline.spec.ts`, `tests/sandbox-views.spec.tsx`, and the local-image assertion in `test:mount`.
+
 - 🐞 **The euro sign in a GBK file is no longer written as the single byte `0x80` that current ICU rejects**: it uses the canonical two-byte `0xA2E3` spelling, so saving and reopening no longer produces mojibake on Node 24.21 / ICU 78; a literal encoding/decoding test pins it.
 
 - 🧵 **The fork point is a native disclosure, collapsed by default: one "Before the fork" divider line until the reader expands it.** `data-sidechat-fork-point` is a controlled `<details>` (closed on first render), its `<summary>` IS the opening divider (`sideChatForkDivider` copy plus the expand chevron, no inherited text at all), and the body still reads question → answer → closing divider; with no answer it is the question and the closing divider only. Collapsing or expanding changes no transcript row, and the block holds no `button` / `a` beyond the summary.

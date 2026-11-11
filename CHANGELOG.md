@@ -4,6 +4,11 @@
 
 ### 未发布
 
+- 🖼 **Markdown 语法里的 `data:image` 图片能显示了**：预览的图片词表此前只放行本地路径，`data:` 一律退回 alt 文本；现在 `data:image/*` 原样交给宿主渲染器（其白名单本就接受 `data:`），`data:text/html` 等仍拒绝。相对/绝对本地图片在桌面壳下的 page-base 修复（#1043）同批进入本版，0.30.1 用户升级后本地图片不再只剩斜体 alt。
+  - 🧪 测试：`tests/markdown-images.spec.ts`、`tests/markdown-html-render.spec.tsx`、`tests/html-preview-inline.spec.ts`。
+- 🪟 **桌面壳里开启沙箱的 HTML 预览不再空白（403）**：壳只给 origin 为 `dsh-app://app` 的子帧注入转发标记，沙箱 iframe 是不透明源，主文档导航直接被壳拒绝。现在顶层可信帧取回 HTML 与同源静态资源，内联成自包含文档后交给 sandboxed `blob:` iframe；相对 CSS/JS/图片/字体正常，iframe 仍无 `allow-same-origin`，浏览器与“关闭沙箱”路径不变。嵌套 iframe / Worker / 脚本运行时相对请求仍受壳限制。
+  - 🧪 测试：`tests/html-preview-frame.spec.tsx`、`tests/html-preview-inline.spec.ts`、`tests/sandbox-views.spec.tsx`、`test:mount` 的本地图片断言。
+
 - 🐞 **GBK 文件里的欧元符号不再被写成 ICU 拒绝的单字节 `0x80`**：改用标准两字节 `0xA2E3`，修复 Node 24.21 / ICU 78 下保存后重开变乱码；新增字面量测试钉住编码与回读。
 
 - 🧵 **fork 块改成默认折叠的原生 disclosure：折叠时只剩那条「分支前的主会话」分割线，展开才看到继承的问答**：`data-sidechat-fork-point` 现在是受控的 `<details>`（默认 closed），`<summary>` 就是开头那条分割线（`sideChatForkDivider` 文案 + 展开 chevron，不含任何继承正文），body 展开后仍是原顺序「提问 → 回答 → 结尾分割线」，没有回答时只有提问与结尾线；折叠/展开不改变转录行数，块内除 summary 外没有任何 `button` / `a`。
