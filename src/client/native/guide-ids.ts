@@ -23,6 +23,18 @@ export function guideKeyOf(providerId: string, entryId: string): string {
   return providerId + '::' + entryId
 }
 
+/** The native identity a Better Sidebar descriptor registers under. */
+export function guideIdentityOfDescriptor(descriptorId: string): {
+  providerId: string
+  entryId: string
+  kind: string
+} {
+  if (descriptorId === EDITOR_KIND) {
+    return { providerId: nativeId(FILES_KIND), entryId: FILES_KIND, kind: FILES_KIND }
+  }
+  return { providerId: nativeId(descriptorId), entryId: descriptorId, kind: descriptorId }
+}
+
 /**
  * The Better Sidebar descriptor that owns one native guide card, when it is
  * one of ours. The files takeover is its own registration id but is the

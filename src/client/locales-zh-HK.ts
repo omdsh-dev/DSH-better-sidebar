@@ -405,6 +405,7 @@ export const zhHK: Record<string, string> = {
   settingsGuideAlignCenter: '置中',
   settingsGuideAlignTop: '靠上',
   settingsGuideShow: '在開始頁顯示',
+  settingsGuideEnable: '啟用',
   settingsGuideReset: '恢復預設順序',
   guideMore: '更多',
   guideOrder: '調整順序',

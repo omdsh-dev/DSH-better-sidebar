@@ -381,6 +381,7 @@ export const it: Record<string, string> = {
   settingsGuideAlignCenter: 'Centrato',
   settingsGuideAlignTop: 'In alto',
   settingsGuideShow: 'Mostra nella pagina iniziale',
+  settingsGuideEnable: 'Abilita',
   settingsGuideReset: 'Ripristina ordine',
   guideMore: 'Altro',
   guideOrder: 'Riordina',

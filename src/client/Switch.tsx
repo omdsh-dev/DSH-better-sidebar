@@ -13,13 +13,17 @@ export function Switch(props: {
 }) {
   const { checked, onChange, label } = props
   return (
+    // The parent's write is asynchronous. Derive the next value from the PROP
+    // instead of the event's checkbox state: the controlled value can be reset
+    // before React's change handler runs, which previously made a switch
+    // impossible to turn back on.
     <label className={css.switch}>
       <input
         type="checkbox"
         className={css.switchInput}
         checked={checked}
         aria-label={label}
-        onChange={event => { onChange(event.currentTarget.checked) }}
+        onChange={() => { onChange(!checked) }}
       />
       <span className={css.switchTrack} aria-hidden="true">
         <span className={css.switchThumb} />

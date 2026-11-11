@@ -388,6 +388,7 @@ export const id: Record<string, string> = {
   settingsGuideAlignCenter: 'Tengah',
   settingsGuideAlignTop: 'Atas',
   settingsGuideShow: 'Tampilkan di halaman mulai',
+  settingsGuideEnable: 'Aktifkan',
   settingsGuideReset: 'Atur ulang urutan',
   guideMore: 'Lainnya',
   guideOrder: 'Ubah urutan',

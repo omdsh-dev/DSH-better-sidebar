@@ -19,11 +19,12 @@ import clsx from 'clsx'
 import type { SidebarPrefs } from '../../prefs-shared.ts'
 import type { HostShellCatalog } from '../terminal-client.ts'
 import type { SidebarStore } from '../state.ts'
+import type { BetterSidebarService } from '../service.ts'
 import { t } from '../locales.ts'
-import type { NativeGuideCatalog, NativeGuideEntry } from './guide-catalog.ts'
+import { mergeGuideEntries, type NativeGuideCatalog, type NativeGuideEntry } from './guide-catalog.ts'
 import { columnsForWidth, computeGuideLayout, orderGuideEntries } from './guide-layout.ts'
 import { GuideOrderDialog } from './guide-order.tsx'
-import { saveGuideOrder, saveGuideRows, setGuideEntryHidden } from './guide-prefs.ts'
+import { saveGuideOrder, saveGuideRows, setGuideEntryEnabled, setGuideEntryHidden } from './guide-prefs.ts'
 import css from './guide.module.css'
 
 /** The terminal service slice the card's native menu needs. */
@@ -44,6 +45,8 @@ export interface NativeGuideProps {
   useTabInfo?: () => { tab: { actions: GuideActions } } | undefined
   catalog: NativeGuideCatalog
   store: SidebarStore
+  /** The plugin registry, so disabled types stay in the reorder inventory. */
+  service: BetterSidebarService
   /** Present only when the host exposes both shell catalog and selection. */
   shellMenu?: GuideShellMenu | undefined
   /** Host plugin discovery action, when the service exists. */
@@ -55,13 +58,15 @@ export interface NativeGuideProps {
 /** The grid's inputs, extracted for direct rendering in tests. */
 export interface GuideGridProps {
   entries: readonly NativeGuideEntry[]
-  prefs: Pick<SidebarPrefs, 'guideOrder' | 'guideHidden' | 'guideRows' | 'guideAlign'>
+  prefs: Pick<SidebarPrefs, 'guideOrder' | 'guideHidden' | 'guideRows' | 'guideAlign' | 'tabsEnabled'>
   /** Pane width in CSS pixels. */
   width: number
   onOpen: (entry: NativeGuideEntry, params?: Record<string, unknown>) => void
   onSaveOrder?: (order: readonly string[]) => void
-  onToggleHidden?: (key: string, hidden: boolean) => void
+  onToggleHidden?: (entry: NativeGuideEntry, hidden: boolean) => void
   onSaveRows?: (rows: number) => void
+  /** The editable inventory (live cards plus disabled plugin descriptors). */
+  inventory?: readonly NativeGuideEntry[]
   /** Host "Browse other plugins" action, when the navigation service exists. */
   onBrowsePlugins?: () => void
   /** Host "Create your plugin" action, when the workspace can start a session. */
@@ -195,18 +200,32 @@ export function GuideGrid(props: GuideGridProps) {
     entries, prefs, width, onOpen, onSaveOrder, onToggleHidden, onSaveRows,
     onBrowsePlugins, onCreatePlugin, shellMenu,
   } = props
+  const inventory = props.inventory ?? entries
   const [orderOpen, setOrderOpen] = useState(false)
   const [moreOpen, setMoreOpen] = useState(false)
+  // A Better Sidebar type's switch is the FEATURE switch (tabsEnabled), not
+  // the start-page visibility map; older guideHidden keys for those types are
+  // ignored so the two surfaces cannot disagree.
+  const hiddenForLayout: Record<string, boolean> = { ...prefs.guideHidden }
+  for (const entry of entries) {
+    if (entry.descriptorId !== undefined) delete hiddenForLayout[entry.key]
+  }
   const layout = computeGuideLayout(entries, {
     order: prefs.guideOrder,
-    hidden: prefs.guideHidden,
+    hidden: hiddenForLayout,
     rows: prefs.guideRows,
     width,
     // The More card is also the home of the host's plugin discovery/creation
     // actions, so it stays available even when every tab fits.
     reserveMore: true,
   })
-  const orderedAll = orderGuideEntries(entries, prefs.guideOrder)
+  const orderedAll = orderGuideEntries(inventory, prefs.guideOrder)
+  const switchHidden: Record<string, boolean> = {}
+  for (const entry of orderedAll) {
+    switchHidden[entry.key] = entry.descriptorId === undefined
+      ? prefs.guideHidden[entry.key] === true
+      : prefs.tabsEnabled[entry.descriptorId] === false
+  }
 
   const move = (key: string, delta: -1 | 1): void => {
     const keys = orderedAll.map(entry => entry.key)
@@ -312,9 +331,9 @@ export function GuideGrid(props: GuideGridProps) {
         open={orderOpen}
         onClose={() => { setOrderOpen(false) }}
         entries={orderedAll}
-        hidden={prefs.guideHidden}
+        hidden={switchHidden}
         onMove={move}
-        onToggle={(key, hidden) => { onToggleHidden?.(key, hidden) }}
+        onToggle={(entry, hidden) => { onToggleHidden?.(entry, hidden) }}
         rows={prefs.guideRows}
         onRows={(next) => { onSaveRows?.(next) }}
       />
@@ -340,8 +359,10 @@ function useGuideWidth(ref: { current: HTMLDivElement | null }): number {
 
 /** The chain component registered into the host's guide slot. */
 export function NativeGuide(props: NativeGuideProps) {
-  const { catalog, store, shellMenu, onBrowsePlugins, onCreatePlugin, useTabInfo } = props
+  const { catalog, store, service, shellMenu, onBrowsePlugins, onCreatePlugin, useTabInfo } = props
   const entries = useSyncExternalStore(catalog.subscribe, catalog.getSnapshot, catalog.getSnapshot)
+  const [descriptors, setDescriptors] = useState(() => service.getTabs())
+  useEffect(() => service.subscribe(() => setDescriptors(service.getTabs())), [service])
   // The store's members are methods (they read their receiver); bind them
   // through arrows or useSyncExternalStore crashes on the first render.
   const snapshot = useSyncExternalStore(
@@ -350,6 +371,9 @@ export function NativeGuide(props: NativeGuideProps) {
     () => store.getSnapshot(),
   )
   const prefs = snapshot.prefs
+  const liveEntries = entries.filter(entry => entry.descriptorId === undefined
+    || prefs.tabsEnabled[entry.descriptorId] !== false)
+  const inventory = mergeGuideEntries(entries, descriptors, prefs.tabsEnabled)
   const rootRef = useRef<HTMLDivElement | null>(null)
   const width = useGuideWidth(rootRef)
   const actions = useTabInfo?.()?.tab.actions
@@ -371,12 +395,16 @@ export function NativeGuide(props: NativeGuideProps) {
       data-guide-align={prefs.guideAlign}
     >
       <GuideGrid
-        entries={entries}
+        entries={liveEntries}
+        inventory={inventory}
         prefs={prefs}
         width={width}
         onOpen={open}
         onSaveOrder={(order) => { saveGuideOrder(store, order) }}
-        onToggleHidden={(key, hidden) => { setGuideEntryHidden(store, key, hidden) }}
+        onToggleHidden={(entry, hidden) => {
+          if (entry.descriptorId === undefined) setGuideEntryHidden(store, entry.key, hidden)
+          else setGuideEntryEnabled(store, entry.descriptorId, !hidden)
+        }}
         onSaveRows={(next) => { saveGuideRows(store, next) }}
         onBrowsePlugins={onBrowsePlugins}
         onCreatePlugin={onCreatePlugin}

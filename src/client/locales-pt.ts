@@ -373,6 +373,7 @@ export const pt: Record<string, string> = {
   settingsGuideAlignCenter: 'Centralizado',
   settingsGuideAlignTop: 'Topo',
   settingsGuideShow: 'Mostrar na página inicial',
+  settingsGuideEnable: 'Ativar',
   settingsGuideReset: 'Restaurar ordem',
   guideMore: 'Mais',
   guideOrder: 'Reordenar',

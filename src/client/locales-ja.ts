@@ -390,6 +390,7 @@ export const ja: Record<string, string> = {
   settingsGuideAlignCenter: '中央',
   settingsGuideAlignTop: '上',
   settingsGuideShow: 'スタートページに表示',
+  settingsGuideEnable: '有効にする',
   settingsGuideReset: '既定の順序に戻す',
   guideMore: 'その他',
   guideOrder: '順序を調整',

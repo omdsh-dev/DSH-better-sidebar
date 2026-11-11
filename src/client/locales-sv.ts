@@ -373,6 +373,7 @@ export const sv: Record<string, string> = {
   settingsGuideAlignCenter: 'Centrerat',
   settingsGuideAlignTop: 'Överst',
   settingsGuideShow: 'Visa på startsidan',
+  settingsGuideEnable: 'Aktivera',
   settingsGuideReset: 'Återställ ordning',
   guideMore: 'Mer',
   guideOrder: 'Ändra ordning',

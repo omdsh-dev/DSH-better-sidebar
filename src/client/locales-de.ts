@@ -376,6 +376,7 @@ export const de: Record<string, string> = {
   settingsGuideAlignCenter: 'Zentriert',
   settingsGuideAlignTop: 'Oben',
   settingsGuideShow: 'Auf der Startseite anzeigen',
+  settingsGuideEnable: 'Aktivieren',
   settingsGuideReset: 'Standardreihenfolge',
   guideMore: 'Mehr',
   guideOrder: 'Reihenfolge ändern',

@@ -34,6 +34,12 @@ export function setGuideEntryHidden(store: SidebarStore, key: string, hidden: bo
   writeGuidePrefs(store, { guideHidden: next })
 }
 
+/** Persist one Better Sidebar type's feature switch (the sidebar-content state). */
+export function setGuideEntryEnabled(store: SidebarStore, descriptorId: string, enabled: boolean): void {
+  const current = store.getPrefs().tabsEnabled
+  writeGuidePrefs(store, { tabsEnabled: { ...current, [descriptorId]: enabled } })
+}
+
 /** Persist the maximum row count. */
 export function saveGuideRows(store: SidebarStore, rows: number): void {
   writeGuidePrefs(store, { guideRows: rows })

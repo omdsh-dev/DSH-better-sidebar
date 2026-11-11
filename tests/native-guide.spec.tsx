@@ -8,7 +8,7 @@ import { createElement } from 'react'
 import { renderToString } from 'react-dom/server'
 import { act } from 'react-dom/test-utils'
 import { GuideGrid, NativeGuide } from '../src/client/native/guide.tsx'
-import { createNativeGuideCatalog } from '../src/client/native/guide-catalog.ts'
+import { createNativeGuideCatalog, mergeGuideEntries } from '../src/client/native/guide-catalog.ts'
 import { registerNativeSurface } from '../src/client/native/index.ts'
 import { createNativeTabRecords } from '../src/client/native/tab-adapter.tsx'
 import { createBetterSidebarService } from '../src/client/service.ts'
@@ -170,6 +170,38 @@ describe('GuideGrid', () => {
     mounted.unmount()
   })
 
+  it('uses the feature switch (tabsEnabled) for a Better Sidebar row and can turn it back on', async () => {
+    const gitEntry: NativeGuideEntry = {
+      ...entry('git'),
+      descriptorId: 'git',
+      title: () => 'Git',
+    }
+    const onToggleHidden = vi.fn()
+    const mounted = renderRoot(createElement(GuideGrid, {
+      entries: [gitEntry],
+      prefs: { ...SIDEBAR_PREFS_DEFAULTS, tabsEnabled: { git: false } },
+      width: 600,
+      onOpen: () => {},
+      onToggleHidden,
+    }))
+    await act(async () => {
+      ;(mounted.container.querySelector('[data-guide-more]') as HTMLButtonElement).click()
+      await Promise.resolve()
+    })
+    const reorder = [...document.querySelectorAll('[role="menuitem"]')]
+      .find(node => node.textContent?.includes('Reorder'))
+    await act(async () => {
+      ;(reorder as HTMLElement).click()
+      await Promise.resolve()
+    })
+    const toggle = document.querySelector('input[aria-label="Enable: Git"]') as HTMLInputElement
+    expect(toggle).not.toBeNull()
+    expect(toggle.checked).toBe(false)
+    act(() => { toggle.click() })
+    expect(onToggleHidden).toHaveBeenCalledWith(expect.objectContaining({ key: 'git' }), false)
+    mounted.unmount()
+  })
+
   it('also exposes the shared row-count control inside the reorder dialog', async () => {
     const mounted = renderRoot(createElement(GuideGrid, {
       entries,
@@ -242,12 +274,14 @@ describe('NativeGuide', () => {
   it('renders from a real store and catalog without losing their method receivers', () => {
     const store = createSidebarStore()
     store.setSession('s1')
+    const service = createBetterSidebarService(store)
     const catalog = { getSnapshot: () => entries, subscribe: () => () => {} }
     const openTab = vi.fn()
     const close = vi.fn()
     const mounted = renderRoot(createElement(NativeGuide, {
       catalog,
       store,
+      service,
       useTabInfo: () => ({ tab: { actions: { openTab, close } } }),
     }))
     const card = mounted.container.querySelector('[data-sidebar-right-guide-entry="a"] button')
@@ -383,6 +417,18 @@ describe('host services for the start page', () => {
     shellMenu?.selectShell('/bin/zsh')
     expect(terminals.selected).toBe('/bin/zsh')
     dispose()
+  })
+})
+
+describe('mergeGuideEntries', () => {
+  it('adds a synthetic row for a descriptor whose native type is disabled', () => {
+    const merged = mergeGuideEntries([entry('host')], [
+      { id: 'git', title: 'Changes', component: () => null, order: 30 },
+    ], { git: false })
+    const git = merged.find(item => item.descriptorId === 'git')
+    expect(git?.key).toBe('dsh-better-sidebar:git::git')
+    expect(git?.kind).toBe('git')
+    expect(git?.title()).toBe('Changes')
   })
 })
 

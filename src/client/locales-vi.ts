@@ -390,6 +390,7 @@ export const vi: Record<string, string> = {
   settingsGuideAlignCenter: 'Giữa',
   settingsGuideAlignTop: 'Trên',
   settingsGuideShow: 'Hiển thị trên trang bắt đầu',
+  settingsGuideEnable: 'Bật',
   settingsGuideReset: 'Đặt lại thứ tự',
   guideMore: 'Khác',
   guideOrder: 'Sắp xếp',

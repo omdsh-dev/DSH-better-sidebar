@@ -390,6 +390,7 @@ export const th: Record<string, string> = {
   settingsGuideAlignCenter: 'กึ่งกลาง',
   settingsGuideAlignTop: 'ด้านบน',
   settingsGuideShow: 'แสดงในหน้าเริ่มต้น',
+  settingsGuideEnable: 'เปิดใช้งาน',
   settingsGuideReset: 'รีเซ็ตลำดับ',
   guideMore: 'เพิ่มเติม',
   guideOrder: 'ปรับลำดับ',

@@ -20,6 +20,7 @@
   - 🧪 测试：`tests/side-card-section.spec.tsx`（原生入口清单、默认开启、顺序与隐藏状态）、`tests/prefs.spec.ts`（行数 / 顺序 / 可见性校验）。
 - 🖥 **终端卡片保留原生 Shell 菜单**：开始页的终端卡片右侧有「…」，菜单通过宿主 `webTerminals.launchShells` 读取 Shell 列表，选择后写入宿主偏好并以该 Shell 打开终端；宿主没有这些能力时卡片退化为普通入口。修复 `launchShells` / `selectShell` 丢失 `this` 导致「Shell 加载失败：Cannot read properties of undefined (reading 'remote')」的问题，并加回归测试。其他第三方自定义开始页卡片组件无法在 chain 接管页中复用，会显示为通用卡片（原因见 `docs/host-contracts.md` §9）。
 - 🧩 **「更多」保留宿主的浏览/创建插件动作**：开始页的「更多」卡片现在常驻（不再只在溢出时出现），菜单按图标 + 标题列出溢出入口，并恢复宿主原生的「浏览更多插件」与「创建你的插件」（走 `pluginNavigation.openList()` 与 `uiWorkspace.startSession(..., { agentPreset: 'cordis', whenDraftExists: 'append' })`）；服务缺失时对应行自动隐藏。
+- 🎛 **统一开始页开关**：调整顺序与开始页清单里，Better Sidebar 自己的 tab 使用和「侧边栏内容」卡片相同的功能开关（`tabsEnabled`），关闭即禁用并从开始页移除，清单行保留并可重新打开；宿主/第三方 tab 仍使用「在开始页显示」开关。同时修复开关关闭后无法再点开的问题：受控 checkbox 的异步写回会被原生 toggle 抢先重置，现改为由 label/input 的点击显式驱动、从 prop 推导下一状态。
 - 🧪 挂载冒烟新增真实宿主断言：开始页由插件接管（`data-dsh-guide-grid`）、列数跟随面板宽度、终端卡片提供 Shell 菜单；现有 guide 选择器与条目断言保持不变。
 
 - 🐞 **GBK 文件里的欧元符号不再被写成 ICU 拒绝的单字节 `0x80`**：改用标准两字节 `0xA2E3`，修复 Node 24.21 / ICU 78 下保存后重开变乱码；新增字面量测试钉住编码与回读。

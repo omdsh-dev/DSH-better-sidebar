@@ -64,7 +64,7 @@ import { parsePrefs } from './prefs.ts'
 import { AddPluginModal, type PluginKind } from './add-plugin-modal.tsx'
 import { t } from './locales.ts'
 import type { SidebarStore } from './state.ts'
-import type { NativeGuideCatalog, NativeGuideEntry } from './native/guide-catalog.ts'
+import { mergeGuideEntries, type NativeGuideCatalog, type NativeGuideEntry } from './native/guide-catalog.ts'
 import { orderGuideEntries } from './native/guide-layout.ts'
 import { GuideOrderList } from './native/guide-order.tsx'
 import { GuideRowsInput } from './native/guide-rows.tsx'
@@ -676,7 +676,14 @@ export function SideCardSection({ store, service, guideCatalog }: SideCardSectio
     ? () => EMPTY_GUIDE_ENTRIES
     : () => guideCatalog.getSnapshot()
   const guideEntries = useSyncExternalStore(subscribeGuide, snapshotGuide, snapshotGuide)
-  const orderedGuide = orderGuideEntries(guideEntries, prefs.guideOrder)
+  const guideInventory = mergeGuideEntries(guideEntries, tabs, prefs.tabsEnabled)
+  const orderedGuide = orderGuideEntries(guideInventory, prefs.guideOrder)
+  const guideSwitchHidden: Record<string, boolean> = {}
+  for (const entry of orderedGuide) {
+    guideSwitchHidden[entry.key] = entry.descriptorId === undefined
+      ? prefs.guideHidden[entry.key] === true
+      : prefs.tabsEnabled[entry.descriptorId] === false
+  }
 
   // The settings document revision (guards concurrent writes). A ref: commits
   // read the freshest value at execution time, no re-render needed.
@@ -757,6 +764,20 @@ export function SideCardSection({ store, service, guideCatalog }: SideCardSectio
     if (shown) delete next[key]
     else next[key] = true
     applyPref({ guideHidden: next })
+  }
+
+  /**
+   * One unified switch: Better Sidebar types use the same feature switch as
+   * the card above; host/third-party types only have start-page visibility.
+   */
+  const onToggleGuideEntry = (entry: NativeGuideEntry, shown: boolean): void => {
+    if (entry.descriptorId === undefined) {
+      onToggleGuide(entry.key, shown)
+      return
+    }
+    applyPref({
+      tabsEnabled: { ...optimisticRef.current.tabsEnabled, [entry.descriptorId]: shown },
+    })
   }
 
   /** Move one card within the current explicit order. */
@@ -1086,9 +1107,9 @@ export function SideCardSection({ store, service, guideCatalog }: SideCardSectio
           : (
             <GuideOrderList
               entries={orderedGuide}
-              hidden={prefs.guideHidden}
+              hidden={guideSwitchHidden}
               onMove={onMoveGuide}
-              onToggle={(key, hidden) => { onToggleGuide(key, !hidden) }}
+              onToggle={(entry, hidden) => { onToggleGuideEntry(entry, !hidden) }}
             />
           )}
       </div>

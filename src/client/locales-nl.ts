@@ -388,6 +388,7 @@ export const nl: Record<string, string> = {
   settingsGuideAlignCenter: 'Gecentreerd',
   settingsGuideAlignTop: 'Boven',
   settingsGuideShow: 'Op de startpagina tonen',
+  settingsGuideEnable: 'Inschakelen',
   settingsGuideReset: 'Volgorde herstellen',
   guideMore: 'Meer',
   guideOrder: 'Volgorde wijzigen',

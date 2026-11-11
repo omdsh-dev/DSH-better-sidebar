@@ -7,9 +7,10 @@
  * catalog too. Entries are kept as thunks/components rather than resolved
  * strings so a language switch re-renders without a registry notification.
  */
-import type { ComponentType } from 'react'
+import type { ComponentType, ReactNode } from 'react'
 import type { Context } from '../../context-types.ts'
-import { descriptorIdOfGuideEntry, guideKeyOf } from './guide-ids.ts'
+import type { TabDescriptor } from '../service.ts'
+import { descriptorIdOfGuideEntry, guideIdentityOfDescriptor, guideKeyOf } from './guide-ids.ts'
 
 /** One host guide card, normalized for the plugin's own surfaces. */
 export interface NativeGuideEntry {
@@ -53,6 +54,62 @@ interface GuideRegistry {
 }
 
 const EMPTY: readonly NativeGuideEntry[] = []
+
+/** A descriptor glyph as a component the guide card can render. */
+function descriptorIcon(icon: TabDescriptor['icon']): ComponentType<{ size?: number }> | undefined {
+  if (icon === undefined) return undefined
+  if (typeof icon === 'function') {
+    return (props: { size?: number }) => icon(props.size ?? 16)
+  }
+  return () => icon as ReactNode
+}
+
+/** A descriptor's copy, resolved through the same thunk contract as the guide. */
+function descriptorTitle(title: TabDescriptor['title']): () => string {
+  return typeof title === 'function' ? title : () => title
+}
+
+/**
+ * Merge the live guide cards with every enabled descriptor's synthetic card.
+ *
+ * A disabled Better Sidebar type unregisters its native type, so it vanishes
+ * from the live catalog; the settings/reorder inventory still needs its row so
+ * the switch can turn it back on. These synthetic rows never enter the grid
+ * (the grid receives the live catalog), only the editable inventory.
+ */
+export function mergeGuideEntries(
+  entries: readonly NativeGuideEntry[],
+  descriptors: readonly TabDescriptor[],
+  tabsEnabled: Readonly<Record<string, boolean>>,
+): NativeGuideEntry[] {
+  const byKey = new Set(entries.map(entry => entry.key))
+  const merged = [...entries]
+  for (const descriptor of descriptors) {
+    if (descriptor.hidden === true || descriptor.bottomOnly === true) continue
+    // An enabled type without a live guide entry simply has no start-page
+    // presence; only a switched-off type needs a synthetic row so its switch
+    // can turn it back on.
+    if (tabsEnabled[descriptor.id] !== false) continue
+    const identity = guideIdentityOfDescriptor(descriptor.id)
+    const key = guideKeyOf(identity.providerId, identity.entryId)
+    if (byKey.has(key)) continue
+    byKey.add(key)
+    const icon = descriptorIcon(descriptor.icon)
+    merged.push({
+      key,
+      providerId: identity.providerId,
+      entryId: identity.entryId,
+      kind: identity.kind,
+      title: descriptorTitle(descriptor.title),
+      ...(descriptor.description === undefined
+        ? {}
+        : { description: typeof descriptor.description === 'function' ? descriptor.description : () => descriptor.description as string }),
+      ...(icon === undefined ? {} : { icon }),
+      descriptorId: descriptor.id,
+    })
+  }
+  return merged
+}
 
 /** One registry snapshot, normalized. */
 function entriesOf(registry: GuideRegistry | undefined): readonly NativeGuideEntry[] {

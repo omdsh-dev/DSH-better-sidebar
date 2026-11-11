@@ -390,6 +390,7 @@ export const tr: Record<string, string> = {
   settingsGuideAlignCenter: 'Ortalı',
   settingsGuideAlignTop: 'Üstte',
   settingsGuideShow: 'Başlangıç sayfasında göster',
+  settingsGuideEnable: 'Etkinleştir',
   settingsGuideReset: 'Sırayı sıfırla',
   guideMore: 'Daha fazla',
   guideOrder: 'Sırala',

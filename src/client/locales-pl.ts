@@ -392,6 +392,7 @@ export const pl: Record<string, string> = {
   settingsGuideAlignCenter: 'Wyśrodkowane',
   settingsGuideAlignTop: 'Do góry',
   settingsGuideShow: 'Pokaż na stronie startowej',
+  settingsGuideEnable: 'Włącz',
   settingsGuideReset: 'Przywróć kolejność',
   guideMore: 'Więcej',
   guideOrder: 'Zmień kolejność',

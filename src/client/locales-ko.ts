@@ -382,6 +382,7 @@ export const ko: Record<string, string> = {
   settingsGuideAlignCenter: '가운데',
   settingsGuideAlignTop: '위',
   settingsGuideShow: '시작 페이지에 표시',
+  settingsGuideEnable: '사용',
   settingsGuideReset: '순서 초기화',
   guideMore: '더보기',
   guideOrder: '순서 조정',

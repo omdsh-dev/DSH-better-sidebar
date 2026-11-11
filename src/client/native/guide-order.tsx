@@ -21,7 +21,7 @@ export interface GuideOrderListProps {
   entries: readonly NativeGuideEntry[]
   hidden: Readonly<Record<string, boolean>>
   onMove: (key: string, delta: -1 | 1) => void
-  onToggle: (key: string, hidden: boolean) => void
+  onToggle: (entry: NativeGuideEntry, hidden: boolean) => void
 }
 
 /** The inline order/visibility list. */
@@ -61,9 +61,9 @@ export function GuideOrderList({ entries, hidden, onMove, onToggle }: GuideOrder
                 <IconChevronDownOutlineRegular size={12} />
               </button>
               <Switch
-                label={`${t('settingsGuideShow')}: ${title}`}
+                label={`${entry.descriptorId === undefined ? t('settingsGuideShow') : t('settingsGuideEnable')}: ${title}`}
                 checked={shown}
-                onChange={(next) => { onToggle(entry.key, !next) }}
+                onChange={(next) => { onToggle(entry, !next) }}
               />
             </span>
           </div>

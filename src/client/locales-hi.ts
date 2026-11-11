@@ -390,6 +390,7 @@ export const hi: Record<string, string> = {
   settingsGuideAlignCenter: 'मध्य',
   settingsGuideAlignTop: 'ऊपर',
   settingsGuideShow: 'प्रारंभ पृष्ठ पर दिखाएँ',
+  settingsGuideEnable: 'सक्षम करें',
   settingsGuideReset: 'क्रम रीसेट करें',
   guideMore: 'अधिक',
   guideOrder: 'क्रम बदलें',

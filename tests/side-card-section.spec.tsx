@@ -155,7 +155,8 @@ describe('SideCardSection declarative inventory', () => {
     expect(html).toContain('aria-label="Maximum rows"')
     // Takeover is on by default; vertical alignment is a two-option radio group
     // with Center selected.
-    expect(html).toContain('aria-label="Take over the start page" checked=""')
+    const takeover = html.match(/<input[^>]*aria-label="Take over the start page"[^>]*>/)?.[0] ?? ''
+    expect(takeover).toContain('checked=""')
     expect(html).toContain('role="radiogroup" aria-label="Vertical alignment"')
     expect(html).toContain('aria-checked="true"')
     // Explicit order puts Dashboard before Terminal, independently of catalog order.

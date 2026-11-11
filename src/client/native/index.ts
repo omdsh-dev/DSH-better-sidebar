@@ -387,6 +387,7 @@ export function registerNativeSurface(deps: NativeSurfaceDeps): () => void {
                 return {
                   catalog,
                   store,
+                  service,
                   ...(shellMenu === undefined ? {} : { shellMenu }),
                   ...(onBrowsePlugins === undefined ? {} : { onBrowsePlugins }),
                   ...(onCreatePlugin === undefined ? {} : { onCreatePlugin }),

@@ -391,6 +391,7 @@ export const ar: Record<string, string> = {
   settingsGuideAlignCenter: 'وسط',
   settingsGuideAlignTop: 'أعلى',
   settingsGuideShow: 'إظهار في صفحة البدء',
+  settingsGuideEnable: 'تفعيل',
   settingsGuideReset: 'إعادة الترتيب الافتراضي',
   guideMore: 'المزيد',
   guideOrder: 'تغيير الترتيب',

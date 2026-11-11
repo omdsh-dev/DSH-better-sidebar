@@ -383,6 +383,7 @@ export const fr: Record<string, string> = {
   settingsGuideAlignCenter: 'Centré',
   settingsGuideAlignTop: 'Haut',
   settingsGuideShow: 'Afficher sur la page de démarrage',
+  settingsGuideEnable: 'Activer',
   settingsGuideReset: 'Rétablir l\'ordre',
   guideMore: 'Plus',
   guideOrder: 'Réorganiser',

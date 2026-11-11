@@ -387,6 +387,7 @@ export const ru: Record<string, string> = {
   settingsGuideAlignCenter: 'По центру',
   settingsGuideAlignTop: 'Сверху',
   settingsGuideShow: 'Показывать на начальной странице',
+  settingsGuideEnable: 'Включить',
   settingsGuideReset: 'Сбросить порядок',
   guideMore: 'Ещё',
   guideOrder: 'Изменить порядок',
