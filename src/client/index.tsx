@@ -20,6 +20,7 @@ import { Sidebar } from './Sidebar.tsx'
 import { RenderBoundary } from './RenderBoundary.tsx'
 import { createNativeTabRecords } from './native/tab-adapter.tsx'
 import { registerNativeSurface } from './native/index.ts'
+import { createNativeGuideCatalog } from './native/guide-catalog.ts'
 import { registerBottomToggle } from './sidebar/bottom-toggle.tsx'
 import { ContextDiagnosticsHost, createContextDiagnosticsHost, registerContextDiagnosticsUI } from './context-diagnostics-ui.tsx'
 import { createNativeSurface } from './native/surface.ts'
@@ -179,6 +180,11 @@ export function apply(ctx: Context): void {
   // right column belongs to the host and only the bottom workbench stays
   // plugin-owned. Both halves live for this fiber's lifetime.
   const nativeRecords = createNativeTabRecords()
+  // One live catalog of host guide cards, shared by the start-page takeover
+  // and the settings inventory. It subscribes to the host tab registry and is
+  // released with this activation.
+  const nativeGuide = createNativeGuideCatalog(ctx)
+  ctx.effect(() => () => { nativeGuide.dispose() }, 'dsh-better-sidebar: native guide catalog')
   const nativeSurface = createNativeSurface(ctx, nativeRecords)
   service.setSurface(nativeSurface)
   // The optional dsh-context diagnostics: ONE controller per activation. It
@@ -192,6 +198,7 @@ export function apply(ctx: Context): void {
   ctx.effect(
     () => registerNativeSurface({
       ctx, store: sidebarStore, service, records: nativeRecords, diagnostics,
+      guideCatalog: nativeGuide.catalog,
       reportFailure: (phase, error) => { fail(`native ${phase}`, error) },
     }),
     'dsh-better-sidebar: native right-Sidebar registrations',
@@ -487,7 +494,7 @@ export function apply(ctx: Context): void {
       id: 'better-sidebar',
       order: 100,
       label: () => t('settingsNav'),
-      inject: () => ({ store: sidebarStore, service }),
+      inject: () => ({ store: sidebarStore, service, guideCatalog: nativeGuide.catalog }),
     }, SideCardSection))
   } catch (error) {
     fail('load', error)
