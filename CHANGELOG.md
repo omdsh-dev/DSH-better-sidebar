@@ -2,7 +2,7 @@
 
 > 本文档收录 dsh-better-sidebar 的完整发布历史（最新版摘要见 [README](README_ZH.md)；同步发布于 [GitHub Releases](https://github.com/omdsh-dev/DSH-better-sidebar/releases)）。
 
-### 未发布
+### v0.31.0
 
 - 🖼 **Markdown 语法里的 `data:image` 图片能显示了**：预览的图片词表此前只放行本地路径，`data:` 一律退回 alt 文本；现在 `data:image/*` 原样交给宿主渲染器（其白名单本就接受 `data:`），`data:text/html` 等仍拒绝。相对/绝对本地图片在桌面壳下的 page-base 修复（#1043）同批进入本版，0.30.1 用户升级后本地图片不再只剩斜体 alt。
   - 🧪 测试：`tests/markdown-images.spec.ts`、`tests/markdown-html-render.spec.tsx`、`tests/html-preview-inline.spec.ts`。

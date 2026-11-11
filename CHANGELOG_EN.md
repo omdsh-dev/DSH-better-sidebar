@@ -4,7 +4,7 @@
 >
 > 📝 The Chinese [CHANGELOG](./CHANGELOG.md) is the authoritative, item-by-item record; this file carries the English summaries and has historically lagged behind it. Where the two disagree, the Chinese one is current.
 
-### Unreleased
+### v0.31.0
 
 - 🖼 **Markdown-syntax `data:image` images now render.** The preview's image vocabulary only admitted local paths, so every `data:` destination fell back to alt text; `data:image/*` now passes straight to the host renderer (whose own allowlist already accepts `data:`), while `data:text/html` and friends stay rejected. The page-base fix for relative/absolute local images in the desktop shell (#1043) ships in this release too, so 0.30.1 users no longer see only italic alt text.
   - 🧪 `tests/markdown-images.spec.ts`, `tests/markdown-html-render.spec.tsx`, `tests/html-preview-inline.spec.ts`.
