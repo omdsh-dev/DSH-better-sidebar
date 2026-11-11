@@ -93,7 +93,30 @@ export function parsePrefs(value: unknown): SidebarPrefs {
     tabsEnabled: booleanMapOf(record.tabsEnabled),
     viewersEnabled: booleanMapOf(record.viewersEnabled),
     pluginSettings: pluginSettingsMapOf(record.pluginSettings),
+    guideRows: positiveIntegerOf(record.guideRows, SIDEBAR_PREFS_DEFAULTS.guideRows),
+    guideOrder: uniqueStringListOf(record.guideOrder),
+    guideHidden: booleanMapOf(record.guideHidden),
   }
+}
+
+/** One positive safe integer, or the fallback (row counts are 1-based). */
+function positiveIntegerOf(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 1 ? value : fallback
+}
+
+/** A trimmed, de-duplicated string list preserving first-seen order. */
+function uniqueStringListOf(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  const out: string[] = []
+  const seen = new Set<string>()
+  for (const item of value) {
+    if (typeof item !== 'string') continue
+    const trimmed = item.trim()
+    if (trimmed === '' || seen.has(trimmed)) continue
+    seen.add(trimmed)
+    out.push(trimmed)
+  }
+  return out
 }
 
 /**

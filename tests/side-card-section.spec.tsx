@@ -31,6 +31,7 @@ import { createBetterSidebarService, type BetterSidebarService } from '../src/cl
 import type { TabDescriptor } from '../src/client/service.ts'
 import { FeatureSettingsRows, mergePluginSetting, SettingsBody, SideCardSection, type SideCardSectionProps } from '../src/client/SideCardSection.tsx'
 import { SIDEBAR_PREFS_DEFAULTS } from '../src/prefs-shared.ts'
+import type { NativeGuideCatalog, NativeGuideEntry } from '../src/client/native/guide-catalog.ts'
 
 /** One tab + one viewer + the subagent-style nested toggle under a tab. */
 function mount(): { store: SidebarStore; service: BetterSidebarService } {
@@ -68,11 +69,23 @@ function mount(): { store: SidebarStore; service: BetterSidebarService } {
   return { store, service }
 }
 
-function renderSection(store: SidebarStore, service: BetterSidebarService): string {
+function renderSection(
+  store: SidebarStore,
+  service: BetterSidebarService,
+  guideCatalog?: NativeGuideCatalog,
+): string {
   return renderToString(createElement(
     SideCardSection,
-    { store, service } as unknown as SideCardSectionProps,
+    { store, service, guideCatalog } as unknown as SideCardSectionProps,
   ))
+}
+
+/** A catalog with one host terminal card and one third-party card. */
+function guideCatalogOf(entries: readonly NativeGuideEntry[]): NativeGuideCatalog {
+  return {
+    getSnapshot: () => entries,
+    subscribe: () => () => {},
+  }
 }
 
 /** Count `aria-pressed` occurrences of one value in the rendered HTML. */
@@ -113,6 +126,45 @@ describe('SideCardSection declarative inventory', () => {
     expect(html).toContain('>File viewers</span><span')
     expect(html).toContain('>2</span>')
     expect(html).toContain('>1</span>')
+  })
+
+  it('lists every native start-page card, ordered, default-on, and not filtered by feature state', () => {
+    const { store, service } = mount()
+    const entries: NativeGuideEntry[] = [
+      {
+        key: 'host::terminal',
+        providerId: 'host',
+        entryId: 'terminal',
+        kind: 'terminal',
+        title: () => 'Terminal',
+        description: () => 'Shell',
+      },
+      {
+        key: 'third::dash',
+        providerId: 'third',
+        entryId: 'dash',
+        kind: 'dash',
+        title: () => 'Dashboard',
+      },
+    ]
+    const catalog = guideCatalogOf(entries)
+    let html = renderSection(store, service, catalog)
+    expect(html).toContain('Start page')
+    expect(html).toContain('Terminal')
+    expect(html).toContain('Dashboard')
+    expect(html).toContain('aria-label="Show on the start page: Terminal"')
+    expect(html).toContain('aria-label="Maximum rows"')
+    // Explicit order puts Dashboard before Terminal, independently of catalog order.
+    store.setPrefs({ ...store.getPrefs(), guideOrder: ['third::dash'] })
+    html = renderSection(store, service, catalog)
+    expect(html.indexOf('>Dashboard<')).toBeLessThan(html.indexOf('>Terminal<'))
+    // A hidden card stays in the settings list (so it can be restored) and is
+    // marked off, not dropped.
+    store.setPrefs({ ...store.getPrefs(), guideHidden: { 'host::terminal': true } })
+    html = renderSection(store, service, catalog)
+    expect(html).toContain('Terminal')
+    expect(html).toContain('aria-label="Show on the start page: Terminal"')
+    expect(html).toContain('Dashboard')
   })
 
   it('renders the mobile group: heading + both narrow-viewport switches, on by default', () => {

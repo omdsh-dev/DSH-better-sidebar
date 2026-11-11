@@ -32,6 +32,11 @@ import { parseFileAddress } from '../resource-address.ts'
 import type { ContextDiagnostics } from '../context-diagnostics.ts'
 import type { BetterSidebarService, TabDescriptor } from '../service.ts'
 import type { SidebarStore } from '../state.ts'
+import { webTerminals } from '../terminal-client.ts'
+import type { NativeGuideCatalog } from './guide-catalog.ts'
+import { NativeGuide } from './guide.tsx'
+import { EDITOR_KIND, FILES_KIND, nativeId } from './guide-ids.ts'
+import { mountedSessionId } from './surface.ts'
 import {
   NativeTabBody,
   NativeTabTitle,
@@ -109,17 +114,6 @@ interface NativeTabRegistry {
     title: (address: string) => string
     guide?: readonly { id: string; order: number; title: () => string; description?: () => string; icon?: unknown }[]
   }): () => void
-}
-
-/** The kind the plugin's files window owns (page + file viewer). */
-const EDITOR_KIND = 'editor'
-
-/** The built-in page kind this plugin takes over. */
-const FILES_KIND = 'files'
-
-/** The plugin's implementation id for a descriptor (unique across kinds). */
-function nativeId(descriptorId: string): string {
-  return `dsh-better-sidebar:${descriptorId}`
 }
 
 /** The descriptor's title text, evaluated fresh for the current locale. */
@@ -247,6 +241,13 @@ export interface NativeSurfaceDeps {
   /** The shared native tab record registry (the surface writes it too). */
   readonly records: NativeTabRecords
   /**
+   * The live catalog of host guide cards. When present, the plugin replaces
+   * the shipped guide page with its own start page; omitted keeps the host's
+   * guide untouched (the unit harnesses use this to exercise the original
+   * surface without mounting the start page).
+   */
+  readonly guideCatalog?: NativeGuideCatalog
+  /**
    * The activation's optional dsh-context diagnostics controller (see
    * ../context-diagnostics.ts). Forwarded into the tab bodies' injected bag,
    * because a native body renders in the HOST's React tree and cannot read the
@@ -275,7 +276,7 @@ export interface NativeSurfaceDeps {
  * @returns a disposer unregistering everything.
  */
 export function registerNativeSurface(deps: NativeSurfaceDeps): () => void {
-  const { ctx, store, service, records, reportFailure, diagnostics } = deps
+  const { ctx, store, service, records, reportFailure, diagnostics, guideCatalog } = deps
   // Bind the store BEFORE any body can render: the per-session state is the
   // authority for the explorer's expansion set, so the native surface and the
   // workbench share one set per session and a closed tab cannot drop it.
@@ -315,6 +316,45 @@ export function registerNativeSurface(deps: NativeSurfaceDeps): () => void {
         disposeClose = right.registerCloseHandler(EDITOR_KIND, () => { flushDraftBackups() })
       } catch (error) {
         reportFailure?.('register editor close handler', error)
+      }
+    }
+
+    // The start page: replace the host guide body with the plugin's own grid.
+    // The chain slot is declared by the host's guide type, so injection waits
+    // for that declaration; a failure leaves the shipped guide in place.
+    let disposeGuide: (() => void) | undefined
+    if (guideCatalog !== undefined) {
+      const catalog = guideCatalog
+      try {
+        disposeGuide = ctx.slots.inject('sidebar.right.tab.guide', () => {
+          try {
+            return ctx.slots.register({
+              name: 'sidebar.right.tab.guide',
+              // Always elect: the shipped guide is the fallback we replace.
+              select: () => ({}),
+              inject: (sessionId: string) => {
+                const scope = typeof sessionId === 'string' && sessionId !== ''
+                  ? sessionId
+                  : mountedSessionId(ctx)
+                const terminals = webTerminals(ctx)
+                const launchShells = terminals?.launchShells
+                const selectShell = terminals?.selectShell
+                const shellMenu = scope !== undefined && launchShells !== undefined && selectShell !== undefined
+                  ? {
+                    launchShells: (signal: AbortSignal) => launchShells(scope, signal),
+                    selectShell: (path: string) => { selectShell(path) },
+                  }
+                  : undefined
+                return { catalog, store, ...(shellMenu === undefined ? {} : { shellMenu }) }
+              },
+            }, NativeGuide)
+          } catch (error) {
+            reportFailure?.('register start page', error)
+            return () => {}
+          }
+        })
+      } catch (error) {
+        reportFailure?.('register start page', error)
       }
     }
 
@@ -559,6 +599,7 @@ export function registerNativeSurface(deps: NativeSurfaceDeps): () => void {
       live.clear()
       for (const dispose of disposeSubscriptions.reverse()) disposeSafely(dispose, 'a native tab subscription')
       if (disposeClose !== undefined) disposeSafely(disposeClose, 'the editor close handler')
+      if (disposeGuide !== undefined) disposeSafely(disposeGuide, 'the start-page guide takeover')
     }
   })
   return () => {

@@ -124,6 +124,13 @@ export const PrefsSchema: z<SidebarPrefs> = z.object({
   // "settings seam" opening — without it the seam would drop third-party
   // keys as unknown schema fields.
   pluginSettings: z.dict(z.dict(z.any())).default({}),
+  // The start page's own layout preferences. `guideRows` is a MAXIMUM row
+  // count with no upper bound (the layout only ever slices the entry list);
+  // `guideOrder` and `guideHidden` are open maps so a third-party entry can
+  // appear or disappear without a schema migration.
+  guideRows: z.number().step(1).min(1).default(6),
+  guideOrder: z.array(z.string()).default([]),
+  guideHidden: z.dict(z.boolean()).default({}),
 })
 
 // ── The Loader row schema ───────────────────────────────────────────────────

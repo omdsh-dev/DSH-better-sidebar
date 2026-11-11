@@ -142,6 +142,27 @@ export interface SidebarPrefs {
    * numbers / booleans; custom panels are responsible for their own).
    */
   pluginSettings: Record<string, Record<string, unknown>>
+  /**
+   * Maximum number of rows the native start page draws before the overflow
+   * collapses into its "More" card. The wide layout puts two cards on a row
+   * and a narrow one puts one; the minimum is a single row and there is no
+   * upper bound (a huge value simply never overflows).
+   */
+  guideRows: number
+  /**
+   * Explicit start-page order, as `providerId::entryId` keys (the host guide
+   * card identity). Keys absent from this list follow in registration order;
+   * keys that no longer exist are ignored. Empty means "registry order".
+   */
+  guideOrder: string[]
+  /**
+   * Start-page visibility overrides keyed by `providerId::entryId`. An absent
+   * key means VISIBLE, so old documents need no migration and a newly
+   * registered entry shows by default. `false` hides the card from the start
+   * page only: the tab type stays registered, and shortcuts, resource opens
+   * and already-open tabs are untouched.
+   */
+  guideHidden: Record<string, boolean>
 }
 
 // ── Side-chat composer preferences ──────────────────────────────────────────
@@ -207,4 +228,10 @@ export const SIDEBAR_PREFS_DEFAULTS: SidebarPrefs = {
   tabsEnabled: {},
   viewersEnabled: {},
   pluginSettings: {},
+  // Six rows: on a wide pane that is twelve card slots (the current set of
+  // native entries fits without a "More" card), while a narrow pane still
+  // scrolls through six. The value is a maximum, not a fixed height.
+  guideRows: 6,
+  guideOrder: [],
+  guideHidden: {},
 }
