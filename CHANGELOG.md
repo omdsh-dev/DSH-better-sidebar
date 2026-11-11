@@ -82,6 +82,8 @@
   - 🐞 **IME 组合收尾的那个回车不再混进一个换行**：Safari 在 `compositionend` 之后才送 closing keydown，guard 拦住提交是对的，但 textarea 仍会自己插入换行——宿主 composer 的语义是「既不提交也不换行」。现在宽限窗内的回车会被消费（`preventDefault()`），活跃组合中的按键仍原样交给输入法（不消费，避免干扰候选框），Shift+Enter 在任何状态都保留原生换行。
     - 🧪 测试：新增 `tests/sidechat-ime-consuming-enter.spec.tsx` 钉住三种状态（closing 消费不提交 / active 不消费不提交 / closing 下的 Shift+Enter 不消费）。
 
+- 🧭 **文件树根目录可以自己选了**（[#1003](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1003)）：根行上的目录名现在是一个下拉，列出**当前会话仓库的全部 checkout**（分支 · 目录名 · 变更数，与 Git 页同一份 `git.worktrees` 数据），选中即固定，另有「自动（跟随 agent）」一项把控制权交回推断。此前根完全由推断决定（宿主提交的 `working_directory` + 最新 tool call 里出现的 linked worktree），唯一的纠正手段是重启宿主并设置进程级 `DSH_SIDEBAR_WORKTREE_ROOT`——#952（嵌套仓库的 worktree 抢根）、#960（已删除的 checkout 把侧栏钉死）报告的正是这条推断出错、而用户无从干预的场景。固定值由**宿主**保存并按会话生效（客户端只发一次写入），因此 `/sidebar/file`、`/sidebar/html` 与 fs-watch 这些**无法携带客户端参数**的路由一并跟随；写入走 `git.resolveWorktree` 校验，只接受该会话仓库自己的 checkout，且**目录消失即自动作废**（返回自动根，不再出现 #960 那种死路）。固定是**视图根**：它决定 explorer 列出谁、watch 订阅谁，**不改变相对路径与写路径的解析基准**（那条口径见 #956 / #963）。宿主重启后回到自动根。
+
 - 🎨 **「添加到对话」悬浮按钮改用宿主的浮动按钮令牌，不再透出底色**：此前取的是默认主题下带透明度的**菜单**令牌 `--dsw-specific-menu`，在 Markdown 预览里看着正常，到代码/文本视图（CodeMirror 透明底）就整块发虚。现在与宿主自己的选区引用动作（`@deepseek-ai/dsh-message-quotes`）用同一对令牌：常态 `--dsw-alias-button-floating-fill`、悬停与键盘聚焦 `--dsw-alias-button-floating-hover`；几何与扁平边框不变。
   - 🧪 测试：`tests/theme.spec.ts` 新增 1 例钉住 `.selectionPopup` 的两个填充值，并禁止退回菜单令牌与 `interactive-bg-hover`。
 
