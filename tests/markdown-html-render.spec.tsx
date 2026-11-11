@@ -111,6 +111,16 @@ describe('MarkdownDocument (HTML leaves)', () => {
     await unmount(root)
   })
 
+  it('rewrites a raw HTML file: URL through /sidebar/file', async () => {
+    const { container, root } = await renderDocument('<img src="file:///ws/docs/shot.png" alt="shot"/>')
+    const img = container.querySelector('img')
+    expect(img).not.toBeNull()
+    expect(img?.getAttribute('src')).toBe(
+      'http://gui.origin/proxy/3080/sidebar/file?sessionId=s1&path=%2Fws%2Fdocs%2Fshot.png&cwd=%2Fws',
+    )
+    await unmount(root)
+  })
+
   it('keeps an inline data:image through DOMPurify', async () => {
     const dataUrl = 'data:image/png;base64,iVBORw0KGgo='
     const { container, root } = await renderDocument(`<img src="${dataUrl}" alt="pasted"/>`)
@@ -388,6 +398,19 @@ describe('MarkdownDocument (local markdown images)', () => {
     const img = container.querySelector('img')
     expect(img?.getAttribute('src')).toBe('https://example.com/x.png')
     await unmount(root)
+  })
+
+  it('renders a markdown-syntax file: URL through the media routes', async () => {
+    for (const [renderMedia, expected] of [
+      [media, 'http://gui.origin/proxy/3080/sidebar/file?sessionId=s1&path=%2Fws%2Fdocs%2Fpic.png&cwd=%2Fws'],
+      [desktopMedia, 'dsh-app://app/api/file?path=%2Fws%2Fdocs%2Fpic.png'],
+    ] as const) {
+      const { container, root } = await renderDocument('![file](file:///ws/docs/pic.png)', renderMedia)
+      const img = container.querySelector('img')
+      expect(img, 'a file: URL image must render as <img>, not alt').not.toBeNull()
+      expect(img?.getAttribute('src')).toContain(expected)
+      await unmount(root)
+    }
   })
 
   it('renders a markdown-syntax image data URI (the only data: the vocabulary admits)', async () => {

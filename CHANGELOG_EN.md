@@ -4,6 +4,11 @@
 >
 > 📝 The Chinese [CHANGELOG](./CHANGELOG.md) is the authoritative, item-by-item record; this file carries the English summaries and has historically lagged behind it. Where the two disagree, the Chinese one is current.
 
+### v0.31.1
+
+- 🔗 **`file://` image destinations in Markdown now render.** The `file:` scheme is never handed to the renderer or DOMPurify (the former rejects it and the latter drops the src); it is converted to an absolute local path and served by the same session media route as a relative image. POSIX paths, Windows drive URLs (`file:///C:/...`, percent-encoding included), `localhost` and UNC (`file://server/share/...`) are covered; raw HTML `<img src="file:///...">` is mapped before sanitization too. This is the same idea as VSCode's Markdown-preview webview resource mapping.
+  - 🧪 `tests/markdown-images.spec.ts`, `tests/markdown-html-render.spec.tsx`, and the `file://` image assertion in `test:mount`.
+
 ### v0.31.0
 
 - 🖼 **Markdown-syntax `data:image` images now render.** The preview's image vocabulary only admitted local paths, so every `data:` destination fell back to alt text; `data:image/*` now passes straight to the host renderer (whose own allowlist already accepts `data:`), while `data:text/html` and friends stay rejected. The page-base fix for relative/absolute local images in the desktop shell (#1043) ships in this release too, so 0.30.1 users no longer see only italic alt text.

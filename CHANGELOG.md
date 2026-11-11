@@ -2,6 +2,11 @@
 
 > 本文档收录 dsh-better-sidebar 的完整发布历史（最新版摘要见 [README](README_ZH.md)；同步发布于 [GitHub Releases](https://github.com/omdsh-dev/DSH-better-sidebar/releases)）。
 
+### v0.31.1
+
+- 🔗 **Markdown 里的 `file://` 图片地址也能显示了**：`file:` 不交给渲染器或 DOMPurify（前者会拒绝、后者会剥掉 src），而是先还原成绝对本地路径，再走与相对图片相同的会话媒体路由。支持 POSIX 路径、Windows 盘符（`file:///C:/...`，含百分号编码）、`localhost` 与 UNC（`file://server/share/...`）；原始 HTML 的 `<img src="file:///...">` 同样在消毒前完成映射。与 VSCode Markdown 预览的 webview 资源映射同一思路。
+  - 🧪 测试：`tests/markdown-images.spec.ts`、`tests/markdown-html-render.spec.tsx`、`test:mount` 的 `file://` 图片断言。
+
 ### v0.31.0
 
 - 🖼 **Markdown 语法里的 `data:image` 图片能显示了**：预览的图片词表此前只放行本地路径，`data:` 一律退回 alt 文本；现在 `data:image/*` 原样交给宿主渲染器（其白名单本就接受 `data:`），`data:text/html` 等仍拒绝。相对/绝对本地图片在桌面壳下的 page-base 修复（#1043）同批进入本版，0.30.1 用户升级后本地图片不再只剩斜体 alt。

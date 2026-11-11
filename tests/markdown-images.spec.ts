@@ -10,6 +10,7 @@ import { describe, expect, it } from 'vitest'
 import {
   createMarkdownPathImages,
   desktopFileUrl,
+  fileUrlToLocalPath,
   markdownImageTarget,
   markdownMediaUrl,
   resolveLocalMediaDest,
@@ -51,6 +52,26 @@ describe('markdownImageTarget', () => {
     expect(markdownImageTarget('https://example.com/x.png', '/repo/readme.md')).toBeUndefined()
     expect(markdownImageTarget('data:image/png;base64,AAA', '/repo/readme.md')).toBeUndefined()
     expect(markdownImageTarget('./img.png?v=1', '/repo/readme.md')).toBeUndefined()
+  })
+})
+
+describe('fileUrlToLocalPath', () => {
+  it('turns POSIX, Windows and localhost file URLs into local paths', () => {
+    expect(fileUrlToLocalPath('file:///repo/docs/my%20image.png')).toBe('/repo/docs/my image.png')
+    expect(fileUrlToLocalPath('file://localhost/repo/docs/a.png')).toBe('/repo/docs/a.png')
+    expect(fileUrlToLocalPath('FILE:///C:/repo/docs/a.png')).toBe('C:\\repo\\docs\\a.png')
+    expect(fileUrlToLocalPath('file://C:/repo/docs/a.png')).toBe('C:\\repo\\docs\\a.png')
+  })
+
+  it('keeps a UNC file URL in the host resolver\'s forward-slash spelling', () => {
+    expect(fileUrlToLocalPath('file://server/share/a.png')).toBe('//server/share/a.png')
+  })
+
+  it('refuses malformed file URLs and every non-file scheme', () => {
+    expect(fileUrlToLocalPath('file:///bad%E0%A4%A.png')).toBeUndefined()
+    expect(fileUrlToLocalPath('file://')).toBeUndefined()
+    expect(fileUrlToLocalPath('https://example.com/x.png')).toBeUndefined()
+    expect(fileUrlToLocalPath('./x.png')).toBeUndefined()
   })
 })
 
@@ -172,6 +193,35 @@ describe('createMarkdownPathImages', () => {
     expect(images.resolve('data:application/pdf;base64,AAA')).toBeUndefined()
   })
 
+  it('maps an authored file: URL through the same media routes as a local path', () => {
+    const browser = createMarkdownPathImages(scope, '/repo/docs/readme.md', ORIGIN)
+    expect(browser.resolve('file:///repo/docs/img.png')).toBe(
+      'http://127.0.0.1:3080/sidebar/file?sessionId=abc&path=%2Frepo%2Fdocs%2Fimg.png&cwd=%2Frepo',
+    )
+    const desktop = createMarkdownPathImages(scope, '/repo/docs/readme.md', APP)
+    expect(desktop.resolve('file:///repo/docs/img.png')).toBe(
+      'dsh-app://app/api/file?path=%2Frepo%2Fdocs%2Fimg.png',
+    )
+  })
+
+  it('maps a Windows file: URL with the drive and backslashes intact', () => {
+    const images = createMarkdownPathImages(
+      { sessionId: 'abc', cwd: 'C:\\repo' },
+      'C:\\repo\\t\\doc.md',
+      APP,
+    )
+    expect(images.resolve('file:///C:/pics/a%20b.png')).toBe(
+      'dsh-app://app/api/file?path=C%3A%5Cpics%5Ca+b.png',
+    )
+  })
+
+  it('maps a UNC file: URL through the media route', () => {
+    const images = createMarkdownPathImages(scope, '/repo/docs/readme.md', ORIGIN)
+    expect(images.resolve('file://server/share/a.png')).toBe(
+      'http://127.0.0.1:3080/sidebar/file?sessionId=abc&path=%2F%2Fserver%2Fshare%2Fa.png&cwd=%2Frepo',
+    )
+  })
+
   it('maps a relative image from a Windows absolute tab path on the browser base', () => {
     // The reporter's platform: an absolute Windows path joined with the image's
     // relative destination, then percent-encoded for /sidebar/file.
@@ -205,6 +255,12 @@ describe('resolveLocalMediaDest (raw HTML leaves)', () => {
     // (the markdown-syntax vocabulary above needs the host file route instead).
     expect(resolveLocalMediaDest('./shot.png', scope, '/repo/docs/readme.md', APP)).toBe(
       'dsh-app://app/sidebar/file?sessionId=abc&path=%2Frepo%2Fdocs%2Fshot.png&cwd=%2Frepo',
+    )
+  })
+
+  it('rewrites a raw HTML file: URL through the media route', () => {
+    expect(resolveLocalMediaDest('file:///repo/docs/shot.png', scope, '/repo/docs/readme.md', ORIGIN)).toBe(
+      'http://127.0.0.1:3080/sidebar/file?sessionId=abc&path=%2Frepo%2Fdocs%2Fshot.png&cwd=%2Frepo',
     )
   })
 
@@ -272,6 +328,13 @@ describe('rewriteProseLocalImageUrls', () => {
   it('resolves a relative destination against the prose cwd (the row is not a file)', () => {
     const out = rewriteProseLocalImageUrls('![a](./cat.png)', proseScope, '/repo', ORIGIN)
     expect(out).toBe(`![a](${FILE_URL('/repo/cat.png')})`)
+  })
+
+  it('rewrites a file: URL to the media route (prose and legacy file surfaces)', () => {
+    const out = rewriteProseLocalImageUrls('![a](file:///repo/cat.png)', proseScope, '/repo', ORIGIN)
+    expect(out).toBe(`![a](${FILE_URL('/repo/cat.png')})`)
+    expect(rewriteLocalImageUrls('![a](file:///repo/cat.png)', proseScope, '/repo/readme.md', ORIGIN))
+      .toBe(`![a](${FILE_URL('/repo/cat.png')})`)
   })
 
   it('leaves relative destinations untouched when the cwd is unknown', () => {
