@@ -166,9 +166,7 @@ export const builtinTabPlugins: readonly PluginEntry[] = [
     name: () => t('pluginSidenoteName'),
     url: 'https://github.com/g-yixuan/dsh-sidenote',
     description: () => t('pluginSidenoteDesc'),
-    // dsh-sidenote hard-depends on dsh-better-sidebar (required peer), so
-    // the install line installs the prerequisite first, then the plugin.
-    install: 'cd ~/.dsh && dsh plugin --profile web add dsh-better-sidebar && dsh plugin --profile web add dsh-sidenote',
+    install: 'cd ~/.dsh && dsh plugin --profile web add dsh-sidenote',
   },
   {
     id: 'dsh-server-deck',
