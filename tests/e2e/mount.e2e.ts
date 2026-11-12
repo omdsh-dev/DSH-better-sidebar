@@ -308,6 +308,24 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
     'a freshly expanded surface shows the guide page',
   ).toBeVisible({ timeout: 30_000 })
 
+  // The start page is the PLUGIN's chain takeover, not the host's shipped
+  // guide: the marker exists only on the plugin's grid, and its column count
+  // follows the measured pane width (two columns from 520px on).
+  const startPage = page.locator('[data-dsh-guide-grid]')
+  await expect(startPage, 'the plugin start-page takeover must own the guide body').toBeVisible({ timeout: 30_000 })
+  const startPageGeometry = await startPage.evaluate((element) => ({
+    width: element.clientWidth,
+    columns: element.getAttribute('data-guide-columns'),
+    align: element.getAttribute('data-guide-align'),
+  }))
+  expect(startPageGeometry.columns).toBe(startPageGeometry.width >= 520 ? '2' : '1')
+  expect(startPageGeometry.align).toBe('center')
+  // The host's terminal card keeps its native shell menu under the takeover.
+  await expect(
+    page.locator('[data-sidebar-right-guide-entry="terminal"] [data-guide-shell-menu]'),
+    'the terminal card must expose the host shell menu',
+  ).toHaveCount(1, { timeout: 30_000 })
+
   // Every built-in descriptor must be registered as a native tab type: the
   // guide lists one entry per type, so a missing entry is a real regression
   // (descriptor removed, registration failed, or the type got disabled).

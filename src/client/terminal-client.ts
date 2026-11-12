@@ -121,8 +121,29 @@ export interface HostTerminalView {
   close(): Promise<void>
 }
 
+/** One shell the host offers for new terminals. */
+export interface HostShellChoice {
+  readonly name: string
+  readonly path: string
+}
+
+/** The host's shell catalog and remembered selection. */
+export interface HostShellCatalog {
+  readonly shells: readonly HostShellChoice[]
+  /** The shell the host will use when none is named. */
+  readonly selectedShell?: string
+}
+
 /** The service slice this plugin consumes. */
 export interface WebTerminalsFace {
+  /**
+   * Shells the host can launch for a session (the guide card's native menu).
+   * Optional: a host that only exposes the terminal view leaves the plugin
+   * card as a plain tile.
+   */
+  launchShells?(sessionId: string, signal: AbortSignal): Promise<HostShellCatalog>
+  /** Remember the shell choice for terminals opened afterwards. */
+  selectShell?(path: string): void
   view(
     sessionId: string,
     key: string,

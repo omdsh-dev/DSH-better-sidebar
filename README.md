@@ -44,14 +44,14 @@ dsh plugin --profile web add dsh-better-sidebar@latest
 
 Then **hard-refresh the browser** (Cmd/Ctrl+Shift+R). Requires DSH **0.2.2-rc.1+**.
 
-> **Compatibility warning — match the plugin to the host line.** As of 2026-11-04, DSH's npm `latest` is **0.2.1-rc.5** and `next` is **0.2.2-rc.1**. **v0.31.1 requires DSH 0.2.2-rc.1+**; hosts on the 0.2.1 line (**0.2.1-rc.1 ~ rc.5**, i.e. today's `latest`) must pin `dsh-better-sidebar@0.28.2` — v0.29.0 was never published to npm. DSH 0.2.1-alpha.5 users must pin `dsh-better-sidebar@0.28.0-alpha.0`, and hosts still on **0.2.0-rc.2** must pin `dsh-better-sidebar@0.26.1`. A 0.x caret never spans a minor version, so one plugin build cannot serve two host lines. The marketplace installer picks the plugin's `latest` regardless of host version, so an old host gets a version-rejection error — upgrade the host or pin the version explicitly. The two packages' `latest` tags are independent.
+> **Compatibility warning — match the plugin to the host line.** As of 2026-11-04, DSH's npm `latest` is **0.2.1-rc.5** and `next` is **0.2.2-rc.1**. **v0.32.0 requires DSH 0.2.2-rc.1+**; hosts on the 0.2.1 line (**0.2.1-rc.1 ~ rc.5**, i.e. today's `latest`) must pin `dsh-better-sidebar@0.28.2` — v0.29.0 was never published to npm. DSH 0.2.1-alpha.5 users must pin `dsh-better-sidebar@0.28.0-alpha.0`, and hosts still on **0.2.0-rc.2** must pin `dsh-better-sidebar@0.26.1`. A 0.x caret never spans a minor version, so one plugin build cannot serve two host lines. The marketplace installer picks the plugin's `latest` regardless of host version, so an old host gets a version-rejection error — upgrade the host or pin the version explicitly. The two packages' `latest` tags are independent.
 
 <details>
 <summary><b>Pick the plugin version for your DSH version</b></summary>
 
 | Your DSH version | Install command |
 | --- | --- |
-| **0.2.2-rc.1+** | `dsh plugin --profile web add dsh-better-sidebar@0.31.1` |
+| **0.2.2-rc.1+** | `dsh plugin --profile web add dsh-better-sidebar@0.32.0` |
 | **0.2.1-rc.1 ~ 0.2.1-rc.5** | `dsh plugin --profile web add dsh-better-sidebar@0.28.2` |
 | **0.2.1-alpha.5** | `dsh plugin --profile web add dsh-better-sidebar@0.28.0-alpha.0` |
 | **0.2.0-rc.2** | `dsh plugin --profile web add dsh-better-sidebar@0.26.1` |
@@ -71,12 +71,12 @@ Always pin **exact versions** for older releases (`latest` moves forward with ea
 
 ```text
 Install the dsh-better-sidebar plugin (a sidebar workbench for DSH):
-1. Confirm DSH is 0.2.2-rc.1 or newer, then run dsh plugin --profile web add dsh-better-sidebar@0.31.1
+1. Confirm DSH is 0.2.2-rc.1 or newer, then run dsh plugin --profile web add dsh-better-sidebar@0.32.0
 2. Remind me to hard-refresh the browser (Cmd/Ctrl+Shift+R) afterwards
 If something fails, check the FAQ table in https://github.com/omdsh-dev/DSH-better-sidebar README first.
 ```
 
-**One-line script** — clone this repo and run `bash scripts/install.sh 0.31.1` (macOS / Linux / Windows Git Bash; `./scripts/install.ps1 -Version 0.31.1` for native Windows). It handles installation + bundle registration.
+**One-line script** — clone this repo and run `bash scripts/install.sh 0.32.0` (macOS / Linux / Windows Git Bash; `./scripts/install.ps1 -Version 0.32.0` for native Windows). It handles installation + bundle registration.
 
 **Updating**: just re-run the install command, then hard-refresh the browser.
 
@@ -94,11 +94,18 @@ If something fails, check the FAQ table in https://github.com/omdsh-dev/DSH-bett
 | **Two sidebars** on the page | Double mounting. Remove the legacy manual mount line (`- insert: ... better-sidebar ...`) from `~/.dsh/profiles/web/cordis.patch.yml`; aggregate packages mounting this package under a different id are auto-yielded, no action needed. |
 | Settings values gone after upgrade | Since DSH 0.1.7, preferences live on this plugin's mount row in the profile (default entry id `better-sidebar`). The plugin migrates your old `settings.yaml` values once on first start and never overwrites newer values. |
 | Terminal unavailable | Terminals are provided by **DSH itself** (this plugin ships no PTY) — see DSH docs; "host provides no terminal capability" in the bottom terminal means this deployment has no terminal controller mounted. |
-| `dsh: command not found` | Install DSH first; or use `npx -y --package @deepseek-ai/dsh@0.2.2-rc.1 dsh plugin --profile web add dsh-better-sidebar@0.31.1`. |
+| `dsh: command not found` | Install DSH first; or use `npx -y --package @deepseek-ai/dsh@0.2.2-rc.1 dsh plugin --profile web add dsh-better-sidebar@0.32.0`. |
 
 </details>
 
 ## 🆕 Recent Updates
+
+**v0.32.0 — plugin-owned start page and card polish**
+
+- **The right sidebar start page is now plugin-owned**: a responsive two-column grid, a configurable row budget (default 6), a persistent More card with Reorder, center/top alignment, and a default-on takeover switch that restores the host page when off.
+- **The host's start-page actions survive**: the terminal card keeps its native shell menu, More restores "Browse more plugins" / "Create your plugin", and Better Sidebar tabs share the same enable switch as their sidebar-content card.
+- **Card subtitles stay on one line** with an ellipsis, and More-menu icons are vertically centered with their labels.
+- **Also included since v0.30.1**: Markdown `data:`/`file://` images, desktop-shell HTML preview inlining, built-in audio/video previews, the side-chat overhaul, data-safety fixes, and the linear-time diff highlighter.
 
 **v0.31.1 — `file://` image URLs in Markdown**
 
@@ -109,10 +116,6 @@ If something fails, check the FAQ table in https://github.com/omdsh-dev/DSH-bett
 - **Markdown previews show local images again**: relative/absolute paths no longer collapse to alt text in the desktop shell because their media URL is no longer cross-site; Markdown-syntax `data:image` renders too (`data:text/html` and friends stay rejected).
 - **Sandboxed HTML previews in the desktop shell no longer render blank**: the trusted top frame fetches the document and its relative CSS/JS/images/fonts and inlines them into a sandboxed Blob; the iframe still has no `allow-same-origin`, and the browser / explicitly-unsandboxed paths are unchanged.
 - **Also in this release**: the task, editor and side-chat fixes merged into dev after 0.30.1.
-
-**v0.30.1 — settings nav icon fix**
-
-- **The "Side card" row in Settings no longer shows two icons.** The plugin used to paint its own glyph over the shell's fallback gear with a CSS mask; the shell now wraps the nav icon in a container and exposes a per-section icon slot. The row contributes its icon through that slot, and the stale marker + CSS apparatus is gone — along with a document-wide DOM observer.
 
 ## 🔌 Plugin Ecosystem
 

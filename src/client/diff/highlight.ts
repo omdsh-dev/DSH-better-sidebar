@@ -50,6 +50,8 @@ interface LangConfig {
 
 const LETTER = /[A-Za-z_$]/u
 const WORD = /[A-Za-z0-9_$]/u
+/** One-character whitespace test (see the scan loop: it must never slice). */
+const WHITESPACE = /^\s/u
 const ANYWORD = { wordStart: LETTER, wordBody: WORD }
 
 const kw = (words: string): ReadonlySet<string> => new Set(words.split(/\s+/))
@@ -367,8 +369,10 @@ export function scanLine(line: string, lang: string | undefined, inBlock = false
       continue
     }
     const ch = line[i]!
-    const wsMatch = /\s/u.exec(line.slice(i))
-    if (wsMatch !== null && wsMatch.index === 0) {
+    // Single-character test: `exec(line.slice(i))` scans ahead to the next
+    // whitespace on EVERY character, which is quadratic on a minified line
+    // (618KB measured 1.9s). Testing `ch` is O(1).
+    if (WHITESPACE.test(ch)) {
       push(ch, 'plain')
       i += 1
       continue
