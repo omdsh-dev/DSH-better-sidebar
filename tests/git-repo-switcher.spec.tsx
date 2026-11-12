@@ -22,7 +22,6 @@ import { act } from 'react-dom/test-utils'
 import { afterEach, expect, it, vi } from 'vitest'
 import { api, type GitStatusResult, type SessionScope } from '../src/client/api.ts'
 import { GitLens } from '../src/client/changes/GitLens.tsx'
-import { createSidebarStore } from '../src/client/state.ts'
 import { renderRoot, setupReactAct } from './test-utils.ts'
 
 setupReactAct()
@@ -55,7 +54,7 @@ async function mount(options: { sessionId: string; repositories?: string[] }) {
     isRepo: true, root: CWD, entries: [], branches: [], hasMore: false, snapshot: 'one',
   })
   const view = renderRoot(
-    <GitLens scope={{ sessionId: options.sessionId, cwd: CWD }} store={createSidebarStore()} visible
+    <GitLens scope={{ sessionId: options.sessionId, cwd: CWD }} visible
       selectedRef={null} onOpenFile={() => {}} onPreview={() => {}} />,
   )
   await flush()

@@ -15,7 +15,6 @@ import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
 import { GitLens } from '../src/client/changes/GitLens.tsx'
-import { createSidebarStore } from '../src/client/state.ts'
 import { api, type GitStatusEntry, type GitStatusResult, type GitWorktree } from '../src/client/api.ts'
 import type { BetterSidebarService } from '../src/client/service.ts'
 import { t } from '../src/client/locales.ts'
@@ -91,7 +90,6 @@ function mountGit(
   act(() => {
     root.render(createElement(GitLens, {
       scope: options.scope ?? { sessionId: 'session', cwd: MAIN },
-      store: createSidebarStore(),
       onOpenFile: () => {},
       onPreview: () => {},
       selectedRef: null,

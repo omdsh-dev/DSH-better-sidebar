@@ -232,8 +232,7 @@ describe('folderIcon resolver (registered folder/folder-open → the host folder
     const service = createBetterSidebarService(createSidebarStore())
     expect(glyphOf(service.folderIcon('/w/src', false, 14))).toBe(FileTypeIcon)
     expect(glyphOf(service.folderIcon('/w/src', true, 14))).toBe(FileTypeIcon)
-    expect(glyphOf(builtinFolderIcon(false, 14))).toBe(FileTypeIcon)
-    expect(glyphOf(builtinFolderIcon(true, 14))).toBe(FileTypeIcon)
+    expect(glyphOf(builtinFolderIcon(14))).toBe(FileTypeIcon)
   })
 
   it('folder / folder-open registrations replace the dir glyphs (priority desc)', () => {
@@ -283,10 +282,10 @@ describe('built-in glyphs are the host’s own artwork', () => {
   })
 
   it('renders the host folder category for directories', () => {
-    const props = (builtinFolderIcon(false, 14) as ReactElement).props as { kind: string; size: number }
+    const props = (builtinFolderIcon(14) as ReactElement).props as { kind: string; size: number }
     expect(props.kind).toBe('folder')
     expect(props.size).toBe(14)
-    // Both expansion states resolve to the host's folder drawing.
-    expect(glyphOf(builtinFolderIcon(true, 14))).toBe(FileTypeIcon)
+    // The host ships one folder drawing; expansion state is the tree's chevron.
+    expect(glyphOf(builtinFolderIcon(14))).toBe(FileTypeIcon)
   })
 })
