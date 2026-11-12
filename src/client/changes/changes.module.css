@@ -58,37 +58,6 @@
 .scmHeader:hover .scmActions, .scmHeader:focus-within .scmActions { opacity: 1; }
 @media (hover: none) { .scmActions { opacity: 1; } }
 
-/* Child repositories of a workspace container: every view in this panel is
-   pinned to ONE root, so the picker is the only surface that names the current
-   one and lists the others one click away. A labeled select scales to any
-   number of discovered roots in a single compact band — a chip per root does
-   not, once location labels distinguish same-named checkouts. The label
-   mirrors the section headers; the box mirrors the graph's branch select. */
-.repoPick {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  min-height: 28px;
-  padding: 0 6px;
-  font: var(--dsw-font-xxs-strong-12);
-  color: var(--dsw-alias-label-primary);
-  cursor: pointer;
-}
-.repoPickLabel { flex: none; white-space: nowrap; }
-.repoPickSelect {
-  flex: 1;
-  min-width: 0;
-  max-width: 100%;
-  height: 28px;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 3px;
-  background: var(--dsw-alias-bg-base);
-  color: var(--dsw-alias-label-primary);
-  font: inherit;
-}
-
 /* Docked by the flex column above (a sibling of `.gitScroll`), plus sticky so
    it also survives the case where the host tab body itself scrolls the whole
    tab — the branch control must never leave the bottom of the pane.

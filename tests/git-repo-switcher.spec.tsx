@@ -4,8 +4,9 @@
  *
  * Contract:
  * - `git.status` reports `repositories` (every discovered root). When it holds
- *   more than one, the lens renders a labeled <select> ("Repository") above
- *   the Changes section: each option pairs the display-only disambiguation
+ *   more than one, the lens renders a labeled <select> ("Repository") at the
+ *   head of the commit-graph toolbar, ahead of the branch filter: each option
+ *   pairs the display-only disambiguation
  *   label (`buildRepositoryLabels(roots, scope.cwd, hostHome)` — deeper roots
  *   carry their relative parent, so same-named checkouts stay tellable apart)
  *   with its absolute root as the value.
@@ -19,8 +20,10 @@
  *   so the next status read carries that root and the picker
  *   survives the following read (a selected child still reports the full
  *   `repositories` list).
- * - A single-repository workspace renders NO picker: the row must not steal
- *   vertical space from the ordinary case.
+ * - A single-repository workspace renders NO picker: nothing steals vertical
+ *   space from the ordinary case.
+ * - The picker lives in the graph toolbar, so a folded graph hides it; the
+ *   ⋯ → Repository submenu stays reachable as the fallback surface.
  */
 // @vitest-environment jsdom
 import { act } from 'react-dom/test-utils'

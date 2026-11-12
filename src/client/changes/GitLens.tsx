@@ -1133,27 +1133,6 @@ export function GitLens(props: GitLensProps) {
         {snapshot !== null && !isRepo && <Notice kind="empty" tone="page">{t('notRepo')}</Notice>}
         {snapshot?.truncated === true && <Notice kind="warn">{t('statusTruncated')}</Notice>}
 
-        {/* A container workspace can hold several independent repositories, and
-            every view below is pinned to ONE of them — without this picker the
-            panel silently shows the first root, so nothing on screen says the
-            others exist. The picker is not a second source of truth:
-            `repoChoices` comes from the status snapshot, `chooseRepo` re-pins
-            the scope (reads, writes, graph) to the picked root. A labeled
-            select keeps the current root on screen and the rest one click away
-            however many repositories discovery finds. */}
-        {isRepo && repoChoices.length > 1 && (
-          <label className={css.repoPick} data-scm-repos>
-            <span className={css.repoPickLabel}>{t('gitRepository')}</span>
-            <select className={css.repoPickSelect} aria-label={t('gitRepository')}
-              value={resolvedRepository ?? ''} disabled={busy || suggesting}
-              onChange={event => { chooseRepo(event.target.value) }}>
-              {resolvedRepository !== undefined && !repositoryLabels.some(item => item.root === resolvedRepository) &&
-                <option value={resolvedRepository} disabled>{resolvedRepositoryLabel ?? t('gitRepository')}</option>}
-              {repositoryLabels.map(item => <option key={item.root} value={item.root}>{item.label}</option>)}
-            </select>
-          </label>
-        )}
-
         {isRepo && (
           <section className={css.changesSection} data-scm-section="changes">
             <div className={css.scmHeader}>
@@ -1181,6 +1160,11 @@ export function GitLens(props: GitLensProps) {
                   items={[
                     { id: 'pull', label: t('pull'), disabled: busy || suggesting || snapshot?.detached === true },
                     { id: 'push', label: t('push'), disabled: busy || suggesting || snapshot?.detached === true },
+                    ...(repoChoices.length > 1 ? [{ id: 'repos', label: t('gitRepository'),
+                      submenu: repoChoices.map(root => ({ id: `repo:${root}`,
+                        label: repositoryLabels.find(item => item.root === root)?.label ?? baseName(root), disabled: busy || suggesting,
+                      })),
+                    }] : []),
                     ...(worktrees.length > 1 ? [{ id: 'worktrees', label: t('worktree'),
                       submenu: worktrees.map(entry => ({ id: `worktree:${entry.path}`,
                         label: `${entry.branch || t('gitDetached')} · ${baseName(entry.path)} (${entry.changes})`, disabled: busy || suggesting,
@@ -1191,6 +1175,7 @@ export function GitLens(props: GitLensProps) {
                     setMoreMenu(null)
                     if (id === 'push') push()
                     else if (id === 'pull') pull()
+                    else if (id.startsWith('repo:')) chooseRepo(id.slice(5))
                     else if (id.startsWith('worktree:')) chooseWorktree(id.slice(9))
                   }} />
               </div>
@@ -1229,6 +1214,10 @@ export function GitLens(props: GitLensProps) {
           </section>
         )}
 
+        {/* The graph toolbar hosts the multi-repo picker at its head (repository
+            first, then the branch filter — one scope row). The picker rides the
+            section, so a folded graph hides it; the ⋯ → Repository submenu in
+            the Changes header stays reachable as the fallback surface. */}
         {isRepo && <section className={graphOpen ? css.graphSection : undefined} data-scm-section="graph">
           <div className={css.scmHeader}>
             <button type="button" className={css.scmDisclosure} aria-expanded={graphOpen}
@@ -1250,6 +1239,13 @@ export function GitLens(props: GitLensProps) {
               onClearPreview={() => { props.onClearPreview?.() }}
               onDetailsChange={props.onDetailsChange}
               onContextMenu={openHistoryMenu}
+              repoPicker={repoChoices.length > 1 ? {
+                labels: repositoryLabels,
+                value: resolvedRepository ?? '',
+                standInLabel: resolvedRepositoryLabel,
+                disabled: busy || suggesting,
+                onChooseRepo: chooseRepo,
+              } : undefined}
             />
           </div>}
         </section>}

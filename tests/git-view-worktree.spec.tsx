@@ -287,7 +287,7 @@ describe('GitLens (changes tab, git lens) linked-worktree consistency', () => {
       act(() => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })) })
       act(() => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })) })
 
-      // The standalone picker replaced the ⋯ → Repository submenu.
+      // The toolbar picker stays alongside the ⋯ → Repository fallback submenu.
       const picker = container.querySelector<HTMLSelectElement>(`[data-scm-repos] select[aria-label="${t('gitRepository')}"]`)!
       await act(async () => { picker.value = REPO_A; picker.dispatchEvent(new Event('change', { bubbles: true })) })
       await flushEffects()
