@@ -1,6 +1,10 @@
 .root { display: flex; flex: 1; flex-direction: column; min-height: 0; min-width: 0; font: var(--dsw-font-xxs-12); color: var(--dsw-alias-label-primary); }
 .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 6px 12px; }
 .select { flex: 1; min-width: 0; max-width: 100%; height: 28px; border: 1px solid var(--dsw-alias-border-l2); border-radius: 3px; background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary); font: inherit; }
+/* The multi-repo picker slots in ahead of the branch filter so the toolbar
+   reads as one scope row — root first, then its history filter. The slot
+   flexes like .select, so both boxes share the row instead of stacking. */
+.repoPick { flex: 1; min-width: 0; display: flex; }
 .hint { color: var(--dsw-alias-label-secondary); font: var(--dsw-font-xxxs-11); }
 .scroll { flex: 1; min-height: 0; overflow: auto; }
 /* A commit row is ONE 28px line — rail, ref pills, subject (the GitLens-style
