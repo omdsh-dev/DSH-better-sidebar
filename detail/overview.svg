@@ -1,0 +1,135 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="300" viewBox="0 0 640 300" role="img" aria-label="Better Sidebar: a right sidebar workbench per conversation with files, editor, changes, tasks, and side chat">
+  <defs>
+    <style>
+      .ui { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    </style>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#4D6BFE"/>
+    </marker>
+  </defs>
+  <rect width="640" height="300" rx="12" fill="#F5F6FC"/>
+  <!-- left rail -->
+  <rect x="16" y="16" width="32" height="268" rx="9" fill="#FFFFFF" stroke="#E6EAF3"/>
+  <circle cx="32" cy="34" r="6" fill="#4D6BFE"/>
+  <rect x="26" y="52" width="12" height="12" rx="3" fill="#DDE3F0"/>
+  <rect x="26" y="72" width="12" height="12" rx="3" fill="#DDE3F0"/>
+  <rect x="26" y="92" width="12" height="12" rx="3" fill="#DDE3F0"/>
+  <!-- conversation -->
+  <rect x="56" y="16" width="208" height="268" rx="10" fill="#FFFFFF" stroke="#E6EAF3"/>
+  <circle cx="74" cy="36" r="8" fill="#E8EDFF"/>
+  <rect x="88" y="31" width="78" height="6" rx="3" fill="#C9D0DE"/>
+  <rect x="88" y="41" width="48" height="5" rx="2.5" fill="#E1E6F0"/>
+  <rect x="168" y="58" width="80" height="26" rx="9" fill="#E8EDFF"/>
+  <rect x="178" y="66" width="60" height="4" rx="2" fill="#9DB0F0"/>
+  <rect x="178" y="74" width="42" height="4" rx="2" fill="#C4CFF5"/>
+  <rect x="72" y="98" width="156" height="6" rx="3" fill="#DDE3EE"/>
+  <rect x="72" y="110" width="132" height="6" rx="3" fill="#DDE3EE"/>
+  <rect x="72" y="122" width="146" height="6" rx="3" fill="#DDE3EE"/>
+  <rect x="72" y="140" width="100" height="6" rx="3" fill="#DDE3EE"/>
+  <!-- file link in the conversation -->
+  <rect x="72" y="160" width="118" height="24" rx="7" fill="#F3F6FF" stroke="#C9D6FF"/>
+  <path d="M82 167h6l4 4v9h-10z" fill="#4D6BFE" opacity="0.85"/>
+  <text x="96" y="176" class="ui" font-size="9" font-weight="600" fill="#3150D8">App.tsx</text>
+  <rect x="72" y="196" width="146" height="6" rx="3" fill="#DDE3EE"/>
+  <rect x="72" y="208" width="112" height="6" rx="3" fill="#DDE3EE"/>
+  <!-- composer -->
+  <rect x="68" y="236" width="184" height="36" rx="11" fill="#FFFFFF" stroke="#DFE4EF"/>
+  <rect x="78" y="248" width="102" height="5" rx="2.5" fill="#DDE3EE"/>
+  <circle cx="238" cy="254" r="9" fill="#4D6BFE"/>
+  <path d="M238 249v10M234 255l4 4 4-4" stroke="#FFFFFF" stroke-width="1.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- right sidebar panel -->
+  <rect x="278" y="18" width="348" height="268" rx="10" fill="#1F2433" opacity="0.05"/>
+  <rect x="276" y="16" width="348" height="268" rx="10" fill="#FFFFFF" stroke="#DFE4EF"/>
+  <!-- tabs -->
+  <g class="ui" font-size="8.5" font-weight="600">
+    <rect x="288" y="28" width="58" height="20" rx="6" fill="#E8EDFF"/>
+    <circle cx="298" cy="38" r="5.5" fill="#4D6BFE"/>
+    <text x="298" y="40.6" font-size="7" font-weight="700" fill="#FFFFFF" text-anchor="middle">1</text>
+    <text x="307" y="41" fill="#3150D8">Files</text>
+
+    <text x="356" y="41" fill="#6B7280">Editor</text>
+
+    <circle cx="410" cy="38" r="5.5" fill="#4D6BFE"/>
+    <text x="410" y="40.6" font-size="7" font-weight="700" fill="#FFFFFF" text-anchor="middle">3</text>
+    <text x="419" y="41" fill="#6B7280">Changes</text>
+
+    <circle cx="478" cy="38" r="5.5" fill="#4D6BFE"/>
+    <text x="478" y="40.6" font-size="7" font-weight="700" fill="#FFFFFF" text-anchor="middle">4</text>
+    <text x="487" y="41" fill="#6B7280">Tasks</text>
+
+    <circle cx="542" cy="38" r="5.5" fill="#4D6BFE"/>
+    <text x="542" y="40.6" font-size="7" font-weight="700" fill="#FFFFFF" text-anchor="middle">5</text>
+    <text x="551" y="41" fill="#6B7280">Side chat</text>
+  </g>
+  <line x1="288" y1="56" x2="612" y2="56" stroke="#EDF0F7"/>
+  <!-- file tree -->
+  <rect x="288" y="66" width="108" height="178" rx="7" fill="#FBFCFE" stroke="#EDF0F7"/>
+  <g class="ui" font-size="8" fill="#3B4252">
+    <path d="M296 78l3 3 3-3" stroke="#8A93A6" stroke-width="1.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M306 75h8l2 2h-10z" fill="#F2B84B"/>
+    <text x="320" y="82" font-weight="600">src</text>
+
+    <path d="M300 91h7l2 2v7h-9z" fill="#9DB0F0"/>
+    <text x="312" y="99">App.tsx</text>
+    <rect x="362" y="92" width="10" height="9" rx="2" fill="#FFF4E5"/>
+    <text x="367" y="99" font-size="6.5" font-weight="700" fill="#D97706" text-anchor="middle">M</text>
+
+    <path d="M300 105h7l2 2v7h-9z" fill="#9DB0F0"/>
+    <text x="312" y="113">styles.css</text>
+    <rect x="362" y="106" width="10" height="9" rx="2" fill="#FFF4E5"/>
+    <text x="367" y="113" font-size="6.5" font-weight="700" fill="#D97706" text-anchor="middle">M</text>
+
+    <path d="M300 119h7l2 2v7h-9z" fill="#C6CCDA"/>
+    <text x="312" y="127">README.md</text>
+
+    <path d="M296 142l3 3 3-3" stroke="#8A93A6" stroke-width="1.2" fill="none" stroke-linecap="round" stroke-linejoin="round" transform="rotate(-90 299 143)"/>
+    <path d="M306 139h8l2 2h-10z" fill="#F2B84B"/>
+    <text x="320" y="146" font-weight="600">components</text>
+
+    <path d="M300 155h7l2 2v7h-9z" fill="#9DB0F0"/>
+    <text x="312" y="163">Button.tsx</text>
+    <rect x="360" y="156" width="12" height="9" rx="2" fill="#E9FBF0"/>
+    <text x="366" y="163" font-size="6.5" font-weight="700" fill="#16A34A" text-anchor="middle">A</text>
+
+    <path d="M300 169h7l2 2v7h-9z" fill="#9DB0F0"/>
+    <text x="312" y="177">index.ts</text>
+  </g>
+  <!-- editor -->
+  <rect x="404" y="66" width="208" height="178" rx="7" fill="#FFFFFF" stroke="#E6EAF3"/>
+  <rect x="404" y="66" width="208" height="22" rx="7" fill="#F8FAFF"/>
+  <rect x="410" y="70" width="76" height="14" rx="4" fill="#FFFFFF" stroke="#DFE4EF"/>
+  <circle cx="419" cy="77" r="2.4" fill="#4D6BFE"/>
+  <text x="425" y="80" class="ui" font-size="7.5" font-weight="600" fill="#3150D8">App.tsx</text>
+  <circle cx="598" cy="76" r="7" fill="#4D6BFE"/>
+  <text x="598" y="78.8" class="ui" font-size="8" font-weight="700" fill="#FFFFFF" text-anchor="middle">2</text>
+  <!-- changed line highlight -->
+  <rect x="404" y="146" width="208" height="13" fill="#F0FDF4"/>
+  <rect x="404" y="146" width="2" height="13" fill="#22C55E"/>
+  <!-- code -->
+  <g class="mono" font-size="7.6" xml:space="preserve">
+    <text x="414" y="103" fill="#B6BDCB">1</text>
+    <text x="428" y="103" fill="#7C3AED">import</text><text x="462" y="103" fill="#3B4252"> { useMemo } </text><text x="518" y="103" fill="#7C3AED">from</text><text x="540" y="103" fill="#0E9F6E">'react'</text>
+    <text x="414" y="116" fill="#B6BDCB">2</text>
+    <text x="428" y="116" fill="#7C3AED">import</text><text x="462" y="116" fill="#3B4252"> { FileTree } </text><text x="531" y="116" fill="#7C3AED">from</text><text x="553" y="116" fill="#0E9F6E">'./FileTree'</text>
+    <text x="414" y="129" fill="#B6BDCB">3</text>
+    <text x="428" y="129" fill="#7C3AED">export</text><text x="456" y="129" fill="#7C3AED"> function</text><text x="496" y="129" fill="#2563EB"> Sidebar</text><text x="532" y="129" fill="#3B4252">() {</text>
+    <text x="414" y="142" fill="#B6BDCB">4</text>
+    <text x="428" y="142" fill="#3B4252">  </text><text x="438" y="142" fill="#7C3AED">const</text><text x="462" y="142" fill="#3B4252"> tabs = </text><text x="500" y="142" fill="#2563EB">useTabs</text><text x="538" y="142" fill="#3B4252">()</text>
+    <text x="414" y="159" fill="#B6BDCB">5</text>
+    <text x="428" y="159" fill="#3B4252">  </text><text x="438" y="159" fill="#7C3AED">return</text><text x="468" y="159" fill="#3B4252"> &lt;</text><text x="478" y="159" fill="#D97706">FileTree</text><text x="516" y="159" fill="#3B4252"> tabs=</text><text x="544" y="159" fill="#3B4252">{tabs} /&gt;</text>
+    <text x="414" y="172" fill="#B6BDCB">6</text>
+    <text x="428" y="172" fill="#3B4252">}</text>
+    <text x="414" y="185" fill="#B6BDCB">7</text>
+    <text x="428" y="185" fill="#8A93A6">// per-conversation state</text>
+    <text x="414" y="198" fill="#B6BDCB">8</text>
+    <text x="428" y="198" fill="#7C3AED">const</text><text x="452" y="198" fill="#3B4252"> store = </text><text x="494" y="198" fill="#2563EB">useSidebarStore</text><text x="566" y="198" fill="#3B4252">()</text>
+  </g>
+  <!-- bottom workbench -->
+  <rect x="288" y="252" width="324" height="20" rx="6" fill="#F7F9FE"/>
+  <rect x="296" y="257" width="12" height="10" rx="2" fill="#DCE3F5"/>
+  <path d="M299 260l3 2-3 2" stroke="#4D6BFE" stroke-width="1.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="314" y="260" width="48" height="4" rx="2" fill="#C9D0DE"/>
+  <circle cx="598" cy="262" r="4" fill="#E8EDFF"/>
+  <circle cx="598" cy="262" r="1.8" fill="#4D6BFE"/>
+</svg>

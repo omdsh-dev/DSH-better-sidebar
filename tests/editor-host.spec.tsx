@@ -1167,7 +1167,7 @@ describe('EditorHost native-tab context-menu actions', { timeout: 120_000 }, () 
         .find(el => el.getAttribute('aria-haspopup') === 'menu')
       expect(parent).toBeDefined()
       act(() => { parent!.click() })
-      const vscodeRow = [...document.querySelectorAll<HTMLElement>('[role="menu"] [role="menu"] [role="menuitem"]')]
+      const vscodeRow = [...document.querySelectorAll<HTMLElement>('[role="menu"][data-submenu-layout] [role="menuitem"]')]
         .find(el => el.textContent?.trim() === 'VS Code')
       expect(vscodeRow).toBeDefined()
       await act(async () => {

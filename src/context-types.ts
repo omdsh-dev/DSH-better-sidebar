@@ -370,9 +370,13 @@ export interface SidebarAgentPresetsService {
 }
 
 /**
- * The experimental Agent Teams service face (`ctx.agentTeams`, mounted only
- * when the deployment loads `dsh-experimental-agent-team-profile`; absent →
- * `ctx.get` returns undefined and the Teams block hides).
+ * The Agent Teams service face (`ctx.agentTeams`).
+ *
+ * DSH 0.2.2-rc.2 replaced the opt-in `dsh-experimental-agent-team` package
+ * with `@deepseek-ai/dsh-agent-team` in the base composition. The service is
+ * therefore always mounted, while a session opts in per tree
+ * (`enabled: false` by default); the Teams block still hides when the Lead's
+ * `agentTeam` projection says the session runs no team.
  *
  * Only the WRITE half is mirrored here. DSH 0.1.7 deleted the 0.1.6
  * `remoteView` / `remoteCreateTask` / `remoteUpdateTask` trio (the browser UI
@@ -382,38 +386,21 @@ export interface SidebarAgentPresetsService {
  * never touch this service any more; the two remaining calls each need the
  * exact live Lead Agent as their authority credential, hence the host routes.
  *
- * Rejections are THROWN now, not returned: `createTask` / `updateTask` hand
- * back the committed view, and a stale revision throws a `TeamError`
- * (`HarnessError` subclass, `code === 'TEAM_TASK_STALE_REVISION'`) instead of
- * resolving the 0.1.6 `TeamTaskMutationResult` union.
+ * 0.2.2-rc.2 removed the roster's `tryMembership` probe: the current service
+ * exposes `isEnabled`, and a team member is a direct subagent of the Lead
+ * (the roster is read from `subagentCatalog`, never from this service).
+ *
+ * Rejections are THROWN, not returned: `createTask` / `updateTask` hand back
+ * the committed view, and a stale revision throws a `TeamError`
+ * (`HarnessError` subclass, `code === 'TEAM_TASK_STALE_REVISION'`).
  */
 export interface SidebarAgentTeamsService {
-  /** The agent's team membership, or undefined for a non-team/stale agent. */
-  tryMembership(agent: unknown): unknown
+  /** Whether Team tools and the task board are enabled for this agent's tree. */
+  isEnabled(agent: unknown): boolean
   /** Create one shared task (CAS-free; ids are server-issued). */
   createTask(agent: unknown, req: SidebarCreateTeamTaskRequest): Promise<SidebarTeamTaskView>
   /** Compare-and-set mutation of one shared task (stale revision → throws). */
   updateTask(agent: unknown, req: SidebarUpdateTeamTaskRequest): Promise<SidebarTeamTaskView>
-}
-
-/**
- * One team member as the runtime-enriched `listMembers` view reports it.
- * NOT consumed by this plugin any more (the projection below carries the
- * durable half and the live channel carries activity, see
- * ./client/team-projection.ts); kept as the mirror of the service's own
- * vocabulary so a future reader does not re-derive it.
- */
-export interface SidebarTeamMemberView {
-  /** The member's session id (the teammate's child session under the lead). */
-  id: string
-  name: string
-  role: 'lead' | 'teammate'
-  status: 'running' | 'idle' | 'inactive' | 'provisioning' | 'failed'
-  description?: string
-  provider?: string
-  context?: 'fresh' | 'fork'
-  model?: string
-  diagnostics: string[]
 }
 
 /**

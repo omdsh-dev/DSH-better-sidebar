@@ -4,6 +4,16 @@
 >
 > 📝 The Chinese [CHANGELOG](./CHANGELOG.md) is the authoritative, item-by-item record; this file carries the English summaries and has historically lagged behind it. Where the two disagree, the Chinese one is current.
 
+### Unreleased
+
+- 🧩 **DSH 0.2.2-rc.2 support**: the plugin baseline moves to the newest 0.2.2 RC and follows that host's client contract and team service.
+  - **Menus and the open-with submenu are now positioned by the host**: DSH 0.2.2-rc.2 uses CSS-anchored menus and portals submenus into their own layer; the plugin switches to the new `anchorPoint` API and drops its own submenu flip workaround, so it no longer fights the host's placement.
+  - **Team task-board writes move to the built-in Agent Team service**: the experimental package became `@deepseek-ai/dsh-agent-team` in the base composition, enabled per session; the plugin checks `isEnabled` and keeps reading the `agentTeam` projection plus the subagent roster.
+  - **Dependency and installer sync**: all 14 DSH peer floors move to `^0.2.2-rc.2`; dev pins follow, including the newly transitive `dsh-error` peer; Cordis 4.1.0 / include 1.1.0.
+  - **Support line**: DSH 0.2.2-rc.2+ uses this release; hosts still on **0.2.2-rc.1** should pin **v0.32.0**.
+  - 🖼 **The plugin page now carries illustrated details**: DSH's Plugins page shows an overview of the right sidebar and a per-conversation isolation diagram, with numbered notes for files, editor, changes, tasks, and side chat; each `locale/*.json` declares `meta.detail` pointing at `detail/DETAIL*.md`, and the SVGs ship in the npm package.
+  - 🧪 Tests: open-with/submenu specs now locate the portaled child card by its own marker; team-route specs cover the three `isEnabled` branches; baseline/peer guards updated; `tests/plugin-detail.spec.ts` and the tarball detail-asset assertions are new; the real 0.2.2-rc.2 + Chromium mount smoke is recorded in the adaptation note.
+
 ### v0.32.0
 
 - 🧭 **The start page is now plugin-owned, with a responsive two-column grid, a configurable row budget, and a More card for overflow.** Expanding the right sidebar no longer shows the host's single-column card page. Wide panes (>= 520px) put two cards on a row and narrow panes one; 6 rows by default (configurable to any value >= 1 in settings or in the Reorder dialog), and entries beyond the budget move into a More card whose rows all carry an icon plus a title and open the entry or the Reorder dialog. The grid is vertically centered by default and can be pinned to the top; settings gain a default-on "Take over the start page" switch that restores the host's page when off. Picking a card replaces the guide tab with the chosen page, exactly like the host did.

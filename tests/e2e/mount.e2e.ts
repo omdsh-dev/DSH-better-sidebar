@@ -694,7 +694,11 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
     return result
   })
   expect(modalRegions.modal, 'the zoom modal must opt out of app-region computation').toBe('none')
-  expect(modalRegions.button, 'its buttons must stay no-drag').toBe('no-drag')
+  // DSH 0.2.2 removed the blanket control rule: only chrome rows/controls
+  // declare no-drag, and everything else computes the neutral `initial`
+  // (`none`), which contributes no drag box. That is exactly what a toolbar
+  // button inside the modal needs — a click must never start a window drag.
+  expect(modalRegions.button, 'its buttons must never start a window drag').toBe('none')
   // Issue #805: the shell draws its native window controls OVER the page's
   // top-right and those pointer events never reach the document, so the
   // toolbar must sit below that band. At the reporter's 42px overlay a bare
@@ -1200,8 +1204,20 @@ test('the explorer @-reference button keeps earlier chips (no whole-draft rewrit
   // ones stay chips (the flattened-draft bug used to eat them on any insert).
   const composer = chips.first().locator('xpath=ancestor::*[@contenteditable="true"][1]')
   const typeInComposer = async (text: string): Promise<void> => {
-    await composer.click()
-    await page.keyboard.press('End')
+    // DSH 0.2.2 renders a folder mention as an editable text entity
+    // (`canInsertTextBefore: true`), so typing where a click happens to land
+    // can legitimately split the token. Put the caret at the very END of the
+    // composer instead of relying on click position plus `End` (which a chip
+    // or an entity can consume).
+    await composer.evaluate((element) => {
+      const range = document.createRange()
+      range.selectNodeContents(element)
+      range.collapse(false)
+      const selection = window.getSelection()
+      selection?.removeAllRanges()
+      selection?.addRange(range)
+      ;(element as HTMLElement).focus()
+    })
     await page.keyboard.type(text)
   }
 
@@ -1269,3 +1285,22 @@ test('the explorer @-reference button keeps earlier chips (no whole-draft rewrit
   expect(pageErrors, 'no page error while inserting references').toEqual([])
 })
 
+
+test('the Plugins page can serve the shipped detail document image', async ({ page }) => {
+  // The Plugins page resolves locale meta.detail through the host's
+  // readBundleDetail and then loads each image through this route. Proving
+  // the route answers the installed package catches a detail path that only
+  // exists in the source tree (or a package.json#files omission) before a
+  // user ever opens the page.
+  await gotoPage(page)
+  const url = new URL('/api/plugin-manager/detail-file', PAGE_URL)
+  url.searchParams.set('bundle', 'dsh-better-sidebar')
+  url.searchParams.set('document', 'detail/DETAIL.zh.md')
+  url.searchParams.set('path', 'overview.zh.svg')
+  const response = await page.request.get(url.href)
+  expect(response.status(), 'the plugin detail image route').toBe(200)
+  expect(response.headers()['content-type'], 'the image media type').toContain('image/svg+xml')
+  const body = await response.text()
+  expect(body, 'the shipped overview SVG').toContain('<svg')
+  expect(body, 'not an empty placeholder').toContain('viewBox')
+})

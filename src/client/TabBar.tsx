@@ -366,7 +366,7 @@ export function TabBar(props: {
           portal
           compact
           align="start"
-          getAnchorRect={() => (tabMenu === null ? null : new DOMRect(tabMenu.x, tabMenu.y, 0, 0))}
+          anchorPoint={tabMenu === null ? undefined : { x: tabMenu.x, y: tabMenu.y }}
           anchor={<span />}
         />
       </div>

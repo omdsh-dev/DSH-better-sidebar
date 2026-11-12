@@ -60,7 +60,6 @@ import { FS_TREES_MAX_PATHS } from '../fs-batch.ts'
 import { builtinFileIcon, builtinFolderIcon } from './file-icons.tsx'
 import { IconUploadOutline16, IconVscode16 } from './icons.tsx'
 import { isLikelyImeKey } from './ime-guard.ts'
-import { useSubmenuFlip } from './menu-flip.ts'
 import type { OpenInApp, OpenInAppEntry } from './open-in-app.ts'
 import type { OpenWithTarget } from './open-with.ts'
 import { relativeTo } from './paths.ts'
@@ -704,7 +703,6 @@ export function FileTree(props: {
   const [rowMenu, setRowMenu] = useState<{ path: string; isDir: boolean; x: number; y: number } | null>(null)
   // The plugin submenu can tower past the viewport; publish its flip geometry
   // for layout.css while the row menu is open.
-  useSubmenuFlip(rowMenu)
   /** The open-in-app rows for the open menu (null entries = listing failed). */
   const [apps, setApps] = useState<{ path: string; entries: readonly OpenInAppEntry[] | null } | null>(null)
   /** The row being renamed inline: its path plus the edit buffer. */
@@ -2603,7 +2601,7 @@ export function FileTree(props: {
         portal
         compact
         align="start"
-        getAnchorRect={() => (rowMenu === null ? null : new DOMRect(rowMenu.x, rowMenu.y, 0, 0))}
+        anchorPoint={rowMenu === null ? undefined : { x: rowMenu.x, y: rowMenu.y }}
         anchor={<span />}
       />
 
