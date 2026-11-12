@@ -4,6 +4,10 @@
 >
 > 📝 The Chinese [CHANGELOG](./CHANGELOG.md) is the authoritative, item-by-item record; this file carries the English summaries and has historically lagged behind it. Where the two disagree, the Chinese one is current.
 
+### Unreleased
+
+- Refresh the Sidenote recommendation with document excerpts and question–answer handback; its install command no longer reinstalls Better Sidebar.
+
 ### v0.32.0
 
 - 🧭 **The start page is now plugin-owned, with a responsive two-column grid, a configurable row budget, and a More card for overflow.** Expanding the right sidebar no longer shows the host's single-column card page. Wide panes (>= 520px) put two cards on a row and narrow panes one; 6 rows by default (configurable to any value >= 1 in settings or in the Reorder dialog), and entries beyond the budget move into a More card whose rows all carry an icon plus a title and open the entry or the Reorder dialog. The grid is vertically centered by default and can be pinned to the top; settings gain a default-on "Take over the start page" switch that restores the host's page when off. Picking a card replaces the guide tab with the chosen page, exactly like the host did.

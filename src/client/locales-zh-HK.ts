@@ -712,7 +712,7 @@ export const zhHK: Record<string, string> = {
   pluginSentinelDesc: '條件驅動的 agent 喚醒系統：檔案/程序/連接埠/HTTP/命令/webhook 感測器，條件達成自動喚醒休眠工作階段；註冊「哨兵」Tab 展示伺服器全域監控表',
   pluginServerDeckDesc: '伺服器卡片儀表板：每台伺服器一張卡片，展示線上狀態、OS、運行時長、CPU/記憶體/磁碟用量與延遲；點卡片進入 xterm.js 互動終端機，支援 ~/.ssh/config 一鍵匯入（自動跳過 Git 託管別名）；安裝 better-sidebar 後註冊原生「伺服器」分頁，未安裝時保留獨立抽屜',
   pluginSidebarQaDesc: '基於 better-sidebar 的劃選提問tab分頁: 對話劃選 → 右側面板提問 → 同工作區獨立追問工作階段（❓追問·主題）：快速無思考模型壓縮主對話上下文後與引文一起注入，不打斷主對話；追問可巢狀、可繼續、可歸檔',
-  pluginSidenoteDesc: 'Codex 風格側邊聊天與劃選註解：從目前工作階段 fork 出獨立側邊工作階段（歸檔隱藏、多實例並存、/side 命令、重新整理/重啟後恢復、模型跟隨主工作階段）；assistant 訊息劃選 → 編號角標 + 註解編輯器 →「N 條註解」chip 隨訊息送出，也可直接進入側邊聊天提問',
+  pluginSidenoteDesc: '帶著主對話的背景在側邊追問，不用重新說明；選取聊天回覆加上註解，把有用的問答帶回主對話。也可從 Better Sidebar 的 PDF、Word／PPT 原生預覽中摘錄文字，保留來源與頁碼。輸入框、訊息與工具卡延續熟悉的原生體驗。',
   pluginSshTunnelDesc: 'better-sidebar「SSH 隧道」Tab：多機主機清單 + 按專案授權 + 密鑰本地保管；模型工具 SSHManager（exec/SFTP/工作階段策略）；中央互動終端與雙欄 SFTP',
   pluginVideoPreviewDesc: '在 better-sidebar 編輯器內聯預覽影片檔案（.mp4/.webm/.mov/.mkv/.avi 等），自帶支援 HTTP Range（206）的 /video 宿主路由，可拖曳進度條、不必等整個檔案下載完就能開始播放',
   pluginAudioDesc: '在 better-sidebar 編輯器內預覽音訊檔案（.mp3/.wav/.flac/.ogg/.m4a/.aac/.opus），內建波形播放器與即時頻譜：可縮放波形、點擊/拖曳定位、A-B 循環、聲道切換、即時頻譜與全曲頻譜圖；媒體路由支援 HTTP Range，任意大小皆可拖曳進度',
