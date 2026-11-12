@@ -766,7 +766,7 @@ interface BetterSidebarService {
   matchFileIcon(path: string): FileIconDescriptor | undefined
   /** 匹配目录行注册：先按 folderNames 匹配目录名（name 传 basename，可省），
    *  再按 'folder'/'folder-open' 保留扩展名；priority 降序、注册序；
-   *  返回 undefined = 回退内置 VscFolder/VscFolderOpened */
+   *  返回 undefined = 回退宿主内置目录图标（FileTypeIcon folder） */
   matchFolderIcon(open: boolean, name?: string): FileIconDescriptor | undefined
   /** 文件图标权威解析器（v0.19.0+），完整回退链：
    *  ① 具体 names/扩展名注册 → ② 内置 glyph（md/媒体/pdf/json/代码/配置/数据库/lock/压缩包）
@@ -774,7 +774,7 @@ interface BetterSidebarService {
    *  任一注册工厂抛错都会被吞（console.error 后跳下一级），永远返回有效 ReactNode。 */
   fileIcon(path: string, size: number): ReactNode
   /** 目录图标解析器：注册的 folderNames/'folder'（闭合）/'folder-open'（展开）图标 →
-   *  内置 VscFolder/VscFolderOpened；path 为目录自身路径（主题可按目录变化），
+   *  宿主内置目录图标（FileTypeIcon folder）；path 为目录自身路径（主题可按目录变化），
    *  open 会传给工厂，一条注册即可渲染开/合两态。 */
   folderIcon(path: string, open: boolean, size: number): ReactNode
   /** 按 id 查 tab 描述符 */

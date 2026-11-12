@@ -74,9 +74,9 @@ export function workspaceRelativePath(root: string | undefined, path: string): s
  * Whether `target` lies under `base` (or equals it), tolerant of separator
  * style and of letter case. Case-insensitive on every platform by design:
  * the volume may report different casing than the cwd row, and this decision
- * must not depend on it. Used to decide whether a git-derived path can be
- * opened in the editor (a linked worktree outside the session workspace
- * cannot).
+ * must not depend on it. Used by tab retargeting after rename/delete and by
+ * tree search expansion to decide whether an absolute row still belongs
+ * under the session root.
  */
 export function isWithinWorkspace(base: string, target: string): boolean {
   const norm = (value: string): string => value.replace(/[\\/]+/g, '/').replace(/\/$/, '')

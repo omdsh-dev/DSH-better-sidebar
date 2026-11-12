@@ -1254,8 +1254,8 @@ function buildApi(
       if (action === 'url') return launchExternal('url', requireString(payload, 'url'))
       throw new SidebarError('bad-request', 'action must be "reveal" or "url"')
     },
-    // Archive builds: fence the selection and hand the packing to the
-    // background task table, which runs the system's zip/tar into a temp file.
+    // Archive builds: resolve the selection lexically and hand the packing to
+    // the background task table, which runs the system's zip/tar into a temp file.
     // The tree watches it through `archive.status` and downloads the finished
     // bytes from GET /sidebar/archive?id=.
     //
@@ -1796,7 +1796,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
 
   // ── Archive routes (zip one selection, watch it build, download it) ─────
   // The file tree's "zip and download" action is a three-step flow: POST
-  // `archive.build` fences every `path` through the SAME workspace fence as
+  // `archive.build` resolves every `path` through the same lexical resolver as
   // fs.tree / /sidebar/file and returns an id IMMEDIATELY; the system's zip
   // (or tar) packs the selection into a temp file in the background, reported
   // through `archive.status`; and GET /sidebar/archive STREAMS the finished
