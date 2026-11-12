@@ -696,7 +696,7 @@ export const ja: Record<string, string> = {
   pluginSentinelDesc: '条件駆動の agent 起動システム：ファイル/プロセス/ポート/HTTP/コマンド/webhook センサーが条件達成時に休眠会話を自動起動。「Sentinel」Tab を登録しサーバー全体の監視テーブルを表示',
   pluginServerDeckDesc: 'サーバーカードダッシュボード：各サーバーを1枚のカードで表示し、オンライン状態・OS・稼働時間・CPU/メモリ/ディスク使用率とレイテンシを確認。カードをクリックすると xterm.js の対話ターミナルを開き、~/.ssh/config をワンクリック取り込み（Git ホスティングの別名は自動スキップ）。better-sidebar インストール時はネイティブな「サーバー」タブを登録、未インストール時は独立ドロワーを維持',
   pluginSidebarQaDesc: 'better-sidebar ベースの選択して質問 Tab：会話選択 → 右パネルで質問 → 同ワークスペースの独立追問会話（❓追問・主題）。高速 no-thinking モデルが主対話コンテキストを圧縮し引用と一緒に注入、主対話を中断しない。追問はネスト、継続、アーカイブ可能',
-  pluginSidenoteDesc: 'Codex スタイルのサイドチャット + 選択注釈：現在の会話を fork して独立したサイド会話を作成（一覧からはアーカイブで隠蔽、複数共存、/side コマンド、リロード/再起動後も復元、モデルは主会話に追従）。assistant メッセージを選択 → 番号バッジ + 注釈エディタ →「N 件の注釈」チップが次のメッセージに同梱、またはサイドチャットで直接質問',
+  pluginSidenoteDesc: '主会話の背景を引き継いでサイドチャットで質問でき、説明し直す必要はありません。チャットの返信に注釈を付け、役立つ質問と回答を主会話に戻せます。Better Sidebar のネイティブ PDF・Word・PowerPoint プレビューから、出典とページ番号付きで文章を引用。入力欄、メッセージ、ツールカードも使い慣れたネイティブの操作感です。',
   pluginSshTunnelDesc: 'better-sidebar「SSH トンネル」Tab：複数ホストインベントリ + プロジェクト単位の認可 + 鍵のローカル保管。モデルツール SSHManager（exec/SFTP/セッション戦略）。中央対話ターミナルと双欄 SFTP',
   pluginVideoPreviewDesc: 'better-sidebar エディター内で動画ファイルをインラインプレビュー（.mp4/.webm/.mov/.mkv/.avi 等）。HTTP Range (206) をサポートする専用 /video ホストルートを搭載、プログレスバーをドラッグでき、ファイル全体の読み込みを待たずに再生が始まります',
   pluginAudioDesc: 'better-sidebar エディター内で音声ファイル（.mp3/.wav/.flac/.ogg/.m4a/.aac/.opus）をインラインプレビュー。ズーム可能な波形プレイヤー（クリック/ドラッグでシーク、A-B ループ、チャンネル切替）、ライブスペクトラム、全曲スペクトログラムを備え、自前のメディアルートが HTTP Range に対応するため大きなファイルでもシーク可能',

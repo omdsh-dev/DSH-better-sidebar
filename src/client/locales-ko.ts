@@ -689,7 +689,7 @@ export const ko: Record<string, string> = {
   pluginSentinelDesc: '조건 기반 agent 웨이크업 시스템: 파일/프로세스/포트/HTTP/명령/webhook 센서가 조건을 충족하면 휴면 세션을 자동으로 깨웁니다. "센티널(哨兵)" Tab을 등록하여 서버 전역 모니터링 표를 보여줍니다',
   pluginServerDeckDesc: '서버 카드 대시보드: 호스트마다 한 장의 카드로 온라인 상태, OS, 업타임, CPU/메모리/디스크 사용률과 지연 시간을 표시합니다. 카드를 클릭하면 xterm.js 대화형 터미널이 열리고, ~/.ssh/config를 원클릭으로 가져옵니다(Git 호스팅 별칭은 자동 제외). better-sidebar 설치 시 네이티브 「서버」 탭을 등록하고, 미설치 시 독립 드로어를 유지합니다',
   pluginSidebarQaDesc: 'better-sidebar 기반 드래그 선택 질문 탭: 대화 드래그 선택 → 오른쪽 패널 질문 → 같은 작업 공간의 독립 후속 질문 세션(❓후속 질문·주제). 빠른 무사고 모델이 주 대화 컨텍스트를 압축한 후 인용과 함께 주입하며, 주 대화를 방해하지 않습니다. 후속 질문은 중첩, 계속, 보관이 가능합니다',
-  pluginSidenoteDesc: 'Codex 스타일 사이드 챗 + 선택 주석: 현재 세션을 fork해 독립 사이드 세션으로 분기(세션 목록에서는 보관되어 숨겨짐, 다중 인스턴스, /side 명령, 새로고침/재시작 후에도 복원됨, 모델은 주 세션을 따름); assistant 메시지 선택 → 번호 배지 + 주석 편집기 → "N개 주석" 칩이 다음 메시지에 함께 전송되며, 사이드 챗에서 바로 질문할 수도 있습니다',
+  pluginSidenoteDesc: '주 대화의 맥락을 이어받아 사이드 채팅에서 질문하세요. 배경을 다시 설명할 필요가 없습니다. 답변에 주석을 달고 유용한 질문과 답변을 주 대화로 가져올 수 있습니다. Better Sidebar의 기본 PDF·Word·PowerPoint 미리보기에서 출처와 페이지 번호가 포함된 발췌문을 모으세요. 입력창, 메시지, 도구 카드는 익숙한 기본 사용 경험을 유지합니다.',
   pluginSshTunnelDesc: 'better-sidebar "SSH 터널" Tab: 다중 호스트 목록 + 프로젝트별 권한 + 키 로컬 보관. 모델 도구 SSHManager(exec/SFTP/세션 전략). 중앙 대화형 터미널과 이중 창 SFTP',
   pluginVideoPreviewDesc: 'better-sidebar 편집기에서 비디오 파일(.mp4/.webm/.mov/.mkv/.avi 등)을 인라인 미리보기합니다. HTTP Range(206)를 지원하는 /video 호스트 라우트를 내장하며, 진행 바를 드래그할 수 있고 파일 전체를 내려받기 전에 재생이 시작됩니다',
   pluginAudioDesc: 'better-sidebar 편집기에서 오디오 파일(.mp3/.wav/.flac/.ogg/.m4a/.aac/.opus)을 바로 미리 봅니다. 확대 가능한 파형 플레이어(클릭/드래그 탐색, A-B 반복, 채널 전환), 실시간 스펙트럼, 전체 파일 스펙트로그램을 제공하며 자체 미디어 라우트가 HTTP Range를 지원해 크기와 무관하게 탐색할 수 있습니다',
