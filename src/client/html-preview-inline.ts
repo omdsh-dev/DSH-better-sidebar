@@ -99,10 +99,17 @@ export function insidePreviewFolder(resourceUrl: string, documentUrl: string): b
     return false
   }
   if (!sameOrigin(resource, page)) return false
-  const route = page.pathname.indexOf(HTML_ROUTE_PREFIX)
+  // The document must BE an html route, with the prefix at the start of the
+  // path (the same contract as decodeHtmlUrl), not merely contain one later.
+  // Inlining only runs in the desktop shell, whose page is `dsh-app://app/`, so
+  // its routes sit at the origin root; a reverse-proxied web deployment (the
+  // one place a directory prefix exists) keeps the route-src iframe instead.
+  if (!page.pathname.startsWith(HTML_ROUTE_PREFIX)) return false
   const folder = page.pathname.slice(0, page.pathname.lastIndexOf('/') + 1)
-  // Fail closed unless the folder extends past `/sidebar/html/<session>`.
-  if (route === -1 || folder.indexOf('/', route + HTML_ROUTE_PREFIX.length) === -1) return false
+  // Fail closed unless the session segment is non-empty and the folder
+  // extends past `/sidebar/html/<session>`.
+  const sessionEnd = folder.indexOf('/', HTML_ROUTE_PREFIX.length)
+  if (sessionEnd <= HTML_ROUTE_PREFIX.length) return false
   if (!resource.pathname.startsWith(folder)) return false
   const rest = resource.pathname.slice(folder.length)
   if (rest === '') return false

@@ -91,6 +91,18 @@ describe('insidePreviewFolder', () => {
     expect(insidePreviewFolder('dsh-app://app/sidebar/a.png', file)).toBe(false)
     expect(insidePreviewFolder('dsh-app://app/sidebar/html/a.png', 'dsh-app://app/sidebar/html/index.html')).toBe(false)
   })
+
+  it('needs the route prefix at the start of the document path, and a session id', () => {
+    // The prefix showing up later in the path does not make it an html route.
+    expect(inside('a.png', 'dsh-app://app/x/sidebar/html/s1/p/index.html')).toBe(false)
+    expect(inside('a.png', 'dsh-app://app/sidebar/file/sidebar/html/s1/p/index.html')).toBe(false)
+    expect(inside('img/a.png', 'dsh-app://app/sidebar/api/sidebar/html/s1/p/docs/index.html')).toBe(false)
+    // An empty session segment is not a session (decodeHtmlUrl refuses it too).
+    expect(inside('a.png', 'dsh-app://app/sidebar/html//p/index.html')).toBe(false)
+    expect(inside('a.png', 'dsh-app://app/sidebar/html//index.html')).toBe(false)
+    // The UNC marker ('//' right after the session id) still has a session.
+    expect(inside('a.png', 'dsh-app://app/sidebar/html/s1//server/share/index.html')).toBe(true)
+  })
 })
 
 describe('bytesToBase64', () => {
