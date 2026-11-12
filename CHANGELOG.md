@@ -2,7 +2,7 @@
 
 > 本文档收录 dsh-better-sidebar 的完整发布历史（最新版摘要见 [README](README_ZH.md)；同步发布于 [GitHub Releases](https://github.com/omdsh-dev/DSH-better-sidebar/releases)）。
 
-### 未发布
+### v0.32.0
 
 - 🧭 **开始页由插件接管，支持两列自适应、可配置行数和「更多」收纳**：右侧栏展开时不再用宿主自带的单列卡片页。宽屏（≥520px）每行两张、窄屏一张；默认最多 6 行（可在设置或「调整顺序」弹窗中改为 ≥1 行），超出容量的入口收进「更多」卡片，菜单行统一为图标 + 标题，可直接打开，也可打开「调整顺序」。开始页内容默认垂直居中，可切换为靠上；设置中新增「接管开始页」开关（默认开），关闭后恢复宿主自带开始页。开始页卡片点击后用新页面替换指南页，和宿主原行为一致。
   - 🧪 测试：`tests/guide-layout.spec.ts`（排序 / 隐藏 / 列数与容量 / More 占格 / 最小容量）、`tests/native-guide.spec.tsx`（卡片、More、终端 Shell 菜单、catalog 订阅、chain 注册与释放）。
@@ -13,6 +13,7 @@
 - 🧩 **「更多」保留宿主的浏览/创建插件动作**：开始页的「更多」卡片现在常驻（不再只在溢出时出现），菜单按图标 + 标题列出溢出入口，并恢复宿主原生的「浏览更多插件」与「创建你的插件」（走 `pluginNavigation.openList()` 与 `uiWorkspace.startSession(..., { agentPreset: 'cordis', whenDraftExists: 'append' })`）；服务缺失时对应行自动隐藏。
 - 🎛 **统一开始页开关**：调整顺序与开始页清单里，Better Sidebar 自己的 tab 使用和「侧边栏内容」卡片相同的功能开关（`tabsEnabled`），关闭即禁用并从开始页移除，清单行保留并可重新打开；宿主/第三方 tab 仍使用「在开始页显示」开关。同时修复开关关闭后无法再点开的问题：受控 checkbox 的异步写回会被原生 toggle 抢先重置，现改为由 label/input 的点击显式驱动、从 prop 推导下一状态。
 - 🧪 挂载冒烟新增真实宿主断言：开始页由插件接管（`data-dsh-guide-grid`）、列数跟随面板宽度、终端卡片提供 Shell 菜单；现有 guide 选择器与条目断言保持不变。
+- 📇 插件在 DSH 插件列表里的描述现在会提示侧边栏配置入口：左下角「设置 → 侧边卡片」。`package.json` / `dsh.plugin.json` / `locale/*.json` 同步，并继续使用已有的 36×36 渐变 SVG 图标。
 
 - ⚡ **超大单行文件的 diff 不再把界面卡死**：共用高亮器 `scanLine` 原先对每个字符都执行 `exec(line.slice(i))`，会一直向后找到下一个空白才停——压缩成单行的 JSON/JS 上就是 O(n²)（实测 618 KB 单行 1.9 s，2 MB 约 20 s），点开差异时主线程长任务直接表现为「加载中」假死。现在改为单字符空白判定，整行只线性扫描一次（2.6 MB 实测 57 ms）；同时超过 20 K 字符的行在差异面板只渲染有界纯文本预览（折叠 2 K / 展开 20 K），不再生成多 MB 的文本节点与 `title`。普通长短行行为不变；完整内容仍可在内容页或源文件查看。
   - 🧪 测试：`tests/changes-ops.spec.ts`（1 MB minified 行线性扫描且 token 覆盖全行、长行仍推进块注释状态）、`tests/diff-fold-expand.spec.tsx`（超预算行折叠/展开均有界、500 字符行仍完整渲染）。

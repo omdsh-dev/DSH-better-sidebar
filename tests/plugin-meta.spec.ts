@@ -26,6 +26,7 @@ const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)))
 const pkg = JSON.parse(readFileSync(resolve(ROOT, 'package.json'), 'utf8')) as {
   name: string
   version: string
+  description?: string
   icon?: string
   files?: string[]
   exports?: Record<string, unknown>
@@ -69,6 +70,15 @@ describe('DSH plugin presentation metadata', () => {
     expect(pkg.exports?.['./icon'], 'exports["./icon"]').toBe('./icon.svg')
     expect(pkg.exports?.['./locale/*.json'], 'exports["./locale/*.json"]').toBe('./locale/*.json')
     expect(pkg.exports?.['./package.json'], 'exports["./package.json"]').toBe('./package.json')
+  })
+
+  it('points readers to where the sidebar is configured', () => {
+    const documents = new Map(locales())
+    expect(pkg.description).toContain('Settings → Side card')
+    expect(documents.get('en.json')?.meta?.description).toContain('Settings → Side card')
+    expect(documents.get('zh.json')?.meta?.description).toContain('设置 → 侧边卡片')
+    const manifest = JSON.parse(readFileSync(resolve(ROOT, 'dsh.plugin.json'), 'utf8')) as { description?: string }
+    expect(manifest.description).toContain('设置 → 侧边卡片')
   })
 
   it('ships an English baseline and complete translations beside it', () => {
