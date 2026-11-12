@@ -86,6 +86,10 @@ it('lists every discovered repository and re-pins the scope through the picker',
   // the base itself stays short.
   expect(options(node).map(option => option.textContent)).toEqual(['work', 'work-admin (C:\\)', 'work-docs (C:\\)'])
   expect(node.value).toBe(CWD)
+  // The scope caption reads in front of the picker, ahead of the branch filter.
+  const caption = node.closest('[data-scm-repos]')!.firstElementChild
+  expect(caption?.tagName).toBe('SPAN')
+  expect(caption?.textContent).toBe(t('gitRepository'))
 
   await act(async () => { node.value = ADMIN; node.dispatchEvent(new Event('change', { bubbles: true })) })
   await flush()

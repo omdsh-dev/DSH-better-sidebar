@@ -370,6 +370,7 @@ export function GitGraphSection({ scope, worktree, visible, refreshTick = 0, onP
     <div className={css.toolbar}>
       {repoPicker && (
         <label className={css.repoPick} data-scm-repos>
+          <span className={css.repoPickLabel}>{t('gitRepository')}</span>
           <select className={css.select} aria-label={t('gitRepository')}
             value={repoPicker.value} disabled={repoPicker.disabled}
             onChange={event => { repoPicker.onChooseRepo(event.target.value) }}>
