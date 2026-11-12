@@ -118,13 +118,12 @@
 }
 
 .cardDesc {
-  display: -webkit-box;
   overflow: hidden;
   color: var(--dsw-alias-label-tertiary);
   font-size: 12px;
   line-height: 18px;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .cardMenuButton {
