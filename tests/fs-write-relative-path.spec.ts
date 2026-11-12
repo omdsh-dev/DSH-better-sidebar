@@ -2,7 +2,7 @@ import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, describe, expect, it } from 'vitest'
-import { ensureWorkspaceWritePath } from '../src/path-security.ts'
+import { resolveTarget } from '../src/path-security.ts'
 import { removeTree } from './temp-tree.ts'
 
 const dirs: string[] = []
@@ -13,7 +13,7 @@ describe('fs.write resolves session-relative paths (#646)', () => {
     const dir = join(tmpdir(), 'dshm-646-a')
     dirs.push(dir)
     mkdirSync(join(dir, 'pastes'), { recursive: true })
-    const result = await ensureWorkspaceWritePath(dir, 'pastes/test.txt', false)
+    const result = resolveTarget(dir, 'pastes/test.txt')
     expect(result).toContain('pastes')
     expect(result).toContain('test.txt')
   })
@@ -23,7 +23,7 @@ describe('fs.write resolves session-relative paths (#646)', () => {
     dirs.push(dir)
     mkdirSync(dir, { recursive: true })
     const abs = join(dir, 'abs.txt')
-    const result = await ensureWorkspaceWritePath(dir, abs, false)
+    const result = resolveTarget(dir, abs)
     expect(result).toContain('abs.txt')
   })
 
@@ -35,8 +35,7 @@ describe('fs.write resolves session-relative paths (#646)', () => {
     mkdirSync(outside, { recursive: true })
     dirs.push(outside)
     const target = join(outside, 'x.txt')
-    // The fence argument is ignored by design now; the path resolves lexically.
-    await expect(ensureWorkspaceWritePath(dir, target, true)).resolves.toBe(target)
+    expect(resolveTarget(dir, target)).toBe(target)
   })
 
   it('expands a ~ home path instead of joining it under the cwd (#713)', async () => {
@@ -44,7 +43,7 @@ describe('fs.write resolves session-relative paths (#646)', () => {
     dirs.push(dir)
     mkdirSync(dir, { recursive: true })
     const { homedir } = await import('node:os')
-    const result = await ensureWorkspaceWritePath(dir, '~/notes/x.txt', false)
+    const result = resolveTarget(dir, '~/notes/x.txt')
     expect(result.startsWith(homedir())).toBe(true)
     expect(result).toContain(join('notes', 'x.txt'))
   })
