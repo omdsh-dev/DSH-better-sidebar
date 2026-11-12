@@ -80,6 +80,12 @@ function cardIcon(entry: NativeGuideEntry): ReactNode {
   return Icon === undefined ? null : createElement(Icon, { size: 16 })
 }
 
+/** Menu glyphs sit in a fixed 14px box; some custom icons keep their own
+ *  baseline, so center the SVG explicitly or it rides 2px above the label. */
+function menuIcon(icon: ReactNode): ReactNode {
+  return icon === null ? null : <span className={css.menuIcon} aria-hidden="true">{icon}</span>
+}
+
 /** The terminal card's shell menu: the host's shell catalog, drawn natively here. */
 function TerminalMenu(props: {
   entry: NativeGuideEntry
@@ -242,21 +248,21 @@ export function GuideGrid(props: GuideGridProps) {
   const hostActions = [
     ...(onBrowsePlugins === undefined
       ? []
-      : [{ id: 'browse', label: t('guideBrowsePlugins'), icon: <IconPluginPinwheelOutlineRegular size={16} /> }]),
+      : [{ id: 'browse', label: t('guideBrowsePlugins'), icon: menuIcon(<IconPluginPinwheelOutlineRegular size={16} />) }]),
     ...(onCreatePlugin === undefined
       ? []
-      : [{ id: 'create', label: t('guideCreatePlugin'), icon: <IconPlusOutlineRegular size={16} /> }]),
+      : [{ id: 'create', label: t('guideCreatePlugin'), icon: menuIcon(<IconPlusOutlineRegular size={16} />) }]),
   ]
   const moreItems = [
     ...layout.overflow.map(entry => ({
       id: 'open:' + entry.key,
       label: entry.title(),
-      icon: cardIcon(entry),
+      icon: menuIcon(cardIcon(entry)),
     })),
     ...(layout.overflow.length === 0 ? [] : [{ type: 'separator' as const, id: 'overflow-separator' }]),
     ...hostActions,
     ...(hostActions.length === 0 ? [] : [{ type: 'separator' as const, id: 'actions-separator' }]),
-    { id: 'order', label: t('guideOrder'), icon: <IconSettingsOutlineRegular size={14} /> },
+    { id: 'order', label: t('guideOrder'), icon: menuIcon(<IconSettingsOutlineRegular size={14} />) },
   ]
 
   /** The grid body; the More anchor is a card-sized Menu trigger. */

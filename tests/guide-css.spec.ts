@@ -16,4 +16,16 @@ describe('start-page card description', () => {
     expect(rule).toMatch(/overflow:\s*hidden/)
     expect(rule).not.toContain('line-clamp')
   })
+
+  it('centers More-menu glyphs in a fixed box', () => {
+    const rule = css.match(/\.menuIcon\s*\{([\s\S]*?)\n\}/)?.[1]
+    expect(rule).toBeDefined()
+    expect(rule).toMatch(/display:\s*inline-flex/)
+    expect(rule).toMatch(/align-items:\s*center/)
+    expect(rule).toMatch(/justify-content:\s*center/)
+    expect(rule).toMatch(/width:\s*14px/)
+    expect(rule).toMatch(/height:\s*14px/)
+    expect(css).toMatch(/\.menuIcon\s*>\s*span\s*\{[^}]*display:\s*flex/)
+    expect(css).toMatch(/\.menuIcon\s+svg\s*\{[^}]*display:\s*block/)
+  })
 })

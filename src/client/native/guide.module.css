@@ -149,6 +149,28 @@
   color: var(--dsw-alias-label-primary);
 }
 
+.menuIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+}
+
+.menuIcon > span {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+}
+
+.menuIcon svg {
+  display: block;
+  width: 14px;
+  height: 14px;
+}
+
 .moreSlot {
   display: flex;
   min-width: 0;
