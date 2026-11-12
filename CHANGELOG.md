@@ -2,7 +2,7 @@
 
 > 本文档收录 dsh-better-sidebar 的完整发布历史（最新版摘要见 [README](README_ZH.md)；同步发布于 [GitHub Releases](https://github.com/omdsh-dev/DSH-better-sidebar/releases)）。
 
-### 未发布
+### v0.32.1
 
 - 🧩 **适配 DSH 0.2.2-rc.2**：插件基线抬到 0.2.2 线的最新 RC，同时跟上这一版宿主的客户端契约与团队服务。
   - **右键菜单与「打开方式」子菜单交给宿主定位**：DSH 0.2.2-rc.2 把菜单改为 CSS 锚点定位、子菜单改为独立浮层，插件改用新的 `anchorPoint`；原先自己改写子菜单左右/上下翻转的 workaround 已删除，不再与宿主的新放置逻辑打架。

@@ -119,12 +119,6 @@ dsh plugin --profile web add dsh-better-sidebar@latest
 
 - **`file:///...` 图片现在能显示**：Markdown 语法和原始 HTML 的 `file:` 地址会先还原成绝对本地路径，再走与相对图片相同的会话媒体路由；支持 Windows 盘符、`localhost`、UNC 与百分号编码。
 
-**v0.31.0 — Markdown/HTML 预览的本地图片与桌面壳修复**
-
-- **Markdown 预览的本地图片恢复正常**：桌面壳里相对/绝对路径不再因媒体 URL 跨站而只剩 alt；Markdown 语法的 `data:image` 也能显示（`data:text/html` 等仍拒绝）。
-- **桌面壳沙箱 HTML 预览不再空白**：文档与相对 CSS/JS/图片/字体由顶层可信帧取回并内联到 sandboxed Blob；iframe 仍未开放 `allow-same-origin`，浏览器与「关闭沙箱」路径不变。
-- **其他**：本版同时带上 0.30.1 之后已合入 dev 的任务、编辑器与侧边对话修复。
-
 ## 🔌 插件生态
 
 `ctx.betterSidebar` 向所有插件开放 `registerTab` / `registerFileViewer` / `registerFileIcon` / `registerFileAction` / `registerTabAction` 五个扩展点，内置 6 tab + 5 viewer 与第三方插件走同一套 API。GitHub topic [`dsh-better-sidebar`](https://github.com/topics/dsh-better-sidebar) 下已有 **30+ 生态插件**；完整接入文档见 **[docs/external-plugin-guide.md](./docs/external-plugin-guide.md)**。

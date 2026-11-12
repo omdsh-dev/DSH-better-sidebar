@@ -119,12 +119,6 @@ If something fails, check the FAQ table in https://github.com/omdsh-dev/DSH-bett
 
 - **`file:///...` images now render**: a Markdown-syntax or raw-HTML `file:` URL is converted to an absolute local path and served by the same session media route as a relative image; Windows drives, `localhost`, UNC and percent-encoding are covered.
 
-**v0.31.0 — local-image and desktop-shell preview fixes**
-
-- **Markdown previews show local images again**: relative/absolute paths no longer collapse to alt text in the desktop shell because their media URL is no longer cross-site; Markdown-syntax `data:image` renders too (`data:text/html` and friends stay rejected).
-- **Sandboxed HTML previews in the desktop shell no longer render blank**: the trusted top frame fetches the document and its relative CSS/JS/images/fonts and inlines them into a sandboxed Blob; the iframe still has no `allow-same-origin`, and the browser / explicitly-unsandboxed paths are unchanged.
-- **Also in this release**: the task, editor and side-chat fixes merged into dev after 0.30.1.
-
 ## 🔌 Plugin Ecosystem
 
 `ctx.betterSidebar` offers five extension points to every plugin — `registerTab` / `registerFileViewer` / `registerFileIcon` / `registerFileAction` / `registerTabAction`; the built-in 6 tabs + 5 viewers use the very same API. The GitHub topic [`dsh-better-sidebar`](https://github.com/topics/dsh-better-sidebar) already lists **30+ ecosystem plugins**; the full integration guide is at **[docs/external-plugin-guide.md](./docs/external-plugin-guide.md)**.

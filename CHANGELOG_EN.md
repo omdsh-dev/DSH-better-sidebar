@@ -4,7 +4,7 @@
 >
 > 📝 The Chinese [CHANGELOG](./CHANGELOG.md) is the authoritative, item-by-item record; this file carries the English summaries and has historically lagged behind it. Where the two disagree, the Chinese one is current.
 
-### Unreleased
+### v0.32.1
 
 - 🧩 **DSH 0.2.2-rc.2 support**: the plugin baseline moves to the newest 0.2.2 RC and follows that host's client contract and team service.
   - **Menus and the open-with submenu are now positioned by the host**: DSH 0.2.2-rc.2 uses CSS-anchored menus and portals submenus into their own layer; the plugin switches to the new `anchorPoint` API and drops its own submenu flip workaround, so it no longer fights the host's placement.
