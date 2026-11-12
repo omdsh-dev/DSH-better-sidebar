@@ -241,7 +241,7 @@ Windows / Linux / macOS 三平台适配（macOS 日常验证，其余经单元�
 推荐添加 QQ 群（577011007）
 
 <div align="center">
-  <img width="220" alt="微信群二维码" src="https://github.com/user-attachments/assets/2816b2c7-45c6-4879-b969-77f258c4068c" />
+  <img width="220" alt="微信群二维码" src="https://github.com/user-attachments/assets/c4266ec9-3db2-406e-b7e1-384be09e3654" />
   <img width="220" alt="QQ群二维码" src="https://github.com/user-attachments/assets/9be34629-26ef-4537-aad4-1393c147f81c" />
 </div>
 
