@@ -7,9 +7,10 @@
 
 | 项 | 值 |
 | --- | --- |
-| 基线宿主 | **DSH 0.2.2-rc.1**（v0.30.0 起） |
-| DSH peer 数量 | **14 条** `@deepseek-ai/dsh-*`，下限全部 `^0.2.2-rc.1` |
-| devDependencies | 每条 DSH 包精确钉 `0.2.2-rc.1`（只有 devDeps 精确钉，peer 绝不钉精确版本） |
+| 基线宿主 | **DSH 0.2.2-rc.2**（v0.32.1 起） |
+| DSH peer 数量 | **14 条** `@deepseek-ai/dsh-*`，下限全部 `^0.2.2-rc.2` |
+| devDependencies | 每条 DSH 包精确钉 `0.2.2-rc.2`（**30 条**：0.2.2-rc.2 新增的传递 peer `@deepseek-ai/dsh-error` 已提升进 devDependencies） |
+| 伴随依赖 | Cordis peer `^4.1.0` / dev `4.1.0`、group `~1.1.0`、schemastery `~3.19.0` 解析、include `1.1.0` |
 | `engines.dsh` | **不声明**（package.json 里没有该字段，走 peer 兼容性检查；`dsh.plugin.json#engines.dsh` 不参与判定） |
 | 守护测试 | tests/market-manifest.spec.ts（peer 形状）+ tests/dsh-baseline.spec.ts（CI / 脚本 / 文档同版） |
 
@@ -19,8 +20,9 @@
 
 | 用户的 DSH | 应安装的插件 |
 | --- | --- |
-| **0.2.2-rc.1+** | **v0.30.x**（当前线） |
-| 0.2.1-rc.1 ~ 0.2.1-rc.5（含 npm latest） | **v0.28.2** |
+| **0.2.2-rc.2+** | **v0.32.1**（当前线） |
+| 0.2.2-rc.1 | **v0.32.0** |
+| 0.2.1-rc.1 ~ 0.2.1-rc.5 | **v0.28.2** |
 | 0.2.1-alpha.5 | v0.28.0-alpha.0 |
 | 0.2.0-rc.2 | v0.26.1 |
 | 0.2.0-rc.1 | v0.24.1 |
@@ -53,18 +55,23 @@
 
 ## 6. 0.2.1 → 0.2.2 的代码级差异（v0.30.0）
 
-这一版**不是纯版本同步**，上游有三处真实变化：
+上一版不是纯版本同步：`dsh-agent` 的模型选择改为 agent 自有的 `AgentModel`，`dsh-tools` 移除了 PTC 事件类型声明（读取路径保留），宿主图标改为 sprite。证据见 [0.2.2-rc.1 适配记录](plans/2026-11-04-dsh-0.2.2-rc.1-adaptation.md)。
+
+## 7. 0.2.2-rc.1 → 0.2.2-rc.2 的代码级差异（v0.32.1）
 
 | 变化 | 影响 | 处理 |
 | --- | --- | --- |
-| `dsh-agent`：可安装的 `ModelSelectionRef` + `installModelSelection(ctx, ref)` 改为 agent 自有的 `AgentModel`（`agent.model`，`select()` 同时落盘并作用于下一步） | 侧边对话的模型切换 | `ensureModelSelection` 只认领 `agent.model`，首次 seed 一次；**不要再额外 append `model/selection`**，`select()` 已经写了 |
-| `dsh-tools` 移除 PTC（`tool/ptc-dispatch*`）的事件**类型声明**（运行期仍记录、旧会话仍可读） | 测试无法再用 store append 造事件 | 读取路径保留；产生事件的那条 store 级用例删除，改由 `tests/changes-ops.spec.ts` 的合成事件覆盖 |
-| 宿主图标由内联 `<path>` 改为 sprite `<use href="#dsw-icon-…">` | 按图元的断言 | 断言改到 sprite id；设置页导航图标改用 `settings.section.icon` 插槽 |
+| `ui-primitives` 的 `Menu` 删除 `getAnchorRect`，改为 `anchorRef` / `anchorPoint`；portal 菜单使用 CSS Anchor Positioning；子菜单改为 portal 到 `document.body`，按空间选 side / single-page | 4 处光标锚定的右键菜单；原先改写子菜单几何的本地 workaround 全部失效 | `getAnchorRect({x,y})` → `anchorPoint({x,y})`；删除 `menu-flip.ts`、`layout.css` 的 flip/tether 规则和对应测试，子菜单放置交给宿主 |
+| `dsh-agent-team`（base composition）取代 `dsh-experimental-agent-team`；`TeamService` 删除 `tryMembership`，改提供 `isEnabled` | 团队任务写路由的准入探测 | `SidebarAgentTeamsService` 镜像改用 `isEnabled`；读路径（`agentTeam` 投影 + `subagentCatalog` 名册）不变 |
+| 所有宿主包把 Cordis peer 收紧到 `~4.1.0`；`cordis-plugin-include` 1.1.0；新增 `dsh-error` 传递 peer | dev 依赖树 | dev 钉 Cordis 4.1.0、include 1.1.0，并提升 `dsh-error`；插件代码只用到稳定的 `ctx.fiber` / `ctx.loader.entries()` / `Service` |
 
-逐项证据：[0.2.2 适配记录](plans/2026-11-04-dsh-0.2.2-rc.1-adaptation.md)。
+**不变**：`SESSION_FORMAT_VERSION` = 4、`SUBAGENT_DESCRIPTOR_VERSION` = 3、`agentTeam` 投影 `{enabled,tasks,failure?}`、`session/event` 逐条发布（批量 append 仍有逐条通知）、`jobs` 客户端服务与 `sessionController` 面。
 
-## 7. 适配记录索引
+逐项证据：[0.2.2-rc.2 适配记录](plans/2026-11-12-dsh-0.2.2-rc.2-adaptation.md)。
 
+## 8. 适配记录索引
+
+- [0.2.2-rc.2](plans/2026-11-12-dsh-0.2.2-rc.2-adaptation.md)
 - [0.2.2-rc.1](plans/2026-11-04-dsh-0.2.2-rc.1-adaptation.md)
 - [0.2.1-rc.1](plans/2026-10-17-dsh-0.2.1-rc.1-adaptation.md)
 - 更早（0.1.5 / 0.1.6 / 0.1.7）见 [docs/plans/](plans/) 对应文件。

@@ -8,14 +8,13 @@
  * Session projection: the browser already receives it in
  * `SessionListState.projectionsBySession`, so the Tasks page reads the board
  * straight off the shared snapshot (see ./client/team-projection.ts) and no
- * host route, poller or observation handshake is involved. That also removed
- * the only reason this file needed `tryMembership` for reads.
+ * host route, poller or observation handshake is involved.
  *
  * What remains cannot be done in the browser: `createTask` / `updateTask`
  * demand the exact live Lead Agent as their authority credential, which only
- * the host holds. The experimental `dsh-experimental-agent-team` service
- * (`ctx.agentTeams`) exists only when the deployment opts in, so the routes
- * degrade structurally:
+ * the host holds. DSH 0.2.2-rc.2 ships `@deepseek-ai/dsh-agent-team` in the
+ * base composition (`ctx.agentTeams`), while a session opts into Team mode
+ * per tree, so the routes degrade structurally:
  *
  * - service absent (`ctx.get('agentTeams')` undefined) → 503 `team-error`
  *   (a mutation can never be accepted there; the page silently hides the
@@ -23,7 +22,8 @@
  *   belt to that pair of braces);
  * - the tree's root agent is not live in this process (cold session / another
  *   harness) → 404 `team-error`; teams are live-led by definition;
- * - the root leads no team (`tryMembership` miss) → 404 `team-error`.
+ * - the root's tree has Team mode disabled (`isEnabled` false) → 404
+ *   `team-error` (a normal page state, but never for a mutation).
  *
  * Rejections are THROWN by 0.1.7 (0.1.6 returned a `TeamTaskMutationResult`
  * union), so the CAS conflict has to be translated back into a wire code the
@@ -34,7 +34,7 @@
  * method demands the live member Agent as its authority token, so the routes
  * re-derive the caller per request (`ctx.agents.get(rootSessionId)`) exactly
  * like the jobs.kill fence. Zero DSH source changes; the plugin never imports
- * the experimental package (structural mirrors only).
+ * the Team package (structural mirrors only).
  */
 import type {
   Context,
@@ -86,13 +86,13 @@ function errorCodeOf(error: unknown): string | undefined {
  */
 export function buildTeamsApi(ctx: Context): SidebarTeamsRoutes {
   /**
-   * The live lead agent of the requested tree plus its membership check.
-   * Throws 503 when the experimental layer is absent and 404 when the root
-   * simply leads no team (a normal page state, but never for a mutation).
+   * The live lead agent of the requested tree plus its Team-mode check.
+   * Throws 503 when the Team layer is absent and 404 when the root's tree has
+   * Team mode disabled (a normal page state, but never for a mutation).
    *
    * Both services are read per request, not captured when the routes are
-   * built: the experimental layer is a separate plugin and can mount after
-   * this one, and a captured `undefined` would pin the 503 forever (#1148).
+   * built: a deployment may mount the Team layer after this plugin, and a
+   * captured `undefined` would pin the 503 forever (#1148).
    */
   const membershipOf = async (
     payload: unknown,
@@ -110,8 +110,8 @@ export function buildTeamsApi(ctx: Context): SidebarTeamsRoutes {
       throw new SidebarError('team-error', 'the tree root is not live in this process', 404)
     }
     try {
-      if (teams.tryMembership(agent) === undefined) {
-        throw new SidebarError('team-error', 'the tree root leads no team', 404)
+      if (!teams.isEnabled(agent)) {
+        throw new SidebarError('team-error', 'the tree root has Agent Teams disabled', 404)
       }
     } catch (error) {
       if (error instanceof SidebarError) throw error

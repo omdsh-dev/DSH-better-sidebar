@@ -119,7 +119,7 @@ function menuItems(): HTMLElement[] {
 }
 
 function submenuRows(): HTMLElement[] {
-  return [...document.querySelectorAll<HTMLElement>('[role="menu"] [role="menu"] [role="menuitem"]')]
+  return [...document.querySelectorAll<HTMLElement>('[role="menu"][data-submenu-layout] [role="menuitem"]')]
 }
 
 function submenuParent(): HTMLElement {
@@ -133,7 +133,6 @@ describe('FileTree plugin open-with menu', () => {
   afterEach(() => {
     harness.unmount()
     document.body.innerHTML = ''
-    document.body.removeAttribute('data-dsh-sidebar-submenu')
   })
 
   it('keeps application rows out of level 1 and lists them under the open-with submenu', async () => {
@@ -198,7 +197,7 @@ describe('FileTree plugin open-with menu', () => {
     expect(harness.onToggleOpenWithPin).toHaveBeenCalledWith('cursor')
     expect(harness.onOpenWith).not.toHaveBeenCalled()
     // The menu (and the submenu) stayed open.
-    expect(document.querySelector('[role="menu"] [role="menu"]')).not.toBeNull()
+    expect(document.querySelector('[role="menu"][data-submenu-layout]')).not.toBeNull()
   })
 
   it('selecting a submenu child invokes onOpenWith with the row path and closes the menu', async () => {
@@ -209,7 +208,7 @@ describe('FileTree plugin open-with menu', () => {
     act(() => { zedRow.click() })
     expect(harness.onOpenWith).toHaveBeenCalledWith('zed', '/tmp/a.ts')
     // Selecting closes the row menu entirely.
-    expect(document.querySelector('[role="menu"] [role="menu"]')).toBeNull()
+    expect(document.querySelector('[role="menu"][data-submenu-layout]')).toBeNull()
     expect(menuItems()).toHaveLength(0)
   })
 
@@ -270,44 +269,5 @@ describe('FileTree plugin open-with menu', () => {
       await Promise.resolve()
     })
     expect(harness.container.querySelector('[role="alert"]')?.textContent).toContain('Could not open: /tmp/a.ts')
-  })
-})
-
-describe('FileTree plugin open-with menu flip geometry (submenu clamping)', () => {
-  const ATTR = 'data-dsh-sidebar-submenu'
-
-  let harness: Harness
-  afterEach(() => {
-    harness.unmount()
-    document.body.innerHTML = ''
-    document.body.removeAttribute(ATTR)
-  })
-
-  it('publishes "down" for a top-of-tree opening and clears on selection', async () => {
-    harness = await mountTree()
-    // openMenu() right-clicks at (20, 30) — the upper half, plenty of right
-    // room in jsdom's default viewport.
-    openMenu(harness.container)
-    expect(document.body.getAttribute(ATTR)).toBe('down')
-    act(() => { submenuParent().click() })
-    const zedRow = submenuRows().find(item => item.textContent?.trim() === 'Zed')!
-    act(() => { zedRow.click() })
-    expect(menuItems()).toHaveLength(0)
-    expect(document.body.hasAttribute(ATTR)).toBe(false)
-  })
-
-  it('adds "left" when the cursor sits within the right-hand submenu room', async () => {
-    harness = await mountTree()
-    const nearRight = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: window.innerWidth - 10, clientY: 30 })
-    act(() => { fileRow(harness.container).dispatchEvent(nearRight) })
-    expect(document.body.getAttribute(ATTR)).toBe('down left')
-  })
-
-  it('clears the attribute on unmount with the menu still open', async () => {
-    harness = await mountTree()
-    openMenu(harness.container)
-    expect(document.body.getAttribute(ATTR)).toBe('down')
-    harness.unmount()
-    expect(document.body.hasAttribute(ATTR)).toBe(false)
   })
 })

@@ -19,7 +19,6 @@ import type { GitLineCounts, GitLogEntry, GitStatusEntry, GitStatusResult, GitWo
 import { api, SidebarApiError } from '../api.ts'
 import { builtinFileIcon, builtinFolderIcon } from '../file-icons.tsx'
 import { usePolling } from '../use-polling.ts'
-import { useSubmenuFlip } from '../menu-flip.ts'
 import { baseName, relativeTo } from '../paths.ts'
 import { resolveSidebarPath } from '../paths.ts'
 import { isZh, t } from '../locales.ts'
@@ -431,7 +430,6 @@ export function GitLens(props: GitLensProps) {
    */
   const [moreMenu, setMoreMenu] = useState<{ x: number; y: number } | null>(null)
   const moreOpen = moreMenu !== null
-  useSubmenuFlip(moreMenu)
   const [branchOpen, setBranchOpen] = useState(false)
   /** Commit drafts, one per scope: the Commit button asks only for a message
    *  and a staged row, so a draft typed against another project would submit
@@ -1316,7 +1314,7 @@ export function GitLens(props: GitLensProps) {
         portal
         compact
         align="start"
-        getAnchorRect={() => (fileMenu === null ? null : new DOMRect(fileMenu.x, fileMenu.y, 0, 0))}
+        anchorPoint={fileMenu === null ? undefined : { x: fileMenu.x, y: fileMenu.y }}
         anchor={<span />}
       />
 
@@ -1374,7 +1372,7 @@ export function GitLens(props: GitLensProps) {
         portal
         compact
         align="start"
-        getAnchorRect={() => (historyMenu === null ? null : new DOMRect(historyMenu.x, historyMenu.y, 0, 0))}
+        anchorPoint={historyMenu === null ? undefined : { x: historyMenu.x, y: historyMenu.y }}
         anchor={<span />}
       />
 

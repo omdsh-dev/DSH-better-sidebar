@@ -111,9 +111,11 @@
    for keeping the window draggable while a diagram is enlarged.
    Deliberately NOT applied to the other interactive popups (`.selectionPopup`
    is a `<button>`; FloatingWindow / AnchoredPopover own pointer drags and are
-   not scrims): the shell's `:is(button, a, input, …)` rule already keeps those
-   no-drag, and `initial !important` would outrank it and start a window drag on
-   press instead — the click-swallow regression of issues #103/#111. */
+   not scrims): DSH 0.2.2 resets every element to `initial` and lets only
+   marked chrome rows declare `drag`, while each body child keeps the shell's
+   `no-drag` box, so those popups are already non-draggable. Applying
+   `initial !important` there would erase their region and start a window drag
+   on press instead — the click-swallow regression of issues #103/#111. */
 :global(html[data-platform] body > [data-dsh-better-sidebar]),
 :global([data-dsh-panel-host]) {
   -webkit-app-region: initial !important;
@@ -2132,8 +2134,8 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
      pointer-events — without this reset the open modal cancels every
      window-drag strip under it plus the macOS double-click-title zoom.
      Same contract as the panel host rule above; `initial` computes to the
-     neutral `none`, and the toolbar's buttons keep their own no-drag from
-     the shell's `:is(button, …)` rule. */
+     neutral `none`, and DSH 0.2.2's element-wide `initial` reset leaves the
+     toolbar buttons non-draggable without a second declaration. */
   -webkit-app-region: initial !important;
   z-index: 1000;
   display: flex;
