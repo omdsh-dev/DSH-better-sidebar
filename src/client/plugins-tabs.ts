@@ -67,7 +67,7 @@ export const builtinTabPlugins: readonly PluginEntry[] = [
   {
     id: 'dsh-dev-git-graph',
     name: 'dsh-dev-git-graph 提交图',
-    url: 'https://github.com/kp-z/dsh-dev-git-graph',
+    url: 'https://github.com/kp-z/dsh-plugins',
     description: () => t('pluginDevGitGraphDesc'),
     // Optional peer of dsh-better-sidebar (native tab + DiffTab reuse when
     // present, overlay fallback when not); published on npm.
