@@ -356,11 +356,6 @@ export function registerQuoteSource(ctx: Context): () => void {
   }
 }
 
-/** Whether this module instance currently owns a registered quote source. */
-export function quoteSourceReady(): boolean {
-  return sourceReady
-}
-
 // ── Insert (popup commit) ───────────────────────────────────────────────────
 
 /**

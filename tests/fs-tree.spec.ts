@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve, sep } from 'node:path'
-import { compareEntries, isWithin, invalidateDirectoryCache, listDirectory, parentOf, requireAbsolute, rootLabel } from '../src/fs-tree.ts'
+import { compareEntries, invalidateDirectoryCache, listDirectory, parentOf, requireAbsolute, rootLabel } from '../src/fs-tree.ts'
 import { isWin32 } from './platform.ts'
 import { removeTree } from './temp-tree.ts'
 
@@ -72,31 +72,6 @@ describe('fs-tree', () => {
     it('rejects backslash UNC paths (not absolute on POSIX)', () => {
       expect(() => requireAbsolute('\\\\server\\share\\proj')).toThrow(/not an absolute path/)
     })
-  })
-
-  it('isWithin tolerates separators and (on win32) letter case', () => {
-    expect(isWithin('/work/proj', '/work/proj/src/a.ts')).toBe(true)
-    expect(isWithin('/work/proj', '/work/proj')).toBe(true)
-    expect(isWithin('/work/proj', '/work/proj2/a.ts')).toBe(false)
-    expect(isWithin('/work/proj', '/other/a.ts')).toBe(false)
-    // Mixed separators normalize on every platform.
-    expect(isWithin('C:\\Users\\me', 'C:/Users/me/src/a.ts')).toBe(true)
-    // Case sensitivity follows the platform's filesystem semantics (the
-    // platform parameter makes both branches assertable on any host).
-    expect(isWithin('C:\\Users\\Me', 'c:/users/me/file.png', 'win32')).toBe(true)
-    expect(isWithin('/Users/Me', '/users/me/file.png', 'win32')).toBe(true)
-    expect(isWithin('/Users/Me', '/users/me/file.png', 'linux')).toBe(false)
-    expect(isWithin('/Users/Me', '/users/me/file.png', 'darwin')).toBe(false)
-    // Windows drive-root containment.
-    expect(isWithin('C:\\', 'C:\\Users\\me\\a.png', 'win32')).toBe(true)
-    expect(isWithin('c:\\users', 'C:/USERS/me/b.png', 'win32')).toBe(true)
-    // UNC network-share containment: the '//' share prefix must not defeat
-    // the prefix test, and a sibling share must stay outside. The platform
-    // parameter is injected, so these win32-semantics assertions run on
-    // every host without any platform guard.
-    expect(isWithin('\\\\server\\share\\proj', '\\\\server\\share\\proj\\src\\a.ts', 'win32')).toBe(true)
-    expect(isWithin('\\\\server\\share\\proj', '\\\\server\\share\\proj2\\a.ts', 'win32')).toBe(false)
-    expect(isWithin('\\\\server\\share\\proj', '\\\\other\\share\\a.ts', 'win32')).toBe(false)
   })
 })
 

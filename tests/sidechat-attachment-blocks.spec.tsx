@@ -9,7 +9,7 @@
  *
  * Why this spec exists: a side turn that hands the model a screenshot, or whose
  * tool result carries one, shows NOTHING here. The mapping keeps only `text`
- * blocks (`sidechat-transcript.ts` `blockText` / `resultTextOf` / the assistant
+ * blocks (`sidechat-transcript.ts` `joinedText` / `resultTextOf` / the assistant
  * `flatMap`), so the image the reader attached and the image a tool produced
  * both vanish — the transcript claims a text-only conversation. A `file` block
  * disappears the same way, leaving no trace that the model was given a

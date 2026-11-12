@@ -66,7 +66,7 @@ describe('decodeHtmlUrl', () => {
   it.skipIf(!isWin32)('decoded drive paths resolve back verbatim on win32', () => {
     // The host runs requireAbsolute() over the decoded path: with the old
     // '/C:/...' form node's resolve() produced 'C:\C:\Users\...' (drive
-    // doubled) on Windows and the isWithin(cwd) fence rejected every drive
+    // doubled) on Windows and the old workspace fence rejected every drive
     // path. The slash-free form must resolve back to the original path.
     expect(resolve('C:/Users/me/a.html')).toBe('C:\\Users\\me\\a.html')
   })
@@ -132,10 +132,10 @@ describe('decodeHtmlUrl', () => {
     })
   })
 
-  it('keeps encoded traversal segments for the isWithin fence to bound', () => {
+  it('keeps encoded traversal segments for the host resolver to collapse', () => {
     // The decoder is not a security boundary by itself: an encoded `..`
-    // decodes to `..` and the HOST refuses it via requireAbsolute +
-    // isWithin(cwd) (the decoded path resolves outside the cwd).
+    // decodes to `..`; the host's lexical resolveTarget() collapses it (the
+    // old workspace containment guard was removed).
     const result = decodeHtmlUrl('/sidebar/html/s/Users/me/../../etc/passwd')
     expect(result.ok).toBe(true)
     if (result.ok) expect(result.ref.path).toBe('/Users/me/../../etc/passwd')

@@ -95,7 +95,6 @@ export interface SidebarState {
   bottomSplits: SplitNode
 }
 
-export const TAB_MAX_WIDTH = 160
 /** Bottom panel geometry contract (the upper bound is the viewport, enforced
  *  by {@link setBottomHeight}). */
 export const BOTTOM_MIN = 120
