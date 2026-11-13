@@ -4,6 +4,11 @@
 >
 > 📝 The Chinese [CHANGELOG](./CHANGELOG.md) is the authoritative, item-by-item record; this file carries the English summaries and has historically lagged behind it. Where the two disagree, the Chinese one is current.
 
+### Unreleased
+
+- 🐞 **A `[label]: destination` line inside a Markdown code block is no longer hoisted to the end of the document as a reference definition**: the preview used to match reference definitions line by line across every markdown segment, so an ordinary line inside a fenced block that merely demonstrates a PowerShell `[Type]::Method()` call, a regex, or a YAML snippet was taken for a real definition - it disappeared from the block and reappeared at the end of the document. The scan now runs over the same code-region mask the image and link rewriters share and restores each matched line, so code regions can no longer define anything.
+  - 🧪 `tests/markdown-html.spec.ts` (a fenced code block; a tilde fence plus an unclosed fence).
+
 ### v0.32.1
 
 - 🧩 **DSH 0.2.2-rc.2 support**: the plugin baseline moves to the newest 0.2.2 RC and follows that host's client contract and team service.
