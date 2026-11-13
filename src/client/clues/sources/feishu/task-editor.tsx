@@ -33,7 +33,7 @@ import css from './feishu.module.css'
 import type { FeishuClientLabels } from './labels.ts'
 import { appDate, appDateTime } from './time.ts'
 import { t } from '../../../locales.ts'
-import { ActionButton, Checkbox, TextArea, TextInput } from '../../../ui/index.ts'
+import { ActionButton, ActionFooter, Checkbox, Field, TextArea, TextInput } from '../../../ui/index.ts'
 
 /** Props of {@link FeishuTaskEditor}. */
 export interface FeishuTaskEditorProps extends ClueFormatRendererProps {
@@ -189,8 +189,7 @@ function TimeField(props: {
   }, [time])
   if (time === null) {
     return (
-      <div className={css.field} data-feishu-task-field={field}>
-        <span className={css.fieldLabel}>{label}</span>
+      <Field label={label} data-feishu-task-field={field}>
         <button
           type="button"
           className={css.linkButton}
@@ -201,14 +200,16 @@ function TimeField(props: {
         >
           {labels.setTime}
         </button>
-      </div>
+      </Field>
     )
   }
   const shownError = error ?? clearError
   const errorId = `${id}-error`
   return (
-    <div className={css.field} data-feishu-task-field={field}>
-      <label className={css.fieldLabel} htmlFor={id}>{label}</label>
+    <Field label={label} htmlFor={id} data-feishu-task-field={field}
+      error={shownError === undefined ? undefined : (
+        <span id={errorId} data-feishu-task-error={field} data-feishu-task-time-error={field}>{shownError}</span>
+      )}>
       <div className={css.timeRow}>
         <TextInput
           ref={inputRef}
@@ -245,18 +246,7 @@ function TimeField(props: {
           {labels.allDay}
         </label>
       </div>
-      {shownError !== undefined && (
-        <p
-          className={css.error}
-          id={errorId}
-          data-feishu-task-error={field}
-          data-feishu-task-time-error={field}
-          role="alert"
-        >
-          {shownError}
-        </p>
-      )}
-    </div>
+    </Field>
   )
 }
 
@@ -331,8 +321,10 @@ export function FeishuTaskEditor(props: FeishuTaskEditorProps): ReactNode {
         </div>
       )}
 
-      <div className={css.field}>
-        <label className={css.fieldLabel} htmlFor={idOf('title')}>{labels.title}</label>
+      <Field label={labels.title} htmlFor={idOf('title')}
+        error={errorOf('title') === undefined ? undefined : (
+          <span id={errorIdOf('title')} data-feishu-task-error="title">{errorOf('title')}</span>
+        )}>
         <TextInput
           id={idOf('title')}
           className={css.input}
@@ -344,15 +336,9 @@ export function FeishuTaskEditor(props: FeishuTaskEditorProps): ReactNode {
           aria-describedby={errorOf('title') === undefined ? undefined : errorIdOf('title')}
           onChange={(event) => { emit({ title: event.target.value }) }}
         />
-        {errorOf('title') !== undefined && (
-          <p className={css.error} id={errorIdOf('title')} data-feishu-task-error="title" role="alert">
-            {errorOf('title')}
-          </p>
-        )}
-      </div>
+      </Field>
 
-      <div className={css.field}>
-        <label className={css.fieldLabel} htmlFor={idOf('description')}>{labels.description}</label>
+      <Field label={labels.description} htmlFor={idOf('description')}>
         <TextArea
           id={idOf('description')}
           className={css.textarea}
@@ -362,7 +348,7 @@ export function FeishuTaskEditor(props: FeishuTaskEditorProps): ReactNode {
           rows={4}
           onChange={(event) => { emit({ description: event.target.value }) }}
         />
-      </div>
+      </Field>
 
       <TimeField
         id={idOf('start')}
@@ -397,7 +383,7 @@ export function FeishuTaskEditor(props: FeishuTaskEditorProps): ReactNode {
       </label>
 
       {props.onSave !== undefined && props.embedded !== true && (
-        <div className={css.actions}>
+        <ActionFooter end={
           <ActionButton
             variant="primary"
             busy={props.saving}
@@ -407,7 +393,7 @@ export function FeishuTaskEditor(props: FeishuTaskEditorProps): ReactNode {
           >
             {props.saving ? labels.saving : labels.save}
           </ActionButton>
-        </div>
+        } />
       )}
     </form>
   )

@@ -74,7 +74,9 @@ import { ResourceFilters } from '../resource-filters.tsx'
 import { SourceReadiness } from '../sources/readiness.tsx'
 import { SelectMenu } from '../../ui/SelectMenu.tsx'
 import { LoadingIndicator } from '../../ui/LoadingIndicator.tsx'
-import { ActionButton, Checkbox, IconButton, Menu, Notice, TextInput } from '../../ui/index.ts'
+import {
+  ActionButton, ActionFooter, Checkbox, EmptyState, ErrorBlock, IconButton, Menu, Notice, TextInput,
+} from '../../ui/index.ts'
 import { useScrollLoad } from '../../ui/use-scroll-load.ts'
 import { t } from '../../locales.ts'
 import type { ClueDetailTarget } from './detail.tsx'
@@ -977,20 +979,17 @@ export function PackManagementPage(
         {error !== null && <Notice kind="error">{error}</Notice>}
         {saveError !== null && <Notice kind="error">{saveError}</Notice>}
         {conflict && (
-          <div className={css.conflict} role="alert">
-            <span>{t('cluePackConflict')}</span>
-            <button type="button" className={css.action} onClick={() => {
-              // A CAS conflict means the pack library (and its members'
-              // titles/bindings) changed elsewhere; refresh those families,
-              // not the whole activation cache.
-              invalidateClueRequests(workspaceId, [
-                'clues.clues',
-                'clues.packs.list',
-                'clues.bindings.list',
-              ])
-              void load()
-            }}>{t('retry')}</button>
-          </div>
+          <ErrorBlock message={t('cluePackConflict')} retryLabel={t('retry')} onRetry={() => {
+            // A CAS conflict means the pack library (and its members'
+            // titles/bindings) changed elsewhere; refresh those families,
+            // not the whole activation cache.
+            invalidateClueRequests(workspaceId, [
+              'clues.clues',
+              'clues.packs.list',
+              'clues.bindings.list',
+            ])
+            void load()
+          }} />
         )}
 
         <div className={css.sectionHead}>
@@ -1019,11 +1018,11 @@ export function PackManagementPage(
               activeId={addSourceId ?? ''}
               onChange={pickSource}
             />
-            {enabledSources.length === 0 && <div className={css.status}>{t('clueBrowserAllDisabled')}</div>}
+            {enabledSources.length === 0 && <EmptyState title={t('clueBrowserAllDisabled')} />}
 
 
             {addSourceId === null ? (
-              <div className={css.status}>{t('cluePackPickSource')}</div>
+              <EmptyState title={t('cluePackPickSource')} />
             ) : (
               <>
                 <div className={css.scopeBar}>
@@ -1112,13 +1111,8 @@ export function PackManagementPage(
                   windows={props.windows} visible={addOpen} onReady={() => { if (addSourceId !== null) void loadAdd(addSourceId, addView) }} />}
 
                 {addNeedsScope !== null && (
-                  <div className={css.stateLine} data-add-state="needs-scope">
-                    <span>
-                      {addNeedsScope === 'search'
-                        ? t('clueBrowserSearchScopeNeeded')
-                        : t('clueBrowserScopeNeeded')}
-                    </span>
-                  </div>
+                  <EmptyState data-add-state="needs-scope"
+                    title={addNeedsScope === 'search' ? t('clueBrowserSearchScopeNeeded') : t('clueBrowserScopeNeeded')} />
                 )}
                 {addView.kind === 'search'
                   && addSourceId === BUILTIN_SOURCE_IDS.feishuDocs
@@ -1128,11 +1122,9 @@ export function PackManagementPage(
                   </div>
                 )}
                 {addLoading && <LoadingIndicator />}
-                {addError !== null && <div className={css.error} role="alert">{addError}</div>}
+                {addError !== null && <ErrorBlock message={addError} />}
                 {!addLoading && addError === null && addNeedsScope === null && addCandidates.length === 0 && (
-                  <div className={css.status}>
-                    {addView.kind === 'search' ? t('clueBrowserNoResults') : t('clueBrowserEmpty')}
-                  </div>
+                  <EmptyState title={addView.kind === 'search' ? t('clueBrowserNoResults') : t('clueBrowserEmpty')} />
                 )}
                 <div className={css.addScroll} data-clue-add-scroll>
                   <ul className={css.addList}>
@@ -1166,21 +1158,16 @@ export function PackManagementPage(
                   </ul>
                   {addMoreLoading && <LoadingIndicator inline />}
                   {addMoreError !== null && (
-                    <div className={css.error} data-clue-add-more-error role="alert">
-                      <span>{addMoreError}</span>
-                      <button type="button" className={css.action} onClick={() => {
-                        // Retry only the paged resource reads; shelves, pins and
-                        // runtime observations are unrelated to this failure.
-                        invalidateClueRequests(workspaceId, [
-                          'clues.list',
-                          'clues.search',
-                          'clues.resolve',
-                        ])
-                        loadMoreAdd()
-                      }}>
-                        {t('retry')}
-                      </button>
-                    </div>
+                    <ErrorBlock data-clue-add-more-error message={addMoreError} retryLabel={t('retry')} onRetry={() => {
+                      // Retry only the paged resource reads; shelves, pins and
+                      // runtime observations are unrelated to this failure.
+                      invalidateClueRequests(workspaceId, [
+                        'clues.list',
+                        'clues.search',
+                        'clues.resolve',
+                      ])
+                      loadMoreAdd()
+                    }} />
                   )}
                   <div ref={addSentinelRef} data-clue-add-sentinel aria-hidden="true" />
                 </div>
@@ -1191,7 +1178,7 @@ export function PackManagementPage(
         ) : (
           <div className={css.body}>
             {members.length === 0
-              ? <div className={css.status}>{t('cluePackNoMembers')}</div>
+              ? <EmptyState title={t('cluePackNoMembers')} />
               : (
                 <ul className={css.memberList}>
                   {members.map(row => (
@@ -1239,16 +1226,8 @@ export function PackManagementPage(
               <summary className={css.sectionTitle}>{t('cluePackBindingHeading')}</summary>
               {bindingsError
                 ? (
-                  <div className={css.error} role="alert">
-                    <span>{t('clueStateRequestFailed')}</span>
-                    <button
-                      type="button"
-                      className={css.action}
-                      onClick={() => { setBindingsAttempt(value => value + 1) }}
-                    >
-                      {t('retry')}
-                    </button>
-                  </div>
+                  <ErrorBlock message={t('clueStateRequestFailed')} retryLabel={t('retry')}
+                    onRetry={() => { setBindingsAttempt(value => value + 1) }} />
                 )
                 : bound
                 ? (
@@ -1292,32 +1271,26 @@ export function PackManagementPage(
       </div>
 
               {addOpen && addSelected.size > 0 && (
-                <div className={css.foot} data-clue-pack-add-footer>
-                  <span className={css.status} role="status">
-                    {t('clueBrowserSelected', { n: addSelected.size })}
-                  </span>
-                  <ActionButton variant="primary" busy={saving} onClick={() => { void addMembers() }}>
+                <ActionFooter bleed data-clue-pack-add-footer
+                  start={t('clueBrowserSelected', { n: addSelected.size })}
+                  end={<ActionButton variant="primary" busy={saving} onClick={() => { void addMembers() }}>
                     {t('cluePackAddSelected')}
-                  </ActionButton>
-                </div>
+                  </ActionButton>} />
               )}
 
       {!addOpen && (
-        <div className={css.foot} data-clue-pack-footer>
-          <span className={css.status} role="status" data-clue-pack-save-status>
-            {pendingName ? t('unsaved') : nameSaved ? t('saved') : null}
-          </span>
-          {pendingName ? (
+        <ActionFooter bleed data-clue-pack-footer
+          start={<span data-clue-pack-save-status>{pendingName ? t('unsaved') : nameSaved ? t('saved') : null}</span>}
+          end={pendingName ? (
             <>
-              <button type="button" className={css.action} disabled={saving} onClick={discardDraft}>{t('cancel')}</button>
+              <ActionButton disabled={saving} onClick={discardDraft}>{t('cancel')}</ActionButton>
               <ActionButton variant="primary" busy={saving} disabled={name.trim() === ''}
                 onClick={() => { void saveName() }}>{t('save')}</ActionButton>
             </>
           ) : (
-            <button type="button" className={css.primary} disabled={saving || loading || error !== null}
-              onClick={() => { props.onInsertPack(pack) }}>{t('cluePackInsert')}</button>
-          )}
-        </div>
+            <ActionButton variant="primary" disabled={saving || loading || error !== null}
+              onClick={() => { props.onInsertPack(pack) }}>{t('cluePackInsert')}</ActionButton>
+          )} />
       )}
 
       <Menu

@@ -60,28 +60,6 @@
   outline: 2px solid var(--dsw-alias-brand-primary);
   outline-offset: 1px;
 }
-.status {
-  color: var(--dsw-alias-label-tertiary);
-  font-size: 12px;
-  line-height: 18px;
-  margin: 0;
-  overflow-wrap: anywhere;
-}
-.error,
-.conflict {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--ds-sidebar-space-2);
-  padding: 6px 8px;
-  border: 1px solid var(--dsw-alias-state-error-primary);
-  border-radius: var(--ds-sidebar-radius);
-  color: var(--dsw-alias-label-secondary);
-  overflow-wrap: anywhere;
-}
-.conflict {
-  border-color: var(--dsw-alias-state-warn-primary);
-}
 .sectionHead {
   display: flex;
   flex-wrap: wrap;
@@ -191,17 +169,6 @@
   background: var(--dsw-alias-bg-base);
   color: var(--dsw-alias-label-primary);
 }
-.foot {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--ds-sidebar-space-2);
-  justify-content: flex-end;
-  flex: none;
-  margin: 0 calc(-1 * var(--ds-sidebar-gutter)) calc(-1 * var(--ds-sidebar-gutter));
-  padding: var(--ds-sidebar-space-3) var(--ds-sidebar-gutter);
-  border-top: 1px solid var(--dsw-alias-border-l1);
-}
 .scopeBar {
   display: flex;
   flex-wrap: wrap;
@@ -237,15 +204,6 @@
   color: var(--dsw-alias-state-error-primary);
   font-size: 11px;
   line-height: 16px;
-}
-.stateLine {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--ds-sidebar-space-2);
-  padding: var(--ds-sidebar-space-2) 0;
-  color: var(--dsw-alias-label-tertiary);
-  overflow-wrap: anywhere;
 }
 .queryRow {
   display: flex;
@@ -311,7 +269,5 @@
 .binding > summary { cursor: pointer; }
 .binding > :not(summary) { margin-top: 8px; }
 .binding > summary:focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary); outline-offset: 2px; }
-
-.foot > .status { margin-inline-end: auto; }
 
 .menuAnchor { position: absolute; }

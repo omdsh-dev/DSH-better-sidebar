@@ -266,7 +266,7 @@ export function ErrorBlock({ message, detail, retryLabel, onRetry, busy, classNa
 }
 
 /** Props of {@link Field}. */
-export interface FieldProps {
+export interface FieldProps extends DataAttributes {
   readonly label: ReactNode
   readonly description?: ReactNode
   readonly error?: ReactNode
@@ -284,9 +284,9 @@ export interface FieldProps {
  * three typographic rungs. The label is a real `<label>` when `htmlFor` is
  * given, so clicking it focuses the control.
  */
-export function Field({ label, description, error, htmlFor, layout = 'stacked', children, className }: FieldProps): ReactNode {
+export function Field({ label, description, error, htmlFor, layout = 'stacked', children, className, ...dataProps }: FieldProps): ReactNode {
   return (
-    <div className={clsx(css.field, layout === 'inline' && css.fieldInline, className)}>
+    <div {...dataProps} className={clsx(css.field, layout === 'inline' && css.fieldInline, className)}>
       {htmlFor === undefined
         ? <span className={css.fieldLabel}>{label}</span>
         : <label className={css.fieldLabel} htmlFor={htmlFor}>{label}</label>}
@@ -396,7 +396,7 @@ export function StatusLine({ text, tone, icon, meta, action, role, plain, classN
 }
 
 /** Props of {@link ActionFooter}. */
-export interface ActionFooterProps {
+export interface ActionFooterProps extends DataAttributes {
   /** Leading content: a count, a hint, the progress copy. */
   readonly start?: ReactNode
   /** Trailing actions, in reading order. */
@@ -412,9 +412,9 @@ export interface ActionFooterProps {
  * Its separator is the page's ONE horizontal hairline at that edge, so callers
  * pass actions and never re-declare the border.
  */
-export function ActionFooter({ start, end, bleed, className }: ActionFooterProps): ReactNode {
+export function ActionFooter({ start, end, bleed, className, ...dataProps }: ActionFooterProps): ReactNode {
   return (
-    <div className={clsx(css.actionFooter, bleed === true && css.actionFooterBleed, className)}>
+    <div {...dataProps} className={clsx(css.actionFooter, bleed === true && css.actionFooterBleed, className)}>
       {start !== undefined && <span className={css.actionFooterStart} role="status">{start}</span>}
       {end !== undefined && <span className={css.actionFooterEnd}>{end}</span>}
     </div>

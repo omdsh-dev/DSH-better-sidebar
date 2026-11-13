@@ -29,7 +29,7 @@ import {
 import { TextDocumentContent } from '../../../windows/format-content.tsx'
 import { MdToc } from '../../../md-toc.tsx'
 import { t } from '../../../locales.ts'
-import { ActionButton, TextArea, TextInput } from '../../../ui/index.ts'
+import { ActionButton, ActionFooter, Field, TextArea, TextInput } from '../../../ui/index.ts'
 import css from './feishu.module.css'
 import type { FeishuClientLabels } from './labels.ts'
 import { appDateTime } from './time.ts'
@@ -388,8 +388,7 @@ function EditBlock(props: {
   const { block, labels, onChange, disabled, describedBy } = props
   const label = `${labels.blocks}: ${block.tag}`
   return (
-    <div className={css.field} data-feishu-docs-block={block.id} data-feishu-docs-block-tag={block.tag}>
-      <span className={css.fieldLabel}>{block.tag}</span>
+    <Field label={block.tag} data-feishu-docs-block={block.id} data-feishu-docs-block-tag={block.tag}>
       <TextArea
         className={css.textarea}
         value={block.text}
@@ -401,7 +400,7 @@ function EditBlock(props: {
         data-feishu-docs-block-input={block.id}
         onChange={(event) => { onChange(event.target.value) }}
       />
-    </div>
+    </Field>
   )
 }
 
@@ -454,41 +453,30 @@ function EditPreview(props: {
         </div>
       )}
 
-      <div className={css.field}>
-        <label className={css.fieldLabel} htmlFor={`${prefix}-title`}>{labels.title}</label>
+      <Field label={labels.title} {...(data.titleEditable ? { htmlFor: `${prefix}-title` } : {})}
+        error={titleInvalid
+          ? <span id={`${prefix}-title-error`} data-feishu-docs-error="title">{labels.docsTitleRequired}</span>
+          : undefined}>
         {data.titleEditable ? (
-          <>
-            <TextInput
-              id={`${prefix}-title`}
-              className={css.input}
-              type="text"
-              value={data.title}
-              disabled={saving}
-              data-feishu-docs-title=""
-              aria-invalid={titleInvalid}
-              aria-describedby={titleInvalid ? `${prefix}-title-error` : undefined}
-              onChange={(event) => { emit({ ...data, title: event.target.value }) }}
-            />
-            {titleInvalid && (
-              <p
-                className={css.error}
-                id={`${prefix}-title-error`}
-                data-feishu-docs-error="title"
-                role="alert"
-              >
-                {labels.docsTitleRequired}
-              </p>
-            )}
-          </>
+          <TextInput
+            id={`${prefix}-title`}
+            className={css.input}
+            type="text"
+            value={data.title}
+            disabled={saving}
+            data-feishu-docs-title=""
+            aria-invalid={titleInvalid}
+            aria-describedby={titleInvalid ? `${prefix}-title-error` : undefined}
+            onChange={(event) => { emit({ ...data, title: event.target.value }) }}
+          />
         ) : (
           <div className={css.hint} data-feishu-docs-title-read-only="">
             {data.title} — {labels.blockReadOnly}
           </div>
         )}
-      </div>
+      </Field>
 
-      <div className={css.field}>
-        <span className={css.fieldLabel}>{labels.blocks}</span>
+      <Field label={labels.blocks}>
         {data.blocks.length === 0 && data.readOnlyBlocks.length === 0 && (
           <p className={css.hint} data-feishu-docs-no-blocks="">{labels.noBlocks}</p>
         )}
@@ -507,7 +495,7 @@ function EditPreview(props: {
             labels={labels}
           />
         )))}
-      </div>
+      </Field>
 
       {embedded !== true && (
         <>
@@ -516,7 +504,7 @@ function EditPreview(props: {
         </>
       )}
       {onSave !== undefined && embedded !== true && (
-        <div className={css.actions}>
+        <ActionFooter end={
           <ActionButton
             variant="primary"
             busy={saving}
@@ -526,7 +514,7 @@ function EditPreview(props: {
           >
             {saving ? labels.saving : labels.save}
           </ActionButton>
-        </div>
+        } />
       )}
     </section>
   )

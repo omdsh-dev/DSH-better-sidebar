@@ -448,10 +448,11 @@
   font: var(--dsw-font-xxxs-11);
 }
 
+/* The window recipe: edge-to-edge hairline, gutter-wide inset, 12px band. */
 .actionFooterBleed {
   flex: none;
   margin: auto calc(-1 * var(--ds-sidebar-gutter)) calc(-1 * var(--ds-sidebar-gutter));
-  padding-inline: var(--ds-sidebar-gutter);
+  padding: var(--ds-sidebar-space-3) var(--ds-sidebar-gutter);
 }
 
 .actionFooterStart {

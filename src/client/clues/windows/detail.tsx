@@ -36,7 +36,8 @@
 import { createElement, useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { ReactNode } from 'react'
 import { IconRefreshOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
-import { IconButton } from '../../ui/kit.tsx'
+import { ActionButton, IconButton } from '../../ui/kit.tsx'
+import { ErrorBlock } from '../../ui/patterns.tsx'
 import type { WindowDocumentContent, WindowHandle } from '../../windows/types.ts'
 import type { BetterSidebarWindowsClientFace } from '../../windows/types.ts'
 import type {
@@ -273,28 +274,20 @@ function DetailFailure(props: {
 }): ReactNode {
   return createElement(
     'div',
-    { className: css.failure, role: 'alert' },
-    createElement('div', { className: css.failureTitle }, t('clueDetailFailed')),
-    createElement('div', { className: css.failureBody }, props.message),
-    createElement(
-      'div',
-      { className: css.failureActions },
-      props.onRetry === undefined
-        ? null
-        : createElement('button', {
-            type: 'button',
-            className: css.action,
-            onClick: props.onRetry,
-          }, t('retry')),
-      props.url === undefined
-        ? null
-        : createElement('a', {
-            className: css.action,
-            href: props.url,
-            target: '_blank',
-            rel: 'noreferrer',
-          }, t('clueDetailOpenSource')),
-    ),
+    { className: css.failure },
+    createElement(ErrorBlock, {
+      message: t('clueDetailFailed'),
+      detail: props.message,
+      ...(props.onRetry === undefined ? {} : { retryLabel: t('retry'), onRetry: props.onRetry }),
+    }),
+    props.url === undefined
+      ? null
+      : createElement('a', {
+          className: css.action,
+          href: props.url,
+          target: '_blank',
+          rel: 'noreferrer',
+        }, t('clueDetailOpenSource')),
   )
 }
 
@@ -1016,10 +1009,8 @@ function createDetailController(options: ClueDetailWindowOptions): DetailControl
           !guard.dirty
             ? null
             : createElement(
-                'button',
+                ActionButton,
                 {
-                  type: 'button',
-                  className: css.action,
                   disabled: currentEdit?.saving === true,
                   onClick: () => {
                     // Explicit discard: the ONLY path that drops the draft.
@@ -1032,8 +1023,8 @@ function createDetailController(options: ClueDetailWindowOptions): DetailControl
               ),
           currentEdit !== null && (state.conflict || state.authBlocked)
             ? createElement(
-                'button',
-                { type: 'button', className: css.action, 'data-clue-detail-reread': '', onClick: () => { void reloadEdit() } },
+                ActionButton,
+                { 'data-clue-detail-reread': '', onClick: () => { void reloadEdit() } },
                 t('clueDetailReload'),
               )
             : null,
@@ -1044,10 +1035,9 @@ function createDetailController(options: ClueDetailWindowOptions): DetailControl
           || state.authBlocked
             ? null
             : createElement(
-                'button',
+                ActionButton,
                 {
-                  type: 'button',
-                  className: `${css.action} ${css.primary}`,
+                  variant: 'primary',
                   'data-clue-detail-save': '',
                   disabled: currentEdit.saving || !formatEditable,
                   onClick: () => { void save() },
@@ -1059,10 +1049,8 @@ function createDetailController(options: ClueDetailWindowOptions): DetailControl
           options.onAddToPack === undefined
             ? null
             : createElement(
-                'button',
+                ActionButton,
                 {
-                  type: 'button',
-                  className: css.action,
                   'data-clue-detail-add-to-pack': '',
                   disabled: referenceBusy || (target.clueId === undefined && state.read === null),
                   onClick: () => {
@@ -1083,10 +1071,9 @@ function createDetailController(options: ClueDetailWindowOptions): DetailControl
           options.onInsertClue === undefined
             ? null
             : createElement(
-                'button',
+                ActionButton,
                 {
-                  type: 'button',
-                  className: currentEdit?.dirty === true && formatEditable ? css.action : `${css.action} ${css.primary}`,
+                  variant: currentEdit?.dirty === true && formatEditable ? 'outline' : 'primary',
                   'data-clue-detail-insert': '',
                   disabled: referenceBusy || (target.clueId === undefined && state.read === null),
                   onClick: () => { void insertReference() },

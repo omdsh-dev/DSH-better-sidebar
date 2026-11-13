@@ -47,13 +47,6 @@
   overflow-wrap: anywhere;
 }
 
-.error {
-  margin: 0;
-  color: var(--dsw-alias-state-error-primary);
-  font-size: 12px;
-  overflow-wrap: anywhere;
-}
-
 .pre {
   max-height: 60vh;
   margin: 0;
@@ -94,18 +87,6 @@
   overflow-wrap: anywhere;
 }
 
-.field {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
-}
-
-.fieldLabel {
-  color: var(--dsw-alias-label-secondary);
-  font-size: 12px;
-}
-
 .input,
 .textarea {
   width: 100%;
@@ -137,26 +118,9 @@
   align-self: flex-start;
   text-decoration: none;
 }
-
-.actions {
-  display: flex;
-  gap: 8px;
-  justify-content: flex-end;
-}
-
-.saveButton {
-  composes: buttonPrimary from "../../../ui/kit.module.css";
-}
-
-.saveButton:disabled {
-  cursor: default;
-  opacity: 0.4;
-}
-
-.saveButton:hover:not(:disabled) { background: var(--dsw-alias-button-primary-hover); }
 .linkButton:hover { text-decoration: underline; }
 .textarea { max-height: 360px; overflow: auto; }
-@media (pointer: coarse) { .saveButton, .linkButton, .input { min-height: 44px; } }
+@media (pointer: coarse) { .linkButton, .input { min-height: 44px; } }
 
 /* ── Readable document projection (S9 refresh) ─────────────────────────── */
 
