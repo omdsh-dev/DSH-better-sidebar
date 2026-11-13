@@ -24,7 +24,7 @@ import { FileTypeIcon, IconLinkOutlineRegular } from '@deepseek-ai/dsh-client-ui
 import { BUILTIN_SOURCE_IDS } from '../../../clues/types.ts'
 import { CluePackArtwork } from '../artwork.tsx'
 import { LoadingIndicator } from '../../ui/LoadingIndicator.tsx'
-import { ActionButton, ToggleSwitch } from '../../ui/index.ts'
+import { ActionButton, EmptyState, ErrorBlock, ToggleSwitch } from '../../ui/index.ts'
 import { t, type CopyKey } from '../../locales.ts'
 import {
   isCluePacksMentionEnabled,
@@ -211,21 +211,11 @@ export function ClueSourcesPanel(props: ClueSourcesPanelProps) {
     <div className={css.sources}>
 
       {error !== null && (
-        <div className={css.error} role="alert">
-          <span>{t('clueSourcesLoadFailed')} {error}</span>
-          <ActionButton variant="outline" type="button" className={css.smallButton} onClick={props.onReload}>
-            {t('retry')}
-          </ActionButton>
-        </div>
+        <ErrorBlock message={t('clueSourcesLoadFailed')} detail={error} retryLabel={t('retry')} onRetry={props.onReload} />
       )}
 
       {statusError !== null && (
-        <div className={css.error} role="alert">
-          <span>{t('clueStateRequestFailed')} {statusError}</span>
-          <ActionButton variant="outline" type="button" className={css.smallButton} onClick={props.onReload}>
-            {t('retry')}
-          </ActionButton>
-        </div>
+        <ErrorBlock message={t('clueStateRequestFailed')} detail={statusError} retryLabel={t('retry')} onRetry={props.onReload} />
       )}
 
       {loading && !catalogueLoaded ? (
@@ -245,7 +235,7 @@ export function ClueSourcesPanel(props: ClueSourcesPanelProps) {
             <LoadingIndicator className={css.loading} />
           ) : catalogueLoaded ? (
             sources.length === 0 && configuredOnly.length === 0
-              ? <div className={css.empty}>{t('clueSourcesEmpty')}</div>
+              ? <EmptyState title={t('clueSourcesEmpty')} />
               : (
                 <ul className={css.sourceList} aria-label={t('settingsGroupSources')}>
                   {sources.map(source => {

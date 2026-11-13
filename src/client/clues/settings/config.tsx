@@ -27,7 +27,7 @@ import { encode as encodeQr } from 'uqr'
 import { t, type CopyKey } from '../../locales.ts'
 import { clueRuntimeApi, type ClueRuntimeApi } from '../runtime-api.ts'
 import { LoadingIndicator } from '../../ui/LoadingIndicator.tsx'
-import { ActionButton, Checkbox, Notice, TextInput } from '../../ui/index.ts'
+import { ActionButton, Checkbox, FactRow, Notice, TextInput } from '../../ui/index.ts'
 import {
   publishClueStatuses,
   publishClueTask,
@@ -1205,35 +1205,19 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
                 {current?.manualPath !== undefined && <span className={css.disclosureMeta}>{t('clueDependencyManualPath')}</span>}
               </summary>
               <div className={css.advancedBody}>
-                <div className={css.configRow}>
-                  <span className={css.configLabel}>{t('clueDependencyActualPath')}</span>
-                  <span className={`${css.configValue} ${css.configMono}`}>
-                    {current?.executablePath ?? missingDependencyValue(current)}
-                  </span>
-                </div>
-                <div className={css.configRow}>
-                  <span className={css.configLabel}>{t('clueDependencyVersion')}</span>
-                  <span className={`${css.configValue} ${css.configMono}`}>
-                    {current?.version ?? missingDependencyValue(current)}
-                  </span>
-                </div>
+                <FactRow label={t('clueDependencyActualPath')} mono
+                  value={current?.executablePath ?? missingDependencyValue(current)} />
+                <FactRow label={t('clueDependencyVersion')} mono
+                  value={current?.version ?? missingDependencyValue(current)} />
                 {current !== undefined && (
-                  <div className={css.configRow}>
-                    <span className={css.configLabel}>{t('clueDependencyCompat')}</span>
-                    <span className={css.configValue}>
-                      {t('clueDependencyRequirement', {
-                        minimum: current.minimumVersion,
-                        recommended: current.recommendedVersion,
-                      })}
-                    </span>
-                  </div>
+                  <FactRow label={t('clueDependencyCompat')} value={t('clueDependencyRequirement', {
+                    minimum: current.minimumVersion,
+                    recommended: current.recommendedVersion,
+                  })} />
                 )}
                 {current?.manualPath !== undefined && (
-                  <div className={css.configRow}>
-                    <span className={css.configLabel}>{t('clueDependencyManualPath')}</span>
-                    <span className={`${css.configValue} ${css.configMono}`}>{current.manualPath}</span>
-                    <Action label={t('clueDependencyClearPath')} onClick={() => { void clearPath(dependencyId) }} />
-                  </div>
+                  <FactRow label={t('clueDependencyManualPath')} mono value={current.manualPath}
+                    action={<Action label={t('clueDependencyClearPath')} onClick={() => { void clearPath(dependencyId) }} />} />
                 )}
                 <div className={css.configInputRow}>
                   <TextInput
@@ -1280,70 +1264,39 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
               <>
                 <p className={css.configHint}>{t('clueDependencyInstallUnavailable')}</p>
                 {current.manualInstall !== undefined && (
-                  <div className={css.configRow}>
-                    <span className={css.configLabel}>{t('clueDependencyManualInstall')}</span>
-                    <span className={css.configValue}>
-                      {current.manualInstall.instructions}
-                      {current.manualInstall.url !== undefined && (
-                        <>
-                          {' '}
-                          <a className={css.authLink} href={current.manualInstall.url} target="_blank" rel="noreferrer">
-                            {current.manualInstall.url}
-                          </a>
-                        </>
-                      )}
-                    </span>
-                  </div>
+                  <FactRow label={t('clueDependencyManualInstall')} value={<>
+                    {current.manualInstall.instructions}
+                    {current.manualInstall.url !== undefined && (
+                      <>
+                        {' '}
+                        <a className={css.authLink} href={current.manualInstall.url} target="_blank" rel="noreferrer">
+                          {current.manualInstall.url}
+                        </a>
+                      </>
+                    )}
+                  </>} />
                 )}
               </>
             )}
             {current?.state === 'installing' && current.installation !== undefined && currentTask === undefined && (
-              <div className={css.configRow}>
-                <span className={css.configLabel}>{t('clueDependencyInstall')}</span>
-                <span className={css.configValue}>
-                  {current.installation.stage === undefined
-                    ? t('clueStateInstalling')
-                    : t(STAGE_COPY[current.installation.stage])}
-                </span>
-              </div>
+              <FactRow label={t('clueDependencyInstall')} value={current.installation.stage === undefined
+                ? t('clueStateInstalling')
+                : t(STAGE_COPY[current.installation.stage])} />
             )}
 
             {currentPlan !== undefined && (
               <div className={css.plan} data-clue-plan={currentPlan.planId}>
-                <div className={css.configRow}>
-                  <span className={css.configValue}>
-                    {t('clueDependencyPlanTitle', { name: currentPlan.name, version: currentPlan.version })}
-                  </span>
-                </div>
-                <div className={css.configRow}>
-                  <span className={css.configValue}>
-                    {t('clueDependencyPlanTarget', { path: currentPlan.targetDir })}
-                  </span>
-                </div>
+                <FactRow value={t('clueDependencyPlanTitle', { name: currentPlan.name, version: currentPlan.version })} />
+                <FactRow value={t('clueDependencyPlanTarget', { path: currentPlan.targetDir })} />
                 {/* S2 §6.1: confirm the exact asset being installed --
                     platform/arch, distribution source+kind, the PATH copy
                     that will be left untouched, and the plan's expiry. */}
-                <div className={css.configRow}>
-                  <span className={css.configLabel}>{t('clueDependencyPlanPlatform')}</span>
-                  <span className={`${css.configValue} ${css.configMono}`}>
-                    {currentPlan.platform} / {currentPlan.arch}
-                  </span>
-                </div>
-                <div className={css.configRow}>
-                  <span className={css.configLabel}>{t('clueDependencyPlanDistribution')}</span>
-                  <span className={css.configValue}>
-                    {currentPlan.distribution.source}
-                    {' · '}
-                    {t(DISTRIBUTION_COPY[currentPlan.distribution.kind])}
-                  </span>
-                </div>
-                <div className={css.configRow}>
-                  <span className={css.configLabel}>
-                    {t('clueDependencyPlanExpires', {
-                      time: new Date(currentPlan.expiresAt).toLocaleString(),
-                    })}
-                  </span>
-                </div>
+                <FactRow label={t('clueDependencyPlanPlatform')} mono value={`${currentPlan.platform} / ${currentPlan.arch}`} />
+                <FactRow label={t('clueDependencyPlanDistribution')}
+                  value={`${currentPlan.distribution.source} · ${t(DISTRIBUTION_COPY[currentPlan.distribution.kind])}`} />
+                <p className={css.configHint}>
+                  {t('clueDependencyPlanExpires', { time: new Date(currentPlan.expiresAt).toLocaleString() })}
+                </p>
                 {!currentPlan.installable && (
                   <p className={css.configHint}>
                     {t('clueDependencyInstallUnavailable')}
@@ -1366,25 +1319,20 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
                         </li>
                       ))}
                     </ul>
-                    <div className={css.configRow}>
-                      <span className={css.configLabel}>{t('clueDependencyPlanSystemInstall')}</span>
-                      <span className={css.configValue}>
-                        {currentPlan.systemInstall === undefined
-                          ? t('clueDependencyPlanSystemInstallNone')
-                          : (
-                            <>
-                              <span className={css.configMono}>{currentPlan.systemInstall.executablePath}</span>
-                              {currentPlan.systemInstall.version === undefined
-                                ? ''
-                                : ` · ${currentPlan.systemInstall.version}`}
-                              {' · '}
-                              {currentPlan.systemInstall.compatible
-                                ? t('clueDependencyPlanSystemInstallCompatible')
-                                : t('clueDependencyPlanSystemInstallIncompatible')}
-                            </>
-                          )}
-                      </span>
-                    </div>
+                    <FactRow label={t('clueDependencyPlanSystemInstall')} value={currentPlan.systemInstall === undefined
+                      ? t('clueDependencyPlanSystemInstallNone')
+                      : (
+                        <>
+                          <span className={css.configMono}>{currentPlan.systemInstall.executablePath}</span>
+                          {currentPlan.systemInstall.version === undefined
+                            ? ''
+                            : ` · ${currentPlan.systemInstall.version}`}
+                          {' · '}
+                          {currentPlan.systemInstall.compatible
+                            ? t('clueDependencyPlanSystemInstallCompatible')
+                            : t('clueDependencyPlanSystemInstallIncompatible')}
+                        </>
+                      )} />
                   </div>
                 </details>
                 <div className={css.configActions}>
@@ -1406,17 +1354,14 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
             )}
 
             {currentTask !== undefined && currentTask.state !== 'running' && (
-              <div className={css.configRow} data-clue-task={currentTask.taskId}>
-                <span className={css.configLabel}>{t('clueDependencyInstall')}</span>
-                <span className={css.configValue}>
-                  {currentTask.state === 'succeeded'
-                    ? t('tasksStateDone')
-                    : currentTask.state === 'cancelled'
-                      ? t('clueDependencyInstallCancelled')
-                      : t('clueDependencyInstallFailed')}
-                  {currentTask.error !== undefined && ` — ${currentTask.error.message}`}
-                </span>
-              </div>
+              <FactRow data-clue-task={currentTask.taskId} label={t('clueDependencyInstall')} value={<>
+                {currentTask.state === 'succeeded'
+                  ? t('tasksStateDone')
+                  : currentTask.state === 'cancelled'
+                    ? t('clueDependencyInstallCancelled')
+                    : t('clueDependencyInstallFailed')}
+                {currentTask.error !== undefined && ` — ${currentTask.error.message}`}
+              </>} />
             )}
 
             {currentTask !== undefined && currentTask.state === 'running' && currentTask.progress !== undefined && (
@@ -1457,47 +1402,29 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
         // The first explicit read is still in flight. "Not configured" is
         // a terminal verdict this page has not earned yet (the table's
         // `checked` rule, applied here too).
-        <div className={css.configRow}>
-          <span className={css.configLabel}>{t('clueConnectionAuthorization')}</span>
-          <span className={css.status} data-kind="unchecked">{t(CLUE_SOURCE_STATUS_COPY.unchecked)}</span>
-        </div>
+        <FactRow label={t('clueConnectionAuthorization')}
+          value={<span className={css.status} data-kind="unchecked">{t(CLUE_SOURCE_STATUS_COPY.unchecked)}</span>} />
       ) : connection === undefined ? (
         // A failed read is NOT "this source was never configured": the
         // distinction is the whole point of the status surface.
-        <div className={css.configRow}>
-          <span className={css.configLabel}>{t('clueConnectionAuthorization')}</span>
-          <span
-            className={css.status}
-            data-kind={connectionReadFailed ? 'request-failed' : 'not-configured'}
-          >
+        <FactRow label={t('clueConnectionAuthorization')} value={
+          <span className={css.status} data-kind={connectionReadFailed ? 'request-failed' : 'not-configured'}>
             {t(connectionReadFailed
               ? CLUE_SOURCE_STATUS_COPY['request-failed']
               : CLUE_SOURCE_STATUS_COPY['not-configured'])}
           </span>
-        </div>
+        } />
       ) : (
         <>
 
-          <div className={css.configRow} data-stale={connectionReadFailed ? 'true' : undefined}>
-            <span className={css.configLabel}>{t('clueConnectionAuthorization')}</span>
-            {connectionReadFailed ? (
-              // A failed re-read must mark the row itself, even when a
-              // previous projection is still on screen — the old "Ready"
-              // is not the current answer.
-              <span className={css.status} data-kind="request-failed">
-                {t(CLUE_SOURCE_STATUS_COPY['request-failed'])}
-              </span>
-            ) : (
-              <span className={css.configValue} data-authorization={connection.authorization}>
-                {t(CONNECTION_AUTHORIZATION_COPY[connection.authorization])}
-              </span>
-            )}
-          </div>
+          {/* A failed re-read marks the row itself, even when a previous
+              projection is still on screen: the old "Ready" is not the answer. */}
+          <FactRow data-stale={connectionReadFailed ? 'true' : undefined} label={t('clueConnectionAuthorization')}
+            value={connectionReadFailed
+              ? <span className={css.status} data-kind="request-failed">{t(CLUE_SOURCE_STATUS_COPY['request-failed'])}</span>
+              : <span data-authorization={connection.authorization}>{t(CONNECTION_AUTHORIZATION_COPY[connection.authorization])}</span>} />
           {connection.account !== undefined && (
-            <div className={css.configRow}>
-              <span className={css.configLabel}>{t('clueConnectionAccount')}</span>
-              <span className={css.configValue}>{connection.account}</span>
-            </div>
+            <FactRow label={t('clueConnectionAccount')} value={connection.account} />
           )}
           {connection.detail !== undefined && <p className={css.configHint}>{connection.detail}</p>}
           {connection.error !== undefined && <p className={css.configError} role="alert">{connection.error.message}</p>}
@@ -1568,25 +1495,14 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
           {connection.prompt !== undefined && (
             <div className={css.authPrompt} data-clue-auth-prompt="">
               {connection.prompt.verificationUrl !== undefined && (
-                <div className={css.configRow}>
-                  <span className={css.configLabel}>{t('clueConnectionUrl')}</span>
-                  <span className={css.configValue}>
-                    <a
-                      className={css.authLink}
-                      href={connection.prompt.verificationUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      {connection.prompt.verificationUrl}
-                    </a>
-                  </span>
-                </div>
+                <FactRow label={t('clueConnectionUrl')} value={
+                  <a className={css.authLink} href={connection.prompt.verificationUrl} target="_blank" rel="noreferrer">
+                    {connection.prompt.verificationUrl}
+                  </a>
+                } />
               )}
               {connection.prompt.userCode !== undefined && (
-                <div className={css.configRow}>
-                  <span className={css.configLabel}>{t('clueConnectionCode')}</span>
-                  <span className={`${css.configValue} ${css.configMono}`}>{connection.prompt.userCode}</span>
-                </div>
+                <FactRow label={t('clueConnectionCode')} mono value={connection.prompt.userCode} />
               )}
               {connection.prompt.qr !== undefined && (
                 <div className={css.qrBlock} data-clue-qr={connection.prompt.qr.uri}>
@@ -1601,17 +1517,12 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
                       <path d={qrPath} fill="currentColor" />
                     </svg>
                   )}
-                  <div className={css.configRow}>
-                    <span className={css.configLabel}>{t('clueConnectionQrPayload')}</span>
-                    <span className={`${css.configValue} ${css.configMono}`}>{connection.prompt.qr.uri}</span>
-                  </div>
+                  <FactRow label={t('clueConnectionQrPayload')} mono value={connection.prompt.qr.uri} />
                 </div>
               )}
-              <div className={css.configRow}>
-                <span className={css.configLabel}>{t('clueConnectionExpires', {
-                  time: new Date(connection.prompt.expiresAt).toLocaleString(),
-                })}</span>
-              </div>
+              <p className={css.configHint}>
+                {t('clueConnectionExpires', { time: new Date(connection.prompt.expiresAt).toLocaleString() })}
+              </p>
               {connection.prompt.instructions !== undefined && (
                 <p className={css.configHint}>{connection.prompt.instructions}</p>
               )}
@@ -1620,13 +1531,11 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
           <details className={css.advanced} data-clue-connection-details open={connection.configuration !== 'ready' || connectionReadFailed}>
             <summary className={css.advancedSummary}>{t('clueConnectionConfiguration')} · {t('windowReadOnly')}</summary>
             <div className={css.advancedBody}>
-                <div className={css.configRow} data-stale={connectionReadFailed ? 'true' : undefined}>
-                  <span className={css.configLabel}>{t('clueConnectionConfiguration')}</span>
-                  {connectionReadFailed ? (
-                    // The old projection is kept as LAST-KNOWN context, but it
-                    // is no longer the current answer: the row itself says the
-                    // read failed instead of presenting a stale "Ready".
-                    <span className={css.configValue}>
+                {/* The old projection stays as LAST-KNOWN context, but the row
+                    itself says the read failed instead of presenting a stale "Ready". */}
+                <FactRow data-stale={connectionReadFailed ? 'true' : undefined} label={t('clueConnectionConfiguration')}
+                  value={connectionReadFailed ? (
+                    <>
                       <span className={css.status} data-kind="request-failed">
                         {t(CLUE_SOURCE_STATUS_COPY['request-failed'])}
                       </span>
@@ -1634,13 +1543,10 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
                       <span className={css.configHint}>
                         {t('clueConnectionLastKnown')} {configurationCopy(connection.configuration)}
                       </span>
-                    </span>
+                    </>
                   ) : (
-                    <span className={css.configValue} data-configuration={connection.configuration}>
-                      {configurationCopy(connection.configuration)}
-                    </span>
-                  )}
-                </div>
+                    <span data-configuration={connection.configuration}>{configurationCopy(connection.configuration)}</span>
+                  )} />
             </div>
           </details>
         </>

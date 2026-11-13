@@ -21,44 +21,11 @@
   line-height: 20px;
 }
 
-.sourcesIntro {
-  margin: 0;
-  padding: 0;
-  font-size: 12px;
-  line-height: 18px;
-  color: var(--dsw-alias-label-tertiary);
-  overflow-wrap: anywhere;
-}
-
-.error {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: var(--ds-sidebar-space-2) var(--ds-sidebar-space-3);
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: var(--ds-sidebar-radius);
-  background: var(--dsw-alias-bg-layer-1);
-  font-size: 12px;
-  line-height: 18px;
-  color: var(--dsw-alias-label-secondary);
-  overflow-wrap: anywhere;
-}
-
 .loading {
   padding: var(--ds-sidebar-space-2) 0;
   font-size: 12px;
   line-height: 18px;
   color: var(--dsw-alias-label-tertiary);
-}
-
-.empty {
-  padding: var(--ds-sidebar-space-3) 0;
-  font-size: 12px;
-  line-height: 18px;
-  color: var(--dsw-alias-label-tertiary);
-  overflow-wrap: anywhere;
 }
 
 /* Batch controls: a scope line plus the four explicit actions. */
@@ -152,13 +119,6 @@
   font-size: 13px;
   line-height: 20px;
   color: var(--dsw-alias-label-primary);
-  overflow-wrap: anywhere;
-}
-
-.sourceId {
-  font-size: 11px;
-  line-height: 16px;
-  color: var(--dsw-alias-label-tertiary);
   overflow-wrap: anywhere;
 }
 
@@ -318,15 +278,6 @@
 }
 
 /* The local pack library: same row geometry, no source switch. */
-.packsRow {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--ds-sidebar-space-2) var(--ds-sidebar-space-3);
-  min-width: 0;
-  padding: var(--ds-sidebar-space-3) 0;
-  border-top: 1px solid var(--dsw-alias-border-l1);
-}
 
 .addSource {
   display: flex;
@@ -334,15 +285,6 @@
   align-items: center;
   gap: 8px;
   padding-top: 4px;
-}
-
-.addSourceDesc {
-  flex: 1 1 220px;
-  min-width: 0;
-  font-size: 11px;
-  line-height: 16px;
-  color: var(--dsw-alias-label-tertiary);
-  overflow-wrap: anywhere;
 }
 
 /* ── Source configuration window body (S6 window content) ───────────────── */
@@ -382,29 +324,6 @@
   line-height: 18px;
   font-weight: 500;
   color: var(--dsw-alias-label-tertiary);
-}
-
-.configRow {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--ds-sidebar-space-1) var(--ds-sidebar-space-3);
-  min-width: 0;
-  font-size: 12px;
-  line-height: 18px;
-}
-
-.configLabel {
-  flex: none;
-  min-width: 72px;
-  color: var(--dsw-alias-label-tertiary);
-}
-
-.configValue {
-  flex: 1 1 180px;
-  min-width: 0;
-  color: var(--dsw-alias-label-primary);
-  overflow-wrap: anywhere;
 }
 
 .configMono {
@@ -592,17 +511,12 @@
     width: 100%;
   }
 
-  .configLabel {
-    min-width: 0;
-  }
-
   .advancedRow {
     align-items: flex-start;
   }
 }
 
 .configSection + .configSection { padding-top: var(--ds-sidebar-space-2); }
-.sourceId { font-family: var(--ds-font-family-code, monospace); }
 @media (pointer: coarse) {
   .smallButton,
   .configInput,
@@ -627,7 +541,6 @@
 @media (pointer: coarse) { .permissionChoice { min-height: 44px; } }
 
 @container sidebar-clue-config (max-width: 480px) {
-  .configLabel { min-width: 0; }
   .configInputRow { align-items: stretch; }
   .configInput { flex-basis: 100%; }
   .permissionGrid { grid-template-columns: 1fr; }

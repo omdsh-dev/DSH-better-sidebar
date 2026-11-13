@@ -24,10 +24,12 @@
   padding: 0;
 }
 
+/* A long value wraps under its label instead of squeezing it. */
 .factRow {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
-  gap: var(--ds-sidebar-space-2);
+  gap: var(--ds-sidebar-space-1) var(--ds-sidebar-space-3);
   min-width: 0;
   padding: 3px 0;
   font: var(--dsw-font-xxs-12);
@@ -35,14 +37,18 @@
 
 .factLabel {
   flex: none;
+  min-width: 72px;
   color: var(--dsw-alias-label-tertiary);
 }
 
 .factValue {
+  flex: 1 1 160px;
   min-width: 0;
   overflow-wrap: anywhere;
   color: var(--dsw-alias-label-primary);
 }
+
+.factAction { flex: none; }
 
 /* One ink rung per fact tone; a default fact stays secondary. */
 .factRow[data-tone='error'] .factValue { color: var(--dsw-alias-state-error-primary); }

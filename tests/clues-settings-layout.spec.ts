@@ -24,6 +24,7 @@ beforeAll(() => {
 const SECTION_SHEET = readFileSync(resolve(process.cwd(), 'src/client/SideCardSection.module.css'), 'utf8')
 const KIT_SHEET = readFileSync(resolve(process.cwd(), 'src/client/ui/kit.module.css'), 'utf8')
 const CLUE_SHEET = readFileSync(resolve(process.cwd(), 'src/client/clues/settings/settings.module.css'), 'utf8')
+const PATTERN_SHEET = readFileSync(resolve(process.cwd(), 'src/client/ui/patterns.module.css'), 'utf8')
 
 function ruleBody(sheet: string, selector: string): string | undefined {
   return new RegExp(`${selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\{([^}]*?)\\}`).exec(sheet)?.[1]
@@ -53,7 +54,8 @@ describe('grouped settings layout', () => {
     for (const selector of ['.settingsShell', '.groupPane']) expect(ruleBody(SECTION_SHEET, selector)).toContain('min-width: 0')
     expect(ruleBody(CLUE_SHEET, '.sources')).toContain('container: sidebar-clue-sources / inline-size')
     expect(ruleBody(CLUE_SHEET, '.sourceRow')).toContain('flex-wrap: wrap')
-    for (const selector of ['.sourceName', '.sourceId', '.configValue']) expect(ruleBody(CLUE_SHEET, selector)).toContain('overflow-wrap: anywhere')
+    expect(ruleBody(CLUE_SHEET, '.sourceName')).toContain('overflow-wrap: anywhere')
+    expect(ruleBody(PATTERN_SHEET, '.factValue')).toContain('overflow-wrap: anywhere')
     const narrow = containerBlock(CLUE_SHEET, 'sidebar-clue-sources', 420)
     expect(narrow).toMatch(/\.sourceIdentity\s*\{[^}]*flex-basis: 100%;/)
     expect(narrow).toMatch(/\.sourceControls\s*\{[^}]*width: 100%;/)

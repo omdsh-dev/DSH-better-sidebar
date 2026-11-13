@@ -50,11 +50,13 @@ export interface Fact {
 }
 
 /** Props of {@link FactRow}. */
-export interface FactRowProps {
-  readonly label?: string
+export interface FactRowProps extends DataAttributes {
+  readonly label?: ReactNode
   readonly value: ReactNode
   readonly mono?: boolean
   readonly tone?: PatternTone
+  /** One trailing control that acts on this fact (clear, copy). */
+  readonly action?: ReactNode
   readonly className?: string
 }
 
@@ -66,11 +68,12 @@ export interface FactRowProps {
  * would fight the surrounding semantics. The label/value pair is readable in
  * order either way.
  */
-export function FactRow({ label, value, mono, tone, className }: FactRowProps): ReactNode {
+export function FactRow({ label, value, mono, tone, action, className, ...dataProps }: FactRowProps): ReactNode {
   return (
-    <div className={clsx(css.factRow, className)} {...(tone === undefined ? {} : { 'data-tone': tone })}>
+    <div {...dataProps} className={clsx(css.factRow, className)} {...(tone === undefined ? {} : { 'data-tone': tone })}>
       {label !== undefined && <span className={css.factLabel}>{label}</span>}
       <span className={clsx(css.factValue, mono === true && css.mono)}>{value}</span>
+      {action !== undefined && <span className={css.factAction}>{action}</span>}
     </div>
   )
 }
