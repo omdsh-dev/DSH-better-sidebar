@@ -37,13 +37,6 @@
   border-bottom: 1px solid var(--dsw-alias-border-l1);
 }
 
-.destinationLabel {
-  display: block;
-  padding: 0 4px 4px;
-  color: var(--dsw-alias-label-secondary);
-  font: var(--dsw-font-xxxs-11);
-}
-
 .destinations {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

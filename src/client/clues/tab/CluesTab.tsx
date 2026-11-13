@@ -43,22 +43,10 @@ import design from '../../ui/design.module.css'
 import css from './clues-tab.module.css'
 
 /** The plugin-settings key of the clue tab (one sparse blob). */
-export const CLUE_TAB_SETTINGS_KEY = 'clues'
+const CLUE_TAB_SETTINGS_KEY = 'clues'
 
 /** The subset of the tab component props the clue page consumes. */
-export type CluesTabProps = Pick<TabComponentProps, 'ctx' | 'store' | 'scope' | 'visible'>
-
-/** The persisted clue-tab settings shape. */
-export interface ClueTabSettings {
-  /** workspaceId -> sourceId -> persisted range value. */
-  readonly scopes?: Readonly<Record<string, Readonly<Record<string, JsonValue>>>>
-  /** Most recently inserted/opened pack ids (ordering only). */
-  readonly recentPacks?: readonly string[]
-  /** Expanded sidebar sections (VSCode-style explorer state). */
-  readonly layout?: { readonly browse?: boolean; readonly packs?: boolean }
-  /** Last chosen source, restored when the tab opens again. */
-  readonly activeSource?: string
-}
+type CluesTabProps = Pick<TabComponentProps, 'ctx' | 'store' | 'scope' | 'visible'>
 
 /** The persisted section state, with the explorer defaults applied. */
 function sectionLayoutOf(blob: Record<string, unknown>): { browse: boolean; packs: boolean } {

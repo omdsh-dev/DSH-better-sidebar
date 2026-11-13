@@ -51,23 +51,8 @@ export const CLUE_SELECTION_ACTIONS = [
 /** One menu entry. */
 export type ClueSelectionAction = (typeof CLUE_SELECTION_ACTIONS)[number]
 
-/** The server-owned action names (insert is local-only). */
-export const CLUE_SELECTION_SERVER_ACTIONS = [
-  'explain',
-  'rewrite',
-  'expand',
-  'continue',
-  'shorten',
-  'translate',
-] as const
-
-/** One server-owned selection action. */
-export type ClueSelectionServerAction = (typeof CLUE_SELECTION_SERVER_ACTIONS)[number]
-
-/** Whether a value is a server-owned action. */
-export function isClueSelectionServerAction(value: unknown): value is ClueSelectionServerAction {
-  return typeof value === 'string' && (CLUE_SELECTION_SERVER_ACTIONS as readonly string[]).includes(value)
-}
+/** One server-owned selection action (insert is local-only). */
+type ClueSelectionServerAction = Exclude<ClueSelectionAction, 'insert'>
 
 /** The exact request payload of `clues.actions.start`. */
 export interface ClueSelectionActionRequest {
@@ -93,7 +78,7 @@ export interface ClueSelectionActionScope {
 }
 
 /** The transport seam (tests and integration may replace it). */
-export type ClueSelectionActionStarter = (request: ClueSelectionActionRequest) => Promise<unknown>
+type ClueSelectionActionStarter = (request: ClueSelectionActionRequest) => Promise<unknown>
 
 /** Core and lazy editor bundles inline this module independently; only the page owns bridge state. */
 interface SelectionBridgeState {
@@ -124,7 +109,7 @@ export function startClueSelectionAction(request: ClueSelectionActionRequest): P
 }
 
 /** One insert decision: the parent appends the payload to its composer draft. */
-export interface ClueSelectionInsertInput {
+interface ClueSelectionInsertInput {
   /** Present when the wrapper/bridge knows the owning clue target. */
   readonly workspaceId?: string
   readonly sessionId?: string
@@ -145,7 +130,7 @@ export type ClueSelectionInsertHandler = (input: ClueSelectionInsertInput) => bo
  * `ResourceSelectionActions` wrapper (the shared TextEditor uses the target
  * fields; a bare bridge supplies `onInsert` only).
  */
-export interface ClueSelectionActionContext {
+interface ClueSelectionActionContext {
   readonly workspaceId?: string
   readonly sessionId?: string
   readonly resource?: ClueClientResourceInput
@@ -229,7 +214,7 @@ export function useClueSelectionActionContext(): ClueSelectionActionContext | un
 }
 
 /** Typed selection labels from the integrated locale dictionaries. */
-export const CLUE_SELECTION_LOCALE_KEYS = {
+const CLUE_SELECTION_LOCALE_KEYS = {
   menu: 'clueSelectionMenu',
   insert: 'clueSelectionInsert',
   explain: 'clueSelectionExplain',
@@ -246,12 +231,12 @@ export const CLUE_SELECTION_LOCALE_KEYS = {
 
 type SelectionLabelKey = keyof typeof CLUE_SELECTION_LOCALE_KEYS
 /** The localized label of one key, checked against the integrated dictionary. */
-export function clueSelectionLabel(key: SelectionLabelKey): string {
+function clueSelectionLabel(key: SelectionLabelKey): string {
   return t(CLUE_SELECTION_LOCALE_KEYS[key])
 }
 
 /** The localized label of one menu action. */
-export function clueSelectionActionLabel(action: ClueSelectionAction): string {
+function clueSelectionActionLabel(action: ClueSelectionAction): string {
   return clueSelectionLabel(action)
 }
 
@@ -266,12 +251,12 @@ function requestResourceOf(resource: ClueClientResourceInput): ClueClientResourc
 }
 
 /** The actions a surface offers; comments are intentionally narrower. */
-export function clueSelectionActionsFor(comment: boolean | undefined): readonly ClueSelectionAction[] {
+function clueSelectionActionsFor(comment: boolean | undefined): readonly ClueSelectionAction[] {
   return comment === true ? ['insert', 'explain'] : CLUE_SELECTION_ACTIONS
 }
 
 /** One menu anchor (viewport coordinates, like `SelectionPopup`). */
-export interface SelectionActionMenuProps {
+interface SelectionActionMenuProps {
   readonly workspaceId: string
   readonly sessionId: string
   readonly resource: ClueClientResourceInput
@@ -457,7 +442,7 @@ export function SelectionActionMenu(props: SelectionActionMenuProps): ReactNode 
 }
 
 /** Props of the wrapper surface. */
-export interface ResourceSelectionActionsProps {
+interface ResourceSelectionActionsProps {
   readonly workspaceId: string
   readonly sessionId: string
   readonly resource: ClueClientResourceInput

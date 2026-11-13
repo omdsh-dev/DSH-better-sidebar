@@ -63,7 +63,7 @@ const PERMISSION_COPY: Readonly<Record<string, CopyKey>> = {
 }
 
 /** Props of the configuration page (S6 window content). */
-export interface SourceConfigPageProps {
+interface SourceConfigPageProps {
   readonly sourceId: string
   readonly sourceName: string
   readonly dependencyIds: readonly string[]

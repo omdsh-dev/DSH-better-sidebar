@@ -275,8 +275,3 @@ export function registerFeishuSourceClient(
     currentFormats = new Map()
   }
 }
-
-export { DEFAULT_FEISHU_LABELS, resolveFeishuLabels, type FeishuClientLabels } from './labels.ts'
-export { FeishuDocsPreview } from './docs-preview.tsx'
-export { FeishuTaskEditor } from './task-editor.tsx'
-export { FeishuDocsGlyph, FeishuTasksGlyph, feishuDocsIcon, feishuTasksIcon } from './icons.tsx'

@@ -94,14 +94,14 @@ export function SourceNavigation(props: {
 
 
 /** Whether this source needs an explicitly chosen range before listing. */
-export function scopeRequired(sourceId: string): boolean {
+function scopeRequired(sourceId: string): boolean {
   return sourceId === BUILTIN_SOURCE_IDS.githubIssues
     || sourceId === BUILTIN_SOURCE_IDS.githubPulls
     || sourceId === BUILTIN_SOURCE_IDS.feishuDocs
 }
 
 /** The `kind` of a persisted Feishu docs range, when it has one. */
-export function feishuRangeKind(scope: JsonValue | undefined): string | undefined {
+function feishuRangeKind(scope: JsonValue | undefined): string | undefined {
   if (scope === null || typeof scope !== 'object' || Array.isArray(scope)) return undefined
   const kind = (scope as Record<string, unknown>).kind
   return typeof kind === 'string' ? kind : undefined

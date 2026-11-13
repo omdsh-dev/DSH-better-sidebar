@@ -83,7 +83,7 @@ import type { ClueDetailTarget } from './detail.tsx'
 import css from './pack.module.css'
 
 /** The workspace the pack belongs to (display only; never used to guess). */
-export interface PackWorkspaceChoice {
+interface PackWorkspaceChoice {
   readonly workspaceId: string
   readonly title: string
 }
@@ -96,7 +96,7 @@ export interface PackDraftGuard {
 }
 
 /** Options of {@link openPackManagementWindow}. */
-export interface PackManagementOptions {
+interface PackManagementOptions {
   readonly windows: BetterSidebarWindowsClientFace
   readonly workspaceId: string
   readonly face: BetterSidebarCluesClientFace
@@ -187,7 +187,7 @@ function memberRowsOf(pack: CluePack, clues: readonly Clue[]): MemberRow[] {
 }
 
 /** The window id of one pack (a second open focuses the same surface). */
-export function packWindowId(packId: string): string {
+function packWindowId(packId: string): string {
   return `pack:${packId}`
 }
 

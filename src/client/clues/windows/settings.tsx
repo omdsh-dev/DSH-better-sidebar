@@ -18,10 +18,10 @@ import { openClueSettings, type ClueSettingsGroup } from '../settings/navigation
 import { t } from '../../locales.ts'
 
 /** The settings window id (one instance; a second open focuses it). */
-export const CLUE_SETTINGS_WINDOW_ID = 'clue-settings'
+const CLUE_SETTINGS_WINDOW_ID = 'clue-settings'
 
 /** Options of {@link openClueSettingsWindow}. */
-export interface OpenClueSettingsWindowOptions {
+interface OpenClueSettingsWindowOptions {
   readonly windows: BetterSidebarWindowsClientFace
   readonly store: SidebarStore
   readonly service: BetterSidebarService

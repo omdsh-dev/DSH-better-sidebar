@@ -290,7 +290,7 @@ function StateChip(props: { readonly state: ClueResourceState; readonly dot: num
 // ── Components ─────────────────────────────────────────────────────────────
 
 /** Props of {@link ResourceSummary}. */
-export interface ResourceSummaryProps {
+interface ResourceSummaryProps {
   /** The source-owned snapshot; absent/empty renders nothing but the action seat. */
   readonly info?: ClueResourceInfo
   /**
@@ -383,7 +383,7 @@ export function ResourceSummary({ info, actions, className }: ResourceSummaryPro
 }
 
 /** Props of {@link ResourceInlineMeta}. */
-export interface ResourceInlineMetaProps {
+interface ResourceInlineMetaProps {
   readonly info?: ClueResourceInfo
   readonly className?: string
 }

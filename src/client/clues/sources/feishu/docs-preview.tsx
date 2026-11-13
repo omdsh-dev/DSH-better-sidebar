@@ -18,7 +18,6 @@
 import { createElement, useId, useMemo, useState, type ReactNode } from 'react'
 import type { ClueFormatRendererProps, JsonValue } from '../../../../clues/types.ts'
 import {
-  DOCS_EDIT_SCOPE_NOTE,
   FEISHU_FORMATS,
   parseDocEditData,
   parseDocReadData,
@@ -38,7 +37,7 @@ import { appDateTime } from './time.ts'
 const MAX_PREVIEW_CHARS = 40_000
 
 /** Props of {@link FeishuDocsPreview}. */
-export interface FeishuDocsPreviewProps extends ClueFormatRendererProps {
+interface FeishuDocsPreviewProps extends ClueFormatRendererProps {
   readonly labels: FeishuClientLabels
   /** App-locale date/time formatter (S9 supplies it; fallback is the browser locale). */
   readonly formatDateTime?: (value: string) => string
@@ -615,9 +614,6 @@ export function FeishuDocsPreview(props: FeishuDocsPreviewProps): ReactNode {
     />
   )
 }
-
-/** The host-visible scope note (exported for S9's settings copy). */
-export const FEISHU_DOCS_EDIT_SCOPE_NOTE = DOCS_EDIT_SCOPE_NOTE
 
 /** The editable-block contract is exported for S9 renderer wiring/tests. */
 export type { FeishuDocEditBlock, FeishuDocEditData, FeishuDocReadData }

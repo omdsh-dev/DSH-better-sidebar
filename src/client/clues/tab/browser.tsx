@@ -83,16 +83,16 @@ import type { BetterSidebarWindowsClientFace } from '../../windows/types.ts'
 import css from './clues-tab.module.css'
 
 /** The persisted range per source id (JSON value, absent = not chosen). */
-export type ClueScopes = Readonly<Record<string, JsonValue | undefined>>
+type ClueScopes = Readonly<Record<string, JsonValue | undefined>>
 
 /** Imperative seam the tab uses to start a collection from a detail window. */
-export interface ClueBrowserController {
+interface ClueBrowserController {
   /** Add one resource to a pack through the SAME collection window/CAS flow. */
   addToPack(target: ClueDetailTarget): void
 }
 
 /** Props of the browser. */
-export interface ClueBrowserProps {
+interface ClueBrowserProps {
   readonly workspaceId: string
   readonly face: BetterSidebarCluesClientFace
   readonly windows: BetterSidebarWindowsClientFace

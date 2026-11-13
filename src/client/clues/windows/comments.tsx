@@ -25,7 +25,7 @@ export interface ResourceDiscussionProps {
   onCreate(body: string, replyToId: string | undefined, requestId: string): Promise<void>
 }
 
-export function reviewStateLabel(state: string): string {
+function reviewStateLabel(state: string): string {
   switch (state.toUpperCase()) {
     case 'APPROVED': return copy('clueReviewApproved')
     case 'CHANGES_REQUESTED': return copy('clueReviewChangesRequested')

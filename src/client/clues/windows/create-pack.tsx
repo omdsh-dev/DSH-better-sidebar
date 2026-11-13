@@ -36,13 +36,13 @@ export function createPackWindowId(workspaceId: string): string {
  * latch (state alone is one render behind a double click); `handle` is wired
  * after `open()` returns so the page can close its own window.
  */
-export interface CreatePackGuard {
+interface CreatePackGuard {
   busy: boolean
   handle?: WindowHandle
 }
 
 /** Options of {@link openCreatePackWindow}. */
-export interface OpenCreatePackWindowOptions {
+interface OpenCreatePackWindowOptions {
   readonly windows: BetterSidebarWindowsClientFace
   readonly face: BetterSidebarCluesClientFace
   readonly workspaceId: string
@@ -86,7 +86,7 @@ export function openCreatePackWindow(options: OpenCreatePackWindowOptions): Wind
 }
 
 /** The interactive create-pack surface. */
-export function CreatePackPage(props: OpenCreatePackWindowOptions & { readonly guard: CreatePackGuard }): ReactNode {
+function CreatePackPage(props: OpenCreatePackWindowOptions & { readonly guard: CreatePackGuard }): ReactNode {
   const { face, workspaceId, guard, onCreated, onNotice } = props
   const inputRef = useRef<HTMLInputElement | null>(null)
   const [draft, setDraft] = useState('')

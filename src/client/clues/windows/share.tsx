@@ -44,10 +44,10 @@ import { LoadingIndicator } from '../../ui/LoadingIndicator.tsx'
 import css from './share.module.css'
 
 /** The share window id (one instance per plugin; opening again focuses it). */
-export const CLUE_SHARE_WINDOW_ID = 'clue-share'
+const CLUE_SHARE_WINDOW_ID = 'clue-share'
 
 /** Options of {@link openShareWindow}. */
-export interface OpenShareWindowOptions {
+interface OpenShareWindowOptions {
   readonly windows: BetterSidebarWindowsClientFace
   readonly workspaceId: string
   readonly face: BetterSidebarCluesClientFace

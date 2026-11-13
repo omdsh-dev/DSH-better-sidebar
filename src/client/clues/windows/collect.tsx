@@ -89,13 +89,13 @@ export function clearClueCollectionDrafts(): void {
 }
 
 /** The mutable close guard the hosted window reads. */
-export interface ClueCollectGuard {
+interface ClueCollectGuard {
   busy: boolean
   handle?: WindowHandle
 }
 
 /** Options of {@link openClueCollectionWindow}. */
-export interface OpenClueCollectionWindowOptions {
+interface OpenClueCollectionWindowOptions {
   readonly windows: BetterSidebarWindowsClientFace
   readonly face: BetterSidebarCluesClientFace
   readonly workspaceId: string
@@ -113,7 +113,7 @@ export interface OpenClueCollectionWindowOptions {
 }
 
 /** Options of {@link openClueCollectionForTarget}. */
-export interface OpenClueCollectionForTargetOptions {
+interface OpenClueCollectionForTargetOptions {
   readonly windows: BetterSidebarWindowsClientFace
   readonly face: BetterSidebarCluesClientFace
   readonly workspaceId: string

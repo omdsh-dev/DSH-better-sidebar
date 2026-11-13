@@ -137,7 +137,7 @@ export interface ClueDetailTarget {
 }
 
 /** Options of {@link openClueDetailWindow}. */
-export interface ClueDetailWindowOptions {
+interface ClueDetailWindowOptions {
   readonly windows: BetterSidebarWindowsClientFace
   readonly face: BetterSidebarCluesClientFace
   readonly workspaceId: string
@@ -229,7 +229,7 @@ function httpUrlOf(value: unknown): string | undefined {
  * A source-body URL (Feishu docs `sourceUrl`, task `url`) for locators that
  * do not carry one. It only feeds the credential-free "open source" link.
  */
-export function sourceUrlFromData(data: JsonValue | undefined): string | undefined {
+function sourceUrlFromData(data: JsonValue | undefined): string | undefined {
   if (data === null || typeof data !== 'object' || Array.isArray(data)) return undefined
   const record = data as Record<string, unknown>
   return httpUrlOf(record.sourceUrl) ?? httpUrlOf(record.url)
@@ -241,14 +241,14 @@ export function sourceUrlFromData(data: JsonValue | undefined): string | undefin
  * a direct-URL target like `owner/repo#42` must adopt the real title once the
  * source returns it. Empty/absent values never erase the current title.
  */
-export function sourceTitleOf(data: JsonValue | undefined): string | undefined {
+function sourceTitleOf(data: JsonValue | undefined): string | undefined {
   if (data === null || typeof data !== 'object' || Array.isArray(data)) return undefined
   const title = (data as Record<string, unknown>).title
   return typeof title === 'string' && title.trim() !== '' ? title.trim() : undefined
 }
 
 /** The localized explanation of a source-owned read-only marker. */
-export function readOnlyReasonCopy(reason: string | undefined): string {
+function readOnlyReasonCopy(reason: string | undefined): string {
   switch (reason) {
     case 'archived':
       return t('clueDetailReadOnlyArchived')
@@ -1653,5 +1653,3 @@ export function openClueDetailWindow(options: ClueDetailWindowOptions): WindowHa
   controller.attach(handle, guard)
   return handle
 }
-
-export { ResourceInlineMeta, ResourceSummary } from '../resource-summary.tsx'

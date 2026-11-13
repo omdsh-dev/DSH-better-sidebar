@@ -22,9 +22,6 @@ import type { BetterSidebarCluesClientFace } from '../../registry.ts'
 import { githubMarkdownRenderer } from './editor.tsx'
 import { GithubIssueIcon, GithubPullRequestIcon } from './icons.tsx'
 
-export { githubMarkdownRenderer, isGithubSource } from './editor.tsx'
-export { GithubIssueIcon, GithubPullRequestIcon } from './icons.tsx'
-
 /**
  * Register the GitHub source presentation and the title+body editor.
  * @param face - `ctx.betterSidebar.clues`.
