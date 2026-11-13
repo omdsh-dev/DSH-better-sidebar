@@ -28,6 +28,15 @@ import type {
 } from '../context-types.ts'
 import { baseName, workspaceRelativePath } from './paths.ts'
 
+/** Public host payload/span mirrors used by clue codecs. */
+export type ComposerReference = SidebarReferenceInsert
+export type ComposerSpan = Parameters<NonNullable<SidebarSessionInput['insertReference']>>[1]
+
+/** Fold a draft end using the same command/reference logic as every insert. */
+export function detectOffsetOfDraftEnd(draft: string, occurrences: readonly SidebarSessionOccurrence[] = [], commandToken?: string): number {
+  return appendOffset({ draft, occurrences, ...(commandToken === undefined ? {} : { phase: 'claimed' as const, claim: { token: commandToken } }) }) ?? 0
+}
+
 /**
  * One structured reference to insert as a chip: the compact `label` the
  * composer shows, and the `text` the model receives on send. The two are
@@ -141,14 +150,15 @@ export function foldClipboardOffset(
  * `foldClipboardOffset` alone is not enough: a command chip (`/goal `, present
  * while `phase === 'claimed'`) collapses to one detect character but never
  * appears in `occurrences` — the host only collects reference chips. The chip
- * covers exactly `claim.token`, a prefix of the draft, so its own characters
+ * covers `claim.token.trimEnd()`; its separator remains a separate text node,
+ * so only the command's own characters
  * fold away and one placeholder takes their place.
  */
 function appendOffset(snapshot: ReturnType<SidebarSessionInput['state']['getSnapshot']>): number | undefined {
   const { draft, claim } = snapshot
   const occurrences = snapshot.occurrences ?? []
-  const token = snapshot.phase === 'claimed' && claim !== undefined && draft.startsWith(claim.token)
-    ? claim.token
+  const token = snapshot.phase === 'claimed' && claim !== undefined && draft.startsWith(claim.token.trimEnd())
+    ? claim.token.trimEnd()
     : ''
   if (token === '') return foldClipboardOffset(draft, occurrences, draft.length)
   // Fold the arguments behind the token, then add the command chip's one
@@ -176,7 +186,7 @@ function appendOffset(snapshot: ReturnType<SidebarSessionInput['state']['getSnap
 export function insertDraftReference(
   ctx: Context,
   sessionId: string,
-  reference: PendingReference,
+  reference: PendingReference | SidebarReferenceInsert,
 ): boolean {
   let before: number | undefined
   try {
@@ -188,10 +198,10 @@ export function insertDraftReference(
     const snapshot = input.state.getSnapshot()
     if (input.insertReference === undefined || snapshot.draftRev === undefined) return false
     if (snapshot.phase === 'adjudicating' || snapshot.phase === 'submitting') return false
-    before = snapshot.draftRev
-    // Chips always append at the document end (there is no caret API and the
-    // composer is a contenteditable, not a textarea — `probeComposerCaret`
-    // never resolves one), so the span is the folded end position.
+    // Only the chip write is a successful reference insertion. Reserving a
+    // separator may change the revision but must not masquerade as a chip.
+    // The public contenteditable face has no caret API; every insert uses
+    // the one coordinate it exposes: the folded document end.
     const at = appendOffset(snapshot)
     if (at === undefined) return false
     // The host's insertReference adds a space AFTER the chip but never before
@@ -211,9 +221,12 @@ export function insertDraftReference(
       rev = afterSpace.draftRev ?? rev
       start = at + 1
     }
+    before = rev
     const chip: SidebarReferenceInsert = {
       source: reference.source ?? 'reference',
-      ref: reference.ref ?? reference.text,
+      // A plain pending selection carries its payload in `text`; a plugin
+      // insert (which always has `ref`) keeps its own short reference id.
+      ref: reference.ref ?? ('text' in reference ? reference.text : reference.label),
       label: reference.label,
       // The built-in source's `ref` is a fenced block, not a path: leaving
       // `appearance` unset on such a chip keeps the host from marking it
@@ -262,6 +275,7 @@ function revisionChanged(ctx: Context, sessionId: string, revision?: number): bo
  * the host does not publish here.
  */
 export function appendToDraft(ctx: Context, sessionId: string, text: string): boolean {
+  let before: number | undefined
   try {
     const actx = ctx.sessions.scope(sessionId)
     if (actx === undefined) {
@@ -275,6 +289,8 @@ export function appendToDraft(ctx: Context, sessionId: string, text: string): bo
     }
     const input = conversation.input.for(actx)
     const snapshot = input.state.getSnapshot()
+    if (snapshot.phase === 'adjudicating' || snapshot.phase === 'submitting') return false
+    before = snapshot.draftRev
     const draft = snapshot.draft
     const occurrences = snapshot.occurrences ?? []
     // A command chip (`/goal`) is not a reference occurrence, but `setDraft`
@@ -309,7 +325,7 @@ export function appendToDraft(ctx: Context, sessionId: string, text: string): bo
     return true
   } catch (error) {
     console.warn('[dsh-better-sidebar] draft insert failed:', error)
-    return false
+    return revisionChanged(ctx, sessionId, before)
   }
 }
 
@@ -375,6 +391,15 @@ export function directoryMention(relativePath: string): string | undefined {
  * changes cannot leave a captured root stale. Missing/unready membership or
  * an unrepresentable path is a logged no-op; never guess from session cwd.
  */
+function focusComposer(ctx: Context, sessionId: string): void {
+  try {
+    const actx = ctx.sessions.scope(sessionId)
+    const conversation = ctx.get('conversation') as SidebarConversation | undefined
+    const input = actx === undefined ? undefined : conversation?.input.for(actx)
+    ;(input as { focus?(): void } | undefined)?.focus?.()
+  } catch { /* focus does not change a successful insertion */ }
+}
+
 export function insertWorkspaceReference(ctx: Context, sessionId: string, path: string, isDir: boolean): boolean {
   try {
     const snapshot = ctx.get('workspaces')?.list.getSnapshot()
@@ -394,21 +419,34 @@ export function insertWorkspaceReference(ctx: Context, sessionId: string, path: 
       }
       // The host adds space after a file chip, but not before it. Complete
       // directory inserts need their own separator for the next @ click.
-      return appendToDraft(ctx, sessionId, `${mention} `)
+      const inserted = appendToDraft(ctx, sessionId, `${mention} `)
+      if (inserted) focusComposer(ctx, sessionId)
+      return inserted
     }
     const file = mentionFor(relative, 'file')
     if (file === undefined) {
       console.warn('[dsh-better-sidebar] reference insert skipped: path cannot be represented as a mention')
       return false
     }
-    return insertReferenceOrText(ctx, sessionId, {
+    const inserted = insertReferenceOrText(ctx, sessionId, {
       label: file.label,
       text: file.mention,
       clipboardText: file.mention,
       appearance: 'file',
     })
+    if (inserted) focusComposer(ctx, sessionId)
+    return inserted
   } catch (error) {
     console.warn('[dsh-better-sidebar] workspace-reference insert failed:', error)
     return false
   }
+}
+
+/** File references use the shared chip writer and its phase/revision guards. */
+export function insertFileReference(ctx: Context, sessionId: string, relativePath: string): boolean {
+  const file = mentionFor(relativePath, 'file')
+  if (file === undefined) return false
+  const inserted = insertDraftReference(ctx, sessionId, { label: file.label, text: file.mention, clipboardText: file.mention, appearance: 'file' })
+  if (inserted) focusComposer(ctx, sessionId)
+  return inserted
 }

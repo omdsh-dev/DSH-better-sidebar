@@ -86,6 +86,7 @@ export function SessionLens({ ops, loadError, onPreview, selectedCallId }: Sessi
             data-op-kind={op.kind}
             data-op-error={op.isError ? 'true' : undefined}
             data-selected={selectedCallId === op.callId ? 'true' : undefined}
+            aria-pressed={selectedCallId === op.callId}
             onClick={() => { onPreview(op.path, op) }}
           >
             <StatusBadge tone={op.kind}>{t(KIND_LABEL[op.kind])}</StatusBadge>

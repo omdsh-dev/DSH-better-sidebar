@@ -77,7 +77,7 @@ const CRASH_STRIP_PATTERNS = [/^dsh-better-sidebar:/, /^\[dsh-better-sidebar\]/]
  * Browser tabs"), and every lane here drives the web profile. Listing it would
  * demand a guide entry the host itself has stopped offering.
  */
-const PLUGIN_TABS = ['files', 'git', 'subagent', 'sidechat'] as const
+const PLUGIN_TABS = ['files', 'git', 'subagent', 'sidechat', 'clues'] as const
 const HOST_OWNED_TABS = ['terminal'] as const
 const NATIVE_TABS: readonly string[] = [...PLUGIN_TABS, ...HOST_OWNED_TABS]
 
@@ -170,6 +170,17 @@ test.beforeAll(async () => {
   await seedSession()
 })
 
+
+test.beforeEach(async ({ page }) => {
+  // First-visit help has its own real-host test. These shell sweeps use an
+  // acknowledged browser and navigate PAGE_URL directly rather than gotoPage.
+  await page.addInitScript(() => {
+    // Init scripts run in EVERY frame; a sandboxed preview frame (no
+    // allow-same-origin) throws on localStorage access. Only the top document
+    // carries the plugin's storage.
+    if (window === window.top) localStorage.setItem('dsh-better-sidebar:clues-help-seen-v2', '1')
+  })
+})
 
 test.afterAll(async () => {
   await api?.dispose()
@@ -860,10 +871,10 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   await page.mouse.down()
   await page.mouse.move(lineBox!.x + lineBox!.width - 1, lineBox!.y + lineBox!.height / 2, { steps: 8 })
   await page.mouse.up()
-  const addToChat = page.locator('button', { hasText: /添加到对话|Add to conversation/ }).first()
-  await expect(addToChat, 'selecting preview text must raise the add-to-conversation button')
+  const selectionMenu = page.locator('[data-clue-selection-menu]')
+  await expect(selectionMenu, 'selecting preview text must raise the selection action menu')
     .toBeVisible({ timeout: 10_000 })
-  await addToChat.click()
+  await selectionMenu.locator('[data-clue-selection-action="insert"]').click()
   // `data-composer-chip` is the host's own anchor for a composer chip (its
   // JSDoc names e2e as the reason it exists) — a bare `[class*="reference"]`
   // match could land on any element whose hashed class happens to contain it.
@@ -1377,9 +1388,9 @@ test('the explorer @-reference button keeps earlier chips (no whole-draft rewrit
   await page.mouse.move(tailBox!.x + tailBox!.width - 2, tailBox!.y + tailBox!.height / 2, { steps: 8 })
   await page.mouse.up()
 
-  const quoteButton = page.getByRole('button', { name: /Add to conversation|添加到对话/ })
-  await expect(quoteButton, 'the selection popup must offer the quote').toHaveCount(1, { timeout: 10_000 })
-  await quoteButton.click()
+  const selectionMenu = page.locator('[data-clue-selection-menu]')
+  await expect(selectionMenu, 'the selection menu must offer insertion').toBeVisible({ timeout: 10_000 })
+  await selectionMenu.locator('[data-clue-selection-action="insert"]').click()
   // Since the selection-to-chat rework (#1052) the quote lands as its own
   // reference CHIP — the fenced body is serialized only when the draft is
   // sent — so the chip count grows to four and the three earlier chips stay

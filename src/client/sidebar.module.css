@@ -1836,13 +1836,8 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 /* Preview / edit segmented toggle (markdown and other previewable files). */
 .editorModeToggle {
   flex: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  padding: 2px;
-  border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 6px;
-  background: var(--dsw-alias-bg-layer-1);
+  padding: 0;
+  border: none;
 }
 
 .editorModeButton {

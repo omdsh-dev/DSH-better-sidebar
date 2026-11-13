@@ -27,7 +27,7 @@ import { useRightPanelOpen } from './right-panel-open.ts'
 import css from '../sidebar.module.css'
 
 /** 按钮尺寸与宿主展开按钮一致（28px），间距 8px。 */
-const BUTTON_SIZE = 28
+const BUTTON_SIZE = 32
 const GAP = 8
 
 /** 让位时的搜索步长（像素）：够细以免跨过窄芯片，够粗以免几百次命中测试。 */
@@ -49,9 +49,9 @@ const MAX_RETREAT_STEPS = 100
  * @param top - 槽位上边（视口坐标）。
  * @returns 整格都空时为 true。
  */
-function slotFree(left: number, top: number): boolean {
-  const cy = top + BUTTON_SIZE / 2
-  for (const dx of [2, 8, BUTTON_SIZE / 2, BUTTON_SIZE - 8, BUTTON_SIZE - 2]) {
+function slotFree(left: number, top: number, size: number): boolean {
+  const cy = top + size / 2
+  for (const dx of [2, 8, size / 2, size - 8, size - 2]) {
     if (slotOccupied(left + dx, cy)) return false
   }
   return true
@@ -189,14 +189,17 @@ function measure(expanded: boolean): { top: number; left: number } {
   // a missing anchor: the zero rect would otherwise pin the entry to the
   // top-left 88px macOS traffic-light inset and cover the theme's own button.
   const visible = anchored === undefined && rect !== undefined && rect.width > 0 && rect.height > 0
-  const top = anchored?.top ?? (visible ? Math.max(4, rect.top + (rect.height - BUTTON_SIZE) / 2) : 8)
-  let left = anchored?.left ?? (visible ? rect.left - GAP - BUTTON_SIZE : window.innerWidth - BUTTON_SIZE - GAP - 8)
+  // The entry shares the IconButton geometry; a coarse pointer gets the 44px
+  // touch target the rest of the plugin uses at that input class.
+  const size = window.matchMedia?.('(pointer: coarse)').matches ? 44 : BUTTON_SIZE
+  const top = anchored?.top ?? (visible ? Math.max(4, rect.top + (rect.height - size) / 2) : 8)
+  let left = anchored?.left ?? (visible ? rect.left - GAP - size : window.innerWidth - size - GAP - 8)
   // 复用宿主 preload 的平台属性；原生红绿灯不会出现在 elementsFromPoint 中。
   // 48px 高度 / 88px 左侧留白与宿主 AppFrame / fullscreen dock strip 的几何一致。
   const root = document.documentElement
   const minLeft = root.dataset.platform === 'darwin' && !root.hasAttribute('data-fullscreen') && top < 48 ? 88 : 4
   for (let step = 0; step < MAX_RETREAT_STEPS && left >= minLeft; step++) {
-    if (slotFree(left, top)) return { top, left }
+    if (slotFree(left, top, size)) return { top, left }
     left -= STEP_PX
   }
   return { top, left: Math.max(left, minLeft) }

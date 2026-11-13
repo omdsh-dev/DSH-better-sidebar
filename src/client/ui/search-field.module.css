@@ -1,0 +1,37 @@
+.root {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-tertiary);
+}
+.root:focus-within { border-color: var(--dsw-alias-state-business-primary); }
+.icon { display: inline-flex; flex: none; align-items: center; justify-content: center; width: 16px; height: 16px; color: var(--dsw-alias-label-tertiary); }
+.input {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  font-size: 13px;
+  line-height: 20px;
+}
+.input::placeholder { color: var(--dsw-alias-label-tertiary); }
+.input:focus-visible { outline: none; }
+.trailing { display: inline-flex; flex: none; align-items: center; gap: 2px; }
+@media (pointer: coarse) {
+  /* The root's 1px border is inside the 44px target; the input content is 42. */
+  .root { min-height: 44px; }
+  .input { min-height: 42px; }
+}

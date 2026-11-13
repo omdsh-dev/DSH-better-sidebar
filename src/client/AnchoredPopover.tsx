@@ -22,6 +22,7 @@ import {
 import { createPortal } from 'react-dom'
 import { createFrameBatcher } from './frame-batcher.ts'
 import { useViewportInsetTop } from './viewport-inset.ts'
+import design from './ui/design.module.css'
 
 /** The popover's default visual width (viewport-clamped). */
 const POP_WIDTH = 264
@@ -176,10 +177,11 @@ export function AnchoredPopover(props: AnchoredPopoverProps): ReactNode {
     <div
       ref={cardRef}
       role="dialog"
+      className={design.surface}
       // Presentation only: geometry stays inline (the drag math owns
       // `left`/`top`/`width`). The wrapper is a bare positioning box — the
       // surface the reader sees is the card the caller renders inside it
-      // (`popCard`): fill, 1px `border-l2` edge and the floating shadow. With
+      // (`popCard`): token fill and a flat 1px `border-l2` edge. With
       // no padding or border of its own, the declared width is the measured
       // width, so the drag clamp above stays exact.
       style={{

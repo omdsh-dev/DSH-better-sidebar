@@ -7,9 +7,10 @@
  * read the same colorful glyph from `descriptor.icon`.
  *
  * The color always arrives from a theme token, never from the plugin: the
- * glyph is a VSCodicon drawn in `currentColor`, and the wrapper class supplies
- * that color. A skin therefore keeps control of everything (the guide's §12);
- * this module is what `tests/theme.spec.ts` checks for color literals.
+ * ordinary glyph is a VSCodicon drawn in `currentColor`, and the wrapper class
+ * supplies that color. Clues instead uses token-colored layered artwork, as do
+ * the collection rows inside its workbench. A skin keeps control (guide §12);
+ * `tests/theme.spec.ts` checks these modules for color literals.
  *
  * `files` is the one exception in kind rather than in color: it renders DSH's
  * own folder artwork (`FileTypeIcon`), matching the file rows this tab shows.
@@ -17,6 +18,7 @@
 import type { ReactNode } from 'react'
 import { FileTypeIcon } from '@deepseek-ai/dsh-client-ui-primitives'
 import styles from './tab-icons.module.css'
+import { CluePackArtwork } from '../clues/artwork.tsx'
 import {
   VscCommentDiscussion,
   VscGitCommit,
@@ -64,3 +66,6 @@ export const sidechatTabIcon: TabIcon = (size) =>
  */
 export const terminalTabIcon: TabIcon = (size) =>
   themed(css.terminal, <VscTerminal size={Math.max(10, Math.round(size * 0.85))} />)
+
+/** Clues — the same layered collection artwork used by its directory rows. */
+export const cluesTabIcon: TabIcon = (size) => <CluePackArtwork size={size} />

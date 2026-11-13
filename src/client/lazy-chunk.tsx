@@ -12,6 +12,7 @@
  */
 import { createElement, useEffect, useState, type ComponentType, type ReactNode } from 'react'
 import { loadChunk, type ChunkExports, type ChunkName } from './chunk-loader.ts'
+import { ActionButton, LoadingIndicator } from './ui/index.ts'
 import { t } from './locales.ts'
 import css from './sidebar.module.css'
 
@@ -49,19 +50,17 @@ function LazyChunkView<P extends object>({ chunk, pick, props }: LazyChunkViewPr
   }, [chunk, pick, attempt])
 
   if (state.status === 'loading') {
-    return <div className={css.editorPlaceholder}>{t('loading')}</div>
+    return <LoadingIndicator className={css.editorPlaceholder} />
   }
   if (state.status === 'error') {
     return (
-      <div className={css.editorError}>
+      <div className={css.editorError} role="alert">
         <span>{state.message}</span>
-        <button
-          type="button"
-          className={css.terminalRetry}
+        <ActionButton
           onClick={() => { setAttempt(current => current + 1) }}
         >
           {t('terminalRetry')}
-        </button>
+        </ActionButton>
       </div>
     )
   }

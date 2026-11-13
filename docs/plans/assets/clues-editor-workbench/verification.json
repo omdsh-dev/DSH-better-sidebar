@@ -1,0 +1,131 @@
+{
+  "startTime": 1792433257460,
+  "duration": 10324.478,
+  "stats": {
+    "total": 2,
+    "expected": 2,
+    "unexpected": 0,
+    "flaky": 0,
+    "skipped": 0,
+    "ok": true
+  },
+  "errors": [],
+  "hostVersion": "0.2.1-rc.1",
+  "lastRun": {
+    "status": "passed",
+    "failedTests": []
+  },
+  "targetedRegressions": {
+    "files": 10,
+    "tests": 196
+  },
+  "screenshots": [
+    {
+      "file": "clues-integrated-light-320.png",
+      "sha256": "c858618bbb49aeaeebc3c2159deb762ccc1de733bdd5771274ea73fd3e536673"
+    },
+    {
+      "file": "clues-integrated-light-390.png",
+      "sha256": "c0995f941cf5ffcb521def52744276ea078a03e6084782eccb4b6696affe884e"
+    },
+    {
+      "file": "clues-integrated-light-640.png",
+      "sha256": "2ec34357bcba4992c3e8de82526c130312089e5bb7069b2619b3e76213d7f82f"
+    },
+    {
+      "file": "clues-integrated-dark-320.png",
+      "sha256": "5d2cbdc0f042a971c1b100269f40db5f29d3b935a36e044a4abe04e5f3a66745"
+    },
+    {
+      "file": "clues-integrated-dark-390.png",
+      "sha256": "3918a56de15b978614e26cd347253d117d63308b93338e5f200f06375c4bfec2"
+    },
+    {
+      "file": "clues-integrated-dark-640.png",
+      "sha256": "8d95ca5835030345c50958fd327eb0adae1353fac0c2afd3175ad0d37db04d19"
+    },
+    {
+      "file": "clues-selection-light-320.png",
+      "sha256": "0d099ac7884a7caf392219684a4156faf84aea0c48f0393360b8fe415e3fc83e"
+    },
+    {
+      "file": "clues-selection-light-390.png",
+      "sha256": "36d2e4b1d2bdb47d5fbc00a3f8f6bc4709659608af791f5aa4b7019cfee16baa"
+    },
+    {
+      "file": "clues-selection-light-640.png",
+      "sha256": "a24b34428d1839b746278fe99d1ad03b5fe3bfac0dc6a7fe49e1e6ad509d77fd"
+    },
+    {
+      "file": "clues-selection-dark-320.png",
+      "sha256": "875a03a124f6ce52b34d0abc72dfdafc1c3d6d4048823b7b1a08a0eb629f4460"
+    },
+    {
+      "file": "clues-selection-dark-390.png",
+      "sha256": "6cd780a439183a5adb14e0f669d857e93be971aa65a612b4a7d33d8f22dbbf87"
+    },
+    {
+      "file": "clues-selection-dark-640.png",
+      "sha256": "a956c0a1e9adda64bc013552f1b8990899ca03b66835381bfd32a5433b571df7"
+    },
+    {
+      "file": "clues-help.png",
+      "sha256": "d3fad978191083372c0005c1d3fb73db84ce36b32644e1a8d95271ea2d591ab7"
+    },
+    {
+      "file": "clues-source-github-390.png",
+      "sha256": "fb4662798dae9a96e65806ca11def35c7686e971c286acc21931f8bc1b031739"
+    },
+    {
+      "file": "clues-source-feishu-390.png",
+      "sha256": "60ed277fc6fa04e3ea9ed0904826f64ea9d219c1a8ddfa7a6c9b9c66043d2a1d"
+    },
+    {
+      "file": "clues-integrated-shell-dark.png",
+      "sha256": "31f4a9425fad6edfe50c7c1883d14ae6502b3666c215762634820a9a0ce4be7d"
+    },
+    {
+      "file": "clues-pinned-390.png",
+      "sha256": "321c5f5a700900bb476b775fd3ebd031a42ba7fb96ffe59fc95bdf11f0c5322c"
+    },
+    {
+      "file": "clues-destination-long-name-320.png",
+      "sha256": "8e954a128b3bf989755446b2c4211f4dbaf20af2da95cf10280f3dfc738eaa3e"
+    },
+    {
+      "file": "clues-selection-mobile.png",
+      "sha256": "733e5fc4e5c6b28fd33bab1b6a9574ed67eaf7f5a81dccdd5d3b87cf21296ea4"
+    },
+    {
+      "file": "clues-pack-management.png",
+      "sha256": "098b24fba8b6dd28eaf693febf8d4476555c718dc5a589256154c175c2f55f1e"
+    },
+    {
+      "file": "clues-share-fixed-actions.png",
+      "sha256": "2cc6413d8aaa99c0fc8c3adcefbe4eb294880b5a64832cc982a14002213e2ab8"
+    },
+    {
+      "file": "clues-empty-packs-touch.png",
+      "sha256": "02a599206f614f8356fbaf9be1d9af17bc2544eca09e4a95e010d4088f517229"
+    },
+    {
+      "file": "clues-selection-actions-touch.png",
+      "sha256": "1ee0700665087e67c71e3a2c148c28d7670ef4167f61253449be6844b013c027"
+    },
+    {
+      "file": "clues-share-touch-320x240.png",
+      "sha256": "60a7b89d63dce53ac6070411c5ca30d19002bac35013f7fa0685fd5f11aee163"
+    }
+  ],
+  "layoutMetricsFile": "clues-layout-metrics.json",
+  "buildArtifacts": [
+    {
+      "file": "lib/client.js",
+      "sha256": "c6034c204ae1cc010b1e6bab24955bc7204b8075eb2c0f8adfc39a38d5f34c6c"
+    },
+    {
+      "file": "dsh-better-sidebar-0.28.0.tgz",
+      "sha256": "02bb9428a17f0e2bd4810744c8ba6b38bebc589847f4b005360c60fe168b411a"
+    }
+  ]
+}

@@ -53,6 +53,8 @@ import type { TabDragPayload } from './TabBar.tsx'
 import { t } from './locales.ts'
 import { useSessionRoot } from './use-session-root.ts'
 import { useSessionScope } from './session-scope.ts'
+import { IconButton } from './ui/index.ts'
+import design from './ui/design.module.css'
 import css from './sidebar.module.css'
 
 /**
@@ -705,7 +707,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
       */}
       <div
         ref={bottomRef}
-        className={clsx(css.bottomPanel, !state.bottomOpen && css.bottomPanelHidden)}
+        className={clsx(design.surface, css.bottomPanel, !state.bottomOpen && css.bottomPanelHidden)}
         data-dsh-panel
         data-dsh-bottom-panel
         style={{
@@ -758,14 +760,12 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
           under it): one tap collapses the panel.
         */}
         <Tooltip label={t('collapseBottomPanel')} side="bottom" delayMs={500}>
-          <button
-            type="button"
+          <IconButton
             className={css.bottomClose}
-            aria-label={t('collapseBottomPanel')}
+            label={t('collapseBottomPanel')}
+            icon={<IconCloseFillRegular size={14} />}
             onClick={() => { store.reduce(toggleBottomPanel) }}
-          >
-            <IconCloseFillRegular size={14} />
-          </button>
+          />
         </Tooltip>
         <div className={css.panelBody}>
           <Workbench
@@ -802,17 +802,15 @@ export function BottomDockToggle(props: { store: SidebarStore }) {
   const label = open ? t('collapseBottomPanel') : t('expandBottomPanel')
   return (
     <Tooltip label={label} side="bottom" delayMs={500}>
-      <button
-        type="button"
+      <IconButton
         className={css.toggleButton}
+        label={label}
+        icon={<IconPanelBottomOutline16 size={14} />}
         data-dsh-bottom-toggle
         data-active={open ? 'true' : undefined}
-        aria-label={label}
-        aria-pressed={open}
+        active={open}
         onClick={() => { store.reduce(toggleBottomPanel) }}
-      >
-        <IconPanelBottomOutline16 size={15} />
-      </button>
+      />
     </Tooltip>
   )
 }

@@ -44,11 +44,14 @@ import { createOpenInApp } from './open-in-app.ts'
 import { TreePanel } from './TreePanel.tsx'
 import { t } from './locales.ts'
 import { consumeLineTarget, peekLineTarget } from './line-target.ts'
-import { relativeTo } from './paths.ts'
+import { extOf, relativeTo, workspaceRelativePath } from './paths.ts'
 import { resolveNativeSidebarPath, resolveSidebarPath } from './paths.ts'
+import { workspaceIdOfSession, workspaceLocationOf } from './clues/workspace-id.ts'
+import type { ClueSelectionActionTarget } from './clues/selection-actions.tsx'
 import { clearRetargetedPath, closePathTabs, consumeRetargetedPath, pathTabKey, retargetPathTabs } from './tree-mutations.ts'
 import type { EditorToolbarControls, EditorToolbarState, FileViewerDescriptor, TabActionDescriptor } from './service.ts'
 import { firstLeaf, insertLeafAt, leafWithTab, mintTabId, type SidebarStore, type SidebarTab } from './state.ts'
+import { Tabs } from './ui/index.ts'
 import css from './sidebar.module.css'
 
 /**
@@ -151,6 +154,26 @@ function confirmDiscard(message: string): boolean {
   return typeof window.confirm === 'function' ? window.confirm(message) : false
 }
 
+/** Project this exact file against the live registered workspace, never the session cwd. */
+export function editorSelectionTargetOf(ctx: Context, sessionId: string, path: string): ClueSelectionActionTarget | undefined {
+  try {
+    const workspaceId = workspaceIdOfSession(ctx, sessionId)
+    if (workspaceId === undefined) return undefined
+    const location = workspaceLocationOf(ctx, workspaceId)
+    if (location === undefined || !location.sessionIds.includes(sessionId)) return undefined
+    const relative = workspaceRelativePath(location.root, path)
+    if (relative === undefined || relative === '.') return undefined
+    const windows = /^[A-Za-z]:[\\/]/.test(location.root) || /^[\\/]{2}/.test(location.root)
+    if (!windows && !location.root.startsWith('/')) return undefined
+    const extension = extOf(path)
+    return { workspaceId, sessionId, resource: {
+      sourceId: 'builtin.files',
+      typeId: extension === 'md' || extension === 'markdown' ? 'builtin.files.markdown' : 'builtin.files.text',
+      locator: { root: { kind: 'workspace', workspaceId }, path: relative, dialect: windows ? 'win32' : 'posix' },
+    } }
+  } catch { return undefined }
+}
+
 export function EditorHost(props: {
   ctx: Context
   store: SidebarStore
@@ -168,6 +191,9 @@ export function EditorHost(props: {
   const visible = props.visible !== false
   const path = tab.path ?? ''
   const title = tab.title
+  // A callback crosses the lazy-editor bundle boundary by props. Reading the
+  // registry at selection time avoids per-tab subscriptions and stale roots.
+  const resolveSelectionTarget = useCallback(() => editorSelectionTargetOf(ctx, scope.sessionId, path), [ctx, scope.sessionId, path])
   // A folder window: the model's `sidebar_open` (or any caller) opens a
   // directory as an editor tab carrying `meta.dir: true` with the directory
   // as its path. It renders the file tree rooted at that folder instead of
@@ -450,6 +476,8 @@ export function EditorHost(props: {
   // without a toolbar — image, pdf, binary download).
   const [toolbar, setToolbar] = useState<EditorToolbarState | null>(null)
   const controlsRef = useRef<EditorToolbarControls | null>(null)
+  const toolbarScopeRef = useRef(scope)
+  const toolbarViewerRef = useRef<string | null>(null)
   const onToolbarState = useCallback((next: EditorToolbarState) => {
     setToolbar(prev => prev !== null && JSON.stringify(prev) === JSON.stringify(next) ? prev : next)
   }, [])
@@ -539,9 +567,14 @@ export function EditorHost(props: {
     loadedPathRef.current = path
     if (pathChanged && consumeRetargetedPath(retargetKey, previousPath, path)) return
     if (!pathChanged) clearRetargetedPath(retargetKey)
-    // A (re)load or a path-less tab clears any hoisted toolbar state — the
-    // fresh viewer re-registers its own.
-    setToolbar(null)
+    // Keep the same file's toolbar mounted through a reload: keyboard mode
+    // navigation has just focused one of its tabs. Removing it drops focus.
+    const previousScope = toolbarScopeRef.current
+    toolbarScopeRef.current = scope
+    if (pathChanged || previousScope.sessionId !== scope.sessionId || previousScope.cwd !== scope.cwd || showEmpty || isDir) {
+      setToolbar(null)
+      toolbarViewerRef.current = null
+    }
     // The seeded home tab (no path) never loads a viewer — the empty-state
     // hint renders until the user picks a file. A folder tab never loads a
     // viewer either — its tree is rooted at the folder.
@@ -553,8 +586,11 @@ export function EditorHost(props: {
     setLoad({ status: 'loading' })
     setFileErrorAction(null)
     const mediaUrlOf = (): string => mediaUrl(scope, path)
-    const apply = (action: EditorLoadAction): void => {
+    const apply = (action: EditorLoadAction, mtimeMs?: number): void => {
       if (cancelled) return
+      const viewerId = action.kind === 'binary' ? null : action.viewer.id
+      if (toolbarViewerRef.current !== viewerId || action.kind === 'binary') setToolbar(null)
+      toolbarViewerRef.current = viewerId
       switch (action.kind) {
         case 'binary':
           setLoad({ status: 'binary' })
@@ -568,6 +604,7 @@ export function EditorHost(props: {
             largeFile: action.largeFile,
             mediaUrl: action.mediaUrl,
             customData: action.customData,
+            mtimeMs,
           })
           return
         case 'customLoad':
@@ -576,6 +613,7 @@ export function EditorHost(props: {
             setLoad({ status: 'ready', viewer: action.viewer, customData: data })
           }).catch((error: unknown) => {
             if (cancelled) return
+            setToolbar(null)
             setLoad({ status: 'error', message: error instanceof Error ? error.message : String(error) })
           })
           return
@@ -587,8 +625,7 @@ export function EditorHost(props: {
             const outcome = planFsReadOutcome(action.viewer, result, (head) => ctx.get('betterSidebar')?.matchFileViewer(path, head), mediaUrlOf)
             // Carry the read's mtime into the rendered viewer: the text
             // editor uses it as the save baseline (fs-conflict on drift).
-            if (outcome.kind === 'render') setLoad({ ...outcome, status: 'ready', mtimeMs: result.mtimeMs })
-            else apply(outcome)
+            apply(outcome, result.mtimeMs)
           }).catch(async (error: unknown) => {
             if (cancelled) return
             const message = error instanceof Error ? error.message : String(error)
@@ -620,6 +657,7 @@ export function EditorHost(props: {
               }, scope.sessionId)
               return
             }
+            setToolbar(null)
             const fileNotFound = error instanceof SidebarApiError
               && error.code === 'fs-error'
               && message.startsWith('File not found: ')
@@ -751,7 +789,7 @@ export function EditorHost(props: {
   // at the folder instead of the session cwd.
   if (treeOnly || folderRoot !== undefined) {
     return (
-      <div className={css.editor}>
+      <div className={css.editor} data-sidebar-surface="files">
         <TreePanel
           full
           visible={visible}
@@ -820,35 +858,23 @@ export function EditorHost(props: {
   }
 
   return (
-    <div className={css.editor}>
+    <div className={css.editor} data-sidebar-surface="editor">
       <div className={css.editorHeader}>
         <EditorPathInput key={path} path={path} cwd={scope.cwd} onOpen={openFile} />
         {toolbar?.modes === true && (
-          <div className={css.editorModeToggle}>
-            <button
-              type="button"
-              className={clsx(css.editorModeButton, toolbar.mode === 'preview' && css.editorModeActive)}
-              onClick={() => {
-                // Issue #167 part B: returning from edit to preview reloads so
-                // the preview renders the just-saved content. A dirty draft
-                // (or a failed save) suppresses the reload — the draft only
-                // lives in the editor instance and a remount would drop it.
-                if (toolbar.mode === 'edit' && toolbar.dirty !== true && toolbar.saveState !== 'failed') {
-                  setReloadSeq(sequence => sequence + 1)
-                }
-                controlsRef.current?.setMode('preview')
-              }}
-            >
-              {t('preview')}
-            </button>
-            <button
-              type="button"
-              className={clsx(css.editorModeButton, toolbar.mode === 'edit' && css.editorModeActive)}
-              onClick={() => { controlsRef.current?.setMode('edit') }}
-            >
-              {t('edit')}
-            </button>
-          </div>
+          <Tabs
+            className={css.editorModeToggle}
+            value={toolbar.mode}
+            ariaLabel={`${t('preview')} / ${t('edit')}`}
+            options={[{ value: 'preview', label: t('preview') }, { value: 'edit', label: t('edit') }]}
+            onChange={(mode) => {
+              // Preserve the draft and failed-save baseline when returning to preview.
+              if (mode === 'preview' && toolbar.mode === 'edit' && toolbar.dirty !== true && toolbar.saveState !== 'failed') {
+                setReloadSeq(sequence => sequence + 1)
+              }
+              controlsRef.current?.setMode(mode as 'preview' | 'edit')
+            }}
+          />
         )}
         {toolbar?.dirty === true && <span className={css.dirtyDot} title={t('unsaved')} />}
         {toolbar?.editable === true && toolbar?.largeFile !== true && controlsRef.current?.search !== undefined && (
@@ -991,6 +1017,7 @@ export function EditorHost(props: {
             onToolbarState,
             onToolbarControls,
             onReload: refreshFile,
+            ...{ resolveSelectionTarget },
           })}
         </div>
         {treeOpen && (

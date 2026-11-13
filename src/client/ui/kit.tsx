@@ -15,17 +15,21 @@
  * Skin contract: every paint comes from `kit.module.css` and resolves to a
  * `--dsw-*` / `--ds-*` token (`tests/theme.spec.ts` scans the sheet).
  */
-import { type MouseEvent, type ReactNode } from 'react'
+import { forwardRef, type ButtonHTMLAttributes, type MouseEvent, type ReactNode } from 'react'
 import clsx from 'clsx'
-import { Button, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Modal } from '@deepseek-ai/dsh-client-ui-primitives'
+import { LoadingIndicator } from './LoadingIndicator.tsx'
+import design from './design.module.css'
 import css from './kit.module.css'
+
+type DataAttributes = { readonly [key: `data-${string}`]: string | number | boolean | undefined }
 
 /**
  * A 28px (`md`) or 24px (`sm`) square glyph button — the ONE icon button of
  * the plugin. Callers that need a pressed state pass `active`; the danger
  * tone only recolors the glyph/hover, never the geometry.
  */
-export function IconButton(props: {
+export const IconButton = forwardRef<HTMLButtonElement, Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'children' | 'size'> & DataAttributes & {
   icon: ReactNode
   /** Accessible name; also the default hover title. */
   label: string
@@ -36,23 +40,40 @@ export function IconButton(props: {
   disabled?: boolean
   danger?: boolean
   className?: string | undefined
-}): ReactNode {
-  const { icon, label, title, onClick, size = 'md', active, disabled, danger } = props
+}>(function IconButton(props, ref): ReactNode {
+  const { icon, label, title, onClick, size = 'md', active, disabled, danger, className, ...nativeProps } = props
   return (
     <button
+      {...nativeProps}
+      ref={ref}
       type="button"
       className={clsx(css.iconButton, size === 'sm' ? css.iconButtonSm : css.iconButtonMd,
-        active === true && css.iconButtonActive, danger === true && css.iconButtonDanger, props.className)}
+        active === true && css.iconButtonActive, danger === true && css.iconButtonDanger, className)}
       aria-label={label}
       title={title ?? label}
       disabled={disabled}
-      aria-pressed={active}
+      aria-pressed={active ?? nativeProps['aria-pressed']}
       onClick={(event) => { onClick(event) }}
     >
       {icon}
     </button>
   )
-}
+})
+
+/** A shared text action. Busy actions keep their label and width while waiting. */
+export const ActionButton = forwardRef<HTMLButtonElement, ButtonHTMLAttributes<HTMLButtonElement> & DataAttributes & {
+  variant?: 'outline' | 'primary' | 'ghost'
+  busy?: boolean
+  size?: 'sm' | 'md'
+  danger?: boolean
+}>(function ActionButton({ variant = 'outline', busy, disabled, className, children, type = 'button', size = 'md', danger, ...props }, ref): ReactNode {
+  return <button {...props} ref={ref} type={type} disabled={disabled || busy}
+    aria-busy={busy || undefined}
+    className={clsx(css.button, variant === 'primary' && css.buttonPrimary, variant === 'ghost' && css.buttonGhost, size === 'sm' && css.buttonSm, danger && css.confirmDanger, className)}>
+    {busy && <span className={css.buttonSpinner} aria-hidden={true}><LoadingIndicator inline size={14} label="" role="presentation" /></span>}
+    <span className={css.buttonLabel}>{children}</span>
+  </button>
+})
 
 /**
  * A small toggle chip (filters, list switches). `count` renders as a trailing
@@ -118,11 +139,16 @@ export function Notice(props: {
   children: ReactNode
 }): ReactNode {
   const tone = props.tone ?? 'well'
+  if (props.kind === 'loading') {
+    return <LoadingIndicator label={props.children} inline={tone === 'inline'} role={props.role}
+      className={clsx(css.notice, tone === 'page' ? css.noticePage : tone === 'inline' ? css.noticeInline : css.noticeWell,
+        css.noticeHint, props.className)} />
+  }
   return (
     <div
       className={clsx(css.notice, tone === 'page' ? css.noticePage : tone === 'inline' ? css.noticeInline : css.noticeWell,
         props.kind === 'error' && css.noticeError, props.kind === 'warn' && css.noticeWarn,
-        (props.kind === 'hint' || props.kind === 'loading') && css.noticeHint, props.className)}
+        props.kind === 'hint' && css.noticeHint, props.className)}
       data-kind={props.kind}
       role={props.role ?? (props.kind === 'error' ? 'alert' : undefined)}
     >
@@ -150,17 +176,20 @@ export function ConfirmDialog(props: {
   return (
     <Modal
       open={props.open}
-      onClose={props.onClose}
+      onClose={() => { if (!props.busy) props.onClose() }}
+      backdropBlur={false}
       title={props.title}
+      className={clsx(design.surface, css.confirmDialog)}
+      contentClassName={css.confirmContent}
       closeLabel={props.cancelLabel}
       footer={(
         <>
-          <Button variant="outline" disabled={props.busy} onClick={props.onClose}>{props.cancelLabel}</Button>
-          <Button variant="primary" disabled={props.busy} onClick={props.onConfirm}>{props.confirmLabel}</Button>
+          <ActionButton className={css.confirmAction} disabled={props.busy} onClick={props.onClose}>{props.cancelLabel}</ActionButton>
+          <ActionButton className={css.confirmAction} danger={props.danger} variant="primary" busy={props.busy} onClick={props.onConfirm}>{props.confirmLabel}</ActionButton>
         </>
       )}
     >
-      <p className={css.confirmDesc} data-danger={props.danger === true ? 'true' : undefined}>{props.description}</p>
+      <p className={css.confirmDesc}>{props.description}</p>
     </Modal>
   )
 }

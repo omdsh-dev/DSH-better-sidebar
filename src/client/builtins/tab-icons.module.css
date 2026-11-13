@@ -33,3 +33,5 @@
      renders a step smaller than its siblings (see tab-icons.tsx). */
   color: var(--dsw-alias-label-primary);
 }
+
+/* Clues uses its own token-layered collection artwork (clues/artwork.tsx). */

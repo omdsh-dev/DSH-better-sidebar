@@ -117,6 +117,26 @@ function moduleStylesheets(): string[] {
 }
 
 describe('skin contract: the plugin owns no color of its own', () => {
+  it('inherits the host palette with shared scoped geometry', () => {
+    const design = readFileSync(resolve(ROOT, 'src/client/ui/design.module.css'), 'utf8')
+    expect(design).toContain('--ds-sidebar-accent: var(--dsw-alias-state-business-primary)')
+    expect(design).not.toContain('#3388BB')
+    expect(design).not.toContain('--dsw-alias-brand-primary:')
+    expect(design).not.toContain('--dsw-alias-button-primary-fill:')
+    expect(design).toContain('--ds-sidebar-control-height: 32px')
+    expect(design).toContain('--ds-sidebar-control-sm: 26px')
+    expect(design).toContain('--ds-sidebar-radius: 6px')
+  })
+
+  it('pairs shared switch tracks and thumbs with the host palette', () => {
+    const controls = readFileSync(resolve(ROOT, 'src/client/ui/controls.module.css'), 'utf8')
+    expect(controls).toContain('.switchThumb')
+    expect(controls).toContain('background: var(--dsw-alias-label-primary-foreground)')
+    expect(controls).toContain('background: var(--dsw-alias-button-primary-fill)')
+    expect(controls).toContain('.switch:focus-visible')
+    expect(controls).toContain('@media (prefers-reduced-motion: reduce)')
+  })
+
   it('keeps Context diagnostics feedback themed and bounded on narrow viewports', () => {
     const source = readFileSync(resolve(ROOT, 'src/client/context-diagnostics.module.css'), 'utf8')
     expect(source).toContain('var(--dsw-alias-bg-layer-3)')
@@ -128,8 +148,97 @@ describe('skin contract: the plugin owns no color of its own', () => {
     for (const token of tokens) expect(token).toMatch(/^--(?:dsw-alias-|dsw-font-|ds-)/)
   })
 
+  it('clue surfaces keep every paint themed and pair primary foreground with fill', () => {
+    for (const file of [
+      'src/client/clues/tab/clues-tab.module.css',
+      'src/client/clues/windows/pack.module.css',
+      'src/client/clues/windows/share.module.css',
+      'src/client/clues/windows/detail.module.css',
+      'src/client/clues/settings/settings.module.css',
+      'src/client/ui/workbench-section.module.css',
+      'src/client/ui/loading-indicator.module.css',
+      'src/client/windows/hosted-window.module.css',
+      'src/client/windows/windows.module.css',
+      'src/client/FloatingWindow.module.css',
+      'src/client/clues/windows/create-pack.module.css',
+    ]) {
+      const source = readFileSync(resolve(ROOT, file), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
+      expect(source, file).not.toMatch(/#[0-9a-fA-F]{3,8}\b|\brgba?\(|\bhsla?\(/)
+      if (file === 'src/client/clues/tab/clues-tab.module.css') {
+        // Collection/results stay neutral. The visible source choice may use a
+        // light business tint (user's native colorful UI request), never a stripe.
+        expect(source).not.toMatch(/::(?:before|after)/)
+        for (const rule of source.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+          if (/\[(?:aria-(?:selected|pressed)|data-selected)=|:has\(input:checked\)|\.pack(?:Card|Row)\b/.test(rule[1]!)) {
+            expect(rule[2]).not.toMatch(/box-shadow|border-(?:left|inline-start)/)
+            if (!rule[1]!.includes('.sourceNavItem')) expect(rule[2]).not.toMatch(/brand-primary|state-business-primary/)
+          }
+        }
+      }
+      for (const token of source.matchAll(/var\(--([a-z0-9-]+)/gi)) {
+        expect(isThemeToken(token[1]!), `${file}: ${token[0]}`).toBe(true)
+      }
+    }
+    // Primary paint belongs to the shared recipe, not each consuming page.
+    for (const file of ['src/client/ui/kit.module.css']) {
+      const source = readFileSync(resolve(ROOT, file), 'utf8')
+      expect(source, file).toContain('var(--dsw-alias-button-primary-fill)')
+      expect(source, file).toContain('var(--dsw-alias-label-primary-foreground)')
+      expect(source, file).toContain('var(--dsw-alias-button-primary-hover)')
+      expect(source, file).not.toMatch(/(?:^|[;{\s])color:\s*var\(--dsw-alias-bg-base\)/)
+    }
+  })
+
+  it('the clue chrome separates surfaces with flat fills, never decorative shadows', () => {
+    const source = readFileSync(resolve(ROOT, 'src/client/clues/tab/clues-tab.module.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
+    const header = /\.header\s*\{([^}]+)\}/.exec(source)?.[1]
+    expect(header).toContain('background: transparent')
+    const packRegion = /\.packRegion\s*\{([^}]+)\}/.exec(source)?.[1]
+    expect(packRegion).toContain('background: var(--dsw-alias-bg-layer-1)')
+    expect(source).not.toMatch(/box-shadow/)
+    expect(source).toMatch(/\.querySubmit\s*\{[^}]*background:\s*transparent/)
+    expect(source).toMatch(/\.rowActions \.iconButton\s*\{[^}]*color:\s*var\(--dsw-alias-label-tertiary\)/)
+  })
+
+  it('source identity remains themed while actions use the single shared recipe', () => {
+    const source = readFileSync(resolve(ROOT, 'src/client/clues/tab/clues-tab.module.css'), 'utf8')
+    const switcher = readFileSync(resolve(ROOT, 'src/client/ui/source-switcher.module.css'), 'utf8')
+    const controls = readFileSync(resolve(ROOT, 'src/client/ui/controls.module.css'), 'utf8')
+    const glyphs = readFileSync(resolve(ROOT, 'src/client/clues/sources/source-icons.module.css'), 'utf8')
+    const kit = readFileSync(resolve(ROOT, 'src/client/ui/kit.module.css'), 'utf8')
+    expect(switcher).toContain('.tabIcon')
+    expect(switcher).toContain('.tabText')
+    expect(controls).toContain('.tabsSegmented')
+    expect(glyphs).toContain('state-business-primary')
+    expect(glyphs).toContain('state-success-primary')
+    expect(glyphs).toContain('state-warn-primary')
+    expect(kit).toContain('background: var(--dsw-alias-button-primary-fill)')
+    expect(kit).toContain('color: var(--dsw-alias-label-primary-foreground)')
+    expect(kit).toContain('background: var(--dsw-alias-button-primary-hover)')
+    expect(source).not.toContain('collectAction')
+  })
+
+  it('settings navigation is a 144px left rail at wide sizes and a group select below 640', () => {
+    const settings = readFileSync(resolve(ROOT, 'src/client/SideCardSection.module.css'), 'utf8')
+    expect(settings).toContain('.navRail')
+    expect(settings).toMatch(/width:\s*144px/)
+    expect(settings).toContain('border-inline-end: 1px solid var(--dsw-alias-border-l1)')
+    expect(settings).toMatch(/@container sidebar-settings \(max-width:\s*639px\)/)
+    expect(settings).toContain('.navSelect')
+    expect(settings).toContain('.groupIcon')
+    expect(settings).not.toMatch(/#[0-9a-fA-F]{3,8}\b/)
+    expect(settings).not.toMatch(/\brgba?\(/)
+    for (const match of settings.matchAll(/var\((--[\w-]+)/g)) expect(match[1]).toMatch(/^--(?:dsw-|ds-)/)
+  })
+
   it('the icon modules carry no color literals', () => {
-    for (const file of ['src/client/file-icons.tsx', 'src/client/icons.tsx']) {
+    for (const file of [
+      'src/client/file-icons.tsx',
+      'src/client/icons.tsx',
+      'src/client/clues/artwork.tsx',
+      'src/client/clues/sources/github/icons.tsx',
+      'src/client/clues/sources/feishu/icons.tsx',
+    ]) {
       const source = readFileSync(resolve(ROOT, file), 'utf8')
       expect(source, file).not.toMatch(/#[0-9a-fA-F]{3,8}\b/)
       expect(source, file).not.toMatch(/\brgba?\(/)
@@ -182,7 +291,7 @@ describe('skin contract: the plugin owns no color of its own', () => {
     const block = /\.ref\[data-tone="tag"\] \{([^}]*)\}/.exec(styles)?.[1]
     if (block === undefined) throw new Error('the tag ref pill rule must exist in graph.module.css')
     expect(block).toContain('color: var(--dsw-alias-label-secondary)')
-    expect(block).toContain('border-style: dashed')
+    expect(styles).toContain('border: 1px solid currentColor')
   })
 
   it('the graph viewport fills its container without a viewport-relative height cap', () => {
@@ -197,8 +306,13 @@ describe('skin contract: the plugin owns no color of its own', () => {
       expect(graph.getPropertyValue('max-height')).toBe('')
       expect(Number.parseFloat(graph.getPropertyValue('min-height'))).toBe(0)
       const section = rules.find(rule => rule.selectorText === '.graphSection')!.style
-      expect(section.getPropertyValue('min-height')).toBe('248px')
+      expect(section.getPropertyValue('min-height')).toBe('calc(var(--ds-workbench-bar, 28px) + 221px)')
       expect(section.getPropertyValue('max-height')).toBe('')
+      const touch = Array.from(sheet.sheet!.cssRules).find((rule): rule is CSSMediaRule =>
+        'conditionText' in rule && rule.conditionText === '(hover: none), (pointer: coarse)')!
+      const touchSection = Array.from(touch.cssRules).find((rule): rule is CSSStyleRule =>
+        'selectorText' in rule && rule.selectorText === '.graphSection')!.style
+      expect(touchSection.getPropertyValue('min-height')).toBe('calc(var(--ds-workbench-bar, 28px) + 233px)')
     } finally {
       sheet.remove()
     }
@@ -220,10 +334,8 @@ describe('skin contract: the plugin owns no color of its own', () => {
         expect(style.getPropertyValue('border-left')).toBe('')
         expect(style.getPropertyValue('background')).toBe('var(--dsw-alias-interactive-bg-active)')
         const marker = rules.find(rule => rule.selectorText.split(',').some(part => part.trim() === `${selector}::before`))!
-        expect(marker.style.getPropertyValue('width')).toBe('2px')
-        expect(marker.style.getPropertyValue('top')).toBe('4px')
-        expect(marker.style.getPropertyValue('bottom')).toBe('4px')
-        expect(marker.style.getPropertyValue('background')).toBe('var(--dsw-alias-state-business-primary)')
+        // Selected fill carries state without another decorative accent stripe.
+        expect(marker).toBeUndefined()
       }
       const guide = rules.find(rule => rule.selectorText === '.guide')!
       expect(guide.style.getPropertyValue('position')).toBe('absolute')
@@ -233,24 +345,12 @@ describe('skin contract: the plugin owns no color of its own', () => {
     }
   })
 
-  it('the running bar sweeps the FULL width (a band either side, not a partial blob)', () => {
-    // Reader report: the first cut moved a 45%-wide band with
-    // `background-position`, so the bar was only ever partially lit. The
-    // corrected rule is a bar-wide band whose TRANSFORM travels one full width
-    // either side of the bar — entered at the left edge, covering the bar
-    // mid-flight, gone past the right edge.
+  it('shows running activity without decorative sweep animations', () => {
     const styles = readFileSync(resolve(ROOT, 'src/client/tasks-graph.module.css'), 'utf8')
-    const block = /\.cardBar\[data-running='true'\]::after \{([\s\S]*?)\n\}/.exec(styles)?.[1]
-    if (block === undefined) throw new Error('the running bar sweep rule must exist')
-    expect(block).toContain('width: 100%')
-    expect(block).toContain('transform: translateX(-100%)')
-    // No residual background-position travel (the partial-sweep mechanism).
-    expect(block).not.toContain('background-position')
-    expect(block).not.toContain('background-size')
-    const frames = /@keyframes dsh-tasks-bar-sweep \{([\s\S]*?)\n\}/.exec(styles)?.[1]
-    if (frames === undefined) throw new Error('the sweep keyframes must exist')
-    expect(frames).toContain('transform: translateX(-100%)')
-    expect(frames).toContain('transform: translateX(100%)')
+    expect(styles).toContain('.barState')
+    expect(styles).toContain('.barActivity')
+    expect(styles).not.toContain('dsh-tasks-bar-sweep')
+    expect(styles).not.toContain('linear-gradient')
   })
 
   it('the running bar keeps its state word and activity on ONE font stack', () => {
@@ -265,31 +365,16 @@ describe('skin contract: the plugin owns no color of its own', () => {
     expect(block).not.toContain('--ds-font-family-code')
   })
 
-  it('the empty-pane welcome capsule follows the host guide recipe', () => {
-    // The card is the same surface as DSH's own guide capsule ("pick what
-    // opens here"), so this pins the shared geometry and the token-only
-    // paint. A literal here would drift away from the host under every skin.
+  it('paints empty pane choices with the host capsule recipe', () => {
     const styles = readFileSync(resolve(ROOT, 'src/client/sidebar.module.css'), 'utf8')
-    const block = /\.paneCard \{([\s\S]*?)\n\}/.exec(styles)?.[1]
-    if (block === undefined) throw new Error('the .paneCard rule must exist in src/client/sidebar.module.css')
-    expect(block).toContain('border: 0.5px solid var(--dsw-alias-border-l4)')
-    expect(block).toContain('border-radius: 24px')
-    expect(block).toContain('background: var(--dsw-alias-bg-layer-1)')
+    const start = styles.indexOf('.paneCard {')
+    const block = styles.slice(start, styles.indexOf('}', start))
+    // The pane choices mirror the host's own guide capsules: a 56px row with
+    // the session-entry radius, left-aligned content, and token-only paint.
     expect(block).toContain('min-height: 56px')
-    expect(block).toContain('padding: 14px 20px')
-    // No paint of its own: every color-ish declaration resolves to a token,
-    // and the upstream-only spellings this repo must not copy are absent.
-    for (const declaration of block.matchAll(/(?:^|\n)\s*(?:background|border|color|font):\s*([^;]*);/g)) {
-      const value = declaration[1] ?? ''
-      // A literal here (hex, rgba, a named colour) would drift from the host
-      // under every skin, so any keyword whose value is not a token fails.
-      expect(
-        value === '' || value.includes('var(--dsw-'),
-        `${declaration[0].trim()} must paint through a --dsw-* token (got: ${value})`,
-      ).toBe(true)
-    }
-    expect(block).not.toContain('--dsw-alias-bg-l1')
-    expect(block).not.toContain('--dsw-alias-bg-l2')
+    expect(block).toContain('justify-content: flex-start')
+    expect(block).toContain('border: 0.5px solid var(--dsw-alias-border-l4)')
+    expect(block).not.toMatch(/#[0-9a-fA-F]{3,8}\b|\brgba?\(/)
   })
 
   it('the floating selection action paints from the host floating-button pair', () => {

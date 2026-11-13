@@ -1,0 +1,438 @@
+/**
+ * S8 clue source table (presentational): one compact row per registered
+ * source with icon + name, the derived availability state, the source switch
+ * and exactly one configure action; one independent pack @ switch; four batch
+ * controls over the currently registered set; the add-source plugin entry.
+ *
+ * The PRIMARY row is deliberately identity + state + enable + configure only:
+ * the technical `sourceId` is not rendered as copy, and every secondary
+ * preference (@ switches, the pack @ switch) plus the batch operations lives
+ * in ONE native `<details>` disclosure. This spec pins that split so the
+ * settings surface cannot slowly re-grow into a wall of switches.
+ *
+ * "Absent preference = ON" is S1's rule, so a source the user never touched
+ * renders enabled. The @ switch reflects the STORED preference even while the
+ * source is disabled (the value is preserved for re-enabling) but is inert in
+ * that state — the effective mention is off, which is what the row announces.
+ *
+ * Rendered with renderToString: no RPC runs; the panel is pure props.
+ */
+import { beforeAll, describe, expect, it } from 'vitest'
+import { renderToString } from 'react-dom/server'
+import { createElement } from 'react'
+import {
+  ClueSourcesPanel,
+  sourceDisplayName,
+  type ClueSourcesPanelProps,
+} from '../src/client/clues/settings/sources.tsx'
+import type { ClueSourceStatus } from '../src/client/clues/settings/status.ts'
+import { SIDEBAR_PREFS_DEFAULTS, type SidebarPrefs } from '../src/prefs-shared.ts'
+import type { ClueSourceDescriptor } from '../src/clues/types.ts'
+
+beforeAll(() => {
+  Object.defineProperty(navigator, 'language', { value: 'en-US', configurable: true })
+})
+
+/** One registered source fixture. */
+function source(sourceId: string, name: string, extra: Partial<ClueSourceDescriptor> = {}): ClueSourceDescriptor {
+  return {
+    sourceId,
+    name,
+    order: 10,
+    pluginId: 'test.plugin',
+    types: [],
+    transport: 'files',
+    capabilities: { resolve: true, list: true, search: true, read: true, edit: false, portable: true },
+    ...extra,
+  }
+}
+
+const SOURCES = [
+  source('builtin.files', 'Local files', { order: 10 }),
+  source('acme.docs', 'Acme Docs', {
+    order: 20,
+    transport: 'cli',
+    dependencyIds: ['acme.cli'],
+    connectionId: 'acme.auth',
+  }),
+]
+
+/** A status map with every source ready unless overridden. */
+function statuses(overrides: Record<string, ClueSourceStatus> = {}): ReadonlyMap<string, ClueSourceStatus> {
+  return new Map([
+    ['builtin.files', { kind: 'ready' }],
+    ['acme.docs', { kind: 'ready' }],
+    ...Object.entries(overrides),
+  ])
+}
+
+/** Full shared prefs (the panel consumes the S1 object and its helpers). */
+function prefs(overrides: Partial<SidebarPrefs> = {}): SidebarPrefs {
+  return { ...SIDEBAR_PREFS_DEFAULTS, ...overrides }
+}
+
+/** Default props: everything enabled (S1 absent = ON). */
+function props(overrides: Partial<ClueSourcesPanelProps> = {}): ClueSourcesPanelProps {
+  return {
+    sources: SOURCES,
+    displays: [],
+    statuses: statuses(),
+    prefs: prefs(),
+    loading: false,
+    error: null,
+    statusError: null,
+    catalogueLoaded: true,
+    onToggleSource: () => {},
+    onToggleMention: () => {},
+    onTogglePacksMention: () => {},
+    onEnableAll: () => {},
+    onDisableAll: () => {},
+    onMentionAll: () => {},
+    onMentionNone: () => {},
+    onConfigure: () => {},
+    onAddSource: () => {},
+    onReload: () => {},
+    ...overrides,
+  }
+}
+
+function render(overrides: Partial<ClueSourcesPanelProps> = {}): string {
+  return renderToString(createElement(ClueSourcesPanel, props(overrides)))
+}
+
+/** The primary surface with the advanced disclosure removed. */
+function primary(html: string): string {
+  return html.replace(/<details[\s\S]*?<\/details>/g, '')
+}
+
+/** The advanced disclosure (its controls are secondary preferences/actions). */
+function advanced(html: string): string {
+  const at = html.indexOf('<details')
+  return at < 0 ? '' : html.slice(at)
+}
+
+/** The first complete button element carrying one accessible name. */
+function buttonTag(html: string, label: string): string | undefined {
+  return [...html.matchAll(/<button[^>]*>[\s\S]*?<\/button>/g)]
+    .map(match => match[0])
+    .find(tag => tag.includes(`aria-label="${label}"`))
+}
+
+/** Every role=switch button in the HTML, by accessible name. */
+function switches(html: string): { label: string; checked: boolean; disabled: boolean }[] {
+  return [...html.matchAll(/<button[^>]*role="switch"[^>]*>/g)].map(match => {
+    const tag = match[0]
+    return {
+      label: /aria-label="([^"]*)"/.exec(tag)?.[1] ?? '',
+      checked: /aria-checked="true"/.test(tag),
+      disabled: /disabled=""/.test(tag) || /\sdisabled(?:\s|>)/.test(tag),
+    }
+  })
+}
+
+describe('ClueSourcesPanel rows', () => {
+  it('renders one primary row per registered source with its name and derived status', () => {
+    const html = render()
+    expect(html).toContain('data-clue-source="builtin.files"')
+    expect(html).toContain('data-clue-source="acme.docs"')
+    expect(html).toContain('Local files')
+    // The technical id stays identity-only: the DOM carries it, the visible
+    // primary row does not print it.
+    expect(primary(html)).not.toContain('>builtin.files<')
+    expect(primary(html)).not.toContain('>acme.docs<')
+    expect(html).toContain('Ready')
+    expect(buttonTag(html, 'Configure source: Acme Docs')).toContain('Configure')
+    expect(html).not.toContain('Connect an account or install a dependency here when needed.')
+  })
+
+  it('folds every secondary preference and batch action into ONE advanced disclosure', () => {
+    const html = render()
+    expect(html.match(/<details/g) ?? []).toHaveLength(1)
+    expect(primary(html)).not.toContain('<details')
+    expect(primary(html)).not.toContain('@ candidates:')
+    expect(primary(html)).not.toContain('Enable all sources')
+    // The disclosure is a native summary, so keyboard/touch semantics are
+    // the browser's rather than a hand-rolled popover.
+    expect(advanced(html)).toContain('<summary')
+    expect(advanced(html)).toContain('Advanced settings')
+    expect(html.indexOf('Add source plugin')).toBeLessThan(html.indexOf('<details'))
+    expect(advanced(html)).toContain('@ candidates: Acme Docs')
+    expect(advanced(html)).toContain('@ candidates: clue packs')
+    expect(advanced(html)).toContain('Enable all sources')
+    // The add-source journey stays primary (it is not a bulk preference).
+    expect(primary(html)).toContain('Add source plugin')
+  })
+
+  it('summarizes only non-default advanced preferences while collapsed', () => {
+    const defaultSummary = /<summary[^>]*>([\s\S]*?)<\/summary>/.exec(render())?.[1] ?? ''
+    expect(defaultSummary).not.toContain('modified')
+    const html = render({ prefs: prefs({
+      clueSourcesEnabled: { 'builtin.files': false },
+      clueSourcesMentionEnabled: { 'acme.docs': false, 'unloaded.plugin': false },
+      cluePacksMentionEnabled: false,
+    }) })
+    const summary = /<summary[^>]*>([\s\S]*?)<\/summary>/.exec(html)?.[1] ?? ''
+    expect(summary).toContain('3 modified')
+    expect(advanced(html)).toContain('data-clue-mention="unloaded.plugin"')
+  })
+
+  it('treats an absent preference as ON (the row renders an enabled source switch)', () => {
+    const html = render()
+    const on = switches(html)
+    const sourceSwitches = on.filter(item => item.label === 'Enable source: Local files')
+    expect(sourceSwitches).toEqual([{ label: 'Enable source: Local files', checked: true, disabled: false }])
+    expect(switches(advanced(html))).toContainEqual({ label: '@ candidates: Local files', checked: true, disabled: false })
+  })
+
+  it('renders an explicit false as off and preserves the stored @ value while the source is off', () => {
+    const html = render({
+      prefs: prefs({
+        clueSourcesEnabled: { 'builtin.files': false },
+        clueSourcesMentionEnabled: { 'builtin.files': true },
+      }),
+    })
+    expect(switches(html)).toContainEqual({ label: 'Enable source: Local files', checked: false, disabled: false })
+    // The stored @ pref is still true, but the control is inert while the
+    // source is disabled (the effective mention is off).
+    expect(switches(advanced(html))).toContainEqual({ label: '@ candidates: Local files', checked: true, disabled: true })
+  })
+
+  it('renders one @ switch per source and never a second enable switch for the pack row', () => {
+    const html = render()
+    const labels = switches(html).map(item => item.label)
+    expect(labels).toContain('@ candidates: Acme Docs')
+    expect(labels).toContain('@ candidates: clue packs')
+    expect(labels).toContain('Enable source: Acme Docs')
+    // The pack row has the @ switch only (it is not a remote source).
+    expect(labels).not.toContain('Enable source: Clue packs')
+    expect(advanced(html)).toContain('data-clue-packs=""')
+    expect(advanced(html)).not.toContain('not a remote source')
+  })
+
+  it('renders the pack @ switch as off when the preference is false (independent of every source)', () => {
+    const html = render({
+      prefs: prefs({
+        clueSourcesEnabled: { 'builtin.files': false, 'acme.docs': false },
+        clueSourcesMentionEnabled: { 'builtin.files': false, 'acme.docs': false },
+        cluePacksMentionEnabled: false,
+      }),
+    })
+    expect(switches(advanced(html))).toContainEqual({ label: '@ candidates: clue packs', checked: false, disabled: false })
+  })
+
+  it('uses the client display name and icon override when one is registered', () => {
+    const html = render({
+      displays: [{ sourceId: 'acme.docs', name: 'Acme Cloud', icon: 'ACME-ICON' }],
+    })
+    expect(html).toContain('Acme Cloud')
+    expect(html).not.toContain('>Acme Docs<')
+    expect(html).toContain('ACME-ICON')
+  })
+
+  it('falls back to the generic glyph when the descriptor icon has no client display', () => {
+    const html = render({
+      sources: [source('acme.docs', 'Acme Docs', { icon: 'acme.brand' })],
+    })
+    // The descriptor only carries a serializable icon id: without a client
+    // display it is kept for a future registration and a generic glyph is
+    // rendered (never an empty slot, never the raw id as the icon).
+    expect(html).toContain('data-clue-source-icon="fallback"')
+    expect(html).toContain('data-clue-source-icon-id="acme.brand"')
+    expect(html).toContain('<svg')
+    expect(html).not.toContain('>acme.brand</span>')
+    // The row still has a full accessible name (the icon is decorative).
+    expect(html).toContain('>Acme Docs<')
+    expect(html).toContain('aria-label="Enable source: Acme Docs"')
+    expect(html).toContain('aria-label="@ candidates: Acme Docs"')
+  })
+
+  it('falls back from a blank display name to the descriptor name, then the id', () => {
+    const descriptor = source('acme.docs', 'Acme Docs')
+    expect(sourceDisplayName(descriptor, { sourceId: 'acme.docs', name: '   ' })).toBe('Acme Docs')
+    expect(sourceDisplayName(source('acme.docs', '   '), { sourceId: 'acme.docs', name: '' }))
+      .toBe('acme.docs')
+    expect(sourceDisplayName(descriptor, { sourceId: 'acme.docs', name: 'Acme Cloud' }))
+      .toBe('Acme Cloud')
+  })
+
+  it('localizes the built-in files source name in Chinese settings', () => {
+    const language = Object.getOwnPropertyDescriptor(navigator, 'language')
+    Object.defineProperty(navigator, 'language', { value: 'zh-CN', configurable: true })
+    try {
+      expect(sourceDisplayName(SOURCES[0]!, undefined)).toBe('本地文件')
+    } finally {
+      if (language !== undefined) Object.defineProperty(navigator, 'language', language)
+    }
+  })
+
+  it('renders the derived state label and keeps a long name intact (layout wraps, never truncates)', () => {
+    const longName = 'A very long source name that should still be announced in full by the accessible label'
+    const html = render({
+      sources: [source('acme.docs', longName)],
+      statuses: statuses({ 'acme.docs': { kind: 'auth-expired' } }),
+    })
+    expect(html).toContain(longName)
+    expect(html).toContain('Authorization expired')
+    expect(html).toContain(`data-clue-source-status="auth-expired"`)
+    expect(html).toContain(`aria-label="Enable source: ${longName}"`)
+  })
+})
+
+describe('ClueSourcesPanel states', () => {
+  it('renders each derived state as its own explicit label, never claiming ready for unknown work', () => {
+    const kinds = [
+      'unchecked', 'missing', 'incompatible', 'installing',
+      'not-configured', 'not-authorized', 'authorizing', 'auth-expired',
+      'request-failed', 'ready',
+    ] as const
+    const labels: Record<(typeof kinds)[number], string> = {
+      unchecked: 'Not checked',
+      missing: 'Missing dependency',
+      incompatible: 'Incompatible version',
+      installing: 'Installing',
+      'not-configured': 'Not configured',
+      'not-authorized': 'Not authorized',
+      authorizing: 'Authorizing',
+      'auth-expired': 'Authorization expired',
+      'request-failed': 'Request failed',
+      ready: 'Ready',
+    }
+    const html = render({
+      sources: kinds.map(kind => source(`source.${kind}`, `Source ${kind}`)),
+      statuses: new Map(kinds.map(kind => [`source.${kind}`, { kind }])),
+    })
+    for (const kind of kinds) {
+      expect(html).toContain(`data-clue-source-status="${kind}"`)
+      expect(html, kind).toContain(labels[kind])
+    }
+  })
+
+  it('shows the sanitized failure detail as row text, not only a hover title', () => {
+    const html = render({
+      statuses: statuses({
+        'acme.docs': { kind: 'request-failed', detail: 'the probe timed out' },
+      }),
+    })
+    expect(html).toContain('Request failed')
+    // Keyboard and screen-reader users get the same reason: row text plus
+    // aria-describedby on the badge (the title remains as a hover extra).
+    expect(html).toContain('title="the probe timed out"')
+    expect(html).toContain('data-clue-source-detail="acme.docs"')
+    expect(html).toContain('the probe timed out')
+    expect(html).toContain('aria-describedby="clue-source-status-detail:acme.docs"')
+  })
+
+  it('keeps configured-but-not-loaded sources visible with their stored preferences', () => {
+    const html = render({
+      prefs: prefs({
+        clueSourcesEnabled: { 'legacy.source': false },
+        clueSourcesMentionEnabled: { 'legacy.source': true },
+      }),
+    })
+    expect(primary(html)).toContain('data-clue-source="legacy.source"')
+    expect(primary(html)).toContain('The source plugin is not loaded')
+    expect(switches(primary(html))).toContainEqual({ label: 'Enable source: legacy.source', checked: false, disabled: true })
+    expect(switches(advanced(html))).toContainEqual({ label: '@ candidates: legacy.source', checked: true, disabled: true })
+  })
+
+  it('renders loading, failure and empty states as operable surfaces', () => {
+    expect(render({ loading: true })).toContain('role="status"')
+    expect(render({ loading: true })).toContain('Loading')
+
+    const failed = render({ error: 'the source route answered 500' })
+    expect(failed).toContain('role="alert"')
+    expect(failed).toContain('Could not load the source list.')
+    expect(failed).toContain('Retry')
+
+    const empty = render({ sources: [] })
+    expect(empty).toContain('No clue sources are registered yet.')
+    expect(empty).toContain('Add source plugin')
+  })
+
+  it('does not invent "plugin not loaded" rows before the catalogue was read', () => {
+    // First paint / failed catalogue: the stored preference maps merely name
+    // sources. Calling them unavailable fabricates a plugin-unloaded verdict.
+    const html = render({
+      sources: [],
+      catalogueLoaded: false,
+      loading: true,
+      prefs: prefs({
+        clueSourcesEnabled: { 'later.source': false },
+        clueSourcesMentionEnabled: { 'later.source': true },
+      }),
+    })
+    expect(html).not.toContain('data-clue-source="later.source"')
+    expect(html).not.toContain('The source plugin is not loaded')
+    // No batch scope is claimed while the registered set is unknown.
+    expect(html).not.toContain('Batch actions apply')
+  })
+
+  it('offers a retry for a failed status probe without pretending the list failed', () => {
+    const html = render({ statusError: 'the status route timed out' })
+    expect(html).toContain('role="alert"')
+    expect(html).toContain('the status route timed out')
+    expect(html).toContain('Request failed')
+    expect(html).toContain('Retry')
+    // The catalogue itself is still shown (rows keep their derived request-failed state).
+    expect(html).toContain('data-clue-source="builtin.files"')
+    expect(html).not.toContain('Could not load the source list.')
+  })
+})
+
+describe('ClueSourcesPanel batch controls', () => {
+  it('renders exactly the four explicit batch actions (two per switch kind) in the advanced disclosure', () => {
+    const html = render()
+    const folded = advanced(html)
+    const batch = [...folded.matchAll(/<button[^>]*>([\s\S]*?)<\/button>/g)].map(match => match[1]!.replace(/<[^>]*>/g, ''))
+    expect(batch).toContain('Enable all sources')
+    expect(batch).toContain('Disable all sources')
+    expect(batch).toContain('Enable all @')
+    expect(batch).toContain('Disable all @')
+    // Batch controls are not toggles (no aria-pressed / role=switch).
+    expect(html.match(/aria-pressed=/g) ?? []).toHaveLength(0)
+    expect(folded).toContain('Batch actions apply to the currently registered sources only')
+    // No batch control leaks back onto the primary surface.
+    expect(primary(html)).not.toContain('Disable all sources')
+  })
+
+  it('names every configure control with the source it configures (only sources that HAVE configuration)', () => {
+    const html = render()
+    // Local files declares no dependency and no connection: nothing to
+    // configure, so no button (the empty-window trap).
+    expect(html).not.toContain('aria-label="Configure source: Local files"')
+    expect(html).toContain('aria-label="Configure source: Acme Docs"')
+    // The not-loaded source has no configure action (there is no plugin to configure).
+    expect(html).not.toContain('aria-label="Configure source: legacy.source"')
+  })
+
+  it('tunes the configure verb to the state while keeping the accessible name stable', () => {
+    const missing = render({ statuses: statuses({ 'acme.docs': { kind: 'missing' } }) })
+    expect(buttonTag(missing, 'Configure source: Acme Docs')).toContain('One-click install')
+    const incompatible = render({ statuses: statuses({ 'acme.docs': { kind: 'incompatible' } }) })
+    expect(buttonTag(incompatible, 'Configure source: Acme Docs')).toContain('One-click install')
+    const unauthorized = render({ statuses: statuses({ 'acme.docs': { kind: 'not-authorized' } }) })
+    expect(buttonTag(unauthorized, 'Configure source: Acme Docs')).toContain('Authorize')
+    const expired = render({ statuses: statuses({ 'acme.docs': { kind: 'auth-expired' } }) })
+    expect(buttonTag(expired, 'Configure source: Acme Docs')).toContain('Authorize')
+    const ready = render()
+    expect(buttonTag(ready, 'Configure source: Acme Docs')).toContain('Configure')
+    // The onclick path is the same window in every case; the label is copy only.
+    expect(buttonTag(missing, 'Configure source: Acme Docs')).not.toContain('disabled')
+  })
+
+  it('keeps the add-source action concise on the primary surface', () => {
+    const html = render()
+    expect(primary(html)).toContain('Add source plugin')
+    expect(primary(html)).not.toContain('installing the plugin and installing the CLI it needs are separate steps')
+  })
+
+  it('disables the batch controls when the registered source set is empty', () => {
+    const folded = advanced(render({ sources: [] }))
+    for (const label of ['Enable all sources', 'Disable all sources', 'Enable all @', 'Disable all @']) {
+      const tag = [...folded.matchAll(/<button[^>]*>([\s\S]*?)<\/button>/g)]
+        .find(match => match[1]!.replace(/<[^>]*>/g, '') === label)?.[0]
+      expect(tag, label).toBeDefined()
+      expect(tag, label).toContain('disabled')
+    }
+  })
+})

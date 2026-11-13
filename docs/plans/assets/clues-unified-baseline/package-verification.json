@@ -1,0 +1,14 @@
+{
+  "packagedSourceFilesVerified": 89,
+  "packageSha256": "1f9dc05bc9725023669600b5e39d64152781b19a3221058bb9450c814d0fe16d",
+  "bundles": {
+    "client.js": "a04bea74534de5f70fb853202fcd755d0721a84df22eb87411a924db3772912c",
+    "client-registry.js": "6f978ece07361eda47bb63d86a88a98657efba7263f737c68a90878aacf1c035",
+    "client-locale.js": "5762a21e76ec65b41c78b70e58605f8fd7a8c715a2fb302847cb24e49e228449",
+    "client-editor.js": "161accaae58fc10f79d94b60d07c7be3cb44e4b147d3b84e63c74989dd313c5f",
+    "client-terminal.js": "f249be2eda38628dae5f0f6c812ce63fc9f84ca782ea319518f284ad07d15f03",
+    "client-mermaid.js": "38d678b4dee0f82e4635af4e1673370d32890fa346ce294d5ada84dcb8bff143",
+    "index.js": "8f739591d6957e75fe830f70017b45aeee42af9f0544e71f6c2b3a6d124452f5",
+    "clues.js": "d2977b68e155ba96d813b01931fe10eb6e639706b3dfc13091d0568046aedc05"
+  }
+}

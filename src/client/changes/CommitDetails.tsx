@@ -67,7 +67,7 @@ export function CommitDetails({ entry, remotes = new Set<string>(), slot }: Comm
     </div>
     <div className={css.metaRow}>
       <span className={css.metaGlyph} aria-hidden="true"><IconClockOutlineRegular size={12} /></span>
-      <span className={css.metaValue}>{relativeTime(entry.date)} · {entry.date}</span>
+      <time className={css.metaValue} dateTime={entry.date} title={relativeTime(entry.date)}>{entry.date}</time>
     </div>
     <div className={css.metaRow}>
       <code className={css.hashChip}>{entry.hashFull}</code>

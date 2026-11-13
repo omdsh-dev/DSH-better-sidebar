@@ -1,0 +1,125 @@
+/**
+ * Selection action menu (UI19). Layout-neutral wrapper + a portaled menu that
+ * uses the same host menu surface and text tokens as the legacy one-button
+ * selection popup. No literal colors: every visual value is a DSH token, and
+ * coarse pointers get a 44px target (the clue UI's touch baseline).
+ */
+.surface {
+  display: contents;
+}
+
+.menu {
+  position: fixed;
+  /* Same layer as the pinned host portaled Menu, above windows and modals. */
+  z-index: 1100;
+  transform: translate(-50%, calc(-100% - 8px));
+  display: flex;
+  flex-direction: column;
+  min-width: 136px;
+  max-width: min(240px, calc(100vw - 16px));
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: var(--ds-sidebar-radius);
+  background: var(--dsw-alias-bg-base);
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xxs-12);
+}
+
+.menuBelow {
+  transform: translate(-50%, 8px);
+}
+
+.destinationGroup {
+  margin-bottom: 4px;
+  padding: 2px 2px 6px;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
+
+.destinationLabel {
+  display: block;
+  padding: 0 4px 4px;
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xxxs-11);
+}
+
+.destinations {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.destination {
+  min-height: var(--ds-sidebar-control-height);
+  padding: 4px 6px;
+  border: 1px solid transparent;
+  border-radius: var(--ds-sidebar-radius);
+  color: var(--dsw-alias-label-secondary);
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+
+.destination[aria-checked="true"],
+.destination:hover {
+  border-color: var(--dsw-alias-border-l1);
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-interactive-bg-hover-solid);
+}
+
+.destination:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: -2px;
+}
+
+.destination:disabled {
+  color: var(--dsw-alias-label-tertiary);
+  cursor: default;
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  min-height: var(--ds-sidebar-control-height);
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--ds-sidebar-radius);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.item:hover,
+.item:focus-visible {
+  background: var(--dsw-alias-interactive-bg-hover-solid);
+  outline: none;
+}
+
+.item:disabled {
+  color: var(--dsw-alias-label-tertiary);
+  cursor: default;
+}
+
+.item:disabled:hover {
+  background: transparent;
+}
+
+.error {
+  margin: 4px 6px 2px;
+  color: var(--dsw-alias-state-error-primary);
+  font: var(--dsw-font-xxxs-11);
+  white-space: normal;
+}
+
+@media (pointer: coarse) {
+  .item,
+  .destination {
+    min-height: 44px;
+    padding: 0 10px;
+  }
+}

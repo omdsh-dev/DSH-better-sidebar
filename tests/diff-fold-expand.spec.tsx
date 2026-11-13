@@ -42,6 +42,22 @@ const hiddenRows = Array.from({ length: 10 }, (_, i) => ({
 afterEach(() => { document.body.innerHTML = '' })
 
 describe('DiffFiles on-demand fold expansion', () => {
+  it('renders syntax tokens across inline changes without duplicate React keys', () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const container = document.createElement('div')
+    const root = createRoot(container)
+    try {
+      const segments = buildDiffSegments(diffLines('const value = "old" + 1', 'const value = "new" + 2'))
+      act(() => { root.render(createElement(DiffRows, { segments, lang: 'ts' })) })
+      expect(container.textContent).toContain('"old"')
+      expect(container.textContent).toContain('"new"')
+      expect(error.mock.calls.flat().join(' ')).not.toContain('same key')
+    } finally {
+      act(() => { root.unmount() })
+      error.mockRestore()
+    }
+  })
+
   it('expands a git gap fold through resolveFold, then collapses back', async () => {
     const resolveFold = vi.fn((_file: DiffFile, _segment: FoldSegment) => Promise.resolve(hiddenRows))
     const container = document.createElement('div')

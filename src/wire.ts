@@ -9,6 +9,12 @@ import type { SidebarHttpRequest, SidebarHttpResponse } from './context-types.ts
 // node builtins, so this introduces no cycle; wire.ts is host-half only and is
 // never reachable from the browser bundle.
 import { GitCommandError } from './git.ts'
+// This is the shared clue-error module, externalized from the host bundle onto
+// the public `./clues` artifact (see tsdown.config.ts): the host and external
+// source plugins must share ONE ClueError class, or `instanceof` loses the
+// category.
+import { ClueError, type ClueErrorCategory } from './clues/error.ts'
+import { MAX_EDITABLE_BYTES } from './editor-limits.ts'
 
 /** Machine-readable error codes of the sidebar API. */
 export type SidebarErrorCode =
@@ -43,19 +49,42 @@ export class SidebarError extends Error {
     readonly status = 400,
     /** Optional structured context carried alongside the code. */
     readonly meta?: Record<string, string>,
+    /**
+     * The original failure, when this error wraps one. Clue callers read the
+     * same errno from it (a `permission-denied` must not degrade to `failed`
+     * just because a shared helper wrapped the OS error).
+     */
+    cause?: unknown,
   ) {
-    super(message)
+    super(message, cause === undefined ? undefined : { cause })
   }
 }
 
-/** Body size bound of one JSON request (defense against unbounded reads). */
+/** Body size bound of one ordinary JSON request (defense against unbounded reads). */
 const MAX_BODY_BYTES = 1 << 20
+
+/**
+ * JSON body bound of `clues.saveEdit`.
+ *
+ * The clue edit document travels as JSON (`{ format, data, baseRevision }`)
+ * while the editable text itself is allowed up to {@link MAX_EDITABLE_BYTES}
+ * (the S6 source editor's limit, the same one `clues.loadEdit` enforces). A
+ * 1 MiB JSON envelope would therefore make files between 1 and 5 MiB
+ * loadable but unsaveable. JSON string escaping can expand one byte up to six
+ * (`\u0000`-style control escapes), so the transport bound covers that worst
+ * case plus 64 KiB of envelope overhead (format/revision/escaping of the
+ * surrounding JSON, not a second document). This is a sanity guard, NOT a
+ * product limit: the source enforces the editable size on the ENCODED document
+ * before it writes anything.
+ */
+export const MAX_CLUE_SAVE_BODY_BYTES = MAX_EDITABLE_BYTES * 6 + (64 << 10)
 
 /**
  * Read and parse the JSON request body (bounded; malformed → bad-request).
  *
  * @param req - the request face (async-iterable body).
- * @param limit - maximum accepted body size in bytes.
+ * @param limit - maximum accepted body size in bytes; the dispatcher raises it
+ *   only for `clues.saveEdit` (see {@link MAX_CLUE_SAVE_BODY_BYTES}).
  * @param onBytes - optional per-chunk observer of the cumulative size. Callers
  *   that must account for a LARGE body before the whole read finishes (the
  *   Side Chat image admission gate) use it; a throw from the callback aborts
@@ -145,10 +174,43 @@ export function writeOk(res: SidebarHttpResponse, value: unknown): void {
   writeJson(res, 200, { ok: true, value })
 }
 
+/**
+ * HTTP status of one clue failure category. The clue surface keeps its own
+ * machine-readable categories on the wire (the client branches on them), so
+ * this is only the transport-level status; no original stdout/token ever
+ * reaches it (the service's normalization guarantees that).
+ */
+export function clueStatusOf(category: ClueErrorCategory): number {
+  switch (category) {
+    case 'not-found':
+    case 'source-missing': return 404
+    case 'auth-required':
+    case 'permission-denied': return 403
+    case 'rate-limited': return 429
+    case 'conflict': return 409
+    case 'cancelled': return 499
+    case 'timeout': return 504
+    case 'dependency-missing':
+    case 'dependency-incompatible': return 503
+    case 'unsupported':
+    case 'invalid-request': return 400
+    case 'failed': return 500
+  }
+}
+
 /** Write the failure envelope for any thrown value (unknown → internal 500). */
 export function writeError(res: SidebarHttpResponse, error: unknown): void {
   if (error instanceof SidebarError) {
     writeJson(res, error.status, { ok: false, error: { code: error.code, message: error.message } })
+    return
+  }
+  // Clue categories are their own wire codes: the client needs `conflict`,
+  // `cancelled`, `source-missing` etc. to render the right sentence.
+  if (error instanceof ClueError) {
+    writeJson(res, clueStatusOf(error.category), {
+      ok: false,
+      error: { code: error.category, message: error.message },
+    })
     return
   }
   // A git failure is a state/input problem the user caused (unknown ref, path

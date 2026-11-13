@@ -16,6 +16,9 @@ function mount(initialRejection: 401 | 403 | undefined = undefined) {
     webServer: {
       register: (route: SidebarWebRoute) => { routes.push(route); return () => {} },
       registerUpgrade: (route: SidebarWebUpgradeRoute) => { upgrades.push(route); return () => {} },
+      // The approved loopback read route compares the peer socket's local port
+      // with the real bound port.
+      port: 3080,
     },
     sessions: { get: () => undefined },
     tools: { register: () => () => {} },
@@ -93,19 +96,35 @@ describe('native Connection admission', () => {
     const mounted = mount(rejection)
     try {
       expect(mounted.routes.map(route => route.path)).toEqual([
+        // S7 share surface (four exact POST routes, fenced per request).
+        '/sidebar/clues/share/export-preview', '/sidebar/clues/share/export',
+        '/sidebar/clues/share/import-preview', '/sidebar/clues/share/import',
+        // Two approved exact loopback POST exceptions (not a generic API bypass).
+        '/sidebar/agent/clues/read', '/sidebar/agent/clues/commit',
         '/sidebar/api', '/sidebar/sidechat-image', '/sidebar/upload', '/sidebar/write', '/sidebar/bundle',
         '/sidebar/archive', '/sidebar/file', '/sidebar/html',
       ])
       expect(mounted.upgrades.map(route => route.path)).toEqual([
         '/sidebar/ws/agent-opens', '/sidebar/ws/fs-watch', '/sidebar/ws/sidechat',
       ])
+      const agentPaths = ['/sidebar/agent/clues/read', '/sidebar/agent/clues/commit']
       for (const route of mounted.routes) {
+        if (agentPaths.includes(route.path)) continue
         const input = request(route.path)
         const { res, out } = response()
         await route.handler(input.req, res)
         expect(out.status, route.path).toBe(403)
         expect(input.reads(), route.path).toBe(0)
         expect(mounted.connection.requestRejection).toHaveBeenLastCalledWith(input.req)
+      }
+      // Both exact routes reject a non-loopback peer before reading a body.
+      for (const path of agentPaths) {
+        const input = request(path)
+        const { res, out } = response()
+        await mounted.routes.find(route => route.path === path)!.handler(input.req, res)
+        expect(out.status).toBe(403)
+        expect(input.reads()).toBe(0)
+        expect(mounted.connection.requestRejection).not.toHaveBeenCalledWith(input.req)
       }
       for (const route of mounted.upgrades) {
         const input = request(route.path)
@@ -115,7 +134,8 @@ describe('native Connection admission', () => {
         expect(input.reads(), route.path).toBe(0)
         expect(mounted.connection.requestRejection).toHaveBeenLastCalledWith(input.req)
       }
-      expect(mounted.connection.requestRejection).toHaveBeenCalledTimes(mounted.routes.length + mounted.upgrades.length)
+      // One admission check per FENCED HTTP route and per WebSocket upgrade.
+      expect(mounted.connection.requestRejection).toHaveBeenCalledTimes(mounted.routes.length + mounted.upgrades.length - agentPaths.length)
     } finally {
       mounted.cleanup()
     }
@@ -126,11 +146,21 @@ describe('native Connection admission', () => {
     try {
       mounted.connection.requestRejection.mockReturnValue(verdict as never)
       for (const route of mounted.routes) {
+        if (['/sidebar/agent/clues/read', '/sidebar/agent/clues/commit'].includes(route.path)) continue
         const input = request(route.path)
         const { res, out } = response()
         await route.handler(input.req, res)
         expect(out.status, route.path).toBe(403)
         expect(input.reads(), route.path).toBe(0)
+      }
+      // The loopback route ignores the login verdict entirely; without a real
+      // peer socket its own gate still refuses it.
+      for (const path of ['/sidebar/agent/clues/read', '/sidebar/agent/clues/commit']) {
+        const input = request(path)
+        const { res, out } = response()
+        await mounted.routes.find(route => route.path === path)!.handler(input.req, res)
+        expect(out.status).toBe(403)
+        expect(input.reads()).toBe(0)
       }
       for (const route of mounted.upgrades) {
         const input = request(route.path)

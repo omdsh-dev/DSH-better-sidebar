@@ -8,7 +8,7 @@
  * only (react + ui-primitives, all provided or inlined — the editor and
  * mermaid libraries arrive as lazy chunks).
  */
-import { createElement } from 'react'
+import { createElement, Fragment } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import type { Context } from '../context-types.ts'
 import { createSidebarStore } from './state.ts'
@@ -17,6 +17,7 @@ import { disposeSidechatSurfaces } from './sidechat-surface.ts'
 import { revalidateChunksOnReactivate, setChunkModuleSystem } from './chunk-loader.ts'
 import { registerBuiltins } from './builtins/index.ts'
 import { Sidebar } from './Sidebar.tsx'
+import { WindowHost, registerWindowSidebarSurface } from './windows/index.ts'
 import { RenderBoundary } from './RenderBoundary.tsx'
 import { createNativeTabRecords } from './native/tab-adapter.tsx'
 import { registerNativeSurface } from './native/index.ts'
@@ -32,9 +33,23 @@ import { registerChatMarkdownMentions } from './chat-mentions.ts'
 import type { SettingsSectionIconOwnerProps } from '@deepseek-ai/dsh-client-ui-settings/client'
 import { awaitBootDecision, type BootDecision } from './prefs.ts'
 import { SideCardSection } from './SideCardSection.tsx'
-import { api } from './api.ts'
+import { api, call } from './api.ts'
+import { insertReferenceOrText } from './conversation-draft.ts'
+import { parkSidechatReopen } from './SideChatView.tsx'
+import { setClueSelectionActionContext, setClueSelectionActionStarter } from './clues/selection-actions.tsx'
+import { createClueActionRefreshWatcher, type ClueActionDraftStatus, type ClueActionRefreshResult } from './clues/action-refresh.ts'
+import { invalidateClueAgentSave, type ClueClientResourceInput } from './clues/api.ts'
 import { LOCALE_NS, attachLocale, attachBetterLocale, t, zh, en } from './locales.ts'
 import { loadChunk } from './chunk-loader.ts'
+import { registerGithubSourceClient } from './clues/sources/github/index.tsx'
+import { registerFeishuSourceClient } from './clues/sources/feishu/index.tsx'
+import { appDateTime } from './clues/sources/feishu/time.ts'
+import { installClueInputTriggers } from './clues/mentions.ts'
+import { insertClueReferenceSpan, setClueNoticeSink } from './clues/insert.ts'
+import { clueMentionsCopy, feishuClientLabels } from './clues/locale-copy.ts'
+import { notifyClue } from './clues/notify.ts'
+import { resolveWorkspaceIdForSession } from './clues/workspace-id.ts'
+import { openClueReference } from './clues/open-reference.ts'
 import css from './sidebar.module.css'
 import './layout.css'
 
@@ -177,6 +192,61 @@ export function apply(ctx: Context): void {
   ctx.provide('betterSidebar', service)
   ctx.effect(() => () => { disposeSidechatSurfaces(service) }, 'dsh-better-sidebar: sidechat surface adapters')
   ctx.effect(() => registerChatMarkdownMentions(ctx), 'dsh-better-sidebar: chat Markdown mentions')
+  // The shared draft-insert helpers (file tree / Tab) report refusals through
+  // the plugin's ONE visible notice sink. Without this wiring they fell back
+  // to console.warn and the user never saw why an insert failed.
+  ctx.effect(() => {
+    setClueNoticeSink(notifyClue)
+    return () => { setClueNoticeSink(undefined) }
+  }, 'dsh-better-sidebar: clue notice sink')
+  // The unified window host's records live with the service; the React host is
+  // mounted ONCE in the root tree below (never per tab body), and disposing the
+  // service drops any open window. (Each mounted window's layer registration is
+  // released by FloatingWindow's own unmount effect.)
+  ctx.effect(() => () => { service.windowHost.dispose() }, 'dsh-better-sidebar: window host')
+  // Clue client surfaces (S3/S4/S5). The host half publishes the catalogue and
+  // the `clues.*` methods; the browser half registers the source glyphs, the
+  // structured format renderers and the two `@` trigger sources through the
+  // ONE face on the service. Every registration owns its effect disposer, so an
+  // HMR reload cannot leave a duplicate display or renderer behind.
+  ctx.effect(
+    () => registerGithubSourceClient(service.clues),
+    'dsh-better-sidebar: github clue client',
+  )
+  ctx.effect(
+    () => registerFeishuSourceClient(service.clues, {
+      // The live getter keeps every visible label following the locale without
+      // a re-registration; `subscribe` additionally re-registers the renderers
+      // so an open window re-renders with the new copy.
+      labels: feishuClientLabels,
+      formatDateTime: value => appDateTime(value),
+      subscribe: listener => ctx.locale.subscribe(listener),
+    }),
+    'dsh-better-sidebar: feishu clue client',
+  )
+  // The composer's `@` sources. Workspace resolution is the authoritative
+  // session → workspace lookup (never a cwd guess); refusals surface as the
+  // plugin's own visible notice instead of a silent no-op.
+  ctx.effect(
+    () => installClueInputTriggers(ctx, {
+      face: service.clues,
+      resolveWorkspaceId: session => resolveWorkspaceIdForSession(ctx, session.sessionId),
+      onNotice: message => { notifyClue(message) },
+      openReference: reference => openClueReference(ctx, reference),
+      // Every user-visible refusal follows the active locale. The copy is
+      // created ONCE here but its stale-prone strings are lazy getters (insert
+      // notices), so a locale switch reaches the next candidate round without
+      // re-installing the trigger sources. (Model-facing projection labels
+      // minted inside the codec stay stable English metadata.)
+      copy: clueMentionsCopy(),
+      // A not-yet-stored search hit is ensured on pick; this tail applies the
+      // chip with the ORIGINAL pick-time detect span/draftRev, so an edit or
+      // submission during the ensure keeps the draft untouched.
+      insertReference: (reference, session, span) =>
+        insertClueReferenceSpan(ctx, session.sessionId, reference, span),
+    }),
+    'dsh-better-sidebar: clue @ sources',
+  )
   // The native right-Sidebar surface: the plugin's content is registered as
   // DSH tab types (one per descriptor) and every open routes there, so the
   // right column belongs to the host and only the bottom workbench stays
@@ -207,6 +277,34 @@ export function apply(ctx: Context): void {
     }),
     'dsh-better-sidebar: native right-Sidebar registrations',
   )
+  ctx.effect(
+    () => registerWindowSidebarSurface(ctx, service.windowHost),
+    'dsh-better-sidebar: retained window native destinations',
+  )
+  ctx.effect(() => {
+    let active = true
+    const refresh = createClueActionRefreshWatcher<ClueClientResourceInput>({
+      sessions: ctx.sessions,
+      readDrafts: () => call<readonly ClueActionDraftStatus[]>('clues.drafts.list', {}),
+      invalidate: invalidateClueAgentSave,
+    })
+    setClueSelectionActionContext({ onInsert: input => {
+      const inserted = input.sessionId !== undefined && insertReferenceOrText(ctx, input.sessionId, input.reference ?? { label: input.selection.slice(0, 80), text: input.insert })
+      if (!inserted) notifyClue(t('clueInsertFailed'))
+      return inserted
+    } })
+    setClueSelectionActionStarter(async request => {
+      const result = await call<ClueActionRefreshResult>('clues.actions.start', { ...request })
+      if (!active) return result
+      refresh.track(request, result)
+      if (request.target === 'side' && result.deliveryId !== undefined) {
+        parkSidechatReopen(result.deliveryId)
+        service.openTab({ type: 'sidechat' }, { sessionId: request.sessionId })
+      }
+      return result
+    })
+    return () => { active = false; refresh.dispose(); setClueSelectionActionContext(null); setClueSelectionActionStarter(undefined) }
+  }, 'dsh-better-sidebar: selection action insert and direct submit')
   // The bottom workbench's expand/collapse button in DSH's session header
   // (the header's corner seat belongs to the native sidebar's own control).
   ctx.effect(
@@ -361,7 +459,15 @@ export function apply(ctx: Context): void {
             createElement(
               ContextDiagnosticsHost,
               { controller: diagnostics },
-              createElement(Sidebar, { ctx, store: sidebarStore }),
+              createElement(
+                Fragment,
+                null,
+                createElement(Sidebar, { ctx, store: sidebarStore }),
+                // The public window host is a ROOT-level singleton: every
+                // `ctx.betterSidebar.windows.open()` renders here, so native
+                // tab bodies (which stay mounted forever) never duplicate it.
+                createElement(WindowHost, { host: service.windowHost, formats: service.clues }),
+              ),
             ),
           ))
           mounted = true

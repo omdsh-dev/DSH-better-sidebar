@@ -341,7 +341,7 @@ function typeAndCommit(input: HTMLInputElement, value: string): void {
 
 /** Register a viewer that reports an unsaved draft on mount; its report
  *  feeds the editor-dirty registry the switch/close guards read. */
-function registerDirtyViewer(service: ReturnType<typeof createBetterSidebarService>): void {
+function registerDirtyViewer(service: Pick<ReturnType<typeof createBetterSidebarService>, 'registerFileViewer'>): void {
   const DirtyViewer = (viewerProps: FileViewerProps): ReactNode => {
     useEffect(() => {
       viewerProps.onToolbarState?.({ modes: true, mode: 'edit', dirty: true, editable: true, saveState: 'idle' })

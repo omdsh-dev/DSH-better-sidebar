@@ -16,40 +16,36 @@ import type { SidebarDiffRef } from './state.ts'
 import { DiffFiles } from './diff/DiffFiles.tsx'
 import { useGitDiffTarget } from './diff/use-git-diff.ts'
 import { t } from './locales.ts'
-import css from './sidebar.module.css'
+import { IconButton, Notice } from './ui/index.ts'
+import css from './diff/diff.module.css'
 
 export function DiffTab(props: { scope: SessionScope; diff: SidebarDiffRef }) {
   const { scope, diff } = props
   const { loading, error, diffText, untracked, refresh, resolveFold } = useGitDiffTarget(diff, scope)
 
   return (
-    <div className={css.gitDiffTab}>
-      <div className={css.gitDiffTabHeader}>
-        <span className={css.gitDiffTabTitle} title={diff.kind === 'worktree' ? diff.path : `${diff.hash} ${diff.subject}`}>
+    <div className={css.tab}>
+      <div className={css.tabHeader}>
+        <span className={css.tabTitle} title={diff.kind === 'worktree' ? diff.path : `${diff.hash} ${diff.subject}`}>
           {diff.kind === 'worktree' ? diff.path : `${diff.hash} ${diff.subject}`}
         </span>
-        <button
-          type="button"
-          className={css.iconButton}
-          aria-label={t('refresh')}
-          title={t('refresh')}
-          onClick={refresh}
-        >
-          <IconRefreshOutlineRegular size={14} />
-        </button>
+        <IconButton size="sm" icon={<IconRefreshOutlineRegular size={14} />}
+          label={t('refresh')} disabled={loading} onClick={refresh} />
       </div>
-      {loading && <div className={css.gitPlaceholder}>{t('loading')}</div>}
-      {!loading && error !== null && <div className={css.gitError}>{t('diffLoadError')}: {error}</div>}
+      <div className={css.tabBody} aria-busy={loading}>
+      {loading && <Notice kind="loading" tone="page">{t('loading')}</Notice>}
+      {!loading && error !== null && <Notice kind="error" tone="page" role="alert">{t('diffLoadError')}: {error}</Notice>}
       {!loading && error === null && diffText !== null && (
         <>
           {untracked !== undefined
             ? <DiffFiles diff="" untrackedPath={diff.kind === 'worktree' ? diff.path : ''} untrackedContent={untracked} />
             : <DiffFiles diff={diffText} resolveFold={resolveFold} />}
           {diffText === '' && untracked === undefined && (
-            <div className={css.gitEmpty}>{t('diffEmpty')}</div>
+            <Notice kind="empty" tone="page">{t('diffEmpty')}</Notice>
           )}
         </>
       )}
+      </div>
     </div>
   )
 }

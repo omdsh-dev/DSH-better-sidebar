@@ -8,7 +8,7 @@
  *    tell two siblings apart), and
  *  - the hydration hint drawn over an empty canvas.
  *
- * Everything else the graph wears (the dotted canvas, the bezier edges, the
+ * Everything else the graph wears (the flat canvas, the bezier edges, the
  * node cards, the control cluster) stays in tasks-graph.module.css — one source
  * of truth per rule.
  *

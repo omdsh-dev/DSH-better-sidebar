@@ -102,7 +102,14 @@ async function authCookie(): Promise<string> {
  *  this way), so pre-seed the browser context with the exchanged cookie and
  *  navigate the stamped URL directly. Playwright gives every test a fresh
  *  context, so the seeding is per-call and idempotent. */
-export async function gotoPage(page: Page, extra: Record<string, string> = {}): Promise<void> {
+export async function gotoPage(page: Page, extra: Record<string, string> = {}, options: { firstCluesVisit?: boolean } = {}): Promise<void> {
+  if (!options.firstCluesVisit) {
+    await page.addInitScript(() => {
+      // The HTML preview deliberately denies same-origin storage in its iframe.
+      // This launch preference belongs only to the top-level test document.
+      if (window === window.top) window.localStorage.setItem('dsh-better-sidebar:clues-help-seen-v2', '1')
+    })
+  }
   if (Object.keys(extra).length > 0) {
     const header = await authCookie()
     const eq = header.indexOf('=')

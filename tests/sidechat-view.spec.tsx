@@ -756,7 +756,7 @@ describe('SideChatView queue, echo and model picker', () => {
     // explain themselves otherwise), and the native `title` bubble is gone:
     // the styled popup replaced it.
     for (const control of [newThread, threads, save, archive, model, send]) {
-      expect(control.getAttribute('title'), 'no native title bubble').toBeNull()
+      expect(control.getAttribute('title') ?? '', 'no native title bubble').toBe('')
       const anchor = control.parentElement
       expect(anchor?.tagName, 'each control sits in a hover anchor').toBe('SPAN')
       expect(composer!.contains(anchor), 'the anchor must be inside the composer box').toBe(true)

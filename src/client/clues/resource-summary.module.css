@@ -1,0 +1,175 @@
+/*
+ * Shared clue resource metadata (S9).
+ *
+ * The host's own detail rows are ink on the surface with one accent and no
+ * fills; this block follows that, so it reads as part of the window rather than
+ * as a card pinned on top:
+ *
+ * - every value is text at 12px/18px or 11px/16px, all tabular;
+ * - a semantic colour appears only on a 12px verdict glyph, or on the word of a
+ *   destructive fact (CI failing, changes requested, conflicts) — nothing is
+ *   filled, and a healthy request stays monochrome;
+ * - separation comes from an 8px gap and the tertiarily-inked second line, not
+ *   from boxes, chips or dividers.
+ */
+.summary {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--ds-sidebar-space-3);
+  min-width: 0;
+  padding: 8px var(--ds-sidebar-gutter) 7px;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 18px;
+  font-variant-numeric: tabular-nums;
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex: 1;
+  min-width: 0;
+}
+
+/* The action seat never wraps and never takes the metadata's room. */
+.actions {
+  display: flex;
+  align-items: center;
+  flex: none;
+  gap: var(--ds-sidebar-space-1);
+  margin-inline-start: auto;
+}
+
+.identity {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 8px;
+  min-width: 0;
+}
+
+/* The one loud value of the header; everything around it is a step quieter. */
+.number {
+  color: var(--dsw-alias-label-primary);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.state {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 5px;
+  color: var(--dsw-alias-label-secondary);
+  white-space: nowrap;
+}
+
+.meta {
+  min-width: 0;
+  color: var(--dsw-alias-label-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Branches are a mono tail on the facts line, never the identity line. */
+.branch {
+  min-width: 0;
+  max-width: 100%;
+  color: var(--dsw-alias-label-tertiary);
+  font-family: var(--ds-font-family-code, monospace);
+  font-size: 11px;
+  line-height: 16px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.path {
+  flex: 1 1 160px;
+  min-width: 0;
+  color: var(--dsw-alias-label-tertiary);
+  font-family: var(--ds-font-family-code, monospace);
+  font-size: 11px;
+  line-height: 16px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The facts line: verdict glyph, ink words, branch tail — no capsules. */
+.facts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 8px;
+  min-width: 0;
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.fact {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  color: var(--dsw-alias-label-tertiary);
+  white-space: nowrap;
+}
+
+/* Only a fact a reader must not miss earns colour. */
+.fact[data-ink='error'] { color: var(--dsw-alias-state-error-primary); }
+
+/* CI: the verdict glyph carries the semantic colour, its word stays quiet. */
+.checks {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  color: var(--dsw-alias-label-tertiary);
+  white-space: nowrap;
+}
+
+/* The dot carries its own state colour; the word stays tertiary, so a healthy
+   request never paints a coloured word next to a coloured glyph. */
+.checks[data-ink='error'] { color: var(--dsw-alias-state-error-primary); }
+
+.checksGlyph {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+}
+
+/* ── List/card row variant ──────────────────────────────────────────────── */
+
+.inline {
+  display: flex;
+  flex-wrap: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  gap: 4px 8px;
+  align-items: center;
+  min-width: 0;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 16px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* A row states its number in secondary ink: it is the row's identity, but the
+   title above it stays the loudest line. */
+.inline > [data-clue-resource-inline-identity] {
+  color: var(--dsw-alias-label-secondary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.inline > [data-clue-resource-inline-author],
+.inline > [data-clue-resource-inline-due],
+.inline > [data-clue-resource-inline-checks] {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

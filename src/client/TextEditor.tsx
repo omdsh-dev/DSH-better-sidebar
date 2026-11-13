@@ -41,6 +41,12 @@ import { flashQuoteLines, quoteFlashField, quoteFlashHighlight } from './quote-f
 import { isDarkScheme, subscribeColorScheme } from './theme.ts'
 import { SandboxStatusBar } from './SandboxStatusBar.tsx'
 import { insertReferenceOrText, type PendingReference } from './conversation-draft.ts'
+import {
+  SelectionActionMenu,
+  useClueSelectionActionContext,
+  type ClueSelectionActionTarget,
+  type ClueSelectionInsertHandler,
+} from './clues/selection-actions.tsx'
 import { useSelectionPopup } from './selection-popup.ts'
 import { buildSelectionInsert, linesOfSelection, type SelectionLines } from './selection-payload.ts'
 import { insertQuoteChip, type QuoteSelection } from './selection-quote.ts'
@@ -53,6 +59,7 @@ import { splitMermaidBlocks } from './mermaid-blocks.ts'
 import { localeSignature, t } from './locales.ts'
 import { HtmlPreviewFrame } from './HtmlPreviewFrame.tsx'
 import type { EditorToolbarState, FileViewerProps } from './service.ts'
+import { Tabs } from './ui/index.ts'
 import css from './sidebar.module.css'
 
 /** Previewable files (rendered output vs source editing). */
@@ -149,7 +156,12 @@ function editScrollOf(scope: { sessionId: string }, path: string): number {
   return editScrollMemory.get(previewScrollKey(scope, path)) ?? 0
 }
 
-export function TextEditor(props: FileViewerProps) {
+/** Private host-to-editor channel; props retain identity across the lazy bundle boundary. */
+export interface TextEditorSelectionProps {
+  readonly resolveSelectionTarget?: () => ClueSelectionActionTarget | undefined
+}
+
+export function TextEditor(props: FileViewerProps & TextEditorSelectionProps) {
   const { ctx, scope, path, viewerId, content, size, largeFile, line } = props
   const [mode, setMode] = useState<ViewMode>('preview')
   /** The editor's current text (null while clean); preview renders this. */
@@ -281,8 +293,26 @@ export function TextEditor(props: FileViewerProps) {
    * listeners (outside mousedown, Escape, hidden tab/window, surface
    * leaving the viewport) — see selection-popup.ts.
    */
+  // Capture the exact owner for this selection through this editor's own
+  // prop. Never overwrite a process-wide target or wrap a second popup.
+  const resolverRef = useRef(props.resolveSelectionTarget)
+  resolverRef.current = props.resolveSelectionTarget
+  const [selectionActionTarget, setSelectionActionTarget] = useState<ClueSelectionActionTarget | undefined>()
+  const selectionActionBridge = useClueSelectionActionContext()
   const selectionPopup = useSelectionPopup<SelectionInsert>({
     onCommit: (insert) => {
+      const handler = selectionActionTarget?.onInsert ?? selectionActionBridge?.onInsert
+      if (handler !== undefined) {
+        handler({
+          selection: insert.selection.text,
+          insert: insert.text,
+          reference: insert,
+          ...(selectionActionTarget === undefined
+            ? { sessionId: scope.sessionId }
+            : { workspaceId: selectionActionTarget.workspaceId, sessionId: selectionActionTarget.sessionId || scope.sessionId, resource: selectionActionTarget.resource }),
+        })
+        return
+      }
       // The quote chip first (a clickable, source-owned chip), then #1052's
       // plain built-in reference chip, then bare text — every step down is one
       // the host actually supports, never a silent no-op.
@@ -293,6 +323,11 @@ export function TextEditor(props: FileViewerProps) {
     // in preview mode, the CodeMirror host otherwise.
     getSurface: () => (markdown && mode === 'preview' ? mdRef.current : hostRef.current),
   })
+  const selectionActionInsert: ClueSelectionInsertHandler = (input) => {
+    const handler = selectionActionTarget?.onInsert ?? selectionActionBridge?.onInsert
+    if (handler !== undefined) return handler(input)
+    return insertReferenceOrText(ctx, scope.sessionId, input.reference ?? { label: input.selection.slice(0, 80), text: input.insert })
+  }
 
   useEffect(() => subscribeColorScheme(() => { setDark(isDarkScheme()) }), [])
 
@@ -456,6 +491,8 @@ export function TextEditor(props: FileViewerProps) {
               return
             }
             if (!update.view.hasFocus) {
+              // Menu controls take focus deliberately; keep the captured selection.
+              if (selectionPopup.popupRef.current?.contains(document.activeElement)) return
               selectionPopup.hide()
               return
             }
@@ -482,10 +519,12 @@ export function TextEditor(props: FileViewerProps) {
               start: doc.lineAt(sel.from).number,
               end: doc.lineAt(sel.to).number,
             }
+            setSelectionActionTarget(resolverRef.current?.())
             selectionPopup.show(
               selectionInsertOf(path, scope.cwd, lines, text),
               rect.left - window.scrollX + (rect.right - rect.left) / 2,
               rect.top - window.scrollY,
+              text,
             )
           }),
         ] : []),
@@ -1021,10 +1060,12 @@ export function TextEditor(props: FileViewerProps) {
     }
     const rect = sel.getRangeAt(0).getBoundingClientRect()
     const lines = linesOfSelection(mdText, text)
+    setSelectionActionTarget(resolverRef.current?.())
     selectionPopup.show(
       selectionInsertOf(path, scope.cwd, lines ?? undefined, text),
       rect.left + rect.width / 2,
       rect.top,
+      text,
     )
   }
   const editable = content !== undefined
@@ -1094,24 +1135,15 @@ export function TextEditor(props: FileViewerProps) {
       {!hostToolbar && (
       <div className={css.editorHeader}>
         {toggleable && (
-          <div className={css.editorModeToggle}>
-            <button
-              type="button"
-              className={clsx(css.editorModeButton, mode === 'preview' && css.editorModeActive)}
-              onClick={() => { setMode('preview') }}
-            >
-              {t('preview')}
-            </button>
-            <button
-              type="button"
-              className={clsx(css.editorModeButton, mode === 'edit' && css.editorModeActive)}
-              onClick={() => { setMode('edit') }}
-            >
-              {t('edit')}
-            </button>
-          </div>
+          <Tabs
+            className={css.editorModeToggle}
+            value={mode}
+            ariaLabel={`${t('preview')} / ${t('edit')}`}
+            options={[{ value: 'preview', label: t('preview') }, { value: 'edit', label: t('edit') }]}
+            onChange={(next) => { setMode(next as ViewMode) }}
+          />
         )}
-        {dirty && <span className={css.dirtyDot} title={t('unsaved')} />}
+        {dirty && <span className={css.dirtyDot} role="img" aria-label={t('unsaved')} title={t('unsaved')} />}
         {editable && (
           <button
             type="button"
@@ -1254,18 +1286,33 @@ export function TextEditor(props: FileViewerProps) {
         </>
       )}
       {selectionPopup.popup !== null && createPortal(
-        <button
-          type="button"
-          ref={selectionPopup.buttonRef}
-          className={css.selectionPopup}
-          style={{ left: selectionPopup.popup.left, top: selectionPopup.popup.top }}
-          // Keep the selection (and CodeMirror focus) alive until the click
-          // commits — without this the popup unmounts before click lands.
-          onMouseDown={(event) => { event.preventDefault() }}
-          onClick={selectionPopup.commit}
-        >
-          {t('addToConversation')}
-        </button>,
+        selectionActionTarget !== undefined
+          ? <SelectionActionMenu
+              workspaceId={selectionActionTarget.workspaceId}
+              sessionId={selectionActionTarget.sessionId === '' ? scope.sessionId : selectionActionTarget.sessionId}
+              resource={selectionActionTarget.resource}
+              selection={selectionPopup.popup.selection}
+              insert={selectionPopup.popup.insert.text}
+              reference={selectionPopup.popup.insert}
+              {...(selectionActionTarget.comment === undefined ? {} : { comment: selectionActionTarget.comment })}
+              left={selectionPopup.popup.left}
+              top={selectionPopup.popup.top}
+              onInsert={selectionActionInsert}
+              onClose={() => { selectionPopup.hide() }}
+              containerRef={selectionPopup.popupRef}
+            />
+          : <button
+              type="button"
+              ref={selectionPopup.buttonRef}
+              className={css.selectionPopup}
+              style={{ left: selectionPopup.popup.left, top: selectionPopup.popup.top }}
+              // Keep the selection (and CodeMirror focus) alive until the click
+              // commits — without this the popup unmounts before click lands.
+              onMouseDown={(event) => { event.preventDefault() }}
+              onClick={selectionPopup.commit}
+            >
+              {t('addToConversation')}
+            </button>,
         document.body,
       )}
     </>

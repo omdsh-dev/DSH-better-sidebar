@@ -1,0 +1,113 @@
+{
+  "startTime": 1792423165837,
+  "duration": 9778.507,
+  "stats": {
+    "total": 2,
+    "expected": 2,
+    "unexpected": 0,
+    "flaky": 0,
+    "skipped": 0,
+    "ok": true
+  },
+  "errors": [],
+  "files": [
+    {
+      "fileName": "clues-uiux.e2e.ts",
+      "stats": {
+        "total": 2,
+        "expected": 2,
+        "unexpected": 0,
+        "flaky": 0,
+        "skipped": 0,
+        "ok": true
+      }
+    }
+  ],
+  "hostVersion": "0.2.1-rc.1",
+  "lastRun": {
+    "status": "passed",
+    "failedTests": []
+  },
+  "screenshots": [
+    {
+      "file": "clues-help.png",
+      "sha256": "d3fad978191083372c0005c1d3fb73db84ce36b32644e1a8d95271ea2d591ab7"
+    },
+    {
+      "file": "clues-integrated-dark-320.png",
+      "sha256": "3cc37540f066de1ba03afda9ccc7cd7bba7c4902caa2eba7b1063ce125677edb"
+    },
+    {
+      "file": "clues-integrated-dark-390.png",
+      "sha256": "2dd4c8fba298c7bc260dca8b2e07b2676b81e2baed822e851188b89709198905"
+    },
+    {
+      "file": "clues-integrated-dark-640.png",
+      "sha256": "743718928775e15b21e853c1a63975c10391bd5351e24cd68cdba099c9da4d62"
+    },
+    {
+      "file": "clues-integrated-light-320.png",
+      "sha256": "74d90e4bc0688c949d5bd9f06c8845ff20567a3e4e269aeada5fe25e15920def"
+    },
+    {
+      "file": "clues-integrated-light-390.png",
+      "sha256": "54d77b133b8985c9bb05ccfb81ac022d74ee8acc7d531b3a0ea95840e221b745"
+    },
+    {
+      "file": "clues-integrated-light-640.png",
+      "sha256": "58e1d130cbf9a7dcb9fe666f785f3f126a707441333fc568fcb7822aa5e9da19"
+    },
+    {
+      "file": "clues-integrated-shell-dark.png",
+      "sha256": "061f11d7e1a226b37d7d75e845c9df2a3475e6fe52c86e0b0322ae46d4e6d612"
+    },
+    {
+      "file": "clues-pack-management.png",
+      "sha256": "12e13369b92d49cdeffbab2a53ef4e7c279892677010cc7c0456eb0802376f41"
+    },
+    {
+      "file": "clues-selection-dark-320.png",
+      "sha256": "efc6b8522a75198567ed2d6b972f3d4cf5211eaff5889aec379e5a9e72ca874c"
+    },
+    {
+      "file": "clues-selection-dark-390.png",
+      "sha256": "87abb4c1e0430cdb3f2b14071b8e9a95513fbe9c77f5042529ad1a9390f8a54d"
+    },
+    {
+      "file": "clues-selection-dark-640.png",
+      "sha256": "ee901b4eb068c828a1e06c22afbee6be7c1a02e82cd89c87fcb11f548480fea9"
+    },
+    {
+      "file": "clues-selection-light-320.png",
+      "sha256": "47ac1edf11f3f271255a9c451692d8df5e5c713de36fbcb74cd92ac349c2a888"
+    },
+    {
+      "file": "clues-selection-light-390.png",
+      "sha256": "611e0894098d2ebc6bd1413863aec036a27747ceb0080e421d0c2753be3bf810"
+    },
+    {
+      "file": "clues-selection-light-640.png",
+      "sha256": "ff203ac499a7273fdd0ac62f73644b4e890304dd530862e239be60539d2d0e98"
+    },
+    {
+      "file": "clues-selection-mobile.png",
+      "sha256": "1b09df18274b533bd691f4671665fc5a106c39b579e05a937149c7b307d66e0b"
+    },
+    {
+      "file": "clues-share-fixed-actions.png",
+      "sha256": "2f4ba0cf99f322014d8547770640b376953d0988129a4280bb0dcdfb09aa4136"
+    },
+    {
+      "file": "clues-source-feishu-390.png",
+      "sha256": "742e2fb8df13b09ccada572165e611d52aa373e0b5996b6a29d2b42c21296209"
+    },
+    {
+      "file": "clues-source-github-390.png",
+      "sha256": "dfbea8e16d4285a64a631d303a94b69646f098aa81492f250d53b3052da75d8c"
+    },
+    {
+      "file": "clues-share-touch-320x240.png",
+      "sha256": "f57e531e12c2970ddba04b9d73be37eddcf8344a58427b883e7f8739b30a7025"
+    }
+  ]
+}

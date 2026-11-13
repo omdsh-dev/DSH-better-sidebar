@@ -109,7 +109,7 @@ export function TerminalBottomView({ ctx, scope, tab, visible }: TerminalBottomP
 
   if (service === undefined) {
     return (
-      <section className={css.root} data-dsh-bottom-terminal data-terminal-state="unavailable">
+      <section className={css.root} data-sidebar-surface="terminal" data-dsh-bottom-terminal data-terminal-state="unavailable">
         <p className={css.notice} role="alert">{t('terminalUnavailable')}</p>
       </section>
     )
@@ -124,7 +124,7 @@ export function TerminalBottomView({ ctx, scope, tab, visible }: TerminalBottomP
   const status = missing || ended ? undefined : statusOf(state)
 
   return (
-    <section className={css.root} data-dsh-bottom-terminal data-terminal-state={state.phase}>
+    <section className={css.root} data-sidebar-surface="terminal" data-dsh-bottom-terminal data-terminal-state={state.phase}>
       {status !== undefined && (
         <div className={css.status} role="status">
           <span>{status}</span>

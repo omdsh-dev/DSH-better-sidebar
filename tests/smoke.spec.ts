@@ -39,6 +39,13 @@ vi.mock('../src/fs-tree.ts', async (importOriginal) => {
   }
 })
 
+// This fixture expands ~ into a managed temporary home, never the user's home.
+const testHome = vi.hoisted(() => ({ path: undefined as string | undefined }))
+vi.mock('node:os', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:os')>()
+  return { ...actual, homedir: () => testHome.path ?? actual.homedir() }
+})
+
 /** Symlink creation may require elevated privileges on Windows. */
 const canCreateSymlink = (() => {
   const dir = mkdtempSync(join(tmpdir(), 'dsh-sidebar-security-probe-'))
@@ -131,6 +138,14 @@ describe('host plugin smoke', () => {
     }
     apply(ctx as never)
     expect(routes.map(route => route.path)).toEqual([
+      // S7 share surface: four exact POST routes, each fenced per request.
+      '/sidebar/clues/share/export-preview',
+      '/sidebar/clues/share/export',
+      '/sidebar/clues/share/import-preview',
+      '/sidebar/clues/share/import',
+      // The two approved fixed loopback POST exceptions; all others remain fenced.
+      '/sidebar/agent/clues/read',
+      '/sidebar/agent/clues/commit',
       '/sidebar/api',
       '/sidebar/sidechat-image',
       '/sidebar/upload',
@@ -1282,11 +1297,11 @@ describe('session cwd resolution over the API route', () => {
   })
 
   it('serves a home-relative media path (the ~ marker reaches the shared resolver, #713)', async () => {
-    // A real file under the user's home: the ~ expansion must happen on the
-    // ROUTE side (resolveTarget), not be pre-joined onto the session cwd.
-    const dirName = `.dsh-sidebar-selftest-${process.pid.toString(36)}`
-    const dir = join(homedir(), dirName)
-    mkdirSync(dir, { recursive: true })
+    // ~ expands on the ROUTE side to this temporary home, not session cwd.
+    const home = mkdtempSync(join(tmpdir(), 'dsh-sidebar-home-fixture-'))
+    testHome.path = home
+    const dirName = 'media', dir = join(homedir(), dirName)
+    mkdirSync(dir)
     const target = join(dir, 'note.txt')
     writeFileSync(target, 'home sweet home')
     try {
@@ -1295,7 +1310,8 @@ describe('session cwd resolution over the API route', () => {
       expect(await invokeGet(file, downloadUrl({ sessionId: 'home' }, `~/${dirName}/note.txt`)))
         .toMatchObject({ status: 200, body: 'home sweet home' })
     } finally {
-      removeTree(dir)
+      testHome.path = undefined
+      removeTree(home)
     }
   })
 
@@ -2127,7 +2143,15 @@ describe('agent sidebar-open tool gating', () => {
         registerUpgrade: (route: SidebarWebUpgradeRoute) => { void route; return () => {} },
       },
       sessions: { get: () => undefined },
-      tools: { register: () => { registered += 1; return () => { disposed += 1 } } },
+      // Count the SIDEBAR_OPEN tool only: the clue read-only tools are part
+      // of the always-on clue stack and are not gated by this setting.
+      tools: {
+        register: (tool: { readonly name?: string }) => {
+          if (tool.name !== 'sidebar_open') return () => {}
+          registered += 1
+          return () => { disposed += 1 }
+        },
+      },
       effect: (fn: () => void | (() => void)) => { fn() },
       inject: (deps: readonly string[], callback: (sctx: { settings: unknown }) => void) => {
         if (deps.includes('settings')) callback({ settings })

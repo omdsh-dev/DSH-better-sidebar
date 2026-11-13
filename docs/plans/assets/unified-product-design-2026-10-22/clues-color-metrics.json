@@ -1,0 +1,366 @@
+[
+  {
+    "theme": "light",
+    "width": 320,
+    "sources": [
+      {
+        "sourceId": "builtin.files",
+        "paints": [
+          "rgb(247, 173, 49)",
+          "rgb(255, 255, 255)"
+        ]
+      },
+      {
+        "sourceId": "builtin.feishu.docs",
+        "paints": [
+          "color(srgb 0.2 0.533333 0.733333 / 0.12)",
+          "rgb(51, 136, 187)",
+          "rgb(78, 209, 126)",
+          "rgb(255, 255, 255)"
+        ]
+      },
+      {
+        "sourceId": "builtin.feishu.tasks",
+        "paints": [
+          "rgb(247, 173, 49)",
+          "rgb(245, 158, 11)",
+          "rgb(255, 255, 255)",
+          "rgb(97, 102, 107)"
+        ]
+      },
+      {
+        "sourceId": "builtin.github.issues",
+        "paints": [
+          "rgb(230, 250, 237)",
+          "rgb(34, 197, 94)",
+          "rgb(78, 209, 126)"
+        ]
+      },
+      {
+        "sourceId": "builtin.github.pulls",
+        "paints": [
+          "rgb(51, 136, 187)",
+          "rgb(34, 197, 94)",
+          "rgb(78, 209, 126)"
+        ]
+      }
+    ],
+    "pack": [
+      "rgb(245, 158, 11)",
+      "rgb(51, 136, 187)",
+      "rgb(255, 255, 255)"
+    ],
+    "resource": [
+      "rgb(65, 118, 230)",
+      "rgb(255, 255, 255)"
+    ]
+  },
+  {
+    "theme": "light",
+    "width": 390,
+    "sources": [
+      {
+        "sourceId": "builtin.files",
+        "paints": [
+          "rgb(247, 173, 49)",
+          "rgb(255, 255, 255)"
+        ]
+      },
+      {
+        "sourceId": "builtin.feishu.docs",
+        "paints": [
+          "color(srgb 0.2 0.533333 0.733333 / 0.12)",
+          "rgb(51, 136, 187)",
+          "rgb(78, 209, 126)",
+          "rgb(255, 255, 255)"
+        ]
+      },
+      {
+        "sourceId": "builtin.feishu.tasks",
+        "paints": [
+          "rgb(247, 173, 49)",
+          "rgb(245, 158, 11)",
+          "rgb(255, 255, 255)",
+          "rgb(97, 102, 107)"
+        ]
+      },
+      {
+        "sourceId": "builtin.github.issues",
+        "paints": [
+          "rgb(230, 250, 237)",
+          "rgb(34, 197, 94)",
+          "rgb(78, 209, 126)"
+        ]
+      },
+      {
+        "sourceId": "builtin.github.pulls",
+        "paints": [
+          "rgb(51, 136, 187)",
+          "rgb(34, 197, 94)",
+          "rgb(78, 209, 126)"
+        ]
+      }
+    ],
+    "pack": [
+      "rgb(245, 158, 11)",
+      "rgb(51, 136, 187)",
+      "rgb(255, 255, 255)"
+    ],
+    "resource": [
+      "rgb(65, 118, 230)",
+      "rgb(255, 255, 255)"
+    ]
+  },
+  {
+    "theme": "light",
+    "width": 640,
+    "sources": [
+      {
+        "sourceId": "builtin.files",
+        "paints": [
+          "rgb(247, 173, 49)",
+          "rgb(255, 255, 255)"
+        ]
+      },
+      {
+        "sourceId": "builtin.feishu.docs",
+        "paints": [
+          "color(srgb 0.2 0.533333 0.733333 / 0.12)",
+          "rgb(51, 136, 187)",
+          "rgb(78, 209, 126)",
+          "rgb(255, 255, 255)"
+        ]
+      },
+      {
+        "sourceId": "builtin.feishu.tasks",
+        "paints": [
+          "rgb(247, 173, 49)",
+          "rgb(245, 158, 11)",
+          "rgb(255, 255, 255)",
+          "rgb(97, 102, 107)"
+        ]
+      },
+      {
+        "sourceId": "builtin.github.issues",
+        "paints": [
+          "rgb(230, 250, 237)",
+          "rgb(34, 197, 94)",
+          "rgb(78, 209, 126)"
+        ]
+      },
+      {
+        "sourceId": "builtin.github.pulls",
+        "paints": [
+          "rgb(51, 136, 187)",
+          "rgb(34, 197, 94)",
+          "rgb(78, 209, 126)"
+        ]
+      }
+    ],
+    "pack": [
+      "rgb(245, 158, 11)",
+      "rgb(51, 136, 187)",
+      "rgb(255, 255, 255)"
+    ],
+    "resource": [
+      "rgb(65, 118, 230)",
+      "rgb(255, 255, 255)"
+    ]
+  },
+  {
+    "theme": "dark",
+    "width": 320,
+    "sources": [
+      {
+        "sourceId": "builtin.files",
+        "paints": [
+          "rgb(247, 173, 49)",
+          "rgb(255, 255, 255)"
+        ]
+      },
+      {
+        "sourceId": "builtin.feishu.docs",
+        "paints": [
+          "color(srgb 0.2 0.533333 0.733333 / 0.12)",
+          "rgb(51, 136, 187)",
+          "rgb(78, 209, 126)",
+          "rgb(21, 21, 23)"
+        ]
+      },
+      {
+        "sourceId": "builtin.feishu.tasks",
+        "paints": [
+          "rgb(247, 173, 49)",
+          "rgb(245, 158, 11)",
+          "rgb(21, 21, 23)",
+          "rgb(207, 211, 214)"
+        ]
+      },
+      {
+        "sourceId": "builtin.github.issues",
+        "paints": [
+          "rgb(35, 60, 44)",
+          "rgb(34, 197, 94)",
+          "rgb(78, 209, 126)"
+        ]
+      },
+      {
+        "sourceId": "builtin.github.pulls",
+        "paints": [
+          "rgb(51, 136, 187)",
+          "rgb(34, 197, 94)",
+          "rgb(78, 209, 126)"
+        ]
+      }
+    ],
+    "pack": [
+      "rgb(245, 158, 11)",
+      "rgb(51, 136, 187)",
+      "rgb(21, 21, 23)"
+    ],
+    "resource": [
+      "rgb(65, 118, 230)",
+      "rgb(255, 255, 255)"
+    ]
+  },
+  {
+    "theme": "dark",
+    "width": 390,
+    "sources": [
+      {
+        "sourceId": "builtin.files",
+        "paints": [
+          "rgb(247, 173, 49)",
+          "rgb(255, 255, 255)"
+        ]
+      },
+      {
+        "sourceId": "builtin.feishu.docs",
+        "paints": [
+          "color(srgb 0.2 0.533333 0.733333 / 0.12)",
+          "rgb(51, 136, 187)",
+          "rgb(78, 209, 126)",
+          "rgb(21, 21, 23)"
+        ]
+      },
+      {
+        "sourceId": "builtin.feishu.tasks",
+        "paints": [
+          "rgb(247, 173, 49)",
+          "rgb(245, 158, 11)",
+          "rgb(21, 21, 23)",
+          "rgb(207, 211, 214)"
+        ]
+      },
+      {
+        "sourceId": "builtin.github.issues",
+        "paints": [
+          "rgb(35, 60, 44)",
+          "rgb(34, 197, 94)",
+          "rgb(78, 209, 126)"
+        ]
+      },
+      {
+        "sourceId": "builtin.github.pulls",
+        "paints": [
+          "rgb(51, 136, 187)",
+          "rgb(34, 197, 94)",
+          "rgb(78, 209, 126)"
+        ]
+      }
+    ],
+    "pack": [
+      "rgb(245, 158, 11)",
+      "rgb(51, 136, 187)",
+      "rgb(21, 21, 23)"
+    ],
+    "resource": [
+      "rgb(65, 118, 230)",
+      "rgb(255, 255, 255)"
+    ]
+  },
+  {
+    "theme": "dark",
+    "width": 640,
+    "sources": [
+      {
+        "sourceId": "builtin.files",
+        "paints": [
+          "rgb(247, 173, 49)",
+          "rgb(255, 255, 255)"
+        ]
+      },
+      {
+        "sourceId": "builtin.feishu.docs",
+        "paints": [
+          "color(srgb 0.2 0.533333 0.733333 / 0.12)",
+          "rgb(51, 136, 187)",
+          "rgb(78, 209, 126)",
+          "rgb(21, 21, 23)"
+        ]
+      },
+      {
+        "sourceId": "builtin.feishu.tasks",
+        "paints": [
+          "rgb(247, 173, 49)",
+          "rgb(245, 158, 11)",
+          "rgb(21, 21, 23)",
+          "rgb(207, 211, 214)"
+        ]
+      },
+      {
+        "sourceId": "builtin.github.issues",
+        "paints": [
+          "rgb(35, 60, 44)",
+          "rgb(34, 197, 94)",
+          "rgb(78, 209, 126)"
+        ]
+      },
+      {
+        "sourceId": "builtin.github.pulls",
+        "paints": [
+          "rgb(51, 136, 187)",
+          "rgb(34, 197, 94)",
+          "rgb(78, 209, 126)"
+        ]
+      }
+    ],
+    "pack": [
+      "rgb(245, 158, 11)",
+      "rgb(51, 136, 187)",
+      "rgb(21, 21, 23)"
+    ],
+    "resource": [
+      "rgb(65, 118, 230)",
+      "rgb(255, 255, 255)"
+    ]
+  },
+  {
+    "theme": "light",
+    "hovered": false,
+    "fill": "rgb(51, 136, 187)",
+    "foreground": "rgb(15, 17, 21)",
+    "contrast": 4.841087891315795
+  },
+  {
+    "theme": "light",
+    "hovered": true,
+    "fill": "color(srgb 0.296 0.589333 0.765333)",
+    "foreground": "rgb(15, 17, 21)",
+    "contrast": 5.803672529102135
+  },
+  {
+    "theme": "dark",
+    "hovered": false,
+    "fill": "rgb(51, 136, 187)",
+    "foreground": "rgb(21, 21, 23)",
+    "contrast": 4.672064641925105
+  },
+  {
+    "theme": "dark",
+    "hovered": true,
+    "fill": "color(srgb 0.293176 0.58698 0.763451)",
+    "foreground": "rgb(21, 21, 23)",
+    "contrast": 5.601041300070326
+  }
+]

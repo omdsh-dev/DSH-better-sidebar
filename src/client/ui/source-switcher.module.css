@@ -1,0 +1,21 @@
+/* The switcher owns its own container so it works in the tab AND in a window. */
+.root { container-type: inline-size; display: block; min-width: 0; width: 100%; }
+.wide { display: block; min-width: 0; }
+.narrow { display: none; min-width: 0; }
+
+.tabs { width: 100%; }
+.tabLabel { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-width: 0; max-width: 100%; }
+.tabIcon { display: inline-flex; flex: none; align-items: center; }
+.tabIcon svg { display: block; }
+.tabText { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.select { display: flex; width: 100%; min-height: 28px; justify-content: flex-start; }
+@media (hover: none), (pointer: coarse) {
+  .select { min-height: 44px; }
+}
+
+/* Below the five-segment comfort width the select is the honest form. */
+@container (max-width: 519px) {
+  .wide { display: none; }
+  .narrow { display: block; }
+}

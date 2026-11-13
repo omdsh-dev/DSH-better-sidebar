@@ -1,0 +1,187 @@
+/** The one collection window: same control recipe and tokens as the tab. */
+.root {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--ds-sidebar-space-2);
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  box-sizing: border-box;
+  padding: var(--ds-sidebar-gutter);
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-primary);
+}
+.selection { flex: none; min-width: 0; }
+.selection > summary { cursor: pointer; min-height: var(--ds-sidebar-control-height); align-content: center; }
+.selection > summary:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 1px; }
+.selectionTitle { margin-inline-start: 8px; color: var(--dsw-alias-label-primary); overflow-wrap: anywhere; }
+.selectionList { max-height: 96px; overflow: auto; margin: 4px 0 0; padding-inline-start: 20px; color: var(--dsw-alias-label-secondary); overflow-wrap: anywhere; }
+.destinationSummary { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dsw-alias-label-secondary); }
+.count {
+  flex: none;
+  margin: 0;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 18px;
+}
+.form {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--ds-sidebar-space-2);
+  min-width: 0;
+  min-height: 0;
+}
+.fields {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--ds-sidebar-space-3);
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+.searchBox {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  gap: var(--ds-sidebar-space-2);
+  min-width: 0;
+  color: var(--dsw-alias-label-tertiary);
+}
+.searchBox > svg {
+  flex: none;
+}
+.searchInput {
+  flex: 1;
+  width: 100%;
+  min-width: 0;
+}
+
+
+.destinationList {
+  display: flex;
+  flex: 1 1 112px;
+  flex-direction: column;
+  gap: var(--ds-sidebar-space-1);
+  min-width: 0;
+  min-height: 36px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+.destinationList:disabled {
+  opacity: 0.4;
+}
+.destinationRow {
+  display: flex;
+  align-items: center;
+  flex: none;
+  gap: var(--ds-sidebar-space-2);
+  min-width: 0;
+  min-height: 36px;
+  padding: 4px 8px;
+  box-sizing: border-box;
+  border-radius: var(--ds-sidebar-radius);
+  color: var(--dsw-alias-label-primary);
+  cursor: pointer;
+}
+.destinationRow:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+.destinationRow:has(input:checked) {
+  background: var(--dsw-alias-interactive-bg-active);
+}
+.destinationRow input {
+  flex: none;
+  accent-color: var(--dsw-alias-state-business-primary, var(--dsw-alias-label-secondary));
+}
+.destinationRow:has(input:focus-visible) {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: -2px;
+}
+.destinationRow > span:not([data-clue-artwork]) {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.destinationRow > small {
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-sidebar-space-1);
+  flex: none;
+}
+.fieldLabel {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 16px;
+}
+.textInput {
+  composes: input from "../../ui/kit.module.css";
+}
+.fieldError {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ds-sidebar-space-2);
+  color: var(--dsw-alias-state-error-primary);
+  font-size: 11px;
+  line-height: 16px;
+  overflow-wrap: anywhere;
+}
+.hint {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 16px;
+}
+.footer {
+  display: flex;
+  align-items: center;
+  flex: none;
+  gap: var(--ds-sidebar-space-2);
+  min-width: 0;
+  justify-content: flex-end;
+  padding-top: var(--ds-sidebar-space-2);
+  border-top: 1px solid var(--dsw-alias-border-l1);
+}
+.footer > button {
+  flex: none;
+}
+.action {
+  composes: button from "../../ui/kit.module.css";
+}
+.primary {
+  composes: buttonPrimary from "../../ui/kit.module.css";
+  background: var(--dsw-alias-button-primary-fill);
+  color: var(--dsw-alias-label-primary-foreground);
+}
+.primary:hover:not(:disabled) {
+  background: var(--dsw-alias-button-primary-hover);
+}
+.stateAction {
+  composes: button buttonGhost from "../../ui/kit.module.css";
+}
+@media (pointer: coarse) {
+  .action,
+  .primary,
+  .textInput,
+  .destinationRow {
+    min-height: 44px;
+  }
+}

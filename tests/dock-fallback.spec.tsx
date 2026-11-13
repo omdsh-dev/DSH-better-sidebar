@@ -117,6 +117,11 @@ describe('dock fallback（空白会话入口）', () => {
     // `bottomOpen: true` (the click would close it instead of open it).
     localStorage.clear()
     intervals.clear()
+    vi.stubGlobal('matchMedia', vi.fn((query: string): MediaQueryList => ({
+      matches: false, media: query, onchange: null,
+      addEventListener: () => {}, removeEventListener: () => {},
+      addListener: () => {}, removeListener: () => {}, dispatchEvent: () => true,
+    })))
     vi.spyOn(globalThis, 'setInterval').mockImplementation(((fn: () => void, ms?: number) => {
       const id = ++intervalSeq
       intervals.set(id, { fn, ms })
@@ -133,6 +138,7 @@ describe('dock fallback（空白会话入口）', () => {
     Reflect.deleteProperty(document, 'hidden')
     Reflect.deleteProperty(document, 'visibilityState')
     vi.restoreAllMocks()
+    vi.unstubAllGlobals()
   })
 
   it('renders the fallback entry and flips the bottom workbench through the store', async () => {
@@ -197,6 +203,27 @@ describe('dock fallback（空白会话入口）', () => {
   // 定位逻辑现在只服务**收起态**（右侧栏收起时宿主的角落只有「Open right sidebar」
   // 一个按钮）。让位仍是逐个槽位试探：万一宿主的收起态角落也并排了别的东西，
   // 固定偏移会正好落在**下一个**按钮上。
+  it('reserves the full 44px target on coarse pointers', async () => {
+    phaseIs(true)
+    vi.spyOn(window, 'matchMedia').mockImplementation(query => ({
+      matches: query === '(pointer: coarse)', media: query, onchange: null,
+      addEventListener: () => {}, removeEventListener: () => {},
+      addListener: () => {}, removeListener: () => {}, dispatchEvent: () => true,
+    }))
+    const anchor = appendAnchor(500)
+    const { unmount } = renderDockFallback()
+    try {
+      await settle()
+      const shell = document.querySelector<HTMLElement>('[data-dsh-dock-fallback]')!
+      expect(shell.style.left).toBe('448px')
+      expect(shell.style.top).toBe('4px')
+      expect(Number.parseFloat(shell.style.left) + 44).toBe(492)
+    } finally {
+      unmount()
+      anchor.remove()
+    }
+  })
+
   it('keeps stepping left until the slot is free of host buttons', async () => {
     phaseIs(true)
     const rect = (left: number, top: number) => () => ({
@@ -216,9 +243,9 @@ describe('dock fallback（空白会话入口）', () => {
       await act(async () => { await new Promise(resolve => { setTimeout(resolve, 0) }) })
       const shell = document.querySelector<HTMLElement>('[data-dsh-dock-fallback]')
       expect(shell, '空白会话里备用入口应当在').not.toBeNull()
-      // 464 被占 → 4px 步长退到第一个整格都不碰 Fullscreen(464..492) 的槽位 432
-      // （右缘采样点 432+26=458 ≤ 460）。停在 464 就是压在 Fullscreen 上。
-      expect(shell!.style.left, '占位时必须继续左移，不能停在 Fullscreen 上').toBe('432px')
+      // 464 被占 → 4px 步长退到第一个整格都不碰 Fullscreen(464..492) 的槽位 428
+      // （右缘采样点 428+30=458 ≤ 460）。停在 464 就是压在 Fullscreen 上。
+      expect(shell!.style.left, '占位时必须继续左移，不能停在 Fullscreen 上').toBe('428px')
     } finally {
       unmount()
       anchor.remove()
@@ -315,8 +342,8 @@ describe('dock fallback（空白会话入口）', () => {
       await act(async () => { await new Promise(resolve => { setTimeout(resolve, 0) }) })
       const shell = document.querySelector<HTMLElement>('[data-dsh-dock-fallback]')
       expect(shell, '空白会话里备用入口应当在').not.toBeNull()
-      // 桩的命中测试说 x > 430 都被芯片盖住 → 右缘采样点(left+26) 必须 ≤ 430，即 left ≤ 404。
-      expect(shell!.style.left, '被页签占位时必须继续左移').toBe('404px')
+      // 桩的命中测试说 x > 430 都被芯片盖住 → 右缘采样点(left+30) 必须 ≤ 430，即 left ≤ 400。
+      expect(shell!.style.left, '被页签占位时必须继续左移').toBe('400px')
     } finally {
       unmount()
       anchor.remove()
@@ -479,7 +506,8 @@ describe('dock fallback（空白会话入口）', () => {
       const shell = document.querySelector<HTMLElement>('[data-dsh-dock-fallback]')
       expect(shell, '空白会话里备用入口应当在').not.toBeNull()
       expect(shell!.style.top, '零尺寸锚点走右上角兜底').toBe('8px')
-      expect(shell!.style.left, '零尺寸锚点走右上角兜底').toBe(`${window.innerWidth - 44}px`)
+      // 32px shared IconButton geometry + 8px gap + 8px viewport margin.
+      expect(shell!.style.left, '零尺寸锚点走右上角兜底').toBe(`${window.innerWidth - 48}px`)
     } finally {
       unmount()
       hit.restore()
@@ -503,9 +531,9 @@ describe('dock fallback（空白会话入口）', () => {
       // 走查每步的**第一个**采样点就被占 → 一次 tick 恰好 100 次命中测试。
       expect(hit.hits(), '让位走查必须封顶在 100 步（400px）').toBe(100)
       const shell = document.querySelector<HTMLElement>('[data-dsh-dock-fallback]')
-      // 锚点在 500、按钮 28px、间距 8px → 起点 464；100 步 × 4px = 400px → 64。
-      // 耗尽上限后停在 464 - 400，而不是视口左缘；隐藏唯一入口不是可接受的兜底。
-      expect(shell!.style.left, '耗尽上限后停在 464 - 400，而不是视口左缘').toBe('64px')
+      // 锚点在 500、按钮 32px、间距 8px → 起点 460；100 步 × 4px = 400px → 60。
+      // 耗尽上限后停在 460 - 400，而不是视口左缘；隐藏唯一入口不是可接受的兜底。
+      expect(shell!.style.left, '耗尽上限后停在 460 - 400，而不是视口左缘').toBe('60px')
     } finally {
       unmount()
       hit.restore()

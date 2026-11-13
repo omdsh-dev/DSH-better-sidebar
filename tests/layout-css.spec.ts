@@ -9,6 +9,13 @@ import { describe, expect, it } from 'vitest'
 const css = readFileSync('src/client/layout.css', 'utf8')
 
 describe('layout.css conversation column', () => {
+  it('leaves submenu placement to the host instead of flip-flopping it in CSS', () => {
+    // DSH 0.2.2-rc.2 positions menus from a CSS anchor and renders submenus in
+    // their own surface, so the plugin's old submenu flip/offset workaround was
+    // deleted (the call sites pass `anchorPoint` instead). A reintroduced rule
+    // would fight the host's own placement.
+    expect(css).not.toContain('data-dsh-sidebar-submenu')
+  })
   it('targets the AppFrame center column through the shell-written tag', () => {
     // The bottom-push rule anchors on the [data-dsh-center-col] tag the
     // Sidebar shell's locator writes onto the measured column node (see

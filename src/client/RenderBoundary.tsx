@@ -16,7 +16,7 @@
  */
 import { Component, type ErrorInfo, type ReactNode } from 'react'
 import { t } from './locales.ts'
-import css from './sidebar.module.css'
+import { ActionButton } from './ui/index.ts'
 
 export class RenderBoundary extends Component<{ children?: ReactNode; className?: string }, { error: string | null }> {
   state = { error: null as string | null }
@@ -32,15 +32,13 @@ export class RenderBoundary extends Component<{ children?: ReactNode; className?
   render(): ReactNode {
     if (this.state.error !== null) {
       return (
-        <div className={this.props.className}>
+        <div className={this.props.className} role="alert">
           <span>dsh-better-sidebar: {this.state.error}</span>
-          <button
-            type="button"
-            className={css.terminalRetry}
+          <ActionButton
             onClick={() => { this.setState({ error: null }) }}
           >
             {t('terminalRetry')}
-          </button>
+          </ActionButton>
         </div>
       )
     }

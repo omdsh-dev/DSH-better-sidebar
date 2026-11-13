@@ -12,6 +12,12 @@ const entry = (hashFull: string, parents: string[] = []) => ({ hash: hashFull.sl
 const page = (hash = 'a', more = false) => ({ isRepo: true, root: '/repo', entries: [entry(hash)], branches: [{ ref: 'refs/heads/topic', name: 'topic', hashFull: hash }], hasMore: more, nextCursor: more ? 'opaque' : undefined, snapshot: 'snapshot' })
 const defaults: GitGraphSectionProps = { scope: { sessionId: 'one', cwd: '/repo', repoRoot: '/repo' }, worktree: '/linked', visible: true, onPreview: () => {}, selectedRef: null }
 const flush = async () => { await act(async () => { await Promise.resolve() }) }
+async function filterBranch(container: HTMLElement, label: string): Promise<void> {
+  const trigger = container.querySelector<HTMLButtonElement>(`button[aria-label="${t('graphBranchFilter')}"]`)!
+  await act(async () => { trigger.click() })
+  const option = [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(item => item.textContent === label)!
+  await act(async () => { option.click() })
+}
 function button(container: HTMLElement, text: string): HTMLButtonElement {
   return [...container.querySelectorAll('button')].find(node => node.textContent === text)!
 }
@@ -94,7 +100,7 @@ describe('read-only graph', () => {
       expect(mounted.container.querySelectorAll('[data-graph-commit]')).toHaveLength(2)
       await act(async () => { mounted.container.querySelector<HTMLButtonElement>('[data-graph-commit]')!.click() })
       expect(preview).toHaveBeenCalledWith(expect.objectContaining({ kind: 'commit', worktree: '/linked', repoRoot: '/repo', hashFull: 'a' }))
-      await act(async () => { const select = mounted.container.querySelector('select')!; select.value = 'refs/heads/topic'; select.dispatchEvent(new Event('change', { bubbles: true })) })
+      await filterBranch(mounted.container, 'topic')
       expect(clear).toHaveBeenCalled()
       expect(graph.mock.calls.at(-1)![1]).toMatchObject({ branch: 'refs/heads/topic', cursor: undefined })
       expect(checkout).not.toHaveBeenCalled()
@@ -123,10 +129,9 @@ describe('read-only graph', () => {
     const mounted = renderRoot(createElement(GitGraphSection, defaults))
     try {
       await flush()
-      const change = async (value: string) => act(async () => { const select = mounted.container.querySelector('select')!; select.value = value; select.dispatchEvent(new Event('change', { bubbles: true })) })
-      await change('refs/heads/topic')
+      await filterBranch(mounted.container, 'topic')
       const signal = graph.mock.calls[1]![3]!
-      await change('')
+      await filterBranch(mounted.container, t('graphAllBranches'))
       expect(signal.aborted).toBe(true)
       await act(async () => { resolve(page('late-topic')) })
       expect(mounted.container.textContent).toContain('subject all')
@@ -201,17 +206,18 @@ describe('graph toolbar', () => {
     const mounted = renderRoot(createElement(GitGraphSection, defaults))
     try {
       await flush()
-      const select = mounted.container.querySelector<HTMLSelectElement>(`select[aria-label="${t('graphBranchFilter')}"]`)!
+      const select = mounted.container.querySelector<HTMLButtonElement>(`button[aria-label="${t('graphBranchFilter')}"]`)!
       expect(select).not.toBeNull()
-      expect([...select.options].map(option => option.textContent)).toEqual([t('graphAllBranches'), 'topic'])
-      const toolbar = select.parentElement!
+      expect(mounted.container.querySelector('select')).toBeNull()
+      expect(select.textContent).toBe(t('graphAllBranches'))
+      const toolbar = select.parentElement!.parentElement!
       // The select is the toolbar's ONLY interactive control — a re-added
       // hint, legend trigger or action has to fail here.
       expect([...toolbar.querySelectorAll('select, button, input, textarea, a[href], [role="button"]')]).toEqual([select])
       for (const hint of REMOVED_READ_ONLY_HINTS) expect(mounted.container.textContent).not.toContain(hint)
       for (const wording of REMOVED_LEGEND) expect(mounted.container.textContent).not.toContain(wording)
       // The old select tooltip carried the removed read-only copy.
-      expect(select.getAttribute('title')).toBeNull()
+      expect(select.getAttribute('title')).toBe(t('graphAllBranches'))
       // Nothing in the lens opens a floating card on hover any more …
       await act(async () => { toolbar.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, relatedTarget: null })) })
       expect(dialog()).toBeNull()
@@ -224,7 +230,8 @@ describe('graph toolbar', () => {
     try {
       await flush()
       expect(mounted.container.textContent).toContain(t('graphEmpty'))
-      expect(mounted.container.querySelector('button')).toBeNull()
+      expect(mounted.container.querySelectorAll('button')).toHaveLength(1)
+      expect(mounted.container.querySelector(`button[aria-label="${t('graphBranchFilter')}"]`)).not.toBeNull()
     } finally { mounted.unmount() }
   })
 

@@ -1,0 +1,16 @@
+.discussion { flex: none; min-width: 0; padding: var(--ds-sidebar-gutter); border-top: 1px solid var(--dsw-alias-border-l1); color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-layer-1); font-size: 13px; line-height: 1.6; }
+.heading { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; margin-bottom: 12px; }
+.heading h2 { margin: 0; font-size: 14px; font-weight: 600; }
+.hint, .meta { color: var(--dsw-alias-label-tertiary); font-size: 11px; overflow-wrap: anywhere; }
+.comment { padding: 12px 0; border-top: 1px solid var(--dsw-alias-border-l1); }
+.comment[data-clue-reply-to] { margin-inline-start: 16px; padding-inline-start: 12px; border-inline-start: 1px solid var(--dsw-alias-border-l1); }
+.meta, .actions, .replyContext { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.meta strong { color: var(--dsw-alias-label-secondary); }
+.meta a { color: inherit; }
+.state { border: 1px solid var(--dsw-alias-border-l1); border-radius: var(--ds-sidebar-radius); padding: 0 6px; color: var(--dsw-alias-label-secondary); }
+.body { margin: 6px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.composer { display: flex; flex-direction: column; gap: 8px; margin-top: 16px; }
+.composer textarea { width: 100%; min-height: 72px; }
+.composer .actions { justify-content: flex-end; }
+.error { color: var(--dsw-alias-state-error-primary); overflow-wrap: anywhere; }
+.error button { margin-inline-start: 8px; }

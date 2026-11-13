@@ -1,0 +1,41 @@
+.number { font-variant-numeric: tabular-nums; }
+.textarea { display: block; width: 100%; min-height: 80px; line-height: 20px; resize: vertical; }
+.checkbox { position: relative; display: inline-flex; align-items: center; justify-content: center; flex: none; width: 20px; height: 20px; vertical-align: middle; }
+.checkboxInput { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+.checkboxBox { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; box-sizing: border-box; border: 1px solid var(--dsw-alias-border-l3); border-radius: 4px; background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary-foreground); pointer-events: none; }
+.checkboxBox svg { visibility: hidden; }
+.checkboxInput:checked + .checkboxBox { background: var(--dsw-alias-button-primary-fill); border-color: var(--dsw-alias-button-primary-fill); }
+.checkboxInput:checked + .checkboxBox svg { visibility: visible; }
+.checkboxInput:indeterminate + .checkboxBox { background: var(--dsw-alias-interactive-bg-active); }
+.checkboxInput:indeterminate + .checkboxBox::after { content: ''; width: 8px; height: 1px; background: var(--dsw-alias-label-primary); }
+.checkboxInput:focus-visible + .checkboxBox { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 2px; }
+.checkboxInput:disabled { cursor: default; }
+.checkboxInput:disabled + .checkboxBox { opacity: .4; }
+.switch { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 36px; min-height: 28px; padding: 0; border: 0; background: transparent; cursor: pointer; }
+.switchTrack { display: flex; align-items: center; width: 32px; height: 18px; padding: 2px; box-sizing: border-box; border: 1px solid var(--dsw-alias-border-l3); border-radius: 12px; background: var(--dsw-alias-interactive-bg-active); }
+.switchThumb { width: 12px; height: 12px; border-radius: 50%; background: var(--dsw-alias-label-secondary); transition: transform 100ms ease; }
+.switch[aria-checked='true'] .switchTrack { background: var(--dsw-alias-button-primary-fill); border-color: var(--dsw-alias-button-primary-fill); }
+.switch[aria-checked='true'] .switchThumb { background: var(--dsw-alias-label-primary-foreground); transform: translateX(14px); }
+.switch:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 2px; border-radius: 6px; }
+.switch:disabled { opacity: .4; cursor: default; }
+/** One tab strip, two skins: the quiet rule under a pane, or the host's
+ *  full-width segmented track. Both keep the same roving-focus contract. */
+.tabs { display: flex; align-items: center; flex: none; gap: 4px; min-width: 0; padding: 4px; border-bottom: 1px solid var(--dsw-alias-border-l1); }
+.tab { composes: button buttonGhost from './kit.module.css'; min-height: var(--ds-sidebar-control-sm); padding: 2px 10px; color: var(--dsw-alias-label-secondary); }
+.tab[aria-selected='true'] { background: var(--dsw-alias-interactive-bg-active); color: var(--dsw-alias-label-primary); font-weight: 600; }
+
+/* Segmented: equal-width, full-bleed, the selected segment carries the raised
+   fill. No sliding indicator: a source strip may clip a long label, and the
+   four visible edges must stay honest. */
+.tabsSegmented { gap: 2px; padding: 3px; border: 0; border-radius: 8px; background: var(--dsw-alias-bg-module-platform); }
+.tabSegmented { flex: 1 1 0; min-width: 0; min-height: 28px; padding: 2px 6px; border: 0; border-radius: 6px; background: transparent; color: var(--dsw-alias-label-secondary); font-size: 13px; font-weight: 500; line-height: 20px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tabSegmented[aria-selected='true'] { background: var(--dsw-alias-bg-layer-3); border: 0.5px solid var(--dsw-alias-border-l3); color: var(--dsw-alias-label-primary); }
+.tabSegmented:disabled { opacity: .4; }
+.settingRow { display: flex; align-items: center; justify-content: space-between; gap: 24px; min-width: 0; padding: 12px 0; border-bottom: 1px solid var(--dsw-alias-border-l1); }
+.settingCopy { flex: 1; min-width: 0; }
+.settingLabel { color: var(--dsw-alias-label-primary); font: inherit; }
+.settingDescription { margin-top: 4px; color: var(--dsw-alias-label-tertiary); font: var(--dsw-font-xxs-12); overflow-wrap: anywhere; }
+.settingControl { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; max-width: 60%; min-width: 0; }
+@media (max-width: 480px) { .settingRow { align-items: flex-start; flex-direction: column; gap: 8px; } .settingControl { max-width: 100%; width: 100%; justify-content: flex-start; } }
+@media (pointer: coarse) { .checkbox, .switch { min-width: 44px; min-height: 44px; } .tab, .tabSegmented { min-height: 44px; } }
+@media (prefers-reduced-motion: reduce) { .switchThumb { transition: none; } }

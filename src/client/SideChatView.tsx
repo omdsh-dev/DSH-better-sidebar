@@ -124,6 +124,9 @@ import type { SessionScope } from './api.ts'
 import type { SidebarTab } from './state.ts'
 import { SIDECHAT_SUBMIT_KEY_DEFAULT, type SidechatSubmitKey } from '../prefs-shared.ts'
 import css from './SideChatView.module.css'
+// The host menu renders in a portal outside this view's surface; this carries
+// the plugin's flat 1px chrome onto it (the settings/selection menus share it).
+import menuCss from './ui/menu.module.css'
 
 /**
  * Fallback poll cadence while the selected thread is running and the tab
@@ -2159,7 +2162,7 @@ export function SideChatView(props: {
   //    until the thread lands; legacy persisted tabs offer a manual start) ──
   if (threadId === undefined) {
     return (
-      <div className={css.sidechat}>
+      <div className={css.sidechat} data-sidebar-surface="sidechat">
         <div className={css.sidechatHero}>
           <IconNewChatOutlineRegular />
           <div
@@ -2198,7 +2201,7 @@ export function SideChatView(props: {
   }
 
   return (
-    <div className={css.sidechat}>
+    <div className={css.sidechat} data-sidebar-surface="sidechat">
       {connectionState !== undefined && connectionState !== 'connected' && (
         <ConnectionIndicator
           state={connectionState}
@@ -2463,6 +2466,7 @@ export function SideChatView(props: {
             <ComposerTip label={t('sideChatThreads')}>
               <Menu
                 open={menuOpen}
+                listClassName={menuCss.menu}
                 anchor={(
                   <button
                     type="button"
@@ -2512,6 +2516,7 @@ export function SideChatView(props: {
           >
             <Menu
               open={modelMenuOpen}
+              listClassName={menuCss.menu}
               anchor={(
                 <button
                   type="button"

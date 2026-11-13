@@ -255,6 +255,43 @@ function mermaidChunkAliases(): BuildPlugin {
   }
 }
 
+/**
+ * Keep exactly ONE ClueError class in the process.
+ *
+ * The public `./clues` artifact is a separate tsdown build (and therefore a
+ * separate module instance at runtime). The host bundle imports the same
+ * source modules, so without a rewrite it would inline a second copy of
+ * `ClueError` — and every `instanceof` check (the service's error
+ * normalization and wire.ts's writeError) would fail for a ClueError thrown by
+ * an external source plugin, silently degrading auth-required/conflict/… to
+ * "failed" or 500 internal.
+ *
+ * Only the ERROR module is externalized onto `./clues.js` (a relative import
+ * resolved inside lib/, i.e. the same module instance as
+ * `dsh-better-sidebar/clues`). It is reached through two spellings: the
+ * root-level `./clues/error.ts` (wire.ts) and the sibling `./error.ts`
+ * re-exported by `src/clues/types.ts`; both must be rewritten. The rest of the
+ * clue code is inlined into the host bundle on purpose: it shares the host's
+ * `fs-tree` / `fs-read` / `fs-search` module state, so a host-side write
+ * invalidates the same directory cache the clue listing reads, and a clue save
+ * invalidates the same cache the explorer reads. Externalizing the whole clue
+ * entry would give the two artifacts separate cache copies (and only the
+ * error identity needs to be shared).
+ */
+function cluesSharedError(): BuildPlugin {
+  return {
+    name: 'dsh-clues-shared-error',
+    resolveId(source: string, importer: string | undefined) {
+      const fromClueModule = importer !== undefined
+        && /[\\/]src[\\/]clues[\\/][^\\/]+$/.test(importer)
+      if (source === './clues/error.ts' || (source === './error.ts' && fromClueModule)) {
+        return { id: './clues.js', external: true }
+      }
+      return null
+    },
+  }
+}
+
 /** The shared client-bundle purity gate (see the clientBundle doc). */
 function purityGatePlugin(): BuildPlugin {
   return {
@@ -287,7 +324,10 @@ function makeCssPlugin(pluginId: string): BuildPlugin {
       // specifiers (e.g. '@xterm/xterm/css/xterm.css') resolve from the package.
       let abs: string
       if (source.startsWith('.') || source.startsWith('/') || /^[A-Za-z]:[\\/]/.test(source)) {
-        abs = importer === undefined ? source : resolvePath(dirname(importer), source)
+        const physicalImporter = importer?.startsWith(CSS_VIRTUAL_PREFIX)
+          ? importer.slice(CSS_VIRTUAL_PREFIX.length, -CSS_VIRTUAL_SUFFIX.length)
+          : importer
+        abs = physicalImporter === undefined ? source : resolvePath(dirname(physicalImporter), source)
       } else {
         abs = require.resolve(source)
       }
@@ -307,11 +347,25 @@ function makeCssPlugin(pluginId: string): BuildPlugin {
           cssModules: { pattern: `[hash]_[local]` },
           minify: true,
         })
-        const classMap: Record<string, string> = {}
-        for (const [local, exp] of Object.entries(cssExports ?? {})) classMap[local] = exp.name
+        // Composition lives in the exports, not the generated CSS. Importing
+        // dependency maps also injects their styles before this module's rules.
+        const dependencies = new Map<string, string>()
+        const entries = Object.entries(cssExports ?? {}).map(([local, exp]) => {
+          const names = [JSON.stringify(exp.name), ...exp.composes.map(reference => {
+            if (reference.type !== 'dependency') return JSON.stringify(reference.name)
+            let dependency = dependencies.get(reference.specifier)
+            if (dependency === undefined) {
+              dependency = `composed${dependencies.size}`
+              dependencies.set(reference.specifier, dependency)
+            }
+            return `${dependency}[${JSON.stringify(reference.name)}]`
+          })]
+          return `${JSON.stringify(local)}: [${names.join(', ')}].join(' ')`
+        })
         return [
+          ...[...dependencies].map(([specifier, name]) => `import ${name} from ${JSON.stringify(specifier)};`),
           injectTag(pluginId, fileId, code.toString()),
-          `export default ${JSON.stringify(classMap)};`,
+          `export default {${entries.join(', ')}};`,
         ].join('\n')
       }
       return [
@@ -337,6 +391,23 @@ export default [
     // clean stays off: the build script removes lib/ wholesale before tsc, so
     // a tsdown clean here would wipe the lib/types declarations tsc just
     // emitted (and `watch` must never touch them).
+    clean: false,
+    // Share the clue ERROR class with the published `./clues` artifact
+    // instead of inlining a second copy; the rest of the clue code stays
+    // inlined so it shares the host's fs module state (see cluesSharedError).
+    plugins: [cluesSharedError()],
+  },
+  // Public clue entry (package subpath `./clues`): the node-only host vocabulary
+  // + service + built-in local source other plugins register against. It is a
+  // separate artifact so a consumer never has to load the whole sidebar host.
+  {
+    entry: { clues: 'src/clues/index.ts' },
+    outDir: 'lib',
+    format: ['esm'],
+    platform: 'node',
+    target: 'es2024',
+    fixedExtension: false,
+    dts: false,
     clean: false,
   },
   // Official profile channel: bundle id = package name (package.json `name`).
