@@ -23,7 +23,7 @@ import type { BetterSidebarCluesClientFace } from '../registry.ts'
 import type { BetterSidebarWindowsClientFace, WindowHandle } from '../../windows/types.ts'
 import { clueErrorMessage } from '../copy.ts'
 import { t } from '../../locales.ts'
-import { ActionButton, Notice, TextInput } from '../../ui/index.ts'
+import { ActionButton, ActionFooter, Field, Notice, TextInput } from '../../ui/index.ts'
 import css from './create-pack.module.css'
 
 /** The stable window id of one workspace's creation surface. */
@@ -132,27 +132,25 @@ export function CreatePackPage(props: OpenCreatePackWindowOptions & { readonly g
       aria-busy={busy}
       onSubmit={(event) => { event.preventDefault(); if (!guard.busy) void submit() }}
     >
-      <label className={css.field}>
-        <span className={css.label}>{t('cluePacksNamePlaceholder')}</span>
+      <Field label={t('cluePacksNamePlaceholder')}>
         <TextInput
           ref={inputRef}
-          className={css.input}
           value={draft}
           disabled={busy}
           placeholder={t('cluePacksNamePlaceholder')}
           aria-label={t('cluePacksNamePlaceholder')}
           onChange={(event) => { setDraft(event.target.value) }}
         />
-      </label>
+      </Field>
 
       {error !== null && <Notice kind="error">{error}</Notice>}
 
-      <div className={css.actions}>
+      <ActionFooter bleed end={<>
         <ActionButton disabled={busy} onClick={cancel}>{t('cancel')}</ActionButton>
         <ActionButton type="submit" variant="primary" busy={busy}>
           {t('cluePacksCreate')}
         </ActionButton>
-      </div>
+      </>} />
     </form>
   )
 }

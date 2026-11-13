@@ -5,7 +5,7 @@ import type { ClueComment, ClueCommentCapabilities, ClueDiscussionPage } from '.
 import { markdownTextProps } from '../../markdown-labels.tsx'
 import { t, type CopyKey } from '../../locales.ts'
 import { LoadingIndicator } from '../../ui/LoadingIndicator.tsx'
-import { ActionButton, Notice, TextArea } from '../../ui/index.ts'
+import { ActionButton, ErrorBlock, Notice, TextArea } from '../../ui/index.ts'
 import { clueErrorMessage } from '../copy.ts'
 import { personLabel, formatResourceTime } from '../resource-summary.tsx'
 import { ResourceSelectionActions, type ClueSelectionActionTarget } from '../selection-actions.tsx'
@@ -126,7 +126,14 @@ export function ResourceDiscussion(props: ResourceDiscussionProps): ReactNode {
     })}
     {page?.status === 'ok' && page.items.length === 0 && !loading && <p className={css.hint}>{copy('clueDiscussionEmpty')}</p>}
     {page !== undefined && page.status !== 'ok' && <p className={css.hint}>{copy(page.status === 'not-captured' ? 'clueDiscussionNotCaptured' : 'clueDiscussionUnavailable')}</p>}
-    {(error !== undefined || page?.error !== undefined) && <div className={css.error} role="alert">{error ?? page?.error?.message}<ActionButton type="button" disabled={loading} onClick={() => { props.onLoad() }}>{t('retry')}</ActionButton></div>}
+    {(error !== undefined || page?.error !== undefined) && (
+      <ErrorBlock
+        message={error ?? page?.error?.message ?? ''}
+        retryLabel={t('retry')}
+        busy={loading}
+        onRetry={() => { props.onLoad() }}
+      />
+    )}
     {page?.nextCursor !== undefined && <ActionButton type="button" disabled={loading} data-clue-comments-more onClick={() => { props.onLoad(page.nextCursor) }}>{copy('clueDiscussionMore')}</ActionButton>}
     {canCreate && <form className={css.composer} onSubmit={event => { event.preventDefault(); void submit() }}>
       <label htmlFor={inputId}>{copy(reply === undefined ? 'clueCommentWrite' : 'clueCommentReply')}</label>

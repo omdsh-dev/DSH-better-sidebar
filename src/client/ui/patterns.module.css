@@ -287,6 +287,9 @@
   flex-direction: column;
   gap: var(--ds-sidebar-space-1);
   min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
 }
 
 .choice {
@@ -442,8 +445,24 @@
   font: var(--dsw-font-xxxs-11);
 }
 
+.actionFooterBleed {
+  flex: none;
+  margin: auto calc(-1 * var(--ds-sidebar-gutter)) calc(-1 * var(--ds-sidebar-gutter));
+  padding-inline: var(--ds-sidebar-gutter);
+}
+
+.actionFooterStart {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
 .actionFooterEnd {
   display: inline-flex;
+  flex: none;
   align-items: center;
   gap: var(--ds-sidebar-space-2);
   margin-left: auto;

@@ -37,7 +37,9 @@ import {
 } from '../share-client.ts'
 import { cluesApi, peekClueRequest } from '../api.ts'
 import { t } from '../../locales.ts'
-import { ActionButton, Checkbox, Notice, Tabs } from '../../ui/index.ts'
+import {
+  ActionButton, ActionFooter, ChoiceCard, EmptyState, ErrorBlock, Field, Notice, Tabs,
+} from '../../ui/index.ts'
 import { LoadingIndicator } from '../../ui/LoadingIndicator.tsx'
 import css from './share.module.css'
 
@@ -441,56 +443,50 @@ export function SharePage(props: OpenShareWindowOptions): ReactNode {
       {failure !== null && <Notice kind="error">{failure}</Notice>}
       {direction === 'export' ? (
         <div className={css.body}>
-          <div className={css.field}>
-            <span className={css.fieldLabel}>{t('clueSharePacks')}</span>
+          <Field label={t('clueSharePacks')}>
             {packsLoading
               ? <LoadingIndicator inline />
               : packsError
-              ? (
-                <div className={css.error} role="alert">
-                  <span>{t('error')}</span>
-                  <button type="button" className={css.action} onClick={() => { void loadPacks() }}>
-                    {t('retry')}
-                  </button>
-                </div>
-              )
+              ? <ErrorBlock message={t('error')} retryLabel={t('retry')} onRetry={() => { void loadPacks() }} />
               : packs.length === 0
-              ? <span className={css.hint}>{t('clueBrowserNoPacks')}</span>
+              ? <EmptyState tone="well" title={t('clueBrowserNoPacks')} />
               : (
-                <ul className={css.packPicker}>
-                  {packs.map(pack => (
-                    <li key={pack.id}>
-                      <label className={css.packRow}>
-                        <Checkbox
-                          checked={selectedPacks.has(pack.id)}
-                          disabled={busy}
-                          onChange={() => { togglePack(pack.id) }}
-                        />
-                        <span className={css.packName}>{pack.name}</span>
-                        <span className={css.packCount}>{t('cluePacksMembers', { n: pack.members.length })}</span>
-                      </label>
-                    </li>
-                  ))}
-                </ul>
+                <ChoiceCard
+                  type="checkbox"
+                  name="clue-share-packs"
+                  label={t('clueSharePacks')}
+                  disabled={busy}
+                  selected={[...selectedPacks]}
+                  options={packs.map(pack => ({
+                    value: pack.id,
+                    title: pack.name,
+                    meta: t('cluePacksMembers', { n: pack.members.length }),
+                  }))}
+                  onChange={id => { togglePack(id) }}
+                />
               )}
-          </div>
+          </Field>
 
-          <fieldset className={css.modeChoices} disabled={busy} aria-label={t('clueShareMode')}>
-            <legend className={css.fieldLabel}>{t('clueShareMode')}</legend>
-            {(['snapshot', 'references'] as const).map(value => (
-              <label key={value} className={css.modeChoice} data-selected={mode === value}>
-                <input type="radio" name="clue-share-mode" value={value} checked={mode === value}
-                  onChange={() => {
-                    setMode(value)
-                    setPreview(null)
-                    setInspection(null)
-                    setMessage(null)
-                    setFailure(null)
-                  }} />
-                <span>{t(value === 'snapshot' ? 'clueShareModeSnapshot' : 'clueShareModeReference')}</span>
-              </label>
-            ))}
-          </fieldset>
+          <Field label={t('clueShareMode')}>
+            <ChoiceCard
+              type="radio"
+              name="clue-share-mode"
+              label={t('clueShareMode')}
+              disabled={busy}
+              selected={[mode]}
+              options={(['snapshot', 'references'] as const).map(value => ({
+                value,
+                title: t(value === 'snapshot' ? 'clueShareModeSnapshot' : 'clueShareModeReference'),
+              }))}
+              onChange={value => {
+                setMode(value as typeof mode)
+                setPreview(null)
+                setInspection(null)
+                setMessage(null)
+                setFailure(null)
+              }}
+            />
+          </Field>
 
           {progress !== null && <div className={css.progress} role="status">{progressLine(progress)}</div>}
 
@@ -618,10 +614,10 @@ export function SharePage(props: OpenShareWindowOptions): ReactNode {
       )}
       </div>
 
-      <div className={css.foot}>
-        <span className={css.footerStatus} role="status">
-          {direction === 'export' ? t('clueSharePackCount', { n: selectedPacks.size }) : fileName ?? t('clueShareNoFile')}
-        </span>
+      <ActionFooter
+        bleed
+        start={direction === 'export' ? t('clueSharePackCount', { n: selectedPacks.size }) : fileName ?? t('clueShareNoFile')}
+        end={<>
         {busy ? (
           <button type="button" className={css.action} onClick={cancel}>
             <IconCloseOutlineRegular size={14} />
@@ -650,7 +646,8 @@ export function SharePage(props: OpenShareWindowOptions): ReactNode {
             {t('clueShareImportAction')}
           </ActionButton>
         )}
-      </div>
+        </>}
+      />
     </div>
   )
 }

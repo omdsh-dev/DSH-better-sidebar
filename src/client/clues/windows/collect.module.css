@@ -17,7 +17,6 @@
 .selection > summary:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 1px; }
 .selectionTitle { margin-inline-start: 8px; color: var(--dsw-alias-label-primary); overflow-wrap: anywhere; }
 .selectionList { max-height: 96px; overflow: auto; margin: 4px 0 0; padding-inline-start: 20px; color: var(--dsw-alias-label-secondary); overflow-wrap: anywhere; }
-.destinationSummary { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dsw-alias-label-secondary); }
 .count {
   flex: none;
   margin: 0;
@@ -121,66 +120,12 @@
   font-size: 11px;
   font-variant-numeric: tabular-nums;
 }
-.field {
-  display: flex;
-  flex-direction: column;
-  gap: var(--ds-sidebar-space-1);
-  flex: none;
-}
-.fieldLabel {
-  color: var(--dsw-alias-label-tertiary);
-  font-size: 11px;
-  line-height: 16px;
-}
-.textInput {
-  composes: input from "../../ui/kit.module.css";
-}
-.fieldError {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--ds-sidebar-space-2);
-  color: var(--dsw-alias-state-error-primary);
-  font-size: 11px;
-  line-height: 16px;
-  overflow-wrap: anywhere;
-}
 .hint {
   color: var(--dsw-alias-label-tertiary);
   font-size: 11px;
   line-height: 16px;
 }
-.footer {
-  display: flex;
-  align-items: center;
-  flex: none;
-  gap: var(--ds-sidebar-space-2);
-  min-width: 0;
-  justify-content: flex-end;
-  padding-top: var(--ds-sidebar-space-2);
-  border-top: 1px solid var(--dsw-alias-border-l1);
-}
-.footer > button {
-  flex: none;
-}
-.action {
-  composes: button from "../../ui/kit.module.css";
-}
-.primary {
-  composes: buttonPrimary from "../../ui/kit.module.css";
-  background: var(--dsw-alias-button-primary-fill);
-  color: var(--dsw-alias-label-primary-foreground);
-}
-.primary:hover:not(:disabled) {
-  background: var(--dsw-alias-button-primary-hover);
-}
-.stateAction {
-  composes: button buttonGhost from "../../ui/kit.module.css";
-}
 @media (pointer: coarse) {
-  .action,
-  .primary,
-  .textInput,
   .destinationRow {
     min-height: 44px;
   }

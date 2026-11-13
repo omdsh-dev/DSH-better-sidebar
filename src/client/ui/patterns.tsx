@@ -312,6 +312,8 @@ export interface ChoiceCardProps {
   readonly selected: readonly string[]
   readonly onChange: (value: string, checked: boolean) => void
   readonly label?: string
+  /** Locks the whole group, the way a native `<fieldset disabled>` does. */
+  readonly disabled?: boolean
   readonly className?: string
 }
 
@@ -323,10 +325,10 @@ export interface ChoiceCardProps {
  * screen-reader announcements and `:checked` styling all come for free, and
  * only its picture is replaced by {@link ChoiceCard}'s own mark.
  */
-export function ChoiceCard({ type, name, options, selected, onChange, label, className }: ChoiceCardProps): ReactNode {
+export function ChoiceCard({ type, name, options, selected, onChange, label, disabled, className }: ChoiceCardProps): ReactNode {
   return (
-    <div className={clsx(css.choiceGrid, className)} role={type === 'radio' ? 'radiogroup' : 'group'}
-      {...(label === undefined ? {} : { 'aria-label': label })}>
+    <fieldset className={clsx(css.choiceGrid, className)} role={type === 'radio' ? 'radiogroup' : 'group'}
+      disabled={disabled} {...(label === undefined ? {} : { 'aria-label': label })}>
       {options.map(option => {
         const checked = selected.includes(option.value)
         return (
@@ -337,7 +339,7 @@ export function ChoiceCard({ type, name, options, selected, onChange, label, cla
               name={name}
               value={option.value}
               checked={checked}
-              disabled={option.disabled}
+              disabled={disabled === true || option.disabled === true}
               onChange={event => { onChange(option.value, event.target.checked) }}
             />
             <span className={css.choiceMark} aria-hidden="true">
@@ -355,7 +357,7 @@ export function ChoiceCard({ type, name, options, selected, onChange, label, cla
           </label>
         )
       })}
-    </div>
+    </fieldset>
   )
 }
 
@@ -395,6 +397,8 @@ export interface ActionFooterProps {
   readonly start?: ReactNode
   /** Trailing actions, in reading order. */
   readonly end?: ReactNode
+  /** Reach the edges of a gutter-padded window root so the hairline spans the window. */
+  readonly bleed?: boolean
   readonly className?: string
 }
 
@@ -404,10 +408,10 @@ export interface ActionFooterProps {
  * Its separator is the page's ONE horizontal hairline at that edge, so callers
  * pass actions and never re-declare the border.
  */
-export function ActionFooter({ start, end, className }: ActionFooterProps): ReactNode {
+export function ActionFooter({ start, end, bleed, className }: ActionFooterProps): ReactNode {
   return (
-    <div className={clsx(css.actionFooter, className)}>
-      {start !== undefined && <span>{start}</span>}
+    <div className={clsx(css.actionFooter, bleed === true && css.actionFooterBleed, className)}>
+      {start !== undefined && <span className={css.actionFooterStart} role="status">{start}</span>}
       {end !== undefined && <span className={css.actionFooterEnd}>{end}</span>}
     </div>
   )

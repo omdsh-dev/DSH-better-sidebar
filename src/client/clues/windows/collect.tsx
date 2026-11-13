@@ -43,7 +43,7 @@ import { cluesApi, peekClueRequest } from '../api.ts'
 import { clueErrorMessage } from '../copy.ts'
 import { CluePackArtwork } from '../artwork.tsx'
 import { LoadingIndicator } from '../../ui/LoadingIndicator.tsx'
-import { ActionButton, Notice, TextInput } from '../../ui/index.ts'
+import { ActionButton, ActionFooter, ErrorBlock, Field, TextInput } from '../../ui/index.ts'
 import { t } from '../../locales.ts'
 import css from './collect.module.css'
 
@@ -420,14 +420,13 @@ export function ClueCollectPage(
           <fieldset className={css.destinationList} disabled={busy} aria-label={t('clueBrowserAddToPack')}>
             {packsPhase === 'loading' && <LoadingIndicator className={css.hint} inline />}
             {packsPhase === 'error' && (
-              <Notice kind="error" tone="inline" className={css.fieldError}>
-                <span>{packsError ?? t('error')}</span>
-                <button type="button" className={css.stateAction} onClick={() => { void loadPacks() }}>
-                  {t('retry')}
-                </button>
-              </Notice>
+              <ErrorBlock
+                message={packsError ?? t('error')}
+                retryLabel={t('retry')}
+                onRetry={() => { void loadPacks() }}
+              />
             )}
-            {error !== null && <Notice kind="error" tone="inline">{error}</Notice>}
+            {error !== null && <ErrorBlock message={error} />}
             {matchingPacks.map(pack => (
               <label key={pack.id} className={css.destinationRow} title={pack.name}>
                 <input
@@ -460,29 +459,28 @@ export function ClueCollectPage(
             </label>
           </fieldset>
           {destination === '__new' && (
-            <label className={css.field}>
-              <span className={css.fieldLabel}>{t('cluePacksNamePlaceholder')}</span>
+            <Field label={t('cluePacksNamePlaceholder')}>
               <TextInput
                 autoFocus
-                className={css.textInput}
                 aria-label={t('cluePacksNamePlaceholder')}
                 placeholder={t('cluePacksNamePlaceholder')}
                 value={newPackName}
                 disabled={busy}
                 onChange={(event) => { setNewPackName(event.target.value) }}
               />
-            </label>
+            </Field>
           )}
         </div>
-        <div className={css.footer}>
-          <span className={css.destinationSummary} role="status" data-clue-collection-destination>
-            {destinationName ?? t('clueSharePacks')}
-          </span>
-          <ActionButton disabled={busy} onClick={cancel}>{t('cancel')}</ActionButton>
-          <ActionButton type="submit" variant="primary" busy={busy} disabled={pending.length === 0 || destination === ''}>
-            {submitLabel}
-          </ActionButton>
-        </div>
+        <ActionFooter
+          bleed
+          start={<span data-clue-collection-destination>{destinationName ?? t('clueSharePacks')}</span>}
+          end={<>
+            <ActionButton disabled={busy} onClick={cancel}>{t('cancel')}</ActionButton>
+            <ActionButton type="submit" variant="primary" busy={busy} disabled={pending.length === 0 || destination === ''}>
+              {submitLabel}
+            </ActionButton>
+          </>}
+        />
       </form>
     </div>
   )

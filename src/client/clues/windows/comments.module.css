@@ -12,5 +12,3 @@
 .composer { display: flex; flex-direction: column; gap: 8px; margin-top: 16px; }
 .composer textarea { width: 100%; min-height: 72px; }
 .composer .actions { justify-content: flex-end; }
-.error { color: var(--dsw-alias-state-error-primary); overflow-wrap: anywhere; }
-.error button { margin-inline-start: 8px; }

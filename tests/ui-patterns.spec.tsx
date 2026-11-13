@@ -265,6 +265,14 @@ describe('ChoiceCard', () => {
     expect(view.container.querySelector('[class*="choiceMeta"]')).toBeNull()
   })
 
+  it('locks every option through the native fieldset when the group is disabled', () => {
+    view = renderRoot(createElement(ChoiceCard, {
+      type: 'radio', name: 'mode', label: 'Mode', options, selected: ['snapshot'], onChange: () => {}, disabled: true,
+    }))
+    expect(view.container.querySelector<HTMLFieldSetElement>('fieldset[aria-label="Mode"]')!.disabled).toBe(true)
+    expect([...view.container.querySelectorAll<HTMLInputElement>('input')].every(input => input.matches(':disabled'))).toBe(true)
+  })
+
   it('refuses a disabled option without hiding it', () => {
     view = renderRoot(createElement(ChoiceCard, {
       type: 'checkbox', name: 'cap', options: [{ value: 'a', title: 'A', disabled: true }], selected: [], onChange: () => {},
@@ -313,5 +321,13 @@ describe('ActionFooter', () => {
     expect(footer.firstElementChild!.textContent).toBe('2 of 12 selected')
     expect(footer.querySelector('[data-slot="save"]')).not.toBeNull()
     expect(footer.querySelector('[class*="actionFooterEnd"]')).not.toBeNull()
+    expect(footer.firstElementChild!.getAttribute('role')).toBe('status')
+  })
+
+  it('bleeds to the window edge only when asked', () => {
+    view = renderRoot(createElement(ActionFooter, { end: 'x' }))
+    expect(byClass(view.container, 'actionFooterBleed')).toBeNull()
+    view.rerender(createElement(ActionFooter, { end: 'x', bleed: true }))
+    expect(byClass(view.container, 'actionFooterBleed')).not.toBeNull()
   })
 })
