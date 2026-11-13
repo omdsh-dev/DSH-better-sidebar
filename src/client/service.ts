@@ -1286,7 +1286,7 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
       const icon = safeIcon(registered, path, size, open)
       if (icon !== undefined) return icon
     }
-    return builtinFolderIcon(open, size)
+    return builtinFolderIcon(size)
   }
 
   // The enable switches come from the user's side card prefs (the shared

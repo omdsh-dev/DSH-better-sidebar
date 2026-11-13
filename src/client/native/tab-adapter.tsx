@@ -24,7 +24,7 @@
  * activation and handed to every registration.
  */
 import { createElement, useEffect, useSyncExternalStore } from 'react'
-import type { ComponentType, ReactNode } from 'react'
+import type { ReactNode } from 'react'
 import type { Context } from '../../context-types.ts'
 import type { SessionScope } from '../api.ts'
 import { RenderBoundary } from '../RenderBoundary.tsx'
@@ -696,10 +696,4 @@ function UnreadDot(): ReactNode {
       title={t('tabUnread')}
     />
   )
-}
-
-/** The component pair one descriptor contributes to the native surface. */
-export interface NativeTabComponents {
-  readonly body: ComponentType<NativeBodyInjected & NativeBodyFrameworkProps>
-  readonly title: ComponentType<NativeTitleInjected & NativeBodyFrameworkProps>
 }

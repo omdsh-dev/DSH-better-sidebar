@@ -42,11 +42,10 @@ export function builtinFileIcon(path: string, size: number): ReactNode {
  * its own. The expansion state is already legible from the tree's own chevron
  * and row affordances, so this deliberately does not invent a second folder
  * drawing.
- * @param _open - whether the row is expanded (accepted for API compatibility).
  * @param size - the square edge in px.
  * @returns the host's folder glyph.
  */
-export function builtinFolderIcon(_open: boolean, size: number): ReactNode {
+export function builtinFolderIcon(size: number): ReactNode {
   return <FileTypeIcon kind="folder" size={size} />
 }
 

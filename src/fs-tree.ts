@@ -409,30 +409,6 @@ export function requireAbsolute(path: string): string {
   return resolve(path)
 }
 
-/**
- * Whether `target` lies under `base` (or equals it), tolerant of separator
- * style and — on Windows, where the filesystem is case-insensitive — of
- * letter case.
- *
- * LEXICAL ONLY, and no longer a security boundary: the sidebar's containment
- * fence was removed (see path-security.ts), so nothing in this plugin decides
- * access by this function any more. It is kept for the client-side mirror
- * usage and the historical tests, not as a guard.
- * @param platform - filesystem semantics; injectable so both branches are
- *  unit-testable on any host.
- */
-export function isWithin(base: string, target: string, platform: NodeJS.Platform = process.platform): boolean {
-  const norm = (value: string): string => value.replace(/[\\/]+/g, '/').replace(/\/$/, '')
-  const b = norm(base)
-  const t = norm(target)
-  if (platform === 'win32') {
-    const lb = b.toLowerCase()
-    const lt = t.toLowerCase()
-    return lt === lb || lt.startsWith(`${lb}/`)
-  }
-  return t === b || t.startsWith(`${b}/`)
-}
-
 /** Message text of an unknown thrown value. */
 export function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)

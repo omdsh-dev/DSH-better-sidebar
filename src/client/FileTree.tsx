@@ -421,7 +421,7 @@ const DirRow = memo(function DirRow(props: DirRowProps): ReactNode {
   // the user sees expanded (`a/b/c`), so dropping into it, renaming it or
   // opening a menu on it must address `c`, not the fold head `a`.
   const target = chain[chain.length - 1]!
-  const icon = service !== undefined ? service.folderIcon(target.path, expanded, 14) : builtinFolderIcon(expanded, 14)
+  const icon = service !== undefined ? service.folderIcon(target.path, expanded, 14) : builtinFolderIcon(14)
   return (
     <div
       role="button"
@@ -499,7 +499,7 @@ interface RootRowProps {
 const RootRow = memo(function RootRow(props: RootRowProps): ReactNode {
   const { path, iconsVersion, service, dropTarget, gitChanged, copied, actions } = props
   void iconsVersion
-  const icon = service !== undefined ? service.folderIcon(path, true, 14) : builtinFolderIcon(true, 14)
+  const icon = service !== undefined ? service.folderIcon(path, true, 14) : builtinFolderIcon(14)
   return (
     <div
       className={clsx(css.explorerRow, dropTarget && css.explorerRowDropTarget)}
@@ -693,7 +693,7 @@ export function FileTree(props: {
   /** One directory's leading glyph for the surfaces WITHOUT a memoized row
    *  (the inline rename and new-folder editors). */
   const dirRowIcon = (path: string, open: boolean): ReactNode =>
-    service !== undefined ? service.folderIcon(path, open, 14) : builtinFolderIcon(open, 14)
+    service !== undefined ? service.folderIcon(path, open, 14) : builtinFolderIcon(14)
   const dataRef = useRef(data)
   /** Bumped whenever the cache is wiped: a response from an older generation is dropped. */
   const generationRef = useRef(0)

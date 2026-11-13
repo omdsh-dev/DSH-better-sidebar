@@ -200,9 +200,6 @@ export type SidechatSubmitKey = 'enter' | 'mod-enter'
 /** The submit key every document that never chose one gets (host semantics). */
 export const SIDECHAT_SUBMIT_KEY_DEFAULT: SidechatSubmitKey = 'enter'
 
-/** Every accepted submit-key mode (the settings dropdown's value set). */
-export const SIDECHAT_SUBMIT_KEYS: readonly SidechatSubmitKey[] = ['enter', 'mod-enter']
-
 /**
  * Validate one stored submit-key value. Anything that is not a known mode (an
  * absent value, a legacy string, a hand-edited document) falls back to the

@@ -1,7 +1,7 @@
 import './browser-globals.ts'
 import { describe, expect, it } from 'vitest'
 import { decodeHtmlUrl } from '../src/html-route.ts'
-import { isAbsolutePath, relativeTo, workspaceRelativePath } from '../src/client/paths.ts'
+import { isAbsolutePath, isWithinWorkspace, relativeTo, workspaceRelativePath } from '../src/client/paths.ts'
 import { resolveNativeSidebarPath, resolveSidebarPath } from '../src/client/paths.ts'
 import { downloadUrl, htmlUrl, mediaUrl } from '../src/client/api.ts'
 
@@ -70,6 +70,28 @@ describe('path helpers', () => {
     expect(isAbsolutePath('//server/share/x.ts')).toBe(true)
     expect(isAbsolutePath('C:relative.ts')).toBe(false)
     expect(isAbsolutePath('rel/x.ts')).toBe(false)
+  })
+
+  it('isWithinWorkspace tolerates separators and letter case on every platform', () => {
+    expect(isWithinWorkspace('/work/proj', '/work/proj/src/a.ts')).toBe(true)
+    expect(isWithinWorkspace('/work/proj', '/work/proj')).toBe(true)
+    expect(isWithinWorkspace('/work/proj', '/work/proj2/a.ts')).toBe(false)
+    expect(isWithinWorkspace('/work/proj', '/other/a.ts')).toBe(false)
+    // Mixed separators normalize on every platform.
+    expect(isWithinWorkspace('C:\\Users\\me', 'C:/Users/me/src/a.ts')).toBe(true)
+    // The live helper is case-insensitive on every platform by design: the
+    // volume may report different casing than the cwd row, and the decision
+    // must not depend on it.
+    expect(isWithinWorkspace('/Users/Me', '/users/me/file.png')).toBe(true)
+    expect(isWithinWorkspace('C:\\Users\\Me', 'c:/users/me/file.png')).toBe(true)
+    // Windows drive-root containment.
+    expect(isWithinWorkspace('C:\\', 'C:\\Users\\me\\a.png')).toBe(true)
+    expect(isWithinWorkspace('c:\\users', 'C:/USERS/me/b.png')).toBe(true)
+    // UNC network-share containment: the '//' share prefix must not defeat
+    // the prefix test, and a sibling share must stay outside.
+    expect(isWithinWorkspace('\\\\server\\share\\proj', '\\\\server\\share\\proj\\src\\a.ts')).toBe(true)
+    expect(isWithinWorkspace('\\\\server\\share\\proj', '\\\\server\\share\\proj2\\a.ts')).toBe(false)
+    expect(isWithinWorkspace('\\\\server\\share\\proj', '\\\\other\\share\\a.ts')).toBe(false)
   })
 
   it('treats ~ as home-absolute, never a session-relative path (#713)', () => {

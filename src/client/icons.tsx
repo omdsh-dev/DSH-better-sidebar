@@ -1,9 +1,8 @@
 /**
- * Icons the sidebar needs beyond the primitives set: a terminal glyph (the
- * icon library has none), a diff glyph, and the bottom-workbench toggle.
- * Per-tab icons live on the tab descriptors
- * (`descriptor.icon`), not in a type-keyed switch — the icon mapping was
- * registry-ized with the tab types.
+ * Icons the sidebar needs beyond the primitives set: the bottom-workbench
+ * toggle and the settings-page / file-viewer glyphs. Per-tab icons live on
+ * the tab descriptors (`descriptor.icon`), not in a type-keyed switch — the
+ * icon mapping was registry-ized with the tab types.
  */
 import { IconPanelLeftOutlineRegular, type IconProps } from '@deepseek-ai/dsh-client-ui-primitives'
 
@@ -12,18 +11,6 @@ export const IconPanelBottomOutline16 = ({ size = 16, className }: IconProps) =>
   <span className={className} style={{ display: 'inline-flex', width: size, height: size, transform: 'rotate(-90deg)' }}>
     <IconPanelLeftOutlineRegular size={size} />
   </span>
-)
-
-/**
- * Terminal glyph in the app's outline style (1.5px stroke, currentColor):
- * a rounded frame with a prompt chevron and underscore cursor.
- */
-export const IconTerminalOutline16 = ({ size = 16, className }: IconProps) => (
-  <svg width={size} height={size} className={className} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <rect x="1.5" y="2.5" width="13" height="11" rx="2" stroke="currentColor" strokeWidth="1.5" />
-    <path d="M4.5 6.25 6.75 8 4.5 9.75" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-    <path d="M8.5 10.4h3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-  </svg>
 )
 
 /**
@@ -36,15 +23,6 @@ export const IconSideCardNav = ({ size = 16, className }: IconProps) => (
     <path d="M2 7v10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
     <path d="M6 5v14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
     <rect x="10" y="3" width="12" height="18" rx="2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-  </svg>
-)
-
-/** Diff glyph in the app's outline style: a file frame with a plus and a minus row. */
-export const IconDiffOutline16 = ({ size = 16, className }: IconProps) => (
-  <svg width={size} height={size} className={className} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <rect x="1.5" y="1.5" width="13" height="13" rx="2.5" stroke="currentColor" strokeWidth="1.5" />
-    <path d="M4 5h3M5.5 3.5v3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-    <path d="M9.5 12.5h2.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
   </svg>
 )
 
@@ -73,15 +51,6 @@ export const IconHtmlOutline16 = ({ size = 16, className }: IconProps) => (
     <path d="M3.5 1.5h6.5L13.5 5v9.5h-10z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
     <path d="M9.5 1.5V5h4" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
     <path d="M5.6 13.2 4.2 10l1.4-3.2M7.4 6.8 8.8 10l-1.4 3.2" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" />
-  </svg>
-)
-
-/** Browser tab glyph: a globe with meridians. */
-export const IconGlobeOutline16 = ({ size = 16, className }: IconProps) => (
-  <svg width={size} height={size} className={className} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <circle cx="8" cy="8" r="6.5" stroke="currentColor" strokeWidth="1.5" />
-    <ellipse cx="8" cy="8" rx="2.8" ry="6.5" stroke="currentColor" strokeWidth="1.5" />
-    <path d="M1.5 8h13M8 1.5c-2.4 1.8-2.4 11.2 0 13M8 1.5c2.4 1.8 2.4 11.2 0 13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
   </svg>
 )
 

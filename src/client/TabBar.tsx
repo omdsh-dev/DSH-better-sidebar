@@ -1,5 +1,5 @@
 /**
- * The tab strip of one pane: tabs capped at TAB_MAX_WIDTH (ellipsized),
+ * The tab strip of one pane: tabs capped at 160px (ellipsized),
  * overflow scrolls horizontally, a close button per tab, a four-way split
  * button cluster, and the + menu that opens new tabs (explorer / git). Tabs
  * are draggable; dropping onto another tab inserts before it, dropping on the

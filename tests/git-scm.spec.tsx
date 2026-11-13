@@ -3,7 +3,6 @@ import { act } from 'react-dom/test-utils'
 import { afterEach, expect, it, vi } from 'vitest'
 import { api, type GitStatusResult, type SessionScope } from '../src/client/api.ts'
 import { GitLens } from '../src/client/changes/GitLens.tsx'
-import { createSidebarStore } from '../src/client/state.ts'
 import { invalidateGitStatus } from '../src/client/ui/git-status.ts'
 import { t } from '../src/client/locales.ts'
 import { renderRoot, setupReactAct } from './test-utils.ts'
@@ -11,7 +10,6 @@ import { renderRoot, setupReactAct } from './test-utils.ts'
 setupReactAct()
 afterEach(() => { vi.restoreAllMocks() })
 const CWD = 'C:/repo'
-const store = createSidebarStore()
 /** The unstage artwork the SCM rows draw (the plugin's own inline horizontal half). */
 const MINUS_GLYPH = 'M2 8H14'
 /** The host's own Plus, a document-sprite reference since DSH 0.2.2 (it used
@@ -58,7 +56,7 @@ async function mount(readStatus: (scope: SessionScope) => GitStatusResult) {
     hasMore: false,
     snapshot: 'one',
   })
-  const render = (sessionId: string) => <GitLens scope={{ sessionId, cwd: CWD }} store={store} visible
+  const render = (sessionId: string) => <GitLens scope={{ sessionId, cwd: CWD }} visible
     selectedRef={null} onOpenFile={() => {}} onPreview={() => {}} />
   const view = renderRoot(render('scm-A'))
   await flush()
