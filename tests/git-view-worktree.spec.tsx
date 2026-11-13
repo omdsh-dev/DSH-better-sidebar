@@ -260,11 +260,12 @@ describe('GitLens (changes tab, git lens) linked-worktree consistency', () => {
       await flushEffects()
 
       // The workspace container's child repositories retain their basename labels.
-      const repoOptions = openMoreSubmenu(container, t('gitRepository'))
-      expect(repoOptions.map(button => button.textContent)).toEqual(['a', 'b'])
+      const repoPicker = container.querySelector<HTMLSelectElement>(`[data-scm-repos] select[aria-label="${t('gitRepository')}"]`)!
+      expect(repoPicker).not.toBeNull()
+      expect([...repoPicker.options].map(option => option.textContent)).toEqual(['a', 'b'])
       const listingsBefore = worktrees.mock.calls.length
 
-      await act(async () => { repoOptions[1]!.click() })
+      await act(async () => { repoPicker.value = REPO_B; repoPicker.dispatchEvent(new Event('change', { bubbles: true })) })
       await flushEffects()
 
       // The listing carries the selected repoRoot — a container's own listing
@@ -288,7 +289,10 @@ describe('GitLens (changes tab, git lens) linked-worktree consistency', () => {
       act(() => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })) })
       act(() => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })) })
 
-      await chooseMoreOption(container, t('gitRepository'), 'a')
+      // The toolbar picker stays alongside the ⋯ → Repository fallback submenu.
+      const picker = container.querySelector<HTMLSelectElement>(`[data-scm-repos] select[aria-label="${t('gitRepository')}"]`)!
+      await act(async () => { picker.value = REPO_A; picker.dispatchEvent(new Event('change', { bubbles: true })) })
+      await flushEffects()
       expect(branchButton(container).title).toBe(`${t('branch')}: a-main*`)
       expect(container.querySelector('[data-path="a-change.ts"]')).not.toBeNull()
       expect(container.querySelector('[data-path="b-change.ts"]')).toBeNull()

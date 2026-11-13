@@ -35,6 +35,18 @@ export interface GraphDetailsSelection {
   readonly slot: number
 }
 
+/** The lens-owned multi-repository picker state. `labels` pairs each
+ *  discovered root with its display-only disambiguation label; `value` is the
+ *  RESOLVED status root; `standInLabel` is set when the server fell back from
+ *  the requested root — rendered as a disabled option, never a candidate. */
+export interface RepoPickerState {
+  readonly labels: ReadonlyArray<{ readonly root: string; readonly label: string }>
+  readonly value: string
+  readonly standInLabel?: string
+  readonly disabled: boolean
+  readonly onChooseRepo: (root: string) => void
+}
+
 export interface GitGraphSectionProps {
   scope: SessionScope
   worktree?: string
@@ -52,6 +64,12 @@ export interface GitGraphSectionProps {
   /** Row context menu: the Git lens's advanced commit actions (view / copy /
    *  revert / cherry-pick). Absent, the rows simply carry no menu. */
   onContextMenu?: (event: MouseEvent<HTMLButtonElement>, entry: GraphEntry) => void
+  /** The lens-owned multi-repository picker, rendered at the head of the
+   *  toolbar so the row reads as one scope line: pick the root, then filter
+   *  its history. Present only when the workspace holds several roots; the
+   *  lens keeps the ⋯ → Repository submenu reachable so a FOLDED graph never
+   *  orphans the switcher (the toolbar unmounts with the section). */
+  repoPicker?: RepoPickerState
 }
 
 /** One-line rows: the GitLens-style picture is rail + ref pills + subject on
@@ -136,7 +154,7 @@ export function RefPill({ pill, slot }: { pill: RefPillModel; slot?: number }) {
   </span>
 }
 
-export function GitGraphSection({ scope, worktree, visible, refreshTick = 0, onPreview, selectedRef, onClearPreview, onDetailsChange, onContextMenu }: GitGraphSectionProps) {
+export function GitGraphSection({ scope, worktree, visible, refreshTick = 0, onPreview, selectedRef, onClearPreview, onDetailsChange, onContextMenu, repoPicker }: GitGraphSectionProps) {
   const [branch, setBranch] = useState('')
   const [page, setPage] = useState<GraphPage | null>(null)
   const [branches, setBranches] = useState<GraphPage['branches']>([])
@@ -350,6 +368,18 @@ export function GitGraphSection({ scope, worktree, visible, refreshTick = 0, onP
   return <section className={css.root} aria-label={t('gitGraph')} data-git-graph
     data-graph-count={page?.entries.length ?? 0}>
     <div className={css.toolbar}>
+      {repoPicker && (
+        <label className={css.repoPick} data-scm-repos>
+          <span className={css.repoPickLabel}>{t('gitRepository')}</span>
+          <select className={css.select} aria-label={t('gitRepository')}
+            value={repoPicker.value} disabled={repoPicker.disabled}
+            onChange={event => { repoPicker.onChooseRepo(event.target.value) }}>
+            {repoPicker.standInLabel !== undefined &&
+              <option value={repoPicker.value} disabled>{repoPicker.standInLabel}</option>}
+            {repoPicker.labels.map(item => <option key={item.root} value={item.root}>{item.label}</option>)}
+          </select>
+        </label>
+      )}
       {linearFallback && <div role="status">{t('graphLinearFallback')}</div>}
       {!linearFallback && <select className={css.select} aria-label={t('graphBranchFilter')}
         value={branch} onChange={event => { chooseBranch(event.target.value) }}>
