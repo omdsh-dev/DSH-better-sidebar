@@ -1,0 +1,441 @@
+/*
+ * Shared page patterns — the second half of the global kit.
+ *
+ * `kit.module.css` owns the ATOMS (a button, a badge, a state line); this sheet
+ * owns the SHAPES that pages kept rebuilding: a key-value fact, a list row, an
+ * empty page, an error with a retry, a labelled field, a mutually-exclusive
+ * choice, a status line and an action footer. Every rule here replaces 6-31
+ * hand-written copies that had drifted apart (different paddings, three
+ * different "selected" pictures, four spellings of the retry row).
+ *
+ * Contract, same as the kit: token-only paint (`tests/theme.spec.ts` scans this
+ * sheet), ONE border language (1px solid), no shadow, no gradient, no
+ * decoration. Numbers use tabular figures. Touch targets reach 44px under a
+ * coarse pointer.
+ */
+
+/* ── FactRow / FactList ─────────────────────────────────────────────────── */
+
+.factList {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+}
+
+.factRow {
+  display: flex;
+  align-items: baseline;
+  gap: var(--ds-sidebar-space-2);
+  min-width: 0;
+  padding: 3px 0;
+  font: var(--dsw-font-xxs-12);
+}
+
+.factLabel {
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.factValue {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--dsw-alias-label-primary);
+}
+
+/* One ink rung per fact tone; a default fact stays secondary. */
+.factRow[data-tone='error'] .factValue { color: var(--dsw-alias-state-error-primary); }
+.factRow[data-tone='warn'] .factValue { color: var(--dsw-alias-state-warn-primary); }
+.factRow[data-tone='success'] .factValue { color: var(--dsw-alias-state-success-primary); }
+.factRow[data-tone='business'] .factValue { color: var(--dsw-alias-state-business-primary); }
+
+/* The host defines no `--dsw-font-mono`; the fallback keeps the declaration
+   alive and resolves to the plugin's code family (the same pair every other
+   mono site in this repo uses). */
+.mono {
+  font-family: var(--dsw-font-mono, var(--ds-font-family-code));
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── ListRow ────────────────────────────────────────────────────────────── */
+
+.listRow {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: var(--ds-sidebar-space-2);
+  min-width: 0;
+  min-height: 30px;
+  padding: 0 var(--ds-sidebar-space-3);
+  border-radius: var(--ds-sidebar-radius);
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xxs-12);
+}
+
+.listRow:hover { background: var(--dsw-alias-interactive-bg-hover); }
+
+.listRow[data-selected='true'] {
+  background: var(--dsw-alias-interactive-bg-active);
+  color: var(--dsw-alias-label-primary);
+}
+
+.listRow[data-dimmed='true'] { color: var(--dsw-alias-label-tertiary); }
+
+.listRowLeading {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.listRowMain {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1 1 auto;
+  text-align: start;
+  gap: 1px;
+}
+
+/* The title is a real button when the row navigates: keyboard operation and a
+   visible focus ring come for free, and the row's own padding stays intact. */
+.listRowTitle {
+  appearance: none;
+  display: block;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.listRowTitle:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 1px;
+  border-radius: var(--ds-sidebar-radius);
+}
+
+.listRowSubtitle {
+  color: var(--dsw-alias-label-tertiary);
+  font: var(--dsw-font-xxxs-11);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.listRowMeta {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  gap: var(--ds-sidebar-space-2);
+  color: var(--dsw-alias-label-tertiary);
+  font: var(--dsw-font-xxxs-11);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Row actions stay out of the way until the row is touched, but a coarse
+   pointer has no hover: there they are always present. */
+.listRowActions {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  gap: 2px;
+  opacity: 0;
+}
+
+.listRow:hover .listRowActions,
+.listRow:focus-within .listRowActions,
+.listRow[data-selected='true'] .listRowActions {
+  opacity: 1;
+}
+
+@media (pointer: coarse) {
+  .listRow { min-height: 44px; }
+  .listRowActions { opacity: 1; }
+}
+
+/* ── EmptyState ─────────────────────────────────────────────────────────── */
+
+.empty {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--ds-sidebar-space-2);
+  color: var(--dsw-alias-label-tertiary);
+  font: var(--dsw-font-xxs-12);
+  text-align: center;
+}
+
+.emptyPage { padding: var(--ds-sidebar-gutter); }
+
+.emptyWell { padding: var(--ds-sidebar-space-2) var(--ds-sidebar-space-3) var(--ds-sidebar-space-3); }
+
+.emptyIcon {
+  display: inline-flex;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.emptyTitle { color: var(--dsw-alias-label-secondary); }
+
+.emptyDescription {
+  max-width: 34em;
+  overflow-wrap: anywhere;
+}
+
+.emptyActions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: var(--ds-sidebar-space-2);
+  margin-top: var(--ds-sidebar-space-1);
+}
+
+/* ── ErrorBlock ─────────────────────────────────────────────────────────── */
+
+.errorBlock {
+  box-sizing: border-box;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--ds-sidebar-space-2);
+  min-width: 0;
+  padding: var(--ds-sidebar-space-2) var(--ds-sidebar-space-3);
+  color: var(--dsw-alias-state-error-primary);
+  font: var(--dsw-font-xxs-12);
+}
+
+.errorBody {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.errorMessage { overflow-wrap: anywhere; }
+
+.errorDetail {
+  color: var(--dsw-alias-label-tertiary);
+  font: var(--dsw-font-xxxs-11);
+  overflow-wrap: anywhere;
+}
+
+.errorAction { flex: none; }
+
+/* ── Field ──────────────────────────────────────────────────────────────── */
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-sidebar-space-1);
+  min-width: 0;
+  padding: var(--ds-sidebar-space-2) 0;
+}
+
+.fieldLabel {
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xxxs-strong-11);
+}
+
+.fieldDescription {
+  color: var(--dsw-alias-label-tertiary);
+  font: var(--dsw-font-xxxs-11);
+  overflow-wrap: anywhere;
+}
+
+.fieldError {
+  color: var(--dsw-alias-state-error-primary);
+  font: var(--dsw-font-xxxs-11);
+  overflow-wrap: anywhere;
+}
+
+.fieldInline {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--ds-sidebar-space-3);
+}
+
+.fieldInline .fieldControl { flex: 1 1 auto; min-width: 0; }
+
+.fieldControl { min-width: 0; }
+
+/* ── ChoiceCard ─────────────────────────────────────────────────────────── */
+
+.choiceGrid {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-sidebar-space-1);
+  min-width: 0;
+}
+
+.choice {
+  box-sizing: border-box;
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--ds-sidebar-space-2);
+  min-width: 0;
+  padding: var(--ds-sidebar-space-2);
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--ds-sidebar-radius);
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xxs-12);
+  cursor: pointer;
+}
+
+.choice:hover { background: var(--dsw-alias-interactive-bg-hover); }
+
+/* Selected is a border + tint, never a fill block: one accent surface per
+   screen is the budget, and the choice list lives beside other content. */
+.choice:has(.choiceInput:checked) {
+  border-color: var(--dsw-alias-state-business-primary);
+  background: var(--dsw-alias-interactive-bg-hover-accent);
+}
+
+.choice:has(.choiceInput:focus-visible) {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 1px;
+}
+
+.choice:has(.choiceInput:disabled) {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* The native control keeps form semantics and keyboard behavior; only its
+   picture is replaced. */
+.choiceInput {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: inherit;
+}
+
+.choiceMark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 14px;
+  height: 14px;
+  margin-top: 3px;
+  box-sizing: border-box;
+  border: 1px solid var(--dsw-alias-border-l3);
+  border-radius: 50%;
+  color: var(--dsw-alias-label-primary-foreground);
+}
+
+.choice[data-type='checkbox'] .choiceMark { border-radius: 3px; }
+
+.choice:has(.choiceInput:checked) .choiceMark {
+  border-color: var(--dsw-alias-state-business-primary);
+  background: var(--dsw-alias-state-business-primary);
+}
+
+.choiceMarkGlyph { visibility: hidden; }
+.choice:has(.choiceInput:checked) .choiceMarkGlyph { visibility: visible; }
+
+.choiceBody {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.choiceTitle { min-width: 0; overflow-wrap: anywhere; }
+
+.choiceMeta {
+  color: var(--dsw-alias-label-tertiary);
+  font: var(--dsw-font-xxxs-11);
+  overflow-wrap: anywhere;
+}
+
+.choiceIcon {
+  display: inline-flex;
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+@media (pointer: coarse) {
+  .choice { min-height: 44px; }
+}
+
+/* ── StatusLine ─────────────────────────────────────────────────────────── */
+
+.statusLine {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: var(--ds-sidebar-space-2);
+  min-width: 0;
+  min-height: 24px;
+  padding: 0 var(--ds-sidebar-space-3);
+  color: var(--dsw-alias-label-tertiary);
+  font: var(--dsw-font-xxxs-11);
+  font-variant-numeric: tabular-nums;
+}
+
+.statusLine[data-tone='error'] { color: var(--dsw-alias-state-error-primary); }
+.statusLine[data-tone='warn'] { color: var(--dsw-alias-state-warn-primary); }
+.statusLine[data-tone='success'] { color: var(--dsw-alias-state-success-primary); }
+.statusLine[data-tone='business'] { color: var(--dsw-alias-state-business-primary); }
+
+.statusLineIcon {
+  display: inline-flex;
+  flex: none;
+}
+
+.statusLineText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.statusLineMeta { flex: none; }
+
+.statusLineAction {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+}
+
+.statusLinePlain { padding: 0; }
+
+/* ── ActionFooter ───────────────────────────────────────────────────────── */
+
+.actionFooter {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: var(--ds-sidebar-space-2);
+  min-height: var(--ds-sidebar-control-height);
+  padding: var(--ds-sidebar-space-2) var(--ds-sidebar-space-3);
+  border-top: 1px solid var(--dsw-alias-border-l1);
+  color: var(--dsw-alias-label-tertiary);
+  font: var(--dsw-font-xxxs-11);
+}
+
+.actionFooterEnd {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ds-sidebar-space-2);
+  margin-left: auto;
+}
+
+@media (pointer: coarse) {
+  .actionFooter { min-height: 44px; }
+}

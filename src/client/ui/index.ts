@@ -11,6 +11,12 @@ export { LoadingIndicator, type LoadingIndicatorProps } from './LoadingIndicator
 export { WorkbenchSection, type WorkbenchSectionProps } from './WorkbenchSection.tsx'
 export { SelectMenu, type SelectMenuProps, type SelectOption } from './SelectMenu.tsx'
 export { TextInput, TextArea, NumberInput, Checkbox, ToggleSwitch, Tabs, SettingRow, type TabOption } from './controls.tsx'
+export {
+  ActionFooter, ChoiceCard, EmptyState, ErrorBlock, FactList, FactRow, Field, ListRow, StatusLine,
+  type ActionFooterProps, type ChoiceCardProps, type ChoiceOption, type EmptyStateProps,
+  type ErrorBlockProps, type Fact, type FactListProps, type FactRowProps, type FieldProps,
+  type ListRowProps, type PatternTone, type StatusLineProps,
+} from './patterns.tsx'
 export { SourceSwitcher, type SourceSwitcherItem, type SourceSwitcherProps } from './SourceSwitcher.tsx'
 export { SearchField, type SearchFieldProps } from './SearchField.tsx'
 export { SidebarToolbar, type SidebarToolbarProps } from './SidebarToolbar.tsx'

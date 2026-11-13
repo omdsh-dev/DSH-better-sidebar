@@ -156,6 +156,7 @@ describe('skin contract: the plugin owns no color of its own', () => {
       'src/client/clues/windows/detail.module.css',
       'src/client/clues/settings/settings.module.css',
       'src/client/ui/workbench-section.module.css',
+      'src/client/ui/patterns.module.css',
       'src/client/ui/loading-indicator.module.css',
       'src/client/windows/hosted-window.module.css',
       'src/client/windows/windows.module.css',
