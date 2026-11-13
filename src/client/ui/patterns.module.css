@@ -98,21 +98,33 @@
   gap: 1px;
 }
 
-/* The title is a real button when the row navigates: keyboard operation and a
-   visible focus ring come for free, and the row's own padding stays intact. */
+/* The title text. Truncation lives here, so a caller's locator can land on the
+   element that actually clips — a wrapper would inherit the ellipsis but not
+   the measured overflow. */
+.listRowName {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* A navigating row makes the whole caption (name + subtitle) one button:
+   keyboard operation and a visible focus ring come for free, and the row's own
+   padding stays intact. */
 .listRowTitle {
   appearance: none;
-  display: block;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 1px;
   min-width: 0;
+  flex: 1 1 auto;
   padding: 0;
   border: 0;
   background: none;
   color: inherit;
   font: inherit;
   text-align: start;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
   cursor: pointer;
 }
 
@@ -123,6 +135,7 @@
 }
 
 .listRowSubtitle {
+  min-width: 0;
   color: var(--dsw-alias-label-tertiary);
   font: var(--dsw-font-xxxs-11);
   white-space: nowrap;

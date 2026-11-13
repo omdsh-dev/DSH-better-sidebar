@@ -97,10 +97,25 @@ describe('ListRow', () => {
     expect(onClick).toHaveBeenCalledOnce()
   })
 
-  it('keeps the roving tabindex contract: one row in the tab order', () => {
-    view = renderRoot(createElement(ListRow, { title: 'First', titleAs: 'button', primaryTabIndex: true }))
-    view.rerender(createElement(ListRow, { title: 'First', titleAs: 'button', primaryTabIndex: false }))
-    expect(view.container.querySelector('button')!.tabIndex).toBe(-1)
+  it('marks the roving-focus entry on the title button, not on the row shell', () => {
+    // useListNavigation focuses the element carrying data-list-primary, so the
+    // marker and the tab stop must both land on the real button.
+    view = renderRoot(createElement(ListRow, { title: 'First', titleAs: 'button', primary: true }))
+    const entry = view.container.querySelector('button')!
+    expect(entry.hasAttribute('data-list-primary')).toBe(true)
+    expect(entry.tabIndex).toBe(0)
+
+    view.rerender(createElement(ListRow, { title: 'Second', titleAs: 'button', primary: false }))
+    const other = view.container.querySelector('button')!
+    expect(other.hasAttribute('data-list-primary')).toBe(true)
+    expect(other.tabIndex).toBe(-1)
+  })
+
+  it('leaves the tab order alone when the row is not part of a roving list', () => {
+    view = renderRoot(createElement(ListRow, { title: 'Plain', titleAs: 'button' }))
+    const button = view.container.querySelector('button')!
+    expect(button.hasAttribute('data-list-primary')).toBe(false)
+    expect(button.tabIndex).toBe(0)
   })
 
   it('mounts every slot it is given and nothing it is not', () => {

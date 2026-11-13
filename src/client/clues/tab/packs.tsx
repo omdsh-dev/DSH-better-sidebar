@@ -41,7 +41,10 @@ import { clueErrorMessage } from '../copy.ts'
 import { cluesApi, invalidateClueRequests, peekClueRequest } from '../api.ts'
 import { openCreatePackWindow } from '../windows/create-pack.tsx'
 import { openShareWindow } from '../windows/share.tsx'
-import { ActionButton, ConfirmDialog, IconButton, LoadingIndicator, Menu, SearchField } from '../../ui/index.ts'
+import {
+  ActionButton, ConfirmDialog, EmptyState, ErrorBlock, IconButton, ListRow, LoadingIndicator, Menu,
+  SearchField, StatusLine,
+} from '../../ui/index.ts'
 import { useScrollLoad } from '../../ui/use-scroll-load.ts'
 import { useListNavigation } from '../../ui/use-list-navigation.ts'
 import { t } from '../../locales.ts'
@@ -383,26 +386,26 @@ export function CluePacksSection(props: CluePacksSectionProps): ReactNode {
       </div>
 
       <div ref={scrollRef} className={css.packScroll} data-clue-pack-scroll>
-        {phase === 'loading' && (
-          <div className={css.stateLine}><LoadingIndicator inline /></div>
-        )}
+        {phase === 'loading' && <StatusLine plain text={<LoadingIndicator inline />} />}
         {error !== null && (
-          <div className={css.stateLine} role="alert" data-clue-pack-error>
-            <span>{error}</span>
-            <button type="button" className={css.stateAction} onClick={() => {
+          <ErrorBlock
+            message={error}
+            retryLabel={t('retry')}
+            data-clue-pack-error
+            onRetry={() => {
               invalidateClueRequests(workspaceId, 'clues.packs.list')
               void load()
-            }}>{t('retry')}</button>
-          </div>
+            }}
+          />
         )}
         {phase === 'ready' && visiblePacks.length === 0 && (
-          <div className={css.emptyState}>
-            <CluePackArtwork className={css.emptyIcon} size={24} />
-            <p>{search.trim() === '' ? t('cluePacksEmpty') : t('cluePacksNoMatch')}</p>
-            {search.trim() === ''
-              ? <button type="button" className={css.toolButton} onClick={openCreate}>{t('cluePacksNew')}</button>
-              : <button type="button" className={css.toolButton} onClick={() => { setSearch(''); resetVisible() }}>{t('clueClearSearch')}</button>}
-          </div>
+          <EmptyState
+            icon={<CluePackArtwork size={24} />}
+            title={search.trim() === '' ? t('cluePacksEmpty') : t('cluePacksNoMatch')}
+            actions={search.trim() === ''
+              ? <ActionButton size="sm" onClick={openCreate}>{t('cluePacksNew')}</ActionButton>
+              : <ActionButton size="sm" onClick={() => { setSearch(''); resetVisible() }}>{t('clueClearSearch')}</ActionButton>}
+          />
         )}
 
         {shown.length > 0 && (
@@ -411,7 +414,6 @@ export function CluePacksSection(props: CluePacksSectionProps): ReactNode {
             {shown.map((pack, index) => (
               <li
                 key={pack.id}
-                className={css.packRow}
                 onContextMenu={(event) => {
                   setPackMenu({ pack, ...contextMenuPoint(event) })
                 }}
@@ -420,29 +422,25 @@ export function CluePacksSection(props: CluePacksSectionProps): ReactNode {
                   if (point !== undefined) setPackMenu({ pack, ...point })
                 }}
               >
-                <button
-                  type="button"
-                  className={css.packOpen}
-                  data-list-primary tabIndex={navigation.itemTabIndex(index)}
-                  title={t('cluePacksManageAria', { name: pack.name })}
-                  aria-label={t('cluePacksManageAria', { name: pack.name })}
-                  onClick={() => { onOpenPack(pack) }}
-                >
-                  <CluePackArtwork className={css.packGlyph} size={16} />
-                  <span className={css.packName} data-clue-pack-name>{pack.name}</span>
-                </button>
-                <div className={css.packMeta}>
-                  <span className={css.packCount}>{t('cluePacksMembers', { n: pack.members.length })}</span>
-                  <button
-                    type="button"
-                    className={css.packReference}
-                    aria-label={t('cluePacksInsertAria', { name: pack.name })}
-                    title={t('cluePackInsert')}
-                    onClick={() => { if (onInsertPack(pack)) rememberUse(pack.id) }}
-                  >
-                    <IconContextInjectionOutlineRegular size={14} />
-                  </button>
-                </div>
+                <ListRow
+                  title={pack.name}
+                  titleData={{ 'data-clue-pack-name': pack.name }}
+                  titleLabel={t('cluePacksManageAria', { name: pack.name })}
+                  titleAs="button"
+                  primary={navigation.itemTabIndex(index) === 0}
+                  onTitleClick={() => { onOpenPack(pack) }}
+                  leading={<CluePackArtwork size={16} />}
+                  meta={<span>{t('cluePacksMembers', { n: pack.members.length })}</span>}
+                  actions={(
+                    <IconButton
+                      size="sm"
+                      label={t('cluePacksInsertAria', { name: pack.name })}
+                      title={t('cluePackInsert')}
+                      onClick={() => { if (onInsertPack(pack)) rememberUse(pack.id) }}
+                      icon={<IconContextInjectionOutlineRegular size={14} />}
+                    />
+                  )}
+                />
               </li>
             ))}
           </ul>

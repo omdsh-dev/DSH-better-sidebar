@@ -18,6 +18,9 @@ const sections = read('src/client/ui/workbench-section.module.css')
 const switcher = read('src/client/ui/source-switcher.module.css')
 const search = read('src/client/ui/search-field.module.css')
 const controls = read('src/client/ui/controls.module.css')
+// The pack shelf's rows are the shared ListRow recipe now, so its density and
+// touch-target contract lives in the shared patterns sheet, not in the tab's.
+const patterns = read('src/client/ui/patterns.module.css')
 
 describe('clue tab container-query layout', () => {
   it('makes the tab root an inline-size container and never a viewport column', () => {
@@ -61,7 +64,10 @@ describe('clue workbench density and affordances', () => {
 
   it('keeps 30px rows and reveals row actions on hover, focus or touch', () => {
     expect(tab).toMatch(/\.resultRow,[\s\S]*?\.pinRow\s*\{[^}]*min-height:\s*30px/)
-    expect(tab).toMatch(/\.packRow\s*\{[^}]*min-height:\s*30px/)
+    // A pack row IS a ListRow: 30px, hover/focus-revealed actions, untouched at rest.
+    expect(patterns).toMatch(/\.listRow\s*\{[^}]*min-height:\s*30px/)
+    expect(patterns).toMatch(/\.listRowActions\s*\{[^}]*opacity:\s*0/)
+    expect(patterns).toMatch(/\.listRow:hover \.listRowActions,[\s\S]*?\{\s*opacity:\s*1/)
     const actions = /\.rowActions\s*\{([^}]+)\}/.exec(tab)?.[1]
     expect(actions).toBeDefined()
     expect(actions).toMatch(/opacity:\s*0/)
@@ -74,7 +80,9 @@ describe('clue workbench density and affordances', () => {
     expect(tab).toMatch(/@media[^}]*pointer:\s*coarse/)
     expect(tab).toContain('min-height: 44px')
     expect(tab).toMatch(/@media[^}]*pointer:\s*coarse[\s\S]*\.rowActions \.iconButton,[^}]*width:\s*44px/)
-    expect(tab).toMatch(/@media[^}]*pointer:\s*coarse[\s\S]*\.packReference[^}]*width:\s*44px/)
+    // The ListRow's own coarse-pointer rule: the pack reference button is a
+    // 44px target through the row, and the row itself grows to 44px.
+    expect(patterns).toMatch(/@media \(pointer: coarse\) \{\s*\.listRow \{ min-height: 44px; \}/)
   })
 
   it('uses the shared 32px search field with a flat query wrapper', () => {

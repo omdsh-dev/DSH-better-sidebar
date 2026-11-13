@@ -106,6 +106,18 @@ export interface ListRowProps extends DataAttributes {
   /** Glyph or status dot at the leading edge. */
   readonly leading?: ReactNode
   readonly title: ReactNode
+  /**
+   * `data-*` for the title element itself. The title owns the ellipsis, so a
+   * caller's locator must land on the title, not on a wrapper inside it — a
+   * nested span would inherit the truncation but not the measured style.
+   */
+  readonly titleData?: DataAttributes
+  /**
+   * Accessible name of the title button when the visible title alone would be
+   * ambiguous ("Release clues" → "Manage pack: Release clues"). Ignored for a
+   * plain title, which is text rather than a control.
+   */
+  readonly titleLabel?: string
   /** Secondary line under the title (a subtitle, not a second fact column). */
   readonly subtitle?: ReactNode
   /** Facts at the trailing edge, before the actions. */
@@ -122,9 +134,15 @@ export interface ListRowProps extends DataAttributes {
   readonly selected?: boolean
   /** A row that exists but is not actionable yet (unresolved reference). */
   readonly dimmed?: boolean
-  readonly onContextMenu?: (event: React.MouseEvent) => void
-  /** Roving tabindex: only one row of a list is in the tab order. */
-  readonly primaryTabIndex?: boolean
+  readonly onContextMenu?: (event: React.MouseEvent<HTMLElement>) => void
+  /**
+   * Roving-focus membership for {@link useListNavigation}: the title button
+   * carries `data-list-primary` and is the list's one Tab stop when `true`,
+   * and leaves the tab order when `false`. The hook's contract is exactly
+   * "mark each title with data-list-primary", so the row honours it here
+   * instead of making every caller reach into the button.
+   */
+  readonly primary?: boolean
   readonly className?: string
 }
 
@@ -137,8 +155,8 @@ export interface ListRowProps extends DataAttributes {
  */
 export function ListRow(props: ListRowProps): ReactNode {
   const {
-    leading, title, subtitle, meta, actions, titleAs = 'plain', onTitleClick,
-    selected, dimmed, onContextMenu, primaryTabIndex, className, ...dataProps
+    leading, title, titleData, titleLabel, subtitle, meta, actions, titleAs = 'plain', onTitleClick,
+    selected, dimmed, onContextMenu, primary, className, ...dataProps
   } = props
   return (
     <div
@@ -149,19 +167,29 @@ export function ListRow(props: ListRowProps): ReactNode {
       onContextMenu={onContextMenu}
     >
       {leading !== undefined && <span className={css.listRowLeading}>{leading}</span>}
-      <span className={css.listRowMain}>
-        {titleAs === 'button'
-          ? (
-              <button
-                type="button"
-                className={css.listRowTitle}
-                tabIndex={primaryTabIndex === false ? -1 : undefined}
-                onClick={onTitleClick}
-              >{title}</button>
-            )
-          : <span className={css.listRowTitle} style={TITLE_TEXT as CSSProperties}>{title}</span>}
-        {subtitle !== undefined && <span className={css.listRowSubtitle}>{subtitle}</span>}
-      </span>
+      {titleAs === 'button'
+        ? (
+            // A navigating row puts the subtitle INSIDE the button: the whole
+            // two-line caption is then one click target and one accessible
+            // name, exactly like the browse rows this replaces.
+            <button
+              type="button"
+              {...titleData}
+              className={clsx(css.listRowMain, css.listRowTitle)}
+              {...(titleLabel === undefined ? {} : { 'aria-label': titleLabel, title: titleLabel })}
+              {...(primary === undefined ? {} : { 'data-list-primary': true, tabIndex: primary ? 0 : -1 })}
+              onClick={onTitleClick}
+            >
+              <span className={css.listRowName}>{title}</span>
+              {subtitle !== undefined && <span className={css.listRowSubtitle}>{subtitle}</span>}
+            </button>
+          )
+        : (
+            <span className={css.listRowMain}>
+              <span {...titleData} className={css.listRowName} style={TITLE_TEXT as CSSProperties}>{title}</span>
+              {subtitle !== undefined && <span className={css.listRowSubtitle}>{subtitle}</span>}
+            </span>
+          )}
       {meta !== undefined && <span className={css.listRowMeta}>{meta}</span>}
       {actions !== undefined && <span className={css.listRowActions}>{actions}</span>}
     </div>
@@ -171,8 +199,10 @@ export function ListRow(props: ListRowProps): ReactNode {
 /** A text title must not inherit the button's pointer cursor. */
 const TITLE_TEXT = { cursor: 'inherit' } as const
 
+/** The title text itself: truncation happens here, on whatever owns the row. */
+
 /** Props of {@link EmptyState}. */
-export interface EmptyStateProps {
+export interface EmptyStateProps extends DataAttributes {
   readonly icon?: ReactNode
   readonly title: ReactNode
   readonly description?: ReactNode
@@ -183,9 +213,9 @@ export interface EmptyStateProps {
 }
 
 /** The one empty state: glyph, one-line title, optional description, actions. */
-export function EmptyState({ icon, title, description, actions, tone = 'well', className }: EmptyStateProps): ReactNode {
+export function EmptyState({ icon, title, description, actions, tone = 'well', className, ...dataProps }: EmptyStateProps): ReactNode {
   return (
-    <div className={clsx(css.empty, tone === 'page' ? css.emptyPage : css.emptyWell, className)}>
+    <div {...dataProps} className={clsx(css.empty, tone === 'page' ? css.emptyPage : css.emptyWell, className)}>
       {icon !== undefined && <span className={css.emptyIcon}>{icon}</span>}
       <span className={css.emptyTitle}>{title}</span>
       {description !== undefined && <span className={css.emptyDescription}>{description}</span>}
@@ -195,7 +225,7 @@ export function EmptyState({ icon, title, description, actions, tone = 'well', c
 }
 
 /** Props of {@link ErrorBlock}. */
-export interface ErrorBlockProps {
+export interface ErrorBlockProps extends DataAttributes {
   readonly message: ReactNode
   /** A sanitized second line (a reason code, a dependency id) — never a secret. */
   readonly detail?: ReactNode
@@ -213,9 +243,9 @@ export interface ErrorBlockProps {
  * belongs to, and the four hand-written spellings this replaces had already
  * drifted in exactly that way (two put the button above, two below).
  */
-export function ErrorBlock({ message, detail, retryLabel, onRetry, busy, className }: ErrorBlockProps): ReactNode {
+export function ErrorBlock({ message, detail, retryLabel, onRetry, busy, className, ...dataProps }: ErrorBlockProps): ReactNode {
   return (
-    <div className={clsx(css.errorBlock, className)} role="alert">
+    <div {...dataProps} className={clsx(css.errorBlock, className)} role="alert">
       <span className={css.errorBody}>
         <span className={css.errorMessage}>{message}</span>
         {detail !== undefined && <span className={css.errorDetail}>{detail}</span>}
