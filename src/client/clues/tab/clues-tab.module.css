@@ -29,39 +29,6 @@
   font-size: 12px;
   line-height: 16px;
 }
-.viewTabs {
-  display: flex;
-  flex: 1 1 180px;
-  min-width: 0;
-  gap: 2px;
-  padding: 2px;
-  border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: var(--ds-sidebar-radius);
-  background: var(--dsw-alias-bg-base);
-  overflow-x: auto;
-  overflow-y: hidden;
-  overscroll-behavior-x: contain;
-  scrollbar-width: thin;
-}
-.viewTabs > button {
-  display: inline-flex;
-  flex: none;
-  align-items: center;
-  gap: 6px;
-  white-space: nowrap;
-}
-.viewTabs.viewTabs > button[aria-selected='true'] {
-  background: var(--dsw-alias-interactive-bg-active);
-  color: var(--dsw-alias-label-primary);
-}
-.headerActions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  flex: 0 0 auto;
-  min-width: 0;
-  gap: var(--ds-sidebar-space-1);
-}
 .workspaceSelect {
   flex: 1 1 auto;
   max-width: 100%;
@@ -115,23 +82,10 @@
   flex-direction: column;
   min-height: 0;
 }
-.sectionTools {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px;
-  min-width: 0;
-}
-.sectionTools .iconButton[aria-expanded='true'],
-.sectionTools .iconButton[data-filtered='true'] {
-  background: var(--dsw-alias-interactive-bg-active);
-  color: var(--dsw-alias-label-primary);
-}
 .iconButton {
   composes: iconButton iconButtonMd from '../../ui/kit.module.css';
 }
 .toolButton { composes: button from '../../ui/kit.module.css'; }
-.stateAction { composes: button from '../../ui/kit.module.css'; }
 .primaryButton {
   composes: buttonPrimary from '../../ui/kit.module.css';
   background: var(--dsw-alias-button-primary-fill);
@@ -149,7 +103,6 @@
 }
 .iconButton:hover:not(:disabled),
 .toolButton:hover:not(:disabled):not([aria-disabled='true']),
-.stateAction:hover:not(:disabled),
 .scopeButton:hover {
   background: var(--dsw-alias-interactive-bg-hover);
   color: var(--dsw-alias-label-primary);
@@ -162,18 +115,15 @@
 .toolButton:disabled,
 .toolButton[aria-disabled='true'],
 .primaryButton:disabled,
-.querySubmit:disabled,
-.stateAction:disabled {
+.querySubmit:disabled {
   opacity: 0.4;
   cursor: default;
 }
 .iconButton:focus-visible,
 .toolButton:focus-visible,
 .primaryButton:focus-visible,
-.stateAction:focus-visible,
 .workspaceSelect:focus-visible,
-.scopeButton:focus-visible,
-.rowTitle:focus-visible {
+.scopeButton:focus-visible {
   outline: 2px solid var(--dsw-alias-brand-primary);
   outline-offset: 1px;
 }
@@ -185,49 +135,6 @@
   padding: 4px var(--ds-sidebar-gutter) 6px;
 }
 .packSearch { flex: 1 1 160px; min-width: 0; }
-.searchBox {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--ds-sidebar-space-2);
-  flex: 1;
-  min-width: 0;
-  box-sizing: border-box;
-  min-height: var(--ds-sidebar-control-height);
-  padding: 4px 8px;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: var(--ds-sidebar-radius);
-  background: var(--dsw-alias-bg-base);
-  color: var(--dsw-alias-label-tertiary);
-}
-.searchBox > svg {
-  flex: none;
-}
-.searchInput,
-.searchBox .searchInput {
-  flex: 1;
-  min-height: 20px;
-  width: 100%;
-  min-width: 0;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--dsw-alias-label-primary);
-  font: inherit;
-  font-size: 13px;
-  line-height: 20px;
-}
-.searchBox:has(.searchInput:focus-visible),
-.queryRow:has(.searchInput:focus-visible) {
-  outline: 2px solid var(--dsw-alias-brand-primary);
-  outline-offset: 1px;
-}
-.searchInput:focus-visible,
-.searchBox .searchInput:focus-visible {
-  outline: none;
-}
-.textInput {
-  composes: input from '../../ui/kit.module.css';
-}
 .packList {
   display: flex;
   flex-direction: column;
@@ -316,18 +223,15 @@
 .scopeChoice > span {
   overflow-wrap: anywhere;
 }
-.scopeChoice:has(input:checked),
-.destinationRow:has(input:checked) {
+.scopeChoice:has(input:checked) {
   background: var(--dsw-alias-interactive-bg-active);
   color: var(--dsw-alias-label-primary);
 }
-.scopeChoice input,
-.destinationRow input {
+.scopeChoice input {
   flex: none;
   accent-color: var(--dsw-alias-state-business-primary, var(--dsw-alias-label-secondary));
 }
-.scopeChoice:has(input:focus-visible),
-.destinationRow:has(input:focus-visible) {
+.scopeChoice:has(input:focus-visible) {
   outline: 2px solid var(--dsw-alias-brand-primary);
   outline-offset: -2px;
 }
@@ -365,13 +269,6 @@
   align-items: center;
   gap: var(--ds-sidebar-space-2);
 }
-.field {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
-  flex: 1 1 150px;
-}
 .fieldLabel {
   color: var(--dsw-alias-label-tertiary);
   font-size: 11px;
@@ -405,27 +302,6 @@
   padding: 0;
   list-style: none;
 }
-.resultRow,
-.pinRow {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  box-sizing: border-box;
-  min-width: 0;
-  min-height: 30px;
-  padding: 0 6px;
-  border-radius: 4px;
-}
-.resultRow:hover,
-.resultRow:focus-within,
-.pinRow:hover,
-.pinRow:focus-within {
-  background: var(--dsw-alias-interactive-bg-hover);
-}
-.resultRow[data-selected='true'],
-.pinRow[data-selected='true'] {
-  background: var(--dsw-alias-interactive-bg-active);
-}
 .rowSelection,
 .rowGlyph {
   flex: none;
@@ -443,68 +319,7 @@
   display: inline-flex;
   color: var(--dsw-alias-label-secondary);
 }
-.rowTitle {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  flex: 1;
-  min-width: 0;
-  gap: var(--ds-sidebar-space-1);
-  padding: 0;
-  border: 0;
-  border-radius: var(--ds-sidebar-radius);
-  background: transparent;
-  color: var(--dsw-alias-label-primary);
-  font: inherit;
-  text-align: start;
-  cursor: pointer;
-}
-.rowName {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 1;
-  max-width: 100%;
-  overflow: hidden;
-  overflow-wrap: anywhere;
-  font-size: 13px;
-  line-height: 20px;
-}
-.rowSubtitle {
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--dsw-alias-label-tertiary);
-  font-size: 11px;
-  line-height: 16px;
-}
-.rowActions {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  flex: none;
-  opacity: 0;
-  transition: opacity 100ms ease;
-}
-.resultRow:hover .rowActions,
-.resultRow:focus-within .rowActions,
-.pinRow:hover .rowActions,
-.pinRow:focus-within .rowActions {
-  opacity: 1;
-}
-@media (hover: none), (pointer: coarse) {
-  .rowActions { opacity: 1; }
-}
-.rowActions .iconButton {
-  width: 24px;
-  height: 24px;
-  color: var(--dsw-alias-label-tertiary);
-}
-.rowActions .iconButton:hover,
-.rowActions .iconButton:focus-visible {
-  color: var(--dsw-alias-label-primary);
-}
-.rowActions .iconButton[data-clue-pin='true'],
+.pins [data-clue-pin='true'],
 .pinAccent {
   color: var(--dsw-alias-state-warn-label, var(--dsw-alias-state-warn-primary, var(--dsw-alias-label-secondary)));
 }
@@ -531,37 +346,6 @@
 }
 .workbench > .state {
   padding: var(--ds-sidebar-gutter);
-}
-.refreshError {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--ds-sidebar-space-2);
-  margin: 4px 0;
-  padding: 6px 8px;
-  border: 1px solid var(--dsw-alias-state-error-primary);
-  border-radius: var(--ds-sidebar-radius);
-  color: var(--dsw-alias-label-secondary);
-  overflow-wrap: anywhere;
-}
-.emptyState {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--ds-sidebar-space-3);
-  margin: 12px 0;
-  padding: 32px 16px;
-  color: var(--dsw-alias-label-secondary);
-  text-align: center;
-}
-.emptyState p {
-  max-width: 38ch;
-  margin: 0;
-  line-height: 20px;
-  overflow-wrap: anywhere;
-}
-.emptyIcon {
-  color: var(--dsw-alias-label-tertiary);
 }
 .resolveHead {
   display: flex;
@@ -624,132 +408,28 @@
   white-space: normal;
   overflow-wrap: anywhere;
 }
-.collectForm {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  gap: var(--ds-sidebar-space-2);
-  min-width: 0;
-  min-height: 0;
-}
-.collectForm > .searchBox {
-  flex: none;
-}
-.destinationList {
-  display: flex;
-  flex: 1 1 112px;
-  flex-direction: column;
-  gap: var(--ds-sidebar-space-1);
-  min-width: 0;
-  min-height: 36px;
-  margin: 0;
-  padding: 0;
-  border: 0;
-  overflow: auto;
-  overscroll-behavior: contain;
-  scrollbar-width: thin;
-}
-.destinationRow {
-  display: flex;
-  align-items: center;
-  flex: none;
-  gap: var(--ds-sidebar-space-2);
-  min-width: 0;
-  min-height: 36px;
-  padding: 4px 8px;
-  box-sizing: border-box;
-  border: 0;
-  background: transparent;
-  color: var(--dsw-alias-label-primary);
-  font: inherit;
-  text-align: start;
-  width: 100%;
-  border-radius: var(--ds-sidebar-radius);
-  cursor: pointer;
-}
-.destinationRow:disabled { opacity: 0.4; cursor: default; }
-.destinationRow:focus-visible {
-  outline: 2px solid var(--dsw-alias-state-business-primary);
-  outline-offset: -2px;
-}
-.destinationRow:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
-}
-.destinationRow > span:not([data-clue-artwork]) {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  overflow-wrap: anywhere;
-}
-.destinationRow > small {
-  flex: none;
-  color: var(--dsw-alias-label-tertiary);
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-}
-.destinationList:disabled {
-  opacity: 0.4;
-}
-.collectFooter {
-  display: flex;
-  align-items: center;
-  flex: none;
-  gap: var(--ds-sidebar-space-2);
-  min-width: 0;
-  justify-content: flex-end;
-  margin: 0 calc(-1 * var(--ds-sidebar-gutter)) calc(-1 * var(--ds-sidebar-gutter));
-  padding: var(--ds-sidebar-space-3) var(--ds-sidebar-gutter);
-  border-top: 1px solid var(--dsw-alias-border-l1);
-}
-.collectFooter > button {
-  flex: none;
-}
-:global(body[data-ds-dark-theme]) .scopeChoice input,
-:global(body[data-ds-dark-theme]) .destinationRow input {
+:global(body[data-ds-dark-theme]) .scopeChoice input {
   color-scheme: dark;
 }
 @media (hover: none), (pointer: coarse) {
-  .rowActions {
-    opacity: 1;
-  }
   .selectionActions > button,
   .toolButton,
   .primaryButton,
-  .stateAction,
-  .textInput,
   .scopeChoice,
-  .destinationRow,
   .scopeButton,
-  .searchBox,
-  .searchBox .searchInput,
   .selectionReview summary,
   .querySubmit,
   .iconButton {
     min-height: 44px;
   }
-  .rowActions .iconButton,
   .iconButton,
   .querySubmit {
     width: 44px;
   }
-  .resultRow,
-  .pinRow {
-    min-height: 44px;
-  }
-  .resultRow { padding-block: 0; }
   .rowSelection { width: 44px; height: 44px; }
   .queryRow { min-height: 44px; }
-  .queryRow .searchBox, .queryRow .iconButton, .queryRow .querySubmit { min-height: 42px; height: 42px; }
-  .searchBox .searchInput { min-height: 32px; }
+  .queryRow .iconButton, .queryRow .querySubmit { min-height: 42px; height: 42px; }
   .queryRow .iconButton, .queryRow .querySubmit { width: 42px; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .rowActions {
-    transition: none;
-  }
 }
 .packRegion > [data-workbench-section] {
   max-height: 100%;
@@ -783,9 +463,7 @@
   min-height: 0;
   overflow: auto;
 }
-.scopeFields > .field,
-.scopeFields > .scopeChoices,
-.collectForm > .field { flex: none; }
+.scopeFields > .scopeChoices { flex: none; }
 .scopeTask > .scopeActions {
   flex: none;
   flex-wrap: wrap;
@@ -795,37 +473,14 @@
   border-top: 1px solid var(--dsw-alias-border-l1);
 }
 .scopeTask > .scopeActions > :first-child { margin-inline-end: auto; }
-.collectionTask {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  gap: var(--ds-sidebar-space-3);
-  min-width: 0;
-  min-height: 0;
-  overflow: hidden;
-}
-.collectionTask .collectForm { min-height: 0; }
-.collectionFields {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  gap: var(--ds-sidebar-space-3);
-  min-height: 0;
-  overflow: auto;
-}
-.collectionFields > .searchBox,
-.collectionFields > .field { flex: none; }
-.collectionTask .destinationList { flex: none; overflow: visible; }
 @container clue-tab (min-width: 520px) {
   .batchBar { display: flex; }
   .batchBar > .selectionActions { flex: 1; justify-content: flex-end; }
 }
-.scopeTask,
-.collectionTask {
+.scopeTask {
   box-sizing: border-box;
   padding: var(--ds-sidebar-gutter);
 }
-.collectionTask > .scopeHint { margin: 0; }
 .readiness {
   display: flex;
   flex: none;

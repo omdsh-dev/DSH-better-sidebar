@@ -31,7 +31,7 @@ import { t } from '../../locales.ts'
 import { CluePacksSection } from './packs.tsx'
 import { ClueBrowser } from './browser.tsx'
 import { ClueHelpOverlay, clueHelpSeen, markClueHelpSeen } from './help.tsx'
-import { IconButton, SidebarToolbar, WorkbenchSection } from '../../ui/index.ts'
+import { ActionButton, EmptyState, IconButton, SidebarToolbar, WorkbenchSection } from '../../ui/index.ts'
 import { openClueDetailWindow, type ClueDetailTarget } from '../windows/detail.tsx'
 import { openClueCollectionForTarget } from '../windows/collect.tsx'
 import { openPackManagementWindow } from '../windows/pack.tsx'
@@ -361,15 +361,11 @@ export function CluesTab({ ctx, store, scope, visible }: CluesTabProps): ReactNo
         <LoadingIndicator className={css.state} />
       )}
       {resolved && workspaceId === undefined && (
-        <div className={css.state}>
-          <span>{t('clueTabNoWorkspace')}</span>
-          <button type="button" className={css.stateAction} onClick={retry}>{t('retry')}</button>
-        </div>
+        <EmptyState tone="page" title={t('clueTabNoWorkspace')}
+          actions={<ActionButton size="sm" onClick={retry}>{t('retry')}</ActionButton>} />
       )}
       {resolved && workspaceId !== undefined && !ready && (
-        <div className={css.state}>
-          <span>{t('clueTabUnavailable')}</span>
-        </div>
+        <EmptyState tone="page" title={t('clueTabUnavailable')} />
       )}
 
       {ready && browseWorkspaceId !== undefined && (

@@ -1027,16 +1027,11 @@ export function ClueBrowser(props: ClueBrowserProps): ReactNode {
           refresh must not insert a row above the search box. */}
       {cataloguePhase === 'loading' && sources.length === 0 && <LoadingIndicator className={css.stateLine} />}
       {cataloguePhase === 'error' && sources.length === 0 && (
-        <div className={css.stateLine}>
-          <span>{catalogueError ?? t('error')}</span>
-          <button type="button" className={css.stateAction} onClick={() => { void loadCatalogue() }}>{t('retry')}</button>
-        </div>
+        <ErrorBlock message={catalogueError ?? t('error')} retryLabel={t('retry')} onRetry={() => { void loadCatalogue() }} />
       )}
       {cataloguePhase === 'ready' && enabled.length === 0 && (
-        <div className={css.stateLine}>
-          <span>{t('clueBrowserAllDisabled')}</span>
-          <button type="button" className={css.stateAction} onClick={onOpenSettings}>{t('clueBrowserOpenSettings')}</button>
-        </div>
+        <EmptyState tone="well" title={t('clueBrowserAllDisabled')}
+          actions={<ActionButton size="sm" onClick={onOpenSettings}>{t('clueBrowserOpenSettings')}</ActionButton>} />
       )}
 
       {enabled.length > 0 && active !== undefined && (
@@ -1092,10 +1087,7 @@ export function ClueBrowser(props: ClueBrowserProps): ReactNode {
               windows={windows} visible={visible}
               onReady={() => { void run(view, undefined, false, { auto: true }) }} />
             {cataloguePhase === 'error' && sources.length > 0 && (
-              <div className={css.stateLine} role="alert">
-                <span>{catalogueError ?? t('error')}</span>
-                <button type="button" className={css.stateAction} onClick={() => { void loadCatalogue() }}>{t('retry')}</button>
-              </div>
+              <ErrorBlock message={catalogueError ?? t('error')} retryLabel={t('retry')} onRetry={() => { void loadCatalogue() }} />
             )}
             {showScopeEditor && active.sourceId !== BUILTIN_SOURCE_IDS.feishuTasks && (
               <HostedWindow windows={windows} id={`clue-scope:${workspaceId}:${headingId}`}
@@ -1123,21 +1115,16 @@ export function ClueBrowser(props: ClueBrowserProps): ReactNode {
             )}
 
             {(pinsPhase === 'error' || pinsRetrying) && (
-              <div className={css.stateLine} role="alert" aria-busy={pinsRetrying}>
-                <span>{t('clueBrowserPinsFailed')}</span>
-                <button type="button" className={css.toolButton} aria-disabled={pinsRetrying}
-                  onClick={(event) => {
-                    if (pinsRetrying) return
-                    const retryButton = event.currentTarget
-                    setPinsRetrying(true)
-                    void refreshLocal().then(loaded => {
-                      setPinsRetrying(false)
-                      if (loaded && visibleRef.current && document.activeElement === retryButton) queryInputRef.current?.focus()
-                    })
-                  }}>
-                  {pinsRetrying ? t('loading') : t('retry')}
-                </button>
-              </div>
+              <ErrorBlock message={t('clueBrowserPinsFailed')} busy={pinsRetrying}
+                retryLabel={pinsRetrying ? t('loading') : t('retry')}
+                onRetry={(event) => {
+                  const retryButton = event.currentTarget
+                  setPinsRetrying(true)
+                  void refreshLocal().then(loaded => {
+                    setPinsRetrying(false)
+                    if (loaded && visibleRef.current && document.activeElement === retryButton) queryInputRef.current?.focus()
+                  })
+                }} />
             )}
             {pinnedRows.length > 0 && <PinsPanel
               pinned={pinnedRows}
@@ -1172,42 +1159,27 @@ export function ClueBrowser(props: ClueBrowserProps): ReactNode {
               aria-busy={moreLoading || state.kind === 'loading' || refresh.kind === 'refreshing'}
               role="region" aria-label={t('clueBrowserHeading')} tabIndex={0}>
               {refresh.kind === 'error' && (
-                <div className={css.refreshError} data-clue-refresh-status="error" role="alert">
-                  <span>{refresh.message}</span>
-                  <button type="button" className={css.stateAction}
-                    onClick={() => {
-                      const last = lastRequestRef.current
-                      void run(last.view, last.cursor, false, { force: true })
-                    }}>{t('retry')}</button>
-                </div>
+                <ErrorBlock data-clue-refresh-status="error" message={refresh.message} retryLabel={t('retry')}
+                  onRetry={() => {
+                const last = lastRequestRef.current
+                void run(last.view, last.cursor, false, { force: true })
+              }} />
               )}
-              {state.kind === 'idle' && <div className={css.stateLine}>{t('clueBrowserSearchNeeded')}</div>}
+              {state.kind === 'idle' && <EmptyState title={t('clueBrowserSearchNeeded')} />}
               {state.kind === 'loading' && <LoadingIndicator className={css.stateLine} />}
               {state.kind === 'needs-scope' && (
-                <div className={css.stateLine}>
-                  <span>{state.reason === 'search' ? t('clueBrowserSearchScopeNeeded') : t('clueScopeNoDefault')}</span>
-                  <button type="button" className={css.stateAction} onClick={() => { setScopeOpen(true) }}>{t('clueBrowserScopeEdit')}</button>
-                </div>
+                <EmptyState title={state.reason === 'search' ? t('clueBrowserSearchScopeNeeded') : t('clueScopeNoDefault')}
+                  actions={<ActionButton size="sm" onClick={() => { setScopeOpen(true) }}>{t('clueBrowserScopeEdit')}</ActionButton>} />
               )}
               {state.kind === 'unsupported' && (
-                <div className={css.stateLine}>
-                  {state.reason === 'no-list' ? t('clueBrowserUnsupported') : t('clueBrowserSearchUnsupported')}
-                </div>
+                <EmptyState title={state.reason === 'no-list' ? t('clueBrowserUnsupported') : t('clueBrowserSearchUnsupported')} />
               )}
               {state.kind === 'error' && (
-                <div className={css.stateLine}>
-                  <span>{state.message}</span>
-                  <button
-                    type="button"
-                    className={css.stateAction}
-                    onClick={() => {
-                      const last = lastRequestRef.current
-                      void run(last.view, last.cursor, false, { force: true })
-                    }}
-                  >
-                    {t('retry')}
-                  </button>
-                </div>
+                <ErrorBlock message={state.message} retryLabel={t('retry')}
+                  onRetry={() => {
+                const last = lastRequestRef.current
+                void run(last.view, last.cursor, false, { force: true })
+              }} />
               )}
               {state.kind === 'page' && state.result.items.length === 0 && (
                 <EmptyState
@@ -1227,7 +1199,7 @@ export function ClueBrowser(props: ClueBrowserProps): ReactNode {
                 </div>
               )}
               {state.kind === 'resolved' && state.candidates.length === 0 && (
-                <div className={css.stateLine}>{t('clueBrowserResolveEmpty')}</div>
+                <EmptyState title={t('clueBrowserResolveEmpty')} />
               )}
 
               {state.kind === 'page' && state.view.kind === 'search'
@@ -1395,43 +1367,26 @@ function PinsPanel(props: {
               <ul className={css.pinList} ref={navigation.ref} onKeyDown={navigation.onKeyDown}
                 onFocusCapture={navigation.onFocusCapture} onClickCapture={navigation.onClickCapture}>
                 {pinned.map((row, index) => (
-                  <li key={row.clueId} className={css.pinRow}
+                  <li key={row.clueId}
                     onContextMenu={event => { props.onContextMenu(event, row) }}
                     onKeyDown={event => { props.onMenuKey(event, row) }}>
-                    <span className={css.rowGlyph} aria-hidden="true">{resourceIcon(row, props.displays)}</span>
-                    <button
-                      type="button"
-                      className={css.rowTitle}
-                      data-list-primary tabIndex={navigation.itemTabIndex(index)}
+                    <ListRow
                       title={row.title}
-                      onClick={() => { props.onOpenDetail(row) }}
-                    >
-                      <span className={css.rowName}>{row.title}</span>
-                      <span className={css.rowSubtitle}><ResourceInlineMeta info={row.info} />{row.info?.state === undefined ? props.displayName(row.sourceId) : null}</span>
-                    </button>
-                    <span className={css.rowActions}>
-                      <button
-                        type="button"
-                        className={css.iconButton}
-                        aria-label={t('clueBrowserInsertRow', { title: row.title })}
-                        title={t('clueBrowserInsert')}
-                        disabled={busy}
-                        onClick={() => { props.onInsert(row) }}
-                      >
-                        <IconContextInjectionOutlineRegular size={16} />
-                      </button>
-                      <button
-                        type="button"
-                        className={css.iconButton}
-                        data-clue-pin="true"
-                        aria-label={t('clueBrowserUnpinRow', { title: row.title })}
-                        title={t('clueBrowserUnpin')}
-                        disabled={busy}
-                        onClick={() => { props.onUnpin(row) }}
-                      >
-                        <IconPinFillRegular size={14} />
-                      </button>
-                    </span>
+                      titleLabel={row.title}
+                      titleAs="button"
+                      primary={navigation.itemTabIndex(index) === 0}
+                      onTitleClick={() => { props.onOpenDetail(row) }}
+                      leading={<span className={css.rowGlyph} aria-hidden="true">{resourceIcon(row, props.displays)}</span>}
+                      subtitle={<><ResourceInlineMeta info={row.info} />{row.info?.state === undefined ? props.displayName(row.sourceId) : null}</>}
+                      actions={<>
+                        <IconButton size="sm" label={t('clueBrowserInsertRow', { title: row.title })} title={t('clueBrowserInsert')}
+                          disabled={busy} onClick={() => { props.onInsert(row) }}
+                          icon={<IconContextInjectionOutlineRegular size={16} />} />
+                        <IconButton size="sm" data-clue-pin="true" label={t('clueBrowserUnpinRow', { title: row.title })} title={t('clueBrowserUnpin')}
+                          disabled={busy} onClick={() => { props.onUnpin(row) }}
+                          icon={<IconPinFillRegular size={14} />} />
+                      </>}
+                    />
                   </li>
                 ))}
               </ul>

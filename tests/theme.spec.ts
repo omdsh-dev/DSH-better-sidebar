@@ -198,7 +198,8 @@ describe('skin contract: the plugin owns no color of its own', () => {
     expect(packRegion).toContain('background: var(--dsw-alias-bg-layer-1)')
     expect(source).not.toMatch(/box-shadow/)
     expect(source).toMatch(/\.querySubmit\s*\{[^}]*background:\s*transparent/)
-    expect(source).toMatch(/\.rowActions \.iconButton\s*\{[^}]*color:\s*var\(--dsw-alias-label-tertiary\)/)
+    const patterns = readFileSync(resolve(ROOT, 'src/client/ui/patterns.module.css'), 'utf8')
+    expect(patterns).toMatch(/\.listRowActions > button\s*\{[^}]*color:\s*var\(--dsw-alias-label-tertiary\)/)
   })
 
   it('source identity remains themed while actions use the single shared recipe', () => {

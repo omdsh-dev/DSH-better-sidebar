@@ -20,7 +20,7 @@ import type {
 import { BUILTIN_SOURCE_IDS } from '../../../clues/types.ts'
 import { parseGithubRepoRef } from '../../../clues/sources/github/url.ts'
 import { t } from '../../locales.ts'
-import { SourceSwitcher, TextInput } from '../../ui/index.ts'
+import { Field, SourceSwitcher, TextInput } from '../../ui/index.ts'
 import css from './clues-tab.module.css'
 
 /** Stable row key of one candidate (the locator is source-normalized JSON). */
@@ -278,15 +278,14 @@ export function ScopeFields(props: {
   if (sourceId === BUILTIN_SOURCE_IDS.githubIssues || sourceId === BUILTIN_SOURCE_IDS.githubPulls) {
     return (
       <>
-        <label className={css.field}>
-          <span className={css.fieldLabel}>{t('clueBrowserScopeGithubRepo')}</span>
+        <Field label={t('clueBrowserScopeGithubRepo')} htmlFor={`${choiceName}-repo`}>
           <TextInput
-            className={css.textInput}
+            id={`${choiceName}-repo`}
             value={form.repo}
             placeholder={t('clueBrowserScopeGithubRepoPlaceholder')}
             onChange={(event) => { onChange({ ...form, repo: event.target.value }) }}
           />
-        </label>
+        </Field>
         <fieldset className={css.scopeChoices}>
           <legend className={css.fieldLabel}>{t('clueBrowserScopeGithubState')}</legend>
           {([
@@ -323,39 +322,36 @@ export function ScopeFields(props: {
           ))}
         </fieldset>
         {form.docsKind === 'drive' && (
-          <label className={css.field}>
-            <span className={css.fieldLabel}>{t('clueBrowserScopeDocsFolder')}</span>
+          <Field label={t('clueBrowserScopeDocsFolder')} htmlFor={`${choiceName}-folder`}>
             <TextInput
-              className={css.textInput}
+              id={`${choiceName}-folder`}
               value={form.docsToken}
               placeholder={t('clueBrowserScopeTokenPlaceholder')}
               onChange={(event) => { onChange({ ...form, docsToken: event.target.value }) }}
             />
-          </label>
+          </Field>
         )}
         {form.docsKind === 'wiki' && (
-          <label className={css.field}>
-            <span className={css.fieldLabel}>{t('clueBrowserScopeDocsWiki')}</span>
+          <Field label={t('clueBrowserScopeDocsWiki')} htmlFor={`${choiceName}-wiki`}>
             <TextInput
-              className={css.textInput}
+              id={`${choiceName}-wiki`}
               value={form.docsSpace}
               placeholder={t('clueBrowserScopeSpacePlaceholder')}
               onChange={(event) => { onChange({ ...form, docsSpace: event.target.value }) }}
             />
-          </label>
+          </Field>
         )}
       </>
     )
   }
   return (
-    <label className={css.field}>
-      <span className={css.fieldLabel}>{t('clueBrowserScopeFilesPath')}</span>
+    <Field label={t('clueBrowserScopeFilesPath')} htmlFor={`${choiceName}-path`}>
       <TextInput
-        className={css.textInput}
+        id={`${choiceName}-path`}
         value={form.filesPath}
         placeholder={t('clueBrowserScopeFilesPathPlaceholder')}
         onChange={(event) => { onChange({ ...form, filesPath: event.target.value }) }}
       />
-    </label>
+    </Field>
   )
 }

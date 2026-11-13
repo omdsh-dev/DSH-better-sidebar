@@ -163,6 +163,9 @@
   opacity: 0;
 }
 
+/* Muted at rest; the kit's hover/focus rule restores the primary ink. */
+.listRowActions > button { color: var(--dsw-alias-label-tertiary); }
+
 .listRow:hover .listRowActions,
 .listRow:focus-within .listRowActions,
 .listRow[data-selected='true'] .listRowActions {

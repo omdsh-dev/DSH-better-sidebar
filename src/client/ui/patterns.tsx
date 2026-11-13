@@ -26,7 +26,7 @@
  * Skin contract: every paint resolves to a `--dsw-*` / `--ds-*` token
  * (`tests/theme.spec.ts` scans `patterns.module.css`).
  */
-import type { CSSProperties, ReactNode } from 'react'
+import type { CSSProperties, MouseEvent, ReactNode } from 'react'
 import clsx from 'clsx'
 import { ActionButton } from './kit.tsx'
 import css from './patterns.module.css'
@@ -134,7 +134,7 @@ export interface ListRowProps extends DataAttributes {
   readonly selected?: boolean
   /** A row that exists but is not actionable yet (unresolved reference). */
   readonly dimmed?: boolean
-  readonly onContextMenu?: (event: React.MouseEvent<HTMLElement>) => void
+  readonly onContextMenu?: (event: MouseEvent<HTMLElement>) => void
   /**
    * Roving-focus membership for {@link useListNavigation}: the title button
    * carries `data-list-primary` and is the list's one Tab stop when `true`,
@@ -230,8 +230,11 @@ export interface ErrorBlockProps extends DataAttributes {
   /** A sanitized second line (a reason code, a dependency id) — never a secret. */
   readonly detail?: ReactNode
   readonly retryLabel?: string
-  readonly onRetry?: () => void
-  /** A retry already in flight: the button stays, disabled, and says so. */
+  readonly onRetry?: (event: MouseEvent<HTMLButtonElement>) => void
+  /**
+   * A retry already in flight: the button stays focusable but inert
+   * (`aria-disabled`), so keyboard focus is not dropped to the document.
+   */
   readonly busy?: boolean
   readonly className?: string
 }
@@ -245,7 +248,7 @@ export interface ErrorBlockProps extends DataAttributes {
  */
 export function ErrorBlock({ message, detail, retryLabel, onRetry, busy, className, ...dataProps }: ErrorBlockProps): ReactNode {
   return (
-    <div {...dataProps} className={clsx(css.errorBlock, className)} role="alert">
+    <div {...dataProps} className={clsx(css.errorBlock, className)} role="alert" aria-busy={busy === true || undefined}>
       <span className={css.errorBody}>
         <span className={css.errorMessage}>{message}</span>
         {detail !== undefined && <span className={css.errorDetail}>{detail}</span>}
@@ -254,7 +257,8 @@ export function ErrorBlock({ message, detail, retryLabel, onRetry, busy, classNa
         <span className={css.errorAction}>
           {/* The kit's own action recipe: a retry is a button, not a fifth
               spelling of one. */}
-          <ActionButton size="sm" busy={busy === true} onClick={onRetry}>{retryLabel}</ActionButton>
+          <ActionButton size="sm" aria-disabled={busy === true || undefined}
+            onClick={event => { if (busy !== true) onRetry(event) }}>{retryLabel}</ActionButton>
         </span>
       )}
     </div>

@@ -173,13 +173,17 @@ describe('ErrorBlock', () => {
     expect(view.container.querySelector('button')).toBeNull()
   })
 
-  it('locks the retry while one is in flight instead of offering a second', () => {
+  it('locks the retry while one is in flight without dropping its focus', () => {
+    const onRetry = vi.fn()
     view = renderRoot(createElement(ErrorBlock, {
-      message: 'Request failed', retryLabel: 'Retry', onRetry: () => {}, busy: true,
+      message: 'Request failed', retryLabel: 'Retry', onRetry, busy: true,
     }))
     const retry = view.container.querySelector('button')!
-    expect(retry.disabled).toBe(true)
-    expect(retry.getAttribute('aria-busy')).toBe('true')
+    expect(retry.disabled).toBe(false)
+    expect(retry.getAttribute('aria-disabled')).toBe('true')
+    expect(view.container.querySelector('[role="alert"]')!.getAttribute('aria-busy')).toBe('true')
+    retry.click()
+    expect(onRetry).not.toHaveBeenCalled()
   })
 
   it('separates a sanitized detail from the message', () => {
