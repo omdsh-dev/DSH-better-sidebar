@@ -1933,6 +1933,7 @@ describe('side card settings routes', () => {
     expect(view.value).toMatchObject({
       autoOpenSubagent: true,
       autoOpenJobs: true,
+      autoCollapseAfterIdle: false,
       agentOpenTools: false,
       editorExplorer: false,
       customCss: '',
