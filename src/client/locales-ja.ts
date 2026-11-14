@@ -725,6 +725,8 @@ export const ja: Record<string, string> = {
   pluginAudioName: '音声プレビュー',
   pluginTurnOutlineName: "dsh-turn-outline ターンアウトライン",
   pluginTurnOutlineDesc: "セッションをユーザーターン（入力＋ツール手順＋出力）ごとに折りたたみ、任意のステップをクリックすると会話の該当箇所へワンクリックでジャンプ。LLM 呼び出しなし・読み取り専用",
+  pluginZoteroWorkspaceName: 'dsh-zotero-workspace Zotero ワークスペース',
+  pluginZoteroWorkspaceDesc: 'Zotero ライブラリを右サイドバーに：コレクションツリー、アイテム一覧/詳細、サーバー側検索、レンダリング済み PDF と解析済み Markdown をその場で閲覧し、引用とファイルパスを現在の会話へワンクリックで挿入。ローカル API のみ・読み取り専用・MCP 不要',
   pluginDshMemoryDeltaName: 'dsh-memory-delta メモリ',
   pluginDshMemoryDeltaDesc: 'セッションをまたぐ記憶：変化した部分だけを注入し（変化がなければ何も注入しません）、レビュー期日のリマインド、関連度順の検索、サイドバーのタブを備えます。',
 }
