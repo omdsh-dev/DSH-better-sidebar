@@ -150,7 +150,7 @@ export const builtinTabPlugins: readonly PluginEntry[] = [
     // differential injection (only what changed), review-date reminders,
     // ranked search and a read-only sidebar tab. lib/ ships prebuilt, so the
     // pinned github:-form install needs no local build.
-    install: 'cd ~/.dsh && dsh plugin --profile web add "github:lpf20200901/dsh-memory-delta#v1.3.3"',
+    install: 'cd ~/.dsh && dsh plugin --profile web add "github:lpf20200901/dsh-memory-delta#v1.3.4"',
   },
   {
     id: 'dsh-sidebar-qa',
