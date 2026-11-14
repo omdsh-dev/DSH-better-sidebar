@@ -8,6 +8,39 @@ const sourceNames: Record<string, string> = {
   'builtin.feishu.tasks': 'Feishu tasks',
 }
 
+/**
+ * One retained window frame, whether it is docked in the right sidebar or
+ * floating. Both surfaces render the same content markers; only the shell and
+ * the dock/float control switch.
+ */
+export function clueWindowFrame(page: Page, marker: Locator): Locator {
+  return page.locator('[data-floating-window], [data-window-docked="true"]').filter({ has: marker })
+}
+
+/**
+ * Clue windows open DOCKED when a session is active. Present the floating
+ * surface the older cases measure and pin the transfer contract: the same
+ * frame becomes a floating dialog with the reverse dock control.
+ */
+export async function floatClueWindow(page: Page, marker: Locator): Promise<Locator> {
+  const frame = clueWindowFrame(page, marker)
+  await expect(frame).toHaveCount(1)
+  await expect(frame).toHaveAttribute('data-window-docked', 'true')
+  await frame.locator('[data-window-float]').click()
+  await expect(frame).toHaveAttribute('data-floating-window', '')
+  await expect(frame.locator('[data-window-dock]')).toBeVisible()
+  // Floating keeps the native sidebar tab selected (it now only shows the
+  // "open in a floating window" hint), which would hide the workbench the
+  // caller needs next. Return to the clue guide tab, the surface the window
+  // was opened from.
+  const workbenchTab = page.locator('[data-sidebar-right-panel]:visible [role="tab"]')
+    .filter({ hasText: /^\s*Clues\b/ }).first()
+  await expect(workbenchTab).toHaveCount(1)
+  await workbenchTab.click()
+  await expect(workbenchTab).toHaveAttribute('aria-selected', 'true')
+  return frame
+}
+
 /** Exercise the real portaled SelectMenu, including its close and focus contract. */
 export async function selectMenu(scope: Locator, label: string, option: string): Promise<void> {
   const trigger = scope.getByRole('button', { name: label, exact: true })

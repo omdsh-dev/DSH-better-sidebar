@@ -12,7 +12,7 @@ import { join } from 'node:path'
 import { test, expect, type Locator, type Page, type TestInfo } from '@playwright/test'
 import { createHostApi, dismissOnboarding, gotoPage, hostRpc, sendFirstMessage } from './host'
 import type { WorkflowRunView } from '../../src/workflow-runs'
-import { clueView, expectNoOverflow, selectMenu, setTheme, stableWidth } from './ui-helpers'
+import { clueView, expectNoOverflow, floatClueWindow, selectMenu, setTheme, stableWidth } from './ui-helpers'
 
 async function openGuide(page: Page, kind: string): Promise<void> {
   const panel = page.locator('[data-sidebar-right-panel]:visible')
@@ -338,15 +338,14 @@ for (const touch of [false, true]) {
       }
       await page.setViewportSize({ width: 1440, height: 900 })
       await resourceRow.getByRole('button', { name: 'acceptance.md', exact: true }).click()
-      const detail = page.locator('[data-floating-window]:visible')
+      const detail = await floatClueWindow(page, page.locator('[data-window-document-preview]'))
       await expect(detail.locator('[data-window-document-preview]')).toContainText('Browser acceptance')
       await screenshotMatrix(page, detail, 'resource-window', info)
       metrics.windowTab = await controlStyle(detail.locator('[data-window-mode-tab="preview"]'))
       await detail.getByRole('button', { name: 'Close', exact: true }).click()
       await clueView(clues, 'browse')
       await clues.getByRole('button', { name: 'Open clue source settings', exact: true }).click()
-      const sourceSettings = page.locator('[data-floating-window]:visible')
-        .filter({ has: page.locator('[data-sidebar-settings]') })
+      const sourceSettings = await floatClueWindow(page, page.locator('[data-sidebar-settings]'))
       await expect(sourceSettings).toBeVisible()
       await expect(sourceSettings).toContainText('Sidebar settings')
       const sourceSettingsTabs = sourceSettings.getByRole('tablist', { name: 'Settings groups', exact: true })

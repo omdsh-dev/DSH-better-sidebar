@@ -16,7 +16,7 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { test, expect, type Locator, type Page } from '@playwright/test'
-import { clueView, expectNoOverflow, selectClueSource, selectionMode, setTheme, stableWidth } from './ui-helpers'
+import { clueView, expectNoOverflow, floatClueWindow, selectClueSource, selectionMode, setTheme, stableWidth } from './ui-helpers'
 import { createHostApi, dismissOnboarding, gotoPage, hostRpc, sendFirstMessage, sidebarApi } from './host'
 
 /** One measured workbench layout, written to the test artifact for tuning. */
@@ -297,14 +297,18 @@ test('clues workbench stays usable across column widths and host themes', async 
               await expect(sourceNavigation.getByRole('button', { name: 'Source', exact: true })).toBeVisible()
               await expect(sourceNavigation.getByRole('tab')).toHaveCount(0)
             }
-            await expect(browser.locator('[data-clue-result-pagination]')).toHaveCount(0)
+            // Progressive results end in a scroll sentinel, not a pager.
+            await expect(browser.locator('[data-clue-result-sentinel]')).toBeAttached()
           } else {
             await expect(packs.getByRole('button', { name: /^Manage pack:/ })).toHaveCount(12)
-            await expect(packs.locator('[data-clue-pack-pagination]')).toHaveCount(0)
+            await expect(packs.locator('[data-clue-pack-sentinel]')).toBeAttached()
             const title = packs.getByRole('button', { name: 'Manage pack: Release context and implementation references', exact: true })
             await title.scrollIntoViewIfNeeded()
-            // 30px rows: one line with an ellipsis (the full name stays in the title/tooltip).
-            const packNameStyle = await title.locator('[data-clue-pack-name]').evaluate(node => {
+            // The title hook rides the ListRow BUTTON itself; truncation lives on
+            // its one name span. 30px rows: one line with an ellipsis (the full
+            // name stays in the tooltip).
+            await expect(title).toHaveAttribute('data-clue-pack-name', 'Release context and implementation references')
+            const packNameStyle = await title.locator(':scope > span').first().evaluate(node => {
               const s = getComputedStyle(node)
               return { clamp: s.webkitLineClamp, overflow: s.textOverflow, whiteSpace: s.whiteSpace }
             })
@@ -349,6 +353,7 @@ test('clues workbench stays usable across column widths and host themes', async 
     await expect(browser.locator('[data-clue-browser-state="page"] li').first()).toContainText('architecture')
     await selectClueSource(browser, 'builtin.github.issues')
     await expect(sourceNavigation).toHaveAttribute('data-clue-active-source', 'builtin.github.issues')
+    // The scope editor is still a locally owned floating task window.
     const scopeWindow = (): Locator => page.locator('[data-floating-window]')
       .filter({ has: page.locator('[data-clue-scope-window]') })
     await expect(scopeWindow()).toHaveCount(0)
@@ -408,7 +413,7 @@ test('clues workbench stays usable across column widths and host themes', async 
     await expect(query).toHaveValue('architecture')
     await packFilter.fill('')
     await expect(packs.getByRole('button', { name: /^Manage pack:/ })).toHaveCount(12)
-    await expect(packs.locator('[data-clue-pack-pagination]')).toHaveCount(0)
+    await expect(packs.locator('[data-clue-pack-sentinel]')).toBeAttached()
     const manage = packs.getByRole('button', { name: 'Manage pack: Release context and implementation references', exact: true })
     await manage.scrollIntoViewIfNeeded()
     const insert = packs.getByRole('button', { name: 'Insert pack: Release context and implementation references', exact: true })
@@ -418,7 +423,8 @@ test('clues workbench stays usable across column widths and host themes', async 
     await page.keyboard.press('Tab')
     await expect(insert).toBeFocused()
     await insert.press('Enter')
-    await expect(page.locator('[data-floating-window]:visible')).toHaveCount(0)
+    // Inserting a pack reference writes to the composer and opens no window.
+    await expect(page.locator('[data-window-pages]')).toHaveCount(0)
     await expect(query).toHaveValue('architecture')
 
     // A short workbench still contains the last pack row inside the 158px
@@ -499,7 +505,7 @@ test('clues workbench stays usable across column widths and host themes', async 
       .then(() => true).catch(() => false)
     expect(lateListRequest).toBe(false)
     expect(clueListRequests).toBe(requestsBeforeAppend + 1)
-    await expect(browser.locator('[data-clue-result-pagination]')).toHaveCount(0)
+    await expect(browser.locator('[data-clue-result-sentinel]')).toBeAttached()
     await results.evaluate(node => { node.scrollTop = 0 })
 
     // Runtime query flow: keyword search is trailing-edge debounced (300ms),
@@ -596,7 +602,10 @@ test('clues workbench stays usable across column widths and host themes', async 
     // this assertion pins.
     const beforeFeishuRequests = clueListRequests
     await selectClueSource(browser, 'builtin.feishu.docs')
-    await expect(browser.locator('[data-clue-browser-state="page"], [data-clue-browser-state="error"], [data-clue-browser-state="needs-scope"]').first()).toBeVisible()
+    // A cold Feishu source probes its real CLI before it can reach page/error/
+    // needs-scope; that probe can outlast the 5s expect default on a loaded
+    // host. This read is not what the case pins: the cached Files flip below is.
+    await expect(browser.locator('[data-clue-browser-state="page"], [data-clue-browser-state="error"], [data-clue-browser-state="needs-scope"]').first()).toBeVisible({ timeout: 45_000 })
     const afterFeishuRequests = clueListRequests
     requestMetrics.feishuSourceFlipListRequests = afterFeishuRequests - beforeFeishuRequests
     await selectClueSource(browser, 'builtin.files')
@@ -656,9 +665,7 @@ test('clues workbench stays usable across column widths and host themes', async 
     await page.keyboard.press('Escape')
     await expect(shelfMenu).toHaveCount(0)
     await shelfPack.click()
-    const packWindow = page.locator('[data-floating-window]')
-      .filter({ has: page.locator('[data-clue-pack-window]') })
-    await expect(packWindow).toBeVisible()
+    const packWindow = await floatClueWindow(page, page.locator('[data-clue-pack-window]'))
     await page.mouse.move(0, 0)
     await packWindow.screenshot({ path: testInfo.outputPath('clues-pack-management.png') })
     const packFooter = packWindow.locator('[data-clue-pack-footer]')
@@ -755,7 +762,7 @@ test('clues workbench stays usable across column widths and host themes', async 
     const readsBeforeDetail = clueReadRequests
     const editsBeforeDetail = clueLoadEditRequests
     await rowMenu.getByRole('menuitem', { name: 'Preview', exact: true }).click()
-    const detailWindow = page.locator('[data-floating-window]:visible').last()
+    const detailWindow = await floatClueWindow(page, page.locator('[data-window-document]'))
     await expect(detailWindow).toBeVisible()
     // Opening the detail reads the preview only. `loadEdit` is the explicit
     // Edit action, never an eager side effect of opening the window.
@@ -930,7 +937,7 @@ test('clues workbench stays usable across column widths and host themes', async 
     await expect(editor).toHaveValue('# Edited title\n\nLocal fixture content.')
     await expect(detailWindow).toContainText('Unsaved edits')
     await detailWindow.getByRole('button', { name: 'Discard edits', exact: true }).click()
-    await expect(page.locator('[data-floating-window]:visible')).toHaveCount(0)
+    await expect(page.locator('[data-window-pages]')).toHaveCount(0)
 
     // The keyboard path uses the same menu anchored at the focused row.
     await detailRow.getByRole('button', { name: 'api-contract.md', exact: true }).focus()
@@ -1000,9 +1007,7 @@ test('clues workbench stays usable across column widths and host themes', async 
     await expect(rowMenu).toBeVisible()
     await rowMenu.getByRole('menuitem', { name: 'Add to pack', exact: true }).click()
     expect((await composer.textContent())?.trim() ?? '').toBe(composerBeforeCollection)
-    const collectionWindow = page.locator('[data-floating-window]')
-      .filter({ has: page.locator('[data-clue-collection]') })
-    await expect(collectionWindow).toBeVisible()
+    const collectionWindow = await floatClueWindow(page, page.locator('[data-clue-collection]'))
     await page.mouse.move(0, 0)
     await collectionWindow.screenshot({ path: testInfo.outputPath('clues-collection-window.png') })
     const collectionForm = collectionWindow.locator('form[data-clue-collection]')
@@ -1075,9 +1080,7 @@ test('clues workbench stays usable across column widths and host themes', async 
     await expect(browser.getByRole('checkbox', { name: 'Select api-contract.md', exact: true })).toBeChecked()
     await expect(browser.getByRole('checkbox', { name: 'Select architecture-decisions.md', exact: true })).toBeChecked()
     await tray.getByRole('button', { name: 'Add to pack', exact: true }).click()
-    const reopenedCollection = page.locator('[data-floating-window]')
-      .filter({ has: page.locator('[data-clue-collection]') })
-    await expect(reopenedCollection).toBeVisible()
+    const reopenedCollection = await floatClueWindow(page, page.locator('[data-clue-collection]'))
     await reopenedCollection.getByRole('radio', { name: 'New', exact: true }).check()
     const reopenedName = reopenedCollection.getByRole('textbox', { name: 'Pack name', exact: true })
     await expect(reopenedName).toBeVisible()
@@ -1085,8 +1088,7 @@ test('clues workbench stays usable across column widths and host themes', async 
     await reopenedCollection.getByRole('button', { name: 'Close', exact: true }).click()
     await expect(reopenedCollection).toHaveCount(0)
     await tray.getByRole('button', { name: 'Add to pack', exact: true }).click()
-    const draftedCollection = page.locator('[data-floating-window]')
-      .filter({ has: page.locator('[data-clue-collection]') })
+    const draftedCollection = await floatClueWindow(page, page.locator('[data-clue-collection]'))
     await expect(draftedCollection.getByRole('textbox', { name: 'Pack name', exact: true })).toHaveValue('Review context')
     await expect(draftedCollection.getByRole('button', { name: 'Create', exact: true })).toBeVisible()
 
@@ -1135,9 +1137,7 @@ test('clues workbench stays usable across column widths and host themes', async 
     expect(JSON.stringify(await listBeforeCreate.json())).not.toContain('Window-created pack')
     await clueView(tab, 'packs')
     await packs.getByRole('button', { name: 'New', exact: true }).click()
-    const createWindow = page.locator('[data-floating-window]')
-      .filter({ has: page.getByRole('textbox', { name: 'Pack name', exact: true }) })
-    await expect(createWindow).toBeVisible()
+    const createWindow = await floatClueWindow(page, page.getByRole('textbox', { name: 'Pack name', exact: true }))
     await createWindow.getByRole('textbox', { name: 'Pack name', exact: true }).fill('Window-created pack')
     await page.mouse.move(0, 0)
     await createWindow.screenshot({ path: testInfo.outputPath('clues-pack-create-window.png') })
@@ -1152,9 +1152,7 @@ test('clues workbench stays usable across column widths and host themes', async 
 
     // The gear opens the full shared settings component on Clue sources.
     await tab.getByRole('button', { name: 'Open clue source settings', exact: true }).click()
-    const settingsWindow = page.locator('[data-floating-window]:visible')
-      .filter({ has: page.locator('[data-sidebar-settings]') })
-    await expect(settingsWindow).toBeVisible()
+    const settingsWindow = await floatClueWindow(page, page.locator('[data-sidebar-settings]'))
     await expect(settingsWindow).toContainText('Sidebar settings')
     const gearGroups = settingsWindow.getByRole('tablist', { name: 'Settings groups', exact: true })
     await expect(gearGroups.getByRole('tab')).toHaveCount(6)
@@ -1177,6 +1175,7 @@ test('clues workbench stays usable across column widths and host themes', async 
     for (let attempt = 0; attempt < 2; attempt += 1) {
       await settingsWindow.getByRole('button', { name: 'Close', exact: true }).click()
       await tab.getByRole('button', { name: 'Open clue source settings', exact: true }).click()
+      await floatClueWindow(page, page.locator('[data-sidebar-settings]'))
       await expect(settingsWindow.locator('[data-clue-source]')).toHaveCount(5)
       await expect(settingsWindow.locator('[data-clue-source-status="unchecked"]')).toHaveCount(0)
     }
@@ -1202,9 +1201,7 @@ test('clues workbench stays usable across column widths and host themes', async 
     expect(feishuConnection?.selectableCapabilities).toEqual(expect.arrayContaining(declaredCapabilities))
     expect(feishuConnection?.selectableCapabilities).toHaveLength(11)
     await settingsWindow.getByRole('button', { name: 'Configure source: Feishu docs', exact: true }).click()
-    const configWindow = page.locator('[data-floating-window]:visible')
-      .filter({ has: page.locator('[data-clue-config]') })
-    await expect(configWindow).toBeVisible()
+    const configWindow = await floatClueWindow(page, page.locator('[data-clue-config]'))
     // Permissions are progressive details; expand only when auditing the
     // requested capabilities instead of placing eleven rows on first view.
     await configWindow.locator('[data-clue-permissions] > summary').click()
@@ -1251,8 +1248,9 @@ test('clues workbench stays usable across column widths and host themes', async 
     // not a runtime mutation: use the same explicit Recheck as a real user so
     // the activation cache and observation bus see this new inspection result.
     await tab.getByRole('button', { name: 'Open clue source settings', exact: true }).click()
+    await floatClueWindow(page, page.locator('[data-sidebar-settings]'))
     await settingsWindow.getByRole('button', { name: 'Configure source: GitHub Issues', exact: true }).click()
-    const githubConfig = page.locator('[data-floating-window]:visible').filter({ has: page.locator('[data-clue-config]') })
+    const githubConfig = await floatClueWindow(page, page.locator('[data-clue-config]'))
     await githubConfig.getByRole('button', { name: 'Recheck', exact: true }).click()
     await expect(githubConfig.locator('[data-clue-dependency] [data-kind="missing"]')).toBeVisible()
     await githubConfig.getByRole('button', { name: 'Close', exact: true }).click()
@@ -1283,6 +1281,7 @@ test('clues workbench stays usable across column widths and host themes', async 
     await tab.getByRole('button', { name: 'Import', exact: true }).click()
     const share = page.locator('[data-clue-share-window]')
     await expect(share).toBeVisible()
+    const shareWindow = await floatClueWindow(page, share)
     await share.getByRole('tab', { name: 'Export', exact: true }).click()
     const panel = share.getByRole('tabpanel')
     const initialShareAction = share.getByRole('button', { name: 'Preview selection', exact: true })
@@ -1305,7 +1304,7 @@ test('clues workbench stays usable across column widths and host themes', async 
     const after = await action.boundingBox()
     expect(after?.y).toBe(before?.y)
     await share.screenshot({ path: testInfo.outputPath('clues-share-fixed-actions.png') })
-    await page.locator('[data-floating-window]').filter({ has: share }).getByRole('button', { name: 'Close', exact: true }).click()
+    await shareWindow.getByRole('button', { name: 'Close', exact: true }).click()
 
     // The plugin's same full settings component is also available in Settings.
     await page.getByRole('button', { name: 'Account menu', exact: true }).click()
@@ -1467,7 +1466,7 @@ test('clues share actions remain reachable in a minimum touch window', async ({ 
     await clueView(tab, 'packs')
     await packs.getByRole('button', { name: 'Refresh', exact: true }).click()
     await packs.getByRole('button', { name: 'Manage pack: Touch pack', exact: true }).click()
-    const touchPackWindow = page.locator('[data-floating-window]').filter({ has: page.locator('[data-clue-pack-window]') })
+    const touchPackWindow = await floatClueWindow(page, page.locator('[data-clue-pack-window]'))
     await touchPackWindow.evaluate(node => { (node as HTMLElement).style.width = '320px'; (node as HTMLElement).style.height = '240px' })
     await touchPackWindow.getByRole('button', { name: 'Add members', exact: true }).click()
     const touchAddPage = touchPackWindow.locator('[data-clue-add-member]')
@@ -1491,8 +1490,8 @@ test('clues share actions remain reachable in a minimum touch window', async ({ 
     await clueView(tab, 'packs')
     await tab.getByRole('button', { name: 'Import', exact: true }).click()
     const share = page.locator('[data-clue-share-window]')
+    const window = await floatClueWindow(page, share)
     await share.getByRole('tab', { name: 'Export', exact: true }).click()
-    const window = page.locator('[data-floating-window]:visible').last()
     await window.evaluate(node => {
       const element = node as HTMLElement
       element.style.width = '320px'

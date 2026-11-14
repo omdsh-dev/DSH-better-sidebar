@@ -13,7 +13,7 @@
 import { mkdirSync, realpathSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { test, expect, type Locator, type Page, type Route } from '@playwright/test'
-import { selectClueSource } from './ui-helpers'
+import { floatClueWindow, selectClueSource } from './ui-helpers'
 import { composerEditable, composerLocator, createHostApi, dismissOnboarding, gotoPage, hostRpc } from './host'
 
 const TITLE = 'UI19 local discussion fixture'
@@ -148,13 +148,11 @@ async function openFixture(page: Page): Promise<{ state: FixtureState; surface: 
   const tab = panel!.locator('[data-clue-tab]')
   await expect(tab).toBeVisible()
   await tab.locator('[data-clue-browse-region]').getByRole('button', { name: TITLE, exact: true }).click()
-  const frame = page.getByRole('dialog', { name: TITLE, exact: true })
-  await expect(frame.locator('[data-window-document-body]')).toContainText(BODY_SELECTION)
-  await expect(frame.locator('[data-clue-comment="ui19-comment"]')).toContainText(COMMENT_SELECTION)
-  const windowId = await frame.locator('[data-window-pages]').getAttribute('data-window-owner')
-  expect(windowId).toBeTruthy()
-  const surface = page.locator(`[data-window-surface-target=${JSON.stringify(windowId)}]`)
-  await expect(surface).toHaveCount(1)
+  // A clue window opens DOCKED in the right sidebar; this fixture floats it to
+  // measure content, selection and draft retention on the floating surface.
+  const surface = await floatClueWindow(page, page.locator('[data-window-document-body]'))
+  await expect(surface.locator('[data-window-document-body]')).toContainText(BODY_SELECTION)
+  await expect(surface.locator('[data-clue-comment="ui19-comment"]')).toContainText(COMMENT_SELECTION)
   return { state, surface, sessionId }
 }
 
@@ -272,16 +270,16 @@ test('UI19 moves the same draft and scroll DOM between floating and native sideb
   await expect(dock).toHaveText('Return to sidebar')
   await expect(dock.locator('svg')).toBeVisible()
   await dock.click()
-  await expect(surface).toHaveAttribute('data-window-surface', 'sidebar')
-  await expect(surface.locator('[data-window-docked="true"]')).toBeVisible()
+  await expect(surface).toHaveAttribute('data-window-docked', 'true')
+  await expect(surface).not.toHaveAttribute('data-floating-window', '')
   await expect(surface.locator('[data-window-float]')).toHaveText('Float window')
   await expect(input).toHaveValue(draft)
   expect(await input.evaluate((node, previous) => node === previous, inputNode)).toBe(true)
   expect(await surface.locator('[data-window-document-body]').evaluate((node, previous) => node === previous, bodyNode)).toBe(true)
 
   await surface.locator('[data-window-float]').click()
-  await expect(surface).toHaveAttribute('data-window-surface', 'floating')
-  await expect(surface.locator('[data-floating-window]')).toBeVisible()
+  await expect(surface).toHaveAttribute('data-floating-window', '')
+  await expect(surface).not.toHaveAttribute('data-window-docked', 'true')
   await expect(dock).toHaveText('Return to sidebar')
   await expect(dock).toHaveAccessibleName('Return to sidebar')
   await expect(dock.getByText('Return to sidebar', { exact: true })).toBeVisible()

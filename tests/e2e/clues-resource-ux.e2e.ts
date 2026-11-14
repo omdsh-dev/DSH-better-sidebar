@@ -6,7 +6,7 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { test, expect } from '@playwright/test'
-import { selectClueSource, setTheme } from './ui-helpers'
+import { clueWindowFrame, floatClueWindow, selectClueSource, setTheme } from './ui-helpers'
 import { createHostApi, dismissOnboarding, gotoPage, hostRpc, sendFirstMessage } from './host'
 
 const now = '2026-10-23T03:00:00.000Z'
@@ -82,8 +82,14 @@ test('clues cache revisits and expose source status, author and branches in one 
     await expect(browse.getByRole('button', { name: /^Review launch checklist/ })).toHaveCount(0)
     await filter.click()
     await page.getByRole('menuitem', { name: 'All', exact: true }).click()
-    const frame = page.locator('[data-floating-window]:visible').last()
-    await browse.getByRole('button', { name: /^Review launch checklist/ }).click()
+    // A clue detail opens DOCKED in the right sidebar; float the one surface
+    // this case measures. Reopening it opens docked again.
+    const frame = clueWindowFrame(page, page.locator('[data-window-document-preview]'))
+    const openDetail = async (name: RegExp): Promise<void> => {
+      await browse.getByRole('button', { name }).click()
+      await floatClueWindow(page, page.locator('[data-window-document-preview]'))
+    }
+    await openDetail(/^Review launch checklist/)
     const summary = frame.locator('[data-clue-resource-summary]')
     await expect(summary.locator('[data-clue-resource-state-chip]')).toHaveCount(0)
     await expect(summary).toContainText('Ada')
@@ -92,7 +98,7 @@ test('clues cache revisits and expose source status, author and branches in one 
     await expect(frame.locator('[data-window-document-preview]')).toContainText('Checklist')
     const reads = requests.filter(item => item.startsWith('read:')).length
     await frame.getByRole('button', { name: 'Close', exact: true }).click()
-    await browse.getByRole('button', { name: /^Review launch checklist/ }).click()
+    await openDetail(/^Review launch checklist/)
     await expect(frame.locator('[data-clue-resource-summary]')).toContainText('Ada')
     expect(requests.filter(item => item.startsWith('read:'))).toHaveLength(reads)
     await frame.getByRole('button', { name: 'Refresh', exact: true }).click()
@@ -107,7 +113,7 @@ test('clues cache revisits and expose source status, author and branches in one 
     await expect(rowChecks).toHaveAttribute('data-clue-resource-inline-checks', 'success')
     await expect(rowChecks.locator('[data-checks]')).toHaveAttribute('aria-label', 'CI: Passed')
     await expect(rowChecks).toHaveText('')
-    await browse.getByRole('button', { name: /^Improve the resource workbench/ }).click()
+    await openDetail(/^Improve the resource workbench/)
     await expect(summary).toContainText('Grace')
     await expect(summary.locator('[data-clue-change-request-fact="checks"]')).toContainText('Passed')
     await expect(summary.locator('[data-clue-change-request-fact="checks"]').getByRole('img'))
@@ -130,11 +136,11 @@ test('clues cache revisits and expose source status, author and branches in one 
     await frame.screenshot({ animations: 'disabled', path: testInfo.outputPath('pull-compact.png') })
     await frame.getByRole('button', { name: 'Close', exact: true }).click()
     await selectClueSource(browse, 'builtin.github.issues')
-    await browse.getByRole('button', { name: /^Keep resource details readable/ }).click()
+    await openDetail(/^Keep resource details readable/)
     await expect(summary).toContainText('Grace')
     await frame.getByRole('button', { name: 'Close', exact: true }).click()
     await selectClueSource(browse, 'builtin.feishu.docs')
-    await browse.getByRole('button', { name: /^Launch notes/ }).click()
+    await openDetail(/^Launch notes/)
     await expect(frame.locator('[data-window-document-preview]')).toContainText('Readable document content.')
     await expect(frame.locator('[data-window-document-preview] details summary')).toHaveText('Details')
     await frame.screenshot({ animations: 'disabled', path: testInfo.outputPath('document-readable.png') })
