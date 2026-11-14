@@ -104,6 +104,7 @@ interface PackManagementOptions {
   readonly face: BetterSidebarCluesClientFace
   readonly workspaces: readonly PackWorkspaceChoice[]
   readonly pack: CluePack
+  readonly sessionId?: string
   onInsertClue(clueId: string, title: string): boolean
   onInsertPack(pack: CluePack): boolean
   onNotice(message: string): void
@@ -203,7 +204,8 @@ export function openPackManagementWindow(options: PackManagementOptions): Window
   const titleFor = (dirty: boolean): string =>
     dirty ? `${options.pack.name} · ${t('cluePackUnsaved')}` : options.pack.name
   const handle: WindowHandle = options.windows.open({
-    id: packWindowId(options.pack.id),
+    id: packWindowId(options.pack.id) + (options.sessionId === undefined ? '' : ':session:' + options.sessionId),
+    sessionId: options.sessionId,
     surface: options.surface ?? preferredClueWindowSurface(),
     title: titleFor(false),
     size: 'collection',
@@ -848,10 +850,10 @@ export function PackManagementPage(
     openClueDetailWindow({
       windows: props.windows, face, workspaceId,
       target: { sourceId: row.clue.sourceId, typeId: row.clue.typeId, clueId: row.clue.id, title: row.clue.title, info: row.clue.info, subtitle: row.clue.subtitle },
-      workspaces, onInsertClue: props.onInsertClue,
+      workspaces, onInsertClue: props.onInsertClue, sessionId: props.sessionId,
       ...(props.onAddToPack === undefined ? {} : { onAddToPack: props.onAddToPack }),
     })
-  }, [face, props.onAddToPack, props.onInsertClue, props.windows, workspaceId, workspaces])
+  }, [face, props.onAddToPack, props.onInsertClue, props.sessionId, props.windows, workspaceId, workspaces])
 
   const openCandidateDetail = useCallback((candidate: ClueCandidate): void => {
     openClueDetailWindow({
@@ -864,10 +866,10 @@ export function PackManagementPage(
         title: candidate.title,
           info: candidate.info, subtitle: candidate.subtitle,
       },
-      workspaces, onInsertClue: props.onInsertClue,
+      workspaces, onInsertClue: props.onInsertClue, sessionId: props.sessionId,
       ...(props.onAddToPack === undefined ? {} : { onAddToPack: props.onAddToPack }),
     })
-  }, [face, props.onAddToPack, props.onInsertClue, props.windows, workspaceId, workspaces])
+  }, [face, props.onAddToPack, props.onInsertClue, props.sessionId, props.windows, workspaceId, workspaces])
 
   const onRowMenuSelect = useCallback((id: string): void => {
     const menu = rowMenu

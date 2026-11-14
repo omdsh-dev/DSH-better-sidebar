@@ -14,6 +14,13 @@ interface SessionPromptFace {
 }
 export interface ClueSessionReceipt { readonly sessionId: string; readonly accepted: true }
 
+/** The host explicitly rejected admission before sending; this intent can be retried. */
+export class ClueWriterHeldError extends ClueError {
+  constructor(meta?: Record<string, string>) {
+    super('conflict', 'The conversation is in use by another DSH instance.', meta)
+  }
+}
+
 /** The side start callback is the already mounted sidechat.start handler. */
 export function createClueSessionDelivery(ctx: Context, startSide: (payload: { sessionId: string; question: string }) => Promise<{ childId: string }>) {
   const deliveries = new Map<string, { prompt: string; pending: boolean; result: Promise<ClueSessionReceipt> }>()
@@ -53,7 +60,11 @@ export function createClueSessionDelivery(ctx: Context, startSide: (payload: { s
         if (signal?.aborted || (error instanceof Error && error.name === 'AbortError')) throw new ClueError('cancelled', 'the operation was cancelled')
         const code = error !== null && typeof error === 'object' ? (error as { code?: unknown }).code : undefined
         if (code === 'session/not-found') throw new ClueError('not-found', 'the target conversation is unavailable')
-        if (code === 'session/writer-held' || code === 'session/agent-busy') throw new ClueError('conflict', 'the target conversation could not admit the operation')
+        if (code === 'session/writer-held') {
+          deliveries.delete(key)
+          throw new ClueWriterHeldError()
+        }
+        if (code === 'session/agent-busy') throw new ClueError('conflict', 'the target conversation could not admit the operation')
         throw new ClueError('failed', 'the conversation operation could not be admitted')
       }
     }).finally(() => { entry.pending = false }) }

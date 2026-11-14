@@ -1,13 +1,13 @@
 /** Whole-resource discussion. Source replies/reviews stay separate from the body. */
 import { useId, useMemo, useRef, useState, type ReactNode } from 'react'
-import { MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
+import { MarkdownText, type MarkdownPathImages } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ClueComment, ClueCommentCapabilities, ClueDiscussionPage } from '../../../clues/types.ts'
 import { markdownTextProps } from '../../markdown-labels.tsx'
 import { t, type CopyKey } from '../../locales.ts'
 import { LoadingIndicator } from '../../ui/LoadingIndicator.tsx'
 import { ActionButton, ErrorBlock, Notice, TextArea } from '../../ui/index.ts'
 import { clueErrorMessage } from '../copy.ts'
-import { personLabel, formatResourceTime } from '../resource-summary.tsx'
+import { ResourcePerson, personLabel, formatResourceTime } from '../resource-summary.tsx'
 import { ResourceSelectionActions, type ClueSelectionActionTarget } from '../selection-actions.tsx'
 import css from './comments.module.css'
 
@@ -19,6 +19,8 @@ export interface ResourceDiscussionProps {
   readonly loading: boolean
   readonly error?: string
   readonly readOnly?: boolean
+  readonly pathImages?: MarkdownPathImages
+  readonly showAvatars?: boolean
   /** Captured resource ownership; only each comment's body enters this surface. */
   readonly selectionTarget?: Pick<ClueSelectionActionTarget, 'workspaceId' | 'sessionId' | 'resource'>
   onLoad(cursor?: string, parentId?: string): void
@@ -106,11 +108,13 @@ export function ResourceDiscussion(props: ResourceDiscussionProps): ReactNode {
     {comments.map(comment => {
       const url = commentUrl(comment.url)
       const body = comment.format === 'text/markdown'
-        ? <div className={css.body}><MarkdownText {...markdownTextProps(comment.body, { copyLabel: t('copy'), copiedLabel: t('copied'), codeLabel: t('codeBlockTitle'), wrapLabel: t('codeBlockWrap'), unwrapLabel: t('codeBlockUnwrap') })} /></div>
+        ? <div className={css.body}><MarkdownText {...markdownTextProps(comment.body, { copyLabel: t('copy'), copiedLabel: t('copied'), codeLabel: t('codeBlockTitle'), wrapLabel: t('codeBlockWrap'), unwrapLabel: t('codeBlockUnwrap') }, props.pathImages)} /></div>
         : <div className={css.body}>{comment.body}</div>
       return <article key={comment.id} className={css.comment} data-clue-comment={comment.id} data-clue-reply-to={comment.replyToId}>
         <div className={css.meta}>
-          <strong>{personLabel(comment.author) ?? t('clueResourceUnknownPerson')}</strong>
+          <strong>{props.showAvatars && comment.author !== undefined
+            ? <ResourcePerson person={comment.author} linked />
+            : personLabel(comment.author) ?? t('clueResourceUnknownPerson')}</strong>
           {comment.createdAt !== undefined && <time dateTime={comment.createdAt}>{formatResourceTime(comment.createdAt)}</time>}
           {comment.reviewState !== undefined && <span className={css.state} data-clue-review-state={comment.reviewState}>{reviewStateLabel(comment.reviewState)}</span>}
           {comment.resolved === true && <span className={css.state}>{copy('clueCommentResolved')}</span>}

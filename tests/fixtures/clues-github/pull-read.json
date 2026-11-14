@@ -18,7 +18,8 @@
         "author": {
           "login": "umairnaeem0309",
           "name": "Umair Naeem",
-          "url": "https://github.com/umairnaeem0309"
+          "url": "https://github.com/umairnaeem0309",
+          "avatarUrl": "https://avatars.githubusercontent.com/u/1234?v=4"
         },
         "assignees": {
           "nodes": [
@@ -32,13 +33,16 @@
         "additions": 42,
         "deletions": 7,
         "headRefName": "fix/type-resolution",
+        "headRefOid": "2345678abc012345678abc012345678abc0123456",
         "baseRefName": "trunk",
         "headRepository": { "nameWithOwner": "umairnaeem0309/cli" },
         "reviewDecision": "APPROVED",
         "mergeable": "MERGEABLE",
+        "mergeStateStatus": "CLEAN",
         "statusCheckRollup": {
           "state": "SUCCESS",
           "contexts": {
+            "totalCount": 28,
             "nodes": [
               {
                 "__typename": "CheckRun",

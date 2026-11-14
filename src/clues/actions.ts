@@ -2,6 +2,7 @@
 import { existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { ClueError } from './error.ts'
+import { ClueWriterHeldError } from './session-delivery.ts'
 import type { ClueDraft, ClueDraftManager } from './drafts.ts'
 import type { ClueApiContext, CluesReadParams, Locator } from './types.ts'
 
@@ -29,6 +30,7 @@ export interface ClueActionDelivery {
   readonly skillPath: string
   readonly scriptPath?: string
   readonly draft?: ClueDraft
+  readonly signal?: AbortSignal
 }
 export interface ClueActionStartResult {
   readonly action: ClueSelectionAction
@@ -79,7 +81,7 @@ const instructions: Record<Exclude<ClueSelectionAction, 'explain'>, string> = {
 }
 /** Public handler for `clues.actions.start` (registered by the host entry). */
 export function createClueActionStartHandler(deps: ClueActionStartDeps): (payload: unknown, context: ClueApiContext) => Promise<ClueActionStartResult> {
-  const starts = new Map<string, { signature: string; pending: boolean; result: Promise<ClueActionStartResult> }>()
+  const starts = new Map<string, { signature: string; pending: boolean; retryable: boolean; draft?: ClueDraft; result: Promise<ClueActionStartResult> }>()
   return async (payload, context) => {
     if (context.caller !== 'ui') throw new ClueError('permission-denied', 'only an explicit interactive action can start a clue action')
     const input = record(payload)
@@ -100,15 +102,15 @@ export function createClueActionStartHandler(deps: ClueActionStartDeps): (payloa
     const previous = starts.get(key)
     if (previous !== undefined) {
       if (previous.signature !== signature) throw new ClueError('conflict', 'the action identity was already used for another operation')
-      return previous.result
+      if (!previous.retryable) return previous.result
     }
-    if (starts.size >= 128) {
+    if (previous === undefined && starts.size >= 128) {
       const oldest = [...starts].find(([, entry]) => !entry.pending)?.[0]
       if (oldest === undefined) throw new ClueError('rate-limited', 'too many clue operations are pending')
       starts.delete(oldest)
     }
-    const entry = { signature, pending: true, result: Promise.resolve().then(async (): Promise<ClueActionStartResult> => {
-      let draft: ClueDraft | undefined
+    let draft = previous?.draft
+    const entry = { signature, pending: true, retryable: false, draft, result: Promise.resolve().then(async (): Promise<ClueActionStartResult> => {
       let scriptPath: string | undefined
       let commitUrl: string | undefined
       const skillPath = assetPath(action === 'explain' ? 'clue-selection-explain/SKILL.md' : 'clue-selection-edit/SKILL.md')
@@ -116,7 +118,8 @@ export function createClueActionStartHandler(deps: ClueActionStartDeps): (payloa
         commitUrl = deps.getCommitUrl()
         if (commitUrl === undefined) throw new ClueError('failed', 'the local draft commit endpoint is unavailable')
         scriptPath = assetPath('clue-selection-edit/scripts/commit-draft.mjs')
-        draft = await deps.drafts.prepare(resource, { caller: context.caller, signal: context.signal, sessionId })
+        draft ??= await deps.drafts.prepare(resource, { caller: context.caller, signal: context.signal, sessionId })
+        entry.draft = draft
       }
       const prompt = action === 'explain'
         ? [
@@ -135,10 +138,16 @@ export function createClueActionStartHandler(deps: ClueActionStartDeps): (payloa
           ].join('\n')
       if (context.signal?.aborted) throw new ClueError('cancelled', 'the clue action was cancelled; its prepared draft was preserved')
       try {
-        const delivery = await deps.deliver({ workspaceId, sessionId, target, requestId, action, resource, selection, prompt, skillPath, ...(scriptPath === undefined ? {} : { scriptPath }), ...(draft === undefined ? {} : { draft }) })
+        const delivery = await deps.deliver({ workspaceId, sessionId, target, requestId, action, resource, selection, prompt, skillPath, signal: context.signal, ...(scriptPath === undefined ? {} : { scriptPath }), ...(draft === undefined ? {} : { draft }) })
         return { action, target, ...(draft === undefined ? {} : { draft }), ...(delivery?.deliveryId === undefined ? {} : { deliveryId: delivery.deliveryId }) }
-      } catch {
-        throw new ClueError('failed', 'the action could not be delivered; any prepared draft was preserved', draft === undefined ? undefined : { draftId: draft.draftId })
+      } catch (error) {
+        const meta = draft === undefined ? undefined : { draftId: draft.draftId }
+        if (error instanceof ClueWriterHeldError) {
+          entry.retryable = true
+          throw new ClueWriterHeldError(meta)
+        }
+        if (error instanceof ClueError) throw new ClueError(error.category, error.message, meta)
+        throw new ClueError('failed', 'The conversation did not confirm receipt of the action.', meta)
       }
     }).finally(() => { entry.pending = false }) }
     starts.set(key, entry)

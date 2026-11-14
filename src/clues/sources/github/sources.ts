@@ -296,6 +296,11 @@ function dataOf(kind: GithubKind, snapshot: GithubResourceSnapshot): JsonObject 
   }
   if (snapshot.stateReason !== undefined) data.stateReason = snapshot.stateReason
   if (snapshot.author !== undefined) data.author = snapshot.author
+  const imageRepository = kind === 'pull' ? snapshot.headRepository : snapshot.resource.owner + '/' + snapshot.resource.repo
+  if (snapshot.imageRef !== undefined && imageRepository !== undefined) {
+    data.imageRepository = imageRepository
+    data.imageRef = snapshot.imageRef
+  }
   if (snapshot.viewerPermission !== undefined) data.viewerPermission = snapshot.viewerPermission
   if (snapshot.isDraft !== undefined) data.isDraft = snapshot.isDraft
   if (snapshot.merged !== undefined) data.merged = snapshot.merged
@@ -372,6 +377,7 @@ interface GithubInfoFields {
   readonly author?: string
   readonly authorName?: string
   readonly authorUrl?: string
+  readonly authorAvatarUrl?: string
   readonly assignees?: readonly GithubPerson[]
   readonly labels?: readonly string[]
   readonly createdAt?: string
@@ -392,6 +398,8 @@ interface GithubInfoFields {
   readonly mergeable?: 'mergeable' | 'conflicting' | 'unknown'
   readonly checks?: ClueResourceInfo['checks']
   readonly checkRuns?: readonly ClueResourceCheck[]
+  readonly checkCount?: number
+  readonly mergeStatus?: ClueResourceInfo['mergeStatus']
 }
 
 /** Map one provider person to the public display person (login -> handle). */
@@ -430,6 +438,7 @@ function githubInfoOf(
         handle: fields.author,
         ...(fields.authorName === undefined ? {} : { name: fields.authorName }),
         ...(fields.authorUrl === undefined ? {} : { url: fields.authorUrl }),
+        ...(fields.authorAvatarUrl === undefined ? {} : { avatarUrl: fields.authorAvatarUrl }),
       }
   const assignees = (fields.assignees ?? []).map(githubPersonOf)
   const createdAt = isoInstantOf(fields.createdAt)
@@ -475,6 +484,8 @@ function githubInfoOf(
     ...(fields.mergeable === undefined ? {} : { mergeable: fields.mergeable }),
     ...(fields.checks === undefined ? {} : { checks: fields.checks }),
     ...(fields.checkRuns === undefined ? {} : { checkRuns: fields.checkRuns }),
+    ...(fields.checkCount === undefined ? {} : { checkCount: fields.checkCount }),
+    ...(fields.mergeStatus === undefined ? {} : { mergeStatus: fields.mergeStatus }),
   }
 }
 

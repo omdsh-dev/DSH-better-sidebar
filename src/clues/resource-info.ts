@@ -16,6 +16,8 @@
  */
 import {
   CLUE_CHECK_STATES,
+  CLUE_CHECK_RUN_STATES,
+  CLUE_MERGE_STATES,
   CLUE_MAX_CHECK_RUNS,
   CLUE_RESOURCE_STATES,
   ClueError,
@@ -23,6 +25,8 @@ import {
   type CluePerson,
   type ClueResourceBranches,
   type ClueResourceCheck,
+  type ClueCheckRunState,
+  type ClueMergeState,
   type ClueResourceCounts,
   type ClueResourceInfo,
   type ClueResourceState,
@@ -173,7 +177,7 @@ function personOf(value: unknown, what: string): CluePerson | undefined {
   if (!isRecord(value)) {
     throw new ClueError('invalid-request', `${what} must be a JSON object`)
   }
-  const person: { id?: string; name?: string; handle?: string; url?: string } = {}
+  const person: { id?: string; name?: string; handle?: string; url?: string; avatarUrl?: string } = {}
   if (value.id !== undefined) person.id = displayText(value.id, `${what}.id`, MAX_CLUE_PERSON_TEXT)
   if (value.name !== undefined) person.name = displayText(value.name, `${what}.name`, MAX_CLUE_PERSON_TEXT)
   if (value.handle !== undefined) person.handle = displayText(value.handle, `${what}.handle`, MAX_CLUE_PERSON_TEXT)
@@ -181,6 +185,7 @@ function personOf(value: unknown, what: string): CluePerson | undefined {
   if (Object.keys(person).length === 0) {
     throw new ClueError('invalid-request', `${what} must name at least one id, name, handle or url`)
   }
+  if (value.avatarUrl !== undefined) person.avatarUrl = displayUrl(value.avatarUrl, what + '.avatarUrl')
   return person
 }
 
@@ -310,7 +315,10 @@ function checkRunsOf(value: unknown): ClueResourceCheck[] | undefined {
     const what = `clue resource info checkRuns[${index}]`
     if (!isRecord(entry)) throw new ClueError('invalid-request', `${what} must be a JSON object`)
     const name = displayText(entry.name, `${what}.name`, MAX_CLUE_CHECK_NAME)
-    const state = checkStateOf(entry.state, `${what}.state`)
+    if (typeof entry.state !== 'string' || !(CLUE_CHECK_RUN_STATES as readonly string[]).includes(entry.state)) {
+      throw new ClueError('invalid-request', what + '.state is not a check run state')
+    }
+    const state = entry.state as ClueCheckRunState
     const url = entry.url === undefined ? undefined : displayUrl(entry.url, `${what}.url`)
     return { name, state, ...(url === undefined ? {} : { url }) }
   })
@@ -365,6 +373,8 @@ export function normalizeClueResourceInfo(
     mergeable?: 'mergeable' | 'conflicting' | 'unknown'
     checks?: ClueCheckState
     checkRuns?: readonly ClueResourceCheck[]
+    checkCount?: number
+    mergeStatus?: ClueMergeState
   } = {}
 
   const state = stateOf(value.state)
@@ -440,6 +450,18 @@ export function normalizeClueResourceInfo(
   if (value.checks !== undefined) info.checks = checkStateOf(value.checks, what + '.checks')
   const checkRuns = checkRunsOf(value.checkRuns)
   if (checkRuns !== undefined) info.checkRuns = checkRuns
+  if (value.checkCount !== undefined) {
+    if (typeof value.checkCount !== 'number' || !Number.isSafeInteger(value.checkCount) || value.checkCount < 0) {
+      throw new ClueError('invalid-request', what + '.checkCount must be a non-negative integer')
+    }
+    info.checkCount = value.checkCount
+  }
+  if (value.mergeStatus !== undefined) {
+    if (typeof value.mergeStatus !== 'string' || !(CLUE_MERGE_STATES as readonly string[]).includes(value.mergeStatus)) {
+      throw new ClueError('invalid-request', what + '.mergeStatus is not a merge state')
+    }
+    info.mergeStatus = value.mergeStatus as ClueMergeState
+  }
 
   return info
 }

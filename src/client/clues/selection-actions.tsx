@@ -34,7 +34,7 @@ import type { PendingReference } from '../conversation-draft.ts'
 import { isLikelyImeKey } from '../ime-guard.ts'
 import { ActionButton } from '../ui/index.ts'
 import type { ClueClientResourceInput } from './api.ts'
-import { clueErrorMessage } from './copy.ts'
+import { categoryOf, clueErrorHint } from './copy.ts'
 import css from './selection-actions.module.css'
 
 /** Every menu entry, in visual order. */
@@ -285,10 +285,10 @@ export function SelectionActionMenu(props: SelectionActionMenuProps): ReactNode 
   const actions = clueSelectionActionsFor(comment)
   const menuRef = useRef<HTMLDivElement | null>(null)
   const [busy, setBusy] = useState<ClueSelectionAction | null>(null)
-  const [failure, setFailure] = useState<string | null>(null)
+  const [failure, setFailure] = useState<{ message: string; retry?: ClueSelectionServerAction } | null>(null)
   const [destination, setDestination] = useState<'main' | 'side'>('main')
   const busyRef = useRef(false)
-  const lastRequestRef = useRef<{ key: string; requestId: string } | null>(null)
+  const lastRequestRef = useRef<{ key: string; requestId: string; action: ClueSelectionServerAction } | null>(null)
 
   const attachRef = (node: HTMLDivElement | null): void => {
     menuRef.current = node
@@ -347,7 +347,7 @@ export function SelectionActionMenu(props: SelectionActionMenuProps): ReactNode 
     try {
       const requestResource = requestResourceOf(resource)
       const key = JSON.stringify([workspaceId, sessionId, requestResource, comment === true, action, destination, selection])
-      if (lastRequestRef.current?.key !== key) lastRequestRef.current = { key, requestId: globalThis.crypto.randomUUID() }
+      if (lastRequestRef.current?.key !== key) lastRequestRef.current = { key, requestId: globalThis.crypto.randomUUID(), action }
       // The server needs the comment flag itself (not just the UI filter) so
       // a tampered client cannot turn a comment selection into a write.
       await startClueSelectionAction({
@@ -366,7 +366,14 @@ export function SelectionActionMenu(props: SelectionActionMenuProps): ReactNode 
     } catch (error) {
       busyRef.current = false
       setBusy(null)
-      setFailure(clueErrorMessage(error, clueSelectionLabel('failed')))
+      const category = categoryOf(error)
+      const writerHeld = category === 'conflict' && error instanceof Error
+        && error.message === 'The conversation is in use by another DSH instance.'
+      const message = writerHeld ? t('clueSelectionWriterHeld')
+        : category === 'cancelled' ? t('cancel')
+          : category === 'not-found' || category === 'unsupported' || category === 'conflict' ? t('clueSelectionSessionUnavailable')
+            : clueErrorHint(category) ?? (category === 'failed' ? t('clueSelectionReceiptUnknown') : clueSelectionLabel('failed'))
+      setFailure({ message, ...(writerHeld ? { retry: action } : {}) })
     }
   }
 
@@ -425,7 +432,8 @@ export function SelectionActionMenu(props: SelectionActionMenuProps): ReactNode 
         busy: busy === action,
         className: css.item,
         'data-clue-selection-action': action,
-        disabled: busy !== null,
+        disabled: busy !== null || (failure !== null && action !== 'insert' && failure.retry === undefined
+          && action === lastRequestRef.current?.action),
         'aria-busy': busy === action ? 'true' : undefined,
         onClick: () => { void run(action) },
       },
@@ -436,7 +444,11 @@ export function SelectionActionMenu(props: SelectionActionMenuProps): ReactNode 
           className: css.error,
           role: 'alert',
           'data-clue-selection-error': '',
-        }, failure)
+        }, failure.message,
+        failure.retry === undefined ? null : createElement(ActionButton, {
+          size: 'sm', variant: 'ghost', className: css.item, role: 'menuitem',
+          onClick: () => { if (failure.retry !== undefined) void run(failure.retry) },
+        }, t('retry')))
       : null,
   )
 }
@@ -476,28 +488,31 @@ export function ResourceSelectionActions(props: ResourceSelectionActionsProps): 
     },
   })
 
-  const capture = (): void => {
+  const capture = (point?: MouseEvent<HTMLDivElement>): boolean => {
     const wrapper = wrapperRef.current
     const selection = window.getSelection()
     if (wrapper === null || selection === null || selection.isCollapsed
       || selection.anchorNode === null || selection.focusNode === null) {
-      popup.hide()
-      return
+      if (point === undefined) popup.hide()
+      return false
     }
     if (!wrapper.contains(selection.anchorNode) || !wrapper.contains(selection.focusNode)) {
-      popup.hide()
-      return
+      if (point === undefined) popup.hide()
+      return false
     }
     const text = selection.toString()
     if (text.trim() === '') {
-      popup.hide()
-      return
+      if (point === undefined) popup.hide()
+      return false
     }
     const range = selection.getRangeAt(0)
     const rect = typeof range.getBoundingClientRect === 'function'
       ? range.getBoundingClientRect()
       : { left: 0, top: 0, width: 0 }
-    popup.show(text, rect.left + rect.width / 2, rect.top, text)
+    if (point !== undefined && point.button !== 0 && !Array.from(range.getClientRects()).some(box =>
+      point.clientX >= box.left && point.clientX <= box.right && point.clientY >= box.top && point.clientY <= box.bottom)) return false
+    popup.show(text, point?.clientX ?? rect.left + rect.width / 2, point?.clientY ?? rect.top, text)
+    return true
   }
 
   return createElement(
@@ -509,8 +524,13 @@ export function ResourceSelectionActions(props: ResourceSelectionActionsProps): 
         ref: wrapperRef,
         className: css.surface,
         'data-clue-selection-surface': '',
-        onMouseUp: capture,
-        onKeyUp: capture,
+        onMouseUp: (event: MouseEvent<HTMLDivElement>) => { if (event.button === 0) capture() },
+        onKeyUp: () => { capture() },
+        onContextMenu: (event: MouseEvent<HTMLDivElement>) => {
+          if (!capture(event)) return
+          event.preventDefault()
+          event.stopPropagation()
+        },
       },
       children,
     ),

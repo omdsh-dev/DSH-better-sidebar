@@ -2,7 +2,7 @@
 import { ClueError, type ClueComment } from '../../types.ts'
 import type { GithubResource } from './ids.ts'
 
-const AUTHOR = 'author{login url ... on User{name} ... on Organization{name}}'
+const AUTHOR = 'author{login url avatarUrl(size:48) ... on User{name} ... on Organization{name}}'
 const COMMENT_FIELDS = `id body createdAt updatedAt url ${AUTHOR}`
 const REVIEW_FIELDS = `id body createdAt submittedAt updatedAt url state ${AUTHOR}`
 
@@ -53,6 +53,7 @@ export function githubCommentOf(value: unknown, rest = false): ClueComment {
   const handle = text(author?.login)
   const name = text(author?.name)
   const authorUrl = text(rest ? author?.html_url : author?.url)
+  const avatarUrl = text(rest ? author?.avatar_url : author?.avatarUrl)
   const review = node.__typename === 'PullRequestReview'
   const createdAt = text(rest ? node.created_at : review ? node.submittedAt ?? node.createdAt : node.createdAt)
   const updatedAt = text(rest ? node.updated_at : node.updatedAt)
@@ -62,6 +63,7 @@ export function githubCommentOf(value: unknown, rest = false): ClueComment {
     ...(handle === undefined && name === undefined ? {} : { author: {
       ...(handle === undefined ? {} : { handle }), ...(name === undefined ? {} : { name }),
       ...(authorUrl === undefined ? {} : { url: authorUrl }),
+      ...(avatarUrl === undefined ? {} : { avatarUrl }),
     } }),
     ...(createdAt === undefined ? {} : { createdAt }), ...(updatedAt === undefined ? {} : { updatedAt }),
     ...(url === undefined ? {} : { url }),

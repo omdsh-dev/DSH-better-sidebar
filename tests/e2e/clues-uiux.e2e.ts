@@ -163,8 +163,26 @@ test('clues workbench stays usable across column widths and host themes', async 
     const layoutMetrics: ClueLayoutMetric[] = []
     const colorMetrics: Record<string, unknown>[] = []
     await expect(tab.getByRole('button', { name: 'Resources', exact: true })).toHaveAttribute('aria-expanded', 'true')
-    await expect(packs).toBeHidden()
+    const packHeading = tab.getByRole('button', { name: 'Collections', exact: true })
+    if (await packHeading.getAttribute('aria-expanded') === 'false') await packHeading.click()
+    await expect(packs).toBeVisible()
     await expect(browser.getByRole('region', { name: 'Resources', exact: true })).toBeVisible()
+    const sash = tab.getByRole('separator', { name: 'Resources / Collections', exact: true })
+    const topHeight = (await browser.boundingBox())!.height
+    const handle = (await sash.boundingBox())!
+    const x = handle.x + handle.width / 2
+    const y = handle.y + handle.height / 2
+    await page.mouse.move(x, y)
+    await page.mouse.down()
+    await page.mouse.move(x, y - 36, { steps: 6 })
+    await page.mouse.up()
+    await expect.poll(async () => (await browser.boundingBox())!.height).toBeLessThan(topHeight - 20)
+    const afterDrag = (await browser.boundingBox())!.height
+    await sash.press('ArrowDown')
+    await expect.poll(async () => (await browser.boundingBox())!.height).toBeGreaterThan(afterDrag)
+    await packHeading.click()
+    await expect(sash).toHaveCount(0)
+    await expect(packs).toBeHidden()
     await clueView(tab, 'packs')
     await expect(packs.getByRole('region', { name: 'Collections', exact: true })).toBeVisible()
     await clueView(tab, 'browse')

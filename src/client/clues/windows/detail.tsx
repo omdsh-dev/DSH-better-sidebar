@@ -33,7 +33,7 @@
  * candidate uses a deterministic hash of source/type/locator, so clicking the
  * same row twice focuses the same window instead of stacking previews.
  */
-import { createElement, useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { Fragment, createElement, useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { ReactNode } from 'react'
 import { IconRefreshOutlineRegular, IconRightUpOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import { ActionButton, IconButton } from '../../ui/kit.tsx'
@@ -63,10 +63,14 @@ import type { BetterSidebarCluesClientFace } from '../registry.ts'
 import { categoryOf, clueErrorMessage, clueErrorHint } from '../copy.ts'
 import { preferredClueWindowSurface, type ClueWindowSurface } from '../../prefs.ts'
 import { t } from '../../locales.ts'
+import { isAbsolutePath, resolveSidebarPath } from '../../paths.ts'
+import { createMarkdownPathImages } from '../../markdown-images.ts'
+import { githubPathImages } from '../sources/github/images.ts'
 import { supportsWindowEditing } from '../../windows/format-content.tsx'
 import { SelectMenu } from '../../ui/SelectMenu.tsx'
 import { LoadingIndicator } from '../../ui/LoadingIndicator.tsx'
 import {
+  PullRequestStatus,
   ResourceSummary,
   formatResourceTime,
   mergeResourceInfo,
@@ -595,6 +599,10 @@ function createDetailController(options: ClueDetailWindowOptions): DetailControl
   const { face, workspaceId, target } = options
   const readCache = options.readCache ?? (face.api === cluesApi ? defaultReadCache : noReadCache)
   const resource = resourceOf(options)
+  const github = target.sourceId === BUILTIN_SOURCE_IDS.githubIssues || target.sourceId === BUILTIN_SOURCE_IDS.githubPulls
+  const pull = target.sourceId === BUILTIN_SOURCE_IDS.githubPulls
+  const discussionId = 'clue-discussion-' + locatorHash([workspaceId, clueDetailWindowId(target), options.sessionId ?? ''])
+  const workspaceRoot = options.workspaces?.find(workspace => workspace.workspaceId === workspaceId)?.title
   const bodyResource = { ...resource, includeDiscussion: false as const }
   // A window keeps the session captured when it opened; never borrow the
   // active composer/session later when the reader selects its retained body.
@@ -643,12 +651,7 @@ function createDetailController(options: ClueDetailWindowOptions): DetailControl
     mode: 'preview',
     read: initialRead ?? null,
     edit: null,
-    info: infoOf(
-      initialRead?.format ?? '',
-      initialRead?.data ?? null,
-      target.info,
-      initialRead === undefined ? undefined : attachedInfo(initialRead),
-    ),
+    info: initialRead === undefined ? target.info : readInfoOf(initialRead, target.info),
     editable: undefined,
     readLoading: initialRead === undefined,
     refreshing: false,
@@ -718,10 +721,37 @@ function createDetailController(options: ClueDetailWindowOptions): DetailControl
     )
   }
 
+  let imageRead: ClueReadResult | null = null
+  let pathImages: WindowDocumentContent['pathImages']
+  function previewImages(): WindowDocumentContent['pathImages'] {
+    if (imageRead === state.read) return pathImages
+    imageRead = state.read
+    pathImages = undefined
+    if (imageRead?.format !== 'text/markdown') return undefined
+    if (github) pathImages = githubPathImages(imageRead.data)
+    else if (target.sourceId === BUILTIN_SOURCE_IDS.files && imageRead.freshness !== 'snapshot') {
+      const path = imageRead.info?.path
+      if (path !== undefined && (isAbsolutePath(path) || workspaceRoot !== undefined)) {
+        pathImages = createMarkdownPathImages(undefined, resolveSidebarPath(workspaceRoot, path))
+      }
+    }
+    return pathImages
+  }
+
+  function readInfoOf(read: ClueReadResult, base: ClueResourceInfo | undefined): ClueResourceInfo | undefined {
+    // A pull read is authoritative for its volatile checks. Missing after a
+    // refresh means unavailable now, not the old head's successful status.
+    const { checks: _checks, checkRuns: _runs, checkCount: _count,
+      review: _review, mergeStatus: _status, mergeable: _mergeable, ...stable } = base ?? {}
+    return infoOf(read.format, read.data, pull ? stable : base, attachedInfo(read))
+  }
+
   function headerNode(): ReactNode {
     // Always render the seat: a source that reports no metadata still keeps
     // Refresh and the original-source link inside the header.
-    return createElement(ResourceSummary, { info: state.info, actions: headerActions() })
+    const info = target.sourceId === BUILTIN_SOURCE_IDS.feishuTasks && state.read !== null
+      ? { ...state.info, due: undefined } : state.info
+    return createElement(ResourceSummary, { info, actions: headerActions(), github, title: github ? currentTitle : undefined, separateChecks: pull })
   }
 
   function failureContent(): ReactNode {
@@ -768,8 +798,18 @@ function createDetailController(options: ClueDetailWindowOptions): DetailControl
       embedded: true,
       header: headerNode(),
       afterBody: afterBody(),
-      ...(selectionTarget === undefined ? {} : {
-        bodyWrapper: (body: ReactNode) => createElement(ResourceSelectionActions, selectionTarget, body),
+      pathImages: previewImages(),
+      ...(selectionTarget === undefined && !pull ? {} : {
+        bodyWrapper: (body: ReactNode) => createElement(Fragment, null,
+          pull && state.info !== undefined ? createElement(PullRequestStatus, {
+            info: state.info, sourceUrl: sourceUrl?.startsWith('https://github.com/') ? sourceUrl : undefined,
+            ...(commentsCapabilities?.read === true ? { onDiscussion: () => {
+              const node = document.getElementById(discussionId)
+              node?.scrollIntoView({ block: 'start' })
+              node?.focus({ preventScroll: true })
+            } } : {}),
+          }) : null,
+          selectionTarget === undefined ? body : createElement(ResourceSelectionActions, selectionTarget, body)),
       }),
       ...(offerEdit
         ? {
@@ -801,8 +841,10 @@ function createDetailController(options: ClueDetailWindowOptions): DetailControl
         : null,
       commentsCapabilities?.read !== true || discussionApi.commentsList === undefined
         ? null
-        : createElement(ResourceDiscussion, {
+        : createElement('div', { id: discussionId, tabIndex: -1 }, createElement(ResourceDiscussion, {
             key: `discussion:${authGeneration}`,
+            pathImages: github ? previewImages() : undefined,
+            showAvatars: github,
             page: discussion, capabilities: { ...commentsCapabilities, create: commentsCapabilities.create && discussionApi.commentsCreate !== undefined }, loading: commentsLoading,
             ...(commentsError === undefined ? {} : { error: commentsError }),
             readOnly: state.read?.freshness === 'snapshot',
@@ -812,7 +854,7 @@ function createDetailController(options: ClueDetailWindowOptions): DetailControl
               void loadComments(next.cursor, next.parentId)
             },
             onCreate: createComment,
-          }))
+          })))
   }
 
   async function loadComments(cursor?: string, parentId?: string): Promise<void> {
@@ -1134,7 +1176,7 @@ function createDetailController(options: ClueDetailWindowOptions): DetailControl
       state = {
         ...state,
         read: result,
-        info: infoOf(result.format, result.data, state.info, attachedInfo(result)),
+        info: readInfoOf(result, state.info),
         readLoading: false,
         refreshing: false,
         readStale: false,
@@ -1625,7 +1667,8 @@ function resourceOf(options: ClueDetailWindowOptions): ClueClientResourceInput {
  */
 export function openClueDetailWindow(options: ClueDetailWindowOptions): WindowHandle {
   const { windows, target } = options
-  const id = clueDetailWindowId(target)
+  const resourceId = clueDetailWindowId(target)
+  const id = options.sessionId === undefined ? resourceId : resourceId + ':session:' + options.sessionId
   const guard: DetailGuard = { dirty: false, saving: false }
   const previous = loadedDetailWindows.get(id)
   const controller = createDetailController(options)

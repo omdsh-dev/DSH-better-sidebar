@@ -29,7 +29,7 @@
  * The vocabulary comes from the public clue contract (the host half and the
  * browser bundle share it); this module only renders it.
  */
-import type { ReactNode } from 'react'
+import { useId, useState, type ReactNode } from 'react'
 import type {
   ClueCheckState,
   CluePerson,
@@ -40,7 +40,7 @@ import type {
   ClueResourceState,
   ClueResourceTime,
 } from '../../clues/types.ts'
-import { IconChevronRightOutlineRegular, StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconCheckOutlineRegular, IconChevronRightOutlineRegular, IconClockOutlineRegular, IconCloseOutlineRegular, IconRightUpOutlineRegular, StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
 import { t } from '../locales.ts'
 import css from './resource-summary.module.css'
 
@@ -66,6 +66,24 @@ export function personLabel(person: CluePerson | undefined): string | undefined 
   if (handle !== undefined) return handle.startsWith('@') ? handle : `@${handle}`
   const id = typeof person.id === 'string' && person.id.trim() !== '' ? person.id : undefined
   return id
+}
+
+/** Provider identity with a visible initial even when the avatar cannot load. */
+export function ResourcePerson({ person, linked = false }: { person: CluePerson; linked?: boolean }): ReactNode {
+  const [failedSrc, setFailedSrc] = useState<string>()
+  const label = personLabel(person) ?? t('clueResourceUnknownPerson')
+  const avatar = person.avatarUrl?.startsWith('https://') === true ? person.avatarUrl : undefined
+  const content = <>
+    <span className={css.avatar} aria-hidden="true">
+      {avatar !== undefined && failedSrc !== avatar
+        ? <img src={avatar} alt="" loading="lazy" referrerPolicy="no-referrer" onError={() => { setFailedSrc(avatar) }} />
+        : Array.from(label.replace(/^@/, ''))[0]?.toLocaleUpperCase()}
+    </span>
+    <span className={css.personName}>{label}</span>
+  </>
+  return linked && person.url !== undefined && person.url.startsWith('https://')
+    ? <a className={css.person} href={person.url} target="_blank" rel="noreferrer" title={label}>{content}</a>
+    : <span className={css.person} title={label}>{content}</span>
 }
 
 /** Localized lifecycle label of one normalized state. */
@@ -161,6 +179,7 @@ function stateIsInformative(state: ClueResourceState): boolean {
 /** The host `StateDot` semantic of one state; never `ongoing` (see module note). */
 function stateDot(state: ClueResourceState): 'done' | 'warning' | 'error' | 'idle' {
   switch (state) {
+    case 'open':
     case 'merged':
     case 'completed':
       return 'done'
@@ -172,13 +191,17 @@ function stateDot(state: ClueResourceState): 'done' | 'warning' | 'error' | 'idl
 }
 
 /** Localized CI value; the one mapping shared by the verdict and the list row. */
-function checksValueOf(checks: NonNullable<ClueResourceInfo['checks']>): string {
+function checksValueOf(checks: ClueResourceCheck['state']): string {
   switch (checks) {
     case 'success': return t('cluePrChecksSuccess')
     case 'failure': return t('cluePrChecksFailure')
     case 'pending': return t('cluePrChecksPending')
     case 'expected': return t('cluePrChecksExpected')
     case 'error': return t('cluePrChecksError')
+    case 'skipped': return t('cluePrChecksSkipped')
+    case 'neutral': return t('cluePrChecksNeutral')
+    case 'cancelled': return t('cluePrChecksCancelled')
+    case 'unknown': return t('cluePrMergeUnknown')
   }
 }
 
@@ -195,13 +218,14 @@ function checksInk(checks: NonNullable<ClueResourceInfo['checks']>): 'error' | u
  * `idle` for a queued rollup. Only a rollup that is genuinely running spins;
  * it is the one fact here that is in flight.
  */
-function checksGlyph(checks: NonNullable<ClueResourceInfo['checks']>): ReactNode {
+function checksGlyph(checks: ClueResourceCheck['state']): ReactNode {
   switch (checks) {
-    case 'success': return <StateDot state="done" size={10} />
+    case 'success': return <IconCheckOutlineRegular size={12} />
     case 'failure':
-    case 'error': return <StateDot state="error" size={10} />
+    case 'error': return <IconCloseOutlineRegular size={12} />
     case 'pending': return <StateDot state="ongoing" size={10} />
-    case 'expected': return <StateDot state="idle" size={10} />
+    case 'expected': return <IconClockOutlineRegular size={12} />
+    default: return <span className={css.quietMark}>−</span>
   }
 }
 
@@ -229,7 +253,7 @@ function ChecksVerdict(props: {
       {...(ink === undefined ? {} : { 'data-ink': ink })}
       data-checks={props.checks}
     >
-      <span className={css.checksGlyph}>{checksGlyph(props.checks)}</span>
+      <span className={css.checksGlyph} data-check-tone={checkTone(props.checks)}>{checksGlyph(props.checks)}</span>
       {props.word === false ? null : <span>{value}</span>}
     </span>
   )
@@ -240,12 +264,8 @@ function ChecksVerdict(props: {
  * before "what ran?", so failures and errors come first and a green wall never
  * buries the one red job.
  */
-const CHECK_RANK: Readonly<Record<ClueCheckState, number>> = {
-  failure: 0,
-  error: 1,
-  pending: 2,
-  expected: 3,
-  success: 4,
+const CHECK_RANK: Readonly<Record<ClueResourceCheck['state'], number>> = {
+  failure: 0, error: 1, cancelled: 2, pending: 3, expected: 4, unknown: 5, success: 6, skipped: 7, neutral: 8,
 }
 
 /** The ranked copy of one check list (stable: equal ranks keep provider order). */
@@ -254,7 +274,7 @@ function rankedChecks(checks: readonly ClueResourceCheck[]): readonly ClueResour
 }
 
 /** Whether one check is a verdict a reader must not miss. */
-function checkFailed(state: ClueCheckState): boolean {
+function checkFailed(state: ClueResourceCheck['state']): boolean {
   return state === 'failure' || state === 'error'
 }
 
@@ -283,13 +303,27 @@ function CheckList(props: { readonly checks: readonly ClueResourceCheck[] }): Re
         {failing > 0 ? ' · ' : null}
         <span>{t('cluePrChecksCount', { count: ranked.length })}</span>
       </summary>
-      <ul className={css.checksList}>
-        {ranked.map((check, index) => {
+      <CheckRows checks={ranked} />
+    </details>
+  )
+}
+
+function checkTone(state: ClueResourceCheck['state']): 'pass' | 'fail' | 'wait' | 'other' {
+  if (state === 'success') return 'pass'
+  if (checkFailed(state)) return 'fail'
+  if (state === 'pending' || state === 'expected') return 'wait'
+  return 'other'
+}
+
+function CheckRows({ checks, detailed = false }: { checks: readonly ClueResourceCheck[]; detailed?: boolean }): ReactNode {
+  return <ul className={detailed ? css.checkRows : css.checksList}>
+        {checks.map((check, index) => {
           const state = checksValueOf(check.state)
           const label = `${check.name} · ${state}`
           return (
             <li className={css.checkRow} data-clue-check={check.state} key={`${index}:${check.name}`}>
-              <span className={css.checkGlyph} role="img" aria-label={state} title={state}>
+              <span className={css.checkGlyph} data-check-tone={checkTone(check.state)}
+                 role={detailed ? undefined : 'img'} aria-hidden={detailed ? true : undefined} aria-label={detailed ? undefined : state} title={state}>
                 {checksGlyph(check.state)}
               </span>
               {check.url === undefined ? (
@@ -305,12 +339,11 @@ function CheckList(props: { readonly checks: readonly ClueResourceCheck[] }): Re
                   {check.name}
                 </a>
               )}
+              {detailed && <span className={css.checkRowState} data-check-tone={checkTone(check.state)}>{state}</span>}
             </li>
           )
         })}
       </ul>
-    </details>
-  )
 }
 
 /** One plain fact of the second line (review / mergeability). */
@@ -345,12 +378,12 @@ function inkFacts(info: ClueResourceInfo): InkFact[] {
 }
 
 /** Additions/deletions only; the other counts are list-row detail. */
-function changeCounts(info: ClueResourceInfo): string | undefined {
-  const counts = info.counts
-  const additions = counts?.additions === undefined ? '' : '+' + counts.additions
-  const deletions = counts?.deletions === undefined ? '' : '−' + counts.deletions
-  const value = [additions, deletions].filter(part => part !== '').join(' ')
-  return value === '' ? undefined : value
+function ChangeCounts({ counts }: { counts: ClueResourceCounts }): ReactNode {
+  if (counts.additions === undefined && counts.deletions === undefined) return null
+  return <span className={css.changes} data-clue-resource-item="changes">
+    {counts.additions !== undefined && <span data-check-tone="pass">+{counts.additions.toLocaleString()}</span>}
+    {counts.deletions !== undefined && <span data-check-tone="fail">−{counts.deletions.toLocaleString()}</span>}
+  </span>
 }
 
 /** One dot plus its word, shared by the header and the list row. */
@@ -383,6 +416,9 @@ interface ResourceSummaryProps {
    */
   readonly actions?: ReactNode
   readonly className?: string
+  readonly github?: boolean
+  readonly title?: string
+  readonly separateChecks?: boolean
 }
 
 /**
@@ -393,42 +429,47 @@ interface ResourceSummaryProps {
  * two carries the facts a reader acts on. A window title or a body heading
  * already states the subject, so neither line repeats it.
  */
-export function ResourceSummary({ info, actions, className }: ResourceSummaryProps): ReactNode {
+export function ResourceSummary({ info, actions, className, github, title, separateChecks }: ResourceSummaryProps): ReactNode {
   const number = info === undefined ? undefined : numberLabel(info)
   const author = personLabel(info?.author)
   const branches = branchesLabel(info?.branches)
-  const counts = info === undefined ? undefined : changeCounts(info)
+  const counts = info?.counts
   const due = info?.due === undefined ? undefined : formatResourceTime(info.due.at, info.due.allDay)
-  const facts = info === undefined ? [] : inkFacts(info)
-  const state = info?.state !== undefined && stateIsInformative(info.state) ? info.state : undefined
+  const facts = info === undefined || separateChecks === true ? [] : inkFacts(info)
+  const state = info?.state !== undefined && (github === true || stateIsInformative(info.state)) ? info.state : undefined
   const hasIdentity = info !== undefined && (state !== undefined || number !== undefined
-    || author !== undefined || counts !== undefined || due !== undefined
+    || author !== undefined || counts?.additions !== undefined || counts?.deletions !== undefined || due !== undefined
     || info.path !== undefined || info.sizeBytes !== undefined)
   const hasFacts = info !== undefined
-    && (info.checks !== undefined || facts.length > 0 || branches !== undefined)
-  const checkRuns = info?.checkRuns !== undefined && info.checkRuns.length > 0 ? info.checkRuns : undefined
+    && ((separateChecks !== true && info.checks !== undefined) || facts.length > 0 || branches !== undefined)
+  const checkRuns = separateChecks !== true && info?.checkRuns !== undefined && info.checkRuns.length > 0 ? info.checkRuns : undefined
   // The action seat is itself something to show: a window whose source reports
   // no metadata still keeps Refresh and the original-source link here.
-  if (!hasIdentity && !hasFacts && checkRuns === undefined && actions === undefined) return null
+  if (!hasIdentity && !hasFacts && checkRuns === undefined && actions === undefined && title === undefined) return null
   return (
     <section
       className={className === undefined ? css.summary : css.summary + ' ' + className}
       data-clue-resource-summary
+      data-clue-resource-github={github === true ? '' : undefined}
       {...(info?.state === undefined ? {} : { 'data-clue-resource-state': info.state })}
       {...(info?.number === undefined ? {} : { 'data-clue-resource-number': String(info.number) })}
       {...(info?.repository === undefined ? {} : { 'data-clue-resource-repository': info.repository })}
     >
       <div className={css.body}>
+        {title !== undefined && <h2 className={css.resourceTitle}>{title}</h2>}
         {hasIdentity && info !== undefined && (
           <div className={css.identity}>
             {state !== undefined && (
-              <span data-clue-resource-state-chip={state} data-clue-resource-item="state">
+              <span className={github === true ? css.githubState : undefined} data-clue-resource-state-chip={state} data-clue-resource-item="state">
                 <StateChip state={state} dot={8} attribute="data-clue-resource-state-mark" />
               </span>
             )}
             {number !== undefined && <span className={css.number} data-clue-resource-item="number">{number}</span>}
-            {author !== undefined && <span className={css.meta} data-clue-resource-item="author">{author}</span>}
-            {counts !== undefined && <span className={css.meta} data-clue-resource-item="changes">{counts}</span>}
+            {author !== undefined && <span className={css.author} data-clue-resource-item="author">
+              {github === true && info.author !== undefined ? <ResourcePerson person={info.author} linked /> : author}
+            </span>}
+            {github === true && info.createdAt !== undefined && <time className={css.meta} dateTime={info.createdAt}>{formatResourceTime(info.createdAt, true)}</time>}
+            {counts !== undefined && <ChangeCounts counts={counts} />}
             {due !== undefined && <span className={css.meta} data-clue-resource-item="due">{t('clueResourceDue')} {due}</span>}
             {info.path !== undefined && (
               <span className={css.path} data-clue-resource-item="path" title={info.path}>{info.path}</span>
@@ -440,7 +481,7 @@ export function ResourceSummary({ info, actions, className }: ResourceSummaryPro
         )}
         {hasFacts && info !== undefined && (
           <div className={css.facts} data-clue-change-request>
-            {info.checks !== undefined && (
+            {separateChecks !== true && info.checks !== undefined && (
               <span data-clue-change-request-fact="checks">
                 <ChecksVerdict checks={info.checks} />
               </span>
@@ -456,7 +497,9 @@ export function ResourceSummary({ info, actions, className }: ResourceSummaryPro
               </span>
             ))}
             {branches !== undefined && (
-              <span className={css.branch} data-clue-resource-item="branches" title={branches}>{branches}</span>
+              <span className={css.branch} data-clue-resource-item="branches" title={branches}>
+                {github === true ? <><code>{info.branches?.head}</code>{info.branches?.base !== undefined && <> → <code>{info.branches.base}</code></>}</> : branches}
+              </span>
             )}
           </div>
         )}
@@ -465,6 +508,88 @@ export function ResourceSummary({ info, actions, className }: ResourceSummaryPro
       {actions !== undefined && <div className={css.actions}>{actions}</div>}
     </section>
   )
+}
+
+function mergeGate(info: ClueResourceInfo) {
+  if (info.state === 'merged' || info.state === 'closed') return { key: info.state, label: stateLabel(info.state) } as const
+  if (info.state === 'draft') return { key: 'wait', label: stateLabel('draft') } as const
+  if (info.mergeable === 'conflicting') return { key: 'fail', label: t('cluePrConflict') } as const
+  if (info.mergeStatus === 'behind') return { key: 'wait', label: t('cluePrMergeBehind') } as const
+  if (info.review === 'changes-requested' || info.mergeStatus === 'blocked' || (info.checks !== undefined && checksInk(info.checks) === 'error')) {
+    return { key: 'fail', label: t('cluePrMergeBlocked') } as const
+  }
+  if (info.review === 'review-required' || info.checks === 'pending' || info.checks === 'expected') return { key: 'wait', label: t('cluePrMergeWaiting') } as const
+  if (info.state === 'open' && info.mergeStatus === 'ready' && info.mergeable === 'mergeable') return { key: 'pass', label: t('cluePrMergeReady') } as const
+  return { key: 'other', label: t('cluePrMergeUnknown') } as const
+}
+
+/** One read-only PR overview. The rollup always outranks a bounded sample of runs. */
+export function PullRequestStatus({ info, sourceUrl, onDiscussion }: {
+  info: ClueResourceInfo
+  sourceUrl?: string
+  onDiscussion?: () => void
+}): ReactNode {
+  const [expanded, setExpanded] = useState(false)
+  const listId = useId()
+  const runs = info.checkRuns ?? []
+  const sample = info.checkCount !== undefined && info.checkCount > runs.length
+  const tones = { fail: 0, wait: 0, pass: 0, other: 0 }
+  for (const check of runs) tones[checkTone(check.state)]++
+  const checkLink = sourceUrl === undefined ? undefined : sourceUrl.replace(/\/$/, '') + '/checks'
+  const checkToggle = runs.length > 0
+  const gate = mergeGate(info)
+  const review = info.review === 'approved' ? t('cluePrReviewApproved')
+    : info.review === 'changes-requested' ? t('cluePrReviewChanges')
+      : info.review === 'review-required' ? t('cluePrReviewRequired') : '—'
+  const checksContent = <>
+    <span className={css.gateLabel}>{t('cluePrChecks')}{checkToggle && <IconChevronRightOutlineRegular size={12} />}</span>
+    {info.checks !== undefined ? <ChecksVerdict checks={info.checks} />
+      : <span className={css.gateValue}>{info.checkCount === 0 ? t('cluePrChecksNone') : t('cluePrMergeUnknown')}</span>}
+    <span className={css.checkMeter} aria-hidden="true">
+      {runs.length > 0 && !sample
+        ? (Object.entries(tones) as [keyof typeof tones, number][]).map(([tone, count]) => count > 0
+          && <span key={tone} data-check-tone={tone} style={{ flexGrow: count }} />)
+        : <span data-check-tone={info.checks === undefined ? 'other' : checkTone(info.checks)} />}
+    </span>
+  </>
+  return <section className={css.gate} data-clue-pr-status data-md-toc-exclude aria-label={t('cluePrMerge')}>
+    <div className={css.gateHeadline} data-clue-pr-merge={gate.key}>
+      <span className={css.gateIcon} aria-hidden="true" data-check-tone={gate.key}>
+        {gate.key === 'pass' || gate.key === 'merged' ? <IconCheckOutlineRegular size={16} />
+          : gate.key === 'fail' || gate.key === 'closed' ? <IconCloseOutlineRegular size={16} /> : <IconClockOutlineRegular size={16} />}
+      </span>
+      <div><span className={css.gateCaption}>{t('cluePrMerge')}</span><strong>{gate.label}</strong></div>
+    </div>
+    <div className={css.gateFacts} data-clue-change-request>
+      {checkToggle ? <button type="button" className={css.gateCell} aria-expanded={expanded}
+        aria-controls={listId} data-clue-change-request-fact="checks" onClick={() => { setExpanded(!expanded) }}>
+        {checksContent}
+      </button> : <div className={css.gateCell} data-clue-change-request-fact="checks">{checksContent}</div>}
+      {onDiscussion === undefined ? <div className={css.gateCell}>
+        <span className={css.gateLabel}>{t('clueResourceComments')}</span>
+        <span className={css.gateValue}>{info.counts?.comments?.toLocaleString() ?? '—'}</span>
+      </div> : <button type="button" className={css.gateCell} onClick={onDiscussion}>
+        <span className={css.gateLabel}>{t('clueResourceComments')}<IconRightUpOutlineRegular size={12} /></span>
+        <span className={css.gateValue}>{info.counts?.comments?.toLocaleString() ?? '—'}</span>
+      </button>}
+      <div className={css.gateCell} data-clue-change-request-fact="review">
+        <span className={css.gateLabel}>{t('cluePrReview')}</span>
+        <span className={css.gateValue} data-check-tone={info.review === 'approved' ? 'pass' : info.review === 'changes-requested' ? 'fail' : undefined}>{review}</span>
+      </div>
+    </div>
+    {checkToggle && <div id={listId} className={css.gateChecks} hidden={!expanded} data-clue-check-list={runs.length}>
+      <div className={css.checkListHead}>
+        <span>{sample ? t('cluePrChecksPartial', { shown: runs.length.toLocaleString(), total: info.checkCount!.toLocaleString() })
+          : t('cluePrChecksCount', { count: runs.length })}</span>
+        {sample && checkLink !== undefined && <a href={checkLink} target="_blank" rel="noreferrer">GitHub <IconRightUpOutlineRegular size={12} /></a>}
+      </div>
+      {expanded && <CheckRows checks={rankedChecks(runs)} detailed />}
+    </div>}
+    {sample && !checkToggle && <div className={css.checkListHead}>
+      <span>{t('cluePrChecksPartial', { shown: '0', total: info.checkCount!.toLocaleString() })}</span>
+      {checkLink !== undefined && <a href={checkLink} target="_blank" rel="noreferrer">GitHub <IconRightUpOutlineRegular size={12} /></a>}
+    </div>}
+  </section>
 }
 
 /** Props of {@link ResourceInlineMeta}. */
@@ -498,7 +623,8 @@ export function ResourceInlineMeta({ info, className }: ResourceInlineMetaProps)
       {state !== undefined && <StateChip state={state} dot={6} attribute="data-clue-resource-inline-state" />}
       {identity !== undefined && <span data-clue-resource-inline-identity>{identity}</span>}
       {author !== undefined && (
-        <span data-clue-resource-inline-author title={t('clueResourceAuthor')}>{author}</span>
+        <span data-clue-resource-inline-author title={t('clueResourceAuthor')}>{info.author?.avatarUrl === undefined
+          ? author : <ResourcePerson person={info.author} />}</span>
       )}
       {due !== undefined && (
         <span data-clue-resource-inline-due title={t('clueResourceDue')}>{due}</span>

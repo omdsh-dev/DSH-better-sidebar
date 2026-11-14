@@ -33,6 +33,7 @@ import css from './feishu.module.css'
 import type { FeishuClientLabels } from './labels.ts'
 import { appDate, appDateTime } from './time.ts'
 import { t } from '../../../locales.ts'
+import { personLabel } from '../../resource-summary.tsx'
 import { ActionButton, ActionFooter, Checkbox, Field, TextArea, TextInput } from '../../../ui/index.ts'
 
 /** Props of {@link FeishuTaskEditor}. */
@@ -99,6 +100,7 @@ function displayTime(
 /** The static read-only task view (a preview read is read-only by definition). */
 function TaskReadOnly(props: {
   readonly task: FeishuTaskDocumentData
+  readonly assignees?: readonly string[]
   readonly labels: FeishuClientLabels
   readonly formatDateTime?: (value: string) => string
   readonly embedded?: boolean
@@ -116,6 +118,12 @@ function TaskReadOnly(props: {
         </span>
       </div>}
       {embedded !== true && <h3 className={css.title}>{task.title}</h3>}
+      {embedded === true && <dl className={css.taskFacts}>
+        <div><dt>{t('cluePreviewStatus')}</dt><dd data-feishu-task-completed={task.completed ? 'true' : 'false'}>{task.completed ? labels.completed : labels.open}</dd></div>
+        {props.assignees?.length ? <div><dt>{t('clueResourceAssignees')}</dt><dd>{props.assignees.join(', ')}</dd></div> : null}
+        {task.start !== null && <div><dt>{labels.start}</dt><dd>{displayTime(task.start, labels, formatDateTime)}</dd></div>}
+        {task.due !== null && <div><dt>{labels.due}</dt><dd>{displayTime(task.due, labels, formatDateTime)}</dd></div>}
+      </dl>}
       <dl className={css.fields} {...(embedded === true ? { 'aria-label': t('clueResourceBody') } : {})}>
         {embedded !== true && (
           <>
@@ -273,6 +281,7 @@ export function FeishuTaskEditor(props: FeishuTaskEditorProps): ReactNode {
     return (
       <TaskReadOnly
         task={task}
+        assignees={props.document.info?.assignees?.map(personLabel).filter(label => label !== undefined)}
         labels={labels}
         {...(props.formatDateTime === undefined ? {} : { formatDateTime: props.formatDateTime })}
         {...(props.embedded === undefined ? {} : { embedded: props.embedded })}

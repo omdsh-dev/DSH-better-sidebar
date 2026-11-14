@@ -69,6 +69,12 @@ export const CLUE_CHECK_STATES = ['success', 'failure', 'pending', 'expected', '
 /** One normalized CI state (rollup or a single check). */
 export type ClueCheckState = (typeof CLUE_CHECK_STATES)[number]
 
+export const CLUE_CHECK_RUN_STATES = [...CLUE_CHECK_STATES, 'skipped', 'neutral', 'cancelled', 'unknown'] as const
+export type ClueCheckRunState = (typeof CLUE_CHECK_RUN_STATES)[number]
+
+export const CLUE_MERGE_STATES = ['ready', 'blocked', 'behind', 'unknown'] as const
+export type ClueMergeState = (typeof CLUE_MERGE_STATES)[number]
+
 /**
  * Most individual checks one detail read carries. The provider query asks for
  * exactly this many, so the bound is a request budget, not a truncation of a
@@ -80,7 +86,7 @@ export const CLUE_MAX_CHECK_RUNS = 20
 export interface ClueResourceCheck {
   /** The provider's check name/job (bounded display text, never a raw log). */
   readonly name: string
-  readonly state: ClueCheckState
+  readonly state: ClueCheckRunState
   /** Provider link to the full check; absent when the provider reported none. */
   readonly url?: string
 }
@@ -95,6 +101,7 @@ export interface CluePerson {
   readonly name?: string
   readonly handle?: string
   readonly url?: string
+  readonly avatarUrl?: string
 }
 
 /** One display instant; `allDay` keeps the provider's own semantics. */
@@ -157,6 +164,10 @@ export interface ClueResourceInfo {
    * browsing row never pays for them.
    */
   readonly checkRuns?: readonly ClueResourceCheck[]
+  /** Provider's total, independent of the bounded list of check runs. */
+  readonly checkCount?: number
+  /** Provider-reported merge gate, distinct from content conflicts. */
+  readonly mergeStatus?: ClueMergeState
 }
 
 // ── Resource discussion ───────────────────────────────────────────────────

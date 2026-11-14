@@ -25,7 +25,7 @@ import {
   type FeishuDocEditData,
   type FeishuDocReadData,
 } from '../../../../clues/sources/feishu/format.ts'
-import { TextDocumentContent } from '../../../windows/format-content.tsx'
+import { DocumentImage, TextDocumentContent } from '../../../windows/format-content.tsx'
 import { MdToc } from '../../../md-toc.tsx'
 import { t } from '../../../locales.ts'
 import { ActionButton, ActionFooter, Disclosure, Field, TextArea, TextInput } from '../../../ui/index.ts'
@@ -103,37 +103,68 @@ function safeXmlSource(xml: string): boolean {
   return !/<!DOCTYPE|<!ENTITY/i.test(xml)
 }
 
-/**
- * Parse one XML fragment with DOMParser and project TEXT only.
- *
- * This is deliberately not an HTML renderer: the inert XML document is never
- * inserted with `innerHTML`, no attribute/URL is trusted, and only textContent
- * reaches React (which escapes it again). A parser error or a hostile
- * DOCTYPE yields no projection; the caller still offers the raw XML collapsed.
- */
-function projectXml(xml: string): ProjectedBlock[] {
-  if (typeof DOMParser === 'undefined') return []
-  if (xml.trim() === '' || !safeXmlSource(xml)) return []
-  try {
-    const body = xml.replace(/^\s*<\?xml[^>]*\?>/i, '')
-    const parsed = new DOMParser().parseFromString(`<clue-root>${body}</clue-root>`, 'application/xml')
-    if (parsed.querySelector('parsererror') !== null) return []
-    const root = parsed.documentElement
-    if (root === null) return []
-    const blocks: ProjectedBlock[] = []
-    for (const child of Array.from(root.children)) {
-      const tag = child.tagName.toLowerCase()
-      // The document title is window/header identity, never a duplicate body heading.
-      if (tag === 'title') continue
-      const raw = child.textContent ?? ''
-      const text = tag === 'pre' || tag === 'code' ? raw.replace(/\s+$/, '') : raw.replace(/\s+/g, ' ').trim()
-      if (text === '') continue
-      blocks.push({ tag, text })
+const XML_TAGS = new Set(['p', 'blockquote', 'pre', 'code', 'b', 'strong', 'i', 'em', 'u', 's', 'span', 'hr', 'br',
+  'ul', 'ol', 'li', 'thead', 'tbody', 'tfoot', 'tr', 'th', 'td', 'caption'])
+
+/** Construct a small React projection; never insert provider XML into the live DOM. */
+function projectXml(xml: string, limit: number, sourceUrl: string | undefined): ReactNode[] {
+  if (typeof DOMParser === 'undefined' || !safeXmlSource(xml)) return []
+  const parsed = new DOMParser().parseFromString('<clue-root>' + xml.replace(/^\s*<\?xml[^>]*\?>/i, '') + '</clue-root>', 'application/xml')
+  if (parsed.querySelector('parsererror') !== null) return []
+  let budget = limit
+  const original = sourceUrl?.startsWith('https://') === true ? sourceUrl : undefined
+  function project(node: Node, key: number, depth: number): ReactNode {
+    if (budget <= 0 || depth > 32) return null
+    if (node.nodeType === 3 || node.nodeType === 4) {
+      const text = (node.nodeValue ?? '').slice(0, budget)
+      budget -= text.length
+      return text
     }
-    return blocks
-  } catch {
-    return []
+    if (node.nodeType !== 1) return null
+    budget--
+    const element = node as Element
+    const tag = element.localName.toLowerCase()
+    if (tag === 'title' || tag === 'script' || tag === 'style') return null
+    if (tag === 'img' || tag === 'image') {
+      const url = ['src', 'url', 'href'].map(attribute => element.getAttribute(attribute)).find(value => value?.startsWith('https://'))
+      return <DocumentImage key={key} url={url ?? undefined} alt={element.getAttribute('alt') ?? ''} original={original} />
+    }
+    const tableChildren: Record<string, string> = { table: 'caption thead tbody tfoot tr', thead: 'tr', tbody: 'tr', tfoot: 'tr', tr: 'td th' }
+    const allowed = tableChildren[tag]
+    const nodes = allowed === undefined ? Array.from(node.childNodes)
+      : Array.from(element.children).filter(child => allowed.split(' ').includes(child.localName))
+    const children = nodes.map((child, index) => project(child, index, depth + 1))
+    const block = { 'data-feishu-docs-block-tag': tag }
+    if (/^h[1-9]$/.test(tag)) {
+      const level = Number(tag.slice(1))
+      return createElement(level <= 6 ? tag : 'div', { key, ...block, className: css.docHeading,
+        ...(level <= 6 ? {} : { role: 'heading', 'aria-level': level }) }, children)
+    }
+    if (tag === 'a') {
+      const url = element.getAttribute('href')
+      return url?.startsWith('https://') === true
+        ? <a key={key} href={url} target="_blank" rel="noreferrer">{children}</a> : <span key={key}>{children}</span>
+    }
+    if (tag === 'table') {
+      const rows = Array.from(element.children).every(child => child.localName === 'tr')
+      return <div key={key} className={css.docTable} data-feishu-docs-block-tag={tag}>
+        <table>{rows ? <tbody>{children}</tbody> : children}</table>
+      </div>
+    }
+    if (tag === 'quote' || tag === 'callout') return <blockquote {...block} key={key} className={css.docQuote}>{children}</blockquote>
+    if (tag === 'checkbox') return <p {...block} key={key} className={css.docTodo}>{element.getAttribute('checked') === 'true' ? '☑ ' : '☐ '}{children}</p>
+    if (XML_TAGS.has(tag)) {
+      const className = tag === 'pre' ? css.docCode : tag === 'blockquote' ? css.docQuote : undefined
+      return createElement(tag, { key, ...block, className }, tag === 'br' || tag === 'hr' ? undefined : children)
+    }
+    if (tag === 'mention') return <span key={key}>{children}</span>
+    if (tag === 'div' || tag === 'section' || tag === 'grid' || tag === 'column') return <div key={key}>{children}</div>
+    return <div className={css.blockFallback} key={key} data-feishu-docs-block-tag={tag}>
+      {children.some(child => child !== null) ? children : t('cluePreviewBlockUnavailable')}
+      {original !== undefined && <a href={original} target="_blank" rel="noreferrer">{t('clueDetailOpenSource')}</a>}
+    </div>
   }
+  return Array.from(parsed.documentElement.childNodes, (node, index) => project(node, index, 0))
 }
 
 /** Project one editable block's inner XML (plain blocks are already text). */
@@ -157,38 +188,13 @@ function projectEditBlock(block: FeishuDocEditBlock): ProjectedBlock {
   }
 }
 
-/** One projected block; headings/code keep their readable shape. */
-function ProjectedBlockRow(props: { readonly block: ProjectedBlock }): ReactNode {
-  const { block } = props
-  const tag = block.tag.toLowerCase()
-  const heading = /^h[1-9]$/.test(tag) || tag === 'title'
-  if (heading) {
-    const level = tag === 'title' ? 1 : Number(tag.slice(1))
-    return createElement(level <= 6 ? `h${level}` : 'div', { className: css.docHeading, 'data-feishu-docs-block-tag': tag,
-      ...(level <= 6 ? {} : { role: 'heading', 'aria-level': level }) }, block.text)
-  }
-  if (tag === 'pre' || tag === 'code') {
-    return <pre className={css.docCode} data-feishu-docs-block-tag={tag}>{block.text}</pre>
-  }
-  if (tag === 'li' || tag === 'checkbox') {
-    return <p className={css.docListItem} data-feishu-docs-block-tag={tag}>{block.text}</p>
-  }
-  if (tag === 'blockquote') {
-    return <blockquote className={css.docQuote} data-feishu-docs-block-tag={tag}>{block.text}</blockquote>
-  }
-  return <p className={css.docParagraph} data-feishu-docs-block-tag={tag}>{block.text}</p>
-}
-
-/** The readable projection of a whole document read. */
-function ProjectedBlocks(props: { readonly blocks: readonly ProjectedBlock[] }): ReactNode {
-  if (props.blocks.length === 0) return null
-  return (
-    <div className={css.docBlocks} data-feishu-docs-blocks="">
-      {props.blocks.map((block, index) => (
-        <ProjectedBlockRow key={`${block.tag}:${index}`} block={block} />
-      ))}
-    </div>
-  )
+function ProjectedBlockRow({ block }: { block: ProjectedBlock }): ReactNode {
+  const { tag, text } = block
+  const info = { 'data-feishu-docs-block-tag': tag }
+  if (/^h[1-6]$/.test(tag)) return createElement(tag, { ...info, className: css.docHeading }, text)
+  if (tag === 'pre' || tag === 'code') return <pre {...info} className={css.docCode}>{text}</pre>
+  if (tag === 'blockquote') return <blockquote {...info} className={css.docQuote}>{text}</blockquote>
+  return <p {...info}>{text}</p>
 }
 
 /** Revision + freshness metadata of one read. */
@@ -259,21 +265,9 @@ function ReadPreview(props: {
   const [expanded, setExpanded] = useState(false)
   const collapsible = read.content.length > MAX_PREVIEW_CHARS
   const content = collapsible && !expanded ? read.content.slice(0, MAX_PREVIEW_CHARS) : read.content
-  const xmlBlocks = useMemo(() => {
-    if (read.projection !== 'xml') return []
-    // Truncating XML before parsing can cut a closing tag and erase the whole
-    // readable preview. Parse the bounded source response, then cap text rows.
-    const blocks = projectXml(read.content)
-    if (!collapsible || expanded) return blocks
-    let remaining = MAX_PREVIEW_CHARS
-    const visible: ProjectedBlock[] = []
-    for (const block of blocks) {
-      if (remaining <= 0) break
-      visible.push({ ...block, text: block.text.slice(0, remaining) })
-      remaining -= block.text.length
-    }
-    return visible
-  }, [read.content, read.projection, collapsible, expanded])
+  const xmlBlocks = useMemo(() => read.projection === 'xml'
+    ? projectXml(read.content, collapsible && !expanded ? MAX_PREVIEW_CHARS : Number.POSITIVE_INFINITY, read.sourceUrl)
+    : [], [read.content, read.projection, read.sourceUrl, collapsible, expanded])
   const fetchedAt = 'fetchedAt' in document && typeof document.fetchedAt === 'string'
     ? document.fetchedAt
     : undefined
@@ -307,7 +301,9 @@ function ReadPreview(props: {
           <TextDocumentContent text={content} readOnly markdown onChange={() => {}} />
         </div>
       ) : (
-        <ProjectedBlocks blocks={xmlBlocks} />
+        <div className={css.docBlocks} data-feishu-docs-blocks="">
+          {xmlBlocks.length === 0 ? <p className={css.hint}>{t('cluePreviewBlockUnavailable')} <SourceLink url={read.sourceUrl} labels={labels} /></p> : xmlBlocks}
+        </div>
       )}
       </div>
       {content !== '' && (

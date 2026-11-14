@@ -14,6 +14,7 @@
  * conversion by the host.
  */
 import type { ReactNode } from 'react'
+import type { MarkdownPathImages } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ClueEditDocument, ClueReadResult, JsonValue } from '../../clues/types.ts'
 import type { ViewportSize, WindowBox, WindowSize, WindowSizePreset } from './geometry.ts'
 
@@ -69,6 +70,8 @@ export interface WindowDocumentContent {
   readonly afterBody?: ReactNode
   /** Wrap only the rendered preview body, e.g. body-scoped TOC / selection actions. */
   readonly bodyWrapper?: (body: ReactNode) => ReactNode
+  /** Image vocabulary scoped to this document's actual origin. */
+  readonly pathImages?: MarkdownPathImages
   /**
    * The document is embedded in a larger detail surface (window chrome already
    * shows the title, toolbar already shows the source link). Source renderers

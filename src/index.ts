@@ -1501,7 +1501,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
       } | undefined
       if (controller?.resolveAgent === undefined) throw new ClueError('unsupported', 'the parent conversation cannot be resumed')
       const restored = await controller.resolveAgent(payload.sessionId)
-      if ('error' in restored) throw new ClueError('conflict', 'the parent conversation could not be resumed')
+      if ('error' in restored) throw restored.error
     }
     return await api['sidechat.start']!(payload) as { childId: string }
   })
@@ -1510,7 +1510,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
     runtime: clueStack.runtime,
     deliver: async operation => {
       const receipt = await deliverClueOperation({ sessionId: operation.sessionId, target: operation.target,
-        requestId: operation.requestId, prompt: operation.prompt })
+        requestId: operation.requestId, prompt: operation.prompt, signal: operation.signal })
       return { deliveryId: receipt.sessionId }
     },
   })

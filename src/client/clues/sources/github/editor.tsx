@@ -30,6 +30,7 @@
  * Ctrl/Cmd+Enter and remains the caller's source-owned write path).
  */
 import { createElement, type KeyboardEvent, type ReactNode } from 'react'
+import type { MarkdownPathImages } from '@deepseek-ai/dsh-client-ui-primitives'
 import type {
   ClueFormatRenderer,
   ClueFormatRendererProps,
@@ -107,6 +108,7 @@ function readOnlySurface(
   reason: string | undefined,
   hostReadOnly: boolean,
   embedded: boolean,
+  pathImages?: MarkdownPathImages,
 ): ReactNode {
   return (
     <div
@@ -122,7 +124,7 @@ function readOnlySurface(
       {reason !== undefined && <div className={css.readOnlyReason}>{readOnlyReasonLabel(reason)}</div>}
       {!embedded && <div className={css.readOnlyTitle}>{title}</div>}
       <div className={css.readOnlyBody}>
-        <TextDocumentContent text={body} readOnly markdown onChange={() => {}} />
+        <TextDocumentContent text={body} readOnly markdown pathImages={pathImages} onChange={() => {}} />
       </div>
     </div>
   )
@@ -175,7 +177,7 @@ function editableSurface(
  */
 export const githubMarkdownRenderer: ClueFormatRenderer = (props: ClueFormatRendererProps): ReactNode => {
   const { sourceId, format, document, readOnly, saving, onChange, onSave } = props
-  const embedded = (props as ClueFormatRendererProps & { readonly embedded?: boolean }).embedded === true
+  const { embedded = false, pathImages } = props as ClueFormatRendererProps & { readonly embedded?: boolean; readonly pathImages?: MarkdownPathImages }
   const data = document.data
   if (!isGithubSource(sourceId)) {
     return (
@@ -184,6 +186,7 @@ export const githubMarkdownRenderer: ClueFormatRenderer = (props: ClueFormatRend
           text: textOf(data) ?? '',
           readOnly,
           markdown: format === 'text/markdown',
+          pathImages,
           saving,
           onChange: (next: string) => { onChange(withText(data, next)) },
         })}
@@ -202,7 +205,7 @@ export const githubMarkdownRenderer: ClueFormatRenderer = (props: ClueFormatRend
   }
   const locked = sourceReadOnly(data)
   if (readOnly || locked !== undefined) {
-    return readOnlySurface(fields.title, fields.body, locked?.reason, readOnly, embedded)
+    return readOnlySurface(fields.title, fields.body, locked?.reason, readOnly, embedded, pathImages)
   }
   return editableSurface(fields.title, fields.body, onChange, data, saving, onSave)
 }

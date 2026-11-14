@@ -41,6 +41,7 @@ import { LoadingIndicator } from '../../ui/LoadingIndicator.tsx'
 import { SelectMenu } from '../../ui/SelectMenu.tsx'
 import design from '../../ui/design.module.css'
 import css from './clues-tab.module.css'
+import { SectionStack } from './SectionStack.tsx'
 
 /** The plugin-settings key of the clue tab (one sparse blob). */
 const CLUE_TAB_SETTINGS_KEY = 'clues'
@@ -49,12 +50,19 @@ const CLUE_TAB_SETTINGS_KEY = 'clues'
 type CluesTabProps = Pick<TabComponentProps, 'ctx' | 'store' | 'scope' | 'visible'>
 
 /** The persisted section state, with the explorer defaults applied. */
-function sectionLayoutOf(blob: Record<string, unknown>): { browse: boolean; packs: boolean } {
+function sectionLayoutOf(blob: Record<string, unknown>): { browse: boolean; packs: boolean; weights?: Record<string, unknown> } {
   const raw = blob.layout
   const layout = raw !== null && typeof raw === 'object' && !Array.isArray(raw)
     ? raw as Record<string, unknown>
     : {}
-  return { browse: layout.browse !== false, packs: layout.packs === true }
+  const weights = layout.weights
+  return {
+    browse: layout.browse !== false,
+    packs: layout.packs !== false,
+    ...(weights !== null && typeof weights === 'object' && !Array.isArray(weights)
+      ? { weights: weights as Record<string, unknown> }
+      : {}),
+  }
 }
 
 /** Read the sparse settings blob out of the live preferences. */
@@ -172,11 +180,16 @@ export function CluesTab({ ctx, store, scope, visible }: CluesTabProps): ReactNo
 
   /** Flip one explorer section from the rendered state, then persist it. */
   const toggleSection = useCallback((key: 'browse' | 'packs', open: boolean): void => {
-    const next = { ...sections, [key]: open }
-    setSections(next)
     const current = blobOf(store.getPrefs())
+    const next = { ...sections, weights: sectionLayoutOf(current).weights, [key]: open }
+    setSections(next)
     persistSettings({ ...current, layout: next }, true)
   }, [sections, persistSettings, store])
+
+  const persistWeights = (weights: Record<string, number>): void => {
+    const current = blobOf(store.getPrefs())
+    persistSettings({ ...current, layout: { ...sections, weights } }, true)
+  }
 
   /** Remember the source the reader chose (restored on the next open). */
   const rememberSource = useCallback((sourceId: string): void => {
@@ -284,6 +297,7 @@ export function CluesTab({ ctx, store, scope, visible }: CluesTabProps): ReactNo
       face,
       workspaces: listClueWorkspaces(ctx),
       pack,
+      sessionId: scope.sessionId,
       onInsertClue: insertClue,
       onInsertPack: insertPack,
       onNotice: notifyClue,
@@ -291,7 +305,7 @@ export function CluesTab({ ctx, store, scope, visible }: CluesTabProps): ReactNo
       scopes,
       onScopeChange,
     })
-  }, [service, face, browseWorkspaceId, ctx, insertClue, insertPack, openAddToPack, scopes, onScopeChange])
+  }, [service, face, browseWorkspaceId, ctx, scope.sessionId, insertClue, insertPack, openAddToPack, scopes, onScopeChange])
 
   const openImport = useCallback((): void => {
     if (service === undefined || browseWorkspaceId === undefined) return
@@ -364,65 +378,65 @@ export function CluesTab({ ctx, store, scope, visible }: CluesTabProps): ReactNo
       )}
 
       {ready && browseWorkspaceId !== undefined && (
-        <div className={css.regions} key={browseWorkspaceId}>
-          <WorkbenchSection
-            title={t('clueViewBrowse')}
-            icon={<IconSearchOutlineRegular size={14} />}
-            open={sections.browse}
-            onOpenChange={open => { toggleSection('browse', open) }}
-            actions={utilityButtons}
-            className={css.browseSection}
-            bodyClassName={css.browseBody}
-          >
-            <div className={css.browseRegion} data-clue-browse-region>
-              <ClueBrowser
-                onPacksChanged={refreshPacks}
-                onTaskOpenChange={setBrowserTaskOpen}
-                sourcePreferences={sourcePreferences}
-                workspaceId={browseWorkspaceId}
-                face={face}
-                windows={service.windows}
-                visible={visible && sections.browse}
-                initialSourceId={activeSource}
-                onSourceChange={rememberSource}
-                scopes={scopes}
-                onScopeChange={onScopeChange}
-                onOpenDetail={openDetail}
-                onRevealFile={revealFile}
-                onInsertClue={insertClue}
-                onOpenSettings={openSettings}
-                onNotice={notifyClue}
-              />
-            </div>
-          </WorkbenchSection>
-          <WorkbenchSection
-            title={t('clueViewPacks')}
-            icon={<IconArchiveOutlineRegular size={14} />}
-            open={sections.packs}
-            onOpenChange={open => { toggleSection('packs', open) }}
-            // Cap the shelf only while resources also has the floor; alone, it fills.
-            size={sections.browse ? 'compact' : 'fill'}
-            className={css.packSection}
-            bodyClassName={css.packBody}
-          >
-            <div className={css.packRegion} data-clue-pack-region>
-              <CluePacksSection
-                onTaskOpenChange={setPackTaskOpen}
-                workspaceId={browseWorkspaceId}
-                face={face}
-                windows={service.windows}
-                visible={visible && sections.packs}
-                settings={settings}
-                refreshRevision={packsRevision}
-                onSettingsChange={persistSettings}
-                onInsertPack={insertPack}
-                onOpenPack={openPack}
-                onImport={openImport}
-                onNotice={notifyClue}
-              />
-            </div>
-          </WorkbenchSection>
-        </div>
+        <SectionStack key={browseWorkspaceId} initialWeights={sectionLayoutOf(settings).weights}
+          onResize={persistWeights} sections={[
+            { id: 'browse', title: t('clueViewBrowse'), open: sections.browse, weight: 3, content: (
+                <WorkbenchSection
+                  title={t('clueViewBrowse')}
+                  icon={<IconSearchOutlineRegular size={14} />}
+                  open={sections.browse}
+                  onOpenChange={open => { toggleSection('browse', open) }}
+                  actions={utilityButtons}
+                  className={css.browseSection}
+                >
+                  <div className={css.browseRegion} data-clue-browse-region>
+                    <ClueBrowser
+                      onPacksChanged={refreshPacks}
+                      onTaskOpenChange={setBrowserTaskOpen}
+                      sourcePreferences={sourcePreferences}
+                      workspaceId={browseWorkspaceId}
+                      face={face}
+                      windows={service.windows}
+                      visible={visible && sections.browse}
+                      initialSourceId={activeSource}
+                      onSourceChange={rememberSource}
+                      scopes={scopes}
+                      onScopeChange={onScopeChange}
+                      onOpenDetail={openDetail}
+                      onRevealFile={revealFile}
+                      onInsertClue={insertClue}
+                      onOpenSettings={openSettings}
+                      onNotice={notifyClue}
+                    />
+                  </div>
+                </WorkbenchSection>
+            ) },
+            { id: 'packs', title: t('clueViewPacks'), open: sections.packs, weight: 2, content: (
+                <WorkbenchSection
+                  title={t('clueViewPacks')}
+                  icon={<IconArchiveOutlineRegular size={14} />}
+                  open={sections.packs}
+                  onOpenChange={open => { toggleSection('packs', open) }}
+                >
+                  <div className={css.packRegion} data-clue-pack-region>
+                    <CluePacksSection
+                      onTaskOpenChange={setPackTaskOpen}
+                      workspaceId={browseWorkspaceId}
+                      face={face}
+                      windows={service.windows}
+                      visible={visible && sections.packs}
+                      settings={settings}
+                      refreshRevision={packsRevision}
+                      onSettingsChange={persistSettings}
+                      onInsertPack={insertPack}
+                      onOpenPack={openPack}
+                      onImport={openImport}
+                      onNotice={notifyClue}
+                    />
+                  </div>
+                </WorkbenchSection>
+            ) },
+        ]} />
       )}
 
       </div>

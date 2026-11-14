@@ -151,6 +151,8 @@ describe('skin contract: the plugin owns no color of its own', () => {
   it('clue surfaces keep every paint themed and pair primary foreground with fill', () => {
     for (const file of [
       'src/client/clues/tab/clues-tab.module.css',
+      'src/client/clues/resource-summary.module.css',
+      'src/client/clues/sources/feishu/feishu.module.css',
       'src/client/clues/windows/pack.module.css',
       'src/client/clues/windows/share.module.css',
       'src/client/clues/windows/detail.module.css',

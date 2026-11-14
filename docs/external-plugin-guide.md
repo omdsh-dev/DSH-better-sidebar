@@ -1045,6 +1045,12 @@ ctx.effect(() =>
 
 ---
 
+### 线索文档预览：可选展示元数据
+
+线索详情的身份与 CI 概览只读：来源可提供 `CluePerson.avatarUrl`、`ClueResourceInfo.checkCount` 和 `mergeStatus`。`checks` 是整体结论，`checkRuns` 最多 20 项，可以额外区分跳过、中性、取消和未知；当检查总数多于明细条数时，详情会标注部分结果，不从样本重算整体结论。缺失字段不妨碍旧来源渲染。
+
+结构化文档可通过 `WindowDocumentContent.pathImages` 提供宿主 Markdown 的图片解析器；内置本地 Markdown 仅在已取得真实文件基址时解析相对图片，第三方来源不共享本地文件基址。PNG、SVG 等本地图片使用宿主认证文件路由，以普通图片上下文渲染；不会把 SVG 作为 HTML 或可执行文档插入。
+
 ### 7.1 侧边对话渲染适配器（新增提案，尚未发布）
 
 这是 v0.29.0 新增、配合 GenUI 0.15.0 的窄范围接入能力，关联 [dsh-genui #354](https://github.com/omdsh-dev/dsh-genui/issues/354)。消费方必须先探测方法存在；未安装、旧版本或未注册适配器时，侧边对话继续使用原有 `MarkdownText` 和 `markdownTextProps()`，不改变普通 Markdown 与代码围栏。

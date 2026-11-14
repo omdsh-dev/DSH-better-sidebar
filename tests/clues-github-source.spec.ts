@@ -256,12 +256,12 @@ describe('read and loadEdit', () => {
     expect(result.data).toMatchObject({ kind: 'pull', isDraft: false, merged: false, checkRuns })
     expect(result.info).toEqual({
       state: 'open', number: 14727, repository: 'cli/cli',
-      author: { handle: 'umairnaeem0309', name: 'Umair Naeem', url: 'https://github.com/umairnaeem0309' },
+      author: { handle: 'umairnaeem0309', name: 'Umair Naeem', url: 'https://github.com/umairnaeem0309', avatarUrl: 'https://avatars.githubusercontent.com/u/1234?v=4' },
       assignees: [{ handle: 'cli-triage', name: 'CLI Triage', url: 'https://github.com/apps/cli-triage' }],
       labels: ['bug'], createdAt: '2026-10-17T12:00:00.000Z', updatedAt: '2026-10-17T15:26:56.000Z',
       branches: { head: 'fix/type-resolution', base: 'trunk', headRepository: 'umairnaeem0309/cli', baseRepository: 'cli/cli' },
       counts: { comments: 5, commits: 12, changedFiles: 3, additions: 42, deletions: 7 },
-      review: 'approved', mergeable: 'mergeable', checks: 'success', checkRuns,
+      review: 'approved', mergeable: 'mergeable', checks: 'success', checkRuns, checkCount: 28, mergeStatus: 'ready',
     })
   })
 

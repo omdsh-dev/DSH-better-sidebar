@@ -141,7 +141,7 @@ const MARKDOWN_EXTENSIONS = new Set(['.md', '.markdown'])
  * only keeps browsing/resolution from having to open every file.
  */
 const BINARY_EXTENSIONS = new Set([
-  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.ico', '.avif', '.tif', '.tiff', '.heic', '.psd',
+  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp', '.ico', '.avif', '.tif', '.tiff', '.heic', '.psd',
   '.pdf', '.zip', '.gz', '.tgz', '.tar', '.bz2', '.xz', '.7z', '.rar',
   '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.odt', '.ods', '.odp',
   '.mp3', '.wav', '.flac', '.ogg', '.m4a', '.mp4', '.mov', '.webm', '.mkv', '.avi',
@@ -792,7 +792,7 @@ async function readFileContent(
   // `stat` succeeds on an unreadable entry; `readText` would report the
   // resulting EACCES as a generic fs-error, so probe first.
   await requireAccess(absolute, FILE_ACCESS)
-  if (typeId === LOCAL_FILE_TYPE_IDS.binary) {
+  if (typeId === LOCAL_FILE_TYPE_IDS.binary || localFileTypeOf(locator.path, locator.dialect) === LOCAL_FILE_TYPE_IDS.binary) {
     return binaryReadResult(locator, absolute, info, new Date().toISOString())
   }
   const result = await readText(absolute).catch((error: unknown) => {
@@ -838,7 +838,7 @@ async function loadEditDocument(
 ): Promise<ClueEditDocument> {
   throwIfAborted(context)
   const format = formatOf(typeId)
-  if (typeId === LOCAL_FILE_TYPE_IDS.binary) {
+  if (typeId === LOCAL_FILE_TYPE_IDS.binary || localFileTypeOf(locator.path, locator.dialect) === LOCAL_FILE_TYPE_IDS.binary) {
     throw new ClueError('unsupported', 'a binary local file is read-only')
   }
   const absolute = absolutePathOf(locator, context)
@@ -873,7 +873,7 @@ async function saveEditDocument(
 ): Promise<ClueSaveEditResult> {
   throwIfAborted(context)
   const expectedFormat = formatOf(typeId)
-  if (typeId === LOCAL_FILE_TYPE_IDS.binary) {
+  if (typeId === LOCAL_FILE_TYPE_IDS.binary || localFileTypeOf(locator.path, locator.dialect) === LOCAL_FILE_TYPE_IDS.binary) {
     throw new ClueError('unsupported', 'a binary local file is read-only')
   }
   if (document.format !== expectedFormat) {

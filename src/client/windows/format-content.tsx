@@ -5,7 +5,10 @@
  * Unknown formats stay read-only and never acquire a generic save path.
  */
 import { createElement, useCallback, useId, useState, useSyncExternalStore, type KeyboardEvent, type ReactNode } from 'react'
-import { MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
+import { MarkdownText, type MarkdownPathImages } from '@deepseek-ai/dsh-client-ui-primitives'
+import { BUILTIN_SOURCE_IDS } from '../../clues/types.ts'
+import { hostHttpBase } from '../desktop-env.ts'
+import { desktopFileUrl } from '../markdown-images.ts'
 import type { ClueFormatRenderer, ClueFormatRendererProps, JsonValue } from '../../clues/types.ts'
 import type { WindowDocumentContent } from './types.ts'
 import { markdownTextProps } from '../markdown-labels.tsx'
@@ -63,6 +66,7 @@ export interface TextDocumentContentProps {
   readonly text: string
   readonly readOnly: boolean
   readonly markdown?: boolean
+  readonly pathImages?: MarkdownPathImages
   readonly saving?: boolean
   onChange(text: string): void
 }
@@ -76,7 +80,7 @@ export function TextDocumentContent(props: TextDocumentContentProps): ReactNode 
         <MarkdownText {...markdownTextProps(text, {
           copyLabel: t('copy'), copiedLabel: t('copied'), codeLabel: t('codeBlockTitle'),
           wrapLabel: t('codeBlockWrap'), unwrapLabel: t('codeBlockUnwrap'),
-        })} />
+        }, props.pathImages)} />
       </div>
     }
     return <pre className={css.textReadOnly} data-window-text-read-only>{text}</pre>
@@ -94,10 +98,20 @@ export function TextDocumentContent(props: TextDocumentContentProps): ReactNode 
   )
 }
 
+/** Keep SVG and remote diagrams in image context, never an inline document. */
+export function DocumentImage({ url, alt, original }: { url?: string; alt: string; original?: string }): ReactNode {
+  const [failed, setFailed] = useState(false)
+  return <figure className={css.documentImage} data-clue-image-preview data-image-unavailable={url === undefined || failed ? '' : undefined}>
+    {url !== undefined && !failed
+      ? <img src={url} alt={alt} loading="lazy" decoding="async" referrerPolicy="no-referrer" onError={() => { setFailed(true) }} />
+      : <figcaption>{t('cluePreviewImageUnavailable')}{original !== undefined && <a href={original} target="_blank" rel="noreferrer">{t('clueDetailOpenSource')}</a>}</figcaption>}
+  </figure>
+}
+
 export function ClueFormatHost(props: ClueFormatHostProps): ReactNode {
   const {
     registry, sourceId, typeId, format, document, readOnly, saving, saved, loading, error, onChange, onSave,
-    presentation, mode: controlledMode, onModeChange, editLoading, header, embedded, afterBody, bodyWrapper,
+    presentation, mode: controlledMode, onModeChange, editLoading, header, embedded, afterBody, bodyWrapper, pathImages,
   } = props
   const renderer = useFormatRenderer(registry, format)
   const text = renderer === undefined ? textOf(document.data) : undefined
@@ -132,7 +146,7 @@ export function ClueFormatHost(props: ClueFormatHostProps): ReactNode {
 
   const body = (preview: boolean): ReactNode => {
     if (renderer !== undefined) {
-      const rendererProps: ClueFormatRendererProps & { readonly embedded?: boolean } = {
+      const rendererProps: ClueFormatRendererProps & { readonly embedded?: boolean; readonly pathImages?: MarkdownPathImages } = {
         sourceId, typeId, format, document,
         readOnly: preview,
         saving: saving === true,
@@ -142,6 +156,7 @@ export function ClueFormatHost(props: ClueFormatHostProps): ReactNode {
         // mounts keep the source renderer's own save affordance.
         ...(preview || onSave === undefined || embedded === true ? {} : { onSave }),
         ...(embedded === undefined ? {} : { embedded }),
+        ...(pathImages === undefined ? {} : { pathImages }),
       }
       return createElement(renderer, rendererProps)
     }
@@ -151,10 +166,18 @@ export function ClueFormatHost(props: ClueFormatHostProps): ReactNode {
           text={text}
           readOnly={preview}
           markdown={format === 'text/markdown'}
+          pathImages={pathImages}
           saving={saving === true}
           onChange={(next) => { onChange?.(dataWithText(document.data, next)) }}
         />
       </div>
+    }
+    if (sourceId === BUILTIN_SOURCE_IDS.files && 'assets' in document && document.freshness !== 'snapshot') {
+      const image = document.assets?.find(asset => asset.mime?.startsWith('image/') === true && asset.path !== undefined)
+      if (image?.path !== undefined) {
+        const url = desktopFileUrl(image.path, hostHttpBase())
+        return <DocumentImage key={url + (document.revision ?? '')} url={url} alt={image.path.split(/[\\/]/).at(-1) ?? ''} original={url} />
+      }
     }
     return <section className={css.unknownFormat} data-window-unknown-format role="note">
       <div className={css.unknownHead}>

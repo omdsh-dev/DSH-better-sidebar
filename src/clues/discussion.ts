@@ -172,11 +172,13 @@ export function parseClueDiscussion(value: unknown, source = 'discussion'): Clue
     const name = optionalString(record, 'name', what)
     const handle = optionalString(record, 'handle', what)
     const url = optionalString(record, 'url', what)
+    const avatarUrl = optionalString(record, 'avatarUrl', what)
     return {
       ...(id === undefined ? {} : { id }),
       ...(name === undefined ? {} : { name }),
       ...(handle === undefined ? {} : { handle }),
       ...(url === undefined ? {} : { url }),
+      ...(avatarUrl === undefined ? {} : { avatarUrl }),
     }
   }
   const anchorOf = (raw: unknown, what: string): ClueCommentAnchor => {

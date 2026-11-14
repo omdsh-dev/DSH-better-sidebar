@@ -40,6 +40,7 @@ interface ActionRequest {
 interface FixtureState {
   workspaceId?: string
   actions: ActionRequest[]
+  rejectNext?: boolean
   reads: number
   comments: number
   blocked: string[]
@@ -85,6 +86,11 @@ async function interceptFixture(page: Page): Promise<FixtureState> {
       case 'clues.snapshots.list': await ok(route, { snapshots: [] }); return
       case 'clues.actions.start':
         state.actions.push(route.request().postDataJSON() as ActionRequest)
+        if (state.rejectNext === true) {
+          state.rejectNext = false
+          await route.fulfill({ status: 409, json: { ok: false, error: { code: 'conflict',
+            message: 'The conversation is in use by another DSH instance.' } } }); return
+        }
         // No deliveryId: the client must not reopen/start a sidechat either.
         await ok(route, { accepted: true }); return
       default:
@@ -157,10 +163,10 @@ async function openFixture(page: Page): Promise<{ state: FixtureState; surface: 
 }
 
 /** Set a real DOM Selection, then let the rendered surface handle mouseup. */
-async function selectText(page: Page, scope: Locator, text: string): Promise<Locator> {
+async function selectText(page: Page, scope: Locator, text: string, right = false): Promise<Locator> {
   const paragraph = scope.getByText(text, { exact: true })
   await paragraph.scrollIntoViewIfNeeded()
-  await paragraph.evaluate((node, selected) => {
+  const handled = await paragraph.evaluate((node, { selected, right }) => {
     const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT)
     let textNode: Node | null
     while ((textNode = walker.nextNode()) !== null) {
@@ -172,11 +178,14 @@ async function selectText(page: Page, scope: Locator, text: string): Promise<Loc
       const selection = window.getSelection()!
       selection.removeAllRanges()
       selection.addRange(range)
-      node.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
-      return
+      if (!right) { node.dispatchEvent(new MouseEvent('mouseup', { bubbles: true })); return true }
+      const box = range.getClientRects()[0]!
+      return !node.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, button: 2,
+        clientX: box.left + box.width / 2, clientY: box.top + box.height / 2 }))
     }
     throw new Error('the fixture selection must exist in one rendered text node')
-  }, text)
+  }, { selected: text, right })
+  expect(handled).toBe(true)
   const menu = page.locator('[data-clue-selection-menu]')
   await expect(menu).toBeVisible()
   await expect(menu).toHaveAttribute('role', 'menu')
@@ -214,14 +223,18 @@ test('UI19 keeps discussion below the body and comment headings out of its outli
 test('UI19 selects body and comment actions with readable main/side targets without sending', async ({ page }) => {
   const { state, surface, sessionId } = await openFixture(page)
   const body = surface.locator('[data-window-document-body]')
-  let menu = await selectText(page, body, BODY_SELECTION)
+  let menu = await selectText(page, body, BODY_SELECTION, true)
   expect(await menu.locator('[data-clue-selection-action]').evaluateAll(nodes => nodes.map(node => node.getAttribute('data-clue-selection-action'))))
     .toEqual(['insert', 'explain', 'rewrite', 'expand', 'continue', 'shorten', 'translate'])
   await expect(menu.getByRole('menuitemradio', { name: 'Main conversation', exact: true })).toHaveAttribute('aria-checked', 'true')
   await expect(menu.getByRole('menuitemradio', { name: 'Side conversation', exact: true })).toBeVisible()
+  state.rejectNext = true
   await menu.locator('[data-clue-selection-action="explain"]').click()
+  await expect(menu.getByRole('alert')).toContainText('Another DSH instance is using this conversation.')
+  await menu.getByRole('menuitem', { name: 'Retry', exact: true }).click()
   await expect(menu).toHaveCount(0)
-  await expect.poll(() => state.actions.length).toBe(1)
+  await expect.poll(() => state.actions.length).toBe(2)
+  expect(state.actions[1]).toEqual(state.actions[0])
   expect(state.actions[0]).toMatchObject({ workspaceId: state.workspaceId, sessionId, action: 'explain', target: 'main', selection: BODY_SELECTION, resource: { sourceId: SOURCE, typeId: TYPE, locator: candidate.locator } })
   expect(state.actions[0]!.requestId).toBeTruthy()
   expect(state.actions[0]!.comment).toBeUndefined()
@@ -233,13 +246,13 @@ test('UI19 selects body and comment actions with readable main/side targets with
   await side.click()
   await expect(side).toHaveAttribute('aria-checked', 'true')
   await menu.locator('[data-clue-selection-action="explain"]').click()
-  await expect.poll(() => state.actions.length).toBe(2)
-  expect(state.actions[1]).toMatchObject({ workspaceId: state.workspaceId, sessionId, action: 'explain', target: 'side', selection: COMMENT_SELECTION, comment: true, resource: { sourceId: SOURCE, typeId: TYPE, locator: candidate.locator } })
+  await expect.poll(() => state.actions.length).toBe(3)
+  expect(state.actions[2]).toMatchObject({ workspaceId: state.workspaceId, sessionId, action: 'explain', target: 'side', selection: COMMENT_SELECTION, comment: true, resource: { sourceId: SOURCE, typeId: TYPE, locator: candidate.locator } })
   menu = await selectText(page, surface.locator('[data-clue-comment="ui19-comment"] [data-clue-selection-surface]'), COMMENT_SELECTION)
   await menu.locator('[data-clue-selection-action="insert"]').click()
   const composer = page.getByRole('textbox', { name: /^(Describe what you want to build|Message or run a task|描述你想要构建)/ })
   await expect(composer).toContainText(COMMENT_SELECTION)
-  expect(state.actions).toHaveLength(2)
+  expect(state.actions).toHaveLength(3)
   expectQuiet(state)
 })
 

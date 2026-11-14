@@ -56,6 +56,7 @@
 }
 
 .document {
+  container-type: inline-size;
   background: var(--dsw-alias-bg-base);
   display: flex;
   flex-direction: column;
@@ -78,6 +79,8 @@
   overflow-y: auto;
   overscroll-behavior: contain;
 }
+
+.documentHeader:has([data-clue-resource-github]) { max-height: min(55%, 160px); }
 
 .modeBar {
   display: flex;
@@ -182,6 +185,22 @@
   overflow-wrap: anywhere;
   color: var(--dsw-alias-label-secondary);
 }
+
+.documentImage {
+  display: grid;
+  place-items: center;
+  min-width: 0;
+  min-height: 120px;
+  margin: var(--ds-sidebar-gutter);
+  padding: var(--ds-sidebar-gutter);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: var(--ds-sidebar-radius);
+  background: var(--dsw-alias-bg-base);
+}
+.documentImage[data-image-unavailable] { min-height: 0; }
+.documentImage img { display: block; max-width: 100%; max-height: 65vh; object-fit: contain; }
+.documentImage figcaption { display: grid; gap: 6px; text-align: center; color: var(--dsw-alias-label-secondary); }
+.documentImage a { color: var(--ds-sidebar-accent); }
 
 .markdownPreview {
   box-sizing: border-box;

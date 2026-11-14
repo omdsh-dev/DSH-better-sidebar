@@ -42,12 +42,33 @@
   font-size: 12px;
   line-height: 16px;
 }
-.regions {
+.stack {
   display: flex;
   flex: 1;
   flex-direction: column;
-  min-width: 0;
   min-height: 0;
+  min-width: 0;
+  overflow-y: auto;
+}
+.stackPane { display: flex; flex: none; min-width: 0; }
+.stackPane[data-expanded='true'] { flex: 1 0 112px; min-height: 112px; }
+.sash {
+  position: relative;
+  flex: 0 0 7px;
+  cursor: row-resize;
+  touch-action: none;
+  outline: none;
+  box-sizing: border-box;
+  padding-block: 3px;
+  background: var(--dsw-alias-border-l2) content-box;
+}
+.sash + .stackPane > div > div:first-child { border-top: 0; }
+.sash:hover, .sash:focus-visible, .sash:active {
+  background-color: var(--ds-sidebar-accent);
+}
+@media (pointer: coarse) {
+  .stackPane[data-expanded='true'] { flex-basis: 156px; min-height: 156px; }
+  .sash { flex-basis: 14px; padding-block: 6px 7px; }
 }
 /* The very first workbench section at the top of the tab needs no double top rule. */
 .browseSection > div:first-child {

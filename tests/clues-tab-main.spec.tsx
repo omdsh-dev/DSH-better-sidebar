@@ -636,8 +636,14 @@ describe('clue tab main page', () => {
     expect(nav.textContent).not.toContain('Local files')
     expect(trigger.querySelector('svg')).not.toBeNull()
   })
-  it('defaults to resources and reads only the visible mounted view', async () => {
+  it('defaults to both sections open', async () => {
     const { fx, view } = await mountTab()
+    expect(sectionOf(view.container, t('clueViewPacks'))?.getAttribute('data-open')).toBe('true')
+    expect(view.container.querySelector('[role="separator"]')).not.toBeNull()
+    expect(fx.calls).toMatchObject({ packsList: 1, list: 1 })
+  })
+  it('restores a collapsed section without reading it until expanded', async () => {
+    const { fx, view } = await mountTab({ clueSettings: { layout: { packs: false } } })
     const query = browserQueryInput(view.container)
     expect(sectionOf(view.container, t('clueViewPacks'))?.getAttribute('data-open')).toBe('false')
     expect(sectionOf(view.container, t('clueViewBrowse'))?.getAttribute('data-open')).toBe('true')
@@ -1127,7 +1133,7 @@ describe('clue selection confirmation', () => {
     const unresolved: ClueCandidate = {
       sourceId: FILES.sourceId, typeId: 'file', title: 'Unregistered note', locator: { path: 'new.md' },
     }
-    const { fx, view } = await mountTab({ listItems: [selectionFiles[0]!, unresolved] })
+    const { fx, view } = await mountTab({ listItems: [selectionFiles[0]!, unresolved], clueSettings: { layout: { packs: false } } })
     const collection = await selectionWindow(view)
     const name = startNewPack(collection)
     typeInto(name, '  Investigation  ')
@@ -1515,6 +1521,7 @@ describe('clue workbench UX regressions', () => {
   it('reveals the whole pack library progressively without paging controls', async () => {
     installIntersectionObserver()
     const { fx, view } = await mountTab({
+      clueSettings: { layout: { packs: false } },
       enabled: [FILES.sourceId],
       listItems: [{ sourceId: FILES.sourceId, typeId: 'file', title: 'A note', locator: { path: 'a.md' } }],
     })
@@ -1667,7 +1674,7 @@ describe('clue browser trailing query and row menu', () => {
     expect(checkbox.checked).toBe(false)
     click(first, 'First note')
     await flush()
-    expect(fx.opened.at(-1)).toMatchObject({ id: 'clue:c-a', title: 'First note' })
+    expect(fx.opened.at(-1)).toMatchObject({ id: 'clue:c-a:session:s1', sessionId: 's1', title: 'First note' })
     expect(checkbox.checked).toBe(false)
     click(first, 'Insert First note')
     await flush()

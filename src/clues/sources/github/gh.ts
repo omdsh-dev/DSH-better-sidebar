@@ -63,7 +63,7 @@ const ISSUE_LIST_QUERY = 'query($owner:String!,$repo:String!,$first:Int!,$after:
   + '{repository(owner:$owner,name:$repo){issues(first:$first,after:$after,states:$states,'
   + 'orderBy:{field:UPDATED_AT,direction:DESC}){totalCount pageInfo{hasNextPage endCursor} '
   + 'nodes{number title state createdAt updatedAt closedAt url '
-  + 'author{login url ... on User{name} ... on Organization{name}} '
+  + 'author{login url avatarUrl(size:48) ... on User{name} ... on Organization{name}} '
   + 'assignees(first:10){nodes{login name url}} labels(first:20){nodes{name}}}}}}'
 
 /** One pull request browse page. */
@@ -72,14 +72,14 @@ const PULL_LIST_QUERY = 'query($owner:String!,$repo:String!,$first:Int!,$after:S
   + 'orderBy:{field:UPDATED_AT,direction:DESC}){totalCount pageInfo{hasNextPage endCursor} '
   + 'nodes{number title state isDraft mergedAt headRefName baseRefName headRepository{nameWithOwner} '
   + 'createdAt updatedAt closedAt url reviewDecision mergeable statusCheckRollup{state} '
-  + 'author{login url ... on User{name} ... on Organization{name}} '
+  + 'author{login url avatarUrl(size:48) ... on User{name} ... on Organization{name}} '
   + 'assignees(first:10){nodes{login name url}} labels(first:20){nodes{name}}}}}}'
 
 /** One issue read (live; also the repository's archived/permission state). */
 const ISSUE_READ_QUERY = 'query($owner:String!,$repo:String!,$number:Int!)'
-  + '{repository(owner:$owner,name:$repo){isArchived viewerPermission '
+  + '{repository(owner:$owner,name:$repo){isArchived viewerPermission defaultBranchRef{target{oid}} '
   + 'issue(number:$number){number title body state stateReason createdAt updatedAt closedAt url '
-  + 'author{login url ... on User{name} ... on Organization{name}} '
+  + 'author{login url avatarUrl(size:48) ... on User{name} ... on Organization{name}} '
   + 'assignees(first:10){nodes{login name url}} labels(first:20){nodes{name}} '
   + 'comments(first:1){totalCount}}}}'
 
@@ -93,12 +93,12 @@ const ISSUE_READ_QUERY = 'query($owner:String!,$repo:String!,$number:Int!)'
 const PULL_READ_QUERY = 'query($owner:String!,$repo:String!,$number:Int!)'
   + '{repository(owner:$owner,name:$repo){isArchived viewerPermission '
   + 'pullRequest(number:$number){number title body state isDraft merged mergedAt createdAt updatedAt closedAt url '
-  + 'author{login url ... on User{name} ... on Organization{name}} '
+  + 'author{login url avatarUrl(size:48) ... on User{name} ... on Organization{name}} '
   + 'assignees(first:10){nodes{login name url}} labels(first:20){nodes{name}} '
   + 'comments(first:1){totalCount} commits(first:1){totalCount} '
-  + 'changedFiles additions deletions headRefName baseRefName headRepository{nameWithOwner} '
-  + 'reviewDecision mergeable statusCheckRollup{state '
-  + `contexts(first:${CLUE_MAX_CHECK_RUNS}){nodes{__typename `
+  + 'changedFiles additions deletions headRefName headRefOid baseRefName headRepository{nameWithOwner} '
+  + 'reviewDecision mergeable mergeStateStatus statusCheckRollup{state '
+  + `contexts(first:${CLUE_MAX_CHECK_RUNS}){totalCount nodes{__typename `
   + '... on CheckRun{name status conclusion detailsUrl} '
   + '... on StatusContext{context state targetUrl}}}}}}}'
 
@@ -106,7 +106,7 @@ const PULL_READ_QUERY = 'query($owner:String!,$repo:String!,$number:Int!)'
 const SEARCH_ISSUE_QUERY = 'query($q:String!,$first:Int!,$after:String)'
   + '{search(query:$q,type:ISSUE,first:$first,after:$after){issueCount pageInfo{hasNextPage endCursor} '
   + 'nodes{... on Issue{number title state createdAt updatedAt closedAt url '
-  + 'author{login url ... on User{name} ... on Organization{name}} '
+  + 'author{login url avatarUrl(size:48) ... on User{name} ... on Organization{name}} '
   + 'assignees(first:10){nodes{login name url}} labels(first:20){nodes{name}}}}}}'
 
 /** Same-repository pull request search. */
@@ -114,7 +114,7 @@ const SEARCH_PULL_QUERY = 'query($q:String!,$first:Int!,$after:String)'
   + '{search(query:$q,type:ISSUE,first:$first,after:$after){issueCount pageInfo{hasNextPage endCursor} '
   + 'nodes{... on PullRequest{number title state isDraft mergedAt '
   + 'headRefName baseRefName headRepository{nameWithOwner} createdAt updatedAt closedAt url '
-  + 'author{login url ... on User{name} ... on Organization{name}} '
+  + 'author{login url avatarUrl(size:48) ... on User{name} ... on Organization{name}} '
   + 'assignees(first:10){nodes{login name url}} labels(first:20){nodes{name}}}}}}'
 
 /** The state filter's GraphQL enum, or undefined for "all". */
@@ -350,6 +350,7 @@ export interface GithubListItem {
   readonly author?: string
   readonly authorName?: string
   readonly authorUrl?: string
+  readonly authorAvatarUrl?: string
   readonly assignees?: readonly GithubPerson[]
   readonly labels?: readonly string[]
   readonly isDraft?: boolean
@@ -384,6 +385,7 @@ export interface GithubResourceSnapshot {
   readonly author?: string
   readonly authorName?: string
   readonly authorUrl?: string
+  readonly authorAvatarUrl?: string
   readonly assignees: readonly GithubPerson[]
   readonly url: string
   readonly createdAt: string
@@ -409,6 +411,9 @@ export interface GithubResourceSnapshot {
   readonly checks?: ClueCheckState
   /** Individual checks of this read (check runs + legacy status contexts). */
   readonly checkRuns?: readonly ClueResourceCheck[]
+  readonly checkCount?: number
+  readonly mergeStatus?: 'ready' | 'blocked' | 'behind' | 'unknown'
+  readonly imageRef?: string
   readonly isArchived: boolean
   readonly viewerPermission?: string
   /** Opaque check-before-save baseline (updatedAt + content fingerprint). */
@@ -532,6 +537,7 @@ function listItemOf(value: unknown, kind: GithubKind): GithubListItem {
   const authorRecord = isRecord(value.author) ? value.author : undefined
   const authorName = stringField(authorRecord?.name)
   const authorUrl = stringField(authorRecord?.url)
+  const authorAvatarUrl = stringField(authorRecord?.avatarUrl)
   const createdAt = stringField(value.createdAt)
   const closedAt = stringField(value.closedAt)
   const assignees = peopleOf(value.assignees)
@@ -554,6 +560,7 @@ function listItemOf(value: unknown, kind: GithubKind): GithubListItem {
     ...(author === undefined ? {} : { author }),
     ...(authorName === undefined ? {} : { authorName }),
     ...(authorUrl === undefined ? {} : { authorUrl }),
+    ...(authorAvatarUrl === undefined ? {} : { authorAvatarUrl }),
     ...(assignees.length === 0 ? {} : { assignees }),
     ...(isRecord(value.labels) ? { labels: labelsOf(value.labels) } : {}),
     ...(kind === 'pull' && typeof value.isDraft === 'boolean' ? { isDraft: value.isDraft } : {}),
@@ -624,6 +631,21 @@ function mergeableOf(raw: unknown): 'mergeable' | 'conflicting' | 'unknown' | un
   return undefined
 }
 
+/** CLEAN means GitHub reports the merge checks are satisfied, not just a conflict-free tree. */
+function mergeStatusOf(raw: unknown): GithubResourceSnapshot['mergeStatus'] {
+  switch (raw) {
+    case 'CLEAN': return 'ready'
+    case 'BLOCKED':
+    case 'DIRTY': return 'blocked'
+    case 'BEHIND': return 'behind'
+    case 'DRAFT':
+    case 'HAS_HOOKS':
+    case 'UNSTABLE':
+    case 'UNKNOWN': return 'unknown'
+    default: return undefined
+  }
+}
+
 /** Normalize the status-check rollup state; an empty rollup stays absent. */
 function checksOf(raw: unknown): ClueCheckState | undefined {
   if (!isRecord(raw)) return undefined
@@ -645,23 +667,23 @@ function checksOf(raw: unknown): ClueCheckState | undefined {
  * neutral/skipped/stale never blocked a merge, timeout/action-required did, and
  * a cancelled run is reported as an error rather than silently passing.
  */
-function checkRunStateOf(status: string | undefined, conclusion: string | undefined): ClueCheckState | undefined {
-  if (conclusion === undefined) return status === undefined ? undefined : 'pending'
+function checkRunStateOf(status: string | undefined, conclusion: string | undefined): ClueResourceCheck['state'] {
+  if (conclusion === undefined) {
+    if (status === 'QUEUED' || status === 'WAITING' || status === 'REQUESTED' || status === 'PENDING') return 'expected'
+    return status === 'IN_PROGRESS' ? 'pending' : 'unknown'
+  }
   switch (conclusion) {
-    case 'SUCCESS':
-    case 'NEUTRAL':
-    case 'SKIPPED':
-    case 'STALE':
-      return 'success'
+    case 'SUCCESS': return 'success'
+    case 'NEUTRAL': return 'neutral'
+    case 'SKIPPED': return 'skipped'
+    case 'STALE': return 'unknown'
     case 'FAILURE':
     case 'TIMED_OUT':
     case 'ACTION_REQUIRED':
     case 'STARTUP_FAILURE':
       return 'failure'
-    case 'CANCELLED':
-      return 'error'
-    default:
-      return undefined
+    case 'CANCELLED': return 'cancelled'
+    default: return 'unknown'
   }
 }
 
@@ -696,12 +718,11 @@ function checkRunsOf(raw: unknown): readonly ClueResourceCheck[] | undefined {
     const state = statusContext
       ? statusContextStateOf(stringField(node.state))
       : checkRunStateOf(stringField(node.status), stringField(node.conclusion))
-    if (state === undefined) continue
     const url = stringField(statusContext ? node.targetUrl : node.detailsUrl)
     runs.push({
       // The provider owns the name; clip rather than drop a long matrix leg.
       name: name.length > GITHUB_CHECK_NAME_MAX ? name.slice(0, GITHUB_CHECK_NAME_MAX - 1) + '…' : name,
-      state,
+      state: state ?? 'unknown',
       ...(url === undefined ? {} : { url }),
     })
     if (runs.length >= CLUE_MAX_CHECK_RUNS) break
@@ -729,6 +750,7 @@ function snapshotOf(
   const authorRecord = isRecord(node.author) ? node.author : undefined
   const authorName = stringField(authorRecord?.name)
   const authorUrl = stringField(authorRecord?.url)
+  const authorAvatarUrl = stringField(authorRecord?.avatarUrl)
   const assignees = peopleOf(node.assignees)
   const url = requireString(node.url, 'read response')
   const createdAt = requireString(node.createdAt, 'read response')
@@ -773,6 +795,12 @@ function snapshotOf(
     checks = checksOf(node.statusCheckRollup)
     checkRuns = checkRunsOf(node.statusCheckRollup)
   }
+  const rollup = isRecord(node.statusCheckRollup) ? node.statusCheckRollup : undefined
+  const checkCount = resource.kind === 'pull' ? countOf(rollup?.contexts) : undefined
+  const mergeStatus = resource.kind === 'pull' ? mergeStatusOf(node.mergeStateStatus) : undefined
+  const branch = isRecord(repository.defaultBranchRef) ? repository.defaultBranchRef : undefined
+  const imageRef = resource.kind === 'pull' ? stringField(node.headRefOid)
+    : isRecord(branch?.target) ? stringField(branch.target.oid) : undefined
   const revision = githubRevisionOf({
     updatedAt,
     title,
@@ -791,6 +819,7 @@ function snapshotOf(
     ...(author === undefined ? {} : { author }),
     ...(authorName === undefined ? {} : { authorName }),
     ...(authorUrl === undefined ? {} : { authorUrl }),
+    ...(authorAvatarUrl === undefined ? {} : { authorAvatarUrl }),
     assignees,
     url,
     createdAt,
@@ -812,6 +841,9 @@ function snapshotOf(
     ...(mergeable === undefined ? {} : { mergeable }),
     ...(checks === undefined ? {} : { checks }),
     ...(checkRuns === undefined ? {} : { checkRuns }),
+    ...(checkCount === undefined ? {} : { checkCount }),
+    ...(mergeStatus === undefined ? {} : { mergeStatus }),
+    ...(imageRef === undefined ? {} : { imageRef }),
     isArchived,
     ...(viewerPermission === undefined ? {} : { viewerPermission }),
     revision,

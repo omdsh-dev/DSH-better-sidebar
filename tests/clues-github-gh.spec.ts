@@ -97,7 +97,7 @@ describe('browse and search argv', () => {
     expect(['owner', 'repo', 'first', 'states[]'].map(key => argValue(request.args, key)))
       .toEqual(['cli', 'cli', '30', 'OPEN'])
     for (const fragment of ['issues(first:$first', '$states:[IssueState!]', 'createdAt updatedAt closedAt',
-      'author{login url ... on User{name} ... on Organization{name}}',
+      'author{login url avatarUrl(size:48) ... on User{name} ... on Organization{name}}',
       'assignees(first:10){nodes{login name url}}', 'labels(first:20){nodes{name}}']) expect(query).toContain(fragment)
     expect(request.args.join(' ')).not.toContain('--paginate')
     expect(page.items).toHaveLength(2)
@@ -189,15 +189,17 @@ describe('read', () => {
     const snapshot = await clientOf(fake).readResource(PULL)
     const query = argValue(fake.runs[0]!.args, 'query')!
     for (const fragment of ['pullRequest(number:$number)', 'commits(first:1){totalCount}', 'changedFiles additions deletions',
-      'headRefName baseRefName headRepository{nameWithOwner}', 'reviewDecision mergeable statusCheckRollup{state contexts(first:20)',
-      'contexts(first:20){nodes{__typename', '... on CheckRun{name status conclusion detailsUrl}',
+      'headRefName headRefOid baseRefName headRepository{nameWithOwner}', 'reviewDecision mergeable mergeStateStatus statusCheckRollup{state contexts(first:20)',
+      'contexts(first:20){totalCount nodes{__typename', '... on CheckRun{name status conclusion detailsUrl}',
       '... on StatusContext{context state targetUrl}']) expect(query).toContain(fragment)
     // Read-only review/CI/mergeability facts are normalized, never invented.
     expect(snapshot).toMatchObject({
       isDraft: false, merged: false, viewerPermission: 'TRIAGE', labels: ['bug'], commentsCount: 5,
       headRefName: 'fix/type-resolution', baseRefName: 'trunk', headRepository: 'umairnaeem0309/cli',
       review: 'approved', mergeable: 'mergeable', checks: 'success', commitsCount: 12, changedFiles: 3,
-      additions: 42, deletions: 7,
+      additions: 42, deletions: 7, checkCount: 28, mergeStatus: 'ready',
+      imageRef: '2345678abc012345678abc012345678abc0123456',
+      authorAvatarUrl: 'https://avatars.githubusercontent.com/u/1234?v=4',
       // Individual checks ride the SAME read (one request); an inconclusive run is pending.
       checkRuns: [
         { name: 'build (macos)', state: 'success', url: 'https://github.com/cli/cli/runs/1' },
@@ -210,14 +212,19 @@ describe('read', () => {
   })
   it('normalizes check runs: drops unusable nodes, stays absent when empty, bounds and clips', async () => {
     const read = (rollup: unknown) => clientOf(fakeRuntime(() => cliResult({ stdout: pullRead({ statusCheckRollup: rollup }) }))).readResource(PULL)
-    // Unknown conclusions are not guessed at; a nameless node cannot be rendered.
+    // Known names are retained even for new GitHub conclusions; a nameless node cannot render.
     const nodes = [
       { __typename: 'CheckRun', name: 'novel', status: 'COMPLETED', conclusion: 'SOMETHING_NEW' },
       { __typename: 'CheckRun', conclusion: 'SUCCESS', detailsUrl: 'https://ci.example/1' },
       { __typename: 'StatusContext', context: 'ci/legacy', state: 'EXPECTED' },
+      { __typename: 'CheckRun', name: 'docs', status: 'COMPLETED', conclusion: 'SKIPPED' },
+      { __typename: 'CheckRun', name: 'nightly', status: 'COMPLETED', conclusion: 'CANCELLED' },
     ]
     const snapshot = await read({ state: 'PENDING', contexts: { nodes } })
-    expect([snapshot.checks, snapshot.checkRuns]).toEqual(['pending', [{ name: 'ci/legacy', state: 'expected' }]])
+    expect([snapshot.checks, snapshot.checkRuns]).toEqual(['pending', [
+      { name: 'novel', state: 'unknown' }, { name: 'ci/legacy', state: 'expected' },
+      { name: 'docs', state: 'skipped' }, { name: 'nightly', state: 'cancelled' },
+    ]])
     // No rollup contexts at all (or an empty node list) stays absent.
     for (const rollup of [{ state: 'PENDING' }, { state: 'PENDING', contexts: { nodes: [] } }]) expect((await read(rollup)).checkRuns).toBeUndefined()
     // Bounded to 20 in provider order, with a name clipped to the display limit.

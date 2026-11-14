@@ -184,6 +184,19 @@ describe('builtin.files read', () => {
     await expect(service.saveEdit({ workspaceId: WORKSPACE_ID, clueId: clue.clue.id, document: { format: 'application/octet-stream', data: { text: 'x' }, baseRevision: 'r' } })).rejects.toMatchObject({ category: 'unsupported' })
   })
 
+  it('serves SVG as a read-only image asset, including an already saved text-typed clue', async () => {
+    const { workspace, service } = fixture()
+    const path = join(workspace, 'diagram.svg')
+    writeFileSync(path, '<svg xmlns="http://www.w3.org/2000/svg" width="48" height="24"/>')
+    const { clue } = await service.ensure({ workspaceId: WORKSPACE_ID, sourceId: 'builtin.files',
+      typeId: LOCAL_FILE_TYPE_IDS.text, locator: workspaceLocator('diagram.svg'), title: 'diagram.svg' })
+    const resource = { workspaceId: WORKSPACE_ID, clueId: clue.id }
+    const read = await service.read(resource)
+    expect(read).toMatchObject({ format: 'application/octet-stream', assets: [{ path, mime: 'image/svg+xml' }] })
+    expect(read.text).toBeUndefined()
+    await expect(service.loadEdit(resource)).rejects.toMatchObject({ category: 'unsupported' })
+  })
+
   it('pages an explicitly requested large read without silent truncation', async () => {
     const { workspace, service } = fixture()
     const content = `${Array.from({ length: 4000 }, () => 'x'.repeat(63)).join('\n')}\n`
