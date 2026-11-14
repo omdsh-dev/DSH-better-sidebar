@@ -428,7 +428,7 @@ export function createWindowHost(options: WindowHostOptions = {}): WindowHostCon
     }
     record.handle = createHandle(record)
     records = [...records, record]
-    notify()
+    if (options.surface !== 'sidebar' || !setSurface(record, 'sidebar')) notify()
     return record.handle
   }
 

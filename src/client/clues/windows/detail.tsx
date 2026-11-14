@@ -1625,6 +1625,7 @@ export function openClueDetailWindow(options: ClueDetailWindowOptions): WindowHa
   const handle = windows.open({
     id,
     ...(options.sessionId === undefined ? {} : { sessionId: options.sessionId }),
+    surface: 'sidebar',
     title: controller.initialTitle,
     size: 'document',
     bodyLayout: 'fill',

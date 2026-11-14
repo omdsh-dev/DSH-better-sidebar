@@ -84,6 +84,7 @@ function requestShareWindow(request: ShareWindowRequest): void {
 export function openShareWindow(options: OpenShareWindowOptions): WindowHandle {
   const handle = options.windows.open({
     id: CLUE_SHARE_WINDOW_ID,
+    surface: 'sidebar',
     title: t('clueShareTitle'),
     size: 'collection',
     bodyLayout: 'fill',

@@ -140,6 +140,12 @@ export interface WindowOpenOptions {
   bodyLayout?: WindowBodyLayout
   /** Where the window first appears; omitted = centred. */
   anchor?: HTMLElement | null
+  /**
+   * Where a NEW window first appears; defaults to 'floating'. 'sidebar' docks it
+   * as a right-sidebar tab when the native sidebar and a session are available,
+   * and floats it otherwise. Re-opening a live id never changes its surface.
+   */
+  surface?: 'floating' | 'sidebar'
   /** Explicit initial pixel size, overriding the preset target (still clamped). */
   initialSize?: WindowSize
   /** Resize floor; defaults to 320×240. */

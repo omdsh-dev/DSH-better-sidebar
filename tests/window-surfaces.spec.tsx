@@ -173,3 +173,25 @@ it('restores the native destination while an async close decision still needs th
   expect(open).toHaveBeenCalledTimes(2)
   expect(host.getSnapshot().windows).toHaveLength(1)
 })
+
+it('opens a surface:sidebar window docked, floats it without a sidebar or session, and never re-docks a live id', () => {
+  const open = vi.fn()
+  host = createWindowHost({ sessionId: () => 'original' })
+  const unfloated = host.open({ id: 'early', title: 'Early', content: 'x', surface: 'sidebar' })
+  expect(host.getSnapshot().windows[0]?.surface).toBe('floating')
+  unfloated.close()
+
+  host.attachSidebar({ open, focus: () => {}, close: () => {} })
+  const handle = host.open({ id: 'docked', title: 'Docked', content: 'x', surface: 'sidebar' })
+  expect(open).toHaveBeenCalledWith('docked', 'original', 'Docked')
+  expect(host.getSnapshot().windows.find(window => window.id === 'docked')?.surface).toBe('sidebar')
+
+  handle.float()
+  host.open({ id: 'docked', title: 'Docked', content: 'x', surface: 'sidebar' })
+  expect(host.getSnapshot().windows.find(window => window.id === 'docked')?.surface).toBe('floating')
+  expect(open).toHaveBeenCalledTimes(1)
+
+  const defaulted = host.open({ id: 'plain', title: 'Plain', content: 'x' })
+  expect(host.getSnapshot().windows.find(window => window.id === 'plain')?.surface).toBe('floating')
+  defaulted.close()
+})

@@ -69,6 +69,7 @@ export function openCreatePackWindow(options: OpenCreatePackWindowOptions): Wind
   const guard: CreatePackGuard = { busy: false }
   const handle = options.windows.open({
     id: createPackWindowId(options.workspaceId),
+    surface: 'sidebar',
     title: title(),
     size: 'compact',
     bodyLayout: 'fill',

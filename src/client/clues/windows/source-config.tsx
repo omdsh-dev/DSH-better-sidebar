@@ -20,6 +20,7 @@ export function openClueSourceConfigWindow(options: {
   const name = sourceDisplayName(source, options.display)
   return options.windows.open({
     id: `clue-source:${source.sourceId}`,
+    surface: 'sidebar',
     title: t('clueConfigTitle', { source: name }),
     size: 'collection',
     bodyLayout: 'fill',

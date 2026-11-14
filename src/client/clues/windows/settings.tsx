@@ -38,6 +38,7 @@ export function openClueSettingsWindow(options: OpenClueSettingsWindowOptions): 
   openClueSettings({ group })
   return options.windows.open({
     id: CLUE_SETTINGS_WINDOW_ID,
+    surface: 'sidebar',
     title: t('clueSettingsWindowTitle'),
     size: 'collection',
     content: createElement(SideCardSection, {

@@ -201,6 +201,7 @@ export function openPackManagementWindow(options: PackManagementOptions): Window
     dirty ? `${options.pack.name} · ${t('cluePackUnsaved')}` : options.pack.name
   const handle: WindowHandle = options.windows.open({
     id: packWindowId(options.pack.id),
+    surface: 'sidebar',
     title: titleFor(false),
     size: 'collection',
     content: <PackManagementPage {...options} guard={guard} />,

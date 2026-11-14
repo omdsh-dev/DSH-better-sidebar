@@ -156,6 +156,7 @@ export function openClueCollectionWindow(
   const guard: ClueCollectGuard = { busy: false }
   const handle = options.windows.open({
     id: collectWindowId(options.workspaceId, options.targets),
+    surface: 'sidebar',
     title: t('clueBrowserAddToPack'),
     size: 'compact',
     bodyLayout: 'fill',
