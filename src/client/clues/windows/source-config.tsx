@@ -6,6 +6,7 @@ import type { ClueRuntimeApi } from '../runtime-api.ts'
 import { SourceConfigPage } from '../settings/config.tsx'
 import { cluePermissionPreferences } from '../settings/permission-preferences.ts'
 import { sourceDisplayName } from '../settings/sources.tsx'
+import { preferredClueWindowSurface, type ClueWindowSurface } from '../../prefs.ts'
 import { t } from '../../locales.ts'
 
 export function openClueSourceConfigWindow(options: {
@@ -14,13 +15,14 @@ export function openClueSourceConfigWindow(options: {
   display?: ClueSourceDisplayDescriptor
   runtime?: ClueRuntimeApi
   initialAction?: 'install'
+  surface?: ClueWindowSurface
   onClose?(): void
 }): WindowHandle {
   const { source } = options
   const name = sourceDisplayName(source, options.display)
   return options.windows.open({
     id: `clue-source:${source.sourceId}`,
-    surface: 'sidebar',
+    surface: options.surface ?? preferredClueWindowSurface(),
     title: t('clueConfigTitle', { source: name }),
     size: 'collection',
     bodyLayout: 'fill',

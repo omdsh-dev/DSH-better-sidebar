@@ -30,11 +30,12 @@
  *   an extra field in.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives'
 import { encode as encodeQr } from 'uqr'
 import { t, type CopyKey } from '../../locales.ts'
 import { clueRuntimeApi, type ClueRuntimeApi } from '../runtime-api.ts'
 import { LoadingIndicator } from '../../ui/LoadingIndicator.tsx'
-import { ActionButton, Checkbox, FactRow, Notice, TextInput } from '../../ui/index.ts'
+import { ActionButton, Checkbox, Disclosure, FactRow, Notice, TextInput } from '../../ui/index.ts'
 import {
   publishClueStatuses,
   publishClueTask,
@@ -1233,58 +1234,59 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
         return (
           <div key={dependencyId} className={css.dependencyBlock} data-clue-dependency={dependencyId}>
             <div className={css.dependencyHead}>
-              <span className={css.dependencyName}>{current?.name ?? dependencyId}</span>
-              <span className={css.status} data-kind={stateKind}>
-                {stateKind === 'installing' || probingIds[dependencyId] === true
-                  ? <LoadingIndicator inline label={t(CLUE_SOURCE_STATUS_COPY[stateKind])} />
-                  : t(CLUE_SOURCE_STATUS_COPY[stateKind])}
+              <span className={css.dependencyIdentity}>
+                <span className={css.dependencyName}>{current?.name ?? dependencyId}</span>
+                <span className={css.status} data-kind={stateKind}>
+                  {stateKind === 'installing' || probingIds[dependencyId] === true
+                    ? <LoadingIndicator inline label={t(CLUE_SOURCE_STATUS_COPY[stateKind])} />
+                    : t(CLUE_SOURCE_STATUS_COPY[stateKind])}
+                </span>
               </span>
+              <div className={css.configActions}>
+                <Action
+                  label={t('clueDependencyInstall')}
+                  primary={stateKind === 'missing' || stateKind === 'incompatible'}
+                  // A live task (or an in-flight start/cancel) already owns
+                  // this dependency: a second install must not be startable
+                  // from a pre-install row while the first one runs.
+                  disabled={!installable
+                    || currentPlan !== undefined
+                    || planningId === dependencyId
+                    || currentTask?.state === 'running'
+                    || busy !== undefined}
+                  onClick={() => { void plan(dependencyId) }}
+                />
+                <Action
+                  label={t('clueDependencyRecheck')}
+                  disabled={refreshing}
+                  onClick={() => { void loadAll(true) }}
+                />
+                {currentTask !== undefined && currentTask.state === 'running' && (
+                  <Action
+                    label={t('clueDependencyInstallCancel')}
+                    disabled={busy !== undefined}
+                    onClick={() => { void cancelInstall(currentTask) }}
+                  />
+                )}
+              </div>
             </div>
             {current?.error !== undefined && (
               <p className={css.configError} data-clue-dependency-error={dependencyId}>
                 {current.error.message}
               </p>
             )}
-            <div className={css.configActions}>
-              <Action
-                label={t('clueDependencyInstall')}
-                primary={stateKind === 'missing' || stateKind === 'incompatible'}
-                // A live task (or an in-flight start/cancel) already owns
-                // this dependency: a second install must not be startable
-                // from a pre-install row while the first one runs.
-                disabled={!installable
-                  || currentPlan !== undefined
-                  || planningId === dependencyId
-                  || currentTask?.state === 'running'
-                  || busy !== undefined}
-                onClick={() => { void plan(dependencyId) }}
-              />
-              <Action
-                label={t('clueDependencyRecheck')}
-                disabled={refreshing}
-                onClick={() => { void loadAll(true) }}
-              />
-              {currentTask !== undefined && currentTask.state === 'running' && (
-                <Action
-                  label={t('clueDependencyInstallCancel')}
-                  disabled={busy !== undefined}
-                  onClick={() => { void cancelInstall(currentTask) }}
-                />
-              )}
-            </div>
 
             {/* Diagnostics are secondary to the state + action above: the
                 executable path, parsed version, compatibility contract and
                 the manual override live behind one native disclosure. The
                 install task/plan pipeline is unaffected by this grouping. */}
-            <details className={css.advanced} data-clue-dependency-details={dependencyId}>
-              <summary className={css.advancedSummary}>
-                {t('clueDependencyActualPath')}
-                {' · '}
-                {t('clueDependencyVersion')}
-                {current?.manualPath !== undefined && <span className={css.disclosureMeta}>{t('clueDependencyManualPath')}</span>}
-              </summary>
-              <div className={css.advancedBody}>
+            <Disclosure
+              className={css.advanced}
+              bodyClassName={css.advancedBody}
+              data-clue-dependency-details={dependencyId}
+              summary={`${t('clueDependencyActualPath')} · ${t('clueDependencyVersion')}`}
+              meta={current?.manualPath !== undefined ? t('clueDependencyManualPath') : undefined}
+            >
                 <FactRow label={t('clueDependencyActualPath')} mono
                   value={current?.executablePath ?? missingDependencyValue(current)} />
                 <FactRow label={t('clueDependencyVersion')} mono
@@ -1319,8 +1321,7 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
                     {pathErrors[dependencyId]}
                   </p>
                 )}
-              </div>
-            </details>
+            </Disclosure>
             {rowErrors[dependencyId] !== undefined && (
               <p
                 className={css.configError}
@@ -1389,32 +1390,34 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
                     target, distribution, platform, expiry). The ordered
                     steps and the existing PATH copy are reference material,
                     so they fold behind one disclosure. */}
-                <details className={css.planDetails} data-clue-plan-details>
-                  <summary className={css.advancedSummary}>{t('taskWindowDetail')}</summary>
-                  <div className={css.advancedBody}>
-                    <ul className={css.planActions}>
-                      {currentPlan.actionIds.map((action, index) => (
-                        <li key={`${action}:${index}`}>
-                          {t(ACTION_COPY[action])}
-                        </li>
-                      ))}
-                    </ul>
-                    <FactRow label={t('clueDependencyPlanSystemInstall')} value={currentPlan.systemInstall === undefined
-                      ? t('clueDependencyPlanSystemInstallNone')
-                      : (
-                        <>
-                          <span className={css.configMono}>{currentPlan.systemInstall.executablePath}</span>
-                          {currentPlan.systemInstall.version === undefined
-                            ? ''
-                            : ` · ${currentPlan.systemInstall.version}`}
-                          {' · '}
-                          {currentPlan.systemInstall.compatible
-                            ? t('clueDependencyPlanSystemInstallCompatible')
-                            : t('clueDependencyPlanSystemInstallIncompatible')}
-                        </>
-                      )} />
-                  </div>
-                </details>
+                <Disclosure
+                  className={css.planDetails}
+                  bodyClassName={css.advancedBody}
+                  data-clue-plan-details=""
+                  summary={t('taskWindowDetail')}
+                >
+                  <ul className={css.planActions}>
+                    {currentPlan.actionIds.map((action, index) => (
+                      <li key={`${action}:${index}`}>
+                        {t(ACTION_COPY[action])}
+                      </li>
+                    ))}
+                  </ul>
+                  <FactRow label={t('clueDependencyPlanSystemInstall')} value={currentPlan.systemInstall === undefined
+                    ? t('clueDependencyPlanSystemInstallNone')
+                    : (
+                      <>
+                        <span className={css.configMono}>{currentPlan.systemInstall.executablePath}</span>
+                        {currentPlan.systemInstall.version === undefined
+                          ? ''
+                          : ` · ${currentPlan.systemInstall.version}`}
+                        {' · '}
+                        {currentPlan.systemInstall.compatible
+                          ? t('clueDependencyPlanSystemInstallCompatible')
+                          : t('clueDependencyPlanSystemInstallIncompatible')}
+                      </>
+                    )} />
+                </Disclosure>
                 <div className={css.configActions}>
                   <Action
                     label={t('cancel')}
@@ -1515,16 +1518,15 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
           )}
 
           {connection.selectableCapabilities !== undefined && connection.selectableCapabilities.length > 0 && (
-            <details className={css.advanced} data-clue-permissions>
-              <summary className={css.advancedSummary}>
-                {t('clueAuthPermissions')}
-                <span className={css.disclosureMeta}>
-                  {selectedPermissions.filter(capability => connection.selectableCapabilities!.includes(capability) && PERMISSION_COPY[capability] !== undefined)
-                    .map(capability => t(PERMISSION_COPY[capability]!)).join(' · ') || t('clueAuthPermissionsEmpty')}
-                </span>
-              </summary>
+            <Disclosure
+              className={css.advanced}
+              data-clue-permissions=""
+              summary={t('clueAuthPermissions')}
+              meta={selectedPermissions.filter(capability => connection.selectableCapabilities!.includes(capability) && PERMISSION_COPY[capability] !== undefined)
+                .map(capability => t(PERMISSION_COPY[capability]!)).join(' · ') || t('clueAuthPermissionsEmpty')}
+            >
               <fieldset className={css.permissionChoices} disabled={connecting || permissionPreferencesLoading || connection.authorization === 'authorizing'}>
-                <legend>{t('clueAuthPermissions')}</legend>
+                <legend className={css.srOnly}>{t('clueAuthPermissions')}</legend>
                 <p className={css.configHint}>{t('clueAuthPermissionsHint')}</p>
                 <div className={css.permissionGrid}>
                   {connection.selectableCapabilities.filter(capability => PERMISSION_COPY[capability] !== undefined).map(capability => (
@@ -1546,7 +1548,7 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
                   ))}
                 </div>
               </fieldset>
-            </details>
+            </Disclosure>
           )}
           {permissionPreferencesError !== null && (
             <p className={css.configError} role="alert" data-clue-permission-preference-error="">
@@ -1597,7 +1599,13 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
                       <path d={qrPath} fill="currentColor" />
                     </svg>
                   )}
-                  <FactRow label={t('clueConnectionQrPayload')} mono value={connection.prompt.qr.uri} />
+                  <ActionButton
+                    size="sm"
+                    className={css.smallButton}
+                    onClick={() => { void writeClipboard(connection.prompt!.qr!.uri) }}
+                  >
+                    {t('clueAuthCopyLink')}
+                  </ActionButton>
                 </div>
               )}
               <p className={css.configHint}>
@@ -1608,27 +1616,30 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
               )}
             </div>
           )}
-          <details className={css.advanced} data-clue-connection-details open={connection.configuration !== 'ready' || connectionReadFailed}>
-            <summary className={css.advancedSummary}>{t('clueConnectionConfiguration')} · {t('windowReadOnly')}</summary>
-            <div className={css.advancedBody}>
-                {/* The old projection stays as LAST-KNOWN context, but the row
-                    itself says the read failed instead of presenting a stale "Ready". */}
-                <FactRow data-stale={connectionReadFailed ? 'true' : undefined} label={t('clueConnectionConfiguration')}
-                  value={connectionReadFailed ? (
-                    <>
-                      <span className={css.status} data-kind="request-failed">
-                        {t(CLUE_SOURCE_STATUS_COPY['request-failed'])}
-                      </span>
-                      {' '}
-                      <span className={css.configHint}>
-                        {t('clueConnectionLastKnown')} {configurationCopy(connection.configuration)}
-                      </span>
-                    </>
-                  ) : (
-                    <span data-configuration={connection.configuration}>{configurationCopy(connection.configuration)}</span>
-                  )} />
-            </div>
-          </details>
+          <Disclosure
+            className={css.advanced}
+            bodyClassName={css.advancedBody}
+            data-clue-connection-details=""
+            open={connection.configuration !== 'ready' || connectionReadFailed}
+            summary={`${t('clueConnectionConfiguration')} · ${t('windowReadOnly')}`}
+          >
+            {/* The old projection stays as LAST-KNOWN context, but the row
+                itself says the read failed instead of presenting a stale "Ready". */}
+            <FactRow data-stale={connectionReadFailed ? 'true' : undefined} label={t('clueConnectionConfiguration')}
+              value={connectionReadFailed ? (
+                <>
+                  <span className={css.status} data-kind="request-failed">
+                    {t(CLUE_SOURCE_STATUS_COPY['request-failed'])}
+                  </span>
+                  {' '}
+                  <span className={css.configHint}>
+                    {t('clueConnectionLastKnown')} {configurationCopy(connection.configuration)}
+                  </span>
+                </>
+              ) : (
+                <span data-configuration={connection.configuration}>{configurationCopy(connection.configuration)}</span>
+              )} />
+          </Disclosure>
         </>
       )}
       {ids.length === 0 && (

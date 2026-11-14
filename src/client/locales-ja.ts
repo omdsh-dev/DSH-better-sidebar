@@ -15,6 +15,12 @@
 
 /** The ja dictionary (key-set-equal to zh, enforced by the type annotation in locales.ts). */
 export const ja: Record<string, string> = {
+  clueWindowSurfaceTitle: "ウィンドウを開く場所",
+  clueWindowSurfaceDesc: "詳細・パック・共有・ソース設定の既定の表示先。",
+  clueWindowSurfaceSidebar: "サイドバータブ",
+  clueWindowSurfaceFloating: "フローティングウィンドウ",
+  cluePackRename: "名前を変更",
+  clueAuthCopyLink: "認可リンクをコピー",
   clueBrowserRevealUnavailable: "このファイルをファイルツリー内で表示できません。ワークスペース、セッション、またはパスが利用できないか、対応していません。",
   clueBrowserRevealRootMismatch: "このセッションのファイルツリーは別の作業ディレクトリまたはリンクされたワークツリーを使用しているため、このファイルを表示できません。",
   clueBrowserRevealQueued: "ワークスペースのセッションに表示をリクエストしました。そのセッションに戻ってファイルツリーを確認してください。",

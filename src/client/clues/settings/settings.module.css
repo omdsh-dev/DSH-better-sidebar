@@ -21,6 +21,47 @@
   line-height: 20px;
 }
 
+.surfaceSettingRow {
+  padding-top: 2px;
+}
+
+.surfaceSegmented {
+  display: inline-flex;
+  flex: none;
+  padding: 2px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-2);
+}
+
+.surfaceSegment {
+  min-width: 68px;
+  padding: 3px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: 12px;
+  line-height: 18px;
+  cursor: pointer;
+}
+
+.surfaceSegment:hover {
+  color: var(--dsw-alias-label-primary);
+}
+
+.surfaceSegmentOn {
+  background: var(--dsw-alias-bg-layer-3);
+  color: var(--dsw-alias-label-primary);
+  font-weight: 500;
+}
+
+.surfaceSegment:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 2px;
+}
+
 .loading {
   padding: var(--ds-sidebar-space-2) 0;
   font-size: 12px;
@@ -122,16 +163,16 @@
   overflow-wrap: anywhere;
 }
 
-/* Derived state badge: neutral by default, warning tint for actionable faults. */
+/* Resting ready state stays quiet ink; actionable states carry a subtle pill. */
 .status {
   display: inline-flex;
   flex: none;
   align-items: center;
   max-width: 100%;
-  padding: 2px 8px;
+  padding: 1px 7px;
   border: 1px solid var(--dsw-alias-border-l2);
   border-radius: var(--ds-sidebar-radius);
-  background: var(--dsw-alias-bg-layer-1);
+  background: transparent;
   color: var(--dsw-alias-label-secondary);
   font-size: 11px;
   line-height: 16px;
@@ -139,9 +180,10 @@
 }
 
 .status[data-kind='ready'] {
-  border-color: var(--dsw-alias-border-l1);
-  background: var(--dsw-alias-bg-layer-1);
-  color: var(--dsw-alias-label-secondary);
+  padding: 0 2px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
 }
 
 .status[data-kind='missing'],
@@ -290,7 +332,7 @@
 /* ── Source configuration window body (S6 window content) ───────────────── */
 
 .config {
-  background: var(--dsw-alias-bg-layer-1);
+  background: transparent;
   display: flex;
   flex-direction: column;
   gap: var(--ds-sidebar-space-4);
@@ -387,12 +429,20 @@
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: var(--ds-sidebar-space-1) var(--ds-sidebar-space-3);
+  gap: var(--ds-sidebar-space-2) var(--ds-sidebar-space-3);
+  min-width: 0;
+}
+
+.dependencyIdentity {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 160px;
   min-width: 0;
 }
 
 .dependencyName {
-  flex: 1 1 160px;
   min-width: 0;
   font-size: 13px;
   line-height: 20px;
@@ -442,6 +492,7 @@
 .qrBlock {
   display: flex;
   flex-direction: column;
+  align-items: flex-start;
   gap: var(--ds-sidebar-space-2);
   min-width: 0;
 }
@@ -533,12 +584,23 @@
   border: 0;
   background: transparent;
 }
-.permissionChoices legend { padding: 0; font-weight: 500; color: var(--dsw-alias-label-primary); }
-.permissionGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 4px 12px; }
-.permissionChoice { display: flex; align-items: center; min-height: var(--ds-sidebar-control-height); gap: 8px; color: var(--dsw-alias-label-primary); }
+.permissionChoices legend,
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+.permissionGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 2px 12px; }
+.permissionChoice { display: flex; align-items: center; min-height: 28px; gap: 8px; color: var(--dsw-alias-label-primary); cursor: pointer; }
 .permissionChoice input { margin: 0; accent-color: var(--dsw-alias-state-business-primary); }
-.permissionGranted { margin-inline-start: auto; padding: 0 6px; border: 1px solid var(--dsw-alias-border-l2); color: var(--dsw-alias-label-secondary); font-size: 11px; }
-@media (pointer: coarse) { .permissionChoice { min-height: 44px; } }
+.permissionGranted { margin-inline-start: auto; color: var(--dsw-alias-label-tertiary); font-size: 11px; }
+@media (pointer: coarse) { .permissionChoice, .surfaceSegment { min-height: 44px; } }
 
 @container sidebar-clue-config (max-width: 480px) {
   .configInputRow { align-items: stretch; }

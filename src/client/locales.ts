@@ -1239,6 +1239,12 @@ export const zh = {
   clueTabWorkspaceAria: '切换浏览工作区',
   clueDetailUnsaved: '有未保存的修改：先保存，或在底栏放弃修改。',
   clueDetailDiscard: '放弃修改',
+  clueWindowSurfaceTitle: '窗口打开位置',
+  clueWindowSurfaceDesc: '详情、线索包、分享与来源配置的默认承载方式。',
+  clueWindowSurfaceSidebar: '侧栏标签页',
+  clueWindowSurfaceFloating: '浮动窗口',
+  cluePackRename: '重命名',
+  clueAuthCopyLink: '复制授权链接',
 }
 
 /** The en dictionary (key-set-equal to zh, enforced by the type annotation). */
@@ -2466,6 +2472,12 @@ export const en: Record<keyof typeof zh, string> = {
   clueTabWorkspaceAria: 'Switch browse workspace',
   clueDetailUnsaved: 'Unsaved edits: save first, or discard them from the footer.',
   clueDetailDiscard: 'Discard edits',
+  clueWindowSurfaceTitle: 'Open clue windows in',
+  clueWindowSurfaceDesc: 'Default presentation for details, packs, sharing and source configuration.',
+  clueWindowSurfaceSidebar: 'Sidebar tab',
+  clueWindowSurfaceFloating: 'Floating window',
+  cluePackRename: 'Rename',
+  clueAuthCopyLink: 'Copy authorization link',
 }
 
 /**

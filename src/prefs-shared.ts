@@ -260,6 +260,23 @@ export function parseSidechatSubmitKey(value: unknown): SidechatSubmitKey {
   return value === 'mod-enter' ? 'mod-enter' : SIDECHAT_SUBMIT_KEY_DEFAULT
 }
 
+/** The clue tab descriptor id; also the key of its settings blob. */
+export const CLUE_PREFS_ID = 'clues'
+
+/** The plugin-owned setting key holding the default window presentation. */
+export const CLUE_WINDOW_SURFACE_SETTING = 'windowSurface'
+
+/** Where clue content windows open by default. */
+export type ClueWindowSurface = 'sidebar' | 'floating'
+
+/** Default clue window presentation (docked in the right sidebar when available). */
+export const CLUE_WINDOW_SURFACE_DEFAULT: ClueWindowSurface = 'sidebar'
+
+/** Normalize a stored clue window surface preference. */
+export function parseClueWindowSurface(value: unknown): ClueWindowSurface {
+  return value === 'floating' ? 'floating' : CLUE_WINDOW_SURFACE_DEFAULT
+}
+
 /** The stock exclude list (VS Code ships a similar files.exclude default). */
 export const EXPLORER_EXCLUDE_DEFAULTS: readonly string[] = ['.DS_Store', 'Thumbs.db']
 

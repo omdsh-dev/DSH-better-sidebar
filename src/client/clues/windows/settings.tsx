@@ -14,6 +14,7 @@ import type { BetterSidebarService } from '../../service.ts'
 import type { BetterSidebarWindowsClientFace, WindowHandle } from '../../windows/types.ts'
 
 import { SideCardSection } from '../../SideCardSection.tsx'
+import { syncClueWindowSurface } from '../../prefs.ts'
 import { openClueSettings, type ClueSettingsGroup } from '../settings/navigation.ts'
 import { t } from '../../locales.ts'
 
@@ -36,9 +37,10 @@ export function openClueSettingsWindow(options: OpenClueSettingsWindowOptions): 
   const group = options.group ?? 'sources'
   // Keep the in-product deep link working for the host's own settings dialog.
   openClueSettings({ group })
+  const surface = syncClueWindowSurface(options.store.getPrefs())
   return options.windows.open({
     id: CLUE_SETTINGS_WINDOW_ID,
-    surface: 'sidebar',
+    surface,
     title: t('clueSettingsWindowTitle'),
     size: 'collection',
     content: createElement(SideCardSection, {

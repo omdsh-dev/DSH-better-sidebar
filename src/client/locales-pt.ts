@@ -1,4 +1,10 @@
 export const pt: Record<string, string> = {
+  clueWindowSurfaceTitle: "Abrir janelas de pistas em",
+  clueWindowSurfaceDesc: "Apresentação padrão para detalhes, pacotes, compartilhamento e configuração de fontes.",
+  clueWindowSurfaceSidebar: "Aba lateral",
+  clueWindowSurfaceFloating: "Janela flutuante",
+  cluePackRename: "Renomear",
+  clueAuthCopyLink: "Copiar link de autorização",
   clueBrowserSelectionMode: "Selecionar",
   clueBrowserMoreRow: "Mais ações: {title}",
   clueAuthPermissionDocsCommentsRead: "Ler comentários de documentos",

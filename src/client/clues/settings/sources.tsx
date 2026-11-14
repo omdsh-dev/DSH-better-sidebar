@@ -24,9 +24,12 @@ import { FileTypeIcon, IconLinkOutlineRegular } from '@deepseek-ai/dsh-client-ui
 import { BUILTIN_SOURCE_IDS } from '../../../clues/types.ts'
 import { CluePackArtwork } from '../artwork.tsx'
 import { LoadingIndicator } from '../../ui/LoadingIndicator.tsx'
-import { ActionButton, EmptyState, ErrorBlock, ToggleSwitch } from '../../ui/index.ts'
+import { ActionButton, Disclosure, EmptyState, ErrorBlock, SettingRow, ToggleSwitch } from '../../ui/index.ts'
 import { t, type CopyKey } from '../../locales.ts'
+import { clueWindowSurfaceOf, type ClueWindowSurface } from '../../prefs.ts'
 import {
+  CLUE_PREFS_ID,
+  CLUE_WINDOW_SURFACE_SETTING,
   isCluePacksMentionEnabled,
   isClueSourceEnabled,
   isClueSourceMentionEnabled,
@@ -69,6 +72,7 @@ export interface ClueSourcesPanelProps {
   onToggleSource(sourceId: string, next: boolean): void
   onToggleMention(sourceId: string, next: boolean): void
   onTogglePacksMention(next: boolean): void
+  onChangeWindowSurface?(surface: ClueWindowSurface): void
   onEnableAll(): void
   onDisableAll(): void
   onMentionAll(): void
@@ -201,14 +205,45 @@ export function ClueSourcesPanel(props: ClueSourcesPanelProps) {
   /** The add-source journey stays outside every catalogue-dependent fold. */
   const addSourceEntry = (
     <div className={css.addSource}>
-      <ActionButton variant="outline" type="button" className={css.smallButton} onClick={props.onAddSource}>
+      <ActionButton variant="outline" size="sm" type="button" className={css.smallButton} onClick={props.onAddSource}>
         {t('clueAddSource')}
       </ActionButton>
     </div>
   )
+  const windowSurface = clueWindowSurfaceOf(prefs)
+  const surfaceErrorKey = `plugin:${CLUE_PREFS_ID}:${CLUE_WINDOW_SURFACE_SETTING}`
 
   return (
     <div className={css.sources}>
+      {props.onChangeWindowSurface !== undefined && (
+        <SettingRow
+          label={t('clueWindowSurfaceTitle')}
+          description={t('clueWindowSurfaceDesc')}
+          className={css.surfaceSettingRow}
+          data-clue-window-surface-setting=""
+        >
+          <span className={css.surfaceSegmented} role="radiogroup" aria-label={t('clueWindowSurfaceTitle')}>
+            {(['sidebar', 'floating'] as const).map(option => (
+              <button
+                key={option}
+                type="button"
+                role="radio"
+                data-clue-window-surface={option}
+                aria-checked={windowSurface === option}
+                className={windowSurface === option ? `${css.surfaceSegment} ${css.surfaceSegmentOn}` : css.surfaceSegment}
+                onClick={() => { props.onChangeWindowSurface?.(option) }}
+              >
+                {t(option === 'sidebar' ? 'clueWindowSurfaceSidebar' : 'clueWindowSurfaceFloating')}
+              </button>
+            ))}
+          </span>
+          {writeErrors[surfaceErrorKey] !== undefined && (
+            <p className={css.rowError} role="alert" data-settings-error={surfaceErrorKey}>
+              {writeErrors[surfaceErrorKey]}
+            </p>
+          )}
+        </SettingRow>
+      )}
 
       {error !== null && (
         <ErrorBlock message={t('clueSourcesLoadFailed')} detail={error} retryLabel={t('retry')} onRetry={props.onReload} />
@@ -272,13 +307,9 @@ export function ClueSourcesPanel(props: ClueSourcesPanelProps) {
                         </span>
                         <StatusBadge status={status} detailId={detailId} />
                         <span className={css.sourceControls}>
-                          <ToggleSwitch
-                            aria-label={t('clueSourceToggleAria', { source: name })}
-                            checked={enabled}
-                            onChange={next => { props.onToggleSource(source.sourceId, next) }}
-                          />
                           {hasSourceConfiguration(source) && (
                             <ActionButton variant="outline"
+                              size="sm"
                               type="button"
                               className={css.smallButton}
                               aria-label={t('clueSourceConfigureAria', { source: name })}
@@ -287,6 +318,11 @@ export function ClueSourcesPanel(props: ClueSourcesPanelProps) {
                               {t(configureLabel(status.kind))}
                             </ActionButton>
                           )}
+                          <ToggleSwitch
+                            aria-label={t('clueSourceToggleAria', { source: name })}
+                            checked={enabled}
+                            onChange={next => { props.onToggleSource(source.sourceId, next) }}
+                          />
                         </span>
                         {writeErrors[`source:${source.sourceId}`] !== undefined && (
                           <p className={css.rowError} role="alert" data-settings-error={`source:${source.sourceId}`}>
@@ -354,14 +390,13 @@ export function ClueSourcesPanel(props: ClueSourcesPanelProps) {
               native <details> (keyboard/touch semantics for free); the pack
               switch stays available even when the catalogue itself failed, so
               no capability depends on a successful read. */}
-          <details className={css.advanced} data-clue-advanced>
-            <summary className={css.advancedSummary}>
-              {t('clueSettingsAdvanced')}
-              {modifiedMentionCount > 0 && (
-                <span className={css.disclosureMeta}>{t('clueSettingsModified', { count: String(modifiedMentionCount) })}</span>
-              )}
-            </summary>
-            <div className={css.advancedBody}>
+          <Disclosure
+            className={css.advanced}
+            bodyClassName={css.advancedBody}
+            data-clue-advanced=""
+            summary={t('clueSettingsAdvanced')}
+            meta={modifiedMentionCount > 0 ? t('clueSettingsModified', { count: String(modifiedMentionCount) }) : undefined}
+          >
               {catalogueLoaded && sources.map(source => mentionRow(
                 source.sourceId,
                 sourceDisplayName(source, displayById.get(source.sourceId)),
@@ -402,16 +437,16 @@ export function ClueSourcesPanel(props: ClueSourcesPanelProps) {
                   <span className={css.batchButtons}>
                     {/* No registered source = no batch scope: the handlers would
                         no-op, so the controls must not look actionable. */}
-                    <ActionButton variant="outline" type="button" className={css.smallButton} disabled={sources.length === 0} onClick={props.onEnableAll}>
+                    <ActionButton variant="outline" size="sm" type="button" className={css.smallButton} disabled={sources.length === 0} onClick={props.onEnableAll}>
                       {t('clueSourcesEnableAll')}
                     </ActionButton>
-                    <ActionButton variant="outline" type="button" className={css.smallButton} disabled={sources.length === 0} onClick={props.onDisableAll}>
+                    <ActionButton variant="outline" size="sm" type="button" className={css.smallButton} disabled={sources.length === 0} onClick={props.onDisableAll}>
                       {t('clueSourcesDisableAll')}
                     </ActionButton>
-                    <ActionButton variant="outline" type="button" className={css.smallButton} disabled={sources.length === 0} onClick={props.onMentionAll}>
+                    <ActionButton variant="outline" size="sm" type="button" className={css.smallButton} disabled={sources.length === 0} onClick={props.onMentionAll}>
                       {t('clueSourcesMentionAll')}
                     </ActionButton>
-                    <ActionButton variant="outline" type="button" className={css.smallButton} disabled={sources.length === 0} onClick={props.onMentionNone}>
+                    <ActionButton variant="outline" size="sm" type="button" className={css.smallButton} disabled={sources.length === 0} onClick={props.onMentionNone}>
                       {t('clueSourcesMentionNone')}
                     </ActionButton>
                   </span>
@@ -422,8 +457,7 @@ export function ClueSourcesPanel(props: ClueSourcesPanelProps) {
                   )}
                 </div>
               )}
-            </div>
-          </details>
+          </Disclosure>
 
         </>
       )}

@@ -2,6 +2,12 @@
  * Spanish dictionary for better-sidebar.
  */
 export const es: Record<string, string> = {
+  clueWindowSurfaceTitle: "Abrir ventanas de pistas en",
+  clueWindowSurfaceDesc: "Presentación predeterminada para detalles, paquetes, uso compartido y configuración de fuentes.",
+  clueWindowSurfaceSidebar: "Pestaña lateral",
+  clueWindowSurfaceFloating: "Ventana flotante",
+  cluePackRename: "Renombrar",
+  clueAuthCopyLink: "Copiar enlace de autorización",
   clueBrowserRevealUnavailable: "No se puede localizar este archivo en el árbol de archivos. Su espacio de trabajo, sesión o ruta no está disponible o no es compatible.",
   clueBrowserRevealRootMismatch: "No se puede localizar este archivo porque el árbol de archivos de esta sesión usa otro directorio de trabajo u otro worktree vinculado.",
   clueBrowserRevealQueued: "Se ha solicitado mostrar el archivo en la sesión del espacio de trabajo. Vuelve a esa sesión para ver su árbol de archivos.",

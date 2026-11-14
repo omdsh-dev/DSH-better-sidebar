@@ -2,6 +2,12 @@
  * German dictionary for better-sidebar.
  */
 export const de: Record<string, string> = {
+  clueWindowSurfaceTitle: "Hinweisfenster öffnen in",
+  clueWindowSurfaceDesc: "Standarddarstellung für Details, Pakete, Teilen und Quellenkonfiguration.",
+  clueWindowSurfaceSidebar: "Seitenleisten-Tab",
+  clueWindowSurfaceFloating: "Schwebendes Fenster",
+  cluePackRename: "Umbenennen",
+  clueAuthCopyLink: "Autorisierungslink kopieren",
   clueBrowserSelectionMode: "Auswählen",
   clueBrowserMoreRow: "Weitere Aktionen: {title}",
   clueAuthPermissionDocsCommentsRead: "Kommentare in Dokumenten lesen",

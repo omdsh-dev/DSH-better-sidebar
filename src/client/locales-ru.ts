@@ -12,6 +12,12 @@
  */
 
 export const ru: Record<string, string> = {
+  clueWindowSurfaceTitle: "Открывать окна подсказок в",
+  clueWindowSurfaceDesc: "Способ открытия по умолчанию для сведений, наборов, обмена и настройки источников.",
+  clueWindowSurfaceSidebar: "Вкладка боковой панели",
+  clueWindowSurfaceFloating: "Плавающее окно",
+  cluePackRename: "Переименовать",
+  clueAuthCopyLink: "Скопировать ссылку авторизации",
   clueBrowserSelectionMode: "Выбрать",
   clueBrowserMoreRow: "Другие действия: {title}",
   clueAuthPermissionDocsCommentsRead: "Читать комментарии к документам",

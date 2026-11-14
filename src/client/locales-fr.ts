@@ -8,6 +8,12 @@
 
 /** fr dictionary for the `betterSidebar` namespace. */
 export const fr: Record<string, string> = {
+  clueWindowSurfaceTitle: "Ouvrir les fenêtres d’indices dans",
+  clueWindowSurfaceDesc: "Présentation par défaut pour les détails, packs, le partage et la configuration des sources.",
+  clueWindowSurfaceSidebar: "Onglet latéral",
+  clueWindowSurfaceFloating: "Fenêtre flottante",
+  cluePackRename: "Renommer",
+  clueAuthCopyLink: "Copier le lien d’autorisation",
   clueBrowserSelectionMode: "Sélectionner",
   clueBrowserMoreRow: "Autres actions : {title}",
   clueAuthPermissionDocsCommentsRead: "Lire les commentaires des documents",
