@@ -6,7 +6,7 @@
  * interpolation.
  */
 import { afterEach, describe, expect, it } from 'vitest'
-import { LOCALE_NS, attachBetterLocale, attachLocale, chatT, en, isZh, relativeTime, t, zh } from '../src/client/locales.ts'
+import { LOCALE_NS, attachLocale, attachLocaleDicts, chatT, en, isZh, localeSignature, relativeTime, t, zh } from '../src/client/locales.ts'
 import { localeDicts } from '../src/client/chunks/locale.tsx'
 
 /** Minimal structural fake of the DSH LocaleService face the sidebar uses. */
@@ -36,7 +36,7 @@ function stubNavigatorLanguage(lang: string | undefined): void {
 
 afterEach(() => {
   attachLocale(undefined)
-  attachBetterLocale(undefined)
+  attachLocaleDicts({})
   stubNavigatorLanguage(undefined)
 })
 
@@ -117,15 +117,14 @@ describe('locales (DSH i18n following)', () => {
     expect(Object.keys(en).sort()).toEqual(Object.keys(zh).sort())
   })
 
-  it('keeps every shipped third-language dictionary key-set-equal to zh', () => {
-    // The third-language dicts live in the lazy locale chunk typed as plain
+  it('keeps every lazily loaded dictionary key-set-equal to zh', () => {
+    // The lazy dicts live in the lazy locale chunk typed as plain
     // records (the chunk boundary has no key-set type tie to zh). This test
     // catches missing/extra keys introduced when a zh key is added without
     // updating every language — a missing key silently falls back to en.
     for (const [lang, dict] of Object.entries(localeDicts)) {
       expect(Object.keys(dict).sort(), lang).toEqual(Object.keys(zh).sort())
     }
-    expect(Object.keys(localeDicts), 'every shipped third language rides the locale chunk').toContain('ja')
   })
 })
 
@@ -179,136 +178,58 @@ describe('locales (host chat namespace bridge)', () => {
   })
 })
 
-/** Minimal fake of the better-locale override store (the subset t()/isZh() read). */
-class FakeBetterLocale {
-  active: string | undefined = undefined
-  private readonly dict: Record<string, Record<string, Record<string, string>>>
-  constructor(dict: Record<string, Record<string, Record<string, string>>>) {
-    this.dict = dict
-  }
-  getOverride(dshActive: string, ns: string, key: string): string | undefined {
-    if (this.active === undefined) return undefined
-    if (dshActive !== 'en') return undefined
-    return this.dict[ns]?.[this.active]?.[key]
-  }
-  isOverrideActive(dshActive: string): boolean {
-    return this.active !== undefined && dshActive === 'en'
-  }
-  subscribe(_listener: () => void): () => void {
-    return () => {}
-  }
-}
-
-describe('locales (better-locale override)', () => {
-  it('returns the override text when an override is active and the key exists', () => {
+describe('locales (official-language dictionaries)', () => {
+  it('follows the host locale into a loaded dictionary and falls back to en for a missing key', () => {
     const locale = new FakeLocale()
-    locale.switchTo('en')
     attachLocale(locale)
+    attachLocaleDicts({ ja: { explorer: 'エクスプローラー', timeMinutesAgo: '{n} 分前' } })
 
-    const betterLocale = new FakeBetterLocale({
-      [LOCALE_NS]: { ja: { explorer: 'エクスプローラー' } },
-    })
-    betterLocale.active = 'ja'
-    attachBetterLocale(betterLocale)
-
+    locale.switchTo('ja')
     expect(t('explorer')).toBe('エクスプローラー')
-    expect(isZh()).toBe(false)
-  })
-
-  it('falls back to the zh/en chain when override is active but the key is missing', () => {
-    const locale = new FakeLocale()
-    locale.switchTo('en')
-    attachLocale(locale)
-
-    const betterLocale = new FakeBetterLocale({
-      [LOCALE_NS]: { ja: { explorer: 'エクスプローラー' } },
-    })
-    betterLocale.active = 'ja'
-    attachBetterLocale(betterLocale)
-
-    // 'changes' has no ja entry in this fake; should fall back to the en text.
-    expect(t('changes')).toBe('Git')
-  })
-
-  it('falls back to the zh/en chain when no override is active', () => {
-    const locale = new FakeLocale()
-    locale.switchTo('zh')
-    attachLocale(locale)
-
-    const betterLocale = new FakeBetterLocale({
-      [LOCALE_NS]: { ja: { explorer: 'エクスプローラー' } },
-    })
-    // active is undefined — no override.
-    attachBetterLocale(betterLocale)
-
-    expect(t('explorer')).toBe('资源管理器')
-    expect(isZh()).toBe(true)
-  })
-
-  it('override is inert while DSH is on zh (override borrows the en slot)', () => {
-    const locale = new FakeLocale()
-    locale.switchTo('zh')
-    attachLocale(locale)
-
-    const betterLocale = new FakeBetterLocale({
-      [LOCALE_NS]: { ja: { explorer: 'エクスプローラー' } },
-    })
-    betterLocale.active = 'ja'
-    attachBetterLocale(betterLocale)
-
-    // Override is set to 'ja' but DSH is on zh — override is inert,
-    // native zh text wins. The user must switch DSH to en to see ja.
-    expect(t('explorer')).toBe('资源管理器')
-    expect(isZh()).toBe(true)
-  })
-
-  it('returns to the zh/en chain after detaching the override store', () => {
-    const locale = new FakeLocale()
-    locale.switchTo('en')
-    attachLocale(locale)
-
-    const betterLocale = new FakeBetterLocale({
-      [LOCALE_NS]: { ja: { explorer: 'エクスプローラー' } },
-    })
-    betterLocale.active = 'ja'
-    attachBetterLocale(betterLocale)
-    expect(t('explorer')).toBe('エクスプローラー')
-
-    attachBetterLocale(undefined)
-    expect(t('explorer')).toBe('Explorer')
-    expect(isZh()).toBe(false)
-  })
-
-  it('interpolates {name} placeholders in the override text', () => {
-    const locale = new FakeLocale()
-    locale.switchTo('en')
-    attachLocale(locale)
-
-    const betterLocale = new FakeBetterLocale({
-      [LOCALE_NS]: { ja: { timeMinutesAgo: '{n} 分前' } },
-    })
-    betterLocale.active = 'ja'
-    attachBetterLocale(betterLocale)
-
     expect(t('timeMinutesAgo', { n: 5 })).toBe('5 分前')
+    expect(t('terminal')).toBe('Terminal')
+    expect(isZh()).toBe(false)
+
+    locale.switchTo('ja-JP')
+    expect(t('explorer')).toBe('エクスプローラー')
   })
 
-  it('ships a ja dictionary whose every key resolves to a non-empty string', () => {
-    // Smoke-check the shipped ja dict: every key in zh must have a non-empty
-    // ja entry. This catches copy-paste mistakes where a key was added to zh
-    // but its ja translation was left blank or missing.
+  it('serves en until the dictionary lands and again once it is detached', () => {
     const locale = new FakeLocale()
-    locale.switchTo('en')
     attachLocale(locale)
+    locale.switchTo('ja')
+    expect(t('explorer')).toBe('Explorer')
 
-    const betterLocale = new FakeBetterLocale({ [LOCALE_NS]: { ja: localeDicts.ja! } })
-    betterLocale.active = 'ja'
-    attachBetterLocale(betterLocale)
+    attachLocaleDicts({ ja: { explorer: 'エクスプローラー' } })
+    expect(t('explorer')).toBe('エクスプローラー')
 
-    for (const key of Object.keys(zh) as (keyof typeof zh)[]) {
-      const text = t(key)
-      expect(text, `ja translation for "${key}"`).toBeTruthy()
-      expect(text, `ja translation for "${key}"`).not.toBe(key)
+    attachLocaleDicts({})
+    expect(t('explorer')).toBe('Explorer')
+  })
+
+  it('bumps the locale signature when a dictionary attaches or the locale switches', () => {
+    const locale = new FakeLocale()
+    attachLocale(locale)
+    const before = localeSignature()
+    attachLocaleDicts({ ja: {} })
+    expect(localeSignature()).not.toBe(before)
+    const loaded = localeSignature()
+    locale.switchTo('ja')
+    expect(localeSignature()).not.toBe(loaded)
+  })
+
+  it('ships exactly the official host languages beyond zh/en', () => {
+    expect(Object.keys(localeDicts).sort()).toEqual(['de', 'es', 'fr', 'ja', 'pt', 'ru'])
+  })
+
+  it('keeps every shipped dictionary non-empty and placeholder-equal to en', () => {
+    const placeholders = (text: string): string => (text.match(/\{\w+\}/g) ?? []).sort().join(',')
+    for (const [lang, dict] of Object.entries(localeDicts)) {
+      for (const key of Object.keys(en) as (keyof typeof en)[]) {
+        const text = dict[key]
+        expect(text, `${lang}.${key}`).toBeTruthy()
+        expect(placeholders(text!), `${lang}.${key} placeholders`).toBe(placeholders(en[key]))
+      }
     }
   })
 })

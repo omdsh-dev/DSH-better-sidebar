@@ -1,24 +1,15 @@
 /**
- * Minimal zh/en/ja copy for the sidebar. The copy follows the DSH i18n system:
- * the client apply attaches the locale service (`ctx.locale`, provided by
- * `@deepseek-ai/dsh-client-locale`) through {@link attachLocale}, and
- * `t()`/`isZh()` resolve the active locale from it — the Host-backed
- * `locale.preference` wins over the raw browser language and switches live.
- * Without an attached service (standalone/test compositions) the browser
- * language is used, matching the previous behavior. The dictionaries are
- * also registered into the DSH locale registry under {@link LOCALE_NS}.
+ * Sidebar copy, following the DSH i18n system: the client apply attaches the
+ * locale service (`ctx.locale`) through {@link attachLocale}, and
+ * `t()`/`isZh()` resolve the host's active locale from it. Without an
+ * attached service (standalone/test compositions) the browser language is
+ * used.
  *
- * ja (Japanese) is opt-in through `@huanlin/dsh-plugin-better-locale`: when
- * that plugin is installed, the client apply also calls
- * {@link attachBetterLocale} with the override store. `t()` then consults
- * the store's active override id first; if it is `'ja'` (or any id whose
- * dict has the requested key) the ja text wins, otherwise the existing
- * zh/en chain runs unchanged. better-locale itself patches
- * `LocaleRuntime.prototype.lookup` so DSH's own translate chain also
- * returns ja where the `betterSidebar` namespace has a ja entry — that
- * path covers external callers of `ctx.locale.bind('betterSidebar')`,
- * while the override-aware `t()` here covers better-sidebar's own
- * components (which bypass `ctx.locale` and call `t()` directly).
+ * zh and en ship in the core bundle. The other official host languages ride
+ * the lazy `locale` chunk: the client apply loads it only when the host is
+ * on one of them, registers the dictionaries into `ctx.locale` and hands
+ * them to {@link attachLocaleDicts}. Any key a language lacks falls back to
+ * English, exactly like the host's own chain.
  */
 
 /** The zh dictionary (also registered into the DSH locale registry under {@link LOCALE_NS}). */
@@ -2481,13 +2472,6 @@ export const en: Record<keyof typeof zh, string> = {
  */
 export const LOCALE_NS = 'betterSidebar'
 
-// The 19 non-zh/en dictionaries live in the LAZY `locale` chunk
-// (src/client/chunks/locale.tsx → lib/client-locale.js): `t()` only ever
-// consults zh/en plus the better-locale override store, so those dicts are
-// needed only when better-locale is installed — the client apply fetches the
-// chunk there and registers its `localeDicts` into the override store. They
-// used to sit statically in the core bundle (≈ half its weight) for a code
-// path most sessions never enter.
 
 /** The DSH locale service attached by the client apply (absent → browser detection). */
 let localeService: {
@@ -2502,23 +2486,8 @@ let localeService: {
   bind?(ns: string): (key: string, params?: Record<string, string | number>) => string
 } | undefined
 
-/**
- * The better-locale override store attached by the client apply
- * (absent → no override; the zh/en chain runs). The store's `active`
- * field holds the user's chosen override id (e.g. `'ja'`); `undefined`
- * means "no override, use DSH native zh/en".
- *
- * The override only takes effect when DSH's active locale is `'en'`
- * (it borrows DSH's English slot to render a third language). While
- * DSH is on `'zh'` the override is inert — `getOverride` returns
- * `undefined` and `isOverrideActive` returns `false` — so `t()` and
- * `isZh()` fall through to the native zh/en chain unchanged.
- */
-let betterLocaleStore: {
-  readonly active: string | undefined
-  getOverride(dshActive: string, ns: string, key: string): string | undefined
-  isOverrideActive(dshActive: string): boolean
-} | undefined
+/** Lazily loaded non-zh/en dictionaries, keyed by host locale id. */
+let localeDicts: Readonly<Record<string, Readonly<Record<string, string>>>> = {}
 
 /**
  * Attach (or detach, with undefined) the DSH locale service. The sidebar
@@ -2586,26 +2555,14 @@ export function hostT(ns: string, key: string, params?: Record<string, string | 
   }
 }
 
-/**
- * Attach (or detach, with undefined) the better-locale override store.
- * When attached with an active override, `t()` consults the store's
- * `getOverride(active, LOCALE_NS, key)` first; if it returns a string,
- * that text wins over the zh/en chain. Detaching (or the store's active
- * being `undefined`) restores the zh/en chain unchanged.
- *
- * The Sidebar root subscribes to the store separately (see Sidebar.tsx)
- * so an override change re-renders the whole tree — the locale service's
- * own revision bump (which better-locale triggers via `publish(active, true)`)
- * does NOT fire the existing `localeRevision` uSES because that snapshot
- * reads `getSnapshot().active` (unchanged) rather than `revision`.
- */
-export function attachBetterLocale(store: typeof betterLocaleStore): void {
-  betterLocaleStore = store
+/** Install (or clear, with `{}`) the lazily loaded non-zh/en dictionaries. */
+export function attachLocaleDicts(dicts: Readonly<Record<string, Readonly<Record<string, string>>>>): void {
+  localeDicts = dicts
 }
 
 /**
- * The active locale id ('zh' | 'en'): the DSH locale service's snapshot when
- * attached, else the browser language.
+ * The active locale id: the DSH locale service's snapshot when attached, else
+ * the browser language.
  */
 function activeLocale(): string {
   return localeService?.getSnapshot().active
@@ -2613,30 +2570,12 @@ function activeLocale(): string {
     ?? 'en'
 }
 
-/** Translate a copy key in the active locale (zh → zh, else en). */
+/** One copy key; zh is the source of truth for the key set. */
 export type CopyKey = keyof typeof zh
 
 /** Translate a copy key; `{name}` placeholders interpolate from `params`. */
 export function t(key: CopyKey, params?: Record<string, string | number>): string {
-  // 1. better-locale override (e.g. ja) wins when an override is active,
-  //    DSH's active locale is 'en' (the override borrows the en slot),
-  //    and the store has a translation for this (ns, key). The store's
-  //    getOverride returns undefined otherwise (no override, DSH on zh,
-  //    or missing key) and the zh/en chain runs.
-  const dshActive = localeService?.getSnapshot().active ?? ''
-  const override = betterLocaleStore?.getOverride(dshActive, LOCALE_NS, key)
-  let text: string | undefined = override
-  // 2. Fall back to the zh/en chain when no override matched.
-  if (text === undefined) {
-    const dict = activeLocale().toLowerCase().startsWith('zh') ? zh : en
-    text = dict[key]
-  }
-  if (text === undefined) {
-    // Key missing from every dict (should not happen — zh is the source of
-    // truth and en/ja are checked against it). Return the key itself so the
-    // UI shows something identifiable rather than `undefined`.
-    text = key
-  }
+  let text: string = dictFor(activeLocale())[key] ?? en[key] ?? key
   if (params !== undefined) {
     for (const [name, value] of Object.entries(params)) {
       text = text.replaceAll(`{${name}}`, String(value))
@@ -2645,34 +2584,25 @@ export function t(key: CopyKey, params?: Record<string, string | number>): strin
   return text
 }
 
+/** The dictionary of one locale id: exact id, then its base language, else en. */
+function dictFor(locale: string): Readonly<Record<string, string>> {
+  const id = locale.toLowerCase()
+  if (id.startsWith('zh')) return zh
+  return localeDicts[id] ?? localeDicts[id.split('-')[0]!] ?? en
+}
+
 /** Whether the active locale is Chinese (used for selectors). */
 export function isZh(): boolean {
-  // An override is only "effectively active" when DSH is on 'en' (the
-  // override borrows the en slot). While DSH is on 'zh' the override is
-  // inert — the user sees native zh, so isZh() returns true. When an
-  // override is effectively active, the rendered text is neither zh nor
-  // en (it's ja/ko/...), so isZh() returns false to route selectors to
-  // the non-zh branch (e.g. date format, pluralization).
-  const dshActive = localeService?.getSnapshot().active ?? ''
-  if (betterLocaleStore?.isOverrideActive(dshActive) === true) return false
   return activeLocale().toLowerCase().startsWith('zh')
 }
 
 /**
- * A signature of the effective UI language: the DSH locale service's active
- * id plus the better-locale override id when one is actually in force (the
- * override only borrows DSH's `en` slot, so it is inert while DSH is on
- * `zh`). `t()` resolves copy from exactly these two inputs, so a component
- * that caches localized text OUTSIDE React state — e.g. CodeMirror's
- * `phrases` facet, which is baked into an EditorState — can use this string
- * as an effect dependency to know when to re-resolve it.
+ * A signature of the effective UI language: the active locale id plus how many
+ * lazy dictionaries are loaded. Components that cache localized text OUTSIDE
+ * React state (CodeMirror's `phrases` facet) use it as an effect dependency.
  */
 export function localeSignature(): string {
-  const dshActive = localeService?.getSnapshot().active ?? ''
-  const override = betterLocaleStore?.isOverrideActive(dshActive) === true
-    ? betterLocaleStore.active ?? ''
-    : ''
-  return `${dshActive}:${override}`
+  return `${activeLocale()}:${Object.keys(localeDicts).length}`
 }
 
 /** Format an ISO 8601 author date relative to now (刚刚 / N 分钟前 / N 小时前 / 昨天 / date). */

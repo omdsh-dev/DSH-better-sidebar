@@ -1,6 +1,6 @@
 /**
  * S8 copy parity: the grouped settings/source/install/authorization copy must
- * exist in EVERY shipped dictionary (zh + en + the 19 lazy-chunk languages).
+ * exist in EVERY shipped dictionary (zh + en + the 6 lazy-chunk languages).
  *
  * The global locales spec already enforces key-set equality against `zh`; this
  * spec pins the S8 surface specifically so a future key addition cannot ship
@@ -77,9 +77,9 @@ function dictionaries(): Record<string, Record<string, string>> {
 }
 
 describe('S8 copy across every shipped locale', () => {
-  it('carries every S8 key in zh, en and all 19 lazy dictionaries', () => {
+  it('carries every S8 key in zh, en and all 6 lazy dictionaries', () => {
     const dictionariesByLang = dictionaries()
-    expect(Object.keys(dictionariesByLang)).toHaveLength(21)
+    expect(Object.keys(dictionariesByLang)).toHaveLength(8)
     for (const [lang, dict] of Object.entries(dictionariesByLang)) {
       for (const key of S8_KEYS) {
         expect(dict[key], `${lang}:${key}`).toBeTypeOf('string')

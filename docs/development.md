@@ -32,7 +32,7 @@ chunk 名的真源是 `CHUNK_NAMES`（src/bundle-route.ts），另有 5 处镜�
 
 ### i18n
 
-- 词典在 betterSidebar 命名空间；**新增 zh key 必须同步 src/client/locales-ja.ts**（否则 ja 下回退 en），其余词典的 key 集由 tests/locales.spec.ts 守护。
+- 词典在 betterSidebar 命名空间；词典只覆盖宿主官方语言：zh / en 内置，ja / de / es / fr / pt / ru 在 src/client/locales-*.ts（懒加载 chunk）。**新增 zh key 必须同步 en 与这 6 份词典**，key 集与占位符由 tests/locales.spec.ts 守护。
 - 渲染 MarkdownText 一律经 `markdownTextProps()`（src/client/markdown-labels.tsx），它负责必填的 labels 嵌套结构；漏传会回退硬编码中文。
 
 ### 皮肤契约

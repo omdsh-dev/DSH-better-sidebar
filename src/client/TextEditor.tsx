@@ -197,9 +197,9 @@ export function TextEditor(props: FileViewerProps & TextEditorSelectionProps) {
   /** The uncommitted-change gutter compartment (issue #212; reconfigured on a
    *  setting flip instead of rebuilding the view). */
   const gitCompRef = useRef<CmGitGutterCompartment | null>(null)
-  /** The effective UI language (DSH locale id + better-locale override id).
+  /** The effective UI language (DSH locale id + loaded dictionary count).
    *  Read during render and subscribed below: the tab-cell memo only
-   *  compares the DSH locale revision, so a better-locale override switch
+   *  compares the DSH locale revision, so a lazily loaded dictionary
    *  would otherwise never reach this component. */
   const [localeSig, setLocaleSig] = useState(() => localeSignature())
   /** The app's resolved color scheme; the editor re-themes in place on flips. */
@@ -331,25 +331,14 @@ export function TextEditor(props: FileViewerProps & TextEditorSelectionProps) {
 
   useEffect(() => subscribeColorScheme(() => { setDark(isDarkScheme()) }), [])
 
-  // Keep `localeSig` fresh from BOTH language sources: the DSH locale service
-  // and (when @huanlin/dsh-plugin-better-locale is installed) the override
-  // store. The sidebar root re-renders the tree on a DSH locale switch, but
-  // an override switch is not part of the tab-cell memo key, so this
+  // Keep `localeSig` fresh from the DSH locale service. A language switch or a
+  // lazily registered dictionary is not part of the tab-cell memo key, so this
   // component subscribes directly instead of relying on a parent render.
   useEffect(() => {
     const sync = (): void => { setLocaleSig(localeSignature()) }
     sync()
     const locale = ctx.locale as { subscribe?: (cb: () => void) => () => void } | undefined
-    type BetterLocaleStore = { subscribe?(listener: () => void): () => void }
-    const betterLocale = typeof ctx.get === 'function'
-      ? (ctx as unknown as { get(name: 'betterLocale'): BetterLocaleStore | undefined }).get('betterLocale')
-      : undefined
-    const offLocale = locale?.subscribe?.(sync)
-    const offOverride = betterLocale?.subscribe?.(sync)
-    return () => {
-      offLocale?.()
-      offOverride?.()
-    }
+    return locale?.subscribe?.(sync)
   }, [ctx])
 
   // A new file (tab switch) starts clean: fresh preview mode, no draft.

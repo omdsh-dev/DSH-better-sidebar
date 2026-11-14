@@ -1,10 +1,9 @@
 /**
  * The ja (Japanese) dictionary for the betterSidebar namespace.
  *
- * Mirrors the key set of `zh` in `locales.ts`. The sidebar's `t()`
- * consults this dict when `attachBetterLocale(store)` has been called
- * with an active better-locale store whose `active` is `'ja'`; absent
- * that, the existing zh/en chain runs unchanged.
+ * Mirrors the key set of `zh` in `locales.ts`. The sidebar's `t()` reads
+ * it when the host's active locale is `ja` (delivered by the lazy `locale`
+ * chunk); missing keys fall back to `en`.
  *
  * Translation conventions:
  * - Common dev-tool loanwords stay in katakana (ターミナル, ブラウザー, サンドボックス).

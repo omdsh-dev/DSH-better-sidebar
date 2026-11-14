@@ -39,8 +39,11 @@ import { parkSidechatReopen } from './SideChatView.tsx'
 import { setClueSelectionActionContext, setClueSelectionActionStarter } from './clues/selection-actions.tsx'
 import { createClueActionRefreshWatcher, type ClueActionDraftStatus, type ClueActionRefreshResult } from './clues/action-refresh.ts'
 import { invalidateClueAgentSave, type ClueClientResourceInput } from './clues/api.ts'
-import { LOCALE_NS, attachLocale, attachBetterLocale, t, zh, en } from './locales.ts'
+import { LOCALE_NS, attachLocale, attachLocaleDicts, t, zh, en } from './locales.ts'
 import { loadChunk } from './chunk-loader.ts'
+
+/** Official host languages whose dictionaries ride the lazy `locale` chunk. */
+const LAZY_LOCALES = new Set(['ja', 'de', 'es', 'fr', 'pt', 'ru'])
 import { registerGithubSourceClient } from './clues/sources/github/index.tsx'
 import { registerFeishuSourceClient } from './clues/sources/feishu/index.tsx'
 import { appDateTime } from './clues/sources/feishu/time.ts'
@@ -93,69 +96,40 @@ export function apply(ctx: Context): void {
     return () => { offZh(); offEn() }
   }, 'dsh-better-sidebar: dictionaries')
 
-  // Opt-in third-language support through @huanlin/dsh-plugin-better-locale.
-  // When that plugin is installed, it publishes `ctx.betterLocale` (the
-  // override store) and patches LocaleRuntime.prototype.lookup to consult
-  // it. We mirror the same override awareness into the sidebar's own `t()`:
-  // attachBetterLocale() makes t() consult the store's getOverride first,
-  // so the sidebar's chrome (which bypasses ctx.locale and calls t()
-  // directly) also switches to the override language. We also register
-  // the ja dict with the better-locale store so external callers of
-  // ctx.locale.lookup('betterSidebar', key) get the override text too.
-  //
-  // Activation-order-safe: ctx.get('betterLocale') is a non-reactive read
-  // (cordis only re-evaluates declared `inject` deps). If better-locale
-  // activates after better-sidebar, the initial read returns undefined.
-  // We subscribe to the locale revision — better-locale bumps it on
-  // activation (when a persisted override exists) and on every override
-  // switch — and re-check ctx.get on each bump, attaching + registering
-  // the ja dict once the store becomes available.
+  // The official host languages beyond zh/en ride the lazy `locale` chunk:
+  // fetched the first time the host is on one of them, then registered into
+  // the shared registry (so `ctx.locale.bind('betterSidebar')` resolves too)
+  // and handed to `t()`. Registration bumps the locale revision, which
+  // re-renders the sidebar root once the dictionaries land.
   ctx.effect(() => {
-    let dispose: (() => void) | undefined
-    // Guards the async chunk registration below: a sync() re-run (or fiber
-    // disposal) that lands while the chunk is still in flight must render
-    // that registration moot.
-    let generation = 0
+    let disposed = false
+    let offDicts: (() => void) | undefined
     const sync = (): void => {
-      generation += 1
-      dispose?.()
-      dispose = undefined
-      const store = ctx.get('betterLocale') as
-        | {
-            readonly active: string | undefined
-            getOverride(dshActive: string, ns: string, key: string): string | undefined
-            isOverrideActive(dshActive: string): boolean
-            register(ns: string, dicts: Record<string, Record<string, string>>): () => void
-            subscribe(listener: () => void): () => void
-          }
-        | undefined
-      attachBetterLocale(store)
-      if (store !== undefined) {
-        // The 19 override dictionaries ride the lazy `locale` chunk: until
-        // it lands, the store has no betterSidebar entries and t() keeps
-        // the zh/en chain; the store's own revision bump on register
-        // re-renders the chrome once the dicts arrive.
-        const myGeneration = generation
-        void loadChunk('locale')
-          .then(mod => {
-            if (myGeneration !== generation) return
-            dispose = store.register(LOCALE_NS, mod.localeDicts as Record<string, Record<string, string>>)
-          })
-          .catch(() => { /* the dicts stay unregistered; the zh/en chain runs */ })
-      }
+      if (offDicts !== undefined || disposed) return
+      const active = ctx.locale.getSnapshot().active.toLowerCase().split('-')[0]!
+      if (!LAZY_LOCALES.has(active)) return
+      offDicts = () => {}
+      void loadChunk('locale')
+        .then(mod => {
+          if (disposed) return
+          // Attach before registering: register() notifies subscribers, and the
+          // sidebar's revision snapshot must already see the new dictionaries.
+          const dicts = mod.localeDicts as Record<string, Record<string, string>>
+          attachLocaleDicts(dicts)
+          const offs = Object.entries(dicts).map(([id, dict]) => ctx.locale.register(LOCALE_NS, id, dict))
+          offDicts = () => { for (const off of offs) off() }
+        })
+        .catch(() => { offDicts = undefined })
     }
-    // Initial check (picks up the store if better-locale activated first).
     sync()
-    // Re-check on every locale revision bump (better-locale bumps when it
-    // activates with a persisted override, and when the user switches).
     const unsubscribe = ctx.locale.subscribe(sync)
     return () => {
-      generation += 1
+      disposed = true
       unsubscribe()
-      dispose?.()
-      attachBetterLocale(undefined)
+      offDicts?.()
+      attachLocaleDicts({})
     }
-  }, 'dsh-better-sidebar: better-locale lazy integration')
+  }, 'dsh-better-sidebar: lazy locale dictionaries')
   // A failure anywhere in the client lifecycle must never take the app down
   // silently: log with the plugin prefix and pin a visible diagnostic strip
   // to the page so a blank panel is never the only symptom. This strip is
