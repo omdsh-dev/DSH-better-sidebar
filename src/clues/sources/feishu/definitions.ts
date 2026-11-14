@@ -21,8 +21,10 @@
  *   projects the opaque verification URL / user code. Read-only document
  *   access is the default; task, wiki and write scopes require explicit choice.
  *   A valid subset remains ready, with capabilities reflecting only its grant;
- * - `poll` runs `lark-cli auth login --device-code <host-side code> --json` on
- *   explicit request only. lark-cli 1.0.55 writes the terminal
+ * - `poll` runs `lark-cli auth login --device-code <host-side code> --json` as
+ *   one request/response call: S2 invokes it only for an explicit poll, and the
+ *   settings page may repeat that same call while the attempt it started is
+ *   authorizing. This adapter owns no timer. lark-cli 1.0.55 writes the terminal
  *   `authorization_complete` object to STDOUT with exit 3 when the user
  *   approved only some scopes (stderr may be empty), so the poll projects that
  *   completion before falling back to the stderr failure envelope;

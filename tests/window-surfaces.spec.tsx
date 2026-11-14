@@ -186,7 +186,7 @@ it('opens a surface:sidebar window docked, floats it without a sidebar or sessio
   expect(open).toHaveBeenCalledWith('docked', 'original', 'Docked')
   expect(host.getSnapshot().windows.find(window => window.id === 'docked')?.surface).toBe('sidebar')
 
-  handle.float()
+  handle.float!()
   host.open({ id: 'docked', title: 'Docked', content: 'x', surface: 'sidebar' })
   expect(host.getSnapshot().windows.find(window => window.id === 'docked')?.surface).toBe('floating')
   expect(open).toHaveBeenCalledTimes(1)

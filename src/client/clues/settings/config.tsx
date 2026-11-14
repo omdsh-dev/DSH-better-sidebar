@@ -12,10 +12,17 @@
  *   explicit authorize action, and — while an attempt runs — the prompt (URL,
  *   code, QR payload, expiry), an explicit status check and cancel.
  *
- * Rules enforced here (approved S8 spec §4):
+ * Rules enforced here (approved S8 spec §4, amended by the UX pass for
+ * device-code auto-check):
  * - a status read happens only because the user opened this page or pressed
- *   re-check; nothing auto-logs-in, auto-polls authorization or requests a
- *   business operation (the "detect" path never runs a dry-run or a login);
+ *   re-check; nothing auto-logs-in, auto-configures or requests a business
+ *   operation (the "detect" path never runs a dry-run or a login);
+ * - the ONE exception is an authorization attempt this page itself started:
+ *   while it is authorizing the page re-sends the same explicit device-code
+ *   poll at the CLI's suggested cadence (visibility-gated, bounded), because
+ *   the human approves in a browser tab and this row is the only place that
+ *   can notice. The runtime still schedules nothing; a hidden page and a
+ *   terminal answer both stop it;
  * - installing a CLI and authorizing a source connection are separate actions;
  * - failures are retried in place and never discard the surrounding settings;
  * - only S2's sanitized projection fields are rendered: no token, raw stdout,
@@ -119,6 +126,24 @@ const DEPENDENCY_STATE_COPY: Record<DependencyState, ClueSourceStatusKind> = {
  * observing each other's probes can never livelock this page.
  */
 const MAX_RELOAD_ATTEMPTS = 3
+
+/**
+ * Device-code auto-check cadence. The CLI's own hint wins inside a sane band
+ * (a 0/absent hint must not spin, a 10-minute hint must not look dead); the
+ * default is the GitHub device flow's documented 5 s.
+ */
+const AUTO_POLL_DEFAULT_MS = 5_000
+const AUTO_POLL_MIN_MS = 1_000
+const AUTO_POLL_MAX_MS = 30_000
+/** Consecutive auto-check failures before the page falls back to the button. */
+const MAX_AUTO_POLL_FAILURES = 3
+
+/** Resolve the interval for one authorizing attempt's suggested cadence. */
+function autoPollInterval(prompt: ConnectionStatusProjection['prompt']): number {
+  const suggested = prompt?.pollAfterMs
+  if (suggested === undefined || !Number.isFinite(suggested)) return AUTO_POLL_DEFAULT_MS
+  return Math.min(AUTO_POLL_MAX_MS, Math.max(AUTO_POLL_MIN_MS, suggested))
+}
 
 /** Copy key per install distribution kind. */
 const DISTRIBUTION_COPY: Record<DependencyInstallPlan['distribution']['kind'], CopyKey> = {
@@ -273,6 +298,8 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
    *  clears only its own transient error, never a plan/start/cancel failure. */
   const [pollErrors, setPollErrors] = useState<Record<string, string>>({})
   const [connecting, setConnecting] = useState(false)
+  /** Consecutive device-code auto-check failures (0 while the loop is healthy). */
+  const [autoPollFailures, setAutoPollFailures] = useState(0)
   const [selectedPermissions, setSelectedPermissions] = useState<readonly string[]>(() =>
     sourceId === 'builtin.feishu.tasks' ? ['tasks.read', 'tasks.comments.read'] : ['docs.read', 'docs.search', 'docs.comments.read'])
   const [permissionPreferencesLoading, setPermissionPreferencesLoading] = useState(
@@ -1069,6 +1096,8 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
     if (permissions?.length === 0) { setConnectionActionError(t('clueAuthPermissionsEmpty')); return }
     setConnecting(true)
     setConnectionActionError(null)
+    // A fresh attempt owns a fresh failure budget.
+    setAutoPollFailures(0)
     beginMutation()
     try {
       const next = await runtime.connectionsConnect(connectionId, lifecycleAbortRef.current?.signal, permissions)
@@ -1084,7 +1113,7 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
     }
   }
 
-  const pollConnection = async (): Promise<void> => {
+  const pollConnection = useCallback(async (): Promise<void> => {
     if (connectionId === undefined) return
     setConnecting(true)
     setConnectionActionError(null)
@@ -1094,18 +1123,23 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
       if (!mounted.current) return
       setConnections(current => replaceConnection(current ?? [], next))
       setConnectionReadFailed(false)
+      setAutoPollFailures(0)
       publishClueStatuses(runtime, [], [next])
     } catch (caught) {
-      if (mounted.current) setConnectionActionError(messageOf(caught))
+      if (mounted.current) {
+        setConnectionActionError(messageOf(caught))
+        setAutoPollFailures(current => current + 1)
+      }
     } finally {
       endMutation()
       if (mounted.current) setConnecting(false)
     }
-  }
+  }, [beginMutation, connectionId, endMutation, runtime])
 
   const cancelConnection = async (): Promise<void> => {
     if (connectionId === undefined) return
     setConnecting(true)
+    setAutoPollFailures(0)
     setConnectionActionError(null)
     beginMutation()
     try {
@@ -1121,6 +1155,52 @@ export function SourceConfigPage(props: SourceConfigPageProps) {
       if (mounted.current) setConnecting(false)
     }
   }
+
+  // The attempt's suggested cadence, resolved once per projection: a primitive
+  // instead of the prompt object keeps the timer from restarting on unrelated
+  // re-renders of the same attempt.
+  const autoPollDelay = connection?.authorization === 'authorizing'
+    ? autoPollInterval(connection.prompt)
+    : undefined
+
+  /**
+   * Device-code auto-check. The runtime still schedules nothing — this page
+   * repeats the SAME explicit poll the button sends, at the CLI's own cadence,
+   * only while its own attempt is authorizing. Everything that ends the wait
+   * stops the timer: a terminal answer, Cancel, closing the window, a hidden
+   * page, or MAX_AUTO_POLL_FAILURES consecutive failures. The manual
+   * "I'm done — check status" button stays as the fallback.
+   */
+  useEffect(() => {
+    if (connectionId === undefined || autoPollDelay === undefined || connecting) return
+    if (autoPollFailures >= MAX_AUTO_POLL_FAILURES) return
+    let timer: number | undefined
+    let stopped = false
+    const hidden = (): boolean => document.visibilityState === 'hidden'
+    const clearTimer = (): void => {
+      if (timer === undefined) return
+      window.clearTimeout(timer)
+      timer = undefined
+    }
+    const schedule = (): void => {
+      if (stopped || hidden() || timer !== undefined) return
+      timer = window.setTimeout(() => {
+        timer = undefined
+        if (stopped || hidden()) return
+        void pollConnection()
+      }, autoPollDelay)
+    }
+    // A background page must not spawn CLI polls; becoming visible again
+    // re-arms instead of replaying the interval that was missed.
+    const onVisibility = (): void => { if (hidden()) clearTimer(); else schedule() }
+    schedule()
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      stopped = true
+      clearTimer()
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
+  }, [autoPollDelay, autoPollFailures, connectionId, connecting, pollConnection])
 
   // Keep install recovery first; a usable CLI yields the first task to account access.
   const dependenciesNeedAttention = ids.some(id => {

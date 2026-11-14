@@ -84,7 +84,11 @@ export interface ClueRuntimeApi {
   ): Promise<readonly ConnectionStatusProjection[]>
   /** `clues.connections.connect` — explicit user authorization action. */
   connectionsConnect(connectionId: string, signal?: AbortSignal, capabilities?: readonly string[]): Promise<ConnectionStatusProjection>
-  /** `clues.connections.poll` — explicit device-code check (never scheduled). */
+  /**
+   * `clues.connections.poll` — one device-code check. The runtime never
+   * schedules it; the settings page repeats this same call while the attempt
+   * it started is authorizing (see SourceConfigPage's auto-check).
+   */
   connectionsPoll(connectionId: string, signal?: AbortSignal): Promise<ConnectionStatusProjection>
   /** `clues.connections.cancel` — abandon the attempt, keep existing login state. */
   connectionsCancel(connectionId: string, signal?: AbortSignal): Promise<ConnectionStatusProjection>

@@ -20,7 +20,9 @@
  *   the adapter is awaited, so a concurrent click shares it instead of starting
  *   a second flow, and `cancel` can abort an attempt that has no session yet;
  * - `poll` is explicit request/response for device-code flows; an expired
- *   attempt is reported as `expired` and cleared, not retried automatically. A
+ *   attempt is reported as `expired` and cleared, not retried automatically by
+ *   this module. (The settings page that owns the attempt may repeat the same
+ *   poll at the CLI's cadence; the cadence lives there, never here.) A
  *   poll/cancel that was overtaken by a cancellation or a new attempt drops its
  *   stale result instead of writing it into the current state;
  * - `cancel` aborts an in-flight adapter start, calls the adapter's

@@ -1708,3 +1708,98 @@ describe('explicit Feishu permission selection', () => {
     rendered.unmount()
   })
 })
+
+describe('device-code auto-check', () => {
+  const authorizing = (pollAfterMs?: number) => connection({
+    authorization: 'authorizing',
+    action: 'connect',
+    capabilities: [],
+    prompt: {
+      verificationUrl: 'https://example.test/device',
+      userCode: 'ABCD-1234',
+      expiresAt: '2026-10-17T00:10:00.000Z',
+      ...(pollAfterMs === undefined ? {} : { pollAfterMs }),
+    },
+  })
+
+  it('re-sends the explicit poll at the CLI cadence and stops at the terminal answer', async () => {
+    vi.useFakeTimers()
+    try {
+      const runtime = fakeRuntime({ connections: [authorizing(1500)] })
+      runtime.connectionsPoll = async (connectionId) => {
+        runtime.calls.push(`poll:${connectionId}`)
+        return connection({ connectionId, authorization: 'ready', action: 'none' })
+      }
+      const rendered = await mount(runtime)
+      runtime.calls.length = 0
+      // The hint is honoured: one millisecond short of it nothing is asked.
+      await act(async () => { await vi.advanceTimersByTimeAsync(1499) })
+      expect(runtime.calls).toEqual([])
+      await act(async () => { await vi.advanceTimersByTimeAsync(1) })
+      expect(runtime.calls).toEqual(['poll:acme.auth'])
+      await flush()
+      expect(rendered.container.textContent).toContain('Ready')
+      // A terminal answer ends the wait: no further poll, and the manual
+      // fallback is gone because the attempt is over.
+      await act(async () => { await vi.advanceTimersByTimeAsync(30_000) })
+      expect(runtime.calls).toEqual(['poll:acme.auth'])
+      rendered.unmount()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('pauses while the page is hidden and re-arms when it is visible again', async () => {
+    vi.useFakeTimers()
+    let hidden = false
+    Object.defineProperty(document, 'visibilityState', {
+      configurable: true,
+      get: () => (hidden ? 'hidden' : 'visible'),
+    })
+    try {
+      const runtime = fakeRuntime({ connections: [authorizing(2000)], pollResult: authorizing(2000) })
+      const rendered = await mount(runtime)
+      runtime.calls.length = 0
+      hidden = true
+      act(() => { document.dispatchEvent(new Event('visibilitychange')) })
+      await act(async () => { await vi.advanceTimersByTimeAsync(20_000) })
+      expect(runtime.calls).toEqual([])
+      hidden = false
+      act(() => { document.dispatchEvent(new Event('visibilitychange')) })
+      await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
+      expect(runtime.calls).toEqual(['poll:acme.auth'])
+      rendered.unmount()
+    } finally {
+      delete (document as unknown as { visibilityState?: unknown }).visibilityState
+      vi.useRealTimers()
+    }
+  })
+
+  it('falls back to the manual button after three consecutive failures', async () => {
+    vi.useFakeTimers()
+    try {
+      const runtime = fakeRuntime({ connections: [authorizing()] })
+      runtime.connectionsPoll = async () => {
+        runtime.calls.push('poll')
+        throw new Error('device check failed')
+      }
+      const rendered = await mount(runtime)
+      runtime.calls.length = 0
+      // The default cadence is the device flow's documented 5 s. Each settled
+      // failure re-arms the timer from its own render, so advance per round.
+      for (let round = 0; round < 3; round += 1) {
+        await act(async () => { await vi.advanceTimersByTimeAsync(5_000) })
+      }
+      expect(runtime.calls).toEqual(['poll', 'poll', 'poll'])
+      await act(async () => { await vi.advanceTimersByTimeAsync(30_000) })
+      expect(runtime.calls).toEqual(['poll', 'poll', 'poll'])
+      // The attempt is still live, so the reader keeps the explicit escape.
+      click(rendered.container, 'I’m done — check status')
+      await act(async () => { await Promise.resolve() })
+      expect(runtime.calls).toHaveLength(4)
+      rendered.unmount()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
