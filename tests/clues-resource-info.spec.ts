@@ -200,6 +200,34 @@ describe('change-request facts', () => {
     expect(failureOf(() => normalizeClueResourceInfo({ checks: 'green' })).category).toBe('invalid-request')
   })
 
+  it('keeps the individual checks bounded and typed', () => {
+    const info = normalizeClueResourceInfo({
+      checks: 'failure',
+      checkRuns: [
+        { name: 'build (macos)', state: 'failure', url: 'https://ci.example/build' },
+        { name: 'lint', state: 'success' },
+        { name: 'docs', state: 'expected', extra: 'dropped' },
+      ],
+    })
+    expect(info.checkRuns).toEqual([
+      { name: 'build (macos)', state: 'failure', url: 'https://ci.example/build' },
+      { name: 'lint', state: 'success' },
+      { name: 'docs', state: 'expected' },
+    ])
+    expect(failureOf(() => normalizeClueResourceInfo({ checkRuns: 'build' })).category).toBe('invalid-request')
+    expect(failureOf(() => normalizeClueResourceInfo({ checkRuns: [{ name: 'build' }] })).category).toBe('invalid-request')
+    expect(failureOf(() => normalizeClueResourceInfo({ checkRuns: [{ name: 'build', state: 'green' }] })).category)
+      .toBe('invalid-request')
+    expect(failureOf(() => normalizeClueResourceInfo({ checkRuns: [{ name: '', state: 'success' }] })).category)
+      .toBe('invalid-request')
+    expect(failureOf(() => normalizeClueResourceInfo({ checkRuns: [{ name: 'a', state: 'success', url: 'ftp://x' }] })).category)
+      .toBe('invalid-request')
+    // The bound is a request budget: 20 is the contract's ceiling.
+    const many = Array.from({ length: 21 }, (_unused, index) => ({ name: `job-${index}`, state: 'success' }))
+    expect(failureOf(() => normalizeClueResourceInfo({ checkRuns: many })).category).toBe('invalid-request')
+    expect(normalizeClueResourceInfo({ checkRuns: many.slice(0, 20) }).checkRuns).toHaveLength(20)
+  })
+
   it('omits the facts when the provider did not report them', () => {
     const info = normalizeClueResourceInfo({ state: 'open', number: 1 })
     expect('review' in info).toBe(false)

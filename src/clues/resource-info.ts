@@ -15,10 +15,14 @@
  * There is no "now" fallback.
  */
 import {
+  CLUE_CHECK_STATES,
+  CLUE_MAX_CHECK_RUNS,
   CLUE_RESOURCE_STATES,
   ClueError,
+  type ClueCheckState,
   type CluePerson,
   type ClueResourceBranches,
+  type ClueResourceCheck,
   type ClueResourceCounts,
   type ClueResourceInfo,
   type ClueResourceState,
@@ -39,6 +43,8 @@ export const MAX_CLUE_INFO_LABEL = 100
 export const MAX_CLUE_INFO_PEOPLE = 50
 /** Maximum labels on one resource. */
 export const MAX_CLUE_INFO_LABELS = 100
+/** Longest check name/job string (a workflow may prefix a long matrix leg). */
+export const MAX_CLUE_CHECK_NAME = 300
 
 /** The epoch unit of a provider number. `auto` picks by magnitude. */
 export type ClueInstantUnit = 'auto' | 'ms' | 's'
@@ -276,6 +282,40 @@ function countsOf(value: unknown): ClueResourceCounts | undefined {
   return Object.keys(counts).length === 0 ? undefined : counts
 }
 
+/** Normalize one CI state value; only the shared vocabulary is accepted. */
+function checkStateOf(value: unknown, what: string): ClueCheckState {
+  if (typeof value !== 'string' || !(CLUE_CHECK_STATES as readonly string[]).includes(value)) {
+    throw new ClueError('invalid-request', `${what} must be one of ${CLUE_CHECK_STATES.join(', ')}`)
+  }
+  return value as ClueCheckState
+}
+
+/**
+ * Normalize the individual checks of one detail read.
+ *
+ * Bounded twice — by {@link CLUE_MAX_CHECK_RUNS} entries and by a per-name
+ * limit — because this list is an untrusted provider payload that the client
+ * renders inline. Provider order is preserved; ranking failures first is a
+ * display decision the client owns.
+ */
+function checkRunsOf(value: unknown): ClueResourceCheck[] | undefined {
+  if (value === undefined) return undefined
+  if (!Array.isArray(value)) {
+    throw new ClueError('invalid-request', 'clue resource info checkRuns must be an array')
+  }
+  if (value.length > CLUE_MAX_CHECK_RUNS) {
+    throw new ClueError('invalid-request', `clue resource info has more than ${CLUE_MAX_CHECK_RUNS} checkRuns`)
+  }
+  return value.map((entry, index) => {
+    const what = `clue resource info checkRuns[${index}]`
+    if (!isRecord(entry)) throw new ClueError('invalid-request', `${what} must be a JSON object`)
+    const name = displayText(entry.name, `${what}.name`, MAX_CLUE_CHECK_NAME)
+    const state = checkStateOf(entry.state, `${what}.state`)
+    const url = entry.url === undefined ? undefined : displayUrl(entry.url, `${what}.url`)
+    return { name, state, ...(url === undefined ? {} : { url }) }
+  })
+}
+
 /** Normalize one `state` value. */
 function stateOf(value: unknown): ClueResourceState | undefined {
   if (value === undefined) return undefined
@@ -323,7 +363,8 @@ export function normalizeClueResourceInfo(
     path?: string
     review?: 'approved' | 'changes-requested' | 'review-required'
     mergeable?: 'mergeable' | 'conflicting' | 'unknown'
-    checks?: 'success' | 'failure' | 'pending' | 'expected' | 'error'
+    checks?: ClueCheckState
+    checkRuns?: readonly ClueResourceCheck[]
   } = {}
 
   const state = stateOf(value.state)
@@ -396,13 +437,9 @@ export function normalizeClueResourceInfo(
     }
     info.mergeable = value.mergeable
   }
-  if (value.checks !== undefined) {
-    if (value.checks !== 'success' && value.checks !== 'failure' && value.checks !== 'pending'
-      && value.checks !== 'expected' && value.checks !== 'error') {
-      throw new ClueError('invalid-request', what + '.checks must be success, failure, pending, expected or error')
-    }
-    info.checks = value.checks
-  }
+  if (value.checks !== undefined) info.checks = checkStateOf(value.checks, what + '.checks')
+  const checkRuns = checkRunsOf(value.checkRuns)
+  if (checkRuns !== undefined) info.checkRuns = checkRuns
 
   return info
 }

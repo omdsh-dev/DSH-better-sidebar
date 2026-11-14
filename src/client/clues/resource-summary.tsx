@@ -6,6 +6,7 @@
  *
  *   line 1  number · author · change counts     (due/path/size for other sources)
  *   line 2  CI verdict · review · mergeability · branches
+ *   line 3  a collapsed check disclosure        (only when a detail read asks)
  *
  * Colour budget: ink carries the text, and a semantic colour appears only on a
  * 12px verdict glyph. Nothing is filled, so a header never becomes a stack of
@@ -30,8 +31,10 @@
  */
 import type { ReactNode } from 'react'
 import type {
+  ClueCheckState,
   CluePerson,
   ClueResourceBranches,
+  ClueResourceCheck,
   ClueResourceCounts,
   ClueResourceInfo,
   ClueResourceState,
@@ -42,8 +45,10 @@ import { t } from '../locales.ts'
 import css from './resource-summary.module.css'
 
 export type {
+  ClueCheckState,
   CluePerson,
   ClueResourceBranches,
+  ClueResourceCheck,
   ClueResourceCounts,
   ClueResourceInfo,
   ClueResourceState,
@@ -230,6 +235,81 @@ function ChecksVerdict(props: {
   )
 }
 
+/**
+ * Display rank of one check. A detail header answers "is anything broken?"
+ * before "what ran?", so failures and errors come first and a green wall never
+ * buries the one red job.
+ */
+const CHECK_RANK: Readonly<Record<ClueCheckState, number>> = {
+  failure: 0,
+  error: 1,
+  pending: 2,
+  expected: 3,
+  success: 4,
+}
+
+/** The ranked copy of one check list (stable: equal ranks keep provider order). */
+function rankedChecks(checks: readonly ClueResourceCheck[]): readonly ClueResourceCheck[] {
+  return [...checks].sort((left, right) => CHECK_RANK[left.state] - CHECK_RANK[right.state])
+}
+
+/** Whether one check is a verdict a reader must not miss. */
+function checkFailed(state: ClueCheckState): boolean {
+  return state === 'failure' || state === 'error'
+}
+
+/**
+ * The individual checks of a detail read, collapsed behind one quiet line.
+ *
+ * The header states the rollup; the individual jobs are detail, so they live in
+ * a disclosure instead of growing the header by up to 20 rows. Each row is a
+ * glyph plus the provider's own name, and a check with a provider link opens it
+ * in a new tab — the same affordance the original-source link has.
+ */
+function CheckList(props: { readonly checks: readonly ClueResourceCheck[] }): ReactNode {
+  const ranked = rankedChecks(props.checks)
+  const failing = ranked.filter(check => checkFailed(check.state)).length
+  return (
+    <details className={css.checksDisclosure} data-clue-check-list={String(ranked.length)}>
+      <summary className={css.checksSummary}>
+        {failing > 0 && (
+          <span className={css.checksFailing} data-ink="error">
+            {t('cluePrChecksFailure')} {failing}
+          </span>
+        )}
+        {failing > 0 ? ' · ' : null}
+        <span>{t('cluePrChecksCount', { count: ranked.length })}</span>
+      </summary>
+      <ul className={css.checksList}>
+        {ranked.map((check, index) => {
+          const state = checksValueOf(check.state)
+          const label = `${check.name} · ${state}`
+          return (
+            <li className={css.checkRow} data-clue-check={check.state} key={`${index}:${check.name}`}>
+              <span className={css.checkGlyph} role="img" aria-label={state} title={state}>
+                {checksGlyph(check.state)}
+              </span>
+              {check.url === undefined ? (
+                <span className={css.checkName} title={check.name}>{check.name}</span>
+              ) : (
+                <a
+                  className={css.checkName}
+                  href={check.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  title={label}
+                >
+                  {check.name}
+                </a>
+              )}
+            </li>
+          )
+        })}
+      </ul>
+    </details>
+  )
+}
+
 /** One plain fact of the second line (review / mergeability). */
 interface InkFact {
   readonly key: 'review' | 'merge'
@@ -323,9 +403,10 @@ export function ResourceSummary({ info, actions, className }: ResourceSummaryPro
     || info.path !== undefined || info.sizeBytes !== undefined)
   const hasFacts = info !== undefined
     && (info.checks !== undefined || facts.length > 0 || branches !== undefined)
+  const checkRuns = info?.checkRuns !== undefined && info.checkRuns.length > 0 ? info.checkRuns : undefined
   // The action seat is itself something to show: a window whose source reports
   // no metadata still keeps Refresh and the original-source link here.
-  if (!hasIdentity && !hasFacts && actions === undefined) return null
+  if (!hasIdentity && !hasFacts && checkRuns === undefined && actions === undefined) return null
   return (
     <section
       className={className === undefined ? css.summary : css.summary + ' ' + className}
@@ -376,6 +457,7 @@ export function ResourceSummary({ info, actions, className }: ResourceSummaryPro
             )}
           </div>
         )}
+        {checkRuns !== undefined && <CheckList checks={checkRuns} />}
       </div>
       {actions !== undefined && <div className={css.actions}>{actions}</div>}
     </section>

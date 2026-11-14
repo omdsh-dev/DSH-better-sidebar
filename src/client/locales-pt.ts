@@ -1025,6 +1025,7 @@ export const pt: Record<string, string> = {
   cluePrChecksPending: "Running",
   cluePrChecksExpected: "Queued",
   cluePrChecksError: "Error",
+  cluePrChecksCount: '{count} verificações',
   cluePrReviewApproved: "Approved",
   cluePrReviewChanges: "Changes requested",
   cluePrReviewRequired: "Review required",

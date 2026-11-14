@@ -550,7 +550,18 @@ describe('read and loadEdit', () => {
   it('reads PR-only draft/merged state and maps branches/counts into info', async () => {
     const { service } = setup(() => cliResult({ stdout: fixture('pull-read.json') }))
     const result = await service.read(readParams('pull'))
-    expect(result.data).toMatchObject({ kind: 'pull', isDraft: false, merged: false })
+    expect(result.data).toMatchObject({
+      kind: 'pull',
+      isDraft: false,
+      merged: false,
+      // The document half carries the same bounded check list the header reads.
+      checkRuns: [
+        { name: 'build (macos)', state: 'success', url: 'https://github.com/cli/cli/runs/1' },
+        { name: 'test (ubuntu)', state: 'pending', url: 'https://github.com/cli/cli/runs/2' },
+        { name: 'lint', state: 'failure', url: 'https://github.com/cli/cli/runs/3' },
+        { name: 'ci/circleci: docs', state: 'success', url: 'https://circleci.example/1' },
+      ],
+    })
     expect(result.info).toEqual({
       state: 'open',
       number: 14727,
@@ -576,6 +587,12 @@ describe('read and loadEdit', () => {
       review: 'approved',
       mergeable: 'mergeable',
       checks: 'success',
+      checkRuns: [
+        { name: 'build (macos)', state: 'success', url: 'https://github.com/cli/cli/runs/1' },
+        { name: 'test (ubuntu)', state: 'pending', url: 'https://github.com/cli/cli/runs/2' },
+        { name: 'lint', state: 'failure', url: 'https://github.com/cli/cli/runs/3' },
+        { name: 'ci/circleci: docs', state: 'success', url: 'https://circleci.example/1' },
+      ],
     })
   })
 

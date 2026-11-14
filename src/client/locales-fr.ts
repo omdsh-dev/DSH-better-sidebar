@@ -1034,6 +1034,7 @@ export const fr: Record<string, string> = {
   cluePrChecksPending: "En cours",
   cluePrChecksExpected: "En attente",
   cluePrChecksError: "Erreur",
+  cluePrChecksCount: '{count} vérifications',
   cluePrReviewApproved: "Approuvé",
   cluePrReviewChanges: "Modifications demandées",
   cluePrReviewRequired: "Revue requise",

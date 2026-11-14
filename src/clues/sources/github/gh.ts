@@ -22,7 +22,7 @@
  * refresh.
  */
 import { tmpdir } from 'node:os'
-import { ClueError, isClueError } from '../../types.ts'
+import { CLUE_MAX_CHECK_RUNS, ClueError, isClueError } from '../../types.ts'
 import { runClueProviderRequest } from '../../request-gate.ts'
 import type { CliResult, ClueRuntime } from '../../runtime/types.ts'
 import { graphqlErrorsOf, mapGithubCliFailure } from './errors.ts'
@@ -47,12 +47,14 @@ import {
   githubCommentOf, requireGithubCommentBody,
   type GithubDiscussionQuery, type GithubDiscussionPage, type GithubCommentInput,
 } from './comments.ts'
-import type { ClueComment } from '../../types.ts'
+import type { ClueCheckState, ClueComment, ClueResourceCheck } from '../../types.ts'
 
 /** Discussion bodies are much larger than browse metadata; bound both bytes and nodes. */
 const GITHUB_DISCUSSION_MAX_OUTPUT_BYTES = 8 << 20
 // 20 × 65,536 chars × up to 6 JSON escape bytes stays below 8 MiB with metadata.
 const GITHUB_DISCUSSION_MAX_PAGE_ITEMS = 20
+/** Longest check name the display contract accepts (a matrix leg can be long). */
+const GITHUB_CHECK_NAME_MAX = 200
 
 // ── GraphQL documents (minimal fields: a browse page never downloads bodies) ─
 
@@ -81,7 +83,13 @@ const ISSUE_READ_QUERY = 'query($owner:String!,$repo:String!,$number:Int!)'
   + 'assignees(first:10){nodes{login name url}} labels(first:20){nodes{name}} '
   + 'comments(first:1){totalCount}}}}'
 
-/** One pull request read (live; includes draft/merged state and PR counts). */
+/**
+ * One pull request read (live; includes draft/merged state, PR counts and the
+ * individual checks).
+ *
+ * Only a READ asks for `contexts`: a browse/search row carries the rollup
+ * state, so a page of 20 pull requests never downloads 20 check lists.
+ */
 const PULL_READ_QUERY = 'query($owner:String!,$repo:String!,$number:Int!)'
   + '{repository(owner:$owner,name:$repo){isArchived viewerPermission '
   + 'pullRequest(number:$number){number title body state isDraft merged mergedAt createdAt updatedAt closedAt url '
@@ -89,7 +97,10 @@ const PULL_READ_QUERY = 'query($owner:String!,$repo:String!,$number:Int!)'
   + 'assignees(first:10){nodes{login name url}} labels(first:20){nodes{name}} '
   + 'comments(first:1){totalCount} commits(first:1){totalCount} '
   + 'changedFiles additions deletions headRefName baseRefName headRepository{nameWithOwner} '
-  + 'reviewDecision mergeable statusCheckRollup{state}}}}'
+  + 'reviewDecision mergeable statusCheckRollup{state '
+  + `contexts(first:${CLUE_MAX_CHECK_RUNS}){nodes{__typename `
+  + '... on CheckRun{name status conclusion detailsUrl} '
+  + '... on StatusContext{context state targetUrl}}}}}}}'
 
 /** Same-repository issue search (the query carries the repo/kind qualifiers). */
 const SEARCH_ISSUE_QUERY = 'query($q:String!,$first:Int!,$after:String)'
@@ -395,7 +406,9 @@ export interface GithubResourceSnapshot {
   /** Pull request mergeability (MERGEABLE/CONFLICTING/UNKNOWN). */
   readonly mergeable?: 'mergeable' | 'conflicting' | 'unknown'
   /** Rollup state of the pull request's status checks. */
-  readonly checks?: 'success' | 'failure' | 'pending' | 'expected' | 'error'
+  readonly checks?: ClueCheckState
+  /** Individual checks of this read (check runs + legacy status contexts). */
+  readonly checkRuns?: readonly ClueResourceCheck[]
   readonly isArchived: boolean
   readonly viewerPermission?: string
   /** Opaque check-before-save baseline (updatedAt + content fingerprint). */
@@ -612,7 +625,7 @@ function mergeableOf(raw: unknown): 'mergeable' | 'conflicting' | 'unknown' | un
 }
 
 /** Normalize the status-check rollup state; an empty rollup stays absent. */
-function checksOf(raw: unknown): 'success' | 'failure' | 'pending' | 'expected' | 'error' | undefined {
+function checksOf(raw: unknown): ClueCheckState | undefined {
   if (!isRecord(raw)) return undefined
   switch (raw.state) {
     case 'SUCCESS': return 'success'
@@ -622,6 +635,78 @@ function checksOf(raw: unknown): 'success' | 'failure' | 'pending' | 'expected' 
     case 'ERROR': return 'error'
     default: return undefined
   }
+}
+
+/**
+ * The CI state of one check run.
+ *
+ * A run that has not finished yet carries no conclusion — that is a queued or
+ * running check, not a passing one. Conclusions map onto the shared vocabulary:
+ * neutral/skipped/stale never blocked a merge, timeout/action-required did, and
+ * a cancelled run is reported as an error rather than silently passing.
+ */
+function checkRunStateOf(status: string | undefined, conclusion: string | undefined): ClueCheckState | undefined {
+  if (conclusion === undefined) return status === undefined ? undefined : 'pending'
+  switch (conclusion) {
+    case 'SUCCESS':
+    case 'NEUTRAL':
+    case 'SKIPPED':
+    case 'STALE':
+      return 'success'
+    case 'FAILURE':
+    case 'TIMED_OUT':
+    case 'ACTION_REQUIRED':
+    case 'STARTUP_FAILURE':
+      return 'failure'
+    case 'CANCELLED':
+      return 'error'
+    default:
+      return undefined
+  }
+}
+
+/** Legacy status contexts spell the same states in their own enum. */
+function statusContextStateOf(state: string | undefined): ClueCheckState | undefined {
+  switch (state) {
+    case 'SUCCESS': return 'success'
+    case 'FAILURE': return 'failure'
+    case 'ERROR': return 'error'
+    case 'PENDING': return 'pending'
+    case 'EXPECTED': return 'expected'
+    default: return undefined
+  }
+}
+
+/**
+ * Normalize `statusCheckRollup.contexts.nodes` — check runs and the legacy
+ * commit statuses GitHub still reports through the same connection.
+ *
+ * Absent rollup, absent contexts or an empty node list all answer undefined, so
+ * a pull request without CI renders exactly as before. Provider order is kept:
+ * ranking failures first is a display decision, not a provider fact.
+ */
+function checkRunsOf(raw: unknown): readonly ClueResourceCheck[] | undefined {
+  if (!isRecord(raw) || !isRecord(raw.contexts) || !Array.isArray(raw.contexts.nodes)) return undefined
+  const runs: ClueResourceCheck[] = []
+  for (const node of raw.contexts.nodes) {
+    if (!isRecord(node)) continue
+    const statusContext = node.__typename === 'StatusContext'
+    const name = stringField(statusContext ? node.context : node.name)
+    if (name === undefined) continue
+    const state = statusContext
+      ? statusContextStateOf(stringField(node.state))
+      : checkRunStateOf(stringField(node.status), stringField(node.conclusion))
+    if (state === undefined) continue
+    const url = stringField(statusContext ? node.targetUrl : node.detailsUrl)
+    runs.push({
+      // The provider owns the name; clip rather than drop a long matrix leg.
+      name: name.length > GITHUB_CHECK_NAME_MAX ? name.slice(0, GITHUB_CHECK_NAME_MAX - 1) + '…' : name,
+      state,
+      ...(url === undefined ? {} : { url }),
+    })
+    if (runs.length >= CLUE_MAX_CHECK_RUNS) break
+  }
+  return runs.length === 0 ? undefined : runs
 }
 
 /** Build the read snapshot (and the opaque revision) of one node. */
@@ -667,7 +752,8 @@ function snapshotOf(
   let headRepository: string | undefined
   let review: 'approved' | 'changes-requested' | 'review-required' | undefined
   let mergeable: 'mergeable' | 'conflicting' | 'unknown' | undefined
-  let checks: 'success' | 'failure' | 'pending' | 'expected' | 'error' | undefined
+  let checks: ClueCheckState | undefined
+  let checkRuns: readonly ClueResourceCheck[] | undefined
   if (resource.kind === 'pull') {
     isDraft = typeof node.isDraft === 'boolean' ? node.isDraft : false
     mergedAt = typeof node.mergedAt === 'string' && node.mergedAt !== '' ? node.mergedAt : undefined
@@ -685,6 +771,7 @@ function snapshotOf(
     review = reviewOf(node.reviewDecision)
     mergeable = mergeableOf(node.mergeable)
     checks = checksOf(node.statusCheckRollup)
+    checkRuns = checkRunsOf(node.statusCheckRollup)
   }
   const revision = githubRevisionOf({
     updatedAt,
@@ -724,6 +811,7 @@ function snapshotOf(
     ...(review === undefined ? {} : { review }),
     ...(mergeable === undefined ? {} : { mergeable }),
     ...(checks === undefined ? {} : { checks }),
+    ...(checkRuns === undefined ? {} : { checkRuns }),
     isArchived,
     ...(viewerPermission === undefined ? {} : { viewerPermission }),
     revision,

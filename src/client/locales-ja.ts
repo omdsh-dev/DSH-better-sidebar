@@ -1038,6 +1038,7 @@ export const ja: Record<string, string> = {
   cluePrChecksPending: "実行中",
   cluePrChecksExpected: "待機中",
   cluePrChecksError: "エラー",
+  cluePrChecksCount: '{count} 件のチェック',
   cluePrReviewApproved: "承認済み",
   cluePrReviewChanges: "変更リクエスト",
   cluePrReviewRequired: "レビュー待ち",

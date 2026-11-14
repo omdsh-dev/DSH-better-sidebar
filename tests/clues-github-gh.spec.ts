@@ -225,7 +225,9 @@ describe('browse and search argv', () => {
     expect(query).toContain('pullRequests(first:$first')
     expect(query).toContain('PullRequestState')
     expect(query).toContain('headRefName baseRefName headRepository{nameWithOwner}')
-    expect(query).toContain('reviewDecision mergeable statusCheckRollup{state}')
+    // A browse page carries the rollup only: no page downloads check lists.
+    expect(query).toContain('reviewDecision mergeable statusCheckRollup{state} ')
+    expect(query).not.toContain('contexts(')
     expect(query).toContain('assignees(first:10){nodes{login name url}}')
     expect(argValue(request.args, 'states[]')).toBe('OPEN')
     expect(page.total).toBe(71)
@@ -368,7 +370,7 @@ describe('read', () => {
     expect(query).toContain('commits(first:1){totalCount}')
     expect(query).toContain('changedFiles additions deletions')
     expect(query).toContain('headRefName baseRefName headRepository{nameWithOwner}')
-    expect(query).toContain('reviewDecision mergeable statusCheckRollup{state}')
+    expect(query).toContain('reviewDecision mergeable statusCheckRollup{state contexts(first:20)')
     expect(snapshot.isDraft).toBe(false)
     expect(snapshot.merged).toBe(false)
     expect(snapshot.mergedAt).toBeUndefined()
@@ -382,10 +384,75 @@ describe('read', () => {
     expect(snapshot.review).toBe('approved')
     expect(snapshot.mergeable).toBe('mergeable')
     expect(snapshot.checks).toBe('success')
+    // Individual checks ride the SAME read (one request), bounded and in
+    // provider order; a run without a conclusion is still pending.
+    expect(query).toContain('contexts(first:20){nodes{__typename')
+    expect(query).toContain('... on CheckRun{name status conclusion detailsUrl}')
+    expect(query).toContain('... on StatusContext{context state targetUrl}')
+    expect(snapshot.checkRuns).toEqual([
+      { name: 'build (macos)', state: 'success', url: 'https://github.com/cli/cli/runs/1' },
+      { name: 'test (ubuntu)', state: 'pending', url: 'https://github.com/cli/cli/runs/2' },
+      { name: 'lint', state: 'failure', url: 'https://github.com/cli/cli/runs/3' },
+      { name: 'ci/circleci: docs', state: 'success', url: 'https://circleci.example/1' },
+    ])
     expect(snapshot.commitsCount).toBe(12)
     expect(snapshot.changedFiles).toBe(3)
     expect(snapshot.additions).toBe(42)
     expect(snapshot.deletions).toBe(7)
+  })
+
+  it('keeps unusable check nodes out of the list and leaves an empty one absent', async () => {
+    const raw = JSON.parse(fixture('pull-read.json')) as {
+      data: { repository: { pullRequest: Record<string, unknown> } }
+    }
+    raw.data.repository.pullRequest.statusCheckRollup = {
+      state: 'PENDING',
+      contexts: {
+        nodes: [
+          // A conclusion this adapter does not know must not be guessed at.
+          { __typename: 'CheckRun', name: 'novel', status: 'COMPLETED', conclusion: 'SOMETHING_NEW' },
+          // A node with no name cannot be rendered, so it is dropped.
+          { __typename: 'CheckRun', conclusion: 'SUCCESS', detailsUrl: 'https://ci.example/1' },
+          { __typename: 'StatusContext', context: 'ci/legacy', state: 'EXPECTED' },
+        ],
+      },
+    }
+    const fake = fakeRuntime(() => cliResult({ stdout: JSON.stringify(raw) }))
+    const snapshot = await clientOf(fake).readResource(PULL)
+    expect(snapshot.checks).toBe('pending')
+    expect(snapshot.checkRuns).toEqual([{ name: 'ci/legacy', state: 'expected' }])
+
+    // No rollup contexts at all (or an empty node list) stays absent.
+    raw.data.repository.pullRequest.statusCheckRollup = { state: 'PENDING' }
+    const quiet = fakeRuntime(() => cliResult({ stdout: JSON.stringify(raw) }))
+    expect((await clientOf(quiet).readResource(PULL)).checkRuns).toBeUndefined()
+    raw.data.repository.pullRequest.statusCheckRollup = { state: 'PENDING', contexts: { nodes: [] } }
+    const empty = fakeRuntime(() => cliResult({ stdout: JSON.stringify(raw) }))
+    expect((await clientOf(empty).readResource(PULL)).checkRuns).toBeUndefined()
+  })
+
+  it('bounds the check list and clips a name that exceeds the display contract', async () => {
+    const raw = JSON.parse(fixture('pull-read.json')) as {
+      data: { repository: { pullRequest: Record<string, unknown> } }
+    }
+    const node = (index: number, name: string) => ({
+      __typename: 'CheckRun', name, status: 'COMPLETED', conclusion: 'SUCCESS',
+    })
+    raw.data.repository.pullRequest.statusCheckRollup = {
+      state: 'SUCCESS',
+      contexts: {
+        nodes: [
+          node(0, 'x'.repeat(400)),
+          ...Array.from({ length: 24 }, (_unused, index) => node(index + 1, `job-${index + 1}`)),
+        ],
+      },
+    }
+    const fake = fakeRuntime(() => cliResult({ stdout: JSON.stringify(raw) }))
+    const snapshot = await clientOf(fake).readResource(PULL)
+    expect(snapshot.checkRuns).toHaveLength(20)
+    expect(snapshot.checkRuns?.[0]?.name).toHaveLength(200)
+    expect(snapshot.checkRuns?.[0]?.name.endsWith('…')).toBe(true)
+    expect(snapshot.checkRuns?.[19]?.name).toBe('job-19')
   })
 
   it('reports a kind mismatch as unsupported instead of rewriting the reference', async () => {

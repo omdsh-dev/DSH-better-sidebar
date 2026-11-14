@@ -36,7 +36,40 @@
         "headRepository": { "nameWithOwner": "umairnaeem0309/cli" },
         "reviewDecision": "APPROVED",
         "mergeable": "MERGEABLE",
-        "statusCheckRollup": { "state": "SUCCESS" }
+        "statusCheckRollup": {
+          "state": "SUCCESS",
+          "contexts": {
+            "nodes": [
+              {
+                "__typename": "CheckRun",
+                "name": "build (macos)",
+                "status": "COMPLETED",
+                "conclusion": "SUCCESS",
+                "detailsUrl": "https://github.com/cli/cli/runs/1"
+              },
+              {
+                "__typename": "CheckRun",
+                "name": "test (ubuntu)",
+                "status": "IN_PROGRESS",
+                "conclusion": null,
+                "detailsUrl": "https://github.com/cli/cli/runs/2"
+              },
+              {
+                "__typename": "CheckRun",
+                "name": "lint",
+                "status": "COMPLETED",
+                "conclusion": "FAILURE",
+                "detailsUrl": "https://github.com/cli/cli/runs/3"
+              },
+              {
+                "__typename": "StatusContext",
+                "context": "ci/circleci: docs",
+                "state": "SUCCESS",
+                "targetUrl": "https://circleci.example/1"
+              }
+            ]
+          }
+        }
       }
     }
   }

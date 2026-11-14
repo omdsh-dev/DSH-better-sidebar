@@ -1028,6 +1028,7 @@ export const de: Record<string, string> = {
   cluePrChecksPending: "Läuft",
   cluePrChecksExpected: "Ausstehend",
   cluePrChecksError: "Fehler",
+  cluePrChecksCount: '{count} Prüfungen',
   cluePrReviewApproved: "Genehmigt",
   cluePrReviewChanges: "Änderungen angefordert",
   cluePrReviewRequired: "Review erforderlich",

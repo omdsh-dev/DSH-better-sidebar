@@ -30,6 +30,7 @@ import {
   type CluePerson,
   type CluePortableRef,
   type ClueReadResult,
+  type ClueResourceCheck,
   type ClueResourceInfo,
   type ClueSaveEditInput,
   type ClueSaveEditResult,
@@ -302,6 +303,13 @@ function dataOf(kind: GithubKind, snapshot: GithubResourceSnapshot): JsonObject 
   if (snapshot.review !== undefined) data.review = snapshot.review
   if (snapshot.mergeable !== undefined) data.mergeable = snapshot.mergeable
   if (snapshot.checks !== undefined) data.checks = snapshot.checks
+  if (snapshot.checkRuns !== undefined) {
+    data.checkRuns = snapshot.checkRuns.map(check => ({
+      name: check.name,
+      state: check.state,
+      ...(check.url === undefined ? {} : { url: check.url }),
+    }))
+  }
   return data
 }
 
@@ -382,7 +390,8 @@ interface GithubInfoFields {
   readonly deletions?: number
   readonly review?: 'approved' | 'changes-requested' | 'review-required'
   readonly mergeable?: 'mergeable' | 'conflicting' | 'unknown'
-  readonly checks?: 'success' | 'failure' | 'pending' | 'expected' | 'error'
+  readonly checks?: ClueResourceInfo['checks']
+  readonly checkRuns?: readonly ClueResourceCheck[]
 }
 
 /** Map one provider person to the public display person (login -> handle). */
@@ -465,6 +474,7 @@ function githubInfoOf(
     ...(fields.review === undefined ? {} : { review: fields.review }),
     ...(fields.mergeable === undefined ? {} : { mergeable: fields.mergeable }),
     ...(fields.checks === undefined ? {} : { checks: fields.checks }),
+    ...(fields.checkRuns === undefined ? {} : { checkRuns: fields.checkRuns }),
   }
 }
 

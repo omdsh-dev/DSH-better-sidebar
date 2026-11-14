@@ -1040,6 +1040,7 @@ export const ru: Record<string, string> = {
   cluePrChecksPending: "Running",
   cluePrChecksExpected: "Queued",
   cluePrChecksError: "Error",
+  cluePrChecksCount: '{count} проверок',
   cluePrReviewApproved: "Approved",
   cluePrReviewChanges: "Changes requested",
   cluePrReviewRequired: "Review required",

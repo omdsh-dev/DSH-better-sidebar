@@ -20,7 +20,11 @@
  *   due, CI verdict). It never grows a second line and never shows branches -
  *   the widest field, kept for the header;
  * - merging metadata is last-writer-wins per field, with counts/branches
- *   merged member-wise so a read snapshot does not drop earlier list data.
+ *   merged member-wise so a read snapshot does not drop earlier list data;
+ * - a detail read that carries individual checks adds ONE collapsed line
+ *   ("Failing 2 · 8 checks") over a failures-first list of provider names, each
+ *   with its own state dot and, when the provider offered one, an outbound
+ *   link. The list row never grows it.
  */
 // @vitest-environment jsdom
 import { beforeAll, describe, expect, it } from 'vitest'
@@ -180,6 +184,50 @@ describe('ResourceSummary', () => {
     expect(view.container.querySelector('img')).toBeNull()
     expect(view.container.textContent).toContain('<script>alert(1)</script>')
     expect(view.container.textContent).toContain('<img src=x onerror=1>')
+    view.unmount()
+  })
+
+  it('lists individual checks failures-first behind one quiet disclosure', () => {
+    const view = rendered({
+      state: 'open',
+      number: 7,
+      checks: 'failure',
+      checkRuns: [
+        { name: 'build', state: 'success' },
+        { name: 'lint', state: 'failure', url: 'https://ci.example/lint' },
+        { name: 'docs', state: 'pending' },
+        { name: 'audit', state: 'error' },
+      ],
+    })
+    const details = view.container.querySelector<HTMLDetailsElement>('details[data-clue-check-list]')
+    expect(details).not.toBeNull()
+    expect(details?.dataset.clueCheckList).toBe('4')
+    // The individual jobs are detail: the header states them, it does not open
+    // by itself and it never grows past one line until asked.
+    expect(details?.open).toBe(false)
+    expect(details?.querySelector('summary')?.textContent).toBe('Failing 2 · 4 checks')
+    const rows = [...details!.querySelectorAll('li')]
+    expect(rows.map(row => row.dataset.clueCheck)).toEqual(['failure', 'error', 'pending', 'success'])
+    const link = details!.querySelector('a')
+    expect(link?.getAttribute('href')).toBe('https://ci.example/lint')
+    expect(link?.getAttribute('target')).toBe('_blank')
+    // A check without a provider link is plain text, never a dead anchor.
+    expect(rows[1]?.querySelector('a')).toBeNull()
+    view.unmount()
+  })
+
+  it('keeps the disclosure out of a healthy header without checks', () => {
+    const view = rendered({ state: 'open', number: 7, checks: 'success' })
+    expect(view.container.querySelector('details[data-clue-check-list]')).toBeNull()
+    view.unmount()
+  })
+
+  it('never grows the one-line list row with individual checks', () => {
+    const view = renderRoot(createElement(ResourceInlineMeta, {
+      info: { state: 'open', number: 7, checkRuns: [{ name: 'build', state: 'success' }] },
+    }))
+    expect(view.container.querySelector('details')).toBeNull()
+    expect(view.container.querySelectorAll('li')).toHaveLength(0)
     view.unmount()
   })
 })

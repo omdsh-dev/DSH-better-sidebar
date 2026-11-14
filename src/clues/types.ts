@@ -60,6 +60,32 @@ export const CLUE_RESOURCE_STATES = [
 export type ClueResourceState = (typeof CLUE_RESOURCE_STATES)[number]
 
 /**
+ * The five normalized CI states. One vocabulary covers both the pull request's
+ * rollup and each individual check, so a reader never learns a second set of
+ * words for the one job that failed.
+ */
+export const CLUE_CHECK_STATES = ['success', 'failure', 'pending', 'expected', 'error'] as const
+
+/** One normalized CI state (rollup or a single check). */
+export type ClueCheckState = (typeof CLUE_CHECK_STATES)[number]
+
+/**
+ * Most individual checks one detail read carries. The provider query asks for
+ * exactly this many, so the bound is a request budget, not a truncation of a
+ * larger list: 20 rows is already more than a reader reads in a header.
+ */
+export const CLUE_MAX_CHECK_RUNS = 20
+
+/** One individual status check: a provider check run or a legacy status context. */
+export interface ClueResourceCheck {
+  /** The provider's check name/job (bounded display text, never a raw log). */
+  readonly name: string
+  readonly state: ClueCheckState
+  /** Provider link to the full check; absent when the provider reported none. */
+  readonly url?: string
+}
+
+/**
  * One display person (author/assignee/follower). Every field is optional
  * because a provider may expose only an open id or only a handle; the core
  * never fabricates the missing ones.
@@ -124,7 +150,13 @@ export interface ClueResourceInfo {
   /** Pull request mergeability; 'unknown' when GitHub is still computing it. */
   readonly mergeable?: 'mergeable' | 'conflicting' | 'unknown'
   /** Rollup of the pull request's status checks (read-only). */
-  readonly checks?: 'success' | 'failure' | 'pending' | 'expected' | 'error'
+  readonly checks?: ClueCheckState
+  /**
+   * Individual checks of a DETAIL read, in provider order and bounded by
+   * {@link CLUE_MAX_CHECK_RUNS}. The list projections keep only the rollup, so a
+   * browsing row never pays for them.
+   */
+  readonly checkRuns?: readonly ClueResourceCheck[]
 }
 
 // ── Resource discussion ───────────────────────────────────────────────────

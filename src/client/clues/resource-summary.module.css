@@ -173,3 +173,64 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* ── Individual checks (detail header, collapsed) ────────────────────────── */
+
+/* A disclosure, not a band: the header keeps its two quiet lines until the
+   reader asks which jobs ran, so an open pull request with 20 checks still
+   reads as one line. */
+.checksDisclosure {
+  min-width: 0;
+  margin-top: 1px;
+}
+
+.checksSummary {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 16px;
+  cursor: pointer;
+}
+
+/* A failing count is the one fact a reader must not miss; the rows below
+   stay quiet and let their own dots carry the state. */
+.checksFailing[data-ink='error'] { color: var(--dsw-alias-state-error-primary); }
+
+.checksList {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-height: 216px;
+  margin: 2px 0 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.checkRow {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.checkGlyph {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+}
+
+.checkName {
+  min-width: 0;
+  color: var(--dsw-alias-label-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-decoration: none;
+}
+
+a.checkName:hover { text-decoration: underline; }
