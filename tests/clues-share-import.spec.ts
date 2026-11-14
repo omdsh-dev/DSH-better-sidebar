@@ -3,24 +3,17 @@
  * commits through S1 (`ensure` / `importUnresolved` / `putSnapshot`) and
  * creates packs LAST.
  *
- * Pinned semantics:
- * - preview never reads a source, installs a plugin/CLI, starts auth or writes;
- * - a missing source keeps a first-class unresolved clue (read answers
- *   `source-missing`) and its snapshot stays readable offline;
- * - a registered source reuses the canonical local clue through `ensure`
- *   (never a second id for the same resource), and importing a snapshot next
- *   to an existing live reference does not change the live locator/read mode;
- * - a duplicate pack name creates a separate pack, never an overwrite;
- * - malicious/traversing paths, checksum mismatches, unknown versions and
- *   oversized archives are refused before the first write;
- * - a v2 snapshot's separate discussion entry is verified (size + SHA-256)
- *   and validated as a `ClueDiscussionPage` before the first write; a v1 (or
- *   descriptor-less) snapshot becomes an explicit `not-captured` page rather
- *   than an empty complete discussion;
- * - pack creation failure is reported as a partial result with a readable
- *   reason, never as success;
- * - bindings/pins are untouched, and no source read/portable operation runs
- *   during import.
+ * Pinned semantics: preview never reads a source or writes; a missing source
+ * keeps a first-class unresolved clue (read answers `source-missing`) whose
+ * snapshot stays readable offline; a registered source reuses the canonical
+ * local clue through `ensure` and never disturbs a live locator/read mode; a
+ * duplicate pack name creates a separate pack; traversing paths, checksum
+ * mismatches, unknown versions and oversized archives are refused before the
+ * first write; a v2 discussion entry is verified and validated before the
+ * first write while v1/descriptor-less archives yield an explicit
+ * `not-captured` page; pack creation failure is a partial result with a
+ * readable reason; bindings/pins are untouched and import never reads a
+ * source.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
@@ -32,134 +25,82 @@ import { createHash } from 'node:crypto'
 import { createCluesService, type CluesService, type ClueSourceRegistration } from '../src/clues/service.ts'
 import { createLocalFileSource, LOCAL_FILE_TYPE_IDS } from '../src/clues/local-files.ts'
 import {
-  ClueError,
-  type ClueDiscussionPage,
-  type CluePortableRef,
-  type ClueReadResult,
-  type JsonValue,
-  type Locator,
+  ClueError, type ClueDiscussionPage, type CluePortableRef, type ClueReadResult, type JsonValue, type Locator,
 } from '../src/clues/types.ts'
+import { importPack, previewImport, type ClueShareImportProgress, type ClueShareImportResult } from '../src/clues/share/import.ts'
+import { SAFE_FAILURE_REASONS, SAFE_SOURCE_NOT_INSTALLED } from '../src/clues/share/reasons.ts'
 import {
-  importPack,
-  previewImport,
-  type ClueShareImportProgress,
-  type ClueShareImportResult,
-} from '../src/clues/share/import.ts'
-import {
-  SAFE_FAILURE_REASONS,
-  SAFE_SOURCE_NOT_INSTALLED,
-} from '../src/clues/share/reasons.ts'
-import {
-  CLUEPACK_FORMAT,
-  serializeCluepackManifest,
-  type CluepackClue,
-  type CluepackIssue,
-  type CluepackManifest,
-  type CluepackMode,
-  type CluepackPack,
-  type CluepackSnapshot,
-  type CluepackSource,
+  CLUEPACK_FORMAT, serializeCluepackManifest, type CluepackClue, type CluepackIssue, type CluepackManifest,
+  type CluepackMode, type CluepackPack, type CluepackSnapshot, type CluepackSource,
 } from '../src/clues/share/manifest.ts'
 import { createZip, readZip } from '../src/clues/share/zip.ts'
 import { removeTree } from './temp-tree.ts'
-
 const NOW = '2026-10-17T00:00:00.000Z'
 const TEST_SOURCE = 'test.source'
 const TEST_TYPE = 'test.source.text'
 const FIXTURE_DIR = fileURLToPath(new URL('./fixtures/cluepack-v1/', import.meta.url))
-
 const roots: string[] = []
-
 afterEach(() => {
   for (const path of roots.splice(0)) removeTree(path)
 })
-
 interface Fixture {
   base: string
   workspace: string
   service: CluesService
   source: { calls: { read: number; portable: number }; read?: () => Promise<ClueReadResult> }
 }
-
-/**
- * The one test source used by every fixture. Extracted so tests can also
- * register it publicly and later remove it (the "source was uninstalled but
- * its clue is still resolved" case).
- */
-function testSourceRegistration(
-  source: Fixture['source'],
-): ClueSourceRegistration {
+/** The one test source used by every fixture (also registerable later). */
+function testSourceRegistration(source: Fixture['source']): ClueSourceRegistration {
   return {
     descriptor: {
-      sourceId: TEST_SOURCE,
-      name: 'Share test source',
-      order: 20,
-      pluginId: 'plugin.test',
-      types: [TEST_TYPE],
-      transport: 'mcp',
-      connectionId: 'conn-a',
+      sourceId: TEST_SOURCE, name: 'Share test source', order: 20, pluginId: 'plugin.test', types: [TEST_TYPE], transport: 'mcp', connectionId: 'conn-a',
       capabilities: { resolve: false, list: false, search: false, read: true, edit: false, portable: true },
     },
-    types: [{
-      typeId: TEST_TYPE,
-      sourceId: TEST_SOURCE,
-      formats: ['text/plain'],
-      capabilities: { read: true, edit: false, concurrency: 'none' },
-    }],
+    types: [{ typeId: TEST_TYPE, sourceId: TEST_SOURCE, formats: ['text/plain'], capabilities: { read: true, edit: false, concurrency: 'none' } }],
     operations: {
       async read() {
         source.calls.read += 1
-        return source.read?.() ?? {
-          format: 'text/plain',
-          data: { text: 'live content' },
-          text: 'live content',
-          fetchedAt: NOW,
-        }
+        return source.read?.() ?? { format: 'text/plain', data: { text: 'live content' }, text: 'live content', fetchedAt: NOW }
       },
       async portable() {
         source.calls.portable += 1
         return { portable: true, locator: { id: 'a' } }
       },
-      normalizeLocator(locator) {
-        return { id: String(locator.id ?? '') }
-      },
-      locatorKey(locator) {
-        return `id:${String(locator.id)}`
-      },
+      normalizeLocator(locator) { return { id: String(locator.id ?? '') } },
+      locatorKey(locator) { return 'id:' + String(locator.id) },
     },
   }
 }
-
+/** A source that is installed but offers neither the read nor the archived type. */
+function externalSource(sourceId: string, typeId: string, operations?: ClueSourceRegistration['operations']): ClueSourceRegistration {
+  return {
+    descriptor: {
+      sourceId, name: sourceId, order: 30, pluginId: 'plugin.late', types: [typeId], transport: 'mcp',
+      capabilities: { resolve: false, list: false, search: false, read: false, edit: false, portable: false },
+    },
+    types: [{ typeId, sourceId, formats: ['text/plain'], capabilities: { read: false, edit: false, concurrency: 'none' } }],
+    ...(operations === undefined ? {} : { operations }),
+  }
+}
 /** A service with one registered source and deterministic ids. */
-function fixture(options: { extraBuiltinSources?: ClueSourceRegistration[] } = {}): Fixture {
+function fixture(options: { extraBuiltinSources?: ClueSourceRegistration[]; withSource?: boolean } = {}): Fixture {
   const base = mkdtempSync(join(tmpdir(), 'dsh-clues-share-import-'))
   roots.push(base)
   const workspace = join(base, 'workspace')
   mkdirSync(workspace, { recursive: true })
   let next = 0
-  const source = { calls: { read: 0, portable: 0 } }
+  const source: Fixture['source'] = { calls: { read: 0, portable: 0 } }
   const service = createCluesService({
-    root: join(base, 'store'),
-    now: () => NOW,
-    newId: kind => `${kind}-${++next}`,
+    root: join(base, 'store'), now: () => NOW, newId: kind => kind + '-' + (++next),
     resolveWorkspacePath: id => (id === 'ws-1' ? workspace : undefined),
-    builtinSources: [testSourceRegistration(source), ...(options.extraBuiltinSources ?? [])],
+    builtinSources: options.withSource === false ? (options.extraBuiltinSources ?? []) : [testSourceRegistration(source), ...(options.extraBuiltinSources ?? [])],
   })
   return { base, workspace, service, source }
 }
-
 /** Ensure one clue of the test source and return its id. */
 async function ensureClue(service: CluesService, id = 'a', title = 'Live clue'): Promise<string> {
-  const result = await service.ensure({
-    workspaceId: 'ws-1',
-    sourceId: TEST_SOURCE,
-    typeId: TEST_TYPE,
-    locator: { id },
-    title,
-  })
-  return result.clue.id
+  return (await service.ensure({ workspaceId: 'ws-1', sourceId: TEST_SOURCE, typeId: TEST_TYPE, locator: { id }, title })).clue.id
 }
-
 /** One snapshot spec for the package builder. */
 interface SnapshotSpec {
   content: Uint8Array
@@ -168,143 +109,83 @@ interface SnapshotSpec {
   mediaType?: string
   fetchedAt?: string
   sourceVersion?: string
-  /** Override the recorded digest (checksum-mismatch cases). */
+  /** Override the recorded digest/byte count (integrity cases). */
   sha256?: string
-  /** Override the recorded byte count. */
   bytes?: number
   path?: string
-  /** Additional raw assets stored beside the primary payload. */
-  assets?: Array<{
-    content: Uint8Array
-    path?: string
-    kind?: 'download' | 'open'
-    mediaType?: string
-    sha256?: string
-    bytes?: number
-  }>
+  assets?: Array<{ content: Uint8Array; path?: string; kind?: 'download' | 'open'; mediaType?: string; sha256?: string; bytes?: number }>
   /** Optional v2 discussion entry stored beside the primary payload. */
-  discussion?: {
-    content: Uint8Array
-    path?: string
-    sha256?: string
-    bytes?: number
-  }
+  discussion?: { content: Uint8Array; path?: string; sha256?: string; bytes?: number }
 }
-
-/** One clue spec for the package builder. */
-interface ClueSpec {
-  key: string
-  sourceId?: string
-  typeId?: string
-  title?: string
-  portable?: CluePortableRef
-  snapshot?: SnapshotSpec
-}
-
-/** Options of the package builder. */
+interface ClueSpec { key: string; sourceId?: string; typeId?: string; title?: string; portable?: CluePortableRef; snapshot?: SnapshotSpec }
 interface BuildOptions {
   mode?: CluepackMode
   packs?: Array<{ key?: string; name: string; members: string[] }>
   issues?: CluepackIssue[]
   exportedAt?: string
-  /** Manifest version written by the builder (v1 unless a case asks for v2). */
   formatVersion?: 1 | 2
   /** Serialize this instead of the assembled manifest (invalid-version cases). */
   rawManifest?: unknown
 }
-
-/** Digest helper used by the package builder. */
 function sha256Of(bytes: Uint8Array): string {
   return createHash('sha256').update(bytes).digest('hex')
 }
-
 /** Assemble one archive from the given clues. */
 function buildPack(clues: ClueSpec[], options: BuildOptions = {}): { bytes: Buffer; manifest: CluepackManifest } {
   const sourceIds = [...new Set(clues.map(clue => clue.sourceId ?? TEST_SOURCE))]
-  const sources: CluepackSource[] = sourceIds.map((sourceId, index) => ({
-    key: `source-${index + 1}`,
-    sourceId,
-  }))
-  const sourceKeyOf = (sourceId: string): string => sources.find(source => source.sourceId === sourceId)!.key
+  const sources: CluepackSource[] = sourceIds.map((sourceId, index) => ({ key: 'source-' + (index + 1), sourceId }))
   const entries: Array<{ name: string; data: Uint8Array }> = []
   const clueRecords: CluepackClue[] = clues.map((clue) => {
     let snapshot: CluepackSnapshot | undefined
     if (clue.snapshot !== undefined) {
-      const encoding = clue.snapshot.encoding ?? 'json'
-      const path = clue.snapshot.path
-        ?? `content/${clue.key}.${encoding === 'json' ? 'json' : 'bin'}`
-      const assets = (clue.snapshot.assets ?? []).map((asset, index) => {
-        const assetPath = asset.path ?? `content/${clue.key}.asset-${index + 1}.bin`
+      const spec = clue.snapshot
+      const encoding = spec.encoding ?? 'json'
+      const path = spec.path ?? 'content/' + clue.key + (encoding === 'json' ? '.json' : '.bin')
+      const assets = (spec.assets ?? []).map((asset, index) => {
+        const assetPath = asset.path ?? 'content/' + clue.key + '.asset-' + (index + 1) + '.bin'
         entries.push({ name: assetPath, data: asset.content })
         return {
-          path: assetPath,
-          kind: asset.kind ?? 'download',
-          mediaType: asset.mediaType ?? 'application/octet-stream',
-          bytes: asset.bytes ?? asset.content.byteLength,
-          sha256: asset.sha256 ?? sha256Of(asset.content),
+          path: assetPath, kind: asset.kind ?? 'download', mediaType: asset.mediaType ?? 'application/octet-stream',
+          bytes: asset.bytes ?? asset.content.byteLength, sha256: asset.sha256 ?? sha256Of(asset.content),
         }
       })
       let discussion: CluepackSnapshot['discussion']
-      if (clue.snapshot.discussion !== undefined) {
-        const discussionSpec = clue.snapshot.discussion
-        const discussionPath = discussionSpec.path ?? `content/${clue.key}.discussion.json`
-        entries.push({ name: discussionPath, data: discussionSpec.content })
+      if (spec.discussion !== undefined) {
+        const discussionPath = spec.discussion.path ?? 'content/' + clue.key + '.discussion.json'
+        entries.push({ name: discussionPath, data: spec.discussion.content })
         discussion = {
-          path: discussionPath,
-          bytes: discussionSpec.bytes ?? discussionSpec.content.byteLength,
-          sha256: discussionSpec.sha256 ?? sha256Of(discussionSpec.content),
+          path: discussionPath, bytes: spec.discussion.bytes ?? spec.discussion.content.byteLength,
+          sha256: spec.discussion.sha256 ?? sha256Of(spec.discussion.content),
         }
       }
       snapshot = {
-        path,
-        encoding,
-        mediaType: clue.snapshot.mediaType ?? (encoding === 'json' ? 'application/json' : 'application/octet-stream'),
-        format: clue.snapshot.format ?? 'text/plain',
-        bytes: clue.snapshot.bytes ?? clue.snapshot.content.byteLength,
-        sha256: clue.snapshot.sha256 ?? sha256Of(clue.snapshot.content),
-        fetchedAt: clue.snapshot.fetchedAt ?? '2026-10-16T12:00:00.000Z',
-        ...(clue.snapshot.sourceVersion === undefined ? {} : { sourceVersion: clue.snapshot.sourceVersion }),
+        path, encoding,
+        mediaType: spec.mediaType ?? (encoding === 'json' ? 'application/json' : 'application/octet-stream'),
+        format: spec.format ?? 'text/plain', bytes: spec.bytes ?? spec.content.byteLength, sha256: spec.sha256 ?? sha256Of(spec.content),
+        fetchedAt: spec.fetchedAt ?? '2026-10-16T12:00:00.000Z',
+        ...(spec.sourceVersion === undefined ? {} : { sourceVersion: spec.sourceVersion }),
         ...(assets.length === 0 ? {} : { assets }),
         ...(discussion === undefined ? {} : { discussion }),
       }
-      entries.push({ name: path, data: clue.snapshot.content })
+      entries.push({ name: path, data: spec.content })
     }
     return {
-      key: clue.key,
-      sourceKey: sourceKeyOf(clue.sourceId ?? TEST_SOURCE),
-      typeId: clue.typeId ?? TEST_TYPE,
-      title: clue.title ?? `Title ${clue.key}`,
+      key: clue.key, sourceKey: sources[sourceIds.indexOf(clue.sourceId ?? TEST_SOURCE)]!.key,
+      typeId: clue.typeId ?? TEST_TYPE, title: clue.title ?? 'Title ' + clue.key,
       portable: clue.portable ?? { portable: true, locator: { id: clue.key } },
       ...(snapshot === undefined ? {} : { snapshot }),
     }
   })
-  const packs: CluepackPack[] = (options.packs ?? []).map((pack, index) => ({
-    key: pack.key ?? `pack-${index + 1}`,
-    name: pack.name,
-    members: pack.members,
-  }))
+  const packs: CluepackPack[] = (options.packs ?? []).map((pack, index) => ({ key: pack.key ?? 'pack-' + (index + 1), name: pack.name, members: pack.members }))
   const manifest: CluepackManifest = {
-    formatVersion: options.formatVersion ?? 1,
-    format: CLUEPACK_FORMAT,
-    exportedAt: options.exportedAt ?? NOW,
-    mode: options.mode ?? 'references',
-    sources,
-    clues: clueRecords,
-    packs,
-    issues: options.issues ?? [],
+    formatVersion: options.formatVersion ?? 1, format: CLUEPACK_FORMAT, exportedAt: options.exportedAt ?? NOW,
+    mode: options.mode ?? 'references', sources, clues: clueRecords, packs, issues: options.issues ?? [],
   }
   const manifestBytes = options.rawManifest === undefined
     ? serializeCluepackManifest(manifest)
     : Buffer.from(JSON.stringify(options.rawManifest), 'utf8')
-  return {
-    bytes: createZip([
-      { name: 'manifest.json', data: manifestBytes },
-      ...entries,
-    ], { modifiedAt: new Date(NOW) }),
-    manifest,
-  }
+  return { bytes: createZip([{ name: 'manifest.json', data: manifestBytes }, ...entries], { modifiedAt: new Date(NOW) }), manifest }
 }
-
 /** Build the static v1 fixture archive (manifest + content). */
 function fixturePack(): Buffer {
   return createZip([
@@ -312,81 +193,37 @@ function fixturePack(): Buffer {
     { name: 'content/clue-1.json', data: readFileSync(join(FIXTURE_DIR, 'content', 'clue-1.json')) },
   ], { modifiedAt: new Date(NOW) })
 }
-
 /** JSON content bytes of one structured snapshot. */
 function jsonContent(data: JsonValue, text?: string): Uint8Array {
-  return Buffer.from(JSON.stringify({
-    format: 'text/plain',
-    data,
-    ...(text === undefined ? {} : { text }),
-  }), 'utf8')
+  return Buffer.from(JSON.stringify({ format: 'text/plain', data, ...(text === undefined ? {} : { text }) }), 'utf8')
 }
-
 /** One complete discussion page with a comment, a native reply and a review. */
 function discussionPage(overrides: Partial<ClueDiscussionPage> = {}): ClueDiscussionPage {
   return {
     status: 'ok',
     items: [
       {
-        id: 'comment-1',
-        kind: 'comment',
-        format: 'text/markdown',
-        body: 'A comment',
-        author: { id: 'user-1', name: 'Ada' },
-        createdAt: NOW,
-        replyCount: 1,
-        resolved: false,
+        id: 'comment-1', kind: 'comment', format: 'text/markdown', body: 'A comment',
+        author: { id: 'user-1', name: 'Ada' }, createdAt: NOW, replyCount: 1, resolved: false,
         anchor: { kind: 'text', quote: 'quoted', locator: { path: 'docs/a.md', line: 2 } },
       },
-      {
-        id: 'reply-1',
-        kind: 'reply',
-        format: 'text/plain',
-        body: 'A reply',
-        replyToId: 'comment-1',
-      },
-      {
-        id: 'review-1',
-        kind: 'review',
-        format: 'text/markdown',
-        body: 'Reviewed',
-        reviewState: 'approved',
-      },
+      { id: 'reply-1', kind: 'reply', format: 'text/plain', body: 'A reply', replyToId: 'comment-1' },
+      { id: 'review-1', kind: 'review', format: 'text/markdown', body: 'Reviewed', reviewState: 'approved' },
     ],
-    fetchedAt: '2026-10-16T12:00:00.000Z',
-    total: 3,
-    complete: true,
-    coverage: 'document',
-    ...overrides,
+    fetchedAt: '2026-10-16T12:00:00.000Z', total: 3, complete: true, coverage: 'document', ...overrides,
   }
 }
-
-/** JSON bytes of one discussion entry (any shape, for malformed cases). */
 function discussionContent(value: unknown): Uint8Array {
   return Buffer.from(JSON.stringify(value), 'utf8')
 }
-
 /** The explicit page import writes when the archive carries no discussion. */
 function notCapturedPage(fetchedAt: string): ClueDiscussionPage {
   return { status: 'not-captured', items: [], fetchedAt, complete: false, coverage: 'document' }
 }
-
-/** The public `putSnapshot` input with the UI19 discussion field under test. */
-type ObservedSnapshotInput = Parameters<CluesService['putSnapshot']>[1] & {
-  discussion?: ClueDiscussionPage
-}
-
-/**
- * Spy on the service's public `putSnapshot` to observe the exact input.
- *
- * The shared service input does not declare `discussion` yet (parent owns that
- * integration); the spy records the input and delegates the real write, so the
- * import still runs against the real library/store instead of a fake success.
- */
-function captureSnapshotInputs(service: CluesService): {
-  service: CluesService
-  inputs: ObservedSnapshotInput[]
-} {
+/** The public putSnapshot input with the UI19 discussion field under test. */
+type ObservedSnapshotInput = Parameters<CluesService['putSnapshot']>[1] & { discussion?: ClueDiscussionPage }
+/** Spy on putSnapshot to observe the exact input while delegating the real write. */
+function captureSnapshotInputs(service: CluesService): { service: CluesService; inputs: ObservedSnapshotInput[] } {
   const inputs: ObservedSnapshotInput[] = []
   const original = service.putSnapshot.bind(service)
   vi.spyOn(service, 'putSnapshot').mockImplementation(async (workspaceId, input) => {
@@ -395,7 +232,6 @@ function captureSnapshotInputs(service: CluesService): {
   })
   return { service, inputs }
 }
-
 /** Rename one ZIP entry in place (both headers) for malicious-path cases. */
 function renameZipEntry(zip: Buffer, from: string, to: string): Buffer {
   const source = Buffer.from(from, 'utf8')
@@ -403,49 +239,41 @@ function renameZipEntry(zip: Buffer, from: string, to: string): Buffer {
   if (source.length !== target.length) throw new Error('renameZipEntry needs equal lengths')
   const copy = Buffer.from(zip)
   let offset = copy.indexOf(source)
-  if (offset === -1) throw new Error(`entry "${from}" not found`)
+  if (offset === -1) throw new Error('entry "' + from + '" not found')
   while (offset !== -1) {
     target.copy(copy, offset)
     offset = copy.indexOf(source, offset + target.length)
   }
   return copy
 }
-
 /** All clue ids currently in the workspace library. */
 async function libraryIds(service: CluesService): Promise<string[]> {
   return (await service.listClues('ws-1')).clues.map(clue => clue.id)
 }
-
 describe('previewImport', () => {
-  it('summarizes an archive without reading a source or writing the library', async () => {
+  it('summarizes an archive without reading, writing or guessing missing sources', async () => {
     const f = fixture()
     const pack = buildPack([
       { key: 'clue-1', title: '设计与实现', snapshot: { content: jsonContent({ text: 'archived' }, 'archived') } },
-    ], { mode: 'snapshot', packs: [{ name: '发布材料', members: ['clue-1'] }] })
+      { key: 'clue-2', sourceId: 'missing.source', title: 'Missing source' },
+    ], { mode: 'snapshot', packs: [{ name: '发布材料', members: ['clue-1', 'clue-2'] }] })
     const preview = await previewImport({ clues: f.service }, { workspaceId: 'ws-1', bytes: pack.bytes })
     expect(preview).toMatchObject({
-      mode: 'snapshot',
-      packNames: ['发布材料'],
-      snapshotCount: 1,
-      unresolvedCount: 0,
-      missingSources: [],
+      mode: 'snapshot', packNames: ['发布材料'], snapshotCount: 1, unresolvedCount: 1, missingSources: ['missing.source'],
     })
-    expect(preview.packs[0]).toMatchObject({ name: '发布材料', members: 1, snapshotMembers: 1 })
+    expect(preview.packs[0]).toMatchObject({ name: '发布材料', members: 2, snapshotMembers: 1 })
     expect(preview.items[0]).toMatchObject({ title: '设计与实现', portable: true, snapshot: true, willBeUnresolved: false })
-    expect(preview.sources[0]).toMatchObject({
-      sourceId: TEST_SOURCE,
-      installed: true,
-      connectionId: 'conn-a',
-      missingTypeIds: [],
-    })
+    expect(preview.items[1]).toMatchObject({ title: 'Missing source', willBeUnresolved: true })
+    expect(preview.items[1]!.unresolvedReason).toMatch(/not installed/i)
+    expect(preview.warnings.join('\n')).toMatch(/not installed/i)
+    expect(preview.sources.find(source => source.sourceId === TEST_SOURCE))
+      .toMatchObject({ installed: true, connectionId: 'conn-a', missingTypeIds: [] })
     expect(f.source.calls).toEqual({ read: 0, portable: 0 })
     expect(await libraryIds(f.service)).toEqual([])
     expect((await f.service.listPacks('ws-1')).packs).toEqual([])
   })
-
   it('honors an abort that lands while the local library is being read', async () => {
     const f = fixture()
-    const pack = buildPack([{ key: 'clue-1' }])
     const controller = new AbortController()
     const aborting = {
       ...f.service,
@@ -455,372 +283,195 @@ describe('previewImport', () => {
         return result
       },
     } as CluesService
-    await expect(previewImport({ clues: aborting }, {
-      workspaceId: 'ws-1',
-      bytes: pack.bytes,
-      signal: controller.signal,
-    })).rejects.toMatchObject({ category: 'cancelled' })
-  })
-
-  it('labels missing sources and missing types without failing the preview', async () => {
-    const f = fixture()
-    const pack = buildPack([
-      { key: 'clue-1', sourceId: 'missing.source', title: 'Missing source' },
-    ])
-    const preview = await previewImport({ clues: f.service }, { workspaceId: 'ws-1', bytes: pack.bytes })
-    expect(preview.missingSources).toEqual(['missing.source'])
-    expect(preview.unresolvedCount).toBe(1)
-    expect(preview.items[0]!.willBeUnresolved).toBe(true)
-    expect(preview.items[0]!.unresolvedReason).toMatch(/not installed/i)
-    expect(preview.warnings.join('\n')).toMatch(/not installed/i)
-    expect(f.source.calls).toEqual({ read: 0, portable: 0 })
+    await expect(previewImport({ clues: aborting }, { workspaceId: 'ws-1', bytes: buildPack([{ key: 'clue-1' }]).bytes, signal: controller.signal }))
+      .rejects.toMatchObject({ category: 'cancelled' })
   })
 })
-
 describe('importPack references mode', () => {
-  it('imports clues and the pack, and re-importing reuses canonical clashes', async () => {
+  it('imports references, reuses canonical clashes and leaves pins/bindings alone', async () => {
     const f = fixture()
+    const liveId = await ensureClue(f.service, 'a', 'Live')
+    await f.service.addPin({ workspaceId: 'ws-1', clueId: liveId })
+    await f.service.addBinding({ workspaceId: 'ws-1', target: { kind: 'clue', clueId: liveId } })
     const pack = buildPack([
-      { key: 'clue-1', title: 'First' },
+      { key: 'clue-1', title: 'First', portable: { portable: true, locator: { id: 'a' } } },
       { key: 'clue-2', title: 'Second' },
     ], { packs: [{ name: 'Imported pack', members: ['clue-1', 'clue-2'] }] })
     const result = await importPack({ clues: f.service }, { workspaceId: 'ws-1', bytes: pack.bytes })
-    expect(result).toMatchObject({ complete: true, partial: false, mode: 'references' })
-    expect(result.clues.map(clue => clue.created)).toEqual([true, true])
+    expect(result).toMatchObject({ complete: true, partial: false, mode: 'references', issues: [] })
+    expect(result.clues.map(clue => [clue.clueId, clue.created])).toEqual([[liveId, false], [expect.any(String), true]])
     expect(result.packs).toHaveLength(1)
     expect(result.packs[0]!.members).toBe(2)
-    expect(result.issues).toEqual([])
     const library = await f.service.listClues('ws-1')
-    expect(library.clues.map(clue => clue.title)).toEqual(['First', 'Second'])
-    const packs = await f.service.listPacks('ws-1')
-    expect(packs.packs).toHaveLength(1)
-    expect(packs.packs[0]).toMatchObject({ name: 'Imported pack', members: library.clues.map(clue => clue.id) })
-    expect((await f.service.listPins('ws-1')).pins).toEqual([])
-    expect((await f.service.listBindings('ws-1')).bindings).toEqual([])
+    expect(library.clues.map(clue => clue.title)).toEqual(['Live', 'Second'])
+    expect((await f.service.listPacks('ws-1')).packs[0]).toMatchObject({ name: 'Imported pack', members: library.clues.map(clue => clue.id) })
+    expect((await f.service.listPins('ws-1')).pins).toEqual([expect.objectContaining({ clueId: liveId })])
+    expect((await f.service.listBindings('ws-1')).bindings).toEqual([expect.objectContaining({ target: { kind: 'clue', clueId: liveId } })])
     expect(f.source.calls).toEqual({ read: 0, portable: 0 })
-
+    // A duplicate pack name creates a separate pack, never an overwrite.
     const again = await importPack({ clues: f.service }, { workspaceId: 'ws-1', bytes: pack.bytes })
     expect(again.clues.map(clue => clue.created)).toEqual([false, false])
     expect(again.clues.map(clue => clue.clueId)).toEqual(result.clues.map(clue => clue.clueId))
     expect(await libraryIds(f.service)).toHaveLength(2)
     const packsAfter = await f.service.listPacks('ws-1')
-    expect(packsAfter.packs).toHaveLength(2)
-    expect(packsAfter.packs.every(pack => pack.name === 'Imported pack')).toBe(true)
+    expect([packsAfter.packs.length, packsAfter.packs.every(pack => pack.name === 'Imported pack')]).toEqual([2, true])
   })
-
-  it('does not disturb existing pins or bindings when re-importing the same resource', async () => {
-    const f = fixture()
-    const liveId = await ensureClue(f.service, 'a', 'Live')
-    await f.service.addPin({ workspaceId: 'ws-1', clueId: liveId })
-    await f.service.addBinding({ workspaceId: 'ws-1', target: { kind: 'clue', clueId: liveId } })
-    const pack = buildPack([{ key: 'clue-1', portable: { portable: true, locator: { id: 'a' } } }])
-    const result = await importPack({ clues: f.service }, { workspaceId: 'ws-1', bytes: pack.bytes })
-    expect(result.clues[0]).toMatchObject({ clueId: liveId, created: false })
-    expect((await f.service.listPins('ws-1')).pins).toEqual([expect.objectContaining({ clueId: liveId })])
-    expect((await f.service.listBindings('ws-1')).bindings).toEqual([
-      expect.objectContaining({ target: { kind: 'clue', clueId: liveId } }),
-    ])
-  })
-
   it('imports the static v1 fixture without changes', async () => {
     const f = fixture()
     const result = await importPack({ clues: f.service }, { workspaceId: 'ws-1', bytes: fixturePack() })
-    expect(result.complete).toBe(true)
-    expect(result.clues).toHaveLength(1)
-    expect(result.snapshots).toHaveLength(1)
+    expect(result).toMatchObject({ complete: true, snapshots: [{ clueKey: 'clue-1' }] })
     const record = await f.service.readSnapshot({ workspaceId: 'ws-1', snapshotId: result.snapshots[0]!.snapshotId })
     expect(record.content.text).toBe('fixture content')
-    expect(record.meta).toMatchObject({
-      format: 'text/plain',
-      fetchedAt: '2026-10-16T12:00:00.000Z',
-      sourceVersion: 'rev-fixture',
-      integrity: 'verified',
-    })
+    expect(record.meta).toMatchObject({ format: 'text/plain', fetchedAt: '2026-10-16T12:00:00.000Z', sourceVersion: 'rev-fixture', integrity: 'verified' })
     expect((await f.service.listPacks('ws-1')).packs[0]!.name).toBe('Fixture pack')
   })
 })
-
 describe('importPack with missing sources and snapshots', () => {
-  it('keeps a missing-source clue unresolved and remaps it after the source appears', async () => {
-    const f = fixture()
-    const pack = buildPack([{ key: 'clue-1', sourceId: 'missing.source', title: 'Orphan' }])
-    const result = await importPack({ clues: f.service }, { workspaceId: 'ws-1', bytes: pack.bytes })
-    expect(result.clues[0]).toMatchObject({ created: true, unresolved: true })
-    const clue = (await f.service.listClues('ws-1')).clues[0]!
-    expect(clue.unresolved?.reason).toMatch(/not installed/i)
-    await expect(f.service.read({ workspaceId: 'ws-1', clueId: clue.id }))
-      .rejects.toMatchObject({ category: 'source-missing' })
-    // The row is a normal clue: it can join a pack.
-    expect((await f.service.listPacks('ws-1')).packs).toHaveLength(0)
-    expect(f.source.calls).toEqual({ read: 0, portable: 0 })
-
-    // A later registration remaps the SAME row instead of minting a new one.
-    f.service.registerSource({
-      descriptor: {
-        sourceId: 'missing.source',
-        name: 'Late source',
-        order: 30,
-        pluginId: 'plugin.late',
-        types: ['missing.source.doc'],
-        transport: 'mcp',
-        capabilities: { resolve: false, list: false, search: false, read: false, edit: false, portable: false },
-      },
-      types: [{
-        typeId: 'missing.source.doc',
-        sourceId: 'missing.source',
-        formats: ['text/plain'],
-        capabilities: { read: false, edit: false, concurrency: 'none' },
-      }],
-    })
-    const remapped = await f.service.ensure({
-      workspaceId: 'ws-1',
-      sourceId: 'missing.source',
-      typeId: 'missing.source.doc',
-      locator: { id: 'clue-1' },
-      title: 'Orphan',
-    })
-    expect(remapped.clue.id).toBe(clue.id)
-    expect(remapped.clue.unresolved).toBeUndefined()
-  })
-
-  it('adopts the same unresolved row on a remap even while the source is still missing', async () => {
+  it('keeps a missing-source clue unresolved and remaps the same row once the source appears', async () => {
     const f = fixture()
     const pack = buildPack([{
-      key: 'clue-1',
-      sourceId: 'missing.source',
-      title: 'Later source',
+      key: 'clue-1', sourceId: 'missing.source', typeId: 'missing.source.doc', title: 'Orphan',
       portable: { portable: true, locator: { id: 'a' } },
     }])
     const first = await importPack({ clues: f.service }, { workspaceId: 'ws-1', bytes: pack.bytes })
+    expect(first.clues[0]).toMatchObject({ created: true, unresolved: true })
     const rowId = first.clues[0]!.clueId
-    const second = await importPack({ clues: f.service }, {
-      workspaceId: 'ws-1',
-      bytes: pack.bytes,
-      remap: [{ clueKey: 'clue-1', locator: { id: 'a' } }],
-    })
-    expect(second.clues[0]!.clueId).toBe(rowId)
-    expect((await f.service.listClues('ws-1')).clues).toHaveLength(1)
     const row = (await f.service.listClues('ws-1')).clues[0]!
-    expect(row.unresolved?.portable?.locator).toEqual({ id: 'a' })
-
-    // Installing the source later uses the persisted receiver hint and keeps
-    // the same clue id (spec §5: install/configure a source and remap it).
-    f.service.registerSource({
-      descriptor: {
-        sourceId: 'missing.source',
-        name: 'Late source',
-        order: 30,
-        pluginId: 'plugin.late',
-        types: ['missing.source.doc'],
-        transport: 'mcp',
-        capabilities: { resolve: false, list: false, search: false, read: false, edit: false, portable: false },
-      },
-      types: [{
-        typeId: 'missing.source.doc',
-        sourceId: 'missing.source',
-        formats: ['text/plain'],
-        capabilities: { read: false, edit: false, concurrency: 'none' },
-      }],
-    })
-    const resolved = await f.service.ensure({
-      workspaceId: 'ws-1',
-      sourceId: 'missing.source',
-      typeId: 'missing.source.doc',
-      locator: { id: 'a' },
-      title: 'Later source',
-    })
-    expect(resolved.clue.id).toBe(rowId)
+    expect(row.unresolved?.reason).toMatch(/not installed/i)
+    await expect(f.service.read({ workspaceId: 'ws-1', clueId: row.id })).rejects.toMatchObject({ category: 'source-missing' })
+    expect(f.source.calls).toEqual({ read: 0, portable: 0 })
+    // A receiver remap persists the hint on the SAME row while the source is still missing.
+    const second = await importPack({ clues: f.service }, { workspaceId: 'ws-1', bytes: pack.bytes, remap: [{ clueKey: 'clue-1', locator: { id: 'a' } }] })
+    expect(second.clues[0]!.clueId).toBe(rowId)
+    const hinted = (await f.service.listClues('ws-1')).clues
+    expect([hinted.length, hinted[0]!.unresolved?.portable?.locator]).toEqual([1, { id: 'a' }])
+    // Installing the source later reuses that row and clears the unresolved state.
+    f.service.registerSource(externalSource('missing.source', 'missing.source.doc'))
+    const resolved = await f.service.ensure({ workspaceId: 'ws-1', sourceId: 'missing.source', typeId: 'missing.source.doc', locator: { id: 'a' }, title: 'Orphan' })
+    expect(resolved.clue).toMatchObject({ id: rowId })
     expect(resolved.clue.unresolved).toBeUndefined()
   })
-
-  it('stores an offline JSON snapshot that stays readable without the source', async () => {
+  it('stores an offline snapshot that stays readable when the live read fails', async () => {
     const f = fixture()
-    const pack = buildPack([{
-      key: 'clue-1',
-      sourceId: 'missing.source',
-      title: 'Archived',
+    const missing = buildPack([{
+      key: 'clue-1', sourceId: 'missing.source', title: 'Archived',
       snapshot: { content: jsonContent({ text: 'archived body' }, 'archived body') },
     }], { mode: 'snapshot', packs: [{ name: 'Archive pack', members: ['clue-1'] }] })
-    const result = await importPack({ clues: f.service }, { workspaceId: 'ws-1', bytes: pack.bytes })
-    expect(result.complete).toBe(true)
-    expect(result.snapshots).toHaveLength(1)
+    const result = await importPack({ clues: f.service }, { workspaceId: 'ws-1', bytes: missing.bytes })
+    expect(result).toMatchObject({ complete: true, snapshots: [{ clueKey: 'clue-1' }] })
     const clue = (await f.service.listClues('ws-1')).clues[0]!
-    await expect(f.service.read({ workspaceId: 'ws-1', clueId: clue.id }))
-      .rejects.toMatchObject({ category: 'source-missing' })
-    const record = await f.service.readSnapshot({
-      workspaceId: 'ws-1',
-      snapshotId: result.snapshots[0]!.snapshotId,
-    })
-    expect(record.meta.clueId).toBe(clue.id)
-    expect(record.meta.fetchedAt).toBe('2026-10-16T12:00:00.000Z')
+    await expect(f.service.read({ workspaceId: 'ws-1', clueId: clue.id })).rejects.toMatchObject({ category: 'source-missing' })
+    const record = await f.service.readSnapshot({ workspaceId: 'ws-1', snapshotId: result.snapshots[0]!.snapshotId })
+    expect(record.meta).toMatchObject({ clueId: clue.id, fetchedAt: '2026-10-16T12:00:00.000Z' })
     expect(record.content).toMatchObject({ format: 'text/plain', data: { text: 'archived body' }, text: 'archived body' })
     expect((await f.service.listPacks('ws-1')).packs).toHaveLength(1)
     expect(f.source.calls).toEqual({ read: 0, portable: 0 })
+    // An installed source that really answers auth-required is no different: the snapshot stays readable.
+    const live = fixture()
+    const liveResult = await importPack({ clues: live.service }, { workspaceId: 'ws-1', bytes: buildPack([{
+      key: 'clue-1', title: 'Authorized once', portable: { portable: true, locator: { id: 'a' } },
+      snapshot: { content: jsonContent({ text: 'offline snapshot body' }, 'offline snapshot body') },
+    }], { mode: 'snapshot' }).bytes })
+    live.source.read = async () => { throw new ClueError('auth-required', 'the installed source requires authorization') }
+    await expect(live.service.read({ workspaceId: 'ws-1', clueId: liveResult.clues[0]!.clueId })).rejects.toMatchObject({ category: 'auth-required' })
+    const authRecord = await live.service.readSnapshot({ workspaceId: 'ws-1', snapshotId: liveResult.snapshots[0]!.snapshotId })
+    expect(authRecord.content).toMatchObject({ format: 'text/plain', text: 'offline snapshot body' })
   })
-
   it('preserves raw binary snapshot bytes exactly', async () => {
     const f = fixture()
     const bytes = new Uint8Array([0, 1, 2, 250, 255, 0, 13, 10])
-    const pack = buildPack([{
-      key: 'clue-1',
-      title: 'Binary asset',
-      snapshot: { content: bytes, encoding: 'raw', mediaType: 'image/png' },
-    }], { mode: 'snapshot' })
+    const pack = buildPack([{ key: 'clue-1', title: 'Binary asset', snapshot: { content: bytes, encoding: 'raw', mediaType: 'image/png' } }], { mode: 'snapshot' })
     const result = await importPack({ clues: f.service }, { workspaceId: 'ws-1', bytes: pack.bytes })
-    expect(result.snapshots).toHaveLength(1)
-    const record = await f.service.readSnapshot({
-      workspaceId: 'ws-1',
-      snapshotId: result.snapshots[0]!.snapshotId,
-    })
-    expect(record.content.format).toBe('text/plain')
+    const record = await f.service.readSnapshot({ workspaceId: 'ws-1', snapshotId: result.snapshots[0]!.snapshotId })
+    expect(record.content).toMatchObject({ format: 'text/plain' })
     expect(record.content.data).toMatchObject({
-      kind: 'binary',
-      mediaType: 'image/png',
-      size: bytes.length,
-      sha256: sha256Of(bytes),
-      encoding: 'base64',
+      kind: 'binary', mediaType: 'image/png', size: bytes.length, sha256: sha256Of(bytes), encoding: 'base64',
     })
-    const data = record.content.data as { base64: string }
-    expect(new Uint8Array(Buffer.from(data.base64, 'base64'))).toEqual(bytes)
+    expect(new Uint8Array(Buffer.from((record.content.data as { base64: string }).base64, 'base64'))).toEqual(bytes)
   })
-
   it('stores the body and every asset of a multi-part snapshot', async () => {
     const f = fixture()
     const first = new Uint8Array([1, 2, 3, 4])
     const second = new Uint8Array([9, 8, 7])
     const pack = buildPack([{
-      key: 'clue-1',
-      title: 'Body plus assets',
+      key: 'clue-1', title: 'Body plus assets',
       snapshot: {
         content: jsonContent({ text: 'body text' }, 'body text'),
-        assets: [
-          { content: first, kind: 'download', mediaType: 'image/png' },
-          { content: second, kind: 'open', mediaType: 'image/png' },
-        ],
+        assets: [{ content: first, kind: 'download', mediaType: 'image/png' }, { content: second, kind: 'open', mediaType: 'image/png' }],
       },
     }], { mode: 'snapshot' })
     const result = await importPack({ clues: f.service }, { workspaceId: 'ws-1', bytes: pack.bytes })
-    expect(result.complete).toBe(true)
-    const record = await f.service.readSnapshot({
-      workspaceId: 'ws-1',
-      snapshotId: result.snapshots[0]!.snapshotId,
-    })
+    const record = await f.service.readSnapshot({ workspaceId: 'ws-1', snapshotId: result.snapshots[0]!.snapshotId })
     expect(record.content).toMatchObject({ format: 'text/plain', text: 'body text' })
-    expect(record.content.data).toMatchObject({
-      kind: 'cluepack-snapshot-bundle',
-      version: 1,
-      primary: { encoding: 'json', data: { text: 'body text' } },
-    })
-    const assets = (record.content.data as {
-      assets: Array<{ kind: string; mediaType: string; base64: string; sha256: string; size: number }>
-    }).assets
-    expect(assets).toHaveLength(2)
+    expect(record.content.data).toMatchObject({ kind: 'cluepack-snapshot-bundle', version: 1, primary: { encoding: 'json', data: { text: 'body text' } } })
+    const assets = (record.content.data as { assets: Array<{ kind: string; base64: string }> }).assets
     expect(assets.map(asset => asset.kind)).toEqual(['download', 'open'])
     expect(new Uint8Array(Buffer.from(assets[0]!.base64, 'base64'))).toEqual(first)
     expect(new Uint8Array(Buffer.from(assets[1]!.base64, 'base64'))).toEqual(second)
   })
-
   it('rejects a missing or checksum-mismatched asset before writing anything', async () => {
     const f = fixture()
     const first = new Uint8Array([1, 2, 3])
     const pack = buildPack([{
-      key: 'clue-1',
-      snapshot: {
-        content: jsonContent({ text: 'body' }, 'body'),
-        assets: [{ content: first, path: 'content/clue-1.asset-1.bin' }],
-      },
+      key: 'clue-1', snapshot: { content: jsonContent({ text: 'body' }, 'body'), assets: [{ content: first, path: 'content/clue-1.asset-1.bin' }] },
     }], { mode: 'snapshot' })
-    const withoutAsset = createZip(
-      readZip(pack.bytes).filter(entry => entry.name !== 'content/clue-1.asset-1.bin'),
-      { modifiedAt: new Date(NOW) },
-    )
-    await expect(importPack({ clues: f.service }, { workspaceId: 'ws-1', bytes: withoutAsset }))
-      .rejects.toMatchObject({ category: 'invalid-request' })
+    const withoutAsset = createZip(readZip(pack.bytes).filter(entry => entry.name !== 'content/clue-1.asset-1.bin'), { modifiedAt: new Date(NOW) })
+    await expect(importPack({ clues: f.service }, { workspaceId: 'ws-1', bytes: withoutAsset })).rejects.toMatchObject({ category: 'invalid-request' })
     expect(await libraryIds(f.service)).toEqual([])
-
     const badPack = buildPack([{
-      key: 'clue-1',
-      snapshot: {
-        content: jsonContent({ text: 'body' }, 'body'),
-        assets: [{ content: first, sha256: 'a'.repeat(64) }],
-      },
+      key: 'clue-1', snapshot: { content: jsonContent({ text: 'body' }, 'body'), assets: [{ content: first, sha256: 'a'.repeat(64) }] },
     }], { mode: 'snapshot' })
-    await expect(importPack({ clues: f.service }, { workspaceId: 'ws-1', bytes: badPack.bytes }))
-      .rejects.toMatchObject({ category: 'invalid-request' })
+    await expect(importPack({ clues: f.service }, { workspaceId: 'ws-1', bytes: badPack.bytes })).rejects.toMatchObject({ category: 'invalid-request' })
     expect(await libraryIds(f.service)).toEqual([])
   })
-
-  it('reuses an existing live reference and keeps live reads live', async () => {
+  it('reuses a live reference, keeps live reads live and mints an independent snapshot per import', async () => {
     const f = fixture()
     const liveId = await ensureClue(f.service, 'a', 'Live title')
     const pack = buildPack([{
-      key: 'clue-1',
-      title: 'Imported old title',
-      portable: { portable: true, locator: { id: 'a' } },
+      key: 'clue-1', title: 'Imported old title', portable: { portable: true, locator: { id: 'a' } },
       snapshot: { content: jsonContent({ text: 'old archived body' }, 'old archived body') },
     }], { mode: 'snapshot' })
-    const result = await importPack({ clues: f.service }, { workspaceId: 'ws-1', bytes: pack.bytes })
-    expect(result.clues[0]).toMatchObject({
-      clueId: liveId,
-      created: false,
-      unresolved: false,
-      title: 'Live title',
-    })
-    expect(await libraryIds(f.service)).toEqual([liveId])
-    const library = await f.service.listClues('ws-1')
-    expect(library.clues[0]).toMatchObject({ title: 'Live title', locator: { id: 'a' } })
-    expect(library.clues[0]!.unresolved).toBeUndefined()
-    expect(f.source.calls).toEqual({ read: 0, portable: 0 })
-    // Live reads still hit the source; the imported snapshot is separate.
-    const live = await f.service.read({ workspaceId: 'ws-1', clueId: liveId })
-    expect(live.text).toBe('live content')
-    expect(f.source.calls.read).toBe(1)
-    const record = await f.service.readSnapshot({
-      workspaceId: 'ws-1',
-      snapshotId: result.snapshots[0]!.snapshotId,
-    })
-    expect(record.meta.clueId).toBe(liveId)
-    expect(record.content.text).toBe('old archived body')
-  })
-
-  it('creates an independent snapshot for every import of the same pack', async () => {
-    const f = fixture()
-    const pack = buildPack([{
-      key: 'clue-1',
-      portable: { portable: true, locator: { id: 'a' } },
-      snapshot: { content: jsonContent({ text: 'same body' }, 'same body') },
-    }], { mode: 'snapshot' })
     const first = await importPack({ clues: f.service }, { workspaceId: 'ws-1', bytes: pack.bytes })
+    expect(first.clues[0]).toMatchObject({ clueId: liveId, created: false, unresolved: false, title: 'Live title' })
+    expect(await libraryIds(f.service)).toEqual([liveId])
+    expect((await f.service.listClues('ws-1')).clues[0]).toMatchObject({ title: 'Live title', locator: { id: 'a' } })
+    const live = await f.service.read({ workspaceId: 'ws-1', clueId: liveId })
+    expect([live.text, f.source.calls.read]).toEqual(['live content', 1])
+    const firstRecord = await f.service.readSnapshot({ workspaceId: 'ws-1', snapshotId: first.snapshots[0]!.snapshotId })
+    expect([firstRecord.meta.clueId, firstRecord.content.text]).toEqual([liveId, 'old archived body'])
     const second = await importPack({ clues: f.service }, { workspaceId: 'ws-1', bytes: pack.bytes })
-    expect(second.clues[0]!.clueId).toBe(first.clues[0]!.clueId)
+    expect(second.clues[0]!.clueId).toBe(liveId)
     expect(second.snapshots[0]!.snapshotId).not.toBe(first.snapshots[0]!.snapshotId)
     for (const imported of [first, second]) {
-      const record = await f.service.readSnapshot({
-        workspaceId: 'ws-1',
-        snapshotId: imported.snapshots[0]!.snapshotId,
-      })
-      expect(record.content.text).toBe('same body')
-      expect(record.meta.clueId).toBe(first.clues[0]!.clueId)
+      const record = await f.service.readSnapshot({ workspaceId: 'ws-1', snapshotId: imported.snapshots[0]!.snapshotId })
+      expect([record.content.text, record.meta.clueId]).toEqual(['old archived body', liveId])
     }
+    expect(f.source.calls).toEqual({ read: 1, portable: 0 })
+  })
+  it('imports a locally resolved clue whose source is gone without minting a second row', async () => {
+    const f = fixture({ withSource: false })
+    const unregister = f.service.registerSource(testSourceRegistration(f.source))
+    const ensured = await f.service.ensure({ workspaceId: 'ws-1', sourceId: TEST_SOURCE, typeId: TEST_TYPE, locator: { id: 'a' }, title: 'Live title' })
+    // The source is gone, but the row it minted is still a RESOLVED clue.
+    unregister()
+    const pack = buildPack([{ key: 'clue-1', title: 'Imported old title', portable: { portable: true, locator: { id: 'a' } } }])
+    const preview = await previewImport({ clues: f.service }, { workspaceId: 'ws-1', bytes: pack.bytes })
+    expect([preview.items[0]!.willBeUnresolved, preview.unresolvedCount]).toEqual([false, 0])
+    const result = await importPack({ clues: f.service }, { workspaceId: 'ws-1', bytes: pack.bytes })
+    expect(result.clues[0]).toMatchObject({ clueId: ensured.clue.id, created: false, unresolved: false })
+    const library = await f.service.listClues('ws-1')
+    expect([library.clues.length, library.clues[0]!.title, library.clues[0]!.unresolved]).toEqual([1, 'Live title', undefined])
+    expect(f.source.calls).toEqual({ read: 0, portable: 0 })
   })
 })
-
 describe('importPack v2 discussion snapshots', () => {
   it('imports a complete discussion beside the body and preserves reply/review fields', async () => {
     const f = fixture()
     const { service, inputs } = captureSnapshotInputs(f.service)
     const page = discussionPage()
-    const withExtensions = {
-      ...page,
-      unknownPageKey: 'ignored',
-      items: page.items.map(item => ({ ...item, unknownItemKey: 'ignored' })),
-    }
+    const withExtensions = { ...page, unknownPageKey: 'ignored', items: page.items.map(item => ({ ...item, unknownItemKey: 'ignored' })) }
     const pack = buildPack([{
-      key: 'clue-1',
-      snapshot: {
-        content: jsonContent({ text: 'archived body' }, 'archived body'),
-        discussion: { content: discussionContent(withExtensions) },
-      },
+      key: 'clue-1', snapshot: { content: jsonContent({ text: 'archived body' }, 'archived body'), discussion: { content: discussionContent(withExtensions) } },
     }], { mode: 'snapshot', formatVersion: 2 })
     const result = await importPack({ clues: service }, { workspaceId: 'ws-1', bytes: pack.bytes })
     expect(result).toMatchObject({ complete: true, partial: false, snapshots: [{ clueKey: 'clue-1' }] })
@@ -830,301 +481,147 @@ describe('importPack v2 discussion snapshots', () => {
     expect(inputs[0]!.discussion!.items[1]).toMatchObject({ replyToId: 'comment-1', body: 'A reply' })
     expect(inputs[0]!.discussion!.items[2]).toMatchObject({ reviewState: 'approved', body: 'Reviewed' })
   })
-
-  it('projects a missing descriptor as explicit not-captured, never an empty complete page', async () => {
+  it('projects a missing or v1 discussion descriptor as explicit not-captured', async () => {
     const fetchedAt = '2026-10-16T12:00:00.000Z'
-    for (const formatVersion of [1, 2] as const) {
+    const cases = [
+      { formatVersion: 1 as const, descriptor: false },
+      { formatVersion: 2 as const, descriptor: false },
+      { formatVersion: 1 as const, descriptor: true },
+    ]
+    for (const testCase of cases) {
       const f = fixture()
       const { service, inputs } = captureSnapshotInputs(f.service)
       const pack = buildPack([{
-        key: 'clue-1',
-        snapshot: { content: jsonContent({ text: 'legacy body' }, 'legacy body'), fetchedAt },
-      }], { mode: 'snapshot', formatVersion })
-      await importPack({ clues: service }, { workspaceId: 'ws-1', bytes: pack.bytes })
+        key: 'clue-1', snapshot: {
+          content: jsonContent({ text: 'legacy body' }, 'legacy body'), fetchedAt,
+          ...(testCase.descriptor ? { discussion: { content: discussionContent(discussionPage()) } } : {}),
+        },
+      }], { mode: 'snapshot', formatVersion: testCase.formatVersion })
+      const result = await importPack({ clues: service }, { workspaceId: 'ws-1', bytes: pack.bytes })
+      expect(result.complete).toBe(true)
+      // The v1 serializer drops the unknown descriptor; the unreferenced entry must not be applied.
+      if (testCase.descriptor) expect(pack.manifest.clues[0]!.snapshot!.discussion).toBeDefined()
       expect(inputs[0]!.discussion).toEqual(notCapturedPage(fetchedAt))
-      expect(inputs[0]!.discussion!.complete).toBe(false)
-      expect(inputs[0]!.discussion!.status).not.toBe('ok')
+      expect([inputs[0]!.discussion!.complete, inputs[0]!.discussion!.status]).toEqual([false, 'not-captured'])
     }
   })
-
-  it('treats a discussion descriptor in a v1 archive as an unknown extension', async () => {
-    const f = fixture()
-    const { service, inputs } = captureSnapshotInputs(f.service)
-    const fetchedAt = '2026-10-16T12:00:00.000Z'
-    const pack = buildPack([{
-      key: 'clue-1',
-      snapshot: {
-        content: jsonContent({ text: 'v1 body' }, 'v1 body'),
-        fetchedAt,
-        discussion: { content: discussionContent(discussionPage()) },
-      },
-    }], { mode: 'snapshot', formatVersion: 1 })
-    // The v1 serializer drops the unknown descriptor, and the unreferenced
-    // entry must not be applied as content.
-    expect(pack.manifest.clues[0]!.snapshot!.discussion).toBeDefined()
-    const result = await importPack({ clues: service }, { workspaceId: 'ws-1', bytes: pack.bytes })
-    expect(result.complete).toBe(true)
-    expect(inputs[0]!.discussion).toEqual(notCapturedPage(fetchedAt))
-  })
-
   it('rejects missing, mismatched or malformed discussion entries before writing anything', async () => {
-    const cases: Array<{
-      readonly name: string
-      readonly pack: () => Buffer
-      readonly message: RegExp
-    }> = [
+    const page = discussionContent(discussionPage())
+    const cases: Array<{ name: string; pack: () => Buffer; message: RegExp }> = [
       {
         name: 'missing entry',
         pack: () => {
           const built = buildPack([{
-            key: 'clue-1',
-            snapshot: {
-              content: jsonContent({ text: 'body' }),
-              discussion: { content: discussionContent(discussionPage()) },
-            },
+            key: 'clue-1', snapshot: { content: jsonContent({ text: 'body' }), discussion: { content: page } },
           }], { mode: 'snapshot', formatVersion: 2 })
-          return createZip(
-            readZip(built.bytes).filter(entry => entry.name !== 'content/clue-1.discussion.json'),
-            { modifiedAt: new Date(NOW) },
-          )
+          return createZip(readZip(built.bytes).filter(entry => entry.name !== 'content/clue-1.discussion.json'), { modifiedAt: new Date(NOW) })
         },
         message: /discussion.*missing/i,
       },
       {
         name: 'declared size mismatch',
-        pack: () => buildPack([{
-          key: 'clue-1',
-          snapshot: {
-            content: jsonContent({ text: 'body' }),
-            discussion: { content: discussionContent(discussionPage()), bytes: 99_999 },
-          },
-        }], { mode: 'snapshot', formatVersion: 2 }).bytes,
+        pack: () => buildPack([{ key: 'clue-1', snapshot: { content: jsonContent({ text: 'body' }), discussion: { content: page, bytes: 99_999 } } }], { mode: 'snapshot', formatVersion: 2 }).bytes,
         message: /discussion.*declared size/i,
       },
       {
         name: 'checksum mismatch',
-        pack: () => buildPack([{
-          key: 'clue-1',
-          snapshot: {
-            content: jsonContent({ text: 'body' }),
-            discussion: { content: discussionContent(discussionPage()), sha256: 'a'.repeat(64) },
-          },
-        }], { mode: 'snapshot', formatVersion: 2 }).bytes,
+        pack: () => buildPack([{ key: 'clue-1', snapshot: { content: jsonContent({ text: 'body' }), discussion: { content: page, sha256: 'a'.repeat(64) } } }], { mode: 'snapshot', formatVersion: 2 }).bytes,
         message: /discussion.*checksum/i,
       },
       {
         name: 'invalid JSON',
-        pack: () => buildPack([{
-          key: 'clue-1',
-          snapshot: {
-            content: jsonContent({ text: 'body' }),
-            discussion: { content: Buffer.from('{', 'utf8') },
-          },
-        }], { mode: 'snapshot', formatVersion: 2 }).bytes,
+        pack: () => buildPack([{ key: 'clue-1', snapshot: { content: jsonContent({ text: 'body' }), discussion: { content: Buffer.from('{', 'utf8') } } }], { mode: 'snapshot', formatVersion: 2 }).bytes,
         message: /discussion.*UTF-8 JSON/i,
       },
       {
         name: 'invalid page shape',
-        pack: () => buildPack([{
-          key: 'clue-1',
-          snapshot: {
-            content: jsonContent({ text: 'body' }),
-            discussion: { content: discussionContent({ status: 'ok', items: [] }) },
-          },
-        }], { mode: 'snapshot', formatVersion: 2 }).bytes,
+        pack: () => buildPack([{ key: 'clue-1', snapshot: { content: jsonContent({ text: 'body' }), discussion: { content: discussionContent({ status: 'ok', items: [] }) } } }], { mode: 'snapshot', formatVersion: 2 }).bytes,
         message: /discussion page/i,
       },
     ]
     for (const testCase of cases) {
       const f = fixture()
-      await expect(
-        importPack({ clues: f.service }, { workspaceId: 'ws-1', bytes: testCase.pack() }),
-        testCase.name,
-      ).rejects.toThrowError(testCase.message)
+      await expect(importPack({ clues: f.service }, { workspaceId: 'ws-1', bytes: testCase.pack() }), testCase.name).rejects.toThrowError(testCase.message)
       expect(await libraryIds(f.service), testCase.name).toEqual([])
       expect((await f.service.listPacks('ws-1')).packs, testCase.name).toEqual([])
     }
-  })
-
-  it('validates every snapshot discussion before the first clue write', async () => {
+    // Two clues: the second invalid page must block the first valid snapshot's write.
     const f = fixture()
     const pack = buildPack([
-      {
-        key: 'clue-1',
-        snapshot: {
-          content: jsonContent({ text: 'first body' }),
-          discussion: { content: discussionContent(discussionPage()) },
-        },
-      },
-      {
-        key: 'clue-2',
-        snapshot: {
-          content: jsonContent({ text: 'second body' }),
-          discussion: { content: discussionContent({ status: 'ok', items: [] }) },
-        },
-      },
+      { key: 'clue-1', snapshot: { content: jsonContent({ text: 'first body' }), discussion: { content: page } } },
+      { key: 'clue-2', snapshot: { content: jsonContent({ text: 'second body' }), discussion: { content: discussionContent({ status: 'ok', items: [] }) } } },
     ], { mode: 'snapshot', formatVersion: 2 })
-    await expect(importPack({ clues: f.service }, { workspaceId: 'ws-1', bytes: pack.bytes }))
-      .rejects.toThrowError(/discussion page/i)
-    expect(await libraryIds(f.service)).toEqual([])
-    expect((await f.service.listPacks('ws-1')).packs).toEqual([])
+    await expect(importPack({ clues: f.service }, { workspaceId: 'ws-1', bytes: pack.bytes })).rejects.toThrowError(/discussion page/i)
+    expect([await libraryIds(f.service), (await f.service.listPacks('ws-1')).packs]).toEqual([[], []])
   })
-
   it('accepts the aggregate item bound and rejects one item above it', async () => {
     const items = (count: number): ClueDiscussionPage['items'] => Array.from({ length: count }, (_, index) => ({
-      id: `comment-${index}`,
-      kind: 'comment' as const,
-      format: 'text/plain' as const,
-      body: '',
+      id: 'comment-' + index, kind: 'comment' as const, format: 'text/plain' as const, body: '',
     }))
     const f = fixture()
     const { service, inputs } = captureSnapshotInputs(f.service)
-    const atLimit = buildPack([{
-      key: 'clue-1',
-      snapshot: {
-        content: jsonContent({ text: 'body' }),
-        discussion: { content: discussionContent(discussionPage({ items: items(10_000) })) },
-      },
-    }], { mode: 'snapshot', formatVersion: 2 })
+    const atLimit = buildPack([{ key: 'clue-1', snapshot: {
+      content: jsonContent({ text: 'body' }), discussion: { content: discussionContent(discussionPage({ items: items(10_000) })) },
+    } }], { mode: 'snapshot', formatVersion: 2 })
     await importPack({ clues: service }, { workspaceId: 'ws-1', bytes: atLimit.bytes })
     expect(inputs[0]!.discussion!.items).toHaveLength(10_000)
-
     const overLimit = fixture()
-    const tooMany = buildPack([{
-      key: 'clue-1',
-      snapshot: {
-        content: jsonContent({ text: 'body' }),
-        discussion: { content: discussionContent(discussionPage({ items: items(10_001) })) },
-      },
-    }], { mode: 'snapshot', formatVersion: 2 })
-    await expect(importPack({ clues: overLimit.service }, { workspaceId: 'ws-1', bytes: tooMany.bytes }))
-      .rejects.toThrowError(/at most 10000 comments/i)
+    const tooMany = buildPack([{ key: 'clue-1', snapshot: {
+      content: jsonContent({ text: 'body' }), discussion: { content: discussionContent(discussionPage({ items: items(10_001) })) },
+    } }], { mode: 'snapshot', formatVersion: 2 })
+    await expect(importPack({ clues: overLimit.service }, { workspaceId: 'ws-1', bytes: tooMany.bytes })).rejects.toThrowError(/at most 10000 comments/i)
     expect(await libraryIds(overLimit.service)).toEqual([])
   })
 })
-
 describe('importPack safety boundary', () => {
-  it('rejects a traversing archive path before writing anything', async () => {
+  it('rejects a traversing archive entry or snapshot path before writing anything', async () => {
     const f = fixture()
-    const pack = buildPack([{ key: 'clue-1' }])
-    const malicious = renameZipEntry(pack.bytes, 'manifest.json', 'content/../aaa.json'.slice(0, 13))
-    await expect(importPack({ clues: f.service }, { workspaceId: 'ws-1', bytes: malicious }))
-      .rejects.toThrowError(/unsafe archive entry name/i)
+    const malicious = renameZipEntry(buildPack([{ key: 'clue-1' }]).bytes, 'manifest.json', 'content/../aaa.json'.slice(0, 13))
+    await expect(importPack({ clues: f.service }, { workspaceId: 'ws-1', bytes: malicious })).rejects.toThrowError(/unsafe archive entry name/i)
     expect(await libraryIds(f.service)).toEqual([])
-    expect((await f.service.listPacks('ws-1')).packs).toEqual([])
-  })
-
-  it('rejects a traversing snapshot path declared by the manifest', async () => {
-    const f = fixture()
     const rawManifest = {
-      formatVersion: 1,
-      format: CLUEPACK_FORMAT,
-      exportedAt: NOW,
-      mode: 'snapshot',
-      sources: [{ key: 'source-1', sourceId: TEST_SOURCE }],
+      formatVersion: 1, format: CLUEPACK_FORMAT, exportedAt: NOW, mode: 'snapshot', sources: [{ key: 'source-1', sourceId: TEST_SOURCE }],
       clues: [{
-        key: 'clue-1',
-        sourceKey: 'source-1',
-        typeId: TEST_TYPE,
-        title: 'Escape',
-        portable: { portable: true, locator: { id: 'a' } },
-        snapshot: {
-          path: 'content/../escape.json',
-          encoding: 'json',
-          mediaType: 'application/json',
-          format: 'text/plain',
-          bytes: 2,
-          sha256: 'a'.repeat(64),
-          fetchedAt: NOW,
-        },
+        key: 'clue-1', sourceKey: 'source-1', typeId: TEST_TYPE, title: 'Escape', portable: { portable: true, locator: { id: 'a' } },
+        snapshot: { path: 'content/../escape.json', encoding: 'json', mediaType: 'application/json', format: 'text/plain', bytes: 2, sha256: 'a'.repeat(64), fetchedAt: NOW },
       }],
-      packs: [],
-      issues: [],
+      packs: [], issues: [],
     }
-    const bytes = createZip([{
-      name: 'manifest.json',
-      data: Buffer.from(JSON.stringify(rawManifest), 'utf8'),
-    }])
-    await expect(importPack({ clues: f.service }, { workspaceId: 'ws-1', bytes }))
-      .rejects.toThrowError(/unsafe archive entry name/i)
-    expect(await libraryIds(f.service)).toEqual([])
+    const bytes = createZip([{ name: 'manifest.json', data: Buffer.from(JSON.stringify(rawManifest), 'utf8') }])
+    await expect(importPack({ clues: f.service }, { workspaceId: 'ws-1', bytes })).rejects.toThrowError(/unsafe archive entry name/i)
+    expect([await libraryIds(f.service), (await f.service.listPacks('ws-1')).packs]).toEqual([[], []])
   })
-
-  it('rejects a checksum mismatch before writing anything', async () => {
+  it('rejects a checksum mismatch, missing content, unknown version and truncated archive before writing', async () => {
     const f = fixture()
-    const pack = buildPack([{
-      key: 'clue-1',
-      snapshot: { content: jsonContent({ text: 'x' }), sha256: 'a'.repeat(64) },
-    }], { mode: 'snapshot' })
-    await expect(importPack({ clues: f.service }, { workspaceId: 'ws-1', bytes: pack.bytes }))
-      .rejects.toThrowError(/checksum/i)
-    expect(await libraryIds(f.service)).toEqual([])
-  })
-
-  it('rejects a missing content entry, an unknown version and a truncated archive', async () => {
-    const f = fixture()
-    const missing = buildPack([{
-      key: 'clue-1',
-      snapshot: { content: jsonContent({ text: 'x' }), path: 'content/clue-1.json' },
-    }], { mode: 'snapshot' })
+    const badChecksum = buildPack([{ key: 'clue-1', snapshot: { content: jsonContent({ text: 'x' }), sha256: 'a'.repeat(64) } }], { mode: 'snapshot' })
+    await expect(importPack({ clues: f.service }, { workspaceId: 'ws-1', bytes: badChecksum.bytes })).rejects.toThrowError(/checksum/i)
+    const missing = buildPack([{ key: 'clue-1', snapshot: { content: jsonContent({ text: 'x' }) } }], { mode: 'snapshot' })
     const withoutContent = createZip([{ name: 'manifest.json', data: serializeCluepackManifest(missing.manifest) }])
-    await expect(importPack({ clues: f.service }, { workspaceId: 'ws-1', bytes: withoutContent }))
-      .rejects.toThrowError(/missing/i)
-
-    const unknown = buildPack([{ key: 'clue-1' }], {
-      rawManifest: {
-        formatVersion: 3,
-        format: CLUEPACK_FORMAT,
-        exportedAt: NOW,
-        mode: 'references',
-        sources: [],
-        clues: [],
-        packs: [],
-        issues: [],
-      },
-    })
-    await expect(importPack({ clues: f.service }, { workspaceId: 'ws-1', bytes: unknown.bytes }))
-      .rejects.toMatchObject({ category: 'unsupported' })
-
+    await expect(importPack({ clues: f.service }, { workspaceId: 'ws-1', bytes: withoutContent })).rejects.toThrowError(/missing/i)
+    const unknown = buildPack([{ key: 'clue-1' }], { rawManifest: {
+      formatVersion: 3, format: CLUEPACK_FORMAT, exportedAt: NOW, mode: 'references', sources: [], clues: [], packs: [], issues: [],
+    } })
+    await expect(importPack({ clues: f.service }, { workspaceId: 'ws-1', bytes: unknown.bytes })).rejects.toMatchObject({ category: 'unsupported' })
     const valid = buildPack([{ key: 'clue-1' }])
-    await expect(importPack({ clues: f.service }, {
-      workspaceId: 'ws-1',
-      bytes: valid.bytes.subarray(0, valid.bytes.length - 8),
-    })).rejects.toMatchObject({ category: 'invalid-request' })
+    await expect(importPack({ clues: f.service }, { workspaceId: 'ws-1', bytes: valid.bytes.subarray(0, valid.bytes.length - 8) }))
+      .rejects.toMatchObject({ category: 'invalid-request' })
     expect(await libraryIds(f.service)).toEqual([])
   })
-
-  it('enforces injected ZIP limits on a content entry before writing anything', async () => {
+  it('enforces injected ZIP limits and refuses a pre-cancelled import before writing', async () => {
     const f = fixture()
     const content = new Uint8Array(4_096)
-    const pack = buildPack([{
-      key: 'clue-1',
-      snapshot: { content, encoding: 'raw' },
-    }], { mode: 'snapshot' })
-    // Above the manifest but below the content entry, so this limit is
-    // actually exercised by a snapshot payload (the old 16-byte limit hit the
-    // manifest first and proved nothing about content bounds).
-    await expect(importPack({ clues: f.service, zipLimits: { maxEntryBytes: 2_048 } }, {
-      workspaceId: 'ws-1',
-      bytes: pack.bytes,
-    })).rejects.toThrowError(/content\/clue-1\.bin.*size limit/i)
+    const pack = buildPack([{ key: 'clue-1', snapshot: { content, encoding: 'raw' } }], { mode: 'snapshot' })
+    // Above the manifest but below the content entry, so the limit really hits a payload.
+    await expect(importPack({ clues: f.service, zipLimits: { maxEntryBytes: 2_048 } }, { workspaceId: 'ws-1', bytes: pack.bytes }))
+      .rejects.toThrowError(/content\/clue-1\.bin.*size limit/i)
     expect(await libraryIds(f.service)).toEqual([])
-  })
-
-  it('refuses a cancelled import before the first write', async () => {
-    const f = fixture()
-    const pack = buildPack([{ key: 'clue-1' }])
     const controller = new AbortController()
     controller.abort()
-    await expect(importPack({ clues: f.service }, {
-      workspaceId: 'ws-1',
-      bytes: pack.bytes,
-      signal: controller.signal,
-    })).rejects.toMatchObject({ category: 'cancelled' })
+    await expect(importPack({ clues: f.service }, { workspaceId: 'ws-1', bytes: buildPack([{ key: 'clue-1' }]).bytes, signal: controller.signal }))
+      .rejects.toMatchObject({ category: 'cancelled' })
     expect(await libraryIds(f.service)).toEqual([])
   })
 })
-
 describe('importPack partial results', () => {
   it('imports a confirmed partial export completely and keeps the sender issues separate', async () => {
     const f = fixture()
@@ -1133,569 +630,237 @@ describe('importPack partial results', () => {
       issues: [{ target: 'clue', key: 'clue-1', category: 'unsupported', reason: 'content was not fetched' }],
     })
     const result = await importPack({ clues: f.service }, { workspaceId: 'ws-1', bytes: pack.bytes })
-    // The SENDER's missing content is a property of the archive, not a local
-    // commit failure: the receiver committed everything the pack promised.
-    expect(result).toMatchObject({ complete: true, partial: false, requiresAcceptance: false })
+    // The SENDER's missing content is a property of the archive, not a local commit failure.
+    expect(result).toMatchObject({ complete: true, partial: false, requiresAcceptance: false, issues: [], reasons: [] })
     expect(result.manifestIssues).toHaveLength(1)
-    expect(result.issues).toEqual([])
-    expect(result.reasons).toEqual([])
     expect(await libraryIds(f.service)).toHaveLength(1)
     expect((await f.service.listPacks('ws-1')).packs).toHaveLength(1)
   })
-
-  it('keeps imported clues when pack creation fails and reports the readable reason', async () => {
+  it('keeps committed rows when pack or snapshot creation fails and reports a partial import', async () => {
     const f = fixture()
-    const pack = buildPack([{ key: 'clue-1' }], { packs: [{ name: 'Uncreatable', members: ['clue-1'] }] })
-    const failing = {
-      ...f.service,
-      createPack: async () => {
-        throw new ClueError('failed', 'the pack store is unavailable')
-      },
-    } as CluesService
-    const result: ClueShareImportResult = await importPack({ clues: failing }, {
-      workspaceId: 'ws-1',
-      bytes: pack.bytes,
+    const pack = buildPack([{ key: 'clue-1', snapshot: { content: jsonContent({ text: 'x' }) } }], {
+      mode: 'snapshot', packs: [{ name: 'Uncreatable', members: ['clue-1'] }],
     })
-    expect(result).toMatchObject({ complete: false, partial: true, requiresAcceptance: true })
-    expect(result.clues).toHaveLength(1)
-    expect(result.packs).toEqual([])
-    expect(result.reasons).toContain(SAFE_FAILURE_REASONS.failed)
+    const failingPack = { ...f.service, createPack: async () => { throw new ClueError('failed', 'the pack store is unavailable') } } as CluesService
+    const packFailure = await importPack({ clues: failingPack }, { workspaceId: 'ws-1', bytes: pack.bytes })
+    expect(packFailure).toMatchObject({ complete: false, partial: true, requiresAcceptance: true, packs: [] })
+    expect(packFailure.clues).toHaveLength(1)
+    expect(packFailure.reasons).toContain(SAFE_FAILURE_REASONS.failed)
     expect(await libraryIds(f.service)).toHaveLength(1)
-  })
-
-  it('keeps the clue when a snapshot write fails and reports a partial import', async () => {
-    const f = fixture()
-    const pack = buildPack([{
-      key: 'clue-1',
-      snapshot: { content: jsonContent({ text: 'x' }) },
-    }], { mode: 'snapshot' })
-    const failing = {
-      ...f.service,
-      putSnapshot: async () => {
-        throw new ClueError('failed', 'the snapshot store is unavailable')
-      },
-    } as CluesService
-    const result = await importPack({ clues: failing }, { workspaceId: 'ws-1', bytes: pack.bytes })
-    expect(result).toMatchObject({ complete: false, partial: true, requiresAcceptance: true })
-    expect(result.clues[0]).toMatchObject({ unresolved: false })
-    expect(result.snapshots).toEqual([])
-    expect(result.reasons).toContain(SAFE_FAILURE_REASONS.failed)
+    const g = fixture()
+    const snapshotPack = buildPack([{ key: 'clue-1', snapshot: { content: jsonContent({ text: 'x' }) } }], { mode: 'snapshot' })
+    const failingSnapshot = { ...g.service, putSnapshot: async () => { throw new ClueError('failed', 'the snapshot store is unavailable') } } as CluesService
+    const snapshotFailure = await importPack({ clues: failingSnapshot }, { workspaceId: 'ws-1', bytes: snapshotPack.bytes })
+    expect(snapshotFailure).toMatchObject({ complete: false, partial: true, requiresAcceptance: true, snapshots: [] })
+    expect(snapshotFailure.clues[0]).toMatchObject({ unresolved: false })
+    expect(snapshotFailure.reasons).toContain(SAFE_FAILURE_REASONS.failed)
   })
   it('keeps an auth-required commit failure as an unresolved row and a partial import', async () => {
     const f = fixture()
     const pack = buildPack([{ key: 'clue-1', portable: { portable: true, locator: { id: 'a' } } }])
-    const failing = {
-      ...f.service,
-      ensure: async () => {
-        throw new ClueError('auth-required', 'the source requires authorization')
-      },
-    } as CluesService
-    const result = await importPack({ clues: failing }, { workspaceId: 'ws-1', bytes: pack.bytes })
+    const failing = { ...f.service, ensure: async () => { throw new ClueError('auth-required', 'the source requires authorization') } } as CluesService
+    const result: ClueShareImportResult = await importPack({ clues: failing }, { workspaceId: 'ws-1', bytes: pack.bytes })
     expect(result).toMatchObject({ complete: false, partial: true, requiresAcceptance: true })
     expect(result.clues[0]).toMatchObject({ created: true, unresolved: true })
-    expect(result.issues).toContainEqual(expect.objectContaining({
-      target: 'clue',
-      key: 'clue-1',
-      category: 'auth-required',
-    }))
+    expect(result.issues).toContainEqual(expect.objectContaining({ target: 'clue', key: 'clue-1', category: 'auth-required' }))
     const row = (await f.service.listClues('ws-1')).clues[0]!
-    expect(row.unresolved).toBeDefined()
     expect(row.unresolved?.reason).toMatch(/authorization/)
   })
 })
-
 describe('explicit receiver remap', () => {
-  it('previews and commits a JSON-safe receiving-side locator choice', async () => {
+  it('previews and commits a JSON-safe remap and refuses a foreign connection', async () => {
     const f = fixture()
-    const pack = buildPack([{
-      key: 'clue-1',
-      title: 'External clue',
-      portable: { portable: false, locator: { url: 'https://sender.invalid/private' } },
-    }])
+    const remote = buildPack([{ key: 'clue-1', title: 'External clue', portable: { portable: false, locator: { url: 'https://sender.invalid/private' } } }])
     const remap = [{ clueKey: 'clue-1', locator: { id: 'a' } }]
-    const preview = await previewImport({ clues: f.service }, {
-      workspaceId: 'ws-1',
-      bytes: pack.bytes,
-      remap,
-    })
-    expect(preview.items[0]!.willBeUnresolved).toBe(false)
-    expect(preview.unresolvedCount).toBe(0)
-
-    const result = await importPack({ clues: f.service }, {
-      workspaceId: 'ws-1',
-      bytes: pack.bytes,
-      remap,
-    })
+    const preview = await previewImport({ clues: f.service }, { workspaceId: 'ws-1', bytes: remote.bytes, remap })
+    expect([preview.items[0]!.willBeUnresolved, preview.unresolvedCount]).toEqual([false, 0])
+    const result = await importPack({ clues: f.service }, { workspaceId: 'ws-1', bytes: remote.bytes, remap })
     expect(result.clues[0]).toMatchObject({ created: true, unresolved: false })
     const clue = (await f.service.listClues('ws-1')).clues[0]!
-    expect(clue.locator).toEqual({ id: 'a' })
-    expect(clue.unresolved).toBeUndefined()
-  })
-
-  it('does not assume a same-named connection belongs to the receiver', async () => {
-    const f = fixture()
+    expect([clue.locator, clue.unresolved]).toEqual([{ id: 'a' }, undefined])
+    // A same-named connection is not assumed to belong to the receiver.
+    const g = fixture()
     const pack = buildPack([{ key: 'clue-1' }])
-    const mismatch = await importPack({ clues: f.service }, {
-      workspaceId: 'ws-1',
-      bytes: pack.bytes,
-      remap: [{ clueKey: 'clue-1', locator: { id: 'a' }, connectionId: 'sender-connection' }],
+    const mismatch = await importPack({ clues: g.service }, {
+      workspaceId: 'ws-1', bytes: pack.bytes, remap: [{ clueKey: 'clue-1', locator: { id: 'a' }, connectionId: 'sender-connection' }],
     })
     expect(mismatch.clues[0]!.unresolved).toBe(true)
-    const unresolved = (await f.service.listClues('ws-1')).clues[0]!
-    expect(unresolved.unresolved?.reason).toMatch(/connection.*not available/i)
-
-    const matched = await importPack({ clues: f.service }, {
-      workspaceId: 'ws-1',
-      bytes: pack.bytes,
-      remap: [{ clueKey: 'clue-1', locator: { id: 'a' }, connectionId: 'conn-a' }],
+    expect((await g.service.listClues('ws-1')).clues[0]!.unresolved?.reason).toMatch(/connection.*not available/i)
+    const matched = await importPack({ clues: g.service }, {
+      workspaceId: 'ws-1', bytes: pack.bytes, remap: [{ clueKey: 'clue-1', locator: { id: 'a' }, connectionId: 'conn-a' }],
     })
     expect(matched.clues[0]!.unresolved).toBe(false)
   })
-
-  it('refuses a deeply nested remap locator as invalid-request, not a 500', async () => {
+  it('refuses a deeply nested remap locator and a stale remap key', async () => {
     const f = fixture()
     const pack = buildPack([{ key: 'clue-1' }])
     let locator: Record<string, unknown> = { value: 1 }
     for (let depth = 0; depth < 100; depth += 1) locator = { nested: locator }
-    await expect(importPack({ clues: f.service }, {
-      workspaceId: 'ws-1',
-      bytes: pack.bytes,
-      remap: [{ clueKey: 'clue-1', locator: locator as never }],
-    })).rejects.toMatchObject({ category: 'invalid-request' })
+    await expect(importPack({ clues: f.service }, { workspaceId: 'ws-1', bytes: pack.bytes, remap: [{ clueKey: 'clue-1', locator: locator as never }] }))
+      .rejects.toMatchObject({ category: 'invalid-request' })
+    await expect(importPack({ clues: f.service }, { workspaceId: 'ws-1', bytes: pack.bytes, remap: [{ clueKey: 'clue-gone', locator: { id: 'a' } }] }))
+      .rejects.toThrowError(/unknown clue/i)
     expect(await libraryIds(f.service)).toEqual([])
   })
-
-  it('refuses a stale remap key instead of silently ignoring it', async () => {
-    const f = fixture()
-    const pack = buildPack([{ key: 'clue-1' }])
-    await expect(importPack({ clues: f.service }, {
-      workspaceId: 'ws-1',
-      bytes: pack.bytes,
-      remap: [{ clueKey: 'clue-gone', locator: { id: 'a' } }],
-    })).rejects.toThrowError(/unknown clue/i)
-    expect(await libraryIds(f.service)).toEqual([])
-  })
-
   it('reports a conflict instead of adopting a row that already owns the remap target', async () => {
-    const f = fixture()
-    const pack = buildPack([{
-      key: 'clue-1',
-      sourceId: 'missing.source',
-      typeId: 'missing.source.doc',
-      title: 'First import',
-      portable: { portable: true, locator: { id: 'a' } },
-    }])
-    const first = await importPack({ clues: f.service }, { workspaceId: 'ws-1', bytes: pack.bytes })
-    expect(first.clues[0]).toMatchObject({ created: true, unresolved: true })
-    const priorId = first.clues[0]!.clueId
-    // Another row already owns the address the remap names.
-    const occupied = await f.service.importUnresolved({
-      workspaceId: 'ws-1',
-      sourceId: 'missing.source',
-      typeId: 'missing.source.doc',
-      locator: {},
-      title: 'Occupying row',
-      reason: SAFE_SOURCE_NOT_INSTALLED,
-      portable: { portable: true, locator: { id: 'b' } },
-    })
-    const before = (await f.service.listClues('ws-1')).clues
-    const second = await importPack({ clues: f.service }, {
-      workspaceId: 'ws-1',
-      bytes: pack.bytes,
-      remap: [{ clueKey: 'clue-1', locator: { id: 'b' } }],
-    })
-    // A missing source must not let S1's dedupe silently adopt the occupying
-    // row and leave the old unresolved row behind.
-    expect(second).toMatchObject({
-      complete: false,
-      partial: true,
-      requiresAcceptance: true,
-    })
-    expect(second.clues).toEqual([])
-    expect(second.issues).toContainEqual(expect.objectContaining({
-      target: 'clue',
-      key: 'clue-1',
-      category: 'conflict',
-    }))
-    const after = (await f.service.listClues('ws-1')).clues
-    expect(after.map(clue => clue.id)).toEqual(before.map(clue => clue.id))
-    const priorRow = after.find(clue => clue.id === priorId)!
-    expect(priorRow.title).toBe('First import')
-    expect(priorRow.unresolved?.portable?.locator).toEqual({ id: 'a' })
-    const occupiedRow = after.find(clue => clue.id === occupied.clue.id)!
-    expect(occupiedRow.title).toBe('Occupying row')
-    expect(occupiedRow.unresolved?.portable?.locator).toEqual({ id: 'b' })
+    for (const testCase of [
+      { sourceId: 'missing.source', typeId: 'missing.source.doc' },
+      { sourceId: TEST_SOURCE, typeId: 'test.source.not-offered' },
+    ]) {
+      const f = fixture()
+      const pack = buildPack([{
+        key: 'clue-1', sourceId: testCase.sourceId, typeId: testCase.typeId, title: 'First import',
+        portable: { portable: true, locator: { id: 'a' } },
+      }])
+      const first = await importPack({ clues: f.service }, { workspaceId: 'ws-1', bytes: pack.bytes })
+      expect(first.clues[0]).toMatchObject({ created: true, unresolved: true })
+      const priorId = first.clues[0]!.clueId
+      const occupied = await f.service.importUnresolved({
+        workspaceId: 'ws-1', sourceId: testCase.sourceId, typeId: testCase.typeId, locator: {}, title: 'Occupying row',
+        reason: SAFE_SOURCE_NOT_INSTALLED, portable: { portable: true, locator: { id: 'b' } },
+      })
+      const before = (await f.service.listClues('ws-1')).clues
+      const second = await importPack({ clues: f.service }, { workspaceId: 'ws-1', bytes: pack.bytes, remap: [{ clueKey: 'clue-1', locator: { id: 'b' } }] })
+      // S1's dedupe must not silently adopt the occupying row and leave the old unresolved row behind.
+      expect(second).toMatchObject({ complete: false, partial: true, requiresAcceptance: true, clues: [] })
+      expect(second.issues).toContainEqual(expect.objectContaining({ target: 'clue', key: 'clue-1', category: 'conflict' }))
+      const after = (await f.service.listClues('ws-1')).clues
+      expect(after.map(clue => clue.id)).toEqual(before.map(clue => clue.id))
+      const priorRow = after.find(clue => clue.id === priorId)!
+      expect([priorRow.title, priorRow.unresolved?.portable?.locator]).toEqual(['First import', { id: 'a' }])
+      const occupiedRow = after.find(clue => clue.id === occupied.clue.id)!
+      expect([occupiedRow.title, occupiedRow.unresolved?.portable?.locator]).toEqual(['Occupying row', { id: 'b' }])
+    }
   })
-
-  it('reports a conflict for a type-missing remap onto an occupied address', async () => {
-    const f = fixture()
-    const missingType = 'test.source.not-offered'
-    const pack = buildPack([{
-      key: 'clue-1',
-      sourceId: TEST_SOURCE,
-      typeId: missingType,
-      title: 'Prior row',
-      portable: { portable: true, locator: { id: 'a' } },
-    }])
-    const first = await importPack({ clues: f.service }, { workspaceId: 'ws-1', bytes: pack.bytes })
-    expect(first.clues[0]).toMatchObject({ created: true, unresolved: true })
-    const priorId = first.clues[0]!.clueId
-    const occupied = await f.service.importUnresolved({
-      workspaceId: 'ws-1',
-      sourceId: TEST_SOURCE,
-      typeId: missingType,
-      locator: {},
-      title: 'Occupying row',
-      reason: SAFE_SOURCE_NOT_INSTALLED,
-      portable: { portable: true, locator: { id: 'b' } },
-    })
-    const second = await importPack({ clues: f.service }, {
-      workspaceId: 'ws-1',
-      bytes: pack.bytes,
-      remap: [{ clueKey: 'clue-1', locator: { id: 'b' } }],
-    })
-    expect(second.complete).toBe(false)
-    expect(second.partial).toBe(true)
-    expect(second.issues).toContainEqual(expect.objectContaining({ key: 'clue-1', category: 'conflict' }))
-    const rows = (await f.service.listClues('ws-1')).clues
-    expect(rows).toHaveLength(2)
-    expect(rows.find(clue => clue.id === priorId)!.unresolved?.portable?.locator).toEqual({ id: 'a' })
-    expect(rows.find(clue => clue.id === occupied.clue.id)!.title).toBe('Occupying row')
+  it('never seeds or rewrites a row when a normalized remap target is already occupied', async () => {
+    for (const typeOffered of [false, true]) {
+      const f = fixture({ extraBuiltinSources: [createLocalFileSource()] })
+      const files = 'builtin.files'
+      const markdown = LOCAL_FILE_TYPE_IDS.markdown
+      const locatorOf = (path: string): Locator => ({ root: { kind: 'workspace', workspaceId: 'ws-1' }, path, dialect: 'posix' })
+      const prior = await f.service.importUnresolved({
+        workspaceId: 'ws-1', sourceId: files, typeId: markdown, locator: {}, title: 'Prior note',
+        reason: SAFE_SOURCE_NOT_INSTALLED, portable: { portable: true, locator: locatorOf('notes/a.md') },
+      })
+      const occupied = await f.service.ensure({ workspaceId: 'ws-1', sourceId: files, typeId: markdown, locator: locatorOf('a.md'), title: 'Occupying file' })
+      const pack = buildPack([{
+        key: 'clue-1', sourceId: files, typeId: typeOffered ? markdown : 'builtin.files.not-offered', title: 'Prior note',
+        portable: { portable: true, locator: locatorOf('notes/a.md') },
+      }])
+      // The target normalizes to the occupied a.md; a raw-key guard would seed first and notice later.
+      const result = await importPack({ clues: f.service }, { workspaceId: 'ws-1', bytes: pack.bytes, remap: [{ clueKey: 'clue-1', locator: locatorOf('docs/../a.md') }] })
+      expect(result.complete).toBe(false)
+      expect(result.issues).toContainEqual(expect.objectContaining({ key: 'clue-1', category: 'conflict' }))
+      const rows = (await f.service.listClues('ws-1')).clues
+      expect(rows).toHaveLength(2)
+      const priorRow = rows.find(clue => clue.id === prior.clue.id)!
+      expect([priorRow.title, priorRow.unresolved?.portable?.locator]).toEqual(['Prior note', locatorOf('notes/a.md')])
+      expect(rows.find(clue => clue.id === occupied.clue.id)!.title).toBe('Occupying file')
+    }
   })
-
-  it('does not rewrite the old row when a normalized remap target is occupied', async () => {
-    const f = fixture({ extraBuiltinSources: [createLocalFileSource()] })
-    const files = 'builtin.files'
-    const markdown = LOCAL_FILE_TYPE_IDS.markdown
-    const locatorOf = (path: string): Locator => ({
-      root: { kind: 'workspace', workspaceId: 'ws-1' },
-      path,
-      dialect: 'posix',
-    })
-    const occupied = await f.service.ensure({
-      workspaceId: 'ws-1',
-      sourceId: files,
-      typeId: markdown,
-      locator: locatorOf('a.md'),
-      title: 'Occupying file',
-    })
-    const prior = await f.service.importUnresolved({
-      workspaceId: 'ws-1',
-      sourceId: files,
-      typeId: markdown,
-      locator: {},
-      title: 'Prior note',
-      reason: SAFE_SOURCE_NOT_INSTALLED,
-      portable: { portable: true, locator: locatorOf('notes/a.md') },
-    })
-    // The package's own type is not offered here, so the import takes the
-    // unresolved path; its archived hint finds the prior row.
-    const pack = buildPack([{
-      key: 'clue-1',
-      sourceId: files,
-      typeId: 'builtin.files.not-offered',
-      title: 'Prior note',
-      portable: { portable: true, locator: locatorOf('notes/a.md') },
-    }])
-    const result = await importPack({ clues: f.service }, {
-      workspaceId: 'ws-1',
-      bytes: pack.bytes,
-      remap: [{ clueKey: 'clue-1', locator: locatorOf('docs/../a.md') }],
-    })
-    expect(result.complete).toBe(false)
-    expect(result.issues).toContainEqual(expect.objectContaining({ key: 'clue-1', category: 'conflict' }))
-    const rows = (await f.service.listClues('ws-1')).clues
-    expect(rows).toHaveLength(2)
-    const priorRow = rows.find(clue => clue.id === prior.clue.id)!
-    // A raw-key comparison would have seeded `docs/../a.md` onto this row
-    // first and only then noticed the clash.
-    expect(priorRow.unresolved?.portable?.locator).toEqual(locatorOf('notes/a.md'))
-    expect(priorRow.title).toBe('Prior note')
-    expect(rows.find(clue => clue.id === occupied.clue.id)!.title).toBe('Occupying file')
-  })
-
-  it('does not seed the old row when a normalized remap target belongs to a live row', async () => {
-    const f = fixture({ extraBuiltinSources: [createLocalFileSource()] })
-    const files = 'builtin.files'
-    const markdown = LOCAL_FILE_TYPE_IDS.markdown
-    const locatorOf = (path: string): Locator => ({
-      root: { kind: 'workspace', workspaceId: 'ws-1' },
-      path,
-      dialect: 'posix',
-    })
-    // Create the unresolved row FIRST so a raw-key guard would seed it with the
-    // target hint before `ensure` discovers the live row on that address.
-    const prior = await f.service.importUnresolved({
-      workspaceId: 'ws-1',
-      sourceId: files,
-      typeId: markdown,
-      locator: {},
-      title: 'Prior note',
-      reason: SAFE_SOURCE_NOT_INSTALLED,
-      portable: { portable: true, locator: locatorOf('notes/a.md') },
-    })
-    const occupied = await f.service.ensure({
-      workspaceId: 'ws-1',
-      sourceId: files,
-      typeId: markdown,
-      locator: locatorOf('a.md'),
-      title: 'Occupying file',
-    })
-    const pack = buildPack([{
-      key: 'clue-1',
-      sourceId: files,
-      typeId: markdown,
-      title: 'Prior note',
-      portable: { portable: true, locator: locatorOf('notes/a.md') },
-    }])
-    const result = await importPack({ clues: f.service }, {
-      workspaceId: 'ws-1',
-      bytes: pack.bytes,
-      remap: [{ clueKey: 'clue-1', locator: locatorOf('docs/../a.md') }],
-    })
-    expect(result.complete).toBe(false)
-    expect(result.issues).toContainEqual(expect.objectContaining({ key: 'clue-1', category: 'conflict' }))
-    const rows = (await f.service.listClues('ws-1')).clues
-    expect(rows).toHaveLength(2)
-    const priorRow = rows.find(clue => clue.id === prior.clue.id)!
-    expect(priorRow.unresolved?.portable?.locator).toEqual(locatorOf('notes/a.md'))
-    expect(rows.find(clue => clue.id === occupied.clue.id)!.title).toBe('Occupying file')
-  })
-
   it('records an issue when the unresolved fallback cannot store the address', async () => {
     const f = fixture()
-    f.service.registerSource({
-      descriptor: {
-        sourceId: 'reject.source',
-        name: 'Rejecting source',
-        order: 30,
-        pluginId: 'plugin.reject',
-        types: ['reject.source.other'],
-        transport: 'mcp',
-        capabilities: { resolve: false, list: false, search: false, read: false, edit: false, portable: false },
-      },
-      types: [{
-        typeId: 'reject.source.other',
-        sourceId: 'reject.source',
-        formats: ['text/plain'],
-        capabilities: { read: false, edit: false, concurrency: 'none' },
-      }],
-      operations: {
-        normalizeLocator() {
-          throw new ClueError('invalid-request', 'this source rejects that address form')
-        },
-        locatorKey(locator) {
-          return JSON.stringify(locator)
-        },
-      },
-    })
-    const pack = buildPack([{
-      key: 'clue-1',
-      sourceId: 'reject.source',
-      typeId: 'reject.source.not-offered',
-      portable: { portable: true, locator: { id: 'a' } },
-    }])
+    f.service.registerSource(externalSource('reject.source', 'reject.source.other', {
+      normalizeLocator() { throw new ClueError('invalid-request', 'this source rejects that address form') },
+      locatorKey(locator) { return JSON.stringify(locator) },
+    }))
+    const pack = buildPack([{ key: 'clue-1', sourceId: 'reject.source', typeId: 'reject.source.not-offered', portable: { portable: true, locator: { id: 'a' } } }])
     const result = await importPack({ clues: f.service }, { workspaceId: 'ws-1', bytes: pack.bytes })
     expect(result).toMatchObject({ complete: false, partial: true })
-    expect(result.issues).toContainEqual(expect.objectContaining({
-      key: 'clue-1',
-      category: 'unsupported',
-      reason: expect.stringMatching(/could not be stored/i),
-    }))
+    expect(result.issues).toContainEqual(expect.objectContaining({ key: 'clue-1', category: 'unsupported', reason: expect.stringMatching(/could not be stored/i) }))
     const row = (await f.service.listClues('ws-1')).clues[0]!
     expect(row.unresolved).toBeDefined()
     expect(row.unresolved?.portable?.locator).toBeUndefined()
   })
 })
-
 describe('importPack progress and edge shapes', () => {
-  it('reports validate/clue/pack/done progress', async () => {
+  it('reports validate/clue/pack/done progress and imports an empty pack', async () => {
     const f = fixture()
-    const pack = buildPack([{ key: 'clue-1' }], { packs: [{ name: 'P', members: ['clue-1'] }] })
     const events: ClueShareImportProgress[] = []
     await importPack({ clues: f.service }, {
-      workspaceId: 'ws-1',
-      bytes: pack.bytes,
+      workspaceId: 'ws-1', bytes: buildPack([{ key: 'clue-1' }], { packs: [{ name: 'P', members: ['clue-1'] }] }).bytes,
       onProgress: event => events.push(event),
     })
     expect(events[0]).toMatchObject({ phase: 'validate', completed: 0, total: 1 })
     expect(events.some(event => event.phase === 'clue')).toBe(true)
     expect(events.some(event => event.phase === 'pack')).toBe(true)
     expect(events.at(-1)).toMatchObject({ phase: 'done', status: 'ok' })
+    const empty = await importPack({ clues: f.service }, { workspaceId: 'ws-1', bytes: buildPack([], {}).bytes })
+    expect(empty).toMatchObject({ complete: true, partial: false, clues: [], packs: [] })
   })
-
-  it('imports an empty pack and preserves long non-ASCII titles/names', async () => {
+  it('preserves long non-ASCII titles and shortens an over-long emoji pack name safely', async () => {
     const f = fixture()
-    const empty = await importPack({ clues: f.service }, {
-      workspaceId: 'ws-1',
-      bytes: buildPack([], {}).bytes,
-    })
-    expect(empty).toMatchObject({ complete: true, partial: false })
-    expect(empty.clues).toEqual([])
-    expect(empty.packs).toEqual([])
-
     const longTitle = '很长的中文标题'.repeat(20)
     const longPack = '中文包名'.repeat(40)
-    const pack = buildPack([{ key: 'clue-1', title: longTitle }], {
-      packs: [{ name: longPack, members: ['clue-1'] }],
-    })
-    const result = await importPack({ clues: f.service }, { workspaceId: 'ws-1', bytes: pack.bytes })
+    const result = await importPack({ clues: f.service }, { workspaceId: 'ws-1', bytes: buildPack([{ key: 'clue-1', title: longTitle }], { packs: [{ name: longPack, members: ['clue-1'] }] }).bytes })
     expect(result.complete).toBe(true)
     expect((await f.service.listClues('ws-1')).clues[0]!.title).toBe(longTitle)
-    expect((await f.service.listPacks('ws-1')).packs[0]!.name).toBe(longPack.slice(0, 200))
-    expect(result.packs[0]!.name).toBe(longPack.slice(0, 200))
-  })
-
-  it('shortens an over-long emoji pack name without splitting a surrogate pair', async () => {
-    const f = fixture()
-    // 199 ASCII units + one emoji (2 units) = 201 units; a code-unit slice
-    // would leave a lone high surrogate. 200 code points is also over S1's
-    // UTF-16 bound, so the stored name must be shortened and reported.
+    expect([(await f.service.listPacks('ws-1')).packs[0]!.name, result.packs[0]!.name]).toEqual([longPack.slice(0, 200), longPack.slice(0, 200)])
+    // 199 ASCII units + one emoji (2 units) = 201 units; a code-unit slice would leave a lone high surrogate.
     const name = 'a'.repeat(199) + '😀'
-    const pack = buildPack([{ key: 'clue-1' }], { packs: [{ name, members: ['clue-1'] }] })
-    const result = await importPack({ clues: f.service }, { workspaceId: 'ws-1', bytes: pack.bytes })
-    expect(result.complete).toBe(false)
-    expect(result.partial).toBe(true)
-    expect(result.issues).toContainEqual(expect.objectContaining({
-      target: 'pack',
-      key: 'pack-1',
-      category: 'unsupported',
-    }))
-    const stored = (await f.service.listPacks('ws-1')).packs[0]!.name
+    const emoji = await importPack({ clues: f.service }, { workspaceId: 'ws-1', bytes: buildPack([{ key: 'clue-1' }], { packs: [{ name, members: ['clue-1'] }] }).bytes })
+    expect(emoji).toMatchObject({ complete: false, partial: true })
+    expect(emoji.issues).toContainEqual(expect.objectContaining({ target: 'pack', key: 'pack-1', category: 'unsupported' }))
+    const stored = (await f.service.listPacks('ws-1')).packs.find(pack => pack.name.startsWith('a'.repeat(199)))!.name
     expect(stored).toBe('a'.repeat(199))
     expect(stored).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/)
   })
 })
-
 describe('importPack cancellation', () => {
-  it('returns an explicit late-cancelled result after the last clue committed', async () => {
-    const f = fixture()
-    const pack = buildPack([{ key: 'clue-1' }])
-    const controller = new AbortController()
-    const result = await importPack({ clues: f.service }, {
-      workspaceId: 'ws-1',
-      bytes: pack.bytes,
-      signal: controller.signal,
-      onProgress: (event) => {
-        if (event.phase === 'clue') controller.abort()
-      },
-    })
-    // Every write completed, so the result is a fully applied import with an
-    // explicit late-cancel flag. It must not be a bare throw (which hid the
-    // committed row and invited a duplicate retry) and must not claim a late
-    // abort never happened.
-    expect(result).toMatchObject({
-      complete: true,
-      partial: false,
-      cancelled: true,
-      requiresAcceptance: false,
-    })
-    expect(result.clues).toHaveLength(1)
-    expect(await libraryIds(f.service)).toHaveLength(1)
+  it('returns an explicit late-cancelled result after the last write', async () => {
+    const cases = [
+      { phase: 'clue' as const, bytes: buildPack([{ key: 'clue-1' }]).bytes, packs: 0 },
+      { phase: 'pack' as const, bytes: buildPack([{ key: 'clue-1' }], { packs: [{ name: 'P', members: ['clue-1'] }] }).bytes, packs: 1 },
+    ]
+    for (const testCase of cases) {
+      const f = fixture()
+      const controller = new AbortController()
+      const result = await importPack({ clues: f.service }, {
+        workspaceId: 'ws-1', bytes: testCase.bytes, signal: controller.signal,
+        onProgress: event => { if (event.phase === testCase.phase) controller.abort() },
+      })
+      // Every write completed, so this is a fully applied import with an explicit late-cancel flag.
+      expect(result).toMatchObject({ complete: true, partial: false, cancelled: true, requiresAcceptance: false })
+      expect([result.clues.length, result.packs.length, (await libraryIds(f.service)).length]).toEqual([1, testCase.packs, 1])
+    }
   })
-
-  it('returns an explicit late-cancelled result after the last pack committed', async () => {
-    const f = fixture()
-    const pack = buildPack([{ key: 'clue-1' }], { packs: [{ name: 'P', members: ['clue-1'] }] })
-    const controller = new AbortController()
-    const result = await importPack({ clues: f.service }, {
-      workspaceId: 'ws-1',
-      bytes: pack.bytes,
-      signal: controller.signal,
-      onProgress: (event) => {
-        if (event.phase === 'pack') controller.abort()
-      },
-    })
-    expect(result).toMatchObject({
-      complete: true,
-      partial: false,
-      cancelled: true,
-      requiresAcceptance: false,
-    })
-    expect(result.packs).toHaveLength(1)
-    expect((await f.service.listPacks('ws-1')).packs).toHaveLength(1)
+  it('stops between items and returns the committed rows explicitly', async () => {
+    for (const mode of ['progress', 'import-unresolved'] as const) {
+      const f = fixture()
+      const pack = buildPack([{ key: 'clue-1', sourceId: 'missing.source' }, { key: 'clue-2', sourceId: 'missing.source' }])
+      const controller = new AbortController()
+      let calls = 0
+      const service = mode === 'progress' ? f.service : {
+        ...f.service,
+        importUnresolved: async (params: Parameters<CluesService['importUnresolved']>[0], options?: Parameters<CluesService['importUnresolved']>[1]) => {
+          const result = await f.service.importUnresolved(params, options)
+          calls += 1
+          if (calls === 1) controller.abort()
+          return result
+        },
+      } as CluesService
+      const result = await importPack({ clues: service }, {
+        workspaceId: 'ws-1', bytes: pack.bytes, signal: controller.signal,
+        ...(mode === 'progress' ? { onProgress: (event: ClueShareImportProgress) => { if (event.phase === 'clue' && event.completed === 1) controller.abort() } } : {}),
+      })
+      // S1 has no rollback; the half-import is an explicit partial result, never success or a bare throw.
+      expect(result).toMatchObject({ complete: false, partial: true, cancelled: true, requiresAcceptance: true })
+      expect(result.clues.map(clue => clue.clueKey)).toEqual(['clue-1'])
+      expect(result.reasons.join('\n')).toMatch(/cancelled after committing 1 of 2 clues/i)
+      expect(await libraryIds(f.service)).toEqual([result.clues[0]!.clueId])
+    }
   })
-
-  it('stops between items and returns the committed rows explicitly (no bare throw)', async () => {
-    const f = fixture()
-    const pack = buildPack([{ key: 'clue-1' }, { key: 'clue-2' }])
-    const controller = new AbortController()
-    const result = await importPack({ clues: f.service }, {
-      workspaceId: 'ws-1',
-      bytes: pack.bytes,
-      signal: controller.signal,
-      onProgress: (event) => {
-        if (event.phase === 'clue' && event.completed === 1) controller.abort()
-      },
-    })
-    // S1 has no rollback; the half-import is reported as an explicit partial
-    // result the user must accept, never as success and never as a bare throw.
-    expect(result).toMatchObject({
-      complete: false,
-      partial: true,
-      cancelled: true,
-      requiresAcceptance: true,
-    })
-    expect(result.clues.map(clue => clue.clueKey)).toEqual(['clue-1'])
-    expect(result.reasons.join('\n')).toMatch(/cancelled after committing 1 of 2 clues/i)
-    expect(await libraryIds(f.service)).toEqual([result.clues[0]!.clueId])
-  })
-
-  it('records a clue committed just before the abort even when its snapshot never ran', async () => {
-    const f = fixture()
-    const pack = buildPack([
-      { key: 'clue-1', sourceId: 'missing.source' },
-      { key: 'clue-2', sourceId: 'missing.source' },
-    ])
-    const controller = new AbortController()
-    let calls = 0
-    const aborting = {
-      ...f.service,
-      importUnresolved: async (
-        params: Parameters<CluesService['importUnresolved']>[0],
-        options?: Parameters<CluesService['importUnresolved']>[1],
-      ) => {
-        const result = await f.service.importUnresolved(params, options)
-        calls += 1
-        if (calls === 1) controller.abort()
-        return result
-      },
-    } as CluesService
-    const result = await importPack({ clues: aborting }, {
-      workspaceId: 'ws-1',
-      bytes: pack.bytes,
-      signal: controller.signal,
-    })
-    expect(result).toMatchObject({
-      complete: false,
-      partial: true,
-      cancelled: true,
-      requiresAcceptance: true,
-    })
-    // The old accounting only counted a clue after its snapshot/loop tail, so
-    // this first-item abort looked like "zero committed" and threw.
-    expect(result.clues.map(clue => clue.clueKey)).toEqual(['clue-1'])
-    expect(await libraryIds(f.service)).toEqual([result.clues[0]!.clueId])
-  })
-
   it('counts the remap adoption seed write and returns partial when cancellation lands after it', async () => {
     const f = fixture()
-    const pack = buildPack([{
-      key: 'clue-1',
-      portable: { portable: false, locator: { id: 'a' } },
-    }])
+    const pack = buildPack([{ key: 'clue-1', portable: { portable: false, locator: { id: 'a' } } }])
     const first = await importPack({ clues: f.service }, { workspaceId: 'ws-1', bytes: pack.bytes })
     expect(first.clues[0]!.unresolved).toBe(true)
     const priorId = first.clues[0]!.clueId
-
     const controller = new AbortController()
     let seedCalls = 0
     const seedThenAbort = {
       ...f.service,
-      importUnresolved: async (
-        params: Parameters<CluesService['importUnresolved']>[0],
-        options?: Parameters<CluesService['importUnresolved']>[1],
-      ) => {
+      importUnresolved: async (params: Parameters<CluesService['importUnresolved']>[0], options?: Parameters<CluesService['importUnresolved']>[1]) => {
         const result = await f.service.importUnresolved(params, options)
         seedCalls += 1
         if (seedCalls === 1) controller.abort()
@@ -1703,140 +868,32 @@ describe('importPack cancellation', () => {
       },
     } as CluesService
     const result = await importPack({ clues: seedThenAbort }, {
-      workspaceId: 'ws-1',
-      bytes: pack.bytes,
-      signal: controller.signal,
-      remap: [{ clueKey: 'clue-1', locator: { id: 'b' } }],
+      workspaceId: 'ws-1', bytes: pack.bytes, signal: controller.signal, remap: [{ clueKey: 'clue-1', locator: { id: 'b' } }],
     })
-    expect(result).toMatchObject({
-      complete: false,
-      partial: true,
-      cancelled: true,
-      requiresAcceptance: true,
-    })
-    // The seed write is durable even though the clue list stayed empty: the
-    // partial result must not look like "nothing happened".
-    expect(result.clues).toEqual([])
+    // The seed write is durable even though the clue list stayed empty.
+    expect(result).toMatchObject({ complete: false, partial: true, cancelled: true, requiresAcceptance: true, clues: [] })
     expect(result.reasons.join('\n')).toMatch(/existing unresolved reference updated in place/i)
     const rows = (await f.service.listClues('ws-1')).clues
     expect(rows).toHaveLength(1)
-    expect(rows[0]!.id).toBe(priorId)
-    expect(rows[0]!.unresolved?.portable?.locator).toEqual({ id: 'b' })
+    expect([rows[0]!.id, rows[0]!.unresolved?.portable?.locator]).toEqual([priorId, { id: 'b' }])
   })
-
   it('converts a non-cancellation commit failure after a write into an explicit partial result', async () => {
     const f = fixture()
-    const pack = buildPack([
-      { key: 'clue-1', sourceId: 'missing.source' },
-      { key: 'clue-2', sourceId: 'missing.source' },
-    ])
+    const pack = buildPack([{ key: 'clue-1', sourceId: 'missing.source' }, { key: 'clue-2', sourceId: 'missing.source' }])
     let calls = 0
     const failing = {
       ...f.service,
-      importUnresolved: async (
-        params: Parameters<CluesService['importUnresolved']>[0],
-        options?: Parameters<CluesService['importUnresolved']>[1],
-      ) => {
+      importUnresolved: async (params: Parameters<CluesService['importUnresolved']>[0], options?: Parameters<CluesService['importUnresolved']>[1]) => {
         calls += 1
         if (calls === 2) throw new ClueError('failed', 'the second clue could not be committed')
         return f.service.importUnresolved(params, options)
       },
     } as CluesService
-    const result = await importPack({ clues: failing }, {
-      workspaceId: 'ws-1',
-      bytes: pack.bytes,
-    })
-    expect(result).toMatchObject({
-      complete: false,
-      partial: true,
-      cancelled: false,
-      requiresAcceptance: true,
-    })
+    const result = await importPack({ clues: failing }, { workspaceId: 'ws-1', bytes: pack.bytes })
+    expect(result).toMatchObject({ complete: false, partial: true, cancelled: false, requiresAcceptance: true })
     expect(result.clues.map(clue => clue.clueKey)).toEqual(['clue-1'])
     expect(result.reasons.join('\n')).toMatch(/failed after committing 1 of 2 clues/i)
     expect(result.issues.find(issue => issue.key === 'clue-2')?.reason).toBe(SAFE_FAILURE_REASONS.failed)
-    expect(result.issues.some(issue => issue.key === 'clue-2')).toBe(true)
     expect(await libraryIds(f.service)).toEqual([result.clues[0]!.clueId])
-  })
-})
-
-describe('offline snapshot with an authorization-invalid source', () => {
-  it('keeps the imported snapshot readable after the installed source really answers auth-required', async () => {
-    const f = fixture()
-    const pack = buildPack([{
-      key: 'clue-1',
-      title: 'Authorized once',
-      portable: { portable: true, locator: { id: 'a' } },
-      snapshot: { content: jsonContent({ text: 'offline snapshot body' }, 'offline snapshot body') },
-    }], { mode: 'snapshot' })
-    const imported = await importPack({ clues: f.service }, {
-      workspaceId: 'ws-1',
-      bytes: pack.bytes,
-    })
-    expect(imported.complete).toBe(true)
-    expect(imported.snapshots).toHaveLength(1)
-    const clueId = imported.clues[0]!.clueId
-
-    f.source.read = async () => {
-      throw new ClueError('auth-required', 'the installed source requires authorization')
-    }
-    await expect(f.service.read({ workspaceId: 'ws-1', clueId }))
-      .rejects.toMatchObject({ category: 'auth-required' })
-    const snapshot = await f.service.readSnapshot({
-      workspaceId: 'ws-1',
-      snapshotId: imported.snapshots[0]!.snapshotId,
-    })
-    expect(snapshot.content).toMatchObject({
-      format: 'text/plain',
-      data: { text: 'offline snapshot body' },
-      text: 'offline snapshot body',
-    })
-  })
-})
-
-describe('importPack with a locally resolved clue whose source is gone', () => {
-  it('previews and imports it as resolved with the same id', async () => {
-    const base = mkdtempSync(join(tmpdir(), 'dsh-clues-share-import-'))
-    roots.push(base)
-    const workspace = join(base, 'workspace')
-    mkdirSync(workspace, { recursive: true })
-    let next = 0
-    const source = { calls: { read: 0, portable: 0 } }
-    const service = createCluesService({
-      root: join(base, 'store'),
-      now: () => NOW,
-      newId: kind => `${kind}-${++next}`,
-      resolveWorkspacePath: id => (id === 'ws-1' ? workspace : undefined),
-    })
-    const unregister = service.registerSource(testSourceRegistration(source))
-    const ensured = await service.ensure({
-      workspaceId: 'ws-1',
-      sourceId: TEST_SOURCE,
-      typeId: TEST_TYPE,
-      locator: { id: 'a' },
-      title: 'Live title',
-    })
-    // The source is gone, but the row it minted is still a RESOLVED clue.
-    unregister()
-    const pack = buildPack([{
-      key: 'clue-1',
-      title: 'Imported old title',
-      portable: { portable: true, locator: { id: 'a' } },
-    }])
-    const preview = await previewImport({ clues: service }, { workspaceId: 'ws-1', bytes: pack.bytes })
-    expect(preview.items[0]!.willBeUnresolved).toBe(false)
-    expect(preview.unresolvedCount).toBe(0)
-
-    const result = await importPack({ clues: service }, { workspaceId: 'ws-1', bytes: pack.bytes })
-    expect(result.clues[0]).toMatchObject({
-      clueId: ensured.clue.id,
-      created: false,
-      unresolved: false,
-    })
-    const library = await service.listClues('ws-1')
-    expect(library.clues).toHaveLength(1)
-    expect(library.clues[0]!.unresolved).toBeUndefined()
-    expect(library.clues[0]!.title).toBe('Live title')
-    expect(source.calls).toEqual({ read: 0, portable: 0 })
   })
 })

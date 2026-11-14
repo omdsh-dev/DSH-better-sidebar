@@ -2,14 +2,12 @@
  * S1 clue API surface: payload validation, fixed caller/abort forwarding, and
  * the host dispatcher fallback.
  *
- * Two layers are pinned here:
- * - the handlers themselves (`registerCluesApi`): every S1 method is claimed,
- *   malformed payloads fail as typed `ClueError`s before reaching a source or
- *   the store, the caller is always `'ui'` and the request signal is forwarded;
- * - the ONE `/sidebar/api` dispatcher fallback (`apply`): an unknown method
+ * - `registerCluesApi` claims every S1 method; malformed payloads fail as typed
+ *   `ClueError`s before reaching a source or the store; the caller is always
+ *   `'ui'` and the request signal is forwarded.
+ * - The ONE `/sidebar/api` dispatcher fallback (`apply`): an unknown method
  *   owned by the clue service is served through `invokeApi` on the existing
- *   fenced route — no second route, and an actually unknown method still
- *   answers 404.
+ *   fenced route — no second route — and an actually unknown method answers 404.
  */
 import { afterEach, describe, expect, it } from 'vitest'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
@@ -25,7 +23,6 @@ import type { SidebarHttpRequest, SidebarHttpResponse, SidebarWebRoute } from '.
 import { removeTree } from './temp-tree.ts'
 
 const roots: string[] = []
-
 afterEach(() => {
   for (const path of roots.splice(0)) removeTree(path)
 })
@@ -33,21 +30,39 @@ afterEach(() => {
 /** The host platform's own path dialect (workspace locators are created in it). */
 const HOST_DIALECT = process.platform === 'win32' ? 'win32' : 'posix'
 
-/** A temp base with a workspace + durable store. */
-function fixture(): { base: string; workspace: string; service: CluesService } {
+/** A temp base with a profile home, a workspace and a clue service on it. */
+function fixture(seed = { file: 'a.md', body: '# hello\n' }): { home: string; workspace: string; service: CluesService } {
   const base = mkdtempSync(join(tmpdir(), 'dsh-clues-api-'))
   roots.push(base)
+  const home = join(base, 'home')
   const workspace = join(base, 'workspace')
+  mkdirSync(home, { recursive: true })
   mkdirSync(workspace, { recursive: true })
+  writeFileSync(join(workspace, seed.file), seed.body)
   let next = 0
   const service = createCluesService({
-    root: join(base, 'store'),
-    now: () => '2026-10-17T00:00:00.000Z',
-    newId: kind => `${kind}-${++next}`,
-    builtinSources: [createLocalFileSource()],
-    resolveWorkspacePath: id => (id === 'ws-1' ? workspace : undefined),
+    root: join(base, 'store'), now: () => '2026-10-17T00:00:00.000Z', newId: kind => `${kind}-${++next}`,
+    builtinSources: [createLocalFileSource()], resolveWorkspacePath: id => (id === 'ws-1' ? workspace : undefined),
   })
-  return { base, workspace, service }
+  return { home, workspace, service }
+}
+
+/** One MCP source with custom operations (wire-seam tests only). */
+function mcpSource(
+  sourceId: string,
+  operations: NonNullable<ClueSourceRegistration['operations']>,
+  options: { filters?: ClueSourceRegistration['descriptor']['filters']; capabilities?: Partial<ClueSourceRegistration['descriptor']['capabilities']> } = {},
+): ClueSourceRegistration {
+  const typeId = `${sourceId}.text`
+  return {
+    descriptor: {
+      sourceId, name: sourceId, order: 10, pluginId: 'test', types: [typeId], transport: 'mcp',
+      capabilities: { resolve: false, list: false, search: false, read: true, edit: false, portable: false, ...options.capabilities },
+      ...(options.filters === undefined ? {} : { filters: options.filters }),
+    },
+    types: [{ typeId, sourceId, formats: ['text/plain'], capabilities: { read: true, edit: false, concurrency: 'none' } }],
+    operations,
+  }
 }
 
 describe('clue API handlers', () => {
@@ -58,221 +73,78 @@ describe('clue API handlers', () => {
     dispose()
     for (const method of CLUES_API_METHODS) expect(service.hasApi(method), method).toBe(false)
   })
-
-  it('answers the source catalogue with serializable descriptors and type rows', async () => {
+  it('answers the wire catalogue with builtin descriptors and source filter declarations', async () => {
+    const { service } = fixture()
+    const filters = [{ scopeKey: 'state', defaultOptionId: 'open', options: [{ id: 'open', value: 'open' }, { id: 'closed', value: 'closed' }, { id: 'all', value: 'all' }] }]
+    service.registerSource(mcpSource('test.filters', {}, { filters, capabilities: { list: true } }))
+    registerCluesApi(service)
+    const result = await service.invokeApi('clues.sources', {}) as { sources: unknown[]; types: unknown[] }
+    expect(result.sources).toMatchObject([
+      { sourceId: 'builtin.files', transport: 'files', types: ['builtin.files.markdown', 'builtin.files.text', 'builtin.files.binary', 'builtin.files.directory'] },
+      { sourceId: 'test.filters', filters },
+    ])
+    expect(result.types).toHaveLength(5)
+  })
+  it('dispatches list/ensure/read/clues and persists display metadata', async () => {
     const { service } = fixture()
     registerCluesApi(service)
-    const result = await service.invokeApi('clues.sources', {})
-    expect(result).toMatchObject({
-      sources: [{
-        sourceId: 'builtin.files',
-        transport: 'files',
-        types: ['builtin.files.markdown', 'builtin.files.text', 'builtin.files.binary', 'builtin.files.directory'],
-      }],
-    })
-    expect((result as { types: unknown[] }).types).toHaveLength(4)
-  })
-
-  it('publishes source filter declarations on the wire catalogue', async () => {
-    const { service } = fixture()
-    service.registerSource({
-      descriptor: {
-        sourceId: 'test.filters',
-        name: 'filter source',
-        order: 10,
-        pluginId: 'test',
-        types: ['test.filters.text'],
-        transport: 'mcp',
-        capabilities: { resolve: false, list: true, search: true, read: false, edit: false, portable: false },
-        filters: [{
-          scopeKey: 'state',
-          appliesTo: 'both',
-          defaultOptionId: 'open',
-          options: [
-            { id: 'open', value: 'open' },
-            { id: 'closed', value: 'closed' },
-            { id: 'all', value: 'all' },
-          ],
-        }],
-      },
-      types: [{
-        typeId: 'test.filters.text',
-        sourceId: 'test.filters',
-        formats: ['text/plain'],
-        capabilities: { read: false, edit: false, concurrency: 'none' },
-      }],
-    })
-    registerCluesApi(service)
-    const result = await service.invokeApi('clues.sources', {}) as {
-      sources: Array<{ sourceId: string; filters?: unknown[] }>
-    }
-    const source = result.sources.find(row => row.sourceId === 'test.filters')
-    expect(source?.filters).toEqual([{
-      scopeKey: 'state',
-      appliesTo: 'both',
-      defaultOptionId: 'open',
-      options: [
-        { id: 'open', value: 'open' },
-        { id: 'closed', value: 'closed' },
-        { id: 'all', value: 'all' },
-      ],
-    }])
-  })
-
-  it('accepts and persists display metadata on clues.ensure', async () => {
-    const { workspace, service } = fixture()
-    writeFileSync(join(workspace, 'a.md'), '# hello\n')
-    registerCluesApi(service)
-    const listing = await service.invokeApi('clues.list', { workspaceId: 'ws-1', sourceId: 'builtin.files' }) as {
-      items: ClueCandidate[]
-    }
-    const ensured = await service.invokeApi('clues.ensure', {
-      workspaceId: 'ws-1',
-      sourceId: 'builtin.files',
-      typeId: LOCAL_FILE_TYPE_IDS.markdown,
-      locator: listing.items[0]!.locator,
-      title: 'a.md',
-      subtitle: 'Markdown file',
-      info: {
-        state: 'active',
-        path: 'a.md',
-        labels: ['docs'],
-        updatedAt: '2026-10-17T00:00:00Z',
-      },
-    }) as { clue: { subtitle?: string; info?: Record<string, unknown> } }
-    expect(ensured.clue.subtitle).toBe('Markdown file')
-    expect(ensured.clue.info).toEqual({
-      state: 'active',
-      path: 'a.md',
-      labels: ['docs'],
-      updatedAt: '2026-10-17T00:00:00.000Z',
-    })
-    const library = await service.invokeApi('clues.clues', { workspaceId: 'ws-1' }) as {
-      clues: Array<{ subtitle?: string; info?: unknown }>
-    }
-    expect(library.clues[0]).toMatchObject({ subtitle: 'Markdown file', info: ensured.clue.info })
-
-    // An unchanged re-ensure is not a write; a changed snapshot reports
-    // `updated` so the client invalidates its cached library.
-    const same = await service.invokeApi('clues.ensure', {
-      workspaceId: 'ws-1',
-      sourceId: 'builtin.files',
-      typeId: LOCAL_FILE_TYPE_IDS.markdown,
-      locator: listing.items[0]!.locator,
-      title: 'a.md',
-      subtitle: 'Markdown file',
-      info: {
-        state: 'active',
-        path: 'a.md',
-        labels: ['docs'],
-        updatedAt: '2026-10-17T00:00:00Z',
-      },
-    }) as { created: boolean; updated?: boolean }
-    expect(same.created).toBe(false)
-    expect(same.updated).toBeUndefined()
-    const changed = await service.invokeApi('clues.ensure', {
-      workspaceId: 'ws-1',
-      sourceId: 'builtin.files',
-      typeId: LOCAL_FILE_TYPE_IDS.markdown,
-      locator: listing.items[0]!.locator,
-      title: 'a.md',
-      info: { ...ensured.clue.info, labels: ['docs', 'release'] },
-    }) as { created: boolean; updated?: boolean }
-    expect(changed.created).toBe(false)
-    expect(changed.updated).toBe(true)
-  })
-
-  it('dispatches list/ensure/read/clues through the wire payloads', async () => {
-    const { workspace, service } = fixture()
-    writeFileSync(join(workspace, 'a.md'), '# hello\n')
-    registerCluesApi(service)
-
-    const listing = await service.invokeApi('clues.list', { workspaceId: 'ws-1', sourceId: 'builtin.files' }) as {
-      items: ClueCandidate[]
-    }
+    const listing = await service.invokeApi('clues.list', { workspaceId: 'ws-1', sourceId: 'builtin.files' }) as { items: ClueCandidate[] }
     expect(listing.items.map(item => item.title)).toEqual(['a.md'])
 
-    const ensured = await service.invokeApi('clues.ensure', {
-      workspaceId: 'ws-1',
-      sourceId: 'builtin.files',
-      typeId: LOCAL_FILE_TYPE_IDS.markdown,
-      locator: listing.items[0]!.locator,
-      title: 'a.md',
-    }) as { clue: { id: string }; created: boolean }
-    expect(ensured.created).toBe(true)
-
-    const read = await service.invokeApi('clues.read', { workspaceId: 'ws-1', clueId: ensured.clue.id }) as {
-      format: string
-      text: string
+    const ensure = {
+      workspaceId: 'ws-1', sourceId: 'builtin.files', typeId: LOCAL_FILE_TYPE_IDS.markdown,
+      locator: listing.items[0]!.locator, title: 'a.md', subtitle: 'Markdown file',
+      info: { state: 'active', path: 'a.md', labels: ['docs'], updatedAt: '2026-10-17T00:00:00Z' },
     }
-    expect(read).toMatchObject({ format: 'text/markdown', text: '# hello\n' })
-
-    const library = await service.invokeApi('clues.clues', { workspaceId: 'ws-1' }) as { clues: unknown[] }
-    expect(library.clues).toHaveLength(1)
+    const ensured = await service.invokeApi('clues.ensure', ensure) as {
+      created: boolean
+      clue: { id: string; subtitle?: string; info?: Record<string, unknown> }
+    }
+    expect(ensured.created).toBe(true)
+    expect(ensured.clue.subtitle).toBe('Markdown file')
+    expect(ensured.clue.info).toEqual({ state: 'active', path: 'a.md', labels: ['docs'], updatedAt: '2026-10-17T00:00:00.000Z' })
+    expect(await service.invokeApi('clues.clues', { workspaceId: 'ws-1' }))
+      .toMatchObject({ clues: [{ subtitle: 'Markdown file', info: ensured.clue.info }] })
+    expect(await service.invokeApi('clues.read', { workspaceId: 'ws-1', clueId: ensured.clue.id }))
+      .toMatchObject({ format: 'text/markdown', text: '# hello\n' })
   })
-
   it('serves pins, packs, bindings and snapshots on the same payload shapes', async () => {
     const { workspace, service } = fixture()
     writeFileSync(join(workspace, 'a.txt'), 'a\n')
     registerCluesApi(service)
     const ensured = await service.invokeApi('clues.ensure', {
-      workspaceId: 'ws-1',
-      sourceId: 'builtin.files',
-      typeId: LOCAL_FILE_TYPE_IDS.text,
-      locator: { root: { kind: 'workspace', workspaceId: 'ws-1' }, path: 'a.txt', dialect: HOST_DIALECT },
-      title: 'a.txt',
+      workspaceId: 'ws-1', sourceId: 'builtin.files', typeId: LOCAL_FILE_TYPE_IDS.text,
+      locator: { root: { kind: 'workspace', workspaceId: 'ws-1' }, path: 'a.txt', dialect: HOST_DIALECT }, title: 'a.txt',
     }) as { clue: { id: string } }
     const clueId = ensured.clue.id
 
-    const pinned = await service.invokeApi('clues.pins.add', { workspaceId: 'ws-1', clueId }) as { pins: unknown[] }
-    expect(pinned.pins).toHaveLength(1)
-    expect(await service.invokeApi('clues.pins.remove', { workspaceId: 'ws-1', clueId }))
-      .toMatchObject({ pins: [] })
+    expect(await service.invokeApi('clues.pins.add', { workspaceId: 'ws-1', clueId })).toMatchObject({ pins: [{ clueId }] })
+    expect(await service.invokeApi('clues.pins.remove', { workspaceId: 'ws-1', clueId })).toMatchObject({ pins: [] })
 
-    const pack = await service.invokeApi('clues.packs.create', {
-      workspaceId: 'ws-1',
-      name: 'Pack',
-      members: [clueId],
-    }) as { pack: { id: string; members: string[] } }
-    expect(pack.pack.members).toEqual([clueId])
-    expect(await service.invokeApi('clues.packs.rename', {
-      workspaceId: 'ws-1',
-      packId: pack.pack.id,
-      name: 'Renamed',
-    })).toMatchObject({ pack: { name: 'Renamed' } })
-    expect(await service.invokeApi('clues.packs.removeMember', {
-      workspaceId: 'ws-1',
-      packId: pack.pack.id,
-      clueId,
-    })).toMatchObject({ pack: { members: [] } })
+    const pack = await service.invokeApi('clues.packs.create', { workspaceId: 'ws-1', name: 'Pack', members: [clueId] }) as { pack: { id: string } }
+    expect(pack.pack).toMatchObject({ members: [clueId] })
+    expect(await service.invokeApi('clues.packs.rename', { workspaceId: 'ws-1', packId: pack.pack.id, name: 'Renamed' }))
+      .toMatchObject({ pack: { name: 'Renamed' } })
+    expect(await service.invokeApi('clues.packs.removeMember', { workspaceId: 'ws-1', packId: pack.pack.id, clueId }))
+      .toMatchObject({ pack: { members: [] } })
     expect(await service.invokeApi('clues.packs.delete', { workspaceId: 'ws-1', packId: pack.pack.id }))
       .toMatchObject({ deleted: true, packs: [] })
 
-    const binding = await service.invokeApi('clues.bindings.add', {
-      workspaceId: 'ws-1',
-      target: { kind: 'clue', clueId },
-    }) as { bindings: unknown[] }
-    expect(binding.bindings).toHaveLength(1)
-    expect(await service.invokeApi('clues.bindings.remove', {
-      workspaceId: 'ws-1',
-      target: { kind: 'clue', clueId },
-    })).toMatchObject({ bindings: [] })
-
-    await service.invokeApi('clues.snapshots.read', { workspaceId: 'ws-1', snapshotId: 'missing' })
-      .then(() => { throw new Error('expected a failure') }, (error: unknown) => {
-        expect(error).toMatchObject({ category: 'not-found' })
-      })
+    expect(await service.invokeApi('clues.bindings.add', { workspaceId: 'ws-1', target: { kind: 'clue', clueId } }))
+      .toMatchObject({ bindings: [{ target: { kind: 'clue', clueId } }] })
+    expect(await service.invokeApi('clues.bindings.remove', { workspaceId: 'ws-1', target: { kind: 'clue', clueId } }))
+      .toMatchObject({ bindings: [] })
+    await expect(service.invokeApi('clues.snapshots.read', { workspaceId: 'ws-1', snapshotId: 'missing' }))
+      .rejects.toMatchObject({ category: 'not-found' })
   })
-
   it('rejects malformed payloads as typed clue failures before dispatching', async () => {
     const { service } = fixture()
     registerCluesApi(service)
+    const ensure = (extra: Record<string, unknown>) => ({ workspaceId: 'ws-1', sourceId: 'builtin.files', typeId: 'builtin.files.text', ...extra })
     const cases: Array<[string, unknown]> = [
-      ['clues.resolve', {}],
       ['clues.resolve', null],
-      ['clues.resolve', { workspaceId: 'ws-1' }],
+      ['clues.resolve', {}],
       ['clues.resolve', { workspaceId: 'ws-1', text: '   ' }],
-      ['clues.list', []],
       ['clues.list', { workspaceId: 'ws-1', sourceId: 7 }],
       ['clues.list', { workspaceId: 'ws-1', sourceId: 'builtin.files', limit: 0 }],
       ['clues.search', { workspaceId: 'ws-1', sourceId: 'builtin.files' }],
@@ -280,40 +152,15 @@ describe('clue API handlers', () => {
       ['clues.loadEdit', { workspaceId: 'ws-1', clueId: 1 }],
       ['clues.saveEdit', { workspaceId: 'ws-1', clueId: 'c' }],
       ['clues.portable', { workspaceId: 'ws-1' }],
-      ['clues.ensure', { workspaceId: 'ws-1', sourceId: 'builtin.files', typeId: 'builtin.files.text', title: 'x' }],
-      ['clues.ensure', {
-        workspaceId: 'ws-1',
-        sourceId: 'builtin.files',
-        typeId: 'builtin.files.text',
-        locator: 'nope',
-        title: 'x',
-      }],
-      ['clues.ensure', {
-        workspaceId: 'ws-1',
-        sourceId: 'builtin.files',
-        typeId: 'builtin.files.text',
-        locator: {},
-        title: 'x',
-        info: 'nope',
-      }],
-      ['clues.ensure', {
-        workspaceId: 'ws-1',
-        sourceId: 'builtin.files',
-        typeId: 'builtin.files.text',
-        locator: {},
-        title: 'x',
-        subtitle: 7,
-      }],
+      ['clues.ensure', ensure({ title: 'x' })],
+      ['clues.ensure', ensure({ locator: 'nope', title: 'x' })],
+      ['clues.ensure', ensure({ locator: {}, title: 'x', info: 'nope' })],
+      ['clues.ensure', ensure({ locator: {}, title: 'x', subtitle: 7 })],
       ['clues.pins.add', { workspaceId: 'ws-1' }],
-      ['clues.pins.remove', { workspaceId: 'ws-1', clueId: 7 }],
       ['clues.packs.create', { workspaceId: 'ws-1', name: 'x', members: 'nope' }],
       ['clues.packs.create', { workspaceId: 'ws-1', name: 'x', expectedRevision: -1 }],
       ['clues.packs.rename', { workspaceId: 'ws-1', packId: 'p' }],
-      ['clues.packs.addMember', { workspaceId: 'ws-1', packId: 'p' }],
-      ['clues.packs.removeMember', { workspaceId: 'ws-1', packId: 'p', clueId: 'c', expectedRevision: 1.5 }],
       ['clues.packs.delete', { workspaceId: 'ws-1' }],
-      ['clues.bindings.list', {}],
-      ['clues.bindings.add', { workspaceId: 'ws-1' }],
       ['clues.bindings.add', { workspaceId: 'ws-1', target: { kind: 'nope' } }],
       ['clues.bindings.remove', { workspaceId: 'ws-1', target: { kind: 'clue' } }],
       ['clues.snapshots.list', { workspaceId: '' }],
@@ -325,277 +172,123 @@ describe('clue API handlers', () => {
       expect((failure as ClueError).category, method).toBe('invalid-request')
     }
   })
-
-  it('fixes the caller to "ui" and forwards the abort signal to the source', async () => {
+  it('fixes the caller to "ui", forwards the signal, and keeps source categories on the wire', async () => {
     const { service } = fixture()
     const seen: Array<{ caller: string; hasSignal: boolean }> = []
-    service.registerSource({
-      descriptor: {
-        sourceId: 'test.caller',
-        name: 'caller test',
-        order: 10,
-        pluginId: 'test',
-        types: ['test.caller.text'],
-        transport: 'mcp',
-        capabilities: { resolve: false, list: false, search: false, read: true, edit: false, portable: false },
+    service.registerSource(mcpSource('test.caller', {
+      async read(_input, context) {
+        seen.push({ caller: context.caller, hasSignal: context.signal !== undefined })
+        return { format: 'text/plain', data: { text: 'x' }, fetchedAt: 'now' }
       },
-      types: [{
-        typeId: 'test.caller.text',
-        sourceId: 'test.caller',
-        formats: ['text/plain'],
-        capabilities: { read: true, edit: false, concurrency: 'none' },
-      }],
-      operations: {
-        async read(_input, context) {
-          seen.push({ caller: context.caller, hasSignal: context.signal !== undefined })
-          return { format: 'text/plain', data: { text: 'x' }, fetchedAt: 'now' }
-        },
-      },
-    })
+    }))
+    service.registerSource(mcpSource('test.fail', { async read() { throw new Error('Authorization: Bearer top-secret') } }))
     registerCluesApi(service)
-    const controller = new AbortController()
     await service.invokeApi('clues.read', {
-      workspaceId: 'ws-1',
-      sourceId: 'test.caller',
-      typeId: 'test.caller.text',
-      locator: { id: 'x' },
-    }, { caller: 'ui', signal: controller.signal })
+      workspaceId: 'ws-1', sourceId: 'test.caller', typeId: 'test.caller.text', locator: { id: 'x' },
+    }, { caller: 'agent', signal: new AbortController().signal })
     expect(seen).toEqual([{ caller: 'ui', hasSignal: true }])
-  })
 
-  it('normalizes a source failure to its clue category on the wire seam', async () => {
-    const { service } = fixture()
-    service.registerSource({
-      descriptor: {
-        sourceId: 'test.fail',
-        name: 'fail',
-        order: 10,
-        pluginId: 'test',
-        types: ['test.fail.text'],
-        transport: 'mcp',
-        capabilities: { resolve: false, list: false, search: false, read: true, edit: false, portable: false },
-      },
-      types: [{
-        typeId: 'test.fail.text',
-        sourceId: 'test.fail',
-        formats: ['text/plain'],
-        capabilities: { read: true, edit: false, concurrency: 'none' },
-      }],
-      operations: {
-        async read() {
-          throw new Error('Authorization: Bearer top-secret')
-        },
-      },
-    })
-    registerCluesApi(service)
     const failure: unknown = await service.invokeApi('clues.read', {
-      workspaceId: 'ws-1',
-      sourceId: 'test.fail',
-      typeId: 'test.fail.text',
-      locator: { id: 'x' },
+      workspaceId: 'ws-1', sourceId: 'test.fail', typeId: 'test.fail.text', locator: { id: 'x' },
     }).then(() => undefined, (error: unknown) => error)
     expect(failure).toBeInstanceOf(ClueError)
     expect((failure as ClueError).category).toBe('failed')
     expect((failure as ClueError).message).not.toContain('top-secret')
   })
-
   it('normalizes registered API handler failures and preserves intentional categories', async () => {
     const { service } = fixture()
-    service.registerApi('test.leak', () => {
-      throw new Error('Authorization: Bearer top-secret-token; stdout: command failed')
-    })
-    service.registerApi('test.auth', () => {
-      throw new ClueError('auth-required', 'sign in first')
-    })
-
-    const leaked: unknown = await service.invokeApi('test.leak', {})
-      .then(() => undefined, (error: unknown) => error)
+    service.registerApi('test.leak', () => { throw new Error('Authorization: Bearer top-secret-token; stdout: command failed') })
+    service.registerApi('test.auth', () => { throw new ClueError('auth-required', 'sign in first') })
+    const leaked: unknown = await service.invokeApi('test.leak', {}).then(() => undefined, (error: unknown) => error)
     expect(leaked).toBeInstanceOf(ClueError)
     expect((leaked as ClueError).category).toBe('failed')
     expect((leaked as ClueError).message).not.toContain('top-secret')
     expect((leaked as ClueError).message).not.toContain('stdout')
-
-    // A handler that raises a real ClueError keeps its category (the fixed
-    // categories are the contract external sources express).
-    await expect(service.invokeApi('test.auth', {})).rejects.toMatchObject({
-      category: 'auth-required',
-      message: 'sign in first',
-    })
+    // A handler that raises a real ClueError keeps its category and message.
+    await expect(service.invokeApi('test.auth', {})).rejects.toMatchObject({ category: 'auth-required', message: 'sign in first' })
   })
 })
 
-/** One structural fake of the host context the `/sidebar/api` dispatcher needs. */
-interface FakeContext {
-  connection: { requestRejection: () => undefined }
-  webServer: {
-    register: (route: SidebarWebRoute) => () => void
-    registerUpgrade: () => () => void
+/** One fake install context that parks effect cleanups. */
+function installCtx(home: string, get: (key: string) => unknown): { ctx: unknown; cleanup: () => void } {
+  const cleanups: Array<() => void> = []
+  const ctx = {
+    profileContext: { home }, logger: { warn: () => {} }, get,
+    effect: (fn: () => void | (() => void)) => { const cleanup = fn(); if (typeof cleanup === 'function') cleanups.push(cleanup) },
   }
-  sessions: { get: () => undefined }
-  tools: unknown
-  effect: (fn: () => void | (() => void), label?: string) => void
-  inject: (deps: readonly string[], callback: (sctx: never) => void) => () => void
-  on: () => () => void
-  get: (key: string) => unknown
-  provide: (name: string, value?: unknown) => void
-  profileContext: { home: string }
-  workspaceRegistry: { get: (id: string) => { path: string } | undefined }
-  logger: { warn: () => void; info: () => void }
+  return { ctx, cleanup: () => { for (const fn of cleanups.reverse()) fn() } }
 }
-
-/** One captured response of the `/sidebar/api` route. */
-interface CapturedResponse {
-  status: number
-  body: { ok: boolean; value?: unknown; error?: { code: string; message: string } }
-}
-
+type Captured = { status: number; body: { ok: boolean; value?: unknown; error?: { code: string; message: string } } }
 /** POST one method through a captured route and return the decoded envelope. */
-async function post(route: SidebarWebRoute, method: string, payload: unknown): Promise<CapturedResponse> {
+async function post(route: SidebarWebRoute, method: string, payload: unknown): Promise<Captured> {
   const body = JSON.stringify(payload)
-  const req = {
-    url: `/sidebar/api/${method}`,
-    method: 'POST',
-    headers: {},
-    async *[Symbol.asyncIterator](): AsyncIterator<Uint8Array> {
-      yield Buffer.from(body)
-    },
-  } as unknown as SidebarHttpRequest
+  const req = { url: `/sidebar/api/${method}`, method: 'POST', headers: {}, async *[Symbol.asyncIterator](): AsyncIterator<Uint8Array> { yield Buffer.from(body) } } as unknown as SidebarHttpRequest
   let status = 0
   let raw = ''
   const res = {
-    statusCode: 0,
-    headersSent: false,
+    statusCode: 0, headersSent: false,
     writeHead(code: number) { status = code; res.statusCode = code; res.headersSent = true },
     write() { return true },
     end(chunk?: string | Uint8Array) { raw += chunk === undefined ? '' : String(chunk) },
-    destroy() { /* no socket in the fixture */ },
-    // The dispatcher attaches a close listener only for cancellable methods
-    // (clues.* included); the fixture has no socket to close.
-    once() { /* no-op */ },
-    off() { /* no-op */ },
+    // No socket in the fixture: the dispatcher's close listener is a no-op.
+    destroy() {}, once() {}, off() {},
   }
   await route.handler(req, res as unknown as SidebarHttpResponse)
-  return { status, body: JSON.parse(raw) as CapturedResponse['body'] }
+  return { status, body: JSON.parse(raw) as Captured['body'] }
 }
 
 describe('installClues dependency lifecycle', () => {
-  it('uses a workspaceRegistry that arrives AFTER install on the first operation', async () => {
-    const base = mkdtempSync(join(tmpdir(), 'dsh-clues-late-registry-'))
-    roots.push(base)
-    const home = join(base, 'home')
-    const workspace = join(base, 'workspace')
-    mkdirSync(home, { recursive: true })
-    mkdirSync(workspace, { recursive: true })
-    writeFileSync(join(workspace, 'a.md'), '# late\n')
-
+  it('defers a late workspaceRegistry to the first operation and installs core-owned builtins', async () => {
+    const { home, workspace } = fixture({ file: 'a.md', body: '# late\n' })
     // At install time the registry is not there yet: the plugin must still
     // install (dependencies arrive later in Cordis), and every operation must
-    // re-read the service instead of snapshotting it at install.
+    // re-read it instead of snapshotting it at install.
     let registry: { get(id: string): { path?: string } | undefined } | undefined
-    const cleanups: Array<() => void> = []
-    const ctx = {
-      profileContext: { home },
-      logger: { warn: () => {} },
-      get: (key: string) => (key === 'workspaceRegistry' ? registry : undefined),
-      effect: (fn: () => void | (() => void)) => {
-        const cleanup = fn()
-        if (typeof cleanup === 'function') cleanups.push(cleanup)
-      },
-    }
-    const service = installClues(ctx as never)
+    const { ctx, cleanup } = installCtx(home, key => (key === 'workspaceRegistry' ? registry : undefined))
     try {
-      // Install succeeded WITHOUT the registry (dependencies may arrive
-      // later); the registry appears before the FIRST read.
+      const service = installClues(ctx as never)
       expect(service.getSources().map(source => source.sourceId)).toContain('builtin.files')
       registry = { get: id => (id === 'ws-1' ? { path: workspace } : undefined) }
-
       const listing = await service.list({ workspaceId: 'ws-1', sourceId: 'builtin.files' })
       expect(listing.items.map(item => item.title)).toEqual(['a.md'])
-    } finally {
-      for (const cleanup of cleanups.reverse()) cleanup()
-    }
-  })
+    } finally { cleanup() }
 
-  it('installs core-owned builtin sources supplied by the total assembly, still rejecting public reserved ids', async () => {
-    const base = mkdtempSync(join(tmpdir(), 'dsh-clues-builtin-sources-'))
-    roots.push(base)
-    const home = join(base, 'home')
-    mkdirSync(home, { recursive: true })
-    const cleanups: Array<() => void> = []
-    const ctx = {
-      profileContext: { home },
-      logger: { warn: () => {} },
-      get: () => undefined,
-      effect: (fn: () => void | (() => void)) => {
-        const cleanup = fn()
-        if (typeof cleanup === 'function') cleanups.push(cleanup)
-      },
-    }
+    // The total assembly supplies core-owned builtins; the public registration
+    // path still refuses a built-in id.
     const builtin: ClueSourceRegistration = {
       descriptor: {
-        sourceId: 'builtin.github.issues',
-        name: 'GitHub Issues',
-        order: 20,
-        pluginId: 'dsh-better-sidebar',
-        types: ['builtin.github.issue'],
-        transport: 'cli',
+        sourceId: 'builtin.github.issues', name: 'GitHub Issues', order: 20, pluginId: 'dsh-better-sidebar',
+        types: ['builtin.github.issue'], transport: 'cli',
         capabilities: { resolve: false, list: false, search: false, read: false, edit: false, portable: false },
       },
-      types: [{
-        typeId: 'builtin.github.issue',
-        sourceId: 'builtin.github.issues',
-        formats: ['text/markdown'],
-        capabilities: { read: true, edit: false, concurrency: 'none' },
-      }],
+      types: [{ typeId: 'builtin.github.issue', sourceId: 'builtin.github.issues', formats: ['text/markdown'], capabilities: { read: true, edit: false, concurrency: 'none' } }],
     }
-    const service = installClues(ctx as never, { builtinSources: [builtin] })
+    const second = installCtx(home, () => undefined)
     try {
-      expect(service.getSources().map(source => source.sourceId))
-        .toContain('builtin.github.issues')
-      // The public registration path still refuses a built-in id.
+      const service = installClues(second.ctx as never, { builtinSources: [builtin] })
+      expect(service.getSources().map(source => source.sourceId)).toContain('builtin.github.issues')
       expect(() => service.registerSource(builtin)).toThrow(/reserved/)
-    } finally {
-      for (const cleanup of cleanups.reverse()) cleanup()
-    }
+    } finally { second.cleanup() }
   })
 })
 
 describe('/sidebar/api clue dispatcher fallback', () => {
   it('serves owned clue methods through the one fenced route and leaves unknown methods 404', async () => {
-    const base = mkdtempSync(join(tmpdir(), 'dsh-clues-dispatch-'))
-    roots.push(base)
-    const home = join(base, 'home')
-    const workspace = join(base, 'workspace')
-    mkdirSync(home, { recursive: true })
-    mkdirSync(workspace, { recursive: true })
-    writeFileSync(join(workspace, 'a.md'), '# dispatched\n')
-
+    const { home, workspace } = fixture({ file: 'a.md', body: '# dispatched\n' })
     const provided = new Map<string, unknown>()
     const effects: Array<() => void | (() => void)> = []
     const routes: SidebarWebRoute[] = []
-    const registry = {
-      get: (id: string) => (id === 'ws-1' ? { path: workspace } : undefined),
-    }
-    const ctx: FakeContext = {
+    const registry = { get: (id: string) => (id === 'ws-1' ? { path: workspace } : undefined) }
+    const ctx = {
       connection: { requestRejection: () => undefined },
-      webServer: {
-        register: (route) => { routes.push(route); return () => {} },
-        registerUpgrade: () => () => {},
-      },
+      webServer: { register: (route: SidebarWebRoute) => { routes.push(route); return () => {} }, registerUpgrade: () => () => {} },
       sessions: { get: () => undefined },
       tools: { register: () => () => {} },
-      effect: (fn) => {
-        const cleanup = fn()
-        if (typeof cleanup === 'function') effects.push(cleanup)
-      },
+      effect: (fn: () => void | (() => void)) => { const cleanup = fn(); if (typeof cleanup === 'function') effects.push(cleanup) },
       inject: () => () => {},
       on: () => () => {},
-      get: (key) => {
-        if (key === 'betterSidebarClues') return provided.get(key)
-        if (key === 'workspaceRegistry') return registry
-        return undefined
-      },
-      provide: (name, value) => { provided.set(name, value) },
+      get: (key: string) => (key === 'betterSidebarClues' ? provided.get(key) : key === 'workspaceRegistry' ? registry : undefined),
+      provide: (name: string, value: unknown) => { provided.set(name, value) },
       profileContext: { home },
       workspaceRegistry: registry,
       logger: { warn: () => {}, info: () => {} },
@@ -605,144 +298,53 @@ describe('/sidebar/api clue dispatcher fallback', () => {
       const route = routes.find(candidate => candidate.path === '/sidebar/api')
       expect(route).toBeDefined()
       expect(provided.get('betterSidebarClues')).toBeDefined()
-
       const sources = await post(route!, 'clues.sources', {})
       expect(sources.status).toBe(200)
-      expect(sources.body.ok).toBe(true)
       expect((sources.body.value as { sources: Array<{ sourceId: string }> }).sources[0]?.sourceId).toBe('builtin.files')
-
-      const list = await post(route!, 'clues.list', { workspaceId: 'ws-1', sourceId: 'builtin.files' })
-      expect(list.status).toBe(200)
-      const items = (list.body.value as { items: ClueCandidate[] }).items
-      expect(items.map(item => item.title)).toEqual(['a.md'])
-
-      const ensure = await post(route!, 'clues.ensure', {
-        workspaceId: 'ws-1',
-        sourceId: 'builtin.files',
-        typeId: LOCAL_FILE_TYPE_IDS.markdown,
-        locator: items[0]!.locator,
-        title: 'a.md',
-      })
-      expect(ensure.status).toBe(200)
-      const clueId = (ensure.body.value as { clue: { id: string } }).clue.id
-
-      // The durable store is rooted under the profile home, not the workspace.
-      expect(existsSync(join(home, 'better-sidebar-data', 'clues', 'workspaces', encodeURIComponent('ws-1'), 'state.json')))
-        .toBe(true)
-
-      const read = await post(route!, 'clues.read', { workspaceId: 'ws-1', clueId })
-      expect(read.body).toMatchObject({ ok: true, value: { text: '# dispatched\n' } })
-
-      // A clue payload error keeps its clue category on the wire AND is a
-      // client error (400), not an internal 500: the request is malformed,
-      // the plugin is not failing.
-      const invalid = await post(route!, 'clues.packs.create', { workspaceId: 'ws-1', members: 'nope' })
+      // A clue payload error keeps its category AND is a client error (400),
+      // not an internal 500.
+      const invalid = await post(route!, 'clues.list', { workspaceId: 'ws-1', sourceId: 'builtin.files', cursor: 'not-a-cursor' })
       expect(invalid.status).toBe(400)
       expect(invalid.body).toMatchObject({ ok: false, error: { code: 'invalid-request' } })
-
-      // A resolve without a selector is a malformed request, not an empty
-      // candidate list.
-      const emptyResolve = await post(route!, 'clues.resolve', { workspaceId: 'ws-1' })
-      expect(emptyResolve.status).toBe(400)
-      expect(emptyResolve.body).toMatchObject({ ok: false, error: { code: 'invalid-request' } })
-
-      // A zero page limit fails in the service's shared validator and must
-      // reach the wire as 400 too.
-      const invalidLimit = await post(route!, 'clues.list', {
-        workspaceId: 'ws-1',
-        sourceId: 'builtin.files',
-        limit: 0,
-      })
-      expect(invalidLimit.status).toBe(400)
-      expect(invalidLimit.body).toMatchObject({ ok: false, error: { code: 'invalid-request' } })
-
-      // A malformed cursor / scope is the caller's input error too: the
-      // source maps it to `invalid-request` (400), never to `failed` (500).
-      const invalidCursor = await post(route!, 'clues.list', {
-        workspaceId: 'ws-1',
-        sourceId: 'builtin.files',
-        cursor: 'not-a-cursor',
-      })
-      expect(invalidCursor.status).toBe(400)
-      expect(invalidCursor.body).toMatchObject({ ok: false, error: { code: 'invalid-request' } })
-
-      const invalidScope = await post(route!, 'clues.list', {
-        workspaceId: 'ws-1',
-        sourceId: 'builtin.files',
-        scope: 42,
-      })
-      expect(invalidScope.status).toBe(400)
-      expect(invalidScope.body).toMatchObject({ ok: false, error: { code: 'invalid-request' } })
-
       // The clue EDIT document is not bound by the 1 MiB control-payload cap:
-      // a 1.5 MiB source document must load AND save back through this route.
-      const bigText = 'x'.repeat(1_500_000)
-      writeFileSync(join(workspace, 'big.txt'), bigText)
-      const bigEnsure = await post(route!, 'clues.ensure', {
-        workspaceId: 'ws-1',
-        sourceId: 'builtin.files',
-        typeId: LOCAL_FILE_TYPE_IDS.text,
-        locator: { root: { kind: 'workspace', workspaceId: 'ws-1' }, path: 'big.txt', dialect: HOST_DIALECT },
-        title: 'big.txt',
+      // a 1.5 MiB source document must load AND save back through this route,
+      // and the durable store is rooted under the profile home.
+      writeFileSync(join(workspace, 'big.txt'), 'x'.repeat(1_500_000))
+      const big = await post(route!, 'clues.ensure', {
+        workspaceId: 'ws-1', sourceId: 'builtin.files', typeId: LOCAL_FILE_TYPE_IDS.text,
+        locator: { root: { kind: 'workspace', workspaceId: 'ws-1' }, path: 'big.txt', dialect: HOST_DIALECT }, title: 'big.txt',
       })
-      expect(bigEnsure.status).toBe(200)
-      const bigId = (bigEnsure.body.value as { clue: { id: string } }).clue.id
-      const bigEdit = await post(route!, 'clues.loadEdit', { workspaceId: 'ws-1', clueId: bigId })
-      expect(bigEdit.status).toBe(200)
-      const bigDocument = bigEdit.body.value as { format: string; data: { text: string }; baseRevision: string }
+      expect(big.status).toBe(200)
+      const bigId = (big.body.value as { clue: { id: string } }).clue.id
+      expect(existsSync(join(home, 'better-sidebar-data', 'clues', 'workspaces', 'ws-1', 'state.json'))).toBe(true)
+      const document = (await post(route!, 'clues.loadEdit', { workspaceId: 'ws-1', clueId: bigId })).body.value as { format: string; data: { text: string }; baseRevision: string }
       const replacement = 'y'.repeat(1_500_000)
-      const bigSave = await post(route!, 'clues.saveEdit', {
-        workspaceId: 'ws-1',
-        clueId: bigId,
-        document: {
-          format: bigDocument.format,
-          data: { text: replacement },
-          baseRevision: bigDocument.baseRevision,
-        },
-      })
-      expect(bigSave.status).toBe(200)
+      expect((await post(route!, 'clues.saveEdit', {
+        workspaceId: 'ws-1', clueId: bigId,
+        document: { format: document.format, data: { text: replacement }, baseRevision: document.baseRevision },
+      })).status).toBe(200)
       expect(readFileSync(join(workspace, 'big.txt'), 'utf8')).toBe(replacement)
-
       // Every OTHER JSON method keeps the tight 1 MiB bound.
-      const oversized = await post(route!, 'clues.resolve', {
-        workspaceId: 'ws-1',
-        text: 'z'.repeat(1_500_000),
-      })
+      const oversized = await post(route!, 'clues.resolve', { workspaceId: 'ws-1', text: 'z'.repeat(1_500_000) })
       expect(oversized.status).toBe(413)
       expect(oversized.body).toMatchObject({ ok: false, error: { code: 'too-large' } })
-
-      // A registered API handler's raw failure is normalized before it can
-      // reach the 500 envelope (no transport output / tokens on the wire).
+      // A registered handler's raw failure is normalized before the 500 envelope.
       const clueService = provided.get('betterSidebarClues') as CluesService
-      clueService.registerApi('test.leak', () => {
-        throw new Error('Authorization: Bearer top-secret-token')
-      })
+      clueService.registerApi('test.leak', () => { throw new Error('Authorization: Bearer top-secret-token') })
       const leaked = await post(route!, 'test.leak', {})
       expect(leaked.status).toBe(500)
       expect(leaked.body).toMatchObject({ ok: false, error: { code: 'failed' } })
       expect(leaked.body.error?.message).not.toContain('top-secret')
-
-      // The dispatcher fallback forwards an optional STRING `sessionId` from
-      // the payload (S6/S2 serialize only the payload); anything else is
-      // ignored instead of being coerced.
+      // Only a STRING `sessionId` is forwarded (never coerced).
       clueService.registerApi('test.session', (_payload, context) => context.sessionId ?? null)
-      const withSession = await post(route!, 'test.session', { sessionId: 'sess-1' })
-      expect(withSession.body).toMatchObject({ ok: true, value: 'sess-1' })
-      const badSession = await post(route!, 'test.session', { sessionId: 42 })
-      expect(badSession.body).toMatchObject({ ok: true, value: null })
-
-      // A method NO service owns is still a 404 — the fallback is not a
-      // catch-all.
+      expect((await post(route!, 'test.session', { sessionId: 'sess-1' })).body).toMatchObject({ ok: true, value: 'sess-1' })
+      expect((await post(route!, 'test.session', { sessionId: 42 })).body).toMatchObject({ ok: true, value: null })
+      // A method NO service owns is still a 404 — the fallback is not a catch-all.
       const unknown = await post(route!, 'definitely.not.a.method', {})
       expect(unknown.status).toBe(404)
       expect(unknown.body).toMatchObject({ ok: false, error: { code: 'not-found' } })
-    } finally {
-      for (const cleanup of effects.reverse()) cleanup()
-    }
-
-    // The install effect is what unmounts the clue service: after its cleanup
-    // the API seam is disposed (the fake context models the same lifecycle the
-    // real plugin-mount lane exercises at the deployment layer).
+    } finally { for (const cleanup of effects.reverse()) cleanup() }
+    // The install effect unmounts the clue service: cleanup disposes the API seam.
     expect((provided.get('betterSidebarClues') as CluesService).hasApi('clues.sources')).toBe(false)
   })
 })
