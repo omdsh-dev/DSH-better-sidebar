@@ -70,7 +70,6 @@ export function SourceSwitcher({ items, value, onChange, ariaLabel, className }:
           value={value}
           onChange={onChange}
           ariaLabel={ariaLabel}
-          title={ariaLabel}
           options={items.map(item => ({
             value: item.value,
             label: item.label,

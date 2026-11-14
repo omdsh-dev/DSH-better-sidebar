@@ -20,7 +20,7 @@ import type {
 import { BUILTIN_SOURCE_IDS } from '../../../clues/types.ts'
 import { parseGithubRepoRef } from '../../../clues/sources/github/url.ts'
 import { t } from '../../locales.ts'
-import { Field, SelectMenu, TextInput } from '../../ui/index.ts'
+import { Field, SourceSwitcher, TextInput } from '../../ui/index.ts'
 import css from './clues-tab.module.css'
 
 /** Stable row key of one candidate (the locator is source-normalized JSON). */
@@ -78,34 +78,18 @@ export function SourceNavigation(props: {
   onChange(sourceId: string): void
 }): ReactNode {
   const { sources, displays, activeId, onChange } = props
-  if (sources.length === 0) return null
-  const options = sources.map(source => {
+  const items = sources.map(source => {
     const label = source.sourceId === BUILTIN_SOURCE_IDS.files
       ? t('clueLocalFilesName')
       : displays.find(display => display.sourceId === source.sourceId)?.name ?? source.name
     return {
       value: source.sourceId,
       label,
-      title: label,
       icon: sourceIcon(source.sourceId, displays, 14),
     }
   })
   return (
-    <div
-      className={css.sourceNav}
-      data-clue-source-navigation
-      data-clue-active-source={activeId}
-      data-source-count={options.length}
-    >
-      <SelectMenu
-        className={css.sourceSelect}
-        value={activeId}
-        onChange={onChange}
-        ariaLabel={t('clueSourceLabel')}
-        title={t('clueSourceLabel')}
-        options={options}
-      />
-    </div>
+    <SourceSwitcher className={css.sourceNav} items={items} value={activeId} onChange={onChange} ariaLabel={t('clueSourceLabel')} />
   )
 }
 

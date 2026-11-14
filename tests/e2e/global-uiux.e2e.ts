@@ -257,8 +257,9 @@ for (const touch of [false, true]) {
       await clueView(clues, 'browse')
       const sourceNavigation = clues.locator('[data-clue-source-navigation]')
       await expect(sourceNavigation).toBeVisible({ timeout: 30_000 })
-      // The approved form is one compact select at every width; it must be
-      // reachable and dismissible from the keyboard like every other control.
+      // Exercise the compact menu in a narrow column regardless of the
+      // native panel's starting width.
+      await clues.evaluate(node => { node.style.maxWidth = '390px' })
       const sourceSelect = sourceNavigation.getByRole('button', { name: 'Source', exact: true })
       await expect(sourceSelect).toBeVisible()
       metrics.cluesTab = await controlStyle(sourceSelect)
@@ -270,6 +271,7 @@ for (const touch of [false, true]) {
       await expect(page.getByRole('menu')).toHaveCount(0)
       await expect(sourceSelect).toBeFocused()
       await expect(sourceNavigation).toHaveAttribute('data-clue-active-source', 'builtin.files')
+      await clues.evaluate(node => { node.style.maxWidth = '' })
       const resourceRow = clues.locator('[data-clue-browser-state="page"] li').filter({ has: page.getByRole('button', { name: 'acceptance.md', exact: true }) }).first()
       await expect(resourceRow).toBeVisible()
       // The actual context handler receives four viewport corners; placement may

@@ -103,23 +103,13 @@
   min-height: 30px;
   padding: 4px var(--ds-sidebar-gutter) 2px;
 }
-.sourceNav {
-  display: inline-flex;
-  flex: 0 1 auto;
-  min-width: 0;
-  max-width: 52%;
-}
-.sourceSelect {
-  min-height: 26px;
-  padding: 2px 6px;
-  border-color: var(--dsw-alias-border-l1);
-  background: transparent;
-  font-size: 12px;
-  line-height: 16px;
-  font-weight: 500;
-}
-@media (pointer: coarse) {
-  .sourceSelect { min-height: 44px; }
+.sourceNav { flex: 0 1 148px; min-width: 0; max-width: 52%; }
+
+/* A 520px source strip plus the two 12px Clues gutters. Give it the
+   whole first row, so range labels and action buttons never clip the tabs. */
+@container (min-width: 544px) {
+  .browserToolbar { flex-wrap: wrap; }
+  .sourceNav { flex: 1 0 100%; max-width: none; }
 }
 .commandSpacer { flex: 1 1 0; min-width: 0; }
 .browser {

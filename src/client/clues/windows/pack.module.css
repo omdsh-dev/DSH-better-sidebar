@@ -147,6 +147,9 @@
   gap: 4px;
   min-width: 0;
 }
+@container (min-width: 544px) {
+  .addToolbar { flex-wrap: wrap; }
+}
 .toolbarSpacer { flex: 1 1 0; min-width: 0; }
 .scopeTrigger {
   display: inline-flex;

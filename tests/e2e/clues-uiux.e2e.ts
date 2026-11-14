@@ -188,11 +188,14 @@ test('clues workbench stays usable across column widths and host themes', async 
     await clueView(tab, 'browse')
     const composer = page.getByRole('textbox', { name: /^(Describe what you want to build|Message or run a task|描述你想要构建)/ })
     const sourceNavigation = browser.locator('[data-clue-source-navigation]')
-    // The approved form is always one compact select, never a clipped tab row.
+    // The startup width belongs to the native host. Check whichever form is
+    // visible now, then exercise both explicitly in the width sweep.
     const sourceSelect = sourceNavigation.getByRole('button', { name: 'Source', exact: true })
-    await expect(sourceSelect).toBeVisible()
-    await expect(sourceSelect).toContainText('Local files')
-    await expect(sourceSelect.locator('svg').first()).toBeVisible()
+    const sourceTabs = sourceNavigation.getByRole('tablist', { name: 'Source', exact: true }).getByRole('tab')
+    const activeSourceControl = sourceSelect.or(sourceTabs.filter({ hasText: 'Local files' }))
+    await expect(activeSourceControl).toBeVisible()
+    await expect(activeSourceControl).toContainText('Local files')
+    await expect(activeSourceControl.locator('svg').first()).toBeVisible()
     await expect(sourceNavigation).toHaveAttribute('data-source-count', '5')
     await expect(browser.getByRole('combobox', { name: 'Source', exact: true })).toHaveCount(0)
     await expect(browser.getByRole('search')).toHaveCSS('height', '32px')
@@ -273,6 +276,11 @@ test('clues workbench stays usable across column widths and host themes', async 
         expect(Math.abs(box.width - tabBox.width)).toBeLessThanOrEqual(1)
         expect(box.height).toBeGreaterThan(tabBox.height * 0.7)
         await expectNoOverflow(active)
+        if (view === 'browse') {
+          await expect(sourceTabs).toHaveCount(5)
+          await expect(sourceTabs.first()).toBeVisible()
+          await expect(sourceSelect).toHaveCount(0)
+        }
         await tab.screenshot({ path: testInfo.outputPath('clues-wide-1100-' + theme + '-' + view + '.png') })
       }
     }
@@ -302,8 +310,20 @@ test('clues workbench stays usable across column widths and host themes', async 
             const insert = first.getByRole('button', { name: /^Insert / }).first()
             await expect(insert.locator('svg')).toHaveCount(1)
             expect((await insert.innerText()).trim()).toBe('')
-            await expect(sourceNavigation.getByRole('button', { name: 'Source', exact: true })).toBeVisible()
-            await expect(sourceNavigation.getByRole('tab')).toHaveCount(0)
+            if (width < 544) {
+              await expect(sourceSelect).toBeVisible()
+              await expect(sourceTabs).toHaveCount(0)
+            } else {
+              await expect(sourceTabs).toHaveCount(5)
+              await expect(sourceSelect).toHaveCount(0)
+              const rows = await sourceTabs.evaluateAll(nodes => new Set(nodes.map(node => node.getBoundingClientRect().top)).size)
+              expect(rows).toBe(1)
+              const clipped = await sourceTabs.evaluateAll(nodes => nodes.some(node => {
+                const label = node.firstElementChild?.lastElementChild ?? null
+                return label !== null && label.scrollWidth > label.clientWidth + 1
+              }))
+              expect(clipped).toBe(false)
+            }
             // Progressive results end in a scroll sentinel, not a pager.
             await expect(browser.locator('[data-clue-result-sentinel]')).toBeAttached()
           } else {
@@ -359,8 +379,20 @@ test('clues workbench stays usable across column widths and host themes', async 
     await query.fill('architecture')
     await query.press('Enter')
     await expect(browser.locator('[data-clue-browser-state="page"] li').first()).toContainText('architecture')
-    await selectClueSource(browser, 'builtin.github.issues')
+    const localSource = sourceNavigation.getByRole('tab', { name: 'Local files', exact: true })
+    const githubSource = sourceNavigation.getByRole('tab', { name: 'GitHub Issues', exact: true })
+    const pullSource = sourceNavigation.getByRole('tab', { name: 'GitHub Pull requests', exact: true })
+    await localSource.press('End')
+    await expect(pullSource).toBeFocused()
+    await pullSource.press('ArrowLeft')
+    await expect(githubSource).toBeFocused()
+    await expect(githubSource).toHaveAttribute('aria-selected', 'true')
     await expect(sourceNavigation).toHaveAttribute('data-clue-active-source', 'builtin.github.issues')
+    await tab.evaluate(node => { (node as HTMLElement).style.width = '390px' })
+    await expect(sourceSelect).toBeVisible()
+    await expect(sourceSelect).toContainText('GitHub Issues')
+    await tab.evaluate(node => { (node as HTMLElement).style.width = '640px' })
+    await expect(githubSource).toHaveAttribute('aria-selected', 'true')
     // The scope editor is still a locally owned floating task window.
     const scopeWindow = (): Locator => page.locator('[data-floating-window]')
       .filter({ has: page.locator('[data-clue-scope-window]') })
@@ -724,7 +756,12 @@ test('clues workbench stays usable across column widths and host themes', async 
     await expect(addPage.getByRole('button', { name: 'Add members', exact: true })).toHaveCount(0)
     await expect(addPage.locator('[data-clue-pins-region]')).toHaveCount(0)
     await expect(addPage.getByRole('button', { name: 'Add selected', exact: true })).toHaveCount(0)
+    const addNav = addPage.locator('[data-clue-source-navigation]')
+    const beforeWide = await packWindow.evaluate(node => (node as HTMLElement).style.width)
+    await packWindow.evaluate(node => { (node as HTMLElement).style.width = '680px' })
+    await expect(addNav.getByRole('tablist')).toBeVisible()
     await selectClueSource(addPage, 'builtin.files')
+    await packWindow.evaluate((node, width) => { (node as HTMLElement).style.width = width }, beforeWide)
     const addSearch = addPage.getByRole('textbox').first()
     await expect(addSearch.locator('..')).toHaveCSS('height', '32px')
     await expect(addSearch).toHaveCSS('font-size', '13px')
@@ -742,6 +779,8 @@ test('clues workbench stays usable across column widths and host themes', async 
     await expect(addAction).toBeVisible()
     const originalPackSize = await packWindow.evaluate(node => ({ width: (node as HTMLElement).style.width, height: (node as HTMLElement).style.height }))
     await packWindow.evaluate(node => { (node as HTMLElement).style.width = '320px'; (node as HTMLElement).style.height = '240px' })
+    await expect(addNav.getByRole('button', { name: 'Source', exact: true })).toContainText('Local files')
+    await expect(addNav.getByRole('tablist')).toHaveCount(0)
     const compactPackBounds = (await packWindow.boundingBox())!
     const compactAddBounds = (await addAction.boundingBox())!
     expect(compactAddBounds.y).toBeGreaterThanOrEqual(compactPackBounds.y)

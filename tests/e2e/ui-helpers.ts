@@ -60,9 +60,13 @@ export async function selectClueSource(scope: Locator, sourceId: string): Promis
   const navigation = scope.locator('[data-clue-source-navigation]')
   const name = sourceNames[sourceId]!
   const select = navigation.getByRole('button', { name: 'Source', exact: true })
-  await expect(select).toBeVisible()
-  await select.click()
-  await scope.page().getByRole('menuitem', { name, exact: true }).click()
+  const tab = navigation.getByRole('tab', { name, exact: true })
+  await expect(tab.or(select)).toBeVisible()
+  if (await tab.isVisible()) await tab.click()
+  else {
+    await select.click()
+    await scope.page().getByRole('menuitem', { name, exact: true }).click()
+  }
   await expect(navigation).toHaveAttribute('data-clue-active-source', sourceId)
 }
 

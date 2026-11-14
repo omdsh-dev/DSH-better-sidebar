@@ -4,7 +4,7 @@
  * The native sidebar is a COLUMN whose width is independent of the browser
  * viewport, so the tab owns its own container. Sections are VSCode-style
  * disclosures (28px bars, mounted bodies), sources are one segmented track that
- * becomes a select below 520px, and rows are a compact 30px with hover-only
+ * becomes a select below 520px of available width, and rows are 30px with hover-only
  * actions. The native search field is the shared 32px recipe.
  */
 import { readFileSync } from 'node:fs'
