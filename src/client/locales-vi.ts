@@ -596,6 +596,8 @@ export const vi: Record<string, string> = {
   tasksNodeOpenMain: "Open in the main window",
   tasksNodeMode: 'Chế độ',
   tasksNodeModel: 'Mô hình',
+  tasksNodeProvider: 'Nhà cung cấp',
+  tasksNodeNotRecorded: 'Chưa ghi nhận',
   tasksNodeTeamRole: 'Vai trò trong nhóm',
   tasksStateRunning: 'Đang chạy',
   tasksStateIdle: 'Nhàn rỗi',

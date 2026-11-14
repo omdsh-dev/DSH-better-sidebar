@@ -582,6 +582,8 @@ export const de: Record<string, string> = {
   tasksNodeOpenMain: "Im Hauptfenster öffnen",
   tasksNodeMode: 'Modus',
   tasksNodeModel: 'Modell',
+  tasksNodeProvider: 'Anbieter',
+  tasksNodeNotRecorded: 'Nicht erfasst',
   tasksNodeTeamRole: 'Teamrolle',
   tasksStateRunning: 'Läuft',
   tasksStateIdle: 'Bereit',

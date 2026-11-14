@@ -109,6 +109,7 @@ function sameLiveView(left: SidebarChildLiveView | undefined, right: SidebarChil
   if (left === right) return true
   if (left === undefined || right === undefined) return false
   return left.running === right.running && left.text === right.text
+    && left.provider === right.provider && left.model === right.model
     && left.lastEventTime === right.lastEventTime && sameSummary(left.summary, right.summary)
 }
 

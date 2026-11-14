@@ -72,8 +72,8 @@ const NODE_TASK_H = 15 + 3
  * An AGENT card: badges + TWO title lines + the state bar. Long agent names are
  * clamped to two lines instead of ellipsizing to a couple of characters (see
  * `.cardName` in tasks-graph.module.css), so the reserve covers that second
- * line. The mode word moved into the badge row, so an agent card carries no
- * mono meta line — reserving one left a visible 16px hole above the bar.
+ * line. This is the base height; child cards add separate model and provider
+ * rows in nodeHeight, while the topology root keeps its existing height.
  */
 export const GRAPH_AGENT_NODE_H = NODE_CHROME_H + NODE_PAD_TOP + NODE_BADGE_H
   + NODE_TITLE_LINES * NODE_TITLE_LINE_H + NODE_PAD_BOTTOM + NODE_BAR_H
@@ -150,7 +150,7 @@ export interface LayoutOptions {
  */
 function nodeHeight(node: TasksNode): number {
   if (node.kind !== 'agent') return GRAPH_NODE_H
-  const base = GRAPH_AGENT_NODE_H
+  const base = GRAPH_AGENT_NODE_H + (node.parentId === undefined ? 0 : 2 * NODE_META_H)
   const lines = textTailLines(node.live?.text)
   const text = lines * NODE_TEXT_LINE_H + (lines === 0 ? 0 : NODE_TEXT_LEAD_H)
   return base + text + ((node.tasks?.length ?? 0) > 0 ? GRAPH_TASK_H : 0)

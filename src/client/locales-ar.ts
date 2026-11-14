@@ -597,6 +597,8 @@ export const ar: Record<string, string> = {
   tasksNodeOpenMain: "Open in the main window",
   tasksNodeMode: 'الوضع',
   tasksNodeModel: 'الطراز',
+  tasksNodeProvider: 'المزوّد',
+  tasksNodeNotRecorded: 'غير مسجّل',
   tasksNodeTeamRole: 'دور الفريق',
   tasksStateRunning: 'قيد التشغيل',
   tasksStateIdle: 'خامل',

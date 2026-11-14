@@ -596,6 +596,8 @@ export const th: Record<string, string> = {
   tasksNodeOpenMain: "Open in the main window",
   tasksNodeMode: 'โหมด',
   tasksNodeModel: 'โมเดล',
+  tasksNodeProvider: 'ผู้ให้บริการ',
+  tasksNodeNotRecorded: 'ไม่ได้บันทึก',
   tasksNodeTeamRole: 'บทบาทในทีม',
   tasksStateRunning: 'กำลังทำงาน',
   tasksStateIdle: 'พร้อม',

@@ -594,6 +594,8 @@ export const nl: Record<string, string> = {
   tasksNodeOpenMain: "Open in the main window",
   tasksNodeMode: 'Modus',
   tasksNodeModel: 'Model',
+  tasksNodeProvider: 'Provider',
+  tasksNodeNotRecorded: 'Niet vastgelegd',
   tasksNodeTeamRole: 'Teamrol',
   tasksStateRunning: 'Bezig',
   tasksStateIdle: 'Inactief',

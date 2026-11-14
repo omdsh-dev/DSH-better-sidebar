@@ -594,6 +594,8 @@ export const ru: Record<string, string> = {
   tasksNodeOpenMain: "Open in the main window",
   tasksNodeMode: 'Режим',
   tasksNodeModel: 'Модель',
+  tasksNodeProvider: 'Провайдер',
+  tasksNodeNotRecorded: 'Не записано',
   tasksNodeTeamRole: 'Роль в команде',
   tasksStateRunning: 'Выполняется',
   tasksStateIdle: 'Ожидает',

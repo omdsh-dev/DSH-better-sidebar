@@ -579,6 +579,8 @@ export const sv: Record<string, string> = {
   tasksNodeOpenMain: "Open in the main window",
   tasksNodeMode: 'Läge',
   tasksNodeModel: 'Modell',
+  tasksNodeProvider: 'Leverantör',
+  tasksNodeNotRecorded: 'Inte registrerat',
   tasksNodeTeamRole: 'Teamroll',
   tasksStateRunning: 'Körs',
   tasksStateIdle: 'Vilar',

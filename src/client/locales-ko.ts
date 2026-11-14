@@ -588,6 +588,8 @@ export const ko: Record<string, string> = {
   tasksNodeOpenMain: "메인 창에서 열기",
   tasksNodeMode: '모드',
   tasksNodeModel: '모델',
+  tasksNodeProvider: '공급자',
+  tasksNodeNotRecorded: '기록 없음',
   tasksNodeTeamRole: '팀 역할',
   tasksStateRunning: '실행 중',
   tasksStateIdle: '대기 중',

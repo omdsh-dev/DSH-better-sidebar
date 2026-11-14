@@ -594,6 +594,8 @@ export const id: Record<string, string> = {
   tasksNodeOpenMain: "Open in the main window",
   tasksNodeMode: 'Mode',
   tasksNodeModel: 'Model',
+  tasksNodeProvider: 'Penyedia',
+  tasksNodeNotRecorded: 'Tidak tercatat',
   tasksNodeTeamRole: 'Peran tim',
   tasksStateRunning: 'Berjalan',
   tasksStateIdle: 'Siaga',

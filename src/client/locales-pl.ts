@@ -598,6 +598,8 @@ export const pl: Record<string, string> = {
   tasksNodeOpenMain: "Open in the main window",
   tasksNodeMode: 'Tryb',
   tasksNodeModel: 'Model',
+  tasksNodeProvider: 'Dostawca',
+  tasksNodeNotRecorded: 'Nie zapisano',
   tasksNodeTeamRole: 'Rola w zespole',
   tasksStateRunning: 'Działa',
   tasksStateIdle: 'Gotowe',
