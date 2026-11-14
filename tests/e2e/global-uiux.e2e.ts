@@ -12,7 +12,7 @@ import { join } from 'node:path'
 import { test, expect, type Locator, type Page, type TestInfo } from '@playwright/test'
 import { createHostApi, dismissOnboarding, gotoPage, hostRpc, sendFirstMessage } from './host'
 import type { WorkflowRunView } from '../../src/workflow-runs'
-import { clueView, expectNoOverflow, floatClueWindow, selectMenu, setTheme, stableWidth } from './ui-helpers'
+import { clueView, expectNoOverflow, floatClueWindow, selectMenu, setTheme } from './ui-helpers'
 
 async function openGuide(page: Page, kind: string): Promise<void> {
   const panel = page.locator('[data-sidebar-right-panel]:visible')
@@ -257,31 +257,18 @@ for (const touch of [false, true]) {
       await clueView(clues, 'browse')
       const sourceNavigation = clues.locator('[data-clue-source-navigation]')
       await expect(sourceNavigation).toBeVisible({ timeout: 30_000 })
-      const sourceWidth = await stableWidth(sourceNavigation)
-      if (sourceWidth >= 520) {
-        const sourceTabs = sourceNavigation.getByRole('tab')
-        await expect(sourceTabs).toHaveCount(5)
-        const source = sourceTabs.first()
-        metrics.cluesTab = await controlStyle(source)
-        await source.focus()
-        await source.press('ArrowRight')
-        await expect(sourceTabs.nth(1)).toBeFocused()
-        await page.keyboard.press('Home')
-        await expect(source).toBeFocused()
-      } else {
-        // The approved narrow form is one host select; it must be reachable
-        // and dismissible from the keyboard like every other control.
-        const sourceSelect = sourceNavigation.getByRole('button', { name: 'Source', exact: true })
-        await expect(sourceSelect).toBeVisible()
-        metrics.cluesTab = await controlStyle(sourceSelect)
-        await sourceSelect.focus()
-        await expect(sourceSelect).toBeFocused()
-        await sourceSelect.press('Enter')
-        await expect(page.getByRole('menu')).toBeVisible()
-        await page.keyboard.press('Escape')
-        await expect(page.getByRole('menu')).toHaveCount(0)
-        await expect(sourceSelect).toBeFocused()
-      }
+      // The approved form is one compact select at every width; it must be
+      // reachable and dismissible from the keyboard like every other control.
+      const sourceSelect = sourceNavigation.getByRole('button', { name: 'Source', exact: true })
+      await expect(sourceSelect).toBeVisible()
+      metrics.cluesTab = await controlStyle(sourceSelect)
+      await sourceSelect.focus()
+      await expect(sourceSelect).toBeFocused()
+      await sourceSelect.press('Enter')
+      await expect(page.getByRole('menu')).toBeVisible()
+      await page.keyboard.press('Escape')
+      await expect(page.getByRole('menu')).toHaveCount(0)
+      await expect(sourceSelect).toBeFocused()
       await expect(sourceNavigation).toHaveAttribute('data-clue-active-source', 'builtin.files')
       const resourceRow = clues.locator('[data-clue-browser-state="page"] li').filter({ has: page.getByRole('button', { name: 'acceptance.md', exact: true }) }).first()
       await expect(resourceRow).toBeVisible()

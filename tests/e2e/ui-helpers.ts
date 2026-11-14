@@ -18,17 +18,23 @@ export function clueWindowFrame(page: Page, marker: Locator): Locator {
 }
 
 /**
- * Clue windows open DOCKED when a session is active. Present the floating
- * surface the older cases measure and pin the transfer contract: the same
- * frame becomes a floating dialog with the reverse dock control.
+ * HEAVY clue windows (detail, pack, share, config, settings) follow the
+ * window-surface preference and open DOCKED by default; light flows
+ * (collect, scope) are always floating. Present the floating surface the
+ * cases measure and pin the transfer contract where it exists: a docked
+ * frame becomes a floating dialog with the reverse dock control, while an
+ * already-floating frame just needs its dock action visible.
  */
 export async function floatClueWindow(page: Page, marker: Locator): Promise<Locator> {
   const frame = clueWindowFrame(page, marker)
   await expect(frame).toHaveCount(1)
-  await expect(frame).toHaveAttribute('data-window-docked', 'true')
-  await frame.locator('[data-window-float]').click()
-  await expect(frame).toHaveAttribute('data-floating-window', '')
-  await expect(frame.locator('[data-window-dock]')).toBeVisible()
+  if (await frame.getAttribute('data-window-docked') === 'true') {
+    await frame.locator('[data-window-float]').click()
+    await expect(frame).toHaveAttribute('data-floating-window', '')
+    await expect(frame.locator('[data-window-dock]')).toBeVisible()
+  } else {
+    await expect(frame).toHaveAttribute('data-floating-window', '')
+  }
   // Floating keeps the native sidebar tab selected (it now only shows the
   // "open in a floating window" hint), which would hide the workbench the
   // caller needs next. Return to the clue guide tab, the surface the window
@@ -53,17 +59,10 @@ export async function selectMenu(scope: Locator, label: string, option: string):
 export async function selectClueSource(scope: Locator, sourceId: string): Promise<void> {
   const navigation = scope.locator('[data-clue-source-navigation]')
   const name = sourceNames[sourceId]!
-  const tab = navigation.getByRole('tab', { name, exact: true })
   const select = navigation.getByRole('button', { name: 'Source', exact: true })
-  // Decide by the FORM, not by the tab's visibility: a tab can be scrolled out
-  // of a wide strip and still be the right control (clicking scrolls it in).
-  if (await select.isVisible().catch(() => false)) {
-    await select.click()
-    await scope.page().getByRole('menuitem', { name, exact: true }).click()
-  } else {
-    await tab.click()
-    await expect(tab).toHaveAttribute('aria-selected', 'true')
-  }
+  await expect(select).toBeVisible()
+  await select.click()
+  await scope.page().getByRole('menuitem', { name, exact: true }).click()
   await expect(navigation).toHaveAttribute('data-clue-active-source', sourceId)
 }
 

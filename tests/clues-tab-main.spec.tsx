@@ -448,16 +448,6 @@ function browserRegion(container: ParentNode): HTMLElement {
 function browserQueryInput(container: ParentNode): HTMLInputElement {
   return container.querySelector<HTMLInputElement>('input[aria-label="Keyword, resource link or file path"]')!
 }
-function workbenchSection(container: ParentNode, title: string): HTMLElement {
-  const section = [...container.querySelectorAll<HTMLElement>('[data-workbench-section]')]
-    .find(candidate => candidate.querySelector('h3')?.textContent?.includes(title) === true)
-  if (section === undefined) throw new Error('workbench section "' + title + '" not found')
-  return section
-}
-function toggleSection(section: HTMLElement): void {
-  const toggle = section.querySelector<HTMLButtonElement>('h3 button')!
-  act(() => { toggle.focus(); toggle.click() })
-}
 function sectionOf(container: ParentNode, title: string): HTMLElement | undefined {
   return [...container.querySelectorAll<HTMLElement>('[data-workbench-section]')]
     .find(node => (node.querySelector('button')?.textContent ?? '').trim() === title)
@@ -483,10 +473,14 @@ function chooseSource(container: ParentNode, sourceId: string): void {
     [FILES.sourceId]: 'Local files', [GITHUB.sourceId]: 'GitHub Issues', [FEISHU_DOCS.sourceId]: 'Feishu docs',
   }
   const label = labels[sourceId] ?? sourceId
-  const tab = [...container.querySelectorAll<HTMLButtonElement>('[data-clue-source-navigation] [role="tab"]')]
+  const trigger = container.querySelector<HTMLButtonElement>('[data-clue-source-navigation] button[aria-haspopup="menu"]')
+  if (trigger === null) throw new Error('missing source selector')
+  if (buttonLabel(trigger) === label) return
+  act(() => { trigger.click() })
+  const option = [...document.querySelectorAll<HTMLButtonElement>('[role="menu"] [role="menuitemradio"], [role="menu"] [role="menuitem"]')]
     .find(candidate => buttonLabel(candidate) === label)
-  if (tab === undefined) throw new Error('missing source tab: ' + label)
-  if (tab.getAttribute('aria-selected') !== 'true') act(() => { tab.click() })
+  if (option === undefined) throw new Error('missing source option: ' + label)
+  act(() => { option.click() })
 }
 function enterSelection(container: ParentNode): void {
   const toggle = container.querySelector<HTMLButtonElement>('[data-clue-selection-mode]')
@@ -637,10 +631,10 @@ describe('clue tab main page', () => {
     Object.defineProperty(navigator, 'language', { value: 'zh-CN', configurable: true })
     const { view } = await mountTab()
     const nav = view.container.querySelector<HTMLElement>('[data-clue-source-navigation]')!
-    const tabs = [...nav.querySelectorAll<HTMLButtonElement>('[role="tab"]')]
-    expect(tabs[0]?.textContent).toContain('本地文件')
+    const trigger = nav.querySelector<HTMLButtonElement>('button[aria-haspopup="menu"]')!
+    expect(trigger.textContent).toContain('本地文件')
     expect(nav.textContent).not.toContain('Local files')
-    expect(tabs.every(tab => tab.querySelector('[aria-hidden="true"]') !== null)).toBe(true)
+    expect(trigger.querySelector('svg')).not.toBeNull()
   })
   it('defaults to resources and reads only the visible mounted view', async () => {
     const { fx, view } = await mountTab()
@@ -985,11 +979,8 @@ describe('clue tab source browser', () => {
     await rowAction(view.container, 'A note', t('clueBrowserPin'))
     await flush()
     expect(adds[0]).toMatchObject({ clueId: 'c9', expectedRevision: 6 })
-    const section = workbenchSection(browserRegion(view.container), 'Pinned')
-    expect(section.textContent).toContain('A note')
-    toggleSection(section)
-    expect(section.getAttribute('data-open')).toBe('false')
-    expect(section.textContent).toContain('A note')
+    const pinsRegion = browserRegion(view.container).querySelector<HTMLElement>('[data-clue-pins-region]')!
+    expect(pinsRegion.textContent).toContain('A note')
   })
   it('shows pack/search/page failures as retryable errors instead of empty results', async () => {
     const packsFail = await mountTab({ packsError: true })
@@ -1498,9 +1489,10 @@ describe('clue workbench UX regressions', () => {
     await showView(view.container, 'packs')
     click(view.container, 'New')
     await flush()
-    const name = document.querySelector<HTMLInputElement>('input[aria-label="Pack name"]')!
+    const inlineCreate = view.container.querySelector<HTMLElement>('[data-clue-pack-inline-create]')!
+    const name = inlineCreate.querySelector<HTMLInputElement>('input[aria-label="Pack name"]')!
     typeInto(name, 'Background collection')
-    click(name.closest<HTMLElement>('[data-floating-window]')!, 'Create')
+    click(inlineCreate, 'Create')
     await flush()
     setVisible(view, fx, false)
     external.focus()
@@ -1631,9 +1623,7 @@ describe('compact clue views and selection', () => {
     typeInto(browserQueryInput(view.container), 'file draft')
     click(browser.querySelector('[data-clue-resource-filters]')!, t('clueResourceFilter'))
     clickMenuItem(document.querySelector<HTMLElement>('[role="menu"]')!, t('clueResourceStateActive'))
-    act(() => {
-      view.container.querySelectorAll<HTMLButtonElement>('[data-clue-resource-filters] button[aria-haspopup="menu"]')[1]!.click()
-    })
+    click(browser.querySelector('[data-clue-resource-filters]')!, t('clueResourceFilter'))
     clickMenuItem(document.querySelector<HTMLElement>('[role="menu"]')!, 'mine')
     chooseSource(browser, GITHUB.sourceId)
     await flush()
@@ -1885,8 +1875,9 @@ describe('explorer accordion (S9)', () => {
     const { fx, view } = await mountTab({
       enabled: [FILES.sourceId, GITHUB.sourceId], clueSettings: { activeSource: GITHUB.sourceId },
     })
-    const tabs = [...view.container.querySelectorAll<HTMLButtonElement>('[data-clue-source-navigation] [role="tab"]')]
-    expect(tabs.find(tab => tab.textContent?.includes('GitHub Issues'))?.getAttribute('aria-selected')).toBe('true')
+    const nav = view.container.querySelector<HTMLElement>('[data-clue-source-navigation]')!
+    expect(nav.getAttribute('data-clue-active-source')).toBe(GITHUB.sourceId)
+    expect(nav.textContent).toContain('GitHub Issues')
     chooseSource(view.container, FILES.sourceId)
     await flush()
     expect((fx.store.getPrefs().pluginSettings.clues as { activeSource?: string }).activeSource).toBe(FILES.sourceId)

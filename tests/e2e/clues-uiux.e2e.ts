@@ -16,7 +16,7 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { test, expect, type Locator, type Page } from '@playwright/test'
-import { clueView, expectNoOverflow, floatClueWindow, selectClueSource, selectionMode, setTheme, stableWidth } from './ui-helpers'
+import { clueView, expectNoOverflow, floatClueWindow, selectClueSource, selectionMode, setTheme } from './ui-helpers'
 import { createHostApi, dismissOnboarding, gotoPage, hostRpc, sendFirstMessage, sidebarApi } from './host'
 
 /** One measured workbench layout, written to the test artifact for tuning. */
@@ -126,7 +126,6 @@ test('clues workbench stays usable across column widths and host themes', async 
     await expect(help).toHaveCount(0)
     await expect(helpTrigger).toBeFocused()
 
-    const tabHeader = tab.locator('[data-sidebar-toolbar]')
     const packs = tab.locator('[data-clue-pack-region]')
     const browser = tab.locator('[data-clue-browse-region]')
     const query = browser.getByRole('textbox', { name: 'Keyword, resource link or file path', exact: true, includeHidden: true })
@@ -171,18 +170,12 @@ test('clues workbench stays usable across column widths and host themes', async 
     await clueView(tab, 'browse')
     const composer = page.getByRole('textbox', { name: /^(Describe what you want to build|Message or run a task|描述你想要构建)/ })
     const sourceNavigation = browser.locator('[data-clue-source-navigation]')
-    const sourceWidth = await stableWidth(sourceNavigation)
-    if (sourceWidth >= 520) {
-      const sourceTabs = sourceNavigation.getByRole('tab')
-      await expect(sourceTabs).toHaveCount(5)
-      await expect(sourceNavigation.getByRole('tab', { name: /Local files/ })).toBeVisible()
-      await expect(sourceNavigation.getByRole('tab', { name: /Local files/ }).locator('[aria-hidden=true] svg')).toHaveCount(1)
-    } else {
-      // The approved narrow form: one select, never a clipped five-button row.
-      const sourceSelect = sourceNavigation.getByRole('button', { name: 'Source', exact: true })
-      await expect(sourceSelect).toBeVisible()
-      await expect(sourceSelect).toContainText('Local files')
-    }
+    // The approved form is always one compact select, never a clipped tab row.
+    const sourceSelect = sourceNavigation.getByRole('button', { name: 'Source', exact: true })
+    await expect(sourceSelect).toBeVisible()
+    await expect(sourceSelect).toContainText('Local files')
+    await expect(sourceSelect.locator('svg').first()).toBeVisible()
+    await expect(sourceNavigation).toHaveAttribute('data-source-count', '5')
     await expect(browser.getByRole('combobox', { name: 'Source', exact: true })).toHaveCount(0)
     await expect(browser.getByRole('search')).toHaveCSS('height', '32px')
     await expect(query).toHaveCSS('font-size', '13px')
@@ -191,7 +184,7 @@ test('clues workbench stays usable across column widths and host themes', async 
       const tab = node.closest('[data-clue-tab]')!
       return node.getBoundingClientRect().left - tab.getBoundingClientRect().left
     })
-    expect(searchGutter).toBe(16)
+    expect(searchGutter).toBe(12)
 
     // Background refresh contract: the current page and the search box stay
     // exactly where they are; the fixed refresh control is the only status,
@@ -291,12 +284,8 @@ test('clues workbench stays usable across column widths and host themes', async 
             const insert = first.getByRole('button', { name: /^Insert / }).first()
             await expect(insert.locator('svg')).toHaveCount(1)
             expect((await insert.innerText()).trim()).toBe('')
-            if (width >= 520) {
-              await expect(sourceNavigation.getByRole('tab')).toHaveCount(5)
-            } else {
-              await expect(sourceNavigation.getByRole('button', { name: 'Source', exact: true })).toBeVisible()
-              await expect(sourceNavigation.getByRole('tab')).toHaveCount(0)
-            }
+            await expect(sourceNavigation.getByRole('button', { name: 'Source', exact: true })).toBeVisible()
+            await expect(sourceNavigation.getByRole('tab')).toHaveCount(0)
             // Progressive results end in a scroll sentinel, not a pager.
             await expect(browser.locator('[data-clue-result-sentinel]')).toBeAttached()
           } else {
@@ -314,12 +303,13 @@ test('clues workbench stays usable across column widths and host themes', async 
             })
             expect(packNameStyle).toEqual({ clamp: 'none', overflow: 'ellipsis', whiteSpace: 'nowrap' })
           }
-          const before = (await tabHeader.boundingBox())!.y
+          const sectionBar = tab.getByRole('button', { name: view === 'browse' ? 'Resources' : 'Collections', exact: true })
+          const before = (await sectionBar.boundingBox())!.y
           const overflows = await scroll.evaluate(node => node.scrollHeight > node.clientHeight)
           await scroll.evaluate(node => { node.scrollTop = node.scrollHeight })
           if (overflows) expect(await scroll.evaluate(node => node.scrollTop)).toBeGreaterThan(0)
           else expect(await scroll.evaluate(node => node.scrollTop)).toBe(0)
-          expect((await tabHeader.boundingBox())!.y).toBe(before)
+          expect((await sectionBar.boundingBox())!.y).toBe(before)
           layoutMetrics.push({ theme, width, view, height: tabBox.height, firstRowHeight: firstBox.height, scrollHeight: (await scroll.boundingBox())!.height })
           await tab.screenshot({ path: testInfo.outputPath('clues-' + view + '-' + theme + '-' + width + '.png') })
         }
@@ -436,9 +426,14 @@ test('clues workbench stays usable across column widths and host themes', async 
     await packScroll.evaluate(node => { node.scrollTop = node.scrollHeight })
     const lastPack = packs.getByRole('button', { name: 'Manage pack: Product decisions', exact: true })
     await expect(lastPack).toBeVisible()
-    // The short-height pass above changes the box between frames; align the
-    // last row before measuring its bounds rather than trusting one scrollTop.
-    await lastPack.scrollIntoViewIfNeeded()
+    // The progressive reveal keeps appending rows while the scroll lands;
+    // retry the scroll+measure until the last row settles inside the tab box.
+    await expect.poll(async () => {
+      await lastPack.scrollIntoViewIfNeeded()
+      const row = await lastPack.boundingBox()
+      const box = await tab.boundingBox()
+      return row === null || box === null ? Number.POSITIVE_INFINITY : row.y + row.height - (box.y + box.height)
+    }).toBeLessThanOrEqual(1)
     const lastPackBounds = (await lastPack.boundingBox())!
     const packScrollBounds = (await packScroll.boundingBox())!
     const tabBounds = (await tab.boundingBox())!
@@ -475,8 +470,10 @@ test('clues workbench stays usable across column widths and host themes', async 
     await expect(results).toHaveAttribute('data-clue-has-next', 'true')
     await expect(results).toHaveAttribute('data-clue-more-loading', 'false')
     await expect(results).toHaveAttribute('data-clue-request-busy', 'false')
-    await results.evaluate(node => { node.scrollTop = node.scrollHeight })
+    // Scroll and measure atomically: between two evaluates the fast loopback
+    // append may already land five rows above the sentinel.
     const appendProbe = await results.evaluate(node => {
+      node.scrollTop = node.scrollHeight
       const sentinel = node.querySelector('[data-clue-result-sentinel]')
       const box = node.getBoundingClientRect()
       return {
@@ -673,10 +670,10 @@ test('clues workbench stays usable across column widths and host themes', async 
     await expect(insertPackAction).toBeVisible()
     const packFrameBounds = (await packWindow.boundingBox())!
     const insertPackBounds = (await insertPackAction.boundingBox())!
-    expect(packFrameBounds.x + packFrameBounds.width - insertPackBounds.x - insertPackBounds.width).toBeCloseTo(17, 0)
+    expect(packFrameBounds.x + packFrameBounds.width - insertPackBounds.x - insertPackBounds.width).toBeCloseTo(13, 0)
     expect(packFrameBounds.y + packFrameBounds.height - insertPackBounds.y - insertPackBounds.height).toBeCloseTo(13, 0)
     expect(await packWindow.locator('[data-window-handle]').getByRole('button', { name: 'Insert pack reference', exact: true }).count()).toBe(0)
-    expect(await packWindow.locator('[data-clue-pack-window]').evaluate(node => getComputedStyle(node).paddingLeft)).toBe('16px')
+    expect(await packWindow.locator('[data-clue-pack-window]').evaluate(node => getComputedStyle(node).paddingLeft)).toBe('12px')
 
 
     // Member row menu (mouse + keyboard) uses the same host Menu.
@@ -684,8 +681,8 @@ test('clues workbench stays usable across column widths and host themes', async 
     await memberRow.click({ button: 'right' })
     await expect(shelfMenu).toBeVisible()
     await expect(shelfMenu.getByRole('menuitem', { name: 'Preview', exact: true })).toBeVisible()
-    await expect(memberRow.getByRole('button').first()).toHaveCSS('font-size', '13px')
-    await expect(memberRow).toHaveCSS('border-radius', '6px')
+    await expect(memberRow.getByRole('button').first().locator('> span').first()).toHaveCSS('font-size', '13px')
+    await expect(memberRow.locator('> div').first()).toHaveCSS('border-radius', '6px')
     expect(await shelfMenu.getByRole('menuitem', { name: /^Remove from pack: / }).evaluate(node => getComputedStyle(node).color))
       .toBe(await shelfMenu.getByRole('menuitem', { name: 'Preview', exact: true }).evaluate(node => getComputedStyle(node).color))
     await page.keyboard.press('Escape')
@@ -859,8 +856,8 @@ test('clues workbench stays usable across column widths and host themes', async 
     const detailFooterBox = (await detailWindow.locator('[data-clue-detail-footer]').boundingBox())!
     const detailFrameBox = (await detailWindow.boundingBox())!
     expect(detailFooterBox.width).toBeGreaterThanOrEqual(detailFrameBox.width - 40)
-    expect(detailFooterBox.x).toBeGreaterThanOrEqual(detailFrameBox.x + 14)
-    expect(detailFooterBox.x + detailFooterBox.width).toBeLessThanOrEqual(detailFrameBox.x + detailFrameBox.width - 14)
+    expect(detailFooterBox.x).toBeGreaterThanOrEqual(detailFrameBox.x + 13)
+    expect(detailFooterBox.x + detailFooterBox.width).toBeLessThanOrEqual(detailFrameBox.x + detailFrameBox.width - 13)
 
     const saveButton = detailWindow.locator('[data-clue-detail-footer]').getByRole('button', { name: 'Save', exact: true })
     await expect(saveButton).toHaveCount(0)
@@ -1020,10 +1017,10 @@ test('clues workbench stays usable across column widths and host themes', async 
         inputLineHeight: getComputedStyle(input).lineHeight, wrapperBorder: getComputedStyle(wrapper).borderWidth }
     })
     writeFileSync(testInfo.outputPath('clues-destination-search-metrics.json'), JSON.stringify(destinationSearchLayout, null, 2))
-    // TextInput owns the control frame; its unframed label only lays out the icon.
-    await expect(destinationSearch).toHaveCSS('height', '32px')
-    await expect(destinationSearch).toHaveCSS('border-width', '1px')
-    await expect(destinationSearch.locator('..')).toHaveCSS('border-width', '0px')
+    // SearchField's wrapper owns the control frame; the searchbox inside is unframed.
+    await expect(destinationSearch.locator('..')).toHaveCSS('height', '32px')
+    await expect(destinationSearch.locator('..')).toHaveCSS('border-width', '1px')
+    await expect(destinationSearch).toHaveCSS('border-width', '0px')
     await expect(destinationSearch).toHaveCSS('font-size', '13px')
     await expect(destinationSearch).toHaveCSS('line-height', '20px')
     // The list is read on open, not on focus: the pack target exists without
@@ -1132,19 +1129,21 @@ test('clues workbench stays usable across column widths and host themes', async 
     expect(releaseAfter.members.length).toBe(releaseBefore.members.length + 2)
     expect(releaseAfter.members).toEqual(expect.arrayContaining(selectedIds))
 
-    // A separate create-pack window writes nothing before its explicit submit.
+    // The inline create row writes nothing before its explicit submit.
     const listBeforeCreate = await api.post(sidebarApi('clues.packs.list'), { data: { workspaceId } })
     expect(JSON.stringify(await listBeforeCreate.json())).not.toContain('Window-created pack')
     await clueView(tab, 'packs')
     await packs.getByRole('button', { name: 'New', exact: true }).click()
-    const createWindow = await floatClueWindow(page, page.getByRole('textbox', { name: 'Pack name', exact: true }))
-    await createWindow.getByRole('textbox', { name: 'Pack name', exact: true }).fill('Window-created pack')
+    const createForm = packs.locator('[data-clue-pack-inline-create]')
+    const createInput = createForm.getByRole('textbox', { name: 'Pack name', exact: true })
+    await expect(createInput).toBeVisible()
+    await createInput.fill('Window-created pack')
     await page.mouse.move(0, 0)
-    await createWindow.screenshot({ path: testInfo.outputPath('clues-pack-create-window.png') })
+    await tab.screenshot({ path: testInfo.outputPath('clues-pack-create-window.png') })
     const listDuringCreate = await api.post(sidebarApi('clues.packs.list'), { data: { workspaceId } })
     expect(JSON.stringify(await listDuringCreate.json())).not.toContain('Window-created pack')
-    await createWindow.getByRole('button', { name: 'Create', exact: true }).click()
-    await expect(createWindow).toHaveCount(0)
+    await createForm.getByRole('button', { name: 'Create', exact: true }).click()
+    await expect(createForm).toHaveCount(0)
     await expect(packs.getByRole('button', { name: 'Manage pack: Window-created pack', exact: true })).toBeVisible()
     const listAfterCreate = await api.post(sidebarApi('clues.packs.list'), { data: { workspaceId } })
     const createdPacks = await listAfterCreate.json() as { value: { packs: { name: string; members: string[] }[] } }

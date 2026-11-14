@@ -163,11 +163,16 @@ function typeInto(input: HTMLInputElement, value: string): void {
   const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
   act(() => { setter.call(input, value); input.dispatchEvent(new Event('input', { bubbles: true })) })
 }
-/** Choose a source through the shared horizontal tab row. */
+/** Choose a source through the shared source select menu. */
 function chooseSource(container: ParentNode, label: string): void {
-  const tab = [...container.querySelectorAll<HTMLButtonElement>('[data-clue-source-navigation] [role="tab"]')].find(button => button.textContent?.trim() === label)
-  if (tab === undefined) throw new Error('source tab not found: ' + label)
-  if (tab.getAttribute('aria-selected') !== 'true') act(() => { tab.click() })
+  const trigger = container.querySelector<HTMLButtonElement>('[data-clue-source-navigation] button[aria-haspopup="menu"]')
+  if (trigger === null) throw new Error('source selector not found')
+  if (trigger.textContent?.trim() === label) return
+  act(() => { trigger.click() })
+  const option = [...document.querySelectorAll<HTMLButtonElement>('[role="menu"] [role="menuitemradio"], [role="menu"] [role="menuitem"]')]
+    .find(button => button.textContent?.trim() === label)
+  if (option === undefined) throw new Error('source option not found: ' + label)
+  act(() => { option.click() })
 }
 /** Choose a detail binding workspace through its real disclosure and portaled menu. */
 function chooseBindingWorkspace(container: ParentNode, title: string): void {
@@ -399,8 +404,8 @@ const headerOf = (windows: ReturnType<typeof recordingWindows>) => renderRoot(cr
     expect(view.container.textContent).toContain('1 selected')
     const navigation = view.container.querySelector<HTMLElement>('[data-clue-add-member] [data-clue-source-navigation]')!
     expect(navigation.dataset.clueActiveSource).toBe(FILES_SOURCE.sourceId)
-    expect(navigation.querySelector('[role="tablist"]')?.getAttribute('aria-orientation')).toBe('horizontal')
-    expect(navigation.querySelectorAll('[role="tab"]')).toHaveLength(2)
+    expect(navigation.getAttribute('data-source-count')).toBe('2')
+    expect(navigation.querySelector('button[aria-haspopup="menu"]')).not.toBeNull()
     chooseSource(view.container, 'GitHub Issues')
     await flush()
     expect(view.container.textContent).toContain('1 selected')
@@ -607,9 +612,14 @@ const headerOf = (windows: ReturnType<typeof recordingWindows>) => renderRoot(cr
     await flush()
     click(disabled.view.container, 'Add members')
     await flush()
-    const tabs = [...disabled.view.container.querySelectorAll('[data-clue-source-navigation] [role="tab"]')].map(tab => tab.textContent?.trim())
-    expect(tabs).toContain('Local files')
-    expect(tabs).not.toContain('GitHub Issues')
+    const disabledNav = disabled.view.container.querySelector<HTMLElement>('[data-clue-source-navigation]')!
+    const disabledTrigger = disabledNav.querySelector<HTMLButtonElement>('button[aria-haspopup="menu"]')!
+    act(() => { disabledTrigger.click() })
+    const sourceOptions = [...document.querySelectorAll<HTMLElement>('[role="menu"] [role="menuitemradio"], [role="menu"] [role="menuitem"]')]
+      .map(item => item.textContent?.trim())
+    act(() => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })) })
+    expect(sourceOptions).toContain('Local files')
+    expect(sourceOptions).not.toContain('GitHub Issues')
     disabled.view.unmount()
   })
   it('guards a dirty name draft on close with a visible unsaved marker', async () => {

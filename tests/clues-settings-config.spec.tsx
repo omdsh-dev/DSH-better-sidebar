@@ -417,9 +417,10 @@ describe('SourceConfigPage connection and authorization', () => {
       runtime.calls.some(call => call.startsWith('connect:'))]).toEqual([true, false])
     click(rendered.container, 'Authorize'); await flush(1)
     const text = rendered.container.textContent ?? ''
+    const qrBlock = rendered.container.querySelector('[data-clue-qr]')
     const qr = rendered.container.querySelector('[data-clue-qr] svg[role="img"]')
     expect([runtime.calls.includes('connect:acme.auth'), text.includes('https://example.test/device'), text.includes('ABCD-1234'),
-      text.includes('acme://device?code=ABCD-1234'), text.includes('Open the URL and enter the code.'),
+      qrBlock?.getAttribute('data-clue-qr') === 'acme://device?code=ABCD-1234' && text.includes('Copy authorization link'), text.includes('Open the URL and enter the code.'),
       qr !== null, qr?.getAttribute('aria-label') === 'Authorization QR code',
       (qr?.querySelector('path')?.getAttribute('d')?.length ?? 0) > 0,
       text.includes(new Date('2026-10-17T00:10:00.000Z').toLocaleString()), text.includes('{time}')])
