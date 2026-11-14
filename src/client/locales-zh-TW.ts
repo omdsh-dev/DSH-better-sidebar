@@ -718,6 +718,8 @@ export const zhTW: Record<string, string> = {
   pluginFileTraceName: 'dsh-file-trace 檔案追蹤',
   pluginFileTraceDesc: '記錄模型讀取/寫入/編輯的每一個檔案，按檔案分組查看內容與逐行 diff；含 Markdown 閱讀模式與敏感內容遮罩，未裝 better-sidebar 時為獨立浮動視窗',
   pluginMnemeName: 'dsh-mneme 記憶庫',
+  pluginSessionSourcesName: 'Session Sources 會話資料',
+  pluginSessionSourcesDesc: '從目前會話復原圖片、檔案與明確的 HTTP/HTTPS 連結；按會話隔離，支援預覽、下載、重新附加與來源檢視，未安裝 better-sidebar 時保留原生面板',
   pluginMnemeDesc: '跨工作階段記憶引擎：autoDream 背景鞏固、工作階段總結與使用者畫像，SQLite + 可人工編輯的 Markdown 鏡像，完全離線私有；安裝 better-sidebar 後註冊「記憶庫」Tab（記憶/實體/狀態/設定四個檢視），未安裝時保留側邊欄獨立面板',
   pluginEgoBrowserName: 'ego-browser Agent 瀏覽器',
   pluginBetterOverleafName: 'dsh-better-overleaf Overleaf 標籤',

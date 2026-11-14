@@ -695,6 +695,8 @@ export const ko: Record<string, string> = {
   pluginFileTraceName: 'dsh-file-trace 파일 추적',
   pluginFileTraceDesc: '모델이 읽기·쓰기·편집한 모든 파일을 기록해 파일별 내용과 줄 단위 diff로 보여 줍니다. Markdown 읽기 모드와 민감정보 마스크 포함, better-sidebar 미설치 시 독립 플로팅 창',
   pluginMnemeName: 'dsh-mneme 메모리 라이브러리',
+  pluginSessionSourcesName: 'Session Sources',
+  pluginSessionSourcesDesc: 'Recover images, files, and explicit HTTP/HTTPS links from the current conversation with per-session isolation, preview, download, re-attach, and source details; keeps a native panel fallback without better-sidebar',
   pluginMnemeDesc: '세션 간 기억 엔진: autoDream 백그라운드 통합, 세션 요약과 사용자 프로필, SQLite + 직접 편집 가능한 Markdown 미러, 완전 오프라인 프라이빗. better-sidebar가 있으면 «메모리 라이브러리» 탭을 등록하고(기억/엔터티/상태/설정 4개 뷰), 없으면 사이드바 독립 패널을 유지합니다',
   pluginEgoBrowserName: 'ego-browser 에이전트 브라우저',
   pluginBetterOverleafName: 'dsh-better-overleaf Overleaf 탭',

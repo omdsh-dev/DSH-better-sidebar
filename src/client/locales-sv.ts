@@ -686,6 +686,8 @@ export const sv: Record<string, string> = {
   pluginFileTraceName: 'dsh-file-trace Filspårning',
   pluginFileTraceDesc: 'Registrerar varje fil modellen läser, skriver eller redigerar; grupperad lista med innehåll och rad-diffs, Markdown-läsläge och hemlighetsmaskering; utan better-sidebar ett fristående flytande fönster',
   pluginMnemeName: 'dsh-mneme Minnesbibliotek',
+  pluginSessionSourcesName: 'Session Sources',
+  pluginSessionSourcesDesc: 'Recover images, files, and explicit HTTP/HTTPS links from the current conversation with per-session isolation, preview, download, re-attach, and source details; keeps a native panel fallback without better-sidebar',
   pluginMnemeDesc: 'Minnesmotor mellan sessioner: autoDream-konsolidering i bakgrunden, sessionsammanfattningar och användarprofil; SQLite + manuellt redigerbara Markdown-speglingar, helt offline och privat. Registrerar en «Minnesbibliotek»-flik (vyer minne/entiteter/status/inställningar) när better-sidebar finns, annars behålls den fristående sidopanelen',
   pluginEgoBrowserName: 'ego-browser Agentwebbläsare',
   pluginBetterOverleafName: 'dsh-better-overleaf Overleaf-flik',
