@@ -283,6 +283,7 @@ describe('sidechat.start', () => {
     expect(options.sessionId).toBe(result.childId)
     expect(options.meta).toMatchObject({
       parentSession: 'parent',
+      forkSource: { sessionId: 'parent', boundary: 5 },
       origin: 'subagent',
       isSeeded: true,
       delegationDepth: 1,
@@ -355,7 +356,11 @@ describe('sidechat.start', () => {
 
     await api['sidechat.start']({ sessionId: 'parent', question: 'what now?' })
 
-    const options = services.create.mock.calls[0]![0] as { seed: Array<{ type: string; data: Record<string, unknown> }> }
+    const options = services.create.mock.calls[0]![0] as {
+      meta: Record<string, unknown>
+      seed: Array<{ type: string; data: Record<string, unknown> }>
+    }
+    expect(options.meta).toMatchObject({ forkSource: { sessionId: 'parent', boundary: 2 } })
     expect(options.seed.map(event => event.type)).toEqual([
       'user/message', 'turn/start', 'step/start', 'step/end', 'turn/end',
       'subagent/descriptor',
@@ -378,7 +383,11 @@ describe('sidechat.start', () => {
 
     await api['sidechat.start']({ sessionId: 'parent', question: 'what now?' })
 
-    const options = services.create.mock.calls[0]![0] as { seed: Array<{ type: string }> }
+    const options = services.create.mock.calls[0]![0] as {
+      meta: Record<string, unknown>
+      seed: Array<{ type: string }>
+    }
+    expect(options.meta).toMatchObject({ forkSource: { sessionId: 'parent', boundary: 3 } })
     // Cut BEFORE the open turn: only the pending user message is inherited.
     expect(options.seed.map(event => event.type)).toEqual(['user/message', 'subagent/descriptor'])
     // The snapshot rides the injection, not the follow-up question.

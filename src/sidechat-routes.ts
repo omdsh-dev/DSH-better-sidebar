@@ -75,6 +75,19 @@ import { requireString, SidebarError } from './wire.ts'
 import { readPersistedSession } from './session-store.ts'
 
 /**
+ * DSH 0.2.2 fork-adoption metadata. Keep the local structural extension so
+ * this plugin can still typecheck against the published host peer while the
+ * field is rolling through the DSH release line.
+ */
+type SidechatForkSource = Readonly<{
+  readonly sessionId: SessionId
+  readonly boundary: number | null
+}>
+type SidechatCreateAgentOptions = Omit<CreateAgentOptions, 'meta'> & {
+  readonly meta: NonNullable<CreateAgentOptions['meta']> & { readonly forkSource?: SidechatForkSource }
+}
+
+/**
  * The plugin's producer-owned message source kind. Message sources are a
  * merge-extensible sum type — DSH 0.1.7 has no shared catch-all `plugin`
  * kind, so every producer declares its own in its own module (the same
@@ -745,6 +758,12 @@ export function buildSidechatApi(
       )
       const routeProvider = parentSelection?.provider ?? parent.options.provider
       const routeModel = parentSelection?.model ?? parent.options.model
+      // Sidechat builds its own seeded child instead of going through the
+      // generic fork provider. Preserve the parent coordinate explicitly so
+      // the context adapter can adopt opaque history before the first request.
+      // The boundary is the parent's durable click-time tail; sidechat may
+      // additionally rebase/close the copied seed for its own transcript.
+      const sourceBoundary = parentSession.snapshotEvents().at(-1)?.seq
       const inheritance = buildSidechatInheritance(
         parentSession.snapshotEvents() as unknown as readonly SidechatLogEvent[],
         live?.chunksFor(sessionId) ?? [],
@@ -809,11 +828,15 @@ export function buildSidechatApi(
       } else {
         delete childAgentOptions.reasoningEffort
       }
-      const options: CreateAgentOptions = {
+      const options: SidechatCreateAgentOptions = {
         sessionId: childId,
         meta: {
           ...(attachCwd === undefined ? {} : { cwd: attachCwd }),
           parentSession: parentSession.id,
+          forkSource: {
+            sessionId: parentSession.id,
+            boundary: sourceBoundary === undefined ? null : sourceBoundary,
+          },
           isSeeded: true,
           origin: 'subagent',
           delegationDepth: (parentSession.header.delegationDepth ?? 0) + 1,
