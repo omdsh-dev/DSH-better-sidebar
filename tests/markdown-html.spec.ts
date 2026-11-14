@@ -193,4 +193,27 @@ describe('collectReferenceDefinitions + analyzeMarkdownHtml', () => {
     expect(analyzeMarkdownHtml('a <b>bold</b>').hasInlineHtml).toBe(true)
     expect(analyzeMarkdownHtml('plain markdown').hasInlineHtml).toBe(false)
   })
+
+  it('ignores definition-shaped lines inside a fenced code block', () => {
+    // A code block that DOCUMENTS the syntax must not define it: the line used
+    // to be collected and appended to the end of the preview, disappearing from
+    // the block it was written in.
+    const info = analyzeMarkdownHtml([
+      '# Release checklist',
+      '',
+      '```powershell',
+      "$target = 'appsettings.json'",
+      '[System.IO.File]::WriteAllText($target, $raw, (New-Object System.Text.UTF8Encoding($false)))',
+      '```',
+      '',
+      '[real]: ./logo.png',
+    ].join('\n'))
+    expect(info.referenceDefinitions).toBe('[real]: ./logo.png')
+  })
+
+  it('ignores definition-shaped lines inside tilde fences and unclosed fences', () => {
+    const closed = analyzeMarkdownHtml(['~~~text', '[a]: ./a.png', '~~~', '', '[b]: ./b.png'].join('\n'))
+    expect(closed.referenceDefinitions).toBe('[b]: ./b.png')
+    expect(analyzeMarkdownHtml(['```text', '[a]: ./a.png'].join('\n')).referenceDefinitions).toBe('')
+  })
 })

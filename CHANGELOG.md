@@ -2,6 +2,11 @@
 
 > 本文档收录 dsh-better-sidebar 的完整发布历史（最新版摘要见 [README](README_ZH.md)；同步发布于 [GitHub Releases](https://github.com/omdsh-dev/DSH-better-sidebar/releases)）。
 
+### 未发布
+
+- 🐞 **Markdown 代码块里形如 `[label]: destination` 的行不再被当成引用定义抽到文末**：预览此前对每个 markdown 段落逐行匹配引用定义，于是代码块里演示 PowerShell `[Type]::Method()`、正则或 YAML 片段的普通行会被误认成真正的定义——那一行从代码块里消失，又在文末重复出现一次。现在先过与图片 / 链接改写共用的代码区掩码，再对掩码后的文本逐行扫描并还原命中行，代码区不再能定义任何东西。
+  - 🧪 测试：`tests/markdown-html.spec.ts`（围栏代码块；波浪号围栏与未闭合围栏）。
+
 ### v0.32.1
 
 - 🧩 **适配 DSH 0.2.2-rc.2**：插件基线抬到 0.2.2 线的最新 RC，同时跟上这一版宿主的客户端契约与团队服务。
