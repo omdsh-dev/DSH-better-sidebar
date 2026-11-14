@@ -4,7 +4,7 @@
  */
 
 .status {
-  background: var(--dsw-alias-bg-layer-1);
+  background: transparent;
   padding: var(--ds-sidebar-gutter);
   color: var(--dsw-alias-label-tertiary);
   font-size: 12px;
@@ -26,7 +26,7 @@
 }
 
 .action {
-  composes: button from "../../ui/kit.module.css";
+  composes: button buttonSm from "../../ui/kit.module.css";
   text-decoration: none;
 }
 
@@ -107,25 +107,9 @@
 
 /* Binding is an explicit secondary disclosure; the primary footer stays small. */
 .bindingDetails {
-  flex: 1 1 180px;
+  flex: 1 1 160px;
   min-width: 0;
   color: var(--dsw-alias-label-secondary);
-}
-.bindingDetails > summary {
-  box-sizing: border-box;
-  min-height: var(--ds-sidebar-control-height);
-  padding: 4px 0;
-  cursor: pointer;
-}
-.bindingDetails > summary:focus-visible {
-  outline: 2px solid var(--dsw-alias-state-business-primary);
-  outline-offset: 1px;
-}
-.bindingDetails[open] > .binding {
-  margin-top: 6px;
-}
-@media (pointer: coarse) {
-  .bindingDetails > summary { min-height: 44px; }
 }
 
 /* ── Unified detail chrome (S9 refresh) ─────────────────────────────────── */
@@ -138,7 +122,7 @@
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
-  background: var(--dsw-alias-bg-layer-1);
+  background: var(--dsw-alias-bg-base);
 }
 
 /* Resource actions sit at the end of the header's metadata block: Refresh is
@@ -152,17 +136,16 @@
 
 /* The original-source link is the header's one text action. */
 .sourceLink {
-  composes: button from "../../ui/kit.module.css";
+  composes: button buttonSm from "../../ui/kit.module.css";
+  gap: 4px;
   text-decoration: none;
   white-space: nowrap;
 }
 
-
 /* The footer remains useful at narrow widths and touch sizes. */
-.footer { box-sizing: border-box; min-height: 44px; align-items: center; padding-block: 4px; }
-.footerActions { justify-content: flex-end; }
-.footerActions > .action { min-height: 32px; gap: 6px; }
-.continuation { padding: 12px var(--ds-sidebar-gutter); border-top: 1px solid var(--dsw-alias-border-l1); color: var(--dsw-alias-label-secondary); }
+.footer { box-sizing: border-box; min-height: 36px; align-items: center; padding-block: 0; }
+.footerActions { justify-content: flex-end; gap: 6px; }
+.continuation { padding: 10px var(--ds-sidebar-gutter); border-top: 1px solid var(--dsw-alias-border-l1); color: var(--dsw-alias-label-secondary); }
 .continuation [role=alert] { margin-bottom: 8px; color: var(--dsw-alias-state-error-primary); }
 @media (max-width: 480px) {
   .bindingDetails { flex-basis: 100%; }

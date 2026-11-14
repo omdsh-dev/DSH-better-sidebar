@@ -35,9 +35,9 @@
  */
 import { createElement, useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { ReactNode } from 'react'
-import { IconRefreshOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconRefreshOutlineRegular, IconRightUpOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import { ActionButton, IconButton } from '../../ui/kit.tsx'
-import { ErrorBlock } from '../../ui/patterns.tsx'
+import { Disclosure, ErrorBlock } from '../../ui/patterns.tsx'
 import type { WindowDocumentContent, WindowHandle } from '../../windows/types.ts'
 import type { BetterSidebarWindowsClientFace } from '../../windows/types.ts'
 import type {
@@ -61,6 +61,7 @@ import * as clueApiModule from '../api.ts'
 import type { ClueWorkspaceChoice } from '../workspace-id.ts'
 import type { BetterSidebarCluesClientFace } from '../registry.ts'
 import { categoryOf, clueErrorMessage, clueErrorHint } from '../copy.ts'
+import { preferredClueWindowSurface, type ClueWindowSurface } from '../../prefs.ts'
 import { t } from '../../locales.ts'
 import { supportsWindowEditing } from '../../windows/format-content.tsx'
 import { SelectMenu } from '../../ui/SelectMenu.tsx'
@@ -143,6 +144,7 @@ interface ClueDetailWindowOptions {
   readonly workspaceId: string
   readonly target: ClueDetailTarget
   readonly sessionId?: string
+  readonly surface?: ClueWindowSurface
   /** Explicit workspaces the binding panel can offer (never guessed). */
   readonly workspaces?: readonly ClueWorkspaceChoice[]
   /** Test/integration seam for the shared synchronous read cache. */
@@ -948,6 +950,7 @@ function createDetailController(options: ClueDetailWindowOptions): DetailControl
       'div',
       { className: css.headerActions, 'data-clue-detail-toolbar': '' },
       createElement(IconButton, {
+        size: 'sm',
         icon: state.refreshing
           ? createElement(LoadingIndicator, { inline: true, size: 14, label: t('clueResourceRefreshing') })
           : createElement(IconRefreshOutlineRegular, { size: 14 }),
@@ -969,7 +972,7 @@ function createDetailController(options: ClueDetailWindowOptions): DetailControl
             href: sourceUrl,
             target: '_blank',
             rel: 'noreferrer',
-          }, t('clueDetailOpenSource')),
+          }, createElement(IconRightUpOutlineRegular, { size: 12 }), t('clueDetailOpenSource')),
     )
   }
 
@@ -990,12 +993,12 @@ function createDetailController(options: ClueDetailWindowOptions): DetailControl
         { className: css.footer, 'data-clue-detail-footer': '', 'aria-busy': referenceBusy || currentEdit?.saving === true },
         target.clueId === undefined
           ? null
-          : createElement('details', {
+          : createElement(Disclosure, {
               className: css.bindingDetails,
+              summary: t('cluePackBindingHeading'),
               'data-clue-detail-advanced': '',
               'data-clue-binding-revision': String(bindingsRevision),
             },
-              createElement('summary', null, t('cluePackBindingHeading')),
               createElement(ClueBindingPanel, {
                 key: `clue-binding:${target.clueId}:${bindingsRevision}`,
                 face,
@@ -1011,6 +1014,7 @@ function createDetailController(options: ClueDetailWindowOptions): DetailControl
             : createElement(
                 ActionButton,
                 {
+                  size: 'sm',
                   disabled: currentEdit?.saving === true,
                   onClick: () => {
                     // Explicit discard: the ONLY path that drops the draft.
@@ -1024,7 +1028,7 @@ function createDetailController(options: ClueDetailWindowOptions): DetailControl
           currentEdit !== null && (state.conflict || state.authBlocked)
             ? createElement(
                 ActionButton,
-                { 'data-clue-detail-reread': '', onClick: () => { void reloadEdit() } },
+                { size: 'sm', 'data-clue-detail-reread': '', onClick: () => { void reloadEdit() } },
                 t('clueDetailReload'),
               )
             : null,
@@ -1037,6 +1041,7 @@ function createDetailController(options: ClueDetailWindowOptions): DetailControl
             : createElement(
                 ActionButton,
                 {
+                  size: 'sm',
                   variant: 'primary',
                   'data-clue-detail-save': '',
                   disabled: currentEdit.saving || !formatEditable,
@@ -1051,6 +1056,7 @@ function createDetailController(options: ClueDetailWindowOptions): DetailControl
             : createElement(
                 ActionButton,
                 {
+                  size: 'sm',
                   'data-clue-detail-add-to-pack': '',
                   disabled: referenceBusy || (target.clueId === undefined && state.read === null),
                   onClick: () => {
@@ -1073,6 +1079,7 @@ function createDetailController(options: ClueDetailWindowOptions): DetailControl
             : createElement(
                 ActionButton,
                 {
+                  size: 'sm',
                   variant: currentEdit?.dirty === true && formatEditable ? 'outline' : 'primary',
                   'data-clue-detail-insert': '',
                   disabled: referenceBusy || (target.clueId === undefined && state.read === null),
@@ -1625,7 +1632,7 @@ export function openClueDetailWindow(options: ClueDetailWindowOptions): WindowHa
   const handle = windows.open({
     id,
     ...(options.sessionId === undefined ? {} : { sessionId: options.sessionId }),
-    surface: 'sidebar',
+    surface: options.surface ?? preferredClueWindowSurface(),
     title: controller.initialTitle,
     size: 'document',
     bodyLayout: 'fill',

@@ -119,8 +119,8 @@ export function ResourceDiscussion(props: ResourceDiscussionProps): ReactNode {
         {comment.replyToId !== undefined && <div className={css.hint}>{copy('clueCommentReplyTo')} {personLabel(authors.get(comment.replyToId)) ?? comment.replyToId}</div>}
         {props.selectionTarget === undefined ? body : <ResourceSelectionActions {...props.selectionTarget} comment>{body}</ResourceSelectionActions>}
         <div className={css.actions}>
-          {canReply && <ActionButton type="button" disabled={sending} onClick={() => { setReply(comment); document.getElementById(inputId)?.focus() }} data-clue-comment-reply={comment.id}>{copy('clueCommentReply')}</ActionButton>}
-          {comment.nextRepliesCursor !== undefined && <ActionButton type="button" disabled={loading} data-clue-comment-replies={comment.id} onClick={() => { props.onLoad(comment.nextRepliesCursor, comment.id) }}>{copy('clueCommentMoreReplies')}</ActionButton>}
+          {canReply && <ActionButton size="sm" variant="ghost" type="button" disabled={sending} onClick={() => { setReply(comment); document.getElementById(inputId)?.focus() }} data-clue-comment-reply={comment.id}>{copy('clueCommentReply')}</ActionButton>}
+          {comment.nextRepliesCursor !== undefined && <ActionButton size="sm" variant="ghost" type="button" disabled={loading} data-clue-comment-replies={comment.id} onClick={() => { props.onLoad(comment.nextRepliesCursor, comment.id) }}>{copy('clueCommentMoreReplies')}</ActionButton>}
         </div>
       </article>
     })}
@@ -134,13 +134,13 @@ export function ResourceDiscussion(props: ResourceDiscussionProps): ReactNode {
         onRetry={() => { props.onLoad() }}
       />
     )}
-    {page?.nextCursor !== undefined && <ActionButton type="button" disabled={loading} data-clue-comments-more onClick={() => { props.onLoad(page.nextCursor) }}>{copy('clueDiscussionMore')}</ActionButton>}
+    {page?.nextCursor !== undefined && <ActionButton size="sm" type="button" disabled={loading} data-clue-comments-more onClick={() => { props.onLoad(page.nextCursor) }}>{copy('clueDiscussionMore')}</ActionButton>}
     {canCreate && <form className={css.composer} onSubmit={event => { event.preventDefault(); void submit() }}>
-      <label htmlFor={inputId}>{copy(reply === undefined ? 'clueCommentWrite' : 'clueCommentReply')}</label>
-      {reply !== undefined && <div className={css.replyContext}><span>{copy('clueCommentReplyTo')} {personLabel(reply.author) ?? reply.id}{capabilities?.reply === 'quote' ? ` · ${copy('clueCommentQuoteReply')}` : ''}</span><ActionButton type="button" disabled={sending} onClick={() => { setReply(undefined) }}>{t('cancel')}</ActionButton></div>}
+      <label className={css.composerLabel} htmlFor={inputId}>{copy(reply === undefined ? 'clueCommentWrite' : 'clueCommentReply')}</label>
+      {reply !== undefined && <div className={css.replyContext}><span>{copy('clueCommentReplyTo')} {personLabel(reply.author) ?? reply.id}{capabilities?.reply === 'quote' ? ` · ${copy('clueCommentQuoteReply')}` : ''}</span><ActionButton size="sm" variant="ghost" type="button" disabled={sending} onClick={() => { setReply(undefined) }}>{t('cancel')}</ActionButton></div>}
       <TextArea id={inputId} rows={3} value={draft} disabled={sending} onChange={event => { setDraft(event.target.value) }} data-clue-comment-input />
       {sendError !== undefined && <Notice kind="error" tone="inline">{sendError}</Notice>}
-      <div className={css.actions}><ActionButton type="submit" busy={sending} disabled={draft.trim() === ''} data-clue-comment-submit>{copy('clueCommentPost')}</ActionButton></div>
+      <div className={css.actions}><ActionButton size="sm" variant="primary" type="submit" busy={sending} disabled={draft.trim() === ''} data-clue-comment-submit>{copy('clueCommentPost')}</ActionButton></div>
     </form>}
   </section>
 }

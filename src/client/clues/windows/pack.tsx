@@ -26,10 +26,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, ReactNode } from 'react'
 import {
+  IconChevronRightOutlineRegular,
+  IconCloseOutlineRegular,
   IconContextInjectionOutlineRegular,
   IconInspectOutlineRegular,
   IconPlusOutlineRegular,
-  IconSearchOutlineRegular,
   IconShareOutlineRegular,
   IconTrashOutlineRegular,
 } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -75,9 +76,10 @@ import { SourceReadiness } from '../sources/readiness.tsx'
 import { SelectMenu } from '../../ui/SelectMenu.tsx'
 import { LoadingIndicator } from '../../ui/LoadingIndicator.tsx'
 import {
-  ActionButton, ActionFooter, Checkbox, EmptyState, ErrorBlock, IconButton, Menu, Notice, TextInput,
+  ActionButton, ActionFooter, Checkbox, Disclosure, EmptyState, ErrorBlock, IconButton, ListRow, Menu, Notice, SearchField, TextInput,
 } from '../../ui/index.ts'
 import { useScrollLoad } from '../../ui/use-scroll-load.ts'
+import { preferredClueWindowSurface, type ClueWindowSurface } from '../../prefs.ts'
 import { t } from '../../locales.ts'
 import type { ClueDetailTarget } from './detail.tsx'
 import css from './pack.module.css'
@@ -111,6 +113,7 @@ interface PackManagementOptions {
   readonly scopes?: Readonly<Record<string, JsonValue | undefined>>
   /** Persist one explicitly chosen range (same shape as the tab browser). */
   onScopeChange?(sourceId: string, scope: JsonValue | undefined): void
+  readonly surface?: ClueWindowSurface
 }
 
 /** One member row as the panel renders it. */
@@ -201,7 +204,7 @@ export function openPackManagementWindow(options: PackManagementOptions): Window
     dirty ? `${options.pack.name} · ${t('cluePackUnsaved')}` : options.pack.name
   const handle: WindowHandle = options.windows.open({
     id: packWindowId(options.pack.id),
-    surface: 'sidebar',
+    surface: options.surface ?? preferredClueWindowSurface(),
     title: titleFor(false),
     size: 'collection',
     content: <PackManagementPage {...options} guard={guard} />,
@@ -958,6 +961,11 @@ export function PackManagementPage(
               disabled={saving || loading}
               onChange={(event) => { setName(event.target.value); setNameSaved(false) }}
               onKeyDown={(event) => {
+                if (event.key === 'Escape' && pendingName) {
+                  event.preventDefault()
+                  discardDraft()
+                  return
+                }
                 if (event.key !== 'Enter' || event.nativeEvent.isComposing || event.keyCode === 229) return
                 if (!pendingName) return
                 event.preventDefault()
@@ -966,6 +974,7 @@ export function PackManagementPage(
             />
             <div className={css.headActions}>
               <IconButton
+                size="sm"
                 icon={<IconShareOutlineRegular size={14} />}
                 label={t('clueShareExport')}
                 onClick={() => {
@@ -995,9 +1004,8 @@ export function PackManagementPage(
 
         <div className={css.sectionHead}>
           <h3 className={css.sectionTitle}>{t('cluePackMembers', { n: members.length })}</h3>
-          <button
-            type="button"
-            className={css.action}
+          <ActionButton
+            size="sm"
             aria-pressed={addOpen}
             onClick={() => {
               if (addOpen) {
@@ -1007,44 +1015,60 @@ export function PackManagementPage(
               setAddOpen(value => !value)
             }}
           >
+            {!addOpen && <IconPlusOutlineRegular size={14} />}
             {addOpen ? t('cluePackBack') : t('cluePackAddMembers')}
-          </button>
+          </ActionButton>
         </div>
 
         {addOpen ? (
           <div className={css.addPage} data-clue-add-member>
-            <SourceNavigation
-              sources={enabledSources}
-              displays={displays}
-              activeId={addSourceId ?? ''}
-              onChange={pickSource}
-            />
+            <div className={css.addToolbar}>
+              <SourceNavigation
+                sources={enabledSources}
+                displays={displays}
+                activeId={addSourceId ?? ''}
+                onChange={pickSource}
+              />
+              {addSourceId !== null && addSourceId !== BUILTIN_SOURCE_IDS.feishuTasks && (
+                <button
+                  type="button"
+                  className={css.scopeTrigger}
+                  aria-expanded={addScopeOpen}
+                  aria-label={t('clueBrowserScopeEdit')}
+                  title={`${t('clueBrowserScopeHeading')}: ${addSummary ?? t('clueBrowserScopeNeeded')}`}
+                  onClick={() => { setAddScopeOpen(value => !value) }}
+                >
+                  <span>{addSummary ?? t('clueBrowserScopeEdit')}</span>
+                  <IconChevronRightOutlineRegular size={12} />
+                </button>
+              )}
+              <span className={css.toolbarSpacer} />
+              {addSourceId !== null && enabledSources.find(source => source.sourceId === addSourceId) !== undefined && (
+                <ResourceFilters
+                  source={enabledSources.find(source => source.sourceId === addSourceId)!}
+                  scope={addScope}
+                  mode={addView.kind === 'search' ? 'search' : 'list'}
+                  onChange={next => {
+                    if (addSourceId === null) return
+                    cancelAddSearch()
+                    const nextScopes = { ...addScopes, [addSourceId]: next }
+                    setAddScopes(nextScopes)
+                    props.onScopeChange?.(addSourceId, next)
+                    resetAdd()
+                    void loadAdd(addSourceId, addView, undefined, nextScopes)
+                  }}
+                />
+              )}
+            </div>
             {enabledSources.length === 0 && <EmptyState title={t('clueBrowserAllDisabled')} />}
-
 
             {addSourceId === null ? (
               <EmptyState title={t('cluePackPickSource')} />
             ) : (
               <>
-                <div className={css.scopeBar}>
-                  {addSourceId === BUILTIN_SOURCE_IDS.feishuTasks
-                    ? <span className={css.scopeHint}>{t('clueBrowserScopeTasksHint')}</span>
-                    : (
-                      <>
-                        <button
-                          type="button"
-                          className={css.action}
-                          aria-expanded={addScopeOpen}
-                          aria-label={t('clueBrowserScopeEdit')}
-                          title={`${t('clueBrowserScopeHeading')}: ${addSummary ?? t('clueBrowserScopeNeeded')}`}
-                          onClick={() => { setAddScopeOpen(value => !value) }}
-                        >
-                          {t('clueBrowserScopeEdit')}
-                        </button>
-                        <span className={css.scopeHint}>{addSummary ?? t('clueBrowserScopeNeeded')}</span>
-                      </>
-                    )}
-                </div>
+                {addSourceId === BUILTIN_SOURCE_IDS.feishuTasks && (
+                  <span className={css.scopeHint}>{t('clueBrowserScopeTasksHint')}</span>
+                )}
 
                 {addScopeOpen && addSourceId !== BUILTIN_SOURCE_IDS.feishuTasks && (
                   <form
@@ -1058,54 +1082,56 @@ export function PackManagementPage(
                     />
                     {addScopeError !== null && <span className={css.fieldError} role="alert">{addScopeError}</span>}
                     <div className={css.scopeActions}>
-                      <button type="submit" className={css.primary}>{t('clueBrowserScopeApply')}</button>
-                      <button
-                        type="button"
-                        className={css.action}
-                        onClick={() => { setAddScopeOpen(false); setAddScopeError(null) }}
-                      >
+                      <ActionButton size="sm" onClick={() => { setAddScopeOpen(false); setAddScopeError(null) }}>
                         {t('cancel')}
-                      </button>
+                      </ActionButton>
+                      <ActionButton size="sm" type="submit" variant="primary">{t('clueBrowserScopeApply')}</ActionButton>
                     </div>
                   </form>
                 )}
 
                 <div className={css.queryRow}>
-                  <label className={css.searchBox}>
-                    <IconSearchOutlineRegular size={14} />
-                    <TextInput
-                      type="text"
-                      className={css.searchInput}
-                      value={addQuery}
-                      placeholder={t('clueBrowserSearchPlaceholder')}
-                      aria-label={t('clueBrowserSearchPlaceholder')}
-                      onChange={(event) => { changeAddQuery(event.target.value) }}
-                      onCompositionStart={() => { setComposing(true); cancelAddSearch() }}
-                      onCompositionEnd={() => { setComposing(false) }}
-                      onKeyDown={(event) => {
-                        if (event.key !== 'Enter' || event.nativeEvent.isComposing || event.keyCode === 229) return
+                  <SearchField
+                    className={css.searchInput}
+                    value={addQuery}
+                    placeholder={t('clueBrowserSearchPlaceholder')}
+                    aria-label={t('clueBrowserSearchPlaceholder')}
+                    onChange={(event) => { changeAddQuery(event.target.value) }}
+                    onCompositionStart={() => { setComposing(true); cancelAddSearch() }}
+                    onCompositionEnd={() => { setComposing(false) }}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Escape' && addQuery !== '') {
                         event.preventDefault()
-                        submitAddQuery()
-                      }}
-                    />
-                  </label>
-                  <button type="button" className={css.action} onClick={submitAddQuery}>
-                    {looksLikeResource(addQuery.trim()) ? t('clueBrowserResolveAction') : t('clueBrowserSearchAction')}
-                  </button>
+                        event.stopPropagation()
+                        changeAddQuery('')
+                        return
+                      }
+                      if (event.key !== 'Enter' || event.nativeEvent.isComposing || event.keyCode === 229) return
+                      event.preventDefault()
+                      submitAddQuery()
+                    }}
+                    trailing={addQuery !== ''
+                      ? (
+                        <>
+                          <IconButton
+                            size="sm"
+                            label={t('clueClearSearch')}
+                            onClick={() => { changeAddQuery('') }}
+                            icon={<IconCloseOutlineRegular size={12} />}
+                          />
+                          <IconButton
+                            size="sm"
+                            label={looksLikeResource(addQuery.trim()) ? t('clueBrowserResolveAction') : t('clueBrowserSearchAction')}
+                            onClick={submitAddQuery}
+                            icon={<IconChevronRightOutlineRegular size={14} />}
+                          />
+                        </>
+                      )
+                      : undefined}
+                  />
                 </div>
                 {/* Setup is actionable below the query row: a probe must never
                     insert a checking row that moves the search box. */}
-                {enabledSources.find(source => source.sourceId === addSourceId) !== undefined && <ResourceFilters
-                  source={enabledSources.find(source => source.sourceId === addSourceId)!} scope={addScope}
-                  mode={addView.kind === 'search' ? 'search' : 'list'} onChange={next => {
-                    if (addSourceId === null) return
-                    cancelAddSearch()
-                    const nextScopes = { ...addScopes, [addSourceId]: next }
-                    setAddScopes(nextScopes)
-                    props.onScopeChange?.(addSourceId, next)
-                    resetAdd()
-                    void loadAdd(addSourceId, addView, undefined, nextScopes)
-                  }} />}
                 {enabledSources.find(source => source.sourceId === addSourceId) !== undefined && <SourceReadiness
                   key={addSourceId} source={enabledSources.find(source => source.sourceId === addSourceId)!}
                   display={displays.find(display => display.sourceId === addSourceId)}
@@ -1135,6 +1161,7 @@ export function PackManagementPage(
                         <li
                           key={key}
                           className={css.addRow}
+                          data-selected={addSelected.has(key) ? 'true' : undefined}
                           onContextMenu={(event) => {
                             setRowMenu({ kind: 'candidate', candidate, ...contextMenuPoint(event) })
                           }}
@@ -1150,7 +1177,7 @@ export function PackManagementPage(
                               onChange={() => { toggleAddSelection(candidate) }}
                             />
                             <span className={css.memberGlyph} aria-hidden="true">{resourceIcon(candidate, displays)}</span>
-                            <span className={css.addTitle}>{candidate.title}</span>
+                            <span className={css.addTitle} title={candidate.title}>{candidate.title}</span>
                             <span className={css.memberSource}><ResourceInlineMeta info={candidate.info} />{candidate.info?.state === undefined ? candidate.subtitle : null}</span>
                           </label>
                         </li>
@@ -1185,7 +1212,6 @@ export function PackManagementPage(
                   {members.map(row => (
                     <li
                       key={row.clue.id}
-                      className={css.memberRow}
                       data-clue-pack-member={row.clue.id}
                       data-unresolved={row.readable ? undefined : 'true'}
                       onContextMenu={(event) => {
@@ -1196,35 +1222,45 @@ export function PackManagementPage(
                         if (point !== undefined) setRowMenu({ kind: 'member', row, ...point })
                       }}
                     >
-                      <span className={css.memberGlyph} aria-hidden="true">{resourceIcon(row.clue, displays)}</span>
-                      <button
-                        type="button"
-                        className={css.memberTitle}
+                      <ListRow
                         title={row.clue.title}
-                        onClick={() => { openMemberDetail(row) }}
-                      >
-                        {row.clue.title}
-                      </button>
-                      <span className={css.memberSource}><ResourceInlineMeta info={row.clue.info} />{row.clue.info?.state === undefined ? displayName(row.clue.sourceId) : null}</span>
-                      {row.readable
-                        ? null
-                        : <span className={css.memberState}>{t('cluePackMemberUnresolved')}</span>}
-                      <IconButton
-                        icon={<IconContextInjectionOutlineRegular size={16} />}
-                        label={t('clueBrowserInsertRow', { title: row.clue.title })}
-                        title={t('clueBrowserInsert')} onClick={() => { props.onInsertClue(row.clue.id, row.clue.title) }} />
-                      <IconButton
-                        icon={<IconTrashOutlineRegular size={14} />}
-                        label={t('cluePackRemoveMember', { title: row.clue.title })}
-                        disabled={saving}
-                        onClick={() => { void removeMember(row.clue.id) }} />
+                        titleLabel={row.clue.title}
+                        titleAs="button"
+                        dimmed={!row.readable}
+                        onTitleClick={() => { openMemberDetail(row) }}
+                        leading={<span className={css.memberGlyph} aria-hidden="true">{resourceIcon(row.clue, displays)}</span>}
+                        subtitle={row.clue.info === undefined ? undefined : <ResourceInlineMeta info={row.clue.info} />}
+                        meta={<>
+                          {row.clue.info?.state === undefined && <span className={css.memberSource}>{displayName(row.clue.sourceId)}</span>}
+                          {!row.readable && <span className={css.memberState}>{t('cluePackMemberUnresolved')}</span>}
+                        </>}
+                        actions={<>
+                          <IconButton
+                            size="sm"
+                            icon={<IconContextInjectionOutlineRegular size={14} />}
+                            label={t('clueBrowserInsertRow', { title: row.clue.title })}
+                            title={t('clueBrowserInsert')}
+                            onClick={() => { props.onInsertClue(row.clue.id, row.clue.title) }}
+                          />
+                          <IconButton
+                            size="sm"
+                            icon={<IconTrashOutlineRegular size={14} />}
+                            label={t('cluePackRemoveMember', { title: row.clue.title })}
+                            disabled={saving}
+                            onClick={() => { void removeMember(row.clue.id) }}
+                          />
+                        </>}
+                      />
                     </li>
                   ))}
                 </ul>
               )}
 
-            <details className={css.binding} data-clue-binding-panel>
-              <summary className={css.sectionTitle}>{t('cluePackBindingHeading')}</summary>
+            <Disclosure
+              className={css.binding}
+              data-clue-binding-panel
+              summary={t('cluePackBindingHeading')}
+            >
               {bindingsError
                 ? (
                   <ErrorBlock message={t('clueStateRequestFailed')} retryLabel={t('retry')}
@@ -1234,14 +1270,13 @@ export function PackManagementPage(
                 ? (
                   <div className={css.bindingRow}>
                     <span className={css.bindingState}>{t('cluePackBound')}</span>
-                    <button
-                      type="button"
-                      className={css.action}
+                    <ActionButton
+                      size="sm"
                       disabled={bindingBusy}
                       onClick={() => { void removeBinding() }}
                     >
                       {t('cluePackUnbind')}
-                    </button>
+                    </ActionButton>
                   </div>
                 )
                 : (
@@ -1254,42 +1289,41 @@ export function PackManagementPage(
                       onChange={setBindingTarget}
                       options={workspaces.map(workspace => ({ value: workspace.workspaceId, label: workspace.title }))}
                     />
-                    <button
-                      type="button"
-                      className={css.action}
+                    <ActionButton
+                      size="sm"
                       disabled={bindingBusy || workspaces.length === 0}
                       onClick={() => { void addBinding() }}
                     >
                       {t('cluePackBind')}
-                    </button>
+                    </ActionButton>
                   </div>
                 )}
-            </details>
+            </Disclosure>
 
           </div>
         )}
 
       </div>
 
-              {addOpen && addSelected.size > 0 && (
-                <ActionFooter bleed data-clue-pack-add-footer
-                  start={t('clueBrowserSelected', { n: addSelected.size })}
-                  end={<ActionButton variant="primary" busy={saving} onClick={() => { void addMembers() }}>
-                    {t('cluePackAddSelected')}
-                  </ActionButton>} />
-              )}
+      {addOpen && addSelected.size > 0 && (
+        <ActionFooter bleed data-clue-pack-add-footer
+          start={t('clueBrowserSelected', { n: addSelected.size })}
+          end={<ActionButton size="sm" variant="primary" busy={saving} onClick={() => { void addMembers() }}>
+            {t('cluePackAddSelected')}
+          </ActionButton>} />
+      )}
 
       {!addOpen && (
         <ActionFooter bleed data-clue-pack-footer
           start={<span data-clue-pack-save-status>{pendingName ? t('unsaved') : nameSaved ? t('saved') : null}</span>}
           end={pendingName ? (
             <>
-              <ActionButton disabled={saving} onClick={discardDraft}>{t('cancel')}</ActionButton>
-              <ActionButton variant="primary" busy={saving} disabled={name.trim() === ''}
+              <ActionButton size="sm" disabled={saving} onClick={discardDraft}>{t('cancel')}</ActionButton>
+              <ActionButton size="sm" variant="primary" busy={saving} disabled={name.trim() === ''}
                 onClick={() => { void saveName() }}>{t('save')}</ActionButton>
             </>
           ) : (
-            <ActionButton variant="primary" disabled={saving || loading || error !== null}
+            <ActionButton size="sm" variant="primary" disabled={saving || loading || error !== null}
               onClick={() => { props.onInsertPack(pack) }}>{t('cluePackInsert')}</ActionButton>
           )} />
       )}

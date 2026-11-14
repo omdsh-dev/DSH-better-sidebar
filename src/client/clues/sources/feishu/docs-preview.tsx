@@ -28,7 +28,7 @@ import {
 import { TextDocumentContent } from '../../../windows/format-content.tsx'
 import { MdToc } from '../../../md-toc.tsx'
 import { t } from '../../../locales.ts'
-import { ActionButton, ActionFooter, Field, TextArea, TextInput } from '../../../ui/index.ts'
+import { ActionButton, ActionFooter, Disclosure, Field, TextArea, TextInput } from '../../../ui/index.ts'
 import css from './feishu.module.css'
 import type { FeishuClientLabels } from './labels.ts'
 import { appDateTime } from './time.ts'
@@ -311,12 +311,11 @@ function ReadPreview(props: {
       )}
       </div>
       {content !== '' && (
-        <details className={css.rawDetails} data-feishu-docs-raw="">
-          <summary>{t('clueResourceDetails')}</summary>
+        <Disclosure className={css.rawDetails} data-feishu-docs-raw="" summary={t('clueResourceDetails')}>
           <pre className={css.pre} id={`${prefix}-content`} data-feishu-docs-content="">
             {content}
           </pre>
-        </details>
+        </Disclosure>
       )}
       {collapsible && (
         <p className={css.hint} data-feishu-docs-truncated="">

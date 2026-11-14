@@ -16,7 +16,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
-import { IconCloseOutlineRegular, IconDownloadOutlineRegular, IconRefreshOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconCloseOutlineRegular, IconDownloadOutlineRegular, IconFolderOpenOutlineRegular, IconRefreshOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { BetterSidebarCluesClientFace } from '../registry.ts'
 import type { BetterSidebarWindowsClientFace, WindowHandle } from '../../windows/types.ts'
 import type { CluePack, CluesPacksResult } from '../../../clues/types.ts'
@@ -36,6 +36,7 @@ import {
   type ShareProgress,
 } from '../share-client.ts'
 import { cluesApi, peekClueRequest } from '../api.ts'
+import { preferredClueWindowSurface, type ClueWindowSurface } from '../../prefs.ts'
 import { t } from '../../locales.ts'
 import {
   ActionButton, ActionFooter, ChoiceCard, EmptyState, ErrorBlock, Field, Notice, Tabs,
@@ -55,6 +56,7 @@ interface OpenShareWindowOptions {
   readonly packIds?: readonly string[]
   /** Initial direction (the tab's Import entry opens the import page). */
   readonly direction?: 'export' | 'import'
+  readonly surface?: ClueWindowSurface
 }
 
 /** One request delivered to an ALREADY-OPEN share window. */
@@ -84,7 +86,7 @@ function requestShareWindow(request: ShareWindowRequest): void {
 export function openShareWindow(options: OpenShareWindowOptions): WindowHandle {
   const handle = options.windows.open({
     id: CLUE_SHARE_WINDOW_ID,
-    surface: 'sidebar',
+    surface: options.surface ?? preferredClueWindowSurface(),
     title: t('clueShareTitle'),
     size: 'collection',
     bodyLayout: 'fill',
@@ -536,19 +538,25 @@ export function SharePage(props: OpenShareWindowOptions): ReactNode {
       ) : (
         <div className={css.body}>
           <p className={css.hint}>{t('clueShareImportHint')}</p>
-          <label className={css.fileRow}>
-            <span className={css.fieldLabel}>{t('clueShareChooseFile')}</span>
-            <input
-              type="file"
-              accept=".cluepack,application/zip"
-              disabled={busy}
-              onChange={(event) => {
-                const file = event.target.files?.[0]
-                if (file !== undefined) void chooseFile(file)
-              }}
-            />
-            <span className={css.hint}>{fileName ?? t('clueShareNoFile')}</span>
-          </label>
+          <Field label={t('clueShareChooseFile')}>
+            <label className={css.filePicker}>
+              <input
+                className={css.fileInput}
+                type="file"
+                accept=".cluepack,application/zip"
+                disabled={busy}
+                onChange={(event) => {
+                  const file = event.target.files?.[0]
+                  if (file !== undefined) void chooseFile(file)
+                }}
+              />
+              <span className={css.fileButton}>
+                <IconFolderOpenOutlineRegular size={14} />
+                {t('clueShareChooseFile')}
+              </span>
+              <span className={css.fileName} title={fileName ?? undefined}>{fileName ?? t('clueShareNoFile')}</span>
+            </label>
+          </Field>
 
           {importPreview !== null && importResult === null && (
             <section className={css.summary} aria-label={t('clueSharePreview')}>
@@ -620,30 +628,30 @@ export function SharePage(props: OpenShareWindowOptions): ReactNode {
         start={direction === 'export' ? t('clueSharePackCount', { n: selectedPacks.size }) : fileName ?? t('clueShareNoFile')}
         end={<>
         {busy ? (
-          <button type="button" className={css.action} onClick={cancel}>
+          <ActionButton size="sm" onClick={cancel}>
             <IconCloseOutlineRegular size={14} />
             {t('cancel')}
-          </button>
+          </ActionButton>
         ) : (
-          <button type="button" className={css.action} onClick={reset}>
+          <ActionButton size="sm" onClick={reset}>
             <IconRefreshOutlineRegular size={14} />
             {t('clueShareReset')}
-          </button>
+          </ActionButton>
         )}
         {direction === 'export' ? (
-          <ActionButton variant="primary" busy={busy} disabled={packsLoading || packsError || selectedPacks.size === 0}
+          <ActionButton size="sm" variant="primary" busy={busy} disabled={packsLoading || packsError || selectedPacks.size === 0}
             onClick={() => { if (preview === null) void runPreview(); else void runExport() }}>
             {preview === null ? t('clueSharePreview') : <><IconDownloadOutlineRegular size={14} />{t('clueShareExportAction')}</>}
           </ActionButton>
         ) : importResult?.requiresAcceptance === true ? (
-          <ActionButton variant="primary" onClick={() => {
+          <ActionButton size="sm" variant="primary" onClick={() => {
             setImportResult({ ...importResult, requiresAcceptance: false })
             setMessage(t('clueShareAcceptPartial'))
           }}>
             {t('clueShareAcceptPartial')}
           </ActionButton>
         ) : (
-          <ActionButton variant="primary" busy={busy} disabled={importBytes === null || importPreview === null || importResult !== null} onClick={() => { void runImport() }}>
+          <ActionButton size="sm" variant="primary" busy={busy} disabled={importBytes === null || importPreview === null || importResult !== null} onClick={() => { void runImport() }}>
             {t('clueShareImportAction')}
           </ActionButton>
         )}

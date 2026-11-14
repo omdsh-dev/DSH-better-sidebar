@@ -31,8 +31,8 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import {
+  IconCheckOutlineRegular,
   IconPlusOutlineRegular,
-  IconSearchOutlineRegular,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ClueCandidate, CluePack, CluesPacksResult } from '../../../clues/types.ts'
 import type { BetterSidebarCluesClientFace } from '../registry.ts'
@@ -43,7 +43,7 @@ import { cluesApi, peekClueRequest } from '../api.ts'
 import { clueErrorMessage } from '../copy.ts'
 import { CluePackArtwork } from '../artwork.tsx'
 import { LoadingIndicator } from '../../ui/LoadingIndicator.tsx'
-import { ActionButton, ActionFooter, ErrorBlock, Field, TextInput } from '../../ui/index.ts'
+import { ActionButton, ActionFooter, Disclosure, ErrorBlock, Field, SearchField, TextInput } from '../../ui/index.ts'
 import { t } from '../../locales.ts'
 import css from './collect.module.css'
 
@@ -156,7 +156,7 @@ export function openClueCollectionWindow(
   const guard: ClueCollectGuard = { busy: false }
   const handle = options.windows.open({
     id: collectWindowId(options.workspaceId, options.targets),
-    surface: 'sidebar',
+    surface: 'floating',
     title: t('clueBrowserAddToPack'),
     size: 'compact',
     bodyLayout: 'fill',
@@ -389,15 +389,20 @@ export function ClueCollectPage(
 
   return (
     <div className={css.root}>
-      <details className={css.selection} data-clue-collection-selection>
-        <summary className={css.count}>
-          <span aria-live="polite">{t('clueBrowserSelected', { n: pending.length })}</span>
-          {pending.length === 1 && <span className={css.selectionTitle}>{pending[0]!.title}</span>}
-        </summary>
+      <Disclosure
+        className={css.selection}
+        data-clue-collection-selection
+        summary={(
+          <span className={css.count}>
+            <span aria-live="polite">{t('clueBrowserSelected', { n: pending.length })}</span>
+            {pending.length === 1 && <span className={css.selectionTitle}>{pending[0]!.title}</span>}
+          </span>
+        )}
+      >
         <ul className={css.selectionList}>
           {pending.map(target => <li key={candidateKey(target)}>{target.title}</li>)}
         </ul>
-      </details>
+      </Disclosure>
       <form
         className={css.form}
         data-clue-collection
@@ -405,19 +410,16 @@ export function ClueCollectPage(
         onSubmit={(event) => { event.preventDefault(); void submit() }}
       >
         <div className={css.fields}>
-          <label className={css.searchBox}>
-            <IconSearchOutlineRegular size={14} />
-            <TextInput
-              autoFocus
-              type="search"
-              className={css.searchInput}
-              aria-label={t('cluePacksSearchPlaceholder')}
-              placeholder={t('cluePacksSearchPlaceholder')}
-              value={query}
-              disabled={busy}
-              onChange={(event) => { setQuery(event.target.value) }}
-            />
-          </label>
+          <SearchField
+            autoFocus
+            type="search"
+            className={css.searchInput}
+            aria-label={t('cluePacksSearchPlaceholder')}
+            placeholder={t('cluePacksSearchPlaceholder')}
+            value={query}
+            disabled={busy}
+            onChange={(event) => { setQuery(event.target.value) }}
+          />
           <fieldset className={css.destinationList} disabled={busy} aria-label={t('clueBrowserAddToPack')}>
             {packsPhase === 'loading' && <LoadingIndicator className={css.hint} inline />}
             {packsPhase === 'error' && (
@@ -431,6 +433,7 @@ export function ClueCollectPage(
             {matchingPacks.map(pack => (
               <label key={pack.id} className={css.destinationRow} title={pack.name}>
                 <input
+                  className={css.destinationInput}
                   type="radio"
                   name={name}
                   value={pack.id}
@@ -438,8 +441,11 @@ export function ClueCollectPage(
                   onChange={() => { setDestination(pack.id) }}
                 />
                 <CluePackArtwork size={16} />
-                <span>{pack.name}</span>
+                <span className={css.destinationName}>{pack.name}</span>
                 <small>{t('cluePacksMembers', { n: pack.members.length })}</small>
+                <span className={css.destinationCheck} aria-hidden="true">
+                  <IconCheckOutlineRegular size={14} />
+                </span>
               </label>
             ))}
             {packsPhase === 'ready' && matchingPacks.length === 0 && (
@@ -449,6 +455,7 @@ export function ClueCollectPage(
             )}
             <label className={css.destinationRow}>
               <input
+                className={css.destinationInput}
                 type="radio"
                 name={name}
                 value="__new"
@@ -456,7 +463,10 @@ export function ClueCollectPage(
                 onChange={() => { setDestination('__new') }}
               />
               <IconPlusOutlineRegular size={16} />
-              <span>{t('cluePacksNew')}</span>
+              <span className={css.destinationName}>{t('cluePacksNew')}</span>
+              <span className={css.destinationCheck} aria-hidden="true">
+                <IconCheckOutlineRegular size={14} />
+              </span>
             </label>
           </fieldset>
           {destination === '__new' && (
@@ -476,8 +486,8 @@ export function ClueCollectPage(
           bleed
           start={<span data-clue-collection-destination>{destinationName ?? t('clueSharePacks')}</span>}
           end={<>
-            <ActionButton disabled={busy} onClick={cancel}>{t('cancel')}</ActionButton>
-            <ActionButton type="submit" variant="primary" busy={busy} disabled={pending.length === 0 || destination === ''}>
+            <ActionButton size="sm" disabled={busy} onClick={cancel}>{t('cancel')}</ActionButton>
+            <ActionButton size="sm" type="submit" variant="primary" busy={busy} disabled={pending.length === 0 || destination === ''}>
               {submitLabel}
             </ActionButton>
           </>}
