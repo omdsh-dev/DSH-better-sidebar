@@ -455,11 +455,15 @@ export function FloatingWindow(props: FloatingWindowProps): ReactNode {
       onPointerDownCapture={() => { layer.raise() }}
       onFocusCapture={() => { layer.raise() }}
     >
-      <div className={css.titleBar} data-window-handle onPointerDown={docked ? undefined : onTitlePointerDown}>
+      <div
+        className={docked ? css.dockedBar : css.titleBar}
+        data-window-handle
+        onPointerDown={docked ? undefined : onTitlePointerDown}
+      >
         {titleLeading !== undefined && (
           <span className={css.titleLeading} data-window-no-drag>{titleLeading}</span>
         )}
-        <span className={css.title} title={title}>{title}</span>
+        {!docked && <span className={css.title} title={title}>{title}</span>}
         {dirty === true && (
           <span
             className={css.dirty}
@@ -495,14 +499,16 @@ export function FloatingWindow(props: FloatingWindowProps): ReactNode {
               onClick={toggleMaximize}
             />
           )}
-          <IconButton
-            size="sm"
-            className={css.close}
-            icon={<IconCloseFillRegular size={14} />}
-            label={closeText}
-            title={closeText}
-            onClick={() => { void requestCloseRef.current() }}
-          />
+          {!docked && (
+            <IconButton
+              size="sm"
+              className={css.close}
+              icon={<IconCloseFillRegular size={14} />}
+              label={closeText}
+              title={closeText}
+              onClick={() => { void requestCloseRef.current() }}
+            />
+          )}
         </span>
       </div>
       {hasNode(toolbarRow) && (

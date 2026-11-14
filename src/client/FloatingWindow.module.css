@@ -37,13 +37,27 @@
   justify-content: space-between;
   gap: var(--ds-sidebar-space-2);
   flex: none;
-  min-height: 40px;
+  min-height: 36px;
   box-sizing: border-box;
   padding: 4px var(--ds-sidebar-gutter);
   border-bottom: 1px solid var(--dsw-alias-border-l1);
   background: var(--dsw-alias-bg-layer-1);
   cursor: grab;
   user-select: none;
+}
+
+/* Native right-sidebar tabs already carry the title and close button; docked
+   windows keep only a slim utility strip for Back + "Pop out". */
+.dockedBar {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-sidebar-space-2);
+  flex: none;
+  min-height: 30px;
+  box-sizing: border-box;
+  padding: 2px var(--ds-sidebar-gutter);
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+  background: var(--dsw-alias-bg-base);
 }
 
 .titleBar:active {
@@ -92,6 +106,7 @@
   align-items: center;
   gap: var(--ds-sidebar-space-1);
   flex: none;
+  margin-inline-start: auto;
 }
 
 .windowControl,
@@ -152,10 +167,10 @@
   gap: 8px;
   flex: none;
   box-sizing: border-box;
-  min-height: 48px;
-  padding: 8px var(--ds-sidebar-gutter);
+  min-height: 42px;
+  padding: 6px var(--ds-sidebar-gutter);
   border-top: 1px solid var(--dsw-alias-border-l1);
-  background: var(--dsw-alias-bg-layer-1);
+  background: inherit;
 }
 
 @media (pointer: coarse) {
@@ -209,13 +224,16 @@
   border: 0;
   border-radius: 0;
   box-shadow: none;
+  background: var(--dsw-alias-bg-base);
 }
-.window[data-window-docked='true'] .titleBar { cursor: default; }
+.window[data-window-docked='true'] .toolbar { background: var(--dsw-alias-bg-base); }
 .surfaceControl {
   display: inline-flex;
   align-items: center;
   gap: var(--ds-sidebar-space-1);
   flex: none;
+  padding-inline: 6px;
+  font-size: 12px;
   white-space: nowrap;
 }
 .surfaceControl svg { flex: none; }

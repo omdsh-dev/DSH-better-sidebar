@@ -28,6 +28,7 @@
  */
 import type { CSSProperties, MouseEvent, ReactNode } from 'react'
 import clsx from 'clsx'
+import { IconChevronRightOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import { ActionButton } from './kit.tsx'
 import css from './patterns.module.css'
 
@@ -421,5 +422,41 @@ export function ActionFooter({ start, end, bleed, className, ...dataProps }: Act
       {start !== undefined && <span className={css.actionFooterStart} role="status">{start}</span>}
       {end !== undefined && <span className={css.actionFooterEnd}>{end}</span>}
     </div>
+  )
+}
+
+/** Props of {@link Disclosure}. */
+export interface DisclosureProps extends DataAttributes {
+  readonly summary: ReactNode
+  readonly meta?: ReactNode
+  readonly open?: boolean
+  readonly className?: string
+  readonly summaryClassName?: string
+  readonly bodyClassName?: string
+  readonly summaryAriaLabel?: string
+  readonly children?: ReactNode
+}
+
+/**
+ * Native `<details>` disclosure with a crisp chevron instead of the browser UA
+ * triangle. Keyboard and touch behaviour remain native.
+ */
+export function Disclosure({
+  summary, meta, open, className, summaryClassName, bodyClassName, summaryAriaLabel, children, ...dataProps
+}: DisclosureProps): ReactNode {
+  return (
+    <details {...dataProps} className={clsx(css.disclosure, className)} open={open}>
+      <summary
+        className={clsx(css.disclosureSummary, summaryClassName)}
+        {...(summaryAriaLabel === undefined ? {} : { 'aria-label': summaryAriaLabel })}
+      >
+        <span className={css.disclosureChevron} aria-hidden="true">
+          <IconChevronRightOutlineRegular size={12} />
+        </span>
+        <span className={css.disclosureLabel}>{summary}</span>
+        {meta !== undefined && <span className={css.disclosureMeta}>{meta}</span>}
+      </summary>
+      <div className={clsx(css.disclosureBody, bodyClassName)}>{children}</div>
+    </details>
   )
 }

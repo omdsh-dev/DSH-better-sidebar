@@ -73,7 +73,7 @@
   gap: var(--ds-sidebar-space-2);
   min-width: 0;
   min-height: 30px;
-  padding: 0 var(--ds-sidebar-space-3);
+  padding: 4px var(--ds-sidebar-space-2);
   border-radius: var(--ds-sidebar-radius);
   color: var(--dsw-alias-label-primary);
   font: var(--dsw-font-xxs-12);
@@ -109,6 +109,8 @@
    the measured overflow. */
 .listRowName {
   min-width: 0;
+  font-size: 13px;
+  line-height: 18px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -480,4 +482,79 @@
 
 @media (pointer: coarse) {
   .actionFooter { min-height: 44px; }
+}
+
+/* ── Disclosure ─────────────────────────────────────────────────────────── */
+
+.disclosure {
+  min-width: 0;
+}
+
+.disclosureSummary {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 2px 0;
+  list-style: none;
+  cursor: pointer;
+  user-select: none;
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xxs-12);
+}
+
+.disclosureSummary::-webkit-details-marker {
+  display: none;
+}
+
+.disclosureSummary:hover {
+  color: var(--dsw-alias-label-primary);
+}
+
+.disclosureSummary:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 2px;
+  border-radius: var(--ds-sidebar-radius);
+}
+
+.disclosureChevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+  transition: transform 140ms ease;
+}
+
+.disclosure[open] > .disclosureSummary > .disclosureChevron {
+  transform: rotate(90deg);
+}
+
+.disclosureLabel {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.disclosureMeta {
+  margin-inline-start: auto;
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+  font: var(--dsw-font-xxxs-11);
+  font-variant-numeric: tabular-nums;
+}
+
+.disclosureBody {
+  min-width: 0;
+  padding-top: var(--ds-sidebar-space-1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .disclosureChevron { transition: none; }
+}
+
+@media (pointer: coarse) {
+  .disclosureSummary { min-height: 44px; }
 }

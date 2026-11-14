@@ -56,7 +56,7 @@
 }
 
 .document {
-  background: var(--dsw-alias-bg-layer-1);
+  background: var(--dsw-alias-bg-base);
   display: flex;
   flex-direction: column;
   flex: 1;
@@ -84,8 +84,13 @@
   align-items: center;
   gap: 8px;
   flex: none;
-  padding: var(--ds-sidebar-space-2) var(--ds-sidebar-gutter);
+  padding: 4px var(--ds-sidebar-gutter);
   border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
+
+.modeBar > [role="tablist"] {
+  border-bottom: 0;
+  padding: 0;
 }
 
 .modeTab {

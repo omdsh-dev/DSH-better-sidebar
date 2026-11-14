@@ -9,7 +9,7 @@
   padding: 0 8px;
   border: 1px solid var(--dsw-alias-border-l2);
   border-radius: 6px;
-  background: var(--dsw-alias-bg-layer-1);
+  background: var(--dsw-alias-bg-base);
   color: var(--dsw-alias-label-tertiary);
 }
 .root:focus-within { border-color: var(--dsw-alias-state-business-primary); }
