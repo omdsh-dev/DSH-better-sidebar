@@ -22,6 +22,7 @@ import { createNativeTabRecords } from './native/tab-adapter.tsx'
 import { registerNativeSurface } from './native/index.ts'
 import { createNativeGuideCatalog } from './native/guide-catalog.ts'
 import { registerBottomToggle } from './sidebar/bottom-toggle.tsx'
+import { registerCloseWindow } from './sidebar/close-window.tsx'
 import { ContextDiagnosticsHost, createContextDiagnosticsHost, registerContextDiagnosticsUI } from './context-diagnostics-ui.tsx'
 import { createNativeSurface } from './native/surface.ts'
 import { isTargetAvailable, openInterceptedLink, registerLinkInterception, shouldTakeOverLink } from './link-intercept.ts'
@@ -208,6 +209,13 @@ export function apply(ctx: Context): void {
   ctx.effect(
     () => registerBottomToggle(ctx, sidebarStore),
     'dsh-better-sidebar: bottom-workbench toggle',
+  )
+  // The desktop-only "close window" control, at the inner end of the same
+  // header utilities row (dock toggle 10, diagnostics 20, this 30). It renders
+  // nothing on Web deployments (no keyboard bridge behind closeWindow there).
+  ctx.effect(
+    () => registerCloseWindow(ctx),
+    'dsh-better-sidebar: close window control',
   )
   ctx.effect(
     () => () => { nativeSurface.dispose(); service.setSurface(undefined) },

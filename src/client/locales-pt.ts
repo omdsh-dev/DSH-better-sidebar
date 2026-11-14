@@ -114,6 +114,7 @@ export const pt: Record<string, string> = {
   newTab: 'Nova aba',
   brokenSymlink: 'Symlink quebrado',
   close: 'Fechar',
+  closeWindow: 'Fechar a janela',
   closeOtherTabs: 'Fechar outras abas',
   tabUnread: 'Há uma nova página ainda não vista',
   closeLeftTabs: 'Fechar abas à esquerda',

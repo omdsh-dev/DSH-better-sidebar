@@ -132,6 +132,7 @@ export const ar: Record<string, string> = {
   newTab: 'تبويب جديد',
   brokenSymlink: 'رابط رمزي معطوب',
   close: 'إغلاق',
+  closeWindow: 'إغلاق النافذة',
   closeOtherTabs: 'إغلاق التبويبات الأخرى',
   tabUnread: 'هناك صفحة جديدة لم تطّلع عليها بعد',
   closeLeftTabs: 'إغلاق التبويبات على اليسار',

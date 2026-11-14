@@ -124,6 +124,7 @@ export const fr: Record<string, string> = {
   newTab: 'Nouvel onglet',
   brokenSymlink: 'Lien symbolique cassé',
   close: 'Fermer',
+  closeWindow: 'Fermer la fenêtre',
   closeOtherTabs: 'Fermer les autres onglets',
   tabUnread: 'Une nouvelle page non consultée est disponible',
   closeLeftTabs: 'Fermer les onglets à gauche',

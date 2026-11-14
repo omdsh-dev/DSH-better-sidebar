@@ -133,6 +133,7 @@ export const pl: Record<string, string> = {
   newTab: 'Nowa karta',
   brokenSymlink: 'Uszkodzone dowiązanie symboliczne',
   close: 'Zamknij',
+  closeWindow: 'Zamknij okno',
   closeOtherTabs: 'Zamknij inne karty',
   tabUnread: 'Jest nowa, jeszcze nieobejrzana strona',
   closeLeftTabs: 'Zamknij karty po lewej',
