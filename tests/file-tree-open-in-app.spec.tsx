@@ -41,6 +41,10 @@ vi.mock('../src/client/api.ts', () => ({
     // The tree reads the shared git-status store; a non-repo answer keeps
     // every row plain (this spec is about the open-in-app rows).
     gitStatus: async () => ({ isRepo: false, entries: [] }),
+    // Rows here already carry absolute paths, so the Host canonicalization is
+    // the identity: this spec pins the MENU wiring, not the path repair (see
+    // file-tree-open-in-app-path.spec.tsx for that).
+    fsRealpath: async (_scope: unknown, path: string) => path,
   },
   downloadUrl: () => '/sidebar/file',
   isOutsideWorkspaceMessage: () => false,
@@ -262,16 +266,18 @@ describe('FileTree open-in-app rows in the menu hierarchy', () => {
     const handle = makeHandle()
     harness = await mountTree(handle)
     await openMenu(harness.container, 'a.ts')
-    clickMenuitem('Open with default app')
+    // The hand-off first asks the Host for the canonical spelling, so the
+    // handle is reached one microtask later than the click.
+    await act(async () => { clickMenuitem('Open with default app'); await Promise.resolve(); await Promise.resolve() })
     expect(handle.open).toHaveBeenCalledWith('/tmp/a.ts')
     // Selecting closes the menu entirely.
     expect(menuItems()).toHaveLength(0)
     await openMenu(harness.container, 'a.ts')
     await openSubmenu()
-    clickSubmenuRow('Preview')
+    await act(async () => { clickSubmenuRow('Preview'); await Promise.resolve(); await Promise.resolve() })
     expect(handle.open).toHaveBeenCalledWith('/tmp/a.ts', 'preview')
     await openMenu(harness.container, 'a.ts')
-    clickMenuitem('Reveal in File Manager')
+    await act(async () => { clickMenuitem('Reveal in File Manager'); await Promise.resolve(); await Promise.resolve() })
     expect(handle.reveal).toHaveBeenCalledWith('/tmp/a.ts')
   })
 
@@ -285,7 +291,7 @@ describe('FileTree open-in-app rows in the menu hierarchy', () => {
     expect(menuLabels()).toContain('Reveal in File Manager')
     await openSubmenu()
     expect(submenuLabels()).toEqual(['VS Code', 'Finder'])
-    clickSubmenuRow('Finder')
+    await act(async () => { clickSubmenuRow('Finder'); await Promise.resolve(); await Promise.resolve() })
     expect(handle.open).toHaveBeenCalledWith('/tmp/sub', 'finder')
   })
 
