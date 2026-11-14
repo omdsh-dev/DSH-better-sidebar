@@ -20,7 +20,7 @@ import type {
 import { BUILTIN_SOURCE_IDS } from '../../../clues/types.ts'
 import { parseGithubRepoRef } from '../../../clues/sources/github/url.ts'
 import { t } from '../../locales.ts'
-import { Field, SourceSwitcher, TextInput } from '../../ui/index.ts'
+import { Field, SelectMenu, TextInput } from '../../ui/index.ts'
 import css from './clues-tab.module.css'
 
 /** Stable row key of one candidate (the locator is source-normalized JSON). */
@@ -78,7 +78,8 @@ export function SourceNavigation(props: {
   onChange(sourceId: string): void
 }): ReactNode {
   const { sources, displays, activeId, onChange } = props
-  const items = sources.map(source => {
+  if (sources.length === 0) return null
+  const options = sources.map(source => {
     const label = source.sourceId === BUILTIN_SOURCE_IDS.files
       ? t('clueLocalFilesName')
       : displays.find(display => display.sourceId === source.sourceId)?.name ?? source.name
@@ -89,7 +90,23 @@ export function SourceNavigation(props: {
       icon: sourceIcon(source.sourceId, displays, 14),
     }
   })
-  return <SourceSwitcher items={items} value={activeId} onChange={onChange} ariaLabel={t('clueSourceLabel')} />
+  return (
+    <div
+      className={css.sourceNav}
+      data-clue-source-navigation
+      data-clue-active-source={activeId}
+      data-source-count={options.length}
+    >
+      <SelectMenu
+        className={css.sourceSelect}
+        value={activeId}
+        onChange={onChange}
+        ariaLabel={t('clueSourceLabel')}
+        title={t('clueSourceLabel')}
+        options={options}
+      />
+    </div>
+  )
 }
 
 
@@ -294,7 +311,7 @@ export function ScopeFields(props: {
             ['all', 'clueBrowserStateAll'],
           ] as const).map(([state, label]) => (
             <label key={state} className={css.scopeChoice}>
-              <input type="radio" name={`${choiceName}-state`} value={state} checked={form.state === state}
+              <input className={css.scopeChoiceInput} type="radio" name={`${choiceName}-state`} value={state} checked={form.state === state}
                 onChange={() => { onChange({ ...form, state }) }} />
               <span>{t(label)}</span>
             </label>
@@ -315,7 +332,7 @@ export function ScopeFields(props: {
             ['wiki-spaces', 'clueBrowserScopeDocsWikiAll'],
           ] as const).map(([docsKind, label]) => (
             <label key={docsKind} className={css.scopeChoice}>
-              <input type="radio" name={`${choiceName}-docs-kind`} value={docsKind} checked={form.docsKind === docsKind}
+              <input className={css.scopeChoiceInput} type="radio" name={`${choiceName}-docs-kind`} value={docsKind} checked={form.docsKind === docsKind}
                 onChange={() => { onChange({ ...form, docsKind }) }} />
               <span>{t(label)}</span>
             </label>

@@ -40,7 +40,7 @@ import type {
   ClueResourceState,
   ClueResourceTime,
 } from '../../clues/types.ts'
-import { StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconChevronRightOutlineRegular, StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
 import { t } from '../locales.ts'
 import css from './resource-summary.module.css'
 
@@ -272,6 +272,9 @@ function CheckList(props: { readonly checks: readonly ClueResourceCheck[] }): Re
   return (
     <details className={css.checksDisclosure} data-clue-check-list={String(ranked.length)}>
       <summary className={css.checksSummary}>
+        <span className={css.checksChevron} aria-hidden="true">
+          <IconChevronRightOutlineRegular size={12} />
+        </span>
         {failing > 0 && (
           <span className={css.checksFailing} data-ink="error">
             {t('cluePrChecksFailure')} {failing}

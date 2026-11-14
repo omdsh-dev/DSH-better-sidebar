@@ -24,7 +24,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, ReactNode } from 'react'
 import {
+  IconCheckOutlineRegular,
+  IconCloseOutlineRegular,
   IconContextInjectionOutlineRegular,
+  IconDownloadOutlineRegular,
   IconFolderOpenRegular,
   IconPlusOutlineRegular,
   IconRefreshOutlineRegular,
@@ -32,18 +35,16 @@ import {
   IconTrashOutlineRegular,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
-import { VscCloudDownload } from 'react-icons/vsc'
 import { CluePackArtwork } from '../artwork.tsx'
 import type { CluePack } from '../../../clues/types.ts'
 import type { BetterSidebarCluesClientFace } from '../registry.ts'
 import type { BetterSidebarWindowsClientFace } from '../../windows/types.ts'
 import { clueErrorMessage } from '../copy.ts'
 import { cluesApi, invalidateClueRequests, peekClueRequest } from '../api.ts'
-import { openCreatePackWindow } from '../windows/create-pack.tsx'
 import { openShareWindow } from '../windows/share.tsx'
 import {
   ActionButton, ConfirmDialog, EmptyState, ErrorBlock, IconButton, ListRow, LoadingIndicator, Menu,
-  SearchField, StatusLine,
+  Notice, SearchField, StatusLine, TextInput,
 } from '../../ui/index.ts'
 import { useScrollLoad } from '../../ui/use-scroll-load.ts'
 import { useListNavigation } from '../../ui/use-list-navigation.ts'
@@ -159,6 +160,12 @@ export function CluePacksSection(props: CluePacksSectionProps): ReactNode {
   const [packMenu, setPackMenu] = useState<PackMenu | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<CluePack | null>(null)
   const [deleting, setDeleting] = useState(false)
+  const [creating, setCreating] = useState(false)
+  const [newName, setNewName] = useState('')
+  const [createBusy, setCreateBusy] = useState(false)
+  const [createError, setCreateError] = useState<string | null>(null)
+  const createBusyRef = useRef(false)
+  const createInputRef = useRef<HTMLInputElement | null>(null)
 
   // A hidden view owns no open menu.
   useEffect(() => {
@@ -280,26 +287,43 @@ export function CluePacksSection(props: CluePacksSectionProps): ReactNode {
   }, [settings, onSettingsChange])
 
   const openCreate = useCallback((): void => {
-    // Pin the shelf's workspace/scope BEFORE the window exists: the host owns
-    // the create surface, and it may outlive a workspace switch. `onClosed`
-    // releases the pin even when the reader cancels.
+    setCreateError(null)
+    setCreating(true)
     onTaskOpenChange?.(true)
-    openCreatePackWindow({
-      windows,
-      face,
-      workspaceId,
-      onCreated: (pack: CluePack): void => {
-        // The create window closes first; this only refreshes the local shelf.
-        // The API already returned every pack, so keep them all and re-render
-        // from the top of the progressive window.
-        setPacks(current => [...current.filter(candidate => candidate.id !== pack.id), pack])
-        resetVisible()
-      },
-      onClosed: () => { onTaskOpenChange?.(false) },
-      onNotice,
-      anchor: createButtonRef.current,
-    })
-  }, [windows, face, workspaceId, resetVisible, onTaskOpenChange, onNotice])
+    queueMicrotask(() => { createInputRef.current?.focus() })
+  }, [onTaskOpenChange])
+
+  const cancelCreate = useCallback((): void => {
+    if (createBusyRef.current) return
+    setCreating(false)
+    setNewName('')
+    setCreateError(null)
+    onTaskOpenChange?.(false)
+    createButtonRef.current?.focus()
+  }, [onTaskOpenChange])
+
+  const submitCreate = useCallback(async (): Promise<void> => {
+    if (createBusyRef.current) return
+    const name = newName.trim() === '' ? t('cluePacksUntitled') : newName.trim()
+    createBusyRef.current = true
+    setCreateBusy(true)
+    setCreateError(null)
+    try {
+      const created = await face.api.packsCreate(workspaceId, { name })
+      setPacks(current => [...current.filter(candidate => candidate.id !== created.pack.id), created.pack])
+      resetVisible()
+      setNewName('')
+      setCreating(false)
+      onTaskOpenChange?.(false)
+    } catch (failure) {
+      const message = clueErrorMessage(failure, t('cluePackSaveFailed'))
+      setCreateError(message)
+      onNotice(message)
+    } finally {
+      createBusyRef.current = false
+      setCreateBusy(false)
+    }
+  }, [face, newName, onNotice, onTaskOpenChange, resetVisible, workspaceId])
 
   /** Delete the pack only: its clues, the resources and old references stay. */
   const removePack = useCallback(async (): Promise<void> => {
@@ -372,7 +396,7 @@ export function CluePacksSection(props: CluePacksSectionProps): ReactNode {
             }
           }} />
         <IconButton size="sm" label={t('clueShareImport')} onClick={onImport}
-          icon={<VscCloudDownload size={14} />} />
+          icon={<IconDownloadOutlineRegular size={14} />} />
         <IconButton size="sm"
           label={refreshing ? t('clueBrowserRefreshing') : t('refresh')}
           aria-busy={refreshing || undefined} data-clue-refresh-status={refreshing ? 'refreshing' : undefined}
@@ -380,10 +404,54 @@ export function CluePacksSection(props: CluePacksSectionProps): ReactNode {
             invalidateClueRequests(workspaceId, 'clues.packs.list'); void load()
           }}
           icon={refreshing ? <LoadingIndicator inline size={12} label="" role="presentation" /> : <IconRefreshOutlineRegular size={14} />} />
-        <ActionButton ref={createButtonRef} size="sm" aria-haspopup="dialog" onClick={openCreate}>
+        <ActionButton ref={createButtonRef} size="sm" aria-pressed={creating} onClick={openCreate}>
           <IconPlusOutlineRegular size={14} />{t('cluePacksNew')}
         </ActionButton>
       </div>
+
+      {creating && (
+        <form
+          className={css.inlineCreate}
+          data-clue-pack-inline-create
+          aria-busy={createBusy}
+          onSubmit={(event) => { event.preventDefault(); void submitCreate() }}
+        >
+          <span className={css.inlineCreateRow}>
+            <CluePackArtwork size={16} />
+            <TextInput
+              ref={createInputRef}
+              className={css.inlineCreateInput}
+              value={newName}
+              disabled={createBusy}
+              placeholder={t('cluePacksNamePlaceholder')}
+              aria-label={t('cluePacksNamePlaceholder')}
+              onChange={(event) => { setNewName(event.target.value) }}
+              onKeyDown={(event) => {
+                if (event.key === 'Escape' && !createBusy) {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  cancelCreate()
+                }
+              }}
+            />
+            <IconButton
+              size="sm"
+              label={t('cluePacksCreate')}
+              disabled={createBusy}
+              onClick={() => { void submitCreate() }}
+              icon={createBusy ? <LoadingIndicator inline size={12} label="" role="presentation" /> : <IconCheckOutlineRegular size={14} />}
+            />
+            <IconButton
+              size="sm"
+              label={t('cancel')}
+              disabled={createBusy}
+              onClick={cancelCreate}
+              icon={<IconCloseOutlineRegular size={14} />}
+            />
+          </span>
+          {createError !== null && <Notice kind="error" tone="inline">{createError}</Notice>}
+        </form>
+      )}
 
       <div ref={scrollRef} className={css.packScroll} data-clue-pack-scroll>
         {phase === 'loading' && <StatusLine plain text={<LoadingIndicator inline />} />}
@@ -398,7 +466,7 @@ export function CluePacksSection(props: CluePacksSectionProps): ReactNode {
             }}
           />
         )}
-        {phase === 'ready' && visiblePacks.length === 0 && (
+        {phase === 'ready' && visiblePacks.length === 0 && !creating && (
           <EmptyState
             icon={<CluePackArtwork size={24} />}
             title={search.trim() === '' ? t('cluePacksEmpty') : t('cluePacksNoMatch')}

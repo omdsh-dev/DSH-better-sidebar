@@ -188,10 +188,26 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  list-style: none;
+  user-select: none;
   color: var(--dsw-alias-label-tertiary);
   font-size: 11px;
   line-height: 16px;
   cursor: pointer;
+}
+
+.checksSummary::-webkit-details-marker { display: none; }
+.checksSummary:hover { color: var(--dsw-alias-label-secondary); }
+
+.checksChevron {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  transition: transform 140ms ease;
+}
+
+.checksDisclosure[open] > .checksSummary > .checksChevron {
+  transform: rotate(90deg);
 }
 
 /* A failing count is the one fact a reader must not miss; the rows below

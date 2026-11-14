@@ -25,9 +25,11 @@ import type { ReactNode, MouseEvent, KeyboardEvent, MutableRefObject } from 'rea
 import {
   writeClipboard, IconCopyOutlineRegular, IconInspectOutlineRegular,
   IconContextInjectionOutlineRegular,
+  IconChevronLeftOutlineRegular,
   IconChevronRightOutlineRegular,
   IconChecklistOutlineRegular,
   IconCloseOutlineRegular,
+  IconEllipsisOutlineRegular,
   IconPinFillRegular,
   IconPinOutlineRegular,
   IconRefreshOutlineRegular,
@@ -72,11 +74,10 @@ import {
 import { ResourceInlineMeta } from '../resource-summary.tsx'
 import { ResourceFilters, resourceFilterState } from '../resource-filters.tsx'
 import {
-  ActionButton, Checkbox, EmptyState, ErrorBlock, IconButton, ListRow, Menu, SearchField,
+  ActionButton, ActionFooter, Checkbox, Disclosure, EmptyState, ErrorBlock, IconButton, ListRow, Menu, SearchField,
 } from '../../ui/index.ts'
 import { useListNavigation } from '../../ui/use-list-navigation.ts'
 import { SourceReadiness } from '../sources/readiness.tsx'
-import { WorkbenchSection } from '../../ui/WorkbenchSection.tsx'
 import { useScrollLoad } from '../../ui/use-scroll-load.ts'
 import { HostedWindow } from '../../windows/HostedWindow.tsx'
 import type { BetterSidebarWindowsClientFace } from '../../windows/types.ts'
@@ -274,7 +275,6 @@ export function ClueBrowser(props: ClueBrowserProps): ReactNode {
   const [pins, setPins] = useState<readonly { readonly clueId: string }[]>([])
   const [titles, setTitles] = useState<ReadonlyMap<string, PinnedRow>>(new Map())
   const [pinsPhase, setPinsPhase] = useState<'loading' | 'ready' | 'error'>('loading')
-  const [pinsOpen, setPinsOpen] = useState(true)
   const [pinsRetrying, setPinsRetrying] = useState(false)
   const queryInputRef = useRef<HTMLInputElement | null>(null)
   const visibleRef = useRef(visible)
@@ -963,10 +963,19 @@ export function ClueBrowser(props: ClueBrowserProps): ReactNode {
   const rowPinned = (candidate: ClueCandidate): boolean =>
     (candidate.clueId !== undefined && pinnedIds.has(candidate.clueId)) || pinnedCandidateKeys.has(candidateKey(candidate))
 
-  const candidates: readonly ClueCandidate[] =
+  const rawCandidates: readonly ClueCandidate[] =
     state.kind === 'page' ? state.result.items : state.kind === 'resolved' ? state.candidates : []
+  // When pinned items are shown inline at the top of the browse list, omit
+  // duplicates from the unpinned list below so each resource appears once.
+  const candidates: readonly ClueCandidate[] =
+    state.kind === 'page' && state.view.kind === 'list' && pinnedRows.length > 0
+      ? rawCandidates.filter(candidate => !rowPinned(candidate))
+      : rawCandidates
 
-  const navigation = useListNavigation(candidates.map(candidateKey))
+  const navigation = useListNavigation<HTMLDivElement>([
+    ...pinnedRows.map(row => `pin:${row.clueId}`),
+    ...candidates.map(candidateKey),
+  ])
 
   const hasNext = state.kind === 'page' && state.result.nextCursor !== undefined
   const loadMore = useCallback((): void => {
@@ -987,16 +996,38 @@ export function ClueBrowser(props: ClueBrowserProps): ReactNode {
     <section className={css.browser} aria-label={t('clueViewBrowse')}>
       <div className={css.browserToolbar} id={headingId}>
         <SourceNavigation sources={enabled} displays={displays} activeId={active?.sourceId ?? ''} onChange={selectSource} />
-      </div>
-      <div className={css.browserCommands}>
-        {active !== undefined && active.sourceId !== BUILTIN_SOURCE_IDS.feishuTasks && <button ref={scopeButtonRef} type="button" className={css.scopeButton}
-              aria-label={`${t('clueBrowserScopeEdit')}: ${summary ?? t('clueBrowserScopeNeeded')}`}
-              title={`${t('clueBrowserScopeHeading')}: ${summary ?? t('clueBrowserScopeNeeded')}`}
-              aria-haspopup="dialog" onClick={() => { setScopeOpen(true) }}>
-              <span>{summary ?? t('clueBrowserScopeEdit')}</span>
-              <IconChevronRightOutlineRegular size={12} />
-            </button>}
+        {scopeTrail.length > 0 && (
+          <IconButton
+            size="sm"
+            data-clue-scope-up
+            label={t('clueBrowserScopeUp' as import('../../locales.ts').CopyKey)}
+            onClick={() => { navigateScope(scopeTrail[scopeTrail.length - 1], scopeTrail.slice(0, -1)) }}
+            icon={<IconChevronLeftOutlineRegular size={14} />}
+          />
+        )}
+        {active !== undefined && active.sourceId !== BUILTIN_SOURCE_IDS.feishuTasks && (
+          <button
+            ref={scopeButtonRef}
+            type="button"
+            className={css.scopeButton}
+            aria-label={`${t('clueBrowserScopeEdit')}: ${summary ?? t('clueBrowserScopeNeeded')}`}
+            title={`${t('clueBrowserScopeHeading')}: ${summary ?? t('clueBrowserScopeNeeded')}`}
+            aria-haspopup="dialog"
+            onClick={() => { setScopeOpen(true) }}
+          >
+            <span>{summary ?? t('clueBrowserScopeEdit')}</span>
+            <IconChevronRightOutlineRegular size={12} />
+          </button>
+        )}
         <span className={css.commandSpacer} />
+        {active !== undefined && (
+          <ResourceFilters
+            source={active}
+            scope={filterDraft === undefined ? activeScope : filterDraft.scope}
+            mode={view.kind === 'search' ? 'search' : 'list'}
+            onChange={changeFilter}
+          />
+        )}
         <IconButton size="sm" active={selectionMode} data-clue-selection-mode disabled={busy}
           label={t('clueBrowserSelectionMode')} onClick={() => { setSelectionMode(value => !value) }}
           icon={<IconChecklistOutlineRegular size={14} />} />
@@ -1064,22 +1095,23 @@ export function ClueBrowser(props: ClueBrowserProps): ReactNode {
                     onSubmitQuery()
                   }
                 }}
-                trailing={<>
-                  <button type="button" className={css.querySubmit} onClick={onSubmitQuery}
-                    aria-label={looksLikeResource(query.trim()) ? t('clueBrowserResolveAction') : t('clueBrowserSearchAction')}
-                    title={looksLikeResource(query.trim()) ? t('clueBrowserResolveAction') : t('clueBrowserSearchAction')}>
-                    <IconChevronRightOutlineRegular size={14} />
-                  </button>
-                  {query !== '' && <button type="button" className={css.clearSearch} aria-label={t('clueClearSearch')} title={t('clueClearSearch')}
-                    onClick={() => { setQuery(''); setView({ kind: 'list' }); queryInputRef.current?.focus() }}>
-                    <IconCloseOutlineRegular size={12} />
-                  </button>}
-                </>}
+                trailing={query !== ''
+                  ? (
+                    <>
+                      <button type="button" className={css.clearSearch} aria-label={t('clueClearSearch')} title={t('clueClearSearch')}
+                        onClick={() => { setQuery(''); setView({ kind: 'list' }); queryInputRef.current?.focus() }}>
+                        <IconCloseOutlineRegular size={12} />
+                      </button>
+                      <button type="button" className={css.querySubmit} onClick={onSubmitQuery}
+                        aria-label={looksLikeResource(query.trim()) ? t('clueBrowserResolveAction') : t('clueBrowserSearchAction')}
+                        title={looksLikeResource(query.trim()) ? t('clueBrowserResolveAction') : t('clueBrowserSearchAction')}>
+                        <IconChevronRightOutlineRegular size={14} />
+                      </button>
+                    </>
+                  )
+                  : undefined}
               />
             </div>
-            {scopeTrail.length > 0 && <div className={css.scopeNavigation}><button type="button" className={css.toolButton} data-clue-scope-up onClick={() => { navigateScope(scopeTrail[scopeTrail.length - 1], scopeTrail.slice(0, -1)) }}>{t('clueBrowserScopeUp' as import('../../locales.ts').CopyKey)}</button><span className={css.scopeHint}>{summary}</span></div>}
-            <ResourceFilters source={active} scope={filterDraft === undefined ? activeScope : filterDraft.scope} mode={view.kind === 'search' ? 'search' : 'list'}
-              onChange={changeFilter} />
             {/* Setup is actionable below the search box, never a checking row
                 that would move the search box while a probe is in flight. */}
             <SourceReadiness key={active.sourceId} source={active}
@@ -1101,15 +1133,22 @@ export function ClueBrowser(props: ClueBrowserProps): ReactNode {
                 <ScopeFields sourceId={active.sourceId} form={form} onChange={(next) => { setForm(next) }} />
                 {scopeError !== null && <span className={css.fieldError} role="alert">{scopeError}</span>}
                 </div>
-                <div className={css.scopeActions}>
-                  <button type="button" className={css.toolButton} onClick={() => {
-                    onScopeChange(active.sourceId, undefined); defaults.refresh(); setScopeOpen(false)
-                  }}>{t('clueScopeUseDefault')}</button>
-                  <button type="button" className={css.toolButton} onClick={() => { setScopeOpen(false); setScopeError(null) }}>
-                    {t('cancel')}
-                  </button>
-                  <button type="submit" className={css.primaryButton}>{t('clueBrowserScopeApply')}</button>
-                </div>
+                <ActionFooter
+                  bleed
+                  start={(
+                    <ActionButton size="sm" variant="ghost" onClick={() => {
+                      onScopeChange(active.sourceId, undefined); defaults.refresh(); setScopeOpen(false)
+                    }}>{t('clueScopeUseDefault')}</ActionButton>
+                  )}
+                  end={(
+                    <>
+                      <ActionButton size="sm" onClick={() => { setScopeOpen(false); setScopeError(null) }}>
+                        {t('cancel')}
+                      </ActionButton>
+                      <ActionButton size="sm" type="submit" variant="primary">{t('clueBrowserScopeApply')}</ActionButton>
+                    </>
+                  )}
+                />
               </form>
               </HostedWindow>
             )}
@@ -1126,22 +1165,6 @@ export function ClueBrowser(props: ClueBrowserProps): ReactNode {
                   })
                 }} />
             )}
-            {pinnedRows.length > 0 && <PinsPanel
-              pinned={pinnedRows}
-              displays={displays}
-              open={pinsOpen}
-              onToggle={() => { setPinsOpen(value => !value) }}
-              displayName={displayName}
-              busy={busy}
-              onOpenDetail={(row) => {
-                onOpenDetail({ ...row })
-              }}
-              onInsert={(row) => {
-                if (!onInsertClue(row.clueId, row.title)) onNotice(t('clueInsertFailed'))
-              }}
-              onContextMenu={openRowMenu} onMenuKey={rowMenuKey}
-                  onUnpin={(row) => { void unpinById(row.clueId) }}
-            />}
 
             <div ref={resultScrollRef} className={css.resultArea} data-clue-browser-state={state.kind}
               data-clue-refresh={refresh.kind}
@@ -1158,6 +1181,78 @@ export function ClueBrowser(props: ClueBrowserProps): ReactNode {
               }}
               aria-busy={moreLoading || state.kind === 'loading' || refresh.kind === 'refreshing'}
               role="region" aria-label={t('clueBrowserHeading')} tabIndex={0}>
+              <div
+                ref={navigation.ref}
+                className={css.listContainer}
+                onKeyDown={navigation.onKeyDown}
+                onFocusCapture={navigation.onFocusCapture}
+                onClickCapture={navigation.onClickCapture}
+              >
+              {pinnedRows.length > 0 && (
+                <div className={css.pinsInline} data-clue-pins-region>
+                  <ul className={css.pinList} aria-label={t('clueBrowserPinsHeading')}>
+                    {pinnedRows.map((row, index) => {
+                      const rowCandidate: ClueCandidate = {
+                        sourceId: row.sourceId,
+                        typeId: row.typeId,
+                        locator: row.locator,
+                        title: row.title,
+                        clueId: row.clueId,
+                        ...(row.info === undefined ? {} : { info: row.info }),
+                        ...(row.subtitle === undefined ? {} : { subtitle: row.subtitle }),
+                      }
+                      const key = candidateKey(rowCandidate)
+                      return (
+                        <li
+                          key={row.clueId}
+                          data-pinned="true"
+                          onContextMenu={event => { openRowMenu(event, rowCandidate) }}
+                          onKeyDown={event => { rowMenuKey(event, rowCandidate) }}
+                        >
+                          <ListRow
+                            selected={selected.has(key)}
+                            title={row.title}
+                            titleLabel={row.title}
+                            titleAs="button"
+                            primary={navigation.itemTabIndex(index) === 0}
+                            onTitleClick={() => { onOpenDetail({ ...row }) }}
+                            leading={<>
+                              {selectionMode && (
+                                <label className={css.rowSelection}>
+                                  <Checkbox
+                                    checked={selected.has(key)}
+                                    disabled={busy}
+                                    aria-label={t('clueBrowserSelectRow', { title: row.title })}
+                                    onChange={() => { selectionToggle(rowCandidate) }}
+                                  />
+                                </label>
+                              )}
+                              <span className={css.rowGlyph} aria-hidden="true">{resourceIcon(row, displays)}</span>
+                            </>}
+                            subtitle={row.info === undefined ? undefined : <ResourceInlineMeta info={row.info} />}
+                            meta={<span className={css.pinnedBadge} title={t('clueBrowserPinnedBadge')}><IconPinFillRegular size={12} /></span>}
+                            actions={<>
+                              <IconButton size="sm" label={t('clueBrowserInsertRow', { title: row.title })} title={t('clueBrowserInsert')}
+                                disabled={busy} onClick={() => { if (!onInsertClue(row.clueId, row.title)) onNotice(t('clueInsertFailed')) }}
+                                icon={<IconContextInjectionOutlineRegular size={14} />} />
+                              <IconButton size="sm" data-clue-pin="true" label={t('clueBrowserUnpinRow', { title: row.title })} title={t('clueBrowserUnpin')}
+                                disabled={busy} onClick={() => { void unpinById(row.clueId) }}
+                                icon={<IconPinFillRegular size={14} />} />
+                              <IconButton size="sm" label={t('clueBrowserMoreRow', { title: row.title })} disabled={busy}
+                                aria-haspopup="menu" aria-expanded={rowMenu !== null && candidateKey(rowMenu.candidate) === key}
+                                icon={<IconEllipsisOutlineRegular size={14} />}
+                                onClick={event => {
+                                  const box = event.currentTarget.getBoundingClientRect()
+                                  setRowMenu({ candidate: rowCandidate, x: box.left, y: box.bottom })
+                                }} />
+                            </>}
+                          />
+                        </li>
+                      )
+                    })}
+                  </ul>
+                </div>
+              )}
               {refresh.kind === 'error' && (
                 <ErrorBlock data-clue-refresh-status="error" message={refresh.message} retryLabel={t('retry')}
                   onRetry={() => {
@@ -1211,8 +1306,7 @@ export function ClueBrowser(props: ClueBrowserProps): ReactNode {
               )}
 
               {candidates.length > 0 && (
-                <ul className={css.resultList} ref={navigation.ref} onKeyDown={navigation.onKeyDown}
-                  onFocusCapture={navigation.onFocusCapture} onClickCapture={navigation.onClickCapture}>
+                <ul className={css.resultList}>
                   {candidates.map((candidate, index) => {
                     const pinned = rowPinned(candidate)
                     const key = candidateKey(candidate)
@@ -1225,7 +1319,7 @@ export function ClueBrowser(props: ClueBrowserProps): ReactNode {
                           title={candidate.title}
                           titleLabel={candidate.title}
                           titleAs="button"
-                          primary={navigation.itemTabIndex(index) === 0}
+                          primary={navigation.itemTabIndex(pinnedRows.length + index) === 0}
                           onTitleClick={() => { previewCandidate(candidate) }}
                           leading={<>
                             {selectionMode && <label className={css.rowSelection}>
@@ -1242,7 +1336,7 @@ export function ClueBrowser(props: ClueBrowserProps): ReactNode {
                             <ResourceInlineMeta info={candidate.info} />
                             {candidate.info?.state === undefined && candidate.info?.author === undefined && candidate.info?.branches === undefined && candidate.subtitle !== candidate.title ? candidate.subtitle : null}
                           </>}
-                          meta={pinned ? <span className={css.pinnedBadge}>{t('clueBrowserPinnedBadge')}</span> : undefined}
+                          meta={pinned ? <span className={css.pinnedBadge} title={t('clueBrowserPinnedBadge')}><IconPinFillRegular size={12} /></span> : undefined}
                           actions={<>
                             <IconButton
                               size="sm"
@@ -1251,11 +1345,11 @@ export function ClueBrowser(props: ClueBrowserProps): ReactNode {
                               disabled={busy}
                               onClick={() => { void insertCandidate(candidate) }}
                               icon={pendingAction?.key === key && pendingAction.kind === 'insert'
-                                ? <LoadingIndicator inline size={14} label="" role="presentation" /> : <IconContextInjectionOutlineRegular size={16} />}
+                                ? <LoadingIndicator inline size={14} label="" role="presentation" /> : <IconContextInjectionOutlineRegular size={14} />}
                             />
-                            <IconButton label={t('clueBrowserMoreRow', { title: candidate.title })} disabled={busy}
+                            <IconButton size="sm" label={t('clueBrowserMoreRow', { title: candidate.title })} disabled={busy}
                               aria-haspopup="menu" aria-expanded={rowMenu !== null && candidateKey(rowMenu.candidate) === key}
-                              icon={<span aria-hidden="true">···</span>}
+                              icon={<IconEllipsisOutlineRegular size={14} />}
                               onClick={event => {
                                 const box = event.currentTarget.getBoundingClientRect()
                                 setRowMenu({ candidate, x: box.left, y: box.bottom })
@@ -1274,32 +1368,38 @@ export function ClueBrowser(props: ClueBrowserProps): ReactNode {
               {state.kind === 'page' && state.result.limited === true && <div className={css.scopeHint}>
                 {t('clueBrowserLimited')}
               </div>}
+              </div>
             </div>
 
             {(selectionMode || selected.size > 0) && (
               <>
                 <div className={css.batchBar} role="region" aria-label={t('clueBrowserSelected', { n: selected.size })} aria-busy={busy}>
-                  <details className={css.selectionReview} data-clue-selection-review>
-                    <summary aria-label={t('clueSelectionReview')}><span className={css.batchCount} role="status">{t('clueBrowserSelected', { n: selected.size })}</span></summary>
+                  <Disclosure
+                    className={css.selectionReview}
+                    summaryAriaLabel={t('clueSelectionReview')}
+                    data-clue-selection-review
+                    summary={<span className={css.batchCount} role="status">{t('clueBrowserSelected', { n: selected.size })}</span>}
+                  >
                     <ul className={css.selectedList}>
                       {[...selected.values()].map(candidate => <li key={candidateKey(candidate)}>
                         <span className={css.selectedCopy}><span title={candidate.title}>{candidate.title}</span><small>{displayName(candidate.sourceId)}</small></span>
-                        <IconButton label={t('clueSelectionRemove', { title: candidate.title })} disabled={busy}
+                        <IconButton size="sm" label={t('clueSelectionRemove', { title: candidate.title })} disabled={busy}
                           icon={<IconCloseOutlineRegular size={14} />} onClick={() => { removeSelected(candidate) }} />
                       </li>)}
                     </ul>
-                  </details>
+                  </Disclosure>
                   <div className={css.selectionActions} data-clue-selection-actions>
-                    <button ref={collectButtonRef} type="button" className={css.toolButton} disabled={busy || selected.size === 0} aria-haspopup="dialog"
+                    <ActionButton ref={collectButtonRef} size="sm" disabled={busy || selected.size === 0} aria-haspopup="dialog"
                       onClick={() => { openCollection([...selected.values()]) }}>
                       <IconPlusOutlineRegular size={14} />{t('clueBrowserAddToPack')}
-                    </button>
-                    <button type="button" className={css.primaryButton} disabled={busy || selected.size === 0} onClick={() => { void insertSelected() }}>
-                      <IconContextInjectionOutlineRegular size={16} />{t('clueBrowserInsertSelected')}
-                    </button>
+                    </ActionButton>
+                    <ActionButton size="sm" variant="primary" disabled={busy || selected.size === 0} onClick={() => { void insertSelected() }}>
+                      <IconContextInjectionOutlineRegular size={14} />{t('clueBrowserInsertSelected')}
+                    </ActionButton>
                   </div>
-                  <button type="button" className={css.iconButton} disabled={busy} aria-label={t('cancel')} title={t('cancel')}
-                    onClick={() => { setSelected(new Map()); setSelectionMode(false); queryInputRef.current?.focus() }}><IconCloseOutlineRegular size={14} /></button>
+                  <IconButton size="sm" disabled={busy} label={t('cancel')} title={t('cancel')}
+                    onClick={() => { setSelected(new Map()); setSelectionMode(false); queryInputRef.current?.focus() }}
+                    icon={<IconCloseOutlineRegular size={14} />} />
                 </div>
               </>
             )}
@@ -1339,59 +1439,5 @@ export function ClueBrowser(props: ClueBrowserProps): ReactNode {
     }} portal compact align="start"
       anchorPoint={rowMenu === null ? undefined : { x: rowMenu.x, y: rowMenu.y }} anchor={<span />} />
     </>
-  )
-}
-
-/** The collapsible pin strip. */
-function PinsPanel(props: {
-  readonly pinned: readonly PinnedRow[]
-  readonly displays: readonly ClueSourceDisplayDescriptor[]
-  readonly open: boolean
-  readonly busy: boolean
-  onToggle(): void
-  displayName(sourceId: string): string
-  onOpenDetail(row: PinnedRow): void
-  onInsert(row: PinnedRow): void
-  onUnpin(row: PinnedRow): void
-  onContextMenu(event: MouseEvent<HTMLElement>, row: PinnedRow): void
-  onMenuKey(event: KeyboardEvent<HTMLElement>, row: PinnedRow): void
-}): ReactNode {
-  const { pinned, open, busy } = props
-  const navigation = useListNavigation(pinned.map(row => row.clueId))
-  return (
-    <div className={css.pins} data-clue-pins-region>
-      <WorkbenchSection title={t('clueBrowserPinsHeading')} count={pinned.length}
-        icon={<IconPinFillRegular className={css.pinAccent} size={14} />}
-        open={open} onOpenChange={props.onToggle}>
-        <div className={css.pinsBody}>
-              <ul className={css.pinList} ref={navigation.ref} onKeyDown={navigation.onKeyDown}
-                onFocusCapture={navigation.onFocusCapture} onClickCapture={navigation.onClickCapture}>
-                {pinned.map((row, index) => (
-                  <li key={row.clueId}
-                    onContextMenu={event => { props.onContextMenu(event, row) }}
-                    onKeyDown={event => { props.onMenuKey(event, row) }}>
-                    <ListRow
-                      title={row.title}
-                      titleLabel={row.title}
-                      titleAs="button"
-                      primary={navigation.itemTabIndex(index) === 0}
-                      onTitleClick={() => { props.onOpenDetail(row) }}
-                      leading={<span className={css.rowGlyph} aria-hidden="true">{resourceIcon(row, props.displays)}</span>}
-                      subtitle={<><ResourceInlineMeta info={row.info} />{row.info?.state === undefined ? props.displayName(row.sourceId) : null}</>}
-                      actions={<>
-                        <IconButton size="sm" label={t('clueBrowserInsertRow', { title: row.title })} title={t('clueBrowserInsert')}
-                          disabled={busy} onClick={() => { props.onInsert(row) }}
-                          icon={<IconContextInjectionOutlineRegular size={16} />} />
-                        <IconButton size="sm" data-clue-pin="true" label={t('clueBrowserUnpinRow', { title: row.title })} title={t('clueBrowserUnpin')}
-                          disabled={busy} onClick={() => { props.onUnpin(row) }}
-                          icon={<IconPinFillRegular size={14} />} />
-                      </>}
-                    />
-                  </li>
-                ))}
-              </ul>
-        </div>
-      </WorkbenchSection>
-    </div>
   )
 }

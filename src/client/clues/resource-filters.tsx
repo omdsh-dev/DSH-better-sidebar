@@ -1,9 +1,11 @@
 /** One source-declared filter surface for tab browsing and pack member browsing. */
-import type { ReactNode } from 'react'
+import { useRef, useState, type ReactNode } from 'react'
+import { IconCheckOutlineRegular, IconSlidersTwoOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
+import type { MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ClueSourceDescriptor, JsonObject, JsonValue } from '../../clues/types.ts'
 import { BUILTIN_SOURCE_IDS } from '../../clues/types.ts'
-import { SelectMenu } from '../ui/SelectMenu.tsx'
-import { ActionButton } from '../ui/kit.tsx'
+import { IconButton } from '../ui/kit.tsx'
+import { Menu } from '../ui/Menu.tsx'
 import { t } from '../locales.ts'
 import css from './resource-filters.module.css'
 
@@ -36,6 +38,9 @@ export function ResourceFilters(props: {
   onChange(scope: JsonValue | undefined): void
 }): ReactNode {
   const { filters, scope, active, clearedScope } = resourceFilterState(props.source, props.scope, props.mode)
+  const [open, setOpen] = useState(false)
+  const [point, setPoint] = useState<{ x: number; y: number } | undefined>(undefined)
+  const triggerRef = useRef<HTMLButtonElement>(null)
   if (filters.length === 0) return null
   const optionLabel = (id: string): string => {
     switch (id) {
@@ -49,23 +54,72 @@ export function ResourceFilters(props: {
       default: return id
     }
   }
-  return <div className={css.filters} data-clue-resource-filters>
-    {filters.map(filter => {
-      const current = filter.options.find(option => JSON.stringify(option.value) === JSON.stringify(scope[filter.scopeKey]))?.id
-        ?? filter.defaultOptionId ?? filter.options[0]?.id
-      return <div key={filter.scopeKey} className={css.filter}>
-        <SelectMenu ariaLabel={t('clueResourceFilter')} value={current ?? ''}
-          options={filter.options.map(option => ({ value: option.id, label: optionLabel(option.id) }))}
-          onChange={(value: string) => {
-            const option = filter.options.find(option => option.id === value)
-            if (option === undefined) return
-            const next = { ...scope }
-            if (option.value === undefined) delete next[filter.scopeKey]
-            else next[filter.scopeKey] = option.value
-            props.onChange(Object.keys(next).length === 0 ? undefined : next)
-          }} />
-      </div>
-    })}
-    {active && <ActionButton variant="ghost" onClick={() => { props.onChange(clearedScope) }}>{t('clueClearFilters')}</ActionButton>}
-  </div>
+  const items: MenuEntry[] = []
+  const actions = new Map<string, () => void>()
+  filters.forEach((filter, filterIndex) => {
+    if (filterIndex > 0) items.push({ type: 'separator', id: `sep-${filter.scopeKey}` })
+    const current = filter.options.find(option => JSON.stringify(option.value) === JSON.stringify(scope[filter.scopeKey]))?.id
+      ?? filter.defaultOptionId ?? filter.options[0]?.id
+    for (const option of filter.options) {
+      const id = `${filter.scopeKey}:${option.id}`
+      const selected = option.id === current
+      items.push({
+        id,
+        label: optionLabel(option.id),
+        icon: selected ? <IconCheckOutlineRegular size={14} /> : undefined,
+      })
+      actions.set(id, () => {
+        const next = { ...scope }
+        if (option.value === undefined) delete next[filter.scopeKey]
+        else next[filter.scopeKey] = option.value
+        props.onChange(Object.keys(next).length === 0 ? undefined : next)
+      })
+    }
+  })
+  if (active) {
+    items.push({ type: 'separator', id: 'sep-clear' })
+    items.push({ id: '__clear', label: t('clueClearFilters') })
+    actions.set('__clear', () => { props.onChange(clearedScope) })
+  }
+  const activeSummary = filters.map(filter => {
+    const current = filter.options.find(option => JSON.stringify(option.value) === JSON.stringify(scope[filter.scopeKey]))?.id
+      ?? filter.defaultOptionId ?? filter.options[0]?.id
+    return current === undefined ? '' : optionLabel(current)
+  }).filter(Boolean).join(' · ')
+  return (
+    <span className={css.filters} data-clue-resource-filters data-filter-active={active ? 'true' : undefined}>
+      <IconButton
+        ref={triggerRef}
+        size="sm"
+        active={active}
+        label={t('clueResourceFilter')}
+        title={activeSummary === '' ? t('clueResourceFilter') : `${t('clueResourceFilter')}: ${activeSummary}`}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        icon={<IconSlidersTwoOutlineRegular size={14} />}
+        onClick={() => {
+          const rect = triggerRef.current?.getBoundingClientRect()
+          setPoint(rect === undefined ? undefined : { x: rect.left, y: rect.bottom })
+          setOpen(current => !current)
+        }}
+      />
+      {open && (
+        <Menu
+          open
+          portal
+          compact
+          autoFocus
+          onClose={() => { setOpen(false) }}
+          anchorPoint={point}
+          anchor={<span />}
+          items={items}
+          onSelect={(id) => {
+            setOpen(false)
+            triggerRef.current?.focus()
+            actions.get(id)?.()
+          }}
+        />
+      )}
+    </span>
+  )
 }

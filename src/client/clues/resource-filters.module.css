@@ -1,2 +1,1 @@
-.filters { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 0 0 8px; flex: none; }
-.filter { display: inline-flex; min-width: 0; max-width: 100%; }
+.filters { display: inline-flex; align-items: center; flex: none; }

@@ -1,5 +1,6 @@
 /** The three-step clue guide in the host's accessible modal layer. */
 import { type ReactNode } from 'react'
+import clsx from 'clsx'
 import { Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 import {
   IconContextInjectionOutlineRegular,
@@ -7,7 +8,9 @@ import {
   IconLinkOutlineRegular,
   IconPaperPlaneOutlineRegular,
 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { ActionButton } from '../../ui/index.ts'
 import { t } from '../../locales.ts'
+import design from '../../ui/design.module.css'
 import css from './help.module.css'
 
 export interface ClueHelpOverlayProps { onClose(): void }
@@ -25,15 +28,53 @@ export function forgetClueHelpSeen(): void {
 }
 
 export function ClueHelpOverlay({ onClose }: ClueHelpOverlayProps): ReactNode {
-  return <Modal open onClose={onClose} title={t('clueHelpTitle')} closeLabel={t('clueHelpClose')}
-    className={css.guideDialog} contentClassName={css.guideContent} backdropBlur={false}>
-    <section className={css.guide} data-clue-help>
-    <ol className={css.steps}>
-      <li data-clue-help-step><IconFolderOpenRegular size={18} /><span><strong>{t('clueHelpSelectLabel')}</strong><small>{t('clueHelpSelectBody')}</small></span></li>
-      <li data-clue-help-step><IconContextInjectionOutlineRegular size={18} /><span><strong>{t('clueHelpInsertLabel')}</strong><small>{t('clueHelpInsertBody')}</small></span></li>
-      <li data-clue-help-step><IconPaperPlaneOutlineRegular size={18} /><span><strong>{t('clueHelpReadLabel')}</strong><small>{t('clueHelpReadBody')}</small></span></li>
-    </ol>
-    <p className={css.hint}><IconLinkOutlineRegular size={14} /><span>{t('clueHelpPackBody')}</span></p>
-    </section>
-  </Modal>
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={t('clueHelpTitle')}
+      closeLabel={t('clueHelpClose')}
+      className={clsx(design.surface, css.guideDialog)}
+      contentClassName={css.guideContent}
+      backdropBlur={false}
+      footer={(
+        <ActionButton variant="primary" size="sm" onClick={onClose}>
+          {t('clueHelpDone')}
+        </ActionButton>
+      )}
+    >
+      <section className={css.guide} data-clue-help>
+        <ol className={css.steps}>
+          <li data-clue-help-step>
+            <span className={css.stepHead}>
+              <span className={css.stepIndex}>01</span>
+              <IconFolderOpenRegular size={16} />
+            </span>
+            <strong>{t('clueHelpSelectLabel')}</strong>
+            <small>{t('clueHelpSelectBody')}</small>
+          </li>
+          <li data-clue-help-step>
+            <span className={css.stepHead}>
+              <span className={css.stepIndex}>02</span>
+              <IconContextInjectionOutlineRegular size={16} />
+            </span>
+            <strong>{t('clueHelpInsertLabel')}</strong>
+            <small>{t('clueHelpInsertBody')}</small>
+          </li>
+          <li data-clue-help-step>
+            <span className={css.stepHead}>
+              <span className={css.stepIndex}>03</span>
+              <IconPaperPlaneOutlineRegular size={16} />
+            </span>
+            <strong>{t('clueHelpReadLabel')}</strong>
+            <small>{t('clueHelpReadBody')}</small>
+          </li>
+        </ol>
+        <p className={css.hint}>
+          <IconLinkOutlineRegular size={14} />
+          <span>{t('clueHelpPackBody')}</span>
+        </p>
+      </section>
+    </Modal>
+  )
 }

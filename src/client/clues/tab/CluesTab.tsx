@@ -26,7 +26,7 @@ import { insertClueReference, insertPackReference } from '../insert.ts'
 import { notifyClue } from '../notify.ts'
 import { revealClueFile } from '../file-reveal.ts'
 import { api } from '../../api.ts'
-import { parsePrefs } from '../../prefs.ts'
+import { parsePrefs, syncClueWindowSurface } from '../../prefs.ts'
 import { t } from '../../locales.ts'
 import { CluePacksSection } from './packs.tsx'
 import { ClueBrowser } from './browser.tsx'
@@ -127,6 +127,7 @@ export function CluesTab({ ctx, store, scope, visible }: CluesTabProps): ReactNo
   useEffect(() => {
     const sync = (): void => {
       const prefs = store.getPrefs()
+      syncClueWindowSurface(prefs)
       setSourcePreferences(prefs.clueSourcesEnabled)
       const next = blobOf(prefs)
       setSettings(current => (sameBlob(current, next) ? current : next))
@@ -316,32 +317,38 @@ export function CluesTab({ ctx, store, scope, visible }: CluesTabProps): ReactNo
   }, [])
 
   const ready = resolved && workspaceId !== undefined && face !== undefined && service !== undefined
+  const utilityButtons = (
+    <>
+      <IconButton ref={helpButtonRef} size="sm" label={t('clueTabHelpAria')} aria-expanded={helpOpen}
+        onClick={() => { if (helpOpen) closeHelp(); else setHelpOpen(true) }} icon={<IconQuestionOutlineRegular size={14} />} />
+      <IconButton size="sm" label={t('clueTabSettingsAria')} onClick={openSettings} icon={<IconSettingsOutlineRegular size={14} />} />
+    </>
+  )
+  const showTopToolbar = workspaces.length > 1 || !ready
 
   return (
     <div className={`${design.surface} ${css.root}`} data-clue-tab>
       <div className={css.workbench}>
-      <SidebarToolbar
-        className={css.header}
-        start={workspaces.length > 1
-          ? (
-            <SelectMenu
-              className={css.workspaceSelect}
-              ariaLabel={t('clueTabWorkspaceAria')}
-              value={browseWorkspaceId ?? ''}
-              disabled={taskOpen}
-              onChange={setWorkspaceChoice}
-              options={workspaces.map(workspace => ({ value: workspace.workspaceId, label: workspace.title }))}
-            />
-          )
-          : currentWorkspace !== undefined && (
-            <span className={css.workspaceLabel} title={currentWorkspace.title}>{currentWorkspace.title}</span>
-          )}
-        end={<>
-          <IconButton ref={helpButtonRef} size="sm" label={t('clueTabHelpAria')} aria-expanded={helpOpen}
-            onClick={() => { if (helpOpen) closeHelp(); else setHelpOpen(true) }} icon={<IconQuestionOutlineRegular size={14} />} />
-          <IconButton size="sm" label={t('clueTabSettingsAria')} onClick={openSettings} icon={<IconSettingsOutlineRegular size={14} />} />
-        </>}
-      />
+      {showTopToolbar && (
+        <SidebarToolbar
+          className={css.header}
+          start={workspaces.length > 1
+            ? (
+              <SelectMenu
+                className={css.workspaceSelect}
+                ariaLabel={t('clueTabWorkspaceAria')}
+                value={browseWorkspaceId ?? ''}
+                disabled={taskOpen}
+                onChange={setWorkspaceChoice}
+                options={workspaces.map(workspace => ({ value: workspace.workspaceId, label: workspace.title }))}
+              />
+            )
+            : currentWorkspace !== undefined && (
+              <span className={css.workspaceLabel} title={currentWorkspace.title}>{currentWorkspace.title}</span>
+            )}
+          end={!ready ? utilityButtons : undefined}
+        />
+      )}
 
       {visible && helpOpen && <ClueHelpOverlay onClose={closeHelp} />}
 
@@ -363,6 +370,7 @@ export function CluesTab({ ctx, store, scope, visible }: CluesTabProps): ReactNo
             icon={<IconSearchOutlineRegular size={14} />}
             open={sections.browse}
             onOpenChange={open => { toggleSection('browse', open) }}
+            actions={utilityButtons}
             className={css.browseSection}
             bodyClassName={css.browseBody}
           >
