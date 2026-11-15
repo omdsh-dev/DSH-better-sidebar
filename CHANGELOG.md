@@ -2,6 +2,11 @@
 
 > 本文档收录 dsh-better-sidebar 的完整发布历史（最新版摘要见 [README](README_ZH.md)；同步发布于 [GitHub Releases](https://github.com/omdsh-dev/DSH-better-sidebar/releases)）。
 
+### 未发布
+
+- 🌿 **多仓库工作区的仓库切换器改成响应式**（贡献者 PR [#1130](https://github.com/omdsh-dev/DSH-better-sidebar/pull/1130) @iasiv5）：容器工作区发现多个仓库时，「更改」上方一行在宽度足够时横排仓库胶囊，放不下时自动改为「仓库 ▾」下拉；两种形态共用位置消歧标签（深层仓库显示 `名 (相对父路径)`，如 `knowhow (ob-harness/contexts)`），当前根始终可见，服务端回退根以禁用项如实显示实际根而不是冒充候选。单仓库工作区不显示；「更多操作 → 仓库」保留为兜底；切换仍走既有 `chooseRepo`，读数、写操作与提交图继续钉在选中的根上。
+  - 🧪 测试：`tests/git-repo-labels.spec.ts`（32 例：POSIX / Windows / UNC / 扩展路径、同名消歧、顺序与输入不变）与 `tests/git-repo-switcher.spec.tsx`（宽时胶囊、窄时下拉、标签与回退禁用项、单仓不显示）。
+
 ### v0.32.1
 
 - 🧩 **适配 DSH 0.2.2-rc.2**：插件基线抬到 0.2.2 线的最新 RC，同时跟上这一版宿主的客户端契约与团队服务。
@@ -155,9 +160,6 @@
 - 🪟 **Windows「在资源管理器中打开」对含空格 / 逗号 / # / % 的路径不再打开错误目录**（[#513](https://github.com/omdsh-dev/DSH-better-sidebar/issues/513)）：Explorer 改收 `/select,` + file URL 两个参数，URL 只转义 `%`、`,`、`#`，空格与非 ASCII 原样保留；不再让 Node 把整个 `/select,<path>` 加引号。
 
 ### v0.30.1
-
-- 🌿 **Git 面板新增「仓库 ▾」下拉，同名仓库一眼可辨**：容器工作区发现多个仓库时，提交图工具栏开头与「所有分支」筛选并排一行显示「仓库 ▾」下拉（仓库在前、分支在后）——当前选中的仓库始终可见，完整列表一键展开，仓库再多也只占一行，且比独立成行更省纵向空间。选项使用位置消歧标签：深层仓库显示 `名 (相对父路径)`（如 `knowhow (ob-harness/contexts)`），同名可辨，极端冲突用完整路径兜底。若服务端把所选仓库回退到其他根，下拉会以禁用项如实显示实际根，不冒充候选；「更多操作 → 仓库」二级菜单保留，作为提交图折叠时的切换兜底。单仓库工作区不显示此下拉；切换仍走既有 `chooseRepo`，读数、写操作与提交图继续钉在选中的根上。
-  - 🧪 测试：`tests/git-repo-labels.spec.ts`（32 例：路径方言、同名消歧、顺序与输入不变）与 `tests/git-repo-switcher.spec.tsx`（下拉选项与标签、拼写折叠、服务端回退的禁用临时项、单仓不显示）。
 
 - 🎯 **设置页「侧边卡片」的导航图标不再叠成两个**：插件此前按"宿主设置导航还没有图标通道"的老假设，用 CSS 把兜底齿轮藏起来、再画自己的图标；宿主早已提供按 section id 寻址的 `settings.section.icon` 插槽，而且图标的 DOM 外面多了一层 span，老选择器失效后兜底 SVG 露了出来，与插件图标并排显示。现在改为**走宿主插槽**提供图标，删掉标记 + CSS 遮罩那一套（顺带去掉了一个监听整个 document 的 MutationObserver）。
   - 🧪 测试：`tests/settings-nav-icon.spec.tsx` 钉住图标按宿主给的 `size` 缩放、只用 `currentColor`；真实宿主上用无头浏览器确认导航行只剩一个 `svg`、无残留标记。

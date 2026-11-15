@@ -25,6 +25,7 @@ import { isZh, t } from '../locales.ts'
 import { GitGraphSection, type GraphDetailsSelection } from './GitGraphSection.tsx'
 import type { SidebarDiffRef } from '../state.ts'
 import { buildRepositoryLabels } from './repo-labels.ts'
+import { RepoSwitcher } from './RepoSwitcher.tsx'
 import {
   ConfirmDialog, IconButton, Notice, StatusBadge, invalidateGitStatus, statusOfXY,
   useGitStatus, type GitFileStatus, type GitTone, type StatusTone,
@@ -1133,6 +1134,25 @@ export function GitLens(props: GitLensProps) {
         {snapshot !== null && !isRepo && <Notice kind="empty" tone="page">{t('notRepo')}</Notice>}
         {snapshot?.truncated === true && <Notice kind="warn">{t('statusTruncated')}</Notice>}
 
+        {/* A container workspace can hold several independent repositories, and
+            every view below is pinned to ONE of them — without this row the
+            panel silently shows the first root, so nothing on screen says the
+            others exist. The switcher is not a second source of truth:
+            repoChoices comes from the status snapshot, chooseRepo re-pins the
+            scope (reads, writes, graph) to the picked root. It renders chips
+            while they fit and one select otherwise; the list is shared with
+            the More -> Repository submenu. */}
+        {isRepo && repoChoices.length > 1 && (
+          <RepoSwitcher
+            labels={repositoryLabels}
+            value={resolvedRepository}
+            standInLabel={resolvedRepositoryLabel}
+            disabled={busy || suggesting}
+            visible={visible && active}
+            onChoose={chooseRepo}
+          />
+        )}
+
         {isRepo && (
           <section className={css.changesSection} data-scm-section="changes">
             <div className={css.scmHeader}>
@@ -1214,10 +1234,6 @@ export function GitLens(props: GitLensProps) {
           </section>
         )}
 
-        {/* The graph toolbar hosts the multi-repo picker at its head (repository
-            first, then the branch filter — one scope row). The picker rides the
-            section, so a folded graph hides it; the ⋯ → Repository submenu in
-            the Changes header stays reachable as the fallback surface. */}
         {isRepo && <section className={graphOpen ? css.graphSection : undefined} data-scm-section="graph">
           <div className={css.scmHeader}>
             <button type="button" className={css.scmDisclosure} aria-expanded={graphOpen}
@@ -1239,13 +1255,6 @@ export function GitLens(props: GitLensProps) {
               onClearPreview={() => { props.onClearPreview?.() }}
               onDetailsChange={props.onDetailsChange}
               onContextMenu={openHistoryMenu}
-              repoPicker={repoChoices.length > 1 ? {
-                labels: repositoryLabels,
-                value: resolvedRepository ?? '',
-                standInLabel: resolvedRepositoryLabel,
-                disabled: busy || suggesting,
-                onChooseRepo: chooseRepo,
-              } : undefined}
             />
           </div>}
         </section>}

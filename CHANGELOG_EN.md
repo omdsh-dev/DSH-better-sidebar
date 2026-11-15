@@ -4,6 +4,11 @@
 >
 > 📝 The Chinese [CHANGELOG](./CHANGELOG.md) is the authoritative, item-by-item record; this file carries the English summaries and has historically lagged behind it. Where the two disagree, the Chinese one is current.
 
+### Unreleased
+
+- 🌿 **The multi-repository switcher is now responsive** (contributor PR [#1130](https://github.com/omdsh-dev/DSH-better-sidebar/pull/1130) @iasiv5): when a container workspace discovers several repositories, the row above Changes renders natural-width chips while every root fits on one line and switches to a `Repository ▾` select once it does not. Both forms share the same location labels (deeper roots show `name (relative/parent)`, e.g. `knowhow (ob-harness/contexts)`), the current root stays visible, and a server-fallback root appears as a disabled stand-in instead of masquerading as a candidate. Single-repository workspaces render nothing; the ⋯ → Repository submenu stays as the fallback; switching still goes through `chooseRepo`, so reads, mutations and the commit graph stay pinned to the chosen root.
+  - 🧪 `tests/git-repo-labels.spec.ts` (32 cases: POSIX / Windows / UNC / extended paths, duplicate disambiguation, order and input immutability) and `tests/git-repo-switcher.spec.tsx` (chips when wide, select when narrow, labels and the disabled fallback, single-repo absence).
+
 ### v0.32.1
 
 - 🧩 **DSH 0.2.2-rc.2 support**: the plugin baseline moves to the newest 0.2.2 RC and follows that host's client contract and team service.
@@ -151,9 +156,6 @@
 - 🪟 **Windows "reveal in file manager" no longer opens the wrong folder for paths containing spaces / commas / # / %** ([#513](https://github.com/omdsh-dev/DSH-better-sidebar/issues/513)): Explorer now receives `/select,` plus a file URL as two arguments; the URL escapes only `%`, `,` and `#`, leaving spaces and non-ASCII literal, so Node cannot quote the whole `/select,<path>` token.
 
 ### v0.30.1
-
-- 🌿 **A labeled "Repository" dropdown for multi-repo workspaces, with same-named checkouts tellable apart**: when a container workspace discovers several repositories, the graph toolbar opens with a `Repository ▾` select sharing one row with the branch filter (repository first, filter second) — the current root stays on screen and the full list is one click away, one line however many roots discovery finds, and no extra row above the sections. Options carry location labels: deeper repositories show `name (relative/parent)` (e.g. `knowhow (ob-harness/contexts)`), so same-named checkouts are distinguishable, and extreme collisions fall back to full paths. If the server fell back from the requested root, the picker displays the actual root as a disabled stand-in instead of masquerading as a candidate; the ⋯ → Repository submenu stays reachable as the fallback surface while the graph is folded. Single-repository workspaces render no picker; switching still goes through the existing `chooseRepo`, so reads, mutations and the commit graph stay pinned to the chosen root.
-  - 🧪 `tests/git-repo-labels.spec.ts` (32 cases: path dialects, duplicate disambiguation, order and input immutability) and `tests/git-repo-switcher.spec.tsx` (picker options and labels, spelling folding, the server-fallback disabled stand-in, single-repo absence).
 
 - 🎯 **The "Side card" settings row no longer shows two icons**: the plugin still assumed the settings navigation had no icon channel, so it hid the fallback gear with CSS and painted its own glyph. The shell has long since exposed a `settings.section.icon` slot addressed by section id, and it now wraps the nav icon in a span — the stale `> svg:first-child` rule stopped hiding the fallback, so both glyphs rendered side by side. The row now contributes its icon **through the slot**, and the marker + CSS-mask apparatus is gone (along with a document-wide MutationObserver).
   - 🧪 `tests/settings-nav-icon.spec.tsx` pins the glyph to the slot-provided `size` and `currentColor`; a headless pass against a real host confirms one `svg` in the row and no leftover marker.
