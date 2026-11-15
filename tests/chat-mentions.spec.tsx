@@ -51,7 +51,41 @@ describe('absolute Markdown chat mentions', () => {
     expect(opened).toEqual(['stock', path])
   })
 
-  it('registers after the real Cordis service arrives and restores its method on release', async () => {
+  it('attaches the host file gesture to the added match without touching stock matches', () => {
+    const opened: string[] = []
+    const stockMatch = { open: () => { opened.push('stock') }, label: 'Stock file', title: '/stock/a.md' }
+    const stock: MarkdownFileMentions = { resolve: value => value === '/stock/a.md' ? stockMatch : undefined }
+    const trigger = (path: string) => ({ tabIndex: 0, onContextMenu: () => { opened.push('menu:' + path) } })
+    const seen: string[] = []
+    const mentions = markdownMentionsFor(
+      { openFile: path => { opened.push(path) } },
+      stock,
+      '/workspace',
+      () => true,
+      path => { seen.push(path); return trigger(path) },
+    )
+    expect(mentions.resolve('/stock/a.md')).toBe(stockMatch)
+    expect(seen).toEqual([])
+    const path = '/Users/x/notes/a.md'
+    const added = mentions.resolve(path)
+    expect(added?.contextMenuProps?.tabIndex).toBe(0)
+    expect(seen).toEqual([path])
+    added?.open()
+    expect(opened).toEqual([path])
+    // A host gesture refusal must not make the file unclickable.
+    const broken = markdownMentionsFor(
+      { openFile: value => { opened.push(value) } },
+      undefined,
+      '/workspace',
+      () => true,
+      () => { throw new Error('no gesture') },
+    )
+    expect(broken.resolve(path)?.contextMenuProps).toBeUndefined()
+    broken.resolve(path)?.open()
+    expect(opened).toEqual([path, path])
+  })
+
+  it('registers after the real Cordis service arrives, forwards the host gesture, and restores on release', async () => {
     const context = new CordisContext()
     disposers.push(context.provide('sessions', { list: { getSnapshot: () => ({ byId: {} }) } } as never))
     const disposeMentions = registerChatMarkdownMentions(context as unknown as Context)
@@ -61,17 +95,28 @@ describe('absolute Markdown chat mentions', () => {
     const opened: string[] = []
     const stockMatch = { open: () => { opened.push('stock') }, label: 'Stock file', title: '/stock/a.md' }
     const stock: MarkdownFileMentions = { resolve: value => value === '/stock/a.md' ? stockMatch : undefined }
-    const originalForClosing = (_owner: { openFile: (path: string) => void }, _sessionId: string): MarkdownFileMentions => stock
+    const gestureSeen: Array<((path: string) => { tabIndex: number }) | undefined> = []
+    const originalForClosing = (
+      _owner: { openFile: (path: string) => void },
+      _sessionId: string,
+      getFileTriggerProps?: (path: string) => { tabIndex: number },
+    ): MarkdownFileMentions => {
+      gestureSeen.push(getFileTriggerProps)
+      return stock
+    }
     const service = { forClosing: originalForClosing }
     disposers.push(context.provide('chatFileMentions', service))
     await new Promise<void>(resolve => setTimeout(resolve, 0))
 
     expect(service.forClosing).not.toBe(originalForClosing)
     const owner = { openFile: (path: string) => { opened.push(path) } }
-    const mentions = service.forClosing(owner, 's1')
+    const trigger = () => ({ tabIndex: 0 })
+    const mentions = service.forClosing(owner, 's1', trigger)
+    expect(gestureSeen).toEqual([trigger])
     expect(mentions?.resolve('/stock/a.md')).toBe(stockMatch)
     const path = '/Users/x/notes/a.md'
     const existingLink = mentions?.resolve(path)
+    expect(existingLink?.contextMenuProps?.tabIndex).toBe(0)
     existingLink?.open()
     expect(opened).toEqual([path])
 
