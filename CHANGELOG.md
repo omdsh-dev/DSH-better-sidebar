@@ -10,6 +10,12 @@
 - 💬 **侧边对话页面模式可配置**（贡献者 PR [#1115](https://github.com/omdsh-dev/DSH-better-sidebar/pull/1115) @pennxiang）：默认仍是「共用一页」——再次打开聚焦同一个页签，并回到本会话最近的侧边对话；在「设置 → 侧边卡片 → 侧边对话」的齿轮里可切换「每个对话独立页」。独立模式下每个线程一个原生 occurrence，按 `(sessionId, contentId)` 精确恢复，跨原生栏与底部工作台按 threadId 去重；关闭原生页签会归档并释放该线程，创建过程中关闭页签不会留下孤儿线程。切换模式只影响之后的新打开，已开页签保持原样。
   - 🧪 测试：`tests/sidechat-native-multiple.spec.ts`（独立页双开、精确恢复、跨载体去重、关闭/并发/存储边界、模式翻转重注册）、`tests/sidechat-view.spec.tsx`（共用页回退 + 独立页创建/归档）、`tests/builtins.spec.ts`（动态谓词默认 false）、`tests/sidechat-submit-key-pref.spec.tsx`（两个设置行并存）；真实宿主 Chromium 覆盖共用页重复打开与独立页三线程刷新恢复。
 
+- 🔗 **聊天里的完整绝对 Markdown 路径可点击**（贡献者 PR [#882](https://github.com/omdsh-dev/DSH-better-sidebar/pull/882) @wang-kaopu）：每轮最后一条助手消息里，完整的绝对 `.md` / `.markdown` 内联代码路径可点击，并按当前会话的文件地址在原生侧栏打开；路径不存在时显示宿主文件读取错误。宿主已有的文件提及优先；`chatFileMentions.forClosing` 的第三个参数 `getFileTriggerProps` 原样转发，原有文件提及右键菜单与点击行为不变；卸载后旧链接不再打开新文件。
+  - 🧪 测试：`tests/chat-mentions.spec.tsx`（POSIX / Windows / UNC 路径判定、stock 优先、三参转发、服务晚到/释放/后装包装、MarkdownText 只认领可点击路径）。
+
+- 📦 **发布包只安装运行时真正需要的依赖**（[#1191](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1191)）：`dependencies` 只保留 host 半真正 import 的 `ws` / `yaml`；已经打进 `lib/client*.js` 的 CodeMirror、mermaid、xterm、react-icons、dompurify、clsx、rxjs 等移入 `devDependencies`。安装不再多拉约 240 MB / 1.26 万个文件，插件实际运行时仍只有插件本体加 `ws` / `yaml`。`src` 与 `./src/*` 导出**保留**，不做破坏性删除。
+  - 🧪 守护：`tests/market-manifest.spec.ts` 同时校验仓库清单与 `pnpm pack` 后的发布清单，dependencies 必须恰好是 `ws` / `yaml`，且 `src` 仍在 `files` 里。
+
 ### v0.32.1
 
 - 🧩 **适配 DSH 0.2.2-rc.2**：插件基线抬到 0.2.2 线的最新 RC，同时跟上这一版宿主的客户端契约与团队服务。

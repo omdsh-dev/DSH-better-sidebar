@@ -69,7 +69,14 @@
 
 逐项证据：[0.2.2-rc.2 适配记录](plans/2026-11-12-dsh-0.2.2-rc.2-adaptation.md)。
 
-## 8. 适配记录索引
+## 8. 0.2.2-rc.2 → 0.2.2-rc.3：已验证，无代码变化
+
+- rc.3 与本插件消费面的源码差异只有 `@deepseek-ai/dsh-client-ui-primitives` 的 `src/icons/artwork.ts`（+1）与 `src/icons/index.tsx`（+6）；其余是各包 `package.json` 版本、CI、桌面更新重启状态和无关的 DeepSeek 会话导入功能。`Menu` / `ui-sidebar-right` / `dsh-session` / `dsh-tools` / `dsh-agent` / `dsh-client-ui-*` 的 API 没有变化。
+- 因此 `peerDependencies` 的 `^0.2.2-rc.2` 同时接受 rc.2 与 rc.3，`dsh.plugin.json#engines.dsh` 的 `>=0.2.2-rc.2` 也接受；**不新增任何运行时兼容代码**。
+- 验证方式：在临时 worktree 把 devDependencies 的 30 条 DSH 包临时升到 `0.2.2-rc.3`（不提交），跑 `typecheck` / 全量 `test` / `build`，再用 rc.3 宿主跑真实挂载；dev 钉版与 CI 仍保持 rc.2 基线。
+- 结论：当前构建服务 **0.2.2-rc.2 与 rc.3 两条 RC**；支持线表不变（`0.2.2-rc.2+`）。
+
+## 9. 适配记录索引
 
 - [0.2.2-rc.2](plans/2026-11-12-dsh-0.2.2-rc.2-adaptation.md)
 - [0.2.2-rc.1](plans/2026-11-04-dsh-0.2.2-rc.1-adaptation.md)
