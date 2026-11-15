@@ -229,9 +229,13 @@ export interface TabDescriptor {
    * are given. Builtins: explorer/git/subagent use `single: true`.
    */
   single?: boolean
-  /** Opt into independent native page occurrences (e.g. one side-chat tab per
-   * thread). Native guide opens otherwise focus the same page in each pane. */
-  multiple?: boolean
+  /**
+   * Opt into independent native page occurrences (e.g. one side-chat tab per
+   * thread). Native guide opens otherwise focus the same page in each pane.
+   * A predicate is re-evaluated on every open and native sync, so a settings
+   * flip re-registers the native type without a restart.
+   */
+  multiple?: boolean | (() => boolean)
   /**
    * If provided, opening a tab whose `dedupeKey(tab)` matches an existing
    * tab's key focuses the existing one instead of creating a new one.
@@ -1087,6 +1091,16 @@ function safeCall(fn: () => void): void {
  * tab/viewer registries (Map + listener set) and proxies openTab/closeTab
  * to the store's reducer. One instance per client plugin activation.
  */
+/**
+ * Whether one tab type opts into independent native page occurrences.
+ * @param descriptor - the registered descriptor.
+ * @returns the current flag, evaluating a dynamic predicate.
+ */
+export function isMultipleTab(descriptor: Pick<TabDescriptor, 'multiple'>): boolean {
+  const multiple = descriptor.multiple
+  return typeof multiple === 'function' ? multiple() : multiple === true
+}
+
 export function createBetterSidebarService(store: SidebarStore): BetterSidebarService {
   const tabs = new Map<string, TabDescriptor>()
   const viewers = new Map<string, FileViewerDescriptor>()
@@ -1368,7 +1382,7 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
     // A thread is one conversation across BOTH carriers. Opening its history
     // entry must not duplicate it on the other surface (closing either copy
     // would otherwise archive the thread still displayed by the first).
-    if (descriptor.multiple === true && descriptor.dedupeKey !== undefined && seed.meta !== undefined) {
+    if (isMultipleTab(descriptor) && descriptor.dedupeKey !== undefined && seed.meta !== undefined) {
       const candidate: SidebarTab = { id: seed.id ?? seed.type, type: seed.type, title: seed.title ?? '', meta: seed.meta }
       const key = descriptor.dedupeKey(candidate)
       if (key !== undefined) {
@@ -1459,7 +1473,7 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
         // #632: rerouting every path seed into openResource sent the open to
         // the editor, so the registered component never mounted).
         const dedupeKey = descriptor.dedupeKey
-        const key = descriptor.multiple === true ? dedupeKey?.(synthetic) : undefined
+        const key = isMultipleTab(descriptor) ? dedupeKey?.(synthetic) : undefined
         surface.openTab({
           sessionId: targetSessionId,
           kind: seed.type,

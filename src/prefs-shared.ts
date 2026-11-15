@@ -191,6 +191,26 @@ export interface SidebarPrefs {
 /** The side-chat tab descriptor id; also the key of its settings blob. */
 export const SIDECHAT_PREFS_ID = 'sidechat'
 
+/** The plugin-owned setting key holding the native page mode. */
+export const SIDECHAT_TABS_SETTING = 'tabs'
+
+/** Whether side chats share one native page or each thread gets its own. */
+export type SidechatTabsMode = 'single' | 'multiple'
+
+/** Pages every document that never chose a mode gets: today's shared page. */
+export const SIDECHAT_TABS_DEFAULT: SidechatTabsMode = 'single'
+
+/**
+ * Validate one stored page-mode value. Anything that is not a known mode (an
+ * absent value, a hand-edited document) falls back to the shared page, so a
+ * bad preference can never make a plain + -> Side Chat open vanish.
+ * @param value - the raw stored value.
+ * @returns a known side-chat page mode.
+ */
+export function parseSidechatTabsMode(value: unknown): SidechatTabsMode {
+  return value === 'multiple' ? 'multiple' : SIDECHAT_TABS_DEFAULT
+}
+
 /** The plugin-owned setting key holding the composer's submit gesture. */
 export const SIDECHAT_SUBMIT_KEY_SETTING = 'submitKey'
 

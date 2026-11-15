@@ -95,6 +95,7 @@ import {
   SIDE_NEW_THREAD_TITLE,
   sideThreadRows,
   threadHasCompletedTurn,
+  type SideThreadRow,
   threadTrailingPending,
   type SidechatLiveEvent,
   type SidechatModelCatalog,
@@ -250,6 +251,12 @@ function loadLastThreads(): void {
   } catch {
     // No storage (or unreadable JSON): nothing was remembered.
   }
+}
+
+/** The thread a session last used (the shared page's reattach hint). */
+function lastSidechatThread(sessionId: string): string | undefined {
+  loadLastThreads()
+  return lastThreadBySession.get(sessionId)
 }
 
 /** Remember the side-chat thread a session is bound to (also across reloads). */
@@ -924,9 +931,13 @@ export function SideChatView(props: {
    *  `sidechatSubmitKeyOf` in prefs.ts); absent reads the default, which keeps
    *  every existing composition unchanged. */
   submitKey?: SidechatSubmitKey
+  /** Whether each thread gets its own native page (the default is one shared
+   *  page). Passed from the descriptor's live prefs snapshot. */
+  multipleTabs?: boolean
 }): React.ReactNode {
   const { ctx, scope, tab, visible } = props
   const submitKey = props.submitKey ?? SIDECHAT_SUBMIT_KEY_DEFAULT
+  const multipleTabs = props.multipleTabs === true
   /** The main conversation's work-details preference, read live (see
    *  sidechat-work-details.ts): the two transcripts of one conversation must
    *  agree about how much process detail to show. */
@@ -1053,15 +1064,32 @@ export function SideChatView(props: {
     return sideThreadRows(list.byId, scope.sessionId).filter(row => !archived.has(row.id))
   }, [list, scope.sessionId, archivedIds])
 
+  /** The newest thread of candidates: the session list carries the thread
+   *  rows but not their age, so the creation order comes from the host's
+   *  subagent catalog. An untouched "new thread" placeholder only wins when
+   *  nothing else is left. */
+  const newestThreadId = useCallback((candidates: readonly SideThreadRow[]): string | undefined => {
+    const catalog = list.projectionsBySession?.[scope.sessionId]?.values.subagentCatalog
+    const createdAt = new Map((catalog ?? []).map(entry => [entry.id, entry.createdAt]))
+    const rank = (id: string): number => createdAt.get(id) ?? 0
+    const real = candidates.filter(row => row.title !== SIDE_NEW_THREAD_TITLE)
+    const pool = real.length > 0 ? real : candidates
+    if (pool.length === 0) return undefined
+    return pool.reduce((newest, row) => (rank(row.id) > rank(newest.id) ? row : newest)).id
+  }, [list, scope.sessionId])
+
   // The thread this tab is bound to rides tab.meta (refresh-restored).
   const threadId = sidechatThreadIdOf(tab)
   const autoCreate = (tab.meta as { autoCreate?: unknown } | undefined)?.autoCreate === true
 
   useEffect(() => {
+    // The shared page follows the session's last/newest thread (the archive
+    // handler below moves it); only an independent occurrence unbinds itself.
+    if (!multipleTabs) return
     if (threadId !== undefined && archivedIds.includes(threadId)) {
       ctx.get('betterSidebar')?.updateTab(tab.id, { meta: {}, title: t('sideChatUntitled') }, scope.sessionId)
     }
-  }, [archivedIds, ctx, scope.sessionId, tab.id, threadId])
+  }, [archivedIds, ctx, scope.sessionId, tab.id, threadId, multipleTabs])
 
   const draft = useSidechatDraft(threadId)
   const composer = draft.owner.text
@@ -1249,13 +1277,34 @@ export function SideChatView(props: {
     }
   }, [ctx, scope.sessionId, tab.id])
 
-  // autoCreate is an explicit NEW conversation, not a request to resume the
-  // session's last thread. Native restores are resolved by exact contentId in
-  // the adapter; bottom tabs already persist their own meta.
+  /**
+   * The existing thread a SHARED-page side chat should reattach to: the
+   * binding this session was last in (while still listed), then the newest
+   * thread with a real prompt. Independent occurrences do not use it — they
+   * restore by exact contentId in the adapter.
+   */
+  const reattachTarget = useCallback((): string | undefined => {
+    const remembered = lastSidechatThread(scope.sessionId)
+    if (remembered !== undefined && (threads.length === 0 || threads.some(row => row.id === remembered))) {
+      return remembered
+    }
+    return newestThreadId(threads)
+  }, [newestThreadId, scope.sessionId, threads])
+
+  // autoCreate is an explicit NEW conversation in independent mode; in shared
+  // mode a tab that lost its binding reattaches to the session's last thread
+  // instead of leaving another orphan "Side: New thread" behind.
   useEffect(() => {
-    if (threadId !== undefined || !autoCreate || !visible) return
-    void startThread()
-  }, [threadId, autoCreate, visible, startThread])
+    if (threadId !== undefined || !visible) return
+    if (!multipleTabs) {
+      const reattach = reattachTarget()
+      if (reattach !== undefined) {
+        ctx.get('betterSidebar')?.updateTab(tab.id, { meta: { threadId: reattach } }, scope.sessionId)
+        return
+      }
+    }
+    if (autoCreate) void startThread()
+  }, [threadId, autoCreate, visible, startThread, reattachTarget, multipleTabs, ctx, tab.id, scope.sessionId])
 
   // Compatibility hint for consumers of the old last-thread key. Our own
   // restoration never reads it: every native occurrence has its own binding.
@@ -1631,7 +1680,14 @@ export function SideChatView(props: {
     try {
       const { childId } = await api.sidechatStart(scope.sessionId)
       rememberSidechatThread(scope.sessionId, childId)
-      ctx.get('betterSidebar')?.openTab({ type: 'sidechat', meta: { threadId: childId } }, scope)
+      if (multipleTabs) {
+        ctx.get('betterSidebar')?.openTab({ type: 'sidechat', meta: { threadId: childId } }, scope)
+      } else {
+        // The shared page has a stable host identity; park the target for its
+        // createTab and let the host focus/rewrite the one page.
+        parkSidechatReopen(childId)
+        ctx.get('betterSidebar')?.openTab({ type: 'sidechat' }, scope)
+      }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
@@ -1639,12 +1695,17 @@ export function SideChatView(props: {
     }
   }
 
-  /** Switch to an existing thread: parked for createTab, deduped to the
-   *  already-open tab when there is one. */
+  /** Switch to an existing thread: an independent page identifies it by meta,
+   *  the shared page parks it and lets the host focus the one page. */
   const openExistingThread = (id: string): void => {
     setMenuOpen(false)
     if (id === threadId) return
-    ctx.get('betterSidebar')?.openTab({ type: 'sidechat', meta: { threadId: id } }, scope)
+    if (multipleTabs) {
+      ctx.get('betterSidebar')?.openTab({ type: 'sidechat', meta: { threadId: id } }, scope)
+    } else {
+      parkSidechatReopen(id)
+      ctx.get('betterSidebar')?.openTab({ type: 'sidechat' }, scope)
+    }
   }
 
   const menuItems = useMemo<MenuEntry[]>(() => {
@@ -1968,11 +2029,19 @@ export function SideChatView(props: {
     }
   }
 
+  /** The thread that should replace `excludeId` on the SHARED page once it is
+   *  archived: the newest real thread first, the newest placeholder only when
+   *  nothing else is left, and undefined when the menu is empty. */
+  const fallbackThreadId = useCallback(
+    (excludeId: string): string | undefined => newestThreadId(threads.filter(row => row.id !== excludeId)),
+    [newestThreadId, threads],
+  )
+
   /** Archive the bound thread on the host (the same capability the session
    *  list's own archive action uses; `stopActivity` settles a running agent
    *  first). The upstream #949 guard still disables this for subagent threads.
-   *  A recoverable binding unbinds after archive; another live thread may
-   *  already own its own tab and must not be substituted here. */
+   *  An independent occurrence unbinds only itself; the shared page moves to
+   *  another live thread. */
   const handleArchive = async (): Promise<void> => {
     if (threadId === undefined || busy !== null || archiveBlocked) return
     setBusy('archiving')
@@ -1982,8 +2051,13 @@ export function SideChatView(props: {
       const service = ctx.get('uiWorkspace') as unknown as ArchiveSessionFace | undefined
       if (service?.archiveSession === undefined) throw new Error('the workspace service is unavailable')
       await service.archiveSession(threadId, { stopActivity: true })
-      // Never steal another open tab's thread after archiving this one.
-      ctx.get('betterSidebar')?.updateTab(tab.id, { meta: {}, title: t('sideChatUntitled') }, scope.sessionId)
+      if (multipleTabs) {
+        // Never steal another open tab's thread after archiving this one.
+        ctx.get('betterSidebar')?.updateTab(tab.id, { meta: {}, title: t('sideChatUntitled') }, scope.sessionId)
+      } else {
+        const next = fallbackThreadId(threadId)
+        ctx.get('betterSidebar')?.updateTab(tab.id, { meta: next === undefined ? {} : { threadId: next } })
+      }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {

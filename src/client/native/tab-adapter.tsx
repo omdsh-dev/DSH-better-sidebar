@@ -39,7 +39,7 @@ import { t } from '../locales.ts'
 import { isUnread, toggleExpanded } from '../state.ts'
 import type { SidebarStore, SidebarTab, TabType } from '../state.ts'
 import css from '../sidebar.module.css'
-import { createSidechatBindings } from './sidechat-bindings.ts'
+import { createSidechatBindings, isSidechatOccurrence } from './sidechat-bindings.ts'
 
 /** The chip glyph's size: the tab strip's own icon scale. */
 const CHIP_ICON_SIZE = 14
@@ -222,12 +222,13 @@ export function createNativeTabRecords(): NativeTabRecords {
   const views = new Map<string, View>()
   const sidechatBindings = createSidechatBindings()
   const persist = (view: View): void => {
-    if (view.tab.type !== 'sidechat' || view.contentId === undefined) return
+    const contentId = view.contentId
+    if (contentId === undefined || !isSidechatOccurrence(view.tab.type, contentId)) return
     const meta = view.tab.meta as { threadId?: unknown } | undefined
     if (typeof meta?.threadId === 'string' && meta.threadId !== '') {
-      sidechatBindings.set(view.seat, view.contentId, meta.threadId, view.tab.title)
+      sidechatBindings.set(view.seat, contentId, meta.threadId, view.tab.title)
     } else {
-      sidechatBindings.delete(view.seat, view.contentId)
+      sidechatBindings.delete(view.seat, contentId)
     }
   }
   const instances = new Map<string, number>()
@@ -281,7 +282,7 @@ export function createNativeTabRecords(): NativeTabRecords {
     tabAt(sessionId, id, kind, contentId) {
       const live = views.get(viewKey(sessionId, id))
       if (live !== undefined && (live.contentId === undefined || live.contentId === contentId)) return live.tab
-      const binding = kind === 'sidechat' ? sidechatBindings.get(sessionId, contentId) : undefined
+      const binding = isSidechatOccurrence(kind, contentId) ? sidechatBindings.get(sessionId, contentId) : undefined
       return binding === undefined ? undefined : { id, type: kind, title: binding.title, meta: { threadId: binding.threadId } }
     },
     attachStore(next) {
@@ -301,9 +302,10 @@ export function createNativeTabRecords(): NativeTabRecords {
         // with revision zero (reload) or its original autoCreate navigation
         // (client entry replacement); neither may replace its bound thread.
         const explicit = params?.meta as { threadId?: unknown } | undefined
-        const binding = kind === 'sidechat' && contentId !== undefined && typeof explicit?.threadId !== 'string'
+        const perOccurrence = isSidechatOccurrence(kind, contentId)
+        const binding = perOccurrence && contentId !== undefined && typeof explicit?.threadId !== 'string'
           ? sidechatBindings.get(sessionId, contentId) : undefined
-        const restoring = kind === 'sidechat' && contentId !== undefined && revision === 0 && params?.meta === undefined
+        const restoring = perOccurrence && revision === 0 && params?.meta === undefined
         const seeded = binding !== undefined || restoring
           ? { title: binding?.title, meta: binding === undefined ? {} : { threadId: binding.threadId } }
           : params?.title === undefined && params?.meta === undefined ? mint?.() : undefined

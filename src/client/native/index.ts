@@ -30,6 +30,7 @@ import { splitTrailingLineSpec } from '../path-line.ts'
 import { baseName } from '../paths.ts'
 import { parseFileAddress } from '../resource-address.ts'
 import type { ContextDiagnostics } from '../context-diagnostics.ts'
+import { isMultipleTab } from '../service.ts'
 import type { BetterSidebarService, TabDescriptor } from '../service.ts'
 import type { SidebarStore } from '../state.ts'
 import { webTerminals } from '../terminal-client.ts'
@@ -180,6 +181,8 @@ function fileTitleOf(address: string): string | undefined {
 /** One descriptor's live native registrations. */
 interface Registration {
   readonly dispose: () => void
+  /** The registration's page-mode flag; a flip needs a fresh host type. */
+  readonly multiple: boolean
 }
 
 /**
@@ -479,7 +482,7 @@ export function registerNativeSurface(deps: NativeSurfaceDeps): () => void {
         // (records, tree expansion, scroll, unsaved drafts) survives without
         // the adapter faking it.
         keepMounted: true,
-        ...(descriptor.multiple === true ? { multiple: true } : {}),
+        ...(isMultipleTab(descriptor) ? { multiple: true } : {}),
         ...(isEditor
           ? {
             patterns: ['dsh-resource://file/**'],
@@ -585,7 +588,7 @@ export function registerNativeSurface(deps: NativeSurfaceDeps): () => void {
     /** Bring the live registrations in line with the registry + the settings. */
     const sync = (): void => {
       syncGuide()
-      const wanted = new Map<string, () => () => void>()
+      const wanted = new Map<string, { create: () => () => void; multiple: boolean }>()
       for (const descriptor of service.getTabs()) {
         if (!service.isTabEnabled(descriptor.id)) continue
         // A `bottomOnly` type lives in the plugin's own workbench and has no
@@ -593,7 +596,10 @@ export function registerNativeSurface(deps: NativeSurfaceDeps): () => void {
         // host's guide for a page it cannot draw (the bottom terminal is the
         // case — the host owns the right-Sidebar `terminal` kind outright).
         if (descriptor.bottomOnly === true) continue
-        wanted.set(descriptor.id, () => registerDescriptor(descriptor))
+        wanted.set(descriptor.id, {
+          create: () => registerDescriptor(descriptor),
+          multiple: isMultipleTab(descriptor),
+        })
       }
       for (const [descriptorId, registration] of live) {
         // `files` is this module's OWN takeover, never a descriptor (`wanted`
@@ -609,13 +615,20 @@ export function registerNativeSurface(deps: NativeSurfaceDeps): () => void {
         disposeSafely(() => registration.dispose(), `native tab type "${descriptorId}"`)
         live.delete(descriptorId)
       }
-      for (const [descriptorId, create] of wanted) {
-        if (live.has(descriptorId)) continue
+      for (const [descriptorId, entry] of wanted) {
+        const current = live.get(descriptorId)
+        if (current !== undefined) {
+          if (current.multiple === entry.multiple) continue
+          // The page mode flipped: the host type must be re-registered with the
+          // new occurrence identity. Existing tabs keep their own contentId.
+          disposeSafely(() => current.dispose(), `native tab type "${descriptorId}"`)
+          live.delete(descriptorId)
+        }
         // One descriptor must not take the rest of the surface down with it:
         // report and continue so the remaining types still register. `create`
         // has already released whatever it managed to install.
         try {
-          live.set(descriptorId, { dispose: create() })
+          live.set(descriptorId, { dispose: entry.create(), multiple: entry.multiple })
         } catch (error) {
           reportFailure?.(`register ${descriptorId}`, error)
         }
@@ -626,7 +639,7 @@ export function registerNativeSurface(deps: NativeSurfaceDeps): () => void {
       const hasFiles = live.has(FILES_KIND)
       if (wantsFiles && !hasFiles) {
         try {
-          live.set(FILES_KIND, { dispose: registerFilesKind(service.getTab(EDITOR_KIND)) })
+          live.set(FILES_KIND, { dispose: registerFilesKind(service.getTab(EDITOR_KIND)), multiple: false })
         } catch (error) {
           reportFailure?.(`register ${FILES_KIND}`, error)
         }

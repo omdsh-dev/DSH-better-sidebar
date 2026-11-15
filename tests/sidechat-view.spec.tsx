@@ -370,9 +370,9 @@ afterEach(() => {
 })
 
 /** The bound-thread view props (tab meta pins threadId 't1'). */
-function viewProps(ctx: Context) {
+function viewProps(ctx: Context, multipleTabs = false) {
   const tab: SidebarTab = { id: 'tab1', type: 'sidechat', title: '线程一', meta: { threadId: 't1' } }
-  return { ctx, scope: { sessionId: 'root', cwd: '/p' }, tab, visible: true }
+  return { ctx, scope: { sessionId: 'root', cwd: '/p' }, tab, visible: true, multipleTabs }
 }
 
 /** The sessions-list snapshot with one idle side thread bound to 'root'. */
@@ -538,7 +538,7 @@ describe('SideChatView archive', () => {
         },
       },
     })
-    const props = viewProps(makeArchiveCtx(store, host))
+    const props = viewProps(makeArchiveCtx(store, host), true)
     const { container, unmount } = renderRoot(createElement(SideChatView, props))
     await act(async () => {})  // flush the initial transcript pull
 
@@ -550,6 +550,41 @@ describe('SideChatView archive', () => {
     // t2 may already be open in its own tab; archiving t1 must not bind it here.
     expect(host.betterSidebar.updateTab).toHaveBeenCalledTimes(1)
     expect(host.betterSidebar.updateTab).toHaveBeenCalledWith('tab1', { meta: {}, title: '新对话' }, 'root')
+    unmount()
+  })
+
+  it('archives a recoverable bound session with stopActivity and rebinds the shared page to the newest remaining thread', async () => {
+    const host = makeArchiveHost()
+    const store = makeStore({
+      byId: {
+        root: { id: 'root', displayTitle: '主会话', running: false },
+        t1: { id: 't1', displayTitle: '线程一', running: false },
+        t2: { id: 't2', displayTitle: 'Side: 线程二', origin: 'subagent', parentId: 'root', running: false },
+      },
+      projectionsBySession: {
+        root: {
+          values: {
+            subagentCatalog: [
+              { id: 't2', createdAt: 2_000, mode: 'continuable', label: 'Side: 线程二' },
+            ],
+          },
+          state: 'ready',
+          error: null,
+        },
+      },
+    })
+    const props = viewProps(makeArchiveCtx(store, host))
+    const { container, unmount } = renderRoot(createElement(SideChatView, props))
+    await act(async () => {})  // flush the initial transcript pull
+
+    await clickArchive(archiveButton(container))
+
+    expect(host.archiveSession).toHaveBeenCalledTimes(1)
+    expect(host.archiveSession).toHaveBeenCalledWith('t1', { stopActivity: true })
+    // The shared page moves to the newest remaining thread, without the
+    // independent mode's title reset.
+    expect(host.betterSidebar.updateTab).toHaveBeenCalledTimes(1)
+    expect(host.betterSidebar.updateTab).toHaveBeenCalledWith('tab1', { meta: { threadId: 't2' } })
     unmount()
   })
 
@@ -570,7 +605,7 @@ describe('SideChatView archive', () => {
 
   it('unbinds the tab to the empty state once no thread is left to switch to', async () => {
     const host = makeArchiveHost()
-    const props = viewProps(makeArchiveCtx(recoverableStore(), host))
+    const props = viewProps(makeArchiveCtx(recoverableStore(), host), true)
     const { container, unmount } = renderRoot(createElement(SideChatView, props))
     await act(async () => {})  // flush the initial transcript pull
 
@@ -588,7 +623,7 @@ describe('SideChatView archive', () => {
 describe('SideChatView independent creation', () => {
   it('autoCreate starts a new thread even when the session already has one', async () => {
     const host = makeArchiveHost()
-    const props = viewProps(makeArchiveCtx(threadStore(), host))
+    const props = viewProps(makeArchiveCtx(threadStore(), host), true)
     props.tab = { ...props.tab, meta: { autoCreate: true } }
     const { unmount } = renderRoot(createElement(SideChatView, props))
     await act(async () => {})
@@ -600,7 +635,7 @@ describe('SideChatView independent creation', () => {
 
   it('the input-bar plus opens a new bound tab instead of rebinding its current tab', async () => {
     const host = makeArchiveHost()
-    const { container, unmount } = renderRoot(createElement(SideChatView, viewProps(makeArchiveCtx(threadStore(), host))))
+    const { container, unmount } = renderRoot(createElement(SideChatView, viewProps(makeArchiveCtx(threadStore(), host), true)))
     await act(async () => {})
     const plus = container.querySelector<HTMLButtonElement>('button[aria-label="新建对话"]')!
     await act(async () => { plus.click() })
@@ -614,7 +649,7 @@ describe('SideChatView independent creation', () => {
     const resolve: Array<(value: { childId: string }) => void> = []
     const start = vi.spyOn(api, 'sidechatStart').mockImplementation(() => new Promise(done => { resolve.push(done) }))
     const host = makeArchiveHost()
-    const props = viewProps(makeArchiveCtx(threadStore(), host))
+    const props = viewProps(makeArchiveCtx(threadStore(), host), true)
     props.tab = { ...props.tab, meta: { autoCreate: true } }
     const a = renderRoot(createElement(SideChatView, props))
     const b = renderRoot(createElement(SideChatView, { ...props, scope: { sessionId: 'other' } }))
@@ -629,7 +664,7 @@ describe('SideChatView independent creation', () => {
     const host = makeArchiveHost()
     Object.assign(host.betterSidebar, { hasTab: () => false })
     const dispose = vi.spyOn(api, 'sidechatDispose').mockResolvedValue({ accepted: true })
-    const props = viewProps(makeArchiveCtx(threadStore(), host))
+    const props = viewProps(makeArchiveCtx(threadStore(), host), true)
     props.tab = { ...props.tab, meta: { autoCreate: true } }
     const { unmount } = renderRoot(createElement(SideChatView, props))
     await act(async () => {})
@@ -664,7 +699,7 @@ describe('SideChatView queue, echo and model picker', () => {
   }
 
   it('creates a fresh thread from the leftmost + button', async () => {
-    const { container, unmount } = renderRoot(createElement(SideChatView, viewProps(makeCtx(threadStore()))))
+    const { container, unmount } = renderRoot(createElement(SideChatView, viewProps(makeCtx(threadStore()), true)))
     await act(async () => {})  // flush the initial transcript pull
 
     const plus = container.querySelector<HTMLButtonElement>('button[aria-label="新建对话"]')

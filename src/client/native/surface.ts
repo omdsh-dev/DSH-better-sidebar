@@ -25,6 +25,7 @@ import { addressBaseOf } from '../address-base.ts'
 import { fileAddressFor } from '../resource-address.ts'
 import type { NativePathTab, NativeTabParams, SidebarSurface } from '../service.ts'
 import type { NativeTabRecords } from './tab-adapter.tsx'
+import { isSidechatOccurrence } from './sidechat-bindings.ts'
 import type { SidebarTab } from '../state.ts'
 
 /** One open the surface could not place yet. */
@@ -161,7 +162,7 @@ export function createNativeSurface(ctx: Context, records: NativeTabRecords, onC
     })
   }
   const rememberSeed = (entry: Extract<Pending, { kind: 'tab' }>, opened: OpenTab): void => {
-    if (entry.tabKind !== 'sidechat') return
+    if (!isSidechatOccurrence(entry.tabKind, opened.contentId)) return
     const meta = entry.params.meta as { threadId?: unknown } | undefined
     if (typeof meta?.threadId === 'string') {
       records.sidechatBindings.set(entry.sessionId, opened.contentId, meta.threadId, entry.params.title ?? '')

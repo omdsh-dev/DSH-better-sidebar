@@ -7,6 +7,9 @@
 - 🌿 **多仓库工作区的仓库切换器改成响应式**（贡献者 PR [#1130](https://github.com/omdsh-dev/DSH-better-sidebar/pull/1130) @iasiv5）：容器工作区发现多个仓库时，「更改」上方一行在宽度足够时横排仓库胶囊，放不下时自动改为「仓库 ▾」下拉；两种形态共用位置消歧标签（深层仓库显示 `名 (相对父路径)`，如 `knowhow (ob-harness/contexts)`），当前根始终可见，服务端回退根以禁用项如实显示实际根而不是冒充候选。单仓库工作区不显示；「更多操作 → 仓库」保留为兜底；切换仍走既有 `chooseRepo`，读数、写操作与提交图继续钉在选中的根上。
   - 🧪 测试：`tests/git-repo-labels.spec.ts`（32 例：POSIX / Windows / UNC / 扩展路径、同名消歧、顺序与输入不变）与 `tests/git-repo-switcher.spec.tsx`（宽时胶囊、窄时下拉、标签与回退禁用项、单仓不显示）。
 
+- 💬 **侧边对话页面模式可配置**（贡献者 PR [#1115](https://github.com/omdsh-dev/DSH-better-sidebar/pull/1115) @pennxiang）：默认仍是「共用一页」——再次打开聚焦同一个页签，并回到本会话最近的侧边对话；在「设置 → 侧边卡片 → 侧边对话」的齿轮里可切换「每个对话独立页」。独立模式下每个线程一个原生 occurrence，按 `(sessionId, contentId)` 精确恢复，跨原生栏与底部工作台按 threadId 去重；关闭原生页签会归档并释放该线程，创建过程中关闭页签不会留下孤儿线程。切换模式只影响之后的新打开，已开页签保持原样。
+  - 🧪 测试：`tests/sidechat-native-multiple.spec.ts`（独立页双开、精确恢复、跨载体去重、关闭/并发/存储边界、模式翻转重注册）、`tests/sidechat-view.spec.tsx`（共用页回退 + 独立页创建/归档）、`tests/builtins.spec.ts`（动态谓词默认 false）、`tests/sidechat-submit-key-pref.spec.tsx`（两个设置行并存）；真实宿主 Chromium 覆盖共用页重复打开与独立页三线程刷新恢复。
+
 ### v0.32.1
 
 - 🧩 **适配 DSH 0.2.2-rc.2**：插件基线抬到 0.2.2 线的最新 RC，同时跟上这一版宿主的客户端契约与团队服务。

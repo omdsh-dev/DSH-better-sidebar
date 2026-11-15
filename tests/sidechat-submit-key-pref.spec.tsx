@@ -28,11 +28,12 @@ import { act } from 'react-dom/test-utils'
 import { createElement } from 'react'
 import { installSidechatHarness, type SidechatHarness } from './helpers/sidechat-view-harness.tsx'
 import { renderRoot, setupReactAct, type RenderedRoot } from './test-utils.ts'
-import { loadPrefs, sidechatSubmitKeyOf, type SidebarSettingsClient } from '../src/client/prefs.ts'
+import { loadPrefs, sidechatSubmitKeyOf, sidechatTabsModeOf, type SidebarSettingsClient } from '../src/client/prefs.ts'
 import {
   SIDEBAR_PREFS_DEFAULTS,
   SIDECHAT_PREFS_ID,
   SIDECHAT_SUBMIT_KEY_SETTING,
+  SIDECHAT_TABS_SETTING,
   parseSidechatSubmitKey,
   type SidebarPrefs,
 } from '../src/prefs-shared.ts'
@@ -98,10 +99,23 @@ describe('side-chat submit key — defaults and validation (prefs layer)', () =>
     expect(sidechatSubmitKeyOf(SIDEBAR_PREFS_DEFAULTS)).toBe('enter')
   })
 
+  it('validates the page mode and defaults to the shared page', async () => {
+    expect(sidechatTabsModeOf(SIDEBAR_PREFS_DEFAULTS)).toBe('single')
+    expect(sidechatTabsModeOf(await loadPrefs(wire({
+      pluginSettings: { sidechat: { tabs: 'multiple' } },
+    })))).toBe('multiple')
+    expect(sidechatTabsModeOf(await loadPrefs(wire({
+      pluginSettings: { sidechat: { tabs: 'not-a-mode' } },
+    })))).toBe('single')
+  })
+
   it('the settings page writes the same key the composer reads', () => {
     const rows = sidechatDescriptor().settings?.pluginToggles ?? []
-    expect(rows.map(row => row.key)).toEqual([SIDECHAT_SUBMIT_KEY_SETTING])
-    const row = rows[0]
+    expect(rows.map(row => row.key)).toEqual([SIDECHAT_TABS_SETTING, SIDECHAT_SUBMIT_KEY_SETTING])
+    const tabs = rows.find(row => row.key === SIDECHAT_TABS_SETTING)
+    expect(tabs?.type).toBe('select')
+    expect((tabs?.options ?? []).map(option => option.value)).toEqual(['single', 'multiple'])
+    const row = rows.find(row => row.key === SIDECHAT_SUBMIT_KEY_SETTING)
     if (row === undefined) throw new Error('the submit-key settings row is missing')
     expect(row.type).toBe('select')
     expect((row.options ?? []).map(option => option.value)).toEqual(['enter', 'mod-enter'])
@@ -121,9 +135,9 @@ describe('side-chat submit key — defaults and validation (prefs layer)', () =>
     }))
 
     // The closed control shows the STORED mode (not a hard-coded default) and
-    // advertises itself as a listbox the user can open.
-    const anchor = view.container.querySelector<HTMLButtonElement>('button[aria-haspopup="listbox"]')
-    if (anchor === null) throw new Error('the submit-key dropdown is missing')
+    // advertises itself as a listbox the user can open. The page also carries
+    // the page-mode select, so scope by the row title.
+    const anchor = selectRowAnchor(view.container, t('settingsSidechatSubmitKeyTitle'))
     expect(anchor.textContent).toContain(t('settingsSidechatSubmitModEnter'))
 
     // Opening it offers both modes; picking Enter commits the value the reader
@@ -160,8 +174,7 @@ describe('side-chat submit key — defaults and validation (prefs layer)', () =>
         onPluginWrite: () => {},
         onClose: () => {},
       }))
-      const anchor = view.container.querySelector<HTMLButtonElement>('button[aria-haspopup="listbox"]')
-      if (anchor === null) throw new Error('the submit-key dropdown is missing')
+      const anchor = selectRowAnchor(view.container, t('settingsSidechatSubmitKeyTitle'))
       const text = (anchor.textContent ?? '').trim()
       view.unmount()
       return text
@@ -173,6 +186,16 @@ describe('side-chat submit key — defaults and validation (prefs layer)', () =>
     })))).toBe(t('settingsSidechatSubmitModEnter'))
   })
 })
+
+/** Find one plugin row's select trigger by its title (the page now has two). */
+function selectRowAnchor(container: HTMLElement, title: string): HTMLButtonElement {
+  const titleSpan = [...container.querySelectorAll<HTMLElement>('span')]
+    .find(span => span.textContent === title)
+  const row = titleSpan?.parentElement?.parentElement
+  const anchor = row?.querySelector<HTMLButtonElement>('button[aria-haspopup="listbox"]') ?? null
+  if (anchor === null) throw new Error('select row missing: ' + title)
+  return anchor
+}
 
 /** The thread rows the mounted view needs from the host's session list. */
 function listSnapshot(): SidebarSessionList {

@@ -16,6 +16,9 @@ function harness() {
   const store = createSidebarStore()
   store.setSession('s1')
   const service = createBetterSidebarService(store)
+  // These cases pin the independent page mode, the mode the descriptor's
+  // dynamic `multiple` predicate reads from the same prefs snapshot.
+  store.setPrefs({ ...store.getPrefs(), pluginSettings: { sidechat: { tabs: 'multiple' } } })
   const records = createNativeTabRecords()
   let mounted = 's1'
   let rows: OpenTab[] = []
@@ -43,7 +46,10 @@ function harness() {
   }
   const registry = { register: (definition: { kind: string; multiple?: boolean }) => { definitions.set(definition.kind, definition); return () => { definitions.delete(definition.kind) } } }
   const ctx = {
-    get: (key: string) => key === 'sidebarRight' ? controller : key === 'sidebarRightTabs' ? registry : undefined,
+    get: (key: string) => key === 'sidebarRight' ? controller
+      : key === 'sidebarRightTabs' ? registry
+        : key === 'betterSidebar' ? service
+          : undefined,
     sessions: { list: { getSnapshot: () => ({ byId: { s1: {}, s2: {} } }), subscribe: () => () => {} } },
     inject: (_deps: readonly string[], callback: (ctx: unknown) => (() => void) | undefined) => {
       const cleanup = callback(ctx)
@@ -59,7 +65,7 @@ function harness() {
     sessionId: row.sessionId, id: row.tabId, kind: row.kind, contentId: row.contentId,
     title: threadId, params: { meta: { threadId } }, revision: 1, scope: { sessionId: row.sessionId },
   })
-  return { ctx, store, service, records, controller, surface, onClose, mount, rows: () => rows,
+  return { ctx, store, service, records, controller, surface, onClose, mount, rows: () => rows, definitions: () => definitions,
     switchSession: (sid: string) => { mounted = sid; mountedListeners.forEach(fn => fn()) },
     dispose: () => { surface.dispose(); disposeRegistration() },
   }
@@ -68,6 +74,16 @@ function harness() {
 beforeEach(() => localStorage.clear())
 
 describe('independent native side chats', () => {
+  it('re-registers the native type when the page mode flips', () => {
+    const h = harness()
+    expect(h.definitions().get('sidechat')?.multiple).toBe(true)
+    h.store.setPrefs({ ...h.store.getPrefs(), pluginSettings: { sidechat: { tabs: 'single' } } })
+    expect(h.definitions().get('sidechat')?.multiple).toBeFalsy()
+    h.store.setPrefs({ ...h.store.getPrefs(), pluginSettings: { sidechat: { tabs: 'multiple' } } })
+    expect(h.definitions().get('sidechat')?.multiple).toBe(true)
+    h.dispose()
+  })
+
   it('two guide opens get two host occurrences, not one singleton page', () => {
     const h = harness()
     h.controller.openTab('sidechat')

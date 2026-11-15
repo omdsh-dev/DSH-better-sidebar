@@ -1,5 +1,14 @@
 # Independent native Side Chat tabs
 
+> **Maintainer addendum (2026-11-16):** this design is now a user setting, not
+> the default. The shared page stays the default (the session's last/newest
+> thread, one native page). Choosing **Settings → Side card → Side chat → One
+> page per thread** turns on the `multiple` predicate; only then do the exact
+> contentId bindings, cross-carrier dedupe and archive-on-native-close paths
+> apply. Switching the mode only affects later opens; open tabs keep their
+> identity. In shared mode the fixed `sidebar://sidechat` contentId never
+> reads or writes an occurrence binding.
+
 ## Reproduction and cause
 
 On the native right sidebar, open Side Chat, then use the tab strip's `+` and choose Side Chat again. The host focuses the existing tab. The `+` below the composer creates a new thread but navigates that same tab, so it appears to replace the old conversation.
