@@ -54,14 +54,14 @@ whether other host/plugin context menus work, and a read-only probe script.
 
 ## Verification
 
-- [ ] `pnpm typecheck`
-- [ ] `pnpm lint`
-- [ ] full `pnpm test`
-- [ ] `pnpm build` + `pnpm check:consumer-types`
-- [ ] `pnpm pack` + temp install (only `ws` / `yaml`)
-- [ ] real-host Chromium mount (shared + independent sidechat, guide/tabs)
-- [ ] rc.3 temporary dev tree + real rc.3 mount
-- [ ] CI on `dev`
+- [x] `pnpm typecheck` (rc.2 baseline and rc.3 temporary dev tree)
+- [x] `pnpm lint`
+- [x] full `pnpm test` — 303 files / 3,518 passed, 17 skipped on the rc.2 serial lane; the parallel run hit only the known `fs-watch` flake (#868), which passed in isolation
+- [x] `pnpm build` + `pnpm check:consumer-types` (both dev trees)
+- [x] `pnpm pack` + temp install — 3 packages / 22 MB total; `dependencies` is exactly `ws` / `yaml`, no mermaid / CodeMirror / xterm / react-icons; `src` still packed
+- [x] real-host Chromium mount on rc.2 — 26 passed / 6 skipped; both sidechat cases (shared-page repeat, independent three-thread reload) passed
+- [x] rc.3 temporary dev tree + real rc.3 mount — full suite 302/303 files (only the baseline pin assertion fails because the temp tree intentionally pins rc.3), 3,517 passed; rc.3 mount 26 passed / 6 skipped
+- [ ] CI on `dev` (pending push)
 
 ## Links
 

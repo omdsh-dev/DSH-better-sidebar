@@ -73,8 +73,8 @@
 
 - rc.3 与本插件消费面的源码差异只有 `@deepseek-ai/dsh-client-ui-primitives` 的 `src/icons/artwork.ts`（+1）与 `src/icons/index.tsx`（+6）；其余是各包 `package.json` 版本、CI、桌面更新重启状态和无关的 DeepSeek 会话导入功能。`Menu` / `ui-sidebar-right` / `dsh-session` / `dsh-tools` / `dsh-agent` / `dsh-client-ui-*` 的 API 没有变化。
 - 因此 `peerDependencies` 的 `^0.2.2-rc.2` 同时接受 rc.2 与 rc.3，`dsh.plugin.json#engines.dsh` 的 `>=0.2.2-rc.2` 也接受；**不新增任何运行时兼容代码**。
-- 验证方式：在临时 worktree 把 devDependencies 的 30 条 DSH 包临时升到 `0.2.2-rc.3`（不提交），跑 `typecheck` / 全量 `test` / `build`，再用 rc.3 宿主跑真实挂载；dev 钉版与 CI 仍保持 rc.2 基线。
-- 结论：当前构建服务 **0.2.2-rc.2 与 rc.3 两条 RC**；支持线表不变（`0.2.2-rc.2+`）。
+- 验证结果（2026-11-16）：临时 worktree 把 devDependencies 的 30 条 DSH 包升到 `0.2.2-rc.3`（不提交）后，`typecheck` / `build` / `check:consumer-types` 通过；全量单测 302/303 文件、3,517 例通过——唯一失败是 `tests/dsh-baseline.spec.ts` 仍断言 dev 钉版为 rc.2（临时升版导致，属于验证环境而非代码）；rc.3 宿主真实挂载 26 通过 / 6 跳过。rc.2 宿主同样 26 通过 / 6 跳过。
+- 结论：当前构建服务 **0.2.2-rc.2 与 rc.3 两条 RC**；dev 钉版与 CI 仍保持 rc.2 基线，支持线表不变（`0.2.2-rc.2+`）。
 
 ## 9. 适配记录索引
 
