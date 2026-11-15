@@ -1,6 +1,6 @@
 /**
- * The 4 built-in file viewer descriptors (markdown / html / jsonl / code),
- * exactly like external plugins register theirs.
+ * The 6 built-in file viewer descriptors (markdown / html / jsonl / image /
+ * media / code), exactly like external plugins register theirs.
  *
  * DSH 0.1.7 ships `ui-sidebar-documentpreview`, its own code / spreadsheet /
  * office / pdf / image / html / markdown / text previews with zoom and
@@ -13,14 +13,21 @@
  *  - `jsonl` — a record-per-row preview (the host maps `.jsonl` to its JSON
  *    highlighter but renders it as one long text document) with the JSONL
  *    editor behind the mode toggle;
+ *  - `image` — raster images (this release): the host viewport zooms, but it has no
+ *    pixel boundary, no pixel grid and no way to say how many pixels a line or
+ *    a rectangle spans. This viewer does, and it keeps the bitmap
+ *    nearest-neighbour so "100%" really is one image pixel per CSS pixel. SVG
+ *    stays with the host: it is vector artwork, where a pixel count means
+ *    nothing;
+ *  - `media` — the bare `<video>` / `<audio>` player on the file route;
  *  - `code` — the catch-all (`exts: []`, lowest priority) that claims any
  *    file no other viewer did, and it is an EDITABLE CodeMirror with save —
  *    the host's equivalents are read-only previews.
- * The yielded ids (image / pdf / binary-download) are deliberately NOT
- * registered here; an external plugin may still claim them through this
- * service. Office previews (.docx / .xlsx / .pptx) were already not built
- * in — they live in the recommended office plugin (see plugins-viewers.ts),
- * which registers the same ids through this service.
+ * The yielded ids (pdf / binary-download) are deliberately NOT registered
+ * here; an external plugin may still claim them through this service. Office
+ * previews (.docx / .xlsx / .pptx) were already not built in — they live in
+ * the recommended office plugin (see plugins-viewers.ts), which registers the
+ * same ids through this service.
  *
  * The heavy viewers (the CodeMirror-backed markdown/html/code) render
  * through {@link lazyChunkComponent} wrappers — their libraries are fetched
@@ -38,11 +45,13 @@ import { lazyChunkComponent } from '../lazy-chunk.tsx'
 import {
   IconMarkdownOutline16,
   IconHtmlOutline16,
+  IconImageOutline16,
 } from '../icons.tsx'
 import type { ComponentType } from 'react'
 import type { FileViewerDescriptor, FileViewerProps } from '../service.ts'
 import { t } from '../locales.ts'
 import { MediaPreview } from './media-preview.tsx'
+import { ImagePreview } from './image-preview.tsx'
 
 /**
  * Lazy wrapper over the chunk-resident viewer component. The `pick`
@@ -52,7 +61,7 @@ import { MediaPreview } from './media-preview.tsx'
  */
 const LazyTextEditor = lazyChunkComponent<FileViewerProps>('editor', (mod) => mod.TextEditor as ComponentType<FileViewerProps> | undefined)
 
-/** The 5 built-in file viewer descriptors. */
+/** The 6 built-in file viewer descriptors. */
 export function builtinViewers(): readonly FileViewerDescriptor[] {
   return [
     {
@@ -105,6 +114,18 @@ export function builtinViewers(): readonly FileViewerDescriptor[] {
         }],
       },
       component: (props) => <LazyTextEditor {...props} />,
+    },
+    {
+      // Raster images. The host's document preview zooms, but only this
+      // viewer snaps measurements to pixel borders and reports how many
+      // pixels a span covers. `mediaUrl` streams through the file route with
+      // Range support, so a huge PNG is never copied into a Blob.
+      id: 'image',
+      title: () => t('viewerImage'),
+      icon: (size: number) => <IconImageOutline16 size={size} />,
+      exts: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico'],
+      fetchStrategy: 'mediaUrl',
+      component: (props) => <ImagePreview {...props} />,
     },
     {
       // Media containers. `mediaUrl` (not `fsRead`) is the whole point: the

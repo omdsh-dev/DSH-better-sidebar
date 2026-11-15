@@ -1,12 +1,14 @@
 /**
- * Built-in registration tests: the plugin registers 6 tabs and 4 file
+ * Built-in registration tests: the plugin registers 6 tabs and 6 file
  * viewers through the same service external plugins use (dogfooding);
  * the catch-all `code` viewer and the html sandbox settings pin the
- * registry's behavior. The read-only previews (image / pdf /
- * binary-download) were yielded to the host's own document preview
- * (DSH 0.1.7 `ui-sidebar-documentpreview`) and legacy Office
- * doc/xls/ppt now fall through to the host too. (Office previews were
- * already NOT built in — they moved to the recommended office plugin,
+ * registry's behavior. The read-only previews PDF / binary-download were
+ * yielded to the host's own document preview (DSH 0.1.7
+ * `ui-sidebar-documentpreview`) and legacy Office doc/xls/ppt now fall
+ * through to the host too. Raster images came BACK in this release: the host's
+ * viewport zooms but cannot measure pixels (see
+ * `src/client/builtins/image-preview.tsx`). (Office previews were already
+ * NOT built in — they moved to the recommended office plugin,
  * see src/client/plugins-viewers.ts.) The git tab is the unified changes
  * tab (git lens + session lens, PR #471's file-trace merged in).
  *
@@ -366,16 +368,17 @@ describe('side chat close archives the bound thread', () => {
 })
 
 describe('built-in file viewer registrations', () => {
-  it('registers the 5 built-in file viewers (the read-only previews yielded to the host)', () => {
+  it('registers the 6 built-in file viewers (pdf/download still yielded to the host)', () => {
     const { service } = setup()
     expect(service.getFileViewers().map(v => v.id).sort()).toEqual(
-      ['code', 'html', 'jsonl', 'markdown', 'media'],
+      ['code', 'html', 'image', 'jsonl', 'markdown', 'media'],
     )
     // The yielded ids are gone: the host's own document preview
-    // (ui-sidebar-documentpreview) owns images, pdf, spreadsheets, office
-    // and plain text; the plugin keeps only markdown / html / the JSONL
-    // record preview / the media player / the editable code catch-all.
-    for (const id of ['image', 'pdf', 'binary-download']) {
+    // (ui-sidebar-documentpreview) owns pdf, spreadsheets, office and plain
+    // text; the plugin keeps markdown / html / the JSONL record preview /
+    // the raster image viewer / the media player / the editable code
+    // catch-all.
+    for (const id of ['pdf', 'binary-download']) {
       expect(service.getFileViewers().map(v => v.id), `${id} must not be built in`).not.toContain(id)
     }
     // Office previews are not built in either: they live in the recommended
@@ -387,17 +390,17 @@ describe('built-in file viewer registrations', () => {
 
   it('the yielded viewer ids stay registrable by external plugins (public contract)', () => {
     const { service } = setup()
-    // Dropping the built-in descriptors must not freeze the ids: the
-    // registry API keeps accepting them from third-party plugins.
+    // Dropping a built-in descriptor must not freeze its id: the registry API
+    // keeps accepting it from third-party plugins.
     const dispose = service.registerFileViewer({
-      id: 'image',
-      exts: ['png'],
+      id: 'pdf',
+      exts: ['pdf'],
       fetchStrategy: 'mediaUrl',
       component: () => null,
     })
-    expect(service.matchFileViewer('photo.png')?.id).toBe('image')
+    expect(service.matchFileViewer('paper.pdf')?.id).toBe('pdf')
     dispose()
-    expect(service.matchFileViewer('photo.png')?.id).toBe('code')
+    expect(service.matchFileViewer('paper.pdf')?.id).toBe('code')
   })
 
   it('code is the catch-all at the lowest priority', () => {
@@ -475,9 +478,22 @@ describe('built-in file viewer registrations', () => {
     expect(toggles('jsonl')).toEqual(toggles('code'))
   })
 
-  it('no built-in viewer claims the yielded extensions (the host document preview does)', () => {
+  it('the image viewer claims the raster formats through the media URL strategy', () => {
     const { service } = setup()
-    // The spreadsheet / pdf / image / office set yielded to the host: the
+    const image = service.getFileViewers().find(v => v.id === 'image')
+    expect(image?.fetchStrategy).toBe('mediaUrl')
+    expect(image?.exts).toEqual(expect.arrayContaining(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico']))
+    for (const name of ['photo.png', 'photo.JPG', 'anim.gif', 'photo.webp', 'tile.bmp', 'favicon.ico']) {
+      expect(service.matchFileViewer(name)?.id, name).toBe('image')
+    }
+    // SVG is vector artwork: the host's zoom viewport owns it (native/index.ts's
+    // HOST_OWNED_EXTS), so no pixel measurement is offered there.
+    expect(service.matchFileViewer('art.svg')?.id).toBe('code')
+  })
+
+  it('no built-in viewer claims the extensions still yielded to the host', () => {
+    const { service } = setup()
+    // The spreadsheet / pdf / office / vector set yielded to the host: the
     // only plugin-side match left is the catch-all code viewer, so the
     // `editor` type can hand these addresses over (see native/index.ts's
     // canOpen). Legacy doc/xls/ppt were previously claimed by the removed
@@ -486,8 +502,7 @@ describe('built-in file viewer registrations', () => {
     for (const path of [
       'book.xlsx', 'legacy.xls', 'macro.xlsb', 'sheet.xlt', 'template.xltx', 'macro.xltm',
       'flat.ods', 'flat.ots', 'flat.fods', 'data.csv', 'data.tsv',
-      'paper.pdf', 'photo.png', 'photo.jpg', 'anim.gif', 'photo.webp', 'art.svg',
-      'tile.bmp', 'favicon.ico', 'next.avif',
+      'paper.pdf', 'art.svg', 'next.avif',
       'report.docx', 'report.doc', 'notes.dot', 'notes.dotx',
       'deck.pptx', 'deck.ppt',
     ]) {
