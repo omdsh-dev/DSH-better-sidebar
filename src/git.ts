@@ -1042,7 +1042,14 @@ async function listedWorktrees(cwd: string): Promise<GitWorktreeRecord[]> {
       raw = await runGit(cwd, ['worktree', 'list', '--porcelain'])
     }
   }
-  return parseWorktreeList(raw).filter(entry => !entry.prunable)
+  return parseWorktreeList(raw)
+    .filter(entry => !entry.prunable)
+    // Every path in this listing was printed by the git that ran in `cwd`, so a
+    // linked checkout of a WSL workspace arrives POSIX-spelled exactly like the
+    // main root does. Re-spell them HERE, the one place both the inventory and
+    // the selector read from: a POSIX entry would neither match the current
+    // root nor survive as a command target (issue #1189).
+    .map(entry => ({ ...entry, path: wslRootSpelling(cwd, entry.path) }))
 }
 
 /**
