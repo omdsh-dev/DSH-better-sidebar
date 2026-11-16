@@ -162,8 +162,11 @@ export function EditorHost(props: {
   revealed: string[]
   onToggleDir: (path: string) => void
   onReferenceFile: (path: string, isDir: boolean) => void
+  /** Append a row's absolute path to the composer draft (passed through to
+   *  the explorer tree; absent → no "add to conversation" row). */
+  onAddToConversation?: (path: string, isDir: boolean) => void
 }) {
-  const { ctx, store, scope, tab, expanded, revealed, onToggleDir, onReferenceFile } = props
+  const { ctx, store, scope, tab, expanded, revealed, onToggleDir, onReferenceFile, onAddToConversation } = props
   const visible = props.visible !== false
   const path = tab.path ?? ''
   const title = tab.title
@@ -770,6 +773,7 @@ export function EditorHost(props: {
           onOpenWith={openWith}
           onToggleOpenWithPin={toggleOpenWithPin}
           onReferenceFile={onReferenceFile}
+          onAddToConversation={onAddToConversation}
           onPathRenamed={onPathRenamed}
           onPathDeleted={onPathDeleted}
           exclude={exclude}
@@ -1011,6 +1015,7 @@ export function EditorHost(props: {
               onOpenWith={openWith}
               onToggleOpenWithPin={toggleOpenWithPin}
               onReferenceFile={onReferenceFile}
+              onAddToConversation={onAddToConversation}
               onPathRenamed={onPathRenamed}
               onPathDeleted={onPathDeleted}
               exclude={exclude}

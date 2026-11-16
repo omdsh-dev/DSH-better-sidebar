@@ -376,6 +376,11 @@ interface TabComponentProps {
   // warn——绝不产出猜测的相对路径或绝对路径。目录插入会带一个尾随分隔空格，
   // 使连续两次点击不会粘成一条 token。
   onReferenceFile?: (path: string, isDir: boolean) => void
+  // 文件树右键菜单的「添加到对话」：把该行的**绝对路径**作为纯文本追加到
+  // 会话 composer 草稿（与上面的 @ 引用不同，绝对路径无法成为宿主可解析的
+  // chip；工作区外的行也只有绝对路径这一种写法）。未提供时该菜单行不渲染，
+  // 老的调用方菜单保持原样。
+  onAddToConversation?: (path: string, isDir: boolean) => void
   onOpenFile?: (path: string) => void
   onOpenDiff?: (tab: SidebarTab) => void
   onSubagentJump?: (childSessionId: string) => void

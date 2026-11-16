@@ -78,6 +78,9 @@ export function TreePanel(props: {
    *  through to FileTree). */
   openWithShowPluginTargets?: boolean
   onReferenceFile: (path: string, isDir: boolean) => void
+  /** Append a row's absolute path to the composer draft (passed through to
+   *  FileTree; absent → no "add to conversation" row). */
+  onAddToConversation?: (path: string, isDir: boolean) => void
   /** The explorerExclude pref patterns: the host filters the tree listing AND
    *  the name search with them (passed through to FileTree, and carried on the
    *  search request so both surfaces agree). */
@@ -99,7 +102,7 @@ export function TreePanel(props: {
     sessionId, cwd, expanded, revealed, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide,
     openInApp, openWithTargets, openWithPinned, openWithSsh, onOpenWith, onToggleOpenWithPin,
     openWithShowPluginTargets, exclude,
-    onReferenceFile, onPathRenamed, onPathDeleted, visible, full, service,
+    onReferenceFile, onAddToConversation, onPathRenamed, onPathDeleted, visible, full, service,
   } = props
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<{ matches: string[]; dirs: string[]; truncated: boolean } | null>(null)
@@ -397,6 +400,7 @@ export function TreePanel(props: {
         openWithShowPluginTargets={openWithShowPluginTargets}
         exclude={exclude}
         onReferenceFile={onReferenceFile}
+        onAddToConversation={onAddToConversation}
         onPathRenamed={onPathRenamed}
         onPathDeleted={onPathDeleted}
         refreshTick={refreshTick}
