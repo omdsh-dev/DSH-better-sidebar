@@ -30,6 +30,7 @@ import clsx from 'clsx'
 import { IconCloseFillRegular, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context } from '../context-types.ts'
 import { referenceInChat as referenceInChatShared } from './reference-in-chat.ts'
+import { appendPathToConversation } from './path-in-chat.ts'
 import { DockFallback } from './sidebar/dock-fallback.tsx'
 import {
   BOTTOM_MIN, CONVERSATION_MIN,
@@ -551,6 +552,17 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
   }, [ctx, sessionId])
 
   /**
+   * The explorer's row-menu "add to conversation": append the row's absolute
+   * path to this session's composer draft as plain text (see
+   * `path-in-chat.ts` for why it is not an `@` chip). Wired only where a
+   * conversation exists, so a tree outside a session keeps the menu it had.
+   */
+  const addToConversation = useCallback((path: string): void => {
+    if (sessionId === undefined) return
+    appendPathToConversation(ctx, sessionId, path)
+  }, [ctx, sessionId])
+
+  /**
    * The tab context menu's "reveal in the file manager" row. The host's
    * open-in-app capability is the ONLY path this plugin reveals through
    * (`ctx.remote.session.openWorkspacePath({action:'reveal'})`, shared with
@@ -677,6 +689,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
         revealed={state.revealed ?? []}
         onToggleDir={(path) => { store.reduce(s => toggleExpanded(s, path)) }}
         onReferenceFile={referenceInChat}
+        onAddToConversation={addToConversation}
         ctx={ctx}
         store={store}
         visible={state.bottomOpen && active}

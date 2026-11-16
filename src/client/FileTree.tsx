@@ -30,8 +30,9 @@
  * a download action (the host serves raw bytes, binary-safe); directory rows
  * offer "upload here", "new folder" and "new file" (an inline editor at the
  * top of that level; the two creators are mutually exclusive); every row can
- * copy the relative or absolute path (with a brief
- * "copied" label replacing the button after a successful write).
+ * append its absolute path to the composer draft ("add to conversation", only
+ * when the caller wires it) and copy the relative or absolute path (with a
+ * brief "copied" label replacing the button after a successful write).
  *
  * Rows are memoized components (FileRow / DirRow) fed by stable callbacks and
  * per-row booleans, so a copy flash, a drag target or a selection change only
@@ -48,7 +49,8 @@ import clsx from 'clsx'
 import {
   IconArchiveOutlineRegular, IconChevronRightOutlineRegular, IconCloseFillRegular, IconCodeOutlineRegular, IconCopyOutlineRegular,
   IconDownloadOutlineRegular,
-  IconEditOutlineRegular, IconFolderOpenRegular, IconLinkOutlineRegular, IconPlusOutlineRegular, IconTrashOutlineRegular,
+  IconEditOutlineRegular, IconFolderOpenRegular, IconLinkOutlineRegular, IconPlusOutlineRegular, IconSendOutlineRegular,
+  IconTrashOutlineRegular,
   Menu, type MenuEntry, type MenuItem, writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { SiCursor, SiZedindustries } from 'react-icons/si'
@@ -604,6 +606,10 @@ export function FileTree(props: {
   onToggleOpenWithPin?: (targetId: string) => void
   /** Insert `@<relative path>` into the composer draft (file vs directory). */
   onReferenceFile: (path: string, isDir: boolean) => void
+  /** Append the row's absolute path to the composer draft (file vs directory).
+   *  Absent → no menu row (an external tab component that never asked for it
+   *  renders exactly the menu it rendered before). */
+  onAddToConversation?: (path: string, isDir: boolean) => void
   /** The explorerExclude pref patterns: the HOST filters the listing with
    *  them (excluded rows never arrive), so changing the list wipes the level
    *  cache and reloads — the rows themselves need no client-side filter. */
@@ -2509,7 +2515,11 @@ export function FileTree(props: {
           ...(rowMenu === null ? [] : fileActionEntries(rowMenu)),
           // 5: ZIP of the current selection (≥2 rows, or one lone directory).
           ...(rowMenu === null ? [] : zipEntries(rowMenu)),
-          // 6: copy, then the mutations (never on the workspace root row).
+          // 6: path actions — add the absolute path to the conversation, then
+          // copy it (the add row only exists when the caller wired it).
+          ...(rowMenu === null || props.onAddToConversation === undefined
+            ? []
+            : [{ id: 'add-to-conversation', label: t('addToConversation'), icon: <IconSendOutlineRegular size={14} /> }]),
           { id: 'relative', label: t('copyRelative'), icon: <IconCopyOutlineRegular size={14} /> },
           { id: 'absolute', label: t('copyAbsolute'), icon: <IconCopyOutlineRegular size={14} /> },
           ...(rowMenu !== null && rowMenu.path !== cwd
@@ -2564,6 +2574,10 @@ export function FileTree(props: {
           }
           if (id === 'archive-selection') {
             downloadArchive([...selected])
+            return
+          }
+          if (id === 'add-to-conversation') {
+            propsRef.current.onAddToConversation?.(target.path, target.isDir)
             return
           }
           if (id === 'download') {

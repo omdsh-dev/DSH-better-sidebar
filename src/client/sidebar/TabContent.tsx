@@ -24,6 +24,9 @@ import css from '../sidebar.module.css'
 interface TabContentProps extends TabContentMemoKey {
   onToggleDir: (path: string) => void
   onReferenceFile: (path: string, isDir: boolean) => void
+  /** Append a row's absolute path to the composer draft (forwarded to the tab
+   *  component; absent → the tree hides the "add to conversation" row). */
+  onAddToConversation?: (path: string, isDir: boolean) => void
   ctx: Context
   store: SidebarStore
   /** Fired before a topology node jumps to its child session (see Sidebar). */
@@ -34,7 +37,7 @@ interface TabContentProps extends TabContentMemoKey {
 
 /** Render the content of one tab (dispatched by type). */
 export const TabContent = memo(function TabContent(props: TabContentProps) {
-  const { tab, sessionId, cwd, expanded, revealed, onToggleDir, onReferenceFile, ctx, store, visible, onSubagentJump, onOpenDiff } = props
+  const { tab, sessionId, cwd, expanded, revealed, onToggleDir, onReferenceFile, onAddToConversation, ctx, store, visible, onSubagentJump, onOpenDiff } = props
   // Stable by content (see session-scope.ts): a tab body keys its memos and
   // effects off this object, so rebuilding it per render made every such
   // dependency look changed whenever a COMPARED field moved — a directory
@@ -51,7 +54,7 @@ export const TabContent = memo(function TabContent(props: TabContentProps) {
     { className: css.tabBoundaryError },
     createElement(descriptor.component, {
       ctx, store, scope, tab, visible, expanded, revealed,
-      onToggleDir, onReferenceFile, onOpenDiff, onSubagentJump,
+      onToggleDir, onReferenceFile, onAddToConversation, onOpenDiff, onSubagentJump,
     }),
   )
 }, tabContentCompare)

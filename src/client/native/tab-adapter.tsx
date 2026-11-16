@@ -32,6 +32,7 @@ import { OrphanedTab } from '../OrphanedTab.tsx'
 import { ContextDiagnosticsHost } from '../context-diagnostics-ui.tsx'
 import type { ContextDiagnostics } from '../context-diagnostics.ts'
 import { referenceInChat } from '../reference-in-chat.ts'
+import { appendPathToConversation } from '../path-in-chat.ts'
 import { useSessionRoot } from '../use-session-root.ts'
 import { useSessionScope } from '../session-scope.ts'
 import type { BetterSidebarService, NativePathTab } from '../service.ts'
@@ -603,6 +604,7 @@ export function NativeTabBody(props: NativeBodyInjected & NativeBodyFrameworkPro
           revealed: view.revealed,
           onToggleDir: (path: string) => { records.toggleExpanded(seatSessionId, nativeTab.id, path) },
           onReferenceFile: (path: string, isDir: boolean) => { referenceInChat(ctx, scopeSessionId, path, isDir) },
+          onAddToConversation: (path: string) => { appendPathToConversation(ctx, scopeSessionId, path) },
           onOpenDiff: (tab: SidebarTab) => {
             service.openTab({
               type: 'diff',

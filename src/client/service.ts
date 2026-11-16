@@ -175,6 +175,9 @@ export interface TabComponentProps {
   revealed?: string[]
   onToggleDir?: (path: string) => void
   onReferenceFile?: (path: string, isDir: boolean) => void
+  /** Append the row's absolute path to the composer draft (the explorer's
+   *  "add to conversation" row; absent → that row is not rendered). */
+  onAddToConversation?: (path: string, isDir: boolean) => void
   onOpenFile?: (path: string) => void
   onOpenDiff?: (tab: SidebarTab) => void
   onSubagentJump?: (childSessionId: string) => void
