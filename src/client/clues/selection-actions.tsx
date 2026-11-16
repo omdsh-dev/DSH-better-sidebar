@@ -16,8 +16,11 @@
 import {
   createContext,
   createElement,
+  useCallback,
   useContext,
   useEffect,
+  useId,
+  useLayoutEffect,
   useRef,
   useState,
   useSyncExternalStore,
@@ -27,6 +30,7 @@ import {
   type ReactNode,
 } from 'react'
 import { createPortal } from 'react-dom'
+import { usePointerGrace } from '@deepseek-ai/dsh-client-ui-primitives'
 import { call } from '../api.ts'
 import { t } from '../locales.ts'
 import { useSelectionPopup } from '../selection-popup.ts'
@@ -308,28 +312,54 @@ export function SelectionActionMenu(props: SelectionActionMenuProps): ReactNode 
   const [failure, setFailure] = useState<{ message: string; action: string } | null>(null)
   const [translation, setTranslation] = useState<string | null>(null)
   const menuRef = useRef<HTMLDivElement | null>(null)
+  const flyoutRef = useRef<HTMLDivElement | null>(null)
+  const rewriteRef = useRef<HTMLButtonElement | null>(null)
+  const enterFlyout = useRef(false)
+  const flyoutId = useId()
+  const [flyoutPosition, setFlyoutPosition] = useState({ top: 8, maxHeight: viewport.height - 16 })
   const busyRef = useRef(false)
   const controller = useRef<AbortController | null>(null)
   const lastRequest = useRef<{ key: string; id: string } | null>(null)
   const attachRef = (element: HTMLDivElement | null): void => {
-    menuRef.current = element
     if (props.containerRef !== undefined) props.containerRef.current = element
   }
   useEffect(() => () => { controller.current?.abort() }, [])
   useEffect(() => {
     menuRef.current?.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus({ preventScroll: true })
-  }, [submenu, translation])
+  }, [translation])
+  const closeSubmenu = useCallback((): void => {
+    if (flyoutRef.current?.contains(document.activeElement)) rewriteRef.current?.focus({ preventScroll: true })
+    setSubmenu(false)
+  }, [])
+  const grace = usePointerGrace(closeSubmenu)
+  const openSubmenu = (enter: boolean): void => {
+    grace.cancel()
+    enterFlyout.current = enter && !submenu
+    if (submenu && enter) flyoutRef.current?.querySelector<HTMLButtonElement>('[data-clue-selection-action]:not(:disabled)')?.focus({ preventScroll: true })
+    setSubmenu(true)
+  }
+  useEffect(() => {
+    if (!submenu) return
+    const onEscape = (event: globalThis.KeyboardEvent): void => {
+      if (event.key !== 'Escape' || isLikelyImeKey(event)) return
+      event.preventDefault(); event.stopPropagation()
+      closeSubmenu()
+    }
+    document.addEventListener('keydown', onEscape, true)
+    return () => document.removeEventListener('keydown', onEscape, true)
+  }, [submenu, closeSubmenu])
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
     if (isLikelyImeKey(event.nativeEvent)) return
     if (event.key === 'Escape' || (submenu && event.key === 'ArrowLeft')) {
       event.preventDefault(); event.stopPropagation()
-      if (submenu) setSubmenu(false)
+      if (submenu) closeSubmenu()
       else props.onClose?.()
       return
     }
     if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return
     event.preventDefault(); event.stopPropagation()
-    const items = Array.from(menuRef.current?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)') ?? [])
+    const activeMenu = flyoutRef.current?.contains(document.activeElement) ? flyoutRef.current : menuRef.current
+    const items = Array.from(activeMenu?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)') ?? [])
     const current = items.indexOf(document.activeElement as HTMLButtonElement)
     const next = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1
       : event.key === 'ArrowDown' ? (current + 1) % items.length : (current - 1 + items.length) % items.length
@@ -338,6 +368,7 @@ export function SelectionActionMenu(props: SelectionActionMenuProps): ReactNode 
   const run = async (id: string): Promise<void> => {
     if (busyRef.current) return
     busyRef.current = true
+    grace.cancel(); closeSubmenu()
     setBusy(id); setFailure(null)
     try {
       if (id === 'insertMain' || id === 'insertSide') {
@@ -389,46 +420,89 @@ export function SelectionActionMenu(props: SelectionActionMenuProps): ReactNode 
   const aboveHeight = Math.max(0, menuTop - 16)
   const placeBelow = aboveHeight < 320 && belowHeight > aboveHeight
   const availableHeight = Math.max(48, placeBelow ? belowHeight : aboveHeight)
-  const halfWidth = Math.min(160, Math.max(0, (viewport.width - 16) / 2))
-  const menuLeft = Math.min(Math.max(left, halfWidth + 8), viewport.width - halfWidth - 8)
+  const width = Math.min(translation === null ? 220 : 320, Math.max(0, viewport.width - 16))
+  const menuLeft = Math.min(Math.max(left, width / 2 + 8), viewport.width - width / 2 - 8)
+  const flyoutWidth = Math.min(180, Math.max(0, viewport.width - 16))
+  const rightSpace = viewport.width - (menuLeft + width / 2) - 8
+  const leftSpace = menuLeft - width / 2 - 8
+  const flyoutSide = rightSpace >= flyoutWidth + 4 || (leftSpace < flyoutWidth + 4 && rightSpace >= leftSpace) ? 'right' : 'left'
+  // On narrow screens keep the side card, overlapping the parent if needed.
+  const flyoutLeft = Math.max(8, Math.min(viewport.width - flyoutWidth - 8,
+    flyoutSide === 'right' ? menuLeft + width / 2 + 4 : menuLeft - width / 2 - flyoutWidth - 4))
+  const flyoutOverlaps = flyoutLeft < menuLeft + width / 2 && flyoutLeft + flyoutWidth > menuLeft - width / 2
+  useLayoutEffect(() => {
+    if (!submenu || flyoutRef.current === null || rewriteRef.current === null) return
+    const row = rewriteRef.current.getBoundingClientRect()
+    let maxHeight = viewport.height - 16
+    let top = row.top
+    if (flyoutOverlaps) {
+      // Keep an overlapping card off the trigger row, so opening it cannot
+      // turn the same pointer/touch into an accidental rewrite selection.
+      const below = viewport.height - row.bottom - 12
+      const above = row.top - 12
+      const placeBelow = below >= above
+      maxHeight = Math.max(0, placeBelow ? below : above)
+      const height = Math.min(flyoutRef.current.scrollHeight + 2, maxHeight)
+      top = placeBelow ? row.bottom + 4 : row.top - height - 4
+    }
+    const height = Math.min(flyoutRef.current.scrollHeight + 2, maxHeight)
+    setFlyoutPosition({ top: Math.max(8, Math.min(top, viewport.height - height - 8)), maxHeight })
+    if (enterFlyout.current) {
+      enterFlyout.current = false
+      flyoutRef.current.querySelector<HTMLButtonElement>('[data-clue-selection-action]:not(:disabled)')?.focus({ preventScroll: true })
+    }
+  }, [submenu, viewport.height, viewport.width, menuLeft, menuTop, placeBelow, flyoutOverlaps, settings])
   const rewriteIds = settings.rewriteOrder.filter(id => !settings.disabled[id])
   const actionButton = (id: string, label: string): ReactNode => <ActionButton key={id} role="menuitem" variant="ghost"
     className={css.item} busy={busy === id} disabled={busy !== null} data-clue-selection-action={id}
+    onPointerEnter={() => { if (id === 'translate' || id.startsWith('insert')) { grace.cancel(); closeSubmenu() } }}
+    onFocus={() => { if (id === 'translate' || id.startsWith('insert')) closeSubmenu() }}
     onClick={() => { void run(id) }}>{label}</ActionButton>
   const canRewrite = !props.comment && props.writable !== false && workspaceId !== undefined && resource !== undefined && rewriteIds.length > 0
   const mainActions = settings.menuOrder.filter(id => !settings.disabled[id] && (id !== 'rewrite' || canRewrite))
   if (!settings.enabled || (mainActions.length === 0 && settings.disabled.insertMain && settings.disabled.insertSide)) return null
-  return <div ref={attachRef} className={placeBelow ? css.menu + ' ' + css.menuBelow : css.menu} role="menu"
-    aria-label={clueSelectionLabel('menu')} data-clue-selection-menu data-selection-submenu={submenu}
-    style={{ left: menuLeft, top: menuTop, maxHeight: availableHeight }} onKeyDown={onKeyDown}
+  // Both fixed cards stay inside the popup ref: outside-click and editor focus
+  // guards must regard the flyout as part of this same selection interaction.
+  return <div ref={attachRef} className={css.surface} data-selection-submenu={submenu} onKeyDown={onKeyDown}
     onMouseDown={(event: MouseEvent<HTMLDivElement>) => {
       event.stopPropagation()
-      if (event.target === event.currentTarget) event.preventDefault()
+      if (event.target === menuRef.current || event.target === flyoutRef.current) event.preventDefault()
     }}>
-    {translation !== null ? <>
-      <ActionButton variant="ghost" className={css.item} role="menuitem" onClick={() => { setTranslation(null) }}>{t('selectionBack')}</ActionButton>
-      <div className={css.translation} data-selection-translation tabIndex={0}>{translation}</div>
-      <ActionButton variant="ghost" className={css.item} role="menuitem" onClick={() => {
-        void navigator.clipboard.writeText(translation).catch(error => { setFailure({ message: String(error), action: 'translate' }) })
-      }}>{t('copy')}</ActionButton>
-    </> : submenu ? <>
-      <ActionButton variant="ghost" className={css.item} role="menuitem" onClick={() => { setSubmenu(false) }}>{t('selectionBack')}</ActionButton>
+    <div ref={menuRef} className={[css.menu, placeBelow ? css.menuBelow : '', translation !== null ? css.translationView : ''].join(' ')} role="menu"
+      aria-label={clueSelectionLabel('menu')} data-clue-selection-menu
+      style={{ left: menuLeft, top: menuTop, width, maxHeight: availableHeight }} onScroll={closeSubmenu}>
+      {translation !== null ? <>
+        <div className={css.translation} data-selection-translation tabIndex={0}>{translation}</div>
+        <div className={css.insertGroup} data-selection-translation-footer>
+          <ActionButton variant="ghost" className={css.item} role="menuitem" onClick={() => { setTranslation(null) }}>{t('selectionBack')}</ActionButton>
+          <ActionButton variant="ghost" className={css.item} role="menuitem" onClick={() => {
+            void navigator.clipboard.writeText(translation).catch(error => { setFailure({ message: String(error), action: 'translate' }) })
+          }}>{t('copy')}</ActionButton>
+        </div>
+      </> : <>
+        {mainActions.map(id => id === 'rewrite'
+          ? <ActionButton ref={rewriteRef} key={id} role="menuitem" variant="ghost" className={css.item + ' ' + css.rewrite}
+            disabled={busy !== null} data-clue-selection-action="rewrite" aria-haspopup="menu" aria-expanded={submenu} aria-controls={submenu ? flyoutId : undefined}
+            onPointerEnter={event => { if (event.pointerType !== 'touch' && busy === null) openSubmenu(false) }}
+            onPointerLeave={event => { if (event.pointerType !== 'touch') grace.arm() }}
+            onKeyDown={event => { if (event.key === 'ArrowRight') { event.preventDefault(); event.stopPropagation(); openSubmenu(true) } }}
+            onClick={() => { openSubmenu(true) }}>{t('clueSelectionRewrite')} <span className={css.chevron} aria-hidden="true">{flyoutSide === 'left' ? '‹' : '›'}</span></ActionButton>
+          : actionButton(id, t('clueSelectionTranslate')))}
+        <div className={css.insertGroup}>
+          {!settings.disabled.insertMain && actionButton('insertMain', t('selectionInsertMain'))}
+          {!settings.disabled.insertSide && actionButton('insertSide', t('selectionInsertSide'))}
+        </div>
+      </>}
+      {busy === 'translate' && <LoadingIndicator label={t('clueSelectionTranslate')} centered />}
+      {failure !== null && <div className={css.error} role="alert" data-clue-selection-error>{failure.message}
+        <ActionButton variant="ghost" size="sm" role="menuitem" disabled={busy !== null} onClick={() => { void run(failure.action) }}>{t('retry')}</ActionButton>
+      </div>}
+    </div>
+    {submenu && <div ref={flyoutRef} id={flyoutId} role="menu" className={css.flyout} aria-label={t('clueSelectionRewrite')}
+      data-selection-submenu-panel data-selection-submenu-side={flyoutSide}
+      style={{ left: flyoutLeft, top: flyoutPosition.top, width: flyoutWidth, maxHeight: flyoutPosition.maxHeight }} onPointerEnter={grace.cancel} onPointerLeave={event => { if (event.pointerType !== 'touch') grace.arm() }}>
+      {flyoutOverlaps && <ActionButton variant="ghost" className={css.item} role="menuitem" onClick={closeSubmenu}>{t('selectionBack')}</ActionButton>}
       {rewriteIds.map(id => actionButton(id, settings.customActions.find(action => action.id === id)?.name ?? clueSelectionActionLabel(id as ClueSelectionAction)))}
-    </> : <>
-      {mainActions.map(id => id === 'rewrite'
-        ? <ActionButton key={id} role="menuitem" variant="ghost" className={css.item}
-          disabled={busy !== null} data-clue-selection-action="rewrite" aria-haspopup="menu" aria-expanded={submenu}
-          onKeyDown={event => { if (event.key === 'ArrowRight') { event.preventDefault(); setSubmenu(true) } }}
-          onClick={() => { setSubmenu(true) }}>{t('clueSelectionRewrite')} <span aria-hidden="true">›</span></ActionButton>
-        : actionButton(id, t('clueSelectionTranslate')))}
-      <div className={css.insertGroup}>
-        {!settings.disabled.insertMain && actionButton('insertMain', t('selectionInsertMain'))}
-        {!settings.disabled.insertSide && actionButton('insertSide', t('selectionInsertSide'))}
-      </div>
-    </>}
-    {busy === 'translate' && <LoadingIndicator label={t('clueSelectionTranslate')} centered />}
-    {failure !== null && <div className={css.error} role="alert" data-clue-selection-error>{failure.message}
-      <ActionButton variant="ghost" size="sm" role="menuitem" disabled={busy !== null} onClick={() => { void run(failure.action) }}>{t('retry')}</ActionButton>
     </div>}
   </div>
 }

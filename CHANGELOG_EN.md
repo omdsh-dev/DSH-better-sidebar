@@ -71,6 +71,8 @@
   - 🧪 `tests/market-manifest.spec.ts` checks both the repo and the `pnpm pack` manifest: dependencies must be exactly `ws` / `yaml`, and `src` must stay in `files`.
 
 
+- 🎛️ **Compact selection menus**: action menus use a smaller width than translation results. Rewrite opens a lateral flyout on hover, click or keyboard, flipping sides to fit; narrow screens keep the flyout with partial parent overlap. Translation results place Back and Copy together in a bottom bar, with long text scrolling separately.
+
 - 🧭 **Clearer start-page entries**: Clues is now marked beta and described as a context hub for local files, Feishu and GitHub; Side Chat drops its beta marker. Side Chat and New terminal exchange their default positions without changing saved custom ordering.
 
 - ✨ **Configurable selection actions**: one menu across file editing/previews and clue bodies/comments, with overall/per-action switches, menu and rewrite ordering, editable/resettable prompts and custom actions. Rewrite opens a submenu (expand / naturalize / shorten / continue) and runs in a fresh side chat by default, with an optional draft-first mode.

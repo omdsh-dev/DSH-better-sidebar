@@ -263,17 +263,25 @@ test('UI19 keeps discussion below the body and comment headings out of its outli
 test('UI19 translates read-only body and comments inline and inserts without sending', async ({ page }, info) => {
   const { state, surface, sessionId } = await openFixture(page)
   const translated: Record<string, unknown>[] = []
+  let translationText = 'Translated selection.\n\nSecond paragraph.'
   await page.route('**/sidebar/api/selection.translate', async route => {
     translated.push(route.request().postDataJSON())
-    await ok(route, { text: 'Translated selection.\n\nSecond paragraph.' })
+    await ok(route, { text: translationText })
   })
   const body = surface.locator('[data-window-document-body]')
   let menu = await selectText(page, body, BODY_SELECTION, true)
   expect(await menu.locator('[data-clue-selection-action]').evaluateAll(nodes => nodes.map(node => node.getAttribute('data-clue-selection-action'))))
     .toEqual(['translate', 'insertMain', 'insertSide'])
   await expect(menu.getByRole('menuitemradio')).toHaveCount(0)
+  expect((await menu.boundingBox())!.width).toBeLessThanOrEqual(220)
   await menu.locator('[data-clue-selection-action="translate"]').click()
   await expect(menu.locator('[data-selection-translation]')).toContainText('Translated selection.')
+  const footer = menu.locator('[data-selection-translation-footer]')
+  await expect(footer.getByRole('menuitem')).toHaveText(['Back', 'Copy'])
+  const back = (await footer.getByRole('menuitem', { name: 'Back', exact: true }).boundingBox())!
+  const copy = (await footer.getByRole('menuitem', { name: 'Copy', exact: true }).boundingBox())!
+  expect(back.y).toBe(copy.y)
+  expect(back.x + back.width).toBeLessThan(copy.x)
   expect(translated).toEqual([{ sessionId, text: BODY_SELECTION, language: 'en' }])
   for (const theme of ['light', 'dark'] as const) {
     await setTheme(page, theme)
@@ -283,7 +291,18 @@ test('UI19 translates read-only body and comments inline and inserts without sen
   const bounds = (await menu.boundingBox())!
   expect(bounds.x).toBeGreaterThanOrEqual(0)
   expect(bounds.x + bounds.width).toBeLessThanOrEqual(390)
+  await expect(footer.getByRole('menuitem', { name: 'Back', exact: true })).toBeVisible()
+  await expect(footer.getByRole('menuitem', { name: 'Copy', exact: true })).toBeVisible()
+  expect(await menu.evaluate(node => node.scrollWidth <= node.clientWidth)).toBe(true)
   await menu.screenshot({ path: info.outputPath('selection-translation-mobile.png') })
+  await footer.getByRole('menuitem', { name: 'Back', exact: true }).click()
+  translationText = 'Long translation paragraph.\n\n'.repeat(100)
+  await menu.locator('[data-clue-selection-action="translate"]').click()
+  await expect(menu.locator('[data-selection-translation]')).toContainText('Long translation paragraph.')
+  expect(await menu.locator('[data-selection-translation]').evaluate(node => node.scrollHeight > node.clientHeight)).toBe(true)
+  await expect(footer.getByRole('menuitem', { name: 'Back', exact: true })).toBeInViewport()
+  await expect(footer.getByRole('menuitem', { name: 'Copy', exact: true })).toBeInViewport()
+  expect(await menu.evaluate(node => node.scrollHeight <= node.clientHeight)).toBe(true)
   await page.keyboard.press('Escape')
   menu = await selectText(page, surface.locator('[data-clue-comment="ui19-comment"] [data-clue-selection-surface]'), COMMENT_SELECTION)
   expect(await menu.locator('[data-clue-selection-action]').evaluateAll(nodes => nodes.map(node => node.getAttribute('data-clue-selection-action'))))
@@ -456,7 +475,7 @@ test('UI19 keeps the CodeMirror long-selection menu focused until a compact chip
   const name = `ui19-code-selection-${Date.now()}.ts`
   const target = join(root, name)
   const selected = Array.from({ length: 8 }, (_, i) =>
-    `// UI19-CM-${String(i).padStart(2, '0')}-ABCDEFGHIJKLMNOPQRSTUVWXYZ-abcdefghijklmnopqrstuvwxyz-0123456789`).join('\n')
+    `// UI19-CM-${String(i).padStart(2, '0')}-ABCDEFGHIJKLMNOPQRSTUVWXYZ-abcdefghijklmnopqrstuvwxyz-0123456789`.slice(0, i === 7 ? 65 : undefined)).join('\n')
   expect(selected.length, 'the native selection must exceed the old 500-character fence').toBeGreaterThan(500)
   writeFileSync(target, selected)
   const api = await createHostApi()
@@ -504,14 +523,26 @@ test('UI19 keeps the CodeMirror long-selection menu focused until a compact chip
   const menu = page.locator('[data-clue-selection-menu]')
   await expect(menu).toBeVisible()
   await expect(menu.locator('[data-clue-selection-action="rewrite"]')).toBeFocused()
-  // In the regression, that deliberate focus handoff raised CM focusChanged
-  // and hid the popup before this real click could complete.
+  // The final line ends near the editor's right edge: CodeMirror anchors at
+  // the selection head, not the mouse/contextmenu coordinates.
   await expect(menu).toBeVisible()
-  await menu.locator('[data-clue-selection-action="rewrite"]').click()
-  expect(await menu.locator('[data-clue-selection-action]').evaluateAll(nodes => nodes.map(node => node.getAttribute('data-clue-selection-action'))))
+  const rewrite = menu.locator('[data-clue-selection-action="rewrite"]')
+  await rewrite.hover()
+  const flyout = page.locator('[data-selection-submenu-panel]')
+  await expect(flyout).toBeVisible()
+  await expect(flyout).toHaveAttribute('data-selection-submenu-side', 'left')
+  await expect(rewrite).toBeFocused()
+  const parentBounds = (await menu.boundingBox())!
+  const childBounds = (await flyout.boundingBox())!
+  expect(parentBounds.width).toBe(220)
+  expect(childBounds.x + childBounds.width).toBeLessThan(parentBounds.x)
+  await rewrite.press('ArrowRight')
+  await expect(flyout.locator('[data-clue-selection-action="expand"]')).toBeFocused()
+  expect(await flyout.locator('[data-clue-selection-action]').evaluateAll(nodes => nodes.map(node => node.getAttribute('data-clue-selection-action'))))
     .toEqual(['expand', 'humanize', 'shorten', 'continue'])
   await page.keyboard.press('Escape')
-  await expect(menu.locator('[data-clue-selection-action="rewrite"]')).toBeVisible()
+  await expect(menu.locator('[data-clue-selection-action="rewrite"]')).toBeFocused()
+  await expect(flyout).toHaveCount(0)
   await menu.locator('[data-clue-selection-action="insertMain"]').click()
   await expect(menu).toHaveCount(0)
   const composer = composerEditable(page)
@@ -533,4 +564,73 @@ test('UI19 keeps the CodeMirror long-selection menu focused until a compact chip
   expect(clipboard).not.toContain('UI19-CM-00-')
   expect(blocked).toEqual([])
   expect(errors).toEqual([])
+})
+test.describe('Selection flyouts with touch input', () => {
+  test.use({ hasTouch: true })
+  test('UI19 rewrite flyouts open right and remain lateral with overlap on touch-sized screens', async ({ page }, info) => {
+    const root = realpathSync(process.env.DSH_E2E_WORKSPACE!)
+    const name = `ui19-flyout-${Date.now()}.md`
+    writeFileSync(join(root, name), '# Rewrite fixture\n\nA short passage for the lateral rewrite menu.\n')
+    const api = await createHostApi()
+    try {
+      const workspace = await hostRpc<{ workspace: { workspaceId: string } }>(api, 'workspace.create', { path: root })
+      await hostRpc(api, 'session.create', { workspaceId: workspace.value.workspace.workspaceId })
+    } finally { await api.dispose() }
+    const blocked: string[] = [], errors: string[] = []
+    page.on('pageerror', error => errors.push(error.message))
+    for (const method of ['clues.actions.start', 'clues.saveEdit', 'fs.write', 'sidechat.start']) {
+      await page.route(`**/sidebar/api/${method}`, async route => {
+        blocked.push(method)
+        await route.fulfill({ status: 403, json: { ok: false, error: { code: 'forbidden', message: 'No source writes in UI acceptance' } } })
+      })
+    }
+    await gotoPage(page); await dismissOnboarding(page)
+    await page.getByRole('button', { name: /^(New session|新建会话)$/i }).first().click()
+    await (await onScreen(page, '[data-sidebar-right-expand]')).click()
+    const panel = await onScreen(page, '[data-sidebar-right-panel]')
+    if (await panel.locator('[data-sidebar-right-guide]').count() === 0) await panel.locator('[data-dockkit-add-tab]').first().click()
+    await panel.locator('[data-sidebar-right-guide-entry="clues"]').click()
+    const browse = panel.locator('[data-clue-browse-region]')
+    await selectClueSource(browse, 'builtin.files')
+    const query = browse.getByRole('textbox', { name: 'Keyword, resource link or file path', exact: true })
+    await query.fill('./' + name); await query.press('Enter')
+    await browse.getByTitle(name, { exact: true }).click({ button: 'right' })
+    await page.getByRole('menuitem', { name: 'Preview', exact: true }).click()
+    const detail = await floatClueWindow(page, page.locator('[data-window-document]'))
+    const body = detail.locator('[data-window-document-body]')
+    let menu = await selectText(page, body, 'A short passage for the lateral rewrite menu.', true)
+    const flyout = page.locator('[data-selection-submenu-panel]')
+    await menu.locator('[data-clue-selection-action="rewrite"]').hover()
+    await expect(flyout).toHaveAttribute('data-selection-submenu-side', 'right')
+    expect((await flyout.boundingBox())!.x).toBeGreaterThan((await menu.boundingBox())!.x + 220)
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme)
+      await page.screenshot({ path: info.outputPath('selection-flyout-' + theme + '.png') })
+    }
+    await page.keyboard.press('Escape')
+    await expect(flyout).toHaveCount(0); await expect(menu).toBeVisible()
+    await page.keyboard.press('Escape')
+    await page.setViewportSize({ width: 390, height: 844 })
+    menu = await selectText(page, body, 'A short passage for the lateral rewrite menu.', true)
+    const trigger = menu.locator('[data-clue-selection-action="rewrite"]')
+    await trigger.tap()
+    await expect(flyout).toBeVisible()
+    const triggerBounds = (await trigger.boundingBox())!
+    const flyoutBounds = (await flyout.boundingBox())!
+    expect(flyoutBounds.y >= triggerBounds.y + triggerBounds.height || flyoutBounds.y + flyoutBounds.height <= triggerBounds.y).toBe(true)
+    await flyout.getByRole('menuitem', { name: 'Back', exact: true }).tap()
+    await expect(flyout).toHaveCount(0); await expect(menu).toBeVisible()
+    await trigger.tap()
+    await expect(flyout).toBeVisible()
+    await expect(menu.locator('[data-clue-selection-action="translate"]')).toBeAttached()
+    const bounds = (await flyout.boundingBox())!
+    expect(bounds.x).toBeGreaterThanOrEqual(8)
+    expect(bounds.x + bounds.width).toBeLessThanOrEqual(382)
+    await page.screenshot({ path: info.outputPath('selection-flyout-mobile.png') })
+    // A real click in the side card must reach its handler, not the outside-click guard.
+    await flyout.locator('[data-clue-selection-action="expand"]').tap()
+    await expect(menu.locator('[data-clue-selection-error]')).toBeVisible()
+    expect(blocked).toEqual(['clues.actions.start'])
+    expect(errors).toEqual([])
+  })
 })
