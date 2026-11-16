@@ -438,4 +438,28 @@ describe('a repository root reported from inside a WSL distribution (issue #1189
 
     expect(spawnMock.mock.calls.every(call => call[0] === 'git')).toBe(true)
   })
+
+  it('re-spells every linked checkout the distribution listed', async () => {
+    spawnMock.mockImplementation((_file: string, args: string[]) => {
+      const command = subcommandOf(args)
+      if (command[0] === 'rev-parse' && command[1] === '--is-inside-work-tree') return fakeGit('true\n')
+      if (command[0] === 'rev-parse' && command[1] === '--show-toplevel') return fakeGit('/home/me/linked\n')
+      if (command[0] === 'worktree') {
+        return fakeGit([
+          'worktree /home/me/linked', 'HEAD abc', 'branch refs/heads/main', '',
+          'worktree /home/me/linked-feature', 'HEAD def', 'branch refs/heads/feature', '',
+        ].join('\n'))
+      }
+      if (command[0] === 'status') return fakeGit('')
+      throw new Error(`unexpected git command: ${command.join(' ')}`)
+    })
+
+    // A POSIX-spelled checkout is not usable as a command target either: the
+    // current one must still be recognised as current (it drives the selector)
+    // and every entry must be a path this host can run git in.
+    await expect(worktrees(unc('/home/me/linked'))).resolves.toEqual([
+      { path: unc('/home/me/linked'), branch: 'main', current: true, changes: 0 },
+      { path: unc('/home/me/linked-feature'), branch: 'feature', current: false, changes: 0 },
+    ])
+  })
 })
