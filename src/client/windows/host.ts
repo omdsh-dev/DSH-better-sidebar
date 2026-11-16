@@ -61,6 +61,7 @@ interface PageEntry {
 interface WindowRecord {
   readonly id: string
   readonly sessionId: string | undefined
+  readonly dockable: boolean
   surface: 'floating' | 'sidebar'
   pendingSidebarClose: boolean
   sidebarTarget: HTMLElement | undefined
@@ -192,7 +193,7 @@ export function createWindowHost(options: WindowHostOptions = {}): WindowHostCon
       baseTitle: record.title,
       ...(record.sessionId === undefined ? {} : { sessionId: record.sessionId }),
       surface: record.surface,
-      canDock: sidebar !== undefined && record.sessionId !== undefined,
+      canDock: record.dockable && sidebar !== undefined && record.sessionId !== undefined,
       ...(record.sidebarTarget === undefined ? {} : { sidebarTarget: record.sidebarTarget }),
       pages,
       activeIndex,
@@ -324,7 +325,7 @@ export function createWindowHost(options: WindowHostOptions = {}): WindowHostCon
   function setSurface(record: WindowRecord, surface: 'floating' | 'sidebar'): boolean {
     if (currentRecord(record.id) !== record) return false
     if (surface === 'sidebar') {
-      if (sidebar === undefined || record.sessionId === undefined) return false
+      if (!record.dockable || sidebar === undefined || record.sessionId === undefined) return false
       try {
         sidebar.open(record.id, record.sessionId, viewOf(record).title)
       } catch (error) {
@@ -407,6 +408,7 @@ export function createWindowHost(options: WindowHostOptions = {}): WindowHostCon
     const record: WindowRecord = {
       id: options.id,
       sessionId: options.sessionId ?? optionsSessionId(),
+      dockable: options.dockable !== false,
       surface: 'floating',
       sidebarTarget: undefined,
       pendingSidebarClose: false,

@@ -261,7 +261,7 @@ async function closeWindow(): Promise<void> {
     selection.removeAllRanges()
     selection.addRange(range)
     act(() => { heading.dispatchEvent(new MouseEvent('mouseup', { bubbles: true })) })
-    const action = document.querySelector<HTMLButtonElement>('[data-clue-selection-action="insert"]')!
+    const action = document.querySelector<HTMLButtonElement>('[data-clue-selection-action="insertMain"]')!
     expect(action).not.toBeNull()
     await act(async () => { action.click(); await Promise.resolve() })
     await flush()

@@ -32,7 +32,9 @@ import { t } from '../locales.ts'
 import { useSelectionPopup } from '../selection-popup.ts'
 import type { PendingReference } from '../conversation-draft.ts'
 import { isLikelyImeKey } from '../ime-guard.ts'
-import { ActionButton } from '../ui/index.ts'
+import { useViewportSize } from '../breakpoints.ts'
+import { ActionButton, LoadingIndicator } from '../ui/index.ts'
+import { selectionSettingsOf, selectionPrompt, type SelectionSettings } from '../../selection-settings.ts'
 import type { ClueClientResourceInput } from './api.ts'
 import { categoryOf, clueErrorHint } from './copy.ts'
 import css from './selection-actions.module.css'
@@ -43,6 +45,8 @@ export const CLUE_SELECTION_ACTIONS = [
   'explain',
   'rewrite',
   'expand',
+  'humanize',
+  'custom',
   'continue',
   'shorten',
   'translate',
@@ -69,6 +73,9 @@ export interface ClueSelectionActionRequest {
    * every action except `explain` when this is true.
    */
   readonly comment?: boolean
+  readonly instruction?: string
+  readonly actionLabel?: string
+  readonly prepareOnly?: boolean
 }
 
 /** The editor identity a bridge target must match before it can be used. */
@@ -85,12 +92,14 @@ interface SelectionBridgeState {
   context: ClueSelectionActionContext | undefined
   starter: ClueSelectionActionStarter | undefined
   listeners: Set<() => void>
+  settings: SelectionSettings
+  language?: () => string
 }
 const SELECTION_BRIDGE_KEY = Symbol.for('dsh-better-sidebar.clue-selection-bridge')
 
 function selectionBridge(): SelectionBridgeState {
   const page = globalThis as typeof globalThis & { [SELECTION_BRIDGE_KEY]?: SelectionBridgeState }
-  return page[SELECTION_BRIDGE_KEY] ??= { context: undefined, starter: undefined, listeners: new Set() }
+  return page[SELECTION_BRIDGE_KEY] ??= { context: undefined, starter: undefined, listeners: new Set(), settings: selectionSettingsOf({}) }
 }
 
 /**
@@ -99,6 +108,17 @@ function selectionBridge(): SelectionBridgeState {
  */
 export function setClueSelectionActionStarter(starter: ClueSelectionActionStarter | undefined): void {
   selectionBridge().starter = starter
+}
+
+/** The live document is page-owned so lazy editor and core never diverge. */
+export function setSelectionMenuSettings(settings: SelectionSettings, language: () => string): void {
+  const bridge = selectionBridge()
+  bridge.settings = settings
+  bridge.language = language
+  for (const listener of [...bridge.listeners]) listener()
+}
+export function useSelectionMenuSettings(): SelectionSettings {
+  return useSyncExternalStore(subscribeClueSelectionActionContext, () => selectionBridge().settings, () => selectionBridge().settings)
 }
 
 /** Send one selection action through `clues.actions.start`. */
@@ -110,6 +130,7 @@ export function startClueSelectionAction(request: ClueSelectionActionRequest): P
 
 /** One insert decision: the parent appends the payload to its composer draft. */
 export interface ClueSelectionInsertInput {
+  readonly target?: 'main' | 'side'
   readonly clueId?: string
   /** Present when the wrapper/bridge knows the owning clue target. */
   readonly workspaceId?: string
@@ -169,6 +190,7 @@ export interface ClueSelectionActionTarget {
   readonly sessionId: string
   readonly resource: ClueClientResourceInput
   readonly comment?: boolean
+  readonly writable?: boolean
   readonly onInsert?: ClueSelectionInsertHandler
 }
 
@@ -221,6 +243,8 @@ const CLUE_SELECTION_LOCALE_KEYS = {
   explain: 'clueSelectionExplain',
   rewrite: 'clueSelectionRewrite',
   expand: 'clueSelectionExpand',
+  humanize: 'selectionHumanize',
+  custom: 'selectionCustom',
   continue: 'clueSelectionContinue',
   target: 'clueSelectionTarget',
   main: 'clueSelectionTargetMain',
@@ -251,21 +275,17 @@ function requestResourceOf(resource: ClueClientResourceInput): ClueClientResourc
   return rest as ClueClientResourceInput
 }
 
-/** The actions a surface offers; comments are intentionally narrower. */
-function clueSelectionActionsFor(comment: boolean | undefined): readonly ClueSelectionAction[] {
-  return comment === true ? ['insert', 'explain'] : CLUE_SELECTION_ACTIONS
-}
-
 /** One menu anchor (viewport coordinates, like `SelectionPopup`). */
 interface SelectionActionMenuProps {
-  readonly workspaceId: string
+  readonly workspaceId?: string
   readonly sessionId: string
-  readonly resource: ClueClientResourceInput
+  readonly resource?: ClueClientResourceInput
   readonly selection: string
   /** The formatted composer insert; never substituted for `selection`. */
   readonly insert: string
   readonly reference?: PendingReference
   readonly comment?: boolean
+  readonly writable?: boolean
   readonly left: number
   readonly top: number
   readonly onInsert?: ClueSelectionInsertHandler
@@ -280,189 +300,137 @@ interface SelectionActionMenuProps {
  * cannot drift between surfaces.
  */
 export function SelectionActionMenu(props: SelectionActionMenuProps): ReactNode {
-  const {
-    workspaceId, sessionId, resource, selection, insert, comment, left, top, onInsert, onClose, containerRef,
-  } = props
-  const actions = clueSelectionActionsFor(comment)
+  const { workspaceId, sessionId, resource, selection, insert, left, top } = props
+  const settings = useSelectionMenuSettings()
+  const viewport = useViewportSize()
+  const [submenu, setSubmenu] = useState(false)
+  const [busy, setBusy] = useState<string | null>(null)
+  const [failure, setFailure] = useState<{ message: string; action: string } | null>(null)
+  const [translation, setTranslation] = useState<string | null>(null)
   const menuRef = useRef<HTMLDivElement | null>(null)
-  const [busy, setBusy] = useState<ClueSelectionAction | null>(null)
-  const [failure, setFailure] = useState<{ message: string; retry?: ClueSelectionServerAction } | null>(null)
-  const [destination, setDestination] = useState<'main' | 'side'>('main')
   const busyRef = useRef(false)
-  const lastRequestRef = useRef<{ key: string; requestId: string; action: ClueSelectionServerAction } | null>(null)
-
-  const attachRef = (node: HTMLDivElement | null): void => {
-    menuRef.current = node
-    if (containerRef !== undefined) containerRef.current = node
+  const controller = useRef<AbortController | null>(null)
+  const lastRequest = useRef<{ key: string; id: string } | null>(null)
+  const attachRef = (element: HTMLDivElement | null): void => {
+    menuRef.current = element
+    if (props.containerRef !== undefined) props.containerRef.current = element
   }
-
-  // Focus the first entry once, so the menu is usable from the keyboard. The
-  // selection was already captured, so moving focus cannot lose it.
+  useEffect(() => () => { controller.current?.abort() }, [])
   useEffect(() => {
-    menuRef.current?.querySelector<HTMLButtonElement>('[data-clue-selection-target="main"], [data-clue-selection-action]')?.focus()
-  }, [])
-
+    menuRef.current?.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus({ preventScroll: true })
+  }, [submenu, translation])
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
     if (isLikelyImeKey(event.nativeEvent)) return
-    if (event.key === 'Escape') {
-      event.preventDefault()
-      onClose?.()
+    if (event.key === 'Escape' || (submenu && event.key === 'ArrowLeft')) {
+      event.preventDefault(); event.stopPropagation()
+      if (submenu) setSubmenu(false)
+      else props.onClose?.()
       return
     }
-    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp' && event.key !== 'Home' && event.key !== 'End') return
-    const items = [...(menuRef.current?.querySelectorAll<HTMLButtonElement>('[data-clue-selection-target], [data-clue-selection-action]') ?? [])]
-    if (items.length === 0) return
-    event.preventDefault()
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return
+    event.preventDefault(); event.stopPropagation()
+    const items = Array.from(menuRef.current?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)') ?? [])
     const current = items.indexOf(document.activeElement as HTMLButtonElement)
-    const next = event.key === 'Home'
-      ? 0
-      : event.key === 'End'
-        ? items.length - 1
-        : event.key === 'ArrowDown'
-          ? (current + 1 + items.length) % items.length
-          : (current - 1 + items.length) % items.length
+    const next = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1
+      : event.key === 'ArrowDown' ? (current + 1) % items.length : (current - 1 + items.length) % items.length
     items[next]?.focus()
   }
-
-  const chooseDestination = (next: 'main' | 'side'): void => {
-    if (busyRef.current || next === destination) return
-    lastRequestRef.current = null
-    setDestination(next)
-    setFailure(null)
-  }
-
-  const run = async (action: ClueSelectionAction): Promise<void> => {
+  const run = async (id: string): Promise<void> => {
     if (busyRef.current) return
-    if (action === 'insert') {
-      // A parent may refuse the insert (e.g. the composer moved); keep the
-      // menu and the captured selection available for an explicit retry.
-      const reference = props.reference ?? { label: selection.trim().split('\n')[0]!.slice(0, 80), text: insert }
-      busyRef.current = true
-      setBusy(action)
-      setFailure(null)
-      try {
-        const accepted = await onInsert?.({ workspaceId, sessionId, resource, selection, insert, reference })
-        if (accepted === false) setFailure({ message: t('clueInsertFailed') })
-        else onClose?.()
-      } catch (error) {
-        setFailure({ message: error instanceof Error ? error.message : t('clueInsertFailed') })
-      } finally {
-        busyRef.current = false
-        setBusy(null)
-      }
-      return
-    }
-    // Freeze synchronously as well as visually: two clicks in one render must not mint two intents.
     busyRef.current = true
-    setBusy(action)
-    setFailure(null)
+    setBusy(id); setFailure(null)
     try {
-      const requestResource = requestResourceOf(resource)
-      const key = JSON.stringify([workspaceId, sessionId, requestResource, comment === true, action, destination, selection])
-      if (lastRequestRef.current?.key !== key) lastRequestRef.current = { key, requestId: globalThis.crypto.randomUUID(), action }
-      // The server needs the comment flag itself (not just the UI filter) so
-      // a tampered client cannot turn a comment selection into a write.
-      await startClueSelectionAction({
-        workspaceId,
-        sessionId,
-        // The session id travels separately; leaving it inside the resource
-        // would let an old target's scope fail the server's equality check.
-        resource: requestResource,
-        action,
-        target: destination,
-        requestId: lastRequestRef.current.requestId,
-        selection,
-        ...(comment === true ? { comment: true } : {}),
-      })
-      onClose?.()
+      if (id === 'insertMain' || id === 'insertSide') {
+        const reference = props.reference ?? { label: selection.trim().split('\n')[0]!.slice(0, 80), text: insert }
+        const result = await props.onInsert?.({ workspaceId, sessionId, resource, selection, insert, reference, target: id === 'insertSide' ? 'side' : 'main' })
+        if (result === false || props.onInsert === undefined) throw new Error(t('clueInsertFailed'))
+        props.onClose?.()
+      } else if (id === 'translate') {
+        const abort = new AbortController()
+        controller.current = abort
+        const route = settings.translationModel
+        const slash = route.indexOf('/')
+        const result = await call<{ text: string }>('selection.translate', {
+          sessionId, text: selection,
+          language: settings.translationLanguage || selectionBridge().language?.() || navigator.language,
+          ...(slash < 1 ? {} : { model: { provider: route.slice(0, slash), model: route.slice(slash + 1) } }),
+        }, abort.signal)
+        if (!abort.signal.aborted) setTranslation(result.text)
+      } else {
+        if (workspaceId === undefined || resource === undefined) throw new Error(t('selectionUnavailable'))
+        const custom = settings.customActions.find(action => action.id === id)
+        const action = custom === undefined ? id as ClueSelectionServerAction : 'custom'
+        const instruction = selectionPrompt(settings, id)
+        const payload = {
+          workspaceId, sessionId, resource: requestResourceOf(resource), action,
+          target: 'side' as const, selection, instruction,
+          actionLabel: custom?.name ?? clueSelectionActionLabel(action),
+          prepareOnly: !settings.autoRun,
+          ...(props.comment === true ? { comment: true } : {}),
+        }
+        const key = JSON.stringify(payload)
+        if (lastRequest.current?.key !== key) lastRequest.current = { key, id: crypto.randomUUID() }
+        await startClueSelectionAction({ ...payload, requestId: lastRequest.current!.id })
+        props.onClose?.()
+      }
     } catch (error) {
+      if (!controller.current?.signal.aborted) {
+        const raw = error instanceof Error ? error.message : String(error)
+        const message = /another DSH instance/u.test(raw) ? t('clueSelectionWriterHeld') : clueErrorHint(categoryOf(error)) ?? raw
+        setFailure({ message, action: id })
+      }
+    } finally {
       busyRef.current = false
       setBusy(null)
-      const category = categoryOf(error)
-      const writerHeld = category === 'conflict' && error instanceof Error
-        && error.message === 'The conversation is in use by another DSH instance.'
-      const message = writerHeld ? t('clueSelectionWriterHeld')
-        : category === 'cancelled' ? t('cancel')
-          : category === 'not-found' || category === 'unsupported' || category === 'conflict' ? t('clueSelectionSessionUnavailable')
-            : clueErrorHint(category) ?? (category === 'failed' ? t('clueSelectionReceiptUnknown') : clueSelectionLabel('failed'))
-      setFailure({ message, ...(writerHeld ? { retry: action } : {}) })
     }
   }
-
-  // A menu can be taller than the legacy one-button popup: flip below the
-  // selection when there is no room above it, so a selection near the top of
-  // the viewport never pushes the actions off-screen.
-  const belowHeight = Math.max(0, window.innerHeight - top - 16)
-  const aboveHeight = Math.max(0, top - 16)
+  const menuTop = Math.min(top, viewport.height - 56)
+  const belowHeight = Math.max(0, viewport.height - menuTop - 16)
+  const aboveHeight = Math.max(0, menuTop - 16)
   const placeBelow = aboveHeight < 320 && belowHeight > aboveHeight
   const availableHeight = Math.max(48, placeBelow ? belowHeight : aboveHeight)
-  const halfWidth = Math.min(120, Math.max(0, (window.innerWidth - 16) / 2))
-  const menuLeft = Math.min(Math.max(left, halfWidth + 8), window.innerWidth - halfWidth - 8)
-  return createElement(
-    'div',
-    {
-      ref: attachRef,
-      className: placeBelow ? `${css.menu} ${css.menuBelow}` : css.menu,
-      role: 'menu',
-      'aria-label': clueSelectionLabel('menu'),
-      'data-clue-selection-menu': '',
-      style: { left: menuLeft, top, maxHeight: availableHeight },
-      onKeyDown,
-      // The hook's document-level capture handler already keeps a mousedown
-      // inside `containerRef`; this stops a future outside handler from
-      // treating the menu itself as an outside click.
-      onMouseDown: (event: MouseEvent<HTMLDivElement>) => { event.stopPropagation() },
-    },
-    createElement('div', { className: css.destinationGroup, role: 'group', 'aria-label': clueSelectionLabel('target') },
-      createElement('div', { className: css.destinations }, ...(['main', 'side'] as const).map(target => createElement('button', {
-        key: target,
-        type: 'button',
-        role: 'menuitemradio',
-        className: css.destination,
-        'aria-checked': destination === target,
-        'data-clue-selection-target': target,
-        tabIndex: destination === target ? 0 : -1,
-        disabled: busy !== null,
-        onClick: () => { chooseDestination(target) },
-        onKeyDown: (event: KeyboardEvent<HTMLButtonElement>) => {
-          if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
-          event.preventDefault()
-          event.stopPropagation()
-          const next = target === 'main' ? 'side' : 'main'
-          chooseDestination(next)
-          menuRef.current?.querySelector<HTMLButtonElement>(`[data-clue-selection-target="${next}"]`)?.focus()
-        },
-      }, clueSelectionLabel(target)))),
-    ),
-    ...actions.map(action => createElement(
-      ActionButton,
-      {
-        key: action,
-        type: 'button',
-        role: 'menuitem',
-        variant: 'ghost',
-        busy: busy === action,
-        className: css.item,
-        'data-clue-selection-action': action,
-        disabled: busy !== null || (failure !== null && action !== 'insert' && failure.retry === undefined
-          && action === lastRequestRef.current?.action),
-        'aria-busy': busy === action ? 'true' : undefined,
-        onClick: () => { void run(action) },
-      },
-      clueSelectionActionLabel(action),
-    )),
-    failure !== null
-      ? createElement('div', {
-          className: css.error,
-          role: 'alert',
-          'data-clue-selection-error': '',
-        }, failure.message,
-        failure.retry === undefined ? null : createElement(ActionButton, {
-          size: 'sm', variant: 'ghost', className: css.item, role: 'menuitem',
-          onClick: () => { if (failure.retry !== undefined) void run(failure.retry) },
-        }, t('retry')))
-      : null,
-  )
+  const halfWidth = Math.min(160, Math.max(0, (viewport.width - 16) / 2))
+  const menuLeft = Math.min(Math.max(left, halfWidth + 8), viewport.width - halfWidth - 8)
+  const rewriteIds = settings.rewriteOrder.filter(id => !settings.disabled[id])
+  const actionButton = (id: string, label: string): ReactNode => <ActionButton key={id} role="menuitem" variant="ghost"
+    className={css.item} busy={busy === id} disabled={busy !== null} data-clue-selection-action={id}
+    onClick={() => { void run(id) }}>{label}</ActionButton>
+  const canRewrite = !props.comment && props.writable !== false && workspaceId !== undefined && resource !== undefined && rewriteIds.length > 0
+  const mainActions = settings.menuOrder.filter(id => !settings.disabled[id] && (id !== 'rewrite' || canRewrite))
+  if (!settings.enabled || (mainActions.length === 0 && settings.disabled.insertMain && settings.disabled.insertSide)) return null
+  return <div ref={attachRef} className={placeBelow ? css.menu + ' ' + css.menuBelow : css.menu} role="menu"
+    aria-label={clueSelectionLabel('menu')} data-clue-selection-menu data-selection-submenu={submenu}
+    style={{ left: menuLeft, top: menuTop, maxHeight: availableHeight }} onKeyDown={onKeyDown}
+    onMouseDown={(event: MouseEvent<HTMLDivElement>) => {
+      event.stopPropagation()
+      if (event.target === event.currentTarget) event.preventDefault()
+    }}>
+    {translation !== null ? <>
+      <ActionButton variant="ghost" className={css.item} role="menuitem" onClick={() => { setTranslation(null) }}>{t('selectionBack')}</ActionButton>
+      <div className={css.translation} data-selection-translation tabIndex={0}>{translation}</div>
+      <ActionButton variant="ghost" className={css.item} role="menuitem" onClick={() => {
+        void navigator.clipboard.writeText(translation).catch(error => { setFailure({ message: String(error), action: 'translate' }) })
+      }}>{t('copy')}</ActionButton>
+    </> : submenu ? <>
+      <ActionButton variant="ghost" className={css.item} role="menuitem" onClick={() => { setSubmenu(false) }}>{t('selectionBack')}</ActionButton>
+      {rewriteIds.map(id => actionButton(id, settings.customActions.find(action => action.id === id)?.name ?? clueSelectionActionLabel(id as ClueSelectionAction)))}
+    </> : <>
+      {mainActions.map(id => id === 'rewrite'
+        ? <ActionButton key={id} role="menuitem" variant="ghost" className={css.item}
+          disabled={busy !== null} data-clue-selection-action="rewrite" aria-haspopup="menu" aria-expanded={submenu}
+          onKeyDown={event => { if (event.key === 'ArrowRight') { event.preventDefault(); setSubmenu(true) } }}
+          onClick={() => { setSubmenu(true) }}>{t('clueSelectionRewrite')} <span aria-hidden="true">›</span></ActionButton>
+        : actionButton(id, t('clueSelectionTranslate')))}
+      <div className={css.insertGroup}>
+        {!settings.disabled.insertMain && actionButton('insertMain', t('selectionInsertMain'))}
+        {!settings.disabled.insertSide && actionButton('insertSide', t('selectionInsertSide'))}
+      </div>
+    </>}
+    {busy === 'translate' && <LoadingIndicator label={t('clueSelectionTranslate')} centered />}
+    {failure !== null && <div className={css.error} role="alert" data-clue-selection-error>{failure.message}
+      <ActionButton variant="ghost" size="sm" role="menuitem" disabled={busy !== null} onClick={() => { void run(failure.action) }}>{t('retry')}</ActionButton>
+    </div>}
+  </div>
 }
 
 /** Props of the wrapper surface. */
@@ -472,7 +440,8 @@ interface ResourceSelectionActionsProps {
   readonly sessionId: string
   readonly resource: ClueClientResourceInput
   readonly children?: ReactNode
-  /** Comment mode narrows the menu to insert/explain. */
+  readonly writable?: boolean
+  /** Comments offer only translation and insertion, never source edits. */
   readonly comment?: boolean
 }
 
@@ -490,6 +459,7 @@ export function ResourceSelectionActions(props: ResourceSelectionActionsProps): 
     workspaceId,
     sessionId,
     resource,
+    ...(props.writable === undefined ? {} : { writable: props.writable }),
     ...(comment === undefined ? {} : { comment }),
     ...(onInsert === undefined ? {} : { onInsert }),
   }
@@ -502,7 +472,9 @@ export function ResourceSelectionActions(props: ResourceSelectionActionsProps): 
     },
   })
 
+  const settings = useSelectionMenuSettings()
   const capture = (point?: MouseEvent<HTMLDivElement>): boolean => {
+    if (!settings.enabled) return false
     const wrapper = wrapperRef.current
     const selection = window.getSelection()
     if (wrapper === null || selection === null || selection.isCollapsed
@@ -555,6 +527,7 @@ export function ResourceSelectionActions(props: ResourceSelectionActionsProps): 
             workspaceId,
             sessionId,
             resource,
+            writable: props.writable,
             selection: popup.popup.selection,
             insert: popup.popup.insert,
             ...(comment === undefined ? {} : { comment }),

@@ -885,7 +885,7 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   const selectionMenu = page.locator('[data-clue-selection-menu]')
   await expect(selectionMenu, 'selecting preview text must raise the selection action menu')
     .toBeVisible({ timeout: 10_000 })
-  await selectionMenu.locator('[data-clue-selection-action="insert"]').click()
+  await selectionMenu.locator('[data-clue-selection-action="insertMain"]').click()
   // `data-composer-chip` is the host's own anchor for a composer chip (its
   // JSDoc names e2e as the reason it exists) — a bare `[class*="reference"]`
   // match could land on any element whose hashed class happens to contain it.
@@ -1401,7 +1401,7 @@ test('the explorer @-reference button keeps earlier chips (no whole-draft rewrit
 
   const selectionMenu = page.locator('[data-clue-selection-menu]')
   await expect(selectionMenu, 'the selection menu must offer insertion').toBeVisible({ timeout: 10_000 })
-  await selectionMenu.locator('[data-clue-selection-action="insert"]').click()
+  await selectionMenu.locator('[data-clue-selection-action="insertMain"]').click()
   // Since the selection-to-chat rework (#1052) the quote lands as its own
   // reference CHIP — the fenced body is serialized only when the draft is
   // sent — so the chip count grows to four and the three earlier chips stay

@@ -1212,8 +1212,8 @@ test('clues workbench stays usable across column widths and host themes', async 
     const settingsWindow = await floatClueWindow(page, page.locator('[data-sidebar-settings]'))
     await expect(settingsWindow).toContainText('Sidebar settings')
     const gearGroups = settingsWindow.getByRole('tablist', { name: 'Settings groups', exact: true })
-    await expect(gearGroups.getByRole('tab')).toHaveCount(6)
-    for (const group of ['General', 'Tabs', 'Start page', 'File viewers', 'Clue sources', 'Appearance']) {
+    await expect(gearGroups.getByRole('tab')).toHaveCount(7)
+    for (const group of ['General', 'Tabs', 'Start page', 'Selection actions', 'File viewers', 'Clue sources', 'Appearance']) {
       await expect(gearGroups.getByRole('tab', { name: group, exact: true })).toBeVisible()
     }
     await expect(gearGroups.getByRole('tab', { name: 'Clue sources', exact: true })).toHaveAttribute('aria-selected', 'true')

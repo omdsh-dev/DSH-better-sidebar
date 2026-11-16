@@ -340,7 +340,7 @@ for (const touch of [false, true]) {
       const sourceSettingsTabs = sourceSettings.getByRole('tablist', { name: 'Settings groups', exact: true })
       const sourceSettingsRail = sourceSettingsTabs.getByRole('tab')
       if (await sourceSettingsRail.count() > 0) {
-        await expect(sourceSettingsRail).toHaveCount(6)
+        await expect(sourceSettingsRail).toHaveCount(7)
         await expect(sourceSettingsTabs.getByRole('tab', { name: 'Clue sources', exact: true })).toHaveAttribute('aria-selected', 'true')
       } else {
         // A narrow settings window replaces the rail with one group select.
@@ -361,10 +361,10 @@ for (const touch of [false, true]) {
       const settingsTabs = settings.getByRole('tablist', { name: 'Settings groups', exact: true })
       const settingsRail = settingsTabs.getByRole('tab')
       if (await settingsRail.count() > 0) {
-        await expect(settingsRail).toHaveCount(5)
+        await expect(settingsRail).toHaveCount(7)
         const firstSettingsTab = settingsTabs.getByRole('tab', { name: 'General', exact: true })
         metrics.settingsTab = await controlStyle(firstSettingsTab)
-        for (const group of ['General', 'Tabs', 'File viewers', 'Clue sources', 'Appearance']) {
+        for (const group of ['General', 'Tabs', 'Start page', 'Selection actions', 'File viewers', 'Clue sources', 'Appearance']) {
           const groupTab = settingsTabs.getByRole('tab', { name: group, exact: true })
           await groupTab.click()
           await expect(groupTab).toHaveAttribute('aria-selected', 'true')
@@ -377,7 +377,7 @@ for (const touch of [false, true]) {
         const groupSelect = settings.getByRole('button', { name: 'Settings groups', exact: true })
         await expect(groupSelect).toBeVisible()
         metrics.settingsTab = await controlStyle(groupSelect)
-        for (const group of ['General', 'Tabs', 'File viewers', 'Clue sources', 'Appearance']) {
+        for (const group of ['General', 'Tabs', 'Start page', 'Selection actions', 'File viewers', 'Clue sources', 'Appearance']) {
           await groupSelect.click()
           await page.getByRole('menuitem', { name: group, exact: true }).click()
           await expect(groupSelect).toContainText(group)

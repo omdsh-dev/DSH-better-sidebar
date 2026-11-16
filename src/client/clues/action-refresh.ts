@@ -16,6 +16,11 @@
  * be idle (`running === false`), and a `prepared` draft is NOT evidence that
  * the action was abandoned. It may be queued behind the current turn, so only
  * a terminal draft state may remove a pending entry.
+ *
+ * A local-file action edits the original file directly and has no draft ledger
+ * row to read. Its resource is invalidated exactly once when the target session
+ * is observed transitioning from running to idle; it is never invalidated on
+ * the initial (idle) observation, because the turn may not have started yet.
  */
 import type { Context } from '../../context-types.ts'
 
@@ -40,6 +45,8 @@ export interface ClueActionRefreshRequest<Resource> {
 export interface ClueActionRefreshResult {
   readonly deliveryId?: string
   readonly draft?: { readonly draftId: string }
+  /** The action edited the original local file directly; there is no draft ledger entry. */
+  readonly localFile?: true
 }
 
 /** Dependencies: the existing session list, draft ledger and cache invalidator. */
@@ -66,7 +73,10 @@ const UNSAVED = new Set(['failed'])
 
 interface Pending<Resource> extends ClueActionRefreshRequest<Resource> {
   readonly key: string
-  readonly draftId: string
+  /** Remote draft ledger entry; absent for a direct local-file edit. */
+  readonly draftId?: string
+  /** Direct local-file edit: completion is the observed turn end, not a ledger read. */
+  readonly localFile?: true
   readonly targetSessionId: string
   /** Last observed target run bit; undefined until the target row is seen. */
   lastRunning: boolean | undefined
@@ -137,6 +147,12 @@ export function createClueActionRefreshWatcher<Resource>(
     }
     for (const entry of targets) {
       if (disposed || pending.get(entry.key) !== entry) continue
+      // Local-file entries never enter the ledger path; this guard keeps the
+      // remote branch's types honest without a second pending map.
+      if (entry.draftId === undefined) {
+        remove(entry.key)
+        continue
+      }
       const status = statuses.get(entry.draftId)
       if (status === undefined || UNSAVED.has(status)) {
         remove(entry.key)
@@ -200,6 +216,7 @@ export function createClueActionRefreshWatcher<Resource>(
   function onListChange(): void {
     if (disposed || pending.size === 0) return
     const list = deps.sessions.list.getSnapshot()
+    let removed = false
     for (const entry of pending.values()) {
       const running = list.byId[entry.targetSessionId]?.running === true
       if (running) {
@@ -207,11 +224,19 @@ export function createClueActionRefreshWatcher<Resource>(
         continue
       }
       // Only an observed true → false is a turn completion. An initial false
-      // was already covered by the track-time check; a repeated false is an
-      // unrelated list event and must not start a query.
-      if (entry.lastRunning === true) requestCheck(entry.key)
+      // is never a completion; a repeated false is an unrelated list event.
+      if (entry.lastRunning === true) {
+        if (entry.localFile === true) {
+          // Remove before invalidating so a reentrant list event cannot call
+          // the invalidator twice for the same local action.
+          remove(entry.key)
+          try { deps.invalidate(entry.workspaceId, entry.resource) } catch { /* best effort */ }
+          removed = true
+        } else requestCheck(entry.key)
+      }
       entry.lastRunning = false
     }
+    if (removed) syncSubscription()
   }
 
   function track(
@@ -219,12 +244,32 @@ export function createClueActionRefreshWatcher<Resource>(
     result: ClueActionRefreshResult,
   ): void {
     if (disposed) return
-    const draftId = result.draft?.draftId
-    if (typeof draftId !== 'string' || draftId === '') return
     const delivered = typeof result.deliveryId === 'string' && result.deliveryId !== ''
       ? result.deliveryId
       : request.target === 'main' ? request.sessionId : undefined
     if (delivered === undefined || delivered === '') return
+    if (result.localFile === true) {
+      // No draft ledger exists for a direct local edit. Identify the action by
+      // its target session and resource so a duplicate receipt is a no-op; the
+      // same bounded map still owns the entry.
+      const key = `${request.workspaceId}\u0000${delivered}\u0000local\u0000${JSON.stringify(request.resource)}`
+      if (pending.has(key)) return
+      if (pending.size >= MAX_PENDING) return
+      pending.set(key, {
+        key,
+        localFile: true,
+        targetSessionId: delivered,
+        workspaceId: request.workspaceId,
+        sessionId: request.sessionId,
+        target: request.target,
+        resource: request.resource,
+        lastRunning: currentRunning(delivered),
+      })
+      syncSubscription()
+      return
+    }
+    const draftId = result.draft?.draftId
+    if (typeof draftId !== 'string' || draftId === '') return
     const key = `${delivered}\u0000${draftId}`
     if (pending.has(key)) return
     if (pending.size >= MAX_PENDING) return

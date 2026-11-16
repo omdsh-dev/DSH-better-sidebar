@@ -35,8 +35,11 @@ import { awaitBootDecision, type BootDecision } from './prefs.ts'
 import { SideCardSection } from './SideCardSection.tsx'
 import { api, call } from './api.ts'
 import { insertReferenceOrText } from './conversation-draft.ts'
-import { parkSidechatReopen } from './SideChatView.tsx'
-import { setClueSelectionActionContext, setClueSelectionActionStarter } from './clues/selection-actions.tsx'
+import { openSelectionSidechat } from './selection-sidechat.tsx'
+import { seedSidechatDraft } from './sidechat-draft.ts'
+import { selectionSettingsOf } from '../selection-settings.ts'
+import { serializeClueToken } from '../clues/context/tokens.ts'
+import { setClueSelectionActionContext, setClueSelectionActionStarter, setSelectionMenuSettings } from './clues/selection-actions.tsx'
 import { createClueActionRefreshWatcher, type ClueActionDraftStatus, type ClueActionRefreshResult } from './clues/action-refresh.ts'
 import { invalidateClueAgentSave, type ClueClientResourceInput } from './clues/api.ts'
 import { LOCALE_NS, attachLocale, attachLocaleDicts, t, zh, en } from './locales.ts'
@@ -262,7 +265,22 @@ export function apply(ctx: Context): void {
       readDrafts: () => call<readonly ClueActionDraftStatus[]>('clues.drafts.list', {}),
       invalidate: invalidateClueAgentSave,
     })
-    setClueSelectionActionContext({ onInsert: input => {
+    let savedPrefs = sidebarStore.getSnapshot().prefs
+    const publishSettings = (): void => {
+      savedPrefs = sidebarStore.getSnapshot().prefs
+      setSelectionMenuSettings(selectionSettingsOf(savedPrefs), () => ctx.locale.getSnapshot().active)
+    }
+    publishSettings()
+    const offSettings = sidebarStore.subscribe(() => { if (sidebarStore.getSnapshot().prefs !== savedPrefs) publishSettings() })
+    setClueSelectionActionContext({ onInsert: async input => {
+      if (input.target === 'side') {
+        if (input.sessionId === undefined) return false
+        const { childId } = await api.sidechatStart(input.sessionId)
+        seedSidechatDraft(childId, input.clueId === undefined ? input.reference?.text ?? input.insert
+          : serializeClueToken('clue', input.clueId) + '\n\n' + input.selection)
+        openSelectionSidechat(ctx, input.sessionId, childId)
+        return true
+      }
       const inserted = input.sessionId !== undefined && (input.clueId === undefined
         ? insertReferenceOrText(ctx, input.sessionId, input.reference ?? { label: input.selection.slice(0, 80), text: input.insert })
         : insertClueSelectionReference(ctx, input.sessionId, { clueId: input.clueId, selection: input.selection, label: input.reference?.label }))
@@ -270,16 +288,21 @@ export function apply(ctx: Context): void {
       return inserted
     } })
     setClueSelectionActionStarter(async request => {
-      const result = await call<ClueActionRefreshResult>('clues.actions.start', { ...request })
+      const result = await call<ClueActionRefreshResult & { prompt?: string }>('clues.actions.start', { ...request })
       if (!active) return result
-      refresh.track(request, result)
-      if (request.target === 'side' && result.deliveryId !== undefined) {
-        parkSidechatReopen(result.deliveryId)
-        service.openTab({ type: 'sidechat' }, { sessionId: request.sessionId })
+      if (result.prompt !== undefined) {
+        const { childId } = await api.sidechatStart(request.sessionId)
+        if (!active) return result
+        seedSidechatDraft(childId, result.prompt)
+        openSelectionSidechat(ctx, request.sessionId, childId)
+        refresh.track(request, { ...result, deliveryId: childId })
+      } else {
+        refresh.track(request, result)
+        if (request.target === 'side' && result.deliveryId !== undefined) openSelectionSidechat(ctx, request.sessionId, result.deliveryId)
       }
       return result
     })
-    return () => { active = false; refresh.dispose(); setClueSelectionActionContext(null); setClueSelectionActionStarter(undefined) }
+    return () => { active = false; offSettings(); refresh.dispose(); setClueSelectionActionContext(null); setClueSelectionActionStarter(undefined) }
   }, 'dsh-better-sidebar: selection action insert and direct submit')
   // The bottom workbench's expand/collapse button in DSH's session header
   // (the header's corner seat belongs to the native sidebar's own control).

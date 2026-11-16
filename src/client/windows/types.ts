@@ -149,6 +149,8 @@ export interface WindowOpenOptions {
    * and floats it otherwise. Re-opening a live id never changes its surface.
    */
   surface?: 'floating' | 'sidebar'
+  /** Floating tasks that own live activity may opt out of inactive tab docking. */
+  dockable?: boolean
   /** Explicit initial pixel size, overriding the preset target (still clamped). */
   initialSize?: WindowSize
   /** Resize floor; defaults to 320×240. */

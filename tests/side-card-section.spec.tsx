@@ -105,14 +105,14 @@ describe('SideCardSection grouped navigation', () => {
   it('renders the six groups (six icon-labeled tabs) and opens on General', () => {
     const { store, service } = mount()
     const html = renderSection(store, service)
-    for (const label of ['General', 'Tabs', 'Start page', 'File viewers', 'Clue sources', 'Appearance']) {
+    for (const label of ['General', 'Tabs', 'Start page', 'Selection actions', 'File viewers', 'Clue sources', 'Appearance']) {
       expect(html).toContain(label)
     }
     // The wide nav marks exactly the active group; the narrow select is present
     // with the same accessible name (CSS swaps them at the 640px container bracket).
     expect(html.match(/aria-selected="true"/g)?.length).toBe(1)
     expect(html).toContain('aria-label="Settings groups"')
-    expect(html.match(/role="tab"/g)?.length).toBe(6)
+    expect(html.match(/role="tab"/g)?.length).toBe(7)
     expect(html).toContain('aria-hidden="true"><svg')
 
   })

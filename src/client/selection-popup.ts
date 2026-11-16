@@ -125,6 +125,7 @@ export function useSelectionPopup<T = string>(options: SelectionPopupOptions<T>)
       hide()
     }
     const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape' && popupSurfaceRef.current?.getAttribute('data-selection-submenu') === 'true') return
       if (event.key === 'Escape' && popupRef.current !== null && !isLikelyImeKey(event)) {
         event.preventDefault() // The popup owns Escape before a containing window.
         hide()

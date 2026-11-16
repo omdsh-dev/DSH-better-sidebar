@@ -56,6 +56,8 @@ import {
   Modal,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import clsx from 'clsx'
+import { SelectionSettingsPanel } from './SelectionSettings.tsx'
+import { selectionSettingsOf } from '../selection-settings.ts'
 // Type-only: pulls the settings shell's SlotMap merges ('settings.section').
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
@@ -159,13 +161,14 @@ function noteSettingsRevision(face: object, revision: number | undefined): void 
  * The section's group ids: the clue navigation tuple plus the start-page
  * editor, which is not a clue deep-link target.
  */
-type SettingsGroup = ClueSettingsGroup | 'startPage'
+type SettingsGroup = ClueSettingsGroup | 'startPage' | 'selection'
 
 /** The label of each group, keyed by the group id. */
 const SETTINGS_GROUP_LABEL: Record<SettingsGroup, () => string> = {
   general: () => t('settingsGeneralTitle'),
   tabs: () => t('settingsGroupTabs'),
   startPage: () => t('settingsStartPageTitle'),
+  selection: () => t('selectionSettings'),
   viewers: () => t('settingsViewersTitle'),
   sources: () => t('settingsGroupSources'),
   appearance: () => t('settingsGroupAppearance'),
@@ -180,6 +183,7 @@ const SETTINGS_GROUP_LABEL: Record<SettingsGroup, () => string> = {
 const SETTINGS_GROUP_ORDER: readonly SettingsGroup[] = [
   ...CLUE_SETTINGS_GROUPS.slice(0, 2),
   'startPage',
+  'selection',
   ...CLUE_SETTINGS_GROUPS.slice(2),
 ]
 
@@ -190,6 +194,7 @@ const SETTINGS_GROUP_ICON: Record<SettingsGroup, ReactNode> = {
   general: <IconSettingsOutlineRegular size={14} />,
   tabs: <IconPanelLeftOutlineRegular size={14} />,
   startPage: <IconLayersOutlineRegular size={14} />,
+  selection: <IconInspectOutlineRegular size={14} />,
   viewers: <IconInspectOutlineRegular size={14} />,
   sources: <IconLinkOutlineRegular size={14} />,
   appearance: <IconPersonalizationOutlineRegular size={14} />,
@@ -1940,6 +1945,11 @@ export function SideCardSection(props: SideCardSectionInjected & Partial<PropsRu
           )}
 
           {group === 'tabs' && renderTabsGroup()}
+          {group === 'selection' && <>
+            <SelectionSettingsPanel value={selectionSettingsOf(prefs)} sessionId={store.getSnapshot().sessionId}
+              onChange={value => { applyPluginSetting('clues', 'selection', value) }} />
+            {renderWriteError('plugin:clues:selection')}
+          </>}
 
           {group === 'startPage' && (
             <div className={css.group}>

@@ -807,7 +807,7 @@ function createDetailController(options: ClueDetailWindowOptions): DetailControl
               node?.focus({ preventScroll: true })
             } } : {}),
           }) : null,
-          selectionTarget === undefined ? body : createElement(ResourceSelectionActions, selectionTarget, body)),
+          selectionTarget === undefined ? body : createElement(ResourceSelectionActions, { ...selectionTarget, writable: canOfferEdit() && state.edit?.dirty !== true }, body)),
       }),
       ...(offerEdit
         ? {

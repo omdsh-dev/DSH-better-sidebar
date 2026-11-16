@@ -36,6 +36,7 @@ export type SidebarErrorCode =
   | 'team-error'
   | 'team-conflict'
   | 'sidechat-error'
+  | 'selection-error'
   | 'subagents-unavailable'
   | 'settings-rejected'
   | 'settings-conflict'

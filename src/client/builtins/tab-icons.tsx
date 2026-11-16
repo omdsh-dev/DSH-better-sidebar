@@ -7,11 +7,12 @@
  * read the same colorful glyph from `descriptor.icon`.
  *
  * Each glyph draws in `currentColor`; its wrapper supplies a skin-owned
- * token. File preview and Clues use distinct outline silhouettes so their
- * meaning remains clear at dense tab-strip sizes. Collection rows retain
+ * token. Files uses the host's folder artwork, matching Local files; Clues
+ * uses a separate outline silhouette. Collection rows retain
  * their separate layered artwork. `tests/theme.spec.ts` guards the palette.
  */
 import type { ReactNode } from 'react'
+import { FileTypeIcon } from '@deepseek-ai/dsh-client-ui-primitives'
 import styles from './tab-icons.module.css'
 import {
   VscCommentDiscussion,
@@ -30,15 +31,8 @@ function themed(className: string, glyph: ReactNode): ReactNode {
   return <span className={className}>{glyph}</span>
 }
 
-/** File preview: a folded document with a clear reading aperture. */
-export const filesTabIcon: TabIcon = (size) => themed(css.files,
-  <svg width={size} height={size} viewBox="0 0 20 20" fill="none" aria-hidden="true" focusable="false">
-    <path d="M4 2h7l4 4v4M15 16v1a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1Z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
-    <path d="M11 2v4h4M6 6h2M6 9h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-    <path d="M8 13.5s2-3 5-3 5 3 5 3-2 3-5 3-5-3-5-3Z" stroke="currentColor" strokeWidth="1.5" />
-    <circle cx="13" cy="13.5" r="1.4" fill="currentColor" />
-  </svg>,
-)
+/** Match the Local files source and the host's folder artwork. */
+export const filesTabIcon: TabIcon = size => themed(css.files, <FileTypeIcon kind="folder" size={size} />)
 
 /** Changes / diff: the commit glyph, green like the diff affordances. */
 export const changesTabIcon: TabIcon = (size) =>

@@ -1085,7 +1085,13 @@ registerSidechatSurfaceAdapter(adapter: SidechatSurfaceAdapter): () => void
 
 ### 7.2 划选「添加到对话」的引用 chip（v0.30.0+）
 
-在内置编辑器（`code` / `markdown` / `jsonl` 的 CodeMirror 面，以及 markdown 预览）里划选一段文字，弹窗「添加到对话」会往主会话 composer 落一枚 chip。此处记录它用到的契约与降级，第三方插件若想复刻同一套交互可以照抄。
+内置编辑器（`code` / `markdown` / `jsonl` 的 CodeMirror 面，以及 markdown 预览）、线索正文和评论共用划选浮层。底部「插入主会话 / 插入到侧边」只写草稿，不发送：主会话 composer 使用引用 chip，侧边 composer 使用保留来源的原文。其他动作与设置见下。此处记录引用 chip 的契约与降级，第三方插件可复用。
+
+设置页「划选操作」复用原设置文档，配置存入 `pluginSettings.clues.selection`：`enabled`、`autoRun`、`disabled`（逐项禁用 map）、`menuOrder`（rewrite / translate）、`rewriteOrder`、`prompts`、`customActions`（id / name / prompt）、`translationLanguage`、`translationModel`（provider/model；空为跟随主会话）。两级排序独立，插入保留底部一组；空目标语言跟随实际 UI locale（由 page bridge 跨 lazy editor bundle 传递），不是浏览器语言。
+
+改写（扩写 / 去 AI 味 / 缩短 / 续写 / 自定义）固定进入新侧边会话；默认立即发送，关闭 `autoRun` 只准备指令并填写侧边草稿。本地文件直接操作原路径；远程正文仍用来源已有的草稿提交与并发保存流程。只读正文、评论和当前存在未保存编辑的表面不提供改写。宽度 `<768px` 使用原生 sidechat Tab，否则使用仅浮动窗口；打开后不因 resize 自动换面。关闭浮窗不归档历史，也不取消已准入操作。
+
+翻译走正常认证的 `selection.translate` 路由和宿主 LLM service；仅传选区、目标语言、会话模型路由及可选独立模型，不建立 Agent、侧边会话、资源草稿或写盘。译文在原浮层显示；失败/截断不当作成功，关闭取消请求。没有独立 API Key 配置或流式新通道。
 
 线索详情的正文和评论选区另有来源要求：显式插入前，未持久化的候选先调用 `clues.ensure` 取得稳定 ID；已存线索复用现有 ID。随后用内置 `reference` chip 携带 `[[dsh-clue:<id>]]`、空行和选区原文，发送时两者一起展开；不改用只序列化 token 的线索 codec，以免丢失选区。纯文本降级也保留两者。失败时保留菜单，插入本身不发送消息。
 
@@ -1262,7 +1268,7 @@ if (ctx.betterSidebar.features.includes('tabActions')) {
 
 `ctx.betterSidebar.windows.open(options)` 按稳定 `id` 打开窗口，返回 `WindowHandle`；重复打开只聚焦现有实例，不替换其草稿或导航栈。内容既可浮动，也可通过 `surface: 'sidebar'` 停靠到打开时所属会话的原生标签页。
 
-- `handle.dock?.()` 将同一份内容移到原会话的侧栏；不可停靠时返回 `false`。
+- `handle.dock?.()` 将同一份内容移到原会话的侧栏；不可停靠时返回 `false`。可用 `dockable: false` 声明仅浮动的任务窗口（不显示停靠控件，`dock()` 返回 `false`），适合不支持隐藏态的实时组件。
 - `handle.float?.()` 先移动原内容，再关闭原生标签页，不保留浮窗提示页；草稿、导航栈和滚动位置继续由同一个实例持有。这不是关闭内容，不运行 `onBeforeClose`。
 - `handle.close()` 才运行 `onBeforeClose`；拒绝关闭会保留内容。`update()` 不会重置用户放置的几何。
 - 浮窗边缘使用更强的 `--dsw-alias-border-l4`，宽度为 2px；停靠后不绘制这条浮窗外框。全部视觉值继续走宿主令牌。

@@ -44,6 +44,7 @@ import { insertReferenceOrText, type PendingReference } from './conversation-dra
 import {
   SelectionActionMenu,
   useClueSelectionActionContext,
+  useSelectionMenuSettings,
   type ClueSelectionActionTarget,
   type ClueSelectionInsertHandler,
 } from './clues/selection-actions.tsx'
@@ -299,6 +300,7 @@ export function TextEditor(props: FileViewerProps & TextEditorSelectionProps) {
   resolverRef.current = props.resolveSelectionTarget
   const [selectionActionTarget, setSelectionActionTarget] = useState<ClueSelectionActionTarget | undefined>()
   const selectionActionBridge = useClueSelectionActionContext()
+  const selectionSettings = useSelectionMenuSettings()
   const selectionPopup = useSelectionPopup<SelectionInsert>({
     onCommit: (insert) => {
       const handler = selectionActionTarget?.onInsert ?? selectionActionBridge?.onInsert
@@ -326,6 +328,7 @@ export function TextEditor(props: FileViewerProps & TextEditorSelectionProps) {
   const selectionActionInsert: ClueSelectionInsertHandler = (input) => {
     const handler = selectionActionTarget?.onInsert ?? selectionActionBridge?.onInsert
     if (handler !== undefined) return handler(input)
+    if (input.target === 'side') return false
     return insertReferenceOrText(ctx, scope.sessionId, input.reference ?? { label: input.selection.slice(0, 80), text: input.insert })
   }
 
@@ -1274,12 +1277,13 @@ export function TextEditor(props: FileViewerProps & TextEditorSelectionProps) {
           />
         </>
       )}
-      {selectionPopup.popup !== null && createPortal(
+      {selectionSettings.enabled && selectionPopup.popup !== null && createPortal(
         selectionActionTarget !== undefined
           ? <SelectionActionMenu
               workspaceId={selectionActionTarget.workspaceId}
               sessionId={selectionActionTarget.sessionId === '' ? scope.sessionId : selectionActionTarget.sessionId}
               resource={selectionActionTarget.resource}
+              writable={!dirty && !readOnly && editable && selectionActionTarget.writable !== false}
               selection={selectionPopup.popup.selection}
               insert={selectionPopup.popup.insert.text}
               reference={selectionPopup.popup.insert}
@@ -1290,18 +1294,18 @@ export function TextEditor(props: FileViewerProps & TextEditorSelectionProps) {
               onClose={() => { selectionPopup.hide() }}
               containerRef={selectionPopup.popupRef}
             />
-          : <button
-              type="button"
-              ref={selectionPopup.buttonRef}
-              className={css.selectionPopup}
-              style={{ left: selectionPopup.popup.left, top: selectionPopup.popup.top }}
-              // Keep the selection (and CodeMirror focus) alive until the click
-              // commits — without this the popup unmounts before click lands.
-              onMouseDown={(event) => { event.preventDefault() }}
-              onClick={selectionPopup.commit}
-            >
-              {t('addToConversation')}
-            </button>,
+          : <SelectionActionMenu
+              sessionId={scope.sessionId}
+              selection={selectionPopup.popup.selection}
+              insert={selectionPopup.popup.insert.text}
+              reference={selectionPopup.popup.insert}
+              writable={false}
+              left={selectionPopup.popup.left}
+              top={selectionPopup.popup.top}
+              onInsert={selectionActionInsert}
+              onClose={() => { selectionPopup.hide() }}
+              containerRef={selectionPopup.popupRef}
+            />,
         document.body,
       )}
     </>

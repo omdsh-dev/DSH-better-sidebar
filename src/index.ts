@@ -36,6 +36,8 @@ import { decodeHtmlUrl } from './html-route.ts'
 import { registerBundleRoute } from './bundle-route.ts'
 import { createDirectoryWatchers, type DirectoryWatchers } from './fs-watch.ts'
 import { createSidechatPushHub } from './sidechat-push.ts'
+import { createSelectionTranslationHandler } from './selection-translation.ts'
+import { parentModelSelection, type SidechatLogEvent } from './sidechat-core.ts'
 import { launchExternal } from './open-external.ts'
 import { createArchiveTasks, respondArchiveDownload, type ArchiveTasks } from './archive-route.ts'
 import * as git from './git.ts'
@@ -900,6 +902,15 @@ function buildApi(
       if (endLine < startLine) throw new SidebarError('bad-request', '"endLine" must not precede "startLine"')
       return { lines: await git.blame(cwd, path, startLine, endLine, repoRoot) }
     },
+    'selection.translate': async (payload, signal) => {
+      const llm = ctx.get('llm') as LlmServiceFace | undefined
+      if (llm === undefined) throw new SidebarError('selection-error', 'the harness LLM service is unavailable', 503)
+      return createSelectionTranslationHandler({ llm, resolveModel: sessionId => {
+        const events = ctx.sessions.get(sessionId)?.snapshotEvents()
+        const selected = events === undefined ? undefined : parentModelSelection(events as unknown as readonly SidechatLogEvent[])
+        return selected ?? conversationModelRoute(ctx, sessionId) ?? defaultModelRoute(ctx)
+      } })(payload, signal)
+    },
     // Commit-message suggestion: build a prompt from the pending changes and
     // stream it through the harness LLM service (`ctx.llm`) — no agent is
     // spawned, no session event is written, and the sidebar never sees a
@@ -1538,7 +1549,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
       // Clue methods are cancellable too: the dispatcher below is the one
       // route that serves them (no second route, no second fence).
       const clueService = ctx.get('betterSidebarClues') as import('./clues/service.ts').CluesService | undefined
-      const controller = method === 'changes.ops' || clueService?.hasApi(method) === true
+      const controller = method === 'changes.ops' || method === 'selection.translate' || clueService?.hasApi(method) === true
         ? new AbortController()
         : undefined
       const response = controller === undefined ? undefined : res as ServerResponse

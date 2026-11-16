@@ -42,6 +42,7 @@ import { builtinClueSourcePlugins } from '../src/client/clues/settings/source-ca
 import { builtinTabPlugins } from '../src/client/plugins-tabs.ts'
 import { en } from '../src/client/locales.ts'
 import { SIDEBAR_PREFS_DEFAULTS } from '../src/prefs-shared.ts'
+import { selectionSettingsOf, REWRITE_PROMPTS } from '../src/selection-settings.ts'
 import type { CluesSourcesCatalogResult, ClueSourceDescriptor } from '../src/clues/types.ts'
 import type { ConnectionStatusProjection, DependencyInstallTask, DependencyStatus } from '../src/clues/runtime/types.ts'
 function source(sourceId: string, name: string, extra: Partial<ClueSourceDescriptor> = {}): ClueSourceDescriptor {
@@ -186,13 +187,43 @@ function switchState(container: ParentNode, label: string): boolean | undefined 
     .find(candidate => candidate.getAttribute('aria-label') === label)
   return control === undefined ? undefined : control.getAttribute('aria-checked') === 'true'
 }
+
+it('persists selection switches, both orders, prompt override and reset through the real settings writer', async () => {
+  const h = harness()
+  const view = await mount(h)
+  click(view.container, 'Selection actions')
+  await flush()
+  click(view.container, 'Run rewrites immediately'); await flush()
+  click(view.container, 'Expand'); await flush()
+  click(view.container, 'Move up: Translate'); await flush()
+  click(view.container, 'Move up: Naturalize'); await flush()
+  const persisted = selectionSettingsOf(h.store.getSnapshot().prefs)
+  expect(persisted.autoRun).toBe(false)
+  expect(persisted.disabled.expand).toBe(true)
+  expect(persisted.menuOrder).toEqual(['translate', 'rewrite'])
+  expect(persisted.rewriteOrder[0]).toBe('humanize')
+  const editor = view.container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Prompt: Expand"]')!
+  act(() => {
+    editor.value = 'Expand with concise examples.'
+    editor.dispatchEvent(new FocusEvent('focusout', { bubbles: true }))
+  })
+  await flush()
+  expect(selectionSettingsOf(h.store.getSnapshot().prefs).prompts.expand).toBe('Expand with concise examples.')
+  const expanded = view.container.querySelector('[data-selection-setting="expand"]')!
+  click(expanded, 'Reset to default'); await flush()
+  expect(selectionSettingsOf(h.store.getSnapshot().prefs).prompts.expand).toBe(REWRITE_PROMPTS.expand)
+  expect(lastPatch(h)).toMatchObject({ pluginSettings: { clues: { selection: { autoRun: false } } } })
+  expect(h.settings.updates.every(update => typeof update.expectedRevision === 'number')).toBe(true)
+  view.unmount()
+})
+
 describe('SideCardSection grouped navigation', () => {
   it('renders six icon tabs in order, opens General by default and honors an explicit group', async () => {
     const rendered = await mount(harness())
     const tablist = rendered.container.querySelector('[role="tablist"][aria-label="Settings groups"]')!
     const tabs = [...tablist.querySelectorAll<HTMLButtonElement>('[role="tab"]')]
     expect(tabs.map(tab => tab.textContent?.trim())).toEqual([
-      'General', 'Tabs', 'Start page', 'File viewers', 'Clue sources', 'Appearance',
+      'General', 'Tabs', 'Start page', 'Selection actions', 'File viewers', 'Clue sources', 'Appearance',
     ])
     expect(tabs.every(tab => tab.querySelector('[aria-hidden="true"] svg') !== null)).toBe(true)
     expect(selected(rendered.container)).toBe('General')

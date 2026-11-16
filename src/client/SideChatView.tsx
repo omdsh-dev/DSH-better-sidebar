@@ -1027,10 +1027,25 @@ export function SideChatView(props: {
   /** Whether each thread gets its own native page (the default is one shared
    *  page). Passed from the descriptor's live prefs snapshot. */
   multipleTabs?: boolean
+  /** A floating seat binds the same view without inventing a sidebar service. */
+  onTabChange?(patch: Partial<SidebarTab>): void
+  onOpenThread?(threadId: string): void
 }): React.ReactNode {
-  const { ctx, scope, tab, visible } = props
+  const { ctx, scope, tab, visible, onTabChange } = props
   const submitKey = props.submitKey ?? SIDECHAT_SUBMIT_KEY_DEFAULT
   const multipleTabs = props.multipleTabs === true
+  const updateSeat = useCallback((patch: Partial<SidebarTab>): void => {
+    if (onTabChange !== undefined) onTabChange(patch)
+    else ctx.get('betterSidebar')?.updateTab(tab.id, patch, scope.sessionId)
+  }, [onTabChange, ctx, tab.id, scope.sessionId])
+  const openThreadSeat = (id: string): void => {
+    if (props.onOpenThread !== undefined) props.onOpenThread(id)
+    else if (multipleTabs) ctx.get('betterSidebar')?.openTab({ type: 'sidechat', meta: { threadId: id } }, scope)
+    else {
+      parkSidechatReopen(id)
+      ctx.get('betterSidebar')?.openTab({ type: 'sidechat' }, scope)
+    }
+  }
   /** The main conversation's work-details preference, read live (see
    *  sidechat-work-details.ts): the two transcripts of one conversation must
    *  agree about how much process detail to show. */
@@ -1180,9 +1195,9 @@ export function SideChatView(props: {
     // handler below moves it); only an independent occurrence unbinds itself.
     if (!multipleTabs) return
     if (threadId !== undefined && archivedIds.includes(threadId)) {
-      ctx.get('betterSidebar')?.updateTab(tab.id, { meta: {}, title: t('sideChatUntitled') }, scope.sessionId)
+      updateSeat({ meta: {}, title: t('sideChatUntitled') })
     }
-  }, [archivedIds, ctx, scope.sessionId, tab.id, threadId, multipleTabs])
+  }, [archivedIds, threadId, multipleTabs, updateSeat])
 
   const draft = useSidechatDraft(threadId)
   const composer = draft.owner.text
@@ -1352,7 +1367,7 @@ export function SideChatView(props: {
     try {
       const { childId } = await api.sidechatStart(scope.sessionId)
       const sidebar = ctx.get('betterSidebar')
-      if (sidebar?.hasTab?.(tab.id, scope.sessionId) === false) {
+      if (onTabChange === undefined && sidebar?.hasTab?.(tab.id, scope.sessionId) === false) {
         // The user closed this unbound tab while creation was in flight.
         // Release only the new orphan, never update another occurrence.
         const workspace = ctx.get('uiWorkspace') as unknown as ArchiveSessionFace | undefined
@@ -1361,14 +1376,14 @@ export function SideChatView(props: {
         return
       }
       // Name the seat session: the same native id names a tab in every session.
-      ctx.get('betterSidebar')?.updateTab(tab.id, { meta: { threadId: childId } }, scope.sessionId)
+      updateSeat({ meta: { threadId: childId } })
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
       inFlightStarts.delete(startKey)
       setBusy(null)
     }
-  }, [ctx, scope.sessionId, tab.id])
+  }, [updateSeat, scope.sessionId, tab.id, ctx, onTabChange])
 
   /**
    * The existing thread a SHARED-page side chat should reattach to: the
@@ -1392,12 +1407,12 @@ export function SideChatView(props: {
     if (!multipleTabs) {
       const reattach = reattachTarget()
       if (reattach !== undefined) {
-        ctx.get('betterSidebar')?.updateTab(tab.id, { meta: { threadId: reattach } }, scope.sessionId)
+        updateSeat({ meta: { threadId: reattach } })
         return
       }
     }
     if (autoCreate) void startThread()
-  }, [threadId, autoCreate, visible, startThread, reattachTarget, multipleTabs, ctx, tab.id, scope.sessionId])
+  }, [threadId, autoCreate, visible, startThread, reattachTarget, multipleTabs, updateSeat])
 
   // Compatibility hint for consumers of the old last-thread key. Our own
   // restoration never reads it: every native occurrence has its own binding.
@@ -1413,12 +1428,12 @@ export function SideChatView(props: {
     const title = threadDisplayTitle(display)
     if (title !== '' && title !== tab.title) {
       try {
-        ctx.get('betterSidebar')?.updateTab(tab.id, { title }, scope.sessionId)
+        updateSeat({ title })
       } catch {
         // A stale title is cosmetic; the thread keeps working.
       }
     }
-  }, [summary, tab.id, tab.title, ctx, scope.sessionId])
+  }, [summary, tab.title, updateSeat])
 
   /** One transcript pull: the thread's own events beyond the cached tail
    *  (first attach = the whole seed-cut slice; polls = afterSeq deltas),
@@ -1773,14 +1788,7 @@ export function SideChatView(props: {
     try {
       const { childId } = await api.sidechatStart(scope.sessionId)
       rememberSidechatThread(scope.sessionId, childId)
-      if (multipleTabs) {
-        ctx.get('betterSidebar')?.openTab({ type: 'sidechat', meta: { threadId: childId } }, scope)
-      } else {
-        // The shared page has a stable host identity; park the target for its
-        // createTab and let the host focus/rewrite the one page.
-        parkSidechatReopen(childId)
-        ctx.get('betterSidebar')?.openTab({ type: 'sidechat' }, scope)
-      }
+      openThreadSeat(childId)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
@@ -1793,12 +1801,7 @@ export function SideChatView(props: {
   const openExistingThread = (id: string): void => {
     setMenuOpen(false)
     if (id === threadId) return
-    if (multipleTabs) {
-      ctx.get('betterSidebar')?.openTab({ type: 'sidechat', meta: { threadId: id } }, scope)
-    } else {
-      parkSidechatReopen(id)
-      ctx.get('betterSidebar')?.openTab({ type: 'sidechat' }, scope)
-    }
+    openThreadSeat(id)
   }
 
   const menuItems = useMemo<MenuEntry[]>(() => {
@@ -2146,10 +2149,10 @@ export function SideChatView(props: {
       await service.archiveSession(threadId, { stopActivity: true })
       if (multipleTabs) {
         // Never steal another open tab's thread after archiving this one.
-        ctx.get('betterSidebar')?.updateTab(tab.id, { meta: {}, title: t('sideChatUntitled') }, scope.sessionId)
+        updateSeat({ meta: {}, title: t('sideChatUntitled') })
       } else {
         const next = fallbackThreadId(threadId)
-        ctx.get('betterSidebar')?.updateTab(tab.id, { meta: next === undefined ? {} : { threadId: next } })
+        updateSeat({ meta: next === undefined ? {} : { threadId: next } })
       }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))

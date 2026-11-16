@@ -71,6 +71,11 @@
   - 🧪 `tests/market-manifest.spec.ts` checks both the repo and the `pnpm pack` manifest: dependencies must be exactly `ws` / `yaml`, and `src` must stay in `files`.
 
 
+- ✨ **Configurable selection actions**: one menu across file editing/previews and clue bodies/comments, with overall/per-action switches, menu and rewrite ordering, editable/resettable prompts and custom actions. Rewrite opens a submenu (expand / naturalize / shorten / continue) and runs in a fresh side chat by default, with an optional draft-first mode.
+  - **Rewrite the original source**: local actions edit the original path; remote bodies use the existing source save flow. Read-only content, comments and surfaces with unsaved edits do not offer rewriting.
+  - **Standalone translation**: call the host LLM directly, without creating a session or changing the source. Results stay in the popup with copy/retry. Configure a separate model; the target language follows the UI by default.
+  - **Explicit insertion targets**: insert into main or side chat only fills a draft and preserves provenance. Selection side chats float on wide screens and open as tabs on narrow screens. The Files tab again matches the Local files folder icon.
+
 - ✨ **Sidebar polish**: content loading uses a centered ring animation with reduced-motion support. Floating a window removes its former tab while preserving drafts and scroll position; floating edges are slightly stronger, and file preview and Clues have distinct, clearer icons.
   - **Selection provenance**: inserting a clue body or comment selection carries both a stable `dsh-clue` reference and the exact excerpt. Failed reference preparation keeps the selection available for retry and never sends a message.
   - **Aligned settings actions**: tab and viewer switches always reserve a settings button, disabled only when no settings exist. Existing configuration stays accessible even when its feature is off. Start-page More now includes Sidebar settings.
