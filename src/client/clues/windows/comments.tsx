@@ -22,7 +22,7 @@ export interface ResourceDiscussionProps {
   readonly pathImages?: MarkdownPathImages
   readonly showAvatars?: boolean
   /** Captured resource ownership; only each comment's body enters this surface. */
-  readonly selectionTarget?: Pick<ClueSelectionActionTarget, 'workspaceId' | 'sessionId' | 'resource'>
+  readonly selectionTarget?: Pick<ClueSelectionActionTarget, 'workspaceId' | 'sessionId' | 'resource' | 'onInsert'>
   onLoad(cursor?: string, parentId?: string): void
   onCreate(body: string, replyToId: string | undefined, requestId: string): Promise<void>
 }

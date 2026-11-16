@@ -8,7 +8,6 @@ import { useLayoutEffect, useRef, useSyncExternalStore, type ReactNode } from 'r
 import type { Context } from '../../context-types.ts'
 import type { NativeTabInfo } from '../native/tab-adapter.tsx'
 import type { WindowHostController } from './types.ts'
-import { ActionButton } from '../ui/index.ts'
 import { t } from '../locales.ts'
 import design from '../ui/design.module.css'
 import css from './windows.module.css'
@@ -67,15 +66,7 @@ function NativeWindowBody({ host, sessionId, useTabInfo }: NativeWindowProps): R
       if (view?.sidebarTarget === destination) host.setSidebarTarget(id, sessionId, undefined)
     }
   }, [host, sessionId, id])
-  const snapshot = useSyncExternalStore(host.subscribe, host.getSnapshot, host.getSnapshot)
-  const view = snapshot.windows.find(window => window.id === id && window.sessionId === sessionId)
-  return <div ref={target} className={`${design.surface} ${css.nativeDestination}`} data-window-sidebar-destination>
-    {view?.surface !== 'sidebar' && <div className={css.documentStatus}>
-      <p>{t('windowFloatingHint')}</p>
-      {view !== undefined && <ActionButton variant="outline" size="sm"
-        onClick={() => { host.setSurface(view.id, 'sidebar') }}>{t('windowDock')}</ActionButton>}
-    </div>}
-  </div>
+  return <div ref={target} className={`${design.surface} ${css.nativeDestination}`} data-window-sidebar-destination />
 }
 
 function NativeWindowTitle({ host, sessionId, useTabInfo }: NativeWindowProps): ReactNode {

@@ -34,7 +34,7 @@
  * streamed log is the visible drag lag of #315).
  *
  * Skin contract: tokens only (`--dsw-alias-*` / `--dsw-font-*`), the floating
- * layer uses the same flat 1px border and 6px corners as the shared controls.
+ * layer uses a stronger 2px edge and 6px corners to separate it from the page.
  */
 import {
   Fragment, isValidElement, useCallback, useEffect, useMemo, useRef, useState,

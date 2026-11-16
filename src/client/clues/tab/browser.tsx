@@ -1261,7 +1261,7 @@ export function ClueBrowser(props: ClueBrowserProps): ReactNode {
               }} />
               )}
               {state.kind === 'idle' && <EmptyState title={t('clueBrowserSearchNeeded')} />}
-              {state.kind === 'loading' && <LoadingIndicator className={css.stateLine} />}
+              {state.kind === 'loading' && <LoadingIndicator centered />}
               {state.kind === 'needs-scope' && (
                 <EmptyState title={state.reason === 'search' ? t('clueBrowserSearchScopeNeeded') : t('clueScopeNoDefault')}
                   actions={<ActionButton size="sm" onClick={() => { setScopeOpen(true) }}>{t('clueBrowserScopeEdit')}</ActionButton>} />

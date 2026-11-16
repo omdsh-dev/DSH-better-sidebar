@@ -367,7 +367,7 @@ export function CluesTab({ ctx, store, scope, visible }: CluesTabProps): ReactNo
       {visible && helpOpen && <ClueHelpOverlay onClose={closeHelp} />}
 
       {!resolved && (
-        <LoadingIndicator className={css.state} />
+        <LoadingIndicator centered />
       )}
       {resolved && workspaceId === undefined && (
         <EmptyState tone="page" title={t('clueTabNoWorkspace')}

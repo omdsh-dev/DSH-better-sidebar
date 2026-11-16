@@ -13,7 +13,7 @@
 import { mkdirSync, realpathSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { test, expect, type Locator, type Page, type Route } from '@playwright/test'
-import { floatClueWindow, selectClueSource } from './ui-helpers'
+import { floatClueWindow, selectClueSource, setTheme } from './ui-helpers'
 import { composerEditable, composerLocator, createHostApi, dismissOnboarding, gotoPage, hostRpc } from './host'
 
 const TITLE = 'UI19 local discussion fixture'
@@ -42,6 +42,8 @@ interface FixtureState {
   actions: ActionRequest[]
   rejectNext?: boolean
   reads: number
+  readGate?: Promise<void>
+  ensured: unknown[]
   comments: number
   blocked: string[]
   pageErrors: string[]
@@ -53,7 +55,7 @@ async function ok(route: Route, value: unknown): Promise<void> {
 
 /** A closed local response catalogue: no source operation can escape to a CLI. */
 async function interceptFixture(page: Page): Promise<FixtureState> {
-  const state: FixtureState = { actions: [], reads: 0, comments: 0, blocked: [], pageErrors: [] }
+  const state: FixtureState = { actions: [], reads: 0, ensured: [], comments: 0, blocked: [], pageErrors: [] }
   page.on('pageerror', error => state.pageErrors.push(error.message))
   await page.route('**/sidebar/api/clues.*', async route => {
     const method = new URL(route.request().url()).pathname.split('/').at(-1)!
@@ -72,6 +74,7 @@ async function interceptFixture(page: Page): Promise<FixtureState> {
       case 'clues.read':
         state.workspaceId = input.workspaceId
         state.reads += 1
+        await state.readGate
         await ok(route, { format: 'text/markdown', data: { title: TITLE, body: BODY, text: BODY }, text: BODY, fetchedAt: NOW, freshness: 'live' }); return
       case 'clues.comments.list':
         state.comments += 1
@@ -79,6 +82,9 @@ async function interceptFixture(page: Page): Promise<FixtureState> {
           { id: 'ui19-comment', kind: 'comment', format: 'text/markdown', body: `## Comment-only heading\n\n${COMMENT_SELECTION}`, author: { name: 'Fixture reviewer' }, createdAt: NOW },
           { id: 'ui19-review', kind: 'review', format: 'text/plain', body: 'Local review summary.', reviewState: 'APPROVED', author: { name: 'Fixture approver' } },
         ] }); return
+      case 'clues.ensure':
+        state.ensured.push(route.request().postDataJSON())
+        await ok(route, { clue: { id: 'ui19-stable', ...candidate }, created: true }); return
       case 'clues.clues': await ok(route, { clues: [], revision: 0 }); return
       case 'clues.pins.list': await ok(route, { pins: [], revision: 0 }); return
       case 'clues.packs.list': await ok(route, { packs: [], revision: 0 }); return
@@ -125,7 +131,7 @@ async function onScreen(page: Page, selector: string): Promise<Locator> {
   return found!
 }
 
-async function openFixture(page: Page): Promise<{ state: FixtureState; surface: Locator; sessionId: string }> {
+async function openFixture(page: Page, checkLoading?: (frame: Locator) => Promise<void>): Promise<{ state: FixtureState; surface: Locator; sessionId: string }> {
   expect(process.env.DSH_E2E_WORKSPACE, 'run through the isolated RC mount lane').toBeTruthy()
   const root = join(process.env.DSH_E2E_WORKSPACE!, `ui19-${Date.now()}-${test.info().testId.replace(/[^a-zA-Z0-9-]/g, '_')}`)
   mkdirSync(root, { recursive: true })
@@ -153,7 +159,16 @@ async function openFixture(page: Page): Promise<{ state: FixtureState; surface: 
   await panel!.locator('[data-sidebar-right-guide-entry="clues"]').click()
   const tab = panel!.locator('[data-clue-tab]')
   await expect(tab).toBeVisible()
+  let releaseRead: (() => void) | undefined
+  if (checkLoading !== undefined) state.readGate = new Promise<void>(resolve => { releaseRead = resolve })
   await tab.locator('[data-clue-browse-region]').getByRole('button', { name: TITLE, exact: true }).click()
+  if (checkLoading !== undefined) {
+    try {
+      const loadingFrame = panel.locator('[data-window-docked="true"]')
+      await expect(loadingFrame.locator('[data-loading-indicator][data-centered]')).toBeVisible()
+      await checkLoading(loadingFrame)
+    } finally { releaseRead?.() }
+  }
   // A clue window opens DOCKED in the right sidebar; this fixture floats it to
   // measure content, selection and draft retention on the floating surface.
   const surface = await floatClueWindow(page, page.locator('[data-window-document-body]'))
@@ -196,6 +211,31 @@ function expectQuiet(state: FixtureState): void {
   expect(state.blocked, 'no source writes, model/session sends or unmocked clue calls').toEqual([])
   expect(state.pageErrors, 'no uncaught errors from the actual mounted client').toEqual([])
 }
+
+test('UI19 centers loading feedback and respects reduced motion in both themes', async ({ page }, info) => {
+  const { state, surface } = await openFixture(page, async frame => {
+    const loading = frame.locator('[data-loading-indicator][data-centered]')
+    const glyph = loading.locator('[aria-hidden="true"]')
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme)
+      const body = (await frame.locator('[data-window-body]').boundingBox())!
+      const content = await loading.evaluate(node => {
+        const first = node.firstElementChild!.getBoundingClientRect()
+        const last = node.lastElementChild!.getBoundingClientRect()
+        return { x: (first.left + first.right) / 2, y: (first.top + last.bottom) / 2 }
+      })
+      expect(Math.abs(content.x - body.x - body.width / 2)).toBeLessThan(3)
+      expect(Math.abs(content.y - body.y - body.height / 2)).toBeLessThan(3)
+      expect(await glyph.evaluate(node => getComputedStyle(node).animationName)).not.toBe('none')
+      await frame.screenshot({ path: info.outputPath('loading-centered-' + theme + '.png') })
+    }
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    await expect(glyph).toHaveCSS('animation-name', 'none')
+    await page.emulateMedia({ reducedMotion: 'no-preference' })
+  })
+  await expect(surface.locator('[data-loading-indicator][data-centered]')).toHaveCount(0)
+  expectQuiet(state)
+})
 
 test('UI19 keeps discussion below the body and comment headings out of its outline', async ({ page }) => {
   const { state, surface } = await openFixture(page)
@@ -252,6 +292,8 @@ test('UI19 selects body and comment actions with readable main/side targets with
   await menu.locator('[data-clue-selection-action="insert"]').click()
   const composer = page.getByRole('textbox', { name: /^(Describe what you want to build|Message or run a task|描述你想要构建)/ })
   await expect(composer).toContainText(COMMENT_SELECTION)
+  await expect(composer.locator('[data-composer-chip="reference"]')).toHaveCount(1)
+  expect(state.ensured).toEqual([expect.objectContaining({ sourceId: SOURCE, typeId: TYPE, locator: candidate.locator })])
   expect(state.actions).toHaveLength(3)
   expectQuiet(state)
 })
@@ -290,9 +332,14 @@ test('UI19 moves the same draft and scroll DOM between floating and native sideb
   expect(await input.evaluate((node, previous) => node === previous, inputNode)).toBe(true)
   expect(await surface.locator('[data-window-document-body]').evaluate((node, previous) => node === previous, bodyNode)).toBe(true)
 
+  const nativeTab = page.locator('[data-sidebar-right-panel]:visible [data-dockkit-tab][aria-selected="true"]').filter({ hasText: TITLE })
+  const nativeTabNode = await nativeTab.elementHandle()
   await surface.locator('[data-window-float]').click()
   await expect(surface).toHaveAttribute('data-floating-window', '')
+  await expect.poll(() => nativeTabNode!.evaluate(node => node.isConnected)).toBe(false)
+  await expect(page.getByText('This content is open in a floating window.', { exact: true })).toHaveCount(0)
   await expect(surface).not.toHaveAttribute('data-window-docked', 'true')
+  await expect(surface).toHaveCSS('border-top-width', '2px')
   await expect(dock).toHaveText('Return to sidebar')
   await expect(dock).toHaveAccessibleName('Return to sidebar')
   await expect(dock.getByText('Return to sidebar', { exact: true })).toBeVisible()

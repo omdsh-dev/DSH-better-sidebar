@@ -13,6 +13,7 @@
  *   never a second window, never a replaced draft;
  * - `update` only changes the fields it names: a streamed refresh cannot move
  *   or resize a window the reader placed;
+ * - floating first moves the retained DOM, then removes the native tab;
  * - a close runs `onBeforeClose` first (async allowed); false/rejection keeps
  *   the window and its content alive;
  * - the close/unmount path releases the layer subscription, so no listener
@@ -61,6 +62,7 @@ interface WindowRecord {
   readonly id: string
   readonly sessionId: string | undefined
   surface: 'floating' | 'sidebar'
+  pendingSidebarClose: boolean
   sidebarTarget: HTMLElement | undefined
   /** The window's own (base) title; a pushed page may override it while on top. */
   title: string
@@ -330,6 +332,8 @@ export function createWindowHost(options: WindowHostOptions = {}): WindowHostCon
         return false
       }
     }
+    if (record.surface === 'sidebar' && surface === 'floating') record.pendingSidebarClose = true
+    if (surface === 'sidebar') record.pendingSidebarClose = false
     record.surface = surface
     notify()
     if (surface === 'floating') raiseWindowLayer(layerKey(record.id))
@@ -405,6 +409,7 @@ export function createWindowHost(options: WindowHostOptions = {}): WindowHostCon
       sessionId: options.sessionId ?? optionsSessionId(),
       surface: 'floating',
       sidebarTarget: undefined,
+      pendingSidebarClose: false,
       title: options.title,
       base: {
         content: options.content,
@@ -508,6 +513,12 @@ export function createWindowHost(options: WindowHostOptions = {}): WindowHostCon
     setSurface(id, surface): boolean {
       const record = currentRecord(id)
       return record !== undefined && setSurface(record, surface)
+    },
+    completeSurfaceMove(id): void {
+      const record = currentRecord(id)
+      if (record === undefined || record.surface !== 'floating' || !record.pendingSidebarClose) return
+      record.pendingSidebarClose = false
+      if (record.sessionId !== undefined) sidebar?.close(record.id, record.sessionId)
     },
     setSidebarTarget(id, sessionId, target): void {
       const record = currentRecord(id)

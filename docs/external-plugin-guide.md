@@ -43,7 +43,7 @@
 | 底部终端的恢复语义（#774） | 刷新后重新上屏同一页签时，页面用**同一份 `(sessionId, key, contentId)`** 再次调用宿主的 `webTerminals.view()`：宿主持久化在 localStorage 的 `(sessionId, contentId) → 终端 id` 绑定因此把**同一个** PTY 认回来（`contentId` 是 `dsh-better-sidebar:terminal-bottom:<instance>`——**每个页签一个实例，不再是恒定值**，#926）。插件**不把 terminalId 写进 `tab.meta`**：`view()` 显式传 terminalId 会关掉宿主的「缺了就建」分支，一个过期的 id 会把页签永久卡在 `missingTerminal` 上。DSH 重启后 PTY 全没了而 localStorage 绑定还在，所以「新建终端」按钮把 `tab.meta.terminalRun` +1 换一代 `contentId`，让宿主另铸一个进程，而不是反复认领死绑定 |
 | 底部工作台的开合 | 落到底部工作台的打开一律展开它（新建与聚焦都算），因此 `openTab` 的落点永远可见；开合按钮注册在 DSH 会话头的 utilities 槽（`conversation.session.header.utilities`），不在插件自己的宿主里 |
 | 在侧边打开（`target: 'side'`，v0.22.0+） | 原生栏里的 tab **不在插件底部工作台的分栏树里**，所以「在侧边打开」不能写 `bottomSplits`（那样会落到用户没展开的底部工作台 = 点了没反应）。服务改为把这一步交给宿主：带 path 的 `editor` seed 走 `openResource(address, { preferNewPane: true, revealIfOpened: false })`——宿主先按自己的两格上限与空间规则尝试分栏，分不了才回退到当前格；`revealIfOpened: false` 允许与已打开的同名资源并存，因此对同一个文件再点一次也会新开一格。其余类型若传 `target: 'side'`，同样以 `preferNewPane` 落原生栏（组件型 tab 的 path 仍是组件种子）——**唯一的例外是 `bottomOnly` 类型**（#774）：它没有原生承载面可落，`target: 'side'` 被改道回 `'bottom'`。path-less 的 `editor`（文件页）与 `'bottom'` 行为不变 |
-| 开始页接管（v0.31 起） | 插件在 `sidebar.right.tab.guide` 注册一个恒选中的 chain 条目，自己绘制开始页：宽屏每行两张、窄屏一张，行数可配置（默认 6，最小 1，设置与「调整顺序」弹窗共用同一个输入组件），内容默认垂直居中、可切换靠上；设置中的「接管开始页」开关默认开，关闭后恢复宿主自带开始页。超出容量的卡片收进「更多」，菜单行为图标 + 标题；「更多」常驻并恢复宿主的「浏览更多插件」「创建你的插件」动作（`pluginNavigation.openList()` / `uiWorkspace.startSession(..., { agentPreset: 'cordis', whenDraftExists: 'append' })`），服务缺失时对应行隐藏。设置页「侧边栏内容 → 开始页」与「调整顺序」列出**当前注册到官方的全部开始页入口**（本插件、宿主终端、第三方），默认全部显示；本插件自己的 tab 使用与「侧边栏内容」功能卡片相同的 `tabsEnabled` 开关（关闭即禁用并移出开始页，清单行保留以便重新打开），宿主/第三方入口的开关只控制开始页显示、不注销 tab 类型。排序按 `providerId::entryId` 持久化。**第三方 guide 条目仍会出现，但其自定义卡片组件不会被复用**：`sidebar.right.tab.guide.entry` 由宿主 guide body 独占声明，chain 条目拿不到 `renderSlot`。当前官方只有终端的 TerminalGuide 是自定义卡片，插件通过 `ctx.webTerminals.launchShells` / `selectShell` 复刻其 Shell 菜单；其他自定义卡片显示为通用卡片。宿主 `MAX_DESCRIBED_ENTRIES` 的描述隐藏逻辑不再适用，插件卡片始终显示描述。
+| 开始页接管（v0.31 起） | 插件在 `sidebar.right.tab.guide` 注册一个恒选中的 chain 条目，自己绘制开始页：宽屏每行两张、窄屏一张，行数可配置（默认 6，最小 1，设置与「调整顺序」弹窗共用同一个输入组件），内容默认垂直居中、可切换靠上；设置中的「接管开始页」开关默认开，关闭后恢复宿主自带开始页。超出容量的卡片收进「更多」，菜单行为图标 + 标题；「更多」常驻，提供打开共享设置面的「侧边栏设置」，并恢复宿主的「浏览更多插件」「创建你的插件」动作（`pluginNavigation.openList()` / `uiWorkspace.startSession(..., { agentPreset: 'cordis', whenDraftExists: 'append' })`），服务缺失时对应行隐藏。设置页「侧边栏内容 → 开始页」与「调整顺序」列出**当前注册到官方的全部开始页入口**（本插件、宿主终端、第三方），默认全部显示；本插件自己的 tab 使用与「侧边栏内容」功能卡片相同的 `tabsEnabled` 开关（关闭即禁用并移出开始页，清单行保留以便重新打开），宿主/第三方入口的开关只控制开始页显示、不注销 tab 类型。排序按 `providerId::entryId` 持久化。**第三方 guide 条目仍会出现，但其自定义卡片组件不会被复用**：`sidebar.right.tab.guide.entry` 由宿主 guide body 独占声明，chain 条目拿不到 `renderSlot`。当前官方只有终端的 TerminalGuide 是自定义卡片，插件通过 `ctx.webTerminals.launchShells` / `selectShell` 复刻其 Shell 菜单；其他自定义卡片显示为通用卡片。宿主 `MAX_DESCRIBED_ENTRIES` 的描述隐藏逻辑不再适用，插件卡片始终显示描述。
 | 新建标签页列表 | 每个 tab 类型在原生 guide 里占一行：标题取 `title` + 图标取 `icon`（缺图标时宿主补一个方块占位），说明取可选的 `description`——**宿主只在 guide 列出的条目 ≤ 4 条时渲染说明**（上游 `MAX_DESCRIBED_ENTRIES = 4`），更长的列表整列丢掉所有说明；未声明 `description` 的条目渲染成单行「图标 + 标题」（rc.1 起 `description` 回到宿主契约，但**宿主与插件都没有兜底句**，所以插件恢复字段而不恢复旧的通用句）；`hidden: true` 的类型不占行，**`bottomOnly: true` 的类型同样不占行**（#774：它只活在插件自己的底部 `+` 菜单里）。插件的 `editor` 类型不再单独占行（它认领的文件资源由 `files` 接管页承载同一视图）。**本插件默认贡献 5 个 guide 条目**（文件 / Git / 线索收集 / 任务管理 / 侧边对话），已经超过宿主上限 4，说明整列默认不渲染（宿主的终端条目再占一行）；要让说明回来，需在插件设置页关掉足够多的 tab 类型把总数压到 ≤ 4 条 |
 | 新建面板的种子（alpha.2） | 在新会话打开原生新面板时，宿主从已注册的 guide 条目里播种：恰好 1 个条目 → 直接打开那一页；0 或 ≥2 个条目 → 打开指南。`revealIfOpened` 打开的「页面」在**同一 pane 内**强制去重（已在该 pane 就不再新建）；由已有 tab 地址驱动的打开不受该去重影响 |
 | alpha.2 全局面板（不接入） | 插件**不采用** alpha.2 引入的全局主面板模型——根级 keyed `main` 槽（预留 key `conversation`，由 ui-conversation 注册为 `main.conversation`）、根级 `sidebar.panellist` 列表槽（`SidebarPanelMetadata` / `SidebarPanelIconOwnerProps`）、`ctx.layout.selectPanel(MainPanelId|null)` / `beginNavigation()` / `dispose()`、全局标准 prop `usePanelInfo`，以及改根级并新增会话级 `rightbar.session` 子槽的 `rightbar`——这些只作兼容保留，不向其迁移 |
@@ -1087,6 +1087,8 @@ registerSidechatSurfaceAdapter(adapter: SidechatSurfaceAdapter): () => void
 
 在内置编辑器（`code` / `markdown` / `jsonl` 的 CodeMirror 面，以及 markdown 预览）里划选一段文字，弹窗「添加到对话」会往主会话 composer 落一枚 chip。此处记录它用到的契约与降级，第三方插件若想复刻同一套交互可以照抄。
 
+线索详情的正文和评论选区另有来源要求：显式插入前，未持久化的候选先调用 `clues.ensure` 取得稳定 ID；已存线索复用现有 ID。随后用内置 `reference` chip 携带 `[[dsh-clue:<id>]]`、空行和选区原文，发送时两者一起展开；不改用只序列化 token 的线索 codec，以免丢失选区。纯文本降级也保留两者。失败时保留菜单，插入本身不发送消息。
+
 **宿主服务与 chip 身份**
 
 - 落 chip 走宿主 `conversation` 服务的 `input.for(session).insertReference(ref, span)`（#1052 之后内置的通道；`ref: ReferenceInsert = { source, ref, label, appearance?, clipboardText }`，`span = { draftRev, start, end }`）。`insertDraftReference()` 负责把「插件投影坐标」折成编辑器检测投影坐标、补前导空格、并在 `snapshot.occurrences` 存在时走 span 通道而不是整框重写（#1002：整框重写会把已有 chip 拍平成纯文本）。
@@ -1256,6 +1258,17 @@ if (ctx.betterSidebar.features.includes('tabActions')) {
 
 ---
 
+### 7.5 统一内容窗口（windowHost）
+
+`ctx.betterSidebar.windows.open(options)` 按稳定 `id` 打开窗口，返回 `WindowHandle`；重复打开只聚焦现有实例，不替换其草稿或导航栈。内容既可浮动，也可通过 `surface: 'sidebar'` 停靠到打开时所属会话的原生标签页。
+
+- `handle.dock?.()` 将同一份内容移到原会话的侧栏；不可停靠时返回 `false`。
+- `handle.float?.()` 先移动原内容，再关闭原生标签页，不保留浮窗提示页；草稿、导航栈和滚动位置继续由同一个实例持有。这不是关闭内容，不运行 `onBeforeClose`。
+- `handle.close()` 才运行 `onBeforeClose`；拒绝关闭会保留内容。`update()` 不会重置用户放置的几何。
+- 浮窗边缘使用更强的 `--dsw-alias-border-l4`，宽度为 2px；停靠后不绘制这条浮窗外框。全部视觉值继续走宿主令牌。
+
+---
+
 ## 8. 声明式设置（v0.4.1+）
 
 每个注册的 tab / viewer **自动**出现在 DSH 设置页「侧边卡片」分区（`SideCardSection` 按注册表驱动渲染，无硬编码），**`hidden: true` 的 tab 类型除外**：
@@ -1263,7 +1276,8 @@ if (ctx.betterSidebar.features.includes('tabActions')) {
 - 展示：小卡片网格（图标 + 标题 + 类型 id），**高亮 = 启用**，勾选徽标钉在卡片最右端；viewer 卡片额外显示扩展名。`hidden` 类型没有 `+` 菜单行、没有原生 guide 条目，也就没有可切换的承载面，因此不进清单，且 `isTabEnabled()` 对它恒为 true（#1009）。
 - 持久化：开关写入 `SidebarPrefs.tabsEnabled / viewersEnabled`（开放 map，**缺省 = 启用**，显式 `false` 才禁用；`hidden` 类型的键被忽略）。
 - 关闭语义：tab 从 `+` 菜单消失、`openTab` 拒绝新开（`console.warn`）、派生流程（子代理自动展开、agent 终端自动补 tab）停止，**已打开的 tab 保留**；viewer 被 `matchFileViewer` 跳过，文件落到下一个匹配。
-- `settings.toggles`（可选）：在卡片行下追加**嵌套设置行**（仅父级启用时显示），绑定 `SidebarPrefs` 字段；通过卡片底部「功能设置」条在原生弹窗中编辑。行控件形状见 §4.1 的 `SettingRow`：`type: 'switch' | 'text' | 'number'`（v0.11.0+；text/number 行 blur/Enter 提交，number 行按 min/max 钳制，unit 渲染单位后缀）与 `type: 'select'`（v0.13.0+；`options` 支持 value/title/desc/icon，`multi` 多选存数组并按 options 顺序提交；任一项带 icon 时渲染大图标选项卡）与 `type: 'patterns'`（可编辑字符串数组——chips + 删除钮 + 常驻添加输入框，add/remove 均原子提交整表，占位符走 `patternsPlaceholder`，值必须存 `string[]`；能力 gate `settingPatterns`）。内置示例：subagent tab 的 `autoOpenSubagent`、editor tab 的 `editorExplorer` 图标化下拉（工作区路径围栏与它的开关已移除，见 §8.1）与 `explorerExclude` 排除模式行。
+- 功能清单每行始终保留设置齿轮，确保开关对齐；没有可配置项时按钮禁用。配置是否可打开只取决于设置是否存在，不受功能开关影响。
+- `settings.toggles`（可选）：声明**嵌套设置行**，绑定 `SidebarPrefs` 字段；通过行尾的「功能设置」齿轮在弹窗中编辑。行控件形状见 §4.1 的 `SettingRow`：`type: 'switch' | 'text' | 'number'`（v0.11.0+；text/number 行 blur/Enter 提交，number 行按 min/max 钳制，unit 渲染单位后缀）与 `type: 'select'`（v0.13.0+；`options` 支持 value/title/desc/icon，`multi` 多选存数组并按 options 顺序提交；任一项带 icon 时渲染大图标选项卡）与 `type: 'patterns'`（可编辑字符串数组——chips + 删除钮 + 常驻添加输入框，add/remove 均原子提交整表，占位符走 `patternsPlaceholder`，值必须存 `string[]`；能力 gate `settingPatterns`）。内置示例：subagent tab 的 `autoOpenSubagent`、editor tab 的 `editorExplorer` 图标化下拉（工作区路径围栏与它的开关已移除，见 §8.1）与 `explorerExclude` 排除模式行。
 - `settings.pluginToggles`（可选，v0.12.0+）：**插件自有设置行**，行控件与 toggles 相同，但 key 是插件局部的——持久化在 prefs 文档的 `pluginSettings[<descriptor id>]`（开放 map，无需宿主 schema 字段）。tab 与 viewer 都可用（v0.12.0 起 viewer 卡片也有设置条）。**默认值要显式声明**：用户在写入前该 blob 是空的，行读不到值就会显示「—」（switch 行恰好读成关闭，看似正常；select 行则直接不显示当前生效值）。声明 `defaultValue`（JSON 可序列化，与 `options[].value` 同类）后，行在你第一次写入前就显示并返回该值——它表达的是「功能本来就在用的默认」，不是「预填一个待保存的值」；写入后存储值优先。
 - `settings.render`（可选，v0.12.0+）：**自定义设置面板**——追加渲染在行列表之后，可单独存在。props 含 store/service/prefs、本 descriptor 的 `pluginSettings` blob、`updatePluginSetting(key, value)` 与 `close()`；抛错会被吞掉并显示内联错误。
 

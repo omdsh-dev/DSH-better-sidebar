@@ -109,7 +109,8 @@ export function startClueSelectionAction(request: ClueSelectionActionRequest): P
 }
 
 /** One insert decision: the parent appends the payload to its composer draft. */
-interface ClueSelectionInsertInput {
+export interface ClueSelectionInsertInput {
+  readonly clueId?: string
   /** Present when the wrapper/bridge knows the owning clue target. */
   readonly workspaceId?: string
   readonly sessionId?: string
@@ -123,7 +124,7 @@ interface ClueSelectionInsertInput {
 }
 
 /** The parent-installed insert callback; `false` may mean "refused". */
-export type ClueSelectionInsertHandler = (input: ClueSelectionInsertInput) => boolean | void
+export type ClueSelectionInsertHandler = (input: ClueSelectionInsertInput) => boolean | void | Promise<boolean | void>
 
 /**
  * The page-wide bridge. It survives a component tree with no
@@ -184,7 +185,7 @@ export function useClueSelectionActionTarget(scope?: ClueSelectionActionScope): 
   const local = useContext(TargetContext)
   const bridge = useSyncExternalStore(subscribeClueSelectionActionContext, getClueSelectionActionContext, getClueSelectionActionContext)
   if (local !== undefined) {
-    return bridge?.onInsert === undefined ? local : { ...local, onInsert: bridge.onInsert }
+    return local.onInsert !== undefined || bridge?.onInsert === undefined ? local : { ...local, onInsert: bridge.onInsert }
   }
   if (bridge?.workspaceId === undefined || bridge.resource === undefined) return undefined
   // A module-level target is only safe for the surface it named. A caller
@@ -336,8 +337,19 @@ export function SelectionActionMenu(props: SelectionActionMenuProps): ReactNode 
       // A parent may refuse the insert (e.g. the composer moved); keep the
       // menu and the captured selection available for an explicit retry.
       const reference = props.reference ?? { label: selection.trim().split('\n')[0]!.slice(0, 80), text: insert }
-      const accepted = onInsert?.({ workspaceId, sessionId, resource, selection, insert, reference })
-      if (accepted !== false) onClose?.()
+      busyRef.current = true
+      setBusy(action)
+      setFailure(null)
+      try {
+        const accepted = await onInsert?.({ workspaceId, sessionId, resource, selection, insert, reference })
+        if (accepted === false) setFailure({ message: t('clueInsertFailed') })
+        else onClose?.()
+      } catch (error) {
+        setFailure({ message: error instanceof Error ? error.message : t('clueInsertFailed') })
+      } finally {
+        busyRef.current = false
+        setBusy(null)
+      }
       return
     }
     // Freeze synchronously as well as visually: two clicks in one render must not mint two intents.
@@ -455,6 +467,7 @@ export function SelectionActionMenu(props: SelectionActionMenuProps): ReactNode 
 
 /** Props of the wrapper surface. */
 interface ResourceSelectionActionsProps {
+  readonly onInsert?: ClueSelectionInsertHandler
   readonly workspaceId: string
   readonly sessionId: string
   readonly resource: ClueClientResourceInput
@@ -472,12 +485,13 @@ export function ResourceSelectionActions(props: ResourceSelectionActionsProps): 
   const { workspaceId, sessionId, resource, children, comment } = props
   const wrapperRef = useRef<HTMLDivElement>(null)
   const bridge = useClueSelectionActionContext()
+  const onInsert = props.onInsert ?? bridge?.onInsert
   const target: ClueSelectionActionTarget = {
     workspaceId,
     sessionId,
     resource,
     ...(comment === undefined ? {} : { comment }),
-    ...(bridge?.onInsert === undefined ? {} : { onInsert: bridge.onInsert }),
+    ...(onInsert === undefined ? {} : { onInsert }),
   }
   const popup = useSelectionPopup({
     onCommit: () => undefined,
@@ -546,7 +560,7 @@ export function ResourceSelectionActions(props: ResourceSelectionActionsProps): 
             ...(comment === undefined ? {} : { comment }),
             left: popup.popup.left,
             top: popup.popup.top,
-            ...(bridge?.onInsert === undefined ? {} : { onInsert: bridge.onInsert }),
+            ...(onInsert === undefined ? {} : { onInsert }),
             onClose: () => { popup.hide() },
             containerRef: popup.popupRef,
           }),

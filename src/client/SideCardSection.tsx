@@ -1724,7 +1724,7 @@ export function SideCardSection(props: SideCardSectionInjected & Partial<PropsRu
     rowKey: string
     error?: string
     onToggle: (next: boolean) => void
-    /** A feature with related settings shows a separate secondary action. */
+    /** An absent handler leaves the aligned settings action disabled. */
     onOpenSettings?: () => void
   }) => {
     const hasSettingsAction = props.onOpenSettings !== undefined
@@ -1748,13 +1748,12 @@ export function SideCardSection(props: SideCardSectionInjected & Partial<PropsRu
             onChange={props.onToggle}
           />
         </div>
-        {hasSettingsAction && (
-          <IconButton
-            icon={<IconSettingsOutlineRegular size={14} />}
-            label={`${props.title} ${t('settingsPopup')}`}
-            onClick={() => { props.onOpenSettings?.() }}
-          />
-        )}
+        <IconButton
+          icon={<IconSettingsOutlineRegular size={14} />}
+          label={`${props.title} ${t('settingsPopup')}`}
+          disabled={!hasSettingsAction}
+          onClick={() => { props.onOpenSettings?.() }}
+        />
         {props.error !== undefined && (
           <p className={css.cardError} role="alert" data-settings-error={props.rowKey}>
             {props.error}
@@ -1785,9 +1784,7 @@ export function SideCardSection(props: SideCardSectionInjected & Partial<PropsRu
               rowKey: `tab:${tab.id}`,
               error: writeErrors[`tab:${tab.id}`],
               onToggle: (next) => { onToggleTab(tab.id, next) },
-              // The settings gear only while the feature is enabled: its
-              // related settings are dormant while the feature is off.
-              onOpenSettings: prefs.tabsEnabled[tab.id] !== false && hasSettings(tab)
+              onOpenSettings: hasSettings(tab)
                 ? () => { setSettingsFor(tab) }
                 : undefined,
             })}
@@ -1828,7 +1825,7 @@ export function SideCardSection(props: SideCardSectionInjected & Partial<PropsRu
               rowKey: `viewer:${viewer.id}`,
               error: writeErrors[`viewer:${viewer.id}`],
               onToggle: (next) => { onToggleViewer(viewer.id, next) },
-              onOpenSettings: prefs.viewersEnabled[viewer.id] !== false && hasSettings(viewer)
+              onOpenSettings: hasSettings(viewer)
                 ? () => { setSettingsFor(viewer) }
                 : undefined,
             })}

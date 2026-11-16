@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import clsx from 'clsx'
 import { downloadUrl, mediaUrl, type SessionScope } from './api.ts'
 import { t } from './locales.ts'
+import { LoadingIndicator } from './ui/LoadingIndicator.tsx'
 import css from './sidebar.module.css'
 
 export function PdfView(props: { scope: SessionScope; path: string; title: string }) {
@@ -91,7 +92,7 @@ export function PdfView(props: { scope: SessionScope; path: string; title: strin
         </a>
       </div>
       <div className={css.editorPdfStage}>
-        {load.status === 'loading' && <div className={css.editorPlaceholder}>{t('loading')}</div>}
+        {load.status === 'loading' && <LoadingIndicator centered />}
         {load.status === 'error' && <div className={css.editorError}>{load.message}</div>}
         {load.status === 'ready' && (
           <iframe

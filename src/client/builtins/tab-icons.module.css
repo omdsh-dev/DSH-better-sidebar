@@ -34,4 +34,6 @@
   color: var(--dsw-alias-label-primary);
 }
 
-/* Clues uses its own token-layered collection artwork (clues/artwork.tsx). */
+.clues {
+  color: var(--dsw-alias-state-business-primary, var(--dsw-alias-brand-primary));
+}

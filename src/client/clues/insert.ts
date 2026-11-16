@@ -33,6 +33,7 @@ import type { ClueSourceDescriptor } from '../../clues/types.ts'
 import { t } from '../locales.ts'
 import {
   insertDraftReference,
+  insertReferenceOrText,
   type ComposerReference,
   type ComposerSpan,
 } from '../conversation-draft.ts'
@@ -199,6 +200,24 @@ export function insertClueReference(ctx: Context, sessionId: string, request: Cl
   } catch {
     return false
   }
+}
+
+/** Insert a selected excerpt with its stable provenance in one model-facing payload. */
+export function insertClueSelectionReference(ctx: Context, sessionId: string, request: {
+  readonly clueId: string
+  readonly selection: string
+  readonly label?: string
+}): boolean {
+  if (sessionId === '' || request.selection.trim() === '') return false
+  let token: string
+  try { token = serializeClueToken('clue', request.clueId) } catch { return false }
+  // The built-in reference codec sends this payload verbatim; the clue codec
+  // sends only the source token and would discard the selected excerpt.
+  return insertReferenceOrText(ctx, sessionId, {
+    label: request.label ?? request.selection.trim().split('\n')[0]!.slice(0, 80),
+    text: token + '\n\n' + request.selection,
+    clipboardText: token,
+  })
 }
 
 /**

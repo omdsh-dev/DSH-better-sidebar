@@ -353,6 +353,8 @@
   overscroll-behavior: contain;
   scrollbar-width: thin;
 }
+.resultArea[data-clue-browser-state='loading'] { display: flex; flex-direction: column; }
+.resultArea[data-clue-browser-state='loading'] > .listContainer { flex: 1; min-height: 0; }
 .resultArea:focus-visible {
   outline: 2px solid var(--dsw-alias-brand-primary);
   outline-offset: -2px;
@@ -494,6 +496,7 @@
 .packRegion > [data-workbench-section] {
   max-height: 100%;
 }
+.packScroll:has(> [data-loading-indicator][data-centered]) { display: flex; flex-direction: column; }
 .packScroll {
   flex: 1;
   min-height: 0;

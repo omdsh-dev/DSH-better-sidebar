@@ -35,10 +35,8 @@ export async function floatClueWindow(page: Page, marker: Locator): Promise<Loca
   } else {
     await expect(frame).toHaveAttribute('data-floating-window', '')
   }
-  // Floating keeps the native sidebar tab selected (it now only shows the
-  // "open in a floating window" hint), which would hide the workbench the
-  // caller needs next. Return to the clue guide tab, the surface the window
-  // was opened from.
+  // Floating closes the source tab. Select the retained Clues workbench
+  // explicitly when another native tab became active behind the window.
   const workbenchTab = page.locator('[data-sidebar-right-panel]:visible [role="tab"]')
     .filter({ hasText: /^\s*Clues\b/ }).first()
   await expect(workbenchTab).toHaveCount(1)

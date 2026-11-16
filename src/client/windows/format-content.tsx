@@ -259,7 +259,7 @@ export function ClueFormatHost(props: ClueFormatHostProps): ReactNode {
             >
               <div className={css.formatContent}>
                 {editLoading === true
-                  ? <div className={css.documentStatus} data-window-edit-loading><LoadingIndicator label={t('clueResourceEditLoading')} /></div>
+                  ? <div className={css.documentStatus} data-window-edit-loading><LoadingIndicator centered label={t('clueResourceEditLoading')} /></div>
                   : body(false)}
               </div>
             </section>}

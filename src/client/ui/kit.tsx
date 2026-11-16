@@ -140,7 +140,7 @@ export function Notice(props: {
 }): ReactNode {
   const tone = props.tone ?? 'well'
   if (props.kind === 'loading') {
-    return <LoadingIndicator label={props.children} inline={tone === 'inline'} role={props.role}
+    return <LoadingIndicator label={props.children} inline={tone === 'inline'} centered={tone === 'page'} role={props.role}
       className={clsx(css.notice, tone === 'page' ? css.noticePage : tone === 'inline' ? css.noticeInline : css.noticeWell,
         css.noticeHint, props.className)} />
   }

@@ -48,7 +48,7 @@ import { registerGithubSourceClient } from './clues/sources/github/index.tsx'
 import { registerFeishuSourceClient } from './clues/sources/feishu/index.tsx'
 import { appDateTime } from './clues/sources/feishu/time.ts'
 import { installClueInputTriggers } from './clues/mentions.ts'
-import { insertClueReferenceSpan, setClueNoticeSink } from './clues/insert.ts'
+import { insertClueReferenceSpan, insertClueSelectionReference, setClueNoticeSink } from './clues/insert.ts'
 import { clueMentionsCopy, feishuClientLabels } from './clues/locale-copy.ts'
 import { notifyClue } from './clues/notify.ts'
 import { resolveWorkspaceIdForSession } from './clues/workspace-id.ts'
@@ -263,7 +263,9 @@ export function apply(ctx: Context): void {
       invalidate: invalidateClueAgentSave,
     })
     setClueSelectionActionContext({ onInsert: input => {
-      const inserted = input.sessionId !== undefined && insertReferenceOrText(ctx, input.sessionId, input.reference ?? { label: input.selection.slice(0, 80), text: input.insert })
+      const inserted = input.sessionId !== undefined && (input.clueId === undefined
+        ? insertReferenceOrText(ctx, input.sessionId, input.reference ?? { label: input.selection.slice(0, 80), text: input.insert })
+        : insertClueSelectionReference(ctx, input.sessionId, { clueId: input.clueId, selection: input.selection, label: input.reference?.label }))
       if (!inserted) notifyClue(t('clueInsertFailed'))
       return inserted
     } })

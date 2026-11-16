@@ -222,7 +222,7 @@ export interface WindowHandle {
   close(): Promise<void>
   /** Move this instance to its original session's native sidebar; false when unavailable. */
   dock?(): boolean
-  /** Return this same instance to its floating frame (optional for external window faces). */
+  /** Float this same instance and close its native tab after moving the content. */
   float?(): void
   readonly navigation: WindowNavigation
 }
@@ -306,6 +306,8 @@ export interface WindowHostController extends BetterSidebarWindowsClientFace {
   attachSidebar(sidebar: WindowSidebarAdapter): () => void
   /** @internal Move a live window without replacing its content. */
   setSurface(id: string, surface: 'floating' | 'sidebar'): boolean
+  /** @internal Release the old tab after the retained DOM has moved to the floating frame. */
+  completeSurfaceMove(id: string): void
   /** @internal Attach/detach the native body's DOM destination. */
   setSidebarTarget(id: string, sessionId: string, target: HTMLElement | undefined): void
   /** @internal Native close path, sharing the same draft guard. */

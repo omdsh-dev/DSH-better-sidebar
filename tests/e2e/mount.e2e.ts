@@ -422,6 +422,17 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
     'the terminal card must expose the host shell menu',
   ).toHaveCount(1, { timeout: 30_000 })
 
+  // More opens the same settings surface, not a second settings document.
+  await startPage.locator('[data-guide-more]').click()
+  await page.getByRole('menuitem', { name: 'Sidebar settings', exact: true }).click()
+  const guideSettings = pane.locator('[data-window-docked="true"]').filter({ has: page.locator('[data-sidebar-settings]') })
+  await expect(guideSettings).toBeVisible()
+  await expect(guideSettings.locator('[data-sidebar-settings]')).toContainText('General')
+  await guideSettings.locator('[data-window-float]').click()
+  const floatingGuideSettings = page.locator('[data-floating-window]').filter({ has: page.locator('[data-sidebar-settings]') })
+  await floatingGuideSettings.getByRole('button', { name: 'Close', exact: true }).click()
+  await expect(startPage).toBeVisible()
+
   // Every built-in descriptor must be registered as a native tab type: the
   // guide lists one entry per type, so a missing entry is a real regression
   // (descriptor removed, registration failed, or the type got disabled).

@@ -44,7 +44,7 @@ import { cluesApi, invalidateClueRequests, peekClueRequest } from '../api.ts'
 import { openShareWindow } from '../windows/share.tsx'
 import {
   ActionButton, ConfirmDialog, EmptyState, ErrorBlock, IconButton, ListRow, LoadingIndicator, Menu,
-  Notice, SearchField, StatusLine, TextInput,
+  Notice, SearchField, TextInput,
 } from '../../ui/index.ts'
 import { useScrollLoad } from '../../ui/use-scroll-load.ts'
 import { useListNavigation } from '../../ui/use-list-navigation.ts'
@@ -454,7 +454,7 @@ export function CluePacksSection(props: CluePacksSectionProps): ReactNode {
       )}
 
       <div ref={scrollRef} className={css.packScroll} data-clue-pack-scroll>
-        {phase === 'loading' && <StatusLine plain text={<LoadingIndicator inline />} />}
+        {phase === 'loading' && <LoadingIndicator centered />}
         {error !== null && (
           <ErrorBlock
             message={error}

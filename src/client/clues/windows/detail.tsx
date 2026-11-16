@@ -79,7 +79,7 @@ import {
 } from '../resource-summary.tsx'
 import { ClueError } from '../../../clues/error.ts'
 import { ResourceDiscussion } from './comments.tsx'
-import { ResourceSelectionActions, type ClueSelectionActionTarget } from '../selection-actions.tsx'
+import { getClueSelectionActionContext, ResourceSelectionActions, type ClueSelectionActionTarget, type ClueSelectionInsertInput } from '../selection-actions.tsx'
 import { BUILTIN_SOURCE_IDS } from '../../../clues/types.ts'
 import css from './detail.module.css'
 
@@ -269,7 +269,7 @@ function readOnlyReasonCopy(reason: string | undefined): string {
 
 /** The loading body. */
 function DetailStatus(props: { readonly text: string }): ReactNode {
-  return createElement('div', { className: css.status }, createElement(LoadingIndicator, { label: props.text }))
+  return createElement(LoadingIndicator, { centered: true, label: props.text })
 }
 
 /** One explicit failure that could not even produce a preview. */
@@ -608,7 +608,7 @@ function createDetailController(options: ClueDetailWindowOptions): DetailControl
   // active composer/session later when the reader selects its retained body.
   const selectionTarget: ClueSelectionActionTarget | undefined = options.sessionId === undefined || options.sessionId === ''
     ? undefined
-    : { workspaceId, sessionId: options.sessionId, resource }
+    : { workspaceId, sessionId: options.sessionId, resource, onInsert: insertSelection }
   // Optional methods keep existing third-party API fakes body-only.
   const discussionApi = face.api as typeof face.api & {
     commentsList?(workspaceId: string, input: ClueClientResourceInput & { cursor?: string; parentId?: string }, signal?: AbortSignal): Promise<ClueDiscussionPage>
@@ -771,11 +771,9 @@ function createDetailController(options: ClueDetailWindowOptions): DetailControl
   }
 
   function pendingContent(): ReactNode {
-    const header = headerNode()
     return createElement(
       'div',
       { className: css.view, 'data-clue-detail-view': 'pending' },
-      header ?? null,
       createElement(DetailStatus, { text: t('loading') }),
     )
   }
@@ -1575,6 +1573,22 @@ function createDetailController(options: ClueDetailWindowOptions): DetailControl
     if (guard.dirty || state.edit?.saving === true || state.editLoading || state.refreshing) return
     void loadRead({ force: true })
     if (commentsCapabilities?.read === true) void loadComments()
+  }
+
+  /** A quote carries the stable source token as well as the exact selected text. */
+  async function insertSelection(input: ClueSelectionInsertInput): Promise<boolean> {
+    const insert = getClueSelectionActionContext()?.onInsert
+    if (insert === undefined || referenceBusy || (target.clueId === undefined && state.read === null)) return false
+    referenceBusy = true
+    render()
+    try {
+      const clueId = target.clueId ?? (await face.api.ensure(workspaceId, ensureInput())).clue.id
+      if (disposed) return false
+      return (await insert({ ...input, clueId })) !== false
+    } finally {
+      referenceBusy = false
+      render()
+    }
   }
 
   /** Insert one reference; first persistence carries subtitle/info snapshots. */

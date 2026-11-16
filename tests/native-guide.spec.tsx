@@ -155,6 +155,7 @@ describe('GuideGrid', () => {
   it('offers the host browse/create plugin actions in the More menu', async () => {
     const onBrowsePlugins = vi.fn()
     const onCreatePlugin = vi.fn()
+    const onOpenSettings = vi.fn()
     const mounted = renderRoot(createElement(GuideGrid, {
       entries,
       prefs: { ...SIDEBAR_PREFS_DEFAULTS },
@@ -162,6 +163,7 @@ describe('GuideGrid', () => {
       onOpen: () => {},
       onBrowsePlugins,
       onCreatePlugin,
+      onOpenSettings,
     }))
     const trigger = mounted.container.querySelector('[data-guide-more]')
     await act(async () => {
@@ -184,6 +186,12 @@ describe('GuideGrid', () => {
       .find(node => node.textContent?.includes('Browse more plugins'))
     act(() => { (browseAgain as HTMLElement).click() })
     expect(onBrowsePlugins).toHaveBeenCalled()
+    await act(async () => { (trigger as HTMLButtonElement).click(); await Promise.resolve() })
+    const settings = [...document.querySelectorAll('[role="menuitem"]')]
+      .find(node => node.textContent?.includes('Sidebar settings'))
+    expect(settings).toBeDefined()
+    act(() => { (settings as HTMLElement).click() })
+    expect(onOpenSettings).toHaveBeenCalledOnce()
     mounted.unmount()
   })
 

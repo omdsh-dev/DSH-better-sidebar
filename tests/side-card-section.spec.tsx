@@ -258,14 +258,12 @@ describe('SideCardSection declarative inventory', () => {
     expect(html).toContain('png · jpg')
   })
 
-  it('renders the gear corner button on features that declare related settings', () => {
+  it('reserves a settings gear for every feature and disables empty settings', () => {
     const { store, service } = mount()
     const html = renderSection(store, service, 'tabs')
-    // Subagents declares a toggle → its card carries the settings gear
-    // (aria-label = "<title> Feature settings"); Explorer and Image declare
-    // none → no gear, so the total is 1.
-    expect(html.match(/aria-label="[^"]*Feature settings"/g)?.length).toBe(1)
-    expect(html).toContain('Subagents Feature settings')
+    expect(html.match(/aria-label="[^"]*Feature settings"/g)?.length).toBe(2)
+    expect(html).toMatch(/<button[^>]*aria-label="Explorer Feature settings"[^>]*disabled/)
+    expect(html).toMatch(/<button(?=[^>]*aria-label="Subagents Feature settings")(?![^>]*disabled)[^>]*>/)
   })
 
   it('renders the dashed "add plugin" cards inside their own groups', () => {
@@ -318,12 +316,11 @@ describe('SideCardSection declarative inventory', () => {
     expect(viewers.match(/data-settings-row="viewer:/g)?.length ?? 0).toBe(1)
   })
 
-  it('hides the gear of a disabled feature (its related settings are dormant)', () => {
+  it('keeps existing settings accessible when the feature is switched off', () => {
     const { store, service } = mount()
     store.setPrefs({ ...store.getPrefs(), tabsEnabled: { subagent: false } })
     const html = renderSection(store, service, 'tabs')
-    // The disabled Subagents card loses its gear — nothing else renders one.
-    expect(html).not.toContain('Feature settings')
+    expect(html).toMatch(/<button(?=[^>]*aria-label="Subagents Feature settings")(?![^>]*disabled)[^>]*>/)
   })
 
   it('renders the custom-CSS escape hatch as its own Appearance group (no scheme dropdown, no strip row)', () => {

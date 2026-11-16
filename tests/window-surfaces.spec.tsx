@@ -48,6 +48,8 @@ it('moves live content between floating and original-session sidebar without rem
   act(() => { handle.float!() })
   expect(document.querySelector('[data-draft]')).toBe(input)
   expect(sidebar.contains(input)).toBe(false)
+  expect(close).toHaveBeenCalledExactlyOnceWith('retained', 'original')
+  expect(guard).not.toHaveBeenCalled()
   expect(handle.navigation.depth()).toBe(2)
   expect(mounted).toHaveBeenCalledTimes(1)
   expect(unmounted).not.toHaveBeenCalled()

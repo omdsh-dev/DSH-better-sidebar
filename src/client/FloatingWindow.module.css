@@ -4,7 +4,7 @@
  * scrolling body, an optional footer and three resize strips.
  *
  * Tokens only (`--dsw-alias-*` / `--dsw-font-*`): the frame wears the same
- * 1px `border-l2` edge, 6px corners and a flat token surface.
+ * 2px `border-l4` edge, 6px corners and a flat token surface.
  */
 .window {
   position: fixed;
@@ -14,7 +14,7 @@
   min-width: 0;
   min-height: 0;
   background: var(--dsw-alias-bg-layer-1);
-  border: 1px solid var(--dsw-alias-border-l2);
+  border: 2px solid var(--dsw-alias-border-l4);
   border-radius: 6px;
   box-shadow: none;
   overflow: hidden;

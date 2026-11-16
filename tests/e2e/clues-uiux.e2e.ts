@@ -720,8 +720,9 @@ test('clues workbench stays usable across column widths and host themes', async 
     await expect(insertPackAction).toBeVisible()
     const packFrameBounds = (await packWindow.boundingBox())!
     const insertPackBounds = (await insertPackAction.boundingBox())!
-    expect(packFrameBounds.x + packFrameBounds.width - insertPackBounds.x - insertPackBounds.width).toBeCloseTo(13, 0)
-    expect(packFrameBounds.y + packFrameBounds.height - insertPackBounds.y - insertPackBounds.height).toBeCloseTo(13, 0)
+    // The footer keeps its 12px gutter inside the stronger 2px floating edge.
+    expect(packFrameBounds.x + packFrameBounds.width - insertPackBounds.x - insertPackBounds.width).toBeCloseTo(14, 0)
+    expect(packFrameBounds.y + packFrameBounds.height - insertPackBounds.y - insertPackBounds.height).toBeCloseTo(14, 0)
     expect(await packWindow.locator('[data-window-handle]').getByRole('button', { name: 'Insert pack reference', exact: true }).count()).toBe(0)
     expect(await packWindow.locator('[data-clue-pack-window]').evaluate(node => getComputedStyle(node).paddingLeft)).toBe('12px')
 

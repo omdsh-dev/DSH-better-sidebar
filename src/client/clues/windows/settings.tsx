@@ -10,6 +10,7 @@
  */
 import { createElement } from 'react'
 import type { SidebarStore } from '../../state.ts'
+import type { NativeGuideCatalog } from '../../native/guide-catalog.ts'
 import type { BetterSidebarService } from '../../service.ts'
 import type { BetterSidebarWindowsClientFace, WindowHandle } from '../../windows/types.ts'
 
@@ -27,6 +28,7 @@ interface OpenClueSettingsWindowOptions {
   readonly store: SidebarStore
   readonly service: BetterSidebarService
   readonly group?: ClueSettingsGroup
+  readonly guideCatalog?: NativeGuideCatalog
 }
 
 /**
@@ -47,6 +49,7 @@ export function openClueSettingsWindow(options: OpenClueSettingsWindowOptions): 
       store: options.store,
       service: options.service,
       initialGroup: group,
+      guideCatalog: options.guideCatalog,
     }),
   })
 }

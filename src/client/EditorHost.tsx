@@ -51,7 +51,7 @@ import type { ClueSelectionActionTarget } from './clues/selection-actions.tsx'
 import { clearRetargetedPath, closePathTabs, consumeRetargetedPath, pathTabKey, retargetPathTabs } from './tree-mutations.ts'
 import type { EditorToolbarControls, EditorToolbarState, FileViewerDescriptor, TabActionDescriptor } from './service.ts'
 import { firstLeaf, insertLeafAt, leafWithTab, mintTabId, type SidebarStore, type SidebarTab } from './state.ts'
-import { Tabs } from './ui/index.ts'
+import { LoadingIndicator, Tabs } from './ui/index.ts'
 import css from './sidebar.module.css'
 
 /**
@@ -945,7 +945,7 @@ export function EditorHost(props: {
         <div className={css.editorMain}>
           {actionError !== null && <div className={css.editorError}>{actionError}</div>}
           {showEmpty && <div className={css.editorPlaceholder}>{t('editorEmptyHint')}</div>}
-          {!showEmpty && load.status === 'loading' && <div className={css.editorPlaceholder}>{t('loading')}</div>}
+          {!showEmpty && load.status === 'loading' && <LoadingIndicator centered />}
           {!showEmpty && load.status === 'error' && (
             <div className={css.editorError} role="alert">
               <div>{load.fileNotFound ? t('editorFileNotFound', { path }) : load.message}</div>

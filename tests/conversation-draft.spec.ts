@@ -13,6 +13,7 @@
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Context } from '../src/context-types.ts'
+import { insertClueSelectionReference } from '../src/client/clues/insert.ts'
 import {
   appendText,
   appendToDraft,
@@ -190,6 +191,30 @@ function composerCtx(options: {
   } as unknown as Context
   return { ctx, emitted, setDrafts, chipInserts }
 }
+
+describe('clue selection provenance', () => {
+  it('sends the stable source token and exact excerpt together in one chip', () => {
+    const fake = composerCtx()
+    expect(insertClueSelectionReference(fake.ctx, 's1', { clueId: 'c1', selection: 'Selected paragraph.\nSecond line.' })).toBe(true)
+    expect(fake.chipInserts).toEqual([{ ref: {
+      source: 'reference', ref: '[[dsh-clue:c1]]\n\nSelected paragraph.\nSecond line.',
+      label: 'Selected paragraph.', clipboardText: '[[dsh-clue:c1]]',
+    }, span: { draftRev: 0, start: 0, end: 0 } }])
+    expect(fake.setDrafts).toEqual([])
+  })
+  it('keeps provenance and the excerpt when only plain draft insertion is available', () => {
+    const fake = composerCtx({ withChipChannel: false })
+    expect(insertClueSelectionReference(fake.ctx, 's1', { clueId: 'c1', selection: 'Quoted text' })).toBe(true)
+    expect(fake.setDrafts).toEqual(['[[dsh-clue:c1]]\n\nQuoted text'])
+  })
+  it('does not modify the draft for an invalid source or an empty selection', () => {
+    const fake = composerCtx()
+    expect(insertClueSelectionReference(fake.ctx, 's1', { clueId: '', selection: 'Text' })).toBe(false)
+    expect(insertClueSelectionReference(fake.ctx, 's1', { clueId: 'c1', selection: '  ' })).toBe(false)
+    expect(fake.chipInserts).toEqual([])
+    expect(fake.setDrafts).toEqual([])
+  })
+})
 
 describe('insertDraftReference', () => {
   it('hands the host one chip carrying the label and the model text apart', () => {

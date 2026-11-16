@@ -71,6 +71,10 @@
   - 🧪 `tests/market-manifest.spec.ts` checks both the repo and the `pnpm pack` manifest: dependencies must be exactly `ws` / `yaml`, and `src` must stay in `files`.
 
 
+- ✨ **Sidebar polish**: content loading uses a centered ring animation with reduced-motion support. Floating a window removes its former tab while preserving drafts and scroll position; floating edges are slightly stronger, and file preview and Clues have distinct, clearer icons.
+  - **Selection provenance**: inserting a clue body or comment selection carries both a stable `dsh-clue` reference and the exact excerpt. Failed reference preparation keeps the selection available for retry and never sends a message.
+  - **Aligned settings actions**: tab and viewer switches always reserve a settings button, disabled only when no settings exist. Existing configuration stays accessible even when its feature is off. Start-page More now includes Sidebar settings.
+
 - 🧭 **New Clues tab: local files, Feishu tasks/docs and GitHub issues/PRs in one place, previewed and edited in one host window**: the right column gains a tab whose top row is a source segment (local files / GitHub issues / GitHub pull requests / Feishu docs / Feishu tasks, remembering the last choice), followed by a scope row (the current repository or workspace) and the shared `SearchField`. Rows are 30px, with row actions only on hover or keyboard focus (always visible at 44px on touch).
   - **Resource types adapt to the column width**: wide panes show source icons and names in a row; narrow panes use a compact menu. Resizing the browser or pack member picker keeps the selected source.
   - **Resources and Collections use resizable VS Code-style sections**: expand several together and drag the horizontal dividers, or resize with the keyboard. The layout is remembered, and collapsing a section preserves its search, scroll position, and drafts.

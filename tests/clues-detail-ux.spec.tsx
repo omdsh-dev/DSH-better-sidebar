@@ -17,7 +17,7 @@
  *   toolbar and an explicit retry.
  */
 // @vitest-environment jsdom
-import { afterEach, beforeAll, beforeEach, expect, it } from 'vitest'
+import { afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest'
 import { act } from 'react-dom/test-utils'
 import { createElement, Fragment, type ReactNode } from 'react'
 import { renderRoot, setupReactAct, type RenderedRoot } from './test-utils.ts'
@@ -35,6 +35,7 @@ import { FeishuDocsPreview } from '../src/client/clues/sources/feishu/docs-previ
 import { FeishuTaskEditor } from '../src/client/clues/sources/feishu/task-editor.tsx'
 import { DEFAULT_FEISHU_LABELS } from '../src/client/clues/sources/feishu/labels.ts'
 import { SidebarApiError } from '../src/client/api.ts'
+import { setClueSelectionActionContext } from '../src/client/clues/selection-actions.tsx'
 setupReactAct()
 beforeAll(() => { Object.defineProperty(navigator, 'language', { value: 'en-US', configurable: true }) })
 const VIEWPORT = { width: 1_000, height: 800 }
@@ -191,11 +192,12 @@ beforeEach(() => {
   Object.defineProperty(window, 'innerHeight', { configurable: true, value: VIEWPORT.height })
 })
 afterEach(() => {
+  setClueSelectionActionContext(null)
   view?.unmount(); view = undefined; host?.dispose(); host = undefined; document.body.innerHTML = ''
 })
 /** Mount the real window host and open one detail. */
 async function mountDetail(options: FaceOptions = {}, extra: {
-  readCache?: ClueDetailReadCache; target?: ClueDetailTarget; subtitle?: string; info?: ClueResourceInfo
+  readCache?: ClueDetailReadCache; target?: ClueDetailTarget; subtitle?: string; info?: ClueResourceInfo; sessionId?: string
   insert?: boolean; onInsertClue?: (clueId: string, title: string) => boolean; onAddToPack?: (target: ClueDetailTarget) => void
 } = {}): Promise<Calls> {
   const { face, calls } = faceOf(options)
@@ -203,7 +205,7 @@ async function mountDetail(options: FaceOptions = {}, extra: {
   view = renderRoot(createElement(WindowHost, { host, formats: face }))
   act(() => {
     openClueDetailWindow({
-      windows: host!, face, workspaceId: 'ws-1',
+      windows: host!, face, workspaceId: 'ws-1', sessionId: extra.sessionId,
       target: { ...(extra.target ?? TARGET), ...(extra.subtitle === undefined ? {} : { subtitle: extra.subtitle }), ...(extra.info === undefined ? {} : { info: extra.info }) },
       ...(extra.readCache === undefined ? {} : { readCache: extra.readCache }),
       ...(extra.insert === true || extra.onInsertClue !== undefined ? { onInsertClue: extra.onInsertClue ?? (() => true) } : {}),
@@ -247,6 +249,30 @@ async function closeWindow(): Promise<void> {
   const close = q<HTMLButtonElement>('button[aria-label="Close"]')
   await act(async () => { close.click(); await Promise.resolve() })
 }
+  it.each([undefined, 'stored-clue'])('preserves selection ownership and ensures only an unstored source (%s)', async clueId => {
+    const insert = vi.fn(() => true)
+    setClueSelectionActionContext({ onInsert: insert })
+    const target = { ...TARGET, clueId }
+    const calls = await mountDetail({}, { target, sessionId: 'selection-session' })
+    const heading = q<HTMLElement>('[data-window-document-body] h1')
+    const range = document.createRange()
+    range.selectNodeContents(heading)
+    const selection = window.getSelection()!
+    selection.removeAllRanges()
+    selection.addRange(range)
+    act(() => { heading.dispatchEvent(new MouseEvent('mouseup', { bubbles: true })) })
+    const action = document.querySelector<HTMLButtonElement>('[data-clue-selection-action="insert"]')!
+    expect(action).not.toBeNull()
+    await act(async () => { action.click(); await Promise.resolve() })
+    await flush()
+    expect(calls.ensure).toHaveLength(clueId === undefined ? 1 : 0)
+    expect(insert).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      clueId: clueId ?? 'c9', workspaceId: 'ws-1', sessionId: 'selection-session', selection: 'Read only',
+    }))
+    expect(document.querySelector('[data-clue-selection-menu]')).toBeNull()
+    selection.removeAllRanges()
+  })
+
   it('paints a hot cached preview synchronously and never loads the edit document', async () => {
     const cache: ClueDetailReadCache = {
       peek: () => ({ ...READ_OLD, data: { title: 'Cached issue title', text: '# body' }, info: { repository: 'acme/widgets', number: 7, state: 'open' } }),

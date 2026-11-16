@@ -48,6 +48,7 @@ interface RetainedSurfaceProps {
   readonly surface: WindowView['surface']
   readonly destination: HTMLElement | undefined
   readonly children: ReactNode
+  readonly onPlaced: () => void
 }
 
 /**
@@ -98,6 +99,7 @@ class RetainedSurface extends Component<RetainedSurfaceProps> {
       node.scrollLeft = position.left
     }
     if (active?.isConnected && document.activeElement !== active) active.focus({ preventScroll: true })
+    this.props.onPlaced()
   }
 
   componentDidMount(): void { this.place(null) }
@@ -124,10 +126,11 @@ function WindowFrame(props: {
   const changeBox = useCallback((box: WindowView['box']): void => { host.setBox(id, box) }, [host, id])
   const changeMaximized = useCallback((maximized: boolean): void => { host.setMaximized(id, maximized) }, [host, id])
   const back = useCallback((): void => { host.popPage(id) }, [host, id])
+  const placed = useCallback((): void => { host.completeSurfaceMove(id) }, [host, id])
 
   return (
     <RetainedSurface target={target} id={id} surface={view.surface}
-      destination={view.surface === 'floating' ? document.body : view.sidebarTarget}>
+      destination={view.surface === 'floating' ? document.body : view.sidebarTarget} onPlaced={placed}>
     <FloatingWindow
       title={view.title}
       portalTarget={target}
