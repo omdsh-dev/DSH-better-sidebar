@@ -19,9 +19,8 @@ export const cluesTab: TabDescriptor = {
   title: () => t('clueTabTitle'),
   description: () => t('guideDescClues'),
   icon: cluesTabIcon,
-  // Between Changes (20) and Tasks (30): the page is a working surface, not a
-  // diagnostic, and the four host-facing pages keep their own order.
-  order: 25,
+  // Keep Clues between Changes and Tasks in the default guide order.
+  order: 17,
   single: true,
   settings: {
     pluginToggles: [{

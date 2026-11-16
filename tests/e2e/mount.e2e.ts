@@ -416,6 +416,13 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   }))
   expect(startPageGeometry.columns).toBe(startPageGeometry.width >= 520 ? '2' : '1')
   expect(startPageGeometry.align).toBe('center')
+  expect(await startPage.locator('[data-sidebar-right-guide-entry]').evaluateAll(nodes =>
+    nodes.map(node => node.getAttribute('data-sidebar-right-guide-entry'))))
+    .toEqual(['files', 'sidechat', 'git', 'clues', 'subagent', 'terminal'])
+  const clueCard = startPage.locator('[data-sidebar-right-guide-entry="clues"]')
+  await expect(clueCard).toContainText('Clues (beta)')
+  await expect(clueCard).toContainText('A context hub for local files, Feishu and GitHub')
+  await expect(startPage.locator('[data-sidebar-right-guide-entry="sidechat"]')).not.toContainText('beta')
   // The host's terminal card keeps its native shell menu under the takeover.
   await expect(
     page.locator('[data-sidebar-right-guide-entry="terminal"] [data-guide-shell-menu]'),

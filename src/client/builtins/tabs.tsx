@@ -215,7 +215,7 @@ export function builtinTabs(ctx: Context): readonly TabDescriptor[] {
       title: () => t('changes'),
       description: () => t('guideDescGit'),
       icon: changesTabIcon,
-      order: 20,
+      order: 16,
       single: true,
       // Custom settings panel (not a declarative toggle row): the pinned
       // commit-message model is picked from the DISCOVERED catalog, so the
@@ -244,7 +244,7 @@ export function builtinTabs(ctx: Context): readonly TabDescriptor[] {
       title: () => t('subagent'),
       description: () => t('guideDescSubagent'),
       icon: tasksTabIcon,
-      order: 30,
+      order: 18,
       single: true,
       // Declarative settings: auto-open, default view, task folding, and the
       // jobs drawer switches share the existing Tasks card's settings gear.
@@ -315,7 +315,8 @@ export function builtinTabs(ctx: Context): readonly TabDescriptor[] {
       title: () => t('sideChat'),
       description: () => t('guideDescSidechat'),
       icon: sidechatTabIcon,
-      order: 35,
+      // The host's New terminal guide stays at 20; keep the other pages before it.
+      order: 15,
       // Codex-style: EVERY side conversation is its own tab. A plain open
       // mints a fresh tab flagged `autoCreate` (the view creates the EMPTY
       // thread on mount); a thread switch from the header menu parks the
@@ -412,7 +413,7 @@ export function builtinTabs(ctx: Context): readonly TabDescriptor[] {
       title: () => t('terminal'),
       description: () => t('guideDescTerminal'),
       icon: terminalTabIcon,
-      // Below the four host-facing pages (10..35) and above the hidden diff
+      // Below the host-facing pages (10..18) and above the hidden diff
       // tab: the terminal is a secondary tool, but a visible menu row.
       order: 40,
       bottomOnly: true,
