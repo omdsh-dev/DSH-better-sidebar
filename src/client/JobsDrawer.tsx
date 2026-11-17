@@ -213,6 +213,7 @@ export function JobsDrawer(props: JobsDrawerProps): ReactNode {
             // back into the per-second render.
             const meta = [
               ...(multiOwner ? [row.ownerTitle] : []),
+              ...(live && job.progress !== undefined && job.progress !== '' ? [job.progress] : []),
               ...(job.detail !== undefined && job.detail !== '' ? [job.detail] : []),
             ].filter(Boolean).join(' · ')
             return (
