@@ -18,6 +18,23 @@ import type { HostShellCatalog } from '../src/client/terminal-client.ts'
 import { SIDEBAR_PREFS_DEFAULTS } from '../src/prefs-shared.ts'
 import { renderRoot, setupReactAct } from './test-utils.ts'
 
+/** The settings wire the start-page writes end up on (asserted below). */
+const settingsUpdate = vi.fn<
+  (patch: Record<string, unknown>) => Promise<{ value: unknown; revision: number }>
+>(async () => ({ value: {}, revision: 2 }))
+// Partial mock: only the write this spec drives is stubbed, everything else
+// keeps the real client.
+vi.mock('../src/client/api.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/client/api.ts')>()
+  return {
+    ...actual,
+    api: {
+      ...actual.api,
+      settingsUpdate: (patch: Record<string, unknown>) => settingsUpdate(patch),
+    },
+  }
+})
+
 setupReactAct()
 
 beforeAll(() => {
@@ -290,6 +307,48 @@ describe('NativeGuide', () => {
     act(() => { (card as HTMLButtonElement).click() })
     expect(openTab).toHaveBeenCalledWith('a', { replaceTab: true })
     expect(close).toHaveBeenCalled()
+    mounted.unmount()
+  })
+
+  it('re-showing a hidden card sends the explicit false on the wire (#1212)', async () => {
+    settingsUpdate.mockClear()
+    // The host resolves the merged document: the touched key is now false.
+    settingsUpdate.mockResolvedValue({ value: { guideHidden: { a: false } }, revision: 2 })
+    const store = createSidebarStore()
+    store.setSession('s1')
+    store.setPrefs({ ...store.getPrefs(), guideHidden: { a: true } })
+    const service = createBetterSidebarService(store)
+    // One stable snapshot: useSyncExternalStore loops on a fresh array.
+    const catalogEntries = [entry('a')]
+    const catalog = { getSnapshot: () => catalogEntries, subscribe: () => () => {} }
+    const mounted = renderRoot(createElement(NativeGuide, { catalog, store, service }))
+    await act(async () => {
+      ;(mounted.container.querySelector('[data-guide-more]') as HTMLButtonElement).click()
+      await Promise.resolve()
+    })
+    const reorder = [...document.querySelectorAll('[role="menuitem"]')]
+      .find(node => node.textContent?.includes('Reorder'))
+    expect(reorder).toBeDefined()
+    await act(async () => {
+      ;(reorder as HTMLElement).click()
+      await Promise.resolve()
+    })
+    const toggle = document.querySelector('input[aria-label="Show on the start page: A"]') as HTMLInputElement
+    expect(toggle).not.toBeNull()
+    expect(toggle.checked).toBe(false)
+    await act(async () => {
+      toggle.click()
+      // The host deep-merges nested plain objects, so a patch with the key
+      // absent would leave the stored true in place: the wire must carry false.
+      await vi.waitFor(() => {
+        expect(settingsUpdate).toHaveBeenCalledWith({ guideHidden: { a: false } })
+      })
+      // Every reader asks `guideHidden[key] === true`, so a stored false
+      // already reads as shown; no map normalization is needed.
+      await vi.waitFor(() => {
+        expect(store.getPrefs().guideHidden.a).not.toBe(true)
+      })
+    })
     mounted.unmount()
   })
 })

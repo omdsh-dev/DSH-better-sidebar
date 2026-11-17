@@ -15,6 +15,7 @@ import { createRoot } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
 import type { Context } from '../src/context-types.ts'
 import { EditorHost } from '../src/client/EditorHost.tsx'
+import { TextEditor } from '../src/client/TextEditor.tsx'
 import { api } from '../src/client/api.ts'
 import { createBetterSidebarService, type FileViewerProps } from '../src/client/service.ts'
 import { allLeaves, createSidebarStore, type SidebarTab } from '../src/client/state.ts'
@@ -674,7 +675,7 @@ describe('EditorHost (files window)', () => {
     }
   })
 
-  it('the header hosts the viewer toolbar (mode toggle / dirty dot / save)', () => {
+  it('the header hosts the viewer toolbar (mode toggle / dirty dot / save / find)', () => {
     const { store, ctx } = setup()
     const service = ctx.betterSidebar
     const calls: string[] = []
@@ -686,6 +687,7 @@ describe('EditorHost (files window)', () => {
         viewerProps.onToolbarControls?.({
           setMode: (next) => { calls.push(`mode:${next}`) },
           save: () => { calls.push('save') },
+          search: () => { calls.push('search') },
         })
         viewerProps.onToolbarState?.({ modes: true, mode: 'preview', dirty: true, editable: true, saveState: 'idle' })
         return () => { viewerProps.onToolbarControls?.(null) }
@@ -712,11 +714,46 @@ describe('EditorHost (files window)', () => {
       expect(buttons.map(b => b.textContent)).toContain('Preview')
       expect(buttons.map(b => b.textContent)).toContain('Edit')
       expect(header.querySelector('button[aria-label="Save"]')).not.toBeNull()
+      expect(header.querySelector('button[aria-label="Find"]')).not.toBeNull()
       expect(header.querySelector('[title="Unsaved"]')).not.toBeNull()
       // The header commands reach the viewer's registered controls.
       act(() => { buttons.find(b => b.textContent === 'Edit')!.click() })
       act(() => { header.querySelector<HTMLButtonElement>('button[aria-label="Save"]')!.click() })
-      expect(calls).toEqual(['mode:edit', 'save'])
+      act(() => { header.querySelector<HTMLButtonElement>('button[aria-label="Find"]')!.click() })
+      expect(calls).toEqual(['mode:edit', 'save', 'search'])
+    } finally {
+      unmount()
+    }
+  })
+
+  it('offers find in the host header and flips a markdown preview to edit (#1214)', async () => {
+    const { store, ctx } = setup()
+    const service = ctx.betterSidebar
+    // The REAL text editor, hoisted into this host's header. A markdown file
+    // starts in preview — a surface with no find of its own — so the header's
+    // find must flip to edit before opening CodeMirror's search panel.
+    service.registerFileViewer({ id: 'markdown', exts: ['md'], fetchStrategy: 'fsRead', component: TextEditor })
+    fsRead.mockResolvedValueOnce({ kind: 'text', content: '# Title\n\nneedle here\n', size: 22 })
+    service.openTab({ type: 'editor', title: 'a.md', path: '/tmp/a.md', id: 'editor:/tmp/a.md' })
+    const fileTab = (): SidebarTab =>
+      allLeaves(store.getSnapshot().state!.bottomSplits).flatMap(leaf => leaf.tabs)
+        .find(tab => tab.path === '/tmp/a.md')!
+    const { container, unmount } = mountHost(ctx, store, fileTab)
+    try {
+      // Settle the mocked fs.read → the viewer mount → its toolbar report.
+      await act(async () => { await new Promise<void>(resolve => { setTimeout(resolve, 0) }) })
+      const header = container.querySelector('input')!.parentElement!
+      const find = header.querySelector<HTMLButtonElement>('button[aria-label="Find"]')
+      expect(find, 'the host header exposes the find command').not.toBeNull()
+      const modeButton = (label: string): HTMLButtonElement =>
+        [...container.querySelectorAll('button')].find(button => button.textContent === label) as HTMLButtonElement
+      expect(modeButton('Preview').classList.length).toBeGreaterThan(modeButton('Edit').classList.length)
+      expect(container.querySelector('.cm-search')).toBeNull()
+
+      act(() => { find!.click() })
+      expect(container.querySelector('.cm-search'), 'the find button opens the search panel').not.toBeNull()
+      // The preview→edit hop: the panel lives in the CodeMirror surface.
+      expect(modeButton('Edit').classList.length).toBeGreaterThan(modeButton('Preview').classList.length)
     } finally {
       unmount()
     }
@@ -757,9 +794,12 @@ describe('EditorHost (files window)', () => {
     try {
       const header = container.querySelector('input')!.parentElement!
       expect(header.querySelector('button[aria-label="Save"]')).toBeNull()
+      // This viewer registers no search command, so the header offers no find.
+      expect(header.querySelector('button[aria-label="Find"]')).toBeNull()
       // A read that hands the document over re-enables saving.
       act(() => { report!(false) })
       expect(header.querySelector('button[aria-label="Save"]')).not.toBeNull()
+      expect(header.querySelector('button[aria-label="Find"]'), 'still no search command').toBeNull()
     } finally {
       unmount()
     }
@@ -779,7 +819,7 @@ describe('EditorHost (files window)', () => {
       return createElement('div', null, 'paged-preview')
     }
     service.registerFileViewer({ id: 'test:big', exts: ['big'], fetchStrategy: 'fsRead', component: FakeViewer })
-    fsRead.mockResolvedValueOnce({ kind: 'too-large', size, head: 'e30=' })
+    fsRead.mockResolvedValueOnce({ kind: 'too-large', size, head: 'e30=', reason: 'size' })
     service.openTab({ type: 'editor', title: 'big.big', path: '/tmp/big.big', id: 'editor:/tmp/big.big' })
     const fileTab = (): SidebarTab =>
       allLeaves(store.getSnapshot().state!.bottomSplits).flatMap(leaf => leaf.tabs)
@@ -792,7 +832,7 @@ describe('EditorHost (files window)', () => {
       })
       expect(container.textContent).toContain('paged-preview')
       expect(fsRead).toHaveBeenCalledWith(expect.anything(), '/tmp/big.big')
-      expect(seen?.largeFile).toEqual({ size })
+      expect(seen?.largeFile).toEqual({ size, reason: 'size' })
       expect(seen?.size).toBe(size)
       expect(seen?.content, 'the document is not handed over').toBeUndefined()
     } finally {

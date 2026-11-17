@@ -9,6 +9,7 @@
  */
 import type { SidechatImageUpload } from '../sidechat-images.ts'
 import type { ShellCandidateView } from '../terminal-shells.ts'
+import type { EditLimitReason } from '../editor-limits.ts'
 import { encodeHtmlUrl } from '../html-route.ts'
 import { hostRouteUrl } from './host-route-url.ts'
 import { resolveSidebarPath } from './paths.ts'
@@ -189,11 +190,13 @@ export interface FsTextResult { kind: 'text'; content: string; size: number; mti
  *  `head` carries the first bytes (base64) for viewer detect sniffing. */
 export interface FsBinaryResult { kind: 'binary'; size: number; mtimeMs?: number; head: string }
 /**
- * The file is above the editable threshold: the host sends no document, only
- * the size and a 4 KiB sniff head. The viewer answers with a read-only paged
- * preview, and the head still lets a `detect`-based viewer claim the file.
+ * The host refused the document: above the editable byte threshold, or with a
+ * line above the edit buffer's line limit (#1165). It sends no document, only
+ * the size, a 4 KiB sniff head and (on a current host) which limit was hit.
+ * The viewer answers with a read-only paged preview, and the head still lets a
+ * `detect`-based viewer claim the file.
  */
-export interface FsTooLargeResult { kind: 'too-large'; size: number; mtimeMs?: number; head: string }
+export interface FsTooLargeResult { kind: 'too-large'; size: number; mtimeMs?: number; head: string; reason?: EditLimitReason }
 /** One `fs.read` outcome. */
 export type FsReadResult = FsTextResult | FsBinaryResult | FsTooLargeResult
 

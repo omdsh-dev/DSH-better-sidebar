@@ -24,6 +24,8 @@ import { resolveSidebarPath } from '../paths.ts'
 import { isZh, t } from '../locales.ts'
 import { GitGraphSection, type GraphDetailsSelection } from './GitGraphSection.tsx'
 import type { SidebarDiffRef } from '../state.ts'
+import { buildRepositoryLabels } from './repo-labels.ts'
+import { RepoSwitcher } from './RepoSwitcher.tsx'
 import {
   ConfirmDialog, IconButton, Notice, StatusBadge, invalidateGitStatus, statusOfXY,
   useGitStatus, type GitFileStatus, type GitTone, type StatusTone,
@@ -65,6 +67,19 @@ const BADGE_TONE: Record<GitTone, StatusTone> = {
  *  this so non-Error rejections never render as '[object Object]'). */
 function errorMessage(reason: unknown): string {
   return reason instanceof Error ? reason.message : String(reason)
+}
+
+/** Existing Host fact used only to disambiguate ambiguous path spellings (a
+ *  leading `//` is either POSIX or Windows UNC). Read through the guarded
+ *  face; never rendered and never requested. */
+function hostHomeOf(ctx: Context | undefined): string | undefined {
+  try {
+    const remote = ctx?.get('remote') as { $host?: { home?: unknown } } | undefined
+    return typeof remote?.$host?.home === 'string' ? remote.$host.home : undefined
+  } catch {
+    // A composition without the Remote service must not take the lens down.
+    return undefined
+  }
 }
 
 /** One checkout root in the form comparisons use: `git rev-parse` reports
@@ -556,6 +571,25 @@ export function GitLens(props: GitLensProps) {
   if (lastStatus.current.key !== statusKey) lastStatus.current = { key: statusKey, value: null }
   if (status.snapshot !== null) lastStatus.current.value = status.snapshot
   const snapshot: GitStatusResult | null = status.snapshot ?? lastStatus.current.value
+  // Display-only labels for the picker and the ⋯ → Repository menu. The
+  // reference is the session's existing cwd (best effort — it can shift with
+  // the active worktree); `hostHome` only disambiguates `//` dialects and is
+  // never rendered.
+  const hostHome = hostHomeOf(ctx)
+  // A requested repoRoot can disappear from server discovery; the server then
+  // falls back. Show the RESOLVED status root, never the stale request or an
+  // arbitrary first option — matched by identity but keeping the option's
+  // original root, or a disabled stand-in with its own short label.
+  const actualRoot = snapshot?.root
+  const selectedCandidate = actualRoot === undefined ? undefined : repoChoices.find(root => sameRepoRoot(root, actualRoot))
+  const unlistedRoot = actualRoot !== undefined && selectedCandidate === undefined ? actualRoot : undefined
+  const allRepositoryLabels = useMemo(
+    () => buildRepositoryLabels(unlistedRoot === undefined ? repoChoices : [...repoChoices, unlistedRoot], scope.cwd, hostHome),
+    [repoChoices, unlistedRoot, scope.cwd, hostHome],
+  )
+  const repositoryLabels = unlistedRoot === undefined ? allRepositoryLabels : allRepositoryLabels.slice(0, -1)
+  const resolvedRepository = selectedCandidate ?? actualRoot
+  const resolvedRepositoryLabel = unlistedRoot === undefined ? undefined : allRepositoryLabels.at(-1)?.label
   useEffect(() => {
     const repositories = snapshot?.repositories
     if (repositories !== undefined && repositories.length > 1) setRepoChoices(repositories)
@@ -1104,21 +1138,19 @@ export function GitLens(props: GitLensProps) {
             every view below is pinned to ONE of them — without this row the
             panel silently shows the first root, so nothing on screen says the
             others exist. The switcher is not a second source of truth:
-            `repoChoices` comes from the status snapshot, `chooseRepo` re-pins
-            the scope (reads, writes, graph) to the clicked root. */}
+            repoChoices comes from the status snapshot, chooseRepo re-pins the
+            scope (reads, writes, graph) to the picked root. It renders chips
+            while they fit and one select otherwise; the list is shared with
+            the More -> Repository submenu. */}
         {isRepo && repoChoices.length > 1 && (
-          <div className={css.repoSwitcher} data-scm-repos role="group" aria-label={t('gitRepository')}>
-            {repoChoices.map(root => {
-              const isActive = sameRepoRoot(root, repoRoot ?? snapshot?.root)
-              return (
-                <button key={root} type="button" className={css.repoChip} data-scm-repo={root}
-                  data-active={isActive ? 'true' : undefined} aria-pressed={isActive} title={root}
-                  disabled={busy || suggesting} onClick={() => { chooseRepo(root) }}>
-                  {baseName(root)}
-                </button>
-              )
-            })}
-          </div>
+          <RepoSwitcher
+            labels={repositoryLabels}
+            value={resolvedRepository}
+            standInLabel={resolvedRepositoryLabel}
+            disabled={busy || suggesting}
+            visible={visible && active}
+            onChoose={chooseRepo}
+          />
         )}
 
         {isRepo && (
@@ -1149,7 +1181,9 @@ export function GitLens(props: GitLensProps) {
                     { id: 'pull', label: t('pull'), disabled: busy || suggesting || snapshot?.detached === true },
                     { id: 'push', label: t('push'), disabled: busy || suggesting || snapshot?.detached === true },
                     ...(repoChoices.length > 1 ? [{ id: 'repos', label: t('gitRepository'),
-                      submenu: repoChoices.map(root => ({ id: `repo:${root}`, label: baseName(root), disabled: busy || suggesting })),
+                      submenu: repoChoices.map(root => ({ id: `repo:${root}`,
+                        label: repositoryLabels.find(item => item.root === root)?.label ?? baseName(root), disabled: busy || suggesting,
+                      })),
                     }] : []),
                     ...(worktrees.length > 1 ? [{ id: 'worktrees', label: t('worktree'),
                       submenu: worktrees.map(entry => ({ id: `worktree:${entry.path}`,

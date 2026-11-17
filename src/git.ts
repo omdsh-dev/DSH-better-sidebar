@@ -400,8 +400,12 @@ export interface RunGitOptions {
  * the Windows host sees it. The legacy `\\wsl$\<distro>\…` share and the
  * forward-slash spelling (`//wsl.localhost/…`, which a POSIX-ish caller
  * hands over) both name the same tree, so all three are accepted.
+ *
+ * Captures, in order: the share exactly as spelled (`wsl.localhost` or `wsl$`
+ * — {@link wslRootSpelling} has to give a path back on the SAME share), the
+ * distribution, and the distribution-side path.
  */
-const WSL_UNC_ROOT = /^[/\\]{2}wsl(?:\.localhost|\$)[/\\]([^/\\]+)(?:[/\\](.*))?$/i
+const WSL_UNC_ROOT = /^[/\\]{2}(wsl(?:\.localhost|\$))[/\\]([^/\\]+)(?:[/\\](.*))?$/i
 
 /** Where one git command must run when the cwd lives in a distribution. */
 export interface WslLaunch {
@@ -427,10 +431,39 @@ export interface WslLaunch {
 export function wslLaunch(cwd: string): WslLaunch | undefined {
   const match = WSL_UNC_ROOT.exec(cwd)
   if (match === null) return undefined
-  const distro = match[1]
+  const distro = match[2]
   if (distro === undefined || distro === '') return undefined
-  const rest = (match[2] ?? '').replace(/[/\\]+$/, '')
+  const rest = (match[3] ?? '').replace(/[/\\]+$/, '')
   return { distro, path: rest === '' ? '/' : `/${rest.replace(/[\\/]+/g, '/')}` }
+}
+
+/**
+ * The UNC spelling of a repository root git reported from INSIDE a
+ * distribution, or `reported` untouched when `cwd` is not a WSL workspace.
+ *
+ * `rev-parse --show-toplevel` runs in the distribution (see
+ * {@link wslLaunch}) and therefore answers with a POSIX path — `/home/me/repo`
+ * for a `\\wsl.localhost\Ubuntu\home\me\repo` cwd. That string is not a path
+ * this host can hand back to git: {@link wslLaunch} recognises only the UNC
+ * spelling, so every later command on the reported root silently fell through
+ * to the Windows git and died with `cannot change to '/home/me/repo'` — the
+ * whole Git panel read as "failed to load" (issue #1189). Re-spelling the root
+ * through the cwd it was discovered from keeps every command inside the
+ * distribution.
+ */
+export function wslRootSpelling(cwd: string, reported: string): string {
+  const match = WSL_UNC_ROOT.exec(cwd)
+  if (match === null) return reported
+  const share = match[1]
+  const distro = match[2]
+  if (share === undefined || distro === undefined || distro === '') return reported
+  // Already a host-side path (a caller resolved a linked checkout, or git
+  // answered with the UNC spelling itself): prefixing again would double it.
+  if (WSL_UNC_ROOT.test(reported)) return reported
+  const rest = reported.replace(/\\/g, '/').replace(/^\/+|\/+$/g, '')
+  return rest === ''
+    ? `\\\\${share}\\${distro}`
+    : `\\\\${share}\\${distro}\\${rest.replace(/\//g, '\\')}`
 }
 
 /** Count the NUL bytes of one stdout chunk (the `-z` field separator). */
@@ -770,7 +803,10 @@ export function repoRoots(cwd: string): Promise<string[]> {
 async function discoverRepoRoots(cwd: string): Promise<string[]> {
   const roots: string[] = []
   try {
-    roots.push(await directRepoRoot(cwd))
+    // git answers from inside the distribution when the cwd lives there, so
+    // the reported root needs the UNC spelling back before it becomes the base
+    // of every later command (issue #1189).
+    roots.push(wslRootSpelling(cwd, await directRepoRoot(cwd)))
   } catch {
     // Current directory is not a Git repository root.
   }
@@ -1006,7 +1042,14 @@ async function listedWorktrees(cwd: string): Promise<GitWorktreeRecord[]> {
       raw = await runGit(cwd, ['worktree', 'list', '--porcelain'])
     }
   }
-  return parseWorktreeList(raw).filter(entry => !entry.prunable)
+  return parseWorktreeList(raw)
+    .filter(entry => !entry.prunable)
+    // Every path in this listing was printed by the git that ran in `cwd`, so a
+    // linked checkout of a WSL workspace arrives POSIX-spelled exactly like the
+    // main root does. Re-spell them HERE, the one place both the inventory and
+    // the selector read from: a POSIX entry would neither match the current
+    // root nor survive as a command target (issue #1189).
+    .map(entry => ({ ...entry, path: wslRootSpelling(cwd, entry.path) }))
 }
 
 /**

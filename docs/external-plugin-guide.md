@@ -26,9 +26,9 @@
 
 | 事项 | 说明 |
 |---|---|
-| 生命周期回调 | 原生面的「打开」不区分新建/聚焦，因此 `onOpen` 每次打开都触发（`onActivate` 仅在插件自己的底部工作台里触发）。程序化 `closeTab` 与 `activateTab` 在原生 tab 上正常工作：关闭走宿主 per-session 面，回调拿到完整 `tab`（**含 `meta`**）；激活经 `ISidebarRight.focus` 聚焦 tab 与其 pane。**例外**：用户直接点原生 tab 上的 × 关闭不会触发 `onClose`（宿主不广播该事件，插件在 tab 体卸载时丢弃记录） |
-| 去重 | 原生按 `(kind, 地址)` 去重：有 `createTab` 的类型每次新开一个 tab（sidechat / diff），其余聚焦已有 tab；`dedupeKey` 的自定义语义不参与原生面 |
-| 布局持久化 | 原生栏的布局**只在内存**（刷新后回到折叠默认），插件自己的底部工作台仍然持久化 |
+| 生命周期回调 | 原生面的「打开」不区分新建/聚焦，因此 `onOpen` 每次打开都触发（`onActivate` 仅在插件自己的底部工作台里触发）。程序化 `closeTab` 与 `activateTab` 在原生 tab 上正常工作：关闭走宿主 per-session 面，回调拿到完整 `tab`（**含 `meta`**）；激活经 `ISidebarRight.focus` 聚焦 tab 与其 pane。**侧聊例外已修复**：sidechat 通过宿主 `registerCloseHandler` 接收原生 ×/菜单关闭，归档并释放该线程一次；组件卸载、折叠、刷新和插件卸载不触发归档。其他类型仍需自行注册宿主关闭处理器 |
+| 去重 | 原生页面默认每个 pane 同 kind 单实例，`createTab` / `revealIfOpened: false` 不能覆盖这条宿主规则。声明 `multiple: true`（或返回 boolean 的谓词）才会创建独立原生 occurrence；内置 sidechat 默认不声明，设置切到「每个对话独立页」后谓词为 true，原生类型随设置翻转重注册。多实例类型的 `dedupeKey` 在原生打开时参与查找；显式 `seed.meta` 的线程打开同时检查底部与原生栏，已有线程只聚焦其所属面。底部工厂返回值也会合并显式 `seed.meta` 再去重。 |
+| 布局持久化 | 原生宿主持久化布局及 contentId，但不持久化 navigation.params。sidechat 在**独立页模式**下按 `(sessionId, contentId)` 保存线程绑定和标题（最多 512 项），新建/恢复按该 occurrence 的精确身份；**共用页模式**的 contentId 是固定的 `sidebar://sidechat`，继续使用会话 last/newest 回退，且不读写 occurrence 绑定（否则单例页签会被旧绑定抢走）。缺失/损坏绑定的独立页显示空态与历史菜单，不自动猜测或创建替代线程。底部工作台继续保存 tab.meta。 |
 | 跨会话打开 | 目标会话的右侧栏 store 未挂载时，打开会排队到该会话上屏后重放 |
 | 内置类型接管 | 插件的 `editor` 类型以 `extension` 优先级认领 `dsh-resource://file/**`（压过内置 `ui-sidebar-documentpreview` 的 `text` 预览——即 `fallback` 带），并接管内置 `files` 页面 kind（`openTab('files')` 打开插件的文件树）；插件卸载/禁用时内置实现自动复位。**但认领是有选择的**：宿主自己的文档预览已经覆盖的格式（表格 / PDF / 图片 / Office，清单见 §5.4）由 `editor.canOpen` 主动**拒绝**，地址交回内置 `text` 档 |
 | 文件树实时刷新（v0.21.1+） | 插件接管了内置 `files` 页，所以宿主自己的按目录 watch 覆盖不到这棵树——插件自带一条 `/sidebar/ws/fs-watch` socket：客户端上报**已展开**的目录集，宿主侧按目录 `fs.watch`（150ms 去抖、每连接上限 64 个句柄），变动后只让那一层缓存失效并重列；目录折叠即退订。路径仍走 `fs.tree` 同一套词法解析 |
@@ -248,6 +248,13 @@ interface TabDescriptor {
    * 同类型 tab 而非新开）。显式给出 dedupeKey 时优先于 single。
    */
   single?: boolean
+  /**
+   * 原生页面多实例：true 或返回 boolean 的谓词。谓词在每次打开与原生 sync
+   * 时求值，设置翻转会重注册该原生类型（已有页签保持原 contentId）。
+   * 缺省为宿主单实例页面。内置 sidechat 用谓词跟随「侧边对话页面」设置：
+   * 默认共用一页，切到独立页后每个线程一个 occurrence。
+   */
+  multiple?: boolean | (() => boolean)
   /**
    * 去重键：openTab 时若已存在 dedupeKey 相同的 tab，则聚焦而非新开。
    * 返回 undefined 表示不去重（每次都新开，但同 id 会被 id 安全网聚焦）。
@@ -473,7 +480,7 @@ ctx.effect(() => {
 | `editor` | 10 | 否（按 path 去重） | 否 | 唯一「文件窗口」（编辑/预览 + 资源管理）。chrome 恒合并形态：路径输入框 + 编辑器控件 + 可开关内嵌文件树（全局搜索 `fs.search`；状态存 `tab.meta.treeOpen/treeWidth`）。`editorExplorer`：关（默认）= 按 path 新开，无路径窗口 = 纯资源管理器；开 = 树点击/Enter 经 `updateTab` 原地切换（id/meta 不变），无路径窗口 = 带 chrome 空窗口。树右键「在新 Tab 中打开」「在侧边打开」（pane 右侧 split）。新会话 seed 空文件窗口（`title:'Files'`）；旧 `explorer` tab 经 `sanitizeState` 迁移。树 listing 与文件名搜索应用 `explorerExclude` 排除模式（editor 卡片齿轮弹窗可编辑；host 侧过滤，匹配条目彻底移除且永不阻塞折叠）；单目录链折叠为 `a/b/c` 面包屑行（POSIX 隐藏与排除条目不计入唯一子项判定） |
 | `git` | 20 | 是 | 是（本轮文件操作数） | 「Git」统一 tab（id 保留 `git` 以兼容持久化布局）：**Git 视角**（Source Control：独立折叠的 Changes / Graph；Changes 内为多行 Message + 仅填草稿的 Generate、Merge Changes → Staged Changes → Changes（资源组也独立折叠，计数常驻标题最右，文件行整行 hover）；Git 刷新仅留在 Changes 标题，外层本轮文件刷新保留；真实 parent hashes 泳道图；常驻底栏为可点击分支 + `*`/`+`/`!` 标记、upstream 的 behind↓ / ahead↑ 及安全 Pull-then-Push 同步；Push/Pull 与 worktree·子仓库选择移入 More Actions；提交只消费已暂存项，冲突/空消息/无暂存时禁止，草稿按会话·仓库·worktree 隔离）+ **本轮文件视角**（原 file-trace：模型读/写/编辑实时折叠，按操作时间倒序平铺、不按文件分组，每行「操作 → 文件路径 → 大小/时间」，支持类型筛选）；会话事件经插件自有宿主路由 `changes.ops` 供给（live 日志优先、冷会话回放持久化记录，`afterSeq` 增量），primed 后用 `wait` 挂在宿主侧等下一个工具事件而不是重放整窗），badge 读 tab 轮询写入的同步缓存。页头使用宿主公开的 `@deepseek-ai/dsh-client-ui-primitives` 中的 `SegmentedControl`（36px 高度、主题 Token 样式；自动处理选中状态、ARIA 关系及左右方向键、Home/End 键盘导航）。两视角共用底部可拖拽预览面板（`tab.meta.lens/previewH` 持久化），diff 渲染统一走 `src/client/diff/`（`DiffRows`/`DiffFiles`：mod 配对 + 行内高亮 + 语法着色 + 上下文折叠）；Git 目标可展开为独立 diff tab（落进工作台的 diff 分栏） |
 | `subagent` | 30 | 是 | 否 | 任务管理（工作流图/树、团队任务板、后台任务抽屉） |
-| `sidechat` | 35 | 否（`sidechat:<uuid>`，按 `meta.threadId` 去重） | 否 | 侧边对话（每对话一 Tab）：打开即建空线程（首条消息赢得标签并同步标题）；线程 = 插件自建子会话（种子继承父会话上下文，进行中回合以 `interrupted` 闭合；种子带合法 `subagent/descriptor`，SubagentView 按 `Side: ` 前缀过滤），`origin:'subagent'` 隐藏于主列表；走 `/sidebar/api/sidechat.*` 路由；头部菜单切换/重开（`parkSidechatReopen` + 确定性 id），关 Tab 释放 live agent；重开经 `collectOwnEvents` 回源到种子边界；「保存为新会话」= `session.fork`（`this` 敏感）。[设计文档](plans/2026-08-20-sidechat-tab-design.md) |
+| `sidechat` | 35 | 否（`sidechat:<uuid>`，按 `meta.threadId` 去重） | 否 | 侧边对话（默认共用一页；设置可切换「每个对话独立页」）：共用页再次打开聚焦同一页并回到本会话最近线程；独立页每个线程一个原生 occurrence，按 contentId 精确恢复。打开即建空线程（首条消息赢得标签并同步标题）；线程 = 插件自建子会话（种子继承父会话上下文，进行中回合以 `interrupted` 闭合；种子带合法 `subagent/descriptor`，SubagentView 按 `Side: ` 前缀过滤），`origin:'subagent'` 隐藏于主列表；走 `/sidebar/api/sidechat.*` 路由；头部菜单切换/重开（`parkSidechatReopen` + 确定性 id），关 Tab 释放 live agent；重开经 `collectOwnEvents` 回源到种子边界；「保存为新会话」= `session.fork`（`this` 敏感）。[设计文档](plans/2026-08-20-sidechat-tab-design.md) |
 | `diff` | -1 | 否（按 id 去重） | 是 | 差异查看（changes tab 的预览面板「展开为独立页签」触发，同一渲染栈） |
 | `terminal-bottom` | 40 | 否（`createTab` 每次铸新 id） | 否 | 底部工作台的终端（#774）。**`bottomOnly`**（见 §4 与「原生承载面」表的说明）：没有原生 tab 类型、不占 guide 条目，只在底部 `+` 菜单里。页面是插件自绘的 xterm（`lib/client-terminal.js` chunk），**进程由宿主的会话级终端服务 `ctx.webTerminals` 供给**（结构化探测，不写进 `dsh.client.inject`——缺服务只会让这一行置灰，不会把整行拖成 `pending`）。恢复靠宿主持久化的 `(sessionId, contentId) → 终端 id` 绑定（`contentId` 形如 `dsh-better-sidebar:terminal-bottom:<instance>`，**每个页签一个实例**，#926），关页签走 `onClose` → `webTerminals.close()` 结束进程（卸载**不**关：宿主的契约是「视图跨 DOM 卸载存活」，刷新要能认回同一个 shell），`tab.meta.terminalRun`（默认 0）是「新建终端」换代号用的代号位。[设计文档](plans/2026-10-05-bottom-terminal-tab.md) |
 
@@ -533,7 +540,7 @@ interface FileViewerProps {
   viewerId: string         // 命中 viewer 的 id（如 'code' / 'my-plugin:csv'）
   content?: string         // fetchStrategy='fsRead' 时；超过编辑上限的文件不带它
   size?: number            // 本次读取量到的文件字节数
-  largeFile?: { size: number }  // 见下方「超大文件」
+  largeFile?: { size: number; reason?: 'size' | 'line' }  // 见下方「超大文件」
   mtimeMs?: number         // fetchStrategy='fsRead' 时：本次读取的磁盘 mtime（保存冲突基线）
   mediaUrl?: string        // fetchStrategy='mediaUrl' 时
   customData?: unknown     // fetchStrategy='custom' 时（load() 的返回值）
@@ -547,12 +554,14 @@ interface FileViewerProps {
   toolbar?: 'self' | 'host'
   visible?: boolean        // 本 tab 是否在屏（原生 tab 停驻时仍挂载）
   onToolbarState?: (state: EditorToolbarState) => void
-  onToolbarControls?: (controls: EditorToolbarControls | null) => void
+  onToolbarControls?: (controls: EditorToolbarControls | null) => void  // { setMode, save, search? }
   onReload?: () => void    // 从磁盘重新加载（保存冲突横幅的按钮回调）
 }
 ```
 
-> **超大文件（v0.26.0 起，`truncated` 已被取代）**：文件超过编辑上限（5 MiB，见 `src/editor-limits.ts` 的 `MAX_EDITABLE_BYTES`）时，`fs.read` 不再回一份被截断的文档，而是 `{ kind: 'too-large', size, mtimeMs, head }` —— **不带 `content`**。宿主把这个结果交给命中的 viewer 时，`content` 缺席、`largeFile: { size }` 到位（见 `planFsReadOutcome`）。内置的文本 viewer 据此渲染只读分页预览（`LargeFileView`），并提供下载出口；**你的 viewer 必须容忍 `content === undefined`**：要么自己处理 `largeFile`（分页预览 / 提示），要么把状态回给 `onToolbarState` 让宿主收起保存按钮。旧的 `truncated` 布尔字段与 `EditorToolbarState.truncated` 都已删除——「拿到半份文档但看起来能编辑」这个状态本身没有了，这正是它被删掉的原因（#732：保存半份文档会毁掉文件尾部）。
+> **页头查找（#1214）**：当 viewer 以 `toolbar: 'host'` 运行（本插件的合并式编辑器页头），查找按钮由宿主页头渲染，而命令来自 viewer 注册的 `EditorToolbarControls.search`。**不注册 `search` 就没有查找按钮**，第三方 viewer 无需改动。内置文本编辑器的 `search()` 与自带工具条的查找按钮同一套逻辑：markdown / html / jsonl 在预览态会先切到编辑，再打开 CodeMirror 的查找面板（含替换行）；纯代码文件直接打开。
+>
+> **超大文件（v0.26.0 起，`truncated` 已被取代）**：文件超过编辑上限（5 MiB，见 `src/editor-limits.ts` 的 `MAX_EDITABLE_BYTES`），**或文件头 64 K 字符内出现单行 ≥ 20,000 字符**（#1165：压缩成单行的 HTML/JS 远低于字节上限，却会让 CodeMirror 的单行虚拟化在首帧卡死）时，`fs.read` 不再回一份被截断的文档，而是 `{ kind: 'too-large', size, mtimeMs, head, reason }` —— **不带 `content`**；`reason` 为 `'size'` 或 `'line'`，让 UI 能说清是哪个上限。宿主把这个结果交给命中的 viewer 时，`content` 缺席、`largeFile: { size, reason? }` 到位（见 `planFsReadOutcome`）。内置的文本 viewer 据此渲染只读分页预览（`LargeFileView`），并提供下载出口；**你的 viewer 必须容忍 `content === undefined`**：要么自己处理 `largeFile`（分页预览 / 提示），要么把状态回给 `onToolbarState` 让宿主收起保存按钮。旧的 `truncated` 布尔字段与 `EditorToolbarState.truncated` 都已删除——「拿到半份文档但看起来能编辑」这个状态本身没有了，这正是它被删掉的原因（#732：保存半份文档会毁掉文件尾部）。
 >
 > **分页读取**：`fs.readPage({ sessionId, cwd?, path, offset })` 按字节窗口返回一页文本（宿主按行对齐，并在同一个文件内锁定宽字符编码），返回 `{ kind:'text', text, offset, nextOffset, eof, size, mtimeMs, encoding }`。消费方式就是**只向前追加**：把每页的 `text` 接到一起，下一次请求用上一页的 `nextOffset` 作为 `offset`，直到 `eof`。因此**必须串行**（下一页的偏移就是上一页的响应），也**不能跳到末尾**——随机访问需要打开时先扫全文件建索引，而那正是分页要避免的开销。内置预览在这之上加了两个策略：滚到底自动追加下一页，以及一条按**渲染行数**设的上限（`LargeFileView` 的 `MAX_PREVIEW_ROWS`），到顶后停止追加并提示下载。
 
@@ -817,6 +826,8 @@ interface BetterSidebarService {
    *  ——走定向通道（不发布、不通知），与定向 `openTab(seed, scope)` 同一条路；
    *  这正是文件树删除调解能覆盖后台会话页面的机制。不传 scope 行为不变。 */
   closeTab(tabId: string, scope?: SessionScope): void
+  /** 异步创建返回前可检查标签是否仍存在，避免关闭后绑定到不存在的标签。 */
+  hasTab?(tabId: string, sessionId: string): boolean
   /** 订阅注册表变化（register/dispose 时触发） */
   subscribe(listener: () => void): () => void
   // ── v0.12.0+ ──────────────────────────────────────────────────────────

@@ -19,6 +19,39 @@
   - 路径层级过多时，盘符之后、最后两级之前的目录折叠成一个 `..` 按钮（避免中间层级把地址栏挤到重叠），点 `..` 原地展开全部层级；切换目录后自动重新折叠。每段面包屑单独截断省略、全路径留在悬停提示里。
   - 编辑态按 Escape 只退回面包屑按钮、不关闭整个对话框（此前事件冒泡到 Modal 的文档级处理器把对话框一起关掉，已拦截并加回归测试）。
   - 🧪 测试：`tests/terminal-settings-panel.spec.tsx`（面包屑渲染 / 长路径折叠成 `..` 并点击展开 / 末段双击进编辑态 / 点计算机列盘符并导航 / Escape 只退编辑态）、`tests/fs-drives.spec.ts`（跨平台盘符枚举形状）。
+- 🧩 **局域网明文 HTTP 下侧边对话与底部终端页签恢复正常**（[#1166](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1166)）：浏览器只在**安全上下文**（https 或 localhost）暴露 `crypto.randomUUID`；用 `http://<局域网 IP>:<端口>` 打开 GUI 时它是 `undefined`，而新开侧边对话页签、新开底部终端都直接调用它——异常发生在宿主创建页签的过程中，界面只剩一个空面板。现在这三处改为一个内部 `freshId()`：有 `randomUUID` 就用它，否则用 `crypto.getRandomValues`（不受安全上下文限制）取 64 位随机数 + 毫秒时间戳兜底，id 仍然唯一。
+  - 🧪 测试：`tests/builtins.spec.ts` 在删掉 `crypto.randomUUID` 的全局环境下驱动真实 `createTab` 工厂，断言侧边对话与终端各自产出非空且互不相同的 id。
+
+- ⚙️ **开始页「调整顺序」里关掉的卡片能重新打开了**（[#1212](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1212)）：宿主设置路由对嵌套普通对象做**深合并**，所以「把 key 删掉」表达不了「显示」——存下来的 `true` 会存活下来，开关自己弹回关。现在两处写入（开始页弹窗与设置页）都改为发送**该 key 的显式布尔值** `{ guideHidden: { <key>: false } }`；读取侧一律按 `=== true` 判断，所以存下来的 `false` 天然表示显示，不需要额外的形状归一。
+  - 🧪 测试：`tests/native-guide.spec.tsx` 驱动真实 `NativeGuide` 走「更多 → 调整顺序 → 重新打开卡片」，断言线上参数确实是 `{ guideHidden: { a: false } }`。
+
+- ⏱️ **设置读得慢时，侧边卡片的开关不再被永久忽略**（[#1159](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1159)）：启动时用「2 秒首绘预算」抢设置文档，超时就按默认值挂载。但抢输的那次读取结果被直接丢弃，而 `settings/document-updated` 只在文档**变更**时触发、不会为一次迟到的读触发——于是 `tabsEnabled: { <id>: false }` 整个会话都没被看见，被禁用的第三方页签一直留在「+ / 更多工具」里，直到用户在设置里开一次再关一次。现在超时后仍会接住**同一次读取**的迟到结果并应用（带 generation 守卫，避免覆盖更新的设置更新；dispose 后不再触碰 store）。首绘预算与「先按默认值挂载」的行为都不变。
+  - 🧪 测试：`tests/prefs.spec.ts` 新增「启动决策超时」两例：迟到结果只回调一次并带上禁用项与 suspended 标记；准时返回时迟到回调永不执行。
+
+- 🐧 **WSL 工作区里 Git 页签不再恒显示「加载失败」**（贡献者 PR [#1206](https://github.com/omdsh-dev/DSH-better-sidebar/pull/1206) @llwinty）：`git rev-parse --show-toplevel` 是在发行版**内部**跑的，因此返回发行版里的 POSIX 路径（`/home/...`）；而后续每条 git 命令都靠 UNC 拼写（`\\wsl.localhost\<发行版>\...`）反推发行版，于是拿到这个 POSIX 根的每条命令都掉回 Windows 侧 git，以 `cannot change to '/home/...'` 失败，整页没有任何分支/分组/提交框。现在发现到的根（以及 worktree 清单里的每个 linked checkout）会按发现它的 cwd 重新拼回同一 share 的 UNC 拼写。贡献者已在本机 Windows + 真实 WSL 仓库上做过修复前后 A/B，并把修复后的 `lib/index.js` 换进已安装包做过端到端验证。
+  - 🧪 测试：`tests/git-spawn.spec.ts` 覆盖根的重新拼写、linked checkout、非 WSL 路径不受影响，以及后续命令确实经 `wsl.exe` 执行。
+
+- 🔍 **宿主接管页头时也有「查找」入口了**（[#1214](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1214)）：v0.32.1 给编辑器自带工具条加的查找按钮，在侧栏真实的合并式页头（`EditorHost` 以 `toolbar: 'host'` 接管）下整行不渲染，markdown / html / jsonl 预览态更是没有任何查找入口，只剩可能被第三方插件全局截获的 Cmd/Ctrl+F。现在内置编辑器把查找命令注册给宿主页头：文件可编辑时页头显示查找按钮，点击与自带工具条按钮走同一套逻辑——预览态先切到编辑，再打开 CodeMirror 的查找面板（含替换行）。没有查找面的 viewer 不注册该命令，页头也就不显示按钮。
+  - 🧪 测试：`tests/editor-host.spec.tsx` 用真实 `TextEditor` 走「页头查找按钮 → 搜索面板打开 + markdown 预览切编辑」；`tests/editor-find.spec.tsx` 增加 host 模式命令测试。
+
+- 🪲 **单行几百 KB 的压缩文件不再在点「编辑」时卡死渲染进程**（[#1165](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1165)）：327 KB 的压缩 HTML（整份文件只有一行）能通过 5 MB 的字节上限，但 CodeMirror 按行虚拟化——一行几百 KB 会在首帧一次性解析、着色、排版，渲染进程直接卡死，只能重启。现在 `fs.read` 在宿主侧对已解码文档的**前 64 K 字符（65,536）**做一次有界探测：任一行达到 20,000 字符就以 `{ kind: 'too-large', reason: 'line' }` 拒绝文档，客户端从不扫描字节，也不会为它创建任何 CodeMirror 状态。它走既有的只读分页预览，提示改为「文件含超长单行（大小）」，不再假装是「文件过大」，下载出口照旧。字节上限（5 MiB）与分页逻辑都不变。
+  - 🧪 测试：`tests/editor-limits.spec.ts`（单行超限 / 正常多行 / 临界值 / CRLF / 有界探测）、`tests/editor-large-file.spec.tsx`（长单行提示 + 无编辑器）、`tests/editor-load.spec.ts` 与 `tests/editor-host.spec.tsx`（`reason` 沿线透传）。
+
+- 🎯 **侧边对话「回到最新」胶囊不再塌成细条、端部恢复正圆**（[#1208](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1208)）：胶囊所在的 `.sidechatToLatestSlot` 是 `height: 0` 的绝对定位 flex 槽位（抄宿主 `ui-chat` 的 `.toBottomSlot` 配方），但子项没有尺寸约束——默认 `align-items: stretch` 会在零高容器里把它拉到 0 高，内容高度被丢掉，只剩 `padding + border` 的 10px，文字于是溢出到胶囊外。宿主自己的 `.toBottom` 靠显式 `34px` 高度绕开了同一个坑，这里改用 `align-items: flex-end` + `flex: none` 让胶囊保持自身内容高度（30px）。同时补上 `corner-shape: round`：宿主 `corner-shape.css` 对 `*` 施加 `superellipse(1.5)`，会把 `border-radius: 999px` 的胶囊端部削平，宿主的全圆元素都成对声明退出该效果，本插件此前漏了这条。该按钮在 v0.31.0 引入，v0.31.0–v0.32.1 均受影响。
+  - 🧪 真实宿主 + Chromium 挂载冒烟确认侧边对话渲染无回归；修复前后在 Chrome 157 用宿主真实 token 样式表做过 A/B 对照（高度 10px→30px、文字溢出 true→false、`corner-shape` 恢复 `superellipse(1)`）。
+
+- 🌿 **多仓库工作区的仓库切换器改成响应式**（贡献者 PR [#1130](https://github.com/omdsh-dev/DSH-better-sidebar/pull/1130) @iasiv5）：容器工作区发现多个仓库时，「更改」上方一行在宽度足够时横排仓库胶囊，放不下时自动改为「仓库 ▾」下拉；两种形态共用位置消歧标签（深层仓库显示 `名 (相对父路径)`，如 `knowhow (ob-harness/contexts)`），当前根始终可见，服务端回退根以禁用项如实显示实际根而不是冒充候选。单仓库工作区不显示；「更多操作 → 仓库」保留为兜底；切换仍走既有 `chooseRepo`，读数、写操作与提交图继续钉在选中的根上。
+  - 🧪 测试：`tests/git-repo-labels.spec.ts`（32 例：POSIX / Windows / UNC / 扩展路径、同名消歧、顺序与输入不变）与 `tests/git-repo-switcher.spec.tsx`（宽时胶囊、窄时下拉、标签与回退禁用项、单仓不显示）。
+
+- 💬 **侧边对话页面模式可配置**（贡献者 PR [#1115](https://github.com/omdsh-dev/DSH-better-sidebar/pull/1115) @pennxiang）：默认仍是「共用一页」——再次打开聚焦同一个页签，并回到本会话最近的侧边对话；在「设置 → 侧边卡片 → 侧边对话」的齿轮里可切换「每个对话独立页」。独立模式下每个线程一个原生 occurrence，按 `(sessionId, contentId)` 精确恢复，跨原生栏与底部工作台按 threadId 去重；关闭原生页签会归档并释放该线程，创建过程中关闭页签不会留下孤儿线程。切换模式只影响之后的新打开，已开页签保持原样。
+  - 🧪 测试：`tests/sidechat-native-multiple.spec.ts`（独立页双开、精确恢复、跨载体去重、关闭/并发/存储边界、模式翻转重注册）、`tests/sidechat-view.spec.tsx`（共用页回退 + 独立页创建/归档）、`tests/builtins.spec.ts`（动态谓词默认 false）、`tests/sidechat-submit-key-pref.spec.tsx`（两个设置行并存）；真实宿主 Chromium 覆盖共用页重复打开与独立页三线程刷新恢复。
+
+- 🔗 **聊天里的完整绝对 Markdown 路径可点击**（贡献者 PR [#882](https://github.com/omdsh-dev/DSH-better-sidebar/pull/882) @wang-kaopu）：每轮最后一条助手消息里，完整的绝对 `.md` / `.markdown` 内联代码路径可点击，并按当前会话的文件地址在原生侧栏打开；路径不存在时显示宿主文件读取错误。宿主已有的文件提及优先；`chatFileMentions.forClosing` 的第三个参数 `getFileTriggerProps` 原样转发，原有文件提及右键菜单与点击行为不变；卸载后旧链接不再打开新文件。
+  - 🧪 测试：`tests/chat-mentions.spec.tsx`（POSIX / Windows / UNC 路径判定、stock 优先、三参转发、服务晚到/释放/后装包装、MarkdownText 只认领可点击路径）。
+
+- 📦 **发布包只安装运行时真正需要的依赖**（[#1191](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1191)）：`dependencies` 只保留 host 半真正 import 的 `ws` / `yaml`；已经打进 `lib/client*.js` 的 CodeMirror、mermaid、xterm、react-icons、dompurify、clsx、rxjs 等移入 `devDependencies`。安装不再多拉约 240 MB / 1.26 万个文件，插件实际运行时仍只有插件本体加 `ws` / `yaml`。`src` 与 `./src/*` 导出**保留**，不做破坏性删除。
+  - 🧪 守护：`tests/market-manifest.spec.ts` 同时校验仓库清单与 `pnpm pack` 后的发布清单，dependencies 必须恰好是 `ws` / `yaml`，且 `src` 仍在 `files` 里。
+
 ### v0.32.1
 
 - 🧩 **适配 DSH 0.2.2-rc.2**：插件基线抬到 0.2.2 线的最新 RC，同时跟上这一版宿主的客户端契约与团队服务。

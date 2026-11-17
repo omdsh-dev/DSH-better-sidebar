@@ -6,7 +6,9 @@ const { spawnMock } = vi.hoisted(() => ({ spawnMock: vi.fn() }))
 
 vi.mock('node:child_process', () => ({ spawn: spawnMock }))
 
-import { currentBranch, isGitRepo, refusedRepository, runGit, worktrees, wslLaunch } from '../src/git.ts'
+import {
+  currentBranch, isGitRepo, refusedRepository, repoRoots, runGit, status, worktrees, wslLaunch, wslRootSpelling,
+} from '../src/git.ts'
 
 afterEach(() => {
   spawnMock.mockReset()
@@ -347,5 +349,117 @@ describe('git inside a WSL distribution', () => {
 
     expect(spawnMock).toHaveBeenCalledWith('git', expect.anything(), expect.anything())
     expect(spawnMock.mock.calls.every(call => call[0] === 'git')).toBe(true)
+  })
+})
+
+/**
+ * `rev-parse --show-toplevel` answers from INSIDE the distribution, so it names
+ * the repository with a POSIX path. That string is not a path this host can run
+ * git in: `wslLaunch` only recognises the UNC spelling, so every later command
+ * on the reported root silently fell through to the Windows git and died with
+ * `exit 128: cannot change to '/home/...'` — the whole Git panel read as
+ * "failed to load" (issue #1189).
+ */
+describe('a repository root reported from inside a WSL distribution (issue #1189)', () => {
+  /** The UNC spelling of one distribution-side path. */
+  const unc = (distroPath: string): string => `\\\\wsl.localhost\\Ubuntu${distroPath.replace(/\//g, '\\')}`
+
+  /** The subcommand, skipping the global `-C`/`--no-pager`/`-c` prefix that
+   *  differs between the plain and the `wsl.exe` argv shapes. */
+  function subcommandOf(args: string[]): string[] {
+    let at = args.indexOf('--no-pager')
+    if (at === -1) return args
+    at += 1
+    while (args[at] === '-c') at += 2
+    return args.slice(at)
+  }
+
+  /** A fake git answering what discovery, `status` and `worktrees` ask for. */
+  function distributionGit(reportedRoot: string): void {
+    spawnMock.mockImplementation((_file: string, args: string[]) => {
+      const command = subcommandOf(args)
+      if (command[0] === 'rev-parse' && command[1] === '--show-toplevel') return fakeGit(`${reportedRoot}\n`)
+      if (command[0] === 'rev-parse' && command[1] === '--is-inside-work-tree') return fakeGit('true\n')
+      if (command[0] === 'rev-parse' && command[1] === '--absolute-git-dir') return fakeGit(`${reportedRoot}/.git\n`)
+      if (command[0] === 'status') return fakeGit('')
+      if (command[0] === 'worktree') return fakeGit('')
+      throw new Error(`unexpected git command: ${command.join(' ')}`)
+    })
+  }
+
+  it('re-spells the reported root through the cwd it was discovered from', () => {
+    expect(wslRootSpelling(unc('/home/me/repo'), '/home/me/repo')).toBe(unc('/home/me/repo'))
+    // The legacy share keeps its OWN spelling: a UNC path is only usable on the
+    // share the cwd arrived through.
+    expect(wslRootSpelling(String.raw`\\wsl$\Ubuntu\home\me\repo`, '/home/me/repo'))
+      .toBe(String.raw`\\wsl$\Ubuntu\home\me\repo`)
+    // The distribution root itself, and a trailing separator git never prints
+    // but a caller might hand over.
+    expect(wslRootSpelling(unc('/home/me/repo'), '/')).toBe(String.raw`\\wsl.localhost\Ubuntu`)
+    expect(wslRootSpelling(unc('/home/me/repo'), '/home/me/repo/')).toBe(unc('/home/me/repo'))
+  })
+
+  it('leaves every ordinary Windows and POSIX root alone', () => {
+    expect(wslRootSpelling('C:\\repo', 'C:/repo')).toBe('C:/repo')
+    expect(wslRootSpelling('C:\\repo', 'C:\\repo')).toBe('C:\\repo')
+    expect(wslRootSpelling('/srv/site', '/srv/site')).toBe('/srv/site')
+    // A root git already spelled as a host path must not be prefixed twice.
+    expect(wslRootSpelling(unc('/home/me/repo'), unc('/home/me/repo'))).toBe(unc('/home/me/repo'))
+  })
+
+  it('keeps the UNC spelling of the root it discovers', async () => {
+    distributionGit('/home/me/discovered')
+
+    await expect(repoRoots(unc('/home/me/discovered'))).resolves.toEqual([unc('/home/me/discovered')])
+  })
+
+  it('runs every later command inside the distribution, not through the Windows git', async () => {
+    distributionGit('/home/me/panel')
+
+    await status(unc('/home/me/panel'))
+
+    const executables = spawnMock.mock.calls.map(call => call[0] as string)
+    // The discovery probe always went through wsl.exe (its cwd is UNC); #1189
+    // is about the commands that FOLLOW it, which the POSIX root sent to the
+    // Windows git.
+    expect(executables.length).toBeGreaterThan(1)
+    expect(executables.every(file => file === 'wsl.exe')).toBe(true)
+    const statusCall = spawnMock.mock.calls.find(call => subcommandOf(call[1] as string[])[0] === 'status')
+    expect(statusCall?.[0]).toBe('wsl.exe')
+    // ...and it was pointed back at the path the distribution understands.
+    const argv = statusCall?.[1] as string[]
+    expect(argv[argv.indexOf('--cd') + 1]).toBe('/home/me/panel')
+  })
+
+  it('still spawns plain git when discovery started from a Windows cwd', async () => {
+    distributionGit('C:\\repo')
+
+    await status('C:\\repo')
+
+    expect(spawnMock.mock.calls.every(call => call[0] === 'git')).toBe(true)
+  })
+
+  it('re-spells every linked checkout the distribution listed', async () => {
+    spawnMock.mockImplementation((_file: string, args: string[]) => {
+      const command = subcommandOf(args)
+      if (command[0] === 'rev-parse' && command[1] === '--is-inside-work-tree') return fakeGit('true\n')
+      if (command[0] === 'rev-parse' && command[1] === '--show-toplevel') return fakeGit('/home/me/linked\n')
+      if (command[0] === 'worktree') {
+        return fakeGit([
+          'worktree /home/me/linked', 'HEAD abc', 'branch refs/heads/main', '',
+          'worktree /home/me/linked-feature', 'HEAD def', 'branch refs/heads/feature', '',
+        ].join('\n'))
+      }
+      if (command[0] === 'status') return fakeGit('')
+      throw new Error(`unexpected git command: ${command.join(' ')}`)
+    })
+
+    // A POSIX-spelled checkout is not usable as a command target either: the
+    // current one must still be recognised as current (it drives the selector)
+    // and every entry must be a path this host can run git in.
+    await expect(worktrees(unc('/home/me/linked'))).resolves.toEqual([
+      { path: unc('/home/me/linked'), branch: 'main', current: true, changes: 0 },
+      { path: unc('/home/me/linked-feature'), branch: 'feature', current: false, changes: 0 },
+    ])
   })
 })

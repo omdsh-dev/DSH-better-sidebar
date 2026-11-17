@@ -36,8 +36,11 @@ import { LazyTerminalBottom } from '../terminal-lazy.tsx'
 import { TerminalSettingsPanel } from '../TerminalSettingsPanel.tsx'
 import { INSTANCE_FIELD, closeBottomTerminal, webTerminals } from '../terminal-client.ts'
 import { api } from '../api.ts'
-import { sidechatSubmitKeyOf } from '../prefs.ts'
-import { SIDECHAT_SUBMIT_KEY_DEFAULT, SIDECHAT_SUBMIT_KEY_SETTING } from '../../prefs-shared.ts'
+import { sidechatSubmitKeyOf, sidechatTabsModeOf } from '../prefs.ts'
+import {
+  SIDECHAT_SUBMIT_KEY_DEFAULT, SIDECHAT_SUBMIT_KEY_SETTING,
+  SIDECHAT_TABS_DEFAULT, SIDECHAT_TABS_SETTING,
+} from '../../prefs-shared.ts'
 import type { Context } from '../../context-types.ts'
 import type { TabComponentProps, TabDescriptor } from '../service.ts'
 
@@ -98,8 +101,34 @@ function SideChatTab(props: TabComponentProps) {
       tab={tab}
       visible={visible}
       submitKey={sidechatSubmitKeyOf(prefs)}
+      multipleTabs={sidechatTabsModeOf(prefs) === 'multiple'}
     />
   )
+}
+
+/**
+ * A fresh, collision-resistant id for a tab minted at open time.
+ *
+ * `crypto.randomUUID` is restricted to secure contexts: a GUI served over
+ * plain `http://` on a LAN address exposes `crypto` but no `randomUUID`,
+ * and the unguarded calls used to take Side Chat and the bottom terminal down
+ * entirely (#1166). `getRandomValues` carries no such restriction, so the
+ * fallback keeps real entropy and only adds a base36 timestamp for
+ * readability — the ids only have to stay unique within one tab strip.
+ */
+function freshId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  const random = new Uint32Array(2)
+  if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+    crypto.getRandomValues(random)
+  } else {
+    // No Web Crypto at all: two draws still stagger ids minted together.
+    random[0] = Math.floor(Math.random() * 0x1_0000_0000)
+    random[1] = Math.floor(Math.random() * 0x1_0000_0000)
+  }
+  return `${Date.now().toString(36)}-${Array.from(random, part => part.toString(36)).join('-')}`
 }
 
 /** The 6 built-in tab descriptors (the host owns the right-Sidebar terminal and browser). */
@@ -276,6 +305,14 @@ export function builtinTabs(ctx: Context): readonly TabDescriptor[] {
     },
     {
       id: 'sidechat',
+      // The page mode is a user preference: the shared page (today's default)
+      // keeps the host's one-page identity, while "one page per thread" opts
+      // into independent native occurrences. A predicate keeps the native
+      // registration and service dedupe in step with the settings write.
+      multiple: () => {
+        const service = ctx.get('betterSidebar')
+        return service !== undefined && sidechatTabsModeOf(service.getSnapshot().prefs) === 'multiple'
+      },
       title: () => t('sideChat'),
       description: () => t('guideDescSidechat'),
       icon: sidechatTabIcon,
@@ -298,7 +335,7 @@ export function builtinTabs(ctx: Context): readonly TabDescriptor[] {
         }
         return {
           tab: {
-            id: `sidechat:new-${crypto.randomUUID()}`,
+            id: `sidechat:new-${freshId()}`,
             type: 'sidechat',
             title: t('sideChatUntitled'),
             meta: { autoCreate: true },
@@ -325,6 +362,24 @@ export function builtinTabs(ctx: Context): readonly TabDescriptor[] {
       // document has no blob, while the composer already sends on Enter).
       settings: {
         pluginToggles: [{
+          key: SIDECHAT_TABS_SETTING,
+          type: 'select',
+          defaultValue: SIDECHAT_TABS_DEFAULT,
+          title: () => t('settingsSidechatTabsTitle'),
+          desc: () => t('settingsSidechatTabsDesc'),
+          options: [
+            {
+              value: 'single',
+              title: () => t('settingsSidechatTabsSingle'),
+              desc: () => t('settingsSidechatTabsSingleDesc'),
+            },
+            {
+              value: 'multiple',
+              title: () => t('settingsSidechatTabsMultiple'),
+              desc: () => t('settingsSidechatTabsMultipleDesc'),
+            },
+          ],
+        }, {
           key: SIDECHAT_SUBMIT_KEY_SETTING,
           type: 'select',
           defaultValue: SIDECHAT_SUBMIT_KEY_DEFAULT,
@@ -370,10 +425,10 @@ export function builtinTabs(ctx: Context): readonly TabDescriptor[] {
       // host binding by instance+run).
       createTab: () => ({
         tab: {
-          id: `terminal-bottom:${crypto.randomUUID()}`,
+          id: `terminal-bottom:${freshId()}`,
           type: 'terminal-bottom',
           title: t('terminal'),
-          meta: { [INSTANCE_FIELD]: crypto.randomUUID() },
+          meta: { [INSTANCE_FIELD]: freshId() },
         },
       }),
       // The service is probed, never injected (it is absent on deployments

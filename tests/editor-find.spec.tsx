@@ -28,7 +28,7 @@ import { cmSearchExtensions } from '../src/client/cm-search.ts'
 import { createSidebarStore } from '../src/client/state.ts'
 import { attachLocale } from '../src/client/locales.ts'
 import { api } from '../src/client/api.ts'
-import type { FileViewerProps } from '../src/client/service.ts'
+import type { EditorToolbarControls, EditorToolbarState, FileViewerProps } from '../src/client/service.ts'
 
 setupReactAct()
 
@@ -132,6 +132,41 @@ describe('editor find-in-file (Cmd/Ctrl+F)', () => {
     press(contentOf(container), 's', { ctrlKey: true })
     expect(write, 'the editor keymap still owns Mod-s').toHaveBeenCalledTimes(1)
     unmount()
+  })
+
+  it('exposes find through the host toolbar, flipping a markdown preview to edit first (#1214)', () => {
+    // With `toolbar: 'host'` the viewer renders NO self toolbar — the header of
+    // EditorHost does — so the registered `search` command is the whole find
+    // entry for the merged editor. The command must do what the self-toolbar
+    // button did: flip a preview to edit (the panel lives in CodeMirror) and
+    // open the panel in the same click.
+    let controls: EditorToolbarControls | null = null
+    const reported: EditorToolbarState[] = []
+    const props: FileViewerProps = {
+      ctx: { locale, get: () => undefined } as unknown as FileViewerProps['ctx'],
+      store: createSidebarStore(),
+      scope: { sessionId: 's1', cwd: '/p' },
+      path: '/p/readme.md',
+      title: 'readme.md',
+      viewerId: 'markdown',
+      content: '# Title\n\nneedle here\n',
+      toolbar: 'host',
+      onToolbarControls: (next) => { controls = next },
+      onToolbarState: (state) => { reported.push(state) },
+    }
+    const { container, unmount } = renderRoot(createElement(TextEditor, props))
+    try {
+      expect(container.querySelector('button[aria-label="查找"]'), 'no self toolbar in host mode').toBeNull()
+      expect(searchField(container), 'no panel before the command').toBeNull()
+      expect(controls, 'the viewer registers its toolbar commands').not.toBeNull()
+      expect(controls!.search, 'the host header receives a find command').toBeTypeOf('function')
+
+      act(() => { controls!.search!() })
+      expect(searchField(container), 'the command opens the search panel').not.toBeNull()
+      expect(reported[reported.length - 1]?.mode, 'markdown preview → edit hop').toBe('edit')
+    } finally {
+      unmount()
+    }
   })
 
   it('re-resolves the panel copy after a live locale switch', () => {
