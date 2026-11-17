@@ -298,7 +298,7 @@ function tryRegisterOnce(ctx: Context): boolean {
     borrowed = false
     // Positive proof the chip build is live (a silent feature-off reads
     // exactly like a stale bundle served by the host).
-    console.info('[dsh-better-sidebar] quote chips ready')
+    console.debug('[dsh-better-sidebar] quote chips ready')
     return true
   } catch (error) {
     // The host message (ui-input-trigger service) is `slash source
@@ -311,7 +311,7 @@ function tryRegisterOnce(ctx: Context): boolean {
       // commit, and a log line per selection would drown the console.
       if (!borrowed) {
         borrowed = true
-        console.info('[dsh-better-sidebar] quote chips ready (source already registered by the other bundle instance)')
+        console.debug('[dsh-better-sidebar] quote chips ready (source already registered by the other bundle instance)')
       }
       return true
     }
