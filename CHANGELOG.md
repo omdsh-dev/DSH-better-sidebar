@@ -4,6 +4,9 @@
 
 ### 未发布
 
+- 💻 **侧边对话显示 PTC（run_code）工具调用树**：`run_code` 行收起时显示模型写的 description，展开后显示程序代码和最终结果；程序内通过 PTC 派发的 bash / read / grep / edit 等子调用缩进挂在它下方，根行收起也可见，并复用终端 / diff / read / search / web 结构卡片。运行中、失败、无 start 的 dispatch 都有对应显示；PTC 内成功 write/edit 的文件也进入可点击路径提及。`present` 仍保留顶层交付卡片，同时在子调用区留下一行。
+  - 🧪 测试：`tests/sidechat-ptc-rows.spec.ts`（配对 / 运行态 / 失败 / 无 start / 嵌套 / 父行缺失 / 身份复用）、`tests/sidechat-ptc-subcalls.spec.tsx`（description 摘要、代码体、缩进与卡片、根行收起仍可见）、`tests/sidechat-mention-sources.spec.tsx`（PTC mutation 进入提及、read 不进入）。
+
 - 🧩 **局域网明文 HTTP 下侧边对话与底部终端页签恢复正常**（[#1166](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1166)）：浏览器只在**安全上下文**（https 或 localhost）暴露 `crypto.randomUUID`；用 `http://<局域网 IP>:<端口>` 打开 GUI 时它是 `undefined`，而新开侧边对话页签、新开底部终端都直接调用它——异常发生在宿主创建页签的过程中，界面只剩一个空面板。现在这三处改为一个内部 `freshId()`：有 `randomUUID` 就用它，否则用 `crypto.getRandomValues`（不受安全上下文限制）取 64 位随机数 + 毫秒时间戳兜底，id 仍然唯一。
   - 🧪 测试：`tests/builtins.spec.ts` 在删掉 `crypto.randomUUID` 的全局环境下驱动真实 `createTab` 工厂，断言侧边对话与终端各自产出非空且互不相同的 id。
 

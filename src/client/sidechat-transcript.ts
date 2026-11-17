@@ -84,6 +84,41 @@ export interface SidechatDeliverable {
   description?: string
 }
 
+/**
+ * One nested PTC sub-call: a tool the model invoked INSIDE a `run_code`
+ * program. The host logs the pair as `tool/ptc-dispatch-start` (the call) and
+ * `tool/ptc-dispatch` (the settled result), both keyed by `subCallId`; these
+ * are log-only events (`deriveMessages()` ignores them), so they never reach
+ * model history and only the transcript can show them.
+ *
+ * The fields mirror a direct tool row exactly (name / args / result / card /
+ * attachments) so the view renders a sub-call through the same atoms. The
+ * node lives on its parent's row: `run_code` keeps its own row and owns the
+ * whole call tree, which is how the main conversation draws it too.
+ */
+export interface SidechatToolChild {
+  /** The `tool/ptc-dispatch-start` seq (a dispatch without a start uses its
+   *  own seq). Stable across polls — the view's React key. */
+  seq: number
+  /** The host's opaque sub-call id (`<parent>:ptc:<n>`); pairs start/result. */
+  callId: string
+  name: string
+  failed: boolean
+  /** Raw arguments JSON, serialized from the dispatch's parsed object. */
+  args?: string
+  /** Plain text of the settled sub-call result. */
+  resultText?: string
+  /** True while the sub-call has not settled yet. */
+  executing?: boolean
+  /** Structured render payload (host Block atoms); absent = generic row. */
+  card?: SidechatToolCard
+  /** `image` / `file` blocks of the settled sub-call's content list. */
+  resultAttachments?: readonly SidechatAttachment[]
+  /** A nested sub-call's own children (a parent chain). The current host does
+   *  not bind `run_code` inside a program, so depth > 1 is defensive only. */
+  children?: SidechatToolChild[]
+}
+
 /** One compact transcript row rendered in the thread view. `seq` is the
  *  source event's log sequence. Text/reasoning also retain the original
  *  content-block index: one event can yield several rows, so seq alone is
@@ -145,6 +180,10 @@ export type SidechatTranscriptRow =
     card?: SidechatToolCard
     /** `image` / `file` blocks of the paired result's content list. */
     resultAttachments?: readonly SidechatAttachment[]
+    /** PTC sub-calls the model dispatched INSIDE this call's program. Only a
+     *  `run_code` call has them; the view draws the tree indented under this
+     *  row, outside its disclosure (so a collapsed root still shows them). */
+    children?: SidechatToolChild[]
     /** The turn this call belongs to, and whether that turn already ended (see
      *  `reasoning.turn`). */
     turn?: number
@@ -366,12 +405,9 @@ function resultBlocks(content: unknown): readonly unknown[] | undefined {
   return content as readonly unknown[]
 }
 
-/** The plain text of a tool/result message (its text blocks, under either of
- *  the two shapes {@link resultBlocks} reads). */
-function resultTextOf(data: Record<string, unknown>): string {
-  const message = data.message as { content?: unknown } | undefined
-  const blocks = resultBlocks(message?.content)
-  if (blocks === undefined) return ''
+/** The plain text of one result content list: its text blocks joined by a
+ *  newline, '' when it carries none. */
+function textOfBlocks(blocks: readonly unknown[]): string {
   const parts: string[] = []
   for (const item of blocks) {
     if (item === null || typeof item !== 'object') continue
@@ -381,6 +417,34 @@ function resultTextOf(data: Record<string, unknown>): string {
     }
   }
   return parts.join('\n')
+}
+
+/** The plain text of a tool/result message (its text blocks, under either of
+ *  the two shapes {@link resultBlocks} reads). */
+function resultTextOf(data: Record<string, unknown>): string {
+  const message = data.message as { content?: unknown } | undefined
+  const blocks = resultBlocks(message?.content)
+  return blocks === undefined ? '' : textOfBlocks(blocks)
+}
+
+/** The plain text of one PTC dispatch result (`tool/ptc-dispatch.content`,
+ *  which is the same content list a `tool/result` message carries). */
+function dispatchResultText(data: Record<string, unknown>): string {
+  const blocks = resultBlocks(data.content)
+  return blocks === undefined ? '' : textOfBlocks(blocks)
+}
+
+/** The `image` / `file` blocks of one PTC dispatch result. */
+function dispatchResultAttachments(data: Record<string, unknown>): SidechatAttachment[] {
+  const blocks = resultBlocks(data.content)
+  return blocks === undefined ? [] : attachmentsOf(blocks)
+}
+
+/** Whether one PTC dispatch reports a FAILED sub-call. The host sets
+ *  `isError`; `error` is the optional structured identity, kept as a fallback
+ *  for a producer that only records the failure object. */
+function dispatchFailed(data: Record<string, unknown>): boolean {
+  return data.isError === true || data.error !== undefined
 }
 
 /**
@@ -501,6 +565,19 @@ export function parseArgsObject(args: string | undefined): Record<string, unknow
     const parsed = JSON.parse(args) as unknown
     if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined
     return parsed as Record<string, unknown>
+  } catch {
+    return undefined
+  }
+}
+
+/** One PTC dispatch's `arguments` as the raw JSON string a tool row stores.
+ *  The host ships the value already parsed and normalized to lossless JSON
+ *  (see the PTC client types), so serialization is the only transformation;
+ *  a value that still cannot serialize degrades to no arguments. */
+function ptcArgsJson(value: unknown): string | undefined {
+  if (typeof value === 'string') return value
+  try {
+    return JSON.stringify(value)
   } catch {
     return undefined
   }
@@ -842,6 +919,10 @@ export function transcriptRows(entries: readonly SidebarHistoryEntry[], prev?: r
   const streamRows = new Map<string, number>()
   /** tool callId → index of its tool row in `rows` (result pairing). */
   const callRows = new Map<string, number>()
+  /** PTC subCallId → its child node. A child lives on its parent's row; this
+   *  map makes the dispatch-settles-start lookup O(1) and lets a sub-call be
+   *  the parent of a deeper one. */
+  const ptcChildren = new Map<string, SidechatToolChild>()
   /** present callId → its deliverables card: the card row's index plus the
    *  call's raw arguments (a FAILED result needs them to rebuild the generic
    *  tool row). A `deliverables/presented` event attaches to this card
@@ -884,6 +965,94 @@ export function transcriptRows(entries: readonly SidebarHistoryEntry[], prev?: r
   const turnFields = (turn: unknown): { turn?: number; turnEnded?: boolean } => {
     if (typeof turn !== 'number' || !Number.isInteger(turn)) return {}
     return { turn, ...(endedTurns.has(turn) ? { turnEnded: true } : {}) }
+  }
+  /**
+   * The mutable children list of one PTC parent: the root `run_code` tool row
+   * when `parentCallId` is its callId, else a sub-call node. Undefined when the
+   * parent is outside the event window (the route keeps the newest events, so
+   * a capped head can lose the root) — the dispatch then has no place in the
+   * tree and is skipped, exactly like the host UI's node-less sub-call.
+   */
+  const ptcChildListOf = (parentCallId: string): SidechatToolChild[] | undefined => {
+    const rowIndex = callRows.get(parentCallId)
+    if (rowIndex !== undefined) {
+      const row = rows[rowIndex]
+      if (row === undefined || row.kind !== 'tool') return undefined
+      row.children ??= []
+      return row.children
+    }
+    const parent = ptcChildren.get(parentCallId)
+    if (parent === undefined) return undefined
+    parent.children ??= []
+    return parent.children
+  }
+  /**
+   * Fold one PTC event into its parent's tree. `started` is true for
+   * `tool/ptc-dispatch-start` (a running child), false for the settled
+   * `tool/ptc-dispatch`. All payload fields are model/host wire data, so each
+   * is narrowed; a malformed event contributes nothing and never throws.
+   */
+  const foldPtc = (eventSeq: number, data: Record<string, unknown>, started: boolean): void => {
+    const subCallId = typeof data.subCallId === 'string' && data.subCallId !== '' ? data.subCallId : undefined
+    const name = typeof data.name === 'string' && data.name !== '' ? data.name : 'tool'
+    if (subCallId === undefined) return
+    const existing = ptcChildren.get(subCallId)
+    if (started) {
+      if (existing !== undefined) return
+      const parentCallId = typeof data.parentCallId === 'string' && data.parentCallId !== '' ? data.parentCallId : undefined
+      if (parentCallId === undefined) return
+      const children = ptcChildListOf(parentCallId)
+      if (children === undefined) return
+      const args = ptcArgsJson(data.arguments)
+      const card = callCard(name, args)
+      const child: SidechatToolChild = {
+        seq: eventSeq,
+        callId: subCallId,
+        name,
+        failed: false,
+        executing: true,
+        ...(args !== undefined ? { args } : {}),
+        ...(card !== undefined ? { card } : {}),
+      }
+      children.push(child)
+      ptcChildren.set(subCallId, child)
+      return
+    }
+    const failed = dispatchFailed(data)
+    const resultText = dispatchResultText(data)
+    const resultAttachments = dispatchResultAttachments(data)
+    if (existing !== undefined) {
+      // The start's seq stays the child's identity across the settle.
+      existing.failed = failed
+      existing.executing = false
+      if (name !== 'tool') existing.name = name
+      if (resultText !== '') existing.resultText = resultText
+      if (resultAttachments.length > 0) existing.resultAttachments = resultAttachments
+      existing.card = failed ? undefined : resultCard(existing.name, existing.card, data, resultText)
+      return
+    }
+    const parentCallId = typeof data.parentCallId === 'string' && data.parentCallId !== '' ? data.parentCallId : undefined
+    if (parentCallId === undefined) return
+    const children = ptcChildListOf(parentCallId)
+    if (children === undefined) return
+    const args = ptcArgsJson(data.arguments)
+    // A dispatch-only sub-call still gets the call-time literal card (bash's
+    // command line, edit/write's replacement) before the result refines it —
+    // the same two-stage derivation a direct call uses.
+    const card = failed ? undefined : resultCard(name, callCard(name, args), data, resultText)
+    const child: SidechatToolChild = {
+      seq: eventSeq,
+      callId: subCallId,
+      name,
+      failed,
+      executing: false,
+      ...(args !== undefined ? { args } : {}),
+      ...(resultText !== '' ? { resultText } : {}),
+      ...(card !== undefined ? { card } : {}),
+      ...(resultAttachments.length > 0 ? { resultAttachments } : {}),
+    }
+    children.push(child)
+    ptcChildren.set(subCallId, child)
   }
   for (let index = 0; index < events.length; index++) {
     const event = events[index]
@@ -1151,6 +1320,15 @@ export function transcriptRows(entries: readonly SidebarHistoryEntry[], prev?: r
         else rows.splice(Math.min(...streamed), streamed.length, ...settled)
         break
       }
+      case 'tool/ptc-dispatch-start':
+      case 'tool/ptc-dispatch': {
+        // PTC sub-calls are LOG-ONLY: `deriveMessages()` ignores them, so they
+        // never re-enter model history and the transcript is the only place
+        // they can be seen. They inherit their parent row's turn visually (the
+        // view draws the tree under `run_code`); the events carry no turn.
+        foldPtc(event.seq, data, event.type === 'tool/ptc-dispatch-start')
+        break
+      }
       case 'tool/call': {
         const callId = data.callId
         const name = typeof data.name === 'string' ? data.name : 'tool'
@@ -1299,6 +1477,25 @@ function turnAnnotationOf(row: SidechatTranscriptRow): { turn?: number; turnEnde
   return row.kind === 'reasoning' || row.kind === 'tool' ? row : {}
 }
 
+/** Whether two PTC child trees render the same thing (the row-reuse compare).
+ *  Card payloads are deliberately not compared: like the root tool row, a
+ *  child's card is a pure function of its args/result, and every transition
+ *  that changes it flips one of the compared fields below. */
+function toolChildrenEqual(a: readonly SidechatToolChild[] | undefined, b: readonly SidechatToolChild[] | undefined): boolean {
+  if (a === b) return true
+  if (a === undefined || b === undefined || a.length !== b.length) return false
+  return a.every((child, index) => {
+    const peer = b[index]
+    if (peer === undefined) return false
+    return child.seq === peer.seq && child.callId === peer.callId
+      && child.name === peer.name && child.failed === peer.failed
+      && child.args === peer.args && child.resultText === peer.resultText
+      && child.executing === peer.executing
+      && attachmentsEqual(child.resultAttachments, peer.resultAttachments)
+      && toolChildrenEqual(child.children, peer.children)
+  })
+}
+
 /** Whether two rows carry identical display content (identity fields plus
  *  every rendered field of their kind). */
 function rowsEqual(a: SidechatTranscriptRow, b: SidechatTranscriptRow): boolean {
@@ -1339,6 +1536,7 @@ function rowsEqual(a: SidechatTranscriptRow, b: SidechatTranscriptRow): boolean 
       return a.name === other.name && a.failed === other.failed && a.args === other.args
         && a.resultText === other.resultText && a.executing === other.executing
         && attachmentsEqual(a.resultAttachments, other.resultAttachments)
+        && toolChildrenEqual(a.children, other.children)
         && left.turn === right.turn && left.turnEnded === right.turnEnded
     }
     case 'deliverables': {
