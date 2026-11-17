@@ -28,6 +28,7 @@ import { isTargetAvailable, openInterceptedLink, registerLinkInterception, shoul
 import { registerImeGuard } from './ime-guard.ts'
 import { registerQuoteSource } from './selection-quote.ts'
 import { IconSideCardNav } from './icons.tsx'
+import { registerChatMarkdownMentions } from './chat-mentions.ts'
 import type { SettingsSectionIconOwnerProps } from '@deepseek-ai/dsh-client-ui-settings/client'
 import { loadBootDecision } from './prefs.ts'
 import { SideCardSection } from './SideCardSection.tsx'
@@ -175,6 +176,7 @@ export function apply(ctx: Context): void {
   const service = createBetterSidebarService(sidebarStore)
   ctx.provide('betterSidebar', service)
   ctx.effect(() => () => { disposeSidechatSurfaces(service) }, 'dsh-better-sidebar: sidechat surface adapters')
+  ctx.effect(() => registerChatMarkdownMentions(ctx), 'dsh-better-sidebar: chat Markdown mentions')
   // The native right-Sidebar surface: the plugin's content is registered as
   // DSH tab types (one per descriptor) and every open routes there, so the
   // right column belongs to the host and only the bottom workbench stays
@@ -185,7 +187,9 @@ export function apply(ctx: Context): void {
   // released with this activation.
   const nativeGuide = createNativeGuideCatalog(ctx)
   ctx.effect(() => () => { nativeGuide.dispose() }, 'dsh-better-sidebar: native guide catalog')
-  const nativeSurface = createNativeSurface(ctx, nativeRecords)
+  const nativeSurface = createNativeSurface(ctx, nativeRecords, (tab, sessionId) => {
+    service.getTab(tab.type)?.onClose?.(tab, { sessionId })
+  })
   service.setSurface(nativeSurface)
   // The optional dsh-context diagnostics: ONE controller per activation. It
   // re-proves the optional runtime faces itself, so the plugin needs no new

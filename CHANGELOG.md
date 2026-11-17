@@ -4,21 +4,25 @@
 
 ### 未发布
 
-- 🖥️ **底部工作台的终端可以在页签内直接换 Shell**：终端面板右上角新增一组控件——左边是 `+`（开一个**新的**终端页签），右边是当前 Shell 名的按钮，点开列出宿主 `webTerminals.launchShells` 报告的全部 Shell，选中即**就地把当前页签换成该 Shell**。两条路径都走宿主自己的偏好（`selectShell` 写 `dsh.terminal.shell`），与开始页终端卡片的 Shell 菜单共用同一份记录，两边互相看得见。页签标题随之变成「终端 · pwsh」这类带 Shell 短名的写法（`powershell` → `pwsh`、去掉 `.exe`），标题只在真正变化时才写回 layout。宿主只提供 `view` / `close` / `recover` 时整个控件不出现，终端本身照旧可用。
-  - **换 Shell 的顺序是契约**：先 `selectShell(path)` 写偏好，再关闭当前进程并由 `terminalRunOf + 1` 铸一代新的 `contentId`——宿主分配新 PTY 时才重读偏好，而已经存在的进程永远不会重读；先关后写会让新进程拿到旧 Shell。
-  - Shell 列表**只在菜单打开时才探测**（带 `AbortController` 生命周期），从不换 Shell 的终端不付这次往返；探测失败给一行「重试」，而不是把错误当选项列出来。
-  - 接口类型 `HostShellChoice` / `HostShellCatalog` 与开始页共用，字段按宿主真实契约补齐（`args`，以及把 `selectedShell` 从可选属性改为显式的 `string | undefined`，让「还没记住」与「没这个字段」不再混淆）。
-  - 🧪 测试：`tests/terminal-shell-switcher.spec.tsx`（16 条——上面 10 条换成 Shell 的行为，加 6 条默认 Shell：按 NAME 解析出宿主认可的 PATH、短名匹配、pin 压过默认值、没配默认值就不探测、候选不可发现与探测失败两种回落）。
+- 🖥️ **底部工作台的终端可以在页签内直接换 Shell**：终端面板右上角新增一组控件——左边是 `+`（开一个**新的**终端页签），右边是当前 Shell 名的按钮，点开列出宿主 `webTerminals.launchShells` 报告的全部 Shell，选中即**就地把当前页签换成该 Shell**。
 
-- ⚙️ **侧边卡片的设置栏新增终端设置**：终端描述符现在声明设置面板，分两组。**默认 Shell** 决定插件自己的底部终端启动哪个 Shell——存的是 Shell 的**名字**（不是路径），落在描述符自己的 `pluginSettings` 里，因此不碰宿主的全局 `dsh.terminal.shell`，也不影响任何其它终端。**可选的 Shell** 通过 `ctx.configEditor` 编辑 profile 的 `terminal-controller` 行：内置项（`zsh` / `bash` / `fish` / `pwsh` / `powershell` / `cmd`）只读，自己加的名字可增可删；每次写入都重述整套内置项，因为 profile 的 override 是**整数组替换**而不是合并。
-  - 名字要到**创建视图之前**才解析成宿主认可的路径——宿主只接受自己 discovery 结果里的 Shell，否则直接抛 `Selected shell is not available in this execution environment`。找不到的名字（候选被删了、这台机器没装）回落到宿主自己的选择；探测本身失败也一样回落而不是弹错，因为总还有一个 Shell 能跑。
-  - 用切换器换过壳的页签在 `tab.meta` 里带自己的 **pin**，优先级高于默认值。所以改默认值不会悄悄推翻手动选择，两个底部终端也可以各待在不同的 Shell 上——宿主那份共享的 `localStorage` 偏好承载不了这件事。
-  - 没配默认值时**一次 discovery 往返都不花**：仍由宿主记住的偏好决定，与这个设置出现之前完全一样。
-  - 🧪 测试：`tests/terminal-shells.spec.ts`（17 条——候选读取、整数组重述、内置项拒绝删除、未知 action），`tests/terminal-settings-panel.spec.tsx`（13 条——选择器顺序与写入、原生项只读、经路由增删、内联错误、无 config editor 的部署、Done），外加 `tests/terminal-shell-switcher.spec.tsx` 里 6 条默认 Shell 用例。
-- 🗂 **Shell 路径选择器改成 Windows 资源管理器式地址栏**：候选框旁的「浏览文件」对话框，顶部那一行不再是单个文本框，而是一排面包屑按钮——最左是「这台电脑」图标，其后是盘符和逐级目录，各点一下就跳到该层。行尾空白处单击、或最后一段目录按钮双击，整行切换成文本框；输入路径回车即跳转到对应目录并刷新列表，随后恢复按钮态。点「这台电脑」进入盘符选择界面（新增宿主 `fs.drives` 路由逐盘符探测，不依赖外部命令），选中盘符列出其根目录。地址栏的回车始终是「导航」而非「确认」，确认候选仍由对话框的「使用这个路径」按钮完成。
-  - 路径层级过多时，盘符之后、最后两级之前的目录折叠成一个 `..` 按钮（避免中间层级把地址栏挤到重叠），点 `..` 原地展开全部层级；切换目录后自动重新折叠。每段面包屑单独截断省略、全路径留在悬停提示里。
-  - 编辑态按 Escape 只退回面包屑按钮、不关闭整个对话框（此前事件冒泡到 Modal 的文档级处理器把对话框一起关掉，已拦截并加回归测试）。
-  - 🧪 测试：`tests/terminal-settings-panel.spec.tsx`（面包屑渲染 / 长路径折叠成 `..` 并点击展开 / 末段双击进编辑态 / 点计算机列盘符并导航 / Escape 只退编辑态）、`tests/fs-drives.spec.ts`（跨平台盘符枚举形状）。
+- ⚙️ **侧边卡片的设置栏新增终端设置**：终端描述符现在声明设置面板，分两组。**默认 Shell** 决定插件自己的底部终端启动哪个 Shell——存的是 Shell 的**名字**（不是路径），落在描述符自己的 `pluginSettings` 里，因此不碰宿主的全局 `dsh.terminal.shell`，也不影响任何其它终端。**可选的 Shell** 通过 `ctx.configEditor` 编辑 profile 的 `terminal-controller` 行：内置项（`zsh` / `bash` / `fish` / `pwsh` / `powershell` / `cmd`）只读，自己加的名字可增可删。
+
+- 🎯 **侧边对话「回到最新」胶囊不再塌成细条、端部恢复正圆**（[#1208](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1208)）：胶囊所在的 `.sidechatToLatestSlot` 是 `height: 0` 的绝对定位 flex 槽位（抄宿主 `ui-chat` 的 `.toBottomSlot` 配方），但子项没有尺寸约束——默认 `align-items: stretch` 会在零高容器里把它拉到 0 高，内容高度被丢掉，只剩 `padding + border` 的 10px，文字于是溢出到胶囊外。宿主自己的 `.toBottom` 靠显式 `34px` 高度绕开了同一个坑，这里改用 `align-items: flex-end` + `flex: none` 让胶囊保持自身内容高度（30px）。同时补上 `corner-shape: round`：宿主 `corner-shape.css` 对 `*` 施加 `superellipse(1.5)`，会把 `border-radius: 999px` 的胶囊端部削平，宿主的全圆元素都成对声明退出该效果，本插件此前漏了这条。该按钮在 v0.31.0 引入，v0.31.0–v0.32.1 均受影响。
+  - 🧪 真实宿主 + Chromium 挂载冒烟确认侧边对话渲染无回归；修复前后在 Chrome 157 用宿主真实 token 样式表做过 A/B 对照（高度 10px→30px、文字溢出 true→false、`corner-shape` 恢复 `superellipse(1)`）。
+
+- 🌿 **多仓库工作区的仓库切换器改成响应式**（贡献者 PR [#1130](https://github.com/omdsh-dev/DSH-better-sidebar/pull/1130) @iasiv5）：容器工作区发现多个仓库时，「更改」上方一行在宽度足够时横排仓库胶囊，放不下时自动改为「仓库 ▾」下拉；两种形态共用位置消歧标签（深层仓库显示 `名 (相对父路径)`，如 `knowhow (ob-harness/contexts)`），当前根始终可见，服务端回退根以禁用项如实显示实际根而不是冒充候选。单仓库工作区不显示；「更多操作 → 仓库」保留为兜底；切换仍走既有 `chooseRepo`，读数、写操作与提交图继续钉在选中的根上。
+  - 🧪 测试：`tests/git-repo-labels.spec.ts`（32 例：POSIX / Windows / UNC / 扩展路径、同名消歧、顺序与输入不变）与 `tests/git-repo-switcher.spec.tsx`（宽时胶囊、窄时下拉、标签与回退禁用项、单仓不显示）。
+
+- 💬 **侧边对话页面模式可配置**（贡献者 PR [#1115](https://github.com/omdsh-dev/DSH-better-sidebar/pull/1115) @pennxiang）：默认仍是「共用一页」——再次打开聚焦同一个页签，并回到本会话最近的侧边对话；在「设置 → 侧边卡片 → 侧边对话」的齿轮里可切换「每个对话独立页」。独立模式下每个线程一个原生 occurrence，按 `(sessionId, contentId)` 精确恢复，跨原生栏与底部工作台按 threadId 去重；关闭原生页签会归档并释放该线程，创建过程中关闭页签不会留下孤儿线程。切换模式只影响之后的新打开，已开页签保持原样。
+  - 🧪 测试：`tests/sidechat-native-multiple.spec.ts`（独立页双开、精确恢复、跨载体去重、关闭/并发/存储边界、模式翻转重注册）、`tests/sidechat-view.spec.tsx`（共用页回退 + 独立页创建/归档）、`tests/builtins.spec.ts`（动态谓词默认 false）、`tests/sidechat-submit-key-pref.spec.tsx`（两个设置行并存）；真实宿主 Chromium 覆盖共用页重复打开与独立页三线程刷新恢复。
+
+- 🔗 **聊天里的完整绝对 Markdown 路径可点击**（贡献者 PR [#882](https://github.com/omdsh-dev/DSH-better-sidebar/pull/882) @wang-kaopu）：每轮最后一条助手消息里，完整的绝对 `.md` / `.markdown` 内联代码路径可点击，并按当前会话的文件地址在原生侧栏打开；路径不存在时显示宿主文件读取错误。宿主已有的文件提及优先；`chatFileMentions.forClosing` 的第三个参数 `getFileTriggerProps` 原样转发，原有文件提及右键菜单与点击行为不变；卸载后旧链接不再打开新文件。
+  - 🧪 测试：`tests/chat-mentions.spec.tsx`（POSIX / Windows / UNC 路径判定、stock 优先、三参转发、服务晚到/释放/后装包装、MarkdownText 只认领可点击路径）。
+
+- 📦 **发布包只安装运行时真正需要的依赖**（[#1191](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1191)）：`dependencies` 只保留 host 半真正 import 的 `ws` / `yaml`；已经打进 `lib/client*.js` 的 CodeMirror、mermaid、xterm、react-icons、dompurify、clsx、rxjs 等移入 `devDependencies`。安装不再多拉约 240 MB / 1.26 万个文件，插件实际运行时仍只有插件本体加 `ws` / `yaml`。`src` 与 `./src/*` 导出**保留**，不做破坏性删除。
+  - 🧪 守护：`tests/market-manifest.spec.ts` 同时校验仓库清单与 `pnpm pack` 后的发布清单，dependencies 必须恰好是 `ws` / `yaml`，且 `src` 仍在 `files` 里。
+
 ### v0.32.1
 
 - 🧩 **适配 DSH 0.2.2-rc.2**：插件基线抬到 0.2.2 线的最新 RC，同时跟上这一版宿主的客户端契约与团队服务。

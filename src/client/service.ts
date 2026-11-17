@@ -230,6 +230,13 @@ export interface TabDescriptor {
    */
   single?: boolean
   /**
+   * Opt into independent native page occurrences (e.g. one side-chat tab per
+   * thread). Native guide opens otherwise focus the same page in each pane.
+   * A predicate is re-evaluated on every open and native sync, so a settings
+   * flip re-registers the native type without a restart.
+   */
+  multiple?: boolean | (() => boolean)
+  /**
    * If provided, opening a tab whose `dedupeKey(tab)` matches an existing
    * tab's key focuses the existing one instead of creating a new one.
    * Returning `undefined` means "no dedup — always open a new tab".
@@ -723,7 +730,9 @@ export interface NativePathTab {
  */
 export interface SidebarSurface {
   /** Open a page type in one session's native surface. */
-  openTab(input: { sessionId: string; kind: string; params: NativeTabParams; revealIfOpened: boolean; preferNewPane?: boolean }): void
+  openTab(input: { sessionId: string; kind: string; params: NativeTabParams; revealIfOpened: boolean; preferNewPane?: boolean; reveal?: boolean; reuseTab?: () => boolean; matchTab?: (tab: SidebarTab) => boolean }): void
+  /** Find a bound occurrence across live and saved native layouts. */
+  findTab?(sessionId: string, kind: string, match: (tab: SidebarTab) => boolean): string | undefined
   /** Open a resource address in one session's native surface. */
   openResource(input: { sessionId: string; address: string; line?: number; revealIfOpened: boolean; preferNewPane?: boolean }): void
   /** The file address of one path (the native surface owns the grammar). */
@@ -886,6 +895,8 @@ export interface BetterSidebarService {
    * background conversation's pages. Without a scope nothing changes.
    */
   closeTab(tabId: string, scope?: SessionScope): void
+  /** Test membership before binding an asynchronous result to a tab. */
+  hasTab?(tabId: string, sessionId: string): boolean
   /** Subscribe to registry changes (register/dispose). */
   subscribe(listener: () => void): () => void
   /** The plugin version this service instance was built from ('0.12.0'). */
@@ -1080,6 +1091,16 @@ function safeCall(fn: () => void): void {
  * tab/viewer registries (Map + listener set) and proxies openTab/closeTab
  * to the store's reducer. One instance per client plugin activation.
  */
+/**
+ * Whether one tab type opts into independent native page occurrences.
+ * @param descriptor - the registered descriptor.
+ * @returns the current flag, evaluating a dynamic predicate.
+ */
+export function isMultipleTab(descriptor: Pick<TabDescriptor, 'multiple'>): boolean {
+  const multiple = descriptor.multiple
+  return typeof multiple === 'function' ? multiple() : multiple === true
+}
+
 export function createBetterSidebarService(store: SidebarStore): BetterSidebarService {
   const tabs = new Map<string, TabDescriptor>()
   const viewers = new Map<string, FileViewerDescriptor>()
@@ -1343,6 +1364,36 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
     const targetSessionId = scope?.sessionId ?? store.getSnapshot().sessionId
     if (targetSessionId === undefined) return
     const callbackScope: SessionScope = scope ?? { sessionId: targetSessionId }
+    // Re-evaluate this at placement too: a queued native open may acquire a
+    // bottom owner while its session is off screen.
+    const reuseBottom = (match: (tab: SidebarTab) => boolean): boolean => {
+      const state = store.getSessionState(targetSessionId)
+      const bottom = state === undefined ? undefined : allLeaves(state.bottomSplits).flatMap(leaf => leaf.tabs).find(match)
+      if (bottom === undefined) return false
+      if (seed.reveal !== false) {
+        reduceInSession(targetSessionId, state => ({
+          ...activateTabReducer(state, findPaneIdOf(state, bottom.id), bottom.id), bottomOpen: true,
+        }))
+        clearUnreadFor(bottom.type, targetSessionId)
+        safeCall(() => descriptor.onActivate?.(bottom, callbackScope))
+      }
+      return true
+    }
+    // A thread is one conversation across BOTH carriers. Opening its history
+    // entry must not duplicate it on the other surface (closing either copy
+    // would otherwise archive the thread still displayed by the first).
+    if (isMultipleTab(descriptor) && descriptor.dedupeKey !== undefined && seed.meta !== undefined) {
+      const candidate: SidebarTab = { id: seed.id ?? seed.type, type: seed.type, title: seed.title ?? '', meta: seed.meta }
+      const key = descriptor.dedupeKey(candidate)
+      if (key !== undefined) {
+        const match = (tab: SidebarTab): boolean => tab.type === seed.type && descriptor.dedupeKey?.(tab) === key
+        if (reuseBottom(match)) return
+        if (surface?.findTab?.(targetSessionId, seed.type, match) !== undefined) {
+          surface.openTab({ sessionId: targetSessionId, kind: seed.type, params: { meta: seed.meta }, revealIfOpened: true, reveal: seed.reveal !== false, matchTab: match, reuseTab: () => reuseBottom(match) })
+          return
+        }
+      }
+    }
     // ── Native right Sidebar ──────────────────────────────────────────────
     // With the native surface installed, every open except an explicit
     // bottom-panel one — and except a `bottomOnly` type, which has no native
@@ -1421,9 +1472,12 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
         // A component type's path seed stays on the page open (regression
         // #632: rerouting every path seed into openResource sent the open to
         // the editor, so the registered component never mounted).
+        const dedupeKey = descriptor.dedupeKey
+        const key = isMultipleTab(descriptor) ? dedupeKey?.(synthetic) : undefined
         surface.openTab({
           sessionId: targetSessionId,
           kind: seed.type,
+          ...(key === undefined ? {} : { matchTab: (tab: SidebarTab) => dedupeKey?.(tab) === key, reuseTab: () => reuseBottom(tab => tab.type === seed.type && dedupeKey?.(tab) === key), reveal: seed.reveal !== false }),
           params: {
             title,
             ...(seed.path === undefined ? {} : { path: seed.path }),
@@ -1460,8 +1514,8 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
       if (descriptor.createTab !== undefined) {
         const result = descriptor.createTab(state)
         if (result === null) return state
-        tab = result.tab
-        next = applyDedupe(state, result.tab, descriptor, land)
+        tab = { ...result.tab, ...(seed.meta === undefined ? {} : { meta: seed.meta }) }
+        next = applyDedupe(state, tab, descriptor, land)
         if (result.patch !== undefined) next = { ...next, ...result.patch }
       } else {
         tab = {
@@ -1710,6 +1764,11 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
     matchFileViewer,
     openTab,
     closeTab,
+    hasTab: (tabId, sessionId) => {
+      if (surface?.has(tabId, sessionId) === true) return true
+      const state = store.getSessionState(sessionId)
+      return state !== undefined && tabOpenIn(state, tabId)
+    },
     subscribe,
     version: SIDEBAR_SERVICE_VERSION,
     features: SIDEBAR_FEATURES,

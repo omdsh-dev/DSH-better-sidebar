@@ -14,9 +14,12 @@ import {
   SIDEBAR_PREFS_DEFAULTS,
   SIDECHAT_PREFS_ID,
   SIDECHAT_SUBMIT_KEY_SETTING,
+  SIDECHAT_TABS_SETTING,
   parseSidechatSubmitKey,
+  parseSidechatTabsMode,
   type SidebarPrefs,
   type SidechatSubmitKey,
+  type SidechatTabsMode,
 } from '../prefs-shared.ts'
 
 export {
@@ -163,6 +166,17 @@ function pluginSettingsMapOf(value: unknown): Record<string, Record<string, unkn
  */
 export function sidechatSubmitKeyOf(prefs: SidebarPrefs): SidechatSubmitKey {
   return parseSidechatSubmitKey(prefs.pluginSettings[SIDECHAT_PREFS_ID]?.[SIDECHAT_SUBMIT_KEY_SETTING])
+}
+
+/**
+ * The side-chat page mode: one shared native page (the default) or one page
+ * per thread. The value is the feature's own plugin-owned setting, so a
+ * document that never chose one reads the default.
+ * @param prefs - the parsed side card preferences.
+ * @returns the configured page mode.
+ */
+export function sidechatTabsModeOf(prefs: SidebarPrefs): SidechatTabsMode {
+  return parseSidechatTabsMode(prefs.pluginSettings[SIDECHAT_PREFS_ID]?.[SIDECHAT_TABS_SETTING])
 }
 
 /**

@@ -20,6 +20,7 @@ import { act } from 'react-dom/test-utils'
 import { renderRoot, setupReactAct } from './test-utils.ts'
 import { SideChatView } from '../src/client/SideChatView.tsx'
 import { bindSidechatSurfaces, disposeSidechatSurfaces, type SidechatSurface } from '../src/client/sidechat-surface.ts'
+import { api } from '../src/client/api.ts'
 import { attachLocale } from '../src/client/locales.ts'
 import type { Context, SidebarSessionList } from '../src/context-types.ts'
 import type { SidebarTab } from '../src/client/state.ts'
@@ -369,9 +370,9 @@ afterEach(() => {
 })
 
 /** The bound-thread view props (tab meta pins threadId 't1'). */
-function viewProps(ctx: Context) {
+function viewProps(ctx: Context, multipleTabs = false) {
   const tab: SidebarTab = { id: 'tab1', type: 'sidechat', title: '线程一', meta: { threadId: 't1' } }
-  return { ctx, scope: { sessionId: 'root', cwd: '/p' }, tab, visible: true }
+  return { ctx, scope: { sessionId: 'root', cwd: '/p' }, tab, visible: true, multipleTabs }
 }
 
 /** The sessions-list snapshot with one idle side thread bound to 'root'. */
@@ -516,7 +517,7 @@ describe('SideChatView archive', () => {
     unmount()
   })
 
-  it('archives a recoverable bound session with stopActivity and rebinds to the newest remaining thread', async () => {
+  it('archives a recoverable binding without stealing another tab’s remaining thread', async () => {
     const host = makeArchiveHost()
     const store = makeStore({
       byId: {
@@ -537,7 +538,7 @@ describe('SideChatView archive', () => {
         },
       },
     })
-    const props = viewProps(makeArchiveCtx(store, host))
+    const props = viewProps(makeArchiveCtx(store, host), true)
     const { container, unmount } = renderRoot(createElement(SideChatView, props))
     await act(async () => {})  // flush the initial transcript pull
 
@@ -546,7 +547,42 @@ describe('SideChatView archive', () => {
     // The host's own archive capability, once, with a running agent settled.
     expect(host.archiveSession).toHaveBeenCalledTimes(1)
     expect(host.archiveSession).toHaveBeenCalledWith('t1', { stopActivity: true })
-    // The tab moves to the newest remaining thread.
+    // t2 may already be open in its own tab; archiving t1 must not bind it here.
+    expect(host.betterSidebar.updateTab).toHaveBeenCalledTimes(1)
+    expect(host.betterSidebar.updateTab).toHaveBeenCalledWith('tab1', { meta: {}, title: '新对话' }, 'root')
+    unmount()
+  })
+
+  it('archives a recoverable bound session with stopActivity and rebinds the shared page to the newest remaining thread', async () => {
+    const host = makeArchiveHost()
+    const store = makeStore({
+      byId: {
+        root: { id: 'root', displayTitle: '主会话', running: false },
+        t1: { id: 't1', displayTitle: '线程一', running: false },
+        t2: { id: 't2', displayTitle: 'Side: 线程二', origin: 'subagent', parentId: 'root', running: false },
+      },
+      projectionsBySession: {
+        root: {
+          values: {
+            subagentCatalog: [
+              { id: 't2', createdAt: 2_000, mode: 'continuable', label: 'Side: 线程二' },
+            ],
+          },
+          state: 'ready',
+          error: null,
+        },
+      },
+    })
+    const props = viewProps(makeArchiveCtx(store, host))
+    const { container, unmount } = renderRoot(createElement(SideChatView, props))
+    await act(async () => {})  // flush the initial transcript pull
+
+    await clickArchive(archiveButton(container))
+
+    expect(host.archiveSession).toHaveBeenCalledTimes(1)
+    expect(host.archiveSession).toHaveBeenCalledWith('t1', { stopActivity: true })
+    // The shared page moves to the newest remaining thread, without the
+    // independent mode's title reset.
     expect(host.betterSidebar.updateTab).toHaveBeenCalledTimes(1)
     expect(host.betterSidebar.updateTab).toHaveBeenCalledWith('tab1', { meta: { threadId: 't2' } })
     unmount()
@@ -569,7 +605,7 @@ describe('SideChatView archive', () => {
 
   it('unbinds the tab to the empty state once no thread is left to switch to', async () => {
     const host = makeArchiveHost()
-    const props = viewProps(makeArchiveCtx(recoverableStore(), host))
+    const props = viewProps(makeArchiveCtx(recoverableStore(), host), true)
     const { container, unmount } = renderRoot(createElement(SideChatView, props))
     await act(async () => {})  // flush the initial transcript pull
 
@@ -579,8 +615,63 @@ describe('SideChatView archive', () => {
     // `{}` rather than a dangling threadId: the panel unbinds instead of
     // staying bound to the session the host just archived.
     expect(host.betterSidebar.updateTab).toHaveBeenCalledTimes(1)
-    expect(host.betterSidebar.updateTab).toHaveBeenCalledWith('tab1', { meta: {} })
+    expect(host.betterSidebar.updateTab).toHaveBeenCalledWith('tab1', { meta: {}, title: '新对话' }, 'root')
     unmount()
+  })
+})
+
+describe('SideChatView independent creation', () => {
+  it('autoCreate starts a new thread even when the session already has one', async () => {
+    const host = makeArchiveHost()
+    const props = viewProps(makeArchiveCtx(threadStore(), host), true)
+    props.tab = { ...props.tab, meta: { autoCreate: true } }
+    const { unmount } = renderRoot(createElement(SideChatView, props))
+    await act(async () => {})
+    expect(startCalls).toBe(1)
+    expect(host.betterSidebar.updateTab).toHaveBeenCalledWith('tab1', { meta: { threadId: 'session-new' } }, 'root')
+    expect(host.betterSidebar.updateTab).not.toHaveBeenCalledWith('tab1', { meta: { threadId: 't1' } }, 'root')
+    unmount()
+  })
+
+  it('the input-bar plus opens a new bound tab instead of rebinding its current tab', async () => {
+    const host = makeArchiveHost()
+    const { container, unmount } = renderRoot(createElement(SideChatView, viewProps(makeArchiveCtx(threadStore(), host), true)))
+    await act(async () => {})
+    const plus = container.querySelector<HTMLButtonElement>('button[aria-label="新建对话"]')!
+    await act(async () => { plus.click() })
+    expect(startCalls).toBe(1)
+    expect(host.betterSidebar.openTab).toHaveBeenCalledWith({ type: 'sidechat', meta: { threadId: 'session-new' } }, expect.objectContaining({ sessionId: 'root' }))
+    expect(host.betterSidebar.updateTab).not.toHaveBeenCalled()
+    unmount()
+  })
+
+  it('two sessions with the same native tab1 can both create while requests are pending', async () => {
+    const resolve: Array<(value: { childId: string }) => void> = []
+    const start = vi.spyOn(api, 'sidechatStart').mockImplementation(() => new Promise(done => { resolve.push(done) }))
+    const host = makeArchiveHost()
+    const props = viewProps(makeArchiveCtx(threadStore(), host), true)
+    props.tab = { ...props.tab, meta: { autoCreate: true } }
+    const a = renderRoot(createElement(SideChatView, props))
+    const b = renderRoot(createElement(SideChatView, { ...props, scope: { sessionId: 'other' } }))
+    expect(start).toHaveBeenCalledTimes(2)
+    await act(async () => { resolve[0]!({ childId: 'a' }); resolve[1]!({ childId: 'b' }) })
+    expect(host.betterSidebar.updateTab).toHaveBeenCalledWith('tab1', { meta: { threadId: 'a' } }, 'root')
+    expect(host.betterSidebar.updateTab).toHaveBeenCalledWith('tab1', { meta: { threadId: 'b' } }, 'other')
+    a.unmount(); b.unmount(); start.mockRestore()
+  })
+
+  it('closing a starting tab releases the newly created orphan instead of rebinding', async () => {
+    const host = makeArchiveHost()
+    Object.assign(host.betterSidebar, { hasTab: () => false })
+    const dispose = vi.spyOn(api, 'sidechatDispose').mockResolvedValue({ accepted: true })
+    const props = viewProps(makeArchiveCtx(threadStore(), host), true)
+    props.tab = { ...props.tab, meta: { autoCreate: true } }
+    const { unmount } = renderRoot(createElement(SideChatView, props))
+    await act(async () => {})
+    expect(host.betterSidebar.updateTab).not.toHaveBeenCalled()
+    expect(host.archiveSession).toHaveBeenCalledWith('session-new', { stopActivity: true })
+    expect(dispose).toHaveBeenCalledWith('session-new')
+    unmount(); dispose.mockRestore()
   })
 })
 
@@ -608,7 +699,7 @@ describe('SideChatView queue, echo and model picker', () => {
   }
 
   it('creates a fresh thread from the leftmost + button', async () => {
-    const { container, unmount } = renderRoot(createElement(SideChatView, viewProps(makeCtx(threadStore()))))
+    const { container, unmount } = renderRoot(createElement(SideChatView, viewProps(makeCtx(threadStore()), true)))
     await act(async () => {})  // flush the initial transcript pull
 
     const plus = container.querySelector<HTMLButtonElement>('button[aria-label="新建对话"]')

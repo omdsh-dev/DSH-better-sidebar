@@ -268,6 +268,12 @@
   z-index: 2;
   height: 0;
   display: flex;
+  /* A zero-height flex box stretches its children to zero height, so the slot
+     must bottom-align them: the pill then keeps its own content height instead
+     of collapsing into its own padding/border. The host's `.toBottom` escapes
+     the same trap with an explicit 34px height; this pill has none, so the
+     alignment is what preserves it. */
+  align-items: flex-end;
   justify-content: flex-end;
   padding-right: max(
     calc(var(--dsh-composer-side-clearance, 16px) + 16px),
@@ -279,9 +285,14 @@
 /* Return-to-latest pill: floats over the transcript's bottom edge while the
    reader is away from the tail. */
 .sidechatToLatest {
+  flex: none;
   padding: 4px 12px;
   border: 1px solid var(--dsw-alias-border-l2, var(--dsw-alias-border-l1));
   border-radius: 999px;
+  /* The host's corner-shape.css applies superellipse(1.5) to every element,
+     which squares off a capsule's ends. Full-round shapes opt out in pairs —
+     the host's own `.toBottom` does the same — so the pill must too. */
+  corner-shape: round;
   background: var(--dsw-alias-bg-base);
   color: var(--dsw-alias-label-secondary);
   font: var(--dsw-font-xs-13);

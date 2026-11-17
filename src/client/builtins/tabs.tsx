@@ -36,8 +36,11 @@ import { LazyTerminalBottom } from '../terminal-lazy.tsx'
 import { TerminalSettingsPanel } from '../TerminalSettingsPanel.tsx'
 import { INSTANCE_FIELD, closeBottomTerminal, webTerminals } from '../terminal-client.ts'
 import { api } from '../api.ts'
-import { sidechatSubmitKeyOf } from '../prefs.ts'
-import { SIDECHAT_SUBMIT_KEY_DEFAULT, SIDECHAT_SUBMIT_KEY_SETTING } from '../../prefs-shared.ts'
+import { sidechatSubmitKeyOf, sidechatTabsModeOf } from '../prefs.ts'
+import {
+  SIDECHAT_SUBMIT_KEY_DEFAULT, SIDECHAT_SUBMIT_KEY_SETTING,
+  SIDECHAT_TABS_DEFAULT, SIDECHAT_TABS_SETTING,
+} from '../../prefs-shared.ts'
 import type { Context } from '../../context-types.ts'
 import type { TabComponentProps, TabDescriptor } from '../service.ts'
 
@@ -98,6 +101,7 @@ function SideChatTab(props: TabComponentProps) {
       tab={tab}
       visible={visible}
       submitKey={sidechatSubmitKeyOf(prefs)}
+      multipleTabs={sidechatTabsModeOf(prefs) === 'multiple'}
     />
   )
 }
@@ -276,6 +280,14 @@ export function builtinTabs(ctx: Context): readonly TabDescriptor[] {
     },
     {
       id: 'sidechat',
+      // The page mode is a user preference: the shared page (today's default)
+      // keeps the host's one-page identity, while "one page per thread" opts
+      // into independent native occurrences. A predicate keeps the native
+      // registration and service dedupe in step with the settings write.
+      multiple: () => {
+        const service = ctx.get('betterSidebar')
+        return service !== undefined && sidechatTabsModeOf(service.getSnapshot().prefs) === 'multiple'
+      },
       title: () => t('sideChat'),
       description: () => t('guideDescSidechat'),
       icon: sidechatTabIcon,
@@ -325,6 +337,24 @@ export function builtinTabs(ctx: Context): readonly TabDescriptor[] {
       // document has no blob, while the composer already sends on Enter).
       settings: {
         pluginToggles: [{
+          key: SIDECHAT_TABS_SETTING,
+          type: 'select',
+          defaultValue: SIDECHAT_TABS_DEFAULT,
+          title: () => t('settingsSidechatTabsTitle'),
+          desc: () => t('settingsSidechatTabsDesc'),
+          options: [
+            {
+              value: 'single',
+              title: () => t('settingsSidechatTabsSingle'),
+              desc: () => t('settingsSidechatTabsSingleDesc'),
+            },
+            {
+              value: 'multiple',
+              title: () => t('settingsSidechatTabsMultiple'),
+              desc: () => t('settingsSidechatTabsMultipleDesc'),
+            },
+          ],
+        }, {
           key: SIDECHAT_SUBMIT_KEY_SETTING,
           type: 'select',
           defaultValue: SIDECHAT_SUBMIT_KEY_DEFAULT,
