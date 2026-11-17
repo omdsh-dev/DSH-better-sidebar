@@ -4,6 +4,18 @@
 
 ### 未发布
 
+- 🧩 **局域网明文 HTTP 下侧边对话与底部终端页签恢复正常**（[#1166](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1166)）：浏览器只在**安全上下文**（https 或 localhost）暴露 `crypto.randomUUID`；用 `http://<局域网 IP>:<端口>` 打开 GUI 时它是 `undefined`，而新开侧边对话页签、新开底部终端都直接调用它——异常发生在宿主创建页签的过程中，界面只剩一个空面板。现在这三处改为一个内部 `freshId()`：有 `randomUUID` 就用它，否则用 `crypto.getRandomValues`（不受安全上下文限制）取 64 位随机数 + 毫秒时间戳兜底，id 仍然唯一。
+  - 🧪 测试：`tests/builtins.spec.ts` 在删掉 `crypto.randomUUID` 的全局环境下驱动真实 `createTab` 工厂，断言侧边对话与终端各自产出非空且互不相同的 id。
+
+- ⚙️ **开始页「调整顺序」里关掉的卡片能重新打开了**（[#1212](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1212)）：宿主设置路由对嵌套普通对象做**深合并**，所以「把 key 删掉」表达不了「显示」——存下来的 `true` 会存活下来，开关自己弹回关。现在两处写入（开始页弹窗与设置页）都改为发送**该 key 的显式布尔值** `{ guideHidden: { <key>: false } }`；读取侧一律按 `=== true` 判断，所以存下来的 `false` 天然表示显示，不需要额外的形状归一。
+  - 🧪 测试：`tests/native-guide.spec.tsx` 驱动真实 `NativeGuide` 走「更多 → 调整顺序 → 重新打开卡片」，断言线上参数确实是 `{ guideHidden: { a: false } }`。
+
+- ⏱️ **设置读得慢时，侧边卡片的开关不再被永久忽略**（[#1159](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1159)）：启动时用「2 秒首绘预算」抢设置文档，超时就按默认值挂载。但抢输的那次读取结果被直接丢弃，而 `settings/document-updated` 只在文档**变更**时触发、不会为一次迟到的读触发——于是 `tabsEnabled: { <id>: false }` 整个会话都没被看见，被禁用的第三方页签一直留在「+ / 更多工具」里，直到用户在设置里开一次再关一次。现在超时后仍会接住**同一次读取**的迟到结果并应用（带 generation 守卫，避免覆盖更新的设置更新；dispose 后不再触碰 store）。首绘预算与「先按默认值挂载」的行为都不变。
+  - 🧪 测试：`tests/prefs.spec.ts` 新增「启动决策超时」两例：迟到结果只回调一次并带上禁用项与 suspended 标记；准时返回时迟到回调永不执行。
+
+- 🐧 **WSL 工作区里 Git 页签不再恒显示「加载失败」**（贡献者 PR [#1206](https://github.com/omdsh-dev/DSH-better-sidebar/pull/1206) @llwinty）：`git rev-parse --show-toplevel` 是在发行版**内部**跑的，因此返回发行版里的 POSIX 路径（`/home/...`）；而后续每条 git 命令都靠 UNC 拼写（`\\wsl.localhost\<发行版>\...`）反推发行版，于是拿到这个 POSIX 根的每条命令都掉回 Windows 侧 git，以 `cannot change to '/home/...'` 失败，整页没有任何分支/分组/提交框。现在发现到的根（以及 worktree 清单里的每个 linked checkout）会按发现它的 cwd 重新拼回同一 share 的 UNC 拼写。贡献者已在本机 Windows + 真实 WSL 仓库上做过修复前后 A/B，并把修复后的 `lib/index.js` 换进已安装包做过端到端验证。
+  - 🧪 测试：`tests/git-spawn.spec.ts` 覆盖根的重新拼写、linked checkout、非 WSL 路径不受影响，以及后续命令确实经 `wsl.exe` 执行。
+
 - 🔍 **宿主接管页头时也有「查找」入口了**（[#1214](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1214)）：v0.32.1 给编辑器自带工具条加的查找按钮，在侧栏真实的合并式页头（`EditorHost` 以 `toolbar: 'host'` 接管）下整行不渲染，markdown / html / jsonl 预览态更是没有任何查找入口，只剩可能被第三方插件全局截获的 Cmd/Ctrl+F。现在内置编辑器把查找命令注册给宿主页头：文件可编辑时页头显示查找按钮，点击与自带工具条按钮走同一套逻辑——预览态先切到编辑，再打开 CodeMirror 的查找面板（含替换行）。没有查找面的 viewer 不注册该命令，页头也就不显示按钮。
   - 🧪 测试：`tests/editor-host.spec.tsx` 用真实 `TextEditor` 走「页头查找按钮 → 搜索面板打开 + markdown 预览切编辑」；`tests/editor-find.spec.tsx` 增加 host 模式命令测试。
 

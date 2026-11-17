@@ -24,5 +24,6 @@ dsh-better-sidebar is built with the community. This file records the PR authors
 | @pennxiang | Side-chat page mode: shared default plus independent per-thread native pages with exact bindings | [#1115](https://github.com/omdsh-dev/DSH-better-sidebar/pull/1115) |
 | @iasiv5 | Responsive multi-repo switcher with location labels | [#1130](https://github.com/omdsh-dev/DSH-better-sidebar/pull/1130) |
 | @wang-kaopu | Clickable absolute Markdown paths in chat | [#882](https://github.com/omdsh-dev/DSH-better-sidebar/pull/882) |
+| @llwinty | WSL repository roots keep their UNC spelling, so the Git tab loads | [#1206](https://github.com/omdsh-dev/DSH-better-sidebar/pull/1206) |
 
 Maintainer-authored work in the same cycle (issue implementations, fixes, integration and tests) is recorded in the changelog. Add a row here when integrating a contributor PR; the release note is the authoritative, versioned copy.
