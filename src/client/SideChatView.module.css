@@ -526,6 +526,36 @@
   margin-top: 2px;
 }
 
+/* ── PTC (run_code) sub-call tree ─────────────────────────────────────
+ * The root tool row owns the whole program call; its sub-calls hang below in
+ * one indented column on a hairline thread (the host ToolCallTree's
+ * `.subCalls` recipe). The column is a SIBLING of the root's <details>, so a
+ * collapsed run_code still shows what the program did. The 22px indent aligns
+ * under the root's 16px icon + 6px gap; each deeper parent adds one more
+ * 22px + 8px step. */
+.sidechatToolTree {
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.sidechatSubCalls {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 4px 0 2px 22px;
+  padding-left: 8px;
+  border-left: 1px solid var(--dsw-alias-border-l1);
+  min-width: 0;
+}
+
+.sidechatSubCall {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
 /* Turn-tail metrics line: quiet, right-aligned, ink-weight only. */
 .sidechatTurnSummary {
   align-self: flex-end;

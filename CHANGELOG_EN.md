@@ -6,6 +6,9 @@
 
 ### Unreleased
 
+- 💻 **Side Chat renders PTC (run_code) tool trees**: the collapsed `run_code` line shows the model-written description, and its expanded body shows the program plus the final result. Tools dispatched inside the program (bash / read / grep / edit, …) render as indented rows under it — visible even when the root row is collapsed — through the same terminal / diff / read / search / web cards. Running, failed and start-less dispatches all render; successful PTC writes/edits join the clickable path mentions. `present` keeps its top-level delivery card and also leaves a sub-call row.
+  - 🧪 Tests: `tests/sidechat-ptc-rows.spec.ts` (pairing / running / failed / no-start / nested / missing parent / identity reuse), `tests/sidechat-ptc-subcalls.spec.tsx` (description summary, program body, indentation and cards, collapsed-root visibility) and `tests/sidechat-mention-sources.spec.tsx` (PTC mutations count, reads do not).
+
 - 🧩 **Side Chat and the bottom terminal work again over plain-HTTP LAN** ([#1166](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1166)): browsers expose `crypto.randomUUID` only in a **secure context** (https or localhost); opened as `http://<LAN IP>:<port>` it is `undefined`, and minting a new Side Chat tab or a new bottom terminal called it unguarded — the throw happened inside the host's tab creation, leaving an empty pane. Those three sites now go through an internal `freshId()`: `randomUUID` when available, otherwise `crypto.getRandomValues` (not restricted to secure contexts) for 64 random bits plus a millisecond timestamp, so the ids stay unique.
   - 🧪 `tests/builtins.spec.ts` drives the real `createTab` factories with `crypto.randomUUID` deleted and asserts non-empty, mutually distinct ids for both tabs.
 

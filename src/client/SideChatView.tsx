@@ -45,6 +45,7 @@ import {
   IconBrowseOutlineRegular,
   IconChevronRightOutlineRegular,
   IconCloseFillRegular,
+  IconCodeOutlineRegular,
   IconEditOutlineRegular,
   IconNewChatOutlineRegular,
   IconPaperclipOutlineRegular,
@@ -106,11 +107,13 @@ import {
 import {
   formatDurationMs,
   formatTokens,
+  parseArgsObject,
   toolArgsSummary,
   transcriptRows,
   sidechatRowKey,
   type SidechatAttachment,
   type SidechatToolCard,
+  type SidechatToolChild,
   type SidechatTranscriptRow,
 } from './sidechat-transcript.ts'
 import { api, mediaUrl, SidebarApiError } from './api.ts'
@@ -500,6 +503,27 @@ function isWorkRow(
 const RUNNING_LINE_MAX = 80
 
 /**
+ * The collapsed line's summary plus the `run_code` program body.
+ *
+ * `run_code`'s own presentation is the host's `code` variant: the model-written
+ * `description` is the line and the program is the body. Every other tool keeps
+ * `toolArgsSummary` — the counted per-row parse the typing-cost spec pins.
+ * @param name - the wire tool name.
+ * @param args - the raw arguments JSON.
+ * @returns the one-line metatext and, for run_code, its program text.
+ */
+function toolRowParts(name: string, args: string | undefined): { meta: string; code?: string } {
+  if (name !== 'run_code') return { meta: toolArgsSummary(args) }
+  const parsed = parseArgsObject(args)
+  const description = typeof parsed?.description === 'string' ? parsed.description.trim() : ''
+  const code = typeof parsed?.code === 'string' && parsed.code !== '' ? parsed.code : undefined
+  return {
+    meta: description === '' ? toolArgsSummary(args) : description,
+    ...(code === undefined ? {} : { code }),
+  }
+}
+
+/**
  * What a RUNNING turn's control line says beyond its label (host
  * `liveProcessDetail`): the running tool with its one-line arguments, or the
  * first line of the reasoning being streamed.
@@ -510,7 +534,7 @@ function runningProcessLine(
   row: Extract<SidechatTranscriptRow, { kind: 'reasoning' | 'tool' }>,
 ): string | undefined {
   if (row.kind === 'tool') {
-    const summary = toolArgsSummary(row.args)
+    const summary = toolRowParts(row.name, row.args).meta
     return summary === '' ? row.name : `${row.name} · ${summary}`
   }
   const first = row.text.split('\n', 1)[0]?.trim() ?? ''
@@ -671,9 +695,80 @@ function toolLeading(name: string, failed: boolean): React.ReactNode {
     case 'glob':
     case 'web_search':
       return <IconSearchOutlineRegular size={14} />
+    case 'run_code':
+      return <IconCodeOutlineRegular size={14} />
     default:
       return <IconSparkleRegular size={14} />
   }
+}
+
+/** The display fields a direct tool row and a PTC sub-call share. */
+interface ToolRowData {
+  name: string
+  failed: boolean
+  args?: string
+  resultText?: string
+  executing?: boolean
+  card?: SidechatToolCard
+  resultAttachments?: readonly SidechatAttachment[]
+}
+
+/**
+ * One tool row: the collapsed line plus the disclosed arguments/result or the
+ * structured card. A direct call and each PTC sub-call render through this one
+ * helper, so a sub-call's atoms (terminal / diff / read / search / web) can
+ * never drift from the same tool's direct-call row.
+ */
+function ToolRowView(props: {
+  row: ToolRowData
+  nodeKey: string
+  labels: RowLabels
+  attachments: (list: readonly SidechatAttachment[]) => React.ReactNode
+}): React.ReactNode {
+  const { row, labels } = props
+  const parts = toolRowParts(row.name, row.args)
+  const resultAttachments = row.resultAttachments === undefined || row.resultAttachments.length === 0
+    ? null
+    : props.attachments(row.resultAttachments)
+  const body = (
+    <>
+      {row.card !== undefined
+        ? toolCardBody(row.card, row.executing === true, labels)
+        : (
+          <>
+            {parts.code !== undefined
+              ? <pre className={css.sidechatRowCode}>{parts.code}</pre>
+              : row.args !== undefined && (
+                <>
+                  <div className={css.sidechatToolSectionLabel}>{t('sideChatToolArguments')}</div>
+                  <pre className={css.sidechatRowCode}>{row.args}</pre>
+                </>
+              )}
+            {row.resultText !== undefined && (
+              <>
+                <div className={css.sidechatToolSectionLabel}>{t('sideChatToolResult')}</div>
+                <pre className={css.sidechatRowCode}>{row.resultText}</pre>
+              </>
+            )}
+          </>
+        )}
+      {resultAttachments}
+    </>
+  )
+  const hasBody = row.card !== undefined || row.args !== undefined || row.resultText !== undefined
+    || resultAttachments !== null
+  return (
+    <CollapsibleRow
+      key={props.nodeKey}
+      label={row.name}
+      meta={parts.meta}
+      icon={toolLeading(row.name, row.failed)}
+      mono
+      streaming={row.executing === true}
+      failed={row.failed}
+      {...(hasBody ? { children: body } : {})}
+    />
+  )
 }
 
 /** The per-view helpers every row renderer needs, collected in one stable
@@ -870,53 +965,48 @@ function renderRow(row: SidechatTranscriptRow, labels: RowLabels, surface: RowSu
       )
     }
     case 'tool': {
-      // A tool WITHOUT a structured card (grep/glob/web_search and every host
-      // tool this view does not know): the collapsed line carries the one-line
-      // argument summary, and the disclosed body splits into two LABELLED
-      // sections — raw arguments, then raw output — so a reader who expands
-      // always knows which block is which (two unlabelled <pre>s of JSON next
-      // to raw output was a wall of escaped quotes).
-      const resultAttachments = row.resultAttachments === undefined || row.resultAttachments.length === 0
-        ? null
-        : surface.attachments(row.resultAttachments)
-      const body = (
-        <>
-          {row.card !== undefined
-            ? toolCardBody(row.card, row.executing === true, labels)
-            : (
-              <>
-                {row.args !== undefined && (
-                  <>
-                    <div className={css.sidechatToolSectionLabel}>{t('sideChatToolArguments')}</div>
-                    <pre className={css.sidechatRowCode}>{row.args}</pre>
-                  </>
-                )}
-                {row.resultText !== undefined && (
-                  <>
-                    <div className={css.sidechatToolSectionLabel}>{t('sideChatToolResult')}</div>
-                    <pre className={css.sidechatRowCode}>{row.resultText}</pre>
-                  </>
-                )}
-              </>
-            )}
-          {resultAttachments}
-        </>
-      )
+      const children = row.children
+      if (children === undefined || children.length === 0) {
+        return <ToolRowView row={row} nodeKey={key} labels={labels} attachments={surface.attachments} />
+      }
+      // PTC tree: the root row owns the whole `run_code` call, and its
+      // sub-calls hang BESIDE the root disclosure (never inside it), so a
+      // collapsed root still shows what the program actually did — the same
+      // composition as the host's ToolCallTree.
       return (
-        <CollapsibleRow
-          key={key}
-          label={row.name}
-          meta={toolArgsSummary(row.args)}
-          icon={toolLeading(row.name, row.failed)}
-          mono
-          streaming={row.executing === true}
-          failed={row.failed}
-          {...(row.args === undefined && row.resultText === undefined && row.card === undefined
-            && resultAttachments === null ? {} : { children: body })}
-        />
+        <div key={key} className={css.sidechatToolTree} data-sidechat-tool-tree="">
+          <ToolRowView row={row} nodeKey={key} labels={labels} attachments={surface.attachments} />
+          <div className={css.sidechatSubCalls} data-sidechat-subcalls="">
+            {children.map(child => renderToolChild(child, labels, surface.attachments))}
+          </div>
+        </div>
       )
     }
   }
+}
+
+/** One PTC sub-call, rendered recursively: the leaf tool row plus its own
+ *  children in the same hairline-indented column. */
+function renderToolChild(
+  child: SidechatToolChild,
+  labels: RowLabels,
+  attachments: (list: readonly SidechatAttachment[]) => React.ReactNode,
+): React.ReactNode {
+  const nested = child.children
+  return (
+    <div
+      key={`${String(child.seq)}:${child.callId}`}
+      className={css.sidechatSubCall}
+      data-sidechat-subcall=""
+    >
+      <ToolRowView row={child} nodeKey={`ptc:${String(child.seq)}`} labels={labels} attachments={attachments} />
+      {nested !== undefined && nested.length > 0 && (
+        <div className={css.sidechatSubCalls} data-sidechat-subcalls="">
+          {nested.map(grandchild => renderToolChild(grandchild, labels, attachments))}
+        </div>
+      )}
+    </div>
+  )
 }
 
 /** One side conversation tab (one thread per tab, Codex-style). */
