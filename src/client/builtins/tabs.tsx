@@ -33,6 +33,7 @@ import { DiffTab } from '../DiffTab.tsx'
 import { SubagentView } from '../SubagentView.tsx'
 import { consumeSidechatSeed, SideChatView, sidechatThreadIdOf } from '../SideChatView.tsx'
 import { LazyTerminalBottom } from '../terminal-lazy.tsx'
+import { TerminalSettingsPanel } from '../TerminalSettingsPanel.tsx'
 import { INSTANCE_FIELD, closeBottomTerminal, webTerminals } from '../terminal-client.ts'
 import { api } from '../api.ts'
 import { sidechatSubmitKeyOf } from '../prefs.ts'
@@ -382,6 +383,20 @@ export function builtinTabs(ctx: Context): readonly TabDescriptor[] {
       // The bottom terminal never declares a title override: the tab strip
       // reads the descriptor's own title.
       component: LazyTerminalBottom,
+      // Two settings under the card's gear, living in two different scopes:
+      //  - the default shell for NEW bottom terminals (plugin-local, in this
+      //    descriptor's own `pluginSettings` blob), and
+      //  - the shell CANDIDATES the host can discover (the profile's
+      //    terminal-controller row, via the host's config editor).
+      // The descriptor's registration captured `ctx`, so the panel receives it
+      // directly: the settings slot is not session-scoped and cannot reach the
+      // host terminal service on its own, while `render` gets the descriptor's
+      // own blob plus whatever its own registration can supply.
+      settings: {
+        render: renderProps => (
+          <TerminalSettingsPanel {...renderProps} terminalCtx={ctx} />
+        ),
+      },
       // Unmounting the view deliberately leaves the shell running (the host's
       // "a view survives DOM unmount" contract, and what makes a reload
       // reattach), so closing the TAB is the only thing that ends the process

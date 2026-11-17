@@ -27,6 +27,7 @@ import {
   type SidebarPrefs,
 } from './config.ts'
 import { createProbeGate, listDirectory, messageOf, parentOf, requireAbsolute, rootLabel, type SidebarFsEntry } from './fs-tree.ts'
+import { listDrives } from './fs-drives.ts'
 import { resolveSessionPath } from './session-path.ts'
 import { createWorkspaceFile, mkdirWorkspaceEntry, renameWorkspaceEntry, removeWorkspaceEntry, writeWorkspaceText, writeWorkspaceUpload } from './fs-operations.ts'
 import { resolveTarget } from './path-security.ts'
@@ -73,6 +74,12 @@ import { FS_TREES_MAX_PATHS } from './fs-batch.ts'
 import { activeWorktreeRootOf } from './active-worktree.ts'
 import { decodeTextAs, decodeTextBytes, isWideEncoding, lastLineBreakEnd, type TextEncoding } from './text-encoding.ts'
 import { MAX_EDITABLE_BYTES, PAGE_BYTES, WRITE_BODY_GUARD_BYTES } from './editor-limits.ts'
+import {
+  applyCandidateAction,
+  candidateView,
+  TERMINAL_CONTROLLER_ENTRY,
+  type ShellConfigEditorFace,
+} from './terminal-shells.ts'
 
 export { Config }
 export type { SidebarConfig, ResolvedSidebarConfig }
@@ -803,6 +810,11 @@ function buildApi(
       const { sessionId, cwd } = await cwdOf(payload)
       return { sessionId, cwd, root: rootLabel(cwd), parent: parentOf(cwd) ?? null }
     },
+    // Roots for the shell-candidate browser's "This PC" breadcrumb. No
+    // session scope is needed — the drives are a property of the host
+    // machine, not of a conversation. The client calls this without a
+    // sessionId, so it deliberately does NOT go through cwdOf().
+    'fs.drives': async () => listDrives(),
     'fs.tree': async (payload) => {
       const { cwd } = await cwdOf(payload)
       const record = payload as { path?: unknown; exclude?: unknown }
@@ -1240,6 +1252,49 @@ function buildApi(
         }
         throw new SidebarError('settings-rejected', error instanceof Error ? error.message : String(error), 400)
       }
+    },
+    // Terminal shell CANDIDATES. The host discovers shells from the profile's
+    // `terminal-controller` row, so this pair reads and edits that row through
+    // DSH's own config editor — never a copy in our prefs (the host resolves a
+    // requested `shellPath` against its OWN discovery result and refuses
+    // anything absent from it).
+    //
+    // `null` (not an error) means "this deployment cannot edit config": the
+    // panel then hides the list instead of offering a control that cannot
+    // save. A deployment without the service keeps working — only the
+    // candidate editor is unavailable, and the hosts own defaults still apply.
+    'terminal.shells': () => {
+      const editor = ctx.get('configEditor') as ShellConfigEditorFace | undefined
+      if (editor === undefined || typeof editor.edit !== 'function') return null
+      const entry = editor.entries().find(row => row.options.id === TERMINAL_CONTROLLER_ENTRY)
+      if (entry === undefined) return null
+      return candidateView(editor, entry.options.config ?? {})
+    },
+    'terminal.shells.update': async (payload) => {
+      const editor = ctx.get('configEditor') as ShellConfigEditorFace | undefined
+      if (editor === undefined || typeof editor.edit !== 'function') {
+        throw new SidebarError('unavailable', 'this deployment mounts no config editor', 503)
+      }
+      const entry = editor.entries().find(row => row.options.id === TERMINAL_CONTROLLER_ENTRY)
+      if (entry === undefined) {
+        throw new SidebarError('unavailable', `no profile row "${TERMINAL_CONTROLLER_ENTRY}"`, 503)
+      }
+      const record = payload as { action?: unknown; value?: unknown } | null
+      // Validate BEFORE `edit()`: the editor's callback runs inside the
+      // Loader's serialized write, so throwing there would report a failed
+      // write for a request we could have refused up front.
+      let nextConfig: Record<string, unknown> = {}
+      try {
+        nextConfig = applyCandidateAction(entry.options.config ?? {}, record?.action, record?.value)
+      } catch (error) {
+        throw new SidebarError('bad-request', error instanceof Error ? error.message : String(error), 400)
+      }
+      try {
+        await editor.edit(entry, () => nextConfig)
+      } catch (error) {
+        throw new SidebarError('settings-rejected', error instanceof Error ? error.message : String(error), 400)
+      }
+      return candidateView(editor, nextConfig)
     },
     // External open for the file tree's "open with" menu: reveal a path in
     // the OS file manager, or hand a custom-scheme URL (vscode://,

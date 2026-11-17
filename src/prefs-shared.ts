@@ -200,6 +200,29 @@ export type SidechatSubmitKey = 'enter' | 'mod-enter'
 /** The submit key every document that never chose one gets (host semantics). */
 export const SIDECHAT_SUBMIT_KEY_DEFAULT: SidechatSubmitKey = 'enter'
 
+/** The terminal tab descriptor id; also the key of its settings blob. */
+export const TERMINAL_PREFS_ID = 'terminal-bottom'
+
+/**
+ * The plugin-owned key holding the default shell's NAME (never a path).
+ *
+ * A name survives the things a path would not: re-adding a candidate under
+ * another installation prefix keeps matching, and a name whose candidate was
+ * removed simply stops matching — which is exactly the outcome we want (the
+ * view then follows the host instead of naming a shell the host would refuse).
+ */
+export const TERMINAL_DEFAULT_SHELL_SETTING = 'defaultShell'
+
+/**
+ * Read the stored default-shell name out of a descriptor's settings blob.
+ * @param blob - the raw `pluginSettings[TERMINAL_PREFS_ID]` value.
+ * @returns the stored name, or undefined when nothing (or a blank) was stored.
+ */
+export function terminalDefaultShellOf(blob: Record<string, unknown> | undefined): string | undefined {
+  const raw = blob?.[TERMINAL_DEFAULT_SHELL_SETTING]
+  return typeof raw === 'string' && raw !== '' ? raw : undefined
+}
+
 /**
  * Validate one stored submit-key value. Anything that is not a known mode (an
  * absent value, a legacy string, a hand-edited document) falls back to the
