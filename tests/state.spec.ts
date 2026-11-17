@@ -378,6 +378,27 @@ describe('sidebar state', () => {
     expect(after).toBe(s)
   })
 
+  it('an explicit line survives a path change, while a bare path change still clears it', () => {
+    let s = state()
+    s = openTabInBottomPane(s, {
+      id: 'editor:/p/a.ts', type: 'editor', title: 'a.ts', path: '/p/a.ts', line: 3,
+    })
+    const tabOf = (current: typeof s) =>
+      (current.bottomSplits as { tabs: { id: string; path?: string; line?: number }[] }).tabs
+        .find(tab => tab.id === 'editor:/p/a.ts')!
+
+    // The content search opens a hit in place: the new path AND its line land
+    // together (the clearing rule must not eat the caller's own line).
+    s = patchTab(s, 'editor:/p/a.ts', { path: '/p/b.ts', title: 'b.ts', line: 9 })
+    expect(tabOf(s)).toMatchObject({ path: '/p/b.ts', line: 9 })
+
+    // Without an explicit line, a path change is a new open: the old landing
+    // line must not follow the file.
+    s = patchTab(s, 'editor:/p/a.ts', { path: '/p/c.ts', title: 'c.ts' })
+    expect(tabOf(s).path).toBe('/p/c.ts')
+    expect(tabOf(s).line).toBeUndefined()
+  })
+
   it('sanitize accepts nextBrowser (defaulting a missing/malformed one to 1)', () => {
     const base = {
       nextBrowser: 1,

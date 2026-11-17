@@ -43,7 +43,7 @@ import { updatePluginSettings } from './plugin-settings.ts'
 import { createOpenInApp } from './open-in-app.ts'
 import { TreePanel } from './TreePanel.tsx'
 import { t } from './locales.ts'
-import { consumeLineTarget, peekLineTarget } from './line-target.ts'
+import { armLineEnd, consumeLineTarget, peekLineTarget } from './line-target.ts'
 import { relativeTo } from './paths.ts'
 import { resolveNativeSidebarPath, resolveSidebarPath } from './paths.ts'
 import { clearRetargetedPath, closePathTabs, consumeRetargetedPath, pathTabKey, retargetPathTabs } from './tree-mutations.ts'
@@ -360,6 +360,40 @@ export function EditorHost(props: {
   /** The context menu's explicit "new tab" escape (per-path dedupe). */
   const openFileNewTab = (absolute: string): void => {
     openSidebarFile(ctx, scope.sessionId, absolute, { cwd: scope.cwd })
+  }
+
+  /**
+   * Open a file AT a source line — the content search result row's gesture.
+   *
+   * Split mode is the ordinary per-path open with the host navigation's
+   * `line` parameter. Merge mode switches THIS tab in place, so the line rides
+   * the tab record (`updateTab`'s optional `line`, consumed by the landing
+   * journal above) instead of the host resource parameter. The arm makes a
+   * re-click on the SAME `path#line` a fresh navigation (a new nonce) rather
+   * than a landing the journal already spent — exactly the quote chip's rule
+   * (`line-target.ts`).
+   *
+   * A type that claims the file receives it without a line, like every other
+   * open path: landing a line is the editor's own contract.
+   */
+  const openFileAtLine = (absolute: string, line: number): void => {
+    if (openClaimedNativeFile(ctx, scope.sessionId, scope.cwd, absolute)) return
+    armLineEnd(absolute, line, undefined)
+    if (!inPlace) {
+      openSidebarFile(ctx, scope.sessionId, absolute, { line, cwd: scope.cwd })
+      return
+    }
+    // Same draft guard as an in-place switch: the draft lives in the viewer
+    // instance, which this navigation remounts.
+    if (absolute !== path && isEditorDirty(tab.id, scope.sessionId)) {
+      if (!confirmDiscard(t('switchUnsavedConfirm'))) return
+      clearDraftBackup(scope.sessionId, path)
+    }
+    ctx.get('betterSidebar')?.updateTab(
+      tab.id,
+      { path: absolute, title: baseName(absolute), line },
+      scope.sessionId,
+    )
   }
 
   /**
@@ -761,6 +795,7 @@ export function EditorHost(props: {
           revealed={revealed}
           onToggle={onToggleDir}
           onOpenFile={openFile}
+          onOpenFileAtLine={openFileAtLine}
           onOpenFileNewTab={openFileNewTab}
           onOpenFileSide={openFileSide}
           openInApp={openInApp}
@@ -1013,6 +1048,7 @@ export function EditorHost(props: {
               revealed={revealed}
               onToggle={onToggleDir}
               onOpenFile={openFile}
+              onOpenFileAtLine={openFileAtLine}
               onOpenFileNewTab={openFileNewTab}
               onOpenFileSide={openFileSide}
               openInApp={openInApp}

@@ -393,7 +393,7 @@ export function isUnread(state: SidebarState | undefined, type: TabType): boolea
 export function patchTab(
   state: SidebarState,
   tabId: string,
-  patch: { title?: string; path?: string; meta?: unknown },
+  patch: { title?: string; path?: string; meta?: unknown; line?: number },
 ): SidebarState {
   let changed = false
   const apply = (tab: SidebarTab): SidebarTab => {
@@ -403,10 +403,14 @@ export function patchTab(
       ...(patch.title !== undefined ? { title: patch.title } : {}),
       ...(patch.path !== undefined ? { path: patch.path } : {}),
       ...(patch.meta !== undefined ? { meta: patch.meta } : {}),
+      // A caller-supplied landing line (the content search opening a hit): the
+      // merge-mode editor consumes it through its landing journal.
+      ...(patch.line !== undefined ? { line: patch.line } : {}),
       // Cleared (not merely left alone) so the reader's next file does not
       // inherit this one's line. Compared against the current value to keep
-      // the object identity when nothing moved.
-      ...(patch.path !== undefined && patch.path !== tab.path && tab.line !== undefined
+      // the object identity when nothing moved. An explicit `line` in the same
+      // patch wins: that IS the navigation the caller wants.
+      ...(patch.path !== undefined && patch.path !== tab.path && tab.line !== undefined && patch.line === undefined
         ? { line: undefined }
         : {}),
     }

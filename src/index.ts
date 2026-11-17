@@ -31,6 +31,7 @@ import { resolveSessionPath } from './session-path.ts'
 import { createWorkspaceFile, mkdirWorkspaceEntry, renameWorkspaceEntry, removeWorkspaceEntry, writeWorkspaceText, writeWorkspaceUpload } from './fs-operations.ts'
 import { resolveTarget } from './path-security.ts'
 import { searchFiles } from './fs-search.ts'
+import { grepFiles, replaceInFiles, GrepQueryError, type GrepReplaceFile } from './fs-grep.ts'
 import { compileExcludePatterns } from './exclude-patterns.ts'
 import { decodeHtmlUrl } from './html-route.ts'
 import { registerBundleRoute } from './bundle-route.ts'
@@ -896,6 +897,87 @@ function buildApi(
       const query = requireString(payload, 'query')
       return searchFiles(cwd, query, { exclude: compileExcludePatterns(record.exclude, cwd) })
     },
+    // Project-wide CONTENT search (the search box's "content" mode). The
+    // payload's `exclude` carries the explorer pref MERGED with the user's
+    // files-to-exclude list: both are the same glob grammar, so one compiled
+    // probe covers them and the tree/search surfaces cannot disagree.
+    // `include` is the positive files-to-include list, compiled host-side so
+    // an excluded file is never even read. A regex query that does not compile
+    // is a BAD REQUEST (the user's input), never an internal fault.
+    'fs.grep': async (payload, signal) => {
+      const { cwd } = await cwdOf(payload)
+      const record = payload as {
+        include?: unknown
+        exclude?: unknown
+        regex?: unknown
+        caseSensitive?: unknown
+        wholeWord?: unknown
+      }
+      const query = requireString(payload, 'query')
+      try {
+        return await grepFiles(cwd, query, {
+          include: record.include,
+          exclude: compileExcludePatterns(record.exclude, cwd),
+          regex: record.regex === true,
+          caseSensitive: record.caseSensitive === true,
+          wholeWord: record.wholeWord === true,
+          ...(signal === undefined ? {} : { signal }),
+        })
+      } catch (error) {
+        if (error instanceof GrepQueryError) throw new SidebarError('bad-request', error.message)
+        throw error
+      }
+    },
+    // Replace-all over the files the client's CURRENT result list names. Each
+    // entry carries the mtime its row was rendered from: a file that changed
+    // on disk since is SKIPPED (`changed`) instead of being rewritten from a
+    // stale reading. The writer owns encoding/EOL round-trip and the atomic
+    // rename (`writeWorkspaceText`), so this route only shapes the request.
+    'fs.grepReplace': async (payload) => {
+      const { cwd } = await cwdOf(payload)
+      const record = payload as {
+        replacement?: unknown
+        regex?: unknown
+        caseSensitive?: unknown
+        wholeWord?: unknown
+        files?: unknown
+      }
+      const query = requireString(payload, 'query')
+      const rawFiles = record.files
+      if (!Array.isArray(rawFiles) || rawFiles.length === 0) {
+        throw new SidebarError('bad-request', 'files must be a non-empty array')
+      }
+      // One request writes at most one search's result list; anything past
+      // this is not a UI gesture and would turn into an unbounded write burst.
+      if (rawFiles.length > 1000) {
+        throw new SidebarError('bad-request', 'too many files (max 1000)')
+      }
+      const files: GrepReplaceFile[] = []
+      for (const item of rawFiles) {
+        const entry = item as { path?: unknown; mtimeMs?: unknown } | null
+        if (typeof entry?.path !== 'string' || entry.path === '') {
+          throw new SidebarError('bad-request', 'each file entry needs a path')
+        }
+        files.push({
+          path: entry.path,
+          ...(typeof entry.mtimeMs === 'number' && Number.isFinite(entry.mtimeMs) ? { mtimeMs: entry.mtimeMs } : {}),
+        })
+      }
+      try {
+        return await replaceInFiles({
+          cwd,
+          query,
+          replacement: typeof record.replacement === 'string' ? record.replacement : '',
+          regex: record.regex === true,
+          caseSensitive: record.caseSensitive === true,
+          wholeWord: record.wholeWord === true,
+          files,
+        })
+      } catch (error) {
+        if (error instanceof GrepQueryError) throw new SidebarError('bad-request', error.message)
+        throw error
+      }
+    },
     'fs.read': async (payload) => {
       const { cwd } = await cwdOf(payload)
       // File links are session-relative. Git callers must provide an absolute
@@ -1672,7 +1754,11 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
       const imagePrompt = method === 'sidechat.prompt'
       let releaseImagePrompt: (() => void) | undefined
       const admitLargePrompt = (): void => { releaseImagePrompt ??= reserveLargePrompt() }
-      const controller = method === 'changes.ops' ? new AbortController() : undefined
+      // A content search is a bounded but potentially long walk: the client
+      // abandons it on the next keystroke, so the route hands it an abort
+      // signal and stops reading files the moment the consumer is gone.
+      const abortable = method === 'changes.ops' || method === 'fs.grep'
+      const controller = abortable ? new AbortController() : undefined
       const response = controller === undefined ? undefined : res as ServerResponse
       const abort = (): void => { controller?.abort() }
       response?.once('close', abort)

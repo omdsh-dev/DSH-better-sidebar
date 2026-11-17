@@ -66,6 +66,71 @@ export interface FsLevel {
   error?: string
 }
 
+/** One highlighted match inside a content-search line (UTF-16 offsets). */
+export interface GrepRange {
+  start: number
+  end: number
+}
+
+/** One matching LINE in a content-search result. */
+export interface GrepLine {
+  /** 1-based line number in the file. */
+  line: number
+  /** Preview text (leading indentation dropped, bounded length). */
+  text: string
+  /** Every match on the line, in preview coordinates. */
+  ranges: GrepRange[]
+}
+
+/** One file with content matches. `mtimeMs` is the replace conflict gate. */
+export interface GrepFile {
+  /** Root-relative, '/'-separated path. */
+  path: string
+  mtimeMs: number
+  matches: GrepLine[]
+}
+
+/** The `fs.grep` answer: files sorted by path, lines in document order. */
+export interface GrepResult {
+  files: GrepFile[]
+  /** Every occurrence this response reports (a capped list is marked). */
+  matchesTotal: number
+  /** A budget cut the walk short — the list is a prefix of the real answer. */
+  truncated: boolean
+}
+
+/** The switches the search box's toggles send with a content search. */
+export interface GrepOptions {
+  /** Files-to-include globs (the host compiles them). */
+  include?: readonly string[]
+  /** Files-to-exclude globs (the host MERGES them with the explorer pref). */
+  exclude?: readonly string[]
+  caseSensitive?: boolean
+  wholeWord?: boolean
+  /** `query` is a JS regular expression. */
+  regex?: boolean
+}
+
+/** One file the replace-all rewrote. */
+export interface GrepReplaceFileResult {
+  path: string
+  replaced: number
+}
+
+/** One file the replace-all refused, and why (`changed` = mtime gate). */
+export interface GrepReplaceSkip {
+  path: string
+  reason: 'changed' | 'missing' | 'binary' | 'too-large' | 'error'
+  message?: string
+}
+
+/** The `fs.grepReplace` answer. */
+export interface GrepReplaceResult {
+  files: GrepReplaceFileResult[]
+  replaced: number
+  skipped: GrepReplaceSkip[]
+}
+
 /** One changed path's line-count summary (host git shape, mirroring
  *  `GitLineCounts` in `src/git.ts`). A binary change is its own variant: git
  *  reports `-`/`-` for it, so there are no counts to show. */
@@ -457,6 +522,42 @@ export const api = {
    *  tree; a pasted direct-open path is explicit intent and skips it). */
   fsSearch: (scope: SessionScope, query: string, exclude?: readonly string[], signal?: AbortSignal) =>
     call<{ matches: string[]; dirs: string[]; truncated: boolean }>('fs.search', scopePayload(scope, { query, exclude }), signal),
+  /** Project-wide CONTENT search (the search box's "content" mode): files
+   *  matching any line, each with its matching lines, preview text and match
+   *  ranges. The host walks the repository's own inventory (or the tree when
+   *  the root is not a workspace), skips binary/oversized files, and applies
+   *  `include` plus the user's `exclude` MERGED with the explorer pref. A
+   *  regex query that does not compile answers `bad-request`. */
+  fsGrep: (scope: SessionScope, query: string, options: GrepOptions = {}, signal?: AbortSignal) =>
+    call<GrepResult>('fs.grep', scopePayload(scope, {
+      query,
+      ...(options.include === undefined ? {} : { include: [...options.include] }),
+      ...(options.exclude === undefined ? {} : { exclude: [...options.exclude] }),
+      ...(options.caseSensitive === true ? { caseSensitive: true } : {}),
+      ...(options.wholeWord === true ? { wholeWord: true } : {}),
+      ...(options.regex === true ? { regex: true } : {}),
+    }), signal),
+  /** Replace every match in the files the current result list shows. Each
+   *  entry carries the mtime its row was rendered from: a file that changed
+   *  on disk since is SKIPPED instead of rewritten from a stale reading.
+   *  Fixed-string replacement is literal (`$1` stays `$1`); regex mode gets
+   *  JS group-reference semantics. Encoding/EOL round-trip and the atomic
+   *  write live in `writeWorkspaceText` host-side. */
+  fsGrepReplace: (
+    scope: SessionScope,
+    query: string,
+    replacement: string,
+    options: Pick<GrepOptions, 'regex' | 'caseSensitive' | 'wholeWord'>,
+    files: readonly { path: string; mtimeMs: number }[],
+  ) =>
+    call<GrepReplaceResult>('fs.grepReplace', scopePayload(scope, {
+      query,
+      replacement,
+      ...(options.regex === true ? { regex: true } : {}),
+      ...(options.caseSensitive === true ? { caseSensitive: true } : {}),
+      ...(options.wholeWord === true ? { wholeWord: true } : {}),
+      files: files.map(file => ({ path: file.path, mtimeMs: file.mtimeMs })),
+    })),
   fsRead: (scope: SessionScope, path: string, signal?: AbortSignal) =>
     call<FsReadResult>('fs.read', scopePayload(scope, { path }), signal),
   /** One page of a large text file, for the read-only paged preview.

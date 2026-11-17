@@ -1,13 +1,29 @@
 /**
- * The files window's tree surface: a global file-name search box on top
- * (300ms debounce; an in-flight search is aborted by the next keystroke)
- * over the shared controlled FileTree. The results panel and the tree are
- * BOTH mounted: the query only parks one of them (`hidden`), so clearing the
- * search is free — the tree keeps its level cache and the live directory
- * watcher (the old conditional render dropped both and refetched the whole
- * visible set on every query change). Owns its refresh tick: the icon next to
- * the search input clears the tree cache, and the sort menu beside it owns the
- * tree's row order (passed down; the default is the host's own order).
+ * The files window's tree surface: a global search box on top over the shared
+ * controlled FileTree. Two search modalities share the one box:
+ *
+ * - **name** (the default, the pre-existing behavior): a 300ms-debounced
+ *   global file-NAME search — the host's `fs.search` walk/engines, results as
+ *   one flat list;
+ * - **content** (the VS Code Search view analogue): a 350ms-debounced
+ *   project-wide TEXT search (`fs.grep`) with the case / whole-word / regex
+ *   toggles, a replace field (`fs.grepReplace`, Replace All), and the
+ *   files-to-include / files-to-exclude glob inputs. Results group by file and
+ *   each row carries its line number plus highlighted match ranges.
+ *
+ * The results panel and the tree are BOTH mounted: a query only parks one of
+ * them (`hidden`), so clearing the search is free — the tree keeps its level
+ * cache and the live directory watcher (the old conditional render dropped
+ * both and refetched the whole visible set on every query change).
+ *
+ * Search result rows carry the same git ink as the tree (`useGitStatus` is one
+ * shared store): a modified file's name takes its tone and a letter badge, so
+ * the result list is color-differentiated from clean files exactly like the
+ * explorer.
+ *
+ * Owns its refresh tick: the icon next to the search input clears the tree
+ * cache (and re-runs a live content search), and the sort menu beside it owns
+ * the tree's row order (passed down; the default is the host's own order).
  * EditorHost docks it as the tab's right panel (wrapped in a drag-resize
  * handle) and provides the file context-menu open escapes.
  *
@@ -19,20 +35,24 @@
  * drop over the file window uploads here and never reaches DSH's chat
  * intake.
  */
-import { useEffect, useMemo, useRef, useState, type InputHTMLAttributes } from 'react'
+import { useEffect, useMemo, useRef, useState, type InputHTMLAttributes, type ReactNode } from 'react'
 import clsx from 'clsx'
-import { IconChevronsUpDownOutlineRegular, IconFolderOpenRegular, IconRefreshOutlineRegular, Menu } from '@deepseek-ai/dsh-client-ui-primitives'
-import { api } from './api.ts'
+import {
+  IconChevronDownOutlineRegular, IconChevronRightOutlineRegular, IconChevronsUpDownOutlineRegular,
+  IconEditOutlineRegular, IconFlatListOutlineRegular, IconFolderOpenRegular, IconRefreshOutlineRegular,
+  IconSearchOutlineRegular, IconSlidersTwoOutlineRegular, Menu,
+} from '@deepseek-ai/dsh-client-ui-primitives'
+import { api, type GrepLine, type GrepResult } from './api.ts'
 import type { BetterSidebarService } from './service.ts'
 import { ancestorDirs } from './state.ts'
-import { FileTree } from './FileTree.tsx'
+import { badgeToneOf, FileTree, gitToneLabel } from './FileTree.tsx'
 import { DEFAULT_FILE_TREE_SORT, type FileTreeSort } from './file-tree-sort.ts'
 import { IconUploadOutline16 } from './icons.tsx'
 import type { OpenInApp } from './open-in-app.ts'
 import type { OpenWithTarget } from './open-with.ts'
 import { t } from './locales.ts'
 import { isWithinWorkspace, resolveSidebarPath } from './paths.ts'
-import { IconButton } from './ui/index.ts'
+import { ConfirmDialog, IconButton, invalidateGitStatus, StatusBadge, useGitStatus, type GitFileStatus } from './ui/index.ts'
 import { UploadOverlay } from './UploadOverlay.tsx'
 import {
   summarizeResults, uploadHintText, uploadItemsFromFiles, uploadToDir,
@@ -50,6 +70,36 @@ interface UploadSession {
   controller: AbortController
 }
 
+/** Which search the box runs. */
+type SearchMode = 'name' | 'content'
+
+/** Split a comma/newline separated pattern field into trimmed patterns. */
+function splitPatterns(raw: string): string[] {
+  return raw.split(/[,\n]/).map(part => part.trim()).filter(part => part !== '')
+}
+
+/** Join a pattern list into one effect dependency (never a churned array). */
+function patternsKey(patterns: readonly string[]): string {
+  return patterns.join('\0')
+}
+
+/**
+ * Render one matching line with its match ranges wrapped in `<mark>`: the
+ * host reports exact UTF-16 offsets, so the preview highlights what actually
+ * matched (a regex result too) rather than re-searching the text client-side.
+ */
+function snippetNodes(match: GrepLine): ReactNode[] {
+  const nodes: ReactNode[] = []
+  let cursor = 0
+  match.ranges.forEach((range, index) => {
+    if (range.start > cursor) nodes.push(match.text.slice(cursor, range.start))
+    nodes.push(<mark key={index} className={css.editorSearchMark}>{match.text.slice(range.start, range.end)}</mark>)
+    cursor = range.end
+  })
+  if (cursor < match.text.length) nodes.push(match.text.slice(cursor))
+  return nodes
+}
+
 export function TreePanel(props: {
   sessionId: string
   cwd: string | undefined
@@ -57,6 +107,9 @@ export function TreePanel(props: {
   revealed: string[]
   onToggle: (path: string) => void
   onOpenFile: (path: string) => void
+  /** Open a content-search hit at its 1-based line. Absent → `onOpenFile`
+   *  (the row still opens the file, it just cannot land on the line). */
+  onOpenFileAtLine?: (path: string, line: number) => void
   /** File context-menu "open in a new tab" (passed through to FileTree). */
   onOpenFileNewTab?: (path: string) => void
   /** File context-menu "open to the side" (passed through to FileTree). */
@@ -80,7 +133,8 @@ export function TreePanel(props: {
   onReferenceFile: (path: string, isDir: boolean) => void
   /** The explorerExclude pref patterns: the host filters the tree listing AND
    *  the name search with them (passed through to FileTree, and carried on the
-   *  search request so both surfaces agree). */
+   *  search request so both surfaces agree). A content search MERGES them with
+   *  its own files-to-exclude field. */
   exclude?: readonly string[]
   /** A tree rename landed (passed through to FileTree for tab retargeting). */
   onPathRenamed?: (oldPath: string, newPath: string) => void
@@ -96,15 +150,19 @@ export function TreePanel(props: {
   service?: BetterSidebarService
 }) {
   const {
-    sessionId, cwd, expanded, revealed, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide,
+    sessionId, cwd, expanded, revealed, onToggle, onOpenFile, onOpenFileAtLine,
+    onOpenFileNewTab, onOpenFileSide,
     openInApp, openWithTargets, openWithPinned, openWithSsh, onOpenWith, onToggleOpenWithPin,
     openWithShowPluginTargets, exclude,
     onReferenceFile, onPathRenamed, onPathDeleted, visible, full, service,
   } = props
+  const [mode, setMode] = useState<SearchMode>('name')
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<{ matches: string[]; dirs: string[]; truncated: boolean } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [refreshTick, setRefreshTick] = useState(0)
+  /** Bumped after a replace so the live content search re-runs against disk. */
+  const [grepReload, setGrepReload] = useState(0)
   /**
    * The explorer's row order (the header's sort control). Starts at the
    * default — name order, folders first — which is the order the host already
@@ -112,6 +170,24 @@ export function TreePanel(props: {
    */
   const [sort, setSort] = useState<FileTreeSort>(DEFAULT_FILE_TREE_SORT)
   const [sortOpen, setSortOpen] = useState(false)
+
+  // ── Content-search options and results ─────────────────────────────────
+  const [matchCase, setMatchCase] = useState(false)
+  const [wholeWord, setWholeWord] = useState(false)
+  const [regex, setRegex] = useState(false)
+  const [showReplace, setShowReplace] = useState(false)
+  const [replacement, setReplacement] = useState('')
+  const [showFilters, setShowFilters] = useState(false)
+  const [includeText, setIncludeText] = useState('')
+  const [excludeText, setExcludeText] = useState('')
+  const [grep, setGrep] = useState<GrepResult | null>(null)
+  const [grepError, setGrepError] = useState<string | null>(null)
+  /** Files whose group the reader collapsed (path set; empty = all expanded). */
+  const [collapsedFiles, setCollapsedFiles] = useState<ReadonlySet<string>>(() => new Set())
+  const [replaceAsk, setReplaceAsk] = useState(false)
+  const [replaceBusy, setReplaceBusy] = useState(false)
+  const [replaceNote, setReplaceNote] = useState('')
+  const [replaceFailed, setReplaceFailed] = useState(false)
 
   // The tree caches loaded directories per refresh tick, so content changed
   // outside DSH (another editor, a sync tool) stays stale until the manual
@@ -193,13 +269,25 @@ export function TreePanel(props: {
 
   const needle = query.trim()
   const searching = needle !== ''
+  const contentMode = mode === 'content'
+  const includePatterns = useMemo(() => splitPatterns(includeText), [includeText])
+  const excludePatterns = useMemo(() => splitPatterns(excludeText), [excludeText])
   // The search effect below must re-run on a CHANGED list, never on a churned
   // array identity: the prefs store hands out one stable reference per
   // document, but keying on the value is what makes that a guarantee rather
-  // than an assumption (a re-run resets the 300ms debounce, so a per-render
-  // identity would keep the search from ever settling).
-  const excludeKey = (exclude ?? []).join('\0')
+  // than an assumption (a re-run resets the debounce, so a per-render identity
+  // would keep the search from ever settling).
+  const excludeKey = patternsKey(exclude ?? [])
+  const includeKey = patternsKey(includePatterns)
+  // The explorer pref and the user's files-to-exclude field are ONE list
+  // host-side (same grammar), so the raw array is only an intermediate — the
+  // key is the value the effect depends on, never the array identity.
+  const grepExcludeKey = patternsKey([...(exclude ?? []), ...excludePatterns])
+
+  // Name search: unchanged semantics, parked while the box is in content mode
+  // (the content effect owns the query then).
   useEffect(() => {
+    if (contentMode) return
     if (needle === '') {
       setResults(null)
       setError(null)
@@ -221,7 +309,84 @@ export function TreePanel(props: {
       window.clearTimeout(timer)
       controller.abort()
     }
-  }, [sessionId, cwd, needle, excludeKey])
+  }, [contentMode, sessionId, cwd, needle, excludeKey])
+
+  // Content search: same debounce discipline, a slightly longer wait (the
+  // host may read thousands of files), and an AbortController per keystroke —
+  // the host stops reading the moment the request is abandoned.
+  useEffect(() => {
+    if (!contentMode) return
+    if (needle === '') {
+      setGrep(null)
+      setGrepError(null)
+      return
+    }
+    const controller = new AbortController()
+    const timer = window.setTimeout(() => {
+      api.fsGrep({ sessionId, cwd }, needle, {
+        ...(includeKey === '' ? {} : { include: includeKey.split('\0') }),
+        ...(grepExcludeKey === '' ? {} : { exclude: grepExcludeKey.split('\0') }),
+        caseSensitive: matchCase,
+        wholeWord,
+        regex,
+      }, controller.signal).then((found) => {
+        setGrep(found)
+        setGrepError(null)
+      }).catch((failure: unknown) => {
+        if (controller.signal.aborted) return
+        setGrep(null)
+        setGrepError(failure instanceof Error ? failure.message : String(failure))
+      })
+    }, 350)
+    return () => {
+      window.clearTimeout(timer)
+      controller.abort()
+    }
+  }, [contentMode, sessionId, cwd, needle, includeKey, grepExcludeKey, matchCase, wholeWord, regex, grepReload])
+
+  /**
+   * Run Replace All over the files the CURRENT result list shows. Each file
+   * carries the mtime its row was rendered from, so a file that changed on
+   * disk since is skipped host-side instead of rewritten from a stale read.
+   */
+  const runReplace = (): void => {
+    if (grep === null || grep.files.length === 0 || replaceBusy) return
+    setReplaceBusy(true)
+    setReplaceNote('')
+    api.fsGrepReplace(
+      { sessionId, cwd },
+      needle,
+      replacement,
+      { regex, caseSensitive: matchCase, wholeWord },
+      grep.files.map(file => ({ path: file.path, mtimeMs: file.mtimeMs })),
+    ).then((result) => {
+      setReplaceBusy(false)
+      setReplaceFailed(false)
+      const notes = [t('editorSearchReplaced', { matches: result.replaced, files: result.files.length })]
+      if (result.skipped.length > 0) notes.push(t('editorSearchReplaceSkipped', { files: result.skipped.length }))
+      setReplaceNote(notes.join(' · '))
+      // The written files are new truth: re-run the search and let the shared
+      // git store re-read the ink every row is painted from.
+      setGrepReload(tick => tick + 1)
+      invalidateGitStatus(sessionId)
+      window.dispatchEvent(new CustomEvent('dsh-sidebar:refresh-files'))
+    }).catch((failure: unknown) => {
+      setReplaceBusy(false)
+      setReplaceFailed(true)
+      setReplaceNote(t('editorSearchReplaceFailed', {
+        message: failure instanceof Error ? failure.message : String(failure),
+      }))
+    })
+  }
+
+  // The shared git status store: the tree (FileTree) and these result rows
+  // read ONE snapshot, so a modified file's ink never disagrees between them.
+  const gitStatus = useGitStatus({ sessionId, cwd }, { visible: visible !== false })
+  /** The git state of one result path (cwd-relative or absolute), or undefined. */
+  const statusOf = (rel: string): GitFileStatus | undefined => {
+    if (cwd === undefined) return undefined
+    return gitStatus.statusOf(resolveSidebarPath(cwd, rel))
+  }
 
   const busy = upload !== null
   /** Directory hits (the host reports them separately): a click navigates the
@@ -251,20 +416,113 @@ export function TreePanel(props: {
     setQuery('')
   }
 
+  /** Open a content hit at its line (falling back to the plain open). */
+  const openContentHit = (rel: string, line: number): void => {
+    const target = resolveSidebarPath(cwd, rel)
+    if (onOpenFileAtLine !== undefined) onOpenFileAtLine(target, line)
+    else onOpenFile(target)
+  }
+
+  /** Toggle one result file's group without touching the others. */
+  const toggleResultFile = (path: string): void => {
+    setCollapsedFiles((current) => {
+      const next = new Set(current)
+      if (next.has(path)) next.delete(path)
+      else next.add(path)
+      return next
+    })
+  }
+
+  const refreshAll = (): void => {
+    setRefreshTick(tick => tick + 1)
+    if (contentMode) setGrepReload(tick => tick + 1)
+  }
+
   return (
     <div className={clsx(css.editorTreePanel, full === true && css.editorTreePanelFull)}>
       <div className={css.editorTreeSearch}>
+        {/* The mode switch: name (flat list glyph) vs content (magnifier). The
+            labels are aria/tooltip only — the placeholder says which search
+            the box runs right now. */}
+        <div className={css.editorSearchModes} role="group" aria-label={t('editorSearchModeName')}>
+          <button
+            type="button"
+            className={clsx(css.editorSearchModeButton, !contentMode && css.editorSearchModeActive)}
+            aria-pressed={!contentMode}
+            aria-label={t('editorSearchModeName')}
+            title={t('editorSearchModeName')}
+            onClick={() => { setMode('name') }}
+          >
+            <IconFlatListOutlineRegular size={14} />
+          </button>
+          <button
+            type="button"
+            className={clsx(css.editorSearchModeButton, contentMode && css.editorSearchModeActive)}
+            aria-pressed={contentMode}
+            aria-label={t('editorSearchModeContent')}
+            title={t('editorSearchModeContent')}
+            onClick={() => { setMode('content') }}
+          >
+            <IconSearchOutlineRegular size={14} />
+          </button>
+        </div>
         <input
           className={css.editorSearchInput}
           value={query}
-          placeholder={t('editorSearchPlaceholder')}
+          placeholder={contentMode ? t('editorSearchContentPlaceholder') : t('editorSearchPlaceholder')}
           spellCheck={false}
           onChange={(event) => { setQuery(event.target.value) }}
         />
+      </div>
+      {/* The tool row: content-only search switches on the left, the tree's
+          own controls on the right. Kept on its own line so a narrow dock
+          never squeezes the query input out. */}
+      <div className={css.editorSearchTools}>
+        {contentMode && (
+          <>
+            <IconButton
+              size="sm"
+              label={t('searchMatchCase')}
+              active={matchCase}
+              icon={<span className={css.editorSearchGlyph}>Aa</span>}
+              onClick={() => { setMatchCase(value => !value) }}
+            />
+            <IconButton
+              size="sm"
+              label={t('searchWholeWord')}
+              active={wholeWord}
+              icon={<span className={css.editorSearchGlyph}>ab</span>}
+              onClick={() => { setWholeWord(value => !value) }}
+            />
+            <IconButton
+              size="sm"
+              label={t('searchRegexp')}
+              active={regex}
+              icon={<span className={css.editorSearchGlyph}>.*</span>}
+              onClick={() => { setRegex(value => !value) }}
+            />
+            <IconButton
+              size="sm"
+              label={t('searchReplace')}
+              active={showReplace}
+              icon={<IconEditOutlineRegular size={14} />}
+              onClick={() => { setShowReplace(value => !value) }}
+            />
+            <IconButton
+              size="sm"
+              label={t('editorSearchFilters')}
+              active={showFilters}
+              icon={<IconSlidersTwoOutlineRegular size={14} />}
+              onClick={() => { setShowFilters(value => !value) }}
+            />
+          </>
+        )}
+        <span className={css.editorSearchToolsGap} />
         <IconButton
+          size="sm"
           label={t('refresh')}
           icon={<IconRefreshOutlineRegular size={14} />}
-          onClick={() => { setRefreshTick(tick => tick + 1) }}
+          onClick={refreshAll}
         />
         {/* Row order: the two keys are one choice (check mark), the
             folders-first switch is independent — the same two-group menu the
@@ -295,6 +553,7 @@ export function TreePanel(props: {
           compact
           anchor={(
             <IconButton
+              size="sm"
               label={t('sort')}
               icon={<IconChevronsUpDownOutlineRegular size={14} />}
               onClick={() => { setSortOpen(open => !open) }}
@@ -302,39 +561,90 @@ export function TreePanel(props: {
           )}
         />
         <IconButton
+          size="sm"
           label={t('uploadFiles')}
           icon={<IconUploadOutline16 size={14} />}
           disabled={busy}
           onClick={() => { fileInputRef.current?.click() }}
         />
         <IconButton
+          size="sm"
           label={t('uploadFolder')}
           icon={<IconFolderOpenRegular size={14} />}
           disabled={busy}
           onClick={() => { folderInputRef.current?.click() }}
         />
-        <input
-          ref={fileInputRef}
-          type="file"
-          multiple
-          style={{ display: 'none' }}
-          onChange={(event) => {
-            if (cwd !== undefined) startUpload(cwd, uploadItemsFromFiles(event.target.files ?? []))
-            event.target.value = ''
-          }}
-        />
-        <input
-          ref={folderInputRef}
-          type="file"
-          multiple
-          {...folderInputProps}
-          style={{ display: 'none' }}
-          onChange={(event) => {
-            if (cwd !== undefined) startUpload(cwd, uploadItemsFromFiles(event.target.files ?? []))
-            event.target.value = ''
-          }}
-        />
       </div>
+      {/* The two hidden pickers behind the toolbar's upload buttons. */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        style={{ display: 'none' }}
+        onChange={(event) => {
+          if (cwd !== undefined) startUpload(cwd, uploadItemsFromFiles(event.target.files ?? []))
+          event.target.value = ''
+        }}
+      />
+      <input
+        ref={folderInputRef}
+        type="file"
+        multiple
+        {...folderInputProps}
+        style={{ display: 'none' }}
+        onChange={(event) => {
+          if (cwd !== undefined) startUpload(cwd, uploadItemsFromFiles(event.target.files ?? []))
+          event.target.value = ''
+        }}
+      />
+      {/* Replace field: a second input under the tool row (VS Code's Search
+          view shape) plus the Replace All action, which confirms first. */}
+      {contentMode && showReplace && (
+        <div className={css.editorSearchFieldRow}>
+          <input
+            className={css.editorSearchInput}
+            value={replacement}
+            placeholder={t('editorSearchReplacePlaceholder')}
+            spellCheck={false}
+            onChange={(event) => { setReplacement(event.target.value) }}
+          />
+          <button
+            type="button"
+            className={css.editorSearchReplaceAll}
+            disabled={grep === null || grep.files.length === 0 || replaceBusy || needle === ''}
+            onClick={() => { setReplaceAsk(true) }}
+          >
+            {t('searchReplaceAll')}
+          </button>
+        </div>
+      )}
+      {/* files-to-include / files-to-exclude: the same glob grammar as the
+          explorer's exclude pref; comma separated, host-compiled. */}
+      {contentMode && showFilters && (
+        <>
+          <div className={css.editorSearchFieldRow}>
+            <input
+              className={css.editorSearchInput}
+              value={includeText}
+              placeholder={t('editorSearchIncludePlaceholder')}
+              spellCheck={false}
+              onChange={(event) => { setIncludeText(event.target.value) }}
+            />
+          </div>
+          <div className={css.editorSearchFieldRow}>
+            <input
+              className={css.editorSearchInput}
+              value={excludeText}
+              placeholder={t('editorSearchExcludePlaceholder')}
+              spellCheck={false}
+              onChange={(event) => { setExcludeText(event.target.value) }}
+            />
+          </div>
+        </>
+      )}
+      {replaceNote !== '' && (
+        <div className={clsx(css.editorSearchHint, replaceFailed && css.editorError)} title={replaceNote}>{replaceNote}</div>
+      )}
       {uploadStatus !== '' && (
         <div className={clsx(css.editorSearchHint, uploadFailed && css.editorError)} title={uploadStatus}>{uploadStatus}</div>
       )}
@@ -345,7 +655,7 @@ export function TreePanel(props: {
         className={clsx(css.explorerBody, !searching && css.explorerHiddenPane)}
         hidden={!searching}
       >
-        {searching && (
+        {searching && !contentMode && (
           <>
             {error !== null && <div className={clsx(css.editorSearchHint, css.editorError)}>{error}</div>}
             {error === null && results === null && <div className={css.editorSearchHint}>{t('loading')}</div>}
@@ -354,6 +664,10 @@ export function TreePanel(props: {
             )}
             {error === null && results !== null && results.matches.map((rel) => {
               const isDirHit = dirHits.has(rel)
+              const status = isDirHit ? undefined : statusOf(rel)
+              const changedDir = isDirHit && cwd !== undefined
+                ? gitStatus.dirHasChanges(resolveSidebarPath(cwd, rel))
+                : false
               return (
                 <button
                   key={rel}
@@ -367,13 +681,80 @@ export function TreePanel(props: {
                   }}
                 >
                   {isDirHit && <IconFolderOpenRegular size={14} />}
-                  <span className={css.editorSearchResultLabel}>{rel}</span>
+                  <span
+                    className={clsx(
+                      css.editorSearchResultLabel,
+                      status !== undefined && css.explorerGitName,
+                      changedDir && css.explorerDirChanged,
+                    )}
+                    data-git-tone={status?.tone}
+                  >{rel}</span>
+                  {status !== undefined && (
+                    <StatusBadge tone={badgeToneOf(status.tone)} title={gitToneLabel(status.tone)}>{status.letter}</StatusBadge>
+                  )}
                 </button>
               )
             })}
             {error === null && results?.truncated === true && (
               <div className={css.editorSearchHint}>{t('editorSearchTruncated')}</div>
             )}
+          </>
+        )}
+        {searching && contentMode && (
+          <>
+            {grepError !== null && <div className={clsx(css.editorSearchHint, css.editorError)}>{grepError}</div>}
+            {grepError === null && grep === null && <div className={css.editorSearchHint}>{t('loading')}</div>}
+            {grepError === null && grep !== null && grep.files.length === 0 && (
+              <div className={css.editorSearchHint}>{t('editorSearchContentNoResults')}</div>
+            )}
+            {grepError === null && grep !== null && grep.files.length > 0 && (
+              <div className={css.editorSearchHint} data-dsh-grep-summary="true">
+                {t(grep.truncated ? 'editorSearchSummaryTruncated' : 'editorSearchSummary', {
+                  files: grep.files.length,
+                  matches: grep.matchesTotal,
+                })}
+              </div>
+            )}
+            {grepError === null && grep !== null && grep.files.map((file) => {
+              const open = !collapsedFiles.has(file.path)
+              const status: GitFileStatus | undefined = statusOf(file.path)
+              return (
+                <div className={css.grepFileGroup} key={file.path} data-dsh-grep-file={file.path}>
+                  <button
+                    type="button"
+                    className={css.grepFileRow}
+                    title={file.path}
+                    aria-expanded={open}
+                    aria-label={open ? t('jsonCollapseNode') : t('jsonExpandNode')}
+                    data-git-tone={status?.tone}
+                    onClick={() => { toggleResultFile(file.path) }}
+                  >
+                    {open ? <IconChevronDownOutlineRegular size={12} /> : <IconChevronRightOutlineRegular size={12} />}
+                    <span
+                      className={clsx(css.grepFileName, status !== undefined && css.explorerGitName)}
+                      data-git-tone={status?.tone}
+                    >{file.path}</span>
+                    <span className={css.grepFileCount}>{file.matches.length}</span>
+                    {status !== undefined && (
+                      <StatusBadge tone={badgeToneOf(status.tone)} title={gitToneLabel(status.tone)}>{status.letter}</StatusBadge>
+                    )}
+                  </button>
+                  {open && file.matches.map((match) => (
+                    <button
+                      key={`${file.path}:${match.line}`}
+                      type="button"
+                      className={css.grepMatchRow}
+                      title={`${file.path}:${match.line}`}
+                      data-dsh-grep-line={match.line}
+                      onClick={() => { openContentHit(file.path, match.line) }}
+                    >
+                      <span className={css.grepLineNo}>{match.line}</span>
+                      <span className={css.grepSnippet}>{snippetNodes(match)}</span>
+                    </button>
+                  ))}
+                </div>
+              )
+            })}
           </>
         )}
       </div>
@@ -417,6 +798,25 @@ export function TreePanel(props: {
           cancelling={cancelling}
         />
       )}
+      {/* Destructive and not undoable by the plugin: confirm once with the
+          counts the reader is looking at. */}
+      <ConfirmDialog
+        open={replaceAsk}
+        title={t('editorSearchReplaceConfirmTitle')}
+        description={t('editorSearchReplaceConfirmDesc', {
+          files: grep?.files.length ?? 0,
+          matches: grep?.matchesTotal ?? 0,
+        })}
+        confirmLabel={t('searchReplaceAll')}
+        cancelLabel={t('cancel')}
+        danger
+        busy={replaceBusy}
+        onConfirm={() => {
+          setReplaceAsk(false)
+          runReplace()
+        }}
+        onClose={() => { setReplaceAsk(false) }}
+      />
     </div>
   )
 }

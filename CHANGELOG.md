@@ -4,6 +4,12 @@
 
 ### 未发布
 
+- 🔎 **文件搜索新增 VS Code 式「内容搜索」与全部替换**：文件页搜索框可在「名称 / 内容」两种模式间切换。内容模式带大小写、整词、正则开关，以及 `files to include` / `files to exclude` glob（与树 / 名称搜索的排除语法同源：无斜杠按基名匹配任意深度、含斜杠按根锚定、`**/` 可匹配零段、目录名包含其子树）；结果按文件分组，带行号与命中高亮，点击行直接打开并落到该行。
+  - **全部替换**先弹出确认（显示文件数与命中数），只改当前结果列表里的文件；写盘复用 `writeWorkspaceText`，文件原有字节编码与行尾保持不变，渲染后磁盘又变更的文件跳过并在一行提示里报告。
+  - **宿主侧新增 `fs.grep` / `fs.grepReplace` 两个 `/sidebar/api` 路由**：内容搜索在 git worktree 内用 `git ls-files --cached --others --exclude-standard` 取文件清单（尊重 `.gitignore`），否则回退目录遍历；跳过二进制、超过 2 MiB 的文件以及 `node_modules` 等噪声目录；每次搜索有文件数 / 命中数 / 扫描字节预算，超限返回 `truncated` 而不是卡住宿主。`updateTab` 的 patch 新增可选 `line`，原地打开也能落到指定行（外部插件同样可用，见接入指南）。
+  - 🧪 测试：`tests/fs-grep.spec.ts`（查询编译、include glob、遍历与跳过、预算、CRLF 替换与 mtime 门）、`tests/fs-grep-route.spec.ts`（路由形状、坏正则 400、替换与冲突跳过）、`tests/file-tree-content-search.spec.tsx`（模式切换、分组 / 高亮 / 行跳转、include·exclude 透传、确认替换、结果行的 git 着色）。
+- 🎨 **搜索结果行也显示修改状态**：名称搜索结果与内容搜索的文件分组复用文件树已有的 Git 着色与字母徽标（`M` / `U` / `A` / `D` …），修改过的文件在结果列表里同样与未修改文件颜色区分。
+
 - 💻 **侧边对话显示 PTC（run_code）工具调用树**：`run_code` 行收起时显示模型写的 description，展开后显示程序代码和最终结果；程序内通过 PTC 派发的 bash / read / grep / edit 等子调用缩进挂在它下方，根行收起也可见，并复用终端 / diff / read / search / web 结构卡片。运行中、失败、无 start 的 dispatch 都有对应显示；PTC 内成功 write/edit 的文件也进入可点击路径提及。`present` 仍保留顶层交付卡片，同时在子调用区留下一行。
   - 🧪 测试：`tests/sidechat-ptc-rows.spec.ts`（配对 / 运行态 / 失败 / 无 start / 嵌套 / 父行缺失 / 身份复用）、`tests/sidechat-ptc-subcalls.spec.tsx`（description 摘要、代码体、缩进与卡片、根行收起仍可见）、`tests/sidechat-mention-sources.spec.tsx`（PTC mutation 进入提及、read 不进入）。
 

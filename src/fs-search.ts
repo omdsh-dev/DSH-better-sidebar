@@ -49,6 +49,7 @@ import { opendir, stat } from 'node:fs/promises'
 import { isAbsolute, join, sep } from 'node:path'
 import { homedir } from 'node:os'
 import type { ExcludeTest } from './exclude-patterns.ts'
+import { relativeExcludeProbe } from './exclude-patterns.ts'
 import { resolveTarget } from './path-security.ts'
 import { SKIP_DIR_NAMES, runEngine, usableEngines } from './search-engines.ts'
 import { debugLog } from './search-debug.ts'
@@ -243,31 +244,9 @@ export async function searchFilesPlain(root: string, query: string, opts: FsSear
  * different surface, so the walk's two rules carry over verbatim: a row whose
  * name is excluded disappears, and so does every row BELOW an excluded
  * directory — the walk never descended into one, so it could never have
- * reported a child as a match either. Verdicts are memoized per directory:
- * the engines report hundreds of rows under the same few directories.
+ * reported a child as a match either. The implementation is shared with the
+ * content search's flat inventory (`relativeExcludeProbe`).
  */
-function engineExcludeProbe(root: string, exclude: ExcludeTest): (relativePath: string) => boolean {
-  const excludedDirs = new Map<string, boolean>()
-  /** Whether the directory at `relativeDir` ('' = the search root) is
-   *  excluded, itself or through an ancestor. */
-  const dirExcluded = (relativeDir: string): boolean => {
-    if (relativeDir === '') return false
-    const cached = excludedDirs.get(relativeDir)
-    if (cached !== undefined) return cached
-    const cut = relativeDir.lastIndexOf('/')
-    const parent = cut === -1 ? '' : relativeDir.slice(0, cut)
-    const name = cut === -1 ? relativeDir : relativeDir.slice(cut + 1)
-    const verdict = dirExcluded(parent) || exclude(join(root, ...relativeDir.split('/')), name)
-    excludedDirs.set(relativeDir, verdict)
-    return verdict
-  }
-  return (relativePath) => {
-    const cut = relativePath.lastIndexOf('/')
-    const parent = cut === -1 ? '' : relativePath.slice(0, cut)
-    const name = cut === -1 ? relativePath : relativePath.slice(cut + 1)
-    return dirExcluded(parent) || exclude(join(root, ...relativePath.split('/')), name)
-  }
-}
 
 /**
  * The fs.search dispatch: an absolute query is stat'ed directly (see the
@@ -320,7 +299,7 @@ export async function searchFiles(root: string, query: string, opts: FsSearchOpt
     return result
   }
   const maxMatches = opts.maxMatches ?? DEFAULT_MAX_MATCHES
-  const isExcluded = opts.exclude === undefined ? undefined : engineExcludeProbe(root, opts.exclude)
+  const isExcluded = opts.exclude === undefined ? undefined : relativeExcludeProbe(root, opts.exclude)
   for (const probe of await usableEngines()) {
     try {
       const result = await runEngine(probe, root, needle, maxMatches)

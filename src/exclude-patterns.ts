@@ -2,7 +2,9 @@
  * Glob-style exclude patterns for the explorer tree and name search — the
  * VS Code `files.exclude` lineage. One compiled matcher serves BOTH host
  * consumption points (the `fs.tree` level listing and the `fs.search` walk)
- * so a pattern can never disagree between the two surfaces.
+ * so a pattern can never disagree between the two surfaces. The content
+ * search (`fs.grep`) consumes the same compiled probe through
+ * {@link relativeExcludeProbe}.
  *
  * Pattern grammar (a deliberate subset of VS Code's globs):
  *  - `name`            matches that base NAME at any depth (`Thumbs.db`);
@@ -13,7 +15,7 @@
  * filesystem's own notion). Invalid shapes (empty, overlong, over the count
  * cap) are dropped silently — a malformed pattern must never break the tree.
  */
-import { relative, sep } from 'node:path'
+import { join, relative, sep } from 'node:path'
 
 /** Hard cap on how many patterns one request may carry (extras dropped). */
 export const EXCLUDE_PATTERN_LIMIT = 64
@@ -160,4 +162,43 @@ export function compileExcludePatterns(
   // entry. NUL joins because no pattern body can contain one.
   const key = `${root}\0${compiled.map(pattern => `${pattern.kind}:${pattern.regex.source}:${pattern.regex.flags}`).join('\0')}`
   return Object.assign(probe, { key })
+}
+
+/**
+ * The exclude probe applied to ROOT-RELATIVE, '/'-separated paths — the shape
+ * a FLAT listing reports (a native engine's output, the content search's
+ * `git ls-files` inventory) instead of the walk's one-entry-at-a-time probe.
+ *
+ * The compiled matcher itself is path/name based, so the walk's two rules
+ * carry over verbatim: a row whose own name takes the pattern disappears, and
+ * so does every row BELOW an excluded directory — the walk never descended
+ * into one, so it could never have reported a child either. Verdicts are
+ * memoized per directory: flat listings repeat the same few parents hundreds
+ * of times.
+ *
+ * @param root - the absolute root the paths are relative to (path-anchored
+ *  patterns resolve against it).
+ * @param exclude - the compiled {@link compileExcludePatterns} probe.
+ * @returns whether one root-relative entry is excluded.
+ */
+export function relativeExcludeProbe(root: string, exclude: ExcludeTest): (relativePath: string) => boolean {
+  const excludedDirs = new Map<string, boolean>()
+  /** Whether the directory at `relativeDir` ('' = the root) is excluded. */
+  const dirExcluded = (relativeDir: string): boolean => {
+    if (relativeDir === '') return false
+    const cached = excludedDirs.get(relativeDir)
+    if (cached !== undefined) return cached
+    const cut = relativeDir.lastIndexOf('/')
+    const parent = cut === -1 ? '' : relativeDir.slice(0, cut)
+    const name = cut === -1 ? relativeDir : relativeDir.slice(cut + 1)
+    const verdict = dirExcluded(parent) || exclude(join(root, ...relativeDir.split('/')), name)
+    excludedDirs.set(relativeDir, verdict)
+    return verdict
+  }
+  return (relativePath) => {
+    const cut = relativePath.lastIndexOf('/')
+    const parent = cut === -1 ? '' : relativePath.slice(0, cut)
+    const name = cut === -1 ? relativePath : relativePath.slice(cut + 1)
+    return dirExcluded(parent) || exclude(join(root, ...relativePath.split('/')), name)
+  }
 }
