@@ -6,6 +6,8 @@
 
 ### Unreleased
 
+- **Optionally collapse the sidebar after background work finishes** ([#738](https://github.com/omdsh-dev/DSH-better-sidebar/pull/738)): enable it in the Tasks card settings to collapse only an automatically opened column after the current session has been idle for three seconds, keeping its tabs. Unrelated feed updates do not postpone the deadline; floating or replacing the Tasks page preserves the current layout.
+
 - 🌿 **The multi-repository switcher is now responsive** (contributor PR [#1130](https://github.com/omdsh-dev/DSH-better-sidebar/pull/1130) @iasiv5): when a container workspace discovers several repositories, the row above Changes renders natural-width chips while every root fits on one line and switches to a `Repository ▾` select once it does not. Both forms share the same location labels (deeper roots show `name (relative/parent)`, e.g. `knowhow (ob-harness/contexts)`), the current root stays visible, and a server-fallback root appears as a disabled stand-in instead of masquerading as a candidate. Single-repository workspaces render nothing; the ⋯ → Repository submenu stays as the fallback; switching still goes through `chooseRepo`, so reads, mutations and the commit graph stay pinned to the chosen root.
   - 🧪 `tests/git-repo-labels.spec.ts` (32 cases: POSIX / Windows / UNC / extended paths, duplicate disambiguation, order and input immutability) and `tests/git-repo-switcher.spec.tsx` (chips when wide, select when narrow, labels and the disabled fallback, single-repo absence).
 

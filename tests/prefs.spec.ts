@@ -34,6 +34,7 @@ describe('side card preferences', () => {
       .toEqual({
         autoOpenSubagent: false,
         autoOpenJobs: true,
+        autoCollapseAfterIdle: false,
         tasksViewMode: 'graph',
         tasksAutoFoldSettled: true,
         tasksAutoFoldBranches: true,
@@ -64,6 +65,7 @@ describe('side card preferences', () => {
       .toEqual({
         autoOpenSubagent: true,
         autoOpenJobs: true,
+        autoCollapseAfterIdle: false,
         tasksViewMode: 'graph',
         tasksAutoFoldSettled: true,
         tasksAutoFoldBranches: true,
@@ -94,6 +96,7 @@ describe('side card preferences', () => {
       .toEqual({
         autoOpenSubagent: true,
         autoOpenJobs: true,
+        autoCollapseAfterIdle: false,
         tasksViewMode: 'graph',
         tasksAutoFoldSettled: true,
         tasksAutoFoldBranches: true,
@@ -301,4 +304,11 @@ describe('boot decision (one fetch for prefs + external disable)', () => {
     expect(decision.suspended).toBe(false)
     expect(decision.prefs.customCss).toBe('html { }')
   })
+})
+
+it('keeps auto-collapse opt-in and rejects malformed stored values', async () => {
+  expect((await loadPrefs(wire({}))).autoCollapseAfterIdle).toBe(false)
+  expect((await loadPrefs(wire({ autoCollapseAfterIdle: 'yes' }))).autoCollapseAfterIdle).toBe(false)
+  expect((await loadPrefs(wire({ autoCollapseAfterIdle: true }))).autoCollapseAfterIdle).toBe(true)
+  expect((await loadPrefs(wire({ autoCollapseAfterIdle: false }))).autoCollapseAfterIdle).toBe(false)
 })

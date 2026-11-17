@@ -5,13 +5,14 @@
  * jump-back). All of it reacts to the host's live feeds for the CURRENT
  * session; the sidebar shell only consumes the returned jump-back ref.
  */
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { Context, SidebarJobView, SidebarSessionList } from '../../context-types.ts'
 import type { SidebarStore } from '../state.ts'
 import { isNarrowWidth } from '../breakpoints.ts'
 import { hostWebSocketUrl } from '../host-route-url.ts'
 import { detectNewDirectSubagent } from '../subagent-detect.ts'
 import { detectNewJob } from '../subagent-jobs.ts'
+import { isSessionActivityIdle } from '../host-activity.ts'
 import { clientJobs, useJobsSnapshot } from '../jobs-client.ts'
 import { mountedSessionId } from '../native/surface.ts'
 import { t } from '../locales.ts'
@@ -44,6 +45,7 @@ const RECONNECT_MAX_MS = 30_000
  * title frame has had time to land.
  */
 const AUTO_OPEN_DEBOUNCE_MS = 500
+const AUTO_COLLAPSE_IDLE_MS = 3000
 
 /**
  * The native column's public face, as this module reaches it. Every reader
@@ -51,12 +53,20 @@ const AUTO_OPEN_DEBOUNCE_MS = 500
  * binding), which is why both gates below are gated on the target session
  * being the on-screen one.
  */
+interface AutoCollapseTarget {
+  readonly sessionId: string
+  readonly host: 'dock' | 'float'
+  readonly tabId: string | undefined
+}
+
 interface NativeColumnFace {
   isExpanded?: () => boolean
   toggleExpanded?: () => void
   /** The active tab of the active pane (`ISidebarRight.active`): which page the
    *  reader is looking at. Absent on a host older than the reader gate. */
-  active?: () => { kind?: string } | undefined
+  active?: () => { id?: string; kind?: string } | undefined
+  commandTarget?: (element?: Element | null) => AutoCollapseTarget | undefined
+  isTargetCurrent?: (target: AutoCollapseTarget) => boolean
 }
 
 /**
@@ -114,7 +124,7 @@ function activateTasksPage(
   store: SidebarStore,
   sessionId: string,
   options: { background: boolean },
-): void {
+): AutoCollapseTarget | undefined {
   const column = ctx.get('sidebarRight') as unknown as NativeColumnFace | undefined
   // The face acts on the MOUNTED session: both gates below are only meaningful
   // (and only safe) when the activation targets the one on screen. "On screen"
@@ -123,6 +133,7 @@ function activateTasksPage(
   // without the feed) reads as "not this session": the plugin then leaves the
   // column alone rather than reading or toggling one it is not drawing.
   const onScreen = mountedSessionId(ctx) === sessionId
+  const wasCollapsed = column?.isExpanded?.() === false
   // Do not take over the page the reader is looking at (see the docblock).
   if (options.background && onScreen && column?.isExpanded?.() === true) {
     const shown = column.active?.()
@@ -133,7 +144,7 @@ function activateTasksPage(
       // The dot belongs to the session the work is in, which is the current
       // one (the gate above proved this seat is the mounted session).
       store.markUnread('subagent')
-      return
+      return undefined
     }
   }
   const park = options.background
@@ -141,9 +152,15 @@ function activateTasksPage(
     && isNarrowWidth(window.innerWidth)
     // Only a column the user had COLLAPSED is put back: an expanded one is in
     // use, and closing it under the user would be worse than the takeover.
-    && column?.isExpanded?.() === false
+    && wasCollapsed
   ctx.get('betterSidebar')?.openTab({ type: 'subagent', title: t('subagent') })
   if (park) column?.toggleExpanded?.()
+  if (!options.background || !onScreen || park || !wasCollapsed
+    || column?.isExpanded?.() !== true) return undefined
+  // active() may name a floating page while toggleExpanded folds the dock.
+  const target = column.commandTarget?.(null)
+  return target?.host === 'dock' && target.sessionId === sessionId
+    && target.tabId === column.active?.()?.id ? target : undefined
 }
 
 export function useHostFeeds(feeds: {
@@ -153,6 +170,8 @@ export function useHostFeeds(feeds: {
   sessionId: string | undefined
 }): { subagentJumpRef: { current: string | undefined } } {
   const { ctx, store, sessionList, sessionId } = feeds
+  const [autoCollapseTarget, setAutoCollapseTarget] = useState<AutoCollapseTarget | undefined>()
+  const autoCollapseEnabled = store.getPrefs().autoCollapseAfterIdle
 
   /**
    * Agent opens push: subscribe to the host's `sidebar_open` requests for
@@ -300,7 +319,8 @@ export function useHostFeeds(feeds: {
       if (!store.getPrefs().autoOpenSubagent) return
       if (store.getPrefs().mobileNoAutoOpen && isNarrowWidth(window.innerWidth)) return
       if (ctx.get('betterSidebar')?.isTabEnabled('subagent') === false) return
-      activateTasksPage(ctx, store, sessionId, { background: true })
+      const target = activateTasksPage(ctx, store, sessionId, { background: true })
+      if (target !== undefined && store.getPrefs().autoCollapseAfterIdle) setAutoCollapseTarget(target)
     }, AUTO_OPEN_DEBOUNCE_MS)
     autoOpenPendingRef.current = { baseline, timer }
   }, [sessionList, sessionId, store, ctx])
@@ -364,7 +384,8 @@ export function useHostFeeds(feeds: {
     if (!store.getPrefs().autoOpenJobs) return
     if (store.getPrefs().mobileNoAutoOpen && isNarrowWidth(window.innerWidth)) return
     if (ctx.get('betterSidebar')?.isTabEnabled('subagent') === false) return
-    activateTasksPage(ctx, store, sessionId, { background: true })
+    const target = activateTasksPage(ctx, store, sessionId, { background: true })
+    if (target !== undefined && store.getPrefs().autoCollapseAfterIdle) setAutoCollapseTarget(target)
   }, [jobsService, jobsSnapshot, sessionId, store, ctx])
 
   /**
@@ -386,6 +407,36 @@ export function useHostFeeds(feeds: {
     subagentJumpRef.current = undefined
     activateTasksPage(ctx, store, sessionId, { background: false })
   }, [sessionId, store, ctx])
+
+  // Global feed churn must not reset the current session's idle deadline.
+  const autoCollapseIdle = autoCollapseTarget !== undefined
+    && isSessionActivityIdle(sessionList, autoCollapseTarget.sessionId,
+      jobsSnapshot.rows[autoCollapseTarget.sessionId])
+
+  // Only the dock occurrence captured by our auto-open may be handed back.
+  useEffect(() => {
+    if (autoCollapseTarget === undefined) return
+    if (!autoCollapseEnabled || autoCollapseTarget.sessionId !== sessionId) {
+      setAutoCollapseTarget(undefined)
+      return
+    }
+    if (!autoCollapseIdle) return
+    const timer = window.setTimeout(() => {
+      setAutoCollapseTarget(undefined)
+      if (mountedSessionId(ctx) !== autoCollapseTarget.sessionId
+        || !store.getPrefs().autoCollapseAfterIdle) return
+      if (!isSessionActivityIdle(ctx.sessions.list.getSnapshot(), autoCollapseTarget.sessionId,
+        jobsService?.state.getSnapshot().rows[autoCollapseTarget.sessionId])) return
+      const column = ctx.get('sidebarRight') as unknown as NativeColumnFace | undefined
+      // Floating, reopening or replacing the captured occurrence gives the
+      // column back to the reader, even if the active page is still Tasks.
+      if (column?.isExpanded?.() !== true || column.active?.()?.kind !== 'subagent'
+        || column.active?.()?.id !== autoCollapseTarget.tabId
+        || column.isTargetCurrent?.(autoCollapseTarget) !== true) return
+      column.toggleExpanded?.()
+    }, AUTO_COLLAPSE_IDLE_MS)
+    return () => window.clearTimeout(timer)
+  }, [autoCollapseTarget, autoCollapseEnabled, autoCollapseIdle, sessionId, jobsService, ctx, store])
 
   return { subagentJumpRef }
 }
