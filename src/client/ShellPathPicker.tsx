@@ -100,21 +100,22 @@ const MAX_VISIBLE_CRUMBS = 4
 
 /** A crumb that stands for the folded middle instead of a real directory. */
 interface VisibleCrumb extends Crumb {
-  readonly expand?: boolean | undefined
+  readonly folded?: boolean | undefined
 }
 
 /**
  * A long path cannot fit the address row. Keep the root and the last two
- * folders clickable and fold everything between them into one `..` button,
- * which reveals the hidden levels instead of losing access to them.
+ * folders clickable and fold everything between them into one `..` marker —
+ * plain text, NOT a button: revealing the middle only makes the row wrap or
+ * overlap again, which is the very problem the fold is meant to solve.
  */
-function visibleCrumbs(crumbs: readonly Crumb[], expanded: boolean): readonly VisibleCrumb[] {
-  if (expanded || crumbs.length <= MAX_VISIBLE_CRUMBS) return crumbs
+function visibleCrumbs(crumbs: readonly Crumb[]): readonly VisibleCrumb[] {
+  if (crumbs.length <= MAX_VISIBLE_CRUMBS) return crumbs
   const hidden = crumbs.slice(1, -2)
   if (hidden.length === 0) return crumbs
   return [
     crumbs[0]!,
-    { label: '..', path: hidden.map(crumb => crumb.label).join('\\'), expand: true },
+    { label: '..', path: hidden.map(crumb => crumb.label).join('\\'), folded: true },
     ...crumbs.slice(-2),
   ]
 }
@@ -153,8 +154,6 @@ export function ShellPathPicker(props: ShellPathPickerProps): ReactNode {
   /** The list area shows the drive chooser instead of a directory. */
   const [showDrives, setShowDrives] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
-  /** Whether the folded middle of a long path has been revealed. */
-  const [crumbsExpanded, setCrumbsExpanded] = useState(false)
 
   // Reopening starts from whatever the box holds now — the dialog is a view
   // of that text, not a second place to keep state.
@@ -166,14 +165,10 @@ export function ShellPathPicker(props: ShellPathPickerProps): ReactNode {
     setError(null)
     setEditing(false)
     setShowDrives(false)
-    setCrumbsExpanded(false)
   }, [open, initialPath])
 
   const currentDir = trail.length > 0 ? trail[trail.length - 1] : undefined
   const crumbs = useMemo(() => crumbsOf(currentDir), [currentDir])
-
-  // Moving to another directory re-folds a long path that was expanded.
-  useEffect(() => { setCrumbsExpanded(false) }, [currentDir])
 
   // Editing focuses and selects the full path so typing replaces it.
   useEffect(() => {
@@ -338,23 +333,23 @@ export function ShellPathPicker(props: ShellPathPickerProps): ReactNode {
         >
           <IconBrowseOutlineRegular size={14} />
         </button>
-        {visibleCrumbs(crumbs, crumbsExpanded).map((crumb, index, shown) => (
-          <span className={css.crumbSlot} key={crumb.expand ? 'folded' : crumb.path}>
+        {visibleCrumbs(crumbs).map((crumb, index, shown) => (
+          <span className={css.crumbSlot} key={crumb.folded ? 'folded' : crumb.path}>
             <IconChevronRightOutlineRegular size={12} />
-            <button
-              type="button"
-              className={crumb.expand || index !== shown.length - 1 ? css.crumb : css.crumbLast}
-              title={crumb.path}
-              data-dsh-path-crumb={crumb.expand ? undefined : ''}
-              data-dsh-path-expand={crumb.expand ? '' : undefined}
-              onClick={() => {
-                if (crumb.expand) setCrumbsExpanded(true)
-                else openCrumb(crumb)
-              }}
-              onDoubleClick={() => { setEditing(true) }}
-            >
-              <span className={css.crumbLabel}>{crumb.label}</span>
-            </button>
+            {crumb.folded
+              ? <span className={css.folded} title={crumb.path} data-dsh-path-expand>{crumb.label}</span>
+              : (
+                <button
+                  type="button"
+                  className={index !== shown.length - 1 ? css.crumb : css.crumbLast}
+                  title={crumb.path}
+                  data-dsh-path-crumb=""
+                  onClick={() => { openCrumb(crumb) }}
+                  onDoubleClick={() => { setEditing(true) }}
+                >
+                  <span className={css.crumbLabel}>{crumb.label}</span>
+                </button>
+              )}
           </span>
         ))}
         {/* The empty tail of the row: a single click here edits the address. */}

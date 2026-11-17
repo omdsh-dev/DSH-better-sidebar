@@ -565,7 +565,7 @@ describe('terminal settings: the breadcrumb address bar', () => {
       expect(root.querySelector('input[type="text"]')).toBeNull()
     } finally { unmount() }
   })
-  it('folds the middle of a long path into a single .. button', async () => {
+  it('folds the middle of a long path into a plain .. marker', async () => {
     vi.spyOn(api, 'fsTree').mockResolvedValue({
       path: 'C:\\a\\b\\c\\d\\e',
       entries: [],
@@ -577,13 +577,14 @@ describe('terminal settings: the breadcrumb address bar', () => {
       // Root + last two folders stay; the levels between fold into `..`.
       const crumbs = [...dialog.querySelectorAll('[data-dsh-path-crumb]')]
       expect(crumbs.map(c => c.textContent)).toEqual(['C:', 'd', 'e'])
-      const expand = dialog.querySelector('[data-dsh-path-expand]')!
-      expect(expand).not.toBeNull()
-      expect(expand.textContent).toBe('..')
+      const folded = dialog.querySelector('[data-dsh-path-expand]')!
+      expect(folded).not.toBeNull()
+      expect(folded.textContent).toBe('..')
+      expect(folded.tagName).toBe('SPAN')
     } finally { unmount() }
   })
 
-  it('reveals the folded levels when .. is clicked', async () => {
+  it('does not expand when the folded .. marker is clicked', async () => {
     vi.spyOn(api, 'fsTree').mockResolvedValue({
       path: 'C:\\a\\b\\c\\d\\e',
       entries: [],
@@ -596,11 +597,16 @@ describe('terminal settings: the breadcrumb address bar', () => {
         dialog.querySelector<HTMLElement>('[data-dsh-path-expand]')!
           .dispatchEvent(new MouseEvent('click', { bubbles: true }))
       })
+      // `..` is plain text: clicking it neither reveals the middle levels nor
+      // flips the row into the edit input.
       const crumbs = [...dialog.querySelectorAll('[data-dsh-path-crumb]')]
-      expect(crumbs.map(c => c.textContent)).toEqual(['C:', 'a', 'b', 'c', 'd', 'e'])
-      expect(dialog.querySelector('[data-dsh-path-expand]')).toBeNull()
+      expect(crumbs.map(c => c.textContent)).toEqual(['C:', 'd', 'e'])
+      expect(dialog.querySelector('[data-dsh-path-expand]')).not.toBeNull()
+      expect(dialog.querySelector('[data-dsh-path-input]')).toBeNull()
+      expect(dialog.querySelector('[data-dsh-path-breadcrumb]')).not.toBeNull()
     } finally { unmount() }
   })
+
 
   it('lists the host drives when the computer icon is clicked', async () => {
     const drives = vi.spyOn(api, 'fsDrives').mockResolvedValue({

@@ -160,12 +160,17 @@
   display: flex;
   align-items: center;
   gap: 3px;
+  width: 100%;
   min-width: 0;
   min-height: 30px;
   padding: 3px 6px;
   border: 1px solid var(--dsw-alias-border-l2);
   border-radius: 8px;
   background: var(--dsw-alias-bg-layer-3);
+  /* A revealed long path must scroll inside the row, never push the dialog
+     wider or squash the crumbs into overlapping text. */
+  overflow-x: auto;
+  scrollbar-width: thin;
 }
 
 .computer,
@@ -220,6 +225,18 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* The folded `..` stands for hidden middle levels. It is plain text, not a
+   button: clicking it to expand only reintroduces the overlap the fold fixed. */
+.folded {
+  flex: none;
+  padding: 3px 5px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+  cursor: default;
+  user-select: none;
 }
 
 .crumbSpacer {
