@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="300" viewBox="0 0 640 300" role="img" aria-label="Two conversations, each with its own sidebar: one shows files and editor, the other shows a side chat, with independent state">
+  <defs>
+    <style>
+      .ui { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    </style>
+    <marker id="iso-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#4D6BFE"/>
+    </marker>
+  </defs>
+  <rect width="640" height="300" rx="12" fill="#F5F6FC"/>
+  <line x1="24" y1="150" x2="616" y2="150" stroke="#DDE3F0" stroke-dasharray="4 5"/>
+  <!-- conversation A -->
+  <rect x="24" y="30" width="204" height="108" rx="10" fill="#FFFFFF" stroke="#E6EAF3"/>
+  <circle cx="44" cy="52" r="10" fill="#E8EDFF"/>
+  <text x="44" y="55.5" class="ui" font-size="9" font-weight="700" fill="#3150D8" text-anchor="middle">A</text>
+  <rect x="60" y="46" width="88" height="6" rx="3" fill="#C9D0DE"/>
+  <rect x="60" y="57" width="56" height="5" rx="2.5" fill="#E1E6F0"/>
+  <rect x="40" y="74" width="168" height="6" rx="3" fill="#DDE3EE"/>
+  <rect x="40" y="86" width="132" height="6" rx="3" fill="#DDE3EE"/>
+  <rect x="40" y="104" width="108" height="22" rx="7" fill="#F3F6FF" stroke="#C9D6FF"/>
+  <path d="M50 111h6l4 4v8h-10z" fill="#4D6BFE" opacity="0.85"/>
+  <text x="64" y="119.5" class="ui" font-size="8.5" font-weight="600" fill="#3150D8">App.tsx</text>
+  <!-- arrow A -->
+  <path d="M232 84 C268 84 304 84 342 84" fill="none" stroke="#4D6BFE" stroke-width="1.4" marker-end="url(#iso-arrow)"/>
+  <circle cx="286" cy="84" r="8" fill="#4D6BFE"/>
+  <text x="286" y="87" class="ui" font-size="8" font-weight="700" fill="#FFFFFF" text-anchor="middle">1</text>
+  <!-- sidebar A -->
+  <rect x="352" y="26" width="264" height="116" rx="10" fill="#1F2433" opacity="0.05"/>
+  <rect x="350" y="24" width="264" height="116" rx="10" fill="#FFFFFF" stroke="#DFE4EF"/>
+  <!-- icon-only tabs A -->
+  <rect x="360" y="34" width="24" height="18" rx="5" fill="#E8EDFF"/>
+  <path d="M366 39h5l2 2h5v7h-12z" fill="#4D6BFE"/>
+  <path d="M390 40l4 3-4 3" stroke="#8A93A6" stroke-width="1.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M404 40h6M404 44h4" stroke="#8A93A6" stroke-width="1.4" stroke-linecap="round"/>
+  <line x1="360" y1="58" x2="604" y2="58" stroke="#EDF0F7"/>
+  <!-- mini editor A -->
+  <rect x="360" y="66" width="84" height="14" rx="4" fill="#F8FAFF" stroke="#DFE4EF"/>
+  <circle cx="368" cy="73" r="2.2" fill="#4D6BFE"/>
+  <text x="374" y="76" class="ui" font-size="7.5" font-weight="600" fill="#3150D8">App.tsx</text>
+  <g class="mono" font-size="7.2">
+    <text x="362" y="96" fill="#7C3AED">import</text><text x="392" y="96" fill="#3B4252"> { useTabs } </text><text x="450" y="96" fill="#7C3AED">from</text>
+    <text x="362" y="108" fill="#7C3AED">export</text><text x="390" y="108" fill="#7C3AED">function</text><text x="426" y="108" fill="#2563EB">Sidebar</text><text x="460" y="108" fill="#3B4252">() {</text>
+    <text x="370" y="120" fill="#7C3AED">return</text><text x="398" y="120" fill="#3B4252">&lt;</text><text x="406" y="120" fill="#D97706">FileTree</text><text x="442" y="120" fill="#3B4252">/&gt;</text>
+    <text x="362" y="132" fill="#3B4252">}</text>
+  </g>
+  <rect x="488" y="66" width="108" height="56" rx="6" fill="#FBFCFE" stroke="#EDF0F7"/>
+  <g class="ui" font-size="7.5" fill="#8A93A6">
+    <path d="M498 76h7l2 2h7v7h-16z" fill="#F2B84B"/>
+    <text x="516" y="84" fill="#3B4252" font-weight="600">src</text>
+    <path d="M502 92h7l2 2v6h-9z" fill="#9DB0F0"/>
+    <text x="514" y="99">App.tsx</text>
+    <path d="M502 106h7l2 2v6h-9z" fill="#9DB0F0"/>
+    <text x="514" y="113">index.ts</text>
+  </g>
+  <!-- conversation B -->
+  <rect x="24" y="162" width="204" height="108" rx="10" fill="#FFFFFF" stroke="#E6EAF3"/>
+  <circle cx="44" cy="184" r="10" fill="#E8EDFF"/>
+  <text x="44" y="187.5" class="ui" font-size="9" font-weight="700" fill="#3150D8" text-anchor="middle">B</text>
+  <rect x="60" y="178" width="76" height="6" rx="3" fill="#C9D0DE"/>
+  <rect x="60" y="189" width="48" height="5" rx="2.5" fill="#E1E6F0"/>
+  <rect x="40" y="206" width="156" height="6" rx="3" fill="#DDE3EE"/>
+  <rect x="40" y="218" width="118" height="6" rx="3" fill="#DDE3EE"/>
+  <rect x="40" y="236" width="120" height="22" rx="7" fill="#F3F6FF" stroke="#C9D6FF"/>
+  <circle cx="52" cy="243" r="2.6" fill="#4D6BFE"/>
+  <rect x="60" y="240" width="72" height="4" rx="2" fill="#9DB0F0"/>
+  <rect x="60" y="248" width="48" height="4" rx="2" fill="#C4CFF5"/>
+  <!-- arrow B -->
+  <path d="M232 216 C268 216 304 216 342 216" fill="none" stroke="#4D6BFE" stroke-width="1.4" marker-end="url(#iso-arrow)"/>
+  <circle cx="286" cy="216" r="8" fill="#4D6BFE"/>
+  <text x="286" y="219" class="ui" font-size="8" font-weight="700" fill="#FFFFFF" text-anchor="middle">2</text>
+  <!-- sidebar B -->
+  <rect x="352" y="158" width="264" height="116" rx="10" fill="#1F2433" opacity="0.05"/>
+  <rect x="350" y="156" width="264" height="116" rx="10" fill="#FFFFFF" stroke="#DFE4EF"/>
+  <!-- icon-only tabs B, chat active -->
+  <path d="M366 168h7l2 2h4v7h-13z" fill="#C9D0DE"/>
+  <rect x="386" y="166" width="26" height="18" rx="5" fill="#E8EDFF"/>
+  <path d="M393 171h10v7h-4l-3 3v-3h-3z" fill="#4D6BFE"/>
+  <path d="M424 170h6M424 174h4" stroke="#C9D0DE" stroke-width="1.4" stroke-linecap="round"/>
+  <line x1="360" y1="190" x2="604" y2="190" stroke="#EDF0F7"/>
+  <circle cx="370" cy="202" r="7" fill="#4D6BFE"/>
+  <text x="370" y="204.6" class="ui" font-size="7.5" font-weight="700" fill="#FFFFFF" text-anchor="middle">3</text>
+  <rect x="384" y="196" width="176" height="22" rx="8" fill="#F3F6FF"/>
+  <rect x="394" y="203" width="128" height="5" rx="2.5" fill="#9DB0F0"/>
+  <rect x="484" y="226" width="76" height="22" rx="8" fill="#FFFFFF" stroke="#DFE4EF"/>
+  <rect x="492" y="233" width="56" height="5" rx="2.5" fill="#DDE3EE"/>
+  <rect x="350" y="256" width="264" height="4" rx="2" fill="#E8EDFF"/>
+</svg>

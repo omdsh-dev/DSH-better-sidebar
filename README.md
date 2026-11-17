@@ -7,7 +7,7 @@
   <a href="https://github.com/omdsh-dev/DSH-better-sidebar/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/omdsh-dev/DSH-better-sidebar/actions/workflows/ci.yml/badge.svg" /></a>
   <a href="https://github.com/omdsh-dev/DSH-better-sidebar/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/omdsh-dev/DSH-better-sidebar" /></a>
   <a href="https://opensource.org/licenses/MIT"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-yellow.svg" /></a>
-  <a href="https://www.npmjs.com/package/@deepseek-ai/dsh?activeTab=versions"><img alt="Supported DSH versions: 0.2.2-rc.1+" src="https://img.shields.io/badge/DSH-0.2.2--rc.1%2B-4d6bfe" /></a>
+  <a href="https://www.npmjs.com/package/@deepseek-ai/dsh?activeTab=versions"><img alt="Supported DSH versions: 0.2.2-rc.2+" src="https://img.shields.io/badge/DSH-0.2.2--rc.2%2B-4d6bfe" /></a>
 </div>
 
 <div align="center">
@@ -24,9 +24,11 @@
 |---|---|
 | **🗂️ File Management**<br/>Lazy-loading tree, git status colors, live directory watch, global search, drag-and-drop upload, multi-select batch actions, dual-source "Open with" menu.<br/><img alt="File tree with git colors" src="./docs/screenshots/files-tree.png" /><br/><img alt="Context menu: Open with + Zip and download" src="./docs/screenshots/files-menu-openwith.png" /> | **🌿 Git**<br/>Source Control (Merge / Staged / Changes groups, message box with Generate, branch + sync footer) plus a this-session AI-changes lens, with a **read-only commit graph** (lanes, branch and tag badges, branch filter, commit details) in one tab.<br/><img alt="Git: changes and commit graph with tags" src="./docs/screenshots/changes-tree.png" /> |
 | **📝 Editable Editor & Previews**<br/>An editable CodeMirror (the stock preview is read-only), Markdown + Mermaid + floating outline, sandboxed HTML preview, `.jsonl` record cards, paged preview for huge files, streaming transfers with no size caps.<br/><img alt="Markdown + Mermaid preview" src="https://github.com/user-attachments/assets/fe0e5182-55bb-45cc-b98b-a2877c2bdd38" /> | **🧩 Tasks**<br/>Live subagent topology (workflow graph / tree modes) + background task list: exit codes, live output, force-kill.<br/><img alt="Tasks: subagent topology" src="https://github.com/user-attachments/assets/dcd8ed2f-59fa-405b-937b-2d250f5034dd" /> |
-| **💬 Side Chat (beta)**<br/>Codex-style side threads: inherit the full parent context and run independently, realtime push, visible & revocable queue, per-thread model selection, one-click promotion to a top-level session.<br/><img alt="Side Chat" src="https://github.com/user-attachments/assets/3a338c36-f5de-4000-95f3-4b1cd04f60fc" /> | **🖥️ Bottom Workbench**<br/>A self-drawn bottom panel that coexists with the native right sidebar: drag-to-split panes, multiple terminal tabs, per-session persisted layout.<br/><img alt="Dual workbench" src="https://github.com/user-attachments/assets/dfdb875e-a1a8-4d4b-8340-353736b1708f" /> |
+| **💬 Side Chat (beta)**<br/>Codex-style side threads: inherit the full parent context and run independently, realtime push, visible & revocable queue, per-thread model selection, one-click promotion to a top-level session. One shared native page by default; switch to one page per thread in Settings.<br/><img alt="Side Chat" src="https://github.com/user-attachments/assets/3a338c36-f5de-4000-95f3-4b1cd04f60fc" /> | **🖥️ Bottom Workbench**<br/>A self-drawn bottom panel that coexists with the native right sidebar: drag-to-split panes, multiple terminal tabs, per-session persisted layout.<br/><img alt="Dual workbench" src="https://github.com/user-attachments/assets/dfdb875e-a1a8-4d4b-8340-353736b1708f" /> |
 
 **Also**: 📂 the `sidebar_open` tool lets the model open the sidebar itself · ⚡ ~325KB core at startup, heavy chunks load on demand · 🌏 i18n follows DSH · 📱 narrow screens switch to a full-width drawer
+
+- **🔗 Markdown paths in chat**: complete absolute `.md` / `.markdown` paths in inline code are clickable in each turn's final assistant message and open through the current session's file address in the native sidebar; missing files show a read error.
 
 ### 🌿 Git Graph (read-only commit graph)
 
@@ -42,16 +44,17 @@ With the `dsh-context` plugin installed, three places offer a one-click jump int
 dsh plugin --profile web add dsh-better-sidebar@latest
 ```
 
-Then **hard-refresh the browser** (Cmd/Ctrl+Shift+R). Requires DSH **0.2.2-rc.1+**.
+Then **hard-refresh the browser** (Cmd/Ctrl+Shift+R). Requires DSH **0.2.2-rc.2+**.
 
-> **Compatibility warning — match the plugin to the host line.** As of 2026-11-04, DSH's npm `latest` is **0.2.1-rc.5** and `next` is **0.2.2-rc.1**. **v0.30.0 requires DSH 0.2.2-rc.1+**; hosts on the 0.2.1 line (**0.2.1-rc.1 ~ rc.5**, i.e. today's `latest`) must pin `dsh-better-sidebar@0.28.2` — v0.29.0 was never published to npm. DSH 0.2.1-alpha.5 users must pin `dsh-better-sidebar@0.28.0-alpha.0`, and hosts still on **0.2.0-rc.2** must pin `dsh-better-sidebar@0.26.1`. A 0.x caret never spans a minor version, so one plugin build cannot serve two host lines. The marketplace installer picks the plugin's `latest` regardless of host version, so an old host gets a version-rejection error — upgrade the host or pin the version explicitly. The two packages' `latest` tags are independent.
+> **Compatibility warning — match the plugin to the host line.** As of 2026-11-12, DSH's npm `latest` is **0.2.2-rc.1** and `next` is **0.2.2-rc.2**. **v0.32.1 requires DSH 0.2.2-rc.2+**; hosts on **0.2.2-rc.1** must pin `dsh-better-sidebar@0.32.0`. Hosts on the 0.2.1 line (**0.2.1-rc.1 ~ rc.5**) must pin `dsh-better-sidebar@0.28.2` — v0.29.0 was never published to npm. DSH 0.2.1-alpha.5 users must pin `dsh-better-sidebar@0.28.0-alpha.0`, and hosts still on **0.2.0-rc.2** must pin `dsh-better-sidebar@0.26.1`. A 0.x caret never spans a minor version, so one plugin build cannot serve two host lines. The marketplace installer picks the plugin's `latest` regardless of host version, so an old host gets a version-rejection error — upgrade the host or pin the version explicitly. The two packages' `latest` tags are independent.
 
 <details>
 <summary><b>Pick the plugin version for your DSH version</b></summary>
 
 | Your DSH version | Install command |
 | --- | --- |
-| **0.2.2-rc.1+** | `dsh plugin --profile web add dsh-better-sidebar@0.30.1` |
+| **0.2.2-rc.2+** | `dsh plugin --profile web add dsh-better-sidebar@0.32.1` |
+| **0.2.2-rc.1** | `dsh plugin --profile web add dsh-better-sidebar@0.32.0` |
 | **0.2.1-rc.1 ~ 0.2.1-rc.5** | `dsh plugin --profile web add dsh-better-sidebar@0.28.2` |
 | **0.2.1-alpha.5** | `dsh plugin --profile web add dsh-better-sidebar@0.28.0-alpha.0` |
 | **0.2.0-rc.2** | `dsh plugin --profile web add dsh-better-sidebar@0.26.1` |
@@ -71,12 +74,12 @@ Always pin **exact versions** for older releases (`latest` moves forward with ea
 
 ```text
 Install the dsh-better-sidebar plugin (a sidebar workbench for DSH):
-1. Confirm DSH is 0.2.2-rc.1 or newer, then run dsh plugin --profile web add dsh-better-sidebar@0.30.1
+1. Confirm DSH is 0.2.2-rc.2 or newer, then run dsh plugin --profile web add dsh-better-sidebar@0.32.1
 2. Remind me to hard-refresh the browser (Cmd/Ctrl+Shift+R) afterwards
 If something fails, check the FAQ table in https://github.com/omdsh-dev/DSH-better-sidebar README first.
 ```
 
-**One-line script** — clone this repo and run `bash scripts/install.sh 0.30.1` (macOS / Linux / Windows Git Bash; `./scripts/install.ps1 -Version 0.30.1` for native Windows). It handles installation + bundle registration.
+**One-line script** — clone this repo and run `bash scripts/install.sh 0.32.1` (macOS / Linux / Windows Git Bash; `./scripts/install.ps1 -Version 0.32.1` for native Windows). It handles installation + bundle registration.
 
 **Updating**: just re-run the install command, then hard-refresh the browser.
 
@@ -94,29 +97,29 @@ If something fails, check the FAQ table in https://github.com/omdsh-dev/DSH-bett
 | **Two sidebars** on the page | Double mounting. Remove the legacy manual mount line (`- insert: ... better-sidebar ...`) from `~/.dsh/profiles/web/cordis.patch.yml`; aggregate packages mounting this package under a different id are auto-yielded, no action needed. |
 | Settings values gone after upgrade | Since DSH 0.1.7, preferences live on this plugin's mount row in the profile (default entry id `better-sidebar`). The plugin migrates your old `settings.yaml` values once on first start and never overwrites newer values. |
 | Terminal unavailable | Terminals are provided by **DSH itself** (this plugin ships no PTY) — see DSH docs; "host provides no terminal capability" in the bottom terminal means this deployment has no terminal controller mounted. |
-| `dsh: command not found` | Install DSH first; or use `npx -y --package @deepseek-ai/dsh@0.2.2-rc.1 dsh plugin --profile web add dsh-better-sidebar@0.30.1`. |
+| `dsh: command not found` | Install DSH first; or use `npx -y --package @deepseek-ai/dsh@0.2.2-rc.2 dsh plugin --profile web add dsh-better-sidebar@0.32.1`. |
 
 </details>
 
 ## 🆕 Recent Updates
 
-**v0.30.1 — settings nav icon fix**
+**v0.32.1 — DSH 0.2.2-rc.2 compatibility**
 
-- **The "Side card" row in Settings no longer shows two icons.** The plugin used to paint its own glyph over the shell's fallback gear with a CSS mask; the shell now wraps the nav icon in a container and exposes a per-section icon slot. The row contributes its icon through that slot, and the stale marker + CSS apparatus is gone — along with a document-wide DOM observer.
+- **Right-click and open-with menus follow the host's new positioning**: DSH 0.2.2-rc.2 replaced the old rectangle callback with CSS-anchored menus and moved submenus to their own portal, so the sidebar now lets the host place them instead of overriding submenu geometry.
+- **Team task boards write through the built-in Agent Team service**: the opt-in experimental team package became `@deepseek-ai/dsh-agent-team` in the base composition, with per-session Team mode.
+- **The Plugins page now shows illustrated details**: an overview of the right sidebar and a per-conversation isolation diagram, with numbered notes for each tool.
+- **DSH 0.2.2-rc.1 hosts stay on plugin v0.32.0**; 0.2.2-rc.2+ should use this release.
 
-**v0.30.0 — DSH 0.2.2 support, side-chat images, clickable quote chips**
+**v0.32.0 — plugin-owned start page and card polish**
 
-- **DSH 0.2.2-rc.1 is the new baseline** (all 14 peer floors move to `^0.2.2-rc.1`). The host replaced the installable model-selection ref with an agent-owned `AgentModel`, so a side-chat thread's model switch now goes through `agent.model.select()` — recorded once in the log and applied to the next step. A 0.x caret never spans a minor: DSH 0.2.1 hosts (today's npm `latest`) keep pinning plugin v0.28.2.
-- **Side Chat takes images**: paste a screenshot or pick PNG / JPEG / WebP / GIF, preview or remove before sending, or send images alone; the preview survives a reload and a cold restore.
-- **Quote chips are clickable**: a passage selected with "Add to conversation" lands as a chip that jumps back to the source file and flashes the quoted lines, with a nonce so a second click jumps again; if the reference record cannot be persisted the plugin falls back to the previous built-in chip instead of landing a dead one.
-- **Drafts survive the host-owned close paths**: closing a native sidebar tab or quitting the desktop app keeps the unsaved draft and offers it back when the same file is reopened — the host exposes no cancellable close hook, so this is backup-and-restore rather than a prompt.
-- **Reliability**: a side-chat seed built from a compacted parent no longer persists an unreadable session log; page CSS zoom is no longer misread as a page transform; the bottom workbench terminal no longer paints black; container workspaces show every child repository in the Git panel; the installers refuse a profile whose `@deepseek-ai/dsh-*` copies are a mixed version pair and print the repair command.
+- **The right sidebar start page is now plugin-owned**: a responsive two-column grid, a configurable row budget (default 6), a persistent More card with Reorder, center/top alignment, and a default-on takeover switch that restores the host page when off.
+- **The host's start-page actions survive**: the terminal card keeps its native shell menu, More restores "Browse more plugins" / "Create your plugin", and Better Sidebar tabs share the same enable switch as their sidebar-content card.
+- **Card subtitles stay on one line** with an ellipsis, and More-menu icons are vertically centered with their labels.
+- **Also included since v0.30.1**: Markdown `data:`/`file://` images, desktop-shell HTML preview inlining, built-in audio/video previews, the side-chat overhaul, data-safety fixes, and the linear-time diff highlighter.
 
-**v0.29.0 — GenUI in side chats**
+**v0.31.1 — `file://` image URLs in Markdown**
 
-- Adds the opt-in `registerSidechatSurfaceAdapter` service for GenUI 0.15.0. Settled assistant replies can render interactive components, with actions and state kept in the owning child thread.
-- Uninstalled consumers, streaming replies and unsupported fences retain the existing Markdown view. The 0.28.2 cold-session read fix remains included.
-- Provider contribution: [@sunxiuguo](https://github.com/sunxiuguo), [#1033](https://github.com/omdsh-dev/DSH-better-sidebar/pull/1033).
+- **`file:///...` images now render**: a Markdown-syntax or raw-HTML `file:` URL is converted to an absolute local path and served by the same session media route as a relative image; Windows drives, `localhost`, UNC and percent-encoding are covered.
 
 ## 🔌 Plugin Ecosystem
 
@@ -240,7 +243,7 @@ Windows / Linux / macOS supported (macOS verified daily, the rest covered by uni
 QQ group: 577011007
 
 <div align="center">
-  <img width="220" alt="WeChat group QR" src="https://github.com/user-attachments/assets/2816b2c7-45c6-4879-b969-77f258c4068c" />
+  <img width="220" alt="WeChat group QR" src="https://github.com/user-attachments/assets/c4266ec9-3db2-406e-b7e1-384be09e3654" />
   <img width="220" alt="QQ group QR" src="https://github.com/user-attachments/assets/9be34629-26ef-4537-aad4-1393c147f81c" />
 </div>
 

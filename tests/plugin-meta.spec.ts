@@ -16,7 +16,7 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, readdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { join, posix, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { removeTree } from './temp-tree.ts'
@@ -26,6 +26,7 @@ const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)))
 const pkg = JSON.parse(readFileSync(resolve(ROOT, 'package.json'), 'utf8')) as {
   name: string
   version: string
+  description?: string
   icon?: string
   files?: string[]
   exports?: Record<string, unknown>
@@ -36,10 +37,16 @@ const ICON = 'icon.svg'
 const LOCALE_DIR = 'locale'
 
 /** Every locale document, as `[filename, parsed]` pairs. */
-function locales(): Array<[string, { meta?: { title?: unknown; description?: unknown } }]> {
+function locales(): Array<[string, { meta?: { title?: unknown; description?: unknown; detail?: unknown } }]> {
   const dir = resolve(ROOT, LOCALE_DIR)
   return readdirSync(dir).filter(name => name.endsWith('.json')).sort()
-    .map(name => [name, JSON.parse(readFileSync(join(dir, name), 'utf8')) as { meta?: { title?: unknown; description?: unknown } }])
+    .map(name => [name, JSON.parse(readFileSync(join(dir, name), 'utf8')) as { meta?: { title?: unknown; description?: unknown; detail?: unknown } }])
+}
+
+/** Every package-relative image destination a detail document references. */
+function detailImages(document: string): string[] {
+  return [...readFileSync(resolve(ROOT, document), 'utf8').matchAll(/!\[[^\]]*\]\(([^)\s]+)\)/g)]
+    .map(match => match[1]!)
 }
 
 /** `package.json#icon`, resolved against the manifest directory. */
@@ -69,6 +76,15 @@ describe('DSH plugin presentation metadata', () => {
     expect(pkg.exports?.['./icon'], 'exports["./icon"]').toBe('./icon.svg')
     expect(pkg.exports?.['./locale/*.json'], 'exports["./locale/*.json"]').toBe('./locale/*.json')
     expect(pkg.exports?.['./package.json'], 'exports["./package.json"]').toBe('./package.json')
+  })
+
+  it('points readers to where the sidebar is configured', () => {
+    const documents = new Map(locales())
+    expect(pkg.description).toContain('Settings → Side card')
+    expect(documents.get('en.json')?.meta?.description).toContain('Settings → Side card')
+    expect(documents.get('zh.json')?.meta?.description).toContain('设置 → 侧边卡片')
+    const manifest = JSON.parse(readFileSync(resolve(ROOT, 'dsh.plugin.json'), 'utf8')) as { description?: string }
+    expect(manifest.description).toContain('设置 → 侧边卡片')
   })
 
   it('ships an English baseline and complete translations beside it', () => {
@@ -124,8 +140,19 @@ describe('DSH plugin presentation metadata', () => {
       const contents = execFileSync('tar', ['-tzf', `${pkg.name}-${pkg.version}.tgz`], { cwd: dir, encoding: 'utf8' })
       const files = contents.split('\n')
       expect(files, `${ICON} must be published`).toContain(`package/${ICON}`)
-      for (const [name] of locales()) {
+      for (const [name, document] of locales()) {
         expect(files, `${LOCALE_DIR}/${name} must be published`).toContain(`package/${LOCALE_DIR}/${name}`)
+        // A declared detail document (and every image beside it) is the
+        // plugin page's long description; a locale that points at a file the
+        // tarball omits degrades to an empty description silently.
+        const detail = document.meta?.detail
+        if (typeof detail !== 'string') continue
+        expect(files, `${detail} must be published`).toContain(`package/${detail}`)
+        for (const destination of detailImages(detail)) {
+          const image = posix.normalize(posix.join(posix.dirname(detail), destination))
+          expect(image.startsWith('..'), `${detail} may not reference outside the package`).toBe(false)
+          expect(files, `${image} must be published`).toContain(`package/${image}`)
+        }
       }
     } finally {
       removeTree(dir)

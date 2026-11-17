@@ -38,6 +38,8 @@ const pkg = JSON.parse(readFileSync(resolve(ROOT, 'package.json'), 'utf8')) as {
   engines?: { node?: string }
   dsh?: { bundle?: { patch?: string } }
   scripts?: Record<string, string>
+  files?: string[]
+  exports?: Record<string, unknown>
   dependencies?: Record<string, string>
   peerDependencies?: Record<string, string>
   optionalDependencies?: Record<string, string>
@@ -77,12 +79,30 @@ describe('DSH community-market manifest compatibility', () => {
     }
   })
 
-  it('declares no install lifecycle scripts in the PACKED manifest (the published surface)', () => {
+  it('ships only the runtime dependencies the host half imports', () => {
+    // Every other library (CodeMirror, mermaid, xterm, react-icons, ...) is
+    // bundled into lib/client*.js at build time; leaving one in dependencies
+    // would install the whole package tree for nothing (#1191). lib/index.js
+    // imports only the DSH peers, schemastery, Node builtins, ws and yaml.
+    expect(Object.keys(pkg.dependencies ?? {}).sort()).toEqual(['ws', 'yaml'])
+  })
+
+  it('keeps the documented src subpath export in the published file list', () => {
+    // Source stays published: ./src/* is an existing export surface, and
+    // removing it would break consumers that deep-import plugin modules.
+    expect(pkg.files ?? []).toContain('src')
+    expect(pkg.exports?.['./src/*']).toBe('./src/*')
+  })
+
+  it('declares no install lifecycle scripts and only runtime deps in the PACKED manifest (the published surface)', () => {
     const packed = packedManifest()
     const scripts = (packed.scripts as Record<string, string> | undefined) ?? {}
     for (const script of LIFECYCLE_SCRIPTS) {
       expect(scripts, script).not.toHaveProperty(script)
     }
+    expect(Object.keys((packed.dependencies as Record<string, string> | undefined) ?? {}).sort())
+      .toEqual(['ws', 'yaml'])
+    expect((packed.files as string[] | undefined) ?? []).toContain('src')
   }, 180000)
 
   it('declares a safe bundle patch that exists inside the package', () => {
@@ -142,7 +162,7 @@ describe('DSH community-market manifest compatibility', () => {
     const dshPeers = Object.keys(peers).filter(name => name === '@deepseek-ai/dsh' || name.startsWith('@deepseek-ai/dsh-'))
     expect(dshPeers.length).toBeGreaterThan(10)
     for (const name of dshPeers) {
-      expect(peers[name], name).toMatch(/^\^0\.2\.2-rc\.1$/)
+      expect(peers[name], name).toMatch(/^\^0\.2\.2-rc\.2$/)
     }
   })
 })

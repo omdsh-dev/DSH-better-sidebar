@@ -24,7 +24,7 @@
  * The decoder rebuilds the marker as a forward-slash `//server/share/...`
  * path. That form is intentionally platform-neutral: `node:path` resolves it
  * to `\\server\share\...` on win32 and `/server/share/...` on POSIX, so the
- * host's existing requireAbsolute + isWithin fence needs no platform signal
+ * host's lexical requireAbsolute resolution needs no platform signal
  * (a leading `//` is a legal POSIX absolute path, so no data is lost on
  * either platform).
  *
@@ -104,7 +104,7 @@ export function decodeHtmlUrl(pathname: string): HtmlDecodeResult {
     // A Windows drive segment ('D:') is the FIRST path segment of an encoded
     // drive path. Rejoining it with a leading slash would yield '/D:/work/...'
     // which node's path.resolve() mangles into 'D:\D:\work\...' on Windows —
-    // the html route's workspace fence would then reject every drive path.
+    // the route would then fail to resolve the intended drive path.
     // Keep the drive form slash-free so requireAbsolute() resolves it verbatim.
     path = tail.join('/')
   } else {

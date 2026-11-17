@@ -111,9 +111,11 @@
    for keeping the window draggable while a diagram is enlarged.
    Deliberately NOT applied to the other interactive popups (`.selectionPopup`
    is a `<button>`; FloatingWindow / AnchoredPopover own pointer drags and are
-   not scrims): the shell's `:is(button, a, input, …)` rule already keeps those
-   no-drag, and `initial !important` would outrank it and start a window drag on
-   press instead — the click-swallow regression of issues #103/#111. */
+   not scrims): DSH 0.2.2 resets every element to `initial` and lets only
+   marked chrome rows declare `drag`, while each body child keeps the shell's
+   `no-drag` box, so those popups are already non-draggable. Applying
+   `initial !important` there would erase their region and start a window drag
+   on press instead — the click-swallow regression of issues #103/#111. */
 :global(html[data-platform] body > [data-dsh-better-sidebar]),
 :global([data-dsh-panel-host]) {
   -webkit-app-region: initial !important;
@@ -1773,115 +1775,6 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   background: var(--dsw-alias-bg-base);
 }
 
-/* ── Browser tab ──────────────────────────────────────────────────────── */
-
-.browser {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-.browserBar {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 6px 8px;
-  border-bottom: 1px solid var(--dsw-alias-border-l1);
-}
-
-.browserInput {
-  flex: 1;
-  min-width: 0;
-  height: 28px;
-  padding: 0 10px;
-  border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 6px;
-  background: var(--dsw-alias-bg-layer-1);
-  color: var(--dsw-alias-label-primary);
-  font: var(--dsw-font-xxs-12);
-}
-
-.browserInput:focus {
-  outline: none;
-  border-color: var(--dsw-alias-border-l2);
-}
-
-.browserMessage {
-  flex: none;
-  padding: 4px 12px;
-  font: var(--dsw-font-xxxs-11);
-  color: var(--dsw-alias-state-warn-label);
-  background: var(--dsw-alias-state-warn-tertiary);
-}
-
-.browserFrame {
-  flex: 1;
-  min-height: 0;
-  width: 100%;
-  border: none;
-  background: var(--dsw-alias-bg-base);
-}
-
-.browserStart {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 20px;
-  text-align: center;
-  font: var(--dsw-font-xs-13);
-  color: var(--dsw-alias-label-tertiary);
-}
-
-/* Embed-refusal panel (X-Frame-Options / frame-ancestors): replaces the
-   blank refused iframe with the reason + open-in-browser actions. */
-.browserBlocked {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  padding: 24px;
-  text-align: center;
-  color: var(--dsw-alias-state-warn-primary);
-}
-
-.browserBlockedTitle {
-  font: var(--dsw-font-xxs-strong-12);
-  color: var(--dsw-alias-label-primary);
-}
-
-.browserBlockedDesc {
-  max-width: 280px;
-  font: var(--dsw-font-xxxs-11);
-  color: var(--dsw-alias-label-secondary);
-}
-
-.browserBlockedActions {
-  display: flex;
-  gap: 8px;
-  margin-top: 6px;
-}
-
-.browserBlockedButton {
-  padding: 4px 12px;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 6px;
-  background: var(--dsw-alias-bg-layer-1);
-  color: var(--dsw-alias-label-primary);
-  font: var(--dsw-font-xxxs-11);
-  cursor: pointer;
-}
-
-.browserBlockedButton:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
-}
-
 .editorCm {
   flex: 1;
   min-height: 0;
@@ -2132,8 +2025,8 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
      pointer-events — without this reset the open modal cancels every
      window-drag strip under it plus the macOS double-click-title zoom.
      Same contract as the panel host rule above; `initial` computes to the
-     neutral `none`, and the toolbar's buttons keep their own no-drag from
-     the shell's `:is(button, …)` rule. */
+     neutral `none`, and DSH 0.2.2's element-wide `initial` reset leaves the
+     toolbar buttons non-draggable without a second declaration. */
   -webkit-app-region: initial !important;
   z-index: 1000;
   display: flex;

@@ -4,6 +4,56 @@
 
 ### 未发布
 
+- 🌿 **多仓库工作区的仓库切换器改成响应式**（贡献者 PR [#1130](https://github.com/omdsh-dev/DSH-better-sidebar/pull/1130) @iasiv5）：容器工作区发现多个仓库时，「更改」上方一行在宽度足够时横排仓库胶囊，放不下时自动改为「仓库 ▾」下拉；两种形态共用位置消歧标签（深层仓库显示 `名 (相对父路径)`，如 `knowhow (ob-harness/contexts)`），当前根始终可见，服务端回退根以禁用项如实显示实际根而不是冒充候选。单仓库工作区不显示；「更多操作 → 仓库」保留为兜底；切换仍走既有 `chooseRepo`，读数、写操作与提交图继续钉在选中的根上。
+  - 🧪 测试：`tests/git-repo-labels.spec.ts`（32 例：POSIX / Windows / UNC / 扩展路径、同名消歧、顺序与输入不变）与 `tests/git-repo-switcher.spec.tsx`（宽时胶囊、窄时下拉、标签与回退禁用项、单仓不显示）。
+
+- 💬 **侧边对话页面模式可配置**（贡献者 PR [#1115](https://github.com/omdsh-dev/DSH-better-sidebar/pull/1115) @pennxiang）：默认仍是「共用一页」——再次打开聚焦同一个页签，并回到本会话最近的侧边对话；在「设置 → 侧边卡片 → 侧边对话」的齿轮里可切换「每个对话独立页」。独立模式下每个线程一个原生 occurrence，按 `(sessionId, contentId)` 精确恢复，跨原生栏与底部工作台按 threadId 去重；关闭原生页签会归档并释放该线程，创建过程中关闭页签不会留下孤儿线程。切换模式只影响之后的新打开，已开页签保持原样。
+  - 🧪 测试：`tests/sidechat-native-multiple.spec.ts`（独立页双开、精确恢复、跨载体去重、关闭/并发/存储边界、模式翻转重注册）、`tests/sidechat-view.spec.tsx`（共用页回退 + 独立页创建/归档）、`tests/builtins.spec.ts`（动态谓词默认 false）、`tests/sidechat-submit-key-pref.spec.tsx`（两个设置行并存）；真实宿主 Chromium 覆盖共用页重复打开与独立页三线程刷新恢复。
+
+- 🔗 **聊天里的完整绝对 Markdown 路径可点击**（贡献者 PR [#882](https://github.com/omdsh-dev/DSH-better-sidebar/pull/882) @wang-kaopu）：每轮最后一条助手消息里，完整的绝对 `.md` / `.markdown` 内联代码路径可点击，并按当前会话的文件地址在原生侧栏打开；路径不存在时显示宿主文件读取错误。宿主已有的文件提及优先；`chatFileMentions.forClosing` 的第三个参数 `getFileTriggerProps` 原样转发，原有文件提及右键菜单与点击行为不变；卸载后旧链接不再打开新文件。
+  - 🧪 测试：`tests/chat-mentions.spec.tsx`（POSIX / Windows / UNC 路径判定、stock 优先、三参转发、服务晚到/释放/后装包装、MarkdownText 只认领可点击路径）。
+
+- 📦 **发布包只安装运行时真正需要的依赖**（[#1191](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1191)）：`dependencies` 只保留 host 半真正 import 的 `ws` / `yaml`；已经打进 `lib/client*.js` 的 CodeMirror、mermaid、xterm、react-icons、dompurify、clsx、rxjs 等移入 `devDependencies`。安装不再多拉约 240 MB / 1.26 万个文件，插件实际运行时仍只有插件本体加 `ws` / `yaml`。`src` 与 `./src/*` 导出**保留**，不做破坏性删除。
+  - 🧪 守护：`tests/market-manifest.spec.ts` 同时校验仓库清单与 `pnpm pack` 后的发布清单，dependencies 必须恰好是 `ws` / `yaml`，且 `src` 仍在 `files` 里。
+
+### v0.32.1
+
+- 🧩 **适配 DSH 0.2.2-rc.2**：插件基线抬到 0.2.2 线的最新 RC，同时跟上这一版宿主的客户端契约与团队服务。
+  - **右键菜单与「打开方式」子菜单交给宿主定位**：DSH 0.2.2-rc.2 把菜单改为 CSS 锚点定位、子菜单改为独立浮层，插件改用新的 `anchorPoint`；原先自己改写子菜单左右/上下翻转的 workaround 已删除，不再与宿主的新放置逻辑打架。
+  - **团队任务板写入迁移到内置 Agent Team 服务**：实验包升级为 base composition 里的 `@deepseek-ai/dsh-agent-team`，按会话开启；插件用 `isEnabled` 判断 Team 模式，任务读取仍走 `agentTeam` 投影与子代理名册。
+  - **依赖与安装脚本同步**：14 条 DSH peer 下限改为 `^0.2.2-rc.2`，dev 钉版同步并把新增的 `dsh-error` 传递 peer 提升进开发依赖；Cordis 4.1.0 / include 1.1.0。
+  - **支持线**：DSH 0.2.2-rc.2+ 使用本版本；仍停在 **0.2.2-rc.1** 的宿主请固定 **v0.32.0**。
+  - 🖼 **插件页有了图文详情**：DSH 的插件页现在展示右侧栏总览图与「每个会话独立」示意图，并用编号说明文件、编辑器、文件变动、任务与侧边对话；`locale/*.json` 的 `meta.detail` 指向 `detail/DETAIL*.md`，SVG 随 npm 包发布。
+  - 🧪 测试：宿主菜单子卡改为 portal 后，打开方式/子菜单用例改按子卡标记定位；团队写路由单测改为 `isEnabled` 三条分支；基线/peer 守护同步；新增 `tests/plugin-detail.spec.ts` 与 tarball 详情资源断言；真实 0.2.2-rc.2 宿主 + Chromium 的挂载冒烟见适配记录。
+
+### v0.32.0
+
+- 🧭 **开始页由插件接管，支持两列自适应、可配置行数和「更多」收纳**：右侧栏展开时不再用宿主自带的单列卡片页。宽屏（≥520px）每行两张、窄屏一张；默认最多 6 行（可在设置或「调整顺序」弹窗中改为 ≥1 行），超出容量的入口收进「更多」卡片，菜单行统一为图标 + 标题，可直接打开，也可打开「调整顺序」。开始页内容默认垂直居中，可切换为靠上；设置中新增「接管开始页」开关（默认开），关闭后恢复宿主自带开始页。开始页卡片点击后用新页面替换指南页，和宿主原行为一致。
+  - 🧪 测试：`tests/guide-layout.spec.ts`（排序 / 隐藏 / 列数与容量 / More 占格 / 最小容量）、`tests/native-guide.spec.tsx`（卡片、More、终端 Shell 菜单、catalog 订阅、chain 注册与释放）。
+  - 卡片副标题固定为一行，宽度不足时以省略号截断，长描述不再把卡片撑成两行；「更多」菜单的图标放在固定 14px 盒子里并垂直居中，不再比文字高 2px。
+- 🗂 **设置里的「开始页」清单接管所有已注册到官方侧边栏的入口**：本插件、宿主终端和第三方 tab 都按 `providerId::entryId` 列出，默认显示；本插件自己的 tab 使用与「侧边栏内容」功能卡片相同的 `tabsEnabled` 功能开关（关闭即禁用并移出开始页，清单行保留以便重新打开）；宿主/第三方入口的开关只控制开始页显示，不注销 tab 类型，也不影响快捷键、资源打开或已打开页签。支持上移/下移和恢复默认顺序，排序持久化。
+  - 🧪 测试：`tests/side-card-section.spec.tsx`（原生入口清单、默认开启、顺序与隐藏状态）、`tests/prefs.spec.ts`（行数 / 顺序 / 可见性校验）。
+- 🖥 **终端卡片保留原生 Shell 菜单**：开始页的终端卡片右侧有「…」，菜单通过宿主 `webTerminals.launchShells` 读取 Shell 列表，选择后写入宿主偏好并以该 Shell 打开终端；宿主没有这些能力时卡片退化为普通入口。修复 `launchShells` / `selectShell` 丢失 `this` 导致「Shell 加载失败：Cannot read properties of undefined (reading 'remote')」的问题，并加回归测试。其他第三方自定义开始页卡片组件无法在 chain 接管页中复用，会显示为通用卡片（原因见 `docs/host-contracts.md` §9）。
+- 🧩 **「更多」保留宿主的浏览/创建插件动作**：开始页的「更多」卡片现在常驻（不再只在溢出时出现），菜单按图标 + 标题列出溢出入口，并恢复宿主原生的「浏览更多插件」与「创建你的插件」（走 `pluginNavigation.openList()` 与 `uiWorkspace.startSession(..., { agentPreset: 'cordis', whenDraftExists: 'append' })`）；服务缺失时对应行自动隐藏。
+- 🎛 **统一开始页开关**：调整顺序与开始页清单里，Better Sidebar 自己的 tab 使用和「侧边栏内容」卡片相同的功能开关（`tabsEnabled`），关闭即禁用并从开始页移除，清单行保留并可重新打开；宿主/第三方 tab 仍使用「在开始页显示」开关。同时修复开关关闭后无法再点开的问题：受控 checkbox 的异步写回会被原生 toggle 抢先重置，现改为由 label/input 的点击显式驱动、从 prop 推导下一状态。
+- 🧪 挂载冒烟新增真实宿主断言：开始页由插件接管（`data-dsh-guide-grid`）、列数跟随面板宽度、终端卡片提供 Shell 菜单；现有 guide 选择器与条目断言保持不变。
+- 📇 插件在 DSH 插件列表里的描述现在会提示侧边栏配置入口：左下角「设置 → 侧边卡片」。`package.json` / `dsh.plugin.json` / `locale/*.json` 同步，并继续使用已有的 36×36 渐变 SVG 图标。
+
+- ⚡ **超大单行文件的 diff 不再把界面卡死**：共用高亮器 `scanLine` 原先对每个字符都执行 `exec(line.slice(i))`，会一直向后找到下一个空白才停——压缩成单行的 JSON/JS 上就是 O(n²)（实测 618 KB 单行 1.9 s，2 MB 约 20 s），点开差异时主线程长任务直接表现为「加载中」假死。现在改为单字符空白判定，整行只线性扫描一次（2.6 MB 实测 57 ms）；同时超过 20 K 字符的行在差异面板只渲染有界纯文本预览（折叠 2 K / 展开 20 K），不再生成多 MB 的文本节点与 `title`。普通长短行行为不变；完整内容仍可在内容页或源文件查看。
+  - 🧪 测试：`tests/changes-ops.spec.ts`（1 MB minified 行线性扫描且 token 覆盖全行、长行仍推进块注释状态）、`tests/diff-fold-expand.spec.tsx`（超预算行折叠/展开均有界、500 字符行仍完整渲染）。
+
+### v0.31.1
+
+- 🔗 **Markdown 里的 `file://` 图片地址也能显示了**：`file:` 不交给渲染器或 DOMPurify（前者会拒绝、后者会剥掉 src），而是先还原成绝对本地路径，再走与相对图片相同的会话媒体路由。支持 POSIX 路径、Windows 盘符（`file:///C:/...`，含百分号编码）、`localhost` 与 UNC（`file://server/share/...`）；原始 HTML 的 `<img src="file:///...">` 同样在消毒前完成映射。与 VSCode Markdown 预览的 webview 资源映射同一思路。
+  - 🧪 测试：`tests/markdown-images.spec.ts`、`tests/markdown-html-render.spec.tsx`、`test:mount` 的 `file://` 图片断言。
+
+### v0.31.0
+
+- 🖼 **Markdown 语法里的 `data:image` 图片能显示了**：预览的图片词表此前只放行本地路径，`data:` 一律退回 alt 文本；现在 `data:image/*` 原样交给宿主渲染器（其白名单本就接受 `data:`），`data:text/html` 等仍拒绝。相对/绝对本地图片在桌面壳下的 page-base 修复（#1043）同批进入本版，0.30.1 用户升级后本地图片不再只剩斜体 alt。
+  - 🧪 测试：`tests/markdown-images.spec.ts`、`tests/markdown-html-render.spec.tsx`、`tests/html-preview-inline.spec.ts`。
+- 🪟 **桌面壳里开启沙箱的 HTML 预览不再空白（403）**：壳只给 origin 为 `dsh-app://app` 的子帧注入转发标记，沙箱 iframe 是不透明源，主文档导航直接被壳拒绝。现在顶层可信帧取回 HTML 与同源静态资源，内联成自包含文档后交给 sandboxed `blob:` iframe；相对 CSS/JS/图片/字体正常，iframe 仍无 `allow-same-origin`，浏览器与“关闭沙箱”路径不变。嵌套 iframe / Worker / 脚本运行时相对请求仍受壳限制。
+  - 🧪 测试：`tests/html-preview-frame.spec.tsx`、`tests/html-preview-inline.spec.ts`、`tests/sandbox-views.spec.tsx`、`test:mount` 的本地图片断言。
+
 - 🐞 **GBK 文件里的欧元符号不再被写成 ICU 拒绝的单字节 `0x80`**：改用标准两字节 `0xA2E3`，修复 Node 24.21 / ICU 78 下保存后重开变乱码；新增字面量测试钉住编码与回读。
 
 - 🧵 **fork 块改成默认折叠的原生 disclosure：折叠时只剩那条「分支前的主会话」分割线，展开才看到继承的问答**：`data-sidechat-fork-point` 现在是受控的 `<details>`（默认 closed），`<summary>` 就是开头那条分割线（`sideChatForkDivider` 文案 + 展开 chevron，不含任何继承正文），body 展开后仍是原顺序「提问 → 回答 → 结尾分割线」，没有回答时只有提问与结尾线；折叠/展开不改变转录行数，块内除 summary 外没有任何 `button` / `a`。

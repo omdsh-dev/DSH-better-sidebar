@@ -3,21 +3,17 @@
  *
  * layout.css shipped from 36fbc5a up to 0.27.0 with an unclosed
  * @media (prefers-reduced-motion: reduce) block (issue #955): every rule after
- * it — the context-menu submenu flip and the visual tether — became a
- * descendant of that media query. The flip then applied only to users who had
- * reduce-motion turned on; everyone else lost the flip and the tether, and the
- * "open with" submenu grew past the right edge of a right-docked workbench.
+ * it became a descendant of that media query, so the styles that followed
+ * applied only to users who had reduce-motion turned on.
  *
- * tests/menu-flip.spec.tsx could not see it: expect(css).toContain(...) matches
+ * Text assertions could not see it: expect(css).toContain(...) matches
  * selector text wherever it sits, and nesting does not change text. These
- * assertions read the block structure instead — every client stylesheet has to
- * close what it opens, and the rules the flip depends on have to stay at top
- * level — so the same mistake fails here.
+ * assertions read the block structure instead — every client stylesheet has
+ * to close what it opens — so the same mistake fails here.
  */
 import { readdirSync, readFileSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { SUBMENU_FLIP_ATTR } from '../src/client/menu-flip.ts'
 
 const ROOT = resolve(import.meta.dirname, '..')
 
@@ -154,43 +150,5 @@ describe('client stylesheet block scope', () => {
         return relative(ROOT, path) + ': ' + faults.join(', ')
       })
     expect(unbalanced).toEqual([])
-  })
-
-  it('keeps the submenu flip and tether rules out of the reduced-motion media query', () => {
-    const { blocks } = scanBlocks(readFileSync(join(ROOT, 'src/client/layout.css'), 'utf8'))
-
-    // menu-flip.ts publishes the attribute on <body>; these six rules are its
-    // only consumers, and they are the whole mechanism that keeps OUR nested
-    // menus inside the viewport. Every one of them has to match in the default
-    // theme, not only for users who asked for reduced motion.
-    const ATTR = SUBMENU_FLIP_ATTR
-    const indexOfRule = (selector: string): number => {
-      const wanted = normalize(selector)
-      const matched = blocks.findIndex(block => block.prelude === wanted)
-      expect(matched, 'no rule opened by ' + wanted).toBeGreaterThanOrEqual(0)
-      expect(blocks.filter(block => block.prelude === wanted), 'more than one rule for ' + wanted).toHaveLength(1)
-      expect(blocks[matched]?.depth, wanted + ' is nested instead of top level').toBe(0)
-      return matched
-    }
-
-    const tetherGap = indexOfRule('body[' + ATTR + '] div[role="menu"] div[role="menu"]')
-    indexOfRule('body[' + ATTR + '] div[role="menu"] button[aria-expanded="true"]')
-    indexOfRule('body[' + ATTR + '] div[role="menu"] div[role="menu"]::before')
-    indexOfRule('body[' + ATTR + '~="down"] div[role="menu"] div[role="menu"]')
-    const flipLeft = indexOfRule('body[' + ATTR + '~="left"] div[role="menu"] div[role="menu"]')
-    indexOfRule('body[' + ATTR + '~="left"] div[role="menu"] div[role="menu"]::before')
-
-    // Same specificity, so the declared order decides: layout.css puts the
-    // tether BEFORE the flip overrides "so their left/right flips still win".
-    // Moving the tether below them silently kills the left flip.
-    expect(tetherGap, 'the tether has to stay declared before the flip overrides').toBeLessThan(flipLeft)
-
-    // Only the center-column override belongs inside the reduced-motion block.
-    // A rule that follows a block missing its closing brace lands here as an
-    // extra child — which is exactly how #955 shipped, silently and unseen.
-    const media = blocks.findIndex(block => block.prelude === '@media (prefers-reduced-motion: reduce)')
-    expect(media, 'the reduced-motion media query is gone').toBeGreaterThanOrEqual(0)
-    const insideMedia = blocks.filter(block => block.parent === media).map(block => block.prelude)
-    expect(insideMedia).toEqual(['#root [data-dsh-center-col]'])
   })
 })

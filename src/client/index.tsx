@@ -20,6 +20,7 @@ import { Sidebar } from './Sidebar.tsx'
 import { RenderBoundary } from './RenderBoundary.tsx'
 import { createNativeTabRecords } from './native/tab-adapter.tsx'
 import { registerNativeSurface } from './native/index.ts'
+import { createNativeGuideCatalog } from './native/guide-catalog.ts'
 import { registerBottomToggle } from './sidebar/bottom-toggle.tsx'
 import { ContextDiagnosticsHost, createContextDiagnosticsHost, registerContextDiagnosticsUI } from './context-diagnostics-ui.tsx'
 import { createNativeSurface } from './native/surface.ts'
@@ -27,6 +28,7 @@ import { isTargetAvailable, openInterceptedLink, registerLinkInterception, shoul
 import { registerImeGuard } from './ime-guard.ts'
 import { registerQuoteSource } from './selection-quote.ts'
 import { IconSideCardNav } from './icons.tsx'
+import { registerChatMarkdownMentions } from './chat-mentions.ts'
 import type { SettingsSectionIconOwnerProps } from '@deepseek-ai/dsh-client-ui-settings/client'
 import { loadBootDecision } from './prefs.ts'
 import { SideCardSection } from './SideCardSection.tsx'
@@ -174,12 +176,20 @@ export function apply(ctx: Context): void {
   const service = createBetterSidebarService(sidebarStore)
   ctx.provide('betterSidebar', service)
   ctx.effect(() => () => { disposeSidechatSurfaces(service) }, 'dsh-better-sidebar: sidechat surface adapters')
+  ctx.effect(() => registerChatMarkdownMentions(ctx), 'dsh-better-sidebar: chat Markdown mentions')
   // The native right-Sidebar surface: the plugin's content is registered as
   // DSH tab types (one per descriptor) and every open routes there, so the
   // right column belongs to the host and only the bottom workbench stays
   // plugin-owned. Both halves live for this fiber's lifetime.
   const nativeRecords = createNativeTabRecords()
-  const nativeSurface = createNativeSurface(ctx, nativeRecords)
+  // One live catalog of host guide cards, shared by the start-page takeover
+  // and the settings inventory. It subscribes to the host tab registry and is
+  // released with this activation.
+  const nativeGuide = createNativeGuideCatalog(ctx)
+  ctx.effect(() => () => { nativeGuide.dispose() }, 'dsh-better-sidebar: native guide catalog')
+  const nativeSurface = createNativeSurface(ctx, nativeRecords, (tab, sessionId) => {
+    service.getTab(tab.type)?.onClose?.(tab, { sessionId })
+  })
   service.setSurface(nativeSurface)
   // The optional dsh-context diagnostics: ONE controller per activation. It
   // re-proves the optional runtime faces itself, so the plugin needs no new
@@ -192,6 +202,7 @@ export function apply(ctx: Context): void {
   ctx.effect(
     () => registerNativeSurface({
       ctx, store: sidebarStore, service, records: nativeRecords, diagnostics,
+      guideCatalog: nativeGuide.catalog,
       reportFailure: (phase, error) => { fail(`native ${phase}`, error) },
     }),
     'dsh-better-sidebar: native right-Sidebar registrations',
@@ -487,7 +498,7 @@ export function apply(ctx: Context): void {
       id: 'better-sidebar',
       order: 100,
       label: () => t('settingsNav'),
-      inject: () => ({ store: sidebarStore, service }),
+      inject: () => ({ store: sidebarStore, service, guideCatalog: nativeGuide.catalog }),
     }, SideCardSection))
   } catch (error) {
     fail('load', error)

@@ -29,7 +29,7 @@ import {
 import { createProbeGate, listDirectory, messageOf, parentOf, requireAbsolute, rootLabel, type SidebarFsEntry } from './fs-tree.ts'
 import { resolveSessionPath } from './session-path.ts'
 import { createWorkspaceFile, mkdirWorkspaceEntry, renameWorkspaceEntry, removeWorkspaceEntry, writeWorkspaceText, writeWorkspaceUpload } from './fs-operations.ts'
-import { ensureWorkspacePath } from './path-security.ts'
+import { resolveTarget } from './path-security.ts'
 import { searchFiles } from './fs-search.ts'
 import { compileExcludePatterns } from './exclude-patterns.ts'
 import { decodeHtmlUrl } from './html-route.ts'
@@ -806,7 +806,7 @@ function buildApi(
     'fs.tree': async (payload) => {
       const { cwd } = await cwdOf(payload)
       const record = payload as { path?: unknown; exclude?: unknown }
-      const target = record.path === undefined ? cwd : await ensureWorkspacePath(cwd, requireString(payload, 'path'))
+      const target = record.path === undefined ? cwd : resolveTarget(cwd, requireString(payload, 'path'))
       // The client's explorerExclude pref rides the request (compiled here so
       // the listing and the singleton fold probe share one matcher).
       const exclude = compileExcludePatterns(record.exclude, cwd)
@@ -850,7 +850,7 @@ function buildApi(
         const homeRelative = raw === '~' || raw.startsWith('~/') || raw.startsWith('~\\')
         const requested = isAbsolute(raw) || homeRelative ? raw : `${cwd}${sep}${raw}`
         try {
-          return await listDirectory(await ensureWorkspacePath(cwd, requested), resolved.listLimit, exclude, gate)
+          return await listDirectory(resolveTarget(cwd, requested), resolved.listLimit, exclude, gate)
         } catch (error) {
           // Per-level failure: the batch itself stays a success (one unreadable
           // directory must not blank the whole tree).
@@ -878,7 +878,7 @@ function buildApi(
       // path or explicitly select a repository; missing files never change base.
       const selected = selectedRepoOf(payload)
       const base = selected === undefined ? cwd : await git.repoRoot(cwd, selected)
-      const path = await ensureWorkspacePath(base, requireString(payload, 'path'))
+      const path = resolveTarget(base, requireString(payload, 'path'))
       return await readText(path)
     },
     // One byte window of a large text file, for the read-only paged preview.
@@ -889,7 +889,7 @@ function buildApi(
       const { cwd } = await cwdOf(payload)
       const selected = selectedRepoOf(payload)
       const base = selected === undefined ? cwd : await git.repoRoot(cwd, selected)
-      const path = await ensureWorkspacePath(base, requireString(payload, 'path'))
+      const path = resolveTarget(base, requireString(payload, 'path'))
       const record = payload as { offset?: unknown } | null
       const offset = typeof record?.offset === 'number' && Number.isFinite(record.offset) && record.offset >= 0
         ? Math.floor(record.offset)
@@ -965,7 +965,7 @@ function buildApi(
     'git.diff-head': async (payload) => {
       const { cwd } = await gitCwdOf(payload)
       const repoRoot = selectedRepoOf(payload)
-      const path = await ensureWorkspacePath(cwd, await resolveGitPath(cwd, requireString(payload, 'path'), repoRoot))
+      const path = resolveTarget(cwd, await resolveGitPath(cwd, requireString(payload, 'path'), repoRoot))
       return { diff: await git.diffHead(cwd, path, repoRoot) }
     },
     'git.stage': async (payload) => {
@@ -1083,7 +1083,7 @@ function buildApi(
     'git.blame': async (payload) => {
       const { cwd } = await gitCwdOf(payload)
       const repoRoot = selectedRepoOf(payload)
-      const path = await ensureWorkspacePath(cwd, await resolveGitPath(cwd, requireString(payload, 'path'), repoRoot))
+      const path = resolveTarget(cwd, await resolveGitPath(cwd, requireString(payload, 'path'), repoRoot))
       const startLine = requireLineNumber(payload, 'startLine')
       const endLine = requireLineNumber(payload, 'endLine')
       if (endLine < startLine) throw new SidebarError('bad-request', '"endLine" must not precede "startLine"')
@@ -1254,8 +1254,8 @@ function buildApi(
       if (action === 'url') return launchExternal('url', requireString(payload, 'url'))
       throw new SidebarError('bad-request', 'action must be "reveal" or "url"')
     },
-    // Archive builds: fence the selection and hand the packing to the
-    // background task table, which runs the system's zip/tar into a temp file.
+    // Archive builds: resolve the selection lexically and hand the packing to
+    // the background task table, which runs the system's zip/tar into a temp file.
     // The tree watches it through `archive.status` and downloads the finished
     // bytes from GET /sidebar/archive?id=.
     //
@@ -1272,7 +1272,7 @@ function buildApi(
       if (paths.length === 0) throw new SidebarError('bad-request', 'paths must be a non-empty array')
       const name = typeof record?.name === 'string' ? record.name : ''
       const selected: string[] = []
-      for (const raw of paths) selected.push(await ensureWorkspacePath(cwd, raw))
+      for (const raw of paths) selected.push(resolveTarget(cwd, raw))
       return await archiveTasks.start({ sessionId, name, paths: selected })
     },
     'archive.status': (payload) =>
@@ -1796,7 +1796,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
 
   // ── Archive routes (zip one selection, watch it build, download it) ─────
   // The file tree's "zip and download" action is a three-step flow: POST
-  // `archive.build` fences every `path` through the SAME workspace fence as
+  // `archive.build` resolves every `path` through the same lexical resolver as
   // fs.tree / /sidebar/file and returns an id IMMEDIATELY; the system's zip
   // (or tar) packs the selection into a temp file in the background, reported
   // through `archive.status`; and GET /sidebar/archive STREAMS the finished
@@ -1855,7 +1855,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
         // session cwd, absolute stays, `~` expands against the home (#713),
         // remote-mirror namespaces project. Pre-joining here would paste a
         // `~` target after the cwd and hide it from the resolver.
-        const path = await ensureWorkspacePath(cwd, raw)
+        const path = resolveTarget(cwd, raw)
         const info = await statFileForRoute(path)
         if (!info.isFile()) {
           throw new SidebarError('fs-error', 'not a file', 400)
@@ -1946,7 +1946,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
         // real-path guard, with the same semantics as the media route's
         // fallback.
         const cwd = await activeWorktreeRootOf(ctx, sessionId, await sessionCwdOf(ctx, sessionId))
-        const absolute = await ensureWorkspacePath(cwd, path)
+        const absolute = resolveTarget(cwd, path)
         const info = await statFileForRoute(absolute)
         if (!info.isFile()) {
           throw new SidebarError('fs-error', 'not a file', 400)
@@ -2125,7 +2125,7 @@ async function handleFsWatchFrame(
   if (path === undefined || path === '') return
   try {
     const cwd = await activeWorktreeRootOf(ctx, sessionId, await sessionCwdOf(ctx, sessionId))
-    const dir = await ensureWorkspacePath(cwd, path)
+    const dir = resolveTarget(cwd, path)
     if (frame.op === 'unwatch') {
       watchers.remove(dir)
       return

@@ -15,11 +15,9 @@ import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
 import { GitLens } from '../src/client/changes/GitLens.tsx'
-import { createSidebarStore } from '../src/client/state.ts'
 import { api, type GitStatusEntry, type GitStatusResult, type GitWorktree } from '../src/client/api.ts'
 import type { BetterSidebarService } from '../src/client/service.ts'
 import { t } from '../src/client/locales.ts'
-import { SUBMENU_FLIP_ATTR } from '../src/client/menu-flip.ts'
 import type { Context } from '../src/context-types.ts'
 
 import { setupReactAct } from './test-utils.ts'
@@ -92,7 +90,6 @@ function mountGit(
   act(() => {
     root.render(createElement(GitLens, {
       scope: options.scope ?? { sessionId: 'session', cwd: MAIN },
-      store: createSidebarStore(),
       onOpenFile: () => {},
       onPreview: () => {},
       selectedRef: null,
@@ -124,7 +121,7 @@ function openMoreSubmenu(container: HTMLElement, label: string): HTMLButtonEleme
   const parent = menuItem(label)
   expect(parent.getAttribute('aria-haspopup')).toBe('menu')
   act(() => { parent.click() })
-  return [...document.querySelectorAll<HTMLButtonElement>('[role="menu"] [role="menu"] button[role="menuitem"]')]
+  return [...document.querySelectorAll<HTMLButtonElement>('[role="menu"][data-submenu-layout] button[role="menuitem"]')]
 }
 
 async function chooseMoreOption(container: HTMLElement, submenu: string, label: string): Promise<void> {
@@ -261,11 +258,11 @@ describe('GitLens (changes tab, git lens) linked-worktree consistency', () => {
       await flushEffects()
 
       // The workspace container's child repositories retain their basename labels.
-      const repoOptions = openMoreSubmenu(container, t('gitRepository'))
-      expect(repoOptions.map(button => button.textContent)).toEqual(['a', 'b'])
+      const repoChips = [...container.querySelectorAll<HTMLButtonElement>('[data-scm-repos] [data-scm-repo]')]
+      expect(repoChips.map(chip => chip.textContent)).toEqual(['a', 'b'])
       const listingsBefore = worktrees.mock.calls.length
 
-      await act(async () => { repoOptions[1]!.click() })
+      await act(async () => { repoChips.find(chip => chip.dataset.scmRepo === REPO_B)!.click() })
       await flushEffects()
 
       // The listing carries the selected repoRoot — a container's own listing
@@ -284,8 +281,12 @@ describe('GitLens (changes tab, git lens) linked-worktree consistency', () => {
       expect(branch).toHaveBeenLastCalledWith(expect.objectContaining({ repoRoot: REPO_B }), REPO_B)
       expect(openMoreSubmenu(container, t('worktree')).map(button => button.textContent))
         .toEqual(['b-main · b (0)', 'b-agent · b-agent (2)'])
+      // DSH 0.2.2's Menu returns from a visible submenu on the first Escape;
+      // the second Escape closes the parent menu.
+      act(() => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })) })
       act(() => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })) })
 
+      // The ⋯ → Repository submenu remains the folded/menu fallback.
       await chooseMoreOption(container, t('gitRepository'), 'a')
       expect(branchButton(container).title).toBe(`${t('branch')}: a-main*`)
       expect(container.querySelector('[data-path="a-change.ts"]')).not.toBeNull()
@@ -487,51 +488,6 @@ describe('GitLens (changes tab, git lens) linked-worktree consistency', () => {
       expect(banner!.parentElement).toBe(container.querySelector('[data-git-scroll]'))
       expect(container.querySelector('[data-git-footer] [role="alert"]')).toBeNull()
       expect(banner!.compareDocumentPosition(input!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    } finally {
-      act(() => { root.unmount() })
-      container.remove()
-    }
-  })
-})
-
-/**
- * Issue #988: the More Actions menu's repo/worktree rows open nested
- * submenus. The button-anchored menu used to skip the body attribute the
- * file-tree row menu publishes (menu-flip.ts), so layout.css never had the
- * tokens it needs to flip those submenus back inside the viewport — in a
- * right-docked sidebar they opened past the right edge and were unreachable.
- */
-describe('GitLens (changes tab, git lens) More Actions submenu flip (#988)', () => {
-  it('publishes the flip geometry while the menu is open and clears it on close', async () => {
-    vi.spyOn(api, 'gitWorktrees').mockResolvedValue(inventories)
-    vi.spyOn(api, 'gitStatus').mockImplementation(async (_scope, target) => statusFor(target))
-    vi.spyOn(api, 'gitBranch').mockImplementation(async (_scope, target) => ({
-      current: target === AGENT ? 'agent' : 'main',
-      names: target === AGENT ? ['agent'] : ['main'],
-    }))
-    vi.spyOn(api, 'gitGraph').mockResolvedValue(graphFor(AGENT))
-
-    const { container, root } = makeRoot()
-    try {
-      mountGit(root)
-      await flushEffects()
-      // The attribute's lifetime IS the mechanism's scope: closed menu, no
-      // attribute (layout.css must not touch host-owned menus).
-      expect(document.body.hasAttribute(SUBMENU_FLIP_ATTR)).toBe(false)
-
-      // The trigger of a right-docked sidebar, above the viewport's midpoint.
-      // Those coordinates have to produce BOTH flips: left (no right-hand room
-      // for card + submenu) and down (more room below the top-edge row menu).
-      const trigger = container.querySelector<HTMLButtonElement>(`button[aria-label="${t('gitMoreActions')}"]`)
-      if (trigger === null) throw new Error('More Actions button not found')
-      vi.spyOn(trigger, 'getBoundingClientRect').mockReturnValue(new DOMRect(976, 100, 24, 24))
-
-      expect(openMoreSubmenu(container, t('worktree')).length).toBeGreaterThan(0)
-      expect(document.body.getAttribute(SUBMENU_FLIP_ATTR)).toBe('down left')
-
-      // Closing the menu drops the tokens: the next menu gets its own geometry.
-      act(() => { trigger.click() })
-      expect(document.body.hasAttribute(SUBMENU_FLIP_ATTR)).toBe(false)
     } finally {
       act(() => { root.unmount() })
       container.remove()

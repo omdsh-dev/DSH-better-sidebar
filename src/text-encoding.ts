@@ -356,7 +356,7 @@ export function lastLineBreakEnd(bytes: Buffer, encoding: TextEncoding): number 
  *
  * BOM handling stays with the caller: `*-bom` encodings describe the file's
  * first bytes, so a caller reading from a non-zero offset should pass the
- * BOM-less spelling (see `bomlessEncoding`).
+ * BOM-less spelling (`utf8` / `utf16le` / `utf16be`).
  *
  * @param bytes - the window to decode (already known to be text).
  * @param encoding - the encoding the first window established.
@@ -382,22 +382,6 @@ export function decodeTextAs(bytes: Buffer, encoding: TextEncoding): string {
       return tryDecode(GBK_DECODER, bytes) ?? bytes.toString('utf8')
     case 'gb18030':
       return tryDecode(GB18030_DECODER, bytes) ?? bytes.toString('utf8')
-  }
-}
-
-/**
- * The same encoding minus its BOM marker, for windows that do not start at the
- * beginning of the file (only offset 0 can carry a BOM).
- *
- * @param encoding - an encoding an earlier window detected.
- * @returns the BOM-less spelling (unchanged for encodings that have none).
- */
-export function bomlessEncoding(encoding: TextEncoding): TextEncoding {
-  switch (encoding) {
-    case 'utf8-bom': return 'utf8'
-    case 'utf16le-bom': return 'utf16le'
-    case 'utf16be-bom': return 'utf16be'
-    default: return encoding
   }
 }
 

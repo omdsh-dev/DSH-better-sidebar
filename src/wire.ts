@@ -51,12 +51,6 @@ export class SidebarError extends Error {
 /** Body size bound of one JSON request (defense against unbounded reads). */
 const MAX_BODY_BYTES = 1 << 20
 
-/** Success envelope of one API method. */
-export interface SidebarOk<T> { ok: true; value: T }
-
-/** Failure envelope of one API method. */
-export interface SidebarErr { ok: false; error: { code: SidebarErrorCode; message: string } }
-
 /**
  * Read and parse the JSON request body (bounded; malformed → bad-request).
  *

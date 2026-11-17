@@ -22,7 +22,7 @@ import './browser-globals.ts'
 
 import type { Context } from '../src/context-types.ts'
 import { api } from '../src/client/api.ts'
-import { createBetterSidebarService } from '../src/client/service.ts'
+import { createBetterSidebarService, isMultipleTab } from '../src/client/service.ts'
 import { planFsReadOutcome } from '../src/client/editor-load.ts'
 import { createSidebarStore } from '../src/client/state.ts'
 import { builtinTabs } from '../src/client/builtins/tabs.tsx'
@@ -141,6 +141,17 @@ describe('built-in tab registrations', () => {
     const sidechat = service.getTab('sidechat')
     expect(sidechat?.order).toBe(35)
     expect(sidechat?.hidden).not.toBe(true)
+  })
+
+  it('side chat page mode is dynamic and defaults to the shared page', () => {
+    const store = createSidebarStore()
+    const service = createBetterSidebarService(store)
+    const ctx = { get: (key: string) => key === 'betterSidebar' ? service : undefined } as unknown as Context
+    const descriptor = builtinTabs(ctx).find(tab => tab.id === 'sidechat')
+    if (descriptor === undefined) throw new Error('sidechat descriptor missing')
+    expect(isMultipleTab(descriptor)).toBe(false)
+    store.setPrefs({ ...store.getPrefs(), pluginSettings: { sidechat: { tabs: 'multiple' } } })
+    expect(isMultipleTab(descriptor)).toBe(true)
   })
 
   it('side chat mints one tab per thread (Codex-style multi-instance)', () => {

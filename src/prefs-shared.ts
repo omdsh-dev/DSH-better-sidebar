@@ -144,6 +144,39 @@ export interface SidebarPrefs {
    * numbers / booleans; custom panels are responsible for their own).
    */
   pluginSettings: Record<string, Record<string, unknown>>
+  /**
+   * Maximum number of rows the native start page draws before the overflow
+   * collapses into its "More" card. The wide layout puts two cards on a row
+   * and a narrow one puts one; the minimum is a single row and there is no
+   * upper bound (a huge value simply never overflows).
+   */
+  guideRows: number
+  /**
+   * Explicit start-page order, as `providerId::entryId` keys (the host guide
+   * card identity). Keys absent from this list follow in registration order;
+   * keys that no longer exist are ignored. Empty means "registry order".
+   */
+  guideOrder: string[]
+  /**
+   * Start-page visibility overrides keyed by `providerId::entryId`. An absent
+   * key means VISIBLE, so old documents need no migration and a newly
+   * registered entry shows by default. `false` hides the card from the start
+   * page only: the tab type stays registered, and shortcuts, resource opens
+   * and already-open tabs are untouched.
+   */
+  guideHidden: Record<string, boolean>
+  /**
+   * Where the start-page grid sits when it is shorter than the pane: vertically
+   * centered (default) or pinned to the top. When the grid is taller than the
+   * pane it always scrolls from the top.
+   */
+  guideAlign: 'center' | 'top'
+  /**
+   * Whether the plugin replaces the host's shipped guide body. On by default;
+   * off restores the host's own start page while every other plugin feature
+   * stays exactly as it is.
+   */
+  guideTakeover: boolean
 }
 
 // ── Side-chat composer preferences ──────────────────────────────────────────
@@ -160,6 +193,26 @@ export interface SidebarPrefs {
 /** The side-chat tab descriptor id; also the key of its settings blob. */
 export const SIDECHAT_PREFS_ID = 'sidechat'
 
+/** The plugin-owned setting key holding the native page mode. */
+export const SIDECHAT_TABS_SETTING = 'tabs'
+
+/** Whether side chats share one native page or each thread gets its own. */
+export type SidechatTabsMode = 'single' | 'multiple'
+
+/** Pages every document that never chose a mode gets: today's shared page. */
+export const SIDECHAT_TABS_DEFAULT: SidechatTabsMode = 'single'
+
+/**
+ * Validate one stored page-mode value. Anything that is not a known mode (an
+ * absent value, a hand-edited document) falls back to the shared page, so a
+ * bad preference can never make a plain + -> Side Chat open vanish.
+ * @param value - the raw stored value.
+ * @returns a known side-chat page mode.
+ */
+export function parseSidechatTabsMode(value: unknown): SidechatTabsMode {
+  return value === 'multiple' ? 'multiple' : SIDECHAT_TABS_DEFAULT
+}
+
 /** The plugin-owned setting key holding the composer's submit gesture. */
 export const SIDECHAT_SUBMIT_KEY_SETTING = 'submitKey'
 
@@ -168,9 +221,6 @@ export type SidechatSubmitKey = 'enter' | 'mod-enter'
 
 /** The submit key every document that never chose one gets (host semantics). */
 export const SIDECHAT_SUBMIT_KEY_DEFAULT: SidechatSubmitKey = 'enter'
-
-/** Every accepted submit-key mode (the settings dropdown's value set). */
-export const SIDECHAT_SUBMIT_KEYS: readonly SidechatSubmitKey[] = ['enter', 'mod-enter']
 
 /**
  * Validate one stored submit-key value. Anything that is not a known mode (an
@@ -210,4 +260,12 @@ export const SIDEBAR_PREFS_DEFAULTS: SidebarPrefs = {
   tabsEnabled: {},
   viewersEnabled: {},
   pluginSettings: {},
+  // Six rows: on a wide pane that is twelve card slots (the current set of
+  // native entries fits without a "More" card), while a narrow pane still
+  // scrolls through six. The value is a maximum, not a fixed height.
+  guideRows: 6,
+  guideOrder: [],
+  guideHidden: {},
+  guideAlign: 'center',
+  guideTakeover: true,
 }

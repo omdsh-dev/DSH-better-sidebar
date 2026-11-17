@@ -281,13 +281,6 @@ function joinedText(content: readonly unknown[]): string {
   return parts.join('\n\n')
 }
 
-/** Extract the visible text of a content-block list (`text` blocks verbatim,
- *  joined by blank lines); empty reads `…` so rows never render blank. */
-export function blockText(content: readonly unknown[]): string {
-  const text = joinedText(content)
-  return text === '' ? '…' : text
-}
-
 /** Cap for a tool row's one-line argument summary (display only). */
 const ARGS_SUMMARY_MAX = 80
 

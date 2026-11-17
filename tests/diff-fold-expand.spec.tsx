@@ -141,3 +141,60 @@ describe('DiffFiles on-demand fold expansion', () => {
     }
   })
 })
+
+/**
+ * The renderer's budget for pathologically long lines: >20K chars renders a
+ * bounded plain preview (2K folded / 20K expanded) instead of the full text.
+ * Normal long lines keep the old full-text rendering.
+ */
+describe('DiffRows long-line budget', () => {
+  const mount = (text: string): { container: HTMLElement; root: Root } => {
+    // A punctuation-heavy minified line: with lang 'js' it also exercises
+    // diffBlockEntries' cross-line scan on the over-budget row.
+    const segments = [{
+      kind: 'hunk' as const,
+      rows: [{ kind: 'add' as const, newLine: 1, text }],
+    }]
+    const container = document.createElement('div')
+    document.body.append(container)
+    const root: Root = createRoot(container)
+    act(() => { root.render(createElement(DiffRows, { segments, lang: 'js' })) })
+    return { container, root }
+  }
+
+  it('bounds an over-budget row while folded, then bounds it again when expanded', () => {
+    const long = '{' + '"k":1,'.repeat(12_000) + '}'
+    const { container, root } = mount(long)
+    try {
+      const row = container.querySelector<HTMLElement>('[data-folded="true"]')
+      expect(row).not.toBeNull()
+      // Folded: 2K preview + '…' (plus the line number and sign).
+      expect(row!.textContent!.length).toBeGreaterThan(2_000)
+      expect(row!.textContent!.length).toBeLessThan(3_000)
+      expect(row!.textContent).not.toContain(long)
+
+      act(() => { row!.click() })
+      expect(container.querySelector('[data-folded="true"]')).toBeNull()
+      // Expanded: 20K body + '…' (plus the line number and sign).
+      expect(container.textContent!.length).toBeGreaterThan(20_000)
+      expect(container.textContent!.length).toBeLessThan(21_000)
+      expect(container.textContent).not.toContain(long)
+    } finally {
+      act(() => { root.unmount() })
+      container.remove()
+    }
+  })
+
+  it('keeps a normal long row (500 chars) rendering in full', () => {
+    const text = 'y'.repeat(500)
+    const { container, root } = mount(text)
+    try {
+      expect(container.querySelector('[data-folded="true"]')).not.toBeNull()
+      expect(container.textContent).toContain(text)
+      expect(container.textContent).not.toContain('…')
+    } finally {
+      act(() => { root.unmount() })
+      container.remove()
+    }
+  })
+})

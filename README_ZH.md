@@ -7,7 +7,7 @@
   <a href="https://github.com/omdsh-dev/DSH-better-sidebar/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/omdsh-dev/DSH-better-sidebar/actions/workflows/ci.yml/badge.svg" /></a>
   <a href="https://github.com/omdsh-dev/DSH-better-sidebar/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/omdsh-dev/DSH-better-sidebar" /></a>
   <a href="https://opensource.org/licenses/MIT"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-yellow.svg" /></a>
-  <a href="https://www.npmjs.com/package/@deepseek-ai/dsh?activeTab=versions"><img alt="支持的 DSH 版本：0.2.2-rc.1+" src="https://img.shields.io/badge/DSH-0.2.2--rc.1%2B-4d6bfe" /></a>
+  <a href="https://www.npmjs.com/package/@deepseek-ai/dsh?activeTab=versions"><img alt="支持的 DSH 版本：0.2.2-rc.2+" src="https://img.shields.io/badge/DSH-0.2.2--rc.2%2B-4d6bfe" /></a>
 </div>
 
 <div align="center">
@@ -24,9 +24,11 @@
 |---|---|
 | **🗂️ 文件管理**<br/>懒加载目录树、Git 变更着色、实时 watch 刷新、全局搜索、拖拽上传、多选批量操作、「打开方式」双源菜单。<br/><img alt="文件树（Git 着色）" src="./docs/screenshots/files-tree.png" /><br/><img alt="右键菜单：打开方式 + 打包下载" src="./docs/screenshots/files-menu-openwith.png" /> | **🌿 Git**<br/>Source Control（Merge / Staged / Changes 三组、带 Generate 的消息框、分支与同步底栏）+ 本轮 AI 改动视角合一，并在同一页签内给出**只读提交图**（泳道、分支与 tag 徽章、分支筛选、提交详情）。<br/><img alt="Git：变更与带 tag 的提交图" src="./docs/screenshots/changes-tree.png" /> |
 | **📝 可编辑编辑器与预览**<br/>可编辑的 CodeMirror（官方预览是只读）、Markdown + Mermaid + 浮动目录、HTML 沙箱预览、`.jsonl` 记录卡片、超大文件分页预览、传输无大小上限。<br/><img alt="Markdown + Mermaid 预览" src="https://github.com/user-attachments/assets/fe0e5182-55bb-45cc-b98b-a2877c2bdd38" /> | **🧩 任务管理**<br/>子代理拓扑实时预览（工作流图 / 树双模式）+ 后台任务清单：退出码、实时输出、强制终止。<br/><img alt="任务页：子代理拓扑" src="https://github.com/user-attachments/assets/dcd8ed2f-59fa-405b-937b-2d250f5034dd" /> |
-| **💬 侧边对话（beta）**<br/>Codex 风格侧边线程：继承主会话完整上下文独立运行、实时推送、排队可见可撤回、每个线程独立选模型、一键提升为顶层会话。<br/><img alt="侧边对话" src="https://github.com/user-attachments/assets/3a338c36-f5de-4000-95f3-4b1cd04f60fc" /> | **🖥️ 底部工作台**<br/>自绘底部面板与原生右侧栏同时展开：拖拽分栏、多终端页签、按会话持久化布局。<br/><img alt="双工作台" src="https://github.com/user-attachments/assets/dfdb875e-a1a8-4d4b-8340-353736b1708f" /> |
+| **💬 侧边对话（beta）**<br/>Codex 风格侧边线程：继承主会话完整上下文独立运行、实时推送、排队可见可撤回、每个线程独立选模型、一键提升为顶层会话。默认共用一个原生页签，可在设置中切换为每个对话独立页。<br/><img alt="侧边对话" src="https://github.com/user-attachments/assets/3a338c36-f5de-4000-95f3-4b1cd04f60fc" /> | **🖥️ 底部工作台**<br/>自绘底部面板与原生右侧栏同时展开：拖拽分栏、多终端页签、按会话持久化布局。<br/><img alt="双工作台" src="https://github.com/user-attachments/assets/dfdb875e-a1a8-4d4b-8340-353736b1708f" /> |
 
 **还有**：📂 `sidebar_open` 工具让模型主动打开侧边栏 · ⚡ 启动只拉 ~325KB 核心、重依赖按需加载 · 🌏 多语言跟随 DSH · 📱 窄屏自动切换全宽抽屉
+
+- **🔗 聊天中的 Markdown 文件路径**：每轮最后一条助手消息里，完整的绝对 `.md` / `.markdown` 内联代码路径可点击，并按当前会话的文件地址交给原生右侧栏打开；路径不存在时显示文件读取错误。
 
 ### 🌿 Git Graph（只读提交图）
 
@@ -42,16 +44,17 @@
 dsh plugin --profile web add dsh-better-sidebar@latest
 ```
 
-装完**硬刷新浏览器**（Cmd/Ctrl+Shift+R）即可。要求 DSH **0.2.2-rc.1+**。
+装完**硬刷新浏览器**（Cmd/Ctrl+Shift+R）即可。要求 DSH **0.2.2-rc.2+**。
 
-> **兼容性警告：插件版本必须与宿主线匹配。** 截至 2026-11-04，DSH 的 npm `latest` 是 **0.2.1-rc.5**、`next` 是 **0.2.2-rc.1**。**v0.30.0 要求 DSH 0.2.2-rc.1+**；仍停在 0.2.1 线（**0.2.1-rc.1 ~ rc.5**，也就是今天的 `latest`）的宿主必须固定 `dsh-better-sidebar@0.28.2`——v0.29.0 从未发布到 npm。DSH 0.2.1-alpha.5 用户固定 `dsh-better-sidebar@0.28.0-alpha.0`，**0.2.0-rc.2** 宿主固定 `dsh-better-sidebar@0.26.1`。0.x 的 caret 不跨 minor，因此一个构建无法同时服务两条宿主线。市场安装器按插件的 `latest` 安装、不按宿主版本选版本，旧宿主会收到版本拒绝错误——请升级宿主或显式固定版本。两个包的 `latest` 标签不是同一支持线。
+> **兼容性警告：插件版本必须与宿主线匹配。** 截至 2026-11-12，DSH 的 npm `latest` 是 **0.2.2-rc.1**、`next` 是 **0.2.2-rc.2**。**v0.32.1 要求 DSH 0.2.2-rc.2+**；仍在 **0.2.2-rc.1** 的宿主必须固定 `dsh-better-sidebar@0.32.0`。仍停在 0.2.1 线（**0.2.1-rc.1 ~ rc.5**）的宿主必须固定 `dsh-better-sidebar@0.28.2`——v0.29.0 从未发布到 npm。DSH 0.2.1-alpha.5 用户固定 `dsh-better-sidebar@0.28.0-alpha.0`，**0.2.0-rc.2** 宿主固定 `dsh-better-sidebar@0.26.1`。0.x 的 caret 不跨 minor，因此一个构建无法同时服务两条宿主线。市场安装器按插件的 `latest` 安装、不按宿主版本选版本，旧宿主会收到版本拒绝错误——请升级宿主或显式固定版本。两个包的 `latest` 标签不是同一支持线。
 
 <details>
 <summary><b>按 DSH 版本选插件版本</b></summary>
 
 | 你的 DSH 版本 | 安装命令 |
 | --- | --- |
-| **0.2.2-rc.1+** | `dsh plugin --profile web add dsh-better-sidebar@0.30.1` |
+| **0.2.2-rc.2+** | `dsh plugin --profile web add dsh-better-sidebar@0.32.1` |
+| **0.2.2-rc.1** | `dsh plugin --profile web add dsh-better-sidebar@0.32.0` |
 | **0.2.1-rc.1 ~ 0.2.1-rc.5** | `dsh plugin --profile web add dsh-better-sidebar@0.28.2` |
 | **0.2.1-alpha.5** | `dsh plugin --profile web add dsh-better-sidebar@0.28.0-alpha.0` |
 | **0.2.0-rc.2** | `dsh plugin --profile web add dsh-better-sidebar@0.26.1` |
@@ -71,12 +74,12 @@ dsh plugin --profile web add dsh-better-sidebar@latest
 
 ```text
 帮我安装 dsh-better-sidebar 插件（DSH 侧边栏工作台），步骤：
-1. 先确认 DSH 为 0.2.2-rc.1 或更新版本，再执行 dsh plugin --profile web add dsh-better-sidebar@0.30.1
+1. 先确认 DSH 为 0.2.2-rc.2 或更新版本，再执行 dsh plugin --profile web add dsh-better-sidebar@0.32.1
 2. 完成后提醒我硬刷新浏览器（Cmd/Ctrl+Shift+R）
 遇到报错先查 https://github.com/omdsh-dev/DSH-better-sidebar README 的常见问题表。
 ```
 
-**一键脚本**——克隆本仓库后执行 `bash scripts/install.sh 0.30.1`（macOS / Linux / Windows Git Bash；Windows 原生用 `./scripts/install.ps1 -Version 0.30.1`），自动完成安装 + bundle 注册。
+**一键脚本**——克隆本仓库后执行 `bash scripts/install.sh 0.32.1`（macOS / Linux / Windows Git Bash；Windows 原生用 `./scripts/install.ps1 -Version 0.32.1`），自动完成安装 + bundle 注册。
 
 **更新**：重跑一次安装命令即可，然后硬刷新浏览器。
 
@@ -94,29 +97,29 @@ dsh plugin --profile web add dsh-better-sidebar@latest
 | 页面出现**两个侧边栏** | 双挂载。删掉 `~/.dsh/profiles/web/cordis.patch.yml` 里旧的手动挂载行（`- insert: ... better-sidebar ...`）；聚合包以不同 id 挂载本包时会自动退让，无需处理。 |
 | 升级后设置页的值去哪了 | DSH 0.1.7 起偏好写在 profile 里本插件的挂载行上（默认 entry id `better-sidebar`），插件首次启动会把旧 `settings.yaml` 里的配置一次性回迁，不会覆盖新设的值。 |
 | 终端无法使用 | 终端由 **DSH 自身**提供（本插件不自带 PTY），请查 DSH 侧文档；底部终端显示「宿主未提供终端能力」= 这个部署没挂终端控制器。 |
-| 提示 `dsh: command not found` | 先安装 DSH；或用 `npx -y --package @deepseek-ai/dsh@0.2.2-rc.1 dsh plugin --profile web add dsh-better-sidebar@0.30.1`。 |
+| 提示 `dsh: command not found` | 先安装 DSH；或用 `npx -y --package @deepseek-ai/dsh@0.2.2-rc.2 dsh plugin --profile web add dsh-better-sidebar@0.32.1`。 |
 
 </details>
 
 ## 🆕 最近更新
 
-**v0.30.1 — 设置导航图标修复**
+**v0.32.1 — 适配 DSH 0.2.2-rc.2**
 
-- **设置页「侧边卡片」那一行不再显示两个图标**：插件此前用 CSS 遮罩盖住宿主的兜底齿轮、再画自己的图标；宿主的导航图标外层多了容器，同时也提供了按 section 挂图标的口子。现在图标走宿主插槽，标记 + 遮罩那一套整体删除（顺带去掉了一个全局 DOM 观察器）。
+- **右键菜单与「打开方式」子菜单跟随宿主的新定位**：DSH 0.2.2-rc.2 把菜单改成 CSS 锚点定位、子菜单改为独立浮层，插件不再自己改写子菜单几何，交给宿主按可用空间放置。
+- **团队任务板写入改走内置 Agent Team 服务**：原实验包升级为 base composition 里的 `@deepseek-ai/dsh-agent-team`，Team 模式按会话开启。
+- **插件页新增图文详情**：右侧栏总览图 +「每个会话独立」示意图，并用编号说明各项功能。
+- **DSH 0.2.2-rc.1 宿主继续使用插件 v0.32.0**；0.2.2-rc.2+ 请使用本版本。
 
-**v0.30.0 — 支持 DSH 0.2.2、侧边对话可发图、引用 chip 可点击**
+**v0.32.0 — 开始页接管与卡片打磨**
 
-- **基线抬到 DSH 0.2.2-rc.1**（14 条 peer 下限全部前移到 `^0.2.2-rc.1`）。宿主把可安装的模型选择 ref 换成了 agent 自有的 `AgentModel`，侧边对话的模型切换改走 `agent.model.select()`——只落盘一次，并作用于下一步。0.x 的 caret 不跨 minor：DSH 0.2.1 线（也就是今天的 npm `latest`）继续固定插件 v0.28.2。
-- **侧边对话可以发图**：粘贴截图或选择 PNG / JPEG / WebP / GIF，发送前可预览、可移除，也可以只发图片；刷新页面或冷恢复后预览仍在。
-- **引用 chip 可点击**：用「添加到对话」划选的一段文字会落成一枚 chip，点击跳回源文件并闪烁被引行段；带 nonce，所以连点两次仍会再次跳转。引用记录写不进存储时回退到原来的内置 chip，而不是落一枚点不动的死 chip。
-- **草稿不再被宿主侧的关闭路径吞掉**：关闭原生侧边页签、或退出桌面端时，未保存草稿会被备份，重开同一文件时提示恢复——宿主没有可取消的关闭钩子，所以这是备份 + 恢复，不是弹窗拦截。
-- **可靠性**：父会话压缩过之后开的侧聊不再写出不可读的会话日志；页面 CSS zoom 不再被误判为页面变换；底部工作台终端不再自带黑底；容器工作区在 Git 面板里能看到每个子仓库；安装脚本发现 profile 里 `@deepseek-ai/dsh-*` 版本混搭会直接拒绝并打印修复命令。
+- **右侧栏开始页改由插件接管**：宽屏两列、行数可配置（默认 6），常驻「更多」卡片与调整顺序，支持居中/靠上，以及默认开启的接管开关（关闭恢复宿主页面）。
+- **宿主的开始页能力保留**：终端卡片保留原生 Shell 菜单，「更多」恢复「浏览更多插件」「创建你的插件」；本插件 tab 与「侧边栏内容」卡片共用同一个功能开关。
+- **卡片副标题固定一行**并以省略号截断，「更多」菜单图标与文字垂直居中。
+- **自 v0.30.1 起还包含**：Markdown `data:`/`file://` 图片、桌面壳 HTML 预览内联、内置音视频预览、侧边对话大修、数据安全修复、线性时间 diff 高亮等。
 
-**v0.29.0 — 侧边对话接入 GenUI**
+**v0.31.1 — Markdown 的 `file://` 图片地址**
 
-- 新增可选的 `registerSidechatSurfaceAdapter` 服务，配合 GenUI 0.15.0 在已结算的侧边回复里渲染交互组件；状态和动作归属对应子线程。
-- 未安装消费插件、流式回复及不支持的围栏继续显示原 Markdown；保留 0.28.2 的冷会话读取修复。
-- 配套实现由 [@sunxiuguo](https://github.com/sunxiuguo) 贡献，见 [#1033](https://github.com/omdsh-dev/DSH-better-sidebar/pull/1033)。
+- **`file:///...` 图片现在能显示**：Markdown 语法和原始 HTML 的 `file:` 地址会先还原成绝对本地路径，再走与相对图片相同的会话媒体路由；支持 Windows 盘符、`localhost`、UNC 与百分号编码。
 
 ## 🔌 插件生态
 
@@ -240,7 +243,7 @@ Windows / Linux / macOS 三平台适配（macOS 日常验证，其余经单元�
 推荐添加 QQ 群（577011007）
 
 <div align="center">
-  <img width="220" alt="微信群二维码" src="https://github.com/user-attachments/assets/2816b2c7-45c6-4879-b969-77f258c4068c" />
+  <img width="220" alt="微信群二维码" src="https://github.com/user-attachments/assets/c4266ec9-3db2-406e-b7e1-384be09e3654" />
   <img width="220" alt="QQ群二维码" src="https://github.com/user-attachments/assets/9be34629-26ef-4537-aad4-1393c147f81c" />
 </div>
 

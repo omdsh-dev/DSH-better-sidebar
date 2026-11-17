@@ -149,7 +149,7 @@ pnpm exec vitest run --maxWorkers=2 --exclude '**/.agents/worktrees/**'
 真实本地挂载：
 
 ```bash
-DSH_CMD='npx -y --package @deepseek-ai/dsh@0.2.2-rc.1 dsh' pnpm test:mount
+DSH_CMD='npx -y --package @deepseek-ai/dsh@0.2.2-rc.2 dsh' pnpm test:mount
 ```
 
 **禁止**只凭 CI 绿就宣称本地跑过；报告里区分「本地实跑」「只在 CI」「未验证」。全量套件首次失败、重跑通过时，要记录为 flake，不要静默改代码或直接放过。

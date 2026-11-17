@@ -17,7 +17,6 @@ import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
 import { GitLens } from '../src/client/changes/GitLens.tsx'
-import { createSidebarStore } from '../src/client/state.ts'
 import { api, SidebarApiError, type GitStatusResult } from '../src/client/api.ts'
 
 import { setupReactAct } from './test-utils.ts'
@@ -52,7 +51,6 @@ async function mount(options: {
   await act(async () => {
     root.render(createElement(GitLens, {
       scope: { sessionId: 'session', cwd: CWD },
-      store: createSidebarStore(),
       onOpenFile: () => {},
       onPreview: () => {},
       selectedRef: null,

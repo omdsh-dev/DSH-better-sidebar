@@ -26,7 +26,7 @@ import { createWriteStream } from 'node:fs'
 import { access, lstat, mkdir, rename, rm, stat, unlink, writeFile } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import { invalidateDirectoryCache, requireAbsolute } from './fs-tree.ts'
-import { ensureWorkspaceWritePath, resolveTarget } from './path-security.ts'
+import { resolveTarget } from './path-security.ts'
 import { encodeText, fileFormatOf, restoreEol } from './text-encoding.ts'
 import { SidebarError } from './wire.ts'
 
@@ -51,8 +51,6 @@ export interface WorkspaceUploadInput {
   relativePath: string
   /** The request body stream (raw bytes). */
   chunks: AsyncIterable<string | Uint8Array>
-  /** @deprecated IGNORED — containment was removed. Do not pass it. */
-  fence?: boolean
 }
 
 /**
@@ -144,7 +142,7 @@ export async function writeWorkspaceUpload(input: WorkspaceUploadInput): Promise
     throw new SidebarError('bad-request', 'relativePath must stay below the upload directory', 400)
   }
   const target = join(base, ...segments)
-  const safeTarget = await ensureWorkspaceWritePath(cwd, target)
+  const safeTarget = resolveTarget(cwd, target)
   const tmp = join(dirname(safeTarget), `.${basename(safeTarget)}.dsh-upload-${randomUUID()}.tmp`)
   await mkdir(dirname(safeTarget), { recursive: true })
   const stream = createWriteStream(tmp, { flags: 'wx' })
@@ -222,7 +220,7 @@ export interface WorkspaceWriteInput {
  */
 export async function writeWorkspaceText(input: WorkspaceWriteInput): Promise<{ mtimeMs?: number }> {
   const { cwd, path, content, expectedMtimeMs } = input
-  const absolute = await ensureWorkspaceWritePath(cwd, path)
+  const absolute = resolveTarget(cwd, path)
   // Detect the byte encoding AND the line ending BEFORE the temp write, so the
   // save round-trips what the file already used.
   const { encoding, eol } = await fileFormatOf(absolute)
@@ -269,8 +267,6 @@ export interface WorkspaceRenameInput {
   path: string
   /** The new base name (single segment — rename never moves across directories). */
   name: string
-  /** @deprecated IGNORED — containment was removed. Do not pass it. */
-  fence?: boolean
 }
 
 /**
@@ -368,7 +364,7 @@ export async function renameWorkspaceEntry(input: WorkspaceRenameInput): Promise
   }
   if (basename(absolute) === name) return { path: absolute }
   const destination = join(dirname(absolute), name)
-  const safeDestination = await ensureWorkspaceWritePath(cwd, destination)
+  const safeDestination = resolveTarget(cwd, destination)
   if (await pathExists(safeDestination)) {
     throw new SidebarError('fs-error', `"${name}" already exists`, 409)
   }
@@ -389,8 +385,6 @@ export interface WorkspaceMkdirInput {
   path: string
   /** The new directory's base name (single segment — mkdir never nests). */
   name: string
-  /** @deprecated IGNORED — containment was removed. Do not pass it. */
-  fence?: boolean
 }
 
 /**
@@ -406,7 +400,7 @@ export async function mkdirWorkspaceEntry(input: WorkspaceMkdirInput): Promise<{
   const { cwd, path, name } = input
   assertSingleSegmentName(name)
   const { absolute } = resolveEntry(cwd, path)
-  const destination = await ensureWorkspaceWritePath(cwd, join(absolute, name))
+  const destination = resolveTarget(cwd, join(absolute, name))
   if (await pathExists(destination)) {
     throw new SidebarError('fs-error', `"${name}" already exists`, 409)
   }
@@ -481,8 +475,6 @@ export interface WorkspaceCreateFileInput {
   path: string
   /** The new file's base name (single segment — creating never nests). */
   name: string
-  /** @deprecated IGNORED — containment was removed. Do not pass it. */
-  fence?: boolean
 }
 
 /**
@@ -502,7 +494,7 @@ export async function createWorkspaceFile(input: WorkspaceCreateFileInput): Prom
   const { cwd, path, name } = input
   assertCreatableFileName(name)
   const { absolute } = await resolveEntry(cwd, path)
-  const destination = await ensureWorkspaceWritePath(cwd, join(absolute, name))
+  const destination = resolveTarget(cwd, join(absolute, name))
   if (await pathExists(destination)) {
     throw new SidebarError('fs-error', `"${name}" already exists`, 409)
   }
@@ -525,8 +517,6 @@ export interface WorkspaceRemoveInput {
   cwd: string
   /** Absolute path of the row as the tree displays it (may be a symlink). */
   path: string
-  /** @deprecated IGNORED — containment was removed. Do not pass it. */
-  fence?: boolean
 }
 
 /**

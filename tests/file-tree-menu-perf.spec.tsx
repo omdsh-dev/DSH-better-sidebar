@@ -266,7 +266,7 @@ describe('FileTree context-menu cost', () => {
       .find(item => item.getAttribute('aria-haspopup') === 'menu')
     expect(parent).toBeDefined()
     await act(async () => { parent!.click(); await Promise.resolve() })
-    const submenuLabels = [...document.querySelectorAll<HTMLElement>('[role="menu"] [role="menu"] [role="menuitem"]')]
+    const submenuLabels = [...document.querySelectorAll<HTMLElement>('[role="menu"][data-submenu-layout] [role="menuitem"]')]
       .map(item => item.textContent?.trim())
     // The default handler is hoisted to level 1; the rest of the list is
     // already there (no disabled Loading row).

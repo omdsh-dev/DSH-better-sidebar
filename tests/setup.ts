@@ -22,3 +22,21 @@ if (storage !== undefined) {
     writable: true,
   })
 }
+
+// DSH 0.2.2-rc.2's Menu measures its child card with a ResizeObserver in a
+// layout effect. jsdom (and node-only suites) have no ResizeObserver, and the
+// menu throws during commit before any test body runs. A no-op observer is
+// enough for tests: the host still measures once synchronously in the same
+// effect, which is what sets `data-submenu-layout`.
+if (typeof (globalThis as { ResizeObserver?: unknown }).ResizeObserver === 'undefined') {
+  class ResizeObserverStub {
+    observe(): void {}
+    unobserve(): void {}
+    disconnect(): void {}
+  }
+  Object.defineProperty(globalThis, 'ResizeObserver', {
+    value: ResizeObserverStub,
+    configurable: true,
+    writable: true,
+  })
+}

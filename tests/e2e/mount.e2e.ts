@@ -30,7 +30,8 @@
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { test, expect, type APIRequestContext } from '@playwright/test'
+import { pathToFileURL } from 'node:url'
+import { test, expect, type APIRequestContext, type Page } from '@playwright/test'
 import { PAGE_URL, composerEditable, createHostApi, dismissOnboarding, gotoPage, hostRpc, sendFirstMessage, sidebarApi } from './host'
 
 /** Workspace the sidebar renders against (created by the lane's seeding). */
@@ -49,6 +50,10 @@ const SEEDED_MD_FILE = 'diagram.md'
  *  inline tags in table cells), opened through the Files window's tree to
  *  prove raw-HTML runs render as sanitized DOM and the TOC outline works. */
 const SEEDED_README_FILE = 'readme-style.md'
+
+/** A 1×1 PNG for the markdown local-image probe. */
+const SEEDED_PNG = 'pic.png'
+const ONE_PIXEL_PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='
 
 /**
  * The plugin's crash markers. The client mounts inside an error boundary that
@@ -105,6 +110,10 @@ async function seedSession(): Promise<void> {
     'tail text',
     '',
   ].join('\n'))
+  // The local-image probe: the markdown preview's media route must serve the
+  // relative path, and a data:image destination must render as an <img>.
+  writeFileSync(join(WORKSPACE_PATH, SEEDED_PNG), Buffer.from(ONE_PIXEL_PNG, 'base64'))
+  const seededPngUrl = pathToFileURL(join(WORKSPACE_PATH, SEEDED_PNG)).href
   // The README-style probe file: raw-HTML runs (badge wall div with an
   // embedded script, a <details> nesting a fence + heading) plus inline tags
   // inside a table cell. The script must be sanitized away in the preview.
@@ -118,6 +127,12 @@ async function seedSession(): Promise<void> {
     '',
     '<a id="readme-anchor"></a>',
     '## Setup',
+    '',
+    '![local image](pic.png)',
+    '',
+    `![data image](data:image/png;base64,${ONE_PIXEL_PNG})`,
+    '',
+    `![file url image](${seededPngUrl})`,
     '',
     '[docs link][def]',
     '',
@@ -158,6 +173,91 @@ test.beforeAll(async () => {
 
 test.afterAll(async () => {
   await api?.dispose()
+})
+
+/** Set the side-chat page mode through the scratch profile's settings route. */
+async function setSidechatTabs(mode: 'single' | 'multiple'): Promise<void> {
+  const current = await api.post(sidebarApi('settings.get'), { data: {} })
+  expect(current.ok(), `settings.get: ${current.status()}`).toBe(true)
+  const body = await current.json() as { value?: { pluginSettings?: Record<string, Record<string, unknown>> } }
+  const pluginSettings = {
+    ...(body.value?.pluginSettings ?? {}),
+    sidechat: { ...(body.value?.pluginSettings?.sidechat ?? {}), tabs: mode },
+  }
+  const update = await api.post(sidebarApi('settings.update'), { data: { patch: { pluginSettings } } })
+  expect(update.ok(), `settings.update (sidechat tabs): ${update.status()} ${await update.text()}`).toBe(true)
+}
+
+/** Stub the side-chat transport for deterministic host/DOM-only assertions. */
+async function stubSidechat(page: Page): Promise<{ starts: () => number; pulls: string[] }> {
+  const state = { starts: 0, pulls: [] as string[] }
+  await page.route('**/sidebar/api/sidechat.*', async route => {
+    const method = route.request().url().split('/').pop()
+    const body = route.request().postDataJSON() as { childId?: string }
+    let value: unknown = { accepted: true }
+    if (method === 'sidechat.start') value = { childId: `test-thread-${++state.starts}` }
+    if (method === 'sidechat.info') value = { live: false, preset: 'test' }
+    if (method === 'sidechat.models') value = { available: false, groups: [], failures: [] }
+    if (method === 'sidechat.events') {
+      state.pulls.push(body.childId ?? '')
+      value = { events: [], live: [], pending: [] }
+    }
+    await route.fulfill({ json: { ok: true, value } })
+  })
+  return { starts: () => state.starts, pulls: state.pulls }
+}
+
+test('sidechat default: repeated guide opens keep the one shared page', async ({ page }) => {
+  await setSidechatTabs('single')
+  const sidechat = await stubSidechat(page)
+  await page.goto(PAGE_URL, { waitUntil: 'domcontentloaded' })
+  await expect(page.locator('[data-dsh-better-sidebar]')).toBeAttached({ timeout: 90_000 })
+  await dismissOnboarding(page)
+  await sendFirstMessage(page)
+  await page.locator('[data-sidebar-right-expand]').first().click()
+  await page.locator('[data-sidebar-right-guide-entry="sidechat"]').click()
+  await expect.poll(() => sidechat.starts()).toBe(1)
+  const tabs = page.locator('[data-sidebar-right-panel] [role="tab"]')
+  const initial = await tabs.count()
+  await page.locator('[data-dockkit-add-tab]').first().click()
+  await page.locator('[data-sidebar-right-guide-entry="sidechat"]').click()
+  // The host focuses the shared page; no second thread and no second tab.
+  await expect(tabs).toHaveCount(initial)
+  expect(sidechat.starts()).toBe(1)
+})
+
+test('sidechat multi-instance: both plus buttons preserve independent tabs across reload', async ({ page }) => {
+  await setSidechatTabs('multiple')
+  const sidechat = await stubSidechat(page)
+  await page.goto(PAGE_URL, { waitUntil: 'domcontentloaded' })
+  await expect(page.locator('[data-dsh-better-sidebar]')).toBeAttached({ timeout: 90_000 })
+  await dismissOnboarding(page)
+  await sendFirstMessage(page)
+  await page.locator('[data-sidebar-right-expand]').first().click()
+  await page.locator('[data-sidebar-right-guide-entry="sidechat"]').click()
+  await expect.poll(() => sidechat.starts()).toBe(1)
+  await expect.poll(() => sidechat.pulls.includes('test-thread-1')).toBe(true)
+  const tabs = page.locator('[data-sidebar-right-panel] [role="tab"]')
+  const initial = await tabs.count()
+  await page.locator('[data-dockkit-add-tab]').first().click()
+  await page.locator('[data-sidebar-right-guide-entry="sidechat"]').click()
+  await expect.poll(() => sidechat.starts()).toBe(2)
+  await expect(tabs).toHaveCount(initial + 1)
+  await expect.poll(() => sidechat.pulls.includes('test-thread-2')).toBe(true)
+  await page.locator('[data-dsh-native-tab-host]:visible button[aria-label="新建对话"], [data-dsh-native-tab-host]:visible button[aria-label="New thread"]').click()
+  await expect.poll(() => sidechat.starts()).toBe(3)
+  await expect(tabs).toHaveCount(initial + 2)
+  await expect.poll(() => sidechat.pulls.includes('test-thread-3')).toBe(true)
+  const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('dsh-sidebar:v1:native-sidechat-bindings') ?? '[]') as Array<{ threadId: string }>)
+  expect(saved.map(row => row.threadId).sort()).toEqual(['test-thread-1', 'test-thread-2', 'test-thread-3'])
+  sidechat.pulls.length = 0
+  await page.reload({ waitUntil: 'domcontentloaded' })
+  await expect(page.locator('[data-dsh-better-sidebar]')).toBeAttached({ timeout: 90_000 })
+  await expect(tabs).toHaveCount(initial + 2, { timeout: 30_000 })
+  for (let index = 0; index < await tabs.count(); index++) await tabs.nth(index).click()
+  await expect.poll(() => new Set(sidechat.pulls).size).toBe(3)
+  expect(sidechat.starts(), 'reload must not create replacement threads').toBe(3)
+  await setSidechatTabs('single')
 })
 
 test('plugin mounts into the DSH shell and survives a built-in tab sweep', async ({ page }) => {
@@ -292,6 +392,24 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
     page.locator('[data-sidebar-right-guide]'),
     'a freshly expanded surface shows the guide page',
   ).toBeVisible({ timeout: 30_000 })
+
+  // The start page is the PLUGIN's chain takeover, not the host's shipped
+  // guide: the marker exists only on the plugin's grid, and its column count
+  // follows the measured pane width (two columns from 520px on).
+  const startPage = page.locator('[data-dsh-guide-grid]')
+  await expect(startPage, 'the plugin start-page takeover must own the guide body').toBeVisible({ timeout: 30_000 })
+  const startPageGeometry = await startPage.evaluate((element) => ({
+    width: element.clientWidth,
+    columns: element.getAttribute('data-guide-columns'),
+    align: element.getAttribute('data-guide-align'),
+  }))
+  expect(startPageGeometry.columns).toBe(startPageGeometry.width >= 520 ? '2' : '1')
+  expect(startPageGeometry.align).toBe('center')
+  // The host's terminal card keeps its native shell menu under the takeover.
+  await expect(
+    page.locator('[data-sidebar-right-guide-entry="terminal"] [data-guide-shell-menu]'),
+    'the terminal card must expose the host shell menu',
+  ).toHaveCount(1, { timeout: 30_000 })
 
   // Every built-in descriptor must be registered as a native tab type: the
   // guide lists one entry per type, so a missing entry is a real regression
@@ -661,7 +779,11 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
     return result
   })
   expect(modalRegions.modal, 'the zoom modal must opt out of app-region computation').toBe('none')
-  expect(modalRegions.button, 'its buttons must stay no-drag').toBe('no-drag')
+  // DSH 0.2.2 removed the blanket control rule: only chrome rows/controls
+  // declare no-drag, and everything else computes the neutral `initial`
+  // (`none`), which contributes no drag box. That is exactly what a toolbar
+  // button inside the modal needs — a click must never start a window drag.
+  expect(modalRegions.button, 'its buttons must never start a window drag').toBe('none')
   // Issue #805: the shell draws its native window controls OVER the page's
   // top-right and those pointer events never reach the document, so the
   // toolbar must sit below that band. At the reporter's 42px overlay a bare
@@ -754,6 +876,26 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
     pane.locator('[data-dsh-html-segment] img[src*="img.shields.io"]'),
     'the badge-wall div must render its image as a real element',
   ).toHaveCount(1, { timeout: 30_000 })
+  // Local image: a relative markdown destination must resolve through the
+  // plugin media route and actually decode. Data image: the vocabulary now
+  // admits data:image, so it must render as an <img>, not alt text.
+  const localImages = pane.locator('img[src*="/sidebar/file"]')
+  await expect(localImages, 'the relative and file: URL markdown images must render through the media route').toHaveCount(2, { timeout: 30_000 })
+  for (let index = 0; index < 2; index += 1) {
+    const image = localImages.nth(index)
+    await image.scrollIntoViewIfNeeded()
+    await expect.poll(
+      () => image.evaluate((node) => (node as HTMLImageElement).naturalWidth),
+      { message: 'each local markdown image (relative and file: URL) must decode in the real browser' },
+    ).toBeGreaterThan(0)
+  }
+  const dataImage = pane.locator('img[src^="data:image/png;base64,"]').first()
+  await expect(dataImage, 'a markdown data:image must render as an <img>').toHaveCount(1, { timeout: 30_000 })
+  await dataImage.scrollIntoViewIfNeeded()
+  await expect.poll(
+    () => dataImage.evaluate((image) => (image as HTMLImageElement).naturalWidth),
+    { message: 'the data:image markdown image must decode' },
+  ).toBeGreaterThan(0)
   await expect(
     pane.locator('script'),
     'the embedded <script> must be sanitized away',
@@ -1147,8 +1289,20 @@ test('the explorer @-reference button keeps earlier chips (no whole-draft rewrit
   // ones stay chips (the flattened-draft bug used to eat them on any insert).
   const composer = chips.first().locator('xpath=ancestor::*[@contenteditable="true"][1]')
   const typeInComposer = async (text: string): Promise<void> => {
-    await composer.click()
-    await page.keyboard.press('End')
+    // DSH 0.2.2 renders a folder mention as an editable text entity
+    // (`canInsertTextBefore: true`), so typing where a click happens to land
+    // can legitimately split the token. Put the caret at the very END of the
+    // composer instead of relying on click position plus `End` (which a chip
+    // or an entity can consume).
+    await composer.evaluate((element) => {
+      const range = document.createRange()
+      range.selectNodeContents(element)
+      range.collapse(false)
+      const selection = window.getSelection()
+      selection?.removeAllRanges()
+      selection?.addRange(range)
+      ;(element as HTMLElement).focus()
+    })
     await page.keyboard.type(text)
   }
 
@@ -1216,3 +1370,22 @@ test('the explorer @-reference button keeps earlier chips (no whole-draft rewrit
   expect(pageErrors, 'no page error while inserting references').toEqual([])
 })
 
+
+test('the Plugins page can serve the shipped detail document image', async ({ page }) => {
+  // The Plugins page resolves locale meta.detail through the host's
+  // readBundleDetail and then loads each image through this route. Proving
+  // the route answers the installed package catches a detail path that only
+  // exists in the source tree (or a package.json#files omission) before a
+  // user ever opens the page.
+  await gotoPage(page)
+  const url = new URL('/api/plugin-manager/detail-file', PAGE_URL)
+  url.searchParams.set('bundle', 'dsh-better-sidebar')
+  url.searchParams.set('document', 'detail/DETAIL.zh.md')
+  url.searchParams.set('path', 'overview.zh.svg')
+  const response = await page.request.get(url.href)
+  expect(response.status(), 'the plugin detail image route').toBe(200)
+  expect(response.headers()['content-type'], 'the image media type').toContain('image/svg+xml')
+  const body = await response.text()
+  expect(body, 'the shipped overview SVG').toContain('<svg')
+  expect(body, 'not an empty placeholder').toContain('viewBox')
+})

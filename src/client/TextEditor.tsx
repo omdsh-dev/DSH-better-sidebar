@@ -51,7 +51,7 @@ import { useMarkdownSurface } from './use-markdown-surface.ts'
 import { MdToc } from './md-toc.tsx'
 import { splitMermaidBlocks } from './mermaid-blocks.ts'
 import { localeSignature, t } from './locales.ts'
-import { HTML_IFRAME_SANDBOX } from './html-preview.ts'
+import { HtmlPreviewFrame } from './HtmlPreviewFrame.tsx'
 import type { EditorToolbarState, FileViewerProps } from './service.ts'
 import css from './sidebar.module.css'
 
@@ -1230,17 +1230,17 @@ export function TextEditor(props: FileViewerProps) {
             onUnlock={() => { setLocalUnlock(true) }}
             onRestore={() => { setLocalUnlock(false) }}
           />
-          {/* Route-src (never srcdoc — a srcdoc frame inherits the parent
-              origin when unsandboxed; the route URL keeps the frame
-              cross-origin by construction). The preview shows the SAVED
-              file; the draft is only visible in edit mode. */}
-          <iframe
+          {/* Route-src on a normal web page; in the desktop shell with the
+              sandbox ON the frame is a self-contained sandboxed blob (the
+              shell rejects an opaque subframe's dsh-app requests — see
+              HtmlPreviewFrame / html-preview-inline.ts). Never srcdoc: an
+              unsandboxed srcdoc frame inherits the parent origin. The preview
+              shows the SAVED file; the draft is only visible in edit mode. */}
+          <HtmlPreviewFrame
             className={css.editorHtml}
             src={htmlUrl(scope, path)}
-            sandbox={htmlNoSandbox ? undefined : HTML_IFRAME_SANDBOX}
-            referrerPolicy="no-referrer"
-            allow=""
             title={path}
+            sandboxed={!htmlNoSandbox}
           />
         </>
       )}

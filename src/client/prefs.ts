@@ -14,9 +14,12 @@ import {
   SIDEBAR_PREFS_DEFAULTS,
   SIDECHAT_PREFS_ID,
   SIDECHAT_SUBMIT_KEY_SETTING,
+  SIDECHAT_TABS_SETTING,
   parseSidechatSubmitKey,
+  parseSidechatTabsMode,
   type SidebarPrefs,
   type SidechatSubmitKey,
+  type SidechatTabsMode,
 } from '../prefs-shared.ts'
 
 export {
@@ -96,7 +99,36 @@ export function parsePrefs(value: unknown): SidebarPrefs {
     tabsEnabled: booleanMapOf(record.tabsEnabled),
     viewersEnabled: booleanMapOf(record.viewersEnabled),
     pluginSettings: pluginSettingsMapOf(record.pluginSettings),
+    guideRows: positiveIntegerOf(record.guideRows, SIDEBAR_PREFS_DEFAULTS.guideRows),
+    guideOrder: uniqueStringListOf(record.guideOrder),
+    guideHidden: booleanMapOf(record.guideHidden),
+    guideAlign: record.guideAlign === 'top' || record.guideAlign === 'center'
+      ? record.guideAlign
+      : SIDEBAR_PREFS_DEFAULTS.guideAlign,
+    guideTakeover: typeof record.guideTakeover === 'boolean'
+      ? record.guideTakeover
+      : SIDEBAR_PREFS_DEFAULTS.guideTakeover,
   }
+}
+
+/** One positive safe integer, or the fallback (row counts are 1-based). */
+function positiveIntegerOf(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 1 ? value : fallback
+}
+
+/** A trimmed, de-duplicated string list preserving first-seen order. */
+function uniqueStringListOf(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  const out: string[] = []
+  const seen = new Set<string>()
+  for (const item of value) {
+    if (typeof item !== 'string') continue
+    const trimmed = item.trim()
+    if (trimmed === '' || seen.has(trimmed)) continue
+    seen.add(trimmed)
+    out.push(trimmed)
+  }
+  return out
 }
 
 /**
@@ -137,6 +169,17 @@ function pluginSettingsMapOf(value: unknown): Record<string, Record<string, unkn
  */
 export function sidechatSubmitKeyOf(prefs: SidebarPrefs): SidechatSubmitKey {
   return parseSidechatSubmitKey(prefs.pluginSettings[SIDECHAT_PREFS_ID]?.[SIDECHAT_SUBMIT_KEY_SETTING])
+}
+
+/**
+ * The side-chat page mode: one shared native page (the default) or one page
+ * per thread. The value is the feature's own plugin-owned setting, so a
+ * document that never chose one reads the default.
+ * @param prefs - the parsed side card preferences.
+ * @returns the configured page mode.
+ */
+export function sidechatTabsModeOf(prefs: SidebarPrefs): SidechatTabsMode {
+  return parseSidechatTabsMode(prefs.pluginSettings[SIDECHAT_PREFS_ID]?.[SIDECHAT_TABS_SETTING])
 }
 
 /**

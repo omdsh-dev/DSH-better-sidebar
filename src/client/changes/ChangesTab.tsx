@@ -79,7 +79,7 @@ type PreviewSelection =
   | { kind: 'git'; ref: SidebarDiffRef }
   | { kind: 'op'; path: string; callId: string }
 
-export function ChangesTab({ ctx, store, scope, tab, visible, onOpenFile, onOpenDiff }: TabComponentProps) {
+export function ChangesTab({ ctx, scope, tab, visible, onOpenFile, onOpenDiff }: TabComponentProps) {
   const meta = (tab.meta ?? {}) as ChangesMeta
   const lensId = useId()
   const [lens, setLens] = useState<Lens>(meta.lens === 'session' ? 'session' : 'git')
@@ -278,7 +278,6 @@ export function ChangesTab({ ctx, store, scope, tab, visible, onOpenFile, onOpen
         <GitLens
           ctx={ctx}
           scope={scope}
-          store={store}
           visible={visible}
           active={lens === 'git'}
           onOpenFile={onOpenFile ?? (() => { /* no-op */ })}

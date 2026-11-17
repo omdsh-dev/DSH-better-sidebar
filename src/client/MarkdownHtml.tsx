@@ -88,10 +88,32 @@ function postProcessSanitized(root: Element, media: MarkdownHtmlMedia): void {
   }
 }
 
+/**
+ * Rewrite authored `file:` media URLs before DOMPurify sees them. The
+ * sanitizer's URI allowlist drops a raw `file:` scheme (it is not a browser
+ * subresource the GUI can load), so a raw-HTML `<img src="file:///…">` would
+ * lose its src entirely. The file URL is a local path in another spelling:
+ * map it through the same media route as a relative src first, then sanitize
+ * the resulting http URL. Sources without a file URL are returned untouched.
+ */
+function rewriteFileUrlMedia(source: string, media: MarkdownHtmlMedia): string {
+  if (!/file:/i.test(source)) return source
+  const template = document.createElement('template')
+  template.innerHTML = source
+  for (const element of template.content.querySelectorAll('img, video, audio, source')) {
+    for (const attribute of ['src', 'poster']) {
+      const value = element.getAttribute(attribute)
+      if (value === null || !/^file:/i.test(value.trim())) continue
+      element.setAttribute(attribute, resolveLocalMediaDest(value, media.scope, media.path, media.baseUrl))
+    }
+  }
+  return template.innerHTML
+}
+
 /** Sanitize one balanced HTML span into markup for dangerouslySetInnerHTML. */
 function sanitizeHtmlBlock(source: string, media: MarkdownHtmlMedia): string {
   const holder = document.createElement('div')
-  holder.innerHTML = DOMPurify.sanitize(source, {
+  holder.innerHTML = DOMPurify.sanitize(rewriteFileUrlMedia(source, media), {
     FORBID_TAGS: PURIFY_FORBID_TAGS,
     FORBID_ATTR: PURIFY_FORBID_ATTR,
   })
@@ -108,7 +130,7 @@ function sanitizeHtmlBlock(source: string, media: MarkdownHtmlMedia): string {
  */
 function sanitizeInlineHtml(text: string, media: MarkdownHtmlMedia): string | null {
   const holder = document.createElement('span')
-  holder.innerHTML = DOMPurify.sanitize(text, {
+  holder.innerHTML = DOMPurify.sanitize(rewriteFileUrlMedia(text, media), {
     FORBID_TAGS: PURIFY_FORBID_TAGS,
     FORBID_ATTR: PURIFY_FORBID_ATTR,
   })

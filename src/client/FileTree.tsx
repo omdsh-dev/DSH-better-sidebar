@@ -60,7 +60,6 @@ import { FS_TREES_MAX_PATHS } from '../fs-batch.ts'
 import { builtinFileIcon, builtinFolderIcon } from './file-icons.tsx'
 import { IconUploadOutline16, IconVscode16 } from './icons.tsx'
 import { isLikelyImeKey } from './ime-guard.ts'
-import { useSubmenuFlip } from './menu-flip.ts'
 import type { OpenInApp, OpenInAppEntry } from './open-in-app.ts'
 import type { OpenWithTarget } from './open-with.ts'
 import { relativeTo } from './paths.ts'
@@ -422,7 +421,7 @@ const DirRow = memo(function DirRow(props: DirRowProps): ReactNode {
   // the user sees expanded (`a/b/c`), so dropping into it, renaming it or
   // opening a menu on it must address `c`, not the fold head `a`.
   const target = chain[chain.length - 1]!
-  const icon = service !== undefined ? service.folderIcon(target.path, expanded, 14) : builtinFolderIcon(expanded, 14)
+  const icon = service !== undefined ? service.folderIcon(target.path, expanded, 14) : builtinFolderIcon(14)
   return (
     <div
       role="button"
@@ -500,7 +499,7 @@ interface RootRowProps {
 const RootRow = memo(function RootRow(props: RootRowProps): ReactNode {
   const { path, iconsVersion, service, dropTarget, gitChanged, copied, actions } = props
   void iconsVersion
-  const icon = service !== undefined ? service.folderIcon(path, true, 14) : builtinFolderIcon(true, 14)
+  const icon = service !== undefined ? service.folderIcon(path, true, 14) : builtinFolderIcon(14)
   return (
     <div
       className={clsx(css.explorerRow, dropTarget && css.explorerRowDropTarget)}
@@ -694,7 +693,7 @@ export function FileTree(props: {
   /** One directory's leading glyph for the surfaces WITHOUT a memoized row
    *  (the inline rename and new-folder editors). */
   const dirRowIcon = (path: string, open: boolean): ReactNode =>
-    service !== undefined ? service.folderIcon(path, open, 14) : builtinFolderIcon(open, 14)
+    service !== undefined ? service.folderIcon(path, open, 14) : builtinFolderIcon(14)
   const dataRef = useRef(data)
   /** Bumped whenever the cache is wiped: a response from an older generation is dropped. */
   const generationRef = useRef(0)
@@ -704,7 +703,6 @@ export function FileTree(props: {
   const [rowMenu, setRowMenu] = useState<{ path: string; isDir: boolean; x: number; y: number } | null>(null)
   // The plugin submenu can tower past the viewport; publish its flip geometry
   // for layout.css while the row menu is open.
-  useSubmenuFlip(rowMenu)
   /** The open-in-app rows for the open menu (null entries = listing failed). */
   const [apps, setApps] = useState<{ path: string; entries: readonly OpenInAppEntry[] | null } | null>(null)
   /** The row being renamed inline: its path plus the edit buffer. */
@@ -2603,7 +2601,7 @@ export function FileTree(props: {
         portal
         compact
         align="start"
-        getAnchorRect={() => (rowMenu === null ? null : new DOMRect(rowMenu.x, rowMenu.y, 0, 0))}
+        anchorPoint={rowMenu === null ? undefined : { x: rowMenu.x, y: rowMenu.y }}
         anchor={<span />}
       />
 

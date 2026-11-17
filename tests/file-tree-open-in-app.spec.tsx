@@ -186,7 +186,7 @@ async function openSubmenu(): Promise<void> {
 }
 
 function submenuRows(): HTMLElement[] {
-  return [...document.querySelectorAll<HTMLElement>('[role="menu"] [role="menu"] [role="menuitem"]')]
+  return [...document.querySelectorAll<HTMLElement>('[role="menu"][data-submenu-layout] [role="menuitem"]')]
 }
 
 function submenuLabels(): string[] {
