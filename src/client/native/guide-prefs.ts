@@ -27,11 +27,11 @@ export function saveGuideOrder(store: SidebarStore, order: readonly string[]): v
 
 /** Persist one card's start-page visibility. */
 export function setGuideEntryHidden(store: SidebarStore, key: string, hidden: boolean): void {
-  const current = store.getPrefs().guideHidden
-  const next = { ...current }
-  if (hidden) next[key] = true
-  else delete next[key]
-  writeGuidePrefs(store, { guideHidden: next })
+  // The host deep-merges nested plain objects, so deleting the key from the
+  // patch cannot express "shown": the stored true would survive the merge.
+  // Send the explicit boolean for the touched key instead. Every reader asks
+  // `guideHidden[key] === true`, so the stored false already reads as shown.
+  writeGuidePrefs(store, { guideHidden: { [key]: hidden } })
 }
 
 /** Persist one Better Sidebar type's feature switch (the sidebar-content state). */
