@@ -872,6 +872,22 @@ export function TextEditor(props: FileViewerProps) {
   }
 
   /**
+   * Reveal the find panel. Shared by the viewer's own toolbar button and the
+   * `search` command the host header calls (issue #1214): the panel lives in
+   * the CodeMirror surface, so a preview flips to edit first — the editor
+   * instance is already mounted (hidden) there, which is what makes the panel
+   * reachable in the same click. A later click in edit re-issues the same
+   * `setMode`, which React bails out of.
+   */
+  const search = (): void => {
+    if (mode === 'preview' && (markdown || html || jsonl)) setMode('edit')
+    const view = viewRef.current
+    if (view === null) return
+    view.focus()
+    openSearchPanel(view)
+  }
+
+  /**
    * The conflict banner's "Reload from disk". A reload whose bytes equal the
    * ones the save baseline was taken from carries no content change — only a
    * new mtime — so it is resolved IN PLACE: adopt the fresh baseline and keep
@@ -1048,9 +1064,10 @@ export function TextEditor(props: FileViewerProps) {
   })
   useEffect(() => {
     if (!hostToolbar) return
-    // `save` reads live refs only, and `setMode` is the stable state setter —
+    // `save` reads live refs only, `setMode` is the stable state setter, and
+    // `search` re-issuing its preview→edit hop is a no-op once in edit —
     // registering this render's closures is safe for the mount's lifetime.
-    props.onToolbarControls?.({ setMode, save })
+    props.onToolbarControls?.({ setMode, save, search })
     return () => { props.onToolbarControls?.(null) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hostToolbar])
@@ -1100,16 +1117,7 @@ export function TextEditor(props: FileViewerProps) {
             className={css.iconButton}
             aria-label={t('searchFind')}
             title={`${t('searchFind')} (Ctrl/Cmd+F)`}
-            onClick={() => {
-              // The panel lives in the CodeMirror surface: in preview mode the
-              // editor is hidden, so switch to edit first (the search panel is
-              // not part of the preview).
-              if (mode === 'preview' && (markdown || html || jsonl)) setMode('edit')
-              const view = viewRef.current
-              if (view === null) return
-              view.focus()
-              openSearchPanel(view)
-            }}
+            onClick={search}
           >
             <IconSearchOutlineRegular size={16} />
           </button>

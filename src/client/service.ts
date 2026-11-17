@@ -409,6 +409,13 @@ export interface EditorToolbarState {
 export interface EditorToolbarControls {
   setMode(mode: 'preview' | 'edit'): void
   save(): void
+  /**
+   * Open the viewer's find panel (the header's magnifier). OPTIONAL: a viewer
+   * with no find surface omits it, and the host renders no find button. The
+   * built-in text editor flips a markdown/html/jsonl preview to edit first,
+   * because the panel lives in the CodeMirror surface (issue #1214).
+   */
+  search?(): void
 }
 
 /** Describes one file previewer (builtins register themselves too). */

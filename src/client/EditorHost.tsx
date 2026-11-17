@@ -25,7 +25,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { createElement } from 'react'
 import clsx from 'clsx'
-import { Button, IconCheckOutlineRegular, IconFolderOpenRegular, IconRefreshOutlineRegular, writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconCheckOutlineRegular, IconFolderOpenRegular, IconRefreshOutlineRegular, IconSearchOutlineRegular, writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context } from '../context-types.ts'
 import { api, mediaUrl, SidebarApiError, type SessionScope } from './api.ts'
 import { BinaryDownload } from './binary-download.tsx'
@@ -850,6 +850,17 @@ export function EditorHost(props: {
           </div>
         )}
         {toolbar?.dirty === true && <span className={css.dirtyDot} title={t('unsaved')} />}
+        {toolbar?.editable === true && toolbar?.largeFile !== true && controlsRef.current?.search !== undefined && (
+          <button
+            type="button"
+            className={css.iconButton}
+            aria-label={t('searchFind')}
+            title={`${t('searchFind')} (Ctrl/Cmd+F)`}
+            onClick={() => { controlsRef.current?.search?.() }}
+          >
+            <IconSearchOutlineRegular size={14} />
+          </button>
+        )}
         {toolbar?.editable === true && toolbar?.largeFile !== true && (
           <button
             type="button"

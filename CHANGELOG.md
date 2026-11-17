@@ -4,6 +4,9 @@
 
 ### 未发布
 
+- 🔍 **宿主接管页头时也有「查找」入口了**（[#1214](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1214)）：v0.32.1 给编辑器自带工具条加的查找按钮，在侧栏真实的合并式页头（`EditorHost` 以 `toolbar: 'host'` 接管）下整行不渲染，markdown / html / jsonl 预览态更是没有任何查找入口，只剩可能被第三方插件全局截获的 Cmd/Ctrl+F。现在内置编辑器把查找命令注册给宿主页头：文件可编辑时页头显示查找按钮，点击与自带工具条按钮走同一套逻辑——预览态先切到编辑，再打开 CodeMirror 的查找面板（含替换行）。没有查找面的 viewer 不注册该命令，页头也就不显示按钮。
+  - 🧪 测试：`tests/editor-host.spec.tsx` 用真实 `TextEditor` 走「页头查找按钮 → 搜索面板打开 + markdown 预览切编辑」；`tests/editor-find.spec.tsx` 增加 host 模式命令测试。
+
 - 🎯 **侧边对话「回到最新」胶囊不再塌成细条、端部恢复正圆**（[#1208](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1208)）：胶囊所在的 `.sidechatToLatestSlot` 是 `height: 0` 的绝对定位 flex 槽位（抄宿主 `ui-chat` 的 `.toBottomSlot` 配方），但子项没有尺寸约束——默认 `align-items: stretch` 会在零高容器里把它拉到 0 高，内容高度被丢掉，只剩 `padding + border` 的 10px，文字于是溢出到胶囊外。宿主自己的 `.toBottom` 靠显式 `34px` 高度绕开了同一个坑，这里改用 `align-items: flex-end` + `flex: none` 让胶囊保持自身内容高度（30px）。同时补上 `corner-shape: round`：宿主 `corner-shape.css` 对 `*` 施加 `superellipse(1.5)`，会把 `border-radius: 999px` 的胶囊端部削平，宿主的全圆元素都成对声明退出该效果，本插件此前漏了这条。该按钮在 v0.31.0 引入，v0.31.0–v0.32.1 均受影响。
   - 🧪 真实宿主 + Chromium 挂载冒烟确认侧边对话渲染无回归；修复前后在 Chrome 157 用宿主真实 token 样式表做过 A/B 对照（高度 10px→30px、文字溢出 true→false、`corner-shape` 恢复 `superellipse(1)`）。
 

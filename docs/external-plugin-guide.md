@@ -554,11 +554,13 @@ interface FileViewerProps {
   toolbar?: 'self' | 'host'
   visible?: boolean        // 本 tab 是否在屏（原生 tab 停驻时仍挂载）
   onToolbarState?: (state: EditorToolbarState) => void
-  onToolbarControls?: (controls: EditorToolbarControls | null) => void
+  onToolbarControls?: (controls: EditorToolbarControls | null) => void  // { setMode, save, search? }
   onReload?: () => void    // 从磁盘重新加载（保存冲突横幅的按钮回调）
 }
 ```
 
+> **页头查找（#1214）**：当 viewer 以 `toolbar: 'host'` 运行（本插件的合并式编辑器页头），查找按钮由宿主页头渲染，而命令来自 viewer 注册的 `EditorToolbarControls.search`。**不注册 `search` 就没有查找按钮**，第三方 viewer 无需改动。内置文本编辑器的 `search()` 与自带工具条的查找按钮同一套逻辑：markdown / html / jsonl 在预览态会先切到编辑，再打开 CodeMirror 的查找面板（含替换行）；纯代码文件直接打开。
+>
 > **超大文件（v0.26.0 起，`truncated` 已被取代）**：文件超过编辑上限（5 MiB，见 `src/editor-limits.ts` 的 `MAX_EDITABLE_BYTES`）时，`fs.read` 不再回一份被截断的文档，而是 `{ kind: 'too-large', size, mtimeMs, head }` —— **不带 `content`**。宿主把这个结果交给命中的 viewer 时，`content` 缺席、`largeFile: { size }` 到位（见 `planFsReadOutcome`）。内置的文本 viewer 据此渲染只读分页预览（`LargeFileView`），并提供下载出口；**你的 viewer 必须容忍 `content === undefined`**：要么自己处理 `largeFile`（分页预览 / 提示），要么把状态回给 `onToolbarState` 让宿主收起保存按钮。旧的 `truncated` 布尔字段与 `EditorToolbarState.truncated` 都已删除——「拿到半份文档但看起来能编辑」这个状态本身没有了，这正是它被删掉的原因（#732：保存半份文档会毁掉文件尾部）。
 >
 > **分页读取**：`fs.readPage({ sessionId, cwd?, path, offset })` 按字节窗口返回一页文本（宿主按行对齐，并在同一个文件内锁定宽字符编码），返回 `{ kind:'text', text, offset, nextOffset, eof, size, mtimeMs, encoding }`。消费方式就是**只向前追加**：把每页的 `text` 接到一起，下一次请求用上一页的 `nextOffset` 作为 `offset`，直到 `eof`。因此**必须串行**（下一页的偏移就是上一页的响应），也**不能跳到末尾**——随机访问需要打开时先扫全文件建索引，而那正是分页要避免的开销。内置预览在这之上加了两个策略：滚到底自动追加下一页，以及一条按**渲染行数**设的上限（`LargeFileView` 的 `MAX_PREVIEW_ROWS`），到顶后停止追加并提示下载。
