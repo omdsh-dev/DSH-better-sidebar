@@ -30,7 +30,7 @@ import { registerQuoteSource } from './selection-quote.ts'
 import { IconSideCardNav } from './icons.tsx'
 import { registerChatMarkdownMentions } from './chat-mentions.ts'
 import type { SettingsSectionIconOwnerProps } from '@deepseek-ai/dsh-client-ui-settings/client'
-import { loadBootDecision } from './prefs.ts'
+import { awaitBootDecision, type BootDecision } from './prefs.ts'
 import { SideCardSection } from './SideCardSection.tsx'
 import { api } from './api.ts'
 import { LOCALE_NS, attachLocale, attachBetterLocale, t, zh, en } from './locales.ts'
@@ -252,6 +252,13 @@ export function apply(ctx: Context): void {
     void revalidateChunksOnReactivate()
     ctx.effect(() => {
       let disposed = false
+      // Settings updates can start a sync while an earlier one is still in
+      // flight. Every sync gets a newer generation, and an answer may only
+      // apply when it is not older than the last applied one: the boot
+      // read's late continuation must never overwrite a decision a later
+      // settings update already adopted.
+      let syncGeneration = 0
+      let appliedGeneration = 0
       let root: Root | undefined
       let host: HTMLDivElement | undefined
       let mounted = false
@@ -370,23 +377,33 @@ export function apply(ctx: Context): void {
         // from ONE settings fetch BEFORE the first session seeds, so a
         // brand-new conversation opens (or stays closed) at the chosen width
         // from first paint. A settings route failure falls back to the schema
-        // defaults; the sidebar still mounts (a stalled wire gives up after
-        // the timeout and mounts on the defaults — the external-disable check
-        // rides the same fetch, so one round trip covers both decisions).
-        const decision = await Promise.race([
-          loadBootDecision(api),
-          new Promise<null>(resolve => { window.setTimeout(() => resolve(null), 2000) }),
-        ])
-        if (disposed) return
-        if (decision !== null) {
+        // defaults. A stalled wire gives up after the first-paint budget and
+        // mounts on the defaults, but the SAME read's eventual answer is
+        // still adopted — a late answer must not strand the store on its
+        // defaults (#1159). The external-disable check rides the same fetch,
+        // so one round trip covers both decisions.
+        const generation = ++syncGeneration
+        const apply = (decision: BootDecision): void => {
+          if (disposed || generation < appliedGeneration) return
+          appliedGeneration = generation
           sidebarStore.setPrefs(decision.prefs)
           // Mutual exclusion with the dsh-web-ui family right panel: while the
           // aionui-panel provider is selected, the sidebar must not mount at
           // all. Re-evaluated on every settings-document update (live switch).
           sidebarStore.setSuspended(decision.suspended)
+          if (decision.suspended) unmount()
+          else mount()
         }
-        if (decision?.suspended) unmount()
-        else mount()
+        const decision = await awaitBootDecision(api, apply)
+        if (disposed) return
+        if (decision !== null) {
+          apply(decision)
+          return
+        }
+        // First paint on the defaults. A late answer may already have applied
+        // (its continuation can win the microtask race), and a newer sync's
+        // answer may have too — both already chose mounted / unmounted.
+        if (generation > appliedGeneration) mount()
       }
       // setPrefs and mount() run inside sync(); a rejection there would leave
       // the sidebar unmounted with a dead toggle as its only symptom.

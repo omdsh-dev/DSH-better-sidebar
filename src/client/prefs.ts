@@ -263,3 +263,46 @@ export async function loadBootDecision(settings: SidebarSettingsClient): Promise
     return { prefs: { ...SIDEBAR_PREFS_DEFAULTS }, suspended: false }
   }
 }
+
+/** The first-paint budget for the boot settings read. A cold start or a slow
+ *  host / LAN can push the route past this; the sidebar still mounts on the
+ *  defaults, and {@link awaitBootDecision} adopts the eventual answer. */
+const BOOT_DECISION_TIMEOUT_MS = 2000
+
+/**
+ * Resolve the boot decision within `timeoutMs`, and when the settings route
+ * misses that budget, keep watching the SAME read so its answer is still
+ * applied late. A timed-out boot must not strand the store on its defaults
+ * forever: the store's own `settings/document-updated` path fires on a
+ * DOCUMENT change, not on a late read, so a disabled third-party tab type
+ * would otherwise stay registered until the user toggled it (#1159).
+ *
+ * `loadBootDecision` never rejects (it falls back to the schema defaults), so
+ * only the late-resolving case needs a continuation. `onLate` runs at most
+ * once, and only when the timeout won the race — never after an in-time
+ * answer. The caller still owns its liveness / supersession checks (a
+ * disposed fiber, or a newer settings update that already applied).
+ * @param settings - the settings wire face (the plugin api by default).
+ * @param onLate - receives the answer that landed after the timeout.
+ * @param timeoutMs - the first-paint budget in milliseconds.
+ * @returns the in-time decision, or null when the timeout won the race.
+ */
+export async function awaitBootDecision(
+  settings: SidebarSettingsClient,
+  onLate: (decision: BootDecision) => void,
+  timeoutMs: number = BOOT_DECISION_TIMEOUT_MS,
+): Promise<BootDecision | null> {
+  const read = loadBootDecision(settings)
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<null>((resolve) => {
+    timer = setTimeout(() => resolve(null), timeoutMs)
+  })
+  const decision = await Promise.race([read, timeout])
+  clearTimeout(timer)
+  if (decision !== null) return decision
+  // The budget expired: the caller mounts on the defaults now, and this
+  // continuation adopts the same read's answer when it lands. No catch —
+  // loadBootDecision cannot reject.
+  void read.then(onLate)
+  return null
+}
