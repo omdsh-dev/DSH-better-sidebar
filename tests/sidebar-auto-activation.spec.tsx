@@ -131,12 +131,15 @@ interface NativeColumnSpy {
   face: {
     isExpanded: () => boolean
     toggleExpanded: () => void
-    active: () => { kind: string } | undefined
+    active: () => { id: string; kind: string } | undefined
+    commandTarget: (element?: Element | null) => { sessionId: string; host: 'dock'; tabId: string }
+    isTargetCurrent: (target: { sessionId: string }) => boolean
     mounted: MountedStore
   }
   toggles: number
   expanded: boolean
   activeKind: string | undefined
+  floating: boolean
   mounted: MountedStore
 }
 
@@ -156,6 +159,7 @@ function makeNativeColumnSpy(
     toggles: 0,
     expanded,
     activeKind,
+    floating: false,
     mounted: makeMountedStore(mounted),
     face: {} as NativeColumnSpy['face'],
   }
@@ -165,7 +169,9 @@ function makeNativeColumnSpy(
       spy.toggles += 1
       spy.expanded = !spy.expanded
     },
-    active: () => (spy.activeKind === undefined ? undefined : { kind: spy.activeKind }),
+    active: () => (spy.activeKind === undefined ? undefined : { id: 'tasks-tab', kind: spy.activeKind }),
+    commandTarget: () => ({ sessionId: spy.mounted.getSnapshot() ?? '', host: 'dock', tabId: 'tasks-tab' }),
+    isTargetCurrent: target => !spy.floating && target.sessionId === spy.mounted.getSnapshot(),
     mounted: spy.mounted,
   }
   return spy
@@ -763,6 +769,36 @@ describe('opt-in auto-collapse after background activity settles', () => {
     await publishActivity(sidebar, 'job')
     await settleActivity(sidebar, 'job')
     sidebar.column.activeKind = 'editor'
+    act(() => { vi.advanceTimersByTime(3000) })
+    expect(sidebar.column.expanded).toBe(true)
+    expect(sidebar.column.toggles).toBe(0)
+  })
+
+  it('keeps the idle deadline through unrelated session and job pushes', async () => {
+    const sidebar = mountSidebar(1280, false, { prefs: { autoCollapseAfterIdle: true } })
+    await publishActivity(sidebar, 'job')
+    await settleActivity(sidebar, 'job')
+    for (let tick = 0; tick < 2; tick += 1) {
+      act(() => { vi.advanceTimersByTime(1000) })
+      act(() => {
+        const before = sidebar.feed.getSnapshot()
+        sidebar.feed.set({ ...before, byId: { ...before.byId } })
+        sidebar.jobs.publish('unrelated-session', [])
+      })
+      await flushFeeds()
+    }
+    act(() => { vi.advanceTimersByTime(1000) })
+    expect(sidebar.column.expanded).toBe(false)
+    expect(sidebar.column.toggles).toBe(1)
+  })
+
+  it('leaves the dock expanded after its Tasks page is floated', async () => {
+    const sidebar = mountSidebar(1280, false, { prefs: { autoCollapseAfterIdle: true } })
+    await publishActivity(sidebar, 'job')
+    await settleActivity(sidebar, 'job')
+    // active() still names the floating Tasks page; the captured dock target
+    // has lost that occurrence, so folding the dock would hide another page.
+    sidebar.column.floating = true
     act(() => { vi.advanceTimersByTime(3000) })
     expect(sidebar.column.expanded).toBe(true)
     expect(sidebar.column.toggles).toBe(0)
