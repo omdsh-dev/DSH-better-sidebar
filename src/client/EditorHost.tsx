@@ -27,6 +27,7 @@ import { createElement } from 'react'
 import clsx from 'clsx'
 import { Button, IconCheckOutlineRegular, IconFolderOpenRegular, IconRefreshOutlineRegular, IconSearchOutlineRegular, writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context } from '../context-types.ts'
+import type { EditLimitReason } from '../editor-limits.ts'
 import { api, mediaUrl, SidebarApiError, type SessionScope } from './api.ts'
 import { BinaryDownload } from './binary-download.tsx'
 import { isDirectoryReadError, planFirstMatch, planFsReadOutcome, type EditorLoadAction } from './editor-load.ts'
@@ -79,7 +80,7 @@ interface LineNav { key: string; nonce: number | null; end?: number }
 type EditorLoad =
   | { status: 'loading' }
   | { status: 'error'; message: string; fileNotFound?: boolean; windowsAbsolutePath?: boolean; repairStatus?: 'searching' | 'done'; repairMatches?: string[]; repairError?: string }
-  | { status: 'ready'; viewer: FileViewerDescriptor; content?: string; size?: number; largeFile?: { size: number }; mtimeMs?: number; mediaUrl?: string; customData?: unknown }
+  | { status: 'ready'; viewer: FileViewerDescriptor; content?: string; size?: number; largeFile?: { size: number; reason?: EditLimitReason }; mtimeMs?: number; mediaUrl?: string; customData?: unknown }
   | { status: 'binary' }
 
 /** The docked tree panel's width bounds (drag-resize clamps into them). */

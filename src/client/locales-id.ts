@@ -175,6 +175,7 @@ export const id: Record<string, string> = {
   saveConflict: 'File diubah di disk oleh sumber lain. Penyimpanan dihentikan; edit Anda tetap ada di editor.',
   saveConflictReload: 'Muat ulang dari disk',
   previewOnlyNotice: 'Berkas terlalu besar ({size}) — hanya pratinjau berhalaman; dapat diedit hingga {limit}',
+   previewLongLineNotice: 'Berkas memiliki baris yang sangat panjang ({size}) — hanya pratinjau berhalaman',
   largeFileEmpty: '(berkas kosong)',
   pagedLineRange: 'Baris {from}–{to}',
   loadAll: 'Muat semua',

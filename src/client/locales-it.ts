@@ -168,6 +168,7 @@ export const it: Record<string, string> = {
   saveConflict: 'Il file è stato modificato su disco da un\'altra origine. Salvataggio annullato; le modifiche restano nell\'editor.',
   saveConflictReload: 'Ricarica dal disco',
   previewOnlyNotice: 'File troppo grande ({size}) — solo anteprima paginata; modificabile fino a {limit}',
+   previewLongLineNotice: 'Il file contiene una riga molto lunga ({size}) — solo anteprima paginata',
   largeFileEmpty: '(file vuoto)',
   pagedLineRange: 'Righe {from}–{to}',
   loadAll: 'Carica tutto',

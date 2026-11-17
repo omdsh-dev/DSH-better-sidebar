@@ -160,6 +160,7 @@ export const sv: Record<string, string> = {
   saveConflict: 'Filen ändrades på disken av någon annan. Sparandet avbröts; dina ändringar finns kvar i redigeraren.',
   saveConflictReload: 'Ladda om från disken',
   previewOnlyNotice: 'Filen är för stor ({size}) — endast sidindelad förhandsvisning; redigerbar upp till {limit}',
+   previewLongLineNotice: 'Filen innehåller en mycket lång rad ({size}) — endast sidindelad förhandsvisning',
   largeFileEmpty: '(tom fil)',
   pagedLineRange: 'Rader {from}–{to}',
   loadAll: 'Ladda allt',

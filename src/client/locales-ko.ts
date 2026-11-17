@@ -169,6 +169,7 @@ export const ko: Record<string, string> = {
   saveConflict: '파일이 디스크에서 다른 곳에 의해 변경되었습니다. 저장이 중단되었고 편집 내용은 그대로 남아 있습니다.',
   saveConflictReload: '디스크에서 다시 불러오기',
   previewOnlyNotice: '파일이 너무 큽니다({size}) — 페이지 단위 미리보기만 제공되며 {limit} 이내는 편집할 수 있습니다',
+   previewLongLineNotice: '파일에 매우 긴 줄이 있습니다({size}) — 페이지 단위 미리보기만 제공됩니다',
   largeFileEmpty: '(빈 파일)',
   pagedLineRange: '{from}–{to}번째 줄',
   loadAll: '모두 불러오기',

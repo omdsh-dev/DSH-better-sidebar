@@ -177,6 +177,7 @@ export const hi: Record<string, string> = {
   saveConflict: 'फ़ाइल डिस्क पर किसी अन्य स्रोत से बदल दी गई है। सहेजना रोक दिया गया; आपके संपादन एडिटर में बने हुए हैं।',
   saveConflictReload: 'डिस्क से फिर लोड करें',
   previewOnlyNotice: 'फ़ाइल बहुत बड़ी है ({size}) — केवल पेजित पूर्वावलोकन; {limit} तक संपादन संभव',
+   previewLongLineNotice: 'फ़ाइल में एक बहुत लंबी पंक्ति है ({size}) — केवल पेजित पूर्वावलोकन',
   largeFileEmpty: '(खाली फ़ाइल)',
   pagedLineRange: 'पंक्तियाँ {from}–{to}',
   loadAll: 'सभी लोड करें',

@@ -177,6 +177,7 @@ export const ja: Record<string, string> = {
   saveConflict: 'ファイルはディスク上で他によって変更されています。保存を中止しました。編集内容はそのまま残っています。',
   saveConflictReload: 'ディスクの内容を再読み込み',
   previewOnlyNotice: 'ファイルが大きすぎます（{size}）— ページ分割プレビューのみ、{limit} 以内は編集可能',
+   previewLongLineNotice: 'ファイルに非常に長い行があります（{size}） — ページ分割プレビューのみ',
   largeFileEmpty: '（空のファイル）',
   pagedLineRange: '{from}–{to} 行',
   loadAll: 'すべて読み込む',

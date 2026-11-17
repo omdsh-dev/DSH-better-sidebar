@@ -170,6 +170,7 @@ export const fr: Record<string, string> = {
   saveConflict: 'Le fichier a été modifié sur le disque par une autre source. Enregistrement interrompu ; vos modifications restent dans l\'éditeur.',
   saveConflictReload: 'Recharger depuis le disque',
   previewOnlyNotice: 'Fichier trop volumineux ({size}) — aperçu paginé uniquement ; modifiable jusqu’à {limit}',
+   previewLongLineNotice: 'Le fichier contient une ligne très longue ({size}) — aperçu paginé uniquement',
   largeFileEmpty: '(fichier vide)',
   pagedLineRange: 'Lignes {from}–{to}',
   loadAll: 'Tout charger',

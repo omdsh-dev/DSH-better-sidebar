@@ -179,6 +179,7 @@ export const pl: Record<string, string> = {
   saveConflict: 'Plik został zmieniony na dysku przez inne źródło. Zapis przerwany; zmiany pozostają w edytorze.',
   saveConflictReload: 'Wczytaj ponownie z dysku',
   previewOnlyNotice: 'Plik jest zbyt duży ({size}) — tylko podgląd stronicowany; edycja do {limit}',
+   previewLongLineNotice: 'Plik zawiera bardzo długi wiersz ({size}) — tylko podgląd stronicowany',
   largeFileEmpty: '(pusty plik)',
   pagedLineRange: 'Wiersze {from}–{to}',
   loadAll: 'Wczytaj wszystko',

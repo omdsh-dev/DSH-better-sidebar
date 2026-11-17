@@ -178,6 +178,7 @@ export const ar: Record<string, string> = {
   saveConflict: 'تم تغيير الملف على القرص من مصدر آخر. تم إيقاف الحفظ، وتعديلاتك ما زالت في المحرر.',
   saveConflictReload: 'إعادة التحميل من القرص',
   previewOnlyNotice: 'الملف كبير جداً ({size}) — معاينة مقسّمة إلى صفحات فقط؛ التحرير متاح حتى {limit}',
+   previewLongLineNotice: 'يحتوي الملف على سطر طويل جداً ({size}) — معاينة مقسّمة إلى صفحات فقط',
   largeFileEmpty: '(ملف فارغ)',
   pagedLineRange: 'الأسطر {from}–{to}',
   loadAll: 'تحميل الكل',

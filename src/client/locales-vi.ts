@@ -177,6 +177,7 @@ export const vi: Record<string, string> = {
   saveConflict: 'Tệp đã bị nguồn khác sửa trên đĩa. Đã hủy lưu; chỉnh sửa của bạn vẫn còn trong trình soạn thảo.',
   saveConflictReload: 'Tải lại từ đĩa',
   previewOnlyNotice: 'Tệp quá lớn ({size}) — chỉ xem trước theo trang; có thể chỉnh sửa trong {limit}',
+   previewLongLineNotice: 'Tệp có một dòng rất dài ({size}) — chỉ xem trước theo trang',
   largeFileEmpty: '(tệp trống)',
   pagedLineRange: 'Dòng {from}–{to}',
   loadAll: 'Tải tất cả',

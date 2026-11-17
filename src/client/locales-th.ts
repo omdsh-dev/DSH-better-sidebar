@@ -177,6 +177,7 @@ export const th: Record<string, string> = {
   saveConflict: 'ไฟล์ถูกแก้ไขบนดิสก์จากแหล่งอื่น การบันทึกถูกยกเลิก การแก้ไขของคุณยังอยู่ในเอดิเตอร์',
   saveConflictReload: 'โหลดใหม่จากดิสก์',
   previewOnlyNotice: 'ไฟล์ใหญ่เกินไป ({size}) — แสดงตัวอย่างแบบแบ่งหน้าเท่านั้น แก้ไขได้ไม่เกิน {limit}',
+   previewLongLineNotice: 'ไฟล์มีบรรทัดที่ยาวมาก ({size}) — แสดงตัวอย่างแบบแบ่งหน้าเท่านั้น',
   largeFileEmpty: '(ไฟล์ว่าง)',
   pagedLineRange: 'บรรทัด {from}–{to}',
   loadAll: 'โหลดทั้งหมด',

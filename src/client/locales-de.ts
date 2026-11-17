@@ -163,6 +163,7 @@ export const de: Record<string, string> = {
   saveConflict: 'Die Datei wurde auf der Platte von anderer Stelle geändert. Speichern abgebrochen; Ihre Änderungen bleiben im Editor.',
   saveConflictReload: 'Inhalt von der Platte neu laden',
   previewOnlyNotice: 'Datei zu groß ({size}) – nur seitenweise Vorschau; bis {limit} bearbeitbar',
+   previewLongLineNotice: 'Datei enthält eine sehr lange Zeile ({size}) – nur seitenweise Vorschau',
   largeFileEmpty: '(leere Datei)',
   pagedLineRange: 'Zeilen {from}–{to}',
   loadAll: 'Alle laden',

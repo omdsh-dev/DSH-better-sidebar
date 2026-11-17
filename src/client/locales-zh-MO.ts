@@ -192,6 +192,7 @@ export const zhMO: Record<string, string> = {
   saveConflict: '檔案已在磁碟上被其他來源修改。儲存已中止，你的編輯仍在編輯器中。',
   saveConflictReload: '重新載入磁碟內容',
   previewOnlyNotice: '檔案過大（{size}），僅提供分頁預覽；{limit} 以內可編輯',
+   previewLongLineNotice: '檔案含超長單行（{size}），僅提供分頁預覽',
   largeFileEmpty: '（空檔案）',
   pagedLineRange: '第 {from}–{to} 行',
   loadAll: '載入全部',

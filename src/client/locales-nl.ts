@@ -175,6 +175,7 @@ export const nl: Record<string, string> = {
   saveConflict: 'Het bestand is op schijf door iets anders gewijzigd. Opslaan afgebroken; je wijzigingen blijven in de editor.',
   saveConflictReload: 'Opnieuw laden vanaf schijf',
   previewOnlyNotice: 'Bestand te groot ({size}) — alleen gepagineerd voorbeeld; bewerkbaar tot {limit}',
+   previewLongLineNotice: 'Bestand bevat een zeer lange regel ({size}) — alleen gepagineerd voorbeeld',
   largeFileEmpty: '(leeg bestand)',
   pagedLineRange: 'Regels {from}–{to}',
   loadAll: 'Alles laden',

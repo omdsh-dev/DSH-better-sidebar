@@ -72,7 +72,7 @@ import {
 import { FS_TREES_MAX_PATHS } from './fs-batch.ts'
 import { activeWorktreeRootOf } from './active-worktree.ts'
 import { decodeTextAs, decodeTextBytes, isWideEncoding, lastLineBreakEnd, type TextEncoding } from './text-encoding.ts'
-import { MAX_EDITABLE_BYTES, PAGE_BYTES, WRITE_BODY_GUARD_BYTES } from './editor-limits.ts'
+import { hasOverlongLine, MAX_EDITABLE_BYTES, PAGE_BYTES, WRITE_BODY_GUARD_BYTES, type EditLimitReason } from './editor-limits.ts'
 
 export { Config }
 export type { SidebarConfig, ResolvedSidebarConfig }
@@ -505,7 +505,7 @@ async function statFileForRoute(path: string): Promise<Stats> {
 export type SidebarReadResult =
   | { kind: 'text'; content: string; size: number; mtimeMs: number }
   | { kind: 'binary'; size: number; mtimeMs: number; head: string }
-  | { kind: 'too-large'; size: number; mtimeMs: number; head: string }
+  | { kind: 'too-large'; size: number; mtimeMs: number; head: string; reason: EditLimitReason }
 
 /**
  * Read one file for the editor host.
@@ -515,10 +515,17 @@ export type SidebarReadResult =
  *
  * - at or below {@link MAX_EDITABLE_BYTES}: the whole document (or the binary
  *   verdict + a 4 KiB sniff head);
- * - above it: `too-large`, carrying only the 4 KiB head. The client answers it
- *   with the read-only paged preview, and the head still lets a `detect`-based
- *   third-party viewer claim the file — which is also what keeps the binary
- *   path (images, office documents) intact for a file of any size.
+ * - above it: `too-large` (reason `size`), carrying only the 4 KiB head;
+ * - at or below it, but with a line at or above `MAX_EDITABLE_LINE_CHARS` in
+ *   the document head: also `too-large`, with reason `line` (#1165). CodeMirror
+ *   virtualizes by line, so one line of a few hundred KB is laid out in one
+ *   frame and hangs the renderer — the explicit probe is what keeps such a
+ *   document out of the edit buffer even though it passes the byte limit.
+ *
+ * Every `too-large` carries only the 4 KiB head. The client answers it with
+ * the read-only paged preview, and the head still lets a `detect`-based
+ * third-party viewer claim the file — which is also what keeps the binary
+ * path (images, office documents) intact for a file of any size.
  *
  * There is no truncation outcome any more. The old capped read handed the
  * editor a partial document it could neither trust nor save (issue #732);
@@ -564,6 +571,23 @@ async function readText(path: string): Promise<SidebarReadResult> {
         size,
         mtimeMs: info.mtimeMs,
         head: slice.toString('base64'),
+        reason: 'size',
+      }
+    }
+    // The byte limit is not the only way a document is too much for the
+    // editor: one line of a few hundred KB hangs CodeMirror's per-line
+    // virtualization (#1165). The document is already decoded here, so the
+    // probe runs on the host — the client never scans the bytes, and no
+    // CodeMirror state is ever built for the file.
+    if (hasOverlongLine(decoded.content)) {
+      return {
+        kind: 'too-large',
+        size,
+        mtimeMs: info.mtimeMs,
+        // Sniff bytes only, never the document: the same `too-large`
+        // contract as the size branch above.
+        head: slice.subarray(0, Math.min(slice.length, READ_HEAD_LIMIT)).toString('base64'),
+        reason: 'line',
       }
     }
     return { kind: 'text', content: decoded.content, size, mtimeMs: info.mtimeMs }

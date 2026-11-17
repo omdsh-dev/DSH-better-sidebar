@@ -29,7 +29,7 @@ import clsx from 'clsx'
 import { IconRefreshOutlineRegular, JsonTree, type JsonTreeLabels } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SessionScope } from './api.ts'
 import { downloadUrl } from './api.ts'
-import { formatByteSize, MAX_EDITABLE_BYTES, MAX_EDITABLE_LABEL } from '../editor-limits.ts'
+import { formatByteSize, MAX_EDITABLE_BYTES, MAX_EDITABLE_LABEL, type EditLimitReason } from '../editor-limits.ts'
 import { isJsonlPath, isTreeRecord, parseRecord, summarizeRecord } from './jsonl.ts'
 import { splitLines, useTextPager } from './text-pages.ts'
 import { t } from './locales.ts'
@@ -75,6 +75,9 @@ function jsonLabels(): JsonTreeLabels {
  * @param props.scope - the session scope.
  * @param props.path - the file being previewed.
  * @param props.size - the file's size in bytes (from the read that refused it).
+ * @param props.reason - why the file stayed out of the edit buffer: the byte
+ *   limit (`size`, also the fallback when absent) or the long-line probe
+ *   (`line`, #1165). The notice names the actual limit.
  * @param props.visible - whether the tab is on screen; a parked tab stops reading.
  * @param props.revision - bumped by the host's refresh to restart from page one.
  * @param props.maxRows - row ceiling (defaults to {@link MAX_PREVIEW_ROWS}).
@@ -84,6 +87,7 @@ export function LargeFileView(props: {
   scope: SessionScope
   path: string
   size: number
+  reason?: EditLimitReason
   visible: boolean
   revision: number
   maxRows?: number
@@ -101,14 +105,15 @@ export function LargeFileView(props: {
   const labels = useMemo(() => jsonLabels(), [])
 
   /**
-   * Whether this file is over the EDITABLE threshold — a different question
-   * from "is this view paged".
+   * Whether this file is over an EDITABLE limit — the byte threshold, or the
+   * long-line probe (#1165) — a different question from "is this view paged".
    *
    * A small `.jsonl` opens straight into this record list as its PREVIEW, and
    * announcing "the file is too large, paged preview only" over a 2 KB file
-   * would be a lie. The threshold decides, not the component.
+   * would be a lie. The host's reason (or the byte threshold, for a caller
+   * that carries none) decides, not the component.
    */
-  const tooLarge = size > MAX_EDITABLE_BYTES
+  const overLimit = props.reason === 'line' || size > MAX_EDITABLE_BYTES
 
   const rows = useMemo(() => pager.pages.map(splitLines), [pager.pages])
   const totalRows = useMemo(() => rows.reduce((sum, page) => sum + page.length, 0), [rows])
@@ -151,9 +156,11 @@ export function LargeFileView(props: {
 
   return (
     <div className={css.largeFile}>
-      {tooLarge && (
+      {overLimit && (
         <div className={css.largeFileNotice}>
-          <span>{t('previewOnlyNotice', { size: formatByteSize(size), limit: MAX_EDITABLE_LABEL })}</span>
+          <span>{props.reason === 'line'
+            ? t('previewLongLineNotice', { size: formatByteSize(size) })
+            : t('previewOnlyNotice', { size: formatByteSize(size), limit: MAX_EDITABLE_LABEL })}</span>
           <button
             type="button"
             className={css.largeFileNoticeAction}

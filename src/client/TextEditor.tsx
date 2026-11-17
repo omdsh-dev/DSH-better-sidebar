@@ -1082,6 +1082,7 @@ export function TextEditor(props: FileViewerProps) {
         scope={scope}
         path={path}
         size={largeFile.size}
+        reason={largeFile.reason}
         visible={props.visible !== false}
         revision={props.mtimeMs ?? 0}
       />

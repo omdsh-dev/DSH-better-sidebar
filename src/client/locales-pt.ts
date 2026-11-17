@@ -160,6 +160,7 @@ export const pt: Record<string, string> = {
   saveConflict: 'O arquivo foi alterado no disco por outra origem. Salvamento cancelado; suas edições permanecem no editor.',
   saveConflictReload: 'Recarregar do disco',
   previewOnlyNotice: 'Arquivo muito grande ({size}) — apenas pré-visualização paginada; editável até {limit}',
+   previewLongLineNotice: 'O arquivo contém uma linha muito longa ({size}) — apenas pré-visualização paginada',
   largeFileEmpty: '(arquivo vazio)',
   pagedLineRange: 'Linhas {from}–{to}',
   loadAll: 'Carregar tudo',

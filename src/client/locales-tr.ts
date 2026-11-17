@@ -177,6 +177,7 @@ export const tr: Record<string, string> = {
   saveConflict: 'Dosya diskte başka bir kaynak tarafından değiştirildi. Kaydetme durduruldu; düzenlemeleriniz düzenleyicide kaldı.',
   saveConflictReload: 'Diskten yeniden yükle',
   previewOnlyNotice: 'Dosya çok büyük ({size}) — yalnızca sayfalı önizleme; {limit} değerine kadar düzenlenebilir',
+   previewLongLineNotice: 'Dosyada çok uzun bir satır var ({size}) — yalnızca sayfalı önizleme',
   largeFileEmpty: '(boş dosya)',
   pagedLineRange: 'Satırlar {from}–{to}',
   loadAll: 'Tümünü yükle',

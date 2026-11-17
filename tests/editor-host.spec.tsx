@@ -819,7 +819,7 @@ describe('EditorHost (files window)', () => {
       return createElement('div', null, 'paged-preview')
     }
     service.registerFileViewer({ id: 'test:big', exts: ['big'], fetchStrategy: 'fsRead', component: FakeViewer })
-    fsRead.mockResolvedValueOnce({ kind: 'too-large', size, head: 'e30=' })
+    fsRead.mockResolvedValueOnce({ kind: 'too-large', size, head: 'e30=', reason: 'size' })
     service.openTab({ type: 'editor', title: 'big.big', path: '/tmp/big.big', id: 'editor:/tmp/big.big' })
     const fileTab = (): SidebarTab =>
       allLeaves(store.getSnapshot().state!.bottomSplits).flatMap(leaf => leaf.tabs)
@@ -832,7 +832,7 @@ describe('EditorHost (files window)', () => {
       })
       expect(container.textContent).toContain('paged-preview')
       expect(fsRead).toHaveBeenCalledWith(expect.anything(), '/tmp/big.big')
-      expect(seen?.largeFile).toEqual({ size })
+      expect(seen?.largeFile).toEqual({ size, reason: 'size' })
       expect(seen?.size).toBe(size)
       expect(seen?.content, 'the document is not handed over').toBeUndefined()
     } finally {

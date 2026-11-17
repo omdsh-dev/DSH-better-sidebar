@@ -31,6 +31,7 @@ import { hostRouteUrl as resolveHostRoute } from './host-route-url.ts'
 import { builtinFileIcon, builtinFolderIcon } from './file-icons.tsx'
 import type { SessionScope } from './api.ts'
 import type { SidebarPrefs } from '../prefs-shared.ts'
+import type { EditLimitReason } from '../editor-limits.ts'
 import { bindSidechatSurfaces, type SidechatSurfaceAdapter } from './sidechat-surface.ts'
 import { armLineEnd } from './line-target.ts'
 export type { SidechatSurface, SidechatSurfaceAdapter } from './sidechat-surface.ts'
@@ -358,11 +359,13 @@ export interface FileViewerProps {
   size?: number
   /**
    * Present when the host refused to hand the document over because the file
-   * exceeds the editable threshold. The viewer renders a read-only paged
-   * preview instead of an editor: CodeMirror has to hold the whole document in
-   * the browser, which is exactly what a file this size makes impossible.
+   * is above the editable threshold, or because one of its lines is too long
+   * for CodeMirror's per-line virtualization (#1165). The viewer renders a
+   * read-only paged preview instead of an editor: CodeMirror has to hold the
+   * whole document in the browser, which is exactly what a file this size —
+   * or this line — makes impossible. `reason` carries which limit was hit.
    */
-  largeFile?: { size: number }
+  largeFile?: { size: number; reason?: EditLimitReason }
   /** Last-modified time (ms) of the loaded bytes — the built-in text editor's
    *  save baseline (a file that changed on disk since refuses the write).
    *  Absent for viewers/loads that carry no baseline. */

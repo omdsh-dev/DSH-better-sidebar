@@ -173,6 +173,7 @@ export const ru: Record<string, string> = {
   saveConflict: 'Файл был изменён на диске другим источником. Сохранение прервано; ваши правки остались в редакторе.',
   saveConflictReload: 'Перезагрузить с диска',
   previewOnlyNotice: 'Файл слишком большой ({size}) — доступен только постраничный просмотр; редактирование до {limit}',
+   previewLongLineNotice: 'В файле есть очень длинная строка ({size}) — доступен только постраничный просмотр',
   largeFileEmpty: '(пустой файл)',
   pagedLineRange: 'Строки {from}–{to}',
   loadAll: 'Загрузить всё',

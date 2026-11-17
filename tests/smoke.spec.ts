@@ -1241,8 +1241,9 @@ describe('session cwd resolution over the API route', () => {
       expect(Buffer.byteLength(content, 'utf8')).toBeGreaterThan(5 * 1024 * 1024)
       writeFileSync(target, Buffer.from(content, 'utf8'))
       const result = await invoke(route, 'fs.read', { sessionId: 'readcap', path: target })
-      const value = result.value as { kind?: string; size?: number; content?: string; head?: string } | undefined
+      const value = result.value as { kind?: string; size?: number; content?: string; head?: string; reason?: string } | undefined
       expect(value?.kind).toBe('too-large')
+      expect(value?.reason).toBe('size')
       expect(value?.size).toBe(Buffer.byteLength(content, 'utf8'))
       // No document rides along — that is the point.
       expect(value?.content).toBeUndefined()
@@ -1250,6 +1251,30 @@ describe('session cwd resolution over the API route', () => {
       // whole number of characters (the reader takes a byte prefix, and the
       // paged route is what reassembles text).
       expect(typeof value?.head).toBe('string')
+      expect(Buffer.from(value!.head!, 'base64').length).toBe(4096)
+    } finally {
+      removeTree(root)
+    }
+  })
+
+  it('fs.read refuses a single-line document above the edit-buffer line limit (#1165)', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-fs-longline-'))
+    const workspace = join(root, 'workspace')
+    mkdirSync(workspace)
+    try {
+      const route = mount({ sessions: { get: () => ({ header: { cwd: workspace } }) } })
+      const target = join(workspace, 'minified.html')
+      // The reported shape: one 327 KB line, far below the 5 MiB byte cap.
+      // CodeMirror would lay that single line out in one frame and hang.
+      const content = '<html>' + 'x'.repeat(327 * 1024) + '</html>'
+      writeFileSync(target, content)
+      const result = await invoke(route, 'fs.read', { sessionId: 'longline', path: target })
+      const value = result.value as { kind?: string; size?: number; content?: string; head?: string; reason?: string } | undefined
+      expect(value?.kind).toBe('too-large')
+      expect(value?.reason).toBe('line')
+      expect(value?.content).toBeUndefined()
+      expect(value?.size).toBe(Buffer.byteLength(content, 'utf8'))
+      // Only the sniff head rides the refusal — never the document.
       expect(Buffer.from(value!.head!, 'base64').length).toBe(4096)
     } finally {
       removeTree(root)
