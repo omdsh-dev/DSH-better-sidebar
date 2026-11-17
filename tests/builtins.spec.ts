@@ -28,6 +28,7 @@ import { createSidebarStore } from '../src/client/state.ts'
 import { builtinTabs } from '../src/client/builtins/tabs.tsx'
 import { registerBuiltins } from '../src/client/builtins/index.ts'
 import { parkSidechatReopen } from '../src/client/SideChatView.tsx'
+import { terminalInstanceOf } from '../src/client/terminal-client.ts'
 
 function setup(): { service: ReturnType<typeof createBetterSidebarService>; store: ReturnType<typeof createSidebarStore>; dispose: () => void } {
   const store = createSidebarStore()
@@ -173,6 +174,36 @@ describe('built-in tab registrations', () => {
     expect(reopen?.tab.meta).toEqual({ threadId: 'session-t1' })
     expect(sidechat?.dedupeKey?.(reopen!.tab)).toBe('session-t1')
     expect(sidechat?.dedupeKey?.(first!.tab)).toBeUndefined()
+  })
+
+  it('mints Side Chat and terminal tab ids without crypto.randomUUID (#1166)', () => {
+    // A GUI served over plain http:// on a LAN address is an INSECURE context:
+    // `crypto` exists but `randomUUID` does not. The unguarded calls threw
+    // here, so the host left a dead <div data-slot-error> instead of a tab.
+    // getRandomValues is exempt from the secure-context restriction.
+    const realCrypto = globalThis.crypto
+    const insecure = {
+      getRandomValues: (array: Uint32Array) => realCrypto.getRandomValues(array),
+    }
+    vi.stubGlobal('crypto', insecure)
+    try {
+      const tabs = builtinTabs({} as Context)
+      const sidechat = tabs.find(tab => tab.id === 'sidechat')
+      const terminal = tabs.find(tab => tab.id === 'terminal-bottom')
+      const firstChat = sidechat?.createTab?.(undefined as never)
+      const secondChat = sidechat?.createTab?.(undefined as never)
+      expect(firstChat?.tab.id).toBeTruthy()
+      expect(firstChat?.tab.id).not.toBe(secondChat?.tab.id)
+      const firstShell = terminal?.createTab?.({} as never)
+      const secondShell = terminal?.createTab?.({} as never)
+      expect(firstShell?.tab.id).toBeTruthy()
+      expect(firstShell?.tab.id).not.toBe(secondShell?.tab.id)
+      const firstInstance = terminalInstanceOf(firstShell!.tab)
+      expect(firstInstance).toBeTruthy()
+      expect(firstInstance).not.toBe(terminalInstanceOf(secondShell!.tab))
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 
   it('the subagent tab declares its auto-open, view, folding, and jobs settings', () => {

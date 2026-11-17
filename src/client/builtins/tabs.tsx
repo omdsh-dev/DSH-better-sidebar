@@ -105,6 +105,31 @@ function SideChatTab(props: TabComponentProps) {
   )
 }
 
+/**
+ * A fresh, collision-resistant id for a tab minted at open time.
+ *
+ * `crypto.randomUUID` is restricted to secure contexts: a GUI served over
+ * plain `http://` on a LAN address exposes `crypto` but no `randomUUID`,
+ * and the unguarded calls used to take Side Chat and the bottom terminal down
+ * entirely (#1166). `getRandomValues` carries no such restriction, so the
+ * fallback keeps real entropy and only adds a base36 timestamp for
+ * readability — the ids only have to stay unique within one tab strip.
+ */
+function freshId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  const random = new Uint32Array(2)
+  if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+    crypto.getRandomValues(random)
+  } else {
+    // No Web Crypto at all: two draws still stagger ids minted together.
+    random[0] = Math.floor(Math.random() * 0x1_0000_0000)
+    random[1] = Math.floor(Math.random() * 0x1_0000_0000)
+  }
+  return `${Date.now().toString(36)}-${Array.from(random, part => part.toString(36)).join('-')}`
+}
+
 /** The 6 built-in tab descriptors (the host owns the right-Sidebar terminal and browser). */
 export function builtinTabs(ctx: Context): readonly TabDescriptor[] {
   return [
@@ -309,7 +334,7 @@ export function builtinTabs(ctx: Context): readonly TabDescriptor[] {
         }
         return {
           tab: {
-            id: `sidechat:new-${crypto.randomUUID()}`,
+            id: `sidechat:new-${freshId()}`,
             type: 'sidechat',
             title: t('sideChatUntitled'),
             meta: { autoCreate: true },
@@ -399,10 +424,10 @@ export function builtinTabs(ctx: Context): readonly TabDescriptor[] {
       // host binding by instance+run).
       createTab: () => ({
         tab: {
-          id: `terminal-bottom:${crypto.randomUUID()}`,
+          id: `terminal-bottom:${freshId()}`,
           type: 'terminal-bottom',
           title: t('terminal'),
-          meta: { [INSTANCE_FIELD]: crypto.randomUUID() },
+          meta: { [INSTANCE_FIELD]: freshId() },
         },
       }),
       // The service is probed, never injected (it is absent on deployments
