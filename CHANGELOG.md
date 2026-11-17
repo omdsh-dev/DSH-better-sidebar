@@ -4,6 +4,9 @@
 
 ### 未发布
 
+- 🎯 **侧边对话「回到最新」胶囊不再塌成细条、端部恢复正圆**（[#1208](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1208)）：胶囊所在的 `.sidechatToLatestSlot` 是 `height: 0` 的绝对定位 flex 槽位（抄宿主 `ui-chat` 的 `.toBottomSlot` 配方），但子项没有尺寸约束——默认 `align-items: stretch` 会在零高容器里把它拉到 0 高，内容高度被丢掉，只剩 `padding + border` 的 10px，文字于是溢出到胶囊外。宿主自己的 `.toBottom` 靠显式 `34px` 高度绕开了同一个坑，这里改用 `align-items: flex-end` + `flex: none` 让胶囊保持自身内容高度（30px）。同时补上 `corner-shape: round`：宿主 `corner-shape.css` 对 `*` 施加 `superellipse(1.5)`，会把 `border-radius: 999px` 的胶囊端部削平，宿主的全圆元素都成对声明退出该效果，本插件此前漏了这条。该按钮在 v0.31.0 引入，v0.31.0–v0.32.1 均受影响。
+  - 🧪 真实宿主 + Chromium 挂载冒烟确认侧边对话渲染无回归；修复前后在 Chrome 157 用宿主真实 token 样式表做过 A/B 对照（高度 10px→30px、文字溢出 true→false、`corner-shape` 恢复 `superellipse(1)`）。
+
 - 🌿 **多仓库工作区的仓库切换器改成响应式**（贡献者 PR [#1130](https://github.com/omdsh-dev/DSH-better-sidebar/pull/1130) @iasiv5）：容器工作区发现多个仓库时，「更改」上方一行在宽度足够时横排仓库胶囊，放不下时自动改为「仓库 ▾」下拉；两种形态共用位置消歧标签（深层仓库显示 `名 (相对父路径)`，如 `knowhow (ob-harness/contexts)`），当前根始终可见，服务端回退根以禁用项如实显示实际根而不是冒充候选。单仓库工作区不显示；「更多操作 → 仓库」保留为兜底；切换仍走既有 `chooseRepo`，读数、写操作与提交图继续钉在选中的根上。
   - 🧪 测试：`tests/git-repo-labels.spec.ts`（32 例：POSIX / Windows / UNC / 扩展路径、同名消歧、顺序与输入不变）与 `tests/git-repo-switcher.spec.tsx`（宽时胶囊、窄时下拉、标签与回退禁用项、单仓不显示）。
 
