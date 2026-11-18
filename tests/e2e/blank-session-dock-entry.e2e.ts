@@ -80,3 +80,46 @@ test('a blank session keeps the bottom workbench reachable from the top-right en
   expect(pageErrors, 'uncaught page errors').toEqual([])
   expect(consoleErrors, 'console errors').toEqual([])
 })
+
+/**
+ * Issue #1218: a brand-new session's right Sidebar must render this plugin's
+ * content on the FIRST expand — no host Split control in between.
+ *
+ * Every other lane expands the right column on a session that already has a
+ * message (the header corner is only drawn for a session with content), so the
+ * blank-session open path had no coverage. The start page is the plugin's
+ * `guideTakeover` chain replacement of the host guide body; the marker
+ * `[data-dsh-guide-grid]` exists only on the plugin's own grid, so a visible
+ * grid proves the takeover rendered rather than the host's shipped guide.
+ */
+test('a blank session renders the plugin start page on the first right-sidebar expand (#1218)', async ({ page }) => {
+  const pageErrors: string[] = []
+  const consoleErrors: string[] = []
+  page.on('pageerror', (error) => pageErrors.push(String(error)))
+  page.on('console', (message) => {
+    if (message.type() === 'error') consoleErrors.push(message.text())
+  })
+
+  await page.goto(PAGE_URL, { waitUntil: 'domcontentloaded' })
+  await expect(page.locator('#root > *')).not.toHaveCount(0, { timeout: 90_000 })
+  await dismissOnboarding(page)
+  await page.getByRole('button', { name: /^(New session|新建会话)$/i }).first().click({ timeout: 30_000 })
+
+  // One click on the host's own control, and nothing else.
+  await page.locator('[data-sidebar-right-expand]').first().click({ timeout: 60_000 })
+
+  await expect(
+    page.locator('[data-sidebar-right-guide]'),
+    'a freshly expanded blank-session surface shows the guide page',
+  ).toBeVisible({ timeout: 30_000 })
+  await expect(
+    page.locator('[data-dsh-guide-grid]'),
+    "the plugin's start-page takeover owns the guide body on the first expand",
+  ).toBeVisible({ timeout: 30_000 })
+  // A slot that failed to resolve draws a host "nothing here" notice instead of
+  // the grid; assert the pane holds no such error slot either.
+  await expect(page.locator('[data-sidebar-right-panel] [data-slot-error]')).toHaveCount(0)
+
+  expect(pageErrors, 'uncaught page errors').toEqual([])
+  expect(consoleErrors, 'console errors').toEqual([])
+})

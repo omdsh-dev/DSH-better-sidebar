@@ -66,10 +66,15 @@ export interface SidebarPrefs {
   /**
    * Whether the editor tab runs in merged mode: a path input replaces the
    * plain header and a toggleable file-tree panel (with a global name
-   * search) docks at the tab's right edge. On by default; also makes brand
-   * new sessions seed an empty editor tab (tree panel open) instead of the
-   * explorer tab. The switch lives under the editor card's gear in the
-   * Side card settings; off restores the pre-merge editor exactly.
+   * search) docks at the tab's right edge. Off by default; on makes a tree
+   * click switch the open file in place (same tab id and meta) instead of
+   * opening another window. The switch lives under the editor card's gear in
+   * the Side card settings.
+   *
+   * This no longer seeds anything: since the plugin's own right panel was
+   * retired (the host owns the right column and its tab list), a brand-new
+   * session starts with no tab at all, and the host's start page — which this
+   * plugin takes over — is what the first open lands on. See `guideTakeover`.
    */
   editorExplorer: boolean
   /**
