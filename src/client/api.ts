@@ -29,6 +29,7 @@ import type {
   SidebarUpdateTeamTaskRequest,
 } from '../context-types.ts'
 import type { WorkflowRunView } from '../workflow-runs.ts'
+import type { MediaListValue } from '../media-routes.ts'
 import type { GitGraphOptions, GitGraphResult } from '../git-graph.ts'
 export type { GitGraphOptions, GitGraphResult, GitGraphEntry, GitGraphBranch } from '../git-graph.ts'
 
@@ -686,6 +687,24 @@ export const api = {
    *  URLs are launched on the browser/client machine; reveal and local URLs
    *  keep using the host's platform opener. */
   openExternal,
+  /**
+   * The session's whole media history (images / clips / audio / documents),
+   * folded out of its durable event log host-side. Each row reports whether a
+   * plugin-owned thumbnail exists and whether the ORIGINAL bytes are still
+   * reachable — the two facts the media viewer is built around.
+   */
+  mediaList: (scope: SessionScope, signal?: AbortSignal) =>
+    call<MediaListValue>('media.list', scopePayload(scope, {}), signal),
+  /**
+   * Store one rendered thumbnail (base64 PNG) under the row's identity. The
+   * host keeps the first capture: re-uploading the same id is a no-op that
+   * answers the stored byte length, so a page reload cannot churn the slot.
+   */
+  mediaThumbSave: (id: string, data: string) =>
+    call<{ bytes: number; created: boolean }>('media.thumb.save', { id, data }),
+  /** Forget one stored thumbnail (a stale picture for a re-used identity). */
+  mediaThumbDelete: (id: string) =>
+    call<{ removed: boolean }>('media.thumb.delete', { id }),
 }
 
 /** Absolute URL of the media route for one path (images only). */

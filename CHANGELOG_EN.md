@@ -3,6 +3,16 @@
 > Full release history of dsh-better-sidebar (see the [README](README.md) for the latest release; also mirrored on [GitHub Releases](https://github.com/omdsh-dev/DSH-better-sidebar/releases)).
 >
 > 📝 The Chinese [CHANGELOG](./CHANGELOG.md) is the authoritative, item-by-item record; this file carries the English summaries and has historically lagged behind it. Where the two disagree, the Chinese one is current.
+>
+> **This repository is a fork of [omdsh-dev/DSH-better-sidebar](https://github.com/omdsh-dev/DSH-better-sidebar) (under Dynesshely)**, adding its own features on top of `0.32.1` from v0.33.0.
+
+### v0.33.0 (fork)
+
+- 🖼 **New "Session media" page (the session media viewer)**: every image, clip, audio file and document one conversation ever carried, in one place — DSH itself only renders media where the chat happens to show it, so there was never a way to see "what has this conversation looked at".
+  - **A thumbnail copy per item**: the browser renders it in a `<canvas>` and uploads it to the plugin's own directory (`<DSH_HOME>/better-sidebar/media-thumbs/v1/<2hex>/<sha256>.png`), content-addressed by media IDENTITY (the `attachmentId` for an attachment, the absolute path for a delivered file). The first capture wins, so a page reload never rewrites it. That copy is what survives a cleaned attachment store, a rebuilt harness home, or a log carried to another machine; when the original is gone the page says so and shows the thumbnail enlarged.
+  - **Four sources folded from the durable log**: `user/message` (uploads), `tool/result` (tool output such as `read_image`), `agent/inbox/spliced` (the PTC / subagent replay, deduplicated by content address) and `deliverables/presented` (a workspace file handed over by `present`, identified by path and never stored in the attachment library). An image marked `image/offload` stays listed — that flag only means the model request omitted it.
+  - **Routes**: `media.list` / `media.thumb.save` / `media.thumb.delete` plus `GET /sidebar/media` (`thumb=1` for the stored thumbnail, otherwise the original bytes; a delivered file streams with Range, so a clip seeks). The original-bytes path never trusts client metadata: the attachment is re-derived from the log and verified (media type, byte length, dimensions, digest).
+  - 🧪 Tests: `tests/session-media.spec.ts`, `tests/media-store.spec.ts`, plus the route and tab inventories in `tests/smoke.spec.ts`, `tests/trusted-hosts.spec.ts` and `tests/builtins.spec.ts`.
 
 ### Unreleased
 

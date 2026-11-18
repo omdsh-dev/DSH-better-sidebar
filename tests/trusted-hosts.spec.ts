@@ -84,7 +84,7 @@ describe('native Connection admission', () => {
     try {
       expect(mounted.routes.map(route => route.path)).toEqual([
         '/sidebar/api', '/sidebar/sidechat-image', '/sidebar/upload', '/sidebar/write', '/sidebar/bundle',
-        '/sidebar/archive', '/sidebar/file', '/sidebar/html',
+        '/sidebar/archive', '/sidebar/file', '/sidebar/media', '/sidebar/html',
       ])
       expect(mounted.upgrades.map(route => route.path)).toEqual([
         '/sidebar/ws/agent-opens', '/sidebar/ws/fs-watch', '/sidebar/ws/sidechat',

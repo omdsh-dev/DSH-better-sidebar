@@ -1,6 +1,17 @@
 # Changelog
 
 > 本文档收录 dsh-better-sidebar 的完整发布历史（最新版摘要见 [README](README_ZH.md)；同步发布于 [GitHub Releases](https://github.com/omdsh-dev/DSH-better-sidebar/releases)）。
+>
+> **本仓库是 [omdsh-dev/DSH-better-sidebar](https://github.com/omdsh-dev/DSH-better-sidebar) 的 fork（Dynesshely 名下）**，v0.33.0 起在 `0.32.1` 的基础上叠加自有功能。
+
+### v0.33.0（fork）
+
+- 🖼 **新增「会话媒体」页（会话媒体查看器）**：把一次会话里出现过的所有图片、视频、音频与文档收进一个页面——DSH 自己只在聊天里逐条渲染媒体，从来没有「这个会话一共看过哪些图」的地方。宿主侧从会话日志折叠出目录，客户端按类型/来源筛选、分页、点开即预览（图片/视频/音频内联，其余给外链）。
+  - **每个媒体额外转存一份缩略图**：缩略图由浏览器 `<canvas>` 渲染后上传到插件自有目录 `<DSH_HOME>/better-sidebar/media-thumbs/v1/<2hex>/<sha256>.png`，按媒体**身份**（图片是 `attachmentId`，交付文件是绝对路径）做内容寻址，首次写入即定案、重载不会反复写。这样即使原始附件对象被清理、harness home 重建、或会话日志被搬到另一台机器，这份缩略图仍是可看的——原件不在时页面会明确标「原始媒体已不在」并把缩略图放大显示。
+  - **目录来源覆盖四类事件**：`user/message`（用户上传）、`tool/result`（`read_image`、截图等工具产出）、`agent/inbox/spliced`（PTC/子代理回放，按内容地址去重，不会算两行）、`deliverables/presented`（`present` 交付的工作区文件，按路径识别，不进附件库）。已被 `image/offload` 标记「请求侧省略」的图片仍在列表里——那只是模型请求侧的选择，不是文件消失。
+  - **路由**：新增 `media.list` / `media.thumb.save` / `media.thumb.delete` 三个 JSON 方法与 `GET /sidebar/media`（`thumb=1` 取缩略图，否则取原始字节；交付文件走 Range 流式，视频可拖动）。原始字节路径**不信任客户端元数据**：附件在宿主侧按日志里的引用重新校验（媒体类型/字节数/尺寸/摘要），对不上就是 `ATTACHMENT_CORRUPT`，不会拿错图。
+  - **i18n / 皮肤**：21 份词典的 key 集齐平（zh / ja 手写，繁中三份按简繁映射，其余显式回落英文）；样式只用 `--dsw-*` 令牌，文档卡片的「纸面」在 canvas 里绘制（那是文件的画像，不是主题表面）。
+  - 🧪 测试：`tests/session-media.spec.ts`（四类事件、内容地址去重、最早 seq 定案、字段补全、非媒体文件过滤、畸形输入不炸）、`tests/media-store.spec.ts`（身份寻址、首次写入定案、PNG/尺寸校验、原子写无残留、原件消失后仍可读）；`tests/smoke.spec.ts` / `tests/trusted-hosts.spec.ts` 的路由清单与 `tests/builtins.spec.ts` 的 tab 清单同步。
 
 ### 未发布
 

@@ -33,3 +33,10 @@
      renders a step smaller than its siblings (see tab-icons.tsx). */
   color: var(--dsw-alias-label-primary);
 }
+
+.media {
+  /* The media chip borrows the business accent: it is neither a change (green)
+     nor running work (amber), and the warn/success families already mean
+     something else in the strip. */
+  color: var(--dsw-alias-state-business-primary, var(--dsw-alias-brand-primary, var(--dsw-alias-label-primary)));
+}
