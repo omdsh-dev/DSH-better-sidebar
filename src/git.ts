@@ -43,6 +43,16 @@ export interface GitStatusEntry {
  *  saying `+0 −0` would invent a number. */
 export type GitLineCounts = { additions: number; deletions: number } | { binary: true }
 
+/** One additional repository's status, aggregated for a container workspace
+ *  (a session cwd that holds several independent checkouts). `entries` are
+ *  relative to `root`, exactly like the top-level snapshot's. */
+export interface GitStatusRepository {
+  root: string
+  entries: GitStatusEntry[]
+  /** This repository's own row cap was hit. */
+  truncated?: boolean
+}
+
 /** The source-control panel snapshot. */
 export interface GitStatusResult {
   isRepo: boolean
@@ -63,6 +73,16 @@ export interface GitStatusResult {
   /** Selected repository root, or the discovered roots when the cwd is a container. */
   root?: string
   repositories?: string[]
+  /** Every OTHER discovered repository's status when the cwd is a workspace
+   *  CONTAINER and no repository was explicitly selected (the file tree's ink
+   *  needs all of them). Empty for a single-repository cwd and absent when the
+   *  caller selected one — that snapshot stays exactly the repository asked
+   *  for. Line counts are omitted here: the tree only reads `xy`, and two
+   *  whole-repo numstat walks per sibling checkout would be pure waste. */
+  others?: GitStatusRepository[]
+  /** More sibling repositories exist than {@link GIT_STATUS_OTHER_REPOS}
+   *  allows; the extra ones stay uncolored rather than slowing the poll. */
+  othersTruncated?: boolean
 }
 
 /** One linked checkout returned by `git worktree list --porcelain`. */
@@ -883,6 +903,14 @@ async function currentOperation(cwd: string): Promise<GitStatusResult['operation
  *  freeze the browser main thread on JSON parse or list render (#369). */
 const GIT_STATUS_LIMIT = 2_000
 
+/** Sibling checkouts whose status a CONTAINER workspace aggregates for the
+ *  file tree's ink. One porcelain read each (the counts are skipped), so the
+ *  poll stays bounded; repositories past this cap simply stay uncolored and
+ *  `othersTruncated` says why. Eight covers the realistic "several projects in
+ *  one folder" workspace without letting a home-directory root spawn a git per
+ *  child. */
+const GIT_STATUS_OTHER_REPOS = 8
+
 /**
  * NUL-field budget of the status read (the row cap enforced while git is
  * producing, not after parsing a megabyte of untracked paths). Porcelain
@@ -935,45 +963,34 @@ function numstatPathsof(porcelainZ: string): string[] | undefined {
 }
 
 /**
- * Working-tree status (untracked included). The read is
- * `status --porcelain=v2 --branch -z --untracked-files=all`: one command
- * answers the rows AND the branch identity (name, tracking ref, ahead/behind,
- * detached HEAD), while preserving repository discovery and explicit
- * repository selection for workspace roots. `--untracked-files=all` lists the
- * contents of new directories as individual entries.
+ * Read ONE checkout's working-tree status.
  *
- * The per-path line counts (#131) ride this SAME read: one batch of three git
- * processes answers status and both numstat sides together, never one process
- * per file, and callers keep their existing refresh cadence. A numstat failure
- * costs only the counts (the rows fall back to their count-less rendering) —
- * the status answer itself must never fail because of it.
+ * `withDetails` adds the two numstat diffs (the change panel's line counts) and
+ * the in-progress-operation marker; the container aggregation asks for neither,
+ * because the file tree only reads each row's `xy`. The porcelain read itself
+ * is the same command either way.
  *
- * The porcelain read now comes FIRST, because its paths become the pathspec of
- * both numstat diffs: the counts only ever ride rows the status read itself
- * reports, and limiting the diffs to those paths is what keeps an unignored
- * nested `node_modules` (59 631 entries / 9.24 MB of numstat) out of the two
- * whole-repo walks. 两条 numstat 也要字面 pathspec，理由见 literalPathspec()。
- *
- * Each side's reading lands on its own field of the entry
- * ({@link GitStatusEntry} documents why the two are never summed).
+ * @param root - the checkout to read (a repository top level).
+ * @param withDetails - also read the per-path line counts and operation marker.
+ * @returns the snapshot WITHOUT `root`/`repositories` (the caller supplies the
+ *  context), with entries bounded and `truncated` set when the cap cut them.
  */
-export async function status(cwd: string, selected?: string): Promise<GitStatusResult> {
-  const repositories = await repoRoots(cwd)
-  if (repositories.length === 0) return { isRepo: false, entries: [], repositories: [] }
-  const root = await repoRoot(cwd, selected)
-  const [operation, raw] = await Promise.all([
-    currentOperation(root).catch(() => undefined),
-    runGit(
-      root,
-      ['status', '--porcelain=v2', '--branch', '--ahead-behind', '-z', '--untracked-files=all'],
-      undefined,
-      // The row cap is enforced while git is still producing, not after parsing
-      // a megabyte of untracked paths: see {@link GIT_STATUS_MAX_FIELDS}.
-      { maxNulFields: GIT_STATUS_MAX_FIELDS },
-    ),
-  ])
+async function readRepoStatus(root: string, withDetails: boolean): Promise<GitStatusResult> {
+  const operation = withDetails ? await currentOperation(root).catch(() => undefined) : undefined
+  const raw = await runGit(
+    root,
+    ['status', '--porcelain=v2', '--branch', '--ahead-behind', '-z', '--untracked-files=all'],
+    undefined,
+    // The row cap is enforced while git is still producing, not after parsing
+    // a megabyte of untracked paths: see {@link GIT_STATUS_MAX_FIELDS}.
+    { maxNulFields: GIT_STATUS_MAX_FIELDS },
+  )
   const snapshot = parseStatusPorcelainV2Z(raw)
   const parsed = snapshot.entries
+  let entries: GitStatusEntry[] = parsed
+  const truncated = parsed.length > GIT_STATUS_LIMIT
+  if (truncated) entries = parsed.slice(0, GIT_STATUS_LIMIT)
+  if (!withDetails) return { ...snapshot, ...(operation === undefined ? {} : { operation }), entries, truncated }
   const pathspec = numstatPathsof(raw)
   let unstagedNumstat = ''
   let stagedNumstat = ''
@@ -992,14 +1009,12 @@ export async function status(cwd: string, selected?: string): Promise<GitStatusR
   }
   const stagedCounts = parseNumstat(stagedNumstat)
   const unstagedCounts = parseNumstat(unstagedNumstat)
-  const truncated = parsed.length > GIT_STATUS_LIMIT
-  const bounded = truncated ? parsed.slice(0, GIT_STATUS_LIMIT) : parsed
   return {
     ...snapshot,
-    operation,
+    ...(operation === undefined ? {} : { operation }),
     // Paths git has no numstat row for on either side (untracked files) keep
     // their entry untouched: the absence IS the information.
-    entries: bounded.map((entry): GitStatusEntry => {
+    entries: entries.map((entry): GitStatusEntry => {
       const staged = stagedCounts.get(entry.path)
       const unstaged = unstagedCounts.get(entry.path)
       if (staged === undefined && unstaged === undefined) return entry
@@ -1010,8 +1025,66 @@ export async function status(cwd: string, selected?: string): Promise<GitStatusR
       }
     }),
     truncated,
+  }
+}
+
+/**
+ * Working-tree status (untracked included). The read is
+ * `status --porcelain=v2 --branch -z --untracked-files=all`: one command
+ * answers the rows AND the branch identity (name, tracking ref, ahead/behind,
+ * detached HEAD), while preserving repository discovery and explicit
+ * repository selection for workspace roots. `--untracked-files=all` lists the
+ * contents of new directories as individual entries.
+ *
+ * A container workspace (cwd inside no repository but holding several child
+ * checkouts) reports the selected/first checkout as the primary snapshot AND
+ * — when the caller did not select one — every other discovered checkout in
+ * `others`, so the file tree can tint files in ALL of them. Those siblings are
+ * read with the porcelain command alone (no numstat, no operation marker):
+ * the ink needs only each row's `xy`.
+ *
+ * The per-path line counts (#131) ride the SAME read: one batch of three git
+ * processes answers status and both numstat sides together, never one process
+ * per file, and callers keep their existing refresh cadence. A numstat failure
+ * costs only the counts (the rows fall back to their count-less rendering) —
+ * the status answer itself must never fail because of it.
+ *
+ * The porcelain read now comes FIRST, because its paths become the pathspec of
+ * both numstat diffs: the counts only ever ride rows the status read itself
+ * reports, and limiting the diffs to those paths is what keeps an unignored
+ * nested `node_modules` (59 631 entries / 9.24 MB of numstat) out of the two
+ * whole-repo walks. 两条 numstat 也要字面 pathspec，理由见 literalPathspec()。
+ *
+ * Each side's reading lands on its own field of the entry
+ * ({@link GitStatusEntry} documents why the two are never summed).
+ */
+export async function status(cwd: string, selected?: string): Promise<GitStatusResult> {
+  const repositories = await repoRoots(cwd)
+  if (repositories.length === 0) return { isRepo: false, entries: [], repositories: [] }
+  const root = await repoRoot(cwd, selected)
+  const primary = await readRepoStatus(root, true)
+  if (selected !== undefined || repositories.length <= 1) {
+    return { ...primary, root, repositories }
+  }
+  // A CONTAINER: every sibling checkout's ink, bounded. A failing sibling is
+  // skipped (one unreadable repository must not blank the others' rows).
+  const siblings = repositories.filter(other => pathIdentity(other) !== pathIdentity(root))
+  const bounded = siblings.slice(0, GIT_STATUS_OTHER_REPOS)
+  const others = (await Promise.all(bounded.map(async (sibling): Promise<GitStatusRepository | undefined> => {
+    const snapshot = await readRepoStatus(sibling, false).catch(() => undefined)
+    if (snapshot === undefined) return undefined
+    return {
+      root: sibling,
+      entries: snapshot.entries,
+      ...(snapshot.truncated === true ? { truncated: true } : {}),
+    }
+  }))).filter((other): other is GitStatusRepository => other !== undefined)
+  return {
+    ...primary,
     root,
     repositories,
+    ...(others.length > 0 ? { others } : {}),
+    ...(siblings.length > bounded.length ? { othersTruncated: true } : {}),
   }
 }
 

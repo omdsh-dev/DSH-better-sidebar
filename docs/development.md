@@ -85,6 +85,7 @@ tests/steady-state.spec.tsx 与 perf lane 守护这些约束。
 | 注册表 / 服务 | service · builtins · market-manifest |
 | 原生承载面 | native-surface · native-registration · native-surface-cross-session |
 | 文件树 | fs-tree-* · file-tree-* · fs-watch |
+| Git 状态着色（含多仓库容器） | git-status-poll · file-tree-git-status · file-tree-multi-repo-status |
 | 文件搜索 / 内容搜索 | fs-search · fs-grep · fs-grep-route · file-tree-content-search |
 | 编辑器与文件路由 | file-stream-route · fs-read-page · text-encoding · fs-write-route |
 | Git | git-status-poll · git-scm · git-graph* |

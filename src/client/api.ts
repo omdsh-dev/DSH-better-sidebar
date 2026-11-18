@@ -149,6 +149,13 @@ export interface GitStatusEntry {
   unstaged?: GitLineCounts
 }
 
+/** One additional checkout of a container workspace's aggregated status. */
+export interface GitStatusRepository {
+  root: string
+  entries: GitStatusEntry[]
+  truncated?: boolean
+}
+
 /** Git status snapshot. */
 export interface GitStatusResult {
   isRepo: boolean
@@ -167,6 +174,12 @@ export interface GitStatusResult {
   truncated?: boolean
   root?: string
   repositories?: string[]
+  /** Sibling checkouts' status when the cwd is a workspace container and no
+   *  repository was explicitly selected — what lets the file tree tint files
+   *  in every repository, not only the first. */
+  others?: GitStatusRepository[]
+  /** More sibling repositories existed than the host aggregates. */
+  othersTruncated?: boolean
 }
 
 /** One linked Git checkout. */

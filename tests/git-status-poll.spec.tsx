@@ -173,6 +173,38 @@ describe('the shared git status store cadence', () => {
     expect(commits.value).toBeGreaterThan(settled)
   })
 
+  it('notifies when only a SIBLING repository changed, and indexes every root', async () => {
+    vi.useFakeTimers()
+    const container: GitStatusResult = {
+      isRepo: true,
+      root: '/tmp/a',
+      repositories: ['/tmp/a', '/tmp/b'],
+      entries: [{ path: 'a.ts', xy: ' M' }],
+      others: [{ root: '/tmp/b', entries: [] }],
+    }
+    gitStatus.mockResolvedValue(container)
+    const commits: Counter = { value: 0 }
+    mounted = renderRoot(createElement(Probe, { scope: scopeFor('container'), commits }))
+    await tick(0)
+    await flush()
+    const settled = commits.value
+    expect(latest?.statusOf('/tmp/b/b.ts')).toBeUndefined()
+
+    // Only the sibling's rows moved: the snapshot is equal on its primary side,
+    // so a comparison that ignored `others` would stay silent and the second
+    // repository's ink would never update.
+    gitStatus.mockResolvedValue({
+      ...container,
+      others: [{ root: '/tmp/b', entries: [{ path: 'b.ts', xy: '??' }] }],
+    })
+    await tick(30_000)
+    await flush()
+    expect(commits.value).toBeGreaterThan(settled)
+    expect(latest?.statusOf('/tmp/b/b.ts')?.tone).toBe('untracked')
+    // The primary still resolves through its own root.
+    expect(latest?.statusOf('/tmp/a/a.ts')?.tone).toBe('modified')
+  })
+
   it('drops to 60 s when a round trip is slow, and climbs back when it is fast', async () => {
     vi.useFakeTimers()
     gitStatus.mockImplementation(() => new Promise((resolve) => {

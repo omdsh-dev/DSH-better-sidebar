@@ -42,6 +42,39 @@ describe('git parsing', () => {
     }
   })
 
+  it('aggregates every container checkout when no repository is selected (file-tree ink)', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'dsh-better-sidebar-git-all-'))
+    const first = join(workspace, 'first-repo')
+    const second = join(workspace, 'second-repo')
+    try {
+      await Promise.all([mkdir(first), mkdir(second)])
+      await Promise.all([
+        execFileAsync('git', ['-C', first, 'init']),
+        execFileAsync('git', ['-C', second, 'init']),
+      ])
+      writeFileSync(join(first, 'a.txt'), 'one')
+      writeFileSync(join(second, 'b.txt'), 'two')
+
+      const all = await status(workspace)
+      expect(all.isRepo).toBe(true)
+      // The primary checkout is still the first discovered repository…
+      expect(all.root).toBe(canonical(first))
+      expect(all.entries).toEqual([{ path: 'a.txt', xy: '??' }])
+      // …and the sibling carries its own rows under its OWN root, which is what
+      // lets the tree tint a file in the second repository.
+      expect(all.others).toEqual([{ root: canonical(second), entries: [{ path: 'b.txt', xy: '??' }] }])
+      expect(all.othersTruncated).toBeUndefined()
+
+      // An explicit selection stays a plain single-repository snapshot (the
+      // changes page's selector must not pay for the aggregation).
+      const selected = await status(workspace, canonical(second))
+      expect(selected).toMatchObject({ root: canonical(second), entries: [{ path: 'b.txt', xy: '??' }] })
+      expect(selected.others).toBeUndefined()
+    } finally {
+      await rm(workspace, { recursive: true, force: true })
+    }
+  })
+
   it('discovers root and direct child repositories when root is also a git repository', async () => {
     const workspace = await mkdtemp(join(tmpdir(), 'dsh-better-sidebar-root-git-'))
     const child = join(workspace, 'child-repo')

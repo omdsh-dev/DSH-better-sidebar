@@ -16,6 +16,14 @@
  * difference. The cost is that two paths differing only in case share an
  * entry — invisible in the tree, which lists one of them anyway.
  *
+ * Container workspaces (a cwd that is no repository itself but holds several
+ * independent checkouts) are the one case where a snapshot describes MORE than
+ * one repository: the host reports the primary checkout plus `others`, and the
+ * path index covers every repo root, so the tree tints a file in ANY of them —
+ * the old behavior colored only the first discovered repository. An explicit
+ * `repoRoot` still narrows a snapshot to that single checkout (the changes
+ * page's selector).
+ *
  * Coalescing: a `refresh()` that lands while a fetch is in flight is queued
  * once and re-run when it settles — never dropped (the old `GitLens.refresh`
  * returned early, so a click during the poll silently did nothing).
@@ -61,7 +69,7 @@
  * fetch in flight.
  */
 import { useCallback, useEffect, useSyncExternalStore } from 'react'
-import { api, type GitLineCounts, type GitStatusResult, type SessionScope } from '../api.ts'
+import { api, type GitLineCounts, type GitStatusEntry, type GitStatusRepository, type GitStatusResult, type SessionScope } from '../api.ts'
 
 /** The semantic class of one changed path (drives the row's ink). */
 export type GitTone =
@@ -153,21 +161,41 @@ function sameCounts(left: GitLineCounts | undefined, right: GitLineCounts | unde
  * lines appended to an already-modified file — must still publish a NEW
  * snapshot, because keeping the previous identity would freeze the row's
  * numbers at their first reading for as long as the porcelain codes stay put.
+ *
+ * A container's `others` are part of that identity too: a change inside a
+ * SIBLING checkout (the file tree tints those rows from the same snapshot)
+ * must publish a new snapshot, or its ink would never update.
  */
+function sameEntries(left: readonly GitStatusEntry[], right: readonly GitStatusEntry[]): boolean {
+  if (left === right) return true
+  if (left.length !== right.length) return false
+  return left.every((entry, index) => {
+    const other = right[index]!
+    return entry.path === other.path && entry.xy === other.xy
+      && sameCounts(entry.staged, other.staged) && sameCounts(entry.unstaged, other.unstaged)
+  })
+}
+
+function sameSibling(left: GitStatusRepository, right: GitStatusRepository): boolean {
+  return left.root === right.root
+    && left.truncated === right.truncated
+    && sameEntries(left.entries, right.entries)
+}
+
 function sameStatus(a: GitStatusResult, b: GitStatusResult): boolean {
   if (a === b) return true
   if (a.isRepo !== b.isRepo || a.branch !== b.branch || a.root !== b.root
     || a.upstream !== b.upstream || a.ahead !== b.ahead || a.behind !== b.behind
     || a.detached !== b.detached || a.operation !== b.operation
-    || a.truncated !== b.truncated || a.entries.length !== b.entries.length) return false
+    || a.truncated !== b.truncated || a.othersTruncated !== b.othersTruncated) return false
   if (a.repositories?.length !== b.repositories?.length) return false
   if (a.repositories !== undefined && b.repositories !== undefined
     && a.repositories.some((root, index) => root !== b.repositories![index])) return false
-  return a.entries.every((entry, index) => {
-    const other = b.entries[index]!
-    return entry.path === other.path && entry.xy === other.xy
-      && sameCounts(entry.staged, other.staged) && sameCounts(entry.unstaged, other.unstaged)
-  })
+  if (!sameEntries(a.entries, b.entries)) return false
+  const aOthers = a.others ?? []
+  const bOthers = b.others ?? []
+  if (aOthers.length !== bOthers.length) return false
+  return aOthers.every((sibling, index) => sameSibling(sibling, bOthers[index]!))
 }
 
 interface Index {
@@ -177,25 +205,32 @@ interface Index {
   dirs: Set<string>
 }
 
-/** Build the lookup index for one snapshot (once per snapshot, O(rows × depth)). */
+/** Build the lookup index for one snapshot (once per snapshot, O(rows × depth)).
+ *  A container snapshot carries its primary checkout in `root`/`entries` and
+ *  every sibling in `others`; both are indexed so a row in ANY repository of
+ *  the workspace resolves its tone. */
 function buildIndex(snapshot: GitStatusResult): Index {
   const files = new Map<string, GitFileStatus>()
   const dirs = new Set<string>()
-  const root = snapshot.root
-  if (!snapshot.isRepo || root === undefined) return { files, dirs }
-  for (const entry of snapshot.entries) {
-    const status = statusOfXY(entry.xy)
-    if (status === undefined) continue
-    const absolute = normPath(joinRoot(root, entry.path))
-    files.set(absolute, status)
-    let at = absolute.lastIndexOf('/')
-    while (at > 0) {
-      const dir = absolute.slice(0, at)
-      if (dirs.has(dir)) break
-      dirs.add(dir)
-      at = dir.lastIndexOf('/')
+  if (!snapshot.isRepo) return { files, dirs }
+  const addRepo = (root: string | undefined, entries: readonly GitStatusEntry[]): void => {
+    if (root === undefined) return
+    for (const entry of entries) {
+      const status = statusOfXY(entry.xy)
+      if (status === undefined) continue
+      const absolute = normPath(joinRoot(root, entry.path))
+      files.set(absolute, status)
+      let at = absolute.lastIndexOf('/')
+      while (at > 0) {
+        const dir = absolute.slice(0, at)
+        if (dirs.has(dir)) break
+        dirs.add(dir)
+        at = dir.lastIndexOf('/')
+      }
     }
   }
+  addRepo(snapshot.root, snapshot.entries)
+  for (const sibling of snapshot.others ?? []) addRepo(sibling.root, sibling.entries)
   return { files, dirs }
 }
 
