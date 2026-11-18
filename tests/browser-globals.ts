@@ -33,6 +33,7 @@ if (g.document === undefined) {
     // injected no __DSH_TRANSPORT__ (see desktop-env.ts); specs pin one
     // stable page base.
     baseURI: 'http://localhost/',
+    location: { href: 'http://localhost/' },
     createElement: () => elementStub(),
     createDocumentFragment: () => elementStub(),
     addEventListener: () => {},

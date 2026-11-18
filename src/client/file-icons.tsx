@@ -20,16 +20,21 @@
  */
 import type { ReactNode } from 'react'
 import { FileTypeIcon } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconDrawioOutline16 } from './icons.tsx'
 
 /**
  * A file row: the host's own classifier and artwork for any path. Unknown
  * extensions land on the generic document glyph, exactly like the host's
- * explorer.
+ * explorer. The supported draw.io formats use the plugin's monochrome glyph
+ * because the host classifier has no draw.io category.
  * @param path - the row's path (any separator; the classifier reads the basename).
  * @param size - the square edge in px.
  * @returns the host's file-type glyph.
  */
 export function builtinFileIcon(path: string, size: number): ReactNode {
+  const dot = path.lastIndexOf('.')
+  const ext = dot === -1 ? '' : path.slice(dot + 1).toLowerCase()
+  if (ext === 'drawio' || ext === 'dio') return <IconDrawioOutline16 size={size} />
   return <FileTypeIcon path={path} size={size} />
 }
 

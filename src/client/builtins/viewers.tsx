@@ -1,5 +1,5 @@
 /**
- * The 4 built-in file viewer descriptors (markdown / html / jsonl / code),
+ * The 6 built-in file viewer descriptors (markdown / html / jsonl / media / drawio / code),
  * exactly like external plugins register theirs.
  *
  * DSH 0.1.7 ships `ui-sidebar-documentpreview`, its own code / spreadsheet /
@@ -38,6 +38,7 @@ import { lazyChunkComponent } from '../lazy-chunk.tsx'
 import {
   IconMarkdownOutline16,
   IconHtmlOutline16,
+  IconDrawioOutline16,
 } from '../icons.tsx'
 import type { ComponentType } from 'react'
 import type { FileViewerDescriptor, FileViewerProps } from '../service.ts'
@@ -52,7 +53,10 @@ import { MediaPreview } from './media-preview.tsx'
  */
 const LazyTextEditor = lazyChunkComponent<FileViewerProps>('editor', (mod) => mod.TextEditor as ComponentType<FileViewerProps> | undefined)
 
-/** The 5 built-in file viewer descriptors. */
+/** The draw.io viewer's maxGraph engine is its own lazy chunk. */
+const LazyDrawioView = lazyChunkComponent<FileViewerProps>('drawio', (mod) => mod.DrawioView as ComponentType<FileViewerProps> | undefined)
+
+/** The 6 built-in file viewer descriptors. */
 export function builtinViewers(): readonly FileViewerDescriptor[] {
   return [
     {
@@ -116,6 +120,17 @@ export function builtinViewers(): readonly FileViewerDescriptor[] {
       exts: ['mp4', 'm4v', 'webm', 'ogv', 'mov', 'mp3', 'm4a', 'aac', 'wav', 'flac', 'ogg', 'oga', 'opus'],
       fetchStrategy: 'mediaUrl',
       component: (props) => <MediaPreview {...props} />,
+    },
+    {
+      id: 'drawio',
+      title: () => t('viewerDrawio'),
+      icon: (size: number) => <IconDrawioOutline16 size={size} />,
+      // draw.io uses `.drawio`; `.dio` is its short alias. The raw XML and
+      // the compressed base64 body are both text, so the normal fsRead path
+      // hands the viewer the complete file.
+      exts: ['drawio', 'dio'],
+      fetchStrategy: 'fsRead',
+      component: (props) => <LazyDrawioView {...props} />,
     },
     {
       id: 'code',

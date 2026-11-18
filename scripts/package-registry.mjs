@@ -34,6 +34,8 @@ const files = [
   // the installed copy, so a chunk left out of this list 404s on the registry
   // channel (`locale` was). tests/manifest-consistency.spec.ts guards the list
   // against src/bundle-route.ts.
+  'lib/client-drawio.js',
+  'lib/client-drawio.js.map',
   'lib/client-editor.js',
   'lib/client-editor.js.map',
   'lib/client-mermaid.js',
