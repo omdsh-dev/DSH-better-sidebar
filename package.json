@@ -25,6 +25,10 @@
       "types": "./lib/types/client/service.d.ts",
       "default": "./lib/client.js"
     },
+    "./clues": {
+      "types": "./lib/types/clues/index.d.ts",
+      "default": "./lib/clues.js"
+    },
     "./client/api": {
       "types": "./lib/types/client/service.d.ts",
       "default": "./lib/client.js"
@@ -63,6 +67,7 @@
     "lib/client-locale.js",
     "lib/client-mermaid.js",
     "lib/client-terminal.js",
+    "lib/clues.js",
     "lib/types/**/*.d.ts",
     "src",
     "scripts/check-profile-host-tree.mjs",
@@ -227,6 +232,7 @@
     "typescript": "^5.6.0",
     "typescript-eslint": "^8.69.0",
     "unrun": "^0.2.39",
+    "uqr": "0.1.3",
     "vitest": "^4.1.8",
     "zustand": "~4.4.7"
   },

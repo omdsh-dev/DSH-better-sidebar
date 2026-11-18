@@ -747,13 +747,17 @@ describe('EditorHost (files window)', () => {
       expect(find, 'the host header exposes the find command').not.toBeNull()
       const modeButton = (label: string): HTMLButtonElement =>
         [...container.querySelectorAll('button')].find(button => button.textContent === label) as HTMLButtonElement
-      expect(modeButton('Preview').classList.length).toBeGreaterThan(modeButton('Edit').classList.length)
+      // The mode strip marks the active tab with `aria-selected` (the shared
+      // Tabs component keeps one class list for every tab).
+      expect(modeButton('Preview').getAttribute('aria-selected')).toBe('true')
+      expect(modeButton('Edit').getAttribute('aria-selected')).toBe('false')
       expect(container.querySelector('.cm-search')).toBeNull()
 
       act(() => { find!.click() })
       expect(container.querySelector('.cm-search'), 'the find button opens the search panel').not.toBeNull()
       // The preview→edit hop: the panel lives in the CodeMirror surface.
-      expect(modeButton('Edit').classList.length).toBeGreaterThan(modeButton('Preview').classList.length)
+      expect(modeButton('Edit').getAttribute('aria-selected')).toBe('true')
+      expect(modeButton('Preview').getAttribute('aria-selected')).toBe('false')
     } finally {
       unmount()
     }

@@ -309,7 +309,11 @@ describe('/sidebar/api clue dispatcher fallback', () => {
       // The clue EDIT document is not bound by the 1 MiB control-payload cap:
       // a 1.5 MiB source document must load AND save back through this route,
       // and the durable store is rooted under the profile home.
-      writeFileSync(join(workspace, 'big.txt'), 'x'.repeat(1_500_000))
+      // Multi-line on purpose: the point is the 1 MiB CONTROL-payload cap, not
+      // the host's separate overlong-single-line edit limit (#1165), which a
+      // single 1.5 MB line would hit first.
+      const bigContent = `${'x'.repeat(99)}\n`.repeat(15_000)
+      writeFileSync(join(workspace, 'big.txt'), bigContent)
       const big = await post(route!, 'clues.ensure', {
         workspaceId: 'ws-1', sourceId: 'builtin.files', typeId: LOCAL_FILE_TYPE_IDS.text,
         locator: { root: { kind: 'workspace', workspaceId: 'ws-1' }, path: 'big.txt', dialect: HOST_DIALECT }, title: 'big.txt',
@@ -318,7 +322,7 @@ describe('/sidebar/api clue dispatcher fallback', () => {
       const bigId = (big.body.value as { clue: { id: string } }).clue.id
       expect(existsSync(join(home, 'better-sidebar-data', 'clues', 'workspaces', 'ws-1', 'state.json'))).toBe(true)
       const document = (await post(route!, 'clues.loadEdit', { workspaceId: 'ws-1', clueId: bigId })).body.value as { format: string; data: { text: string }; baseRevision: string }
-      const replacement = 'y'.repeat(1_500_000)
+      const replacement = `${'y'.repeat(99)}\n`.repeat(15_000)
       expect((await post(route!, 'clues.saveEdit', {
         workspaceId: 'ws-1', clueId: bigId,
         document: { format: document.format, data: { text: replacement }, baseRevision: document.baseRevision },

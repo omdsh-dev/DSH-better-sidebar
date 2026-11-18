@@ -162,8 +162,8 @@ export function LargeFileView(props: {
           <span>{props.reason === 'line'
             ? t('previewLongLineNotice', { size: formatByteSize(size) })
             : t('previewOnlyNotice', { size: formatByteSize(size), limit: MAX_EDITABLE_LABEL })}</span>
-          <button
-            type="button"
+          <ActionButton
+            size="sm"
             className={css.largeFileNoticeAction}
             disabled={pager.atEnd || pager.atCap || pager.loadingAll}
             title={pager.atCap ? t('previewRowLimit', { rows: maxRows }) : undefined}
