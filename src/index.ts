@@ -54,6 +54,7 @@ import { byteRangeOf, streamFileToResponse } from './file-stream.ts'
 import { fileReadError } from './fs-read-error.ts'
 import { createChangesOpsApi } from './changes-ops.ts'
 import { buildMediaApi, respondMedia, type MediaQuery } from './media-routes.ts'
+import { createMediaCaches, type MediaCaches } from './media-cache.ts'
 import { BlockAssembler, createUserMessage, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import {
   buildCommitPrompt,
@@ -748,6 +749,7 @@ function buildApi(
   assistantLive: AssistantLiveBuffer,
   archiveTasks: ArchiveTasks,
   sidechatSignal: AbortSignal,
+  mediaCaches: MediaCaches,
 ): Record<string, ApiMethod> {
   const cwdOf = createCwdResolver(ctx)
   /** Resolve the optional Git-panel checkout selector against the selected
@@ -782,8 +784,10 @@ function buildApi(
   // Session media viewer (fork addition): the catalogue fold, the durable
   // thumbnail slots, and the raw `GET /sidebar/media` route. The store lives
   // under the harness home so a thumbnail outlives the original attachment
-  // object — see media-store.ts for why that copy is the whole point.
-  const mediaApi = buildMediaApi(ctx, cwdOf)
+  // object — see media-store.ts for why that copy is the whole point. Both
+  // memos ride the mount's pair (the caller owns them), so the JSON API and
+  // the byte route fold the log once between them.
+  const mediaApi = buildMediaApi(ctx, cwdOf, mediaCaches)
   return {
     ...mediaApi,
     'session.phase': async (payload) => {
@@ -1609,7 +1613,15 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   // pointless (the two never race on the same key in practice) and this keeps
   // the factory the single definition of "the session's workspace".
   const mediaCwdOf = createCwdResolver(ctx)
-  const api = buildApi(ctx, resolved, () => settingsFace, assistantLive, archiveTasks, sidechatLifetime.signal)
+  // One cache pair per mount, shared by the JSON API and the byte route.
+  const mediaCaches = createMediaCaches()
+  ctx.effect(() => () => {
+    mediaCaches.catalogue.clear()
+    mediaCaches.reachable.clear()
+  }, 'dsh-better-sidebar: media caches')
+  const api = buildApi(
+    ctx, resolved, () => settingsFace, assistantLive, archiveTasks, sidechatLifetime.signal, mediaCaches,
+  )
   // Concurrent LARGE-prompt admissions. Only a prompt body that may carry
   // encoded images is counted: the prompt's JSON metadata is capped at
   // SIDECHAT_METADATA_BYTES, so a body past that threshold is the only one
@@ -1943,7 +1955,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
           ...(params.get('sessionId') === null ? {} : { sessionId: params.get('sessionId')! }),
           ...(params.get('cwd') === null ? {} : { cwd: params.get('cwd')! }),
         }
-        await respondMedia(ctx, mediaCwdOf, query, res)
+        await respondMedia(ctx, mediaCwdOf, query, res, mediaCaches)
       } catch (error) {
         writeError(res, error)
       }

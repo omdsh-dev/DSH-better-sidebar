@@ -743,6 +743,53 @@ const url = ctx.betterSidebar.hostRouteUrl(
 
 转录与 pending 行携带图片出现位置和显示元数据，读取走经宿主鉴权的 `GET /sidebar/sidechat-image?childId=...&messageId=...&blockIndex=...`。路由核验侧聊归属与用户消息身份，禁止用附件 ID 或本地路径直接读取。图片请求只在页签可见时发出；冷历史读取不恢复 Agent。输入与读取边界详见[设计记录](plans/2026-11-02-sidechat-image-input.md)。
 
+### 6.3 会话媒体（`media.*` / `/sidebar/media`，v0.33.0+）
+
+内置的「会话媒体」页（tab id `media`）背后的完整数据面，外部插件同样可以用：它把**一个会话日志里出现过的全部媒体**折成目录，并为每条媒体额外持有一份插件自有的缩略图。宿主自己只按聊天位置逐条渲染媒体，没有「这个会话有哪些图」的入口。
+
+```ts
+// 目录：{ rows: MediaListRow[], attachments: boolean }
+const res = await fetch(route('sidebar/api/media.list'), {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ sessionId, cwd }),
+})
+const { value } = await res.json()
+// row = { id, kind, source, block?, mediaType?, name?, bytes?, width?, height?, path?, seq, time, turn?, thumb, original }
+```
+
+字段语义：
+
+| 字段 | 说明 |
+|---|---|
+| `rows[].id` | 身份。附件行是内容地址 `sha256:<64 hex>`；交付文件行是**绝对路径** |
+| `rows[].kind` | `image` / `video` / `audio` / `document` / `other`，由媒体类型或扩展名判定 |
+| `rows[].source` | 这行是怎么进来的：`user`（用户上传）、`tool`（工具产出，如 `read_image`）、`inbox`（PTC / 子代理回放）、`presented`（`present` 交付的工作区文件） |
+| `rows[].block` | 附件行带 `image` / `file`；交付文件行没有（它的身份是路径，不在附件库） |
+| `rows[].seq` / `time` / `turn?` | 最早出现这条媒体的会话事件位置 —— 深链回聊天时用 `seq` |
+| `rows[].thumb` | 插件自有缩略图是否已存在 |
+| `rows[].original` | **原始字节是否仍在**（附件对象还在磁盘 / 交付文件还在原位） |
+
+目录来源覆盖四类会话事件：`user/message`、`tool/result`、`agent/inbox/spliced`、`deliverables/presented`。同一媒体被回放多次只占一行（按 `id` 去重，最早 `seq` 定案）；被 `image/offload` 标成「请求侧省略」的图片仍在目录里 —— 那只影响模型请求，文件本身没消失。
+
+**缩略图转存**：`media.thumb.save` 收 `{ id, data }`（`data` 是 PNG 的 base64），落在 `<DSH_HOME>/better-sidebar/media-thumbs/v1/<2hex>/<sha256>.png`，按 `id` 做摘要寻址。**首次写入即定案**：同一 `id` 再存是 no-op（回 `{ bytes, created: false }`），所以页面重载不会反复写盘。`media.thumb.delete` 收 `{ id }` 删掉一条。为什么要这份副本：DSH 从不清理已发布的附件对象，但用户回收空间、重建 harness home、或把日志搬到另一台机器之后，历史引用就全部悬空 —— 缩略图是那时唯一还能看的东西。渲染缩略图是**客户端**的活（`<canvas>` 解 PNG / 取视频帧 / 给文档画卡片），宿主侧不需要 `sharp` 或 ffmpeg。
+
+**取字节**：`GET /sidebar/media`，两种模式。
+
+```ts
+// 缩略图：只需要身份
+route(`sidebar/media?${new URLSearchParams({ id, thumb: '1' })}`)
+// 原始字节：需要 sessionId（交付文件要按会话 cwd 解析路径；附件要按日志重校验引用）
+route(`sidebar/media?${new URLSearchParams({ id, sessionId, cwd })}`)
+```
+
+- 缩略图回 `image/png`，带 `immutable` 缓存头（槽位永不覆盖）；没有则 **404**。
+- 原始字节：交付文件走 `/sidebar/file` 同款流式实现，**支持 `Range`**（视频可拖动）；`download=1` 改 `attachment` disposition。附件由宿主 `ctx.attachments.readImage` 读取，**引用按日志重新推导并校验**（媒体类型 / 字节数 / 尺寸 / 摘要），客户端传什么元数据都不作数。
+- 原始已不在时回 **404**（wire 码 `not-found`），这正是缩略图存在的场景；附件服务缺失回 503 `unavailable`。
+- 缩略图需要 harness home 已知（`ctx.profileContext.home`），否则 503 `unavailable`。
+
+性能形态（改了要跟着改）：目录折叠按会话缓存 **5 s**，实时会话以自身 `seq` 失效；`original` 的探测按 `(cwd, id)` 缓存 **30 s**、上限 2000 条；每行的两个文件系统探测走 **8 并发**的池而不是串行。两份缓存由插件**每次挂载**各持一份，卸载时清空（`src/media-cache.ts`，条数与理由都在那里）。
+
 ---
 
 ## 7. 服务方法完整清单

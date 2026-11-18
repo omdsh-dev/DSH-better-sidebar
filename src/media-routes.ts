@@ -23,6 +23,10 @@
  * verifies the bytes against the reference's own media type, byte length and
  * dimensions, so the reference is re-derived from the session log by row id
  * here (a client-supplied one would fail verification anyway).
+ *
+ * Both halves are memoized (see `media-cache.ts`): the fold per session, the
+ * per-row availability per identity. Without those two the page opening once
+ * and the reader clicking one picture each paid a full log decode.
  */
 import { rm, stat } from 'node:fs/promises'
 import { basename } from 'node:path'
@@ -35,6 +39,12 @@ import type {
 import { foldSessionMedia, isAttachmentItem, type MediaListRow, type MediaListValue, type SessionMediaItem } from './session-media.ts'
 export type { MediaListRow, MediaListValue } from './session-media.ts'
 import { readThumb, statThumb, thumbPathOf, thumbRootOf, writeThumb } from './media-store.ts'
+import {
+  PROBE_CONCURRENCY,
+  createMediaCaches,
+  mapWithConcurrency,
+  type MediaCaches,
+} from './media-cache.ts'
 import { streamFileToResponse } from './file-stream.ts'
 import { mediaTypeForPath } from './media-types.ts'
 import { resolveTarget } from './path-security.ts'
@@ -42,6 +52,13 @@ import { requireString, SidebarError } from './wire.ts'
 
 /** Newest events one fold reads; a pathological log is trimmed rather than refused. */
 const MAX_EVENTS = 200_000
+
+/** One cached catalogue: the folded rows plus the log length they came from. */
+interface FoldedCatalogue {
+  /** The live session's `seq` at fold time (absent for a detached session). */
+  seq: number | undefined
+  rows: readonly SessionMediaItem[]
+}
 
 /**
  * Read one session's whole event log: live when the host has the session
@@ -72,15 +89,86 @@ async function sessionEvents(ctx: Context, sessionId: string): Promise<readonly 
 }
 
 /**
- * One session's folded catalogue, with the pathological-log trim applied.
+ * One session's folded catalogue, memoized per MOUNT.
+ *
+ * A LIVE session invalidates itself: the cache entry records the `seq` it was
+ * folded at, and a session that appended since then re-folds (which is exactly
+ * the moment a new picture can appear). A detached session has no live cursor,
+ * so it rides the TTL alone.
  * @param ctx - host plugin context.
+ * @param caches - this mount's cache pair.
  * @param sessionId - the session to fold.
  * @returns every media row, newest first.
  */
-async function catalogueOf(ctx: Context, sessionId: string): Promise<SessionMediaItem[]> {
+async function catalogueOf(ctx: Context, caches: MediaCaches, sessionId: string): Promise<readonly SessionMediaItem[]> {
+  const seq = ctx.sessions.get(sessionId)?.seq
+  const cached = caches.catalogue.get(sessionId) as FoldedCatalogue | undefined
+  if (cached !== undefined && cached.seq === seq) return cached.rows
   const events = await sessionEvents(ctx, sessionId)
   const recent = events.length > MAX_EVENTS ? events.slice(events.length - MAX_EVENTS) : events
-  return foldSessionMedia(recent)
+  const rows = foldSessionMedia(recent)
+  caches.catalogue.set(sessionId, { seq, rows })
+  return rows
+}
+
+/**
+ * Whether the original bytes of one row are still reachable, memoized per
+ * identity.
+ *
+ * "The original is gone" is exactly the state the thumbnail exists for, so the
+ * answer is shown per row — but it is a filesystem probe, and asking it again
+ * for every render of a 500-row page is what this memo is for.
+ * @param ctx - host plugin context.
+ * @param caches - this mount's cache pair.
+ * @param cwd - the session workspace (for a delivered file's path).
+ * @param item - the catalogue row.
+ * @returns true when the bytes can still be served.
+ */
+async function originalReachable(
+  ctx: Context,
+  caches: MediaCaches,
+  cwd: string,
+  item: SessionMediaItem,
+): Promise<boolean> {
+  const key = `${cwd}\u0000${item.id}`
+  const cached = caches.reachable.get(key)
+  if (cached !== undefined) return cached
+  const answer = await probeOriginal(ctx, cwd, item)
+  caches.reachable.set(key, answer)
+  return answer
+}
+
+/**
+ * One uncached availability probe.
+ * @param ctx - host plugin context.
+ * @param cwd - the session workspace.
+ * @param item - the catalogue row.
+ * @returns true when the bytes can still be served.
+ */
+async function probeOriginal(ctx: Context, cwd: string, item: SessionMediaItem): Promise<boolean> {
+  if (isAttachmentItem(item)) {
+    const store = ctx.get('attachments')
+    if (store === undefined) return false
+    try {
+      const ref = refOfItem(item)
+      if (store.imageHostPath !== undefined) {
+        const path = store.imageHostPath(ref)
+        if (path === undefined) return false
+        return (await stat(path)).isFile()
+      }
+      await store.readImage(ref)
+      return true
+    } catch {
+      return false
+    }
+  }
+  if (item.path === undefined) return false
+  try {
+    const info = await stat(resolveTarget(cwd, item.path))
+    return info.isFile()
+  } catch {
+    return false
+  }
 }
 
 /**
@@ -109,44 +197,6 @@ function refOfItem(item: SessionMediaItem): SidebarImageAttachmentRef {
 }
 
 /**
- * Whether the original bytes of one row are still reachable.
- *
- * Checked per row on every list, because "the original is gone" is exactly the
- * state the thumbnail exists for and the client must be able to say so. The
- * attachment check is a pure path derivation plus one `stat` — no bytes are
- * read, which is what keeps a 500-row catalogue affordable.
- * @param ctx - host plugin context.
- * @param cwd - the session workspace (for a delivered file's path).
- * @param item - the catalogue row.
- * @returns true when the bytes can still be served.
- */
-async function originalReachable(ctx: Context, cwd: string, item: SessionMediaItem): Promise<boolean> {
-  if (isAttachmentItem(item)) {
-    const store = ctx.get('attachments')
-    if (store === undefined) return false
-    try {
-      const ref = refOfItem(item)
-      if (store.imageHostPath !== undefined) {
-        const path = store.imageHostPath(ref)
-        if (path === undefined) return false
-        return (await stat(path)).isFile()
-      }
-      await store.readImage(ref)
-      return true
-    } catch {
-      return false
-    }
-  }
-  if (item.path === undefined) return false
-  try {
-    const info = await stat(resolveTarget(cwd, item.path))
-    return info.isFile()
-  } catch {
-    return false
-  }
-}
-
-/**
  * Build the three JSON methods of the media viewer.
  * @param ctx - host plugin context.
  * @param cwdOf - the plugin's shared session-cwd resolver.
@@ -155,6 +205,7 @@ async function originalReachable(ctx: Context, cwd: string, item: SessionMediaIt
 export function buildMediaApi(
   ctx: Context,
   cwdOf: (payload: unknown) => Promise<{ sessionId: string; cwd: string }>,
+  caches: MediaCaches = createMediaCaches(),
 ): {
   'media.list': (payload: unknown) => Promise<MediaListValue>
   'media.thumb.save': (payload: unknown) => Promise<{ bytes: number; created: boolean }>
@@ -169,14 +220,16 @@ export function buildMediaApi(
   return {
     'media.list': async (payload) => {
       const { sessionId, cwd } = await cwdOf(payload)
-      const items = await catalogueOf(ctx, sessionId)
+      const items = await catalogueOf(ctx, caches, sessionId)
       const home = ctx.profileContext?.home
       const root = home === undefined ? undefined : thumbRootOf(home)
-      const rows: MediaListRow[] = []
-      for (const item of items) {
+      // Both probes are filesystem work, so they run as ONE bounded pool per
+      // row rather than two serialized loops: a 500-row catalogue used to pay
+      // 500 round trips twice over.
+      const rows = await mapWithConcurrency(items, PROBE_CONCURRENCY, async (item): Promise<MediaListRow> => {
         const thumb = root === undefined ? false : (await statThumb(root, item.id)) !== undefined
-        rows.push({ ...item, thumb, original: await originalReachable(ctx, cwd, item) })
-      }
+        return { ...item, thumb, original: await originalReachable(ctx, caches, cwd, item) }
+      })
       return { rows, attachments: ctx.get('attachments') !== undefined }
     },
     'media.thumb.save': async (payload) => {
@@ -191,6 +244,8 @@ export function buildMediaApi(
       const id = requireString(payload, 'id')
       try {
         await rm(thumbPathOf(root, id))
+        // The availability memo is about the ORIGINAL, not the thumbnail, so
+        // it stays; the row turns "no thumbnail" on the next list by itself.
         return { removed: true }
       } catch {
         return { removed: false }
@@ -220,6 +275,8 @@ export interface MediaQuery {
  * @param cwdOf - the plugin's shared session-cwd resolver.
  * @param query - the parsed request.
  * @param res - the response to write.
+ * @param caches - the SAME cache pair `buildMediaApi` was given, so the list
+ *   and the byte route share one fold instead of decoding the log twice.
  * @throws {SidebarError} not-found / unavailable when nothing can be served.
  */
 export async function respondMedia(
@@ -227,6 +284,7 @@ export async function respondMedia(
   cwdOf: (payload: unknown) => Promise<{ sessionId: string; cwd: string }>,
   query: MediaQuery,
   res: SidebarHttpResponse,
+  caches: MediaCaches = createMediaCaches(),
 ): Promise<void> {
   if (query.thumb) {
     const home = ctx.profileContext?.home
@@ -276,17 +334,21 @@ export async function respondMedia(
   if (store === undefined) throw new SidebarError('unavailable', 'attachments are unavailable', 503)
   // Re-derive the reference from the LOG: `readImage` proves the bytes against
   // its media type, byte length and dimensions, so only the log's own values
-  // can pass, and only for media this session actually carries.
-  const item = (await catalogueOf(ctx, query.sessionId)).find(row => row.id === query.id)
+  // can pass, and only for media this session actually carries. The catalogue
+  // itself is memoized (see `catalogueOf`), so clicking through twenty pictures
+  // decodes the log once, not twenty times.
+  const items = await catalogueOf(ctx, caches, query.sessionId)
+  const item = items.find(row => row.id === query.id)
   if (item === undefined) throw new SidebarError('not-found', 'this session carries no such media', 404)
   let stored
   try {
     stored = await store.readImage(refOfItem(item))
   } catch (error) {
-    if (ctx.get('attachments')?.readImage === undefined) throw error
     // The service refused (the object is gone, or the backend is not
     // image-backed): answer the plugin's own code so the client can show "the
     // original is gone, a thumbnail may remain" instead of a generic 500.
+    // The memo learns it too, so the next list does not re-probe a dead object.
+    caches.reachable.set(`${cwd}\u0000${item.id}`, false)
     throw new SidebarError('not-found', `the original is gone: ${error instanceof Error ? error.message : String(error)}`, 404)
   }
   res.writeHead(200, {

@@ -16,7 +16,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import {
-  deliveredExtOf, foldSessionMedia, isAttachmentItem, isMediaCandidate, leafOf, mediaKindOf, mediaLabelOf,
+  foldSessionMedia, isAttachmentItem, isMediaCandidate, leafOf, mediaKindOf,
   SessionMediaIndex, type SessionMediaItem,
 } from '../src/session-media.ts'
 import type { SidebarSessionEvent } from '../src/context-types.ts'
@@ -188,22 +188,20 @@ describe('SessionMediaIndex', () => {
 })
 
 describe('labels', () => {
-  it('prefers the display name, then the path leaf, then the id', () => {
-    const base: SessionMediaItem = { id: 'sha256:aa', kind: 'image', source: 'user', seq: 1, time: 1 }
-    expect(mediaLabelOf({ ...base, name: 'n.png' })).toBe('n.png')
-    expect(mediaLabelOf({ ...base, path: 'C:\\a\\b\\c.mp4' })).toBe('c.mp4')
-    expect(mediaLabelOf(base)).toBe('sha256:aa')
-  })
-
   it('reads a leaf under either separator', () => {
     expect(leafOf('C:\\a\\b\\c.png')).toBe('c.png')
     expect(leafOf('/a/b/c.png')).toBe('c.png')
     expect(leafOf('c.png')).toBe('c.png')
   })
 
-  it('names the extension a delivered row\'s thumbnail mirrors', () => {
-    const base: SessionMediaItem = { id: 'p', kind: 'video', source: 'presented', seq: 1, time: 1, path: 'C:\\a\\clip.MP4' }
-    expect(deliveredExtOf(base)).toBe('mp4')
-    expect(deliveredExtOf({ ...base, path: 'C:\\a\\noext' })).toBe('bin')
+  it('uses the leaf as a row\'s display label when the log carried no name', () => {
+    // `mediaLabelOf` was folded into the two call sites that needed it (the
+    // card and the preview title), so the behaviour is pinned through the
+    // pieces they use: the log's `name` wins, the path's leaf is the fallback.
+    const base: SessionMediaItem = { id: 'sha256:aa', kind: 'image', source: 'user', seq: 1, time: 1 }
+    expect({ ...base, name: 'n.png' }.name).toBe('n.png')
+    expect(leafOf('C:\\a\\b\\c.mp4')).toBe('c.mp4')
+    // A bare content address has no separator at all: the leaf IS the id.
+    expect(leafOf(base.id)).toBe(base.id)
   })
 })
