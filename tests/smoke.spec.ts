@@ -138,6 +138,7 @@ describe('host plugin smoke', () => {
       '/sidebar/bundle',
       '/sidebar/archive',
       '/sidebar/file',
+      '/sidebar/media',
       '/sidebar/html',
     ])
     expect(upgrades.map(route => route.path)).toEqual([

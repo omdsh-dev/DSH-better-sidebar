@@ -77,7 +77,7 @@ const CRASH_STRIP_PATTERNS = [/^dsh-better-sidebar:/, /^\[dsh-better-sidebar\]/]
  * Browser tabs"), and every lane here drives the web profile. Listing it would
  * demand a guide entry the host itself has stopped offering.
  */
-const PLUGIN_TABS = ['files', 'git', 'subagent', 'sidechat'] as const
+const PLUGIN_TABS = ['files', 'git', 'subagent', 'sidechat', 'media'] as const
 const HOST_OWNED_TABS = ['terminal'] as const
 const NATIVE_TABS: readonly string[] = [...PLUGIN_TABS, ...HOST_OWNED_TABS]
 

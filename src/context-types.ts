@@ -467,6 +467,58 @@ export interface SidebarSessionTitleService {
 }
 
 /**
+ * One durable image attachment reference, as DSH's attachment service and the
+ * session log carry it.
+ *
+ * Structural mirror of `@deepseek-ai/dsh-attachment`'s `ImageAttachmentRef`
+ * (that package is a HOST peer and is not importable from this plugin's
+ * declaration graph — importing it would also drag `node:buffer` into the
+ * browser bundle). `attachmentId` is a content address (`sha256:<64 hex>`),
+ * never a path.
+ */
+export interface SidebarImageAttachmentRef {
+  attachmentId: string
+  mediaType: string
+  bytes: number
+  width: number
+  height: number
+  name?: string
+  originalDimensions?: { width: number; height: number }
+}
+
+/**
+ * The host attachment store face this plugin reads historical media through
+ * (`ctx.get('attachments')`).
+ *
+ * Only the two READ calls are mirrored: the session media viewer needs to turn
+ * a historical reference back into bytes, and it must never publish a new
+ * attachment (that is the prompt admission path's business). The service is
+ * optional so a deployment without the local attachment backend simply hides
+ * the feature instead of erroring.
+ */
+export interface SidebarAttachmentsService {
+  /**
+   * Read one stored image and verify it against the supplied reference.
+   * @param ref - the reference a session log carried.
+   * @param signal - optional cancellation.
+   * @returns the verified bytes plus the reference, or rejects with the
+   *   backend's own `AttachmentError` (code `ATTACHMENT_NOT_FOUND` when the
+   *   object is gone).
+   */
+  readImage(
+    ref: SidebarImageAttachmentRef,
+    signal?: AbortSignal,
+  ): Promise<{ ref: SidebarImageAttachmentRef; data: Uint8Array }>
+  /**
+   * Locate the normalized object on the host filesystem — the fallback read
+   * path when the service call is refused for a reference-shape reason.
+   * @param ref - the reference a session log carried.
+   * @returns an absolute path, or undefined for a non-file-backed backend.
+   */
+  imageHostPath?(ref: SidebarImageAttachmentRef): string | undefined
+}
+
+/**
  * The host session-persistence face (mirror of the `sessionPersistence`
  * service): durable, handle-addressed session storage.
  *
@@ -907,6 +959,12 @@ export interface SidebarContextShape {
   sessionTitle: SidebarSessionTitleService
   /** The host session-persistence service (optional; side chat cold resume). */
   sessionPersistence: SidebarSessionPersistenceService
+  /**
+   * The host attachment store (optional; the session media viewer reads
+   * historical image references through it). Absent on a deployment without
+   * the local attachment backend, which hides that half of the viewer.
+   */
+  attachments?: SidebarAttachmentsService
   /** The composer draft face (client ui-conversation, lazy `ctx.get` probe). */
   conversation: SidebarConversation
   /**

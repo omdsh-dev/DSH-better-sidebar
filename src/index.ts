@@ -10,7 +10,7 @@
  * session's authoritative cwd comes from the session store.
  */
 import { open, readFile, stat } from 'node:fs/promises'
-import { basename, extname, isAbsolute, join, sep } from 'node:path'
+import { basename, isAbsolute, join, sep } from 'node:path'
 import type { Stats } from 'node:fs'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Duplex } from 'node:stream'
@@ -53,6 +53,7 @@ import { readJsonBody, readTextBody, requireString, SidebarError, writeError, wr
 import { byteRangeOf, streamFileToResponse } from './file-stream.ts'
 import { fileReadError } from './fs-read-error.ts'
 import { createChangesOpsApi } from './changes-ops.ts'
+import { buildMediaApi, respondMedia, type MediaQuery } from './media-routes.ts'
 import { BlockAssembler, createUserMessage, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import {
   buildCommitPrompt,
@@ -115,52 +116,9 @@ export interface SidebarFsLevel {
 /** Services required before mounting: routes, sessions, native request admission, and tools. */
 export const inject = ['webServer', 'sessions', 'connection', 'tools']
 
-/** Content types for media files and HTML preview resources, by extension. */
-const MEDIA_TYPES: Record<string, string> = {
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.gif': 'image/gif',
-  '.webp': 'image/webp',
-  '.svg': 'image/svg+xml',
-  '.bmp': 'image/bmp',
-  '.ico': 'image/x-icon',
-  '.avif': 'image/avif',
-  '.pdf': 'application/pdf',
-  '.html': 'text/html',
-  '.htm': 'text/html',
-  '.css': 'text/css',
-  '.js': 'text/javascript',
-  '.mjs': 'text/javascript',
-  '.json': 'application/json',
-  '.woff': 'font/woff',
-  '.woff2': 'font/woff2',
-  '.ttf': 'font/ttf',
-  '.otf': 'font/otf',
-  '.wasm': 'application/wasm',
-  // Media containers: `<video>` / `<audio>` pick their demuxer from this
-  // header, so a media file answered as octet-stream is a coin flip even when
-  // the browser can decode it. `.ogg` is audio on purpose — a Theora video in
-  // Ogg is vanishingly rare next to Vorbis/Opus audio.
-  '.mp4': 'video/mp4',
-  '.m4v': 'video/mp4',
-  '.webm': 'video/webm',
-  '.ogv': 'video/ogg',
-  '.mov': 'video/quicktime',
-  '.mp3': 'audio/mpeg',
-  '.m4a': 'audio/mp4',
-  '.aac': 'audio/aac',
-  '.wav': 'audio/wav',
-  '.flac': 'audio/flac',
-  '.ogg': 'audio/ogg',
-  '.oga': 'audio/ogg',
-  '.opus': 'audio/ogg',
-}
-
-/** Content type served by /sidebar/file and /sidebar/html; unknowns use a binary-safe fallback. */
-export function mediaTypeForPath(path: string): string {
-  return MEDIA_TYPES[extname(path).toLowerCase()] ?? 'application/octet-stream'
-}
+/** Content types for media files and HTML preview resources live in ./media-types.ts. */
+import { mediaTypeForPath } from './media-types.ts'
+export { MEDIA_TYPES, mediaTypeForPath } from './media-types.ts'
 
 /**
  * Stored header cwd per session id, kept for the process lifetime.
@@ -273,8 +231,7 @@ async function sessionCwdOf(ctx: Context, sessionId: string, clientCwd?: string)
 }
 
 /** Optional repository selected by the Git panel when cwd is a container. */
-function selectedRepoOf(payload: unknown): string | undefined {
-  const record = payload as { repoRoot?: unknown }
+function selectedRepoOf(payload: unknown): string | undefined {  const record = payload as { repoRoot?: unknown }
   if (record.repoRoot === undefined) return undefined
   return requireAbsolute(requireString(payload, 'repoRoot'))
 }
@@ -743,27 +700,28 @@ export interface SidebarSettingsFace {
   update(patch: Record<string, unknown>, expectedRevision?: number): Promise<{ value?: unknown; revision?: number }>
 }
 
-function buildApi(
-  ctx: Context,
-  resolved: ResolvedSidebarConfig,
-  getSettings: () => SidebarSettingsFace | undefined,
-  assistantLive: AssistantLiveBuffer,
-  archiveTasks: ArchiveTasks,
-  sidechatSignal: AbortSignal,
-): Record<string, ApiMethod> {
-  /**
-   * Same-key sharing for the shared cwd path. Every file/Git route below
-   * resolves the session cwd through here, and a session switch fires them at
-   * once. Cold resolution is now a header-only read (see `storedHeaderCwdOf`),
-   * but the whole resolution still folds the active-worktree scan, so sharing
-   * one leader keeps a burst from repeating that too. Concurrent asks for the
-   * same session + client hint share ONE resolution; the hint is part of the
-   * key because it is a fallback the result depends on. No TTL: the stored
-   * header is memoized, and a live session's committed directory is re-read on
-   * every ask after this short-lived entry is dropped.
-   */
+/**
+ * Same-key sharing for the shared cwd path. Every file/Git/media route
+ * resolves the session cwd through {@link createCwdResolver}, and a session
+ * switch fires them at once. Cold resolution is a header-only read (see
+ * `storedHeaderCwdOf`), but the whole resolution still folds the
+ * active-worktree scan, so sharing one leader keeps a burst from repeating
+ * that too. Concurrent asks for the same session + client hint share ONE
+ * resolution; the hint is part of the key because it is a fallback the result
+ * depends on. No TTL: the stored header is memoized, and a live session's
+ * committed directory is re-read on every ask after this short-lived entry is
+ * dropped.
+ *
+ * A factory rather than a closure inside `buildApi`: the raw media route
+ * (`/sidebar/media`) lives outside the JSON API table and must resolve exactly
+ * the same workspace, or a delivered file's relative path would land somewhere
+ * else.
+ * @param ctx - host plugin context.
+ * @returns the resolver the routes take.
+ */
+function createCwdResolver(ctx: Context): (payload: unknown) => Promise<{ sessionId: string; cwd: string }> {
   const cwdInFlight = new Map<string, Promise<{ sessionId: string; cwd: string }>>()
-  const cwdOf = async (payload: unknown): Promise<{ sessionId: string; cwd: string }> => {
+  return async (payload) => {
     const sessionId = requireString(payload, 'sessionId')
     const record = payload as { cwd?: unknown } | null
     const clientCwd = typeof record?.cwd === 'string' && record.cwd !== '' ? record.cwd : undefined
@@ -781,6 +739,17 @@ function buildApi(
       cwdInFlight.delete(key)
     }
   }
+}
+
+function buildApi(
+  ctx: Context,
+  resolved: ResolvedSidebarConfig,
+  getSettings: () => SidebarSettingsFace | undefined,
+  assistantLive: AssistantLiveBuffer,
+  archiveTasks: ArchiveTasks,
+  sidechatSignal: AbortSignal,
+): Record<string, ApiMethod> {
+  const cwdOf = createCwdResolver(ctx)
   /** Resolve the optional Git-panel checkout selector against the selected
    * session repository. Unlike `cwd`, `worktree` is never trusted directly. */
   const gitCwdOf = async (payload: unknown): Promise<{ sessionId: string; cwd: string }> => {
@@ -810,7 +779,13 @@ function buildApi(
   // the tree root leading no team → `{team:null}`. Mutations ride the
   // service's own CAS result union (conflicts stay distinct).
   const teamsApi: SidebarTeamsRoutes = buildTeamsApi(ctx)
+  // Session media viewer (fork addition): the catalogue fold, the durable
+  // thumbnail slots, and the raw `GET /sidebar/media` route. The store lives
+  // under the harness home so a thumbnail outlives the original attachment
+  // object — see media-store.ts for why that copy is the whole point.
+  const mediaApi = buildMediaApi(ctx, cwdOf)
   return {
+    ...mediaApi,
     'session.phase': async (payload) => {
       const sessionId = requireString(payload, 'sessionId')
       const session = ctx.sessions.get(sessionId)
@@ -1629,6 +1604,11 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   ctx.effect(() => () => { archiveTasks.dispose() }, 'dsh-better-sidebar: archive task table')
   const sidechatLifetime = new AbortController()
   ctx.effect(() => () => { sidechatLifetime.abort() }, 'dsh-better-sidebar: sidechat admissions')
+  // The raw media byte route lives outside the JSON API table, so it gets its
+  // own resolver instance. Sharing the leader cache with `buildApi`'s copy is
+  // pointless (the two never race on the same key in practice) and this keeps
+  // the factory the single definition of "the session's workspace".
+  const mediaCwdOf = createCwdResolver(ctx)
   const api = buildApi(ctx, resolved, () => settingsFace, assistantLive, archiveTasks, sidechatLifetime.signal)
   // Concurrent LARGE-prompt admissions. Only a prompt body that may carry
   // encoded images is counted: the prompt's JSON metadata is capped at
@@ -1930,6 +1910,45 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
       }
     },
   }), 'dsh-better-sidebar: /sidebar/file media route')
+
+  // ── Session media viewer byte route ─────────────────────────────────────
+  // One row of the viewer's catalogue, by identity: `thumb=1` answers the
+  // plugin-owned PNG (which outlives the original), otherwise the ORIGINAL
+  // bytes — an attachment read through the host's attachment service, or a
+  // delivered workspace file streamed with Range support. The catalogue itself
+  // is the `media.list` JSON method; this route exists so a 40 MB original (or
+  // a video that needs to seek) never has to travel as base64.
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'prefix',
+    path: '/sidebar/media',
+    handler: async (req, res) => {
+      if (!fence(req)) {
+        res.writeHead(403)
+        res.end('forbidden')
+        return
+      }
+      if (req.method !== 'GET') {
+        res.writeHead(405)
+        res.end()
+        return
+      }
+      try {
+        const params = new URL(req.url ?? '/', 'http://dsh.internal').searchParams
+        const id = params.get('id')
+        if (id === null || id === '') throw new SidebarError('bad-request', 'id is required')
+        const query: MediaQuery = {
+          id,
+          thumb: params.get('thumb') === '1',
+          download: params.get('download') === '1',
+          ...(params.get('sessionId') === null ? {} : { sessionId: params.get('sessionId')! }),
+          ...(params.get('cwd') === null ? {} : { cwd: params.get('cwd')! }),
+        }
+        await respondMedia(ctx, mediaCwdOf, query, res)
+      } catch (error) {
+        writeError(res, error)
+      }
+    },
+  }), 'dsh-better-sidebar: /sidebar/media route')
 
 
   // ── HTML preview route (sandboxed HTML + its relative assets) ───────────

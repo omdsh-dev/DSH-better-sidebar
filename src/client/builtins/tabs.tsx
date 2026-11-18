@@ -21,7 +21,7 @@
 import { IconCodeOutlineRegular, IconPanelLeftOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import { useCallback, useSyncExternalStore } from 'react'
 import {
-  changesTabIcon, filesTabIcon, sidechatTabIcon, tasksTabIcon, terminalTabIcon,
+  changesTabIcon, filesTabIcon, mediaTabIcon, sidechatTabIcon, tasksTabIcon, terminalTabIcon,
 } from './tab-icons.tsx'
 import { t } from '../locales.ts'
 import { openSidebarFile } from '../sidebar-file.ts'
@@ -33,6 +33,7 @@ import { DiffTab } from '../DiffTab.tsx'
 import { SubagentView } from '../SubagentView.tsx'
 import { consumeSidechatSeed, SideChatView, sidechatThreadIdOf } from '../SideChatView.tsx'
 import { LazyTerminalBottom } from '../terminal-lazy.tsx'
+import { MediaViewerTab } from '../MediaViewerTab.tsx'
 import { INSTANCE_FIELD, closeBottomTerminal, webTerminals } from '../terminal-client.ts'
 import { api } from '../api.ts'
 import { sidechatSubmitKeyOf, sidechatTabsModeOf } from '../prefs.ts'
@@ -465,6 +466,22 @@ export function builtinTabs(ctx: Context): readonly TabDescriptor[] {
         tab.diff === undefined ? null
           : <DiffTab scope={scope} diff={tab.diff} />
       ),
+    },
+    {
+      // Session media (fork addition): the conversation's whole media history
+      // plus a plugin-owned thumbnail per row. `single: true` because the page
+      // IS the conversation — a second instance would show the same catalogue
+      // and capture the same thumbnails twice.
+      id: 'media',
+      title: () => t('mediaViewer'),
+      description: () => t('mediaGuideDesc'),
+      icon: mediaTabIcon,
+      // After the four host-facing pages (10..35) and before the bottom
+      // terminal (40): browsing past media is a follow-up act, not a starting
+      // point.
+      order: 38,
+      single: true,
+      component: MediaViewerTab,
     },
   ]
 }
