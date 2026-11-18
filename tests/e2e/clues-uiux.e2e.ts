@@ -478,8 +478,14 @@ test('clues workbench stays usable across column widths and host themes', async 
     await expect(lastPack).toBeVisible()
     // The progressive reveal keeps appending rows while the scroll lands;
     // retry the scroll+measure until the last row settles inside the tab box.
+    // Pin the shelf's OWN scroll to the end (scrollIntoViewIfNeeded can move an
+    // ancestor instead) so the reveal appends and the row settles inside the
+    // 158px viewport before the box is sampled.
+    const scrollShelfToEnd = async (): Promise<void> => {
+      await packScroll.evaluate(node => { node.scrollTop = node.scrollHeight })
+    }
     await expect.poll(async () => {
-      await lastPack.scrollIntoViewIfNeeded()
+      await scrollShelfToEnd()
       const row = await lastPack.boundingBox()
       const box = await tab.boundingBox()
       return row === null || box === null ? Number.POSITIVE_INFINITY : row.y + row.height - (box.y + box.height)
@@ -491,8 +497,15 @@ test('clues workbench stays usable across column widths and host themes', async 
     expect(lastPackBounds.x + lastPackBounds.width).toBeLessThanOrEqual(packScrollBounds.x + packScrollBounds.width + 1)
     // The shelf's inner scroll may keep the row one line under its own box
     // while the section paints it; the user-visible contract is the tab box.
+    // The reveal can append one more row right after the scroll settles, so
+    // the containment retries instead of sampling a single frame.
     expect(lastPackBounds.y).toBeGreaterThanOrEqual(tabBounds.y - 1)
-    expect(lastPackBounds.y + lastPackBounds.height).toBeLessThanOrEqual(tabBounds.y + tabBounds.height + 1)
+    await expect.poll(async () => {
+      await scrollShelfToEnd()
+      const row = (await lastPack.boundingBox())!
+      const box = (await tab.boundingBox())!
+      return row.y + row.height - (box.y + box.height)
+    }).toBeLessThanOrEqual(1)
     await expect(packs.getByRole('region', { name: 'Collections', exact: true })).toBeVisible()
     await expect(packFilter).toBeVisible()
     await page.mouse.move(0, 0)
