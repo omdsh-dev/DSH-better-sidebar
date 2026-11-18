@@ -1439,7 +1439,21 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   const resolved = resolveSidebarConfig(config)
   // Connection owns both deployment trust and authentication; never infer or
   // bypass its policy from invocation flags or a copied trust list.
-  const fence = (req: SidebarHttpRequest): boolean => ctx.connection.requestRejection(req) === undefined
+  // DSH master (after rc.3) removed `connection.requestRejection`; the
+  // upgrade guide points at `admit()`, but that validates credentials and
+  // would reject the cookie-less media/iframe requests #905 deliberately lets
+  // through. Prefer the old face while it exists, then fall back to the pure
+  // Host/Origin trust predicate; with neither face available every request is
+  // refused.
+  const connection = ctx.connection as unknown as {
+    requestRejection?: (request: { headers: Record<string, string | string[] | undefined> }) => 401 | 403 | undefined
+    isTrustedRequest?: (request: unknown) => boolean
+  }
+  const fence = (req: SidebarHttpRequest): boolean => {
+    if (typeof connection.requestRejection === 'function') return connection.requestRejection(req) === undefined
+    if (typeof connection.isTrustedRequest === 'function') return connection.isTrustedRequest(req)
+    return false
+  }
   // The model-facing open-request registry: queues `sidebar_open` requests
   // per session and pushes them to connected sidebar views over the
   // `/sidebar/ws/agent-opens` socket.

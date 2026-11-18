@@ -51,7 +51,7 @@
 ## 5. 仍然生效的删除契约（alpha.5 起）
 
 - 不再依赖 `dsh-invariants`、`ctx.invariants` 或上游 `/invariant` 子路径；不发布 invariant companion。
-- HTTP/WS 准入统一调用 `ctx.connection.requestRejection(req)`，**只有 `undefined` 放行**；不恢复 `webRuntime`，不自建信任例外。
+- HTTP/WS 准入：优先 `ctx.connection.requestRejection(req)`（**只有 `undefined` 放行**）；DSH master 删除该 API 后回退到 `connection.isTrustedRequest(req)`（纯 Host/Origin 判据，不校验凭据）；两者都没有时一律拒绝。不恢复 `webRuntime`，不自建信任例外。
 
 ## 6. 0.2.1 → 0.2.2 的代码级差异（v0.30.0）
 
