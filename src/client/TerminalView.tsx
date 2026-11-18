@@ -42,23 +42,34 @@
  */
 import { FitAddon } from '@xterm/addon-fit'
 import { Terminal } from '@xterm/xterm'
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSyncExternalStore, type ReactNode } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import '@xterm/xterm/css/xterm.css'
 import type { Context } from '../context-types.ts'
 import type { SessionScope } from './api.ts'
-import type { SidebarTab } from './state.ts'
+import type { SidebarStore, SidebarTab } from './state.ts'
+import { TERMINAL_DEFAULT_SHELL_SETTING, TERMINAL_PREFS_ID, terminalDefaultShellOf } from '../prefs-shared.ts'
 import { t } from './locales.ts'
 import { isDarkScheme, subscribeColorScheme } from './theme.ts'
 import {
-  bottomTerminalContentId, nextTerminalMeta, terminalInstanceOf, terminalRunOf, webTerminals,
+  bottomTerminalContentId, matchShellPath, nextTerminalMeta, shortShellName, terminalInstanceOf, terminalRunOf,
+  terminalShellOf, webTerminals,
   type HostTerminalEnvironment, type HostTerminalView, type HostTerminalViewState,
 } from './terminal-client.ts'
 import { terminalClipboardKey } from './terminal-clipboard.ts'
+import { TerminalShellSwitcher, canSwitchShells } from './terminal-shells.tsx'
+import { updatePluginSettings } from './plugin-settings.ts'
 import css from './terminal.module.css'
 
 /** The props the bottom terminal view consumes from its tab descriptor. */
 export interface TerminalBottomProps {
   ctx: Context
+  /**
+   * The sidebar store, used to persist a shell picked inside the terminal as the
+   * descriptor's default. Optional: the view renders without it (and then a
+   * switch only affects the current tab), which keeps the props honest for
+   * callers that have no store to write.
+   */
+  store?: SidebarStore
   scope: SessionScope
   tab: SidebarTab
   visible: boolean
@@ -69,7 +80,7 @@ export interface TerminalBottomProps {
  * @param props - the client context, the tab's session scope and visibility.
  * @returns the terminal screen plus its status/degradation panels.
  */
-export function TerminalBottomView({ ctx, scope, tab, visible }: TerminalBottomProps): ReactNode {
+export function TerminalBottomView({ ctx, store, scope, tab, visible }: TerminalBottomProps): ReactNode {
   const sessionId = scope.sessionId
   // The service is probed structurally, never injected: a deployment without
   // it keeps the tray row disabled and renders the explanation below.
@@ -80,12 +91,60 @@ export function TerminalBottomView({ ctx, scope, tab, visible }: TerminalBottomP
   // identity (`view(sessionId, key, contentId)`), and the instance keeps two
   // bottom terminals in one session from sharing it (#774 follow-up).
   const contentId = bottomTerminalContentId(run, instance)
+  // The descriptor's settings blob rides the sidebar snapshot's prefs, so the
+  // default shell is read here rather than threaded through props: a settings
+  // change has to reach an ALREADY-MOUNTED terminal (native tabs stay mounted),
+  // and only the snapshot subscription can deliver that.
+  const sidebar = ctx.get('betterSidebar')
+  // Optional chaining throughout: `getSnapshot` runs on every render, so a
+  // service that predates the state subscription (or a test double) must not
+  // turn the whole tab into a thrown render.
+  const prefs = useSyncExternalStore(
+    useMemo(() => (listener: () => void) => sidebar?.subscribeState?.(listener) ?? (() => {}), [sidebar]),
+    useCallback(() => sidebar?.getSnapshot?.().prefs, [sidebar]),
+  )
+  // A tab runs the shell it was PINNED to; an unpinned one follows the
+  // descriptor's default shell. The default is stored as a NAME (it has to
+  // survive a re-install: `bash` is `bash.exe` here and `/bin/bash` there),
+  // while the host starts only a PATH from its own discovery result — anything
+  // else throws when the PTY starts. So an unpinned tab spends ONE discovery
+  // round trip first: `view()` freezes its shellPath at construction, and
+  // starting a terminal and re-pointing it afterwards would mean closing a live
+  // process on every mount.
+  const pinnedShell = terminalShellOf(tab)
+  const defaultShell = terminalDefaultShellOf(prefs?.pluginSettings[TERMINAL_PREFS_ID])
+  const [probe, setProbe] = useState<{ readonly name: string; readonly path: string | undefined } | undefined>(undefined)
+  // Settled means "there is nothing left to look up": the tab is pinned, no
+  // default is configured, or the default was already resolved — to a path, or
+  // to nothing, which falls back to the host's own choice.
+  const shellSettled = pinnedShell !== undefined || defaultShell === undefined || probe?.name === defaultShell
+  const shellPath = pinnedShell ?? probe?.path
+
+  useEffect(() => {
+    if (shellSettled || service === undefined || defaultShell === undefined) return
+    const lifetime = new AbortController()
+    void Promise.resolve(service.launchShells?.(sessionId, lifetime.signal)).then(
+      (catalog) => {
+        if (lifetime.signal.aborted) return
+        setProbe({ name: defaultShell, path: matchShellPath(catalog, defaultShell) })
+      },
+      () => {
+        // A failed discovery is not worth an error panel: the terminal still has
+        // a shell to run, it is just the host's own choice.
+        if (!lifetime.signal.aborted) setProbe({ name: defaultShell, path: undefined })
+      },
+    )
+    return () => { lifetime.abort() }
+  }, [defaultShell, service, sessionId, shellSettled])
+
   // `view()` allocates the terminal eagerly and memoizes one model per
   // (session, key) on the host side, so this memo must be the ONLY creation
   // path: a repeat `view()` for the same key is free, a new key is a new PTY.
+  // It also waits for `shellSettled`: allocating before the shell is known
+  // would start the host's own choice and freeze it for this occurrence.
   const model = useMemo(
-    () => service?.view(sessionId, contentId, contentId),
-    [service, sessionId, contentId],
+    () => (shellSettled ? service?.view(sessionId, contentId, contentId, undefined, shellPath) : undefined),
+    [service, sessionId, contentId, shellPath, shellSettled],
   )
   const state = useSyncExternalStore(
     useMemo(() => (callback: () => void) => model?.state.subscribe(callback) ?? (() => {}), [model]),
@@ -107,6 +166,38 @@ export function TerminalBottomView({ ctx, scope, tab, visible }: TerminalBottomP
     ctx.get('betterSidebar')?.updateTab(tab.id, { meta: nextTerminalMeta(tab) }, sessionId)
   }, [ctx, tab, sessionId])
 
+  // The "+" half of the switcher: a SIBLING terminal in the same workbench,
+  // allocated from the host's remembered shell. `createTab` on the descriptor
+  // mints the tab (a fresh instance id), so nothing here names an id.
+  const openTerminal = useCallback(() => {
+    ctx.get('betterSidebar')?.openTab({ type: 'terminal-bottom', target: 'bottom' }, { sessionId })
+  }, [ctx, sessionId])
+
+  // A pick inside the terminal IS the new default: the settings panel and the
+  // switcher edit the same key, so there is one answer to "which shell does a
+  // new bottom terminal start", not two that drift apart. The write goes
+  // through the descriptor's own blob (never the host-wide
+  // `localStorage['dsh.terminal.shell']`), and is skipped when the caller gave
+  // no store — a view rendered without one still switches this tab.
+  const rememberDefault = useCallback((name: string) => {
+    if (store === undefined) return
+    updatePluginSettings(store, TERMINAL_PREFS_ID, blob => ({ ...blob, [TERMINAL_DEFAULT_SHELL_SETTING]: name }))
+  }, [store])
+
+  // The tab names the shell it actually runs. The Host is the only authority on
+  // what it started (a menu pick only expresses a preference), so the title
+  // follows `info.shell.name` once the process reports it. Writing only on a
+  // real difference keeps a remount (session switch, panel toggle) from
+  // rewriting the persisted layout on every render.
+  const shellName = state?.info?.shell?.name
+  const shellTitle = shellName === undefined || shellName === ''
+    ? undefined
+    : t('terminalTitleWithShell', { name: shortShellName(shellName) })
+  useEffect(() => {
+    if (shellTitle === undefined || tab.title === shellTitle) return
+    ctx.get('betterSidebar')?.updateTab(tab.id, { title: shellTitle }, sessionId)
+  }, [ctx, shellTitle, tab.id, tab.title, sessionId])
+
   if (service === undefined) {
     return (
       <section className={css.root} data-dsh-bottom-terminal data-terminal-state="unavailable">
@@ -114,8 +205,16 @@ export function TerminalBottomView({ ctx, scope, tab, visible }: TerminalBottomP
       </section>
     )
   }
-  if (model === undefined || state === undefined) return null
-
+  if (model === undefined || state === undefined) {
+    // `model` is undefined only while the shell is still being resolved (see the
+    // memo above). A blank panel would read as a broken tab, so it says what it
+    // is waiting for instead — the same loading line a starting terminal shows.
+    return (
+      <section className={css.root} data-dsh-bottom-terminal data-terminal-state="loading">
+        <p className={css.status} role="status">{t('loading')}</p>
+      </section>
+    )
+  }
   const missing = state.issue === 'missingTerminal'
   const ended = state.info?.state === 'exited' || state.phase === 'closed'
   // The missing/ended panels carry their own message, so the pending-phase
@@ -125,6 +224,19 @@ export function TerminalBottomView({ ctx, scope, tab, visible }: TerminalBottomP
 
   return (
     <section className={css.root} data-dsh-bottom-terminal data-terminal-state={state.phase}>
+      {canSwitchShells(service) && (
+        <div className={css.switcher} data-dsh-bottom-terminal-switcher>
+          <TerminalShellSwitcher
+            service={service}
+            ctx={ctx}
+            scope={scope}
+            tab={tab}
+            shellName={shellName}
+            onNewTerminal={openTerminal}
+            onDefaultShell={rememberDefault}
+          />
+        </div>
+      )}
       {status !== undefined && (
         <div className={css.status} role="status">
           <span>{status}</span>

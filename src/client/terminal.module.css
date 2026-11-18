@@ -17,6 +17,8 @@
   height: 100%;
   min-height: 0;
   color: var(--dsw-alias-label-primary);
+  /* Anchor for the floating shell switcher (see .switcher). */
+  position: relative;
 }
 
 .screen {
@@ -102,4 +104,35 @@
 
 .action:hover {
   background: var(--dsw-alias-bg-layer-2);
+}
+
+/* The shell switcher floats over the screen instead of claiming a row of its
+   own: the terminal is height-constrained already, and the control is a
+   secondary affordance. It sits at low opacity while idle and comes back on
+   hover or keyboard focus, at which point both halves are live. */
+.switcher {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  z-index: 1;
+  opacity: 0.35;
+  transition: opacity 120ms ease;
+}
+
+.switcher:hover,
+.switcher:focus-within {
+  opacity: 1;
+}
+
+.launch {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.launch .action {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 6px;
 }

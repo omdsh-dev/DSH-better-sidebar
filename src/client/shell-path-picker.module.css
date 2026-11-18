@@ -1,0 +1,247 @@
+/**
+ * Styles for the shell-candidate file browser (ShellPathPicker).
+ *
+ * It renders inside the host's Modal, so only the body needs its own surface:
+ * the path box, a one-line location toolbar, and a scrolling row list. Every
+ * colour is a `--dsw-alias-*` token (the skin contract has no exemption
+ * surface), and rows reuse the 8px/vs-12px rhythm of the settings popup next
+ * door rather than inventing a second one.
+ */
+
+.content {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.pathInput {
+  width: 100%;
+}
+
+.browser {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.up {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-layer-3);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  transition: border-color 0.16s, color 0.16s;
+}
+
+.up:hover:not(:disabled) {
+  border-color: var(--dsw-alias-label-dimmed);
+  color: var(--dsw-alias-label-primary);
+}
+
+.up:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* The current directory: one line, ellipsised from the LEFT is not possible in
+   CSS, so it clips at the end and the full value lives in `title`. */
+.cwd {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  max-height: 240px;
+  overflow-y: auto;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 10px;
+  background: var(--dsw-alias-bg-layer-3);
+  padding: 4px;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: left;
+  cursor: pointer;
+}
+
+.row:hover {
+  background: var(--dsw-alias-bg-layer-2);
+}
+
+.rowName {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hint {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.error {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.cancel,
+.confirm {
+  padding: 6px 14px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-3);
+  color: var(--dsw-alias-label-primary);
+  font-size: 12px;
+  line-height: 1.5;
+  cursor: pointer;
+  transition: border-color 0.16s;
+}
+
+.cancel:hover,
+.confirm:hover {
+  border-color: var(--dsw-alias-label-dimmed);
+}
+
+.confirm {
+  color: var(--dsw-alias-label-primary);
+  font-weight: 600;
+}
+
+/* Explorer-style address bar: a computer icon, then one button per path
+   segment. The empty tail is a click target that switches to text editing. */
+.breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  width: 100%;
+  min-width: 0;
+  min-height: 30px;
+  padding: 3px 6px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-3);
+  /* A revealed long path must scroll inside the row, never push the dialog
+     wider or squash the crumbs into overlapping text. */
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.computer,
+.crumb,
+.crumbLast {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  padding: 3px 6px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+  cursor: pointer;
+  transition: background 0.16s, color 0.16s;
+}
+
+.computer:hover,
+.crumb:hover,
+.crumbLast:hover {
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-primary);
+}
+
+.computerActive {
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-primary);
+}
+
+.crumbSlot {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+  color: var(--dsw-alias-label-dimmed);
+}
+
+.crumbLast {
+  color: var(--dsw-alias-label-primary);
+  font-weight: 600;
+}
+/* Each crumb truncates on its own so one very long folder name cannot
+   push the tail (and the edit target) out of the address row. The full
+   value stays in the button's `title`. */
+.crumbLabel {
+  display: block;
+  max-width: 9em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The folded `..` stands for hidden middle levels. It is plain text, not a
+   button: clicking it to expand only reintroduces the overlap the fold fixed. */
+.folded {
+  flex: none;
+  padding: 3px 5px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+  cursor: default;
+  user-select: none;
+}
+
+.crumbSpacer {
+  flex: 1 1 auto;
+  align-self: stretch;
+  min-width: 24px;
+  cursor: text;
+}
