@@ -8,6 +8,7 @@
  */
 
 .page {
+  position: relative;
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -190,13 +191,20 @@
   padding: 8px 0 14px;
 }
 
+/*
+ * The preview layer is scoped to the PANEL, not the window: this page lives in
+ * one right-column tab, and a viewport-wide lightbox would dim the chat, the
+ * left rail and every other pane to show one picture. `absolute` against the
+ * page root keeps it inside the column it belongs to.
+ */
 .overlay {
-  position: fixed;
+  position: absolute;
   inset: 0;
   z-index: 40;
   display: flex;
   flex-direction: column;
-  background: var(--dsw-alias-bg-mask-1);
+  border-radius: var(--dsw-radius-md);
+  background: var(--dsw-alias-bg-layer-1);
 }
 
 .overlayBar {

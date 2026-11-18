@@ -445,13 +445,20 @@ export function MediaViewerTab(props: TabComponentProps): ReactNode {
           )}
           <Button
             size="sm"
+            data-media-capture-all
             onClick={() => { void captureAll() }}
             disabled={busy || capture.running || counts.missing === 0}
             title={t('mediaCaptureAllHint')}
           >
             {t('mediaCaptureAll')}
           </Button>
-          <Button size="sm" onClick={() => { void load() }} title={t('mediaRefreshHint')} icon={<IconRefreshOutlineRegular size={14} />}>
+          <Button
+            size="sm"
+            data-media-refresh
+            onClick={() => { void load() }}
+            title={t('mediaRefreshHint')}
+            icon={<IconRefreshOutlineRegular size={14} />}
+          >
             {''}
           </Button>
         </div>
