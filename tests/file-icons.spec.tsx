@@ -28,6 +28,7 @@ if (g.localStorage === undefined) {
 import { createBetterSidebarService, SIDEBAR_FEATURES } from '../src/client/service.ts'
 import { createSidebarStore } from '../src/client/state.ts'
 import { builtinFileIcon, builtinFolderIcon, fallbackFileIcon } from '../src/client/file-icons.tsx'
+import { IconDrawioOutline16 } from '../src/client/icons.tsx'
 
 /** The component type of a rendered icon element (identity of the glyph). */
 const glyphOf = (node: ReactNode): unknown => (node as ReactElement).type
@@ -273,6 +274,11 @@ describe('built-in glyphs are the host’s own artwork', () => {
       expect(glyphOf(builtinFileIcon(path, 14)), path).toBe(FileTypeIcon)
     }
     expect(glyphOf(fallbackFileIcon(14))).toBe(FileTypeIcon)
+  })
+
+  it('draw.io rows use the plugin glyph (the host has no draw.io category)', () => {
+    expect(glyphOf(builtinFileIcon('/w/architecture.drawio', 14))).toBe(IconDrawioOutline16)
+    expect(glyphOf(builtinFileIcon('/w/architecture.DIO', 14))).toBe(IconDrawioOutline16)
   })
 
   it('hands the row’s path and size to the host classifier', () => {
