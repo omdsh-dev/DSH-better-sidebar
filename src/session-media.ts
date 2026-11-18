@@ -312,12 +312,6 @@ export function isAttachmentItem(item: SessionMediaItem): boolean {
   return item.block !== undefined
 }
 
-/** The file extension a delivered row's thumbnail key should mirror. */
-export function deliveredExtOf(item: SessionMediaItem): string {
-  const ext = extOf(item.path ?? item.name ?? '')
-  return ext === '' ? 'bin' : ext
-}
-
 /** The leaf name of one path, under either separator style. */
 export function leafOf(path: string): string {
   return path.slice(Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\')) + 1)
@@ -345,14 +339,4 @@ export interface MediaListValue {
   rows: MediaListRow[]
   /** Whether the host attachment store is mounted at all. */
   attachments: boolean
-}
-
-/** A row's display label: its name, else the path's leaf, else its id. */
-export function mediaLabelOf(item: SessionMediaItem): string {
-  if (item.name !== undefined && item.name !== '') return item.name
-  if (item.path !== undefined) {
-    const leaf = leafOf(item.path)
-    if (leaf !== '') return leaf
-  }
-  return item.id
 }
