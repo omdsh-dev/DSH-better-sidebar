@@ -226,7 +226,7 @@ export function EditorHost(props: {
   // purpose: React may render twice, and a discarded render must not eat the
   // arm the committed one still needs (the arm is consumed by the layout
   // effect below, after commit).
-  const peeked = tab.line === undefined ? undefined : peekLineTarget(path, tab.line)
+  const peeked = tab.line === undefined ? undefined : peekLineTarget(path, tab.line, scope.cwd)
   // The navigation this host took for `lineKey`, kept across the renders in
   // between: the first commit shows the loading row (no viewer yet), so the
   // viewer's render must reuse the arm this host already read — otherwise the
@@ -266,12 +266,12 @@ export function EditorHost(props: {
       handedLineRef.current = { key: lineKey, nonce: lineNavRef.current.nonce }
       // One shot per handed navigation: an ordinary open of the same line
       // later must not inherit this flash.
-      if (tab.line !== undefined) consumeLineTarget(path, tab.line)
+      if (tab.line !== undefined) consumeLineTarget(path, tab.line, scope.cwd)
       return
     }
     handedLineRef.current = null
     if (nav === null) lineNavRef.current = null
-  }, [nav, isFreshLine, lineKey, path, tab.line])
+  }, [nav, isFreshLine, lineKey, path, tab.line, scope.cwd])
   const onLineConsumed = useCallback(() => {
     if (handedLineRef.current !== null) setSpentLine(handedLineRef.current)
   }, [])
