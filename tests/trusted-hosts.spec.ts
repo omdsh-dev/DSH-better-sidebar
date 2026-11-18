@@ -134,14 +134,29 @@ describe('native Connection admission', () => {
     }
   })
 
-  it('has no old-host fallback when native admission is missing', async () => {
+  it('falls back to the host trust predicate when requestRejection is gone', async () => {
+    const mounted = mount()
+    try {
+      Reflect.deleteProperty(mounted.connection, 'requestRejection')
+      const trusted = vi.fn(() => true)
+      Object.assign(mounted.connection, { isTrustedRequest: trusted })
+      const input = request('/sidebar/api/session.cwd')
+      const { res } = response()
+      await mounted.routes.find(route => route.path === '/sidebar/api')!.handler(input.req, res)
+      expect(trusted).toHaveBeenCalledWith(input.req)
+    } finally {
+      mounted.cleanup()
+    }
+  })
+
+  it('refuses every route when neither admission face exists', async () => {
     const mounted = mount()
     try {
       Reflect.deleteProperty(mounted.connection, 'requestRejection')
       const input = request('/sidebar/api/session.cwd')
       const { res, out } = response()
-      await expect(mounted.routes.find(route => route.path === '/sidebar/api')!.handler(input.req, res)).rejects.toThrow(TypeError)
-      expect(out.status).toBe(0)
+      await mounted.routes.find(route => route.path === '/sidebar/api')!.handler(input.req, res)
+      expect(out.status).toBe(403)
       expect(input.reads()).toBe(0)
     } finally {
       mounted.cleanup()
