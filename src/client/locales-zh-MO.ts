@@ -747,6 +747,8 @@ export const zhMO: Record<string, string> = {
   pluginAudioName: '音訊預覽插件',
   pluginTurnOutlineName: "dsh-turn-outline 輪次軌跡",
   pluginTurnOutlineDesc: "把會話按用戶輪次摺疊成「輸入 + 工具步驟 + 輸出」摘要，點擊任意步驟一鍵跳回對話原位；零 LLM 調用、唯讀",
+  pluginZoteroWorkspaceName: 'dsh-zotero-workspace Zotero 文獻工作台',
+  pluginZoteroWorkspaceDesc: '把 Zotero 文庫搬進右側欄：集合樹 + 條目列表/詳情、服務端檢索，直接讀渲染版 PDF 與解析後的 Markdown，一鍵把文獻引用與文件路徑帶入當前對話；只讀本地 API、不依賴 MCP',
   pluginDshMemoryDeltaName: 'dsh-memory-delta 記憶',
   pluginDshMemoryDeltaDesc: '跨工作階段記憶：只注入有變動的部分（沒有變動則完全不注入），附到期覆核提醒、相關度排序檢索與側邊欄分頁。',
 }

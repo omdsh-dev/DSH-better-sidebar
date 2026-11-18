@@ -732,6 +732,8 @@ export const tr: Record<string, string> = {
   pluginAudioName: 'Ses Önizlemesi',
   pluginTurnOutlineName: "dsh-turn-outline Tur özeti",
   pluginTurnOutlineDesc: "Oturumu kullanıcı turlarına (girdi + araç adımları + çıktı) katlar; herhangi bir adıma tıklayarak sohbette tam konumuna atlayın — LLM çağrısı yok, yalnızca okunur",
+  pluginZoteroWorkspaceName: 'dsh-zotero-workspace Zotero Workspace',
+  pluginZoteroWorkspaceDesc: 'Bring the Zotero library into the right sidebar: collection tree, item list/detail and server-side search, read the rendered PDF and parsed Markdown in place, and put the citation plus file paths into the current conversation; read-only local API, no MCP',
   pluginDshMemoryDeltaName: 'dsh-memory-delta Bellek',
   pluginDshMemoryDeltaDesc: 'Oturumlar arası bellek: yalnızca değişenler enjekte edilir (değişiklik yoksa hiçbir şey), gözden geçirme tarihi hatırlatması, alaka sıralı arama ve kenar çubuğu sekmesi ile.',
 }

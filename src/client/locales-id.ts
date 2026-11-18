@@ -730,6 +730,8 @@ export const id: Record<string, string> = {
   pluginAudioName: 'Pratinjau Audio',
   pluginTurnOutlineName: "dsh-turn-outline Garis besar giliran",
   pluginTurnOutlineDesc: "Melipat sesi menjadi giliran pengguna (input + langkah alat + output); klik langkah mana pun untuk melompat ke posisi persisnya dalam percakapan — tanpa panggilan LLM, hanya baca",
+  pluginZoteroWorkspaceName: 'dsh-zotero-workspace Zotero Workspace',
+  pluginZoteroWorkspaceDesc: 'Bring the Zotero library into the right sidebar: collection tree, item list/detail and server-side search, read the rendered PDF and parsed Markdown in place, and put the citation plus file paths into the current conversation; read-only local API, no MCP',
   pluginDshMemoryDeltaName: 'dsh-memory-delta Memori',
   pluginDshMemoryDeltaDesc: 'Memori antar sesi: hanya yang berubah yang disuntikkan (tidak ada saat tidak ada perubahan), dengan pengingat tanggal tinjauan, pencarian berperingkat relevansi, dan tab bilah samping.',
 }

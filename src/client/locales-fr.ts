@@ -725,6 +725,8 @@ export const fr: Record<string, string> = {
   pluginAudioName: 'Aperçu audio',
   pluginTurnOutlineName: "dsh-turn-outline Plan des tours",
   pluginTurnOutlineDesc: "Plie la session en tours utilisateur (entrée + étapes d'outil + sortie) ; un clic sur une étape ramène à l'endroit exact de la conversation — sans LLM, en lecture seule",
+  pluginZoteroWorkspaceName: 'dsh-zotero-workspace Zotero Workspace',
+  pluginZoteroWorkspaceDesc: 'Bring the Zotero library into the right sidebar: collection tree, item list/detail and server-side search, read the rendered PDF and parsed Markdown in place, and put the citation plus file paths into the current conversation; read-only local API, no MCP',
   pluginDshMemoryDeltaName: 'dsh-memory-delta Mémoire',
   pluginDshMemoryDeltaDesc: 'Mémoire inter-sessions : seuls les changements sont injectés (rien du tout si rien ne change), avec rappel de révision, recherche classée par pertinence et onglet latéral.',
 }

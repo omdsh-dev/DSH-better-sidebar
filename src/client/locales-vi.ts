@@ -732,6 +732,8 @@ export const vi: Record<string, string> = {
   pluginAudioName: 'Xem trước âm thanh',
   pluginTurnOutlineName: "dsh-turn-outline Dàn ý theo vòng",
   pluginTurnOutlineDesc: "Gấp phiên thành các vòng của người dùng (đầu vào + bước công cụ + đầu ra); nhấp vào bất kỳ bước nào để nhảy về đúng vị trí trong hội thoại — không gọi LLM, chỉ đọc",
+  pluginZoteroWorkspaceName: 'dsh-zotero-workspace Zotero Workspace',
+  pluginZoteroWorkspaceDesc: 'Bring the Zotero library into the right sidebar: collection tree, item list/detail and server-side search, read the rendered PDF and parsed Markdown in place, and put the citation plus file paths into the current conversation; read-only local API, no MCP',
   pluginDshMemoryDeltaName: 'dsh-memory-delta Bộ nhớ',
   pluginDshMemoryDeltaDesc: 'Bộ nhớ xuyên phiên: chỉ chèn phần đã thay đổi (không chèn gì nếu không có thay đổi), kèm nhắc ngày rà soát, tìm kiếm theo độ liên quan và tab thanh bên.',
 }

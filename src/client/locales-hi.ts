@@ -732,6 +732,8 @@ export const hi: Record<string, string> = {
   pluginAudioName: 'ऑडियो प्रीव्यू',
   pluginTurnOutlineName: "dsh-turn-outline टर्न रूपरेखा",
   pluginTurnOutlineDesc: "सत्र को उपयोगकर्ता टर्न (इनपुट + टूल चरण + आउटपुट) में मोड़ें; किसी भी चरण पर क्लिक करें और बातचीत के सटीक स्थान पर जाएँ — कोई LLM कॉल नहीं, केवल पढ़ना",
+  pluginZoteroWorkspaceName: 'dsh-zotero-workspace Zotero Workspace',
+  pluginZoteroWorkspaceDesc: 'Bring the Zotero library into the right sidebar: collection tree, item list/detail and server-side search, read the rendered PDF and parsed Markdown in place, and put the citation plus file paths into the current conversation; read-only local API, no MCP',
   pluginDshMemoryDeltaName: 'dsh-memory-delta स्मृति',
   pluginDshMemoryDeltaDesc: 'सत्रों के बीच स्मृति: केवल बदला हुआ भाग इंजेक्ट होता है (कुछ न बदले तो कुछ नहीं), समीक्षा-तिथि अनुस्मारक, प्रासंगिकता-क्रमित खोज और साइडबार टैब के साथ।',
 }
