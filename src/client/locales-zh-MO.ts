@@ -97,6 +97,8 @@ export const zhMO: Record<string, string> = {
   editorSearchReplaceFailed: '取代失敗：{message}',
   editorSearchReplaceConfirmTitle: '全部取代',
   editorSearchReplaceConfirmDesc: '將在 {files} 個檔案中取代 {matches} 處匹配，且無法復原。',
+  editorSearchReplaceFile: '取代此檔案',
+  editorSearchReplaceMatch: '取代此匹配',
   editorEmptyHint: '從右側檔案樹或上方路徑輸入框選擇檔案開始預覽',
   openFileNewTab: '在新 Tab 中開啟',
   openFileSide: '在側邊開啟',

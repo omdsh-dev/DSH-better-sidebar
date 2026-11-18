@@ -1636,6 +1636,44 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   color: var(--dsw-alias-label-tertiary);
 }
 
+/* Per-file / per-match replace: a hover action on the result row (VS Code's
+   inline replace glyph). It stays out of the reading path until the row is
+   hovered or reached by keyboard, and never eats the row click when hidden. */
+.grepRowAction {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.grepFileRow:hover .grepRowAction,
+.grepFileRow:focus-within .grepRowAction,
+.grepMatchRow:hover .grepRowAction,
+.grepMatchRow:focus-within .grepRowAction {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.grepRowAction:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.grepRowAction:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
 .grepMatchRow {
   display: flex;
   align-items: center;

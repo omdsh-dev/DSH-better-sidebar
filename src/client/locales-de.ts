@@ -68,6 +68,8 @@ export const de: Record<string, string> = {
   editorSearchReplaceFailed: 'Ersetzen fehlgeschlagen: {message}',
   editorSearchReplaceConfirmTitle: 'Alle ersetzen',
   editorSearchReplaceConfirmDesc: '{matches} Treffer in {files} Dateien ersetzen? Das kann nicht rückgängig gemacht werden.',
+  editorSearchReplaceFile: 'In dieser Datei ersetzen',
+  editorSearchReplaceMatch: 'Diesen Treffer ersetzen',
   editorEmptyHint: 'Wählen Sie eine Datei aus dem Dateibaum rechts oder dem Pfadeingabefeld oben, um mit der Vorschau zu beginnen',
   openFileNewTab: 'In neuem Tab öffnen',
   openFileSide: 'Seitlich öffnen',

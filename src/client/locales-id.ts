@@ -80,6 +80,8 @@ export const id: Record<string, string> = {
   editorSearchReplaceFailed: 'Gagal mengganti: {message}',
   editorSearchReplaceConfirmTitle: 'Ganti semua',
   editorSearchReplaceConfirmDesc: 'Ganti {matches} kecocokan di {files} file? Ini tidak bisa dibatalkan.',
+  editorSearchReplaceFile: 'Ganti di file ini',
+  editorSearchReplaceMatch: 'Ganti kecocokan ini',
   editorEmptyHint: 'Pilih berkas dari panel pohon atau input path di atas untuk mulai pratinjau',
   openFileNewTab: 'Buka di Tab Baru',
   openFileSide: 'Buka di Samping',

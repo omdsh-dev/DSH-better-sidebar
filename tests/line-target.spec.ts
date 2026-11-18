@@ -74,6 +74,23 @@ describe('armLineEnd / peekLineTarget / consumeLineTarget', () => {
     expect(peekLineTarget('/w/a.ts', 3)?.end).toBe(7)
   })
 
+  it('carries a content-search seed beside the line, and replaces it on re-arm', () => {
+    // A content hit needs more than a line: the query (and switches) tell the
+    // editor's find panel what to highlight. It rides the same one-shot arm.
+    const seed = { query: 'needle', caseSensitive: true }
+    armLineEnd('/w/a.ts', 5, undefined, seed)
+    expect(peekLineTarget('/w/a.ts', 5)?.search).toBe(seed)
+
+    const nextSeed = { query: 'other', regex: true }
+    armLineEnd('/w/a.ts', 5, undefined, nextSeed)
+    expect(peekLineTarget('/w/a.ts', 5)?.search).toBe(nextSeed)
+
+    // An ordinary reference re-arm clears it: the next landing must not inherit
+    // a previous search's highlighting.
+    armLineEnd('/w/a.ts', 5, undefined)
+    expect(peekLineTarget('/w/a.ts', 5)?.search).toBeUndefined()
+  })
+
   it('caps the pending map so a burst of opens cannot grow it forever', () => {
     for (let line = 1; line <= 200; line++) armLineEnd('/w/a.ts', line, line + 1)
     // The oldest arms were evicted: only the most recent MAX_ARMED survive.

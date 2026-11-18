@@ -73,6 +73,8 @@ export const it: Record<string, string> = {
   editorSearchReplaceFailed: 'Sostituzione non riuscita: {message}',
   editorSearchReplaceConfirmTitle: 'Sostituisci tutto',
   editorSearchReplaceConfirmDesc: 'Sostituire {matches} corrispondenze in {files} file? L\'operazione non può essere annullata.',
+  editorSearchReplaceFile: 'Sostituisci in questo file',
+  editorSearchReplaceMatch: 'Sostituisci questa corrispondenza',
   editorEmptyHint: 'Scelga un file dal pannello dell’albero a destra o dal campo del percorso in alto per iniziare l’anteprima',
   openFileNewTab: 'Apri in una nuova scheda',
   openFileSide: 'Apri a lato',

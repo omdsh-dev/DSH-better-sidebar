@@ -29,12 +29,33 @@
  *  loses a decoration, never the navigation). */
 const MAX_ARMED = 32
 
+/**
+ * The find-in-file seed a CONTENT-SEARCH hit carries: the query and switches
+ * the result was found with. The text viewer paints every match in the file
+ * from it (panel-independent) and seeds the query into CodeMirror's search
+ * state for a later Ctrl/Cmd+F. It is navigation, not a mode — it rides beside
+ * `line` and is spent with it.
+ */
+export interface EditorSearchSeed {
+  /** The query exactly as the search box carried it. */
+  query: string
+  /** Match case (the host's default is case-insensitive). */
+  caseSensitive?: boolean
+  /** Whole-word matching. */
+  wholeWord?: boolean
+  /** The query is a JS regular expression. */
+  regex?: boolean
+}
+
 /** One armed navigation: its identity plus the quoted span's end. */
 export interface LineTarget {
   /** Bumped on every arm of the same `path#line`; a re-click gets a new one. */
   readonly nonce: number
   /** The 1-based last line of the quoted span (absent = a single-line landing). */
   readonly end?: number
+  /** The content-search seed to apply on arrival (absent = an ordinary
+   *  reference landing). */
+  readonly search?: EditorSearchSeed
 }
 
 const armed = new Map<string, LineTarget>()
@@ -51,13 +72,18 @@ function keyOf(path: string, line: number): string {
  * @param line - the 1-based landing line.
  * @param lineEnd - the 1-based last line of the range; `undefined` arms a
  *   single-line landing (a fresh jump without a flash range).
+ * @param search - the content-search seed to hand the text viewer on arrival.
+ *   Omitted for ordinary references; passing it again on the same key is a new
+ *   navigation (new nonce) that re-seeds the find panel.
  * @returns the new navigation's nonce.
  */
-export function armLineEnd(path: string, line: number, lineEnd: number | undefined): number {
+export function armLineEnd(path: string, line: number, lineEnd: number | undefined, search?: EditorSearchSeed): number {
   const key = keyOf(path, line)
   const nonce = nextNonce++
   armed.delete(key)
-  armed.set(key, lineEnd === undefined ? { nonce } : { nonce, end: lineEnd })
+  armed.set(key, search === undefined
+    ? lineEnd === undefined ? { nonce } : { nonce, end: lineEnd }
+    : lineEnd === undefined ? { nonce, search } : { nonce, end: lineEnd, search })
   while (armed.size > MAX_ARMED) {
     const oldest = armed.keys().next()
     if (oldest.done === true) break

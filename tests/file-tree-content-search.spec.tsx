@@ -49,15 +49,6 @@ const GREP: GrepResult = {
   truncated: false,
 }
 
-const REPLACE: GrepReplaceResult = {
-  files: [
-    { path: 'src/a.ts', replaced: 2 },
-    { path: 'docs/b.md', replaced: 1 },
-  ],
-  replaced: 3,
-  skipped: [],
-}
-
 const REPO: GitStatusResult = {
   isRepo: true,
   root: '/tmp',
@@ -70,7 +61,17 @@ const { fsTrees, fsSearch, fsGrep, fsGrepReplace, gitStatus } = vi.hoisted(() =>
   })),
   fsSearch: vi.fn(async () => ({ matches: ['src/a.ts', 'docs/b.md'], dirs: [], truncated: false })),
   fsGrep: vi.fn(async (): Promise<GrepResult> => GREP),
-  fsGrepReplace: vi.fn(async (): Promise<GrepReplaceResult> => REPLACE),
+  fsGrepReplace: vi.fn(async (
+    _scope: unknown,
+    _query: unknown,
+    _replacement: unknown,
+    _options: unknown,
+    files: readonly { path: string }[],
+  ): Promise<GrepReplaceResult> => ({
+    files: files.map(file => ({ path: file.path, replaced: file.path === 'src/a.ts' ? 2 : 1 })),
+    replaced: files.reduce((total, file) => total + (file.path === 'src/a.ts' ? 2 : 1), 0),
+    skipped: [],
+  })),
   gitStatus: vi.fn(async (): Promise<GitStatusResult> => REPO),
 }))
 
@@ -185,12 +186,13 @@ describe('TreePanel content search', () => {
     const row = [...harness.container.querySelectorAll<HTMLButtonElement>('[data-dsh-grep-line]')]
       .find(el => el.getAttribute('data-dsh-grep-line') === '9')!
     await act(async () => { row.click() })
-    expect(onOpenFileAtLine).toHaveBeenCalledWith('/tmp/src/a.ts', 9)
+    expect(onOpenFileAtLine).toHaveBeenCalledWith('/tmp/src/a.ts', 9, { query: 'target' })
     expect(onOpenFile).not.toHaveBeenCalled()
   })
 
   it('sends the option toggles and the include/exclude globs', async () => {
-    harness = mountPanel()
+    const onOpenFileAtLine = vi.fn()
+    harness = mountPanel({ onOpenFileAtLine })
     await act(async () => {})
     await switchToContent(harness.container)
     // Reveal the fields, fill them, then run the search once.
@@ -217,6 +219,14 @@ describe('TreePanel content search', () => {
     expect(options).toMatchObject({ caseSensitive: true, wholeWord: true, regex: true })
     expect(options.include).toEqual(['src/**', '*.ts'])
     expect(options.exclude).toEqual(['**/*.min.js'])
+
+    // The hit carries the SAME switches into the editor: the find panel it
+    // seeds must match what the host searched for.
+    const hit = [...harness.container.querySelectorAll<HTMLButtonElement>('[data-dsh-grep-line]')][0]!
+    await act(async () => { hit.click() })
+    expect(onOpenFileAtLine).toHaveBeenCalledWith('/tmp/src/a.ts', 2, {
+      query: 'target', caseSensitive: true, wholeWord: true, regex: true,
+    })
   })
 
   it('confirms Replace All, then sends the rendered files with their mtimes', async () => {
@@ -244,6 +254,94 @@ describe('TreePanel content search', () => {
     expect(options).toMatchObject({ caseSensitive: false, wholeWord: false, regex: false })
     expect(files).toEqual([{ path: 'src/a.ts', mtimeMs: 111 }, { path: 'docs/b.md', mtimeMs: 222 }])
     expect(harness.container.textContent).toContain('Replaced 3 matches in 2 files')
+  })
+
+  it('replaces every occurrence of ONE file from the group action (no confirm)', async () => {
+    harness = mountPanel()
+    await act(async () => {})
+    await switchToContent(harness.container)
+    await clickTool(harness.container, 'Replace')
+    await search(harness.container, 'target', 'content')
+
+    const action = harness.container.querySelector<HTMLButtonElement>(
+      '[data-dsh-grep-file="src/a.ts"] button[aria-label="Replace in this file"]',
+    )!
+    expect(action).not.toBeNull()
+    await act(async () => { action.click() })
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+
+    // One file, no `line`: the whole file's occurrences.
+    expect(fsGrepReplace).toHaveBeenCalledTimes(1)
+    const [, , , , files] = fsGrepReplace.mock.calls[0] as unknown as [
+      unknown, string, string, unknown, { path: string; mtimeMs: number }[],
+    ]
+    expect(files).toEqual([{ path: 'src/a.ts', mtimeMs: 111 }])
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
+  })
+
+  it('keeps the per-file / per-match actions off until replace mode is open', async () => {
+    harness = mountPanel()
+    await act(async () => {})
+    await search(harness.container, 'target', 'content')
+    // With the replace field closed the replacement text is not on screen; an
+    // always-visible action could silently delete every match.
+    expect(harness.container.querySelector('button[aria-label="Replace in this file"]')).toBeNull()
+    expect(harness.container.querySelector('button[aria-label="Replace this match"]')).toBeNull()
+  })
+
+  it('replaces exactly one occurrence from a match row action', async () => {
+    harness = mountPanel()
+    await act(async () => {})
+    await switchToContent(harness.container)
+    await clickTool(harness.container, 'Replace')
+    await search(harness.container, 'target', 'content')
+
+    const row = harness.container.querySelector<HTMLElement>('[data-dsh-grep-line="2"][data-dsh-grep-match="0"]')!
+    const action = row.querySelector<HTMLButtonElement>('button[aria-label="Replace this match"]')!
+    expect(action).not.toBeNull()
+    await act(async () => { action.click() })
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+
+    const [, , , , files] = fsGrepReplace.mock.calls[0] as unknown as [
+      unknown, string, string, unknown, { path: string; mtimeMs: number; line?: number; matchIndex?: number }[],
+    ]
+    // The row's line + its ordinal on that line: exactly one span on the host.
+    expect(files).toEqual([{ path: 'src/a.ts', mtimeMs: 111, line: 2, matchIndex: 0 }])
+  })
+
+  it('renders ONE ROW PER OCCURRENCE and targets the clicked ordinal', async () => {
+    // Three matches live on line 4; VS Code renders them as three rows so each
+    // can be replaced on its own.
+    fsGrep.mockResolvedValueOnce({
+      files: [{
+        path: 'src/multi.ts',
+        mtimeMs: 333,
+        matches: [{ line: 4, text: 'target target target', ranges: [
+          { start: 0, end: 6 }, { start: 7, end: 13 }, { start: 14, end: 20 },
+        ] }],
+      }],
+      matchesTotal: 3,
+      truncated: false,
+    })
+    harness = mountPanel()
+    await act(async () => {})
+    await switchToContent(harness.container)
+    await clickTool(harness.container, 'Replace')
+    await search(harness.container, 'target', 'content')
+
+    const rows = [...harness.container.querySelectorAll<HTMLElement>('[data-dsh-grep-line="4"]')]
+    expect(rows.map(row => row.getAttribute('data-dsh-grep-match'))).toEqual(['0', '1', '2'])
+    // The file header counts OCCURRENCES, not lines.
+    expect(harness.container.querySelector('[data-dsh-grep-file="src/multi.ts"] [class*="grepFileCount"]')?.textContent).toBe('3')
+
+    const action = rows[1]!.querySelector<HTMLButtonElement>('button[aria-label="Replace this match"]')!
+    await act(async () => { action.click() })
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+
+    const [, , , , files] = fsGrepReplace.mock.calls[0] as unknown as [
+      unknown, string, string, unknown, { path: string; mtimeMs: number; line?: number; matchIndex?: number }[],
+    ]
+    expect(files).toEqual([{ path: 'src/multi.ts', mtimeMs: 333, line: 4, matchIndex: 1 }])
   })
 })
 

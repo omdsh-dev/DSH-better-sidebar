@@ -33,7 +33,8 @@ import type { SessionScope } from './api.ts'
 import type { SidebarPrefs } from '../prefs-shared.ts'
 import type { EditLimitReason } from '../editor-limits.ts'
 import { bindSidechatSurfaces, type SidechatSurfaceAdapter } from './sidechat-surface.ts'
-import { armLineEnd } from './line-target.ts'
+import { armLineEnd, type EditorSearchSeed } from './line-target.ts'
+export type { EditorSearchSeed } from './line-target.ts'
 export type { SidechatSurface, SidechatSurfaceAdapter } from './sidechat-surface.ts'
 
 /**
@@ -344,6 +345,15 @@ export interface FileViewerProps {
    *  side channel (`line-target.ts`), not the host's resource parameters,
    *  which declare `line` only. Absent = a single-line landing. */
   lineEnd?: number
+  /** One-shot find-in-file seed for a CONTENT-SEARCH hit: the query and the
+   *  switches the result was found with. The built-in text viewer paints every
+   *  match in the file with its own panel-independent highlight and seeds the
+   *  same query into CodeMirror's search state (so Ctrl/Cmd+F opens
+   *  pre-filled); every other viewer ignores it. Like {@link
+   *  FileViewerProps.lineEnd} it rides `line-target.ts`, so a click on the same
+   *  result again is a NEW navigation that re-paints. Absent on an ordinary
+   *  open. */
+  search?: EditorSearchSeed
   /** The viewer reports that it has APPLIED the `line` it was handed (or that
    *  the line does not apply to it), and the host stops handing it out: the
    *  line is one navigation, not a mode of the file. The host has to own that
@@ -958,9 +968,12 @@ export interface BetterSidebarService {
    * Open a file in the sidebar editor of `scope`'s session (title defaults to
    * the file name). `options.line` lands the viewer on that 1-based source
    * line (a quote chip's click-through); `options.lineEnd` extends the
-   * landing flash through that line, so the quoted span reads at a glance.
+   * landing flash through that line, so the quoted span reads at a glance;
+   * `options.search` paints the content-search hit: the text viewer highlights
+   * every match on arrival (no find panel) and leaves Ctrl/Cmd+F pre-filled
+   * with the query. All three are one-shot navigations, not file modes.
    */
-  openFile(scope: SessionScope, path: string, title?: string, options?: { line?: number; lineEnd?: number }): void
+  openFile(scope: SessionScope, path: string, title?: string, options?: { line?: number; lineEnd?: number; search?: EditorSearchSeed }): void
   /**
    * Resolve one of the plugin's own host routes (`sidebar/api/fs.read`) into
    * an absolute URL the page can fetch even when the GUI is served under a
@@ -1745,8 +1758,8 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
    *  in line-target.ts — the host's resource parameter map declares `line`
    *  only, and smuggling a second key through host-owned params would work
    *  exactly until upstream tightened that shape. */
-  const openFile = (scope: SessionScope, path: string, title?: string, options?: { line?: number; lineEnd?: number }): void => {
-    if (options?.line !== undefined) armLineEnd(path, options.line, options.lineEnd)
+  const openFile = (scope: SessionScope, path: string, title?: string, options?: { line?: number; lineEnd?: number; search?: EditorSearchSeed }): void => {
+    if (options?.line !== undefined) armLineEnd(path, options.line, options.lineEnd, options.search)
     openTab({
       type: 'editor',
       title: title ?? baseNameOf(path),

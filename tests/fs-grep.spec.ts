@@ -272,6 +272,66 @@ describe('replaceInFiles', () => {
     expect(readFileSync(join(dir, 'src', 'app.ts'), 'utf8')).toContain('target')
   })
 
+  it('replaces every match in ONE file without touching the others', async () => {
+    const dir = makeFixture()
+    writeFileSync(join(dir, 'docs', 'guide.md'), 'target one\ntarget two\n')
+    const result = await replaceInFiles({
+      cwd: dir,
+      query: 'target',
+      replacement: 'done',
+      files: [{ path: 'docs/guide.md' }],
+    })
+    expect(result.replaced).toBe(2)
+    expect(result.files).toEqual([{ path: 'docs/guide.md', replaced: 2 }])
+    expect(readFileSync(join(dir, 'docs', 'guide.md'), 'utf8')).toBe('done one\ndone two\n')
+    // The sibling file the result list also showed was not named in THIS call.
+    expect(readFileSync(join(dir, 'src', 'app.ts'), 'utf8')).toContain('target')
+  })
+
+  it('replaces exactly one occurrence when line + matchIndex are given', async () => {
+    const dir = makeFixture()
+    writeFileSync(join(dir, 'src', 'multi.txt'), 'target target target\nsecond target\n')
+    const result = await replaceInFiles({
+      cwd: dir,
+      query: 'target',
+      replacement: 'X',
+      files: [{ path: 'src/multi.txt', line: 1, matchIndex: 1 }],
+    })
+    expect(result.replaced).toBe(1)
+    expect(result.files).toEqual([{ path: 'src/multi.txt', replaced: 1 }])
+    expect(result.skipped).toEqual([])
+    expect(readFileSync(join(dir, 'src', 'multi.txt'), 'utf8')).toBe('target X target\nsecond target\n')
+  })
+
+  it('expands group references for a single occurrence too', async () => {
+    const dir = makeFixture()
+    writeFileSync(join(dir, 'src', 'ids.txt'), 'id=42 id=7\n')
+    const result = await replaceInFiles({
+      cwd: dir,
+      query: 'id=(\\d+)',
+      replacement: 'v=$1',
+      regex: true,
+      files: [{ path: 'src/ids.txt', line: 1, matchIndex: 1 }],
+    })
+    expect(result.replaced).toBe(1)
+    expect(readFileSync(join(dir, 'src', 'ids.txt'), 'utf8')).toBe('id=42 v=7\n')
+  })
+
+  it('skips a per-match entry whose occurrence no longer exists', async () => {
+    const dir = makeFixture()
+    writeFileSync(join(dir, 'src', 'multi.txt'), 'target\n')
+    const before = readFileSync(join(dir, 'src', 'multi.txt'), 'utf8')
+    const result = await replaceInFiles({
+      cwd: dir,
+      query: 'target',
+      replacement: 'X',
+      files: [{ path: 'src/multi.txt', line: 1, matchIndex: 3 }],
+    })
+    expect(result.replaced).toBe(0)
+    expect(result.skipped).toEqual([{ path: 'src/multi.txt', reason: 'changed' }])
+    expect(readFileSync(join(dir, 'src', 'multi.txt'), 'utf8')).toBe(before)
+  })
+
   it('reports a missing or binary file instead of failing the whole batch', async () => {
     const dir = makeFixture()
     const result = await replaceInFiles({

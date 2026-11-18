@@ -84,6 +84,8 @@ export const pl: Record<string, string> = {
   editorSearchReplaceFailed: 'Zamiana nie powiodła się: {message}',
   editorSearchReplaceConfirmTitle: 'Zamień wszystko',
   editorSearchReplaceConfirmDesc: 'Zamienić {matches} dopasowań w {files} plikach? Tej operacji nie można cofnąć.',
+  editorSearchReplaceFile: 'Zamień w tym pliku',
+  editorSearchReplaceMatch: 'Zamień to dopasowanie',
   editorEmptyHint: 'Wybierz plik z panelu drzewa lub pola ścieżki powyżej, aby rozpocząć podgląd',
   openFileNewTab: 'Otwórz w nowej karcie',
   openFileSide: 'Otwórz z boku',

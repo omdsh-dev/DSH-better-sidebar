@@ -83,6 +83,8 @@ export const ar: Record<string, string> = {
   editorSearchReplaceFailed: 'فشل الاستبدال: {message}',
   editorSearchReplaceConfirmTitle: 'استبدال الكل',
   editorSearchReplaceConfirmDesc: 'استبدال {matches} تطابقات في {files} ملفات؟ لا يمكن التراجع عن ذلك.',
+  editorSearchReplaceFile: 'استبدال في هذا الملف',
+  editorSearchReplaceMatch: 'استبدال هذا التطابق',
   editorEmptyHint: 'اختر ملفاً من لوحة الشجرة أو من حقل المسار بالأعلى لبدء المعاينة',
   openFileNewTab: 'فتح في تبويب جديد',
   openFileSide: 'فتح إلى الجانب',

@@ -149,6 +149,34 @@ describe('fs.grepReplace route', () => {
     expect(readFileSync(join(workspace, 'src', 'a.ts'), 'utf8')).toContain('target')
   })
 
+  it('narrows the write to one occurrence (line + matchIndex)', async () => {
+    const workspace = makeWorkspace()
+    writeFileSync(join(workspace, 'src', 'multi.ts'), 'target target target\n')
+    const result = await invoke(mount(workspace), 'fs.grepReplace', {
+      sessionId: 's1',
+      query: 'target',
+      replacement: 'X',
+      files: [{ path: 'src/multi.ts', line: 1, matchIndex: 1 }],
+    })
+    expect(result.status).toBe(200)
+    expect(result.value?.replaced).toBe(1)
+    expect(result.value?.skipped).toEqual([])
+    expect(readFileSync(join(workspace, 'src', 'multi.ts'), 'utf8')).toBe('target X target\n')
+  })
+
+  it('refuses a half-specified occurrence instead of falling back to the whole file', async () => {
+    const workspace = makeWorkspace()
+    const result = await invoke(mount(workspace), 'fs.grepReplace', {
+      sessionId: 's1',
+      query: 'target',
+      replacement: 'X',
+      files: [{ path: 'src/a.ts', line: 1 }],
+    })
+    expect(result.status).toBe(400)
+    expect(result.error?.code).toBe('bad-request')
+    expect(readFileSync(join(workspace, 'src', 'a.ts'), 'utf8')).toContain('target')
+  })
+
   it('refuses an empty file list', async () => {
     const workspace = makeWorkspace()
     const result = await invoke(mount(workspace), 'fs.grepReplace', {

@@ -74,6 +74,8 @@ export const ko: Record<string, string> = {
   editorSearchReplaceFailed: '바꾸기 실패: {message}',
   editorSearchReplaceConfirmTitle: '모두 바꾸기',
   editorSearchReplaceConfirmDesc: '파일 {files}개에서 일치 {matches}개를 바꿀까요? 되돌릴 수 없습니다.',
+  editorSearchReplaceFile: '이 파일에서 바꾸기',
+  editorSearchReplaceMatch: '이 일치 항목 바꾸기',
   editorEmptyHint: '오른쪽 파일 트리나 위쪽 경로 입력란에서 파일을 선택해 미리보기를 시작하세요',
   openFileNewTab: '새 Tab으로 열기',
   openFileSide: '측면에 열기',

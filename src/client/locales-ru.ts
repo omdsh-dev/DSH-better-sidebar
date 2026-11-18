@@ -78,6 +78,8 @@ export const ru: Record<string, string> = {
   editorSearchReplaceFailed: 'Не удалось заменить: {message}',
   editorSearchReplaceConfirmTitle: 'Заменить всё',
   editorSearchReplaceConfirmDesc: 'Заменить {matches} совпадений в {files} файлах? Это действие нельзя отменить.',
+  editorSearchReplaceFile: 'Заменить в этом файле',
+  editorSearchReplaceMatch: 'Заменить это совпадение',
   editorEmptyHint: 'Выберите файл из дерева справа или введите путь выше, чтобы начать предпросмотр',
   openFileNewTab: 'Открыть в новой вкладке',
   openFileSide: 'Открыть сбоку',

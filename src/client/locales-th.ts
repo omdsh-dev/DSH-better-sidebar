@@ -82,6 +82,8 @@ export const th: Record<string, string> = {
   editorSearchReplaceFailed: 'แทนที่ล้มเหลว: {message}',
   editorSearchReplaceConfirmTitle: 'แทนที่ทั้งหมด',
   editorSearchReplaceConfirmDesc: 'แทนที่ {matches} รายการใน {files} ไฟล์หรือไม่? ไม่สามารถย้อนกลับได้',
+  editorSearchReplaceFile: 'แทนที่ในไฟล์นี้',
+  editorSearchReplaceMatch: 'แทนที่รายการที่ตรงกันนี้',
   editorEmptyHint: 'เลือกไฟล์จากพาเนลต้นไม้ไฟล์หรือช่องกรอกพาธด้านบนเพื่อเริ่มพรีวิว',
   openFileNewTab: 'เปิดใน Tab ใหม่',
   openFileSide: 'เปิดด้านข้าง',

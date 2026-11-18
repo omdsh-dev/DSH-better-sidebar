@@ -75,6 +75,8 @@ export const fr: Record<string, string> = {
   editorSearchReplaceFailed: 'Échec du remplacement : {message}',
   editorSearchReplaceConfirmTitle: 'Tout remplacer',
   editorSearchReplaceConfirmDesc: 'Remplacer {matches} correspondances dans {files} fichiers ? Cette action est irréversible.',
+  editorSearchReplaceFile: 'Remplacer dans ce fichier',
+  editorSearchReplaceMatch: 'Remplacer cette correspondance',
   editorEmptyHint: 'Choisissez un fichier dans l’arborescence à droite ou dans le champ de chemin ci-dessus pour commencer l’aperçu',
   openFileNewTab: 'Ouvrir dans un nouvel onglet',
   openFileSide: 'Ouvrir de côté',

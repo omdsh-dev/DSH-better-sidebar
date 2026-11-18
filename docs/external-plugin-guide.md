@@ -549,6 +549,11 @@ interface FileViewerProps {
   // 行段引用（v0.30.0+）：与 line 同时到达，给出被引区间的末行。内置编辑器据此
   // 闪一下整段；不消费它的 viewer 行为与只收到 line 相同。
   lineEnd?: number
+  // 内容搜索命中（文件页搜索框的「内容」模式结果行）打开时携带的查询与开关。
+  // 内置文本编辑器据此在文件内**独立高亮全部命中**（不弹查找面板），并把查询与
+  // 开关预填进 CodeMirror 查找状态（之后 Ctrl/Cmd+F 直接带着搜索词打开）；其他
+  // viewer 忽略即可。与 line 一样是一次性导航（再次点同一条结果会重新下发）。
+  search?: { query: string; caseSensitive?: boolean; wholeWord?: boolean; regex?: boolean }
   onLineConsumed?: () => void // 已消费该 line 的回报；不调用则每次加载都会重新下发（默认不消费）
   // 以下为内置文本编辑器与 EditorHost 内部协作字段，外部 viewer 忽略：
   toolbar?: 'self' | 'host'
@@ -680,7 +685,7 @@ const { value } = await res.json()   // 错误时 { ok: false, error: { code, me
 | `fs.trees` | **批量**目录列表（v0.23.0+）：入参 `{ sessionId, cwd?, paths: string[] }`（最多 64 条，绝对或会话相对），一次请求返回 `{ levels: [{ path, entries, truncated, error? }] }`。每层与 `fs.tree` 同解析、同缓存；**某一层失败只在该层带 `error`**（`entries: []`），整个批次仍是成功响应——树的一次挂载/刷新因此是 1 个请求而不是 N 个 |
 | `fs.search` | 文件名 / 路径搜索（`{ query, exclude? }` → `{ matches, dirs, truncated }`，root-relative、'/' 分隔） |
 | `fs.grep` | **内容搜索**（v0.32.1 之后的开发线）：`{ query, include?, exclude?, caseSensitive?, wholeWord?, regex? }` → `{ files: [{ path, mtimeMs, matches: [{ line, text, ranges: [{start,end}] }] }], matchesTotal, truncated }`。逐行匹配（不跨行）；`include` 是 files-to-include glob（无 `/` 按基名、含 `/` 按根锚定、`**/` 可匹配零段、目录名包含其子树）；`exclude` 与树/文件名搜索同一套已编译模式（请求里把 pref 与用户输入合并后送来）。二进制、超限文件、`node_modules` 等噪声目录自动跳过；root 在 git worktree 内时文件清单来自 `git ls-files --cached --others --exclude-standard`（尊重 .gitignore），否则走目录遍历。正则不合法回 400 `bad-request`。预算：200 文件 / 2000 处 / 单文件 2 MiB / 单次 128 MiB，超限 `truncated: true` |
-| `fs.grepReplace` | **全部替换**（v0.32.1 之后的开发线）：`{ query, replacement, regex?, caseSensitive?, wholeWord?, files: [{ path, mtimeMs? }] }` → `{ files: [{ path, replaced }], replaced, skipped: [{ path, reason }] }`。只改请求点名的文件（就是当前结果列表）；`mtimeMs` 是乐观并发门——渲染后磁盘又变过的文件进 `skipped`（`reason: 'changed'`）而不写入；编码与行尾按磁盘现状还原、原子落盘（复用 `writeWorkspaceText`）。固定字符串模式替换文本按字面处理（`$1` 原样），正则模式按 JS 分组引用 |
+| `fs.grepReplace` | **替换**（v0.32.1 之后的开发线）：`{ query, replacement, regex?, caseSensitive?, wholeWord?, files: [{ path, mtimeMs?, line?, matchIndex? }] }` → `{ files: [{ path, replaced }], replaced, skipped: [{ path, reason }] }`。三种粒度同一路由：不带 `line` 的条目改**该文件全部命中**（文件名分组上的「替换此文件」按钮；一次请求带全部条目就是「全部替换」）；带 `line`（1 基）+ `matchIndex`（该行上命中的 0 基序号）时**只改那一处**（每行一条结果的逐处替换按钮，宿主按磁盘现状重新推导该 span，找不到就跳过）。`mtimeMs` 是乐观并发门——渲染后磁盘又变过的文件进 `skipped`（`reason: 'changed'`，逐处替换时「匹配已不存在」同样归为该原因）而不写入；编码与行尾按磁盘现状还原、原子落盘（复用 `writeWorkspaceText`）。固定字符串模式替换文本按字面处理（`$1` 原样），正则模式按 JS 分组引用（逐处替换也支持 `$1` / `$&` / `` $` `` / `$'` / `$<name>`） |
 | `fs.read` | 读文件（v0.26.0 起三态）：文本 `{ kind: 'text', content, size, mtimeMs }`；二进制 `{ kind: 'binary', size, mtimeMs, head }`；**超过编辑上限**（5 MiB）`{ kind: 'too-large', size, mtimeMs, head }`（head = base64 前 4KB，用于 `detect` 重匹配；`mtimeMs` = 本次读取的磁盘 mtime，保存冲突基线）。**不再有 `truncated` 文本读**——截断文档既不可信也不能保存（#732），超大文件改走 `fs.readPage` 分页预览 |
 | `fs.readPage` | 大文本文件的分页读取（v0.26.0+）：`{ sessionId, cwd?, path, offset }` → `{ kind:'text', text, offset, nextOffset, eof, size, mtimeMs, encoding }`。窗口按行对齐（调用方可以直接当作整行/整条记录处理），单个超长行原样返回而不是空页；`nextOffset` 必然前进，`eof` 精确 |
 | `fs.write`（**已移至 raw 路由**） | v0.26.0 起保存走 `POST /sidebar/write?sessionId=&cwd=&path=&expectedMtimeMs=`，**请求体就是 LF 文档**（不再走 JSON，因此不再受 `/sidebar/api` 的 1 MiB body 上限约束）；响应仍是 `{ ok: true, value: { ok: true, mtimeMs? } }` 信封。语义不变：`expectedMtimeMs` 是乐观并发门，磁盘 mtime 与基线不符则拒绝（409，wire 错误码 `fs-conflict`），**目标已不存在（保存瞬间被删除或改名走）同样判 409**——数字基线只可能来自一次成功的读取，即该路径当时确实有文件，所以「读不到」是冲突而不是新建意图（新建走 `fs.createFile`、上传走上传路径，都不经过这条分支）。省略则不做门禁；宿主在写盘前按磁盘现状还原文件的行尾与字节编码（`restoreEol` + `encodeText`） |
@@ -892,8 +897,12 @@ interface BetterSidebarService {
    *  markdown / html 先切到编辑态，`line` 是瞬态（不进持久化白名单）。
    *  `lineEnd` 走 `src/client/line-target.ts` 的一次性旁路（key = path + line，
    *  被 viewer 取走即删），**不进**宿主的 `navigation.params`——那张表只声明了
-   *  `line`，塞额外键属于未声明契约。 */
-  openFile(scope: SessionScope, path: string, title?: string, options?: { line?: number; lineEnd?: number }): void
+   *  `line`，塞额外键属于未声明契约。
+   *  同一旁路还携带 `search?: { query, caseSensitive?, wholeWord?, regex? }`
+   *  （内容搜索的结果行用它打开文件）：内置文本编辑器会在文件内独立高亮全部命中
+   *  （不弹查找面板），并把查询/开关预填进查找状态（Ctrl/Cmd+F 直接可导航）；
+   *  其他 viewer 忽略即可。 */
+  openFile(scope: SessionScope, path: string, title?: string, options?: { line?: number; lineEnd?: number; search?: { query: string; caseSensitive?: boolean; wholeWord?: boolean; regex?: boolean } }): void
   /** 把插件自有 host 路由（如 `'sidebar/api/fs.read'`）解析成绝对 URL，
    *  保留反代子路径前缀（v0.25.0+，features 含 'hostRouteUrl'）。前导斜杠会被
    *  去掉——带着它就会甩掉前缀、钉到源站根；桌面壳的真实基底也由它给出。

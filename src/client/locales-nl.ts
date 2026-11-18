@@ -80,6 +80,8 @@ export const nl: Record<string, string> = {
   editorSearchReplaceFailed: 'Vervangen mislukt: {message}',
   editorSearchReplaceConfirmTitle: 'Alles vervangen',
   editorSearchReplaceConfirmDesc: '{matches} treffers vervangen in {files} bestanden? Dit kan niet ongedaan worden gemaakt.',
+  editorSearchReplaceFile: 'In dit bestand vervangen',
+  editorSearchReplaceMatch: 'Deze treffer vervangen',
   editorEmptyHint: 'Kies een bestand uit het boompaneel of het pad-invoerveld hierboven om te beginnen met previewen',
   openFileNewTab: 'Openen in nieuw tabblad',
   openFileSide: 'Openen aan de zijkant',

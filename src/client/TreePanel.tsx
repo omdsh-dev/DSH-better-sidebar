@@ -42,8 +42,8 @@ import {
   IconEditOutlineRegular, IconFlatListOutlineRegular, IconFolderOpenRegular, IconRefreshOutlineRegular,
   IconSearchOutlineRegular, IconSlidersTwoOutlineRegular, Menu,
 } from '@deepseek-ai/dsh-client-ui-primitives'
-import { api, type GrepLine, type GrepResult } from './api.ts'
-import type { BetterSidebarService } from './service.ts'
+import { api, type GrepFile, type GrepLine, type GrepResult } from './api.ts'
+import type { BetterSidebarService, EditorSearchSeed } from './service.ts'
 import { ancestorDirs } from './state.ts'
 import { badgeToneOf, FileTree, gitToneLabel } from './FileTree.tsx'
 import { DEFAULT_FILE_TREE_SORT, type FileTreeSort } from './file-tree-sort.ts'
@@ -107,9 +107,10 @@ export function TreePanel(props: {
   revealed: string[]
   onToggle: (path: string) => void
   onOpenFile: (path: string) => void
-  /** Open a content-search hit at its 1-based line. Absent → `onOpenFile`
+  /** Open a content-search hit at its 1-based line, carrying the query/switches
+   *  the hit was found with so the editor can highlight it. Absent → `onOpenFile`
    *  (the row still opens the file, it just cannot land on the line). */
-  onOpenFileAtLine?: (path: string, line: number) => void
+  onOpenFileAtLine?: (path: string, line: number, search?: EditorSearchSeed) => void
   /** File context-menu "open in a new tab" (passed through to FileTree). */
   onOpenFileNewTab?: (path: string) => void
   /** File context-menu "open to the side" (passed through to FileTree). */
@@ -345,12 +346,16 @@ export function TreePanel(props: {
   }, [contentMode, sessionId, cwd, needle, includeKey, grepExcludeKey, matchCase, wholeWord, regex, grepReload])
 
   /**
-   * Run Replace All over the files the CURRENT result list shows. Each file
+   * Run one replace request over the given files/occurrences. Each entry
    * carries the mtime its row was rendered from, so a file that changed on
    * disk since is skipped host-side instead of rewritten from a stale read.
+   * Callers pick the granularity: every result file (Replace All), one file
+   * (the group's action), or one occurrence (`line` + `matchIndex`).
    */
-  const runReplace = (): void => {
-    if (grep === null || grep.files.length === 0 || replaceBusy) return
+  const applyReplace = (
+    files: readonly { path: string; mtimeMs: number; line?: number; matchIndex?: number }[],
+  ): void => {
+    if (files.length === 0 || replaceBusy) return
     setReplaceBusy(true)
     setReplaceNote('')
     api.fsGrepReplace(
@@ -358,7 +363,7 @@ export function TreePanel(props: {
       needle,
       replacement,
       { regex, caseSensitive: matchCase, wholeWord },
-      grep.files.map(file => ({ path: file.path, mtimeMs: file.mtimeMs })),
+      files,
     ).then((result) => {
       setReplaceBusy(false)
       setReplaceFailed(false)
@@ -377,6 +382,22 @@ export function TreePanel(props: {
         message: failure instanceof Error ? failure.message : String(failure),
       }))
     })
+  }
+
+  /** Replace All: every occurrence in every file the result list shows. */
+  const replaceAllFiles = (): void => {
+    if (grep === null) return
+    applyReplace(grep.files.map(file => ({ path: file.path, mtimeMs: file.mtimeMs })))
+  }
+
+  /** The group header's action: every occurrence in ONE file. */
+  const replaceOneFile = (file: GrepFile): void => {
+    applyReplace([{ path: file.path, mtimeMs: file.mtimeMs }])
+  }
+
+  /** A match row's action: exactly that occurrence on that line. */
+  const replaceOneMatch = (file: GrepFile, match: GrepLine, matchIndex: number): void => {
+    applyReplace([{ path: file.path, mtimeMs: file.mtimeMs, line: match.line, matchIndex }])
   }
 
   // The shared git status store: the tree (FileTree) and these result rows
@@ -416,11 +437,20 @@ export function TreePanel(props: {
     setQuery('')
   }
 
-  /** Open a content hit at its line (falling back to the plain open). */
+  /** Open a content hit at its line with the query it matched, so the text
+   *  viewer paints every match in the file and pre-fills Ctrl/Cmd+F. */
   const openContentHit = (rel: string, line: number): void => {
     const target = resolveSidebarPath(cwd, rel)
-    if (onOpenFileAtLine !== undefined) onOpenFileAtLine(target, line)
-    else onOpenFile(target)
+    if (onOpenFileAtLine !== undefined) {
+      onOpenFileAtLine(target, line, {
+        query: needle,
+        ...(matchCase ? { caseSensitive: true } : {}),
+        ...(wholeWord ? { wholeWord: true } : {}),
+        ...(regex ? { regex: true } : {}),
+      })
+    } else {
+      onOpenFile(target)
+    }
   }
 
   /** Toggle one result file's group without touching the others. */
@@ -718,40 +748,99 @@ export function TreePanel(props: {
             {grepError === null && grep !== null && grep.files.map((file) => {
               const open = !collapsedFiles.has(file.path)
               const status: GitFileStatus | undefined = statusOf(file.path)
+              const occurrences = file.matches.reduce((total, match) => total + match.ranges.length, 0)
               return (
                 <div className={css.grepFileGroup} key={file.path} data-dsh-grep-file={file.path}>
-                  <button
-                    type="button"
+                  <div
+                    role="button"
+                    tabIndex={0}
                     className={css.grepFileRow}
                     title={file.path}
                     aria-expanded={open}
                     aria-label={open ? t('jsonCollapseNode') : t('jsonExpandNode')}
                     data-git-tone={status?.tone}
                     onClick={() => { toggleResultFile(file.path) }}
+                    onKeyDown={(event) => {
+                      // A key pressed on the row's nested action belongs to it.
+                      if (event.target !== event.currentTarget) return
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault()
+                        toggleResultFile(file.path)
+                      }
+                    }}
                   >
                     {open ? <IconChevronDownOutlineRegular size={12} /> : <IconChevronRightOutlineRegular size={12} />}
                     <span
                       className={clsx(css.grepFileName, status !== undefined && css.explorerGitName)}
                       data-git-tone={status?.tone}
                     >{file.path}</span>
-                    <span className={css.grepFileCount}>{file.matches.length}</span>
+                    <span className={css.grepFileCount}>{occurrences}</span>
                     {status !== undefined && (
                       <StatusBadge tone={badgeToneOf(status.tone)} title={gitToneLabel(status.tone)}>{status.letter}</StatusBadge>
                     )}
-                  </button>
-                  {open && file.matches.map((match) => (
-                    <button
-                      key={`${file.path}:${match.line}`}
-                      type="button"
+                    {/* Per-file replace (every occurrence in THIS file): hover
+                        action, no confirm — one file, immediate, re-searchable.
+                        Only in replace mode: with the replace field closed the
+                        current replacement text is not visible, and an action
+                        that silently DELETES every match in the file would be
+                        a trap. */}
+                    {showReplace && (
+                      <button
+                        type="button"
+                        className={css.grepRowAction}
+                        aria-label={t('editorSearchReplaceFile')}
+                        title={t('editorSearchReplaceFile')}
+                        disabled={replaceBusy}
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          replaceOneFile(file)
+                        }}
+                      >
+                        <IconEditOutlineRegular size={12} />
+                      </button>
+                    )}
+                  </div>
+                  {open && file.matches.flatMap((match) => match.ranges.map((range, matchIndex) => (
+                    // ONE ROW PER OCCURRENCE (VS Code's shape): a line with
+                    // three matches yields three rows, each highlighting its
+                    // own span and carrying its own replace action. `matchIndex`
+                    // is the ordinal the row addresses on the host side.
+                    <div
+                      key={`${file.path}:${match.line}:${matchIndex}`}
+                      role="button"
+                      tabIndex={0}
                       className={css.grepMatchRow}
                       title={`${file.path}:${match.line}`}
                       data-dsh-grep-line={match.line}
+                      data-dsh-grep-match={matchIndex}
                       onClick={() => { openContentHit(file.path, match.line) }}
+                      onKeyDown={(event) => {
+                        if (event.target !== event.currentTarget) return
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault()
+                          openContentHit(file.path, match.line)
+                        }
+                      }}
                     >
                       <span className={css.grepLineNo}>{match.line}</span>
-                      <span className={css.grepSnippet}>{snippetNodes(match)}</span>
-                    </button>
-                  ))}
+                      <span className={css.grepSnippet}>{snippetNodes({ ...match, ranges: [range] })}</span>
+                      {showReplace && (
+                        <button
+                          type="button"
+                          className={css.grepRowAction}
+                          aria-label={t('editorSearchReplaceMatch')}
+                          title={t('editorSearchReplaceMatch')}
+                          disabled={replaceBusy}
+                          onClick={(event) => {
+                            event.stopPropagation()
+                            replaceOneMatch(file, match, matchIndex)
+                          }}
+                        >
+                          <IconEditOutlineRegular size={12} />
+                        </button>
+                      )}
+                    </div>
+                  )))}
                 </div>
               )
             })}
@@ -813,7 +902,7 @@ export function TreePanel(props: {
         busy={replaceBusy}
         onConfirm={() => {
           setReplaceAsk(false)
-          runReplace()
+          replaceAllFiles()
         }}
         onClose={() => { setReplaceAsk(false) }}
       />

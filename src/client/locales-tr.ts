@@ -82,6 +82,8 @@ export const tr: Record<string, string> = {
   editorSearchReplaceFailed: 'Değiştirme başarısız: {message}',
   editorSearchReplaceConfirmTitle: 'Tümünü değiştir',
   editorSearchReplaceConfirmDesc: '{files} dosyada {matches} eşleşme değiştirilsin mi? Bu işlem geri alınamaz.',
+  editorSearchReplaceFile: 'Bu dosyada değiştir',
+  editorSearchReplaceMatch: 'Bu eşleşmeyi değiştir',
   editorEmptyHint: 'Önizlemeye başlamak için sağdaki dosya ağacından veya yukarıdaki yol girişinden bir dosya seçin',
   openFileNewTab: 'Yeni sekmede aç',
   openFileSide: 'Yana aç',

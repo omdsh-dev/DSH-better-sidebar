@@ -285,24 +285,59 @@ export function compileGrepInclude(
   }
 }
 
-/** Ranges of every non-empty match of `regex` in one line (bounded per line). */
-function matchRanges(line: string, regex: RegExp): GrepRange[] {
-  const ranges: GrepRange[] = []
+/** Every non-empty match of `regex` in one line, in order (bounded per line).
+ *  The exec arrays are kept so a single-match replace can expand `$1`. */
+function matchExecs(line: string, regex: RegExp): RegExpExecArray[] {
+  const out: RegExpExecArray[] = []
   regex.lastIndex = 0
   let match: RegExpExecArray | null
   while ((match = regex.exec(line)) !== null) {
     if (match[0] === '') {
-      // A zero-width match has nothing to highlight. Advance by one so the
-      // loop terminates (the replace path has the same rule through
-      // String.replace).
+      // A zero-width match has nothing to highlight or replace. Advance by one
+      // so the loop terminates (String.replace has the same rule).
       regex.lastIndex += 1
       if (regex.lastIndex > line.length) break
       continue
     }
-    ranges.push({ start: match.index, end: match.index + match[0].length })
-    if (ranges.length >= 200) break
+    out.push(match)
+    if (out.length >= 200) break
   }
-  return ranges
+  return out
+}
+
+/** Ranges of every non-empty match of `regex` in one line. */
+function matchRanges(line: string, regex: RegExp): GrepRange[] {
+  return matchExecs(line, regex).map(match => ({ start: match.index, end: match.index + match[0].length }))
+}
+
+/**
+ * Expand a template's `$` substitutions for ONE match, with the semantics of
+ * ECMAScript's `String.replace` (`$$`, `$&`, `` $` ``, `$'`, `$n`, `$<name>`).
+ * A single-match replace slices the line by hand, so it cannot use the native
+ * string replacement for group references; this reproduces it. Unknown tokens
+ * stay literal, and an out-of-range `$nn` falls back to `$n` + the second
+ * digit exactly like the native algorithm.
+ */
+function expandReplacement(template: string, match: RegExpExecArray, line: string): string {
+  const groups = (match as RegExpExecArray & { groups?: Record<string, string | undefined> }).groups
+  return template.replace(/\$([$&`']|\d{1,2}|<[^>]*>)/g, (whole: string, token: string) => {
+    if (token === '$') return '$'
+    if (token === '&') return match[0]
+    if (token === '`') return line.slice(0, match.index)
+    if (token === "'") return line.slice(match.index + match[0].length)
+    if (token.startsWith('<')) {
+      const name = token.slice(1, -1)
+      // An unknown name is left literal, like the native substitution.
+      return groups === undefined || !Object.hasOwn(groups, name) ? whole : groups[name] ?? ''
+    }
+    const index = Number(token)
+    if (index > 0 && index < match.length) return match[index] ?? ''
+    if (token.length === 2) {
+      const first = Number(token[0])
+      if (first > 0 && first < match.length) return `${match[first] ?? ''}${token[1]}`
+    }
+    return whole
+  })
 }
 
 /**
@@ -502,10 +537,18 @@ export async function grepFiles(root: string, query: string, options: GrepOption
   return { files, matchesTotal, truncated: truncated || state.truncated }
 }
 
-/** One file the client asks to replace, with the mtime its result row showed. */
+/** One file the client asks to replace, with the mtime its result row showed.
+ *  A per-file button sends just `path`; a per-MATCH button also sends the
+ *  match's 1-based `line` and its 0-based `matchIndex` on that line, which
+ *  narrows the write to that single occurrence. */
 export interface GrepReplaceFile {
   path: string
   mtimeMs?: number
+  /** Replace only the match on this 1-based line (with {@link matchIndex}). */
+  line?: number
+  /** The 0-based ordinal of the target match ON `line` (the order the result
+   *  row's ranges carry). Ignored without `line`. */
+  matchIndex?: number
 }
 
 /** The client's replace request (the same switches as its search). */
@@ -527,7 +570,8 @@ export interface GrepReplaceFileResult {
   replaced: number
 }
 
-/** One file the replace refused, and why. */
+/** One file the replace refused, and why. `changed` covers both a stale mtime
+ *  and a per-match request whose occurrence no longer exists. */
 export interface GrepReplaceSkip {
   path: string
   reason: 'changed' | 'missing' | 'binary' | 'too-large' | 'error'
@@ -542,7 +586,17 @@ export interface GrepReplaceResult {
 }
 
 /**
- * Replace every match of `query` in the named files.
+ * Replace the query in the named files. Three granularities ride the same
+ * route:
+ *
+ * - a file entry WITHOUT `line` (and a call carrying every result file) is
+ *   "replace all" — every match in that file (the Replace All button);
+ * - one file entry without `line` replaces all matches in THAT file (the
+ *   file group's per-file button);
+ * - one file entry WITH `line` + `matchIndex` replaces exactly that occurrence
+ *   (the per-match button). The span is re-derived from disk; if the file's
+ *   matches moved (or the file changed), the entry is SKIPPED rather than
+ *   guessed at.
  *
  * The write goes through `writeWorkspaceText`, so the file's own byte encoding
  * and line endings survive and the bytes land atomically. The search's
@@ -605,14 +659,36 @@ export async function replaceInFiles(input: GrepReplaceInput): Promise<GrepRepla
     // never fire. Normalize, replace, and let the writer restore the EOL.
     const lf = decoded.content.replaceAll('\r\n', '\n')
     let count = 0
-    regex.lastIndex = 0
-    while (regex.exec(lf) !== null) {
-      count += 1
-      if (regex.lastIndex === 0) regex.lastIndex += 1
+    let next: string
+    if (file.line !== undefined) {
+      // A per-MATCH replace: only the chosen occurrence changes. The match is
+      // addressed by (line, ordinal) — exactly what the result row's ranges
+      // carry — and re-derived here, so a file whose changes moved the matches
+      // is refused below instead of replacing the wrong span.
+      const lines = lf.split('\n')
+      const at = file.line - 1
+      const targetLine = lines[at]
+      const hit = targetLine === undefined ? undefined : matchExecs(targetLine, regex)[file.matchIndex ?? 0]
+      if (targetLine === undefined || hit === undefined) {
+        // The row no longer matches disk (the file changed, or a previous
+        // replace shifted the ordinals): skip rather than guess a span.
+        skipped.push({ path: file.path, reason: 'changed' })
+        continue
+      }
+      const inserted = input.regex === true ? expandReplacement(input.replacement, hit, targetLine) : input.replacement
+      lines[at] = `${targetLine.slice(0, hit.index)}${inserted}${targetLine.slice(hit.index + hit[0].length)}`
+      next = lines.join('\n')
+      count = 1
+    } else {
+      regex.lastIndex = 0
+      while (regex.exec(lf) !== null) {
+        count += 1
+        if (regex.lastIndex === 0) regex.lastIndex += 1
+      }
+      if (count === 0) continue
+      regex.lastIndex = 0
+      next = input.regex === true ? lf.replace(regex, input.replacement) : lf.replace(regex, () => input.replacement)
     }
-    if (count === 0) continue
-    regex.lastIndex = 0
-    const next = input.regex === true ? lf.replace(regex, input.replacement) : lf.replace(regex, () => input.replacement)
     try {
       await writeWorkspaceText({ cwd: input.cwd, path: absolute, content: next, expectedMtimeMs: file.mtimeMs })
     } catch (error) {

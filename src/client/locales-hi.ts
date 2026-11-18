@@ -82,6 +82,8 @@ export const hi: Record<string, string> = {
   editorSearchReplaceFailed: 'बदलना विफल: {message}',
   editorSearchReplaceConfirmTitle: 'सभी बदलें',
   editorSearchReplaceConfirmDesc: '{files} फ़ाइलों में {matches} मिलान बदलें? इसे पूर्ववत नहीं किया जा सकता।',
+  editorSearchReplaceFile: 'इस फ़ाइल में बदलें',
+  editorSearchReplaceMatch: 'इस मिलान को बदलें',
   editorEmptyHint: 'पूर्वावलोकन शुरू करने के लिए दाएँ फ़ाइल ट्री या ऊपर पथ इनपुट से फ़ाइल चुनें',
   openFileNewTab: 'नए टैब में खोलें',
   openFileSide: 'बाजू में खोलें',

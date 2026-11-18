@@ -65,6 +65,8 @@ export const pt: Record<string, string> = {
   editorSearchReplaceFailed: 'Falha ao substituir: {message}',
   editorSearchReplaceConfirmTitle: 'Substituir tudo',
   editorSearchReplaceConfirmDesc: 'Substituir {matches} correspondências em {files} arquivos? Isso não pode ser desfeito.',
+  editorSearchReplaceFile: 'Substituir neste arquivo',
+  editorSearchReplaceMatch: 'Substituir esta correspondência',
   editorEmptyHint: 'Escolha um arquivo na árvore do painel ou no campo de caminho acima para começar a pré-visualizar',
   openFileNewTab: 'Abrir em nova aba',
   openFileSide: 'Abrir ao lado',

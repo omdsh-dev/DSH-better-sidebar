@@ -43,7 +43,7 @@ import { updatePluginSettings } from './plugin-settings.ts'
 import { createOpenInApp } from './open-in-app.ts'
 import { TreePanel } from './TreePanel.tsx'
 import { t } from './locales.ts'
-import { armLineEnd, consumeLineTarget, peekLineTarget } from './line-target.ts'
+import { armLineEnd, consumeLineTarget, peekLineTarget, type EditorSearchSeed } from './line-target.ts'
 import { relativeTo } from './paths.ts'
 import { resolveNativeSidebarPath, resolveSidebarPath } from './paths.ts'
 import { clearRetargetedPath, closePathTabs, consumeRetargetedPath, pathTabKey, retargetPathTabs } from './tree-mutations.ts'
@@ -75,7 +75,7 @@ function textOf(...values: Array<string | (() => string) | undefined>): string {
 }
 
 /** One landing navigation the editor host has read from the side channel. */
-interface LineNav { key: string; nonce: number | null; end?: number }
+interface LineNav { key: string; nonce: number | null; end?: number; search?: EditorSearchSeed }
 
 type EditorLoad =
   | { status: 'loading' }
@@ -236,7 +236,12 @@ export function EditorHost(props: {
   const nav = useMemo<LineNav | null>(() => {
     if (lineKey === null) return null
     if (peeked !== undefined) {
-      return { key: lineKey, nonce: peeked.nonce, ...(peeked.end === undefined ? {} : { end: peeked.end }) }
+      return {
+        key: lineKey,
+        nonce: peeked.nonce,
+        ...(peeked.end === undefined ? {} : { end: peeked.end }),
+        ...(peeked.search === undefined ? {} : { search: peeked.search }),
+      }
     }
     return previous !== null && previous.key === lineKey ? previous : null
   }, [lineKey, peeked, previous])
@@ -246,6 +251,10 @@ export function EditorHost(props: {
     || (nav !== null && nav.nonce !== spentLine.nonce)
   )
   const lineEnd = isFreshLine ? nav?.end : undefined
+  // The content-search seed for this landing: handed to the text viewer so it
+  // opens its find panel on the query the result was found with. One-shot like
+  // the line itself.
+  const searchSeed = isFreshLine ? nav?.search : undefined
   // The navigation this commit actually hands to the viewer, so the viewer's
   // consumption marks exactly that one spent (and not a newer arm).
   const handedLineRef = useRef<{ key: string; nonce: number | null } | null>(null)
@@ -373,12 +382,17 @@ export function EditorHost(props: {
    * than a landing the journal already spent — exactly the quote chip's rule
    * (`line-target.ts`).
    *
-   * A type that claims the file receives it without a line, like every other
-   * open path: landing a line is the editor's own contract.
+   * `search` carries the query/switches the content hit was found with. Both
+   * modes ride it on the SAME arm, so the text viewer paints every match in the
+   * file (panel-independent ink) and leaves Ctrl/Cmd+F pre-filled — the row's
+   * own preview cannot tell the reader where in the line the match sits.
+   *
+   * A type that claims the file receives it without line/search, like every
+   * other open path: landing and highlighting are the editor's own contract.
    */
-  const openFileAtLine = (absolute: string, line: number): void => {
+  const openFileAtLine = (absolute: string, line: number, search?: EditorSearchSeed): void => {
     if (openClaimedNativeFile(ctx, scope.sessionId, scope.cwd, absolute)) return
-    armLineEnd(absolute, line, undefined)
+    armLineEnd(absolute, line, undefined, search)
     if (!inPlace) {
       openSidebarFile(ctx, scope.sessionId, absolute, { line, cwd: scope.cwd })
       return
@@ -1011,6 +1025,9 @@ export function EditorHost(props: {
             // The quoted span's end, when the open armed one (the landing
             // flash). Viewers without a flash ignore it.
             lineEnd,
+            // The content-search query for this landing, when the open came
+            // from a result row: the text viewer opens its find panel on it.
+            search: searchSeed,
             onLineConsumed,
             content: load.content,
             size: load.size,

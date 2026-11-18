@@ -82,6 +82,8 @@ export const vi: Record<string, string> = {
   editorSearchReplaceFailed: 'Thay thế thất bại: {message}',
   editorSearchReplaceConfirmTitle: 'Thay thế tất cả',
   editorSearchReplaceConfirmDesc: 'Thay {matches} kết quả khớp trong {files} tệp? Không thể hoàn tác.',
+  editorSearchReplaceFile: 'Thay trong tệp này',
+  editorSearchReplaceMatch: 'Thay kết quả khớp này',
   editorEmptyHint: 'Chọn tệp từ cây tệp bên phải hoặc ô nhập đường dẫn phía trên để xem trước',
   openFileNewTab: 'Mở trong Tab mới',
   openFileSide: 'Mở ở bên cạnh',

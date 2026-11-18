@@ -928,11 +928,13 @@ function buildApi(
         throw error
       }
     },
-    // Replace-all over the files the client's CURRENT result list names. Each
-    // entry carries the mtime its row was rendered from: a file that changed
-    // on disk since is SKIPPED (`changed`) instead of being rewritten from a
-    // stale reading. The writer owns encoding/EOL round-trip and the atomic
-    // rename (`writeWorkspaceText`), so this route only shapes the request.
+    // Replace over the files the client's CURRENT result list names. An entry
+    // without `line` rewrites that whole file; with `line` + `matchIndex` it
+    // rewrites exactly that occurrence (the per-match button). Every entry
+    // carries the mtime its row was rendered from: a file that changed on disk
+    // since is SKIPPED (`changed`) instead of being rewritten from a stale
+    // reading. The writer owns encoding/EOL round-trip and the atomic rename
+    // (`writeWorkspaceText`), so this route only shapes the request.
     'fs.grepReplace': async (payload) => {
       const { cwd } = await cwdOf(payload)
       const record = payload as {
@@ -954,13 +956,28 @@ function buildApi(
       }
       const files: GrepReplaceFile[] = []
       for (const item of rawFiles) {
-        const entry = item as { path?: unknown; mtimeMs?: unknown } | null
+        const entry = item as { path?: unknown; mtimeMs?: unknown; line?: unknown; matchIndex?: unknown } | null
         if (typeof entry?.path !== 'string' || entry.path === '') {
           throw new SidebarError('bad-request', 'each file entry needs a path')
+        }
+        // A per-MATCH entry names the occurrence: 1-based line + 0-based
+        // ordinal. Both, or neither; a malformed pair is a client bug, not a
+        // silent whole-file rewrite (that would be the destructive direction).
+        const hasLine = entry.line !== undefined
+        const hasIndex = entry.matchIndex !== undefined
+        if (hasLine !== hasIndex) {
+          throw new SidebarError('bad-request', 'line and matchIndex must be sent together')
+        }
+        if (hasLine && (typeof entry.line !== 'number' || !Number.isInteger(entry.line) || entry.line < 1)) {
+          throw new SidebarError('bad-request', 'line must be a positive integer')
+        }
+        if (hasIndex && (typeof entry.matchIndex !== 'number' || !Number.isInteger(entry.matchIndex) || entry.matchIndex < 0)) {
+          throw new SidebarError('bad-request', 'matchIndex must be a non-negative integer')
         }
         files.push({
           path: entry.path,
           ...(typeof entry.mtimeMs === 'number' && Number.isFinite(entry.mtimeMs) ? { mtimeMs: entry.mtimeMs } : {}),
+          ...(hasLine ? { line: entry.line as number, matchIndex: entry.matchIndex as number } : {}),
         })
       }
       try {

@@ -82,6 +82,8 @@ export const ja: Record<string, string> = {
   editorSearchReplaceFailed: '置換に失敗しました：{message}',
   editorSearchReplaceConfirmTitle: 'すべて置換',
   editorSearchReplaceConfirmDesc: '{files} ファイル内の {matches} 件を置換しますか？この操作は元に戻せません。',
+  editorSearchReplaceFile: 'このファイル内を置換',
+  editorSearchReplaceMatch: 'この一致を置換',
   editorEmptyHint: '右のファイルツリーまたは上のパス入力欄からファイルを選んでプレビュー',
   openFileNewTab: '新しいタブで開く',
   openFileSide: '横に開く',

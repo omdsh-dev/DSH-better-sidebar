@@ -553,15 +553,17 @@ export const api = {
   /** Replace every match in the files the current result list shows. Each
    *  entry carries the mtime its row was rendered from: a file that changed
    *  on disk since is SKIPPED instead of rewritten from a stale reading.
-   *  Fixed-string replacement is literal (`$1` stays `$1`); regex mode gets
-   *  JS group-reference semantics. Encoding/EOL round-trip and the atomic
-   *  write live in `writeWorkspaceText` host-side. */
+   *  `line` + `matchIndex` narrow an entry to ONE occurrence (the per-match
+   *  button): the host re-derives that match from disk and skips the file if
+   *  it moved. Fixed-string replacement is literal (`$1` stays `$1`); regex
+   *  mode gets JS group-reference semantics. Encoding/EOL round-trip and the
+   *  atomic write live in `writeWorkspaceText` host-side. */
   fsGrepReplace: (
     scope: SessionScope,
     query: string,
     replacement: string,
     options: Pick<GrepOptions, 'regex' | 'caseSensitive' | 'wholeWord'>,
-    files: readonly { path: string; mtimeMs: number }[],
+    files: readonly { path: string; mtimeMs: number; line?: number; matchIndex?: number }[],
   ) =>
     call<GrepReplaceResult>('fs.grepReplace', scopePayload(scope, {
       query,
@@ -569,7 +571,12 @@ export const api = {
       ...(options.regex === true ? { regex: true } : {}),
       ...(options.caseSensitive === true ? { caseSensitive: true } : {}),
       ...(options.wholeWord === true ? { wholeWord: true } : {}),
-      files: files.map(file => ({ path: file.path, mtimeMs: file.mtimeMs })),
+      files: files.map(file => ({
+        path: file.path,
+        mtimeMs: file.mtimeMs,
+        ...(file.line === undefined ? {} : { line: file.line }),
+        ...(file.matchIndex === undefined ? {} : { matchIndex: file.matchIndex }),
+      })),
     })),
   fsRead: (scope: SessionScope, path: string, signal?: AbortSignal) =>
     call<FsReadResult>('fs.read', scopePayload(scope, { path }), signal),

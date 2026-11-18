@@ -65,6 +65,8 @@ export const sv: Record<string, string> = {
   editorSearchReplaceFailed: 'Ersättningen misslyckades: {message}',
   editorSearchReplaceConfirmTitle: 'Ersätt alla',
   editorSearchReplaceConfirmDesc: 'Ersätt {matches} träffar i {files} filer? Detta kan inte ångras.',
+  editorSearchReplaceFile: 'Ersätt i den här filen',
+  editorSearchReplaceMatch: 'Ersätt den här träffen',
   editorEmptyHint: 'Välj en fil från trädpanelen eller sökvägsinmatningen ovan för att börja förhandsgranska',
   openFileNewTab: 'Öppna i ny flik',
   openFileSide: 'Öppna vid sidan',
