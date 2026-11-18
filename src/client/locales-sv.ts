@@ -715,6 +715,8 @@ export const sv: Record<string, string> = {
   pluginAudioName: 'Ljudförhandsvisning',
   pluginTurnOutlineName: "dsh-turn-outline Varvöversikt",
   pluginTurnOutlineDesc: "Viker sessionen i användarvarv (indata + verktygssteg + utdata); klicka på ett steg för att hoppa till exakt plats i samtalet — utan LLM-anrop, skrivskyddad",
+  pluginZoteroWorkspaceName: 'dsh-zotero-workspace Zotero Workspace',
+  pluginZoteroWorkspaceDesc: 'Bring the Zotero library into the right sidebar: collection tree, item list/detail and server-side search, read the rendered PDF and parsed Markdown in place, and put the citation plus file paths into the current conversation; read-only local API, no MCP',
   pluginDshMemoryDeltaName: 'dsh-memory-delta Minne',
   pluginDshMemoryDeltaDesc: 'Minne mellan sessioner: endast det som ändrats injiceras (inget när inget ändrats), med påminnelse om granskningsdatum, relevanssorterad sökning och en sidopanelflik.',
 }

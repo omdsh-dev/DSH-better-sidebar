@@ -730,6 +730,8 @@ export const nl: Record<string, string> = {
   pluginAudioName: 'Audiovoorvertoning',
   pluginTurnOutlineName: "dsh-turn-outline Beurtoverzicht",
   pluginTurnOutlineDesc: "Vouwt de sessie op in gebruikersbeurten (invoer + toolstappen + uitvoer); klik op een stap om terug te springen naar de exacte plek in het gesprek — zonder LLM-aanroepen, alleen-lezen",
+  pluginZoteroWorkspaceName: 'dsh-zotero-workspace Zotero Workspace',
+  pluginZoteroWorkspaceDesc: 'Bring the Zotero library into the right sidebar: collection tree, item list/detail and server-side search, read the rendered PDF and parsed Markdown in place, and put the citation plus file paths into the current conversation; read-only local API, no MCP',
   pluginDshMemoryDeltaName: 'dsh-memory-delta Geheugen',
   pluginDshMemoryDeltaDesc: 'Geheugen tussen sessies: alleen wat is gewijzigd wordt geïnjecteerd (niets als er niets is gewijzigd), met herinnering aan de controledatum, relevantiegerangschikt zoeken en een zijbalktabblad.',
 }

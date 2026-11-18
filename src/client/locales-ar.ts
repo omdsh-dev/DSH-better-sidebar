@@ -733,6 +733,8 @@ export const ar: Record<string, string> = {
   pluginAudioName: 'معاينة الصوت',
   pluginTurnOutlineName: "dsh-turn-outline مخطط الجولات",
   pluginTurnOutlineDesc: "يطوي الجلسة إلى جولات المستخدم (الإدخال + خطوات الأدوات + المخرجات)؛ انقر على أي خطوة للانتقال إلى موضعها الدقيق في المحادثة — بدون استدعاء LLM، للقراءة فقط",
+  pluginZoteroWorkspaceName: 'dsh-zotero-workspace Zotero Workspace',
+  pluginZoteroWorkspaceDesc: 'Bring the Zotero library into the right sidebar: collection tree, item list/detail and server-side search, read the rendered PDF and parsed Markdown in place, and put the citation plus file paths into the current conversation; read-only local API, no MCP',
   pluginDshMemoryDeltaName: 'dsh-memory-delta الذاكرة',
   pluginDshMemoryDeltaDesc: 'ذاكرة عبر الجلسات: يُحقن ما تغيّر فقط (ولا شيء عند عدم وجود تغيير)، مع تذكير بموعد المراجعة وبحث مرتّب حسب الصلة وتبويب في الشريط الجانبي.',
 }
