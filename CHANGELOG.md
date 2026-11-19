@@ -4,6 +4,20 @@
 
 ### 未发布
 
+- 🐞 **修复「内容搜索命中打开后只落行、不高亮关键字」**：结果行 arm 的路径来自文件树/搜索的拼接（Windows 下是 `D:\仓库/src/a.ts` 这类混合分隔符），而原生 tab 记录的是宿主 `resolveAddressPath` 折叠后的 `D:\仓库\src\a.ts`；两串不等导致一次性旁路查不到，`line` 仍由宿主单独送达（所以光标到位），但 `search` 种子丢失。现在一次性旁路的查找按 Windows 语义折叠分隔符并忽略大小写，并可在「绝对 ↔ 会话相对」两种拼写之间自动换算（POSIX 保持精确：大小写与反斜杠都算文件名字符）。行定位、引用 chip 的行段闪烁与 `Ctrl/Cmd+F` 预填因此都恢复。
+  - 🧪 测试：`tests/line-target.spec.ts`（分隔符/大小写折叠、绝对↔相对别名、POSIX 精确性）。
+- 🔁 **内容搜索补齐 VS Code 式的逐文件 / 逐处替换**：结果现在按「每处命中一行」呈现（同一行有多处命中会展开成多行，各自带行号与独立高亮）；文件名分组悬停出现「替换此文件」（改该文件内全部命中，不弹确认），每条结果行悬停出现「替换此匹配」（只改这一处）。三个粒度都只作用于当前结果列表，写入仍保留文件编码与行尾，并以渲染时的 mtime 做并发门；逐处替换由宿主按磁盘现状重新推导该 span，找不到就跳过并在提示行报告。`fs.grepReplace` 的 file 条目新增可选 `line` + `matchIndex`；替换动作只在替换输入框展开时出现，避免空替换文本静默删除。
+  - 🧪 测试：`tests/fs-grep.spec.ts`（单文件全部 / 单处 / 分组引用 / 失效跳过）、`tests/fs-grep-route.spec.ts`（`line`+`matchIndex` 与半指定拒绝）、`tests/file-tree-content-search.spec.tsx`（每处一行、逐文件与逐处调用的参数）。
+- 🔎 **内容搜索的命中打开后直接高亮关键字**：点击结果行仍会定位到该行，并用编辑器自带的**独立高亮层**把文件内**全部**命中标出来（主题 warn 色 + 下划线，不弹查找面板、不抢焦点），打开文件即可看到关键字位置；同一查询与大小写 / 整词 / 正则开关会一并预填进 CodeMirror 查找状态，之后按 Ctrl/Cmd+F 打开的面板已带着搜索词、可直接 next/prev（面板打开时自动让位给面板自身的高亮，不叠加两层）。再次点击同一条结果会重画高亮；普通跳行（引用 chip）会清掉上一次搜索的标记。侧边栏服务 `openFile` 的 `options` 新增可选 `search`，内置文本 viewer 通过 `FileViewerProps.search` 消费，其他 viewer 忽略即可。
+  - 🧪 测试：`tests/editor-content-search-seed.spec.tsx`（独立高亮、不开面板、Ctrl+F 预填与开关、同行再点重画、普通跳行清除）、`tests/line-target.spec.ts`（一次性旁路携带 search）、`tests/file-tree-content-search.spec.tsx`（结果行把查询与开关原样传出）。
+- 🐞 **修复多仓库工作区里文件树只给第一个仓库着色**：当会话 cwd 是「容器」——自身不是 git 仓库、下面有多个独立 checkout——且没有显式选中某个仓库时，`git.status` 以往只读第一个发现的仓库，导致第二个及以后仓库里的文件全部显示为「未修改」。现在快照在首个仓库之外还会带上 `others`（每个兄弟仓库一次 porcelain 读取，不跑 numstat；最多 8 个，超出置 `othersTruncated`），共享 git-status store 的路径索引按各自 root 覆盖所有仓库，因此文件树、搜索结果行、目录着色和编辑器 gutter 对每个仓库的文件都生效。显式传 `repoRoot` 时仍只返回选中的单个仓库（Git 面板的仓库选择语义不变）。
+  - 🧪 测试：`tests/git.spec.ts`（容器聚合、显式选择不聚合）、`tests/git-status-poll.spec.tsx`（只有 sibling 变化也通知、索引跨 root 命中）、`tests/file-tree-multi-repo-status.spec.tsx`（两个仓库的修改行都能着色）。
+- 🔎 **文件搜索新增 VS Code 式「内容搜索」与全部替换**：文件页搜索框可在「名称 / 内容」两种模式间切换。内容模式带大小写、整词、正则开关，以及 `files to include` / `files to exclude` glob（与树 / 名称搜索的排除语法同源：无斜杠按基名匹配任意深度、含斜杠按根锚定、`**/` 可匹配零段、目录名包含其子树）；结果按文件分组，带行号与命中高亮，点击行直接打开并落到该行。
+  - **全部替换**先弹出确认（显示文件数与命中数），只改当前结果列表里的文件；写盘复用 `writeWorkspaceText`，文件原有字节编码与行尾保持不变，渲染后磁盘又变更的文件跳过并在一行提示里报告。
+  - **宿主侧新增 `fs.grep` / `fs.grepReplace` 两个 `/sidebar/api` 路由**：内容搜索在 git worktree 内用 `git ls-files --cached --others --exclude-standard` 取文件清单（尊重 `.gitignore`），否则回退目录遍历；跳过二进制、超过 2 MiB 的文件以及 `node_modules` 等噪声目录；每次搜索有文件数 / 命中数 / 扫描字节预算，超限返回 `truncated` 而不是卡住宿主。`updateTab` 的 patch 新增可选 `line`，原地打开也能落到指定行（外部插件同样可用，见接入指南）。
+  - 🧪 测试：`tests/fs-grep.spec.ts`（查询编译、include glob、遍历与跳过、预算、CRLF 替换与 mtime 门）、`tests/fs-grep-route.spec.ts`（路由形状、坏正则 400、替换与冲突跳过）、`tests/file-tree-content-search.spec.tsx`（模式切换、分组 / 高亮 / 行跳转、include·exclude 透传、确认替换、结果行的 git 着色）。
+- 🎨 **搜索结果行也显示修改状态**：名称搜索结果与内容搜索的文件分组复用文件树已有的 Git 着色与字母徽标（`M` / `U` / `A` / `D` …），修改过的文件在结果列表里同样与未修改文件颜色区分。
+
 - 💻 **侧边对话显示 PTC（run_code）工具调用树**：`run_code` 行收起时显示模型写的 description，展开后显示程序代码和最终结果；程序内通过 PTC 派发的 bash / read / grep / edit 等子调用缩进挂在它下方，根行收起也可见，并复用终端 / diff / read / search / web 结构卡片。运行中、失败、无 start 的 dispatch 都有对应显示；PTC 内成功 write/edit 的文件也进入可点击路径提及。`present` 仍保留顶层交付卡片，同时在子调用区留下一行。
   - 🧪 测试：`tests/sidechat-ptc-rows.spec.ts`（配对 / 运行态 / 失败 / 无 start / 嵌套 / 父行缺失 / 身份复用）、`tests/sidechat-ptc-subcalls.spec.tsx`（description 摘要、代码体、缩进与卡片、根行收起仍可见）、`tests/sidechat-mention-sources.spec.tsx`（PTC mutation 进入提及、read 不进入）。
 

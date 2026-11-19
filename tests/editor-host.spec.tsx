@@ -614,7 +614,9 @@ describe('EditorHost (files window)', () => {
     try {
       // No editor chrome: no path input, no tree toggle, no resize handle.
       expect(container.querySelector('input[placeholder^="File path"]')).toBeNull()
-      expect(container.querySelector('button[aria-pressed]')).toBeNull()
+      // The tree panel's own search-mode buttons are pressed-state buttons too;
+      // this assertion is about the EDITOR's tree toggle, so it names it.
+      expect(container.querySelector('button[aria-label="File tree panel"]')).toBeNull()
       expect(container.querySelector('[role="separator"]')).toBeNull()
       // The tree panel fills the whole window — its search box is the only
       // input, and (no cwd) the tree shows its no-session placeholder.

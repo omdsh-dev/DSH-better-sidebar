@@ -19,7 +19,7 @@ import clsx from 'clsx'
 import { EditorState } from '@codemirror/state'
 import { EditorView as CodeMirrorView, keymap, lineNumbers } from '@codemirror/view'
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
-import { openSearchPanel } from '@codemirror/search'
+import { openSearchPanel, SearchQuery, setSearchQuery } from '@codemirror/search'
 import { IconCheckOutlineRegular, IconSearchOutlineRegular, MarkdownDelegateProvider, MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
 import { markdownTextProps } from './markdown-labels.tsx'
 import {
@@ -35,7 +35,7 @@ import { createMarkdownPathImages } from './markdown-images.ts'
 import { rewriteLocalMarkdownLinks } from './markdown-navigation.ts'
 import { languageForPath } from './lang.ts'
 import { cmSurfaceTheme, CmThemeCompartment } from './cm-themes.ts'
-import { cmSearchExtensions, CmSearchPhrases } from './cm-search.ts'
+import { cmSearchExtensions, CmSearchPhrases, setContentSearchSeed } from './cm-search.ts'
 import { clearDraftBackup, draftBackupBaseMtime, flushDraftBackups, readDraftBackup, registerDraftSource, sameDocument, scheduleDraftBackup } from './editor-draft-backup.ts'
 import { flashQuoteLines, quoteFlashField, quoteFlashHighlight } from './quote-flash.ts'
 import { isDarkScheme, subscribeColorScheme } from './theme.ts'
@@ -52,7 +52,7 @@ import { MdToc } from './md-toc.tsx'
 import { splitMermaidBlocks } from './mermaid-blocks.ts'
 import { localeSignature, t } from './locales.ts'
 import { HtmlPreviewFrame } from './HtmlPreviewFrame.tsx'
-import type { EditorToolbarState, FileViewerProps } from './service.ts'
+import type { EditorSearchSeed, EditorToolbarState, FileViewerProps } from './service.ts'
 import css from './sidebar.module.css'
 
 /** Previewable files (rendered output vs source editing). */
@@ -625,20 +625,29 @@ export function TextEditor(props: FileViewerProps) {
    *  every store notification, so without this a reader would be yanked back to
    *  the same line each time — while a NEW line on the SAME file must land. */
   const landedAtRef = useRef<string | null>(null)
+  /** The content-search seed already applied (identity: the seed object the
+   *  host handed this landing). A NEW object on the same `path#line` is a new
+   *  result click and must re-seed the find panel — the landing journal alone
+   *  would skip it. */
+  const searchSeedRef = useRef<EditorSearchSeed | null>(null)
 
   // Land on the line a file reference named (`a/b.c#L131`, `a/b.c:131` — #826).
   // One-shot per (file, line): an ordinary open carries no line and never
   // fires, and a fresh reference re-fires it.
   useEffect(() => {
+    const seed = props.search
     if (line === undefined) {
       landedAtRef.current = null
+      searchSeedRef.current = null
       return
     }
     if (content === undefined) return
     const view = viewRef.current
     if (view === null) return
     const key = `${path}#${line}`
-    if (landedAtRef.current === key) return
+    // A new search seed on the same landing key re-lands AND re-seeds: the
+    // second click on one result row must not be swallowed by the journal.
+    if (landedAtRef.current === key && searchSeedRef.current === (seed ?? null)) return
     // A markdown/html/jsonl file opens in a preview, which has no source lines
     // to put a cursor on. The reference asked for source, so land in the
     // editor; the key is NOT recorded yet, so the re-run after the flip jumps.
@@ -664,6 +673,38 @@ export function TextEditor(props: FileViewerProps) {
     // on the editor scroller can never touch anything outside the editor.
     view.requestMeasure()
     view.dispatch({ selection: { anchor: target } })
+    // A content-search hit carries the query it matched. Two things happen with it:
+//  - `setContentSearchSeed` paints EVERY match in the file with our own
+//    panel-independent decoration, so the reader sees the keyword the moment
+//    the file opens (CodeMirror's `.cm-searchMatch` ink only exists while the
+//    find panel is open — and opening it on every result click would steal
+//    focus and cover the editor top);
+//  - the same query is SEEDED into CodeMirror's search state, so pressing
+//    Ctrl/Cmd+F later opens the find panel already pre-filled and can step
+//    through the matches.
+    if (seed !== undefined) {
+      searchSeedRef.current = seed
+      try {
+        const query = new SearchQuery({
+          search: seed.query,
+          caseSensitive: seed.caseSensitive === true,
+          wholeWord: seed.wholeWord === true,
+          regexp: seed.regex === true,
+          literal: seed.regex !== true,
+        })
+        view.dispatch({ effects: [setContentSearchSeed.of(seed), setSearchQuery.of(query)] })
+      } catch {
+        // Defensive only: a host-accepted regex compiles here. A bad seed must
+        // never stop the file from landing on its line.
+        view.dispatch({ effects: setContentSearchSeed.of(null) })
+      }
+    } else {
+      // An ordinary line landing (a quote chip) clears a previous search's ink:
+      // it belongs to the previous navigation, not this file.
+      const hadSeed = searchSeedRef.current !== null
+      searchSeedRef.current = null
+      if (hadSeed) view.dispatch({ effects: setContentSearchSeed.of(null) })
+    }
     // Show the caret. A selection alone is invisible here: CodeMirror draws the
     // cursor only in a FOCUSED editor, and a zero-length selection paints
     // nothing — so an unfocused landing read as "the file just opened
@@ -697,7 +738,7 @@ export function TextEditor(props: FileViewerProps) {
     // The reveal reads the live view ref; `markdown`/`html` are derived from
     // `viewerId`, which the view-creation effect already keys on.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [content, path, line, mode, props.onLineConsumed, props.lineEnd])
+  }, [content, path, line, mode, props.onLineConsumed, props.lineEnd, props.search])
 
   // Scheme flip: re-theme in place (the compartment holds only the
   // scheme-dependent extensions; everything else is untouched).

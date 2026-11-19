@@ -131,8 +131,9 @@ const COPIED_MS = 1200
  */
 const APPS_CACHE_MAX = 32
 
-/** One changed row's tooltip word (the badge's status vocabulary). */
-function gitToneLabel(tone: GitTone): string {
+/** One changed row's tooltip word (the badge's status vocabulary). Shared with
+ *  the search result rows (`TreePanel`), so both surfaces speak one status. */
+export function gitToneLabel(tone: GitTone): string {
   switch (tone) {
     case 'added': return t('gitStatusAdded')
     case 'deleted': return t('gitStatusDeleted')
@@ -146,8 +147,9 @@ function gitToneLabel(tone: GitTone): string {
   }
 }
 
-/** The badge tone for one git tone (the kit has no separate 'copied' ink). */
-function badgeToneOf(tone: GitTone): StatusTone {
+/** The badge tone for one git tone (the kit has no separate 'copied' ink).
+ *  Exported for the search result rows, which share the tree's badge. */
+export function badgeToneOf(tone: GitTone): StatusTone {
   return tone === 'copied' ? 'added' : tone
 }
 

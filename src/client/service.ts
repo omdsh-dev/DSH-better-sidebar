@@ -33,7 +33,8 @@ import type { SessionScope } from './api.ts'
 import type { SidebarPrefs } from '../prefs-shared.ts'
 import type { EditLimitReason } from '../editor-limits.ts'
 import { bindSidechatSurfaces, type SidechatSurfaceAdapter } from './sidechat-surface.ts'
-import { armLineEnd } from './line-target.ts'
+import { armLineEnd, type EditorSearchSeed } from './line-target.ts'
+export type { EditorSearchSeed } from './line-target.ts'
 export type { SidechatSurface, SidechatSurfaceAdapter } from './sidechat-surface.ts'
 
 /**
@@ -344,6 +345,15 @@ export interface FileViewerProps {
    *  side channel (`line-target.ts`), not the host's resource parameters,
    *  which declare `line` only. Absent = a single-line landing. */
   lineEnd?: number
+  /** One-shot find-in-file seed for a CONTENT-SEARCH hit: the query and the
+   *  switches the result was found with. The built-in text viewer paints every
+   *  match in the file with its own panel-independent highlight and seeds the
+   *  same query into CodeMirror's search state (so Ctrl/Cmd+F opens
+   *  pre-filled); every other viewer ignores it. Like {@link
+   *  FileViewerProps.lineEnd} it rides `line-target.ts`, so a click on the same
+   *  result again is a NEW navigation that re-paints. Absent on an ordinary
+   *  open. */
+  search?: EditorSearchSeed
   /** The viewer reports that it has APPLIED the `line` it was handed (or that
    *  the line does not apply to it), and the host stops handing it out: the
    *  line is one navigation, not a mode of the file. The host has to own that
@@ -770,7 +780,7 @@ export interface SidebarSurface {
    * (`keepMounted`), so a caller that knows its session should pass it.
    * Omitted, the id resolves against the mounted seat.
    */
-  update(tabId: string, patch: { title?: string; path?: string; meta?: unknown }, sessionId?: string): boolean
+  update(tabId: string, patch: { title?: string; path?: string; meta?: unknown; line?: number }, sessionId?: string): boolean
   /** Focus a native tab through the host controller; false when it is not native (same `sessionId` rule as `update`). */
   activate(tabId: string, sessionId?: string): boolean
   /** Whether a tab id belongs to the native surface (same `sessionId` rule as `update`). */
@@ -935,7 +945,10 @@ export interface BetterSidebarService {
    * A **path change is a new open**: the transient landing line a reference
    * carried (#826) is dropped with it, because that line belongs to the
    * navigation that delivered the file — an in-place switch or a rename that
-   * kept it would send the next file to the previous file's line.
+   * kept it would send the next file to the previous file's line. A caller
+   * that wants an in-place open to LAND somewhere passes `line` in the same
+   * patch (the content search's result rows do exactly this); the explicit
+   * line wins over the clearing rule.
    *
    * v0.26.0+: a `sessionId` that is **not the session on screen** patches that
    * session's own layout through the targeted channel (no publish, no notify —
@@ -944,7 +957,7 @@ export interface BetterSidebarService {
    * resolving them against the active session. The active session keeps the
    * publishing path, and an omitted `sessionId` behaves exactly as before.
    */
-  updateTab(tabId: string, patch: { title?: string; path?: string; meta?: unknown }, sessionId?: string): void
+  updateTab(tabId: string, patch: { title?: string; path?: string; meta?: unknown; line?: number }, sessionId?: string): void
   /**
    * Activate an open tab (the tab-bar activation path; fires
    * descriptor.onActivate). An unknown tab id is a strict no-op. `scope`
@@ -955,9 +968,12 @@ export interface BetterSidebarService {
    * Open a file in the sidebar editor of `scope`'s session (title defaults to
    * the file name). `options.line` lands the viewer on that 1-based source
    * line (a quote chip's click-through); `options.lineEnd` extends the
-   * landing flash through that line, so the quoted span reads at a glance.
+   * landing flash through that line, so the quoted span reads at a glance;
+   * `options.search` paints the content-search hit: the text viewer highlights
+   * every match on arrival (no find panel) and leaves Ctrl/Cmd+F pre-filled
+   * with the query. All three are one-shot navigations, not file modes.
    */
-  openFile(scope: SessionScope, path: string, title?: string, options?: { line?: number; lineEnd?: number }): void
+  openFile(scope: SessionScope, path: string, title?: string, options?: { line?: number; lineEnd?: number; search?: EditorSearchSeed }): void
   /**
    * Resolve one of the plugin's own host routes (`sidebar/api/fs.read`) into
    * an absolute URL the page can fetch even when the GUI is served under a
@@ -1672,7 +1688,7 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
   /** Patch an open tab's display fields (a missing tab id is a no-op). */
   const updateTab = (
     tabId: string,
-    patch: { title?: string; path?: string; meta?: unknown },
+    patch: { title?: string; path?: string; meta?: unknown; line?: number },
     sessionId?: string,
   ): void => {
     if (surface?.update(tabId, patch, sessionId) === true) return
@@ -1680,6 +1696,7 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
       ...(patch.title !== undefined ? { title: patch.title } : {}),
       ...(patch.path !== undefined ? { path: patch.path } : {}),
       ...(patch.meta !== undefined ? { meta: patch.meta } : {}),
+      ...(patch.line !== undefined ? { line: patch.line } : {}),
     })
     // A named session that is not on screen is patched in ITS own state (a
     // background conversation's file page under a rename — see
@@ -1741,8 +1758,8 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
    *  in line-target.ts — the host's resource parameter map declares `line`
    *  only, and smuggling a second key through host-owned params would work
    *  exactly until upstream tightened that shape. */
-  const openFile = (scope: SessionScope, path: string, title?: string, options?: { line?: number; lineEnd?: number }): void => {
-    if (options?.line !== undefined) armLineEnd(path, options.line, options.lineEnd)
+  const openFile = (scope: SessionScope, path: string, title?: string, options?: { line?: number; lineEnd?: number; search?: EditorSearchSeed }): void => {
+    if (options?.line !== undefined) armLineEnd(path, options.line, options.lineEnd, options.search)
     openTab({
       type: 'editor',
       title: title ?? baseNameOf(path),

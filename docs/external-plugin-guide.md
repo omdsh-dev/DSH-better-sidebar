@@ -477,7 +477,7 @@ ctx.effect(() => {
 
 | id | order | single | hidden | 用途 |
 |---|---|---|---|---|
-| `editor` | 10 | 否（按 path 去重） | 否 | 唯一「文件窗口」（编辑/预览 + 资源管理）。chrome 恒合并形态：路径输入框 + 编辑器控件 + 可开关内嵌文件树（全局搜索 `fs.search`；状态存 `tab.meta.treeOpen/treeWidth`）。`editorExplorer`：关（默认）= 按 path 新开，无路径窗口 = 纯资源管理器；开 = 树点击/Enter 经 `updateTab` 原地切换（id/meta 不变），无路径窗口 = 带 chrome 空窗口。树右键「在新 Tab 中打开」「在侧边打开」（pane 右侧 split）。新会话**不 seed 任何页签**（右侧栏归宿主，插件只投 tab 类型；首开落在宿主开始页，即本插件接管的 `guideTakeover` 页面）；旧 `explorer` tab 经 `sanitizeState` 迁移为无路径的 `editor` 页签（`title:'Files'`、`meta.treeOpen:true`）。树 listing 与文件名搜索应用 `explorerExclude` 排除模式（editor 卡片齿轮弹窗可编辑；host 侧过滤，匹配条目彻底移除且永不阻塞折叠）；单目录链折叠为 `a/b/c` 面包屑行（POSIX 隐藏与排除条目不计入唯一子项判定） |
+| `editor` | 10 | 否（按 path 去重） | 否 | 唯一「文件窗口」（编辑/预览 + 资源管理）。chrome 恒合并形态：路径输入框 + 编辑器控件 + 可开关内嵌文件树（搜索框两种模式：文件名 `fs.search`；内容 `fs.grep` + 全部替换 `fs.grepReplace`，带大小写/整词/正则开关与 files-to-include / files-to-exclude glob；结果按文件分组、按 `updateTab({line})` 落地；状态存 `tab.meta.treeOpen/treeWidth`）。`editorExplorer`：关（默认）= 按 path 新开，无路径窗口 = 纯资源管理器；开 = 树点击/Enter 经 `updateTab` 原地切换（id/meta 不变），无路径窗口 = 带 chrome 空窗口。树右键「在新 Tab 中打开」「在侧边打开」（pane 右侧 split）。新会话**不 seed 任何页签**（右侧栏归宿主，插件只投 tab 类型；首开落在宿主开始页，即本插件接管的 `guideTakeover` 页面）；旧 `explorer` tab 经 `sanitizeState` 迁移为无路径的 `editor` 页签（`title:'Files'`、`meta.treeOpen:true`）。树 listing 与文件名搜索应用 `explorerExclude` 排除模式（editor 卡片齿轮弹窗可编辑；host 侧过滤，匹配条目彻底移除且永不阻塞折叠）；单目录链折叠为 `a/b/c` 面包屑行（POSIX 隐藏与排除条目不计入唯一子项判定） |
 | `git` | 20 | 是 | 是（本轮文件操作数） | 「Git」统一 tab（id 保留 `git` 以兼容持久化布局）：**Git 视角**（Source Control：独立折叠的 Changes / Graph；Changes 内为多行 Message + 仅填草稿的 Generate、Merge Changes → Staged Changes → Changes（资源组也独立折叠，计数常驻标题最右，文件行整行 hover）；Git 刷新仅留在 Changes 标题，外层本轮文件刷新保留；真实 parent hashes 泳道图；常驻底栏为可点击分支 + `*`/`+`/`!` 标记、upstream 的 behind↓ / ahead↑ 及安全 Pull-then-Push 同步；Push/Pull 与 worktree·子仓库选择移入 More Actions；提交只消费已暂存项，冲突/空消息/无暂存时禁止，草稿按会话·仓库·worktree 隔离）+ **本轮文件视角**（原 file-trace：模型读/写/编辑实时折叠，按操作时间倒序平铺、不按文件分组，每行「操作 → 文件路径 → 大小/时间」，支持类型筛选）；会话事件经插件自有宿主路由 `changes.ops` 供给（live 日志优先、冷会话回放持久化记录，`afterSeq` 增量），primed 后用 `wait` 挂在宿主侧等下一个工具事件而不是重放整窗），badge 读 tab 轮询写入的同步缓存。页头使用宿主公开的 `@deepseek-ai/dsh-client-ui-primitives` 中的 `SegmentedControl`（36px 高度、主题 Token 样式；自动处理选中状态、ARIA 关系及左右方向键、Home/End 键盘导航）。两视角共用底部可拖拽预览面板（`tab.meta.lens/previewH` 持久化），diff 渲染统一走 `src/client/diff/`（`DiffRows`/`DiffFiles`：mod 配对 + 行内高亮 + 语法着色 + 上下文折叠）；Git 目标可展开为独立 diff tab（落进工作台的 diff 分栏） |
 | `subagent` | 30 | 是 | 否 | 任务管理（工作流图/树、团队任务板、后台任务抽屉） |
 | `sidechat` | 35 | 否（`sidechat:<uuid>`，按 `meta.threadId` 去重） | 否 | 侧边对话（默认共用一页；设置可切换「每个对话独立页」）：共用页再次打开聚焦同一页并回到本会话最近线程；独立页每个线程一个原生 occurrence，按 contentId 精确恢复。打开即建空线程（首条消息赢得标签并同步标题）；线程 = 插件自建子会话（种子继承父会话上下文，进行中回合以 `interrupted` 闭合；种子带合法 `subagent/descriptor`，SubagentView 按 `Side: ` 前缀过滤），`origin:'subagent'` 隐藏于主列表；走 `/sidebar/api/sidechat.*` 路由；头部菜单切换/重开（`parkSidechatReopen` + 确定性 id），关 Tab 释放 live agent；重开经 `collectOwnEvents` 回源到种子边界；「保存为新会话」= `session.fork`（`this` 敏感）。[设计文档](plans/2026-08-20-sidechat-tab-design.md) |
@@ -549,6 +549,11 @@ interface FileViewerProps {
   // 行段引用（v0.30.0+）：与 line 同时到达，给出被引区间的末行。内置编辑器据此
   // 闪一下整段；不消费它的 viewer 行为与只收到 line 相同。
   lineEnd?: number
+  // 内容搜索命中（文件页搜索框的「内容」模式结果行）打开时携带的查询与开关。
+  // 内置文本编辑器据此在文件内**独立高亮全部命中**（不弹查找面板），并把查询与
+  // 开关预填进 CodeMirror 查找状态（之后 Ctrl/Cmd+F 直接带着搜索词打开）；其他
+  // viewer 忽略即可。与 line 一样是一次性导航（再次点同一条结果会重新下发）。
+  search?: { query: string; caseSensitive?: boolean; wholeWord?: boolean; regex?: boolean }
   onLineConsumed?: () => void // 已消费该 line 的回报；不调用则每次加载都会重新下发（默认不消费）
   // 以下为内置文本编辑器与 EditorHost 内部协作字段，外部 viewer 忽略：
   toolbar?: 'self' | 'host'
@@ -678,14 +683,18 @@ const { value } = await res.json()   // 错误时 { ok: false, error: { code, me
 | `session.cwd` | 会话权威 cwd（`{ cwd, root, parent }`） |
 | `fs.tree` / `fs.trees` | 目录列表（`{ path, entries: FsEntry[], truncated }`；FsEntry 含 `isSymlink`/`broken`，目录软链接的 `isDir` 按目标类型；请求可带 `exclude` 模式串，行上可带 `compact` 标记——单目录链由 client 折叠为面包屑行，匹配条目从列表与折叠探测中彻底移除）。`fs.trees` 是批量版（文件树的真实入口，同样吃 `exclude`） |
 | `fs.trees` | **批量**目录列表（v0.23.0+）：入参 `{ sessionId, cwd?, paths: string[] }`（最多 64 条，绝对或会话相对），一次请求返回 `{ levels: [{ path, entries, truncated, error? }] }`。每层与 `fs.tree` 同解析、同缓存；**某一层失败只在该层带 `error`**（`entries: []`），整个批次仍是成功响应——树的一次挂载/刷新因此是 1 个请求而不是 N 个 |
+| `fs.search` | 文件名 / 路径搜索（`{ query, exclude? }` → `{ matches, dirs, truncated }`，root-relative、'/' 分隔） |
+| `fs.grep` | **内容搜索**（v0.32.1 之后的开发线）：`{ query, include?, exclude?, caseSensitive?, wholeWord?, regex? }` → `{ files: [{ path, mtimeMs, matches: [{ line, text, ranges: [{start,end}] }] }], matchesTotal, truncated }`。逐行匹配（不跨行）；`include` 是 files-to-include glob（无 `/` 按基名、含 `/` 按根锚定、`**/` 可匹配零段、目录名包含其子树）；`exclude` 与树/文件名搜索同一套已编译模式（请求里把 pref 与用户输入合并后送来）。二进制、超限文件、`node_modules` 等噪声目录自动跳过；root 在 git worktree 内时文件清单来自 `git ls-files --cached --others --exclude-standard`（尊重 .gitignore），否则走目录遍历。正则不合法回 400 `bad-request`。预算：200 文件 / 2000 处 / 单文件 2 MiB / 单次 128 MiB，超限 `truncated: true` |
+| `fs.grepReplace` | **替换**（v0.32.1 之后的开发线）：`{ query, replacement, regex?, caseSensitive?, wholeWord?, files: [{ path, mtimeMs?, line?, matchIndex? }] }` → `{ files: [{ path, replaced }], replaced, skipped: [{ path, reason }] }`。三种粒度同一路由：不带 `line` 的条目改**该文件全部命中**（文件名分组上的「替换此文件」按钮；一次请求带全部条目就是「全部替换」）；带 `line`（1 基）+ `matchIndex`（该行上命中的 0 基序号）时**只改那一处**（每行一条结果的逐处替换按钮，宿主按磁盘现状重新推导该 span，找不到就跳过）。`mtimeMs` 是乐观并发门——渲染后磁盘又变过的文件进 `skipped`（`reason: 'changed'`，逐处替换时「匹配已不存在」同样归为该原因）而不写入；编码与行尾按磁盘现状还原、原子落盘（复用 `writeWorkspaceText`）。固定字符串模式替换文本按字面处理（`$1` 原样），正则模式按 JS 分组引用（逐处替换也支持 `$1` / `$&` / `` $` `` / `$'` / `$<name>`） |
 | `fs.read` | 读文件（v0.26.0 起三态）：文本 `{ kind: 'text', content, size, mtimeMs }`；二进制 `{ kind: 'binary', size, mtimeMs, head }`；**超过编辑上限**（5 MiB）`{ kind: 'too-large', size, mtimeMs, head }`（head = base64 前 4KB，用于 `detect` 重匹配；`mtimeMs` = 本次读取的磁盘 mtime，保存冲突基线）。**不再有 `truncated` 文本读**——截断文档既不可信也不能保存（#732），超大文件改走 `fs.readPage` 分页预览 |
 | `fs.readPage` | 大文本文件的分页读取（v0.26.0+）：`{ sessionId, cwd?, path, offset }` → `{ kind:'text', text, offset, nextOffset, eof, size, mtimeMs, encoding }`。窗口按行对齐（调用方可以直接当作整行/整条记录处理），单个超长行原样返回而不是空页；`nextOffset` 必然前进，`eof` 精确 |
 | `fs.write`（**已移至 raw 路由**） | v0.26.0 起保存走 `POST /sidebar/write?sessionId=&cwd=&path=&expectedMtimeMs=`，**请求体就是 LF 文档**（不再走 JSON，因此不再受 `/sidebar/api` 的 1 MiB body 上限约束）；响应仍是 `{ ok: true, value: { ok: true, mtimeMs? } }` 信封。语义不变：`expectedMtimeMs` 是乐观并发门，磁盘 mtime 与基线不符则拒绝（409，wire 错误码 `fs-conflict`），**目标已不存在（保存瞬间被删除或改名走）同样判 409**——数字基线只可能来自一次成功的读取，即该路径当时确实有文件，所以「读不到」是冲突而不是新建意图（新建走 `fs.createFile`、上传走上传路径，都不经过这条分支）。省略则不做门禁；宿主在写盘前按磁盘现状还原文件的行尾与字节编码（`restoreEol` + `encodeText`） |
-| `git.status` / `git.diff` / `git.log` 等 | 全套 Git 只读 + 写操作 |
+| `git.status` | 工作区状态快照：`{ isRepo, root?, repositories?, entries: [{ path, xy, staged?, unstaged? }], truncated?, others?, othersTruncated? }`。`path` 相对 `root`。**容器工作区**（会话 cwd 自身不是仓库、下面有多个独立 checkout）在**未显式传 `repoRoot`** 时，`root`/`entries` 是首个仓库，`others: [{ root, entries, truncated? }]` 携带其余仓库（每个仓库一次 porcelain 读取，不跑 numstat；最多 8 个，超出置 `othersTruncated: true`）——文件树/搜索结果凭它给所有仓库的行着色。传 `repoRoot` 选中某个仓库时返回单仓库快照，不含 `others`（Git 面板语义不变） |
+| `git.diff` / `git.log` 等 | 全套 Git 只读 + 写操作 |
 | `pty.close` / `agent-pty.close` | **已删除**（插件自带的 PTY 栈随终端一起移除；宿主 `ui-sidebar-terminal` 不通过本插件的路由暴露控制面） |
 | `settings.get` / `settings.update` | 侧边栏偏好读写（revision 守卫，冲突回 wire 错误码 `settings-conflict`）；后端在 0.1.7 上就是宿主的 `SettingsForms`，见 §8.2 |
 
-> **文件路径语义（v0.23.0 起：无包含检查）**：`fs.tree`、`fs.trees`、`fs.read`、`fs.write`、`fs.rename`、`fs.remove`、`fs.mkdir`、`/sidebar/file`、`/sidebar/html`、`/sidebar/upload` 和 `archive.build` 仍以请求对应 session 的权威 `cwd` 作为**相对路径的基准**，但**不再把 `cwd` 当边界**：绝对路径原样使用，`..` 只做词法折叠，符号链接跟随，越界不再是 403。安全影响见 §8.1 的醒目声明。
+> **文件路径语义（v0.23.0 起：无包含检查）**：`fs.tree`、`fs.trees`、`fs.read`、`fs.write`、`fs.rename`、`fs.remove`、`fs.mkdir`、`fs.grep`、`fs.grepReplace`、`/sidebar/file`、`/sidebar/html`、`/sidebar/upload` 和 `archive.build` 仍以请求对应 session 的权威 `cwd` 作为**相对路径的基准**，但**不再把 `cwd` 当边界**：绝对路径原样使用，`..` 只做词法折叠，符号链接跟随，越界不再是 403。安全影响见 §8.1 的醒目声明。
 
 ### 6.1 打包下载（`archive.build` / `archive.status` / `/sidebar/archive`，v0.22.0+）
 
@@ -849,7 +858,10 @@ interface BetterSidebarService {
   /** 更新一个已打开 tab 的显示字段（title/path/meta）；tab 不存在时 no-op。
    *  **改 path 等于一次新的打开**：引用带的行号（#826）是那次导航的瞬态状态，
    *  会随之清掉——原地切换文件 / 重命名若留着它，下一个文件会跳到上一个文件
-   *  的行号（markdown 还会被拉进编辑态）。
+   *  的行号（markdown 还会被拉进编辑态）。要**原地打开并落到某一行**时，在
+   *  同一个 patch 里显式传 `line`（v0.32.1 之后的开发线；文件页「内容搜索」的结果行就是
+   *  这样落地的）：显式行号胜过上面的清除规则，`line` 随后走编辑器既有的落点
+   *  journal（与引用 chip 同一条一次性语义）。
    *  **写入在原生承载面上是「稳」的**（v0.26.0+）：`path` / `meta` 与宿主自己
    *  投递的导航共用一道闸门——只有该记录**尚未采纳过的导航修订**才允许覆盖
    *  它们，而原生承载面每次渲染都会重投同一次导航；所以插件侧的改址不会被
@@ -864,7 +876,7 @@ interface BetterSidebarService {
    *  自基名**的标题换成新基名，而 `openFile(scope, path, title)` 或 `openTab` 里
    *  **作者自设的标题**（宿主的 agent-opens 推送就带一个）原样保留——名字是你标
    *  的，就不该被一次文件改名换掉。 */
-  updateTab(tabId: string, patch: { title?: string; path?: string; meta?: unknown }, sessionId?: string): void
+  updateTab(tabId: string, patch: { title?: string; path?: string; meta?: unknown; line?: number }, sessionId?: string): void
   /** 激活一个已打开的 tab（tab 栏点击路径；触发 descriptor.onActivate；
    *  未知 id 严格 no-op）；scope（v0.12.0+）随回调传递，同 closeTab */
   activateTab(tabId: string, scope?: SessionScope): void
@@ -885,8 +897,12 @@ interface BetterSidebarService {
    *  markdown / html 先切到编辑态，`line` 是瞬态（不进持久化白名单）。
    *  `lineEnd` 走 `src/client/line-target.ts` 的一次性旁路（key = path + line，
    *  被 viewer 取走即删），**不进**宿主的 `navigation.params`——那张表只声明了
-   *  `line`，塞额外键属于未声明契约。 */
-  openFile(scope: SessionScope, path: string, title?: string, options?: { line?: number; lineEnd?: number }): void
+   *  `line`，塞额外键属于未声明契约。
+   *  同一旁路还携带 `search?: { query, caseSensitive?, wholeWord?, regex? }`
+   *  （内容搜索的结果行用它打开文件）：内置文本编辑器会在文件内独立高亮全部命中
+   *  （不弹查找面板），并把查询/开关预填进查找状态（Ctrl/Cmd+F 直接可导航）；
+   *  其他 viewer 忽略即可。 */
+  openFile(scope: SessionScope, path: string, title?: string, options?: { line?: number; lineEnd?: number; search?: { query: string; caseSensitive?: boolean; wholeWord?: boolean; regex?: boolean } }): void
   /** 把插件自有 host 路由（如 `'sidebar/api/fs.read'`）解析成绝对 URL，
    *  保留反代子路径前缀（v0.25.0+，features 含 'hostRouteUrl'）。前导斜杠会被
    *  去掉——带着它就会甩掉前缀、钉到源站根；桌面壳的真实基底也由它给出。
@@ -1345,7 +1361,7 @@ interface SettingsDescriptor {
 
 ### 8.1 工作区包含检查已移除（v0.23.0，权限放开）
 
-**`workspaceFence` 这个键已经不存在了，也没有替代开关。** 侧栏的文件系统路由（`fs.tree` / `fs.trees` / `fs.read` / `fs.write` / `fs.rename` / `fs.remove` / `fs.mkdir` / `/sidebar/file` 媒体 / `/sidebar/html` 预览 / `/sidebar/upload` / `archive.build`）**不再做任何工作区包含检查**：路径只做词法解析（会话相对路径拼到会话 cwd 下、`resolve()` 折叠 `..`），不再 realpath、不再比对前缀、**不再有 403 `forbidden` 分支**。符号链接被照常跟随。
+**`workspaceFence` 这个键已经不存在了，也没有替代开关。** 侧栏的文件系统路由（`fs.tree` / `fs.trees` / `fs.read` / `fs.write` / `fs.rename` / `fs.remove` / `fs.mkdir` / `fs.grep` / `fs.grepReplace` / `/sidebar/file` 媒体 / `/sidebar/html` 预览 / `/sidebar/upload` / `archive.build`）**不再做任何工作区包含检查**：路径只做词法解析（会话相对路径拼到会话 cwd 下、`resolve()` 折叠 `..`），不再 realpath、不再比对前缀、**不再有 403 `forbidden` 分支**。符号链接被照常跟随。
 
 > ## ⚠️ 安全声明（必读）
 >

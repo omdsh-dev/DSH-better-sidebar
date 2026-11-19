@@ -179,7 +179,7 @@ export interface NativeTabRecords {
   /** Whether this seat session has a record for the id. */
   has(sessionId: string, id: string): boolean
   /** Merge a patch into the synthetic record (the `updateTab` path). */
-  update(sessionId: string, id: string, patch: { title?: string; path?: string; meta?: unknown }): void
+  update(sessionId: string, id: string, patch: { title?: string; path?: string; meta?: unknown; line?: number }): void
   /**
    * Forget one record. Called when the NATIVE TAB really closes — never from a
    * body unmount, because a Session switch remounts bodies while the reader's
@@ -421,8 +421,10 @@ export function createNativeTabRecords(): NativeTabRecords {
       // navigation that delivered the file, so it must not survive into the
       // next one — `updateTab` is exactly how an in-place switch and a rename
       // retarget a record. Keeping it sent the next file to the previous
-      // file's line (and forced a markdown file into the editor).
-      if (patch.path !== undefined && patch.path !== entry.tab.path) next.line = undefined
+      // file's line (and forced a markdown file into the editor). An explicit
+      // `line` in the same patch IS that navigation (the content search opens
+      // a hit in place), so it wins over the clearing rule.
+      if (patch.path !== undefined && patch.path !== entry.tab.path && patch.line === undefined) next.line = undefined
       put(key, { ...entry, tab: next })
     },
     drop(sessionId, id) {

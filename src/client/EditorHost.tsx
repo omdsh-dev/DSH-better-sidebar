@@ -43,7 +43,7 @@ import { updatePluginSettings } from './plugin-settings.ts'
 import { createOpenInApp } from './open-in-app.ts'
 import { TreePanel } from './TreePanel.tsx'
 import { t } from './locales.ts'
-import { consumeLineTarget, peekLineTarget } from './line-target.ts'
+import { armLineEnd, consumeLineTarget, peekLineTarget, type EditorSearchSeed } from './line-target.ts'
 import { relativeTo } from './paths.ts'
 import { resolveNativeSidebarPath, resolveSidebarPath } from './paths.ts'
 import { clearRetargetedPath, closePathTabs, consumeRetargetedPath, pathTabKey, retargetPathTabs } from './tree-mutations.ts'
@@ -75,7 +75,7 @@ function textOf(...values: Array<string | (() => string) | undefined>): string {
 }
 
 /** One landing navigation the editor host has read from the side channel. */
-interface LineNav { key: string; nonce: number | null; end?: number }
+interface LineNav { key: string; nonce: number | null; end?: number; search?: EditorSearchSeed }
 
 type EditorLoad =
   | { status: 'loading' }
@@ -226,7 +226,7 @@ export function EditorHost(props: {
   // purpose: React may render twice, and a discarded render must not eat the
   // arm the committed one still needs (the arm is consumed by the layout
   // effect below, after commit).
-  const peeked = tab.line === undefined ? undefined : peekLineTarget(path, tab.line)
+  const peeked = tab.line === undefined ? undefined : peekLineTarget(path, tab.line, scope.cwd)
   // The navigation this host took for `lineKey`, kept across the renders in
   // between: the first commit shows the loading row (no viewer yet), so the
   // viewer's render must reuse the arm this host already read — otherwise the
@@ -236,7 +236,12 @@ export function EditorHost(props: {
   const nav = useMemo<LineNav | null>(() => {
     if (lineKey === null) return null
     if (peeked !== undefined) {
-      return { key: lineKey, nonce: peeked.nonce, ...(peeked.end === undefined ? {} : { end: peeked.end }) }
+      return {
+        key: lineKey,
+        nonce: peeked.nonce,
+        ...(peeked.end === undefined ? {} : { end: peeked.end }),
+        ...(peeked.search === undefined ? {} : { search: peeked.search }),
+      }
     }
     return previous !== null && previous.key === lineKey ? previous : null
   }, [lineKey, peeked, previous])
@@ -246,6 +251,10 @@ export function EditorHost(props: {
     || (nav !== null && nav.nonce !== spentLine.nonce)
   )
   const lineEnd = isFreshLine ? nav?.end : undefined
+  // The content-search seed for this landing: handed to the text viewer so it
+  // opens its find panel on the query the result was found with. One-shot like
+  // the line itself.
+  const searchSeed = isFreshLine ? nav?.search : undefined
   // The navigation this commit actually hands to the viewer, so the viewer's
   // consumption marks exactly that one spent (and not a newer arm).
   const handedLineRef = useRef<{ key: string; nonce: number | null } | null>(null)
@@ -257,12 +266,12 @@ export function EditorHost(props: {
       handedLineRef.current = { key: lineKey, nonce: lineNavRef.current.nonce }
       // One shot per handed navigation: an ordinary open of the same line
       // later must not inherit this flash.
-      if (tab.line !== undefined) consumeLineTarget(path, tab.line)
+      if (tab.line !== undefined) consumeLineTarget(path, tab.line, scope.cwd)
       return
     }
     handedLineRef.current = null
     if (nav === null) lineNavRef.current = null
-  }, [nav, isFreshLine, lineKey, path, tab.line])
+  }, [nav, isFreshLine, lineKey, path, tab.line, scope.cwd])
   const onLineConsumed = useCallback(() => {
     if (handedLineRef.current !== null) setSpentLine(handedLineRef.current)
   }, [])
@@ -360,6 +369,45 @@ export function EditorHost(props: {
   /** The context menu's explicit "new tab" escape (per-path dedupe). */
   const openFileNewTab = (absolute: string): void => {
     openSidebarFile(ctx, scope.sessionId, absolute, { cwd: scope.cwd })
+  }
+
+  /**
+   * Open a file AT a source line — the content search result row's gesture.
+   *
+   * Split mode is the ordinary per-path open with the host navigation's
+   * `line` parameter. Merge mode switches THIS tab in place, so the line rides
+   * the tab record (`updateTab`'s optional `line`, consumed by the landing
+   * journal above) instead of the host resource parameter. The arm makes a
+   * re-click on the SAME `path#line` a fresh navigation (a new nonce) rather
+   * than a landing the journal already spent — exactly the quote chip's rule
+   * (`line-target.ts`).
+   *
+   * `search` carries the query/switches the content hit was found with. Both
+   * modes ride it on the SAME arm, so the text viewer paints every match in the
+   * file (panel-independent ink) and leaves Ctrl/Cmd+F pre-filled — the row's
+   * own preview cannot tell the reader where in the line the match sits.
+   *
+   * A type that claims the file receives it without line/search, like every
+   * other open path: landing and highlighting are the editor's own contract.
+   */
+  const openFileAtLine = (absolute: string, line: number, search?: EditorSearchSeed): void => {
+    if (openClaimedNativeFile(ctx, scope.sessionId, scope.cwd, absolute)) return
+    armLineEnd(absolute, line, undefined, search)
+    if (!inPlace) {
+      openSidebarFile(ctx, scope.sessionId, absolute, { line, cwd: scope.cwd })
+      return
+    }
+    // Same draft guard as an in-place switch: the draft lives in the viewer
+    // instance, which this navigation remounts.
+    if (absolute !== path && isEditorDirty(tab.id, scope.sessionId)) {
+      if (!confirmDiscard(t('switchUnsavedConfirm'))) return
+      clearDraftBackup(scope.sessionId, path)
+    }
+    ctx.get('betterSidebar')?.updateTab(
+      tab.id,
+      { path: absolute, title: baseName(absolute), line },
+      scope.sessionId,
+    )
   }
 
   /**
@@ -761,6 +809,7 @@ export function EditorHost(props: {
           revealed={revealed}
           onToggle={onToggleDir}
           onOpenFile={openFile}
+          onOpenFileAtLine={openFileAtLine}
           onOpenFileNewTab={openFileNewTab}
           onOpenFileSide={openFileSide}
           openInApp={openInApp}
@@ -976,6 +1025,9 @@ export function EditorHost(props: {
             // The quoted span's end, when the open armed one (the landing
             // flash). Viewers without a flash ignore it.
             lineEnd,
+            // The content-search query for this landing, when the open came
+            // from a result row: the text viewer opens its find panel on it.
+            search: searchSeed,
             onLineConsumed,
             content: load.content,
             size: load.size,
@@ -1013,6 +1065,7 @@ export function EditorHost(props: {
               revealed={revealed}
               onToggle={onToggleDir}
               onOpenFile={openFile}
+              onOpenFileAtLine={openFileAtLine}
               onOpenFileNewTab={openFileNewTab}
               onOpenFileSide={openFileSide}
               openInApp={openInApp}

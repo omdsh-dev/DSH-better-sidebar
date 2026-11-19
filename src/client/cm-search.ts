@@ -4,7 +4,7 @@
  * preview mode — the extension lives in the shared base extension list, not
  * in an editable-only branch).
  *
- * Three pieces:
+ * Four pieces:
  *  - `search({ top: true })` pins the panel to the TOP of the editor
  *    (CodeMirror's default is the bottom), so it reads like a browser/IDE
  *    find bar and never covers the caret's line.
@@ -19,17 +19,24 @@
  *    switch must reconfigure it — {@link CmSearchPhrases} is that
  *    compartment (the document, history, and keymaps survive).
  *
+ * - the CONTENT-SEARCH highlight ({@link setContentSearchSeed} +
+ *    {@link contentSearchHighlighter}): a state field carries the query a
+ *    result row was found with, and a view plugin paints every match even
+ *    while the find panel is CLOSED — CodeMirror's own `.cm-searchMatch` only
+ *    exists with the panel open. Opening the panel yields to its ink.
+ *
  * The panel chrome is re-themed with the app's design tokens
  * ({@link cmSearchTheme}): CodeMirror's stock panel paints its own light
  * palette (`&light` selectors resolve as light because the editor theme does
  * not declare `dark`), which would sit as a gray/white box inside a
  * dark-mode sidebar. Only the token-driven chrome is overridden — the match
  * highlight overlays stay CodeMirror's translucent defaults, which read on
- * both schemes.
+ * both schemes; the content-search ink uses the theme's warn tokens.
  */
-import { Compartment, EditorState, type Extension, type StateEffect } from '@codemirror/state'
-import { EditorView, keymap } from '@codemirror/view'
-import { search, searchKeymap } from '@codemirror/search'
+import { Compartment, EditorState, RangeSetBuilder, StateEffect, StateField, type Extension } from '@codemirror/state'
+import { Decoration, EditorView, keymap, ViewPlugin, type DecorationSet, type ViewUpdate } from '@codemirror/view'
+import { SearchQuery, search, searchKeymap, searchPanelOpen } from '@codemirror/search'
+import type { EditorSearchSeed } from './line-target.ts'
 import { t } from './locales.ts'
 
 /**
@@ -108,7 +115,114 @@ export const cmSearchTheme = EditorView.theme({
   '.cm-panel.cm-search label': {
     color: 'var(--dsw-alias-label-secondary)',
   },
+  // The match ink. CodeMirror paints `.cm-searchMatch` only while the find
+  // panel is open — and a content-search landing opens that panel precisely to
+  // show WHERE the hit sits — so these two rules are what make the matched
+  // text readable instead of the library's hardcoded translucent yellow. The
+  // selected match (the one the panel's next/prev moved to) takes the business
+  // accent.
+  '.cm-searchMatch': {
+    backgroundColor: 'var(--dsw-alias-state-warn-tertiary)',
+    borderRadius: '2px',
+  },
+  '.cm-searchMatch.cm-searchMatch-selected': {
+    backgroundColor: 'var(--dsw-alias-state-business-tertiary)',
+    outline: '1px solid var(--dsw-alias-state-business-primary)',
+  },
+  // The content-search landing's PANEL-INDEPENDENT ink: present the moment the
+  // file opens, no find panel involved.
+  '.cm-contentSearchHit': {
+    backgroundColor: 'var(--dsw-alias-state-warn-tertiary)',
+    borderRadius: '2px',
+    boxShadow: 'inset 0 -1px 0 var(--dsw-alias-state-warn-primary)',
+  },
 })
+
+/**
+ * The persistent match highlight a CONTENT-SEARCH landing paints.
+ *
+ * CodeMirror's own `.cm-searchMatch` exists only while the find panel is open,
+ * and a result click should show WHERE the keyword is without opening (and
+ * stealing focus for) that panel. This pair is the panel-independent ink: a
+ * state field carries the query/switches, and the view plugin decorates every
+ * match in the visible ranges. Opening Ctrl/Cmd+F later still works and is
+ * pre-filled from the same query.
+ */
+export const setContentSearchSeed = StateEffect.define<EditorSearchSeed | null>()
+
+export const contentSearchSeedField = StateField.define<EditorSearchSeed | null>({
+  create: () => null,
+  update(value, tr) {
+    for (const effect of tr.effects) {
+      if (effect.is(setContentSearchSeed)) value = effect.value
+    }
+    // An edit moves the text under these marks: drop them rather than paint
+    // the wrong words. A later navigation re-seeds.
+    if (tr.docChanged) return null
+    return value
+  },
+})
+
+const contentSearchHitMark = Decoration.mark({ class: 'cm-contentSearchHit' })
+
+/** The query for one seed, or null when it cannot match (invalid regex). */
+function queryOfSeed(seed: EditorSearchSeed): SearchQuery | null {
+  try {
+    const query = new SearchQuery({
+      search: seed.query,
+      caseSensitive: seed.caseSensitive === true,
+      wholeWord: seed.wholeWord === true,
+      regexp: seed.regex === true,
+      literal: seed.regex !== true,
+    })
+    return query.valid ? query : null
+  } catch {
+    return null
+  }
+}
+
+/** Paints the current seed's matches across the visible ranges. */
+const contentSearchHighlighter = ViewPlugin.fromClass(class {
+  decorations: DecorationSet = Decoration.none
+  /** Whether the find panel was open at the last build (see {@link build}). */
+  panelOpen = false
+  constructor(view: EditorView) {
+    this.panelOpen = searchPanelOpen(view.state)
+    this.decorations = this.build(view)
+  }
+  update(update: ViewUpdate) {
+    const panelOpen = searchPanelOpen(update.state)
+    if (panelOpen !== this.panelOpen) {
+      // The find panel paints the matches itself (and with its own
+      // next/previous state); our ink yields to it instead of stacking two
+      // translucent backgrounds.
+      this.panelOpen = panelOpen
+      this.decorations = this.build(update.view)
+      return
+    }
+    if (update.docChanged || update.viewportChanged || update.selectionSet
+      || update.startState.field(contentSearchSeedField, false) !== update.state.field(contentSearchSeedField, false)) {
+      this.decorations = this.build(update.view)
+    }
+  }
+  build(view: EditorView): DecorationSet {
+    // The open find panel's `.cm-searchMatch` is the ink then; paint ours only
+    // while the panel is closed.
+    if (searchPanelOpen(view.state)) return Decoration.none
+    const seed = view.state.field(contentSearchSeedField, false)
+    if (seed === null || seed === undefined) return Decoration.none
+    const query = queryOfSeed(seed)
+    if (query === null) return Decoration.none
+    const builder = new RangeSetBuilder<Decoration>()
+    for (const { from, to } of view.visibleRanges) {
+      const cursor = query.getCursor(view.state, from, to)
+      for (let next = cursor.next(); !next.done; next = cursor.next()) {
+        if (next.value.to > next.value.from) builder.add(next.value.from, next.value.to, contentSearchHitMark)
+      }
+    }
+    return builder.finish()
+  }
+}, { decorations: value => value.decorations })
 
 /**
  * The scheme-independent part of the find-in-file wiring: the top-pinned
@@ -117,7 +231,13 @@ export const cmSearchTheme = EditorView.theme({
  * piece a language switch reconfigures).
  */
 export function cmSearchExtensions(): Extension[] {
-  return [search({ top: true }), cmSearchTheme, keymap.of(searchKeymap)]
+  return [
+    search({ top: true }),
+    contentSearchSeedField,
+    contentSearchHighlighter,
+    cmSearchTheme,
+    keymap.of(searchKeymap),
+  ]
 }
 
 /**

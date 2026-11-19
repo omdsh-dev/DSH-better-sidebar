@@ -74,6 +74,68 @@ describe('armLineEnd / peekLineTarget / consumeLineTarget', () => {
     expect(peekLineTarget('/w/a.ts', 3)?.end).toBe(7)
   })
 
+  it('carries a content-search seed beside the line, and replaces it on re-arm', () => {
+    // A content hit needs more than a line: the query (and switches) tell the
+    // editor's find panel what to highlight. It rides the same one-shot arm.
+    const seed = { query: 'needle', caseSensitive: true }
+    armLineEnd('/w/a.ts', 5, undefined, seed)
+    expect(peekLineTarget('/w/a.ts', 5)?.search).toBe(seed)
+
+    const nextSeed = { query: 'other', regex: true }
+    armLineEnd('/w/a.ts', 5, undefined, nextSeed)
+    expect(peekLineTarget('/w/a.ts', 5)?.search).toBe(nextSeed)
+
+    // An ordinary reference re-arm clears it: the next landing must not inherit
+    // a previous search's highlighting.
+    armLineEnd('/w/a.ts', 5, undefined)
+    expect(peekLineTarget('/w/a.ts', 5)?.search).toBeUndefined()
+  })
+
+  it('matches one Windows file across its separator and case spellings', () => {
+    // The result row spells `D:\work/src/a.ts` (backslash cwd + the search's
+    // `/`-separated relative path); the native tab carries what the host
+    // resolved (`D:\work\src\a.ts`). An exact key lost the seed — the line
+    // landed but nothing was highlighted.
+    const seed = { query: 'needle' }
+    armLineEnd('D:\\work/src/a.ts', 3, undefined, seed)
+    expect(peekLineTarget('D:\\work\\src\\a.ts', 3)?.search).toBe(seed)
+    expect(peekLineTarget('d:/work/src/A.ts', 3)?.search).toBe(seed)
+    // Consuming through any spelling spends the one arm.
+    consumeLineTarget('D:/WORK/SRC/A.TS', 3)
+    expect(peekLineTarget('D:\\work\\src\\a.ts', 3)).toBeUndefined()
+  })
+
+  it('finds an ABSOLUTE arm through the native tab’s RELATIVE path (and back)', () => {
+    // The content search arms the absolute path its row resolved; the native
+    // tab carries what the resource address stored — often workspace-relative.
+    // The line still landed (the host carries it), but the search seed was
+    // lost; the cwd lets both spellings find the one arm.
+    const absoluteSeed = { query: 'needle' }
+    armLineEnd('D:\\repo\\src\\a.ts', 3, undefined, absoluteSeed)
+    expect(peekLineTarget('src/a.ts', 3, 'D:\\repo')?.search).toBe(absoluteSeed)
+    consumeLineTarget('src/a.ts', 3, 'D:\\repo')
+    expect(peekLineTarget('D:\\repo\\src\\a.ts', 3)).toBeUndefined()
+
+    // The reverse: armed relative, the tab carries the absolute path.
+    const relativeSeed = { query: 'other' }
+    armLineEnd('src/b.ts', 5, undefined, relativeSeed)
+    expect(peekLineTarget('D:\\repo\\src\\b.ts', 5, 'D:\\repo')?.search).toBe(relativeSeed)
+
+    // POSIX has the same alias, spelled in POSIX form.
+    armLineEnd('/posix/root/src/c.ts', 7, undefined, { query: 'posix' })
+    expect(peekLineTarget('src/c.ts', 7, '/posix/root')?.search).toEqual({ query: 'posix' })
+  })
+
+  it('keeps POSIX paths exact (case and backslashes are name characters)', () => {
+    armLineEnd('/posix/case/A.ts', 3, undefined, { query: 'x' })
+    expect(peekLineTarget('/posix/case/A.ts', 3)).toBeDefined()
+    expect(peekLineTarget('/posix/case/a.ts', 3)).toBeUndefined()
+    // A literal backslash is part of a POSIX name, never a separator.
+    armLineEnd('/posix/case/a\\b.ts', 3, undefined, { query: 'y' })
+    expect(peekLineTarget('/posix/case/a\\b.ts', 3)).toBeDefined()
+    expect(peekLineTarget('/posix/case/a/b.ts', 3)).toBeUndefined()
+  })
+
   it('caps the pending map so a burst of opens cannot grow it forever', () => {
     for (let line = 1; line <= 200; line++) armLineEnd('/w/a.ts', line, line + 1)
     // The oldest arms were evicted: only the most recent MAX_ARMED survive.

@@ -1498,6 +1498,222 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   background: var(--dsw-alias-interactive-bg-hover);
 }
 
+/* ── Content search (the VS Code Search view analogue) ───────────────────
+   The mode switch is a two-glyph segmented control; the tool row below it
+   carries the content switches (case / word / regex / replace / filters) and
+   the tree's own controls. Every paint is a theme token. */
+.editorSearchModes {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  padding: 1px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-layer-1);
+}
+
+.editorSearchModeButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+}
+
+.editorSearchModeButton:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.editorSearchModeActive {
+  background: var(--dsw-alias-interactive-bg-active);
+  color: var(--dsw-alias-label-primary);
+}
+
+.editorSearchTools {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px 6px;
+}
+
+/* Pushes the tree controls to the trailing edge of the tool row. */
+.editorSearchToolsGap {
+  flex: 1;
+}
+
+/* Text glyphs inside the option icon buttons (Aa / ab / .*): the host icon
+   set has no case / word / regexp symbols, and these are the conventional
+   labels. */
+.editorSearchGlyph {
+  font: var(--dsw-font-xxxs-strong-11);
+  letter-spacing: -0.2px;
+}
+
+.editorSearchFieldRow {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px 6px;
+}
+
+.editorSearchReplaceAll {
+  flex: none;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xxs-12);
+  cursor: pointer;
+}
+
+.editorSearchReplaceAll:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.editorSearchReplaceAll:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* A matched substring inside a result line's preview. */
+.editorSearchMark {
+  padding: 0 1px;
+  border-radius: 3px;
+  background: var(--dsw-alias-state-warn-tertiary);
+  color: inherit;
+}
+
+/* One result file's group: its header row plus the matching lines. */
+.grepFileGroup {
+  border-radius: 4px;
+}
+
+.grepFileRow {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  box-sizing: border-box;
+  width: 100%;
+  height: 26px;
+  padding: 0 8px 0 4px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xxs-strong-12);
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.grepFileRow:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.grepFileName {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.grepFileCount {
+  flex: none;
+  font: var(--dsw-font-xxxs-11);
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* Per-file / per-match replace: a hover action on the result row (VS Code's
+   inline replace glyph). It stays out of the reading path until the row is
+   hovered or reached by keyboard, and never eats the row click when hidden. */
+.grepRowAction {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.grepFileRow:hover .grepRowAction,
+.grepFileRow:focus-within .grepRowAction,
+.grepMatchRow:hover .grepRowAction,
+.grepMatchRow:focus-within .grepRowAction {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.grepRowAction:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.grepRowAction:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.grepMatchRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-sizing: border-box;
+  width: 100%;
+  height: 24px;
+  padding: 0 8px 0 22px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.grepMatchRow:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.grepLineNo {
+  flex: none;
+  min-width: 22px;
+  text-align: right;
+  color: var(--dsw-alias-label-tertiary);
+  font: var(--dsw-font-xxxs-11);
+  font-variant-numeric: tabular-nums;
+}
+
+.grepSnippet {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xxxs-11);
+  font-family: var(--dsw-font-mono, var(--ds-font-family-code));
+}
+
 .editorStatus {
   font: var(--dsw-font-xxxs-11);
   color: var(--dsw-alias-label-tertiary);
