@@ -10,6 +10,7 @@ import {
   buildPlanAnnotationInsert,
   buildSelectionInsert,
   cleanPlanTitle,
+  clipText,
   headerOf,
   linesOfSelection,
 } from '../src/client/selection-payload.ts'
@@ -107,18 +108,18 @@ describe('buildPlanAnnotationInsert', () => {
   const labels = { heading: '计划批注', quoteLabel: '原文' }
 
   it('sends the note first and the quoted plan text as a blockquote', () => {
-    expect(buildPlanAnnotationInsert('Use a queue.', 'retry once', { planTitle: 'Ship it' }, labels))
+    expect(buildPlanAnnotationInsert('Use a queue.', 'retry once', { ...labels, planTitle: 'Ship it' }))
       .toBe('计划批注 · Ship it\nUse a queue.\n\n原文:\n> retry once')
   })
 
   it('prefixes every quoted line so a multi-line selection stays one blockquote', () => {
-    expect(buildPlanAnnotationInsert('n', 'one\ntwo', {}, labels))
+    expect(buildPlanAnnotationInsert('n', 'one\ntwo', labels))
       .toBe('计划批注\nn\n\n原文:\n> one\n> two')
   })
 
   it('never exceeds the selection limit and keeps the note intact', () => {
     const note = 'n'.repeat(400)
-    const text = buildPlanAnnotationInsert(note, 'x'.repeat(400), {}, labels)
+    const text = buildPlanAnnotationInsert(note, 'x'.repeat(400), labels)
     expect(text.length).toBeLessThanOrEqual(SELECTION_LIMIT)
     expect(text).toContain(note)
     expect(text).toContain('…')
@@ -126,7 +127,7 @@ describe('buildPlanAnnotationInsert', () => {
 
   it('keeps an over-limit note whole in the bare envelope (never silently truncates)', () => {
     const note = 'n'.repeat(SELECTION_LIMIT + 20)
-    const text = buildPlanAnnotationInsert(note, 'quote', {}, labels)
+    const text = buildPlanAnnotationInsert(note, 'quote', labels)
     // The reader's words survive intact; only the quote is dropped.
     expect(text).toBe(`计划批注\n${note}`)
     expect(text).toContain(note)
@@ -136,7 +137,7 @@ describe('buildPlanAnnotationInsert', () => {
 
   it('truncates the quote on code points so no emoji surrogate pair is split', () => {
     const note = 'n'.repeat(300)
-    const text = buildPlanAnnotationInsert(note, '🙂'.repeat(300), {}, labels)
+    const text = buildPlanAnnotationInsert(note, '🙂'.repeat(300), labels)
     expect(text).toContain('…')
     expect(text.length).toBeLessThanOrEqual(SELECTION_LIMIT)
     // Strip every valid pair; a lone surrogate would remain and fail this.
@@ -145,20 +146,32 @@ describe('buildPlanAnnotationInsert', () => {
   })
 
   it('bounds a very large selection without copying it whole', () => {
-    const text = buildPlanAnnotationInsert('n', 'x'.repeat(100_000), {}, labels)
+    const text = buildPlanAnnotationInsert('n', 'x'.repeat(100_000), labels)
     expect(text.length).toBeLessThanOrEqual(SELECTION_LIMIT)
     expect(text).toContain('…')
   })
 
   it('collapses a multi-line plan title into the heading line', () => {
-    const text = buildPlanAnnotationInsert('note', 'quote', { planTitle: 'Ship\nit\n\nnow' }, labels)
+    const text = buildPlanAnnotationInsert('note', 'quote', { ...labels, planTitle: 'Ship\nit\n\nnow' })
     expect(text).toBe('计划批注 · Ship it now\nnote\n\n原文:\n> quote')
   })
 
   it('caps a long plan title so the heading cannot crowd out the quote', () => {
-    const text = buildPlanAnnotationInsert('note', 'quote', { planTitle: 'T'.repeat(200) }, labels)
+    const text = buildPlanAnnotationInsert('note', 'quote', { ...labels, planTitle: 'T'.repeat(200) })
     expect(text.split('\n')[0]).toBe(`计划批注 · ${'T'.repeat(60)}…`)
     expect(text).toContain('原文:\n> quote')
+  })
+})
+
+describe('clipText', () => {
+  it('keeps a short string and ellipsizes a long one', () => {
+    expect(clipText('short', 10)).toBe('short')
+    expect(clipText('abcdef', 3)).toBe('abc…')
+  })
+
+  it('never leaves half an emoji behind', () => {
+    expect(clipText('🙂🙂', 1)).toBe('…')
+    expect(clipText('🙂🙂', 3)).toBe('🙂…')
   })
 })
 

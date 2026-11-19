@@ -8,12 +8,14 @@ import { describe, expect, it, vi } from 'vitest'
 import { createElement, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
-import { createNativeTabRecords, NativeTabBody, NativeTabTitle } from '../src/client/native/tab-adapter.tsx'
+import { createNativeTabRecords, NativeTabBody, NativeTabTitle, type NativeTabInfo } from '../src/client/native/tab-adapter.tsx'
 import { ContextDiagnosticsButton } from '../src/client/context-diagnostics-ui.tsx'
 import type { ContextDiagnosticTarget, ContextDiagnostics, ContextDiagnosticsSnapshot } from '../src/client/context-diagnostics.ts'
 import { createNativeSurface } from '../src/client/native/surface.ts'
 import { fileParamsOf, registerNativeSurface } from '../src/client/native/index.ts'
-import { createBetterSidebarService, type SidebarSurface, type TabComponentProps } from '../src/client/service.ts'
+import {
+  createBetterSidebarService, type NativeResourceSnapshot, type SidebarSurface, type TabComponentProps, type TabDescriptor,
+} from '../src/client/service.ts'
 import { createSidebarStore, toggleExpanded, type SidebarTab } from '../src/client/state.ts'
 
 const scope = { sessionId: 's1', cwd: '/work' }
@@ -830,6 +832,50 @@ describe('registerNativeSurface lifecycle (service-driven registration)', () => 
   })
 })
 
+interface MountNativeBodyOptions {
+  tab: TabDescriptor
+  info: NativeTabInfo
+  useResource?: (address: string) => NativeResourceSnapshot
+  onProps?: (props: TabComponentProps) => void
+}
+
+/** Mount one native tab body against the adapter's real record host. */
+function mountNativeBody(options: MountNativeBodyOptions): {
+  host: HTMLDivElement
+  root: Root
+  records: ReturnType<typeof createNativeTabRecords>
+} {
+  const store = createSidebarStore()
+  store.setSession('s1')
+  const service = createBetterSidebarService(store)
+  service.registerTab({
+    ...options.tab,
+    component: (props) => {
+      options.onProps?.(props)
+      return options.tab.component(props)
+    },
+  })
+  const records = createNativeTabRecords()
+  const sessions = { list: { subscribe: () => () => {}, getSnapshot: () => ({ byId: {} }) } }
+  const ctx = { sessions } as never
+  const host = document.createElement('div')
+  document.body.appendChild(host)
+  const root = createRoot(host)
+  act(() => {
+    root.render(createElement(NativeTabBody, {
+      sessionId: 's1',
+      ctx,
+      store,
+      service,
+      records,
+      descriptorId: options.tab.id,
+      useTabInfo: () => options.info,
+      ...(options.useResource === undefined ? {} : { useResource: options.useResource }),
+    }))
+  })
+  return { host, root, records }
+}
+
 describe('NativeTabBody full-height host wrapper', () => {
   it('renders the descriptor component inside the [data-dsh-native-tab-host] wrapper', () => {
     // DSH's native tab body host (`.paneBody`) is a BLOCK scroller with a
@@ -840,17 +886,6 @@ describe('NativeTabBody full-height host wrapper', () => {
     // unit check pins the structure: the marker wrapper exists and the
     // descriptor's output is INSIDE it (before the fix the component was
     // rendered bare, with no wrapper at all).
-    const store = createSidebarStore()
-    store.setSession('s1')
-    const service = createBetterSidebarService(store)
-    service.registerTab({
-      id: 'stub',
-      title: 'Stub',
-      component: () => createElement('div', { 'data-stub-body': '' }, 'stub body'),
-    })
-    const records = createNativeTabRecords()
-    const sessions = { list: { subscribe: () => () => {}, getSnapshot: () => ({ byId: {} }) } }
-    const ctx = { sessions } as never
     const info = {
       tab: {
         id: 'native-9',
@@ -862,26 +897,15 @@ describe('NativeTabBody full-height host wrapper', () => {
         signal: new AbortController().signal,
       },
     }
-    const host = document.createElement('div')
-    document.body.appendChild(host)
-    let root: Root | undefined
-    act(() => {
-      root = createRoot(host)
-      root.render(createElement(NativeTabBody, {
-        sessionId: 's1',
-        ctx,
-        store,
-        service,
-        records,
-        descriptorId: 'stub',
-        useTabInfo: () => info,
-      }))
+    const { host, root } = mountNativeBody({
+      tab: { id: 'stub', title: 'Stub', component: () => createElement('div', { 'data-stub-body': '' }, 'stub body') },
+      info,
     })
     const wrapper = host.querySelector('[data-dsh-native-tab-host=""]')
     expect(wrapper, 'the full-height host wrapper must exist').not.toBeNull()
     expect(wrapper!.querySelector('[data-stub-body]'), 'the descriptor component renders inside the wrapper').not.toBeNull()
     expect(wrapper!.childElementCount).toBe(1)
-    act(() => { root?.unmount() })
+    act(() => { root.unmount() })
     host.remove()
   })
 
@@ -889,22 +913,7 @@ describe('NativeTabBody full-height host wrapper', () => {
     // The plan page cannot reach the host's resource hook or the opener's
     // navigation params on its own: `NativeTabBody` is the only place that
     // sees both, so this pins the `native` face the plan takeover depends on.
-    const store = createSidebarStore()
-    store.setSession('s1')
-    const service = createBetterSidebarService(store)
     let captured: TabComponentProps | undefined
-    service.registerTab({
-      id: 'plan',
-      title: () => 'Plan',
-      hidden: true,
-      component: (props) => {
-        captured = props
-        return createElement('div', { 'data-plan-body': '' })
-      },
-    })
-    const records = createNativeTabRecords()
-    const sessions = { list: { subscribe: () => () => {}, getSnapshot: () => ({ byId: {} }) } }
-    const ctx = { sessions } as never
     const params = { planReview: { markdown: '# Draft', title: 'Draft' } }
     const info = {
       tab: {
@@ -921,21 +930,11 @@ describe('NativeTabBody full-height host wrapper', () => {
       status: 'live',
       value: { markdown: address, title: 'Plan' },
     })
-    const host = document.createElement('div')
-    document.body.appendChild(host)
-    let root: Root | undefined
-    act(() => {
-      root = createRoot(host)
-      root.render(createElement(NativeTabBody, {
-        sessionId: 's1',
-        ctx,
-        store,
-        service,
-        records,
-        descriptorId: 'plan',
-        useTabInfo: () => info,
-        useResource,
-      }))
+    const { host, root, records } = mountNativeBody({
+      tab: { id: 'plan', title: () => 'Plan', hidden: true, component: () => createElement('div', { 'data-plan-body': '' }) },
+      info,
+      useResource,
+      onProps: (props) => { captured = props },
     })
     const native = captured?.native
     expect(native).toMatchObject({
@@ -946,7 +945,7 @@ describe('NativeTabBody full-height host wrapper', () => {
     expect(typeof native?.onTitle).toBe('function')
     act(() => { native?.onTitle?.('Ship it') })
     expect(records.get('s1', 'native-plan')?.tab.title).toBe('Ship it')
-    act(() => { root?.unmount() })
+    act(() => { root.unmount() })
     host.remove()
   })
 })

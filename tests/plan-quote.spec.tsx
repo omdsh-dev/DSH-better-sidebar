@@ -5,7 +5,7 @@
  * mark, card list or second annotation store; the chip is the only carrier.
  */
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
@@ -129,6 +129,21 @@ function setTextAreaValue(element: HTMLTextAreaElement, value: string): void {
   element.dispatchEvent(new Event('input', { bubbles: true }))
 }
 
+/** Type into the open note box. */
+function typeNote(box: HTMLElement, value: string): void {
+  act(() => { setTextAreaValue(box.querySelector('textarea')!, value) })
+}
+
+/** Dispatch one click inside the current act batch. */
+function click(element: Element): void {
+  act(() => { element.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
+}
+
+/** Click the note box's submit button. */
+function submitNote(box: HTMLElement): void {
+  click(box.querySelector('[data-plan-annotation-submit]')!)
+}
+
 /** Open the note box through the floating button. */
 function openNote(page: PageCtl, needle: string): HTMLElement {
   selectInPage(page, needle)
@@ -140,6 +155,11 @@ function openNote(page: PageCtl, needle: string): HTMLElement {
   return box!
 }
 
+beforeEach(() => {
+  chipInserts.length = 0
+  chipResult = { id: 'q-test' }
+})
+
 afterEach(() => {
   vi.restoreAllMocks()
   document.body.innerHTML = ''
@@ -147,14 +167,10 @@ afterEach(() => {
 
 describe('PlanViewer quote chip', () => {
   it('select → add → note → submit mints one plan quote chip and leaves the plan untouched', () => {
-    chipInserts.length = 0
-    chipResult = { id: 'q-test' }
     const page = mountPlanPage()
     const box = openNote(page, 'retry once')
-    const textarea = box.querySelector('textarea')!
-    act(() => { setTextAreaValue(textarea, 'Retry with backoff instead.') })
-    const submit = box.querySelector<HTMLButtonElement>('[data-plan-annotation-submit]')!
-    act(() => { submit.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
+    typeNote(box, 'Retry with backoff instead.')
+    submitNote(box)
 
     expect(box.isConnected).toBe(false)
     expect(chipInserts).toEqual([{
@@ -173,20 +189,18 @@ describe('PlanViewer quote chip', () => {
   })
 
   it('keeps the typed note on screen when the composer refuses the chip, then retries', () => {
-    chipInserts.length = 0
     chipResult = undefined
     const page = mountPlanPage()
     const box = openNote(page, 'retry once')
-    const textarea = box.querySelector('textarea')!
-    act(() => { setTextAreaValue(textarea, 'Try a queue.') })
-    act(() => { box.querySelector<HTMLButtonElement>('[data-plan-annotation-submit]')!.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
+    typeNote(box, 'Try a queue.')
+    submitNote(box)
 
     expect(box.isConnected).toBe(true)
     expect(box.querySelector('[data-plan-annotation-error]')).not.toBeNull()
     expect(chipInserts).toHaveLength(1)
 
     chipResult = { id: 'q-retry' }
-    act(() => { box.querySelector<HTMLButtonElement>('[data-plan-annotation-submit]')!.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
+    submitNote(box)
     expect(chipInserts).toHaveLength(2)
     expect(document.querySelector('[data-plan-annotation-note]')).toBeNull()
     page.unmount()
@@ -214,11 +228,10 @@ describe('PlanViewer quote chip', () => {
   })
 
   it('does not submit on an IME composition Enter', () => {
-    chipInserts.length = 0
     const page = mountPlanPage()
     const box = openNote(page, 'Cache the session')
     const textarea = box.querySelector('textarea')!
-    act(() => { setTextAreaValue(textarea, '输入中的批注') })
+    typeNote(box, '输入中的批注')
     act(() => {
       const event = new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true })
       Object.defineProperty(event, 'isComposing', { value: true })
@@ -270,16 +283,14 @@ describe('PlanViewer quote chip', () => {
   })
 
   it('disables submit for a blank note and submits with Ctrl+Enter', () => {
-    chipInserts.length = 0
-    chipResult = { id: 'q-key' }
     const page = mountPlanPage()
     const box = openNote(page, 'Cache the session')
     const textarea = box.querySelector('textarea')!
     const submit = box.querySelector<HTMLButtonElement>('[data-plan-annotation-submit]')!
     expect(submit.disabled).toBe(true)
-    act(() => { setTextAreaValue(textarea, '   ') })
+    typeNote(box, '   ')
     expect(submit.disabled).toBe(true)
-    act(() => { setTextAreaValue(textarea, 'Serialize it.') })
+    typeNote(box, 'Serialize it.')
     expect(submit.disabled).toBe(false)
     act(() => {
       textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true }))
@@ -290,7 +301,6 @@ describe('PlanViewer quote chip', () => {
   })
 
   it('Escape closes an open note, but is inert after a failed insert', () => {
-    chipInserts.length = 0
     chipResult = undefined
     const page = mountPlanPage()
     const first = openNote(page, 'Cache the session')
@@ -300,15 +310,14 @@ describe('PlanViewer quote chip', () => {
     // A failed insert owns the note: neither Escape nor an outside click may
     // discard what the reader typed; only an explicit cancel closes it.
     const second = openNote(page, 'retry once')
-    const textarea = second.querySelector('textarea')!
-    act(() => { setTextAreaValue(textarea, 'Keep me.') })
-    act(() => { second.querySelector<HTMLButtonElement>('[data-plan-annotation-submit]')!.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
+    typeNote(second, 'Keep me.')
+    submitNote(second)
     expect(second.querySelector('[data-plan-annotation-error]')).not.toBeNull()
     act(() => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })) })
     expect(second.isConnected).toBe(true)
     act(() => { document.body.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true })) })
     expect(second.isConnected).toBe(true)
-    act(() => { second.querySelector<HTMLButtonElement>('[data-plan-annotation-cancel]')!.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
+    click(second.querySelector('[data-plan-annotation-cancel]')!)
     expect(second.isConnected).toBe(false)
     page.unmount()
   })
@@ -323,13 +332,11 @@ describe('PlanViewer quote chip', () => {
   })
 
   it('keeps an unsubmitted note when a new selection is attempted', () => {
-    chipInserts.length = 0
     chipResult = undefined
     const page = mountPlanPage()
     const box = openNote(page, 'Cache the session')
-    const textarea = box.querySelector('textarea')!
-    act(() => { setTextAreaValue(textarea, 'Keep me.') })
-    act(() => { box.querySelector<HTMLButtonElement>('[data-plan-annotation-submit]')!.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
+    typeNote(box, 'Keep me.')
+    submitNote(box)
     selectInPage(page, 'retry once')
     expect(document.querySelector('[data-plan-annotation-add]')).toBeNull()
     expect(box.isConnected).toBe(true)

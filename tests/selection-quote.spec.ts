@@ -572,6 +572,22 @@ describe("plan annotations (the plan page's chip)", () => {
     expect(payload).toBe(record.text)
   })
 
+  it('projects only the short label into the draft and still copies the full payload', async () => {
+    const mod = await freshModule()
+    const triggers = fakeTriggers()
+    const composer = fakeComposer()
+    mod.registerQuoteSource(fakeCtx({ triggers, composer }))
+    const record = mod.insertQuoteRecord(fakeCtx({ composer }), 's1', PLAN)!
+    const inserted = composer.insertReference.mock.calls[0]?.[0] as { label: string; clipboardText: string }
+    // The host concatenates chip clipboardText on every composer projection
+    // and saves it with the draft; a plan chip carries its short label there.
+    expect(inserted.clipboardText).toBe(inserted.label)
+    // The chip's copy affordance still yields the full annotation payload,
+    // and the record stores the payload only once.
+    expect(triggers.captured[0]!.codec!.clipboardText(record.id)).toBe(record.text)
+    expect(storedRecord(mod)?.clipboardText).toBeUndefined()
+  })
+
   it('refuses the click-through instead of asking the file opener to open a plan address', async () => {
     const mod = await freshModule()
     const triggers = fakeTriggers()
