@@ -315,7 +315,6 @@ export const fr: Record<string, string> = {
   planAnnotationAdd: 'Ajouter une annotation',
   planAnnotationPlaceholder: 'Écrire une annotation, par ex. : utiliser IndexedDB à la place…',
   planAnnotationSubmit: 'Soumettre l’annotation',
-  planAnnotationCancel: 'Annuler',
   planAnnotationQuote: 'Texte du plan cité',
   planAnnotationNote: 'Remarque',
   planAnnotationSendFailed: 'Échec de l’envoi : la zone de saisie est indisponible pour le moment. Réessayez dans un instant.',

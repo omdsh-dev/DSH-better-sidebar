@@ -313,7 +313,6 @@ export const it: Record<string, string> = {
   planAnnotationAdd: 'Aggiungi annotazione',
   planAnnotationPlaceholder: 'Scrivi un’annotazione, ad es.: usa IndexedDB invece…',
   planAnnotationSubmit: 'Invia annotazione',
-  planAnnotationCancel: 'Annulla',
   planAnnotationQuote: 'Testo del piano citato',
   planAnnotationNote: 'Nota',
   planAnnotationSendFailed: 'Invio non riuscito: il campo di input non è disponibile in questo momento. Riprova tra poco.',

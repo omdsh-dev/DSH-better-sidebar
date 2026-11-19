@@ -14,6 +14,9 @@
  *   registration of the same kind, so `openTab('files')` draws the plugin's
  *   explorer instead of the built-in tree; the built-in resumes when this
  *   plugin unregisters;
+ * - the host's `plan` kind is taken over the same way (logged plans and
+ *   temporary review previews), so the plugin's plan page — with selection
+ *   annotations — draws where the host's read-only preview did;
  * - every other descriptor (changes / subagent / side chat / terminal /
  *   browser / diff) becomes a page type of its own.
  *
@@ -28,7 +31,10 @@ import { flushDraftBackups } from '../editor-draft-backup.ts'
 import { t } from '../locales.ts'
 import { splitTrailingLineSpec } from '../path-line.ts'
 import { baseName } from '../paths.ts'
-import { parseFileAddress } from '../resource-address.ts'
+import { FILE_ADDRESS_PREFIX, parseFileAddress } from '../resource-address.ts'
+import {
+  PLAN_ADDRESS_PATTERN, PLAN_REVIEW_ADDRESS_PATTERN, isPlanResourceAddress,
+} from '../plan-address.ts'
 import type { ContextDiagnostics } from '../context-diagnostics.ts'
 import { isMultipleTab } from '../service.ts'
 import type { BetterSidebarService, TabDescriptor } from '../service.ts'
@@ -36,7 +42,7 @@ import type { SidebarStore } from '../state.ts'
 import { webTerminals } from '../terminal-client.ts'
 import type { NativeGuideCatalog } from './guide-catalog.ts'
 import { NativeGuide } from './guide.tsx'
-import { EDITOR_KIND, FILES_KIND, PLAN_ADDRESS_PATTERN, PLAN_KIND, PLAN_REVIEW_ADDRESS_PATTERN, isPlanResourceAddress, nativeId } from './guide-ids.ts'
+import { EDITOR_KIND, FILES_KIND, PLAN_KIND, nativeId } from './guide-ids.ts'
 import { mountedSessionId } from './surface.ts'
 import {
   NativeTabBody,
@@ -475,7 +481,7 @@ export function registerNativeSurface(deps: NativeSurfaceDeps): () => void {
     } => {
       if (descriptor.id === EDITOR_KIND) {
         return {
-          patterns: ['dsh-resource://file/**'],
+          patterns: [`${FILE_ADDRESS_PREFIX}**`],
           canOpen: (address: string) => {
             const file = parseFileAddress(address)
             // A non-file address, or one of the formats the built-in

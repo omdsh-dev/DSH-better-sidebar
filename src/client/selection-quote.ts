@@ -28,9 +28,10 @@
  *
  * Degradation: without the input-trigger service (older hosts), before the
  * source registers, or when the record cannot be persisted, {@link
- * insertQuoteRecord} reports undefined and the caller keeps the #1052 behavior — the
- * plain built-in reference chip, or the fenced text on hosts with no chip
- * channel at all. A failed quote insert never leaves a dead chip behind: the
+ * insertQuoteRecord} reports undefined — the text viewers keep the #1052
+ * fallback (the plain built-in reference chip, or the fenced text on hosts
+ * with no chip channel), while the plan page keeps its note box open to retry.
+ * A failed quote insert never leaves a dead chip behind: the
  * record is written BEFORE the chip is inserted, and a store write that does
  * not land (quota, private mode) rolls it back and falls back — the other
  * bundle instance resolves refs through `localStorage`, so an unpersisted
@@ -42,7 +43,7 @@ import type { Context } from '../context-types.ts'
 import { insertDraftReference, type PendingReference } from './conversation-draft.ts'
 import { t } from './locales.ts'
 import {
-  buildPlanAnnotationInsert, buildSelectionInsert, cleanPlanTitle, headerOf, whereOf,
+  buildPlanAnnotationInsert, buildSelectionInsert, cleanPlanTitle, whereOf,
   type SelectionLines,
 } from './selection-payload.ts'
 
@@ -61,6 +62,9 @@ export const QUOTE_REGISTER_RETRIES = 20
 /** Delay between registration attempts (ms). */
 export const QUOTE_RETRY_MS = 500
 
+/** What a quote came from; absent on persisted records means a legacy file quote. */
+type QuoteKind = 'file' | 'plan'
+
 /**
  * The selection a viewer hands over when the popup commits: exactly the facts
  * the fenced insert already encoded, kept structured so the chip can act on
@@ -73,7 +77,7 @@ export interface QuoteSelection {
    * the note, and the quoted plan text. Omitted means `'file'` for records
    * written before the plan page existed.
    */
-  kind?: 'file' | 'plan'
+  kind?: QuoteKind
   path?: string
   cwd?: string
   lines?: SelectionLines
@@ -102,7 +106,7 @@ export interface QuoteRecord {
   /** The monotonic record number (FIFO order; the chip's `ref` adds a suffix). */
   n: number
   /** The selection's kind; absent means `'file'` (legacy records). */
-  kind?: 'file' | 'plan'
+  kind?: QuoteKind
   /** The quoted file (file selections only). */
   path?: string
   /** The session cwd the header path was relativized with (file selections). */
@@ -431,6 +435,18 @@ function planInsertOf(sel: QuoteSelection): { text: string; label: string } {
   }
 }
 
+/** The file envelope, shaped like {@link planInsertOf} for the shared record build. */
+function fileInsertOf(sel: QuoteSelection, path: string): { text: string; label: string; clipboardText: string } {
+  const insert = buildSelectionInsert(path, sel.cwd, sel.lines, sel.text)
+  return {
+    text: insert.text,
+    label: t('quoteChip', { where: whereOf(path, sel.lines) }),
+    // `buildSelectionInsert`'s label IS the fenced header — reuse it instead
+    // of building the same string twice.
+    clipboardText: insert.label,
+  }
+}
+
 /**
  * Register the selection as a quote record and insert its chip into the
  * session's composer draft. Returns the persisted record — the plan page uses
@@ -478,11 +494,7 @@ export function insertQuoteRecord(ctx: Context, sessionId: string, sel: QuoteSel
   const path = sel.path!
   const built: { text: string; label: string; clipboardText?: string } = plan
     ? planInsertOf(sel)
-    : {
-      text: buildSelectionInsert(path, sel.cwd, sel.lines, sel.text).text,
-      label: t('quoteChip', { where: whereOf(path, sel.lines) }),
-      clipboardText: headerOf(path, sel.cwd, sel.lines),
-    }
+    : fileInsertOf(sel, path)
   const shared = { id: quoteId(n), sessionId, n, ...built }
   const record: QuoteRecord = plan
     ? { ...shared, kind: 'plan', planId: sel.planId! }

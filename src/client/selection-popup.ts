@@ -27,7 +27,7 @@
  * click commits (the hook's capture-phase listener runs first and must not
  * hide for it).
  */
-import { useEffect, useRef, useState, type RefObject } from 'react'
+import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
 
 /**
  * The floating "add to conversation" action: payload + viewport anchor.
@@ -79,7 +79,9 @@ export function useSelectionPopup<T>(options: SelectionPopupOptions<T>): Selecti
   /** The surface visibility observer (created lazily on open). */
   const observerRef = useRef<IntersectionObserver | null>(null)
 
-  const show = (insert: T, left: number, top: number): void => {
+  // Stable identities: callers keep these in effect dependencies (a tab
+  // switch resets the popup), and only refs/setters are touched here.
+  const show = useCallback((insert: T, left: number, top: number): void => {
     const next: SelectionPopup<T> = {
       insert,
       left: Math.min(Math.max(left, 80), window.innerWidth - 80),
@@ -87,19 +89,19 @@ export function useSelectionPopup<T>(options: SelectionPopupOptions<T>): Selecti
     }
     popupRef.current = next
     setPopup(next)
-  }
+  }, [])
 
-  const hide = (): void => {
+  const hide = useCallback((): void => {
     popupRef.current = null
     setPopup(null)
-  }
+  }, [])
 
-  const commit = (): void => {
+  const commit = useCallback((): void => {
     const current = popupRef.current
     if (current === null) return
     onCommitRef.current(current.insert)
     hide()
-  }
+  }, [hide])
 
   // Global dismissal listeners, registered once; every handler reads the
   // live popup ref so it no-ops while no popup is open.
@@ -131,7 +133,7 @@ export function useSelectionPopup<T>(options: SelectionPopupOptions<T>): Selecti
       observerRef.current?.disconnect()
       observerRef.current = null
     }
-  }, [])
+  }, [hide])
 
   // Re-target the visibility observer whenever a popup opens: the surface
   // refs may have been null at mount (content loads async, mode flips swap
@@ -153,7 +155,7 @@ export function useSelectionPopup<T>(options: SelectionPopupOptions<T>): Selecti
     }, { threshold: 0 })
     observerRef.current = observer
     observer.observe(surface)
-  }, [popupOpen])
+  }, [popupOpen, hide])
 
   return { popup, buttonRef, show, hide, commit }
 }

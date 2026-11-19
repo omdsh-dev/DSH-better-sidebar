@@ -314,7 +314,6 @@ export const ko: Record<string, string> = {
   planAnnotationAdd: '주석 추가',
   planAnnotationPlaceholder: '주석 입력, 예: IndexedDB로 변경…',
   planAnnotationSubmit: '주석 등록',
-  planAnnotationCancel: '취소',
   planAnnotationQuote: '원문',
   planAnnotationNote: '메모',
   planAnnotationSendFailed: '전송 실패: 현재 입력란을 사용할 수 없습니다. 잠시 후 다시 시도하세요.',

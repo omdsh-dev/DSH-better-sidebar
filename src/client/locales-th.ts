@@ -322,7 +322,6 @@ export const th: Record<string, string> = {
   planAnnotationAdd: 'เพิ่มหมายเหตุ',
   planAnnotationPlaceholder: 'เขียนหมายเหตุ เช่น ใช้ IndexedDB แทน…',
   planAnnotationSubmit: 'ส่งหมายเหตุ',
-  planAnnotationCancel: 'ยกเลิก',
   planAnnotationQuote: 'ข้อความต้นฉบับที่อ้างอิง',
   planAnnotationNote: 'หมายเหตุ',
   planAnnotationSendFailed: 'ส่งไม่สำเร็จ: ช่องป้อนข้อความไม่พร้อมใช้งานในขณะนี้ โปรดลองอีกครั้งในอีกสักครู่',

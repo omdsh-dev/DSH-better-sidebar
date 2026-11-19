@@ -9,11 +9,7 @@
  * Pure and viewport-injectable so the rules stay unit-testable.
  */
 
-/** The usable viewport in CSS pixels. */
-export interface ViewportSize {
-  readonly width: number
-  readonly height: number
-}
+import type { ViewportSize } from './breakpoints.ts'
 
 /** A rectangle in client (viewport) coordinates. */
 export interface ViewportRect {

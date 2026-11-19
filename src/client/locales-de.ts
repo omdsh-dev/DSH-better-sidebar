@@ -308,7 +308,6 @@ export const de: Record<string, string> = {
   planAnnotationAdd: 'Anmerkung hinzufügen',
   planAnnotationPlaceholder: 'Anmerkung schreiben, z. B. stattdessen IndexedDB verwenden…',
   planAnnotationSubmit: 'Anmerkung absenden',
-  planAnnotationCancel: 'Abbrechen',
   planAnnotationQuote: 'Zitierter Plantext',
   planAnnotationNote: 'Notiz',
   planAnnotationSendFailed: 'Senden fehlgeschlagen: Das Eingabefeld ist derzeit nicht verfügbar. Versuchen Sie es gleich noch einmal.',

@@ -1,8 +1,8 @@
 /**
- * Pure payload builders for the "add selection to conversation" popup in the
- * text viewers (markdown preview + the catch-all code viewer). Everything
- * here is string math — no React, no ctx — so the unit tests cover it
- * directly.
+ * Pure payload builders for the two quote-popup shapes: the "add selection to
+ * conversation" flow in the text viewers (markdown preview + the catch-all
+ * code viewer) and the plan page's selection annotation. Everything here is
+ * string math — no React, no ctx — so the unit tests cover it directly.
  *
  * Insert shape (agreed with the product owner):
  * - Selection ≤ SELECTION_LIMIT characters: a fenced code block whose info

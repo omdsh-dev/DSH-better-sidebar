@@ -322,7 +322,6 @@ export const vi: Record<string, string> = {
   planAnnotationAdd: 'Thêm chú thích',
   planAnnotationPlaceholder: 'Viết chú thích, vd. dùng IndexedDB thay thế…',
   planAnnotationSubmit: 'Gửi chú thích',
-  planAnnotationCancel: 'Hủy',
   planAnnotationQuote: 'Văn bản kế hoạch được trích dẫn',
   planAnnotationNote: 'Ghi chú',
   planAnnotationSendFailed: 'Gửi thất bại: ô nhập hiện không khả dụng. Hãy thử lại sau giây lát.',

@@ -318,7 +318,6 @@ export const ru: Record<string, string> = {
   planAnnotationAdd: 'Добавить примечание',
   planAnnotationPlaceholder: 'Напишите примечание, например: использовать IndexedDB…',
   planAnnotationSubmit: 'Отправить примечание',
-  planAnnotationCancel: 'Отмена',
   planAnnotationQuote: 'Цитата из плана',
   planAnnotationNote: 'Заметка',
   planAnnotationSendFailed: 'Не удалось отправить: поле ввода сейчас недоступно. Повторите попытку через мгновение.',

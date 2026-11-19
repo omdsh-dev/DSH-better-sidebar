@@ -324,7 +324,6 @@ export const pl: Record<string, string> = {
   planAnnotationAdd: 'Dodaj adnotację',
   planAnnotationPlaceholder: 'Napisz adnotację, np. użyj IndexedDB zamiast tego…',
   planAnnotationSubmit: 'Prześlij adnotację',
-  planAnnotationCancel: 'Anuluj',
   planAnnotationQuote: 'Cytowany tekst planu',
   planAnnotationNote: 'Notatka',
   planAnnotationSendFailed: 'Nie udało się wysłać: pole wprowadzania jest teraz niedostępne. Spróbuj ponownie za chwilę.',

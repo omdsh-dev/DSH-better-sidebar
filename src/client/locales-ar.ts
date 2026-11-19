@@ -323,7 +323,6 @@ export const ar: Record<string, string> = {
   planAnnotationAdd: 'إضافة ملاحظة',
   planAnnotationPlaceholder: 'اكتب ملاحظة، مثل: استخدام IndexedDB بدلًا من ذلك…',
   planAnnotationSubmit: 'إرسال الملاحظة',
-  planAnnotationCancel: 'إلغاء',
   planAnnotationQuote: 'نص الخطة المقتبس',
   planAnnotationNote: 'ملاحظة',
   planAnnotationSendFailed: 'فشل الإرسال: حقل الإدخال غير متاح الآن. أعد المحاولة بعد قليل.',

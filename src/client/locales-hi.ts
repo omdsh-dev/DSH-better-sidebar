@@ -322,7 +322,6 @@ export const hi: Record<string, string> = {
   planAnnotationAdd: 'टिप्पणी जोड़ें',
   planAnnotationPlaceholder: 'टिप्पणी लिखें, उदा.: इसके बजाय IndexedDB का उपयोग करें…',
   planAnnotationSubmit: 'टिप्पणी सबमिट करें',
-  planAnnotationCancel: 'रद्द करें',
   planAnnotationQuote: 'प्लान का उद्धृत पाठ',
   planAnnotationNote: 'टिप्पणी',
   planAnnotationSendFailed: 'भेजने में विफल: इनपुट फ़ील्ड अभी उपलब्ध नहीं है। थोड़ी देर बाद फिर कोशिश करें।',

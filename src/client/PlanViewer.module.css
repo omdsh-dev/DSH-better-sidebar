@@ -53,8 +53,6 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
-  max-width: calc(100vw - 24px);
-  max-height: calc(100vh - 24px);
   overflow: auto;
   box-sizing: border-box;
   border: 1px solid var(--dsw-alias-border-l1);

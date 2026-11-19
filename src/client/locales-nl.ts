@@ -320,7 +320,6 @@ export const nl: Record<string, string> = {
   planAnnotationAdd: 'Annotatie toevoegen',
   planAnnotationPlaceholder: 'Schrijf een annotatie, bijv. gebruik in plaats daarvan IndexedDB…',
   planAnnotationSubmit: 'Annotatie indienen',
-  planAnnotationCancel: 'Annuleren',
   planAnnotationQuote: 'Geciteerde plantekst',
   planAnnotationNote: 'Notitie',
   planAnnotationSendFailed: 'Verzenden mislukt: het invoerveld is momenteel niet beschikbaar. Probeer het zo opnieuw.',

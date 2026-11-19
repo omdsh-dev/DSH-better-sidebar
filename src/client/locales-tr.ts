@@ -322,7 +322,6 @@ export const tr: Record<string, string> = {
   planAnnotationAdd: 'Not ekle',
   planAnnotationPlaceholder: 'Not yazın, örn. IndexedDB kullanın…',
   planAnnotationSubmit: 'Notu gönder',
-  planAnnotationCancel: 'İptal',
   planAnnotationQuote: 'Alıntılanan plan metni',
   planAnnotationNote: 'Not',
   planAnnotationSendFailed: 'Gönderilemedi: giriş alanı şu anda kullanılamıyor. Biraz sonra tekrar deneyin.',

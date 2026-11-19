@@ -25,6 +25,7 @@ import {
 import { IconButton } from './ui/index.ts'
 import { markdownCopyLabels, markdownTextProps } from './markdown-labels.tsx'
 import { t, type CopyKey } from './locales.ts'
+import { useLocaleRefresh } from './locale-hooks.ts'
 import { isLikelyImeKey } from './ime-guard.ts'
 import { insertQuoteRecord } from './selection-quote.ts'
 import { clipText } from './selection-payload.ts'
@@ -32,7 +33,7 @@ import { useSelectionPopup } from './selection-popup.ts'
 import {
   floatingActionPlacement, noteBoxPlacement, surfaceOf, type PlanPopupAnchor,
 } from './plan-placement.ts'
-import { isPlanReviewAddress } from './native/guide-ids.ts'
+import { isPlanReviewAddress } from './plan-address.ts'
 import type { NativeResourceSnapshot, TabComponentProps } from './service.ts'
 import { useNoopResource } from './service.ts'
 import css from './PlanViewer.module.css'
@@ -74,11 +75,16 @@ interface NoteDraft extends PlanSelection {
   note: string
 }
 
-/** Empty-state copy by resource status; a temporary review has no resource. */
+/**
+ * Empty-state copy by status; a temporary review has no resource. A `live`
+ * snapshot without a usable document is a failure, not a loading state.
+ */
 type PlanMessageStatus = 'expired' | NativeResourceSnapshot['status']
-const PLAN_MESSAGE_BY_STATUS: Readonly<Partial<Record<PlanMessageStatus, CopyKey>>> = {
+const PLAN_MESSAGE_BY_STATUS: Readonly<Record<PlanMessageStatus, CopyKey>> = {
   expired: 'planAnnotationExpired',
   none: 'planAnnotationUnavailable',
+  loading: 'planAnnotationLoading',
+  live: 'planAnnotationFailed',
   failed: 'planAnnotationFailed',
 }
 
@@ -92,8 +98,7 @@ export function PlanViewer(props: TabComponentProps): ReactNode {
   const useResource = native?.useResource ?? useNoopResource
   const resource = useResource(address)
   const temporary = isPlanReviewAddress(address)
-  const reviewPlan = temporary ? reviewDocumentOf(native?.params) : undefined
-  const plan = temporary ? reviewPlan : planDocumentOf(resource.value)
+  const plan = temporary ? reviewDocumentOf(native?.params) : planDocumentOf(resource.value)
   const planId = address
   const sessionId = scope.sessionId
 
@@ -105,23 +110,8 @@ export function PlanViewer(props: TabComponentProps): ReactNode {
   }, [plan?.title, onTitle])
 
   // The native body renders in the HOST's tree, outside the plugin shell, so a
-  // locale switch does not re-render it by itself; subscribe here to both the
-  // DSH locale and the optional better-locale override so the page's copy
-  // follows the active language.
-  const [, setLocaleVersion] = useState(0)
-  useEffect(() => {
-    const sync = (): void => { setLocaleVersion(version => version + 1) }
-    const locale = (ctx as unknown as { locale?: { subscribe?: (listener: () => void) => () => void } }).locale
-    const betterLocale = typeof ctx.get === 'function'
-      ? ctx.get('betterLocale') as { subscribe?: (listener: () => void) => () => void } | undefined
-      : undefined
-    const offLocale = locale?.subscribe?.(sync)
-    const offOverride = betterLocale?.subscribe?.(sync)
-    return () => {
-      offLocale?.()
-      offOverride?.()
-    }
-  }, [ctx])
+  // locale switch does not re-render it by itself.
+  useLocaleRefresh(ctx)
 
   // ── Selection → popup → note box ─────────────────────────────────────────
   const docRef = useRef<HTMLDivElement | null>(null)
@@ -150,21 +140,21 @@ export function PlanViewer(props: TabComponentProps): ReactNode {
     setNoteDraft(null)
     setSendFailed(false)
   }, [])
-  // The popup and note box are portalled to document.body, so hiding the tab
-  // does not hide them: close them explicitly. Same when the tab navigates to
-  // another plan address (the effect also runs when the tab becomes visible
-  // again, which is a no-op because being hidden already reset everything).
-  const hidePopupRef = useRef(selectionPopup.hide)
-  hidePopupRef.current = selectionPopup.hide
+  // The note box is portalled to document.body and is not part of the button
+  // popup's own close contract, so hiding the tab (or navigating to another
+  // plan address) must reset it explicitly; the button popup is already closed
+  // by the hook's IntersectionObserver. The effect also runs when the tab
+  // becomes visible again, a no-op after the hidden run reset everything.
+  const hideSelectionPopup = selectionPopup.hide
   useEffect(() => {
     cancelNote()
     setAdded(false)
-    hidePopupRef.current()
-  }, [planId, visible, cancelNote])
+    hideSelectionPopup()
+  }, [planId, visible, cancelNote, hideSelectionPopup])
 
   const noteOpen = noteDraft !== null
 
-  const handleMouseUp = useCallback((): void => {
+  const handleMouseUp = (): void => {
     // Mouse selection only: keyboard and touch selections dispatch no mouseup,
     // so they never open the button (a known limitation, not an oversight).
     // While the note box is open the gesture belongs to the reader's typing: a
@@ -176,16 +166,13 @@ export function PlanViewer(props: TabComponentProps): ReactNode {
     const container = docRef.current
     if (container === null || plan === undefined) return
     const selection = window.getSelection()
-    const range = selection !== null && !selection.isCollapsed && selection.rangeCount > 0
-      ? selection.getRangeAt(0)
-      : null
-    const quote = range?.toString().trim() ?? ''
-    if (
-      range === null
-      || !container.contains(range.startContainer)
-      || !container.contains(range.endContainer)
-      || quote === ''
-    ) {
+    if (selection === null || selection.isCollapsed || selection.rangeCount === 0) {
+      selectionPopup.hide()
+      return
+    }
+    const range = selection.getRangeAt(0)
+    const quote = range.toString().trim()
+    if (!container.contains(range.startContainer) || !container.contains(range.endContainer) || quote === '') {
       selectionPopup.hide()
       return
     }
@@ -198,7 +185,7 @@ export function PlanViewer(props: TabComponentProps): ReactNode {
       left,
       rect.top,
     )
-  }, [plan, selectionPopup, noteOpen])
+  }
 
   // A failed insert keeps the box open so the typed note is never lost; the
   // reader can cancel explicitly or retry once the composer is available.
@@ -249,11 +236,9 @@ export function PlanViewer(props: TabComponentProps): ReactNode {
   // ── Render ───────────────────────────────────────────────────────────────
   let body: ReactNode
   if (plan === undefined) {
-    // `live` with an unusable value is a failure, not a loading state.
-    const messageStatus: PlanMessageStatus = temporary ? 'expired' : resource.status === 'live' ? 'failed' : resource.status
     body = (
       <div className={css.planMessage} role="status">
-        {t(PLAN_MESSAGE_BY_STATUS[messageStatus] ?? 'planAnnotationLoading')}
+        {t(PLAN_MESSAGE_BY_STATUS[temporary ? 'expired' : resource.status])}
       </div>
     )
   } else {
@@ -327,7 +312,7 @@ export function PlanViewer(props: TabComponentProps): ReactNode {
             <IconButton
               size="sm"
               icon={<IconCloseFillRegular size={12} />}
-              label={t('planAnnotationCancel')}
+              label={t('cancel')}
               danger
               onClick={cancelNote}
             />
@@ -353,7 +338,7 @@ export function PlanViewer(props: TabComponentProps): ReactNode {
           {sendFailed && <p className={css.planNoteError} data-plan-annotation-error="">{t('planAnnotationSendFailed')}</p>}
           <div className={css.planNoteRow}>
             <Button type="button" variant="outline" size="sm" data-plan-annotation-cancel="" onClick={cancelNote}>
-              {t('planAnnotationCancel')}
+              {t('cancel')}
             </Button>
             <Button
               type="button"

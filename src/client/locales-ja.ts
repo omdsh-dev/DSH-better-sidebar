@@ -322,7 +322,6 @@ export const ja: Record<string, string> = {
   planAnnotationAdd: '注釈を追加',
   planAnnotationPlaceholder: '注釈を入力（例：IndexedDB に変更）…',
   planAnnotationSubmit: '注釈を登録',
-  planAnnotationCancel: 'キャンセル',
   planAnnotationQuote: '原文',
   planAnnotationNote: 'メモ',
   planAnnotationSendFailed: '送信に失敗しました：入力欄が現在使用できません。しばらくしてから再試行してください。',
