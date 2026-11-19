@@ -468,11 +468,41 @@ export function registerNativeSurface(deps: NativeSurfaceDeps): () => void {
       return disposers
     }
 
+    /** The resource addresses one descriptor claims; page tabs claim none. */
+    const resourceClaimOf = (descriptor: TabDescriptor): {
+      patterns?: string[]
+      canOpen?: (address: string) => boolean
+    } => {
+      if (descriptor.id === EDITOR_KIND) {
+        return {
+          patterns: ['dsh-resource://file/**'],
+          canOpen: (address: string) => {
+            const file = parseFileAddress(address)
+            // A non-file address, or one of the formats the built-in
+            // previews own, leaves the address to DSH's own `text` type.
+            return file !== undefined && !hostOwnedPath(file.path)
+          },
+        }
+      }
+      if (descriptor.id === PLAN_KIND) {
+        return {
+          // The host's plan package claims BOTH families at the `builtin`
+          // band (`dsh-resource://plan/**` for a logged plan invocation,
+          // `dsh-resource://plan-review/**` for a temporary review whose
+          // document rides navigation params). Claiming them at `extension`
+          // is what makes this plugin's plan page the type in force;
+          // unregistering it restores the built-in preview.
+          patterns: [PLAN_ADDRESS_PATTERN, PLAN_REVIEW_ADDRESS_PATTERN],
+          canOpen: isPlanResourceAddress,
+        }
+      }
+      return {}
+    }
+
     /** One descriptor's native type + body + title, as one disposable. */
     const registerDescriptor = (descriptor: TabDescriptor): (() => void) => {
       const id = nativeId(descriptor.id)
       const isEditor = descriptor.id === EDITOR_KIND
-      const isPlan = descriptor.id === PLAN_KIND
       const icon = descriptor.icon
       const disposeType = tabs.register({
         id,
@@ -483,28 +513,7 @@ export function registerNativeSurface(deps: NativeSurfaceDeps): () => void {
         // the adapter faking it.
         keepMounted: true,
         ...(isMultipleTab(descriptor) ? { multiple: true } : {}),
-        ...(isEditor
-          ? {
-            patterns: ['dsh-resource://file/**'],
-            canOpen: (address: string) => {
-              const file = parseFileAddress(address)
-              // A non-file address, or one of the formats the built-in
-              // previews own, leaves the address to DSH's own `text` type.
-              return file !== undefined && !hostOwnedPath(file.path)
-            },
-          }
-          : isPlan
-            ? {
-              // The host's plan package claims BOTH families at the `builtin`
-              // band (`dsh-resource://plan/**` for a logged plan invocation,
-              // `dsh-resource://plan-review/**` for a temporary review whose
-              // document rides navigation params). Claiming them at
-              // `extension` is what makes this plugin's plan page the type in
-              // force; unregistering it restores the built-in preview.
-              patterns: [PLAN_ADDRESS_PATTERN, PLAN_REVIEW_ADDRESS_PATTERN],
-              canOpen: isPlanResourceAddress,
-            }
-            : {}),
+        ...resourceClaimOf(descriptor),
         // An external implementation outranks the product's own viewers, which
         // is what lets the plugin's editor take over file addresses.
         priority: 'extension',

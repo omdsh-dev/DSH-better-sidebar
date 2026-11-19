@@ -34,26 +34,12 @@
   font: var(--dsw-font-xxs-12);
 }
 
-/* The floating action over a text selection. Same paint as the host's primary
-   button, so the action reads as the same control as elsewhere in DSH. */
+/* The floating action over a text selection: the host's own primary Button,
+   lifted off the page so it reads as an overlay. */
 .planSelectionAction {
   flex: none;
-  border: 1px solid var(--dsw-alias-button-primary-fill);
-  border-radius: 7px;
-  background: var(--dsw-alias-button-primary-fill);
-  color: var(--dsw-alias-label-primary-foreground);
-  padding: 4px 11px;
-  font: var(--dsw-font-xxxs-strong-11);
-  line-height: 1.5;
-  cursor: pointer;
   box-shadow: var(--dsw-shadow-lv2);
   white-space: nowrap;
-}
-
-.planSelectionAction:hover,
-.planSelectionAction:focus-visible {
-  background: var(--dsw-alias-button-primary-hover);
-  border-color: var(--dsw-alias-button-primary-hover);
 }
 
 /* The floating note editor. Width and spacing are fixed so the quote,
@@ -141,56 +127,6 @@
   justify-content: flex-end;
   gap: 8px;
   padding-top: 2px;
-}
-
-.planButton {
-  flex: none;
-  border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 6px;
-  background: transparent;
-  color: var(--dsw-alias-label-secondary);
-  padding: 4px 10px;
-  font: var(--dsw-font-xxxs-strong-11);
-  line-height: 1.5;
-  cursor: pointer;
-}
-
-.planButton:hover:not(:disabled),
-.planButton:focus-visible {
-  background: var(--dsw-alias-interactive-bg-hover);
-}
-
-.planButton:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.planButtonPrimary {
-  border-color: var(--dsw-alias-button-primary-fill);
-  background: var(--dsw-alias-button-primary-fill);
-  color: var(--dsw-alias-label-primary-foreground);
-}
-
-.planButtonPrimary:hover:not(:disabled),
-.planButtonPrimary:focus-visible {
-  background: var(--dsw-alias-button-primary-hover);
-  border-color: var(--dsw-alias-button-primary-hover);
-}
-
-.planButtonIcon {
-  flex: none;
-  border: none;
-  background: transparent;
-  color: var(--dsw-alias-label-tertiary);
-  padding: 0 2px;
-  font: var(--dsw-font-xxs-12);
-  line-height: 1;
-  cursor: pointer;
-}
-
-.planButtonIcon:hover,
-.planButtonIcon:focus-visible {
-  color: var(--dsw-alias-state-error-primary);
 }
 
 .planAnnotationToast {

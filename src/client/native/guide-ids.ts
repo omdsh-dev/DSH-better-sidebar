@@ -18,15 +18,24 @@ export const FILES_KIND = 'files'
  */
 export const PLAN_KIND = 'plan'
 
-/** The two address families the host's plan package owns. */
-export const PLAN_ADDRESS_PATTERN = 'dsh-resource://plan/**'
+/** The logged-plan address family (`dsh-resource://plan/<sessionId>/<callId>`). */
+export const PLAN_ADDRESS_PREFIX = 'dsh-resource://plan/'
 
 /** The temporary review preview family (the document lives in params). */
-export const PLAN_REVIEW_ADDRESS_PATTERN = 'dsh-resource://plan-review/**'
+export const PLAN_REVIEW_ADDRESS_PREFIX = 'dsh-resource://plan-review/'
+
+/** The two glob patterns the native claim registers. */
+export const PLAN_ADDRESS_PATTERN = `${PLAN_ADDRESS_PREFIX}**`
+export const PLAN_REVIEW_ADDRESS_PATTERN = `${PLAN_REVIEW_ADDRESS_PREFIX}**`
+
+/** Whether an address is the temporary review preview (no resource provider). */
+export function isPlanReviewAddress(address: string): boolean {
+  return address.startsWith(PLAN_REVIEW_ADDRESS_PREFIX)
+}
 
 /** Whether an address belongs to either plan family. */
 export function isPlanResourceAddress(address: string): boolean {
-  return /^dsh-resource:\/\/plan(?:-review)?\//.test(address)
+  return address.startsWith(PLAN_ADDRESS_PREFIX) || isPlanReviewAddress(address)
 }
 
 /** The prefix of every implementation id this plugin registers natively. */

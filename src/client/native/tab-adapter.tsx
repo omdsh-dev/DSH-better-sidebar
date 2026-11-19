@@ -65,12 +65,6 @@ export interface NativeTabParams {
   readonly meta?: unknown
   /** A line to land on (file addresses carry it as a navigation parameter). */
   readonly line?: number
-  /**
-   * A temporary plan-review document. The host's plan package passes it as a
-   * resource-open parameter (`dsh-resource://plan-review/…`); the plan page
-   * reads it directly because that address has no resource provider.
-   */
-  readonly planReview?: { readonly markdown: string; readonly title: string }
 }
 
 /** The native tab information this adapter reads (structural mirror of `useTabInfo`). */
@@ -83,7 +77,9 @@ export interface NativeTabInfo {
     readonly visible: boolean
     readonly navigation: {
       readonly address: string
-      readonly params: NativeTabParams | undefined
+      /** The opener's params, unvalidated by the host (seed fields are picked
+       *  out by the adapter; resource pages validate their own, e.g. planReview). */
+      readonly params: unknown
       readonly revision: number
     }
     readonly signal: AbortSignal
@@ -561,9 +557,13 @@ export function NativeTabBody(props: NativeBodyInjected & NativeBodyFrameworkPro
   // `version` is not read: it only forces this render when the record changed.
   void version
   const derived = props.paramsOf?.(info)
-  const params = derived === undefined && nativeTab.navigation.params === undefined
+  const nativeParams = nativeTab.navigation.params
+  const seedParams = typeof nativeParams === 'object' && nativeParams !== null
+    ? nativeParams as NativeTabParams
+    : undefined
+  const params = derived === undefined && nativeParams === undefined
     ? undefined
-    : { ...derived, ...nativeTab.navigation.params }
+    : { ...derived, ...seedParams }
   const setTitle = useCallback((title: string): void => {
     records.update(seatSessionId, nativeTab.id, { title })
   }, [records, seatSessionId, nativeTab.id])

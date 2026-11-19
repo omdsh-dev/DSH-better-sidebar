@@ -26,6 +26,7 @@
 import type { ComponentProps } from 'react'
 import { MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { MarkdownFileMentions } from '@deepseek-ai/dsh-client-ui-primitives'
+import { t } from './locales.ts'
 
 /** The code-card chrome the plugin threads through its own props (e.g.
  *  MermaidMarkdownProps.codeLabels — the chunk contract carries the same
@@ -39,6 +40,17 @@ export interface MarkdownCopyLabels {
   wrapLabel: string
   /** Code-card action that preserves source columns with horizontal scrolling. */
   unwrapLabel: string
+}
+
+/** The plugin's flat chrome-label bag for MarkdownText render sites. */
+export function markdownCopyLabels(): MarkdownCopyLabels {
+  return {
+    copyLabel: t('copy'),
+    copiedLabel: t('copied'),
+    codeLabel: t('codeBlockTitle'),
+    wrapLabel: t('codeBlockWrap'),
+    unwrapLabel: t('codeBlockUnwrap'),
+  }
 }
 
 /** The nested `labels` prop the host renderer takes. */

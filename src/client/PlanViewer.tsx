@@ -19,12 +19,17 @@
  */
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { MarkdownText, useDismissOnOutsidePointer } from '@deepseek-ai/dsh-client-ui-primitives'
-import { markdownTextProps } from './markdown-labels.tsx'
+import {
+  Button, IconCloseFillRegular, MarkdownText, useDismissOnOutsidePointer,
+} from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconButton } from './ui/index.ts'
+import { markdownCopyLabels, markdownTextProps } from './markdown-labels.tsx'
 import { t, type CopyKey } from './locales.ts'
 import { isLikelyImeKey } from './ime-guard.ts'
 import { insertQuoteRecord } from './selection-quote.ts'
+import { clipText } from './selection-payload.ts'
 import { useSelectionPopup } from './selection-popup.ts'
+import { isPlanReviewAddress } from './native/guide-ids.ts'
 import type { NativeResourceSnapshot, TabComponentProps } from './service.ts'
 import { useNoopResource } from './service.ts'
 import css from './PlanViewer.module.css'
@@ -44,13 +49,9 @@ const NOTE_HEIGHT = 400
 /** Hard cap on one note. Keeps a pasted essay from overflowing the persisted
  *  quote store (the payload keeps the note whole by design). */
 const NOTE_MAX_LENGTH = 4000
-
-/** Whether one address is the host's temporary review preview. Prefix-only,
- *  matching `PLAN_REVIEW_ADDRESS_PATTERN` in native/guide-ids.ts: multi-segment
- *  addresses and query strings are still review previews. */
-function isReviewAddress(address: string): boolean {
-  return address.startsWith('dsh-resource://plan-review/')
-}
+/** Longest raw selection previewed in the note box. The sent quote is capped
+ *  even lower; this only keeps an unbounded drag-select out of the popup. */
+const QUOTE_PREVIEW_MAX = 480
 
 /** Validate a host plan value (SubmittedPlan / PlanDocument are structural). */
 function planDocumentOf(value: unknown): PlanDocument | undefined {
@@ -111,7 +112,7 @@ export function PlanViewer(props: TabComponentProps): ReactNode {
   const address = native?.address ?? ''
   const useResource = native?.useResource ?? useNoopResource
   const resource = useResource(address)
-  const temporary = isReviewAddress(address)
+  const temporary = isPlanReviewAddress(address)
   const reviewPlan = temporary ? reviewDocumentOf(native?.params) : undefined
   const plan = temporary ? reviewPlan : planDocumentOf(resource.value)
   const planId = address
@@ -165,20 +166,15 @@ export function PlanViewer(props: TabComponentProps): ReactNode {
   }, [])
   // The popup and note box are portalled to document.body, so hiding the tab
   // does not hide them: close them explicitly. Same when the tab navigates to
-  // another plan address.
+  // another plan address (the effect also runs when the tab becomes visible
+  // again, which is a no-op because being hidden already reset everything).
   const hidePopupRef = useRef(selectionPopup.hide)
   hidePopupRef.current = selectionPopup.hide
   useEffect(() => {
     cancelNote()
     setAdded(false)
     hidePopupRef.current()
-  }, [planId, cancelNote])
-  useEffect(() => {
-    if (visible) return
-    cancelNote()
-    setAdded(false)
-    hidePopupRef.current()
-  }, [visible, cancelNote])
+  }, [planId, visible, cancelNote])
 
   const noteOpen = noteDraft !== null
 
@@ -194,17 +190,16 @@ export function PlanViewer(props: TabComponentProps): ReactNode {
     const container = docRef.current
     if (container === null || plan === undefined) return
     const selection = window.getSelection()
-    if (selection === null || selection.isCollapsed || selection.rangeCount === 0) {
-      selectionPopup.hide()
-      return
-    }
-    const range = selection.getRangeAt(0)
-    if (!container.contains(range.startContainer) || !container.contains(range.endContainer)) {
-      selectionPopup.hide()
-      return
-    }
-    const quote = range.toString().trim()
-    if (quote === '') {
+    const range = selection !== null && !selection.isCollapsed && selection.rangeCount > 0
+      ? selection.getRangeAt(0)
+      : null
+    const quote = range?.toString().trim() ?? ''
+    if (
+      range === null
+      || !container.contains(range.startContainer)
+      || !container.contains(range.endContainer)
+      || quote === ''
+    ) {
       selectionPopup.hide()
       return
     }
@@ -276,17 +271,12 @@ export function PlanViewer(props: TabComponentProps): ReactNode {
       </div>
     )
   } else {
-    const markdownProps = markdownTextProps(plan.markdown, {
-      copyLabel: t('copy'),
-      copiedLabel: t('copied'),
-      codeLabel: t('codeBlockTitle'),
-      wrapLabel: t('codeBlockWrap'),
-      unwrapLabel: t('codeBlockUnwrap'),
-    })
+    const markdownProps = markdownTextProps(plan.markdown, markdownCopyLabels())
     body = <MarkdownText {...markdownProps} />
   }
 
   const notePlacement = noteDraft === null ? undefined : noteBoxPlacement(noteDraft)
+  const quotePreview = noteDraft === null ? '' : clipText(noteDraft.quote, QUOTE_PREVIEW_MAX)
 
   return (
     <div className={css.planViewer} data-plan-viewer={planId}>
@@ -298,7 +288,9 @@ export function PlanViewer(props: TabComponentProps): ReactNode {
         // The button is position: fixed; without this it would float over
         // unrelated text after the selection scrolls away (capture catches
         // scrolls of nested code blocks too, which do not bubble).
-        onScrollCapture={() => { selectionPopup.hide() }}
+        onScrollCapture={() => {
+          if (selectionPopup.popup !== null) selectionPopup.hide()
+        }}
       >
         {body}
       </div>
@@ -306,9 +298,11 @@ export function PlanViewer(props: TabComponentProps): ReactNode {
         <p className={css.planAnnotationToast} role="status" data-plan-annotation-toast="">{t('addToConversation')}</p>
       )}
       {selectionPopup.popup !== null && createPortal(
-        <button
-          type="button"
+        <Button
           ref={selectionPopup.buttonRef}
+          type="button"
+          variant="primary"
+          size="sm"
           className={css.planSelectionAction}
           data-plan-annotation-add=""
           style={{
@@ -322,7 +316,7 @@ export function PlanViewer(props: TabComponentProps): ReactNode {
           onClick={() => { selectionPopup.commit() }}
         >
           {t('planAnnotationAdd')}
-        </button>,
+        </Button>,
         document.body,
       )}
       {noteDraft !== null && notePlacement !== undefined && createPortal(
@@ -336,17 +330,15 @@ export function PlanViewer(props: TabComponentProps): ReactNode {
         >
           <div className={css.planNoteHead}>
             <span className={css.planNoteTitle}>{t('planAnnotation')}</span>
-            <button
-              type="button"
-              className={css.planButtonIcon}
-              aria-label={t('planAnnotationCancel')}
-              title={t('planAnnotationCancel')}
+            <IconButton
+              size="sm"
+              icon={<IconCloseFillRegular size={12} />}
+              label={t('planAnnotationCancel')}
+              danger
               onClick={cancelNote}
-            >
-              ×
-            </button>
+            />
           </div>
-          <div className={css.planNoteQuote}>{noteDraft.quote}</div>
+          <div className={css.planNoteQuote}>{quotePreview}</div>
           <textarea
             className={css.planNoteInput}
             autoFocus
@@ -366,18 +358,19 @@ export function PlanViewer(props: TabComponentProps): ReactNode {
           />
           {sendFailed && <p className={css.planNoteError} data-plan-annotation-error="">{t('planAnnotationSendFailed')}</p>}
           <div className={css.planNoteRow}>
-            <button type="button" data-plan-annotation-cancel="" className={css.planButton} onClick={cancelNote}>
+            <Button type="button" variant="outline" size="sm" data-plan-annotation-cancel="" onClick={cancelNote}>
               {t('planAnnotationCancel')}
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
+              variant="primary"
+              size="sm"
               data-plan-annotation-submit=""
-              className={`${css.planButton} ${css.planButtonPrimary}`}
               disabled={noteDraft.note.trim() === ''}
               onClick={submitNote}
             >
               {t('planAnnotationSubmit')}
-            </button>
+            </Button>
           </div>
         </div>,
         document.body,
