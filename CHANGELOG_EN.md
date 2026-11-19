@@ -6,6 +6,8 @@
 
 ### Unreleased
 
+- **`sidebar_open` distinguishes dispatched and queued requests** ([#1174](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1174)). When model-driven sidebar opens are enabled, the tool reports whether it dispatched the request to an attached view or queued it for a connection. Tab visibility is unconfirmed after dispatch.
+
 - 💻 **Side Chat renders PTC (run_code) tool trees**: the collapsed `run_code` line shows the model-written description, and its expanded body shows the program plus the final result. Tools dispatched inside the program (bash / read / grep / edit, …) render as indented rows under it — visible even when the root row is collapsed — through the same terminal / diff / read / search / web cards. Running, failed and start-less dispatches all render; successful PTC writes/edits join the clickable path mentions. `present` keeps its top-level delivery card and also leaves a sub-call row.
   - 🧪 Tests: `tests/sidechat-ptc-rows.spec.ts` (pairing / running / failed / no-start / nested / missing parent / identity reuse), `tests/sidechat-ptc-subcalls.spec.tsx` (description summary, program body, indentation and cards, collapsed-root visibility) and `tests/sidechat-mention-sources.spec.tsx` (PTC mutations count, reads do not).
 
