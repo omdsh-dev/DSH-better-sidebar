@@ -324,6 +324,7 @@ export const hi: Record<string, string> = {
   planAnnotationSubmit: 'टिप्पणी सबमिट करें',
   planAnnotationCancel: 'रद्द करें',
   planAnnotationQuote: 'प्लान का उद्धृत पाठ',
+  planAnnotationNote: 'टिप्पणी',
   planAnnotationSendFailed: 'भेजने में विफल: इनपुट फ़ील्ड अभी उपलब्ध नहीं है। थोड़ी देर बाद फिर कोशिश करें।',
   planAnnotationUnavailable: 'प्लान उपलब्ध नहीं है',
   planAnnotationLoading: 'प्लान लोड हो रहा है…',

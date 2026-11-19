@@ -324,6 +324,7 @@ export const tr: Record<string, string> = {
   planAnnotationSubmit: 'Notu gönder',
   planAnnotationCancel: 'İptal',
   planAnnotationQuote: 'Alıntılanan plan metni',
+  planAnnotationNote: 'Not',
   planAnnotationSendFailed: 'Gönderilemedi: giriş alanı şu anda kullanılamıyor. Biraz sonra tekrar deneyin.',
   planAnnotationUnavailable: 'Plan geçici olarak kullanılamıyor',
   planAnnotationLoading: 'Plan yükleniyor…',

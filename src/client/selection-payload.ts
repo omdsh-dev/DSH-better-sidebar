@@ -106,6 +106,10 @@ export function linesOfSelection(source: string, selected: string): SelectionLin
 export interface PlanAnnotationOptions {
   /** e.g. `计划批注` — the first line's heading. */
   heading: string
+  /** e.g. `批注` — the label that marks the reader's own words. Without it a
+   *  short note (a number, a fragment) reads as a continuation of the heading
+   *  or of the previous block's quote when several chips are sent together. */
+  noteLabel: string
   /** e.g. `原文` — the label preceding the quoted plan text. */
   quoteLabel: string
   /** The plan's heading, appended to the envelope when present. */
@@ -139,11 +143,11 @@ export function clipText(text: string, max: number): string {
 }
 
 /**
- * The composer payload for one plan annotation: the note plus the quoted
- * plan text as a blockquote, normally capped at {@link SELECTION_LIMIT}. The
- * note is the useful part and is never dropped: an over-limit note returns the
- * bare envelope (heading + full note) uncut, and only the quote is truncated
- * to fit the remaining budget.
+ * The composer payload for one plan annotation: a labelled note plus the
+ * quoted plan text as a blockquote, normally capped at {@link SELECTION_LIMIT}.
+ * The note is the useful part and is never dropped: an over-limit note returns
+ * the bare envelope (heading + labelled full note) uncut, and only the quote is
+ * truncated to fit the remaining budget.
  */
 export function buildPlanAnnotationInsert(
   note: string,
@@ -152,7 +156,9 @@ export function buildPlanAnnotationInsert(
 ): string {
   const title = cleanPlanTitle(options.planTitle, PLAN_TITLE_HEADING_MAX)
   const heading = title === undefined ? options.heading : `${options.heading} · ${title}`
-  const base = `${heading}\n${note}`
+  // Label the note once: a multi-line note keeps its own lines, but the first
+  // line says whose words these are.
+  const base = `${heading}\n${options.noteLabel}: ${note}`
   // Over the limit the note still wins: fall back to the bare envelope with
   // the reader's words intact rather than silently chopping them mid-note.
   if (base.length >= SELECTION_LIMIT) return base

@@ -616,7 +616,7 @@ describe("plan annotations (the plan page's chip)", () => {
     const record = mod.insertQuoteRecord(fakeCtx({ composer: fakeComposer() }), 's1', {
       ...PLAN, planTitle: undefined, note, text: 'some plan text',
     })!
-    expect(record.text).toBe(`Plan annotation\n${note}`)
+    expect(record.text).toBe(`Plan annotation\nNote: ${note}`)
     expect(record.text).toContain(note)
     expect(record.text.length).toBeGreaterThan(SELECTION_LIMIT)
     // The quote — not the reader's note — is what the bare envelope drops.

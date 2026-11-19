@@ -310,6 +310,7 @@ export const de: Record<string, string> = {
   planAnnotationSubmit: 'Anmerkung absenden',
   planAnnotationCancel: 'Abbrechen',
   planAnnotationQuote: 'Zitierter Plantext',
+  planAnnotationNote: 'Notiz',
   planAnnotationSendFailed: 'Senden fehlgeschlagen: Das Eingabefeld ist derzeit nicht verfügbar. Versuchen Sie es gleich noch einmal.',
   planAnnotationUnavailable: 'Der Plan ist derzeit nicht verfügbar',
   planAnnotationLoading: 'Plan wird geladen…',

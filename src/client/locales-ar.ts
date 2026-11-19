@@ -325,6 +325,7 @@ export const ar: Record<string, string> = {
   planAnnotationSubmit: 'إرسال الملاحظة',
   planAnnotationCancel: 'إلغاء',
   planAnnotationQuote: 'نص الخطة المقتبس',
+  planAnnotationNote: 'ملاحظة',
   planAnnotationSendFailed: 'فشل الإرسال: حقل الإدخال غير متاح الآن. أعد المحاولة بعد قليل.',
   planAnnotationUnavailable: 'الخطة غير متاحة مؤقتًا',
   planAnnotationLoading: 'جارٍ تحميل الخطة…',

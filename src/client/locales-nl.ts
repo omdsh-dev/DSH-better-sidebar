@@ -322,6 +322,7 @@ export const nl: Record<string, string> = {
   planAnnotationSubmit: 'Annotatie indienen',
   planAnnotationCancel: 'Annuleren',
   planAnnotationQuote: 'Geciteerde plantekst',
+  planAnnotationNote: 'Notitie',
   planAnnotationSendFailed: 'Verzenden mislukt: het invoerveld is momenteel niet beschikbaar. Probeer het zo opnieuw.',
   planAnnotationUnavailable: 'Het plan is niet beschikbaar',
   planAnnotationLoading: 'Plan wordt geladen…',

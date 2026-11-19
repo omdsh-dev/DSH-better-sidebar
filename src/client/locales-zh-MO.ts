@@ -339,6 +339,7 @@ export const zhMO: Record<string, string> = {
   planAnnotationSubmit: '提交批註',
   planAnnotationCancel: '取消',
   planAnnotationQuote: '原文',
+  planAnnotationNote: '批註',
   planAnnotationSendFailed: '傳送失敗：輸入框目前不可用，請稍後再試。',
   planAnnotationUnavailable: '計劃暫不可用',
   planAnnotationLoading: '正在載入計劃…',

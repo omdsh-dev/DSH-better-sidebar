@@ -316,6 +316,7 @@ export const ko: Record<string, string> = {
   planAnnotationSubmit: '주석 등록',
   planAnnotationCancel: '취소',
   planAnnotationQuote: '원문',
+  planAnnotationNote: '메모',
   planAnnotationSendFailed: '전송 실패: 현재 입력란을 사용할 수 없습니다. 잠시 후 다시 시도하세요.',
   planAnnotationUnavailable: '계획을 일시적으로 사용할 수 없습니다',
   planAnnotationLoading: '계획을 불러오는 중…',

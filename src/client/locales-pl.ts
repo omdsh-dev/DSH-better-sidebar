@@ -326,6 +326,7 @@ export const pl: Record<string, string> = {
   planAnnotationSubmit: 'Prześlij adnotację',
   planAnnotationCancel: 'Anuluj',
   planAnnotationQuote: 'Cytowany tekst planu',
+  planAnnotationNote: 'Notatka',
   planAnnotationSendFailed: 'Nie udało się wysłać: pole wprowadzania jest teraz niedostępne. Spróbuj ponownie za chwilę.',
   planAnnotationUnavailable: 'Plan jest niedostępny',
   planAnnotationLoading: 'Ładowanie planu…',

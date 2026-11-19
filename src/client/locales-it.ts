@@ -315,6 +315,7 @@ export const it: Record<string, string> = {
   planAnnotationSubmit: 'Invia annotazione',
   planAnnotationCancel: 'Annulla',
   planAnnotationQuote: 'Testo del piano citato',
+  planAnnotationNote: 'Nota',
   planAnnotationSendFailed: 'Invio non riuscito: il campo di input non è disponibile in questo momento. Riprova tra poco.',
   planAnnotationUnavailable: 'Il piano non è disponibile',
   planAnnotationLoading: 'Caricamento del piano…',

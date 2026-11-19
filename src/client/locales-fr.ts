@@ -317,6 +317,7 @@ export const fr: Record<string, string> = {
   planAnnotationSubmit: 'Soumettre l’annotation',
   planAnnotationCancel: 'Annuler',
   planAnnotationQuote: 'Texte du plan cité',
+  planAnnotationNote: 'Remarque',
   planAnnotationSendFailed: 'Échec de l’envoi : la zone de saisie est indisponible pour le moment. Réessayez dans un instant.',
   planAnnotationUnavailable: 'Le plan n’est pas disponible',
   planAnnotationLoading: 'Chargement du plan…',

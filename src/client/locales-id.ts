@@ -322,6 +322,7 @@ export const id: Record<string, string> = {
   planAnnotationSubmit: 'Ajukan anotasi',
   planAnnotationCancel: 'Batal',
   planAnnotationQuote: 'Teks rencana yang dikutip',
+  planAnnotationNote: 'Catatan',
   planAnnotationSendFailed: 'Gagal mengirim: kolom input tidak tersedia saat ini. Coba lagi sebentar lagi.',
   planAnnotationUnavailable: 'Rencana tidak tersedia',
   planAnnotationLoading: 'Memuat rencana…',

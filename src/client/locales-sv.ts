@@ -307,6 +307,7 @@ export const sv: Record<string, string> = {
   planAnnotationSubmit: 'Skicka in anteckning',
   planAnnotationCancel: 'Avbryt',
   planAnnotationQuote: 'Citerad plantext',
+  planAnnotationNote: 'Anteckning',
   planAnnotationSendFailed: 'Det gick inte att skicka: inmatningsfältet är inte tillgängligt just nu. Försök igen om en stund.',
   planAnnotationUnavailable: 'Planen är inte tillgänglig',
   planAnnotationLoading: 'Läser in planen…',

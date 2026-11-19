@@ -421,6 +421,7 @@ function chipTitleOf(title: string | undefined): string {
 function planInsertOf(sel: QuoteSelection): { text: string; label: string } {
   const text = buildPlanAnnotationInsert(sel.note ?? '', sel.text, {
     heading: t('planAnnotation'),
+    noteLabel: t('planAnnotationNote'),
     quoteLabel: t('planAnnotationQuote'),
     ...(sel.planTitle === undefined ? {} : { planTitle: sel.planTitle }),
   })

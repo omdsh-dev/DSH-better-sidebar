@@ -105,16 +105,21 @@ describe('linesOfSelection', () => {
 })
 
 describe('buildPlanAnnotationInsert', () => {
-  const labels = { heading: '计划批注', quoteLabel: '原文' }
+  const labels = { heading: '计划批注', noteLabel: '批注', quoteLabel: '原文' }
 
-  it('sends the note first and the quoted plan text as a blockquote', () => {
+  it('labels the note and sends the quoted plan text as a blockquote', () => {
     expect(buildPlanAnnotationInsert('Use a queue.', 'retry once', { ...labels, planTitle: 'Ship it' }))
-      .toBe('计划批注 · Ship it\nUse a queue.\n\n原文:\n> retry once')
+      .toBe('计划批注 · Ship it\n批注: Use a queue.\n\n原文:\n> retry once')
   })
 
   it('prefixes every quoted line so a multi-line selection stays one blockquote', () => {
     expect(buildPlanAnnotationInsert('n', 'one\ntwo', labels))
-      .toBe('计划批注\nn\n\n原文:\n> one\n> two')
+      .toBe('计划批注\n批注: n\n\n原文:\n> one\n> two')
+  })
+
+  it('labels a multi-line note once and keeps its own line breaks', () => {
+    expect(buildPlanAnnotationInsert('one\ntwo', 'q', labels))
+      .toBe('计划批注\n批注: one\ntwo\n\n原文:\n> q')
   })
 
   it('never exceeds the selection limit and keeps the note intact', () => {
@@ -129,7 +134,7 @@ describe('buildPlanAnnotationInsert', () => {
     const note = 'n'.repeat(SELECTION_LIMIT + 20)
     const text = buildPlanAnnotationInsert(note, 'quote', labels)
     // The reader's words survive intact; only the quote is dropped.
-    expect(text).toBe(`计划批注\n${note}`)
+    expect(text).toBe(`计划批注\n批注: ${note}`)
     expect(text).toContain(note)
     expect(text.length).toBeGreaterThan(SELECTION_LIMIT)
     expect(text).not.toContain('> quote')
@@ -153,7 +158,7 @@ describe('buildPlanAnnotationInsert', () => {
 
   it('collapses a multi-line plan title into the heading line', () => {
     const text = buildPlanAnnotationInsert('note', 'quote', { ...labels, planTitle: 'Ship\nit\n\nnow' })
-    expect(text).toBe('计划批注 · Ship it now\nnote\n\n原文:\n> quote')
+    expect(text).toBe('计划批注 · Ship it now\n批注: note\n\n原文:\n> quote')
   })
 
   it('caps a long plan title so the heading cannot crowd out the quote', () => {

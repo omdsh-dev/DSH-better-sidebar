@@ -324,6 +324,7 @@ export const vi: Record<string, string> = {
   planAnnotationSubmit: 'Gửi chú thích',
   planAnnotationCancel: 'Hủy',
   planAnnotationQuote: 'Văn bản kế hoạch được trích dẫn',
+  planAnnotationNote: 'Ghi chú',
   planAnnotationSendFailed: 'Gửi thất bại: ô nhập hiện không khả dụng. Hãy thử lại sau giây lát.',
   planAnnotationUnavailable: 'Kế hoạch không khả dụng',
   planAnnotationLoading: 'Đang tải kế hoạch…',
