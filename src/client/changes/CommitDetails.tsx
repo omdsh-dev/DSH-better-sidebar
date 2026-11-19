@@ -15,7 +15,7 @@ import {
   IconClockOutlineRegular, IconCopyOutlineRegular, IconUserOutlineRegular, MarkdownText, writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { relativeTime, t } from '../locales.ts'
-import { markdownTextProps } from '../markdown-labels.tsx'
+import { markdownCopyLabels, markdownTextProps } from '../markdown-labels.tsx'
 import { IconButton } from '../ui/index.ts'
 import { refPills, RefPill, type GraphEntry } from './GitGraphSection.tsx'
 import css from './graph.module.css'
@@ -49,13 +49,7 @@ export function CommitDetails({ entry, remotes = new Set<string>(), slot }: Comm
   const body = messageBodyOf(entry)
   // The host renderer falls back to hardcoded Chinese when the nested chrome
   // labels are omitted, so the code-card labels ride the plugin dictionary.
-  const labels = {
-    copyLabel: t('copy'),
-    copiedLabel: t('copied'),
-    codeLabel: t('codeBlockTitle'),
-    wrapLabel: t('codeBlockWrap'),
-    unwrapLabel: t('codeBlockUnwrap'),
-  }
+  const labels = markdownCopyLabels()
   // No section band here: the pane's tab already says "commit details", so the
   // card opens with the commit's own title instead of repeating that label.
   // The section keeps the label for assistive tech only (aria-label, not text).

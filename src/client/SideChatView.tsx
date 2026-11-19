@@ -72,7 +72,7 @@ import {
   type TerminalBlockLabels,
   type WebBlockLabels,
 } from '@deepseek-ai/dsh-client-ui-primitives'
-import { markdownLabels, markdownTextProps } from './markdown-labels.tsx'
+import { markdownCopyLabels, markdownLabels, markdownTextProps } from './markdown-labels.tsx'
 import { producedFilePaths, resolveProducedPath } from './sidechat-mentions.ts'
 import {
   foldsSettledTurns,
@@ -1046,15 +1046,11 @@ export function SideChatView(props: {
     // DSH 0.1.7-rc.1 widened the diff / read cards into code cards and DELETED
     // `DiffBlockLabels.files`, so the old "N files" footer is gone and these
     // three strings are required by both cards.
-    const codeCard = {
-      codeLabel: t('codeBlockTitle'),
-      wrapLabel: t('codeBlockWrap'),
-      unwrapLabel: t('codeBlockUnwrap'),
-    }
+    const copyLabels = markdownCopyLabels()
+    const { codeLabel, wrapLabel, unwrapLabel } = copyLabels
+    const codeCard = { codeLabel, wrapLabel, unwrapLabel }
     return {
-      copyLabel: t('copy'),
-      copiedLabel: t('copied'),
-      ...codeCard,
+      ...copyLabels,
       thinkLabel: t('sideChatThink'),
       injectionLabel: t('sideChatInjection'),
       terminal: {
@@ -1095,7 +1091,7 @@ export function SideChatView(props: {
         contentTruncated: t('sideChatWebContentTruncated'),
         // The card renders the provider's answer as markdown of its own, so it
         // needs the same nested chrome (and the cached identity) as the rows.
-        markdown: markdownLabels({ copyLabel: t('copy'), copiedLabel: t('copied'), ...codeCard }),
+        markdown: markdownLabels(copyLabels),
       },
     }
   }, [])

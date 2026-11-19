@@ -37,7 +37,7 @@ import { useGitDiffTarget } from '../diff/use-git-diff.ts'
 import { parseReadContent, parseReadLines, type FileOp } from './ops.ts'
 import { redactText } from '../redact.ts'
 import { createMarkdownPathImages } from '../markdown-images.ts'
-import { markdownTextProps } from '../markdown-labels.tsx'
+import { markdownCopyLabels, markdownTextProps } from '../markdown-labels.tsx'
 import { createOpenInApp } from '../open-in-app.ts'
 import { useMarkdownSurface } from '../use-markdown-surface.ts'
 import { splitMermaidBlocks } from '../mermaid-blocks.ts'
@@ -173,13 +173,7 @@ export function PaneTabStrip(props: { tabs: readonly PaneTab[]; active: string; 
  *  editor preview uses (see markdown-images.ts): a transport-origin http URL
  *  would be cross-site and rejected from the desktop shell's page. */
 function MdReadingView(props: { text: string; ctx: Context; scope: SessionScope; path: string; filePath: string }) {
-  const codeLabels = {
-    copyLabel: t('copy'),
-    copiedLabel: t('copied'),
-    codeLabel: t('codeBlockTitle'),
-    wrapLabel: t('codeBlockWrap'),
-    unwrapLabel: t('codeBlockUnwrap'),
-  }
+  const codeLabels = markdownCopyLabels()
   const surface = useMarkdownSurface({
     ctx: props.ctx,
     sessionId: props.scope.sessionId,

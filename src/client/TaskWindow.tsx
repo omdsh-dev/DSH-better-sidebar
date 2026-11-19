@@ -26,7 +26,7 @@ import {
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context, SidebarTeamTaskView } from '../context-types.ts'
 import { api } from './api.ts'
-import { markdownTextProps } from './markdown-labels.tsx'
+import { markdownCopyLabels, markdownTextProps } from './markdown-labels.tsx'
 import { useMarkdownSurface } from './use-markdown-surface.ts'
 import { FloatingWindow } from './FloatingWindow.tsx'
 import { taskBlocked, taskDotState, taskStatusLabel, taskTone } from './tasks-shared.tsx'
@@ -136,13 +136,7 @@ function TaskViewBody(props: {
           : (
             <MarkdownDelegateProvider openFile={surface.openFile}>
               <MarkdownText
-                {...markdownTextProps(surface.rewrite(body), {
-                  copyLabel: t('copy'),
-                  copiedLabel: t('copied'),
-                  codeLabel: t('codeBlockTitle'),
-                  wrapLabel: t('codeBlockWrap'),
-                  unwrapLabel: t('codeBlockUnwrap'),
-                })}
+                {...markdownTextProps(surface.rewrite(body), markdownCopyLabels())}
               />
             </MarkdownDelegateProvider>
           )}
