@@ -4,6 +4,9 @@
 
 ### 未发布
 
+- 🧰 **文件树工具条与列表下方有了外部扩展点（`registerTreeToolbarAction` / `registerTreeDock`，新能力 `'treeToolbarActions'` / `'treeDocks'`）**：文件树顶部那一行（搜索 / 刷新 / 排序 / 上传文件 / 上传文件夹）此前没有任何外部插槽，code studio 这类插件只能靠「每次升级后重写 `lib/client.js`」把「启动 / 停止」塞进去；文件列表下方也被上传遮罩与搜索结果独占。现在工具条右侧可加纯图标按钮（`label` / `title` 支持 thunk，`icon` 可返回按 `size` 渲染的组件，`pressed` 映射 `aria-pressed` 与激活底色，`disabled` 在飞行期间叠加），列表下方可停靠插件自己的面板（终端 / 控制台，收到 `{ sessionId, root, visible }`）。两者都按 `order` 排序、用 `when` 自行隐藏，`when` 抛错只隐藏该注册；`onAction` 抛错 / reject 以 `error.message` 落进文件树错误条，同一动作飞行中的重复点击被忽略，且全部外部按钮在此期间禁用。**树只提供入口与失败出口**：启动进程、写文件与二次确认都由注册方负责。[指南 §7.5](docs/external-plugin-guide.md)
+  - 🧪 测试：`tests/tree-actions.spec.tsx`（两个注册表的 features / 排序 / 重复 id / 过期 disposer、按钮位置 / 共享 context / late 注册 / `when` 与抛错 / `pressed` / `disabled` / 组件图标 14px / 飞行中互斥 / 错误条 / `visible: false` 不触发 / 停靠排序与位置），`tests/consumer-types.ts` 覆盖新公开类型与四个方法。
+
 - 💻 **侧边对话显示 PTC（run_code）工具调用树**：`run_code` 行收起时显示模型写的 description，展开后显示程序代码和最终结果；程序内通过 PTC 派发的 bash / read / grep / edit 等子调用缩进挂在它下方，根行收起也可见，并复用终端 / diff / read / search / web 结构卡片。运行中、失败、无 start 的 dispatch 都有对应显示；PTC 内成功 write/edit 的文件也进入可点击路径提及。`present` 仍保留顶层交付卡片，同时在子调用区留下一行。
   - 🧪 测试：`tests/sidechat-ptc-rows.spec.ts`（配对 / 运行态 / 失败 / 无 start / 嵌套 / 父行缺失 / 身份复用）、`tests/sidechat-ptc-subcalls.spec.tsx`（description 摘要、代码体、缩进与卡片、根行收起仍可见）、`tests/sidechat-mention-sources.spec.tsx`（PTC mutation 进入提及、read 不进入）。
 
