@@ -111,8 +111,9 @@ export interface QuoteRecord {
   lines?: SelectionLines
   /** The chip's visible text (`引用 a.md L12-15` or `计划批注 · …`). */
   label: string
-  /** What copying the chip yields (the file header or the plan payload). */
-  clipboardText: string
+  /** What copying the chip yields (the file header). Plan records omit it —
+   *  their payload is `text` already, and storing both doubled the record. */
+  clipboardText?: string
   /** The plan document's address (plan selections only). */
   planId?: string
   /** The payload `codec.serialize` returns. */
@@ -201,7 +202,7 @@ function isQuoteRecord(value: unknown): value is QuoteRecord {
     && (plan ? typeof record.planId === 'string' && record.planId !== '' : typeof record.path === 'string' && record.path !== '')
     && typeof record.text === 'string'
     && typeof record.label === 'string'
-    && typeof record.clipboardText === 'string'
+    && (record.clipboardText === undefined || typeof record.clipboardText === 'string')
     && (record.cwd === undefined || typeof record.cwd === 'string')
     && (record.lines === undefined || isSelectionLines(record.lines))
 }
@@ -294,7 +295,11 @@ function createQuoteSource(ctx: Context): SidebarQuoteSource {
       }
     },
     codec: {
-      clipboardText: ref => resolveQuote(ref)?.clipboardText ?? ref,
+      clipboardText: (ref) => {
+        const record = resolveQuote(ref)
+        // A plan record stores only the payload (see QuoteRecord.clipboardText).
+        return record?.clipboardText ?? record?.text ?? ref
+      },
       serialize: async (ref) => {
         const record = resolveQuote(ref)
         if (record === undefined) {
@@ -412,20 +417,16 @@ function chipTitleOf(title: string | undefined): string {
   return cleanPlanTitle(title, CHIP_TITLE_MAX) ?? t('plan')
 }
 
-/** The plan annotation envelope (model text, label and clipboard text). */
-function planInsertOf(sel: QuoteSelection): { text: string; label: string; clipboardText: string } {
-  const text = buildPlanAnnotationInsert(
-    sel.note ?? '',
-    sel.text,
-    { ...(sel.planTitle === undefined ? {} : { planTitle: sel.planTitle }) },
-    { heading: t('planAnnotation'), quoteLabel: t('planAnnotationQuote') },
-  )
+/** The plan annotation envelope (model text and label; `text` is also what a copy yields). */
+function planInsertOf(sel: QuoteSelection): { text: string; label: string } {
+  const text = buildPlanAnnotationInsert(sel.note ?? '', sel.text, {
+    heading: t('planAnnotation'),
+    quoteLabel: t('planAnnotationQuote'),
+    ...(sel.planTitle === undefined ? {} : { planTitle: sel.planTitle }),
+  })
   return {
     text,
     label: t('planAnnotationChip', { where: chipTitleOf(sel.planTitle) }),
-    // Copying a plan annotation yields the complete feedback the model will
-    // receive, not a path.
-    clipboardText: text,
   }
 }
 
@@ -473,26 +474,20 @@ export function insertQuoteRecord(ctx: Context, sessionId: string, sel: QuoteSel
   // other bundle instance's `isQuoteRecord` and become a dead chip.
   if (plan && (sel.planId === undefined || sel.planId === '')) return undefined
   const n = nextN++
-  const built = plan
+  const path = sel.path!
+  const built: { text: string; label: string; clipboardText?: string } = plan
     ? planInsertOf(sel)
     : {
-      text: buildSelectionInsert(sel.path!, sel.cwd, sel.lines, sel.text).text,
-      label: t('quoteChip', { where: whereOf(sel.path!, sel.lines) }),
-      clipboardText: headerOf(sel.path!, sel.cwd, sel.lines),
+      text: buildSelectionInsert(path, sel.cwd, sel.lines, sel.text).text,
+      label: t('quoteChip', { where: whereOf(path, sel.lines) }),
+      clipboardText: headerOf(path, sel.cwd, sel.lines),
     }
-  const shared = {
-    id: quoteId(n),
-    sessionId,
-    n,
-    label: built.label,
-    clipboardText: built.clipboardText,
-    text: built.text,
-  }
+  const shared = { id: quoteId(n), sessionId, n, ...built }
   const record: QuoteRecord = plan
     ? { ...shared, kind: 'plan', planId: sel.planId! }
     : {
       ...shared,
-      path: sel.path!,
+      path,
       ...(sel.cwd === undefined ? {} : { cwd: sel.cwd }),
       ...(sel.lines === undefined ? {} : { lines: sel.lines }),
     }
@@ -504,7 +499,10 @@ export function insertQuoteRecord(ctx: Context, sessionId: string, sel: QuoteSel
     // file chips openable, and this source refuses the click anyway. Leaving
     // it undefined also makes the two chip families visually distinct.
     ...(plan ? {} : { appearance: 'file' as const }),
-    clipboardText: built.clipboardText,
+    // The host projects this into the composer and the saved draft, so a plan
+    // chip carries its short label there; the record keeps the full payload
+    // for the codec (copy/send), and the comment below still explains `text`.
+    clipboardText: built.clipboardText ?? built.label,
     // Not what the chip carries (`ref` is the id, and the codec expands it on
     // send), but the plain-text form an ordinary path would fall back to —
     // and the payload itself, so a chip that cannot land still yields the

@@ -102,16 +102,12 @@ export function linesOfSelection(source: string, selected: string): SelectionLin
   }
 }
 
-/** The localized envelope a plan annotation payload carries. */
-export interface PlanAnnotationLabels {
+/** The localized envelope + optional plan identity a payload carries. */
+export interface PlanAnnotationOptions {
   /** e.g. `计划批注` — the first line's heading. */
   heading: string
   /** e.g. `原文` — the label preceding the quoted plan text. */
   quoteLabel: string
-}
-
-/** Optional identity carried into a plan annotation payload. */
-export interface PlanAnnotationMeta {
   /** The plan's heading, appended to the envelope when present. */
   planTitle?: string
 }
@@ -137,6 +133,11 @@ function trimLoneHighSurrogate(text: string): string {
   return text.replace(/[\uD800-\uDBFF]$/, '')
 }
 
+/** Clip an unbounded selection to a preview budget without splitting a surrogate pair. */
+export function clipText(text: string, max: number): string {
+  return text.length <= max ? text : `${trimLoneHighSurrogate(text.slice(0, max))}…`
+}
+
 /**
  * The composer payload for one plan annotation: the note plus the quoted
  * plan text as a blockquote, normally capped at {@link SELECTION_LIMIT}. The
@@ -147,16 +148,15 @@ function trimLoneHighSurrogate(text: string): string {
 export function buildPlanAnnotationInsert(
   note: string,
   selected: string,
-  meta: PlanAnnotationMeta,
-  labels: PlanAnnotationLabels,
+  options: PlanAnnotationOptions,
 ): string {
-  const title = cleanPlanTitle(meta.planTitle, PLAN_TITLE_HEADING_MAX)
-  const heading = title === undefined ? labels.heading : `${labels.heading} · ${title}`
+  const title = cleanPlanTitle(options.planTitle, PLAN_TITLE_HEADING_MAX)
+  const heading = title === undefined ? options.heading : `${options.heading} · ${title}`
   const base = `${heading}\n${note}`
   // Over the limit the note still wins: fall back to the bare envelope with
   // the reader's words intact rather than silently chopping them mid-note.
   if (base.length >= SELECTION_LIMIT) return base
-  const intro = `\n\n${labels.quoteLabel}:\n`
+  const intro = `\n\n${options.quoteLabel}:\n`
   const budget = SELECTION_LIMIT - base.length - intro.length
   if (budget <= 2) return base
   const quoted = (text: string): string => text.split('\n').map(line => `> ${line}`).join('\n')
