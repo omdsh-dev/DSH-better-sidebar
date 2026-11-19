@@ -14,6 +14,9 @@
  *   registration of the same kind, so `openTab('files')` draws the plugin's
  *   explorer instead of the built-in tree; the built-in resumes when this
  *   plugin unregisters;
+ * - the host's `plan` kind is taken over the same way (logged plans and
+ *   temporary review previews), so the plugin's plan page — with selection
+ *   annotations — draws where the host's read-only preview did;
  * - every other descriptor (changes / subagent / side chat / terminal /
  *   browser / diff) becomes a page type of its own.
  *
@@ -28,7 +31,10 @@ import { flushDraftBackups } from '../editor-draft-backup.ts'
 import { t } from '../locales.ts'
 import { splitTrailingLineSpec } from '../path-line.ts'
 import { baseName } from '../paths.ts'
-import { parseFileAddress } from '../resource-address.ts'
+import { FILE_ADDRESS_PREFIX, parseFileAddress } from '../resource-address.ts'
+import {
+  PLAN_ADDRESS_PATTERN, PLAN_REVIEW_ADDRESS_PATTERN, isPlanResourceAddress,
+} from '../plan-address.ts'
 import type { ContextDiagnostics } from '../context-diagnostics.ts'
 import { isMultipleTab } from '../service.ts'
 import type { BetterSidebarService, TabDescriptor } from '../service.ts'
@@ -36,7 +42,7 @@ import type { SidebarStore } from '../state.ts'
 import { webTerminals } from '../terminal-client.ts'
 import type { NativeGuideCatalog } from './guide-catalog.ts'
 import { NativeGuide } from './guide.tsx'
-import { EDITOR_KIND, FILES_KIND, nativeId } from './guide-ids.ts'
+import { EDITOR_KIND, FILES_KIND, PLAN_KIND, nativeId } from './guide-ids.ts'
 import { mountedSessionId } from './surface.ts'
 import {
   NativeTabBody,
@@ -334,7 +340,6 @@ export function registerNativeSurface(deps: NativeSurfaceDeps): () => void {
         reportFailure?.('register editor close handler', error)
       }
     }
-
     // The start page: replace the host guide body with the plugin's own grid.
     // Its lifetime follows the `guideTakeover` preference, so turning the
     // switch off unregisters the chain entry and the shipped guide resumes.
@@ -469,6 +474,37 @@ export function registerNativeSurface(deps: NativeSurfaceDeps): () => void {
       return disposers
     }
 
+    /** The resource addresses one descriptor claims; page tabs claim none. */
+    const resourceClaimOf = (descriptor: TabDescriptor): {
+      patterns?: string[]
+      canOpen?: (address: string) => boolean
+    } => {
+      if (descriptor.id === EDITOR_KIND) {
+        return {
+          patterns: [`${FILE_ADDRESS_PREFIX}**`],
+          canOpen: (address: string) => {
+            const file = parseFileAddress(address)
+            // A non-file address, or one of the formats the built-in
+            // previews own, leaves the address to DSH's own `text` type.
+            return file !== undefined && !hostOwnedPath(file.path)
+          },
+        }
+      }
+      if (descriptor.id === PLAN_KIND) {
+        return {
+          // The host's plan package claims BOTH families at the `builtin`
+          // band (`dsh-resource://plan/**` for a logged plan invocation,
+          // `dsh-resource://plan-review/**` for a temporary review whose
+          // document rides navigation params). Claiming them at `extension`
+          // is what makes this plugin's plan page the type in force;
+          // unregistering it restores the built-in preview.
+          patterns: [PLAN_ADDRESS_PATTERN, PLAN_REVIEW_ADDRESS_PATTERN],
+          canOpen: isPlanResourceAddress,
+        }
+      }
+      return {}
+    }
+
     /** One descriptor's native type + body + title, as one disposable. */
     const registerDescriptor = (descriptor: TabDescriptor): (() => void) => {
       const id = nativeId(descriptor.id)
@@ -483,17 +519,7 @@ export function registerNativeSurface(deps: NativeSurfaceDeps): () => void {
         // the adapter faking it.
         keepMounted: true,
         ...(isMultipleTab(descriptor) ? { multiple: true } : {}),
-        ...(isEditor
-          ? {
-            patterns: ['dsh-resource://file/**'],
-            canOpen: (address: string) => {
-              const file = parseFileAddress(address)
-              // A non-file address, or one of the formats the built-in
-              // previews own, leaves the address to DSH's own `text` type.
-              return file !== undefined && !hostOwnedPath(file.path)
-            },
-          }
-          : {}),
+        ...resourceClaimOf(descriptor),
         // An external implementation outranks the product's own viewers, which
         // is what lets the plugin's editor take over file addresses.
         priority: 'extension',

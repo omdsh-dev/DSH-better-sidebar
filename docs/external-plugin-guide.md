@@ -5,7 +5,7 @@
 > 适用版本：**v0.4.0+**（`ctx.betterSidebar` 服务）；声明式设置 **v0.4.1+**；text/number 设置行 **v0.11.0+**；badge/生命周期/定向打开/插件设置/版本探测 **v0.12.0+**；select 设置行（`settingSelect`）与外链认领（`urlTarget`）**v0.13.0+**；统一 `@deepseek-ai/cordis` 类型基底 **v0.15.2+**；路由前缀安全解析（`hostRouteUrl`）**v0.25.0+**。当前版本 **v0.32.1**（14 条 DSH peer 下限 `^0.2.2-rc.2`，仅支持 DSH **0.2.2-rc.2+**；0.2.2-rc.1 请固定 v0.32.0；0.2.1 线（0.2.1-rc.1 ~ rc.5）请固定 v0.28.2；0.2.1-alpha.5 请固定 v0.28.0-alpha.0，0.2.0-rc.2 请固定 v0.26.1（v0.27.0 尚未发布），0.2.0-rc.1 请用 v0.24.1，0.1.7 线请用 v0.22.1——caret 范围跨 minor 不成立，`^0.1.7-rc.1` 会被 0.2.0 宿主的启动预检静默禁用）。**v0.19.0 移除了自绘右侧面板与自由窗口**（见 §0、§11）；**自 v0.20.0 开发线起**（**注意：0.20.0 从未发布到 npm，这些变更全部落在 v0.21.1**）插件**移除了自带的终端**（宿主 0.1.6 的 `ui-sidebar-terminal` 取代，见 §4.4）、**移除了终端固定（pin）**，并在 0.1.7 上**把浏览器视图与只读文件预览整体让给宿主**（`ui-sidebar-browser` / `ui-sidebar-documentpreview`，见 §4.4、§5.4）、**收敛了外链接管**（见 §4.1）、**重写了设置接入面**（`SettingsForms`，见 §8.2）、**给文件树加了实时刷新**（见 §10）；同时**删除了轮尾产物行接管**（DSH 0.1.6 把 `conversation.chat.turnTail` 从 chain 改成只能追加的 list，替换语义不复存在）。
 > **版本对照提醒**：当前版本 **v0.32.1**（DSH 0.2.2-rc.2+）；DSH **0.2.2-rc.1** 请固定插件 **v0.32.0**。0.x 的 caret 不跨 minor，因此 0.2.1 线（0.2.1-rc.1 ~ 0.2.1-rc.5）必须固定插件 **v0.28.2**——v0.29.0 从未发布；DSH 0.2.1-alpha.5 固定 v0.28.0-alpha.0，0.2.0-rc.2 固定 v0.26.1。市场安装器按插件 `latest` 安装、不按宿主版本选版本。
 > 上一次 0.2.2-rc.1 适配带来真实代码改动（`AgentModel` 取代可安装的 `ModelSelectionRef`、PTC 事件类型声明被移除、宿主图标改为 sprite），逐项记录见 [0.2.2-rc.1 适配记录](plans/2026-11-04-dsh-0.2.2-rc.1-adaptation.md)；**本次 0.2.2-rc.2 适配**迁移了宿主的新菜单定位 API（`getAnchorRect` → `anchorPoint`）与内置 Agent Team 服务（`tryMembership` → `isEnabled`），见 [0.2.2-rc.2 适配记录](plans/2026-11-12-dsh-0.2.2-rc.2-adaptation.md)；伴随依赖为 Cordis peer `^4.1.0` / dev `4.1.0`、group `~1.1.0`、schemastery `~3.19.0`、include `1.1.0`。
-> 权威代码：`src/client/service.ts`（服务实现）、`src/client/builtins/`（内置 6 tab + 3 viewer 参考实现）、`lib/types/client/service.d.ts`（类型声明）。
+> 权威代码：`src/client/service.ts`（服务实现）、`src/client/builtins/`（内置 7 tab + 3 viewer 参考实现）、`lib/types/client/service.d.ts`（类型声明）。
 > alpha.5 已删除 `@deepseek-ai/dsh-invariants` 与上游 `/invariant` 子路径；本插件同步移除 invariant companion，不提供替代注册服务。HTTP/WS 准入遵循宿主 Connection（见 §6）。
 > 当前目录语义：**已 attach** 的会话里，文件 / Git / 终端与新建 sidechat 跟随会话 `working_directory`（live 读 `ctx.workingDirectory.get(session)`）；**cold / detached** 会话读存储 header（`ctx.sessionPersistence.stat(id)`，只读第一个 zstd 帧，不解码日志；进程内 memo + 在飞去重），`activeWorktreeRootOf` 对 detached 直接返回该工作区地址。不要为取一个 cwd 调 `ctx.sessionQuery.observeSession`：它会解码整份会话日志并水合全部投影，启动期 fs-watch 每目录一帧的扇出会把它放大成数十次整读（详见 [2026-10-27 记录](plans/2026-10-27-workspace-cwd-over-cold-reads.md)）。linked worktree 仍按 base 目录记账；新 sidechat seed 尾部盖章当前 cwd，防止继承历史目录覆盖它。
 > alpha.5 的 `TerminalBlockLabels` 要求 `commandLine(line)`；两个渲染消费者与全部 21 份词典同步。宿主兼容性优先读 `package.json#engines.dsh`，缺席才读 DSH peers；本插件没有该字段，仍用 14 条 peers（第三方 `dsh.plugin.json` 不参与）。
@@ -59,7 +59,7 @@ better-sidebar 从 v0.4.0 起把自己改造成一个**注册表服务**：
 - **文件树行内动作（file action，v0.31.0+）**：往文件树的右键菜单里加一项（可选再加一个行内悬停按钮），拿到的是行的**绝对路径**——适合「上传到云端」「在 X 里打开」这类由你的插件自己完成动作的入口；
 - **文件预览器（file viewer）**：注册一种文件类型预览器，让用户在侧边栏打开文件时走你的渲染组件（覆盖或补充内置的 markdown/html/code）。**宿主自己也有文档预览**——DSH 0.1.7 的 `ui-sidebar-documentpreview` 拿走了表格 / PDF / 图片 / Office 等只读格式，本插件因此**拒绝**认领那些扩展名，你的 viewer 也接不到它们（清单与原因见 §5.4）。
 
-内置的 6 个 tab（editor / git——「Git」统一 tab（Source Control 视角 + 本轮文件视角，Git 视角内含只读提交图）/ subagent / sidechat / terminal-bottom / diff）和 5 个 viewer（markdown / html / jsonl / media / code）**自己也是通过同一套 API 注册的**（吃自己的狗粮），所以外部插件的能力与内置功能完全对等。**不再内置 terminal / browser 两个 tab 类型**：DSH 0.1.6 自带右列终端（`ui-sidebar-terminal`、kind `terminal`），浏览器是 0.1.6 的 `ui-sidebar-browser`（kind `browser`，**0.1.7 起只在 desktop profile 挂载**，Web profile 没有这个 kind）；插件的同名类型会让读者看到两份实现。同理，0.1.7 的 `ui-sidebar-documentpreview` 让插件的 image / pdf / Office / 表格预览失去意义，那三个 viewer 描述符（image / pdf / binary-download）已删除。
+内置的 7 个 tab（editor / git——「Git」统一 tab（Source Control 视角 + 本轮文件视角，Git 视角内含只读提交图）/ subagent / sidechat / terminal-bottom / diff / plan（宿主计划页接管，hidden））和 5 个 viewer（markdown / html / jsonl / media / code）**自己也是通过同一套 API 注册的**（吃自己的狗粮），所以外部插件的能力与内置功能完全对等。**不再内置 terminal / browser 两个 tab 类型**：DSH 0.1.6 自带右列终端（`ui-sidebar-terminal`、kind `terminal`），浏览器是 0.1.6 的 `ui-sidebar-browser`（kind `browser`，**0.1.7 起只在 desktop profile 挂载**，Web profile 没有这个 kind）；插件的同名类型会让读者看到两份实现。同理，0.1.7 的 `ui-sidebar-documentpreview` 让插件的 image / pdf / Office / 表格预览失去意义，那三个 viewer 描述符（image / pdf / binary-download）已删除。
 
 关键机制一句话：better-sidebar 的 client half 在 `apply()` 开头执行 `ctx.provide('betterSidebar', service)`（`src/client/index.tsx`），消费插件在 `inject` 里声明 `'betterSidebar'`，Cordis 保证服务就绪后才激活你的插件，然后你调用 `ctx.betterSidebar.registerTab(...)` / `registerFileViewer(...)` 完成注册，返回的 disposer 由 Cordis fiber 在卸载（HMR / 禁用）时自动调用。
 
@@ -362,6 +362,19 @@ interface TabComponentProps {
   scope: SessionScope          // { sessionId, cwd? } —— 会话标识，调用 /sidebar API 必带
   tab: SidebarTab              // 当前 tab 实例（含 id/type/title/path?/diff?/meta?）
   visible: boolean             // 是否当前激活 tab 且面板打开（不可见时暂停轮询等）
+  // 原生资源页用：导航地址、opener 的 navigation.params，以及宿主的资源读取
+  // 标准 hook（与原生的 useTabInfo 同一注入通道）。普通页面可以不看。
+  native?: {
+    address: string
+    params?: unknown
+    useResource?: (address: string) => {
+      status: 'none' | 'loading' | 'live' | 'failed'
+      value: unknown
+      failure?: unknown
+    }
+    // 资源页学到文档标题后回写页签标题（可选）
+    onTitle?: (title: string) => void
+  }
   // 以下由内置 tab 使用，外部 tab 可忽略：
   expanded?: string[]          // 文件树的展开目录集
   onToggleDir?: (path: string) => void
@@ -481,6 +494,7 @@ ctx.effect(() => {
 | `git` | 20 | 是 | 是（本轮文件操作数） | 「Git」统一 tab（id 保留 `git` 以兼容持久化布局）：**Git 视角**（Source Control：独立折叠的 Changes / Graph；Changes 内为多行 Message + 仅填草稿的 Generate、Merge Changes → Staged Changes → Changes（资源组也独立折叠，计数常驻标题最右，文件行整行 hover）；Git 刷新仅留在 Changes 标题，外层本轮文件刷新保留；真实 parent hashes 泳道图；常驻底栏为可点击分支 + `*`/`+`/`!` 标记、upstream 的 behind↓ / ahead↑ 及安全 Pull-then-Push 同步；Push/Pull 与 worktree·子仓库选择移入 More Actions；提交只消费已暂存项，冲突/空消息/无暂存时禁止，草稿按会话·仓库·worktree 隔离）+ **本轮文件视角**（原 file-trace：模型读/写/编辑实时折叠，按操作时间倒序平铺、不按文件分组，每行「操作 → 文件路径 → 大小/时间」，支持类型筛选）；会话事件经插件自有宿主路由 `changes.ops` 供给（live 日志优先、冷会话回放持久化记录，`afterSeq` 增量），primed 后用 `wait` 挂在宿主侧等下一个工具事件而不是重放整窗），badge 读 tab 轮询写入的同步缓存。页头使用宿主公开的 `@deepseek-ai/dsh-client-ui-primitives` 中的 `SegmentedControl`（36px 高度、主题 Token 样式；自动处理选中状态、ARIA 关系及左右方向键、Home/End 键盘导航）。两视角共用底部可拖拽预览面板（`tab.meta.lens/previewH` 持久化），diff 渲染统一走 `src/client/diff/`（`DiffRows`/`DiffFiles`：mod 配对 + 行内高亮 + 语法着色 + 上下文折叠）；Git 目标可展开为独立 diff tab（落进工作台的 diff 分栏） |
 | `subagent` | 30 | 是 | 否 | 任务管理（工作流图/树、团队任务板、后台任务抽屉） |
 | `sidechat` | 35 | 否（`sidechat:<uuid>`，按 `meta.threadId` 去重） | 否 | 侧边对话（默认共用一页；设置可切换「每个对话独立页」）：共用页再次打开聚焦同一页并回到本会话最近线程；独立页每个线程一个原生 occurrence，按 contentId 精确恢复。打开即建空线程（首条消息赢得标签并同步标题）；线程 = 插件自建子会话（种子继承父会话上下文，进行中回合以 `interrupted` 闭合；种子带合法 `subagent/descriptor`，SubagentView 按 `Side: ` 前缀过滤），`origin:'subagent'` 隐藏于主列表；走 `/sidebar/api/sidechat.*` 路由；头部菜单切换/重开（`parkSidechatReopen` + 确定性 id），关 Tab 释放 live agent；重开经 `collectOwnEvents` 回源到种子边界；「保存为新会话」= `session.fork`（`this` 敏感）。[设计文档](plans/2026-08-20-sidechat-tab-design.md) |
+| `plan` | - | 否（按宿主计划地址） | 是 | **宿主 `kind='plan'` 的接管**：`extension` 带注册 `dsh-resource://plan/**` 与 `dsh-resource://plan-review/**`，自绘计划页并提供划选批注；批注在输入框生成引用 chip，正文不留标记。hidden：计划只由宿主的计划卡片 / 评审卡打开，不进 + 菜单。正文来自 `useResource`（日志计划）或 `navigation.params.planReview`（临时评审）。 |
 | `diff` | -1 | 否（按 id 去重） | 是 | 差异查看（changes tab 的预览面板「展开为独立页签」触发，同一渲染栈） |
 | `terminal-bottom` | 40 | 否（`createTab` 每次铸新 id） | 否 | 底部工作台的终端（#774）。**`bottomOnly`**（见 §4 与「原生承载面」表的说明）：没有原生 tab 类型、不占 guide 条目，只在底部 `+` 菜单里。页面是插件自绘的 xterm（`lib/client-terminal.js` chunk），**进程由宿主的会话级终端服务 `ctx.webTerminals` 供给**（结构化探测，不写进 `dsh.client.inject`——缺服务只会让这一行置灰，不会把整行拖成 `pending`）。恢复靠宿主持久化的 `(sessionId, contentId) → 终端 id` 绑定（`contentId` 形如 `dsh-better-sidebar:terminal-bottom:<instance>`，**每个页签一个实例**，#926），关页签走 `onClose` → `webTerminals.close()` 结束进程（卸载**不**关：宿主的契约是「视图跨 DOM 卸载存活」，刷新要能认回同一个 shell），`tab.meta.terminalRun`（默认 0）是「新建终端」换代号用的代号位。[设计文档](plans/2026-10-05-bottom-terminal-tab.md) |
 
@@ -1249,6 +1263,19 @@ if (ctx.betterSidebar.features.includes('tabActions')) {
 
 ---
 
+### 7.5 计划页划选批注
+
+内置页签 `plan` 接管宿主计划 tab 后，`PlanViewer` 在计划正文上提供划选批注，批注复用引用 chip。第三方插件不需要复刻，但下面这些契约是公开的：
+
+- **资源内容**：body slot 的框架 props 里除 `useTabInfo` 外还有宿主资源模型的 `useResource(address)`（`GlobalStandardProps`）。日志计划地址 `dsh-resource://plan/<sessionId>/<callId>` 返回 `{ callId, markdown, title }`；`dsh-resource://plan-review/<sessionId>/<requestKey>` 没有 provider，文档在 `navigation.params.planReview = { markdown, title }`。
+- **交互**：划选 → 浮层「加批注」→ 小框写批注 → 提交。提交后输入框直接生成 chip；计划正文无角标、无卡片、无额外 annotation store，chip 是唯一载体。
+- **chip**：plan 批注复用 `betterSidebarQuote` source 与 `dsh-better-sidebar:quote-refs` store；`QuoteSelection.kind='plan'` 时 `path` 可缺省、chip 不设 `appearance:'file'`、`openReference` 返回 `false`。发送展开为「批注 + 原文 blockquote」，通常 ≤500 字符；批注本身超长时保留完整批注、只裁掉原文引用。
+- **失败处理**：插入失败时批注框保持打开并提示，已写的批注不丢；只有显式取消或提交成功才关闭，不另设 pending 列表。
+- **已知限制**：批注按钮由 `mouseup` 触发，键盘划选（Shift+方向键）与触摸长按选择不会弹出按钮；计划正文本身仍可正常选择和复制。
+- **生命周期**：chip 的删除/发送由 quote store 与宿主草稿决定；计划 tab 关闭无需清理（没有独立的计划批注记录）。
+
+---
+
 ## 8. 声明式设置（v0.4.1+）
 
 每个注册的 tab / viewer **自动**出现在 DSH 设置页「侧边卡片」分区（`SideCardSection` 按注册表驱动渲染，无硬编码），**`hidden: true` 的 tab 类型除外**：
@@ -1527,7 +1554,7 @@ function parseCsv(text: string): string[][] { /* ... */ }
 
 better-sidebar 的内置 tab 和 viewer 就是参考实现（"吃狗粮"），调试时直接读：
 
-- **`src/client/builtins/`**：6 个内置 tab（tabs.tsx）+ 3 个内置 viewer（viewers.tsx）的注册代码 + 聚合与 disposer 生命周期（index.ts）；Office / 表格 / 图片 / PDF 预览**不在插件里**（宿主的 `ui-sidebar-documentpreview` 负责，见 §5.4）
+- **`src/client/builtins/`**：7 个内置 tab（tabs.tsx）+ 3 个内置 viewer（viewers.tsx）的注册代码 + 聚合与 disposer 生命周期（index.ts）；Office / 表格 / 图片 / PDF 预览**不在插件里**（宿主的 `ui-sidebar-documentpreview` 负责，见 §5.4）
 - **`src/client/service.ts`**：`BetterSidebarService` 接口 + `createBetterSidebarService` 工厂实现（含匹配算法、dedupe、createTab、启用态 gating）
 - **`src/client/Sidebar.tsx`**：底部工作台外壳 + `TabContent` 分发（查 `getTab` → 调 descriptor.component；未注册 → `<OrphanedTab/>`）、`+` 菜单构建（order 排序 + available disabled + 禁用过滤）
 - **`src/client/native/`**：原生右侧栏接入（tab 类型注册、合成 `SidebarTab` 适配、资源地址、跨会话打开排队）
@@ -1538,7 +1565,7 @@ better-sidebar 的内置 tab 和 viewer 就是参考实现（"吃狗粮"），�
 - **`src/client/FileTree.tsx`** / **`TreePanel.tsx`** / **`src/fs-search.ts`** / **`src/search-engines.ts`**：文件树 / 树面板 / host 文件搜索（`fs.search`）。查询分三态（#879）：**普通名字**走引擎链——优先探测本机 fd / rg（DSH 自带 ripgrep 优先），缺失或运行失败回退 JS 遍历，两条路径共用同一份 `exclude` 探针（引擎侧是输出后置过滤：匹配条目不出现、被排除目录不下钻）；**带分隔符的相对片段**（如 `records/exp1`，名字永不包含分隔符）由 JS 遍历按根相对路径匹配、不进引擎；**指名单一目标的查询**（绝对路径、`~/…`、`./x`、`../x`）经 `resolveTarget`（与 fs.read 同一解析原语：`~` 展开、会话 cwd 拼接、win32 WSL/dsh-remote 命名空间改写、词法 resolve）stat 直取，命中返回解析后的绝对路径、目标缺失立即空结果（不烧遍历预算，exclude 不作用于显式路径意图）。`dirs` 让目录命中行导航文件树而不是当文件打开；调试插桩 `DSH_SEARCH_DEBUG=1` 写 `$DSH_HOME/search-debug.log`，缺省 `~/.dsh`。host 的 `listDirectory` 给目录行标记 `compact`（仅一个非 symlink 有效子项；POSIX 隐藏与 `explorerExclude` 排除条目不计入），client 的 `file-tree-compact.ts` 把单目录链折叠成 `a/b/c` 面包屑行并整链展开/折叠；`explorerExclude`（VS Code `files.exclude` 风格 glob 子集，见 `exclude-patterns.ts`；editor 卡片的声明式 patterns 行可编辑）把匹配条目从树与搜索中彻底移除，两个界面共用同一 host 侧编译好的 matcher；host 侧目录缓存按「路径 + 行额 + 模式集身份」分键，改排除列表即换键。测试：`tests/fs-tree-compact.spec.ts` / `file-tree-compact.spec.ts` / `fs-tree-exclude.spec.ts` / `exclude-patterns.spec.ts` / `fs-search.spec.ts` / `search-engines.spec.ts`
 - **`src/client/markdown-html.ts`** / **`MarkdownHtml.tsx`** / **`md-toc.tsx`**：markdown 内嵌 HTML 管线与目录大纲（注意 `md-toc.tsx` 头注释的「子组件读父 ref 为 null」时序陷阱）
 - **`src/agent-opens.ts`** / **`/sidebar/ws/agent-opens`**：模型主动打开（`sidebar_open` 工具 + `agentOpenTools` 设置，默认关闭）；文件夹窗口 = `meta.dir: true` 的 editor tab（[设计文档](plans/2026-08-23-agent-open-tools-design.md)）。文件夹窗口的 `path` 必须是**平台原生绝对路径**（`resolveNativeSidebarPath`）：`FileTree` 按请求的根路径缓存层级，host 返回的是 `path.resolve` 后的绝对路径，相对路径或混合斜杠会让树永远停在「加载中」
-- **`tests/service.spec.ts`** / **`tests/builtins.spec.ts`**：注册表生命周期 / 匹配算法 / dedupe / createTab / 启用态 gating；内置清单断言（6 tab + 3 viewer + 声明式元数据，并显式断言 image / pdf / binary-download **不在**内置清单里、但作为公开契约仍可被第三方注册）
+- **`tests/service.spec.ts`** / **`tests/builtins.spec.ts`**：注册表生命周期 / 匹配算法 / dedupe / createTab / 启用态 gating；内置清单断言（7 tab + 3 viewer + 声明式元数据，并显式断言 image / pdf / binary-download **不在**内置清单里、但作为公开契约仍可被第三方注册）
 - **`src/fs-watch.ts`** / **`src/client/use-dir-watch.ts`**：文件树实时刷新（按展开目录 watch，150ms 去抖、每连接 64 个句柄上限；`tests/fs-watch.spec.ts` 守护）
 - **`docs/plans/`**：逐特性设计文档（含实施偏差记录，以现状为准）；入口如 `2026-08-11-service-registry-design.md` / `2026-08-11-declarative-sidebar-settings-design.md`
 

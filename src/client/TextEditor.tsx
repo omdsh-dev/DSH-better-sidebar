@@ -21,7 +21,7 @@ import { EditorView as CodeMirrorView, keymap, lineNumbers } from '@codemirror/v
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
 import { openSearchPanel } from '@codemirror/search'
 import { IconCheckOutlineRegular, IconSearchOutlineRegular, MarkdownDelegateProvider, MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
-import { markdownTextProps } from './markdown-labels.tsx'
+import { markdownCopyLabels, markdownTextProps } from './markdown-labels.tsx'
 import {
   applyGitLineKinds,
   CmGitGutterCompartment,
@@ -43,14 +43,15 @@ import { SandboxStatusBar } from './SandboxStatusBar.tsx'
 import { insertReferenceOrText, type PendingReference } from './conversation-draft.ts'
 import { useSelectionPopup } from './selection-popup.ts'
 import { buildSelectionInsert, linesOfSelection, type SelectionLines } from './selection-payload.ts'
-import { insertQuoteChip, type QuoteSelection } from './selection-quote.ts'
+import { insertQuoteRecord, type QuoteSelection } from './selection-quote.ts'
 import { analyzeMarkdownHtml } from './markdown-html.ts'
 import { LazyMermaidMarkdown, MarkdownDocument, type MarkdownHtmlMedia } from './MarkdownHtml.tsx'
 import { LargeFileView } from './LargeFileView.tsx'
 import { useMarkdownSurface } from './use-markdown-surface.ts'
 import { MdToc } from './md-toc.tsx'
 import { splitMermaidBlocks } from './mermaid-blocks.ts'
-import { localeSignature, t } from './locales.ts'
+import { t } from './locales.ts'
+import { useLocaleSignature } from './locale-hooks.ts'
 import { HtmlPreviewFrame } from './HtmlPreviewFrame.tsx'
 import type { EditorToolbarState, FileViewerProps } from './service.ts'
 import css from './sidebar.module.css'
@@ -186,10 +187,10 @@ export function TextEditor(props: FileViewerProps) {
    *  setting flip instead of rebuilding the view). */
   const gitCompRef = useRef<CmGitGutterCompartment | null>(null)
   /** The effective UI language (DSH locale id + better-locale override id).
-   *  Read during render and subscribed below: the tab-cell memo only
-   *  compares the DSH locale revision, so a better-locale override switch
-   *  would otherwise never reach this component. */
-  const [localeSig, setLocaleSig] = useState(() => localeSignature())
+   *  Read during render and kept fresh: the tab-cell memo only compares the
+   *  DSH locale revision, so a better-locale override switch would otherwise
+   *  never reach this component. */
+  const localeSig = useLocaleSignature(ctx)
   /** The app's resolved color scheme; the editor re-themes in place on flips. */
   const [dark, setDark] = useState(() => isDarkScheme())
   /** The markdown preview container (selection-containment + line lookup). */
@@ -286,7 +287,7 @@ export function TextEditor(props: FileViewerProps) {
       // The quote chip first (a clickable, source-owned chip), then #1052's
       // plain built-in reference chip, then bare text — every step down is one
       // the host actually supports, never a silent no-op.
-      if (insertQuoteChip(ctx, scope.sessionId, insert.selection)) return
+      if (insertQuoteRecord(ctx, scope.sessionId, insert.selection) !== undefined) return
       insertReferenceOrText(ctx, scope.sessionId, insert)
     },
     // The surface that must stay on screen: the markdown preview container
@@ -295,27 +296,6 @@ export function TextEditor(props: FileViewerProps) {
   })
 
   useEffect(() => subscribeColorScheme(() => { setDark(isDarkScheme()) }), [])
-
-  // Keep `localeSig` fresh from BOTH language sources: the DSH locale service
-  // and (when @huanlin/dsh-plugin-better-locale is installed) the override
-  // store. The sidebar root re-renders the tree on a DSH locale switch, but
-  // an override switch is not part of the tab-cell memo key, so this
-  // component subscribes directly instead of relying on a parent render.
-  useEffect(() => {
-    const sync = (): void => { setLocaleSig(localeSignature()) }
-    sync()
-    const locale = ctx.locale as { subscribe?: (cb: () => void) => () => void } | undefined
-    type BetterLocaleStore = { subscribe?(listener: () => void): () => void }
-    const betterLocale = typeof ctx.get === 'function'
-      ? (ctx as unknown as { get(name: 'betterLocale'): BetterLocaleStore | undefined }).get('betterLocale')
-      : undefined
-    const offLocale = locale?.subscribe?.(sync)
-    const offOverride = betterLocale?.subscribe?.(sync)
-    return () => {
-      offLocale?.()
-      offOverride?.()
-    }
-  }, [ctx])
 
   // A new file (tab switch) starts clean: fresh preview mode, no draft.
   useEffect(() => {
@@ -987,13 +967,7 @@ export function TextEditor(props: FileViewerProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [scope.sessionId, scope.cwd, path],
   )
-  const codeLabels = {
-    copyLabel: t('copy'),
-    copiedLabel: t('copied'),
-    codeLabel: t('codeBlockTitle'),
-    wrapLabel: t('codeBlockWrap'),
-    unwrapLabel: t('codeBlockUnwrap'),
-  }
+  const codeLabels = markdownCopyLabels()
 
   /**
    * Selection popup for the markdown preview: a mouse-up inside the preview

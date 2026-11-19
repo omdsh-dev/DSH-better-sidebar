@@ -4,6 +4,9 @@
 
 ### 未发布
 
+- 📝 **计划页支持划选批注**：插件在 `extension` 带接管宿主的 `kind='plan'` 页签（`dsh-resource://plan/**` 日志计划与 `dsh-resource://plan-review/**` 临时评审）。在右侧栏计划正文里划选文字 → 点「加批注」→ 小框里写批注 → 提交后输入框直接生成一枚计划批注 chip；计划正文本身不留角标、不弹卡片、不改内容。chip 复用 `betterSidebarQuote` 的 source/codec/store：不设文件外观、点击不跳文件，发送时展开为「计划批注 · 标题 + 批注 + 原文 blockquote」，模型收到的就是批注与原文；批注本身超长时保留完整批注、只裁掉原文引用。插入失败时批注框保持打开，已写的批注不会丢。批注语义是「让模型改计划」，不是批准。
+  - 🧪 测试：`tests/plan-quote.spec.tsx`（划选→浮层→小框→chip、计划正文无标记、插入失败保留草稿可重试、textarea 聚焦不关闭、IME、隐藏页签关闭弹框、临时评审与过期态）、`tests/selection-quote.spec.ts`（plan 记录无 path / 无 file 外观 / codec 展开 / 点击拒绝）、`tests/selection-payload.spec.ts`（批注载荷与 500 字符上限）、`tests/native-surface.spec.ts` 与 `tests/native-registration.spec.ts`（kind + 双 pattern + slot key 同源 + 无 guide + teardown）、`tests/builtins.spec.ts`（7 个内置页签、plan hidden）。
+
 - 💻 **侧边对话显示 PTC（run_code）工具调用树**：`run_code` 行收起时显示模型写的 description，展开后显示程序代码和最终结果；程序内通过 PTC 派发的 bash / read / grep / edit 等子调用缩进挂在它下方，根行收起也可见，并复用终端 / diff / read / search / web 结构卡片。运行中、失败、无 start 的 dispatch 都有对应显示；PTC 内成功 write/edit 的文件也进入可点击路径提及。`present` 仍保留顶层交付卡片，同时在子调用区留下一行。
   - 🧪 测试：`tests/sidechat-ptc-rows.spec.ts`（配对 / 运行态 / 失败 / 无 start / 嵌套 / 父行缺失 / 身份复用）、`tests/sidechat-ptc-subcalls.spec.tsx`（description 摘要、代码体、缩进与卡片、根行收起仍可见）、`tests/sidechat-mention-sources.spec.tsx`（PTC mutation 进入提及、read 不进入）。
 

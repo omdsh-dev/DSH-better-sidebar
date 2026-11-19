@@ -23,7 +23,7 @@
  * Nothing here is a singleton: the registry is created once per client
  * activation and handed to every registration.
  */
-import { createElement, useEffect, useSyncExternalStore } from 'react'
+import { createElement, useCallback, useEffect, useSyncExternalStore } from 'react'
 import type { ReactNode } from 'react'
 import type { Context } from '../../context-types.ts'
 import type { SessionScope } from '../api.ts'
@@ -34,7 +34,8 @@ import type { ContextDiagnostics } from '../context-diagnostics.ts'
 import { referenceInChat } from '../reference-in-chat.ts'
 import { useSessionRoot } from '../use-session-root.ts'
 import { useSessionScope } from '../session-scope.ts'
-import type { BetterSidebarService, NativePathTab } from '../service.ts'
+import type { BetterSidebarService, NativePathTab, NativeResourceSnapshot } from '../service.ts'
+import { useNoopResource } from '../service.ts'
 import { t } from '../locales.ts'
 import { isUnread, toggleExpanded } from '../state.ts'
 import type { SidebarStore, SidebarTab, TabType } from '../state.ts'
@@ -76,7 +77,9 @@ export interface NativeTabInfo {
     readonly visible: boolean
     readonly navigation: {
       readonly address: string
-      readonly params: NativeTabParams | undefined
+      /** The opener's params, unvalidated by the host (seed fields are picked
+       *  out by the adapter; resource pages validate their own, e.g. planReview). */
+      readonly params: unknown
       readonly revision: number
     }
     readonly signal: AbortSignal
@@ -504,6 +507,12 @@ export interface NativeBodyInjected {
 /** The props the slot framework adds to every tab body and title. */
 export interface NativeBodyFrameworkProps {
   readonly useTabInfo: () => NativeTabInfo
+  /**
+   * The host's global resource reader (`GlobalStandardProps` in the slots
+   * package). Absent on a host that predates the resource model and on the
+   * unit harnesses; the plan page then falls back to review params only.
+   */
+  readonly useResource?: (address: string) => NativeResourceSnapshot
 }
 
 /** Subscribe a component to its own record's mutations. */
@@ -528,6 +537,9 @@ function useRecordVersion(records: NativeTabRecords, sessionId: string, id: stri
  */
 export function NativeTabBody(props: NativeBodyInjected & NativeBodyFrameworkProps): ReactNode {
   const { ctx, store, service, records, descriptorId, useTabInfo } = props
+  // Always hand the body a FUNCTION. The fallback calls a hook so the plan
+  // page's hook count is the same with and without the host's resource model.
+  const useResource = props.useResource ?? useNoopResource
   const info = useTabInfo()
   const nativeTab = info.tab
   // TWO sessions meet here and they are not interchangeable: the SEAT session
@@ -545,9 +557,16 @@ export function NativeTabBody(props: NativeBodyInjected & NativeBodyFrameworkPro
   // `version` is not read: it only forces this render when the record changed.
   void version
   const derived = props.paramsOf?.(info)
-  const params = derived === undefined && nativeTab.navigation.params === undefined
+  const nativeParams = nativeTab.navigation.params
+  const seedParams = typeof nativeParams === 'object' && nativeParams !== null
+    ? nativeParams as NativeTabParams
+    : undefined
+  const params = derived === undefined && nativeParams === undefined
     ? undefined
-    : { ...derived, ...nativeTab.navigation.params }
+    : { ...derived, ...seedParams }
+  const setTitle = useCallback((title: string): void => {
+    records.update(seatSessionId, nativeTab.id, { title })
+  }, [records, seatSessionId, nativeTab.id])
   const descriptor = service.getTab(descriptorId)
   const view = records.ensure({
     sessionId: seatSessionId,
@@ -599,6 +618,12 @@ export function NativeTabBody(props: NativeBodyInjected & NativeBodyFrameworkPro
           scope,
           tab: view.tab,
           visible: nativeTab.visible,
+          native: {
+            address: nativeTab.navigation.address,
+            params: nativeTab.navigation.params,
+            useResource,
+            onTitle: setTitle,
+          },
           expanded: view.expanded,
           revealed: view.revealed,
           onToggleDir: (path: string) => { records.toggleExpanded(seatSessionId, nativeTab.id, path) },

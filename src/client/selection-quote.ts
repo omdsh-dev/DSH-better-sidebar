@@ -28,9 +28,10 @@
  *
  * Degradation: without the input-trigger service (older hosts), before the
  * source registers, or when the record cannot be persisted, {@link
- * insertQuoteChip} reports false and the caller keeps the #1052 behavior — the
- * plain built-in reference chip, or the fenced text on hosts with no chip
- * channel at all. A failed quote insert never leaves a dead chip behind: the
+ * insertQuoteRecord} reports undefined — the text viewers keep the #1052
+ * fallback (the plain built-in reference chip, or the fenced text on hosts
+ * with no chip channel), while the plan page keeps its note box open to retry.
+ * A failed quote insert never leaves a dead chip behind: the
  * record is written BEFORE the chip is inserted, and a store write that does
  * not land (quota, private mode) rolls it back and falls back — the other
  * bundle instance resolves refs through `localStorage`, so an unpersisted
@@ -41,7 +42,10 @@
 import type { Context } from '../context-types.ts'
 import { insertDraftReference, type PendingReference } from './conversation-draft.ts'
 import { t } from './locales.ts'
-import { buildSelectionInsert, headerOf, whereOf, type SelectionLines } from './selection-payload.ts'
+import {
+  buildPlanAnnotationInsert, buildSelectionInsert, cleanPlanTitle, whereOf,
+  type SelectionLines,
+} from './selection-payload.ts'
 
 /** The input-trigger source name the quote chips route by. */
 export const QUOTE_SOURCE = 'betterSidebarQuote'
@@ -58,16 +62,32 @@ export const QUOTE_REGISTER_RETRIES = 20
 /** Delay between registration attempts (ms). */
 export const QUOTE_RETRY_MS = 500
 
+/** What a quote came from; absent on persisted records means a legacy file quote. */
+type QuoteKind = 'file' | 'plan'
+
 /**
  * The selection a viewer hands over when the popup commits: exactly the facts
  * the fenced insert already encoded, kept structured so the chip can act on
  * them (jump to the lines, re-serialize).
  */
 export interface QuoteSelection {
-  path: string
+  /**
+   * What the selection came from. A file selection (the original behavior)
+   * carries a path and a line span; a plan selection carries a plan address,
+   * the note, and the quoted plan text. Omitted means `'file'` for records
+   * written before the plan page existed.
+   */
+  kind?: QuoteKind
+  path?: string
   cwd?: string
   lines?: SelectionLines
   text: string
+  /** The plan document's tab address (`dsh-resource://plan/…`). */
+  planId?: string
+  /** The plan's heading, used in the chip label. */
+  planTitle?: string
+  /** The reader's annotation for the quoted plan text. */
+  note?: string
 }
 
 /**
@@ -83,19 +103,24 @@ export interface QuoteRecord {
   id: string
   /** The session the chip belongs to (clicks from other sessions refuse). */
   sessionId: string
-  /** The monotonic chip number (kept across reloads so labels do not collide). */
+  /** The monotonic record number (FIFO order; the chip's `ref` adds a suffix). */
   n: number
-  /** The quoted file. */
-  path: string
-  /** The session cwd the header path was relativized with. */
+  /** The selection's kind; absent means `'file'` (legacy records). */
+  kind?: QuoteKind
+  /** The quoted file (file selections only). */
+  path?: string
+  /** The session cwd the header path was relativized with (file selections). */
   cwd?: string
-  /** The quoted source span, when the selection mapped to lines. */
+  /** The quoted source span, when the selection mapped to lines (file selections). */
   lines?: SelectionLines
-  /** The chip's visible text (`引用 a.md L12-15`). */
+  /** The chip's visible text (`引用 a.md L12-15` or `计划批注 · …`). */
   label: string
-  /** What copying the chip yields (the `path:lines` header line). */
-  clipboardText: string
-  /** The fenced block (header only past the limit) `codec.serialize` returns. */
+  /** What copying the chip yields (the file header). Plan records omit it —
+   *  their payload is `text` already, and storing both doubled the record. */
+  clipboardText?: string
+  /** The plan document's address (plan selections only). */
+  planId?: string
+  /** The payload `codec.serialize` returns. */
   text: string
 }
 
@@ -128,16 +153,24 @@ const records = new Map<string, QuoteRecord>()
 /** Monotonic chip numbering; restored from the store so numbers keep growing
  *  across reloads instead of colliding with chips still in old drafts. */
 let nextN = 1
-let storeLoaded = false
+/** The exact stored value this instance's memory was last synced with. When
+ *  `getItem` still returns it, the memory already reflects the store — either
+ *  our own `saveStore` wrote it or a read merged it — so the rest of an insert
+ *  batch can reuse those records without another full parse. */
+let storeSyncedRaw: string | null | undefined
 
 /**
  * Read the persisted store into memory. Safe to call repeatedly: the merge is
- * idempotent and `nextN` never moves backwards.
+ * idempotent and `nextN` never moves backwards. The `getItem` compare is cheap
+ * and still catches other pages' writes; only a changed value pays for
+ * `JSON.parse` plus the per-entry validation loop.
  */
 function readStoreIntoMemory(): void {
   try {
     if (typeof localStorage === 'undefined') return
     const raw = localStorage.getItem(QUOTE_STORE_KEY)
+    if (raw === storeSyncedRaw) return
+    storeSyncedRaw = raw
     if (raw === null) return
     const parsed: unknown = JSON.parse(raw)
     if (!Array.isArray(parsed)) return
@@ -152,23 +185,30 @@ function readStoreIntoMemory(): void {
   }
 }
 
-/** First-load wrapper (startup and insert paths). */
-function loadStore(): void {
-  if (storeLoaded) return
-  storeLoaded = true
-  readStoreIntoMemory()
+function isSelectionLines(value: unknown): value is SelectionLines {
+  if (typeof value !== 'object' || value === null) return false
+  const lines = value as Partial<SelectionLines>
+  return typeof lines.start === 'number' && Number.isInteger(lines.start) && lines.start > 0
+    && typeof lines.end === 'number' && Number.isInteger(lines.end) && lines.end >= lines.start
 }
 
 function isQuoteRecord(value: unknown): value is QuoteRecord {
   if (typeof value !== 'object' || value === null) return false
   const record = value as Partial<QuoteRecord>
+  if (record.kind !== undefined && record.kind !== 'file' && record.kind !== 'plan') return false
+  const plan = record.kind === 'plan'
   return typeof record.id === 'string'
     && typeof record.sessionId === 'string'
     && typeof record.n === 'number'
-    && typeof record.path === 'string'
+    && Number.isInteger(record.n) && record.n > 0
+    // A legacy record (no `kind`) is a file quote and always had a path; a
+    // plan record legitimately has none.
+    && (plan ? typeof record.planId === 'string' && record.planId !== '' : typeof record.path === 'string' && record.path !== '')
     && typeof record.text === 'string'
     && typeof record.label === 'string'
-    && typeof record.clipboardText === 'string'
+    && (record.clipboardText === undefined || typeof record.clipboardText === 'string')
+    && (record.cwd === undefined || typeof record.cwd === 'string')
+    && (record.lines === undefined || isSelectionLines(record.lines))
 }
 
 /**
@@ -187,8 +227,16 @@ function saveStore(): boolean {
     const kept = all.slice(over)
     // An empty store is no key at all: the first quote (or a rolled-back
     // record) must not leave an `[]` behind for the next read to interpret.
-    if (kept.length === 0) localStorage.removeItem(QUOTE_STORE_KEY)
-    else localStorage.setItem(QUOTE_STORE_KEY, JSON.stringify(kept))
+    if (kept.length === 0) {
+      localStorage.removeItem(QUOTE_STORE_KEY)
+      storeSyncedRaw = null
+    } else {
+      const serialized = JSON.stringify(kept)
+      localStorage.setItem(QUOTE_STORE_KEY, serialized)
+      // Memory now equals what is stored. Record the exact value so the next
+      // insert in the batch reuses memory instead of parsing our own write.
+      storeSyncedRaw = serialized
+    }
     // Evict from MEMORY only after the write landed: a failed write must not
     // cost this page records it could still resolve.
     if (over > 0) for (const dropped of all.slice(0, over)) records.delete(dropped.id)
@@ -213,7 +261,6 @@ function quoteId(n: number): string {
  * @returns the record, or `undefined` when it is not (or no longer) stored.
  */
 export function resolveQuote(ref: string): QuoteRecord | undefined {
-  loadStore()
   readStoreIntoMemory()
   return records.get(ref)
 }
@@ -234,6 +281,10 @@ function createQuoteSource(ctx: Context): SidebarQuoteSource {
       try {
         const record = resolveQuote(reference.ref)
         if (record === undefined || record.sessionId !== session.sessionId) return false
+        // A plan annotation has no file to jump to. Returning false leaves the
+        // click with the host's own chip behavior instead of asking the file
+        // opener to open a plan address.
+        if (record.kind === 'plan' || record.path === undefined) return false
         ctx.betterSidebar.openFile(
           { sessionId: session.sessionId, ...(record.cwd === undefined ? {} : { cwd: record.cwd }) },
           record.path,
@@ -248,7 +299,11 @@ function createQuoteSource(ctx: Context): SidebarQuoteSource {
       }
     },
     codec: {
-      clipboardText: ref => resolveQuote(ref)?.clipboardText ?? ref,
+      clipboardText: (ref) => {
+        const record = resolveQuote(ref)
+        // A plan record stores only the payload (see QuoteRecord.clipboardText).
+        return record?.clipboardText ?? record?.text ?? ref
+      },
       serialize: async (ref) => {
         const record = resolveQuote(ref)
         if (record === undefined) {
@@ -325,7 +380,7 @@ function tryRegisterOnce(ctx: Context): boolean {
  * retrying briefly because the plugin's apply can run before the host package
  * provides the service. Returns the disposer (idempotent). A commit that finds
  * the source unregistered re-attempts on the spot (see
- * {@link insertQuoteChip}) — the self-heal covers fiber disposals (session
+ * {@link insertQuoteRecord}) — the self-heal covers fiber disposals (session
  * switch, socket reconnect, HMR) that never get a re-apply.
  * @param ctx - the client context.
  * @returns the disposer.
@@ -358,28 +413,56 @@ export function registerQuoteSource(ctx: Context): () => void {
 
 // ── Insert (popup commit) ───────────────────────────────────────────────────
 
-/**
- * The legacy direct insert for one selection — the text #1052's chip carries,
- * and what lands in the draft when chips are unavailable.
- * @param sel - the selection.
- * @returns the fenced block (or the bare header line when over the limit).
- */
-export function quoteFallbackInsert(sel: QuoteSelection): string {
-  return buildSelectionInsert(sel.path, sel.cwd, sel.lines, sel.text).text
+/** Longest plan title in a chip label (code points). */
+const CHIP_TITLE_MAX = 23
+
+/** The chip label's title part; the generic label when the plan has none. */
+function chipTitleOf(title: string | undefined): string {
+  return cleanPlanTitle(title, CHIP_TITLE_MAX) ?? t('plan')
+}
+
+/** The plan annotation envelope (model text and label; `text` is also what a copy yields). */
+function planInsertOf(sel: QuoteSelection): { text: string; label: string } {
+  const text = buildPlanAnnotationInsert(sel.note ?? '', sel.text, {
+    heading: t('planAnnotation'),
+    noteLabel: t('planAnnotationNote'),
+    quoteLabel: t('planAnnotationQuote'),
+    ...(sel.planTitle === undefined ? {} : { planTitle: sel.planTitle }),
+  })
+  return {
+    text,
+    label: t('planAnnotationChip', { where: chipTitleOf(sel.planTitle) }),
+  }
+}
+
+/** The file envelope, shaped like {@link planInsertOf} for the shared record build. */
+function fileInsertOf(sel: QuoteSelection, path: string): { text: string; label: string; clipboardText: string } {
+  const insert = buildSelectionInsert(path, sel.cwd, sel.lines, sel.text)
+  return {
+    text: insert.text,
+    label: t('quoteChip', { where: whereOf(path, sel.lines) }),
+    // `buildSelectionInsert`'s label IS the fenced header — reuse it instead
+    // of building the same string twice.
+    clipboardText: insert.label,
+  }
 }
 
 /**
  * Register the selection as a quote record and insert its chip into the
- * session's composer draft. Returns false — leaving the draft untouched —
- * when chips are unavailable, the record cannot be persisted (quota / private
- * mode), or the host refuses the insert; the caller then falls back to
- * {@link quoteFallbackInsert}.
+ * session's composer draft. Returns the persisted record — the plan page uses
+ * it to know whether an annotation's chip landed — or `undefined` when chips
+ * are unavailable, the record cannot be persisted (quota / private mode), or
+ * the host refuses the insert; the caller keeps its own fallback.
+ *
+ * The plan branch differs from the file branch in three places: no
+ * `appearance:'file'` (there is no file opener target), no path header
+ * (`planInsertOf` builds the payload), and it carries the plan identity.
  * @param ctx - the client context.
  * @param sessionId - the session whose composer receives the chip.
  * @param sel - the selection the viewer's popup committed.
- * @returns whether the chip landed in the draft.
+ * @returns the persisted record, or undefined when no chip landed.
  */
-export function insertQuoteChip(ctx: Context, sessionId: string, sel: QuoteSelection): boolean {
+export function insertQuoteRecord(ctx: Context, sessionId: string, sel: QuoteSelection): QuoteRecord | undefined {
   if (!sourceReady || registeredDisposer === undefined) {
     // Self-heal, and the reason registration state lives in module scope
     // rather than the apply closure: THIS instance (the one the editor's
@@ -393,42 +476,51 @@ export function insertQuoteChip(ctx: Context, sessionId: string, sel: QuoteSelec
     if (!sourceReady) console.info('[dsh-better-sidebar] quote source not ready at commit, re-registering')
     if (!tryRegisterOnce(ctx)) {
       console.info('[dsh-better-sidebar] quote chips unavailable: source not registered')
-      return false
+      return undefined
     }
   }
-  loadStore()
   // `saveStore` rewrites the whole key from this instance's memory, and other
   // pages of the origin write the same key: merge their records in first, or
-  // the write erases them and their chips block the send in the codec.
+  // the write erases them and their chips block the send in the codec. The
+  // read is a cheap `getItem` compare when nothing changed (see above), so a
+  // batch of inserts reuses the memory each `saveStore` just synced.
   readStoreIntoMemory()
+  const plan = sel.kind === 'plan'
+  if (!plan && sel.path === undefined) return undefined
+  // A plan record without its document identity would be rejected by the
+  // other bundle instance's `isQuoteRecord` and become a dead chip.
+  if (plan && (sel.planId === undefined || sel.planId === '')) return undefined
   const n = nextN++
-  const clipboardText = headerOf(sel.path, sel.cwd, sel.lines)
-  // Built ONCE and kept in its size-reduced form (a raw selection is
-  // unbounded storage); the chip's fallback text and the send-time payload are
-  // the same bytes the pre-chip insert produced.
-  const insert = buildSelectionInsert(sel.path, sel.cwd, sel.lines, sel.text)
-  const record: QuoteRecord = {
-    id: quoteId(n),
-    sessionId,
-    n,
-    path: sel.path,
-    ...(sel.cwd === undefined ? {} : { cwd: sel.cwd }),
-    ...(sel.lines === undefined ? {} : { lines: sel.lines }),
-    label: t('quoteChip', { where: whereOf(sel.path, sel.lines) }),
-    clipboardText,
-    text: insert.text,
-  }
+  const path = sel.path!
+  const built: { text: string; label: string; clipboardText?: string } = plan
+    ? planInsertOf(sel)
+    : fileInsertOf(sel, path)
+  const shared = { id: quoteId(n), sessionId, n, ...built }
+  const record: QuoteRecord = plan
+    ? { ...shared, kind: 'plan', planId: sel.planId! }
+    : {
+      ...shared,
+      path,
+      ...(sel.cwd === undefined ? {} : { cwd: sel.cwd }),
+      ...(sel.lines === undefined ? {} : { lines: sel.lines }),
+    }
   const reference: PendingReference = {
     source: QUOTE_SOURCE,
     ref: record.id,
     label: record.label,
-    appearance: 'file',
-    clipboardText,
+    // A plan chip is deliberately NOT `appearance:'file'`: the host marks
+    // file chips openable, and this source refuses the click anyway. Leaving
+    // it undefined also makes the two chip families visually distinct.
+    ...(plan ? {} : { appearance: 'file' as const }),
+    // The host projects this into the composer and the saved draft, so a plan
+    // chip carries its short label there; the record keeps the full payload
+    // for the codec (copy/send), and the comment below still explains `text`.
+    clipboardText: built.clipboardText ?? built.label,
     // Not what the chip carries (`ref` is the id, and the codec expands it on
     // send), but the plain-text form an ordinary path would fall back to —
-    // and the fenced block itself, so a chip that cannot land still yields
-    // the same payload as the pre-chip insert.
-    text: insert.text,
+    // and the payload itself, so a chip that cannot land still yields the
+    // same text as the pre-chip insert.
+    text: built.text,
   }
   records.set(record.id, record)
   if (!saveStore()) {
@@ -438,7 +530,7 @@ export function insertQuoteChip(ctx: Context, sessionId: string, sel: QuoteSelec
     // #1052's built-in chip (same payload, just not clickable).
     records.delete(record.id)
     console.warn('[dsh-better-sidebar] quote chip skipped: the reference store cannot be written (quota/private mode)')
-    return false
+    return undefined
   }
   const landed = insertDraftReference(ctx, sessionId, reference)
   if (!landed) {
@@ -446,6 +538,7 @@ export function insertQuoteChip(ctx: Context, sessionId: string, sel: QuoteSelec
     // an id: the caller's fallback insert carries the same payload.
     records.delete(record.id)
     saveStore()
+    return undefined
   }
-  return landed
+  return record
 }

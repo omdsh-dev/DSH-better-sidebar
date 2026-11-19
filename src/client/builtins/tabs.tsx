@@ -18,7 +18,7 @@
  * can never become a second right-Sidebar terminal capsule beside the host's
  * own. See docs/plans/2026-10-05-bottom-terminal-tab.md.
  */
-import { IconCodeOutlineRegular, IconPanelLeftOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconCodeOutlineRegular, IconPanelLeftOutlineRegular, IconPlanOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import { useCallback, useSyncExternalStore } from 'react'
 import {
   changesTabIcon, filesTabIcon, sidechatTabIcon, tasksTabIcon, terminalTabIcon,
@@ -26,6 +26,7 @@ import {
 import { t } from '../locales.ts'
 import { openSidebarFile } from '../sidebar-file.ts'
 import { EditorHost } from '../EditorHost.tsx'
+import { PlanViewer } from '../PlanViewer.tsx'
 import { OpenWithSettings } from '../open-with-settings.tsx'
 import { CommitModelSettings } from '../changes/CommitModelSettings.tsx'
 import { ChangesTab, opCountOf } from '../changes/ChangesTab.tsx'
@@ -42,6 +43,7 @@ import {
 } from '../../prefs-shared.ts'
 import type { Context } from '../../context-types.ts'
 import type { TabComponentProps, TabDescriptor } from '../service.ts'
+import { PLAN_KIND } from '../native/guide-ids.ts'
 
 /** Host session surface (`ctx.get('uiWorkspace')`). Archive is optional. */
 interface ArchiveSessionFace {
@@ -130,7 +132,7 @@ function freshId(): string {
   return `${Date.now().toString(36)}-${Array.from(random, part => part.toString(36)).join('-')}`
 }
 
-/** The 6 built-in tab descriptors (the host owns the right-Sidebar terminal and browser). */
+/** The 7 built-in tab descriptors (the host owns the right-Sidebar terminal and browser). */
 export function builtinTabs(ctx: Context): readonly TabDescriptor[] {
   return [
     {
@@ -453,6 +455,19 @@ export function builtinTabs(ctx: Context): readonly TabDescriptor[] {
         if (sessionId === undefined || sessionId === '') return
         closeBottomTerminal(ctx, tab, sessionId)
       },
+    },
+    {
+      // The host's plan tab takeover. The host opens `dsh-resource://plan/…`
+      // and `dsh-resource://plan-review/…` addresses itself (the plan card and
+      // the review panel's "view full plan"); an `extension`-band registration
+      // of the same kind puts this plugin's annotatable page in force. The
+      // descriptor is hidden because the + menu must not offer a plan page —
+      // a plan exists only when the model submits one.
+      id: PLAN_KIND,
+      title: () => t('plan'),
+      icon: size => <IconPlanOutlineRegular size={size} />,
+      hidden: true,
+      component: PlanViewer,
     },
     {
       id: 'diff',
