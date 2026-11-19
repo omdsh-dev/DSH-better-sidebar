@@ -77,6 +77,15 @@ function viewportOf(size?: ViewportSize): ViewportSize {
   }
 }
 
+/** The element's border box, or undefined when missing or empty (jsdom, a detached tab). */
+export function surfaceOf(element: Element | null): ViewportRect | undefined {
+  if (element === null) return undefined
+  const box = element.getBoundingClientRect()
+  return box.right > box.left && box.bottom > box.top
+    ? { left: box.left, top: box.top, right: box.right, bottom: box.bottom }
+    : undefined
+}
+
 /** The viewport minus a margin, intersected with the plan document. */
 function safeAreaOf(anchor: PlanPopupAnchor, viewport: ViewportSize): SafeArea {
   const viewportArea: SafeArea = {

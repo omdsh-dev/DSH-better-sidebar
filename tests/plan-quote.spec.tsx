@@ -144,6 +144,35 @@ function submitNote(box: HTMLElement): void {
   click(box.querySelector('[data-plan-annotation-submit]')!)
 }
 
+/** A DOMRect literal (jsdom's Range has no rect API at all). */
+function rect(left: number, top: number, right: number, bottom: number): DOMRect {
+  return {
+    left, top, right, bottom,
+    x: left, y: top, width: right - left, height: bottom - top,
+    toJSON: () => ({}),
+  } as DOMRect
+}
+
+/**
+ * Mock the plan document's box and the selection rect. `docBoxes` is read in
+ * call order, the last entry repeating — the document is measured once on
+ * mouseup and again when the note box opens.
+ */
+function mockRects(page: PageCtl, docBoxes: DOMRect[], selection: DOMRect): () => void {
+  const doc = vi.spyOn(page.doc(), 'getBoundingClientRect')
+  for (const box of docBoxes.slice(0, -1)) doc.mockReturnValueOnce(box)
+  doc.mockReturnValue(docBoxes[docBoxes.length - 1]!)
+  const proto = Range.prototype as unknown as { getBoundingClientRect?: () => DOMRect }
+  const hadRect = 'getBoundingClientRect' in proto
+  const originalRect = proto.getBoundingClientRect
+  proto.getBoundingClientRect = () => selection
+  return () => {
+    doc.mockRestore()
+    if (hadRect) proto.getBoundingClientRect = originalRect
+    else delete proto.getBoundingClientRect
+  }
+}
+
 /** Open the note box through the floating button. */
 function openNote(page: PageCtl, needle: string): HTMLElement {
   selectInPage(page, needle)
@@ -332,18 +361,8 @@ describe('PlanViewer quote chip', () => {
   })
 
   it('keeps the note box inside the plan document instead of covering the window chrome', () => {
-    const rect = (left: number, top: number, right: number, bottom: number): DOMRect => ({
-      left, top, right, bottom,
-      x: left, y: top, width: right - left, height: bottom - top,
-      toJSON: () => ({}),
-    }) as DOMRect
     const page = mountPlanPage()
-    vi.spyOn(page.doc(), 'getBoundingClientRect').mockReturnValue(rect(600, 100, 1180, 700))
-    // jsdom has no Range rect at all; install one for this test only.
-    const proto = Range.prototype as unknown as { getBoundingClientRect?: () => DOMRect }
-    const hadRect = 'getBoundingClientRect' in proto
-    const originalRect = proto.getBoundingClientRect
-    proto.getBoundingClientRect = () => rect(700, 500, 900, 740)
+    const restore = mockRects(page, [rect(600, 100, 1180, 700)], rect(700, 500, 900, 740))
     try {
       const box = openNote(page, 'retry once')
       // A tall selection leaves no room above or below: the old placement
@@ -351,9 +370,46 @@ describe('PlanViewer quote chip', () => {
       // header); it now stays at the selection inside the document.
       expect(box.style.top).toBe('300px')
       expect(box.style.left).toBe('640px')
+      expect(box.style.width).toBe('320px')
+      expect(box.style.maxHeight).toBe('600px')
     } finally {
-      if (hadRect) proto.getBoundingClientRect = originalRect
-      else delete proto.getBoundingClientRect
+      restore()
+      page.unmount()
+    }
+  })
+
+  it('flips the floating action below a selection that touches the pane top', () => {
+    const page = mountPlanPage()
+    const restore = mockRects(page, [rect(600, 100, 1180, 700)], rect(700, 105, 900, 125))
+    try {
+      selectInPage(page, 'retry once')
+      const add = document.querySelector<HTMLElement>('[data-plan-annotation-add]')!
+      // Above the selection would cross the pane's top edge and cover the
+      // pane header, so the button opens below with its upward transform off.
+      expect(add.style.top).toBe('133px')
+      expect(add.style.left).toBe('800px')
+      expect(add.style.transform).toBe('translate(-50%, 0)')
+    } finally {
+      restore()
+      page.unmount()
+    }
+  })
+
+  it('measures the pane again when the note box opens after the window moved', () => {
+    const page = mountPlanPage()
+    // The mouseup snapshot sees the old pane; by the click the pane has moved.
+    const restore = mockRects(
+      page,
+      [rect(600, 100, 1180, 700), rect(0, 100, 500, 700)],
+      rect(700, 500, 900, 740),
+    )
+    try {
+      const box = openNote(page, 'retry once')
+      // Clamped to the current pane (12..500), not the stale one.
+      expect(box.style.left).toBe('180px')
+      expect(box.style.top).toBe('300px')
+    } finally {
+      restore()
       page.unmount()
     }
   })

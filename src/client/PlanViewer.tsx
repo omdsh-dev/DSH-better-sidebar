@@ -30,7 +30,7 @@ import { insertQuoteRecord } from './selection-quote.ts'
 import { clipText } from './selection-payload.ts'
 import { useSelectionPopup } from './selection-popup.ts'
 import {
-  floatingActionPlacement, noteBoxPlacement, type PlanPopupAnchor,
+  floatingActionPlacement, noteBoxPlacement, surfaceOf, type PlanPopupAnchor,
 } from './plan-placement.ts'
 import { isPlanReviewAddress } from './native/guide-ids.ts'
 import type { NativeResourceSnapshot, TabComponentProps } from './service.ts'
@@ -132,7 +132,14 @@ export function PlanViewer(props: TabComponentProps): ReactNode {
   const selectionPopup = useSelectionPopup<PlanSelection>({
     onCommit: (selection) => {
       setSendFailed(false)
-      setNoteDraft({ ...selection, note: '' })
+      // The pane can move between the mouseup snapshot and this click (an OS
+      // window resize or zoom carries no pointerdown to dismiss the popup), so
+      // the note box clamps to the pane's current box, not the stale one.
+      setNoteDraft({
+        ...selection,
+        note: '',
+        surface: surfaceOf(docRef.current) ?? selection.surface,
+      })
     },
     getSurface: () => docRef.current,
   })
@@ -186,17 +193,8 @@ export function PlanViewer(props: TabComponentProps): ReactNode {
       ? range.getBoundingClientRect()
       : { left: 0, top: 0, width: 0, height: 0, right: 0, bottom: 0 }
     const left = rect.left + rect.width / 2
-    // The document box is the safe area the floating surfaces clamp to; a
-    // zero-sized box (jsdom, a detached tab) degrades to the viewport.
-    const box = container.getBoundingClientRect()
     selectionPopup.show(
-      {
-        quote,
-        left,
-        top: rect.top,
-        bottom: rect.bottom,
-        surface: { left: box.left, top: box.top, right: box.right, bottom: box.bottom },
-      },
+      { quote, left, top: rect.top, bottom: rect.bottom, surface: surfaceOf(container) },
       left,
       rect.top,
     )
