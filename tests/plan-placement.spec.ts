@@ -91,4 +91,11 @@ describe('floatingActionPlacement', () => {
     expect(floatingActionPlacement(anchor(200, 220, 610), VIEWPORT).left).toBe(680)
     expect(floatingActionPlacement(anchor(200, 220, 1170), VIEWPORT).left).toBe(1100)
   })
+
+  it('centres the button in a pane narrower than the button itself', () => {
+    const narrow = { left: 0, top: 0, right: 150, bottom: 700 }
+    expect(floatingActionPlacement(anchor(200, 220, 75, narrow), VIEWPORT).left).toBe(81)
+    const tiny = { left: 0, top: 0, right: 76, bottom: 700 }
+    expect(floatingActionPlacement(anchor(200, 220, 75, tiny), VIEWPORT).left).toBe(44)
+  })
 })

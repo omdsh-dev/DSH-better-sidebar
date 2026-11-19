@@ -135,10 +135,13 @@ export function noteBoxPlacement(anchor: PlanPopupAnchor, viewportSize?: Viewpor
 export function floatingActionPlacement(anchor: PlanPopupAnchor, viewportSize?: ViewportSize): FloatingActionPlacement {
   const viewport = viewportOf(viewportSize)
   const area = safeAreaOf(anchor, viewport)
+  // A pane narrower than the button shrinks the reserved half-width too: a
+  // fixed 80px would pin the centre off-centre and push the label over the edge.
+  const half = Math.min(ACTION_HALF_WIDTH, Math.max(area.right - area.left, 0) / 2)
   const left = clamp(
     anchor.left,
-    area.left + ACTION_HALF_WIDTH,
-    Math.max(area.right - ACTION_HALF_WIDTH, area.left + ACTION_HALF_WIDTH),
+    area.left + half,
+    Math.max(area.right - half, area.left + half),
   )
   if (anchor.top - GAP - ACTION_HEIGHT >= area.top) {
     return { left, top: anchor.top - GAP, above: true }
