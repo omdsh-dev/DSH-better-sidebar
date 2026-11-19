@@ -564,7 +564,10 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   align-content: start;
   gap: 12px;
   padding: 12px;
-  overflow: hidden;
+  /* Many-panel sessions overflow this grid; scroll instead of clipping the
+     last row (issue #1086). */
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .paneCard {

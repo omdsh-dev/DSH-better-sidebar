@@ -359,8 +359,11 @@ function fetchSlot(slot: Slot): void {
       slot.error = false
       changed = true
     })
-    .catch(() => {
+    .catch((error: unknown) => {
       if (generation !== slot.generation) return
+      // The panel can only render a generic "error"; without this line a
+      // missing git binary and a timeout look identical (issue #1189).
+      console.warn('[dsh-better-sidebar] git status refresh failed', error)
       if (!slot.error) { slot.error = true; changed = true }
     })
     .finally(() => {
