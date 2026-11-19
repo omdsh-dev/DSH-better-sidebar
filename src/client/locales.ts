@@ -329,6 +329,19 @@ export const zh = {
   referenceFile: '@文件',
   addToConversation: '添加到对话',
   quoteChip: '引用 {where}',
+  plan: '计划',
+  planAnnotation: '计划批注',
+  planAnnotationAdd: '加批注',
+  planAnnotationPlaceholder: '写批注，例如：改用 IndexedDB…',
+  planAnnotationSubmit: '提交批注',
+  planAnnotationCancel: '取消',
+  planAnnotationQuote: '原文',
+  planAnnotationSendFailed: '发送失败：输入框当前不可用，请稍后再试。',
+  planAnnotationUnavailable: '计划暂不可用',
+  planAnnotationLoading: '正在加载计划…',
+  planAnnotationFailed: '计划加载失败',
+  planAnnotationExpired: '评审预览已过期，请回到聊天区重新打开计划。',
+  planAnnotationChip: '计划批注 · {where}',
   copyRelative: '复制相对地址',
   copyAbsolute: '复制绝对地址',
   rename: '重命名',
@@ -1061,6 +1074,19 @@ export const en: Record<keyof typeof zh, string> = {
   referenceFile: '@file',
   addToConversation: 'Add to conversation',
   quoteChip: 'Quote {where}',
+  plan: 'Plan',
+  planAnnotation: 'Plan annotation',
+  planAnnotationAdd: 'Add annotation',
+  planAnnotationPlaceholder: 'Write an annotation, e.g. use IndexedDB instead…',
+  planAnnotationSubmit: 'Submit annotation',
+  planAnnotationCancel: 'Cancel',
+  planAnnotationQuote: 'Quoted plan text',
+  planAnnotationSendFailed: 'Send failed: the composer is unavailable right now; try again in a moment.',
+  planAnnotationUnavailable: 'The plan is unavailable',
+  planAnnotationLoading: 'Loading the plan…',
+  planAnnotationFailed: 'The plan could not be loaded',
+  planAnnotationExpired: 'This review preview has expired. Reopen the plan from the chat.',
+  planAnnotationChip: 'Plan annotation · {where}',
   copyRelative: 'Copy relative path',
   copyAbsolute: 'Copy absolute path',
   rename: 'Rename',
@@ -1647,7 +1673,9 @@ export function t(key: CopyKey, params?: Record<string, string | number>): strin
   }
   if (params !== undefined) {
     for (const [name, value] of Object.entries(params)) {
-      text = text.replaceAll(`{${name}}`, String(value))
+      // A function replacement keeps `$&` / `$'` / `$$` inside the VALUE
+      // literal; the string form would treat them as replacement patterns.
+      text = text.replaceAll(`{${name}}`, () => String(value))
     }
   }
   return text

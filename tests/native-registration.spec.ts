@@ -44,10 +44,17 @@ function createRegistry() {
   /** Every definition the plugin handed the host, guide rows included. */
   const definitions: Array<{ id: string; kind: string; guide?: Array<{ id?: unknown }> }> = []
   let failReleaseOf: string | undefined
+  /** Tab-kind close hooks (the editor cleanup path). */
+  const closeHandlers = new Map<string, (sessionId: string, tab: { id?: string; kind: string; contentId?: string }) => void>()
   return {
     registered,
     events,
     definitions,
+    closeHandlers,
+    registerCloseHandler: (kind: string, handler: (sessionId: string, tab: { id?: string; kind: string; contentId?: string }) => void): (() => void) => {
+      closeHandlers.set(kind, handler)
+      return () => { if (closeHandlers.get(kind) === handler) closeHandlers.delete(kind) }
+    },
     failRelease(id: string): void { failReleaseOf = id },
     register(definition: { id: string; kind: string; guide?: Array<{ id?: unknown }> }): () => void {
       definitions.push(definition)
@@ -177,6 +184,28 @@ describe('native tab registration lifecycle', () => {
       'register dsh-better-sidebar:files',
       'register dsh-better-sidebar:git',
     ])
+  })
+
+  it('registers the hidden plan takeover without a guide row', () => {
+    const host = createHost()
+    const { store, service, records } = createPlugins()
+    service.registerTab({ id: 'plan', title: () => 'Plan', hidden: true, component: () => null })
+    const dispose = registerNativeSurface({ ctx: host.ctx as never, store, service, records })
+    // A descriptor-driven takeover: one type, body + chip title slots, no
+    // guide row (the plan page is a resource page, not a + menu entry).
+    expect(host.registry.events.sort()).toEqual([
+      'register dsh-better-sidebar:editor',
+      'register dsh-better-sidebar:files',
+      'register dsh-better-sidebar:git',
+      'register dsh-better-sidebar:plan',
+    ])
+    expect(host.slotEvents.filter(event => event === 'register sidebar.right.pane.tab::dsh-better-sidebar:plan')).toHaveLength(1)
+    expect(host.slotEvents.filter(event => event === 'register sidebar.right.pane.tab.title::dsh-better-sidebar:plan')).toHaveLength(1)
+    expect(host.registry.definitions.find(definition => definition.kind === 'plan')?.guide).toBeUndefined()
+
+    // Teardown releases every slot and type, the plan ones included.
+    dispose()
+    expect(host.registry.registered.has('dsh-better-sidebar:plan')).toBe(false)
   })
 
   it('never re-creates the "files" takeover on an unrelated notification', () => {

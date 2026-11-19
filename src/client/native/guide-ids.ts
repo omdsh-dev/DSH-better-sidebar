@@ -10,6 +10,25 @@ export const EDITOR_KIND = 'editor'
 /** The built-in page kind this plugin takes over. */
 export const FILES_KIND = 'files'
 
+/**
+ * The host's plan tab kind. The plugin takes the kind over at the
+ * `extension` band so its own plan page (selection annotations) draws where
+ * the host's read-only preview did; the built-in resumes when the plugin
+ * unloads.
+ */
+export const PLAN_KIND = 'plan'
+
+/** The two address families the host's plan package owns. */
+export const PLAN_ADDRESS_PATTERN = 'dsh-resource://plan/**'
+
+/** The temporary review preview family (the document lives in params). */
+export const PLAN_REVIEW_ADDRESS_PATTERN = 'dsh-resource://plan-review/**'
+
+/** Whether an address belongs to either plan family. */
+export function isPlanResourceAddress(address: string): boolean {
+  return /^dsh-resource:\/\/plan(?:-review)?\//.test(address)
+}
+
 /** The prefix of every implementation id this plugin registers natively. */
 const NATIVE_ID_PREFIX = 'dsh-better-sidebar:'
 

@@ -36,7 +36,7 @@ import type { SidebarStore } from '../state.ts'
 import { webTerminals } from '../terminal-client.ts'
 import type { NativeGuideCatalog } from './guide-catalog.ts'
 import { NativeGuide } from './guide.tsx'
-import { EDITOR_KIND, FILES_KIND, nativeId } from './guide-ids.ts'
+import { EDITOR_KIND, FILES_KIND, PLAN_ADDRESS_PATTERN, PLAN_KIND, PLAN_REVIEW_ADDRESS_PATTERN, isPlanResourceAddress, nativeId } from './guide-ids.ts'
 import { mountedSessionId } from './surface.ts'
 import {
   NativeTabBody,
@@ -334,7 +334,6 @@ export function registerNativeSurface(deps: NativeSurfaceDeps): () => void {
         reportFailure?.('register editor close handler', error)
       }
     }
-
     // The start page: replace the host guide body with the plugin's own grid.
     // Its lifetime follows the `guideTakeover` preference, so turning the
     // switch off unregisters the chain entry and the shipped guide resumes.
@@ -473,6 +472,7 @@ export function registerNativeSurface(deps: NativeSurfaceDeps): () => void {
     const registerDescriptor = (descriptor: TabDescriptor): (() => void) => {
       const id = nativeId(descriptor.id)
       const isEditor = descriptor.id === EDITOR_KIND
+      const isPlan = descriptor.id === PLAN_KIND
       const icon = descriptor.icon
       const disposeType = tabs.register({
         id,
@@ -493,7 +493,18 @@ export function registerNativeSurface(deps: NativeSurfaceDeps): () => void {
               return file !== undefined && !hostOwnedPath(file.path)
             },
           }
-          : {}),
+          : isPlan
+            ? {
+              // The host's plan package claims BOTH families at the `builtin`
+              // band (`dsh-resource://plan/**` for a logged plan invocation,
+              // `dsh-resource://plan-review/**` for a temporary review whose
+              // document rides navigation params). Claiming them at
+              // `extension` is what makes this plugin's plan page the type in
+              // force; unregistering it restores the built-in preview.
+              patterns: [PLAN_ADDRESS_PATTERN, PLAN_REVIEW_ADDRESS_PATTERN],
+              canOpen: isPlanResourceAddress,
+            }
+            : {}),
         // An external implementation outranks the product's own viewers, which
         // is what lets the plugin's editor take over file addresses.
         priority: 'extension',

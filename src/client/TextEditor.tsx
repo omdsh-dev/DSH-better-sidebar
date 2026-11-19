@@ -43,7 +43,7 @@ import { SandboxStatusBar } from './SandboxStatusBar.tsx'
 import { insertReferenceOrText, type PendingReference } from './conversation-draft.ts'
 import { useSelectionPopup } from './selection-popup.ts'
 import { buildSelectionInsert, linesOfSelection, type SelectionLines } from './selection-payload.ts'
-import { insertQuoteChip, type QuoteSelection } from './selection-quote.ts'
+import { insertQuoteRecord, type QuoteSelection } from './selection-quote.ts'
 import { analyzeMarkdownHtml } from './markdown-html.ts'
 import { LazyMermaidMarkdown, MarkdownDocument, type MarkdownHtmlMedia } from './MarkdownHtml.tsx'
 import { LargeFileView } from './LargeFileView.tsx'
@@ -286,7 +286,7 @@ export function TextEditor(props: FileViewerProps) {
       // The quote chip first (a clickable, source-owned chip), then #1052's
       // plain built-in reference chip, then bare text — every step down is one
       // the host actually supports, never a silent no-op.
-      if (insertQuoteChip(ctx, scope.sessionId, insert.selection)) return
+      if (insertQuoteRecord(ctx, scope.sessionId, insert.selection) !== undefined) return
       insertReferenceOrText(ctx, scope.sessionId, insert)
     },
     // The surface that must stay on screen: the markdown preview container

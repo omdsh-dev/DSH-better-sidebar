@@ -774,6 +774,60 @@ describe('registerNativeSurface lifecycle (service-driven registration)', () => 
     }
     expect(open('sidebar://editor')).toBe(false)
   })
+
+  it('takes over the host plan kind at the extension band and claims both address families', () => {
+    // The host plan package registers `kind:'plan'` at the `builtin` band with
+    // BOTH `dsh-resource://plan/**` (logged) and `dsh-resource://plan-review/**`
+    // (temporary review). The plugin's hidden `plan` descriptor must register
+    // under the same kind at `extension`, so the resource open routes into the
+    // plugin's body — and its slot key must be the registration id, or
+    // SidebarRight mounts an `OrphanedTab`.
+    const store = createSidebarStore()
+    store.setSession('s1')
+    const service = createBetterSidebarService(store)
+    service.registerTab({ id: 'plan', title: () => 'Plan', hidden: true, component: () => null })
+    const records = createNativeTabRecords()
+    const definitions: Array<{
+      id: string
+      kind: string
+      priority?: string
+      patterns?: readonly string[]
+      canOpen?: (address: string) => boolean
+      guide?: unknown
+    }> = []
+    const slotKeys: string[] = []
+    const registry = {
+      register: (definition: typeof definitions[number]) => { definitions.push(definition); return () => {} },
+    }
+    const ctx = {
+      inject: (_deps: readonly string[], callback: (injected: { get: () => unknown }) => void) => {
+        callback({ get: () => registry })
+        return { dispose: () => {} }
+      },
+      get: () => undefined,
+      slots: {
+        inject: (_key: string, callback: () => () => void) => callback(),
+        register: (options: { key?: string }) => { slotKeys.push(options.key ?? ''); return () => {} },
+      },
+    }
+    const dispose = registerNativeSurface({ ctx: ctx as never, store, service, records })
+    const plan = definitions.find(definition => definition.kind === 'plan')
+    expect(plan).toBeDefined()
+    expect(plan?.priority).toBe('extension')
+    expect(plan?.patterns).toEqual(['dsh-resource://plan/**', 'dsh-resource://plan-review/**'])
+    expect(plan?.guide, 'a hidden takeover contributes no + menu row').toBeUndefined()
+    expect(slotKeys.filter(key => key === 'dsh-better-sidebar:plan')).toHaveLength(2)
+    const open = plan!.canOpen!
+    expect(open('dsh-resource://plan/s1/call-1')).toBe(true)
+    expect(open('dsh-resource://plan/subagent/p1/c1/one-shot/call-2')).toBe(true)
+    expect(open('dsh-resource://plan-review/s1/request-1')).toBe(true)
+    expect(open('dsh-resource://file/session/s1/a.md')).toBe(false)
+    // A hidden takeover is exempt from the side card's enable switches, so a
+    // stale preference cannot strand a plan address with no viewer.
+    store.setPrefs({ ...store.getPrefs(), tabsEnabled: { plan: false } })
+    expect(service.isTabEnabled('plan')).toBe(true)
+    dispose()
+  })
 })
 
 describe('NativeTabBody full-height host wrapper', () => {
@@ -827,6 +881,71 @@ describe('NativeTabBody full-height host wrapper', () => {
     expect(wrapper, 'the full-height host wrapper must exist').not.toBeNull()
     expect(wrapper!.querySelector('[data-stub-body]'), 'the descriptor component renders inside the wrapper').not.toBeNull()
     expect(wrapper!.childElementCount).toBe(1)
+    act(() => { root?.unmount() })
+    host.remove()
+  })
+
+  it('passes the navigation address/params and the host resource reader to the descriptor body', () => {
+    // The plan page cannot reach the host's resource hook or the opener's
+    // navigation params on its own: `NativeTabBody` is the only place that
+    // sees both, so this pins the `native` face the plan takeover depends on.
+    const store = createSidebarStore()
+    store.setSession('s1')
+    const service = createBetterSidebarService(store)
+    let captured: TabComponentProps | undefined
+    service.registerTab({
+      id: 'plan',
+      title: () => 'Plan',
+      hidden: true,
+      component: (props) => {
+        captured = props
+        return createElement('div', { 'data-plan-body': '' })
+      },
+    })
+    const records = createNativeTabRecords()
+    const sessions = { list: { subscribe: () => () => {}, getSnapshot: () => ({ byId: {} }) } }
+    const ctx = { sessions } as never
+    const params = { planReview: { markdown: '# Draft', title: 'Draft' } }
+    const info = {
+      tab: {
+        id: 'native-plan',
+        kind: 'plan',
+        title: 'Plan',
+        contentId: 'dsh-resource://plan/s1/call-1',
+        visible: true,
+        navigation: { address: 'dsh-resource://plan/s1/call-1', params, revision: 1 },
+        signal: new AbortController().signal,
+      },
+    }
+    const useResource = (address: string): { status: 'live'; value: { markdown: string; title: string } } => ({
+      status: 'live',
+      value: { markdown: address, title: 'Plan' },
+    })
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    let root: Root | undefined
+    act(() => {
+      root = createRoot(host)
+      root.render(createElement(NativeTabBody, {
+        sessionId: 's1',
+        ctx,
+        store,
+        service,
+        records,
+        descriptorId: 'plan',
+        useTabInfo: () => info,
+        useResource,
+      }))
+    })
+    const native = captured?.native
+    expect(native).toMatchObject({
+      address: 'dsh-resource://plan/s1/call-1',
+      params,
+      useResource,
+    })
+    expect(typeof native?.onTitle).toBe('function')
+    act(() => { native?.onTitle?.('Ship it') })
+    expect(records.get('s1', 'native-plan')?.tab.title).toBe('Ship it')
     act(() => { root?.unmount() })
     host.remove()
   })

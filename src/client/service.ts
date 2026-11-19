@@ -19,6 +19,7 @@
  *   per descriptor it tries `detect` first (when `head` bytes are given),
  *   then `exts`; `exts: []` is a catch-all that matches any path.
  */
+import { useState } from 'react'
 import type { ReactNode } from 'react'
 import type { Context } from '../context-types.ts'
 import {
@@ -162,6 +163,44 @@ export interface SidebarSettingsDeclaration {
   render?: (props: SidebarSettingsRenderProps) => ReactNode
 }
 
+/** The resource snapshot the host's `useResource` standard hook returns. */
+export interface NativeResourceSnapshot {
+  readonly status: 'none' | 'loading' | 'live' | 'failed'
+  readonly value: unknown
+  readonly failure?: unknown
+}
+
+/** The empty snapshot a host without the resource model (or a test) returns. */
+export const NOOP_RESOURCE_SNAPSHOT: NativeResourceSnapshot = { status: 'none', value: undefined }
+
+/**
+ * Hook-shaped no-op resource reader. A resource page calls `useResource`
+ * unconditionally and the host's reader is itself a hook, so a reader that
+ * called NO hook would change React's hook count on hosts that inject none.
+ */
+export function useNoopResource(_address?: string): NativeResourceSnapshot {
+  return useState(NOOP_RESOURCE_SNAPSHOT)[0]
+}
+
+/**
+ * The native tab facts a body can use when it implements a RESOURCE page
+ * (the plan takeover). Ordinary page components ignore it; the native surface
+ * fills it from the host's `useTabInfo`/`useResource` framework props.
+ */
+export interface NativeTabEnvironment {
+  /** The tab's navigation address (`dsh-resource://…`). */
+  readonly address: string
+  /** The opener's navigation params, unvalidated by the host. */
+  readonly params?: unknown
+  /** The host resource reader; absent on hosts/tests without the model. */
+  readonly useResource?: (address: string) => NativeResourceSnapshot
+  /**
+   * Retitle this tab's chip once a resource page learns its document title.
+   * Optional so ordinary pages and older hosts need not provide it.
+   */
+  readonly onTitle?: (title: string) => void
+}
+
 /** Props every tab component receives (builtins and external alike). */
 export interface TabComponentProps {
   ctx: Context
@@ -170,6 +209,8 @@ export interface TabComponentProps {
   tab: SidebarTab
   /** Whether this tab is the active one AND the panel is open (live views pause otherwise). */
   visible: boolean
+  /** Native framework facts for a resource page (see {@link NativeTabEnvironment}). */
+  native?: NativeTabEnvironment
   /** The explorer's expanded directory set (ExplorerView). */
   expanded?: string[]
   /** The explorer's reveal-highlight set (ExplorerView; "Show in folder" targets). */

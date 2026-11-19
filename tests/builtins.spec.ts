@@ -1,5 +1,5 @@
 /**
- * Built-in registration tests: the plugin registers 6 tabs and 4 file
+ * Built-in registration tests: the plugin registers 7 tabs and 4 file
  * viewers through the same service external plugins use (dogfooding);
  * the catch-all `code` viewer and the html sandbox settings pin the
  * registry's behavior. The read-only previews (image / pdf /
@@ -38,11 +38,14 @@ function setup(): { service: ReturnType<typeof createBetterSidebarService>; stor
 }
 
 describe('built-in tab registrations', () => {
-  it('registers the 6 built-in tabs (the host owns the right-sidebar terminal and browser)', () => {
+  it('registers the 7 built-in tabs (the host owns the right-sidebar terminal and browser)', () => {
     const { service } = setup()
     expect(service.getTabs().map(t => t.id).sort()).toEqual(
-      ['diff', 'editor', 'git', 'sidechat', 'subagent', 'terminal-bottom'],
+      ['diff', 'editor', 'git', 'plan', 'sidechat', 'subagent', 'terminal-bottom'],
     )
+    // The plan page is a RESOURCE takeover: it has no + menu entry because a
+    // plan exists only when the host opens one of its addresses.
+    expect(service.getTab('plan')?.hidden).toBe(true)
   })
 
   it('the terminal tab is bottom-only and never claims a native right-sidebar type', () => {
@@ -122,9 +125,9 @@ describe('built-in tab registrations', () => {
     expect(settings?.pluginToggles ?? []).toEqual([])
   })
 
-  it('only diff is hidden from the + menu; editor is the visible files window (order 10)', () => {
+  it('only diff and plan are hidden from the + menu; editor is the visible files window (order 10)', () => {
     const { service } = setup()
-    expect(service.getTabs().filter(t => t.hidden).map(t => t.id)).toEqual(['diff'])
+    expect(service.getTabs().filter(t => t.hidden).map(t => t.id).sort()).toEqual(['diff', 'plan'])
     const editor = service.getTab('editor')
     expect(editor?.hidden).toBe(false)
     expect(editor?.order).toBe(10)

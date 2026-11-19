@@ -101,3 +101,83 @@ export function linesOfSelection(source: string, selected: string): SelectionLin
     end: lineAt(source, at + Math.max(text.length - 1, 0)),
   }
 }
+
+/** The localized envelope a plan annotation payload carries. */
+export interface PlanAnnotationLabels {
+  /** e.g. `计划批注` — the first line's heading. */
+  heading: string
+  /** e.g. `原文` — the label preceding the quoted plan text. */
+  quoteLabel: string
+}
+
+/** Optional identity carried into a plan annotation payload. */
+export interface PlanAnnotationMeta {
+  /** The plan's heading, appended to the envelope when present. */
+  planTitle?: string
+}
+
+/** Longest plan title kept in the payload heading (code points). */
+const PLAN_TITLE_HEADING_MAX = 60
+
+/**
+ * Collapse whitespace and cap one plan title. Shared by the payload heading
+ * and the chip label so the same title cannot be cleaned two different ways —
+ * a raw newline in a title would otherwise inject extra envelope lines.
+ */
+export function cleanPlanTitle(title: string | undefined, max: number): string | undefined {
+  if (title === undefined) return undefined
+  const clean = title.replace(/\s+/g, ' ').trim()
+  if (clean === '') return undefined
+  const points = Array.from(clean)
+  return points.length > max ? `${points.slice(0, max).join('')}…` : clean
+}
+
+/** Drop a UTF-16 high surrogate left dangling by a code-unit slice. */
+function trimLoneHighSurrogate(text: string): string {
+  return text.replace(/[\uD800-\uDBFF]$/, '')
+}
+
+/**
+ * The composer payload for one plan annotation: the note plus the quoted
+ * plan text as a blockquote, normally capped at {@link SELECTION_LIMIT}. The
+ * note is the useful part and is never dropped: an over-limit note returns the
+ * bare envelope (heading + full note) uncut, and only the quote is truncated
+ * to fit the remaining budget.
+ */
+export function buildPlanAnnotationInsert(
+  note: string,
+  selected: string,
+  meta: PlanAnnotationMeta,
+  labels: PlanAnnotationLabels,
+): string {
+  const title = cleanPlanTitle(meta.planTitle, PLAN_TITLE_HEADING_MAX)
+  const heading = title === undefined ? labels.heading : `${labels.heading} · ${title}`
+  const base = `${heading}\n${note}`
+  // Over the limit the note still wins: fall back to the bare envelope with
+  // the reader's words intact rather than silently chopping them mid-note.
+  if (base.length >= SELECTION_LIMIT) return base
+  const intro = `\n\n${labels.quoteLabel}:\n`
+  const budget = SELECTION_LIMIT - base.length - intro.length
+  if (budget <= 2) return base
+  const quoted = (text: string): string => text.split('\n').map(line => `> ${line}`).join('\n')
+  let quote = selected.trim()
+  // A prefix longer than the budget can never fit once every line gains its
+  // `> ` prefix, so bound the candidate before widening into code points: an
+  // unbounded selection is never copied whole just to be cut back.
+  if (quote.length > budget) quote = trimLoneHighSurrogate(quote.slice(0, budget))
+  if (quoted(quote).length > budget) {
+    // Reserve one character for the ellipsis and search a prefix whose
+    // blockquote form fits; binary search keeps the longest useful quote.
+    // Slice by CODE POINT so an emoji's surrogate pair is never split.
+    const points = Array.from(quote)
+    let low = 0
+    let high = points.length
+    while (low < high) {
+      const mid = Math.ceil((low + high) / 2)
+      if (quoted(`${points.slice(0, mid).join('')}…`).length <= budget) low = mid
+      else high = mid - 1
+    }
+    quote = `${points.slice(0, low).join('')}…`
+  }
+  return `${base}${intro}${quoted(quote)}`
+}

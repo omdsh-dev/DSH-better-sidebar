@@ -16,6 +16,7 @@ import './browser-globals.ts'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Context } from '../src/context-types.ts'
 import type { QuoteSelection, SidebarQuoteSource } from '../src/client/selection-quote.ts'
+import { SELECTION_LIMIT } from '../src/client/selection-payload.ts'
 
 type QuoteModule = typeof import('../src/client/selection-quote.ts')
 
@@ -28,6 +29,10 @@ const SELECTION: QuoteSelection = {
 
 async function freshModule(): Promise<QuoteModule> {
   vi.resetModules()
+  // resetModules gives every import a fresh locales instance; pin English on
+  // THAT instance so the label assertions are independent of the runner locale.
+  const { attachLocale: attach } = await import('../src/client/locales.ts')
+  attach({ getSnapshot: () => ({ active: 'en' }) })
   return await import('../src/client/selection-quote.ts')
 }
 
@@ -133,24 +138,6 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-describe('quoteFallbackInsert', () => {
-  it('is byte-identical to the #1052 direct insert (fenced block)', async () => {
-    const { quoteFallbackInsert } = await freshModule()
-    expect(quoteFallbackInsert(SELECTION)).toBe('```src/a.ts:2-3\nconst x = 1\n```')
-  })
-
-  it('falls back to the header-only line past the limit, like the legacy insert', async () => {
-    const { quoteFallbackInsert } = await freshModule()
-    const big = { ...SELECTION, text: 'x'.repeat(501) }
-    expect(quoteFallbackInsert(big)).toBe('src/a.ts:2-3')
-  })
-
-  it('omits the line suffix when the selection has no line numbers', async () => {
-    const { quoteFallbackInsert } = await freshModule()
-    expect(quoteFallbackInsert({ path: '/w/a.md', cwd: '/w', text: 'hi' })).toBe('```a.md\nhi\n```')
-  })
-})
-
 describe('the record store (persistence is a prerequisite for a chip)', () => {
   it('skips the chip when the record cannot be written (the caller falls back)', async () => {
     const mod = await freshModule()
@@ -173,7 +160,7 @@ describe('the record store (persistence is a prerequisite for a chip)', () => {
     // A chip whose record never landed would click into nothing and make the
     // codec throw on send, so the insert must report false and leave the
     // composer to the built-in fallback (identical payload, not clickable).
-    expect(mod.insertQuoteChip(fakeCtx({ composer }), 's1', SELECTION)).toBe(false)
+    expect(mod.insertQuoteRecord(fakeCtx({ composer }), 's1', SELECTION)).toBeUndefined()
     expect(composer.insertReference).not.toHaveBeenCalled()
     expect(warn).toHaveBeenCalled()
   })
@@ -185,7 +172,7 @@ describe('the record store (persistence is a prerequisite for a chip)', () => {
     // must carry the send payload (header only past the limit), never the raw
     // text (200 records of whole selections).
     const huge = { ...SELECTION, text: 'x'.repeat(200_000) }
-    expect(mod.insertQuoteChip(fakeCtx({ composer: fakeComposer() }), 's1', huge)).toBe(true)
+    expect(mod.insertQuoteRecord(fakeCtx({ composer: fakeComposer() }), 's1', huge)).toBeDefined()
     const record = storedRecord(mod)
     expect(record?.text).toBe('src/a.ts:2-3')
     const raw = localStorage.getItem(mod.QUOTE_STORE_KEY) ?? ''
@@ -196,15 +183,34 @@ describe('the record store (persistence is a prerequisite for a chip)', () => {
   it('stores the fenced block a normal selection sends, byte for byte', async () => {
     const mod = await freshModule()
     mod.registerQuoteSource(fakeCtx({ triggers: fakeTriggers() }))
-    expect(mod.insertQuoteChip(fakeCtx({ composer: fakeComposer() }), 's1', SELECTION)).toBe(true)
+    expect(mod.insertQuoteRecord(fakeCtx({ composer: fakeComposer() }), 's1', SELECTION)).toBeDefined()
     expect(storedRecord(mod)?.text).toBe('```src/a.ts:2-3\nconst x = 1\n```')
+  })
+
+  it('reuses the store synced by saveStore across a batch of inserts (one parse)', async () => {
+    const mod = await freshModule()
+    mod.registerQuoteSource(fakeCtx({ triggers: fakeTriggers() }))
+    // Seed an existing record so the first read has a store to parse/merge.
+    localStorage.setItem(mod.QUOTE_STORE_KEY, JSON.stringify([{
+      id: 'seed-1', sessionId: 's1', n: 1, path: '/w/seed.ts',
+      label: 'Quote seed.ts', clipboardText: 'seed.ts', text: 'seed',
+    }]))
+    const ctx = fakeCtx({ composer: fakeComposer() })
+    const parse = vi.spyOn(JSON, 'parse')
+    for (let i = 0; i < 6; i++) {
+      expect(mod.insertQuoteRecord(ctx, 's1', { ...SELECTION, text: `t${i}` })).toBeDefined()
+    }
+    // Only the first insert parses the persisted store; every saveStore
+    // records the exact value it wrote so the rest of the batch reuses memory.
+    expect(parse).toHaveBeenCalledTimes(1)
+    expect((storedJson(mod) as unknown[])).toHaveLength(7)
   })
 })
 
-describe('insertQuoteChip without a registered source', () => {
+describe('insertQuoteRecord without a registered source', () => {
   it('refuses and leaves the store untouched (the caller falls back)', async () => {
     const mod = await freshModule()
-    expect(mod.insertQuoteChip(fakeCtx({ composer: fakeComposer() }), 's1', SELECTION)).toBe(false)
+    expect(mod.insertQuoteRecord(fakeCtx({ composer: fakeComposer() }), 's1', SELECTION)).toBeUndefined()
     expect(storedJson(mod)).toBeNull()
   })
 })
@@ -230,7 +236,7 @@ describe('registerQuoteSource', () => {
     // insert path keeps refusing (the fallback takes over).
     for (let i = 0; i < 25; i++) await vi.advanceTimersByTimeAsync(500)
     dispose()
-    expect(mod.insertQuoteChip(fakeCtx({ composer: fakeComposer() }), 's1', SELECTION)).toBe(false)
+    expect(mod.insertQuoteRecord(fakeCtx({ composer: fakeComposer() }), 's1', SELECTION)).toBeUndefined()
     expect(storedJson(mod)).toBeNull()
   })
 })
@@ -246,7 +252,7 @@ describe('lifecycle self-heal (a disposed fiber must not kill the feature silent
     dispose() // the fiber went away (session switch, socket reconnect, HMR, …)
     expect(triggers.captured).toHaveLength(0)
     // The very next commit self-heals: re-registers (loudly) and inserts.
-    expect(mod.insertQuoteChip(ctx, 's1', SELECTION)).toBe(true)
+    expect(mod.insertQuoteRecord(ctx, 's1', SELECTION)).toBeDefined()
     expect(triggers.captured).toHaveLength(1)
     const lines = infoSpy.mock.calls.map((calls) => calls.map(String).join(' '))
     expect(lines.some((line) => line.includes('unregistered'))).toBe(true)
@@ -266,7 +272,7 @@ describe('lifecycle self-heal (a disposed fiber must not kill the feature silent
     const ctx = fakeCtx({ triggers: dup, composer: fakeComposer() })
     mod.registerQuoteSource(ctx)
     // The gate passed → the insert path runs (and lands in the fake composer).
-    expect(mod.insertQuoteChip(ctx, 's1', SELECTION)).toBe(true)
+    expect(mod.insertQuoteRecord(ctx, 's1', SELECTION)).toBeDefined()
     expect(storedJson(mod)).toBeTruthy()
   })
 
@@ -282,7 +288,7 @@ describe('lifecycle self-heal (a disposed fiber must not kill the feature silent
     expect(triggers.captured).toHaveLength(1)
 
     const editor = await freshModule() // a cold second instance of the module
-    expect(editor.insertQuoteChip(fakeCtx({ triggers, composer: fakeComposer() }), 's1', SELECTION)).toBe(true)
+    expect(editor.insertQuoteRecord(fakeCtx({ triggers, composer: fakeComposer() }), 's1', SELECTION)).toBeDefined()
     expect(triggers.captured).toHaveLength(1) // no second source: the host refused it
     const record = storedRecord(editor)
     expect(record?.path).toBe('/w/src/a.ts')
@@ -299,7 +305,7 @@ describe('lifecycle self-heal (a disposed fiber must not kill the feature silent
     const disposeCore = core.registerQuoteSource(ctx)
     const editor = await freshModule()
     // The editor copy borrows the live source from the core bundle.
-    expect(editor.insertQuoteChip(ctx, 's1', SELECTION)).toBe(true)
+    expect(editor.insertQuoteRecord(ctx, 's1', SELECTION)).toBeDefined()
     expect(triggers.captured).toHaveLength(1)
     // The owner goes away (session switch / socket reconnect / HMR). Nothing
     // tells the borrowing instance, so its next commit must notice the empty
@@ -307,7 +313,7 @@ describe('lifecycle self-heal (a disposed fiber must not kill the feature silent
     // blocks the send.
     disposeCore()
     expect(triggers.captured).toHaveLength(0)
-    expect(editor.insertQuoteChip(ctx, 's1', SELECTION)).toBe(true)
+    expect(editor.insertQuoteRecord(ctx, 's1', SELECTION)).toBeDefined()
     expect(triggers.captured).toHaveLength(1)
     expect(triggers.captured[0]?.name).toBe(editor.QUOTE_SOURCE)
   })
@@ -322,7 +328,7 @@ describe('several pages of one origin (one shared store, one memory per page)', 
     const ctx = fakeCtx({ triggers, composer })
     /** Commit one selection and return the ref of the chip it minted. */
     const quote = (): string => {
-      expect(mod.insertQuoteChip(ctx, 's1', SELECTION)).toBe(true)
+      expect(mod.insertQuoteRecord(ctx, 's1', SELECTION)).toBeDefined()
       return (composer.insertReference.mock.calls.at(-1)?.[0] as { ref: string }).ref
     }
     return { mod, triggers, ctx, quote }
@@ -371,7 +377,7 @@ describe('the registered source', () => {
     const composer = fakeComposer()
     const sidebar = { openFile: vi.fn() }
     mod.registerQuoteSource(fakeCtx({ triggers, composer, sidebar }))
-    const landed = mod.insertQuoteChip(fakeCtx({ composer, sidebar }), 's1', SELECTION)
+    const landed = mod.insertQuoteRecord(fakeCtx({ composer, sidebar }), 's1', SELECTION) !== undefined
     const record = storedRecord(mod)
     return { mod, source: triggers.captured[0] as NonNullable<typeof triggers.captured[0]>, sidebar, composed: composer, landed, record }
   }
@@ -395,14 +401,14 @@ describe('the registered source', () => {
   it('drops the record when the chip cannot land (no orphan ids in the store)', async () => {
     const mod = await freshModule()
     mod.registerQuoteSource(fakeCtx({ triggers: fakeTriggers() }))
-    expect(mod.insertQuoteChip(fakeCtx({ composer: fakeComposer(false) }), 's1', SELECTION)).toBe(false)
+    expect(mod.insertQuoteRecord(fakeCtx({ composer: fakeComposer(false) }), 's1', SELECTION)).toBeUndefined()
     expect(storedJson(mod)).toBeNull()
   })
 
   it('refuses when the conversation service is unavailable', async () => {
     const mod = await freshModule()
     mod.registerQuoteSource(fakeCtx({ triggers: fakeTriggers() }))
-    expect(mod.insertQuoteChip(fakeCtx({ sessions: false }), 's1', SELECTION)).toBe(false)
+    expect(mod.insertQuoteRecord(fakeCtx({ sessions: false }), 's1', SELECTION)).toBeUndefined()
     expect(storedJson(mod)).toBeNull()
   })
 
@@ -445,7 +451,7 @@ describe('the registered source', () => {
     const triggers = fakeTriggers()
     const sidebar = { openFile: vi.fn() }
     mod.registerQuoteSource(fakeCtx({ triggers, composer: fakeComposer(), sidebar }))
-    mod.insertQuoteChip(fakeCtx({ composer: fakeComposer(), sidebar }), 's1', { path: '/w/a.md', cwd: '/w', text: 'hi' })
+    mod.insertQuoteRecord(fakeCtx({ composer: fakeComposer(), sidebar }), 's1', { path: '/w/a.md', cwd: '/w', text: 'hi' })
     const record = storedRecord(mod)
     expect(triggers.captured[0]?.openReference?.({ sessionId: 's1' }, { ref: record?.id as string })).toBe(true)
     expect(sidebar.openFile).toHaveBeenCalledWith({ sessionId: 's1', cwd: '/w' }, '/w/a.md', undefined, undefined)
@@ -455,6 +461,28 @@ describe('the registered source', () => {
     const { source, sidebar } = await withChip()
     expect(source.openReference?.({ sessionId: 's1' }, { ref: 'q404-gone' })).toBe(false)
     expect(sidebar.openFile).not.toHaveBeenCalled()
+  })
+
+  it('still resolves a legacy file record written before the plan kind existed', async () => {
+    const mod = await freshModule()
+    const triggers = fakeTriggers()
+    const sidebar = { openFile: vi.fn() }
+    mod.registerQuoteSource(fakeCtx({ triggers, composer: fakeComposer(), sidebar }))
+    // Old records carry no `kind`: they are file quotes and must keep clicking
+    // and serializing across the upgrade (a live draft may still hold them).
+    localStorage.setItem(mod.QUOTE_STORE_KEY, JSON.stringify([{
+      id: 'legacy-1', sessionId: 's1', n: 1, path: '/w/src/old.ts', cwd: '/w',
+      lines: { start: 4, end: 4 }, label: 'Quote old.ts L4', clipboardText: 'src/old.ts:4',
+      text: '```src/old.ts:4\nold\n```',
+    }]))
+    const source = triggers.captured[0]!
+    expect(source.openReference?.({ sessionId: 's1' }, { ref: 'legacy-1' })).toBe(true)
+    expect(sidebar.openFile).toHaveBeenCalledWith(
+      { sessionId: 's1', cwd: '/w' }, '/w/src/old.ts', undefined, { line: 4, lineEnd: 4 },
+    )
+    expect(source.codec?.clipboardText('legacy-1')).toBe('src/old.ts:4')
+    await expect(source.codec?.serialize('legacy-1', new AbortController().signal))
+      .resolves.toBe('```src/old.ts:4\nold\n```')
   })
 
   it('names chips by file and lines — a deleted chip leaves no gap', async () => {
@@ -472,7 +500,7 @@ describe('the registered source', () => {
     const mod = await freshModule()
     mod.registerQuoteSource(fakeCtx({ triggers: fakeTriggers() }))
     const commit = (lines?: { start: number; end: number }): string => {
-      mod.insertQuoteChip(fakeCtx({ composer: fakeComposer() }), 's1', { ...SELECTION, lines })
+      mod.insertQuoteRecord(fakeCtx({ composer: fakeComposer() }), 's1', { ...SELECTION, lines })
       const all = JSON.parse(localStorage.getItem(mod.QUOTE_STORE_KEY) ?? '[]') as { label: string }[]
       return all.at(-1)?.label as string
     }
@@ -484,7 +512,7 @@ describe('the registered source', () => {
   it('labels Windows-style paths by basename too', async () => {
     const mod = await freshModule()
     mod.registerQuoteSource(fakeCtx({ triggers: fakeTriggers() }))
-    mod.insertQuoteChip(
+    mod.insertQuoteRecord(
       fakeCtx({ composer: fakeComposer() }),
       's1',
       { ...SELECTION, path: 'C:\\Users\\x\\proj\\a.ts' },
@@ -497,9 +525,105 @@ describe('the registered source', () => {
     const mod = await freshModule()
     mod.registerQuoteSource(fakeCtx({ triggers: fakeTriggers() }))
     for (let i = 0; i < mod.QUOTE_STORE_CAP + 10; i++) {
-      mod.insertQuoteChip(fakeCtx({ composer: fakeComposer() }), 's1', { ...SELECTION, text: `t${i}` })
+      mod.insertQuoteRecord(fakeCtx({ composer: fakeComposer() }), 's1', { ...SELECTION, text: `t${i}` })
     }
     const stored = storedJson(mod) as unknown[]
     expect(stored).toHaveLength(mod.QUOTE_STORE_CAP)
+  })
+})
+
+describe("plan annotations (the plan page's chip)", () => {
+  const PLAN: QuoteSelection = {
+    kind: 'plan',
+    planId: 'dsh-resource://plan/s1/call-1',
+    planTitle: 'Ship it',
+    note: 'Use a queue.',
+    text: 'retry once',
+  }
+
+  it('persists a plan record without a path and mints a non-file chip', async () => {
+    const mod = await freshModule()
+    mod.registerQuoteSource(fakeCtx({ triggers: fakeTriggers() }))
+    const composer = fakeComposer()
+    const record = mod.insertQuoteRecord(fakeCtx({ composer }), 's1', PLAN)
+    expect(record?.kind).toBe('plan')
+    expect(record?.path).toBeUndefined()
+    expect(record?.planId).toBe(PLAN.planId)
+    expect(record?.text).toContain('Use a queue.')
+    expect(record?.text).toContain('> retry once')
+    // The chip carries the source-owned ref and NO file appearance (a file
+    // chip would be handed to the file opener by the host).
+    const inserted = composer.insertReference.mock.calls[0]?.[0] as { source: string; appearance?: string; label: string }
+    expect(inserted.source).toBe(mod.QUOTE_SOURCE)
+    expect(inserted.appearance).toBeUndefined()
+    expect(inserted.label).toContain('Plan annotation')
+    // The persisted record is the one the codec resolves in the other bundle.
+    expect(storedRecord(mod)?.kind).toBe('plan')
+  })
+
+  it('serializes back to the annotation plus quoted plan text', async () => {
+    const mod = await freshModule()
+    const triggers = fakeTriggers()
+    mod.registerQuoteSource(fakeCtx({ triggers }))
+    const record = mod.insertQuoteRecord(fakeCtx({ composer: fakeComposer() }), 's1', PLAN)!
+    const payload = await triggers.captured[0]!.codec!.serialize(record.id, new AbortController().signal)
+    expect(payload).toContain('Use a queue.')
+    expect(payload).toContain('> retry once')
+    expect(payload).toBe(record.text)
+  })
+
+  it('refuses the click-through instead of asking the file opener to open a plan address', async () => {
+    const mod = await freshModule()
+    const triggers = fakeTriggers()
+    mod.registerQuoteSource(fakeCtx({ triggers }))
+    const sidebar = { openFile: vi.fn() }
+    const record = mod.insertQuoteRecord(fakeCtx({ composer: fakeComposer(), sidebar }), 's1', PLAN)!
+    const opened = triggers.captured[0]!.openReference!({ sessionId: 's1' }, { ref: record.id })
+    expect(opened).toBe(false)
+    expect(sidebar.openFile).not.toHaveBeenCalled()
+  })
+
+  it('keeps file selections on the original fenced path payload', async () => {
+    const mod = await freshModule()
+    mod.registerQuoteSource(fakeCtx({ triggers: fakeTriggers() }))
+    const composer = fakeComposer()
+    expect(mod.insertQuoteRecord(fakeCtx({ composer }), 's1', SELECTION)?.text)
+      .toBe('```src/a.ts:2-3\nconst x = 1\n```')
+    const inserted = composer.insertReference.mock.calls[0]?.[0] as { appearance?: string }
+    expect(inserted.appearance).toBe('file')
+  })
+
+  it('keeps an over-limit note whole in the bare envelope (never silently truncates)', async () => {
+    const mod = await freshModule()
+    mod.registerQuoteSource(fakeCtx({ triggers: fakeTriggers() }))
+    const note = 'n'.repeat(SELECTION_LIMIT + 20)
+    const record = mod.insertQuoteRecord(fakeCtx({ composer: fakeComposer() }), 's1', {
+      ...PLAN, planTitle: undefined, note, text: 'some plan text',
+    })!
+    expect(record.text).toBe(`Plan annotation\n${note}`)
+    expect(record.text).toContain(note)
+    expect(record.text.length).toBeGreaterThan(SELECTION_LIMIT)
+    // The quote — not the reader's note — is what the bare envelope drops.
+    expect(record.text).not.toContain('some plan text')
+  })
+
+  it('shows a plan title with $ patterns verbatim in the chip label', async () => {
+    const mod = await freshModule()
+    mod.registerQuoteSource(fakeCtx({ triggers: fakeTriggers() }))
+    for (const title of ['cost$&fee', 'a$`b', "a$'b", 'a$$b']) {
+      const record = mod.insertQuoteRecord(fakeCtx({ composer: fakeComposer() }), 's1', { ...PLAN, planTitle: title })!
+      expect(record.label).toBe(`Plan annotation · ${title}`)
+    }
+  })
+
+  it('truncates an emoji plan title on code points (no lone surrogate in the label)', async () => {
+    const mod = await freshModule()
+    mod.registerQuoteSource(fakeCtx({ triggers: fakeTriggers() }))
+    const title = '🙂'.repeat(30)
+    const record = mod.insertQuoteRecord(fakeCtx({ composer: fakeComposer() }), 's1', { ...PLAN, planTitle: title })!
+    expect(record.label).toBe(`Plan annotation · ${'🙂'.repeat(23)}…`)
+    // Strip valid pairs; no surrogate code unit may remain on its own.
+    const withoutPairs = record.label.replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]/g, '')
+    expect(withoutPairs).not.toMatch(/[\uD800-\uDFFF]/)
   })
 })
