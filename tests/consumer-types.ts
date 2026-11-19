@@ -32,6 +32,11 @@ import type {
   SidebarSettingToggleType,
   TabComponentProps,
   TabDescriptor,
+  TreeDockContext,
+  TreeDockDescriptor,
+  TreeDockProps,
+  TreeToolbarActionContext,
+  TreeToolbarActionDescriptor,
 } from '../src/client/service.ts'
 import type {
   SessionScope,
@@ -153,6 +158,39 @@ service.matchFolderIcon(true)
 service.matchFolderIcon(true, 'node_modules')
 service.fileIcon('/p/a.csv', 14)
 service.folderIcon('/p', true, 14)
+
+/** File-tree toolbar action and dock surface (features `treeToolbarActions` / `treeDocks`, v0.33.0). */
+const treeAction: TreeToolbarActionDescriptor = {
+  id: 'my-plugin:tree-action',
+  label: (context: TreeToolbarActionContext) => `Tree ${context.sessionId}`,
+  title: (context: TreeToolbarActionContext) => `cwd ${context.root ?? ''}`,
+  icon: (context: TreeToolbarActionContext) => {
+    void context.now()
+    return (props: { size: number }) => props.size > 0 ? null : null
+  },
+  order: 10,
+  when: (context: TreeToolbarActionContext) => context.visible,
+  pressed: (context: TreeToolbarActionContext) => context.visible,
+  disabled: false,
+  onAction: async (context: TreeToolbarActionContext) => {
+    void context.root
+  },
+}
+const disposeTreeAction: () => void = service.registerTreeToolbarAction(treeAction)
+service.getTreeToolbarActions()
+const treeDock: TreeDockDescriptor = {
+  id: 'my-plugin:tree-dock',
+  order: 20,
+  when: (context: TreeDockContext) => context.visible,
+  component: (props: TreeDockProps) => {
+    const { sessionId, root, visible } = props
+    void sessionId; void root; void visible
+    return null
+  },
+}
+const disposeTreeDock: () => void = service.registerTreeDock(treeDock)
+service.getTreeDocks()
+void disposeTreeAction; void disposeTreeDock
 
 /** Named state vocabulary stays importable (the pre-0.12 gap). */
 const diff: SidebarDiffRef = { kind: 'worktree', path: '/p/a.ts', staged: false }

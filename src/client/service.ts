@@ -19,7 +19,7 @@
  *   per descriptor it tries `detect` first (when `head` bytes are given),
  *   then `exts`; `exts: []` is a catch-all that matches any path.
  */
-import type { ReactNode } from 'react'
+import type { ComponentType, ReactNode } from 'react'
 import type { Context } from '../context-types.ts'
 import {
   activateTab as activateTabReducer, allLeaves, closeTab as closeTabReducer,
@@ -617,6 +617,115 @@ export interface FileActionDescriptor {
 }
 
 /**
+ * What a file-tree toolbar action is handed while it renders and runs.
+ *
+ * The tree owns no state for external actions: `pressed` / `disabled` /
+ * `label` are asked again on every render, and the same context is passed to
+ * `onAction` so the owner can key its own store by `(sessionId, root)`.
+ */
+export interface TreeToolbarActionContext {
+  /** The session whose file tree this row belongs to. */
+  sessionId: string
+  /** The tree's root — the session's cwd; undefined before a session has one. */
+  root: string | undefined
+  /** Whether the owning tab is on screen (a parked tab still renders). */
+  visible: boolean
+  /**
+   * A fresh clock (ms). Descriptors that own time-based state — a run's
+   * elapsed time, a throttle — read it here instead of keeping a timer; the
+   * panel calls it on each render that asks for one.
+   */
+  now: () => number
+}
+
+/**
+ * Describes one external toolbar action (feature `treeToolbarActions`): a
+ * button at the right end of the file tree's search / refresh / sort / upload
+ * row.
+ *
+ * The callback runs CLIENT-SIDE only — the plugin that registers it owns the
+ * work (its own routes, its own state). The tree contributes the entry point
+ * and a one-line error strip; it never starts, stops or uploads anything.
+ */
+export interface TreeToolbarActionDescriptor {
+  /** Unique id (`'my-plugin:run'`). Re-registering the same id throws. */
+  id: string
+  /** Button label: the accessible name and the default tooltip (i18n-friendly:
+   * string or a thunk). The row is icon-only, so this is never painted. */
+  label: string | ((context: TreeToolbarActionContext) => string)
+  /** Tooltip / accessible name; defaults to the label. */
+  title?: string | ((context: TreeToolbarActionContext) => string)
+  /**
+   * Leading glyph. A function is called with the context and may return a
+   * node or a component, which the tree renders at 14px (the host glyph
+   * convention); a component returned directly is rendered the same way.
+   */
+  icon?: ReactNode | ((context: TreeToolbarActionContext) => ReactNode | ComponentType<{ size: number }>)
+  /** Order among external actions; ascending, default 0. */
+  order?: number
+  /**
+   * Whether the action applies right now. Called once per render, so it must
+   * be cheap and side-effect free; omitted = always.
+   */
+  when?: (context: TreeToolbarActionContext) => boolean
+  /**
+   * Toggle state for a run/stop affordance. When defined the button becomes
+   * `aria-pressed` and, while pressed, keeps the active tint — so one cell can
+   * flip between "start" and "running" in place.
+   */
+  pressed?: boolean | ((context: TreeToolbarActionContext) => boolean)
+  /**
+   * Whether the action is unavailable. One action runs at a time, so every
+   * button is disabled while any other action is in flight (the tree ORs
+   * this in).
+   */
+  disabled?: boolean | ((context: TreeToolbarActionContext) => boolean)
+  /**
+   * Do the work. A rejected promise is reported as `error.message` in the
+   * tree's error strip; a resolved one says nothing (the owner reports its
+   * own outcome). Presses are guarded per id: a second press while the first
+   * is in flight is ignored.
+   */
+  onAction: (context: TreeToolbarActionContext) => void | Promise<void>
+}
+
+/** What a tree dock is handed when it renders. */
+export interface TreeDockContext {
+  /** The session whose file tree this dock sits under. */
+  sessionId: string
+  /** The tree's root — the session's cwd; undefined before a session has one. */
+  root: string | undefined
+  /** Whether the owning tab is on screen (a parked tab still renders). */
+  visible: boolean
+}
+
+/** Props a tree dock component is mounted with (its own context). */
+export type TreeDockProps = TreeDockContext
+
+/**
+ * Describes one external dock (feature `treeDocks`): a component mounted
+ * under the file list, below the tree and above the upload overlay.
+ *
+ * Unlike a toolbar action the dock IS the surface — it renders whatever the
+ * plugin wants (a console, a status line, a small form) and receives the
+ * same `(sessionId, root, visible)` the tree sees. It must not assume it is
+ * alone: descriptors stack in `order` and each owns its own height.
+ */
+export interface TreeDockDescriptor {
+  /** Unique id (`'my-plugin:console'`). Re-registering the same id throws. */
+  id: string
+  /** Order among docks; ascending, default 0. */
+  order?: number
+  /**
+   * Whether the dock applies right now. Called once per render, so it must
+   * be cheap and side-effect free; omitted = always.
+   */
+  when?: (context: TreeDockContext) => boolean
+  /** The dock's component; keyed by id and mounted while the panel is. */
+  component: (props: TreeDockProps) => ReactNode
+}
+
+/**
  * Reserved `exts` values that claim DIRECTORY rows instead of file
  * extensions: `'folder'` matches a closed directory, `'folder-open'` an
  * expanded one (`folderIcon(path, open)` resolves them). They are filtered out of
@@ -800,6 +909,19 @@ export interface BetterSidebarService {
    * registration) order. The registration is disposed with the plugin fiber.
    */
   registerTabAction(descriptor: TabActionDescriptor): () => void
+  /**
+   * Contribute a button to the file tree's search / refresh / sort / upload
+   * row (feature `treeToolbarActions`). Buttons appear after the built-in
+   * upload controls, in `order` (then registration) order. The registration
+   * is disposed with the plugin fiber.
+   */
+  registerTreeToolbarAction(descriptor: TreeToolbarActionDescriptor): () => void
+  /**
+   * Contribute a component docked under the file list (feature `treeDocks`):
+   * below the tree, above the upload overlay, in `order` (then registration)
+   * order. The registration is disposed with the plugin fiber.
+   */
+  registerTreeDock(descriptor: TreeDockDescriptor): () => void
   getTabs(): readonly TabDescriptor[]
   getFileViewers(): readonly FileViewerDescriptor[]
   getFileIcons(): readonly FileIconDescriptor[]
@@ -807,6 +929,10 @@ export interface BetterSidebarService {
   getFileActions(): readonly FileActionDescriptor[]
   /** Every registered tab action, in the order the header renders them. */
   getTabActions(): readonly TabActionDescriptor[]
+  /** Every registered tree toolbar action, in the order the tree renders them. */
+  getTreeToolbarActions(): readonly TreeToolbarActionDescriptor[]
+  /** Every registered tree dock, in the order the tree stacks them. */
+  getTreeDocks(): readonly TreeDockDescriptor[]
   /**
    * Find a SPECIFIC registered file icon for a path (priority desc, then
    * registration order): a `names` match first, then an `exts` match.
@@ -1063,6 +1189,14 @@ export const SIDEBAR_SERVICE_VERSION = '0.32.1'
  *   in the editor header (right of save/reload/tree). Same contract as
  *   `fileActions`: the header supplies the entry point, the owner does the
  *   work.
+ * - 'treeToolbarActions' (v0.33.0): registerTreeToolbarAction/
+ *   getTreeToolbarActions — external buttons in the file tree's search row
+ *   (right of refresh/sort/upload). A descriptor can flip one cell between
+ *   start and stop through `pressed` / `disabled`, and the same context
+ *   (sessionId/root/visible/now) reaches rendering and `onAction`.
+ * - 'treeDocks' (v0.33.0): registerTreeDock/getTreeDocks — external
+ *   components docked under the file list (below the tree, above the upload
+ *   overlay), mounted with `(sessionId, root, visible)`.
  *
  * v0.19.0 REMOVED 'floatWindows': the free-window feature is gone (DSH 0.1.5
  * owns the right column, so the plugin keeps only its bottom workbench).
@@ -1085,6 +1219,8 @@ export const SIDEBAR_FEATURES = [
   'hostRouteUrl',
   'fileActions',
   'tabActions',
+  'treeToolbarActions',
+  'treeDocks',
 ] as const
 
 /** Run one plugin callback; a throw is logged and never breaks the caller. */
@@ -1117,6 +1253,8 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
   const fileIcons = new Map<string, FileIconDescriptor>()
   const fileActions = new Map<string, FileActionDescriptor>()
   const tabActions = new Map<string, TabActionDescriptor>()
+  const treeToolbarActions = new Map<string, TreeToolbarActionDescriptor>()
+  const treeDocks = new Map<string, TreeDockDescriptor>()
   const listeners = new Set<() => void>()
   /** The native right-Sidebar write face, installed by the client half. */
   let surface: SidebarSurface | undefined
@@ -1230,6 +1368,42 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
   /** External tab actions in render order — same ranking as the file rows. */
   const getTabActions = (): readonly TabActionDescriptor[] =>
     Array.from(tabActions.values()).sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+
+  const registerTreeToolbarAction = (descriptor: TreeToolbarActionDescriptor): (() => void) => {
+    if (treeToolbarActions.has(descriptor.id)) {
+      throw new Error(`[dsh-better-sidebar] tree toolbar action "${descriptor.id}" already registered`)
+    }
+    treeToolbarActions.set(descriptor.id, descriptor)
+    notify()
+    return () => {
+      if (treeToolbarActions.get(descriptor.id) === descriptor) {
+        treeToolbarActions.delete(descriptor.id)
+        notify()
+      }
+    }
+  }
+
+  /** External tree toolbar actions in render order — same ranking as the tab header. */
+  const getTreeToolbarActions = (): readonly TreeToolbarActionDescriptor[] =>
+    Array.from(treeToolbarActions.values()).sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+
+  const registerTreeDock = (descriptor: TreeDockDescriptor): (() => void) => {
+    if (treeDocks.has(descriptor.id)) {
+      throw new Error(`[dsh-better-sidebar] tree dock "${descriptor.id}" already registered`)
+    }
+    treeDocks.set(descriptor.id, descriptor)
+    notify()
+    return () => {
+      if (treeDocks.get(descriptor.id) === descriptor) {
+        treeDocks.delete(descriptor.id)
+        notify()
+      }
+    }
+  }
+
+  /** External docks in stacking order — top to bottom, same ranking. */
+  const getTreeDocks = (): readonly TreeDockDescriptor[] =>
+    Array.from(treeDocks.values()).sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
 
   // Registrations in ranking order: priority desc, stable for equal
   // priorities (insertion order) — the same ranking `matchFileViewer` uses.
@@ -1759,11 +1933,15 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
     registerFileIcon,
     registerFileAction,
     registerTabAction,
+    registerTreeToolbarAction,
+    registerTreeDock,
     getTabs,
     getFileViewers,
     getFileIcons,
     getFileActions,
     getTabActions,
+    getTreeToolbarActions,
+    getTreeDocks,
     matchFileIcon,
     matchFolderIcon,
     fileIcon,

@@ -19,11 +19,13 @@
  * drop over the file window uploads here and never reaches DSH's chat
  * intake.
  */
-import { useEffect, useMemo, useRef, useState, type InputHTMLAttributes } from 'react'
+import { createElement, useEffect, useMemo, useRef, useState, type InputHTMLAttributes } from 'react'
 import clsx from 'clsx'
 import { IconChevronsUpDownOutlineRegular, IconFolderOpenRegular, IconRefreshOutlineRegular, Menu } from '@deepseek-ai/dsh-client-ui-primitives'
 import { api } from './api.ts'
-import type { BetterSidebarService } from './service.ts'
+import type {
+  BetterSidebarService, TreeDockDescriptor, TreeToolbarActionContext, TreeToolbarActionDescriptor,
+} from './service.ts'
 import { ancestorDirs } from './state.ts'
 import { FileTree } from './FileTree.tsx'
 import { DEFAULT_FILE_TREE_SORT, type FileTreeSort } from './file-tree-sort.ts'
@@ -112,6 +114,33 @@ export function TreePanel(props: {
    */
   const [sort, setSort] = useState<FileTreeSort>(DEFAULT_FILE_TREE_SORT)
   const [sortOpen, setSortOpen] = useState(false)
+
+  /**
+   * External toolbar actions and docks (features `treeToolbarActions` /
+   * `treeDocks`). The registry is snapshotted on mount and re-read on every
+   * registration change; the tree keeps no state of its own for them, so the
+   * descriptors' own `label`/`pressed`/`disabled` are asked per render.
+   */
+  const [treeToolbarActions, setTreeToolbarActions] = useState<TreeToolbarActionDescriptor[]>([])
+  const [treeDocks, setTreeDocks] = useState<TreeDockDescriptor[]>([])
+  /** The one external action currently running (id), or null. */
+  const [pendingTreeAction, setPendingTreeAction] = useState<string | null>(null)
+  /** The last external action failure (the strip under the search row). */
+  const [treeActionError, setTreeActionError] = useState<string | null>(null)
+  /** Bumped when an action settles so `pressed` is re-asked in place. */
+  const [, setTreeActionTick] = useState(0)
+  /** Ids whose `onAction` is in flight (guards a second press of the same id). */
+  const runningTreeActions = useRef(new Set<string>())
+
+  useEffect(() => {
+    if (service === undefined) return
+    const read = (): void => {
+      setTreeToolbarActions([...service.getTreeToolbarActions()])
+      setTreeDocks([...service.getTreeDocks()])
+    }
+    read()
+    return service.subscribe(read)
+  }, [service])
 
   // The tree caches loaded directories per refresh tick, so content changed
   // outside DSH (another editor, a sync tool) stays stale until the manual
@@ -251,6 +280,64 @@ export function TreePanel(props: {
     setQuery('')
   }
 
+  // The context handed to external actions and docks: the tree root is the
+  // session cwd, and `visible` is the ownership flag the host passes down.
+  // It is rebuilt per render on purpose — the descriptors' thunks read fresh
+  // session state instead of a cached snapshot.
+  const treeActionContext: TreeToolbarActionContext = {
+    sessionId,
+    root: cwd,
+    visible: visible !== false,
+    now: () => Date.now(),
+  }
+
+  const visibleTreeToolbarActions = treeToolbarActions.filter((action) => {
+    if (action.when === undefined) return true
+    try {
+      return action.when(treeActionContext)
+    } catch (error) {
+      console.error('[dsh-better-sidebar] tree toolbar predicate error:', error)
+      return false
+    }
+  })
+
+  const visibleTreeDocks = treeDocks.filter((dock) => {
+    if (dock.when === undefined) return true
+    try {
+      return dock.when({ sessionId, root: cwd, visible: visible !== false })
+    } catch (error) {
+      console.error('[dsh-better-sidebar] tree dock predicate error:', error)
+      return false
+    }
+  })
+
+  /** Run one external action; one at a time, failures land in the strip. */
+  const runTreeToolbarAction = (action: TreeToolbarActionDescriptor): void => {
+    if (visible === false) return
+    if (runningTreeActions.current.has(action.id)) return
+    runningTreeActions.current.add(action.id)
+    setPendingTreeAction(action.id)
+    setTreeActionError(null)
+    const settle = (nextError: string | null): void => {
+      setTreeActionError(nextError)
+      setPendingTreeAction(null)
+      runningTreeActions.current.delete(action.id)
+      setTreeActionTick(tick => tick + 1)
+    }
+    try {
+      const outcome = action.onAction(treeActionContext)
+      if (outcome !== undefined && typeof (outcome as Promise<void>).then === 'function') {
+        void (outcome as Promise<void>).then(() => { settle(null) }, (failure: unknown) => {
+          settle(failure instanceof Error ? failure.message : String(failure))
+        })
+      } else {
+        settle(null)
+      }
+    } catch (error) {
+      settle(error instanceof Error ? error.message : String(error))
+    }
+  }
+
   return (
     <div className={clsx(css.editorTreePanel, full === true && css.editorTreePanelFull)}>
       <div className={css.editorTreeSearch}>
@@ -313,6 +400,38 @@ export function TreePanel(props: {
           disabled={busy}
           onClick={() => { folderInputRef.current?.click() }}
         />
+        {/* External toolbar actions (feature `treeToolbarActions`): one cell
+            per registration, right of the upload controls. A descriptor may
+            flip its own cell between start and stop with `pressed`, so the
+            button is re-asked per render instead of caching state here. */}
+        {visibleTreeToolbarActions.map((action) => {
+          const label = typeof action.label === 'function' ? action.label(treeActionContext) : action.label
+          const title = typeof action.title === 'function' ? action.title(treeActionContext) : action.title ?? label
+          const glyphSource = typeof action.icon === 'function' ? action.icon(treeActionContext) : action.icon
+          const glyph = glyphSource === undefined
+            ? null
+            : typeof glyphSource === 'function'
+              ? createElement(glyphSource, { size: 14 })
+              : glyphSource
+          const pressed = typeof action.pressed === 'function' ? action.pressed(treeActionContext) : action.pressed
+          const disabled = pendingTreeAction !== null
+            || (typeof action.disabled === 'function' ? action.disabled(treeActionContext) : action.disabled) === true
+          return (
+            <button
+              key={action.id}
+              type="button"
+              className={clsx(css.iconButton, pressed === true && css.editorTreeToggleActive)}
+              aria-label={label}
+              title={title}
+              aria-pressed={pressed === undefined ? undefined : pressed}
+              data-dsh-tree-action={action.id}
+              disabled={disabled}
+              onClick={() => { runTreeToolbarAction(action) }}
+            >
+              {glyph}
+            </button>
+          )
+        })}
         <input
           ref={fileInputRef}
           type="file"
@@ -335,6 +454,15 @@ export function TreePanel(props: {
           }}
         />
       </div>
+      {treeActionError !== null && (
+        <div
+          className={clsx(css.editorSearchHint, css.editorError)}
+          role="alert"
+          data-dsh-tree-action-error="true"
+        >
+          {treeActionError}
+        </div>
+      )}
       {uploadStatus !== '' && (
         <div className={clsx(css.editorSearchHint, uploadFailed && css.editorError)} title={uploadStatus}>{uploadStatus}</div>
       )}
@@ -407,6 +535,22 @@ export function TreePanel(props: {
         sort={sort}
         service={service}
       />
+      {/* External docks (feature `treeDocks`): stacked under the file list,
+          above the upload overlay. Each descriptor owns its own height; the
+          wrapper only gives them a flex column so a dock can scroll itself. */}
+      {visibleTreeDocks.length > 0 && (
+        <div
+          data-dsh-tree-dock="true"
+          style={{ flex: '0 0 auto', display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}
+        >
+          {visibleTreeDocks.map(dock => createElement(dock.component, {
+            key: dock.id,
+            sessionId,
+            root: cwd,
+            visible: visible !== false,
+          }))}
+        </div>
+      )}
       {upload !== null && (
         <UploadOverlay
           dir={upload.dir}
