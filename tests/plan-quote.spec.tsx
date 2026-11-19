@@ -331,6 +331,33 @@ describe('PlanViewer quote chip', () => {
     page.unmount()
   })
 
+  it('keeps the note box inside the plan document instead of covering the window chrome', () => {
+    const rect = (left: number, top: number, right: number, bottom: number): DOMRect => ({
+      left, top, right, bottom,
+      x: left, y: top, width: right - left, height: bottom - top,
+      toJSON: () => ({}),
+    }) as DOMRect
+    const page = mountPlanPage()
+    vi.spyOn(page.doc(), 'getBoundingClientRect').mockReturnValue(rect(600, 100, 1180, 700))
+    // jsdom has no Range rect at all; install one for this test only.
+    const proto = Range.prototype as unknown as { getBoundingClientRect?: () => DOMRect }
+    const hadRect = 'getBoundingClientRect' in proto
+    const originalRect = proto.getBoundingClientRect
+    proto.getBoundingClientRect = () => rect(700, 500, 900, 740)
+    try {
+      const box = openNote(page, 'retry once')
+      // A tall selection leaves no room above or below: the old placement
+      // put the box at 92px, above the document's 100px top (over the pane
+      // header); it now stays at the selection inside the document.
+      expect(box.style.top).toBe('300px')
+      expect(box.style.left).toBe('640px')
+    } finally {
+      if (hadRect) proto.getBoundingClientRect = originalRect
+      else delete proto.getBoundingClientRect
+      page.unmount()
+    }
+  })
+
   it('keeps an unsubmitted note when a new selection is attempted', () => {
     chipResult = undefined
     const page = mountPlanPage()

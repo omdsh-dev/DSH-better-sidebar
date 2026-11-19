@@ -29,6 +29,9 @@ import { isLikelyImeKey } from './ime-guard.ts'
 import { insertQuoteRecord } from './selection-quote.ts'
 import { clipText } from './selection-payload.ts'
 import { useSelectionPopup } from './selection-popup.ts'
+import {
+  floatingActionPlacement, noteBoxPlacement, type PlanPopupAnchor,
+} from './plan-placement.ts'
 import { isPlanReviewAddress } from './native/guide-ids.ts'
 import type { NativeResourceSnapshot, TabComponentProps } from './service.ts'
 import { useNoopResource } from './service.ts'
@@ -40,12 +43,6 @@ interface PlanDocument {
   readonly title: string
 }
 
-/** The note box's width; placement uses it to keep the whole box on screen. */
-const NOTE_WIDTH = 320
-/** The note box's height UPPER BOUND (textarea resizable to 220px + quote and
- *  chrome): placement flips above the selection whenever this much room is
- *  missing, so a dragged-taller box never pushes its buttons off screen. */
-const NOTE_HEIGHT = 400
 /** Hard cap on one note. Keeps a pasted essay from overflowing the persisted
  *  quote store (the payload keeps the note whole by design). */
 const NOTE_MAX_LENGTH = 4000
@@ -68,11 +65,8 @@ function reviewDocumentOf(params: unknown): PlanDocument | undefined {
 }
 
 /** The selection payload carried from the floating button into the note box. */
-interface PlanSelection {
+interface PlanSelection extends PlanPopupAnchor {
   readonly quote: string
-  readonly left: number
-  readonly top: number
-  readonly bottom: number
 }
 
 /** The live note box (one at a time per plan page). */
@@ -86,21 +80,6 @@ const PLAN_MESSAGE_BY_STATUS: Readonly<Partial<Record<PlanMessageStatus, CopyKey
   expired: 'planAnnotationExpired',
   none: 'planAnnotationUnavailable',
   failed: 'planAnnotationFailed',
-}
-
-/** Place the note box under the selection, flipping above near the viewport bottom. */
-function noteBoxPlacement(selection: PlanSelection): { left: number; top: number } {
-  const viewportWidth = typeof window === 'undefined' ? 1024 : window.innerWidth || 1024
-  const viewportHeight = typeof window === 'undefined' ? 768 : window.innerHeight || 768
-  const left = Math.min(
-    Math.max(selection.left - NOTE_WIDTH / 2, 12),
-    Math.max(viewportWidth - NOTE_WIDTH - 12, 12),
-  )
-  const below = selection.bottom + 8
-  const top = below + NOTE_HEIGHT <= viewportHeight - 12
-    ? below
-    : Math.max(12, selection.top - NOTE_HEIGHT - 8)
-  return { left, top }
 }
 
 /**
@@ -207,8 +186,17 @@ export function PlanViewer(props: TabComponentProps): ReactNode {
       ? range.getBoundingClientRect()
       : { left: 0, top: 0, width: 0, height: 0, right: 0, bottom: 0 }
     const left = rect.left + rect.width / 2
+    // The document box is the safe area the floating surfaces clamp to; a
+    // zero-sized box (jsdom, a detached tab) degrades to the viewport.
+    const box = container.getBoundingClientRect()
     selectionPopup.show(
-      { quote, left, top: rect.top, bottom: rect.bottom },
+      {
+        quote,
+        left,
+        top: rect.top,
+        bottom: rect.bottom,
+        surface: { left: box.left, top: box.top, right: box.right, bottom: box.bottom },
+      },
       left,
       rect.top,
     )
@@ -276,6 +264,9 @@ export function PlanViewer(props: TabComponentProps): ReactNode {
   }
 
   const notePlacement = noteDraft === null ? undefined : noteBoxPlacement(noteDraft)
+  const actionPlacement = selectionPopup.popup === null
+    ? undefined
+    : floatingActionPlacement(selectionPopup.popup.insert)
   const quotePreview = noteDraft === null ? '' : clipText(noteDraft.quote, QUOTE_PREVIEW_MAX)
 
   return (
@@ -297,7 +288,7 @@ export function PlanViewer(props: TabComponentProps): ReactNode {
       {added && (
         <p className={css.planAnnotationToast} role="status" data-plan-annotation-toast="">{t('addToConversation')}</p>
       )}
-      {selectionPopup.popup !== null && createPortal(
+      {selectionPopup.popup !== null && actionPlacement !== undefined && createPortal(
         <Button
           ref={selectionPopup.buttonRef}
           type="button"
@@ -307,9 +298,9 @@ export function PlanViewer(props: TabComponentProps): ReactNode {
           data-plan-annotation-add=""
           style={{
             position: 'fixed',
-            left: selectionPopup.popup.left,
-            top: selectionPopup.popup.top - 10,
-            transform: 'translate(-50%, -100%)',
+            left: actionPlacement.left,
+            top: actionPlacement.top,
+            transform: `translate(-50%, ${actionPlacement.above ? '-100%' : '0'})`,
             zIndex: 65,
           }}
           onMouseDown={event => { event.preventDefault() }}
@@ -326,7 +317,12 @@ export function PlanViewer(props: TabComponentProps): ReactNode {
           data-plan-annotation-note=""
           role="dialog"
           aria-label={t('planAnnotation')}
-          style={{ left: notePlacement.left, top: notePlacement.top, width: NOTE_WIDTH }}
+          style={{
+            left: notePlacement.left,
+            top: notePlacement.top,
+            width: notePlacement.width,
+            maxHeight: notePlacement.maxHeight,
+          }}
         >
           <div className={css.planNoteHead}>
             <span className={css.planNoteTitle}>{t('planAnnotation')}</span>

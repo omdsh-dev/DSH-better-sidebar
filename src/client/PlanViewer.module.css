@@ -44,9 +44,9 @@
 
 /* The floating note editor. Width and spacing are fixed so the quote,
    textarea and footer always share one edge; the box is portal-positioned and
-   flipped above the selection when there is no room below. The width comes
-   from the component because the placement math needs the same number, and the
-   max-height keeps a resized box inside short viewports. */
+   flipped above the selection when there is no room below. The component
+   supplies width and max-height because its placement math clamps the box to
+   the plan document, not just the window. */
 .planNotePopup {
   position: fixed;
   z-index: 70;
