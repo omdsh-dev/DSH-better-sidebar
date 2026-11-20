@@ -71,6 +71,7 @@ function isVisible(element: Element): boolean {
 function readRightPanelOpen(): boolean {
   const doc = pageDocument()
   if (doc === undefined) return false
+  if (doc.querySelector('[data-animating]') !== null) return open
   for (const element of doc.querySelectorAll('[data-sidebar-right-expand]')) {
     if (isVisible(element)) return false
   }

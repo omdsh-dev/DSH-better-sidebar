@@ -221,4 +221,27 @@ describe('useRightPanelOpen（共享 poller）', () => {
     act(() => { runIntervals() })
     expect(openOf(view.container, 'dock'), 'tick 之后仍是 false').toBe('false')
   })
+
+  it('skips layout reads and keeps cached state while [data-animating] is present', () => {
+    const view = mount(createElement(Consumer, { label: 'dock' }))
+    expect(openOf(view.container, 'dock')).toBe('false')
+
+    appendExpandedToggle()
+    const animating = document.createElement('div')
+    animating.setAttribute('data-animating', '')
+    document.body.append(animating)
+    cleanups.push(() => { animating.remove() })
+
+    layoutReads = 0
+    documentQueries = 0
+    act(() => { runIntervals() })
+    expect(documentQueries).toBe(0)
+    expect(layoutReads).toBe(0)
+    expect(openOf(view.container, 'dock')).toBe('false')
+
+    animating.remove()
+    act(() => { runIntervals() })
+    expect(layoutReads).toBe(1)
+    expect(openOf(view.container, 'dock')).toBe('true')
+  })
 })
