@@ -234,6 +234,22 @@
     visibility 0s linear var(--ds-transition-duration-slow);
 }
 
+/* 宿主右侧栏全屏时，底部工作台不该浮在全屏面板前方：全屏面板铺满中心区，
+   工作台凭自身 z-index 叠在上面，既破坏全屏整体感也挡住操作。宿主把全屏态
+   暴露在 panel 的 data-sidebar-right-panel="fullscreen"（普通态为 "push"）。
+   用一条 body:has(...) 规则据此视觉收起：只改视觉、不动 store 的 bottomOpen，
+   退出全屏即自动失效，工作台连同原展开状态一起恢复，无需记忆逻辑。
+   :has() 在此是安全的——匹配的是宿主的 panel 属性，流式聊天不会改它，浏览器
+   的失效集合只在该属性变化时才重算，不像 layout.css 盯 #root 子树的那种用法。 */
+body:has([data-sidebar-right-panel="fullscreen"]) .bottomPanel {
+  transform: translateY(102%);
+  pointer-events: none;
+  visibility: hidden;
+  transition:
+    transform var(--ds-transition-duration-slow) var(--ds-ease-in-out),
+    visibility 0s linear var(--ds-transition-duration-slow);
+}
+
 /* Height drags write at pointer cadence; easing would detach the edge. */
 .bottomPanel[data-dragging] {
   transition: none;
