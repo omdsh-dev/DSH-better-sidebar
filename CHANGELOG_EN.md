@@ -6,6 +6,9 @@
 
 ### Unreleased
 
+- 🖼️ **Relative Markdown images work when the document address is only a filename**: when a file is opened as `README.md` with no directory component, local images now resolve relative to the session workspace instead of the filesystem root. Leading `..` segments in relative targets are preserved for the host to resolve. This covers both Markdown image syntax and embedded HTML images.
+  - 🧪 Tests: `tests/markdown-images.spec.ts` and `tests/markdown-html-render.spec.tsx`.
+
 - 💻 **Side Chat renders PTC (run_code) tool trees**: the collapsed `run_code` line shows the model-written description, and its expanded body shows the program plus the final result. Tools dispatched inside the program (bash / read / grep / edit, …) render as indented rows under it — visible even when the root row is collapsed — through the same terminal / diff / read / search / web cards. Running, failed and start-less dispatches all render; successful PTC writes/edits join the clickable path mentions. `present` keeps its top-level delivery card and also leaves a sub-call row.
   - 🧪 Tests: `tests/sidechat-ptc-rows.spec.ts` (pairing / running / failed / no-start / nested / missing parent / identity reuse), `tests/sidechat-ptc-subcalls.spec.tsx` (description summary, program body, indentation and cards, collapsed-root visibility) and `tests/sidechat-mention-sources.spec.tsx` (PTC mutations count, reads do not).
 
