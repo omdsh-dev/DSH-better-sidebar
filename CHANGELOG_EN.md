@@ -6,6 +6,10 @@
 
 ### Unreleased
 
+- 🖼 **Read-only `.drawio` / `.dio` preview**: opening a draw.io file from the tree now renders it as SVG instead of the XML source. Both save forms are accepted (plain `mxGraphModel`, and draw.io's default base64 + raw-DEFLATE + percent-escaped `mxfile/diagram` body); multi-page files render the first page. The renderer is a separate lazy chunk (`lib/client-drawio.js`, maxGraph), fetched only on first open; diagram content is inert and the preview is read-only. The existing file-tree drag-and-drop upload path is unchanged: drop the file, then open it.
+  - 🧪 Tests: `tests/drawio.spec.ts` (plain/`mxfile`/compressed/bare base64/malformed, SVG dimensions and label), `tests/builtins.spec.ts` / `tests/lazy-chunk.spec.tsx` / `tests/file-icons.spec.tsx` (viewer claim and glyph), `tests/locales.spec.ts` (all locale key sets), and `tests/e2e/mount.e2e.ts` (real `dsh web` fetches `client-drawio.js` and renders the SVG).
+
+
 - 💻 **Side Chat renders PTC (run_code) tool trees**: the collapsed `run_code` line shows the model-written description, and its expanded body shows the program plus the final result. Tools dispatched inside the program (bash / read / grep / edit, …) render as indented rows under it — visible even when the root row is collapsed — through the same terminal / diff / read / search / web cards. Running, failed and start-less dispatches all render; successful PTC writes/edits join the clickable path mentions. `present` keeps its top-level delivery card and also leaves a sub-call row.
   - 🧪 Tests: `tests/sidechat-ptc-rows.spec.ts` (pairing / running / failed / no-start / nested / missing parent / identity reuse), `tests/sidechat-ptc-subcalls.spec.tsx` (description summary, program body, indentation and cards, collapsed-root visibility) and `tests/sidechat-mention-sources.spec.tsx` (PTC mutations count, reads do not).
 

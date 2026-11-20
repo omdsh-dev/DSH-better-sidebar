@@ -4,6 +4,10 @@
 
 ### 未发布
 
+- 🖼 **`.drawio` / `.dio` 只读预览**：文件树点开 draw.io 文件不再落到 XML 源码，而是渲染成 SVG。两种 save 格式都认（明文 `mxGraphModel`，以及 draw.io 默认的 base64 + raw-DEFLATE + percent-escape 的 `mxfile/diagram`）；多页文件渲染第一页。渲染引擎走独立的 lazy chunk（`lib/client-drawio.js`，maxGraph），只在第一次打开时下载；图内脚本 inert，预览是只读的。文件树沿用现有拖拽上传链路，上传后点开即可。
+  - 🧪 测试：`tests/drawio.spec.ts`（明文/`mxfile`/压缩/bare base64/坏文件、SVG 尺寸与文字）；`tests/builtins.spec.ts` / `tests/lazy-chunk.spec.tsx` / `tests/file-icons.spec.tsx`（viewer 认领与图标）；`tests/locales.spec.ts`（全部语言 key 对齐）；`tests/e2e/mount.e2e.ts`（真实 `dsh web` 中拉取 `client-drawio.js` 并渲染 SVG）。
+
+
 - 💻 **侧边对话显示 PTC（run_code）工具调用树**：`run_code` 行收起时显示模型写的 description，展开后显示程序代码和最终结果；程序内通过 PTC 派发的 bash / read / grep / edit 等子调用缩进挂在它下方，根行收起也可见，并复用终端 / diff / read / search / web 结构卡片。运行中、失败、无 start 的 dispatch 都有对应显示；PTC 内成功 write/edit 的文件也进入可点击路径提及。`present` 仍保留顶层交付卡片，同时在子调用区留下一行。
   - 🧪 测试：`tests/sidechat-ptc-rows.spec.ts`（配对 / 运行态 / 失败 / 无 start / 嵌套 / 父行缺失 / 身份复用）、`tests/sidechat-ptc-subcalls.spec.tsx`（description 摘要、代码体、缩进与卡片、根行收起仍可见）、`tests/sidechat-mention-sources.spec.tsx`（PTC mutation 进入提及、read 不进入）。
 
