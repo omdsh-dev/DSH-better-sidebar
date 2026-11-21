@@ -117,12 +117,15 @@ test('a blank session keeps the bottom workbench reachable while the right panel
   await expect(fallback, '右侧栏展开后空白会话的入口仍应在').toBeVisible({ timeout: 30_000 })
   await expect.poll(() => onScreenCount(page), { timeout: 30_000 }).toBe(1)
 
-  // And it sits LEFT of the panel: never over panel content.
-  const entryBox = await fallback.boundingBox()
-  const panelBox = await page.locator('[data-sidebar-right-panel]').first().boundingBox()
-  expect(entryBox, '备用入口必须可量').not.toBeNull()
-  expect(panelBox, '宿主的右栏面板必须可量').not.toBeNull()
-  expect(entryBox!.x + entryBox!.width, '入口右缘不得越过面板左缘').toBeLessThanOrEqual(panelBox!.x)
+  // And it sits LEFT of the panel: never over panel content. Polled rather than
+  // measured once — the panel slides in, and the entry follows the measured edge
+  // on its own 500ms tick, so a single read can catch the two mid-animation.
+  await expect.poll(async () => {
+    const entryBox = await fallback.boundingBox()
+    const panelBox = await page.locator('[data-sidebar-right-panel]').first().boundingBox()
+    if (entryBox === null || panelBox === null) return Number.POSITIVE_INFINITY
+    return Math.round(entryBox.x + entryBox.width - panelBox.x)
+  }, { timeout: 30_000, message: '入口右缘不得越过面板左缘' }).toBeLessThanOrEqual(0)
 
   // Clicking it opens the bottom workbench, with the panel still expanded.
   await fallback.locator('[data-dsh-bottom-toggle]').click()
