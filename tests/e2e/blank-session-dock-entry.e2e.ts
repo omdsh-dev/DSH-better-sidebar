@@ -82,6 +82,57 @@ test('a blank session keeps the bottom workbench reachable from the top-right en
 })
 
 /**
+ * Issue #989: a blank session must keep the entry while the host right panel is
+ * EXPANDED.
+ *
+ * In a blank session the host draws no session-header utilities, so this
+ * fallback is the ONLY bottom-workbench opener — hiding it while the panel is
+ * open leaves the workbench unreachable until the panel is collapsed (the same
+ * trap #1053 fixed for the header entry). The expanded panel moves the host's
+ * Split / Fullscreen / Collapse cluster inside the panel, so the entry anchors
+ * to the panel's own left edge instead: it must stay left of the panel, never
+ * on top of panel content.
+ */
+test('a blank session keeps the bottom workbench reachable while the right panel is expanded (#989)', async ({ page }) => {
+  const pageErrors: string[] = []
+  const consoleErrors: string[] = []
+  page.on('pageerror', (error) => pageErrors.push(String(error)))
+  page.on('console', (message) => {
+    if (message.type() === 'error') consoleErrors.push(message.text())
+  })
+
+  await page.goto(PAGE_URL, { waitUntil: 'domcontentloaded' })
+  await expect(page.locator('#root > *')).not.toHaveCount(0, { timeout: 90_000 })
+  await dismissOnboarding(page)
+
+  await page.getByRole('button', { name: /^(New session|新建会话)$/i }).first().click({ timeout: 30_000 })
+  const fallback = page.locator('[data-dsh-dock-fallback]')
+  await expect(fallback, '空白会话的备用入口').toBeVisible({ timeout: 60_000 })
+
+  // Expand the host's own right column from its corner control.
+  await page.locator('[data-sidebar-right-expand]').first().click({ timeout: 60_000 })
+  await expect(page.locator('[data-sidebar-right-toggle]').first(), '右侧栏已展开').toBeVisible({ timeout: 30_000 })
+
+  // The entry survives the expand, still exactly one on screen.
+  await expect(fallback, '右侧栏展开后空白会话的入口仍应在').toBeVisible({ timeout: 30_000 })
+  await expect.poll(() => onScreenCount(page), { timeout: 30_000 }).toBe(1)
+
+  // And it sits LEFT of the panel: never over panel content.
+  const entryBox = await fallback.boundingBox()
+  const panelBox = await page.locator('[data-sidebar-right-panel]').first().boundingBox()
+  expect(entryBox, '备用入口必须可量').not.toBeNull()
+  expect(panelBox, '宿主的右栏面板必须可量').not.toBeNull()
+  expect(entryBox!.x + entryBox!.width, '入口右缘不得越过面板左缘').toBeLessThanOrEqual(panelBox!.x)
+
+  // Clicking it opens the bottom workbench, with the panel still expanded.
+  await fallback.locator('[data-dsh-bottom-toggle]').click()
+  await expect(page.locator('[data-dsh-bottom-panel]').first()).toBeVisible({ timeout: 30_000 })
+
+  expect(pageErrors, 'uncaught page errors').toEqual([])
+  expect(consoleErrors, 'console errors').toEqual([])
+})
+
+/**
  * Issue #1218: a brand-new session's right Sidebar must render this plugin's
  * content on the FIRST expand — no host Split control in between.
  *
