@@ -9,7 +9,10 @@
  *   the product opens lands in the plugin's editor — EXCEPT the formats
  *   {@link HOST_OWNED_EXTS} hands back to DSH's own previews, which are
  *   strictly better for binary documents (host-side Office→PDF conversion,
- *   a worker-backed spreadsheet table, a zoom viewport);
+ *   a worker-backed spreadsheet table, a PDF pager, SVG). Raster images are
+ *   claimed by the plugin's pixel viewer, unless that viewer is switched off
+ *   and no other plugin viewer renders them — then they go back to the host
+ *   preview as well (see the `canOpen` check);
  * - the built-in `files` page kind is TAKEN OVER by an `extension`
  *   registration of the same kind, so `openTab('files')` draws the plugin's
  *   explorer instead of the built-in tree; the built-in resumes when this
@@ -51,35 +54,58 @@ import {
  * Extensions DSH's own previews own, and this plugin therefore refuses.
  *
  * DSH 0.1.7 grew a real document-preview package (host-side Office→PDF
- * conversion, a worker-backed spreadsheet table, image/PDF zoom viewports and
+ * conversion, a worker-backed spreadsheet table, PDF zoom viewports and
  * per-directory auto-refresh) for exactly these formats, while the plugin's
  * equivalents are read-only fallbacks. The plugin keeps what the built-in does
  * NOT do: Markdown through its own renderer, HTML through its sandboxed route
- * with the `htmlViewerNoSandbox` safety valve, and — through the `code`
- * catch-all — a genuinely EDITABLE CodeMirror buffer for every text file.
+ * with the `htmlViewerNoSandbox` safety valve, raster images through the
+ * pixel-measuring viewer (the host viewport knows no pixel boundary), and —
+ * through the `code` catch-all — a genuinely EDITABLE CodeMirror buffer for
+ * every text file.
+ *
+ * SVG stays host-owned even though it is an image: it is vector artwork, so a
+ * "pixel" is only whatever the rasteriser chose, and measuring it would be a
+ * lie. The host's zoom viewport is the honest owner.
  *
  * Refusing here is what hands the address over: `canOpen` returning false
  * leaves the built-in `text` type (the `fallback` band) as the only claimant.
  *
  * The list is exactly the set the host renders — nothing more. Nine extensions
  * that the host has NO renderer for (`xlsb xlt xltx xltm ots dot dotx avif`)
- * used to be refused here too, and refusing them turned "the plugin shows a
- * download panel" into "the host shows 'preview is not available for this file
- * type yet'" — a dead end. They are claimed again, so the `code` catch-all
- * takes them to the binary download pane. `fods` stays refused on purpose: the
- * host's plain-text fallback renders flat ODS XML, which beats a download.
- * `tests/native-surface.spec.ts` pins both directions of this boundary.
+ * are claimed again, so the `code` catch-all takes them to the binary download
+ * pane. `fods` stays refused on purpose: the host's plain-text fallback
+ * renders flat ODS XML, which beats a download. `tests/native-surface.spec.ts`
+ * pins both directions of this boundary.
  */
 const HOST_OWNED_EXTS: ReadonlySet<string> = new Set([
   // Spreadsheets: the built-in renders a table in a worker.
   'xlsx', 'xls', 'csv', 'tsv', 'fods',
   // PDF: the built-in viewer pages and zooms.
   'pdf',
-  // Images: the built-in viewer adds a zoom viewport.
-  'png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico',
+  // Vector images: see the note above. Every raster format below is claimed
+  // by the plugin's own pixel viewer.
+  'svg',
   // Office documents: the built-in converts them to PDF host-side.
   'doc', 'docx', 'ppt', 'pptx',
 ])
+
+/**
+ * Raster image extensions the built-in `image` viewer owns. They are not in
+ * {@link HOST_OWNED_EXTS}, so the editor claims them — but only while a
+ * plugin viewer actually renders them. With the viewer disabled, the address
+ * must fall back to the host preview instead of the code catch-all's download
+ * pane (see the `canOpen` check below).
+ */
+const IMAGE_VIEWER_EXTS: ReadonlySet<string> = new Set([
+  'png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico',
+])
+
+/** The lowercase extension of a file path (`''` when it carries none). */
+function extensionOf(path: string): string {
+  const name = path.slice(path.lastIndexOf('/') + 1)
+  const dot = name.lastIndexOf('.')
+  return dot > 0 ? name.slice(dot + 1).toLowerCase() : ''
+}
 
 /**
  * Whether DSH's own preview owns one path.
@@ -87,9 +113,7 @@ const HOST_OWNED_EXTS: ReadonlySet<string> = new Set([
  * @returns true for a {@link HOST_OWNED_EXTS} extension (a dotfile is not one).
  */
 function hostOwnedPath(path: string): boolean {
-  const name = path.slice(path.lastIndexOf('/') + 1)
-  const dot = name.lastIndexOf('.')
-  return dot > 0 && HOST_OWNED_EXTS.has(name.slice(dot + 1).toLowerCase())
+  return HOST_OWNED_EXTS.has(extensionOf(path))
 }
 
 /**
@@ -490,7 +514,16 @@ export function registerNativeSurface(deps: NativeSurfaceDeps): () => void {
               const file = parseFileAddress(address)
               // A non-file address, or one of the formats the built-in
               // previews own, leaves the address to DSH's own `text` type.
-              return file !== undefined && !hostOwnedPath(file.path)
+              if (file === undefined || hostOwnedPath(file.path)) return false
+              // Raster images have a plugin viewer, but the reader can switch
+              // it off. With no enabled plugin owner (only the code catch-all,
+              // or nothing at all), the host's preview is still better than
+              // this plugin's binary-download pane — hand the address back.
+              if (IMAGE_VIEWER_EXTS.has(extensionOf(file.path))) {
+                const owner = service.matchFileViewer(file.path)
+                return owner !== undefined && owner.id !== 'code'
+              }
+              return true
             },
           }
           : {}),

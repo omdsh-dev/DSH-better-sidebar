@@ -711,21 +711,31 @@ describe('registerNativeSurface lifecycle (service-driven registration)', () => 
     dispose()
   })
 
-  it('claims exactly the extensions DSH has no preview for (the nine restored formats included)', () => {
+  it('claims the plugin-owned previews and hands the host-owned ones back', () => {
     // DSH 0.1.7 handed every read-only preview to `ui-sidebar-documentpreview`,
     // and `canOpen` returning false is what gives the address away. The host's
-    // renderer tables cover xlsx/xls/csv/tsv, pdf, the eight common image
-    // formats, doc/docx/ppt/pptx and the flat-ODS text fallback — nine
-    // extensions that were refused here as well have NO host renderer at all,
-    // and refusing them swapped the plugin's binary-download pane for the
-    // host's "Preview is not available for this file type yet" dead end. This
-    // pins both directions so the refusal list can never drift wider than the
-    // host again; the host files behind the boundary are named in
+    // renderer tables cover spreadsheets, pdf, SVG, doc/docx/ppt/pptx and the
+    // flat-ODS text fallback — nine extensions that were refused here as well
+    // have NO host renderer at all, and refusing them swapped the plugin's
+    // binary-download pane for the host's "Preview is not available for this
+    // file type yet" dead end. Raster images are the plugin's now (the host
+    // viewport cannot measure pixels), but the claim is conditional on an
+    // enabled viewer: with `image` switched off, the address must go back to
+    // the host preview rather than the code catch-all's download pane. This
+    // pins both directions; the host files behind the boundary are named in
     // src/client/native/index.ts.
     const store = createSidebarStore()
     store.setSession('s1')
     const service = createBetterSidebarService(store)
     service.registerTab({ id: 'editor', title: 'Files', component: () => null })
+    // The builtin registration is what production has; this stub keeps the
+    // routing test free of React components.
+    service.registerFileViewer({
+      id: 'image',
+      exts: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico'],
+      fetchStrategy: 'mediaUrl',
+      component: () => null,
+    })
     const records = createNativeTabRecords()
     let canOpen: ((address: string) => boolean) | undefined
     const ctx = {
@@ -750,14 +760,27 @@ describe('registerNativeSurface lifecycle (service-driven registration)', () => 
     /** One session-scoped file address, the shape the chat hands the sidebar. */
     const file = (name: string) => `dsh-resource://file/session/s1/${name}`
 
-    // Formats the host renders: DSH's own preview must own them.
+    // Formats the host renders and the plugin does not: DSH's preview owns them.
     for (const name of [
       'book.xlsx', 'legacy.xls', 'data.csv', 'data.tsv', 'flat.fods',
-      'paper.pdf', 'photo.png', 'photo.jpg', 'anim.gif', 'photo.webp', 'art.svg',
-      'tile.bmp', 'favicon.ico', 'report.docx', 'report.doc', 'deck.pptx', 'deck.ppt',
+      'paper.pdf', 'art.svg',
+      'report.docx', 'report.doc', 'deck.pptx', 'deck.ppt',
     ]) {
       expect(open(file(name)), name).toBe(false)
     }
+
+    // Raster images: the plugin's pixel viewer claims them while it is enabled.
+    for (const name of ['photo.png', 'photo.jpg', 'anim.gif', 'photo.webp', 'tile.bmp', 'favicon.ico']) {
+      expect(open(file(name)), name).toBe(true)
+    }
+    // Disabled, the host preview is the fallback (the code catch-all is not a
+    // usable renderer for a bitmap).
+    store.setPrefs({ ...store.getPrefs(), viewersEnabled: { image: false } })
+    for (const name of ['photo.png', 'anim.gif']) {
+      expect(open(file(name)), `${name} disabled`).toBe(false)
+    }
+    store.setPrefs({ ...store.getPrefs(), viewersEnabled: { image: true } })
+    expect(open(file('photo.png'))).toBe(true)
 
     // Formats the host has NO renderer for: the plugin claims them, so the
     // `code` catch-all reaches the binary-download pane instead of a dead end.
@@ -768,7 +791,7 @@ describe('registerNativeSurface lifecycle (service-driven registration)', () => 
       expect(open(file(name)), name).toBe(true)
     }
 
-    // The three viewers the plugin keeps on purpose, and a non-file address.
+    // The text viewers the plugin keeps on purpose, and a non-file address.
     for (const name of ['README.md', 'page.html', 'main.ts']) {
       expect(open(file(name)), name).toBe(true)
     }

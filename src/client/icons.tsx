@@ -54,6 +54,93 @@ export const IconHtmlOutline16 = ({ size = 16, className }: IconProps) => (
   </svg>
 )
 
+/** Image viewer glyph: a photo frame with a horizon and a sun. */
+export const IconImageOutline16 = ({ size = 16, className }: IconProps) => (
+  <svg width={size} height={size} className={className} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <rect x="1.5" y="2.5" width="13" height="11" rx="2" stroke="currentColor" strokeWidth="1.5" />
+    <circle cx="5.5" cy="6" r="1.25" stroke="currentColor" strokeWidth="1.25" />
+    <path d="m2.5 12 3.4-3.4 2.1 2.1 1.8-1.8 3.7 3.1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+)
+
+/** Zoom-out glyph: the minus half of the zoom pair (the plus comes from the
+ *  primitives set, which has no minus). */
+export const IconMinusOutline16 = ({ size = 16, className }: IconProps) => (
+  <svg width={size} height={size} className={className} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M3.5 8h9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+  </svg>
+)
+
+/** The measurement mark itself: one segment, a perpendicular boundary rule
+ *  near each end, and a dot on each end. Both distance icons render THIS
+ *  drawing — the single-axis one only rotates it — so the pair can never drift
+ *  apart in stroke weight, tick length or dot size. */
+const MeasureSegmentGlyph = (
+  <>
+    <path d="M4.2 11.8 11.8 4.2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    <path d="m3 7.6 5.4 5.4M7.6 3l5.4 5.4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    <circle cx="4.2" cy="11.8" r="1.2" fill="currentColor" />
+    <circle cx="11.8" cy="4.2" r="1.2" fill="currentColor" />
+  </>
+)
+
+/** Single-axis distance glyph: the very same drawing as the two-axis icon,
+ *  rotated 45° around the canvas center so the segment stands upright. It is
+ *  taller than its sibling by design (the reader asked for the same mark, not a
+ *  redrawn one), which is why it sits a little higher than the other icons. */
+export const IconMeasureAxisOutline16 = ({ size = 16, className }: IconProps) => (
+  <svg width={size} height={size} className={className} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <g transform="rotate(-45 8 8)">{MeasureSegmentGlyph}</g>
+  </svg>
+)
+
+/** Delete-one-measurement glyph: an eraser on a baseline. */
+export const IconEraseOutline16 = ({ size = 16, className }: IconProps) => (
+  <svg width={size} height={size} className={className} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <rect x="2.8" y="5.4" width="10.4" height="5.2" rx="1.4" transform="rotate(-45 8 8)" stroke="currentColor" strokeWidth="1.5" />
+    <path d="M6.2 6.2 9.8 9.8" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+    <path d="M2.5 14.2h11" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+  </svg>
+)
+
+/** Distance-measurement glyph: the two-axis distance mark (a diagonal segment
+ *  between two end ticks). */
+export const IconMeasureLineOutline16 = ({ size = 16, className }: IconProps) => (
+  <svg width={size} height={size} className={className} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+    {MeasureSegmentGlyph}
+  </svg>
+)
+
+/** Area-measurement glyph: a dashed pixel rectangle with corner dots. */
+export const IconMeasureAreaOutline16 = ({ size = 16, className }: IconProps) => (
+  <svg width={size} height={size} className={className} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <rect x="2.5" y="3.5" width="11" height="9" rx="1" stroke="currentColor" strokeWidth="1.5" strokeDasharray="2 1.6" />
+    <circle cx="2.5" cy="3.5" r="1.1" fill="currentColor" />
+    <circle cx="13.5" cy="12.5" r="1.1" fill="currentColor" />
+  </svg>
+)
+
+/** Fit-to-window glyph: a frame with an L bracket in the bottom-left and the
+ *  opposite bracket in the top-right — "make the picture match this box". */
+export const IconFitWindowOutline16 = ({ size = 16, className }: IconProps) => (
+  <svg width={size} height={size} className={className} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <rect x="1.5" y="1.5" width="13" height="13" rx="1.5" stroke="currentColor" strokeWidth="1.5" />
+    <path d="M4.4 12.2V9.6h2.6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M11.6 3.8v2.6H9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+)
+
+/** Pan glyph: an open hand (the primitives set has no hand). The 24-unit
+ *  viewBox keeps the finger outlines readable at the 14px toolbar size. */
+export const IconHandOutline16 = ({ size = 16, className }: IconProps) => (
+  <svg width={size} height={size} className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M18 11V6a2 2 0 0 0-4 0v5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M14 10V4a2 2 0 0 0-4 0v2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M10 10.5V6a2 2 0 0 0-4 0v8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="m7 15-1.76-1.76a2 2 0 0 0-2.83 2.82l3.6 3.6A8 8 0 0 0 11.6 22h1.4a8 8 0 0 0 8-8V7a2 2 0 0 0-4 0v6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+)
+
 /** History glyph (thread switcher): a clock with a counterclockwise arrow,
  *  in the app's outline style — the "past conversations" mark. */
 export const IconHistoryOutline16 = ({ size = 16, className }: IconProps) => (

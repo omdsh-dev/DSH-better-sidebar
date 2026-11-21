@@ -1602,6 +1602,252 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   color: var(--dsw-alias-label-tertiary);
 }
 
+/* Built-in raster image viewer: a continuous-zoom stage plus the two
+   measurement overlays. The bitmap keeps its natural size and the whole view
+   is one translate+scale transform, so 100% is exactly one image pixel per
+   CSS pixel; `image-rendering` is switched to nearest-neighbour inline from
+   100% up, which keeps every magnified pixel a whole device-pixel block. */
+.imageViewer {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--dsw-alias-bg-document-preview, var(--dsw-alias-bg-base));
+}
+
+.imageToolbar {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--dsw-alias-border-l2);
+}
+
+.imageToolButton {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--dsw-radius-sm, 4px);
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xxs-strong-12);
+  cursor: pointer;
+}
+
+.imageToolButton:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.imageToolButton[aria-pressed='true'] {
+  background: var(--dsw-alias-interactive-bg-active);
+  color: var(--dsw-alias-label-primary);
+}
+
+.imageToolButton:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.imageZoomValue {
+  width: auto;
+  min-width: 46px;
+  padding: 0 5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.imageToolbarDivider {
+  width: 1px;
+  height: 16px;
+  margin: 0 4px;
+  background: var(--dsw-alias-border-l2);
+}
+
+.imageToolbarSpacer {
+  flex: 1;
+}
+
+.imageStage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  touch-action: none;
+  user-select: none;
+  cursor: grab;
+}
+
+.imageStage[data-tool='distance'],
+.imageStage[data-tool='axis'],
+.imageStage[data-tool='rect'],
+.imageStage[data-tool='erase'] {
+  cursor: crosshair;
+}
+
+.imageStage[data-tool='erase'][data-erase-hover='true'] {
+  cursor: pointer;
+}
+
+.imageStage[data-tool='pan']:active,
+.imageStage[data-panning='true'] {
+  cursor: grabbing;
+}
+
+/* The frame is screen-space, not part of the scaled bitmap: its checkerboard
+   shows through transparent pixels and its 1px outline stays 1px at any zoom. */
+.imageFrame {
+  position: absolute;
+  box-sizing: border-box;
+  overflow: hidden;
+  outline: 1px solid var(--dsw-alias-border-l2);
+  background-color: var(--dsw-alias-bg-base);
+  background-image:
+    linear-gradient(45deg, var(--image-checker) 25%, transparent 25%, transparent 75%, var(--image-checker) 75%),
+    linear-gradient(45deg, var(--image-checker) 25%, transparent 25%, transparent 75%, var(--image-checker) 75%);
+  background-position: 0 0, 8px 8px;
+  background-size: 16px 16px;
+  --image-checker: color-mix(in srgb, var(--dsw-alias-label-tertiary) 12%, transparent);
+}
+
+/* Photoshop shows its pixel grid from 600% up; the threshold lives in
+   image-view.ts and the grid follows the same scale as the bitmap. */
+.imageGrid {
+  position: absolute;
+  pointer-events: none;
+  background-image:
+    linear-gradient(to right, var(--image-grid-line) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--image-grid-line) 1px, transparent 1px);
+  background-position: 0 0;
+  --image-grid-line: color-mix(in srgb, var(--dsw-alias-label-primary) 22%, transparent);
+}
+
+/* The bitmap and the measurement geometry share ONE scaled container. The
+   geometry must never be positioned independently: at fractional zoom a
+   separate screen-space overlay visibly drifts off the bitmap's pixel borders,
+   while a child of the same transform cannot. */
+.imageCanvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+  pointer-events: none;
+}
+
+.imageBitmap {
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+.imageGeometry {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  shape-rendering: crispEdges;
+  pointer-events: none;
+}
+
+.imageLabels {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+/* Labels are bare red text on the picture: no box, no shadow. Their position
+   is a pure function of the measured pixels, so they never follow the window. */
+.imageLabel {
+  position: absolute;
+  color: var(--dsw-alias-state-error-primary);
+  white-space: nowrap;
+  pointer-events: none;
+  text-shadow: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.imageLabelResult {
+  font: var(--dsw-font-xl-24);
+}
+
+.imageLabelPoint {
+  font: var(--dsw-font-l-20);
+}
+
+/* A measurement is one solid red line. No halo, no fill, no endpoint dots.
+   The stroke width is set inline as `3 / scale`: the geometry shares the
+   bitmap's HTML transform, and `vector-effect: non-scaling-stroke` does not
+   compensate for an ancestor CSS transform. */
+.imageLine,
+.imageTick,
+.imageRect,
+.imageDraftLine,
+.imageDraftRect {
+  fill: none;
+  stroke: var(--dsw-alias-state-error-primary);
+}
+
+/* The area tool paints a faint red wash inside its outline. It lives in the
+   scaled geometry layer, while the pixel grid is a later screen-space sibling,
+   so the wash sits BEHIND the grid lines and never tints them. */
+.imageRect,
+.imageDraftRect {
+  fill: color-mix(in srgb, var(--dsw-alias-state-error-primary) 24%, transparent);
+}
+
+.imageNotice {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 24px;
+  text-align: center;
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.imageStatus {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 8px;
+  border-top: 1px solid var(--dsw-alias-border-l2);
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.imageStatus > span:not(.imageStatusHint) {
+  flex: none;
+  white-space: nowrap;
+}
+
+.imageStatusHint {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: center;
+}
+
 /* Binary / download-only files (legacy OLE .doc/.xls/.ppt, unknown binaries):
    a centered notice plus a download link — the user always gets the file. */
 .editorBinary {
