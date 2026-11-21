@@ -148,6 +148,26 @@ describe('native Connection admission', () => {
     }
   })
 
+  it('falls back to native admit once requestRejection is gone', async () => {
+    const mounted = mount()
+    try {
+      let rejection: 401 | 403 | undefined
+      const admit = vi.fn(() => (rejection === undefined ? {} : { rejection }))
+      Reflect.deleteProperty(mounted.connection, 'requestRejection')
+      Object.assign(mounted.connection as unknown as Record<string, unknown>, { admit })
+      const route = mounted.routes.find(candidate => candidate.path === '/sidebar/api')!
+      for (const [verdict, expected] of [[undefined, 200], [401, 403], [403, 403]] as const) {
+        rejection = verdict
+        const { res, out } = response()
+        await route.handler(request('/sidebar/api/session.cwd').req, res)
+        expect(out.status).toBe(expected)
+      }
+      expect(admit).toHaveBeenCalledTimes(3)
+    } finally {
+      mounted.cleanup()
+    }
+  })
+
   it('does not bypass native refusals for former desktop, image, or port exceptions', async () => {
     const mounted = mount(403)
     try {
