@@ -40,6 +40,8 @@ export function useCenterColumn(
   // writes the bottom panel's edges directly, so measurement pauses then.
   const centerColRef = useRef<HTMLElement | null>(null)
   const draggingRef = useRef(false)
+  const bottomOpenRef = useRef(Boolean(bottomOpen))
+  bottomOpenRef.current = Boolean(bottomOpen)
   const measureCenter = useCallback((): void => {
     if (draggingRef.current) return
     const col = centerColRef.current
@@ -66,9 +68,33 @@ export function useCenterColumn(
     }
     setCenterMeasured(prev => (prev ? prev : true))
   }, [bottomRef])
+  // Opening the bottom panel measures immediately without tearing down or
+  // recreating the ResizeObserver and MutationObservers.
+  useEffect(() => {
+    if (bottomOpen) measureCenter()
+  }, [bottomOpen, measureCenter])
   useEffect(() => {
     let disposed = false
     let observer: ResizeObserver | undefined
+    let settleTimer: number | undefined
+    const clearSettle = (): void => {
+      if (settleTimer === undefined) return
+      window.clearTimeout(settleTimer)
+      settleTimer = undefined
+    }
+    const onCenterResize = (): void => {
+      if (!bottomOpenRef.current) return
+      const col = centerColRef.current
+      if (col !== null && col.closest('[data-animating]') !== null) {
+        clearSettle()
+        settleTimer = window.setTimeout(() => {
+          settleTimer = undefined
+          if (!disposed && bottomOpenRef.current) measureCenter()
+        }, 300)
+        return
+      }
+      measureCenter()
+    }
     // Locate the AppFrame's center column. DSH 0.1.x wraps slot hosts in
     // [data-slot] containers: the conversation slot host (key
     // `main.conversation` on 0.1.5-alpha.2+, `conversation` on alpha.1)
@@ -91,6 +117,7 @@ export function useCenterColumn(
         if (centerColRef.current !== null) {
           centerColRef.current.removeAttribute('data-dsh-center-col')
           centerColRef.current = null
+          clearSettle()
           observer?.disconnect()
           observer = undefined
         }
@@ -118,10 +145,11 @@ export function useCenterColumn(
         centerColRef.current?.removeAttribute('data-dsh-center-col')
         centerColRef.current = col
         col.setAttribute('data-dsh-center-col', '')
+        clearSettle()
         observer?.disconnect()
-        observer = new ResizeObserver(measureCenter)
+        observer = new ResizeObserver(onCenterResize)
         observer.observe(col)
-        measureCenter()
+        if (bottomOpenRef.current) measureCenter()
       }
     }
     // Last-resort safety net (issue #248): the slow re-locate runs ONLY while
@@ -179,6 +207,7 @@ export function useCenterColumn(
     htmlStyleWatcher.observe(document.documentElement, { attributes: true, attributeFilter: ['style'] })
     return () => {
       disposed = true
+      clearSettle()
       if (locateFrame !== null) cancelAnimationFrame(locateFrame)
       stopRetry()
       observer?.disconnect()
@@ -187,11 +216,7 @@ export function useCenterColumn(
       centerColRef.current?.removeAttribute('data-dsh-center-col')
       centerColRef.current = null
     }
-    // Opening the bottom panel re-runs the whole locate/measure chain: a
-    // panel opened before the center column was ever found must not stay
-    // invisible forever (the HMR recovery path depends on the observers
-    // above, this is the belt-and-braces retry for the open moment itself).
-  }, [measureCenter, bottomOpen])
+  }, [measureCenter])
 
   return { centerColRef, centerRectRef, centerMeasured, measureCenter, draggingRef }
 }
