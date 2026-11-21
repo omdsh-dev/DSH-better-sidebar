@@ -1,6 +1,7 @@
 # Changelog
 
 > 本文档收录 dsh-better-sidebar 的完整发布历史（最新版摘要见 [README](README_ZH.md)；同步发布于 [GitHub Releases](https://github.com/omdsh-dev/DSH-better-sidebar/releases)）。
+>
 
 ### 未发布
 
@@ -44,6 +45,16 @@
 
 - 📦 **发布包只安装运行时真正需要的依赖**（[#1191](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1191)）：`dependencies` 只保留 host 半真正 import 的 `ws` / `yaml`；已经打进 `lib/client*.js` 的 CodeMirror、mermaid、xterm、react-icons、dompurify、clsx、rxjs 等移入 `devDependencies`。安装不再多拉约 240 MB / 1.26 万个文件，插件实际运行时仍只有插件本体加 `ws` / `yaml`。`src` 与 `./src/*` 导出**保留**，不做破坏性删除。
   - 🧪 守护：`tests/market-manifest.spec.ts` 同时校验仓库清单与 `pnpm pack` 后的发布清单，dependencies 必须恰好是 `ws` / `yaml`，且 `src` 仍在 `files` 里。
+
+
+- 🖼 **新增「会话媒体」页（会话媒体查看器）**：把一次会话里出现过的所有图片、视频、音频与文档收进一个页面——DSH 自己只在聊天里逐条渲染媒体，从来没有「这个会话一共看过哪些图」的地方。宿主侧从会话日志折叠出目录，客户端按类型/来源筛选、分页、点开即预览（图片/视频/音频内联，其余给外链）。
+  - **每个媒体额外转存一份缩略图**：缩略图由浏览器 `<canvas>` 渲染后上传到插件自有目录 `<DSH_HOME>/better-sidebar/media-thumbs/v1/<2hex>/<sha256>.png`，按媒体**身份**（图片是 `attachmentId`，交付文件是绝对路径）做内容寻址，首次写入即定案、重载不会反复写。这样即使原始附件对象被清理、harness home 重建、或会话日志被搬到另一台机器，这份缩略图仍是可看的——原件不在时页面会明确标「原始媒体已不在」并把缩略图放大显示。
+  - **目录来源覆盖四类事件**：`user/message`（用户上传）、`tool/result`（`read_image`、截图等工具产出）、`agent/inbox/spliced`（PTC/子代理回放，按内容地址去重，不会算两行）、`deliverables/presented`（`present` 交付的工作区文件，按路径识别，不进附件库）。已被 `image/offload` 标记「请求侧省略」的图片仍在列表里——那只是模型请求侧的选择，不是文件消失。
+  - **路由**：新增 `media.list` / `media.thumb.save` / `media.thumb.delete` 三个 JSON 方法与 `GET /sidebar/media`（`thumb=1` 取缩略图，否则取原始字节；交付文件走 Range 流式，视频可拖动）。原始字节路径**不信任客户端元数据**：附件在宿主侧按日志里的引用重新校验（媒体类型/字节数/尺寸/摘要），对不上就是 `ATTACHMENT_CORRUPT`，不会拿错图。
+  - **开销有上界**：目录折叠按会话缓存 5 s（实时会话以自身 `seq` 失效），`original` 可用性按 `(cwd, id)` 缓存 30 s、上限 2000 条，每行的两个文件系统探测走 8 并发池——一次性打开 500 张的会话不再付 500 次串行 round-trip，点开图片也不再重折整份日志。两份缓存由**每次挂载**各持一份、卸载即清空（`src/media-cache.ts`）。
+  - **i18n / 皮肤**：21 份词典的 key 集齐平（zh / ja 手写，繁中三份按简繁映射，其余显式回落英文）；样式只用 `--dsw-*` 令牌，文档卡片的「纸面」在 canvas 里绘制（那是文件的画像，不是主题表面）。
+  - **文档**：`detail/DETAIL.md` + `DETAIL.zh.md` 的功能清单加上第 6 项「会话媒体」，README 中英各加一张真实截图；`docs/external-plugin-guide.md` 新增 §6.3，把 `media.*` 与 `/sidebar/media` 的数据面、字段语义、缓存形态写全。
+  - 🧪 测试：`tests/session-media.spec.ts`（四类事件、内容地址去重、最早 seq 定案、字段补全、非媒体文件过滤、畸形输入不炸）、`tests/media-store.spec.ts`（身份寻址、首次写入定案、PNG/尺寸校验、原子写无残留、原件消失后仍可读）、`tests/media-routes.spec.ts`（目录/存档/删除、原件缺失回 404、交付文件 Range 与下载 disposition）、`tests/media-cache.spec.ts`（TTL 到期、容量淘汰、并发上限、结果保序）、`tests/media-viewer-tab.spec.tsx`（空态/筛选/预览/只剩缩略图/读取失败/不可见不发请求）；`tests/smoke.spec.ts` / `tests/trusted-hosts.spec.ts` 的路由清单与 `tests/builtins.spec.ts` 的 tab 清单同步。
 
 ### v0.32.1
 

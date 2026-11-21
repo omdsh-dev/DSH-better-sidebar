@@ -1,5 +1,5 @@
 /**
- * Built-in registration tests: the plugin registers 6 tabs and 4 file
+ * Built-in registration tests: the plugin registers 7 tabs and 4 file
  * viewers through the same service external plugins use (dogfooding);
  * the catch-all `code` viewer and the html sandbox settings pin the
  * registry's behavior. The read-only previews (image / pdf /
@@ -13,6 +13,10 @@
  * `terminal-bottom` (#774) is the sixth: the plugin's OWN bottom-workbench
  * terminal, which is `bottomOnly` and therefore contributes no native tab
  * type. It is the one built-in whose carrier surface is asserted here.
+ *
+ * `media` (fork addition) is the seventh: the session media viewer, which
+ * enumerates a conversation's whole media history and keeps a plugin-owned
+ * thumbnail per row.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ReactElement } from 'react'
@@ -38,10 +42,10 @@ function setup(): { service: ReturnType<typeof createBetterSidebarService>; stor
 }
 
 describe('built-in tab registrations', () => {
-  it('registers the 6 built-in tabs (the host owns the right-sidebar terminal and browser)', () => {
+  it('registers the 7 built-in tabs (the host owns the right-sidebar terminal and browser)', () => {
     const { service } = setup()
     expect(service.getTabs().map(t => t.id).sort()).toEqual(
-      ['diff', 'editor', 'git', 'sidechat', 'subagent', 'terminal-bottom'],
+      ['diff', 'editor', 'git', 'media', 'sidechat', 'subagent', 'terminal-bottom'],
     )
   })
 

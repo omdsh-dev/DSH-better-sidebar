@@ -22,9 +22,10 @@ import {
   VscGitCommit,
   VscLayers,
   VscTerminal,
+  VscFileMedia,
 } from 'react-icons/vsc'
 /** The styled wrapper classes; typed so a renamed rule fails the build. */
-const css = styles as Record<'files' | 'changes' | 'tasks' | 'sidechat' | 'terminal', string>
+const css = styles as Record<'files' | 'changes' | 'tasks' | 'sidechat' | 'terminal' | 'media', string>
 
 /** One tab type's glyph, sized by the caller's surface (14px in a strip). */
 export type TabIcon = (size: number) => ReactNode
@@ -56,6 +57,14 @@ export const tasksTabIcon: TabIcon = (size) =>
 /** Side chat — the conversational/secondary accent. */
 export const sidechatTabIcon: TabIcon = (size) =>
   themed(css.sidechat, <VscCommentDiscussion size={size} />)
+
+/**
+ * Session media — the media accent. The glyph is a film frame, not a picture:
+ * the page holds clips and audio too, and a single image glyph would promise
+ * a narrower page than the one it opens.
+ */
+export const mediaTabIcon: TabIcon = (size) =>
+  themed(css.media, <VscFileMedia size={size} />)
 
 /**
  * Terminal — primary ink, the shell is text. Rendered one step down from the

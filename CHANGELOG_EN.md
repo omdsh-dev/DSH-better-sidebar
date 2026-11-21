@@ -3,6 +3,7 @@
 > Full release history of dsh-better-sidebar (see the [README](README.md) for the latest release; also mirrored on [GitHub Releases](https://github.com/omdsh-dev/DSH-better-sidebar/releases)).
 >
 > 📝 The Chinese [CHANGELOG](./CHANGELOG.md) is the authoritative, item-by-item record; this file carries the English summaries and has historically lagged behind it. Where the two disagree, the Chinese one is current.
+>
 
 ### Unreleased
 
@@ -46,6 +47,15 @@
 
 - 📦 **The published package installs only its real runtime dependencies** ([#1191](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1191)): `dependencies` keeps only `ws` / `yaml`, which the host half actually imports. CodeMirror, mermaid, xterm, react-icons, dompurify, clsx, rxjs and the rest are already bundled into `lib/client*.js` and move to `devDependencies`, so a normal install no longer pulls roughly 240 MB / 12.6k unused files. `src` and the `./src/*` export stay published — this is not a breaking removal.
   - 🧪 `tests/market-manifest.spec.ts` checks both the repo and the `pnpm pack` manifest: dependencies must be exactly `ws` / `yaml`, and `src` must stay in `files`.
+
+
+- 🖼 **New "Session media" page (the session media viewer)**: every image, clip, audio file and document one conversation ever carried, in one place — DSH itself only renders media where the chat happens to show it, so there was never a way to see "what has this conversation looked at".
+  - **A thumbnail copy per item**: the browser renders it in a `<canvas>` and uploads it to the plugin's own directory (`<DSH_HOME>/better-sidebar/media-thumbs/v1/<2hex>/<sha256>.png`), content-addressed by media IDENTITY (the `attachmentId` for an attachment, the absolute path for a delivered file). The first capture wins, so a page reload never rewrites it. That copy is what survives a cleaned attachment store, a rebuilt harness home, or a log carried to another machine; when the original is gone the page says so and shows the thumbnail enlarged.
+  - **Four sources folded from the durable log**: `user/message` (uploads), `tool/result` (tool output such as `read_image`), `agent/inbox/spliced` (the PTC / subagent replay, deduplicated by content address) and `deliverables/presented` (a workspace file handed over by `present`, identified by path and never stored in the attachment library). An image marked `image/offload` stays listed — that flag only means the model request omitted it.
+  - **Routes**: `media.list` / `media.thumb.save` / `media.thumb.delete` plus `GET /sidebar/media` (`thumb=1` for the stored thumbnail, otherwise the original bytes; a delivered file streams with Range, so a clip seeks). The original-bytes path never trusts client metadata: the attachment is re-derived from the log and verified (media type, byte length, dimensions, digest).
+  - **Bounded cost**: the catalogue fold is cached per session for 5 s (a live session invalidates it by its own `seq`), the `original` availability answer is cached per `(cwd, id)` for 30 s with a 2000-entry cap, and the two per-row filesystem probes run through an 8-wide pool — a 500-image session no longer pays 500 serialized round trips, and clicking an image no longer re-decodes the whole log. Both memos belong to the MOUNT and clear on teardown (`src/media-cache.ts`).
+  - **Docs**: the detail document's feature list gains a sixth entry, both READMEs gain a real screenshot, and `docs/external-plugin-guide.md` §6.3 documents the `media.*` / `/sidebar/media` surface, field semantics and cache shape.
+  - 🧪 Tests: `tests/session-media.spec.ts`, `tests/media-store.spec.ts`, `tests/media-routes.spec.ts`, `tests/media-cache.spec.ts`, `tests/media-viewer-tab.spec.tsx`, plus the route and tab inventories in `tests/smoke.spec.ts`, `tests/trusted-hosts.spec.ts` and `tests/builtins.spec.ts`.
 
 ### v0.32.1
 
