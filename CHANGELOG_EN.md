@@ -6,6 +6,8 @@
 
 ### Unreleased
 
+- **Reduce Git Graph deduplication work when loading more history** ([#1063](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1063), item 5). Each append indexes the full hashes of loaded commits before filtering the incoming page. New commits keep their page order, and duplicate-only pages still advance the cursor.
+
 - 🧷 **The Git details pane's close button now sits permanently at the right end of the tab row** ([#991](https://github.com/omdsh-dev/DSH-better-sidebar/issues/991)): the bottom pane's "commit details / content / diff" strip is one tab row, but the X that closes the whole pane was drawn inside the content/diff head — a row that does not render at all on the details tab, so that tab had no exit and closing meant switching views first. The button now belongs to the tab row: it stays at the right end on every tab, never moves, and closes the whole pane; the duplicate X inside the content/diff head is gone. A single-view preview with no tab row keeps its previous head placement.
   - 🧪 Tests: `tests/changes-tab.spec.tsx` asserts, per tab, that the pane holds exactly one close button, that it rides the tab row after the tablist (the row's right end), and that clicking it from the details tab closes the whole pane.
 

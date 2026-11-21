@@ -527,6 +527,40 @@ describe('graph end-sentinel auto-load', () => {
       expect(mounted.container.textContent).toContain('subject b')
     } finally { mounted.unmount(); io.restore() }
   })
+  it('deduplicates across pages by full hash and advances past duplicate-only pages', async () => {
+    const original = entry(HASH_A)
+    const repeated = { ...original, subject: 'Repeated commit from a later page' }
+    const sameShortHash = entry(`${original.hash}${'2'.repeat(33)}`)
+    const graph = vi.spyOn(api, 'gitGraph')
+      .mockResolvedValueOnce({ ...graphPage([original]), hasMore: true, nextCursor: 'cursor-2' })
+      .mockResolvedValueOnce({ ...graphPage([repeated, sameShortHash, entry(HASH_B)]), hasMore: true, nextCursor: 'cursor-3' })
+      .mockResolvedValueOnce({ ...graphPage([sameShortHash, repeated]), hasMore: true, nextCursor: 'cursor-4' })
+      .mockResolvedValueOnce(graphPage([repeated]))
+    const io = installIntersectionObserver()
+    const mounted = renderRoot(createElement(GitGraphSection, defaults))
+    const rowHashes = () => [...mounted.container.querySelectorAll<HTMLElement>('[data-graph-commit]')]
+      .map(row => row.dataset.graphCommit)
+    try {
+      await flush()
+      await intersect(io.observers.at(-1)!)
+      expect(rowHashes()).toEqual([HASH_A, sameShortHash.hashFull, HASH_B])
+      expect(mounted.container.textContent).toContain(original.subject)
+      expect(mounted.container.textContent).not.toContain(repeated.subject)
+
+      const duplicatePageObserver = io.observers.at(-1)!
+      await intersect(duplicatePageObserver)
+      expect(rowHashes()).toEqual([HASH_A, sameShortHash.hashFull, HASH_B])
+      expect(mounted.container.querySelector('[data-graph-sentinel]')).not.toBeNull()
+      expect(duplicatePageObserver.disconnected).toBe(true)
+      const finalPageObserver = io.observers.at(-1)!
+      expect(finalPageObserver).not.toBe(duplicatePageObserver)
+
+      await intersect(finalPageObserver)
+      expect(graph.mock.calls.map(call => call[1]?.cursor)).toEqual([undefined, 'cursor-2', 'cursor-3', 'cursor-4'])
+      expect(rowHashes()).toEqual([HASH_A, sameShortHash.hashFull, HASH_B])
+      expect(mounted.container.querySelector('[data-graph-sentinel]')).toBeNull()
+    } finally { mounted.unmount(); io.restore() }
+  })
   it('ignores a second intersection while an append is already in flight', async () => {
     let resolveAppend!: (value: ReturnType<typeof page>) => void
     const graph = vi.spyOn(api, 'gitGraph').mockResolvedValueOnce(page('a', true)).mockImplementationOnce(() => new Promise(yes => { resolveAppend = yes })).mockResolvedValue(page('c'))
