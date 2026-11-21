@@ -6,6 +6,10 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 const baseline = '0.2.2-rc.2'
+/** The host runtime the mount lane and the standalone installers pin. It follows
+ *  `package.json#engines.dsh`, which is stricter than the peer floor: the plugin
+ *  installs on this line or newer, so every place that actually runs it moves. */
+const hostBaseline = '0.2.2-rc.3'
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
 const bash = readFileSync(new URL('../scripts/install.sh', import.meta.url), 'utf8')
 const powershell = readFileSync(new URL('../scripts/install.ps1', import.meta.url), 'utf8')
@@ -32,22 +36,22 @@ describe('DSH host baseline', () => {
   })
 
   it('pins both standalone installer npx fallbacks', () => {
-    expect(bash).toContain(`printf 'npx -y --package @deepseek-ai/dsh@${baseline} dsh'`)
-    expect(powershell).toContain(`$cliArgs = @('-y', '--package', '@deepseek-ai/dsh@${baseline}', 'dsh', 'plugin'`)
+    expect(bash).toContain(`printf 'npx -y --package @deepseek-ai/dsh@${hostBaseline} dsh'`)
+    expect(powershell).toContain(`$cliArgs = @('-y', '--package', '@deepseek-ai/dsh@${hostBaseline}', 'dsh', 'plugin'`)
     for (const source of [bash, powershell]) {
       expect(source).not.toMatch(/^\s*(?:source|\.)\s+[^\r\n]*e2e-common/m)
     }
   })
 
   it('pins the e2e fallback and expected version to the same baseline', () => {
-    expect(e2e).toContain('DSH_NPX_SPEC="${DSH_NPX_SPEC:-@deepseek-ai/dsh@' + baseline + '}"')
-    expect(e2e).toContain('expected="${DSH_EXPECT_VERSION:-' + baseline + '}"')
+    expect(e2e).toContain('DSH_NPX_SPEC="${DSH_NPX_SPEC:-@deepseek-ai/dsh@' + hostBaseline + '}"')
+    expect(e2e).toContain('expected="${DSH_EXPECT_VERSION:-' + hostBaseline + '}"')
   })
 
   it.each(['\n', '\r\n'])('pins CI with its heap budget and peer resolution intact (%j)', (eol) => {
     // Git may check out YAML as CRLF on Windows; the contract is the same.
     const source = ci.replace(/\r?\n/g, eol)
-    expect(source).toContain(`NODE_OPTIONS: --max-old-space-size=4096${eol}        run: npm install -g @deepseek-ai/dsh@${baseline}${eol}`)
+    expect(source).toContain(`NODE_OPTIONS: --max-old-space-size=4096${eol}        run: npm install -g @deepseek-ai/dsh@${hostBaseline}${eol}`)
     expect(source).not.toMatch(/^\s*run:.*--legacy-peer-deps/m)
   })
 })

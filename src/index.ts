@@ -1463,7 +1463,22 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   const resolved = resolveSidebarConfig(config)
   // Connection owns both deployment trust and authentication; never infer or
   // bypass its policy from invocation flags or a copied trust list.
-  const fence = (req: SidebarHttpRequest): boolean => ctx.connection.requestRejection(req) === undefined
+  // DSH 0.2.2-rc.3 deprecated `requestRejection` and DSH master removed it, leaving
+  // `admit` (the method the old wrapper delegated to) as the only admission call.
+  // Prefer the old method while it exists so rc.1–rc.3 semantics stay byte-identical,
+  // then fall back to `admit` and read the same `rejection` field. Never rebuild a
+  // trust list here: when neither method exists the request fails loudly.
+  const fence = (req: SidebarHttpRequest): boolean => {
+    const connection = ctx.connection
+    const requestRejection = connection.requestRejection
+    if (typeof requestRejection === 'function') return requestRejection.call(connection, req) === undefined
+    const admit = connection.admit
+    if (typeof admit === 'function') {
+      const admission = admit.call(connection, req)
+      return !(admission !== null && typeof admission === 'object' && 'rejection' in admission)
+    }
+    throw new TypeError('connection exposes neither requestRejection nor admit')
+  }
   // The model-facing open-request registry: queues `sidebar_open` requests
   // per session and pushes them to connected sidebar views over the
   // `/sidebar/ws/agent-opens` socket.
