@@ -6,6 +6,9 @@
 
 ### Unreleased
 
+- 🎛 **The Changes lens switcher is back to the conversation page's underline tabs** ([#1235](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1235)): #1101 dropped the host's private hashed classes (#1098) in favour of the public `SegmentedControl`, which also brought the grey capsule back — a different look from the conversation header's underline tabs, so #939's outcome was lost. The strip is now drawn by the plugin's own sheet: 13px/500, tertiary idle ink, brand ink plus a 2px bar riding the header rule when selected, 24px gap (the reviewed spacing from #939), with the same ARIA wiring and Arrow/Home/End roving focus. No host-private class names, so host releases cannot break it.
+  - 🧪 Tests: `tests/changes-tab.spec.tsx` pins the strip to the plugin's own `lensTabs/lensTab` classes and the themed underline in `changes.module.css`, keeping the keyboard / persistence / refresh cases.
+
 - 🧷 **The install floor is now arbitrated by `package.json#engines.dsh` alone (`>=0.2.2-rc.3 <0.3.0`)**: the host precheck reads that field first and, when present, ignores the 14 DSH peers, so an install that fails on a 0.2.1-or-older host is classified by the plugin market as "upgrade DSH first" instead of being filed against this plugin. Hosts on 0.2.2-rc.2 or earlier 0.2.2 prereleases stay on v0.32.1.
 
 - 🧩 **`/sidebar/*` no longer answers a bare 400 once DSH master (after 0.2.2-rc.3) removed `connection.requestRejection`** ([#1204](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1204)): HTTP/WS admission calls `requestRejection` while it exists (rc.1–rc.3 behaviour unchanged) and otherwise uses the official replacement `admit`, reading the same `rejection` field; when neither exists it still throws instead of rebuilding a trust list. Before this, every request threw a `TypeError` on its first line and the host's fallback turned that into an empty-body 400, leaving only `HTTP 400` on screen.

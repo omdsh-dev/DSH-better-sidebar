@@ -4,6 +4,9 @@
 
 ### 未发布
 
+- 🎛 **Changes 的「Git / 本轮文件」切换恢复会话页的下划线 Tabs**（[#1235](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1235)）：#1101 为摆脱宿主私有哈希类名（#1098）改用公开的 `SegmentedControl`，视觉随之退回灰底胶囊——与会话页页头的下划线 Tabs 不是一套，#939 的结论等于丢了。现在这条切换由插件自己的样式表绘制：13px/500、未选中三级文字、选中态品牌色 + 2px 下划线压在页头分隔线上、24px 间距（#939 的审阅结论），ARIA 关联与左右方向键 / Home / End 漫游焦点照旧；不引用任何宿主私有类名，宿主改版不再影响它。
+  - 🧪 测试：`tests/changes-tab.spec.tsx` 断言页签条是插件自己的 `lensTabs/lensTab`、下划线由 `changes.module.css` 的主题 Token 画出，并保留键盘 / 持久化 / 刷新用例。
+
 - 🧷 **安装下限改由 `package.json#engines.dsh` 独立裁决（`>=0.2.2-rc.3 <0.3.0`）**：宿主预检先读该字段，字段存在时不再看 14 条 DSH peer，因此停在 0.2.1 及更早宿主的安装失败会被插件市场判成「先升级 DSH」，不再当作插件缺陷自动开 issue。0.2.2-rc.2 及更早的 0.2.2 宿主继续使用 v0.32.1。
 
 - 🧩 **DSH master（0.2.2-rc.3 之后）删除 `connection.requestRejection` 后，`/sidebar/*` 不再全部裸 400**（[#1204](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1204)）：HTTP/WS 准入改为先调用 `requestRejection`（rc.1–rc.3 行为不变），该方法缺席时改用官方替代 `admit` 并读同一个 `rejection` 字段；两者都没有时仍然直接抛错，不重建信任表。此前宿主删掉该方法后，每个请求在第一句就抛 `TypeError`，被宿主兜底成空 body 的 400，界面只剩 `HTTP 400`。
