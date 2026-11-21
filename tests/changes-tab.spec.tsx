@@ -80,7 +80,7 @@ function mockGit(entries: GitStatusEntry[]): void {
   vi.spyOn(api, 'gitLog').mockResolvedValue([])
 }
 
-/** One lens tab rendered by the header's public SegmentedControl. */
+/** One lens tab rendered by the header's underline strip. */
 function lensTab(container: HTMLElement, label: string): HTMLButtonElement | undefined {
   return [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')]
     .find(tab => tab.textContent === label)
@@ -195,7 +195,7 @@ afterEach(() => {
 })
 
 describe('ChangesTab', () => {
-  it('uses the public SegmentedControl with keyboard navigation, persisted lens and refresh', async () => {
+  it('renders the underline lens tabs with keyboard navigation, persisted lens and refresh', async () => {
     mockGit([])
     const ops = vi.spyOn(api, 'changesOps').mockResolvedValue({ events: [], lastSeq: 0 })
     const updateTab = vi.fn()
@@ -211,7 +211,12 @@ describe('ChangesTab', () => {
       const git = lensTab(container, t('changesGitLens'))!
       const session = lensTab(container, t('changesSessionLens'))!
       expect(tabs.getAttribute('aria-label')).toBe(t('changes'))
+      // The strip is the plugin's OWN underline tabs (the host conversation
+      // page's look, theme tokens in changes.module.css) — never the host's
+      // private hashed classes, which go stale on every host upgrade (#1098).
+      expect(tabs.className).toContain('lensTabs')
       expect(tabs.className).not.toContain('wSkVaW')
+      expect(git.className).toContain('lensTab')
       const panels = (): HTMLElement[] => [...container.querySelectorAll<HTMLElement>('[role="tabpanel"]')]
       const selected = (button: HTMLButtonElement): void => {
         expect(button.getAttribute('aria-selected')).toBe('true')
@@ -254,6 +259,11 @@ describe('ChangesTab', () => {
       const sheet = readFileSync('src/client/changes/changes.module.css', 'utf8')
       expect(source).not.toContain('wSkVaW')
       expect(sheet).not.toContain('wSkVaW')
+      // The underline itself: the selected tab paints a 2px bar in the brand
+      // ink over the header rule, and the idle ink is the tertiary label.
+      expect(sheet).toMatch(/\.lensTab::after\s*\{[^}]*height: 2px/)
+      expect(sheet).toMatch(/\.lensTab\[aria-selected='true'\]::after\s*\{\s*background: var\(--dsw-alias-state-business-primary\)/)
+      expect(sheet).toContain('color: var(--dsw-alias-label-tertiary)')
     } finally {
       act(() => { root.unmount() })
       container.remove()

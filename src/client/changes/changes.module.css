@@ -15,6 +15,39 @@
 
 .head { flex: none; display: flex; align-items: stretch; gap: 8px; height: 36px; padding: 0 8px 0 12px; border-bottom: 1px solid var(--dsw-alias-border-l1); }
 .headAction { margin-left: auto; align-self: center; }
+
+/* The lens switcher: the host conversation page's underline tabs, drawn here
+   from theme tokens. The host's Tabs is not a public component, and borrowing
+   its hashed CSS-module classes broke on host upgrades (#1098), so this strip
+   owns its sheet classes and mirrors the conversation header's metrics —
+   13px/500, tertiary ink that turns brand-coloured when selected, and a 2px
+   bar riding the header rule. The 24px gap is the reviewed spacing (#939). */
+.lensTabs { flex: none; display: flex; align-items: stretch; gap: 24px; min-width: 0; }
+.lensTab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  padding: 0;
+  border: none;
+  background: transparent;
+  font: var(--dsw-font-xs-13);
+  font-weight: 500;
+  color: var(--dsw-alias-label-tertiary);
+  cursor: pointer;
+}
+.lensTab::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  bottom: -1px;
+  left: 0;
+  height: 2px;
+  border-radius: 2px;
+  background: transparent;
+}
+.lensTab[aria-selected='true'] { color: var(--dsw-alias-state-business-primary); }
+.lensTab[aria-selected='true']::after { background: var(--dsw-alias-state-business-primary); }
+.lensTab:focus-visible { outline: 2px solid var(--dsw-alias-interactive-bg-hover-accent); outline-offset: -2px; }
 .lensBody { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 /* Retained but not on screen: `display: flex` above would otherwise win over
    the `hidden` attribute and two lenses would share the column. */
