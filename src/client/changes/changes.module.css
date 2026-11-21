@@ -674,12 +674,16 @@
 .dragHandle::after { content: ''; position: absolute; left: calc(50% - 18px); top: 3px; width: 36px; height: 2px; border-radius: 1px; background: var(--dsw-alias-border-l2); }
 .dragHandle:hover::after, .dragHandle:focus-visible::after { background: var(--dsw-alias-state-business-primary); }
 
-/* ── Bottom pane tab strip (VS Code-style panel) ───────────────────────────
-   Only rendered when the pane really hosts two views (a graph commit's
-   `details` + its diff); a diff-only preview keeps the strip-less head. The
-   strip sits under the drag handle, so the handle stays the pane's top edge
-   and the strip doubles as the row that names the active view. */
-.paneTabs { flex: none; display: flex; align-items: center; gap: 2px; height: 28px; padding: 0 8px; border-bottom: 1px solid var(--dsw-alias-border-l1); }
+/* ── Bottom pane strip row (VS Code-style panel) ───────────────────────────
+   Rendered when the pane really hosts two views or more (the changes tab pins
+   `details` / `content` / `diff`); a diff-only preview keeps the strip-less
+   head. The row sits under the drag handle, so the handle stays the pane's top
+   edge, and the row doubles as the pane's own header: the tablist takes the
+   free width, the pane's close button is pinned to the right end. Closing the
+   pane is not a per-view action, so the exit stays on this row for every tab
+   instead of moving into the view body. */
+.paneStrip { flex: none; display: flex; align-items: center; gap: 2px; height: 28px; padding: 0 8px; border-bottom: 1px solid var(--dsw-alias-border-l1); }
+.paneTabs { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 2px; height: 100%; }
 .paneTab {
   align-self: stretch;
   display: inline-flex;
@@ -690,6 +694,7 @@
   background: transparent;
   color: var(--dsw-alias-label-secondary);
   font: var(--dsw-font-xxxs-strong-11);
+  white-space: nowrap;
   cursor: pointer;
 }
 .paneTab:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }

@@ -983,12 +983,13 @@ describe('ChangesTab bottom pane tabs', () => {
       await flushEffects()
       await openGraphCommit(container)
 
-      // ONE region: a single drag handle, and the strip is its sibling INSIDE
-      // that same frame (the header's lens control is outside it).
+      // ONE region: a single drag handle, and the strip row is its sibling
+      // INSIDE that same frame (the header's lens control is outside it). The
+      // row carries the tablist and the pane's close button.
       expect(container.querySelectorAll('[role="separator"]')).toHaveLength(1)
       const pane = paneOf(container)
       expect(pane.children[0]!.getAttribute('role')).toBe('separator')
-      expect(pane.children[1]!.getAttribute('role')).toBe('tablist')
+      expect(pane.children[1]!.querySelector('[role="tablist"]')).not.toBeNull()
       const tabs = paneTabs(container)
       expect(tabs.map(tab => tab.textContent)).toEqual([t('graphDetails'), t('changesContentTab'), t('changesDiffTab')])
       // Details is the default for the FIRST graph selection; roving tabIndex
@@ -1247,4 +1248,55 @@ describe('ChangesTab bottom pane tabs', () => {
       container.remove()
     }
   })
+
+  /**
+   * The pane's exit is ONE control on the strip row, not a per-view action.
+   * Before #991 the only X lived in the diff/content head — below the tabs, and
+   * absent entirely on the details tab, so closing the pane meant switching
+   * views first. Now the strip row's right end carries it on every tab, and no
+   * view body renders a second one.
+   */
+  it('keeps ONE close button at the right end of the strip row on every tab, and it closes the pane', async () => {
+    mockGit([])
+    mockGraph()
+
+    const container = document.createElement('div')
+    document.body.append(container)
+    const root: Root = createRoot(container)
+    const closeLabel = t('changesClosePreview')
+    /** The row the tablist and the close button share. */
+    const stripRow = (): HTMLElement =>
+      paneOf(container).querySelector<HTMLElement>('[role="tablist"]')!.parentElement as HTMLElement
+    const closeButtons = (): HTMLButtonElement[] =>
+      [...paneOf(container).querySelectorAll<HTMLButtonElement>(`button[aria-label="${closeLabel}"]`)]
+    try {
+      mount(root)
+      await flushEffects()
+      await openGraphCommit(container)
+
+      for (const index of [0, 1, 2]) {
+        await act(async () => { paneTabs(container)[index]!.click() })
+        await settle()
+        const buttons = closeButtons()
+        // Exactly one exit in the whole pane: no second one in the view head.
+        expect(buttons).toHaveLength(1)
+        // It rides the strip row, AFTER the tablist (the row's right end).
+        expect(buttons[0]!.parentElement).toBe(stripRow())
+        expect(stripRow().firstElementChild!.getAttribute('role')).toBe('tablist')
+        expect(stripRow().lastElementChild).toBe(buttons[0])
+      }
+
+      // The details tab — the view that had no exit at all — closes the pane.
+      await act(async () => { paneTabs(container)[0]!.click() })
+      await settle()
+      expect(paneOf(container).querySelector(`section[aria-label="${t('graphDetails')}"]`)).not.toBeNull()
+      await act(async () => { closeButtons()[0]!.click() })
+      await settle()
+      expect(container.querySelector('[role="separator"]')).toBeNull()
+    } finally {
+      act(() => { root.unmount() })
+      container.remove()
+    }
+  })
 })
+

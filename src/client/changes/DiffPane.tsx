@@ -15,6 +15,11 @@
  * views the caller hosts (the graph commit's `details` card) sit ahead of
  * both. A read op has no `diff` tab — nothing changed. With one or zero tabs
  * the pane is byte-for-byte the strip-less preview of before.
+ *
+ * Closing the pane is ONE action, not a per-view one: while the strip is up,
+ * its right end carries the pane's close button, so the exit sits on the same
+ * row as the tabs and never moves or disappears with the active view. A
+ * strip-less preview keeps the button in the diff head (its only row).
  */
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import { IconCloseOutlineRegular, IconFolderOpenOutlineRegular, IconRefreshOutlineRegular, IconRightUpOutlineRegular, IconShareOutlineRegular, MarkdownDelegateProvider, MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -124,7 +129,9 @@ export interface PaneTab {
  * the only tab stop, and Left/Right/Home/End move focus AND selection (the
  * standard automatic-activation model). Born as the bottom pane's strip
  * (details / diff). Rendered only when the caller hosts more than one view,
- * so a diff-only preview never grows a strip.
+ * so a diff-only preview never grows a strip. It is the flexible half of the
+ * pane's strip row: the row's own chrome (border, padding, the close button
+ * after it) belongs to the caller, not to the tablist.
  */
 export function PaneTabStrip(props: { tabs: readonly PaneTab[]; active: string; onSelect(id: string): void; className?: string; label?: string }) {
   const buttons = useRef<(HTMLButtonElement | null)[]>([])
@@ -528,7 +535,26 @@ export function DiffPane({ target, ctx, scope, height, onHeightCommit, onClose, 
       }}
     />
   )
-  const strip = hasStrip ? <PaneTabStrip tabs={allTabs} active={active} onSelect={onSelectTab ?? (() => {})} /> : null
+  /** The pane's ONE close affordance. While the strip is up it rides the
+   *  strip row's right end (see `strip`), so closing the pane never depends on
+   *  which view is on screen; a strip-less preview keeps it in the diff head,
+   *  its only row. */
+  const closeButton = (
+    <IconButton
+      size="sm"
+      icon={<IconCloseOutlineRegular size={14} />}
+      label={t('changesClosePreview')}
+      onClick={onClose}
+    />
+  )
+  const strip = hasStrip
+    ? (
+      <div className={css.paneStrip}>
+        <PaneTabStrip tabs={allTabs} active={active} onSelect={onSelectTab ?? (() => {})} />
+        {closeButton}
+      </div>
+    )
+    : null
 
   // A caller-hosted view (the graph commit's card) takes over the head AND
   // the body: same frame, same handle, same height behaviour — only the
@@ -671,12 +697,7 @@ export function DiffPane({ target, ctx, scope, height, onHeightCommit, onClose, 
             onClick={() => { setContentRaw(value => !value) }}
           />
         )}
-        <IconButton
-          size="sm"
-          icon={<IconCloseOutlineRegular size={14} />}
-          label={t('changesClosePreview')}
-          onClick={onClose}
-        />
+        {hasStrip ? null : closeButton}
       </div>
       {active === 'content'
         ? (hasContentTab ? contentBody : <PaneEmpty text={t('changesNoContent')} />)
