@@ -208,6 +208,8 @@ export function TasksTree(props: TasksTreeProps): ReactNode {
           : <IconChevronDownOutlineRegular size={12} />}
       </button>
     )
+    const route = node.kind !== 'agent' || node.parentId === undefined ? undefined
+      : `${t('tasksNodeModel')}: ${node.live?.model ?? t('tasksNodeNotRecorded')} · ${t('tasksNodeProvider')}: ${node.live?.provider ?? t('tasksNodeNotRecorded')}`
     const row = node.kind === 'fold'
       ? (
         <div
@@ -305,6 +307,7 @@ export function TasksTree(props: TasksTreeProps): ReactNode {
               {/* With the chip carrying the mode, the mono line holds what is
                   left: the node's own state (and, for the root, its identity). */}
               <span className={css.treeMeta}>{chip === undefined ? agentMeta(node) : stateLabel(node.state)}</span>
+              {route !== undefined && <span className={css.treeMeta} title={route}>{route}</span>}
               {node.state === 'running' && <LiveLine live={node.live} />}
               <TaskLine tasks={node.tasks} onOpenTask={onOpenTask} />
             </span>

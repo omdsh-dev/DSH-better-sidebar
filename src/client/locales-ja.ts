@@ -603,6 +603,8 @@ export const ja: Record<string, string> = {
   tasksNodeOpenMain: "メインウィンドウで開く",
   tasksNodeMode: 'モード',
   tasksNodeModel: 'モデル',
+  tasksNodeProvider: 'プロバイダー',
+  tasksNodeNotRecorded: '未記録',
   tasksNodeTeamRole: 'チーム役割',
   tasksStateRunning: '実行中',
   tasksStateIdle: '待機',

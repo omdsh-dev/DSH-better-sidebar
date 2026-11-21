@@ -105,8 +105,8 @@ export function CardTop(props: {
   chip?: string
   /** The node's name (already resolved by the model). */
   name: string
-  /** The mono meta line under the name. */
-  meta?: string
+  /** Mono metadata under the name, with one row per array entry. */
+  meta?: string | readonly string[]
   /**
    * The newest assistant text of the node's own session, set as a small tail
    * under the name — the one thing a card could not say before (it lived in the
@@ -138,9 +138,9 @@ export function CardTop(props: {
         {chip !== undefined && chip !== '' && <span className={css.kindChip}>{chip}</span>}
       </span>
       <span className={clsx(css.cardName, props.extraClass)} title={props.name}>{props.name}</span>
-      {props.meta !== undefined && props.meta !== '' && (
-        <span className={css.cardMeta} title={props.meta}>{props.meta}</span>
-      )}
+      {props.meta !== undefined && (typeof props.meta === 'string' ? [props.meta] : props.meta).map(meta => (
+        meta !== '' && <span key={meta} className={css.cardMeta} title={meta}>{meta}</span>
+      ))}
       {text !== undefined && (
         <span
           className={css.cardText}

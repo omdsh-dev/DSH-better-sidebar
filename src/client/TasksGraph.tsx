@@ -768,6 +768,10 @@ const AgentCardContents = memo(function AgentCardContents(props: {
   const activity = activityLine(node)
   /** The identity word beside the kind badge (one badge row, no meta line). */
   const chip = agentChip(node)
+  const route = node.parentId === undefined ? undefined : [
+    `${t('tasksNodeModel')}: ${node.live?.model ?? t('tasksNodeNotRecorded')}`,
+    `${t('tasksNodeProvider')}: ${node.live?.provider ?? t('tasksNodeNotRecorded')}`,
+  ]
   /**
    * The newest assistant text, under the name: what the node is SAYING (a
    * running child) or said last (a settled one). The bar keeps the merged
@@ -782,6 +786,7 @@ const AgentCardContents = memo(function AgentCardContents(props: {
         depth={node.depth}
         {...(node.phase === undefined ? {} : { phase: node.phase })}
         {...(chip === undefined ? {} : { chip })}
+        {...(route === undefined ? {} : { meta: route })}
         {...(tail === undefined ? {} : { text: { value: tail, lines: textTailLines(tail) } })}
         name={node.label}
       >

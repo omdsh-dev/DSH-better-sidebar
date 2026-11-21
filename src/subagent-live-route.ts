@@ -77,10 +77,35 @@ export function buildSubagentLiveApi(ctx: Context): SidebarSubagentLiveRoutes {
        * session list). The fold's own `live` gate is that flag when it exists,
        * and the LOG's evidence for the root.
        */
-      const foldInto = (sessionId: string, running: boolean | undefined): void => {
+      const foldInto = async (sessionId: string, running: boolean | undefined): Promise<void> => {
         const view: SidebarChildLiveView = running === undefined ? {} : { running }
         try {
-          const events = ctx.sessions.get(sessionId)?.snapshotEvents() ?? []
+          const session = ctx.sessions.get(sessionId)
+          const events = session?.snapshotEvents() ?? []
+          if (running !== undefined) {
+            // A completed child may no longer be live. Observe its saved metadata
+            // without loading an Agent or changing the live activity summary.
+            const observation = session === undefined
+              ? await ctx.get('sessionQuery')?.observeSession(sessionId, { projectionMode: 'none' })
+              : undefined
+            try {
+              const routeEvents = observation?.events ?? events
+              // Never substitute spawn defaults or an older request for the latest one.
+              for (let index = routeEvents.length - 1; index >= 0; index -= 1) {
+                const event = routeEvents[index]
+                if (event?.type !== 'request/header') continue
+                const header = event.data.header as {
+                  config?: { provider?: unknown; model?: unknown }
+                } | undefined
+                const config = header?.config
+                if (typeof config?.provider === 'string' && config.provider.trim() !== '') view.provider = config.provider
+                if (typeof config?.model === 'string' && config.model.trim() !== '') view.model = config.model
+                break
+              }
+            } finally {
+              observation?.[Symbol.dispose]()
+            }
+          }
           const fold = foldProcess(events, { live: running !== false })
           if (fold.current.counts.length > 0 || fold.current.running !== undefined) {
             view.summary = fold.current
@@ -94,13 +119,13 @@ export function buildSubagentLiveApi(ctx: Context): SidebarSubagentLiveRoutes {
         live[sessionId] = view
       }
 
-      foldInto(rootSessionId, undefined)
+      await foldInto(rootSessionId, undefined)
       for (const entry of descendants) {
         if (entry.kind !== 'child') continue
         // Side Chat threads ride the subagent origin but are sidebar tabs,
         // never topology — keep them out of the live map too.
         if (entry.label?.startsWith(SIDE_LABEL_PREFIX) ?? false) continue
-        foldInto(entry.id, entry.activity === 'running')
+        await foldInto(entry.id, entry.activity === 'running')
       }
       return { live }
     },
