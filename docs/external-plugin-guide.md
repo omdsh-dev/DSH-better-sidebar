@@ -8,7 +8,7 @@
 > 权威代码：`src/client/service.ts`（服务实现）、`src/client/builtins/`（内置 6 tab + 3 viewer 参考实现）、`lib/types/client/service.d.ts`（类型声明）。
 > alpha.5 已删除 `@deepseek-ai/dsh-invariants` 与上游 `/invariant` 子路径；本插件同步移除 invariant companion，不提供替代注册服务。HTTP/WS 准入遵循宿主 Connection（见 §6）。
 > 当前目录语义：**已 attach** 的会话里，文件 / Git / 终端与新建 sidechat 跟随会话 `working_directory`（live 读 `ctx.workingDirectory.get(session)`）；**cold / detached** 会话读存储 header（`ctx.sessionPersistence.stat(id)`，只读第一个 zstd 帧，不解码日志；进程内 memo + 在飞去重），`activeWorktreeRootOf` 对 detached 直接返回该工作区地址。不要为取一个 cwd 调 `ctx.sessionQuery.observeSession`：它会解码整份会话日志并水合全部投影，启动期 fs-watch 每目录一帧的扇出会把它放大成数十次整读（详见 [2026-10-27 记录](plans/2026-10-27-workspace-cwd-over-cold-reads.md)）。linked worktree 仍按 base 目录记账；新 sidechat seed 尾部盖章当前 cwd，防止继承历史目录覆盖它。
-> alpha.5 的 `TerminalBlockLabels` 要求 `commandLine(line)`；两个渲染消费者与全部 21 份词典同步。宿主兼容性优先读 `package.json#engines.dsh`，缺席才读 DSH peers；本插件没有该字段，仍用 14 条 peers（第三方 `dsh.plugin.json` 不参与）。
+> alpha.5 的 `TerminalBlockLabels` 要求 `commandLine(line)`；两个渲染消费者与全部 21 份词典同步。宿主兼容性优先读 `package.json#engines.dsh`，缺席才读 DSH peers；本插件声明该字段（`>=0.2.2-rc.3 <0.3.0`），14 条 peers 仍描述包级依赖面（第三方 `dsh.plugin.json` 不参与）。
 > 仓库开发规则（硬约束 / CI / 发版）见 [AGENTS.md](../AGENTS.md)。
 
 ---

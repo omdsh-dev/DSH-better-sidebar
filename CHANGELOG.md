@@ -4,6 +4,8 @@
 
 ### 未发布
 
+- 🧷 **安装下限改由 `package.json#engines.dsh` 独立裁决（`>=0.2.2-rc.3 <0.3.0`）**：宿主预检先读该字段，字段存在时不再看 14 条 DSH peer，因此停在 0.2.1 及更早宿主的安装失败会被插件市场判成「先升级 DSH」，不再当作插件缺陷自动开 issue。0.2.2-rc.2 及更早的 0.2.2 宿主继续使用 v0.32.1。
+
 - 💻 **侧边对话显示 PTC（run_code）工具调用树**：`run_code` 行收起时显示模型写的 description，展开后显示程序代码和最终结果；程序内通过 PTC 派发的 bash / read / grep / edit 等子调用缩进挂在它下方，根行收起也可见，并复用终端 / diff / read / search / web 结构卡片。运行中、失败、无 start 的 dispatch 都有对应显示；PTC 内成功 write/edit 的文件也进入可点击路径提及。`present` 仍保留顶层交付卡片，同时在子调用区留下一行。
   - 🧪 测试：`tests/sidechat-ptc-rows.spec.ts`（配对 / 运行态 / 失败 / 无 start / 嵌套 / 父行缺失 / 身份复用）、`tests/sidechat-ptc-subcalls.spec.tsx`（description 摘要、代码体、缩进与卡片、根行收起仍可见）、`tests/sidechat-mention-sources.spec.tsx`（PTC mutation 进入提及、read 不进入）。
 

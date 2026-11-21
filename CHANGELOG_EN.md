@@ -6,6 +6,8 @@
 
 ### Unreleased
 
+- 🧷 **The install floor is now arbitrated by `package.json#engines.dsh` alone (`>=0.2.2-rc.3 <0.3.0`)**: the host precheck reads that field first and, when present, ignores the 14 DSH peers, so an install that fails on a 0.2.1-or-older host is classified by the plugin market as "upgrade DSH first" instead of being filed against this plugin. Hosts on 0.2.2-rc.2 or earlier 0.2.2 prereleases stay on v0.32.1.
+
 - 💻 **Side Chat renders PTC (run_code) tool trees**: the collapsed `run_code` line shows the model-written description, and its expanded body shows the program plus the final result. Tools dispatched inside the program (bash / read / grep / edit, …) render as indented rows under it — visible even when the root row is collapsed — through the same terminal / diff / read / search / web cards. Running, failed and start-less dispatches all render; successful PTC writes/edits join the clickable path mentions. `present` keeps its top-level delivery card and also leaves a sub-call row.
   - 🧪 Tests: `tests/sidechat-ptc-rows.spec.ts` (pairing / running / failed / no-start / nested / missing parent / identity reuse), `tests/sidechat-ptc-subcalls.spec.tsx` (description summary, program body, indentation and cards, collapsed-root visibility) and `tests/sidechat-mention-sources.spec.tsx` (PTC mutations count, reads do not).
 

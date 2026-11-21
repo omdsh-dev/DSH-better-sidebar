@@ -11,7 +11,7 @@
 | DSH peer 数量 | **14 条** `@deepseek-ai/dsh-*`，下限全部 `^0.2.2-rc.2` |
 | devDependencies | 每条 DSH 包精确钉 `0.2.2-rc.2`（**30 条**：0.2.2-rc.2 新增的传递 peer `@deepseek-ai/dsh-error` 已提升进 devDependencies） |
 | 伴随依赖 | Cordis peer `^4.1.0` / dev `4.1.0`、group `~1.1.0`、schemastery `~3.19.0` 解析、include `1.1.0` |
-| `engines.dsh` | **不声明**（package.json 里没有该字段，走 peer 兼容性检查；`dsh.plugin.json#engines.dsh` 不参与判定） |
+| `engines.dsh` | **`>=0.2.2-rc.3 <0.3.0`**（package.json 与 `dsh.plugin.json` 同值；字段存在时宿主只按它判定，peer 不再参与） |
 | 守护测试 | tests/market-manifest.spec.ts（peer 形状）+ tests/dsh-baseline.spec.ts（CI / 脚本 / 文档同版） |
 
 14 条 peer 里包含 `dsh-client-ui-input-trigger`（划选引用 chip 的 `ctx.inputTriggers` 服务）；新增 peer 必须同批更新 AGENTS、本文件、指南与 README 的计数。
@@ -28,9 +28,11 @@
 | 0.2.0-rc.1 | v0.24.1 |
 | 0.1.7-rc.1 ~ 0.1.7 | v0.22.1 |
 
+下一版起 `package.json#engines.dsh` 为 `>=0.2.2-rc.3 <0.3.0`，安装下限随之抬到 rc.3；v0.32.1 仍接受 rc.2。
+
 ## 3. 为什么「一个构建只服务一条宿主线」
 
-- 宿主预检对每个 `@deepseek-ai/dsh*` peer 做 `semver.satisfies(宿主版本, range, { includePrerelease: true })`，不满足就**整行静默禁用**（只有一行日志）。
+- 宿主预检先读 `package.json#engines.dsh`，字段存在时只按它判定（本插件已声明，见 §1）；缺席才回退到逐个 `@deepseek-ai/dsh*` peer 的 `semver.satisfies(宿主版本, range, { includePrerelease: true })`，不满足就**整行静默禁用**（只有一行日志）。
 - **0.x 的 caret 不跨 minor**：`^0.2.1-rc.1` 展开为 `>=0.2.1-rc.1 <0.2.2-0`，因此 0.2.2 宿主会被判 false；反过来 `^0.2.2-rc.1` 也不接受 0.2.1 宿主。
 - 结论：**抬基线必须同批抬 peer 下限**，并接受旧宿主停在旧插件版本。按仓库先例**不写运行时兼容层**，也不把范围放宽成「同时覆盖两条线」。
 
@@ -72,9 +74,9 @@
 ## 8. 0.2.2-rc.2 → 0.2.2-rc.3：已验证，无代码变化
 
 - rc.3 与本插件消费面的源码差异只有 `@deepseek-ai/dsh-client-ui-primitives` 的 `src/icons/artwork.ts`（+1）与 `src/icons/index.tsx`（+6）；其余是各包 `package.json` 版本、CI、桌面更新重启状态和无关的 DeepSeek 会话导入功能。`Menu` / `ui-sidebar-right` / `dsh-session` / `dsh-tools` / `dsh-agent` / `dsh-client-ui-*` 的 API 没有变化。
-- 因此 `peerDependencies` 的 `^0.2.2-rc.2` 同时接受 rc.2 与 rc.3，`dsh.plugin.json#engines.dsh` 的 `>=0.2.2-rc.2` 也接受；**不新增任何运行时兼容代码**。
+- 因此 `peerDependencies` 的 `^0.2.2-rc.2` 同时接受 rc.2 与 rc.3；实际安装下限由 `package.json#engines.dsh`（`>=0.2.2-rc.3 <0.3.0`）独立裁决，即 rc.3 起；**不新增任何运行时兼容代码**。
 - 验证结果（2026-11-16）：临时 worktree 把 devDependencies 的 30 条 DSH 包升到 `0.2.2-rc.3`（不提交）后，`typecheck` / `build` / `check:consumer-types` 通过；全量单测 302/303 文件、3,517 例通过——唯一失败是 `tests/dsh-baseline.spec.ts` 仍断言 dev 钉版为 rc.2（临时升版导致，属于验证环境而非代码）；rc.3 宿主真实挂载 26 通过 / 6 跳过。rc.2 宿主同样 26 通过 / 6 跳过。
-- 结论：当前构建服务 **0.2.2-rc.2 与 rc.3 两条 RC**；dev 钉版与 CI 仍保持 rc.2 基线，支持线表不变（`0.2.2-rc.2+`）。
+- 结论：当前构建服务 **0.2.2-rc.2 与 rc.3 两条 RC**；dev 钉版与 CI 仍保持 rc.2 基线；安装下限由 `engines.dsh` 裁决为 rc.3 起（见 §1）。
 
 ## 9. 适配记录索引
 

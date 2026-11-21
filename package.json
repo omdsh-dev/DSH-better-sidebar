@@ -35,6 +35,7 @@
     "./locale/*.json": "./locale/*.json"
   },
   "engines": {
+    "dsh": ">=0.2.2-rc.3 <0.3.0",
     "node": ">=20"
   },
   "packageManager": "pnpm@11.8.0",
