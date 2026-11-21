@@ -29,7 +29,7 @@
 
 ## 4. 处置
 
-- **本仓库不打补丁**：docx/pdf 由宿主预览拥有，插件侧没有渲染路径；改 DSH 源码是仓库硬约束禁止的；给全局 `Uint8Array.prototype` 打 polyfill 属于越界（红线「不写运行时兼容层」），而且会把宿主的问题藏起来。
+- **本仓库不打补丁**：docx/pdf 由宿主预览拥有，插件侧没有 docx 渲染路径，也没有能替换宿主 pdf.js 的入口；改 DSH 源码是仓库硬约束禁止的；给全局 `Uint8Array.prototype` 打 polyfill 属于越界（红线「不写运行时兼容层」），而且会把宿主的问题藏起来。
 - **宿主侧修法（转上游，二选一）**：给 pdf.js 的运行环境补 `Uint8Array.prototype.toHex`（pdf.js 官方不提供 polyfill），或在文档与错误文案里写清浏览器基线。
 - **reporter 侧**：把浏览器升到 Chrome/Edge ≥140、Firefox ≥133、Safari ≥18.2 后重试。
 
