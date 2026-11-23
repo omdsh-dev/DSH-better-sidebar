@@ -10,6 +10,7 @@ function mount(initialRejection: 401 | 403 | undefined = undefined) {
   const routes: SidebarWebRoute[] = []
   const upgrades: SidebarWebUpgradeRoute[] = []
   const effects: Array<() => void> = []
+  const injections: Array<{ deps: readonly string[]; activate: (ctx: unknown) => void }> = []
   apply({
     connection,
     webServer: {
@@ -22,7 +23,10 @@ function mount(initialRejection: 401 | 403 | undefined = undefined) {
       const cleanup = fn()
       if (typeof cleanup === 'function') effects.push(cleanup)
     },
-    inject: () => () => {},
+    inject: (deps: readonly string[], callback: (ctx: unknown) => void) => {
+      injections.push({ deps, activate: callback })
+      return () => {}
+    },
     on: () => () => {},
     get: () => undefined,
   } as never)
@@ -31,6 +35,12 @@ function mount(initialRejection: 401 | 403 | undefined = undefined) {
     routes,
     upgrades,
     setRejection: (next: 401 | 403 | undefined) => { rejection = next },
+    /** Fire the child fiber that waits for `connection.authentication` (0.2.3+). */
+    activateProvider: (providerConnection: unknown = connection) => {
+      for (const injection of injections) {
+        if (injection.deps.includes('connection.authentication')) injection.activate({ connection: providerConnection })
+      }
+    },
     cleanup: () => { for (const cleanup of effects) cleanup() },
   }
 }
@@ -163,6 +173,31 @@ describe('native Connection admission', () => {
         expect(out.status).toBe(expected)
       }
       expect(admit).toHaveBeenCalledTimes(3)
+    } finally {
+      mounted.cleanup()
+    }
+  })
+
+  it('admits through the injected authentication provider when admit reads the nested service', async () => {
+    const mounted = mount()
+    try {
+      let rejection: 401 | 403 | undefined
+      const providerAdmit = vi.fn(() => (rejection === undefined ? { peer: {} } : { rejection }))
+      // 0.2.3 host: the plugin's own context exposes `admit`, but cordis refuses the
+      // nested `connection.authentication` read unless the provider fiber declared it.
+      Reflect.deleteProperty(mounted.connection, 'requestRejection')
+      Object.assign(mounted.connection as unknown as Record<string, unknown>, {
+        admit: () => { throw new Error('cannot get property "connection.authentication" without inject') },
+      })
+      mounted.activateProvider({ admit: providerAdmit })
+      const route = mounted.routes.find(candidate => candidate.path === '/sidebar/api')!
+      for (const [verdict, expected] of [[undefined, 200], [401, 403], [403, 403]] as const) {
+        rejection = verdict
+        const { res, out } = response()
+        await route.handler(request('/sidebar/api/session.cwd').req, res)
+        expect(out.status).toBe(expected)
+      }
+      expect(providerAdmit).toHaveBeenCalledTimes(3)
     } finally {
       mounted.cleanup()
     }
