@@ -759,7 +759,15 @@ interface BetterSidebarService {
   registerFileAction(descriptor: FileActionDescriptor): () => void
   /** 编辑器头部的外部按钮（§7.4） */
   registerTabAction(descriptor: TabActionDescriptor): () => void
+  /** 文件树工具条的外部按钮（v0.33.0+，features 含 'treeToolbarActions'；§7.5）；返回 disposer */
+  registerTreeToolbarAction(descriptor: TreeToolbarActionDescriptor): () => void
+  /** 文件树列表下方的停靠面板（v0.33.0+，features 含 'treeDocks'；§7.5）；返回 disposer */
+  registerTreeDock(descriptor: TreeDockDescriptor): () => void
   getTabActions(): readonly TabActionDescriptor[]
+  /** 工具条动作快照，按渲染顺序（order 升序，同 order 注册序） */
+  getTreeToolbarActions(): readonly TreeToolbarActionDescriptor[]
+  /** 停靠面板快照，按渲染顺序（order 升序，同 order 注册序） */
+  getTreeDocks(): readonly TreeDockDescriptor[]
   /** 当前已注册的 tab 描述符快照（同步，供 useSyncExternalStore 用；含被设置页禁用的类型） */
   getTabs(): readonly TabDescriptor[]
   /** 当前已注册的 file viewer 描述符快照（含被设置页禁用的 viewer） */
@@ -835,7 +843,7 @@ interface BetterSidebarService {
    *  'badge' | 'tabLifecycle' | 'updateTab' | 'openFile' | 'targetedOpen' |
    *  'stateSubscription' | 'tabMeta' | 'pluginSettings' | 'urlTarget' |
    *  'settingSelect' | 'fileIcons' | 'rightActions' | 'settingPatterns' |
-   *  'hostRouteUrl' | 'fileActions'
+   *  'hostRouteUrl' | 'fileActions' | 'treeToolbarActions' | 'treeDocks'
    *  ——用 `features.includes('xxx')` 按能力 gate。 */
   readonly features: readonly string[]
   /** 当前快照：激活 sessionId + 其状态（面板几何/打开的 tabs/展开集）+ prefs。
@@ -1246,6 +1254,107 @@ if (ctx.betterSidebar.features.includes('tabActions')) {
 
 - **头部不替你做确认**。危险动作的二次确认在 `run` 里自己做。
 - **`path` 的安全边界由你负责**。头部给的是 tab 的路径原文，是否在工作区内、大小限制如何，不在这层——见 §10 的平台约束。
+
+---
+
+### 7.5 文件树工具条动作与下方停靠区（treeToolbarActions / treeDocks，v0.33.0+）
+
+文件树顶部那一行（搜索 / 刷新 / 排序 / 上传文件 / 上传文件夹）原本没有外部插槽，文件列表下方也被上传遮罩与搜索结果独占。`registerTreeToolbarAction` 在那一行最右侧加按钮，`registerTreeDock` 在文件列表下方挂一块插件自己的面板（终端、控制台、运行日志…）——和 §7.3 / §7.4 一样，树只管入口和失败出口，不替你做动作。
+
+为什么需要它：code studio 这类插件要把「启动 / 停止」放进文件树那一行（**不想**为此在每一个文件行上重复一个 `fileActions` 项），并让运行控制台贴着文件列表停靠，而不是占一个编辑器 tab。
+
+```ts
+interface TreeToolbarActionDescriptor {
+  /** 唯一 id（'my-plugin:launch'）；重复注册同一个 id 会抛错 */
+  id: string
+  /** 按钮的无障碍名 / tooltip 缺省（接受 thunk，随界面语言实时解析） */
+  label: string | ((context: TreeToolbarActionContext) => string)
+  /** tooltip / 无障碍名；缺省用 label */
+  title?: string | ((context: TreeToolbarActionContext) => string)
+  /** 图标；函数形式按 context 求值，返回**组件**时宿主以 size=14 渲染。
+   *  不提供 = 只留一个空图标位（label 仍进 aria-label） */
+  icon?: ReactNode
+    | ((context: TreeToolbarActionContext) => ReactNode | ComponentType<{ size: number }>)
+  /** 外部动作之间的排序（升序，默认 0）；内置按钮不受影响 */
+  order?: number
+  /** 只对部分状态出现；每次工具条渲染调一次，必须廉价且无副作用。
+   *  抛错 = 该注册自己隐藏，不会打断文件树 */
+  when?: (context: TreeToolbarActionContext) => boolean
+  /** 选中态：true 时 aria-pressed=true 并高亮；undefined = 该按钮没有选中语义 */
+  pressed?: boolean | ((context: TreeToolbarActionContext) => boolean)
+  /** 额外禁用（任一外部动作飞行期间宿主仍会全部禁用） */
+  disabled?: boolean | ((context: TreeToolbarActionContext) => boolean)
+  /** 真正干活。抛错或 reject 会以 error.message 落进文件树的错误条；
+   *  resolve 则静默（成功提示由注册方自己给）。同一 id 在飞行中的重复点击
+   *  会被忽略 */
+  onAction: (context: TreeToolbarActionContext) => void | Promise<void>
+}
+
+/** `label` / `title` / `icon` / `when` / `pressed` / `disabled` / `onAction` 看到的事实 */
+interface TreeToolbarActionContext {
+  sessionId: string
+  root: string | undefined   // 这棵树的工作区根；未限定 project 时 undefined
+  visible: boolean           // 拥有它的 tab 是否在前台；false 时点击被忽略
+  now(): number              // 本次渲染的 Date.now()：异步 settle 后下一次求值拿新值
+}
+
+interface TreeDockDescriptor {
+  /** 唯一 id（'my-plugin:console'）；重复注册同一个 id 会抛错 */
+  id: string
+  /** 停靠面板之间的排序（升序，默认 0） */
+  order?: number
+  /** 只对部分状态出现；抛错 = 该注册自己隐藏 */
+  when?: (context: TreeDockContext) => boolean
+  /** 面板组件；切到后台不卸载，只把 visible 置 false */
+  component: (props: TreeDockProps) => ReactNode
+}
+
+interface TreeDockContext {
+  sessionId: string
+  root: string | undefined
+  visible: boolean
+}
+
+/** 停靠组件收到的 props（与 context 同形） */
+type TreeDockProps = TreeDockContext
+```
+
+**用法**（工具条上的「启动 / 停止」，加一块只在该会话运行时出现的控制台）：
+
+```ts
+const api = ctx.betterSidebar
+if (api.features.includes('treeToolbarActions')) {
+  ctx.effect(() => api.registerTreeToolbarAction({
+    id: 'code-studio:launch',
+    order: 20,
+    label: () => 'Code Studio',
+    title: context => running(context.sessionId) ? t('stop') : t('start'),
+    icon: () => size => <IconPlay size={size} />,
+    pressed: context => running(context.sessionId),
+    disabled: context => context.root === undefined,
+    onAction: async context => {
+      // 二次确认、目录校验都在这里做
+      await toggleStudio(context.sessionId, context.root!)
+    },
+  }))
+}
+if (api.features.includes('treeDocks')) {
+  ctx.effect(() => api.registerTreeDock({
+    id: 'code-studio:console',
+    order: 10,
+    when: context => running(context.sessionId),
+    component: props => <StudioConsole sessionId={props.sessionId} root={props.root} visible={props.visible} />,
+  }))
+}
+```
+
+**渲染位置**：工具条按钮排在「上传文件夹」按钮之后、隐藏的 `<input type=file>` 之前，`order` 升序（同序按注册序）；按钮是**纯图标按钮**，`aria-label` 取 `label`，`title` 缺省同 `label`，`data-dsh-tree-action` 带 id，`pressed === true` 时用激活底色（`.editorTreeToggleActive`）。错误条紧贴在工具条下方、上传状态行之前（`role="alert"`，`data-dsh-tree-action-error`）。停靠区接在文件列表之后、上传遮罩之前，纵向排列、不参与滚动，`visible: false` 的面板仍挂载（终端 / 进程状态不因切 tab 丢失），与底部工作台的可见性语义一致。
+
+**三条约定**：
+
+- **树不替你做确认**。启动 / 停止进程、写入文件这类动作的二次确认在 `onAction` 里自己做。
+- **一次只跑一个动作**。任一外部 `onAction` 在飞行期间，工具条上的全部外部按钮都会禁用（避免两个插件同时抢端口或写同一份运行状态）；需要并发请在插件内部排队。
+- **`root` 不是安全边界**。它是树给出的工作区根原文，是否允许在该目录启动进程、写文件由你校验——见 §10 的平台约束。
 
 ---
 

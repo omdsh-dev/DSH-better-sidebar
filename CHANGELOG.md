@@ -4,6 +4,9 @@
 
 ### 未发布
 
+- 🧰 **文件树工具条与列表下方有了外部扩展点（`registerTreeToolbarAction` / `registerTreeDock`，新能力 `'treeToolbarActions'` / `'treeDocks'`）**：文件树顶部那一行（搜索 / 刷新 / 排序 / 上传文件 / 上传文件夹）此前没有任何外部插槽，code studio 这类插件只能靠「每次升级后重写 `lib/client.js`」把「启动 / 停止」塞进去；文件列表下方也被上传遮罩与搜索结果独占。现在工具条右侧可加纯图标按钮（`label` / `title` 支持 thunk，`icon` 可返回按 `size` 渲染的组件，`pressed` 映射 `aria-pressed` 与激活底色，`disabled` 在飞行期间叠加），列表下方可停靠插件自己的面板（终端 / 控制台，收到 `{ sessionId, root, visible }`）。两者都按 `order` 排序、用 `when` 自行隐藏，`when` 抛错只隐藏该注册；`onAction` 抛错 / reject 以 `error.message` 落进文件树错误条，同一动作飞行中的重复点击被忽略，且全部外部按钮在此期间禁用。**树只提供入口与失败出口**：启动进程、写文件与二次确认都由注册方负责。[指南 §7.5](docs/external-plugin-guide.md)
+  - 🧪 测试：`tests/tree-actions.spec.tsx`（两个注册表的 features / 排序 / 重复 id / 过期 disposer、按钮位置 / 共享 context / late 注册 / `when` 与抛错 / `pressed` / `disabled` / 组件图标 14px / 飞行中互斥 / 错误条 / `visible: false` 不触发 / 停靠排序与位置），`tests/consumer-types.ts` 覆盖新公开类型与四个方法。
+
 - 🧷 **Git 详情面板的关闭按钮常驻在 Tabs 同一行的最右侧**（[#991](https://github.com/omdsh-dev/DSH-better-sidebar/issues/991)）：底部面板的「提交详情 / 内容 / 差异」是一条 Tabs，但关闭整块面板的 X 原先画在「内容 / 差异」的页内头行上——切到「提交详情」时它整条头行都不渲染，于是那个页签根本没有关闭入口，只能先切页签再点 X。现在关闭按钮属于 Tabs 那一行：无论选中哪个页签都停在最右端、位置不变，点击关闭的是整块面板；「内容 / 差异」头行里那个重复的 X 已移除。只有一个视图、没有 Tabs 行的预览仍保持原来的头行位置。
   - 🧪 测试：`tests/changes-tab.spec.tsx` 逐个页签断言面板里**只有一个**关闭按钮、它挂在 Tabs 那一行且排在 tablist 之后（行尾），并从「提交详情」页签点击它关闭整块面板。
 
