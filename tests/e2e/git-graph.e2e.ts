@@ -78,6 +78,20 @@ test('read-only Git Graph renders merge history and filters without checkout', a
     const mergeRow = graph.locator('[data-graph-commit]', { hasText: 'Graph merge' }).first()
     await expect(mergeRow.getByText('main', { exact: true })).toBeVisible()
     await page.screenshot({ path: testInfo.outputPath('git-graph.png'), fullPage: true })
+    // #991: the pane's exit is ONE control on the tab row — the details tab
+    // used to have no close button at all, and the diff/content views carried
+    // theirs BELOW the strip. It now rides the strip row's right end on every
+    // tab, and clicking it closes the whole pane.
+    const paneRoot = page.locator('[class*="diffPane"]').first()
+    const tabRow = paneRoot.locator('[role="tablist"]').first().locator('..')
+    const closeButton = tabRow.getByRole('button', { name: 'Close preview', exact: true })
+    await expect(closeButton).toHaveCount(1)
+    await paneRoot.getByRole('tab', { name: 'Diff', exact: true }).click()
+    await expect(tabRow.getByRole('button', { name: 'Close preview', exact: true })).toHaveCount(1)
+    // …and it is the pane's ONLY one (no second X left in the diff head).
+    await expect(paneRoot.getByRole('button', { name: 'Close preview', exact: true })).toHaveCount(1)
+    await closeButton.click()
+    await expect(paneRoot).toHaveCount(0)
     const branchFilter = page.locator('[data-git-graph] select').filter({ has: page.locator('option[value="refs/heads/feature"]') })
     await branchFilter.selectOption('refs/heads/feature')
     await expect(graph.getByText('Graph merge', { exact: true })).toHaveCount(0)

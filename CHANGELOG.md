@@ -7,6 +7,20 @@
 - 🧰 **文件树工具条与列表下方有了外部扩展点（`registerTreeToolbarAction` / `registerTreeDock`，新能力 `'treeToolbarActions'` / `'treeDocks'`）**：文件树顶部那一行（搜索 / 刷新 / 排序 / 上传文件 / 上传文件夹）此前没有任何外部插槽，code studio 这类插件只能靠「每次升级后重写 `lib/client.js`」把「启动 / 停止」塞进去；文件列表下方也被上传遮罩与搜索结果独占。现在工具条右侧可加纯图标按钮（`label` / `title` 支持 thunk，`icon` 可返回按 `size` 渲染的组件，`pressed` 映射 `aria-pressed` 与激活底色，`disabled` 在飞行期间叠加），列表下方可停靠插件自己的面板（终端 / 控制台，收到 `{ sessionId, root, visible }`）。两者都按 `order` 排序、用 `when` 自行隐藏，`when` 抛错只隐藏该注册；`onAction` 抛错 / reject 以 `error.message` 落进文件树错误条，同一动作飞行中的重复点击被忽略，且全部外部按钮在此期间禁用。**树只提供入口与失败出口**：启动进程、写文件与二次确认都由注册方负责。[指南 §7.5](docs/external-plugin-guide.md)
   - 🧪 测试：`tests/tree-actions.spec.tsx`（两个注册表的 features / 排序 / 重复 id / 过期 disposer、按钮位置 / 共享 context / late 注册 / `when` 与抛错 / `pressed` / `disabled` / 组件图标 14px / 飞行中互斥 / 错误条 / `visible: false` 不触发 / 停靠排序与位置），`tests/consumer-types.ts` 覆盖新公开类型与四个方法。
 
+- 🧷 **Git 详情面板的关闭按钮常驻在 Tabs 同一行的最右侧**（[#991](https://github.com/omdsh-dev/DSH-better-sidebar/issues/991)）：底部面板的「提交详情 / 内容 / 差异」是一条 Tabs，但关闭整块面板的 X 原先画在「内容 / 差异」的页内头行上——切到「提交详情」时它整条头行都不渲染，于是那个页签根本没有关闭入口，只能先切页签再点 X。现在关闭按钮属于 Tabs 那一行：无论选中哪个页签都停在最右端、位置不变，点击关闭的是整块面板；「内容 / 差异」头行里那个重复的 X 已移除。只有一个视图、没有 Tabs 行的预览仍保持原来的头行位置。
+  - 🧪 测试：`tests/changes-tab.spec.tsx` 逐个页签断言面板里**只有一个**关闭按钮、它挂在 Tabs 那一行且排在 tablist 之后（行尾），并从「提交详情」页签点击它关闭整块面板。
+
+- 🧷 **空白新会话在右侧栏展开时仍能打开底部工作台**（[#989](https://github.com/omdsh-dev/DSH-better-sidebar/issues/989)）：blank 会话里宿主不渲染会话头 utilities，插件的底部工作台入口只剩右上角那一个备用入口；而它在宿主右侧面板展开时整个不渲染，于是「先开右栏」就再也打不开底部工作台（#1053 修的是正常会话的会话头入口，这一处当时被留了下来）。现在展开态照常渲染，并改锚**面板左缘**——那一格是会话头那一行的右端空位，与收起态入口同一列，不压面板内容。
+  - 🧪 测试：`tests/dock-fallback.spec.tsx` 把「展开态不渲染」改成「展开态渲染且锚在面板左缘（756px）」并断言点击仍能打开；`tests/e2e/blank-session-dock-entry.e2e.ts` 新增真实宿主用例：空白会话展开右栏后入口仍在、屏上恰好一个、右缘不越过面板左缘、点击打开底部面板。
+
+- 🎛 **Changes 的「Git / 本轮文件」切换恢复会话页的下划线 Tabs**（[#1235](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1235)）：#1101 为摆脱宿主私有哈希类名（#1098）改用公开的 `SegmentedControl`，视觉随之退回灰底胶囊——与会话页页头的下划线 Tabs 不是一套，#939 的结论等于丢了。现在这条切换由插件自己的样式表绘制：13px/500、未选中三级文字、选中态品牌色 + 2px 下划线压在页头分隔线上、24px 间距（#939 的审阅结论），ARIA 关联与左右方向键 / Home / End 漫游焦点照旧；不引用任何宿主私有类名，宿主改版不再影响它。
+  - 🧪 测试：`tests/changes-tab.spec.tsx` 断言页签条是插件自己的 `lensTabs/lensTab`、下划线由 `changes.module.css` 的主题 Token 画出，并保留键盘 / 持久化 / 刷新用例。
+
+- 🧷 **安装下限改由 `package.json#engines.dsh` 独立裁决（`>=0.2.2-rc.3 <0.3.0`）**：宿主预检先读该字段，字段存在时不再看 14 条 DSH peer，因此停在 0.2.1 及更早宿主的安装失败会被插件市场判成「先升级 DSH」，不再当作插件缺陷自动开 issue。0.2.2-rc.2 及更早的 0.2.2 宿主继续使用 v0.32.1。
+
+- 🧩 **DSH master（0.2.2-rc.3 之后）删除 `connection.requestRejection` 后，`/sidebar/*` 不再全部裸 400**（[#1204](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1204)）：HTTP/WS 准入改为先调用 `requestRejection`（rc.1–rc.3 行为不变），该方法缺席时改用官方替代 `admit` 并读同一个 `rejection` 字段；两者都没有时仍然直接抛错，不重建信任表。此前宿主删掉该方法后，每个请求在第一句就抛 `TypeError`，被宿主兜底成空 body 的 400，界面只剩 `HTTP 400`。
+  - 🧪 测试：`tests/trusted-hosts.spec.ts` 新增「`requestRejection` 缺席时走 `admit`」三档（放行 / 401 / 403），并保留「两者都没有仍抛 TypeError」的既有断言。
+
 - 💻 **侧边对话显示 PTC（run_code）工具调用树**：`run_code` 行收起时显示模型写的 description，展开后显示程序代码和最终结果；程序内通过 PTC 派发的 bash / read / grep / edit 等子调用缩进挂在它下方，根行收起也可见，并复用终端 / diff / read / search / web 结构卡片。运行中、失败、无 start 的 dispatch 都有对应显示；PTC 内成功 write/edit 的文件也进入可点击路径提及。`present` 仍保留顶层交付卡片，同时在子调用区留下一行。
   - 🧪 测试：`tests/sidechat-ptc-rows.spec.ts`（配对 / 运行态 / 失败 / 无 start / 嵌套 / 父行缺失 / 身份复用）、`tests/sidechat-ptc-subcalls.spec.tsx`（description 摘要、代码体、缩进与卡片、根行收起仍可见）、`tests/sidechat-mention-sources.spec.tsx`（PTC mutation 进入提及、read 不进入）。
 

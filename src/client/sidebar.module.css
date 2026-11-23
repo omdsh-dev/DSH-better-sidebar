@@ -234,6 +234,22 @@
     visibility 0s linear var(--ds-transition-duration-slow);
 }
 
+/* 宿主右侧栏全屏时，底部工作台不该浮在全屏面板前方：全屏面板铺满中心区，
+   工作台凭自身 z-index 叠在上面，既破坏全屏整体感也挡住操作。宿主把全屏态
+   暴露在 panel 的 data-sidebar-right-panel="fullscreen"（普通态为 "push"）。
+   用一条 body:has(...) 规则据此视觉收起：只改视觉、不动 store 的 bottomOpen，
+   退出全屏即自动失效，工作台连同原展开状态一起恢复，无需记忆逻辑。
+   :has() 在此是安全的——匹配的是宿主的 panel 属性，流式聊天不会改它，浏览器
+   的失效集合只在该属性变化时才重算，不像 layout.css 盯 #root 子树的那种用法。 */
+body:has([data-sidebar-right-panel="fullscreen"]) .bottomPanel {
+  transform: translateY(102%);
+  pointer-events: none;
+  visibility: hidden;
+  transition:
+    transform var(--ds-transition-duration-slow) var(--ds-ease-in-out),
+    visibility 0s linear var(--ds-transition-duration-slow);
+}
+
 /* Height drags write at pointer cadence; easing would detach the edge. */
 .bottomPanel[data-dragging] {
   transition: none;
@@ -497,15 +513,16 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   overflow: hidden;
 }
 
-/* The native tab chip's glyph (drawn by the plugin inside the host's
-   `sidebar.right.pane.tab.title` slot, which is the chip's content): sized to
-   the text, aligned on its baseline box, and separated from the title the way
-   the workbench strip separates its own glyph from its label. */
+/* The host title row owns centring and its 5px gap. Nested themed glyphs
+   must not add an inline SVG's baseline space to the icon's box. */
 .chipIcon {
   display: inline-flex;
   align-items: center;
-  margin-right: 6px;
   flex: none;
+}
+
+.chipIcon svg {
+  display: block;
 }
 
 /* "This page has something you have not looked at": a small solid dot on the
@@ -1437,6 +1454,20 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   gap: 6px;
   padding: 6px 8px;
   border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
+
+/* Inside DSH's right Sidebar the pane body starts under the host's 38px tab
+   strip. The host's own files pane (`ui-sidebar-files`' FilesBody) opens with
+   a 38px header and a .5px `border-l3` hairline; matching both puts this
+   header's bottom rule on the session tab bar's line at the split. With the
+   roomier workbench header (6px padding + a 1px l1 border) it sat 3px lower
+   in a different shade — measured on DSH 0.2.1-rc.1: left rule y=75.0,
+   this one y=77.3. The bottom workbench keeps the taller header. */
+.nativeTabHost .editorTreeSearch {
+  box-sizing: border-box;
+  height: 38px;
+  padding: 0 8px;
+  border-bottom: 0.5px solid var(--dsw-alias-border-l3);
 }
 
 .editorSearchInput {
