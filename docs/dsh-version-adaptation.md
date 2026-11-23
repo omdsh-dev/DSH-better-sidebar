@@ -53,7 +53,7 @@
 ## 5. 仍然生效的删除契约（alpha.5 起）
 
 - 不再依赖 `dsh-invariants`、`ctx.invariants` 或上游 `/invariant` 子路径；不发布 invariant companion。
-- HTTP/WS 准入优先调用 `ctx.connection.requestRejection(req)`，**只有 `undefined` 放行**；DSH 0.2.2-rc.3 起该方法 deprecated、master 已删除，缺席时改调 `admit(req)` 并读同一个 `rejection` 字段（两者都没有则直接抛错）；不恢复 `webRuntime`，不自建信任例外。
+- HTTP/WS 准入优先调用 `ctx.connection.requestRejection(req)`，**只有 `undefined` 放行**；DSH 0.2.2-rc.3 起该方法 deprecated、0.2.3 已删除，缺席时改调 `admit(req)` 并读同一个 `rejection` 字段。0.2.3 的 `admit` 把凭据校验委托给嵌套服务 `connection.authentication`，cordis 只允许**显式注入**该服务的调用方读取它，因此这一段放在 `ctx.inject(['connection.authentication'])` 子 fiber 里执行；rc.2–rc.5 没有该服务，子 fiber 不激活，旧宿主行为不变。两者都没有则直接抛错；不恢复 `webRuntime`，不自建信任例外。
 
 ## 6. 0.2.1 → 0.2.2 的代码级差异（v0.30.0）
 
