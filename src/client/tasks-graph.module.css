@@ -1424,9 +1424,19 @@
   min-height: 0;
 }
 
-.taskForm > label:last-child {
+/* The description group is the one that grows. The field wrapper is the kit's
+   `Field` (a div, not a label), so the growth has to name its control wrapper
+   one level down: the textarea inside is what absorbs the window's slack. */
+.taskForm > :last-child {
   flex: 1;
   min-height: 0;
+}
+
+.taskForm > :last-child > div {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .taskField {
@@ -1441,21 +1451,11 @@
   margin-top: 4px;
 }
 
-/* The owner field is a fixed band under the description: it must not absorb
-   the window's slack (the prose is what grows). */
 .taskBody > .taskField,
-.taskBody > .jobPopMeta,
+.taskBody > .taskFacts,
 .taskBody > .taskHeadRow,
-.taskBody > .teamNote {
+.taskBody > .taskNote {
   flex: none;
-}
-
-.taskLabel {
-  font-family: var(--ds-font-family-code, monospace);
-  font-size: 10px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--dsw-alias-label-tertiary);
 }
 
 /* The host Input ships chat type (14px) and a 32px box; inside this form it is
@@ -1591,15 +1591,6 @@
 .teamBoardIcon {
   display: inline-flex;
   color: var(--dsw-alias-label-tertiary);
-}
-
-/* The shared warning note of the team surfaces (the board and the task
-   window's card): 12px gutter, warn ink, micro type. */
-.teamNote {
-  padding: 0 12px 6px;
-  font-size: 10px;
-  line-height: 1.4;
-  color: var(--dsw-alias-state-warn-primary);
 }
 
 /* The board is four stacked blocks — bar / filters / rows / footer. Each keeps
