@@ -14,6 +14,16 @@
   font: var(--dsw-font-xxs-12);
   color: var(--dsw-alias-label-primary);
 }
+/* A bleed footer owns the window's bottom edge. The root's own bottom inset
+   would otherwise sit above the footer's 12px padding, leaving 26px inside the
+   2px floating edge instead of the intended 14px: the negative bottom margin of
+   `.actionFooterBleed` cannot pull the footer past the content box once the
+   flexing `.content` consumes every pixel, so the inset is cancelled here. */
+.root:has(> [data-clue-pack-footer]),
+.root:has(> [data-clue-pack-add-footer]) {
+  padding-bottom: 0;
+}
+
 .content {
   display: flex;
   flex: 1;
