@@ -134,11 +134,19 @@ comm -23 \
 
 | 缺口 | 来源 | 补的件 | 需要切换的消费点 |
 | --- | --- | --- | --- |
-| 非交互的静态文件附件卡（`FileTypeIcon` + 名称 + 大小 + 可选 title，不是按钮） | B2（`SidechatAttachments.FileChip` 与 `SideChatView` 各手写一份） | `FileAttachmentChip`（`ui/kit.tsx`，导出 + `FileAttachmentChipProps`） | `src/client/SidechatAttachments.tsx`、`src/client/SideChatView.tsx` |
+| 非交互的静态文件附件卡（`FileTypeIcon` + 名称 + 大小 + 可选 title，不是按钮） | B2（`SidechatAttachments.FileChip` 手写一份；`SideChatView` 的交付物项实为可点击 button，见下） | `FileAttachmentChip`（`ui/kit.tsx`，导出 + `FileAttachmentChipProps`） | `src/client/SidechatAttachments.tsx`（已切换） |
 | `StatusLine` 只能 `role="status"`，失败需要中断式播报 | B2/B3（错误行只能退回手写 `<div role="alert">`） | `StatusLine.role?: 'status' \| 'alert'`（默认行为不变） | 各批次的错误行 |
 | `ListRow` 没有 `disabled`，也没法把 `aria-expanded` / `aria-controls` / `aria-label` 交给标题按钮 | B1（可折叠分组的表头） | `ListRow` 增加 `disabled` 与三个 aria 直通；`disabled` 落 `disabled` + `data-disabled`，aria 落按钮（plain 行落外壳） | B1 的 `tasks-shared` 分组头 |
 
 补件后的约束没变：样式仍只走 `--dsw-*` / `--ds-*` 令牌，`tests/theme.spec.ts` 照旧扫描；三项契约测试分别在 `tests/ui-kit.spec.tsx`（`FileAttachmentChip` 2 例）与 `tests/ui-patterns.spec.tsx`（`ListRow` 2 例、`StatusLine` 1 例）。
+
+### R2 合并与消费点切换（2026-11-25）
+
+- 合并 `refactor/ui-kit-gaps`（`6f9dbdf4`）进地基分支，merge commit `935b674c`，无冲突。
+- `SidechatAttachments.FileChip` 已换成 `FileAttachmentChip`，并删除随之零引用的 `.sidechatAttachmentFile`（先 grep 确认）；附件名称仍是原生 tooltip。
+- `SideChatView.tsx` **没有**切换：它的「附件卡」是交付物列表里打开文件的 `<button>`（带 `aria-label` 与点击打开），与静态 chip 的「只读图片、不是控件」语义相反；换成 `FileAttachmentChip` 会丢交互，故保留。`tasks-shared` 的分组头同理（纯逻辑 + 卡内微行）。
+- `DiffFiles.tsx` 的表头**保持原生 button**：它是「整个表头就是一个控件」的复合网格（chevron + 路径 + 旧路径 + 徽标 + 统计），`ListRow` 的标题按钮模型会把第二层行壳嵌在按钮里、改变几何与 hover/focus 样式；`ListRow` 新增的 `disabled`/aria 直通不解决这一点。
+- `StatusLine` 的 `alert` 变体本轮没有消费点：B3 的两处 alert 分别是面板级失联（`FallbackPane role="alert"`）与通知条（`Notice kind="error" role="alert"`），都不是行级状态，保持原样。
 
 仍然缺口但本轮没做（单点使用，按「只被一个页面用到的不要抽象」留下）：
 

@@ -927,14 +927,6 @@
   background: var(--dsw-alias-bg-base);
 }
 
-/* A file attachment is the shared list row now; this wrapper only keeps the
- * chip's width bounds and the hover tooltip the row's ellipsis needs. */
-.sidechatAttachmentFile {
-  display: inline-flex;
-  min-width: 0;
-  max-width: 100%;
-}
-
 @keyframes sidechatRowIn {
   from { opacity: 0; transform: translateY(4px); }
   to { opacity: 1; transform: translateY(0); }

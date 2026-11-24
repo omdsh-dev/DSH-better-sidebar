@@ -19,7 +19,7 @@
  * broken image; a `file` block never reads bytes at all.
  */
 import { useCallback, useSyncExternalStore } from 'react'
-import { FileTypeIcon, fileSizeText } from '@deepseek-ai/dsh-client-ui-primitives'
+import { fileSizeText } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context } from '../context-types.ts'
 import type {
   SidechatAttachment,
@@ -27,7 +27,7 @@ import type {
   SidechatImageAttachment,
 } from './sidechat-transcript.ts'
 import { t } from './locales.ts'
-import { ListRow, StatusLine } from './ui/index.ts'
+import { FileAttachmentChip, StatusLine } from './ui/index.ts'
 import css from './SideChatView.module.css'
 
 /** What one attachment read is currently worth rendering. */
@@ -193,18 +193,17 @@ function AttachmentThumbnail(props: {
   )
 }
 
-/** One non-image file: the host's name + size row, with no byte read. The
- *  wrapper keeps the chip's hover tooltip, which the row's own ellipsis needs. */
+/** One non-image file: the shared static attachment chip (glyph + name +
+ *  size), with no byte read. The chip is a picture, not a control — the file
+ *  name is also its native tooltip, which the ellipsis needs. */
 function FileChip({ file }: { file: SidechatFileAttachment }): React.ReactNode {
   const size = file.bytes === undefined ? '' : fileSizeText(file.bytes)
   return (
-    <span className={css.sidechatAttachmentFile} title={file.name}>
-      <ListRow
-        leading={<FileTypeIcon path={file.name} size={16} />}
-        title={file.name}
-        {...(size === '' ? {} : { meta: size })}
-      />
-    </span>
+    <FileAttachmentChip
+      name={file.name}
+      title={file.name}
+      {...(size === '' ? {} : { size })}
+    />
   )
 }
 
