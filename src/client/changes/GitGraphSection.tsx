@@ -14,7 +14,7 @@ import {
 import { api, SidebarApiError, type SessionScope } from '../api.ts'
 import type { SidebarDiffRef } from '../state.ts'
 import { relativeTime, t } from '../locales.ts'
-import { ActionButton, Notice, SelectMenu } from '../ui/index.ts'
+import { ActionButton, Notice } from '../ui/index.ts'
 import { AnchoredPopover } from '../AnchoredPopover.tsx'
 import { edgePath, layoutGraph } from './graph-layout.ts'
 import { createFrameBatcher } from '../frame-batcher.ts'
@@ -351,13 +351,12 @@ export function GitGraphSection({ scope, worktree, visible, refreshTick = 0, onP
     data-graph-count={page?.entries.length ?? 0}>
     <div className={css.toolbar}>
       {linearFallback && <Notice kind="hint" tone="inline" role="status">{t('graphLinearFallback')}</Notice>}
-      {!linearFallback && <SelectMenu className={css.select} ariaLabel={t('graphBranchFilter')}
-        value={branch} onChange={chooseBranch}
-        options={[
-          { value: '', label: t('graphAllBranches') },
-          ...branches.map(item => ({ value: item.ref, label: item.name })),
-          ...(branch && !branches.some(item => item.ref === branch) ? [{ value: branch, label: branch }] : []),
-        ]} />}
+      {!linearFallback && <select className={css.select} aria-label={t('graphBranchFilter')}
+        value={branch} onChange={event => { chooseBranch(event.target.value) }}>
+        <option value="">{t('graphAllBranches')}</option>
+        {branches.map(item => <option key={item.ref} value={item.ref}>{item.name}</option>)}
+        {branch && !branches.some(item => item.ref === branch) && <option value={branch}>{branch}</option>}
+      </select>}
     </div>
     <div className={css.scroll} aria-busy={loading} ref={scrollRef} data-graph-scroll
       onScroll={() => {
@@ -370,7 +369,7 @@ export function GitGraphSection({ scope, worktree, visible, refreshTick = 0, onP
         <ActionButton onClick={() => { if (stale || !failedAppend.current) setRetry(value => value + 1); else void request(true) }}>{t('retry')}</ActionButton>
       </div>}
       {loading && <Notice kind="loading" role="status">{t('loading')}</Notice>}
-      {!loading && !error && page !== null && page.entries.length === 0 && <Notice kind="empty">{t(page.isRepo ? 'graphEmpty' : 'notRepo')}</Notice>}
+      {!loading && !error && page !== null && page.entries.length === 0 && <div className={css.notice}>{t(page.isRepo ? 'graphEmpty' : 'notRepo')}</div>}
       {range.top > 0 && <div aria-hidden="true" data-graph-spacer="top" style={{ height: range.top }} />}
       {page?.entries.slice(range.start, range.end).map((entry, offset) => {
         const index = range.start + offset

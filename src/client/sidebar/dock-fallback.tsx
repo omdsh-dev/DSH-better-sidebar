@@ -27,7 +27,7 @@ import { useRightPanelOpen } from './right-panel-open.ts'
 import css from '../sidebar.module.css'
 
 /** 按钮尺寸与宿主展开按钮一致（28px），间距 8px。 */
-const BUTTON_SIZE = 32
+const BUTTON_SIZE = 28
 const GAP = 8
 
 /** 让位时的搜索步长（像素）：够细以免跨过窄芯片，够粗以免几百次命中测试。 */

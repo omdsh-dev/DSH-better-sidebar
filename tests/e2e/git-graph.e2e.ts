@@ -138,7 +138,9 @@ test('read-only Git Graph renders merge history and filters without checkout', a
     await outer.evaluate(el => { el.scrollTop = el.scrollHeight })
     await expectGraphFillsHeight()
     await page.screenshot({ path: testInfo.outputPath('git-graph-long-changes.png'), fullPage: true })
-    await changes.locator(':scope > div > button[aria-expanded]').click()
+    // The section header is the plugin's shared disclosure (h3 > button), not
+    // the bare div > button the earlier hand-rolled header used.
+    await changes.locator('button[aria-expanded]').first().click()
     await expectGraphFillsHeight()
     expect(errors).toEqual([])
   } finally {

@@ -310,13 +310,10 @@ describe('skin contract: the plugin owns no color of its own', () => {
       expect(graph.getPropertyValue('max-height')).toBe('')
       expect(Number.parseFloat(graph.getPropertyValue('min-height'))).toBe(0)
       const section = rules.find(rule => rule.selectorText === '.graphSection')!.style
-      expect(section.getPropertyValue('min-height')).toBe('calc(var(--ds-workbench-bar, 28px) + 221px)')
+      // Upstream's current sheet pins a fixed floor; the branch's earlier
+      // workbench-bar calc() gave way to it in the merge.
+      expect(section.getPropertyValue('min-height')).toBe('248px')
       expect(section.getPropertyValue('max-height')).toBe('')
-      const touch = Array.from(sheet.sheet!.cssRules).find((rule): rule is CSSMediaRule =>
-        'conditionText' in rule && rule.conditionText === '(hover: none), (pointer: coarse)')!
-      const touchSection = Array.from(touch.cssRules).find((rule): rule is CSSStyleRule =>
-        'selectorText' in rule && rule.selectorText === '.graphSection')!.style
-      expect(touchSection.getPropertyValue('min-height')).toBe('calc(var(--ds-workbench-bar, 28px) + 233px)')
     } finally {
       sheet.remove()
     }
@@ -338,8 +335,10 @@ describe('skin contract: the plugin owns no color of its own', () => {
         expect(style.getPropertyValue('border-left')).toBe('')
         expect(style.getPropertyValue('background')).toBe('var(--dsw-alias-interactive-bg-active)')
         const marker = rules.find(rule => rule.selectorText.split(',').some(part => part.trim() === `${selector}::before`))!
-        // Selected fill carries state without another decorative accent stripe.
-        expect(marker).toBeUndefined()
+        expect(marker.style.getPropertyValue('width')).toBe('2px')
+        expect(marker.style.getPropertyValue('top')).toBe('4px')
+        expect(marker.style.getPropertyValue('bottom')).toBe('4px')
+        expect(marker.style.getPropertyValue('background')).toBe('var(--dsw-alias-state-business-primary)')
       }
       const guide = rules.find(rule => rule.selectorText === '.guide')!
       expect(guide.style.getPropertyValue('position')).toBe('absolute')
@@ -349,12 +348,24 @@ describe('skin contract: the plugin owns no color of its own', () => {
     }
   })
 
-  it('shows running activity without decorative sweep animations', () => {
+  it('the running bar sweeps the FULL width (a band either side, not a partial blob)', () => {
+    // Reader report: the first cut moved a 45%-wide band with
+    // `background-position`, so the bar was only ever partially lit. The
+    // corrected rule is a bar-wide band whose TRANSFORM travels one full width
+    // either side of the bar — entered at the left edge, covering the bar
+    // mid-flight, gone past the right edge.
     const styles = readFileSync(resolve(ROOT, 'src/client/tasks-graph.module.css'), 'utf8')
-    expect(styles).toContain('.barState')
-    expect(styles).toContain('.barActivity')
-    expect(styles).not.toContain('dsh-tasks-bar-sweep')
-    expect(styles).not.toContain('linear-gradient')
+    const block = /\.cardBar\[data-running='true'\]::after \{([\s\S]*?)\n\}/.exec(styles)?.[1]
+    if (block === undefined) throw new Error('the running bar sweep rule must exist')
+    expect(block).toContain('width: 100%')
+    expect(block).toContain('transform: translateX(-100%)')
+    // No residual background-position travel (the partial-sweep mechanism).
+    expect(block).not.toContain('background-position')
+    expect(block).not.toContain('background-size')
+    const frames = /@keyframes dsh-tasks-bar-sweep \{([\s\S]*?)\n\}/.exec(styles)?.[1]
+    if (frames === undefined) throw new Error('the sweep keyframes must exist')
+    expect(frames).toContain('transform: translateX(-100%)')
+    expect(frames).toContain('transform: translateX(100%)')
   })
 
   it('the running bar keeps its state word and activity on ONE font stack', () => {

@@ -1,6 +1,24 @@
 .root { display: flex; flex: 1; flex-direction: column; min-height: 0; min-width: 0; font: var(--dsw-font-xxs-12); color: var(--dsw-alias-label-primary); }
 .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 6px 12px; }
-.select { flex: 1; min-width: 0; max-width: 100%; }
+/* The graph's branch filter is the changes lens's ONE native control (#944):
+   the desktop and touch sizes of the kit's controls, token borders and copy
+   colours so it does not fall back to the OS chrome inside a dark panel. */
+.select {
+  flex: 1;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+  min-height: 32px;
+  padding: 0 6px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 0;
+  background: var(--dsw-alias-bg-base);
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xxs-12);
+}
+@media (hover: none), (pointer: coarse) {
+  .select { min-height: 44px; }
+}
 .hint { color: var(--dsw-alias-label-secondary); font: var(--dsw-font-xxxs-11); }
 .scroll { flex: 1; min-height: 0; overflow: auto; }
 /* A commit row is ONE 28px line — rail, ref pills, subject (the GitLens-style

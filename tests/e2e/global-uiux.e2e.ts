@@ -12,7 +12,7 @@ import { join } from 'node:path'
 import { test, expect, type Locator, type Page, type TestInfo } from '@playwright/test'
 import { createHostApi, dismissOnboarding, gotoPage, hostRpc, sendFirstMessage } from './host'
 import type { WorkflowRunView } from '../../src/workflow-runs'
-import { clueView, expectNoOverflow, floatClueWindow, selectMenu, setTheme } from './ui-helpers'
+import { clueView, expectNoOverflow, floatClueWindow, setTheme } from './ui-helpers'
 
 async function openGuide(page: Page, kind: string): Promise<void> {
   const panel = page.locator('[data-sidebar-right-panel]:visible')
@@ -178,13 +178,14 @@ for (const touch of [false, true]) {
       await expect(panel.locator('[class*="diffPane"]')).toBeVisible()
       await screenshotMatrix(page, changesTabs.locator('xpath=../..'), 'git-diff', info)
       metrics.gitTab = await controlStyle(gitTab)
-      const branchFilter = gitRoot.getByRole('button', { name: 'Branch filter', exact: true })
+      // Upstream keeps ONE native select in the changes lens: the graph's own
+      // branch filter (#944). It is also the only <select> left on the surface.
+      const branchFilter = gitRoot.locator('[data-git-graph] select').first()
       await expect(branchFilter).toBeVisible()
       metrics.gitSelect = await controlStyle(branchFilter)
-      metrics.gitMenu = await menuStyle(page, branchFilter)
-      await selectMenu(gitRoot, 'Branch filter', 'review')
-      await expect(branchFilter).toContainText('review')
-      await selectMenu(gitRoot, 'Branch filter', 'All branches')
+      await branchFilter.selectOption('refs/heads/review')
+      await expect(branchFilter).toHaveValue('refs/heads/review')
+      await branchFilter.selectOption('')
       const commit = gitRoot.getByRole('button', { name: 'Commit', exact: true })
       await expect(commit).toBeDisabled()
       metrics.disabled = await controlStyle(commit)
@@ -387,11 +388,16 @@ for (const touch of [false, true]) {
         }
       }
       expect(metrics.gitSelect).toMatchObject({ minHeight: touch ? '44px' : '32px', borderWidth: '1px', borderStyle: 'solid', boxShadow: 'none', backgroundImage: 'none' })
-      const tabStyles = [metrics.editorTab, metrics.gitTab, metrics.windowTab]
+      // The plugin's own tab strips share ONE control; the changes lens's Git /
+      // session switch is upstream's conversation-page underline strip (#1236)
+      // and deliberately keeps its own shape, so it is held to the invariants
+      // every surface must meet (no shadow, no image) instead of the equality.
+      const tabStyles = [metrics.editorTab, metrics.windowTab]
       for (const style of tabStyles) {
         expect(style).toEqual(tabStyles[0])
         expect(style).toMatchObject({ minHeight: touch ? '44px' : '26px', boxShadow: 'none', backgroundImage: 'none' })
       }
+      expect(metrics.gitTab).toMatchObject({ boxShadow: 'none', backgroundImage: 'none' })
       for (const style of [metrics.cluesTab, metrics.settingsTab]) {
         expect(Number.parseFloat((style as { minHeight: string }).minHeight)).toBeGreaterThanOrEqual(touch ? 44 : 26)
         expect(style).toMatchObject({ boxShadow: 'none', backgroundImage: 'none' })
