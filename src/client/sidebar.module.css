@@ -1595,36 +1595,8 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   margin: auto 0;
 }
 
-.mediaPreviewNotice {
-  padding: 16px;
-  text-align: center;
-  font: var(--dsw-font-xxs-12);
-  color: var(--dsw-alias-label-tertiary);
-}
 
-/* Binary / download-only files (legacy OLE .doc/.xls/.ppt, unknown binaries):
-   a centered notice plus a download link — the user always gets the file. */
-.editorDownloadLink {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 14px;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 6px;
-  background: var(--dsw-alias-bg-layer-2);
-  color: var(--dsw-alias-label-primary);
-  font: var(--dsw-font-xxs-strong-12);
-  text-decoration: none;
-  cursor: pointer;
-  transition:
-    background var(--ds-transition-duration-slow) var(--ds-ease-in-out),
-    border-color var(--ds-transition-duration-slow) var(--ds-ease-in-out);
-}
 
-.editorDownloadLink:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
-  border-color: var(--dsw-alias-border-l2);
-}
 
 .editorError {
   padding: 12px 16px;
@@ -2373,7 +2345,6 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 .explorerRef:focus-visible,
 .terminalRetry:focus-visible,
 .editorModeButton:focus-visible,
-.editorDownloadLink:focus-visible,
 .editorPptxButton:focus-visible,
 .editorDocxZoomRange:focus-visible {
   outline: 2px solid var(--dsw-alias-interactive-bg-hover-accent);
@@ -2628,10 +2599,6 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   background: var(--dsw-alias-state-warn-tertiary);
 }
 
-.largeFileDownload {
-  color: inherit;
-  text-decoration: underline;
-}
 
 /* The notice's own "load all" action. It rides the notice's warn ink (the bar
    is a warning surface, not a toolbar) and sits flush right, with the download
