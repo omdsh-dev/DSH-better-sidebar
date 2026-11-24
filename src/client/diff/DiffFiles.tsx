@@ -12,6 +12,7 @@ import clsx from 'clsx'
 import { t } from '../locales.ts'
 import { diffStats, displayPath, parseUnifiedDiff, unifiedSegments, untrackedFile, type DiffFile, type DiffRow, type FoldSegment, type ParsedDiff } from './rows.ts'
 import { langOfPath } from './highlight.ts'
+import { StatusBadge } from '../ui/index.ts'
 import { DiffRows } from './DiffRows.tsx'
 import css from './diff.module.css'
 
@@ -50,14 +51,14 @@ function defaultExpandedFiles(files: readonly DiffFile[]): Set<number> {
   return expanded
 }
 
-/** The file header badge: added / deleted / renamed / binary ('' for a plain edit). */
-function fileTag(file: DiffFile): string | null {
-  if (file.binary) return t('diffBinary')
-  if (file.oldPath === '/dev/null') return t('diffAdded')
-  if (file.newPath === '/dev/null') return t('diffDeleted')
+/** The file header badge: added / deleted / renamed / binary (absent for a plain edit). */
+function fileTag(file: DiffFile): { tone: 'neutral' | 'added' | 'deleted' | 'renamed'; label: string } | null {
+  if (file.binary) return { tone: 'neutral', label: t('diffBinary') }
+  if (file.oldPath === '/dev/null') return { tone: 'added', label: t('diffAdded') }
+  if (file.newPath === '/dev/null') return { tone: 'deleted', label: t('diffDeleted') }
   const oldPath = displayPath(file.oldPath)
   const newPath = displayPath(file.newPath)
-  if (oldPath !== newPath) return t('diffRenamed')
+  if (oldPath !== newPath) return { tone: 'renamed', label: t('diffRenamed') }
   return null
 }
 
@@ -145,7 +146,7 @@ export function DiffFiles({ diff, parsed: provided, untrackedPath, untrackedCont
           {expandable && <span aria-hidden="true" className={clsx(css.fileChevron, fileExpanded && css.fileChevronExpanded)}>›</span>}
           <span className={css.filePath}>{to}</span>
           {from !== to && <span className={css.fileOld}>← {from}</span>}
-          {tag !== null && <span className={css.fileTag}>{tag}</span>}
+          {tag !== null && <StatusBadge tone={tag.tone} className={css.fileTag}>{tag.label}</StatusBadge>}
           {expandable && (stats.added > 0 || stats.deleted > 0) && (
             <span className={css.fileStats}>
               {stats.added > 0 && <span className={css.statAdd}>+{String(stats.added)}</span>}

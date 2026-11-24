@@ -58,9 +58,9 @@ comm -23 \
 | `TasksGraph.tsx` | B1 | `ListRow`、`StatusBadge`、`Disclosure` |
 | `SidechatImages.tsx` | B2 | `Notice`（inline）/ `StatusLine` |
 | `SidechatAttachments.tsx` | B2 | `ListRow`、`Chip` |
-| `diff/DiffFiles.tsx` | B3 | `ListRow`、`StatusBadge`、`ActionButton` |
-| `diff/DiffRows.tsx` | B3 | 行壳 + `ActionFooter`（折叠） |
-| `TerminalView.tsx` | B3 | `IconButton` / `ActionButton`、`Notice`、`StatusLine` |
+| `diff/DiffFiles.tsx` | B3 | **已完成**：`StatusBadge`（tone 直接用它自带的 `added`/`deleted`/`renamed`/`neutral`）；表头仍是原生 disclosure button |
+| `diff/DiffRows.tsx` | B3 | **已完成**：展开全部改 `ActionButton`；折叠行保持原生（测试按 `[data-expandable]` 定位） |
+| `TerminalView.tsx` | B3 | **已完成**：`StatusLine`（待连/已退出）+ `ActionButton`、`ErrorBlock`（不可用/错误）、`FallbackPane`（终端已失联） |
 | `OrphanedTab.tsx` | B3 | **本批已完成**：`FallbackPane`（`role="status"`）+ 既有 `EmptyState` |
 | `Switch.tsx` | B4 | `controls.ToggleSwitch`（唯一消费者 `native/guide-order.tsx`） |
 | `sidebar/dock-fallback.tsx` | B4 | `IconButton` / `ActionButton` |
@@ -71,9 +71,9 @@ comm -23 \
 | 文件 | 新组件 | 消费者 |
 | --- | --- | --- |
 | `binary-download.tsx` | `FallbackPane` + `DownloadLink` | **本批已完成**（示范替换） |
-| `builtins/media-preview.tsx` | 同上 | 待 B3 |
-| `PdfView.tsx`（部分接入） | `DownloadLink` | 待 B3 |
-| `LargeFileView.tsx`（部分接入） | `DownloadLink`（`inline` 变体） | 待 B3 |
+| `builtins/media-preview.tsx` | 同上 | **已完成**（B3）：`FallbackPane role="status"` + `DownloadLink` |
+| `PdfView.tsx`（部分接入） | `DownloadLink` | **已完成**（B3）：工具栏 `DownloadLink` + 错误态 `ErrorBlock` |
+| `LargeFileView.tsx`（部分接入） | `DownloadLink`（`inline` 变体） | **已完成**（B3）：`DownloadLink` + 空文件 `EmptyState` |
 
 ## 本轮新增的组件
 
@@ -93,6 +93,23 @@ comm -23 \
 | --- | --- |
 | `src/client/OrphanedTab.tsx` | 正文从手写 `.editorPlaceholder` 换成 `FallbackPane role="status"`；标题栏保留；`my-plugin:db` / 标题文本不变（`tests/orphaned-tab.spec.tsx` 继续断言） |
 | `src/client/binary-download.tsx` | 整页换成 `<FallbackPane title={t('binaryNoPreview')} actions={<DownloadLink …>} />`；删除自身 CSS 引用 |
+
+## B3 实施记录（标签页与预览宿主）
+
+| 文件 | 实际改动 |
+| --- | --- |
+| `diff/DiffFiles.tsx` | 文件头徽标 `<span className={css.fileTag}>` → `StatusBadge`，`fileTag()` 从返回字符串改为 `{ tone, label }`；表头仍是原生 `button`，因为 `ListRow` 没有 `disabled` / `aria-expanded`，而这两条是折叠语义与 `tests/diff-*-*.spec.tsx` 的定位依据 |
+| `diff/DiffRows.tsx` | 「展开全部」按钮 → `ActionButton size="sm"`；折叠行保留原生 div + `[data-expandable]`，因为测试按该属性点击并断言加载/失败标记 |
+| `TerminalView.tsx` | 不可用告警 → `ErrorBlock`；待连/已退出状态行 → `StatusLine` + `ActionButton`；终端已失联（`role="alert"` + 新建终端）→ `FallbackPane`；连接错误 → `ErrorBlock` |
+| `builtins/media-preview.tsx` | 不可播放提示 → `FallbackPane role="status"`；下载出口 → `DownloadLink` |
+| `PdfView.tsx` | 工具栏下载 `<a className={css.editorDownloadLink}>` → `DownloadLink`；加载失败 → `ErrorBlock` |
+| `LargeFileView.tsx` | 超大文件提示条里的下载 → `DownloadLink`；空文件占位 → `EmptyState tone="well"` |
+
+缺口（留给后续批次，不动 `src/client/ui/**`）：
+
+- `StatusLine.role` 只接受 `'status'`，没有 `'alert'` 变体；告警态因此由 `FallbackPane` 承担。若 B4 也要用，再统一给 `StatusLine` 加 `role` 联合类型。
+- `ListRow` 缺 `disabled` 与任意 `aria-*` 直通，带折叠语义的行只能继续用原生 button。
+- 未改任何测试断言：`diff-binary-row` / `diff-files-collapse` / `diff-fold-expand` / `editor-large-file` / `terminal-tab` / `lazy-chunk` 六个 spec（49 例）直接通过。
 
 ## 风险与阻塞
 

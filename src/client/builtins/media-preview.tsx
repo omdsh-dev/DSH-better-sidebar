@@ -21,6 +21,7 @@ import type { ReactNode } from 'react'
 import { downloadUrl } from '../api.ts'
 import type { FileViewerProps } from '../service.ts'
 import { t } from '../locales.ts'
+import { DownloadLink, FallbackPane } from '../ui/index.ts'
 import css from '../sidebar.module.css'
 
 /** Extensions rendered with an `<audio>` transport instead of a video stage. */
@@ -44,7 +45,7 @@ export function MediaPreview(props: FileViewerProps): ReactNode {
   return (
     <div className={css.mediaPreview}>
       {mediaUrl === undefined || failed
-        ? <div className={css.mediaPreviewNotice}>{t('mediaUnplayable')}</div>
+        ? <FallbackPane role="status" title={t('mediaUnplayable')} />
         : mediaIsAudio(path)
           ? (
               <audio
@@ -68,9 +69,7 @@ export function MediaPreview(props: FileViewerProps): ReactNode {
       {/* The download escape hatch stays for every state: a container the
           bundled ffmpeg cannot decode (an exotic codec, a damaged file) must
           still end in a file the user can take elsewhere. */}
-      <a className={css.editorDownloadLink} href={downloadUrl(scope, path)} download>
-        {t('download')}
-      </a>
+      <DownloadLink href={downloadUrl(scope, path)}>{t('download')}</DownloadLink>
     </div>
   )
 }
