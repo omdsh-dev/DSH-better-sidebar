@@ -280,12 +280,15 @@ describe('/sidebar/api clue dispatcher fallback', () => {
     const routes: SidebarWebRoute[] = []
     const registry = { get: (id: string) => (id === 'ws-1' ? { path: workspace } : undefined) }
     const ctx = {
-      connection: { requestRejection: () => undefined },
+      connection: { admit: () => ({ peer: null }) },
       webServer: { register: (route: SidebarWebRoute) => { routes.push(route); return () => {} }, registerUpgrade: () => () => {} },
       sessions: { get: () => undefined },
       tools: { register: () => () => {} },
       effect: (fn: () => void | (() => void)) => { const cleanup = fn(); if (typeof cleanup === 'function') effects.push(cleanup) },
-      inject: () => () => {},
+      inject: (deps: readonly string[], callback: (sctx: never) => void) => {
+        if (deps.includes('connection.authentication')) callback({ connection: { admit: () => ({ peer: null }) } } as never)
+        return () => {}
+      },
       on: () => () => {},
       get: (key: string) => (key === 'betterSidebarClues' ? provided.get(key) : key === 'workspaceRegistry' ? registry : undefined),
       provide: (name: string, value: unknown) => { provided.set(name, value) },

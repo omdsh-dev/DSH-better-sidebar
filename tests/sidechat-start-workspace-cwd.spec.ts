@@ -1,7 +1,7 @@
 /**
  * The thread's ATTACH cwd must be the parent session's HEADER cwd — the
  * workspace path the Host attaches sessions to — while the seeded
- * `working-directory/change` stamp keeps the parent's LIVE cwd (where the tools
+ * `workspace-root/change` stamp keeps the parent's LIVE cwd (where the tools
  * actually run).
  *
  * Why this spec exists (field failure, Host source verified): the Host's
@@ -19,7 +19,7 @@
  * ============================ CONTRACT ============================
  * 1. `meta.cwd` comes from the PARENT SESSION HEADER (`parent.session.header.cwd`)
  *    ONLY. The live working directory must never win while a header cwd exists.
- * 2. The live cwd still drives the `working-directory/change` boundary stamp
+ * 2. The live cwd still drives the `workspace-root/change` boundary stamp
  *    appended to the seed (the last such event before the descriptor), so the
  *    thread keeps running tools in the directory the reader is standing in.
  * 3. FALLBACKS. A parent with no header cwd (an old/partial session) uses the
@@ -69,7 +69,7 @@ type AgentLike = ReturnType<typeof agent>
 /** A parent conversation with one completed turn, logged from an older cwd. */
 function storedTurn(): unknown[] {
   return [
-    { type: 'working-directory/change', seq: 0, time: 0, data: { cwd: '/older-execution' } },
+    { type: 'workspace-root/change', seq: 0, time: 0, data: { cwd: '/older-execution' } },
     {
       type: 'user/message',
       seq: 1,
@@ -114,9 +114,9 @@ function createdOptions(create: ReturnType<typeof servicesFor>['create']): Creat
   return options as CreateOptions
 }
 
-/** The last `working-directory/change` event in the seed (the boundary stamp). */
+/** The last `workspace-root/change` event in the seed (the boundary stamp). */
 function lastStamp(options: CreateOptions): string | undefined {
-  const changes = (options.seed ?? []).filter(event => event.type === 'working-directory/change')
+  const changes = (options.seed ?? []).filter(event => event.type === 'workspace-root/change')
   const cwd = changes.at(-1)?.data?.cwd
   return typeof cwd === 'string' ? cwd : undefined
 }

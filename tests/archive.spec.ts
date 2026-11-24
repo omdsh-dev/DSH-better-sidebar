@@ -178,7 +178,7 @@ function mountHost(): { api: SidebarWebRoute; download: SidebarWebRoute } {
   const routes: SidebarWebRoute[] = []
   const cleanups: Array<() => void | Promise<void>> = []
   const ctx = {
-    connection: { requestRejection: () => undefined },
+    connection: { admit: () => ({ peer: null }) },
     webServer: {
       register: (route: SidebarWebRoute) => { routes.push(route); return () => {} },
       registerUpgrade: (route: SidebarWebUpgradeRoute) => { void route; return () => {} },
@@ -189,7 +189,10 @@ function mountHost(): { api: SidebarWebRoute; download: SidebarWebRoute } {
       const cleanup = fn()
       if (typeof cleanup === 'function') cleanups.push(cleanup)
     },
-    inject: () => () => {},
+    inject: (deps: readonly string[], callback: (sctx: never) => void) => {
+      if (deps.includes('connection.authentication')) callback({ connection: { admit: () => ({ peer: null }) } } as never)
+      return () => {}
+    },
     on: () => () => {},
     get: () => undefined,
   }

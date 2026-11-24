@@ -20,7 +20,7 @@ interface Fixture {
 function connectedColumn(doc = document.implementation.createHTMLDocument()): Fixture {
   const col = doc.createElement('div')
   const slot = doc.createElement('div')
-  slot.dataset.slot = 'conversation'
+  slot.dataset.slot = 'main.conversation'
   col.append(slot)
   doc.body.append(col)
   return { doc, col, slot }
@@ -30,14 +30,14 @@ function connectedColumn(doc = document.implementation.createHTMLDocument()): Fi
 // contents-skip walk needs a live defaultView.getComputedStyle (inline
 // `display: contents` on the wrapper). Build:
 // #root > col > wrapper[display: contents] > host[data-slot="main.conversation"].
-function alphaColumn(hostSlot: string): { col: HTMLDivElement; host: HTMLDivElement } {
+function alphaColumn(): { col: HTMLDivElement; host: HTMLDivElement } {
   const root = document.createElement('div')
   root.id = 'root'
   const col = document.createElement('div')
   const wrapper = document.createElement('div')
   wrapper.style.display = 'contents'
   const host = document.createElement('div')
-  host.dataset.slot = hostSlot
+  host.dataset.slot = 'main.conversation'
   wrapper.append(host)
   col.append(wrapper)
   root.append(col)
@@ -50,14 +50,9 @@ function alphaColumn(hostSlot: string): { col: HTMLDivElement; host: HTMLDivElem
 afterEach(() => {
   for (const root of document.body.querySelectorAll('div#root')) root.remove()
 })
-describe('center-column anchor keys (DSH 0.1.5-alpha.2)', () => {
+describe('center-column anchor key (main.conversation)', () => {
   it('skips display:contents slot hosts above a main.conversation host', () => {
-    const { col } = alphaColumn('main.conversation')
-    expect(resolveCenterColumn(null, { now: () => 0 })).toBe(col)
-  })
-
-  it('still resolves the alpha.1 conversation key through the default selector', () => {
-    const { col } = alphaColumn('conversation')
+    const { col } = alphaColumn()
     expect(resolveCenterColumn(null, { now: () => 0 })).toBe(col)
   })
 })
@@ -191,7 +186,7 @@ function CenterColumnProbe(): ReactElement {
 
 /** 把上面的 alpha.2 fixture（#root > col > wrapper[contents] > host）建好。 */
 function renderTrackedColumn(): { unmount: () => void; col: HTMLDivElement; root: HTMLElement } {
-  const { col } = alphaColumn('main.conversation')
+  const { col } = alphaColumn()
   const root = document.getElementById('root')
   if (root === null) throw new Error('missing element: #root fixture')
   const view = renderRoot(createElement(CenterColumnProbe))

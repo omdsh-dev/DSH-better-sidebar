@@ -152,7 +152,7 @@ describe('sidechat.start', () => {
     // (packages/workspace/workspace/src/entity.ts:136), so a live cwd that had
     // `cd`-ed elsewhere must not become meta.cwd: it made the fork fail with
     // session/workspace-attach-failed. The live cwd still reaches the child
-    // through the seeded working-directory/change stamp.
+    // through the seeded workspace-root/change stamp.
     expect(services.create.mock.calls[0]![0]).toMatchObject({ meta: { cwd: '/p' } })
     expect(get).toHaveBeenCalledOnce()
   })
@@ -194,10 +194,10 @@ describe('sidechat.start', () => {
     const parent = agent('parent', {
       header: { cwd: original },
       events: [
-        ev('working-directory/change', 0, { cwd: previous }),
+        ev('workspace-root/change', 0, { cwd: previous }),
         ev('turn/start', 1, { turn: 1 }),
         ev('step/start', 2, { turn: 1, step: 1 }),
-        ev('working-directory/change', 3, { cwd: current }),
+        ev('workspace-root/change', 3, { cwd: current }),
         ev('tool/call', 4, { turn: 1, step: 1, callId: 'pending', name: 'bash', arguments: '{}' }),
       ],
     })
@@ -239,7 +239,7 @@ describe('sidechat.start', () => {
     // Control proves that merely changing meta.cwd is insufficient: the
     // dangling-call cut dropped current but retained previous in the seed.
     const unstamped = buildSidechatInheritance(parent.session.snapshotEvents() as never).seed
-    expect(unstamped.map(event => event.type)).toEqual(['working-directory/change'])
+    expect(unstamped.map(event => event.type)).toEqual(['workspace-root/change'])
     expect(unstamped.reduce((cwd, event) => projection.apply(cwd, event as SessionEvent), projection.init({ cwd: current }))).toBe(previous)
     const child = Session.create(options.sessionId, options.seed, {
       ...options.meta, id: options.sessionId, version: SESSION_FORMAT_VERSION, createdAt: Date.now(), isSeeded: true,
@@ -250,7 +250,7 @@ describe('sidechat.start', () => {
     expect(options.seed.every((event, index) => event.seq === index)).toBe(true)
     expect(child.ownEvents()[0]?.type).toBe('session/end-seed')
     expect(workingDirectory.get(child)).toBe(current)
-    expect(options.seed.at(-2)).toMatchObject({ type: 'working-directory/change', data: { cwd: current } })
+    expect(options.seed.at(-2)).toMatchObject({ type: 'workspace-root/change', data: { cwd: current } })
   })
 
   it('creates a seeded subagent-origin child and admits the boundary + question', async () => {

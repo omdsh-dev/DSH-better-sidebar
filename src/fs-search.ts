@@ -218,7 +218,14 @@ export async function searchFilesPlain(root: string, query: string, opts: FsSear
       return undefined
     })
     if (level === undefined) return
-    for await (const dirent of level) {
+    // Iterate in name order: `maxMatches` truncates the walk, so the page a
+    // caller sees must not depend on the filesystem's readdir order (Linux
+    // hashes directory entries; macOS returns creation order). The sorted
+    // match list alone does not help once the walk stopped early.
+    const entries: Dirent[] = []
+    for await (const dirent of level) entries.push(dirent)
+    entries.sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0))
+    for (const dirent of entries) {
       visited += 1
       if (visited > maxVisited) {
         truncated = true

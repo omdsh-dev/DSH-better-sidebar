@@ -177,7 +177,7 @@ export function installClueStack(ctx: Context, options: InstallClueStackOptions)
     const routes = createCluesShareRoutes(share, options.fence)
     const disposers: Array<() => void> = []
     try {
-      for (const route of routes.routes) disposers.push(ctx.webServer.register(route))
+      for (const route of routes.routes) disposers.push(ctx.webServer.register({ ...route, auth: 'anonymous' }))
     } catch (error) {
       for (const dispose of disposers.splice(0).reverse()) dispose()
       throw error

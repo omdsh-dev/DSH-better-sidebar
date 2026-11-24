@@ -33,6 +33,7 @@ function admitted(req: SidebarHttpRequest, port: number | undefined): boolean {
 export function createClueAgentDraftRoute(deps: ClueAgentDraftDeps): SidebarWebRoute {
   return {
     kind: 'exact', path: CLUE_AGENT_COMMIT_ROUTE_PATH,
+    auth: 'anonymous',
     async handler(req, res) {
       // Admission is deliberately before body iteration and draft lookup.
       if (req.method !== 'POST') { reject(res, 405); return }
