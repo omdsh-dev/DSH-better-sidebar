@@ -11,7 +11,7 @@
 </div>
 
 <div align="center">
-  🌏 <a href="./README_ZH.md"><b>中文</b></a> · <a href="./README.md">English</a>
+  🌏 <a href="./README_ZH.md"><b>中文</b></a> · <a href="./README.md">English</a> · <a href="./README_JA.md">日本語</a>
 </div>
 
 <div align="center">
