@@ -1516,6 +1516,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
     },
   })
   ctx.effect(() => ctx.webServer.register({
+    auth: 'anonymous',
     kind: 'prefix',
     path: '/sidebar/api',
     handler: async (req, res) => {
@@ -1609,6 +1610,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   }), 'dsh-better-sidebar: /sidebar/api routes')
 
   ctx.effect(() => ctx.webServer.register({
+    auth: 'anonymous',
     kind: 'exact',
     path: '/sidebar/sidechat-image',
     handler: async (req, res) => {
@@ -1634,6 +1636,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   // failed or oversized upload never leaves a partial file (see
   // fs-operations.ts for the containment and shape rules).
   ctx.effect(() => ctx.webServer.register({
+    auth: 'anonymous',
     kind: 'exact',
     path: '/sidebar/upload',
     handler: async (req, res) => {
@@ -1672,6 +1675,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   // envelope no longer caps what an editor can write back. The encoding and
   // line-ending round-trip lives in writeWorkspaceText, unchanged.
   ctx.effect(() => ctx.webServer.register({
+    auth: 'anonymous',
     kind: 'exact',
     path: '/sidebar/write',
     handler: async (req, res) => {
@@ -1725,6 +1729,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   // file once, with the RFC 5987 disposition. `archiveTasks` owns the
   // concurrency cap, the TTL, and deleting the temp file.
   ctx.effect(() => ctx.webServer.register({
+    auth: 'anonymous',
     kind: 'exact',
     path: '/sidebar/archive',
     handler: async (req, res) => {
@@ -1750,6 +1755,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
 
   // ── Media route (images for the editor) ─────────────────────────────────
   ctx.effect(() => ctx.webServer.register({
+    auth: 'anonymous',
     kind: 'prefix',
     path: '/sidebar/file',
     handler: async (req, res) => {
@@ -1841,6 +1847,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   // the URL (e.g. a popup opened by a previewed page) stays in an opaque
   // origin with no same-origin access to the GUI.
   ctx.effect(() => ctx.webServer.register({
+    auth: 'anonymous',
     kind: 'prefix',
     path: '/sidebar/html',
     handler: async (req, res) => {
@@ -1900,6 +1907,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   // editor / folder-window / browser tab open.
   const agentOpenWss = new WebSocketServer({ noServer: true })
   ctx.effect(() => ctx.webServer.registerUpgrade({
+    auth: 'anonymous',
     path: '/sidebar/ws/agent-opens',
     handler: (req, socket, head) => {
       if (!fence(req)) {
@@ -1921,6 +1929,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   // lexical rules), so the watch observes what the tree can list.
   const fsWatchWss = new WebSocketServer({ noServer: true })
   ctx.effect(() => ctx.webServer.registerUpgrade({
+    auth: 'anonymous',
     path: '/sidebar/ws/fs-watch',
     handler: (req, socket, head) => {
       if (!fence(req)) {
@@ -1943,6 +1952,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   const sidechatPush = createSidechatPushHub(ctx)
   ctx.effect(() => () => { sidechatPush.dispose() }, 'dsh-better-sidebar: side-chat push hub')
   ctx.effect(() => ctx.webServer.registerUpgrade({
+    auth: 'anonymous',
     path: '/sidebar/ws/sidechat',
     handler: (req, socket, head) => {
       if (!fence(req)) {

@@ -90,12 +90,17 @@ export type SidebarUpgradeHead = Uint8Array
 export interface SidebarWebRoute {
   kind: 'exact' | 'prefix'
   path: string
+  /** Host admission policy; DSH 0.2.3 defaults to `required`, so every route
+   *  that enforces admission itself declares `anonymous` and keeps its fence. */
+  auth?: 'anonymous' | 'required' | 'deny'
   handler: (req: SidebarHttpRequest, res: SidebarHttpResponse) => void | Promise<void>
 }
 
 /** One exact-path HTTP upgrade registration (mirror of WebUpgradeRoute). */
 export interface SidebarWebUpgradeRoute {
   path: string
+  /** See {@link SidebarWebRoute.auth}: the upgrade handler fences itself. */
+  auth?: 'anonymous' | 'required' | 'deny'
   handler: (req: SidebarHttpRequest, socket: SidebarUpgradeSocket, head: SidebarUpgradeHead) => void | Promise<void>
 }
 

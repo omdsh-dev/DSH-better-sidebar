@@ -380,7 +380,7 @@ export function createClueAgentReadRoute(deps: ClueAgentReadDeps): SidebarWebRou
       }
     }
   }
-  return { kind: 'exact', path: CLUE_AGENT_READ_ROUTE_PATH, handler }
+  return { kind: 'exact', path: CLUE_AGENT_READ_ROUTE_PATH, auth: 'anonymous', handler }
 }
 
 /**
