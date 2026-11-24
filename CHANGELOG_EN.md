@@ -6,6 +6,8 @@
 
 ### Unreleased
 
+- 🧪 **DSH 0.2.3-alpha.2 (alpha line)**: the 14 DSH peers and `engines.dsh` move to `0.2.3-alpha.2`, with the Cordis line at `4.2.0-alpha.1`. The host removed `@deepseek-ai/dsh-llm`'s `./brand` subpath, so the type now comes from `./types`, and the projection authority moved from `working-directory/change` to `workspace-root/change` — side-chat cwd stamps and worktree following moved with it. Every older-host compatibility branch is gone too (the `requestRejection` admission fallback, the legacy directory event, the old `data-slot` anchor and the `getOrigin` probe): this build serves 0.2.3-alpha.2+ only, and older hosts stay on v0.33.0.
+
 - 🎛️ **Compact selection menus**: action menus use a smaller width than translation results. Rewrite opens a lateral flyout on hover, click or keyboard, flipping sides to fit; narrow screens keep the flyout with partial parent overlap. Translation results place Back and Copy together in a bottom bar, with long text scrolling separately.
 
 - 🧭 **Clearer start-page entries**: Clues is now marked beta and described as a context hub for local files, Feishu and GitHub; Side Chat drops its beta marker. Side Chat and New terminal exchange their default positions without changing saved custom ordering.

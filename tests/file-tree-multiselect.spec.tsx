@@ -240,8 +240,11 @@ describe('FileTree multi-selection', () => {
     expect(rows[rows.length - 1]!.compareDocumentPosition(bar) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     // The only trailing siblings are the menu's portal anchor and the hidden
     // file input, so the bar IS the last piece of tree content.
+    // The host's menu portal anchor trails the tree with an implementation-
+    // specific class name (0.2.3 changed its shape), so identify "content" by
+    // text instead of host class names: the anchor renders no text.
     const content = [...body.children].filter(child =>
-      child.tagName !== 'INPUT' && !(child as HTMLElement).className.includes('_root_'))
+      child.tagName !== 'INPUT' && (child.textContent ?? '').trim() !== '')
     expect(content[content.length - 1]).toBe(bar)
     // jsdom has no layout: the sheet is the evidence for the docking mechanic.
     const sheet = readFileSync('src/client/sidebar.module.css', 'utf8')

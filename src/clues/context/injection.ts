@@ -690,29 +690,27 @@ export function installClueInjection(
    * `getOrigin()` is the host's own public composition fact.
    */
   const readerOriginOf = (): string | undefined => {
-    let webServer: { readonly port?: unknown; getOrigin?(): string } | undefined
+    let webServer: { readonly port?: unknown; getOrigin(): string } | undefined
     try {
       const value = injectionCtx.get?.('webServer')
       if (value !== null && typeof value === 'object') {
-        webServer = value as { readonly port?: unknown; getOrigin?(): string }
+        webServer = value as { readonly port?: unknown; getOrigin(): string }
       }
     } catch {
       webServer = undefined
     }
     if (webServer === undefined) return undefined
-    if (typeof webServer.getOrigin === 'function') {
-      try {
-        const origin = webServer.getOrigin()
-        if (typeof origin === 'string' && origin !== '') {
-          const trimmed = origin.replace(/\/+$/u, '')
-          // The route admits loopback peers only. Never emit a command aimed
-          // at a non-loopback bind address (it would be refused by design).
-          const hostname = new URL(trimmed).hostname
-          if (hostname === 'localhost' || isLoopbackAddress(hostname)) return trimmed
-        }
-      } catch {
-        // Throws before the listener is bound; fall back to the port if known.
+    try {
+      const origin = webServer.getOrigin()
+      if (typeof origin === 'string' && origin !== '') {
+        const trimmed = origin.replace(/\/+$/u, '')
+        // The route admits loopback peers only. Never emit a command aimed
+        // at a non-loopback bind address (it would be refused by design).
+        const hostname = new URL(trimmed).hostname
+        if (hostname === 'localhost' || isLoopbackAddress(hostname)) return trimmed
       }
+    } catch {
+      // Throws before the listener is bound; fall back to the port if known.
     }
     const port = webServer.port
     return typeof port === 'number' && Number.isSafeInteger(port) && port > 0

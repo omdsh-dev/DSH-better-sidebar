@@ -139,12 +139,10 @@ export interface SidebarSessionStore {
  * Host request admission plus the client transport recovery face.
  */
 export interface SidebarConnectionService {
-  /** Public Host/Origin and authentication policy (DSH 0.2.0-rc.2+). Deprecated
-   *  after 0.2.2-rc.3 and removed on DSH master — `admit` is the replacement. */
-  requestRejection?(request: { headers: Record<string, string | string[] | undefined> }): 401 | 403 | undefined
-  /** Host admission (DSH 0.2.2-rc.3+, the method `requestRejection` delegated to).
-   *  Returns an object carrying `rejection` when the request is refused. */
-  admit?(request: { headers: Record<string, string | string[] | undefined> }): unknown
+  /** Host admission (DSH 0.2.3+): verifies Host/Origin and browser credentials
+   *  through the injected `connection.authentication` verifier and returns an
+   *  object carrying `rejection` when the request is refused. */
+  admit(request: { headers: Record<string, string | string[] | undefined> }): unknown
   state: {
     getSnapshot(): 'connected' | 'disconnected' | 'connecting' | undefined
     subscribe(listener: () => void): () => void

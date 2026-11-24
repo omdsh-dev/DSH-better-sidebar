@@ -92,7 +92,7 @@ function makeRemoteFixture(): RemoteFixture {
 function mount(): { route: SidebarWebRoute } {
   const routes: SidebarWebRoute[] = []
   const ctx = {
-    connection: { requestRejection: () => undefined },
+    connection: { admit: () => ({ peer: null }) },
     webServer: {
       register: (route: SidebarWebRoute) => { routes.push(route); return () => {} },
       registerUpgrade: (_route: SidebarWebUpgradeRoute) => () => {},
@@ -101,7 +101,10 @@ function mount(): { route: SidebarWebRoute } {
     tools: { register: () => () => {} },
     // The vendored cordis runs registration effects immediately.
     effect: (fn: () => void | (() => void)) => { fn() },
-    inject: () => () => {},
+    inject: (deps: readonly string[], callback: (sctx: never) => void) => {
+      if (deps.includes('connection.authentication')) callback({ connection: { admit: () => ({ peer: null }) } } as never)
+      return () => {}
+    },
     on: () => () => {},
     get: () => undefined,
   }

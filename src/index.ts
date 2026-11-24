@@ -1261,34 +1261,24 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   const resolved = resolveSidebarConfig(config)
   // Connection owns both deployment trust and authentication; never infer or
   // bypass its policy from invocation flags or a copied trust list.
-  // DSH 0.2.2-rc.3 deprecated `requestRejection` and DSH 0.2.3 removed it, leaving
-  // `admit` (the method the old wrapper delegated to) as the only admission call.
-  // From 0.2.3 `admit` also delegates the credential check to the verifier
-  // registered under the NESTED `connection.authentication` service, and cordis
-  // refuses that read unless the caller declares the dependency. Hosts at
-  // rc.2–rc.5 have no such service (their `admit` verifies in place), so the
-  // dependency lives in a child fiber: where the service never appears the
-  // callback never runs and admission keeps using the host's own method. Never
-  // rebuild a trust list here: when no admission path is available the request
-  // fails loudly.
+  // DSH 0.2.3 deleted `requestRejection`; `admit` is the only admission call and
+  // it verifies credentials with the verifier registered under the NESTED
+  // `connection.authentication` service. Cordis refuses that read unless the
+  // caller declares the dependency, so admission lives in the injected child
+  // fiber — the only path this build supports. Never rebuild a trust list here:
+  // without the provider the request fails loudly.
   /** `admit` refuses by carrying `rejection`; nothing else counts as a refusal. */
   const admitted = (verdict: unknown): boolean =>
     !(verdict !== null && typeof verdict === 'object' && 'rejection' in verdict)
-  let admitThroughProvider: ((req: SidebarHttpRequest) => boolean) | undefined
+  let admit: ((req: SidebarHttpRequest) => boolean) | undefined
   ctx.inject(['connection.authentication'], (providerCtx) => {
     const connection = (providerCtx as Context).connection
-    const admit = connection.admit
-    if (typeof admit !== 'function') return
-    admitThroughProvider = (req) => admitted(admit.call(connection, req))
+    const call = connection.admit
+    admit = (req) => admitted(call.call(connection, req))
   })
   const fence = (req: SidebarHttpRequest): boolean => {
-    const connection = ctx.connection
-    const requestRejection = connection.requestRejection
-    if (typeof requestRejection === 'function') return requestRejection.call(connection, req) === undefined
-    if (admitThroughProvider !== undefined) return admitThroughProvider(req)
-    const admit = connection.admit
-    if (typeof admit === 'function') return admitted(admit.call(connection, req))
-    throw new TypeError('connection exposes neither requestRejection nor admit')
+    if (admit !== undefined) return admit(req)
+    throw new TypeError('connection admission requires the injected authentication provider')
   }
   // The clue stack's context injection reads the live Side card preferences
   // (source switches). The settings face is filled by the `ctx.inject` below,
