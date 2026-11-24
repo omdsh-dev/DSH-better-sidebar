@@ -106,6 +106,31 @@ export function Chip(props: {
 }
 
 /**
+ * The ONE download affix: a real anchor carrying `download`, so the file goes
+ * to disk instead of opening a tab. `button` is the bordered pill a fallback
+ * pane offers as its way out; `inline` is the underlined escape hatch a notice
+ * bar puts beside its sentence. Four surfaces cut this recipe by hand before
+ * (binary download, media fallback, PDF toolbar, large-file notice).
+ */
+export function DownloadLink(props: {
+  href: string
+  children: ReactNode
+  variant?: 'button' | 'inline'
+  className?: string | undefined
+}): ReactNode {
+  const { href, children, variant = 'button', className } = props
+  return (
+    <a
+      className={clsx(css.downloadLink, variant === 'inline' && css.downloadLinkInline, className)}
+      href={href}
+      download
+    >
+      {children}
+    </a>
+  )
+}
+
+/**
  * A 28px section band: a label (with an optional count) that may carry ONE
  * trailing action. The hairline under it is the page's only section divider.
  */

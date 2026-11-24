@@ -4,7 +4,7 @@
  * free to split further without touching call sites.
  */
 export {
-  ActionButton, Chip, ConfirmDialog, IconButton, Notice, SectionHeader, StatusBadge,
+  ActionButton, Chip, ConfirmDialog, DownloadLink, IconButton, Notice, SectionHeader, StatusBadge,
   type StatusTone,
 } from './kit.tsx'
 export { LoadingIndicator, type LoadingIndicatorProps } from './LoadingIndicator.tsx'
@@ -12,9 +12,9 @@ export { WorkbenchSection, type WorkbenchSectionProps } from './WorkbenchSection
 export { SelectMenu, type SelectMenuProps, type SelectOption } from './SelectMenu.tsx'
 export { TextInput, TextArea, NumberInput, Checkbox, ToggleSwitch, Tabs, SettingRow, type TabOption } from './controls.tsx'
 export {
-  ActionFooter, ChoiceCard, Disclosure, EmptyState, ErrorBlock, FactList, FactRow, Field, ListRow, StatusLine,
+  ActionFooter, ChoiceCard, Disclosure, EmptyState, ErrorBlock, FactList, FactRow, FallbackPane, Field, ListRow, StatusLine,
   type ActionFooterProps, type ChoiceCardProps, type ChoiceOption, type DisclosureProps, type EmptyStateProps,
-  type ErrorBlockProps, type Fact, type FactListProps, type FactRowProps, type FieldProps,
+  type ErrorBlockProps, type Fact, type FactListProps, type FactRowProps, type FallbackPaneProps, type FieldProps,
   type ListRowProps, type PatternTone, type StatusLineProps,
 } from './patterns.tsx'
 export { SourceSwitcher, type SourceSwitcherItem, type SourceSwitcherProps } from './SourceSwitcher.tsx'

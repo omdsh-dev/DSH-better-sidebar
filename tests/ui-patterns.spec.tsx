@@ -18,7 +18,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createElement } from 'react'
 import {
-  ActionFooter, ChoiceCard, EmptyState, ErrorBlock, FactList, FactRow, Field, ListRow, StatusLine,
+  ActionFooter, ChoiceCard, EmptyState, ErrorBlock, FactList, FactRow, FallbackPane, Field, ListRow, StatusLine,
 } from '../src/client/ui/patterns.tsx'
 import { renderRoot, setupReactAct, type RenderedRoot } from './test-utils.ts'
 
@@ -333,5 +333,21 @@ describe('ActionFooter', () => {
     expect(byClass(view.container, 'actionFooterBleed')).toBeNull()
     view.rerender(createElement(ActionFooter, { end: 'x', bleed: true }))
     expect(byClass(view.container, 'actionFooterBleed')).not.toBeNull()
+  })
+})
+
+describe('FallbackPane', () => {
+  it('centres the caller sentence and its way out in a pane-filling block', () => {
+    view = renderRoot(createElement(FallbackPane, { title: 'No preview', actions: 'Download' }))
+    const pane = byClass(view.container, 'fallbackPane')!
+    expect(byClass(pane, 'emptyTitle')!.textContent).toBe('No preview')
+    expect(byClass(pane, 'emptyActions')!.textContent).toBe('Download')
+  })
+
+  it('announces itself only when the caller asks', () => {
+    view = renderRoot(createElement(FallbackPane, { title: 'Unregistered tab' }))
+    expect(view.container.querySelector('[role="status"]')).toBeNull()
+    view.rerender(createElement(FallbackPane, { title: 'Unregistered tab', role: 'status' }))
+    expect(view.container.querySelector('[role="status"]')).not.toBeNull()
   })
 })

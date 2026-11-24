@@ -12,7 +12,7 @@ import { createElement, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
 import { setupReactAct } from './test-utils.ts'
-import { Chip, ConfirmDialog, IconButton, Notice, SectionHeader, StatusBadge } from '../src/client/ui/kit.tsx'
+import { Chip, ConfirmDialog, DownloadLink, IconButton, Notice, SectionHeader, StatusBadge } from '../src/client/ui/kit.tsx'
 import { invalidateGitStatus, statusOfXY, useGitStatus, type GitStatusView } from '../src/client/ui/git-status.ts'
 import type { GitStatusResult } from '../src/client/api.ts'
 
@@ -336,6 +336,24 @@ describe('ui kit atoms', () => {
     await act(async () => { cancel?.click() })
     expect(onConfirm).toHaveBeenCalledTimes(1)
     expect(onClose).toHaveBeenCalledTimes(1)
+    await unmount()
+  })
+})
+
+describe('DownloadLink', () => {
+  it('is a real anchor that downloads instead of navigating in place', async () => {
+    const { container, unmount } = await mount(createElement(DownloadLink, { href: '/sidebar/file?path=a.bin', children: 'Download' }))
+    const link = container.querySelector('a')
+    expect(link?.getAttribute('href')).toBe('/sidebar/file?path=a.bin')
+    expect(link?.hasAttribute('download')).toBe(true)
+    expect(link?.className).toContain('downloadLink')
+    expect(link?.className).not.toContain('downloadLinkInline')
+    await unmount()
+  })
+
+  it('drops the pill for the inline variant a notice bar uses', async () => {
+    const { container, unmount } = await mount(createElement(DownloadLink, { href: '/x', variant: 'inline', children: 'Download' }))
+    expect(container.querySelector('a')?.className).toContain('downloadLinkInline')
     await unmount()
   })
 })

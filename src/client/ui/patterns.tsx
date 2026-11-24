@@ -228,6 +228,40 @@ export function EmptyState({ icon, title, description, actions, tone = 'well', c
   )
 }
 
+/** Props of {@link FallbackPane}. */
+export interface FallbackPaneProps extends DataAttributes {
+  readonly icon?: ReactNode
+  readonly title: ReactNode
+  readonly description?: ReactNode
+  /** The way out of the pane: a download pill, a retry, a settings link. */
+  readonly actions?: ReactNode
+  /** The pane announces itself only when the caller asks (the orphaned tab asks). */
+  readonly role?: string
+  readonly className?: string | undefined
+}
+
+/**
+ * The pane-filling "nothing to render here, here is the way out" shape: a
+ * centred {@link EmptyState} that fills the tab or window body.
+ *
+ * The binary and media fallbacks cut this same recipe by hand before (a flex
+ * column filling the pane, centred tertiary text, a download pill under it,
+ * 24/16 padding), so the layout lives here and the sentence stays the caller's.
+ */
+export function FallbackPane({ icon, title, description, actions, role, className, ...dataProps }: FallbackPaneProps): ReactNode {
+  return (
+    <div {...dataProps} {...(role === undefined ? {} : { role })} className={clsx(css.fallbackPane, className)}>
+      <EmptyState
+        tone="page"
+        {...(icon === undefined ? {} : { icon })}
+        title={title}
+        {...(description === undefined ? {} : { description })}
+        {...(actions === undefined ? {} : { actions })}
+      />
+    </div>
+  )
+}
+
 /** Props of {@link ErrorBlock}. */
 export interface ErrorBlockProps extends DataAttributes {
   readonly message: ReactNode

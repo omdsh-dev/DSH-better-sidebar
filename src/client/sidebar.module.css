@@ -1604,22 +1604,6 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 
 /* Binary / download-only files (legacy OLE .doc/.xls/.ppt, unknown binaries):
    a centered notice plus a download link — the user always gets the file. */
-.editorBinary {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-  padding: 24px 16px;
-  text-align: center;
-}
-
-.editorBinaryNotice {
-  font: var(--dsw-font-xxs-12);
-  color: var(--dsw-alias-label-tertiary);
-}
-
 .editorDownloadLink {
   display: inline-flex;
   align-items: center;
