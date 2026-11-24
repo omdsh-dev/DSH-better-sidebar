@@ -131,6 +131,7 @@ export const hi: Record<string, string> = {
   newTab: 'नया टैब',
   brokenSymlink: 'टूटा सिमलिंक',
   close: 'बंद करें',
+  closeWindow: 'विंडो बंद करें',
   closeOtherTabs: 'अन्य टैब बंद करें',
   tabUnread: 'एक नया पृष्ठ है जिसे आपने अभी तक नहीं देखा',
   closeLeftTabs: 'बाएँ टैब बंद करें',

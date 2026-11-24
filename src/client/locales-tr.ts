@@ -131,6 +131,7 @@ export const tr: Record<string, string> = {
   newTab: 'Yeni sekme',
   brokenSymlink: 'Bozuk sembolik bağ',
   close: 'Kapat',
+  closeWindow: 'Pencereyi kapat',
   closeOtherTabs: 'Diğer sekmeleri kapat',
   tabUnread: 'Henüz bakmadığınız yeni bir sayfa var',
   closeLeftTabs: 'Soldaki sekmeleri kapat',

@@ -131,6 +131,7 @@ export const vi: Record<string, string> = {
   newTab: 'Tab mới',
   brokenSymlink: 'Symlink hỏng',
   close: 'Đóng',
+  closeWindow: 'Đóng cửa sổ',
   closeOtherTabs: 'Đóng các tab khác',
   tabUnread: 'Có một trang mới bạn chưa xem',
   closeLeftTabs: 'Đóng tab bên trái',

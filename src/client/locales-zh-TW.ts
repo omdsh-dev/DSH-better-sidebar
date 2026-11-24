@@ -146,6 +146,7 @@ export const zhTW: Record<string, string> = {
   newTab: '新增標籤',
   brokenSymlink: '失效的符號連結',
   close: '關閉',
+  closeWindow: '關閉視窗',
   closeOtherTabs: '關閉其他標籤',
   tabUnread: '有未檢視的新頁面',
   closeLeftTabs: '關閉左側標籤',

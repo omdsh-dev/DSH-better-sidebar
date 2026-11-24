@@ -127,6 +127,7 @@ export const ru: Record<string, string> = {
   newTab: 'Новая вкладка',
   brokenSymlink: 'Сломанная символическая ссылка',
   close: 'Закрыть',
+  closeWindow: 'Закрыть окно',
   closeOtherTabs: 'Закрыть остальные вкладки',
   tabUnread: 'Есть новая страница, которую вы ещё не открывали',
   closeLeftTabs: 'Закрыть вкладки слева',

@@ -123,6 +123,7 @@ export const ko: Record<string, string> = {
   newTab: '새 탭',
   brokenSymlink: '깨진 심볼릭 링크',
   close: '닫기',
+  closeWindow: '창 닫기',
   closeOtherTabs: '다른 탭 닫기',
   tabUnread: '확인하지 않은 새 페이지가 있습니다',
   closeLeftTabs: '왼쪽 탭 닫기',

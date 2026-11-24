@@ -129,6 +129,7 @@ export const id: Record<string, string> = {
   newTab: 'Tab baru',
   brokenSymlink: 'Symlink rusak',
   close: 'Tutup',
+  closeWindow: 'Tutup jendela',
   closeOtherTabs: 'Tutup Tab Lain',
   tabUnread: 'Ada halaman baru yang belum Anda lihat',
   closeLeftTabs: 'Tutup Tab di Kiri',
