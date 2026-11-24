@@ -2,7 +2,7 @@
 
 > 本文档收录 dsh-better-sidebar 的完整发布历史（最新版摘要见 [README](README_ZH.md)；同步发布于 [GitHub Releases](https://github.com/omdsh-dev/DSH-better-sidebar/releases)）。
 
-### 未发布
+### v0.33.0
 
 - 🧷 **Git 详情面板的关闭按钮常驻在 Tabs 同一行的最右侧**（[#991](https://github.com/omdsh-dev/DSH-better-sidebar/issues/991)）：底部面板的「提交详情 / 内容 / 差异」是一条 Tabs，但关闭整块面板的 X 原先画在「内容 / 差异」的页内头行上——切到「提交详情」时它整条头行都不渲染，于是那个页签根本没有关闭入口，只能先切页签再点 X。现在关闭按钮属于 Tabs 那一行：无论选中哪个页签都停在最右端、位置不变，点击关闭的是整块面板；「内容 / 差异」头行里那个重复的 X 已移除。只有一个视图、没有 Tabs 行的预览仍保持原来的头行位置。
   - 🧪 测试：`tests/changes-tab.spec.tsx` 逐个页签断言面板里**只有一个**关闭按钮、它挂在 Tabs 那一行且排在 tablist 之后（行尾），并从「提交详情」页签点击它关闭整块面板。
@@ -10,8 +10,19 @@
 - 🧷 **空白新会话在右侧栏展开时仍能打开底部工作台**（[#989](https://github.com/omdsh-dev/DSH-better-sidebar/issues/989)）：blank 会话里宿主不渲染会话头 utilities，插件的底部工作台入口只剩右上角那一个备用入口；而它在宿主右侧面板展开时整个不渲染，于是「先开右栏」就再也打不开底部工作台（#1053 修的是正常会话的会话头入口，这一处当时被留了下来）。现在展开态照常渲染，并改锚**面板左缘**——那一格是会话头那一行的右端空位，与收起态入口同一列，不压面板内容。
   - 🧪 测试：`tests/dock-fallback.spec.tsx` 把「展开态不渲染」改成「展开态渲染且锚在面板左缘（756px）」并断言点击仍能打开；`tests/e2e/blank-session-dock-entry.e2e.ts` 新增真实宿主用例：空白会话展开右栏后入口仍在、屏上恰好一个、右缘不越过面板左缘、点击打开底部面板。
 
+- 🗂 **文件树的搜索头与会话页签的分隔线接上同一条线**（贡献者 PR [#1011](https://github.com/omdsh-dev/DSH-better-sidebar/pull/1011) @yanzhaohui1999）：右侧栏的面板体直接落在宿主 38px 页签条下面，而文件树的搜索头还在用底部工作台的度量（6px 内边距 + 1px `border-l1`），它的下边线落在 y=79、会话页签条的分隔线在 y=76（DSH 0.2.2-rc.5），接缝处因此错开 3px，粗细与色阶也不一致。现在改用宿主 `ui-sidebar-files` 面板自己那套头：38px border-box + 0.5px `border-l3` 细线，下边线与会话页签条重合；底部工作台保留原来的宽内边距。
+
 - 🎛 **Changes 的「Git / 本轮文件」切换恢复会话页的下划线 Tabs**（[#1235](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1235)）：#1101 为摆脱宿主私有哈希类名（#1098）改用公开的 `SegmentedControl`，视觉随之退回灰底胶囊——与会话页页头的下划线 Tabs 不是一套，#939 的结论等于丢了。现在这条切换由插件自己的样式表绘制：13px/500、未选中三级文字、选中态品牌色 + 2px 下划线压在页头分隔线上、24px 间距（#939 的审阅结论），ARIA 关联与左右方向键 / Home / End 漫游焦点照旧；不引用任何宿主私有类名，宿主改版不再影响它。
   - 🧪 测试：`tests/changes-tab.spec.tsx` 断言页签条是插件自己的 `lensTabs/lensTab`、下划线由 `changes.module.css` 的主题 Token 画出，并保留键盘 / 持久化 / 刷新用例。
+
+- 🖥 **右侧栏全屏时底部工作台自动收起**（贡献者 PR [#1233](https://github.com/omdsh-dev/DSH-better-sidebar/pull/1233) @WinterXMQ）：宿主把右侧栏切到全屏后，面板铺满中心区，而底部工作台凭自身层级浮在它前面，既破坏全屏的整体感，也挡住面板里的操作。现在按宿主暴露的 `data-sidebar-right-panel="fullscreen"`（普通态为 `push`）用一条 `body:has(...)` 规则做视觉收起：滑出屏幕、隐藏、不接收指针事件。规则只改视觉、不碰 store 的 `bottomOpen`，退出全屏即自动失效，工作台连同原来的展开状态一起恢复。
+  - 🧪 测试：`tests/panel-host-css.spec.ts` 断言收起规则存在（`translateY(102%)` / `pointer-events: none` / `visibility: hidden`）且规则里不出现 `bottomOpen`——纯 CSS 收起，不需要记忆与恢复逻辑。
+
+- 🎛 **原生页签的图标与宿主标题的几何对齐**（贡献者 PR [#945](https://github.com/omdsh-dev/DSH-better-sidebar/pull/945) @hairyf）：页签 chip 里的图标此前按插件自己的 14px 尺寸加 6px 右外边距绘制，与宿主标题行自带的居中与 5px 间距叠在一起，图标偏小、偏左。现在图标取宿主页签条自己的 16px，居中与间距交给宿主标题行，并让内联 SVG 以块级显示，不再把基线空隙算进图标盒。
+  - 🧪 测试：`tests/native-surface.spec.ts` 钉住 chip 图标为 16px；`tests/e2e/mount.e2e.ts` 在真实宿主里把 files / git 页签的图标宽高、图标与标题间距、垂直居中逐项与官方页签标题的实测几何比对（jsdom 看不出内联 SVG 的基线偏移）。
+
+- 🎛 **任务图谱的视图切换控件改成方形**（贡献者 PR [#948](https://github.com/omdsh-dev/DSH-better-sidebar/pull/948) @hairyf）：图谱 / 树视图切换是一组分段控件，内部分段仍带圆角，在容器圆角里露出四个小尖角。现在内部分段改为直角、容器裁切溢出，分段与容器边缘齐平。
+  - 🧪 测试：`tests/tasks-motion.spec.ts` 钉住 `.controls` 的 `overflow: hidden` 与两个分段按钮的 `border-radius: 0`。
 
 - 🧷 **安装下限改由 `package.json#engines.dsh` 独立裁决（`>=0.2.2-rc.3 <0.3.0`）**：宿主预检先读该字段，字段存在时不再看 14 条 DSH peer，因此停在 0.2.1 及更早宿主的安装失败会被插件市场判成「先升级 DSH」，不再当作插件缺陷自动开 issue。0.2.2-rc.2 及更早的 0.2.2 宿主继续使用 v0.32.1。
 
@@ -53,6 +64,9 @@
 
 - 📦 **发布包只安装运行时真正需要的依赖**（[#1191](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1191)）：`dependencies` 只保留 host 半真正 import 的 `ws` / `yaml`；已经打进 `lib/client*.js` 的 CodeMirror、mermaid、xterm、react-icons、dompurify、clsx、rxjs 等移入 `devDependencies`。安装不再多拉约 240 MB / 1.26 万个文件，插件实际运行时仍只有插件本体加 `ws` / `yaml`。`src` 与 `./src/*` 导出**保留**，不做破坏性删除。
   - 🧪 守护：`tests/market-manifest.spec.ts` 同时校验仓库清单与 `pnpm pack` 后的发布清单，dependencies 必须恰好是 `ws` / `yaml`，且 `src` 仍在 `files` 里。
+
+- 🧩 **「添加页签插件」弹窗的推荐目录新增 9 个条目**：页签插件目录收录 Session Sources、dsh-artifacts、dsh-conductor、dsh-mail、dsh-phone、dsh-voice、dsh-pr-inbox、dsh-zotero-workspace（22 → 30 条），文件预览插件目录收录 dsh-bioviewer（5 → 6 条）；同时把 dsh-memory-delta 的钉版抬到 v1.3.4、修正 dsh-dev-git-graph 的仓库地址（已改名为 kp-z/dsh-plugins），并从这些安装命令里去掉了多余的 better-sidebar 前置依赖。
+  - 🧪 守护：`tests/plugin-list.spec.ts`。
 
 ### v0.32.1
 
