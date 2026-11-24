@@ -12,7 +12,7 @@ import {
 import clsx from 'clsx'
 import type { NativeGuideEntry } from './guide-catalog.ts'
 import { t } from '../locales.ts'
-import { Switch } from '../Switch.tsx'
+import { ToggleSwitch } from '../ui/index.ts'
 import { GuideRowsInput } from './guide-rows.tsx'
 import css from './guide.module.css'
 
@@ -60,8 +60,8 @@ export function GuideOrderList({ entries, hidden, onMove, onToggle }: GuideOrder
               >
                 <IconChevronDownOutlineRegular size={12} />
               </button>
-              <Switch
-                label={`${entry.descriptorId === undefined ? t('settingsGuideShow') : t('settingsGuideEnable')}: ${title}`}
+              <ToggleSwitch
+                aria-label={`${entry.descriptorId === undefined ? t('settingsGuideShow') : t('settingsGuideEnable')}: ${title}`}
                 checked={shown}
                 onChange={(next) => { onToggle(entry, !next) }}
               />
