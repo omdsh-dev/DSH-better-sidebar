@@ -27,6 +27,7 @@ import type {
   SidechatImageAttachment,
 } from './sidechat-transcript.ts'
 import { t } from './locales.ts'
+import { ListRow, StatusLine } from './ui/index.ts'
 import css from './SideChatView.module.css'
 
 /** What one attachment read is currently worth rendering. */
@@ -180,7 +181,7 @@ function AttachmentThumbnail(props: {
   const { ctx, sessionId, image } = props
   const state = useAttachmentImage(ctx, sessionId, image)
   if (state.status === 'failed') {
-    return <span className={css.sidechatAttachmentFailed}>{t('sideChatAttachmentImageFailed')}</span>
+    return <StatusLine plain text={t('sideChatAttachmentImageFailed')} />
   }
   if (state.status !== 'ready') return null
   return (
@@ -192,14 +193,17 @@ function AttachmentThumbnail(props: {
   )
 }
 
-/** One non-image file: the host's name + size chip, with no byte read. */
+/** One non-image file: the host's name + size row, with no byte read. The
+ *  wrapper keeps the chip's hover tooltip, which the row's own ellipsis needs. */
 function FileChip({ file }: { file: SidechatFileAttachment }): React.ReactNode {
   const size = file.bytes === undefined ? '' : fileSizeText(file.bytes)
   return (
     <span className={css.sidechatAttachmentFile} title={file.name}>
-      <FileTypeIcon path={file.name} size={16} />
-      <span className={css.sidechatAttachmentName}>{file.name}</span>
-      {size === '' ? null : <span className={css.sidechatAttachmentSize}>{size}</span>}
+      <ListRow
+        leading={<FileTypeIcon path={file.name} size={16} />}
+        title={file.name}
+        {...(size === '' ? {} : { meta: size })}
+      />
     </span>
   )
 }
