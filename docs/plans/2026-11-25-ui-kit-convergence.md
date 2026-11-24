@@ -110,3 +110,20 @@ comm -23 \
 2. **B2 侧边对话**（`SidechatImages` → `SidechatAttachments`）。
 3. **B3 标签页与预览宿主**（`diff/*` → `TerminalView` → `media-preview` → `PdfView`/`LargeFileView` → `OrphanedTab` 收尾）。
 4. **B4 文件树与侧栏外壳**（`Switch` → `dock-fallback` → `split-pane`）：直接动交互与布局，放最后。
+
+## 组件层补件记录（U2）
+
+收敛过程中，接页面的批次报告了三处「两个以上页面需要、组件层却没有」的缺口。本轮只补组件层与契约测试，消费页面仍在各自批次分支上，切换留到合并后统一做。
+
+| 缺口 | 来源 | 补的件 | 需要切换的消费点 |
+| --- | --- | --- | --- |
+| 非交互的静态文件附件卡（`FileTypeIcon` + 名称 + 大小 + 可选 title，不是按钮） | B2（`SidechatAttachments.FileChip` 与 `SideChatView` 各手写一份） | `FileAttachmentChip`（`ui/kit.tsx`，导出 + `FileAttachmentChipProps`） | `src/client/SidechatAttachments.tsx`、`src/client/SideChatView.tsx` |
+| `StatusLine` 只能 `role="status"`，失败需要中断式播报 | B2/B3（错误行只能退回手写 `<div role="alert">`） | `StatusLine.role?: 'status' \| 'alert'`（默认行为不变） | 各批次的错误行 |
+| `ListRow` 没有 `disabled`，也没法把 `aria-expanded` / `aria-controls` / `aria-label` 交给标题按钮 | B1（可折叠分组的表头） | `ListRow` 增加 `disabled` 与三个 aria 直通；`disabled` 落 `disabled` + `data-disabled`，aria 落按钮（plain 行落外壳） | B1 的 `tasks-shared` 分组头 |
+
+补件后的约束没变：样式仍只走 `--dsw-*` / `--ds-*` 令牌，`tests/theme.spec.ts` 照旧扫描；三项契约测试分别在 `tests/ui-kit.spec.tsx`（`FileAttachmentChip` 2 例）与 `tests/ui-patterns.spec.tsx`（`ListRow` 2 例、`StatusLine` 1 例）。
+
+仍然缺口但本轮没做（单点使用，按「只被一个页面用到的不要抽象」留下）：
+
+- 图片缩略图的外链壳（`<a target="_blank"><img>`）只有侧边对话一处。
+- 终端输出区、diff 行内部结构属于各自的渲染模型，不是页面 pattern，等 B3 报告是否需要形状级共享。
