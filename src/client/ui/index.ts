@@ -4,8 +4,8 @@
  * free to split further without touching call sites.
  */
 export {
-  ActionButton, Chip, ConfirmDialog, DownloadLink, IconButton, Notice, SectionHeader, StatusBadge,
-  type StatusTone,
+  ActionButton, Chip, ConfirmDialog, DownloadLink, FileAttachmentChip, IconButton, Notice, SectionHeader, StatusBadge,
+  type FileAttachmentChipProps, type StatusTone,
 } from './kit.tsx'
 export { LoadingIndicator, type LoadingIndicatorProps } from './LoadingIndicator.tsx'
 export { WorkbenchSection, type WorkbenchSectionProps } from './WorkbenchSection.tsx'

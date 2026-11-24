@@ -12,7 +12,7 @@ import { createElement, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
 import { setupReactAct } from './test-utils.ts'
-import { Chip, ConfirmDialog, DownloadLink, IconButton, Notice, SectionHeader, StatusBadge } from '../src/client/ui/kit.tsx'
+import { Chip, ConfirmDialog, DownloadLink, FileAttachmentChip, IconButton, Notice, SectionHeader, StatusBadge } from '../src/client/ui/kit.tsx'
 import { invalidateGitStatus, statusOfXY, useGitStatus, type GitStatusView } from '../src/client/ui/git-status.ts'
 import type { GitStatusResult } from '../src/client/api.ts'
 
@@ -354,6 +354,33 @@ describe('DownloadLink', () => {
   it('drops the pill for the inline variant a notice bar uses', async () => {
     const { container, unmount } = await mount(createElement(DownloadLink, { href: '/x', variant: 'inline', children: 'Download' }))
     expect(container.querySelector('a')?.className).toContain('downloadLinkInline')
+    await unmount()
+  })
+})
+
+describe('FileAttachmentChip', () => {
+  it('renders a static file card with the host glyph, name and size — never a control', async () => {
+    const { container, unmount } = await mount(createElement(FileAttachmentChip, {
+      name: 'report.pdf', size: '1.2 MB', title: '/tmp/report.pdf',
+    }))
+    const chip = container.querySelector<HTMLElement>('[class*="fileChip"]')!
+    expect(chip.tagName).toBe('SPAN')
+    expect(chip.getAttribute('title')).toBe('/tmp/report.pdf')
+    expect(container.querySelector('[class*="fileChipName"]')!.textContent).toBe('report.pdf')
+    expect(container.querySelector('[class*="fileChipSize"]')!.textContent).toBe('1.2 MB')
+    expect(chip.querySelector('svg')).not.toBeNull()
+    expect(container.querySelector('button, a')).toBeNull()
+    await unmount()
+  })
+
+  it('marks an unavailable attachment without dropping its identity', async () => {
+    const { container, unmount } = await mount(createElement(FileAttachmentChip, {
+      name: 'gone.png', unavailable: true,
+    }))
+    const chip = container.querySelector<HTMLElement>('[class*="fileChip"]')!
+    expect(chip.dataset.unavailable).toBe('true')
+    expect(chip.textContent).toContain('gone.png')
+    expect(container.querySelector('[class*="fileChipSize"]')).toBeNull()
     await unmount()
   })
 })

@@ -138,6 +138,18 @@ export interface ListRowProps extends DataAttributes {
   readonly selected?: boolean
   /** A row that exists but is not actionable yet (unresolved reference). */
   readonly dimmed?: boolean
+  /** The row's own control is inert: the title button gets `disabled` and the shell `data-disabled`. */
+  readonly disabled?: boolean
+  /**
+   * ARIA state of the row's control, for a collapsible section header that is
+   * one real button. `aria-expanded` / `aria-controls` / `aria-label` land on
+   * the title button; a plain-title row has no control of its own, so they land
+   * on the shell for the caller's own control to reference.
+   */
+  readonly 'aria-expanded'?: boolean
+  readonly 'aria-controls'?: string
+  /** Accessible name, overriding the derived {@link ListRowProps.titleLabel}. */
+  readonly 'aria-label'?: string
   readonly onContextMenu?: (event: MouseEvent<HTMLElement>) => void
   /**
    * Roving-focus membership for {@link useListNavigation}: the title button
@@ -160,14 +172,28 @@ export interface ListRowProps extends DataAttributes {
 export function ListRow(props: ListRowProps): ReactNode {
   const {
     leading, title, titleData, titleLabel, subtitle, meta, actions, titleAs = 'plain', onTitleClick,
-    selected, dimmed, onContextMenu, primary, className, ...dataProps
+    selected, dimmed, disabled, onContextMenu, primary, className,
+    'aria-expanded': expanded, 'aria-controls': controls, 'aria-label': ariaLabel,
+    ...dataProps
   } = props
+  const label = ariaLabel ?? titleLabel
+  // The control semantics belong to whichever element is the control: the
+  // title button when the row navigates, the shell otherwise.
+  const controlAria = titleAs === 'button'
+    ? {}
+    : {
+        ...(expanded === undefined ? {} : { 'aria-expanded': expanded }),
+        ...(controls === undefined ? {} : { 'aria-controls': controls }),
+        ...(label === undefined ? {} : { 'aria-label': label }),
+      }
   return (
     <div
       {...dataProps}
+      {...controlAria}
       className={clsx(css.listRow, className)}
       {...(selected === true ? { 'data-selected': 'true' } : {})}
       {...(dimmed === true ? { 'data-dimmed': 'true' } : {})}
+      {...(disabled === true ? { 'data-disabled': 'true' } : {})}
       onContextMenu={onContextMenu}
     >
       {leading !== undefined && <span className={css.listRowLeading}>{leading}</span>}
@@ -180,7 +206,11 @@ export function ListRow(props: ListRowProps): ReactNode {
               type="button"
               {...titleData}
               className={clsx(css.listRowMain, css.listRowTitle)}
-              {...(titleLabel === undefined ? {} : { 'aria-label': titleLabel, title: titleLabel })}
+              {...(label === undefined ? {} : { 'aria-label': label })}
+              {...(titleLabel === undefined ? {} : { title: titleLabel })}
+              {...(expanded === undefined ? {} : { 'aria-expanded': expanded })}
+              {...(controls === undefined ? {} : { 'aria-controls': controls })}
+              disabled={disabled}
               {...(primary === undefined ? {} : { 'data-list-primary': true, tabIndex: primary ? 0 : -1 })}
               onClick={onTitleClick}
             >
@@ -410,8 +440,8 @@ export interface StatusLineProps {
   readonly icon?: ReactNode
   readonly meta?: ReactNode
   readonly action?: ReactNode
-  /** `status` announces changes politely; omit for a purely static footnote. */
-  readonly role?: 'status'
+  /** `status` announces changes politely, `alert` interrupts for a failure; omit for a purely static footnote. */
+  readonly role?: 'status' | 'alert'
   /** Drop the horizontal padding when the caller's container already has it. */
   readonly plain?: boolean
   readonly className?: string

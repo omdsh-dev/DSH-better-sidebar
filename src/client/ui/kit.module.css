@@ -363,3 +363,41 @@
 .downloadLinkInline:hover {
   background: none;
 }
+
+/* A static file attachment: the chip's band without the chip's control. The
+   glyph is the host's own artwork, so no color is decided here beyond the
+   label tokens. */
+.fileChip {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--ds-sidebar-radius);
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xxxs-11);
+}
+
+.fileChipIcon {
+  display: inline-flex;
+  flex: none;
+}
+
+.fileChipName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fileChipSize {
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.fileChip[data-unavailable='true'] {
+  opacity: 0.4;
+}

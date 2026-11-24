@@ -88,6 +88,11 @@
 
 .listRow[data-dimmed='true'] { color: var(--dsw-alias-label-tertiary); }
 
+/* An inert row keeps its place and its name: the opacity, never a removal, is
+   what says "not actionable". */
+.listRow[data-disabled='true'] { opacity: 0.4; }
+.listRow[data-disabled='true']:hover { background: none; }
+
 .listRowLeading {
   display: inline-flex;
   align-items: center;
