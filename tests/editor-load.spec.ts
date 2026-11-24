@@ -128,6 +128,18 @@ describe('planFsReadOutcome', () => {
     expect(action).not.toHaveProperty('content')
   })
 
+  it('a long-line refusal carries its reason into largeFile (#1165)', () => {
+    const v = viewer({ id: 'code' })
+    const size = 327 * 1024
+    const action = planFsReadOutcome(
+      v,
+      { kind: 'too-large', size, head: 'e30=', reason: 'line' },
+      unclaimed,
+      () => '/m',
+    )
+    expect(action).toEqual({ kind: 'render', viewer: v, size, largeFile: { size, reason: 'line' } })
+  })
+
   it('too-large whose matched viewer is not an fsRead viewer → binary', () => {
     const custom = viewer({ id: 'my:csv', fetchStrategy: 'custom', load: async () => ({}) })
     const action = planFsReadOutcome(custom, { kind: 'too-large', size: LARGE, head: 'e30=' }, unclaimed, () => '/m')

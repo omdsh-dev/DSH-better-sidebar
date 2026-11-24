@@ -1,6 +1,6 @@
 {
   "name": "dsh-better-sidebar",
-  "version": "0.32.1",
+  "version": "0.33.0",
   "description": "Better Sidebar for DSH — file tree, editor, changes, tasks and side chat in one column, separate for every conversation. Configure it in Settings → Side card (bottom-left). Also exposes a service other plugins use to register sidebar tabs and file viewers.",
   "type": "module",
   "repository": {
@@ -35,6 +35,7 @@
     "./locale/*.json": "./locale/*.json"
   },
   "engines": {
+    "dsh": ">=0.2.2-rc.3 <0.3.0",
     "node": ">=20"
   },
   "packageManager": "pnpm@11.8.0",
@@ -123,6 +124,10 @@
     }
   },
   "dependencies": {
+    "ws": "^8.18.0",
+    "yaml": "^2.9.1"
+  },
+  "devDependencies": {
     "@codemirror/commands": "^6.10.4",
     "@codemirror/lang-cpp": "^6.0.3",
     "@codemirror/lang-css": "^6.3.1",
@@ -144,19 +149,7 @@
     "@codemirror/search": "^6.7.1",
     "@codemirror/state": "^6.7.1",
     "@codemirror/view": "^6.43.8",
-    "@formkit/auto-animate": "^0.10.0",
-    "@lezer/highlight": "^1.2.3",
-    "@xterm/addon-fit": "^0.11.0",
-    "@xterm/xterm": "^6.0.0",
-    "clsx": "^2.1.1",
-    "dompurify": "^3.4.14",
-    "mermaid": "^11.16.1",
-    "react-icons": "5.7.0",
-    "rxjs": "^7.8.2",
-    "ws": "^8.18.0",
-    "yaml": "^2.9.1"
-  },
-  "devDependencies": {
+    "@cordisjs/plugin-loader": "^1.0.0-rc.5",
     "@deepseek-ai/cordis": "4.1.0",
     "@deepseek-ai/cordis-plugin-group": "~1.1.0",
     "@deepseek-ai/cordis-plugin-include": "1.1.0",
@@ -190,9 +183,10 @@
     "@deepseek-ai/dsh-util-time": "0.2.2-rc.2",
     "@deepseek-ai/dsh-util-workspace-path": "0.2.2-rc.2",
     "@deepseek-ai/dsh-working-directory": "0.2.2-rc.2",
-    "@cordisjs/plugin-loader": "^1.0.0-rc.5",
     "@eslint/js": "^10.0.1",
+    "@formkit/auto-animate": "^0.10.0",
     "@huanlin/dsh-plugin-better-locale": "^0.1.0",
+    "@lezer/highlight": "^1.2.3",
     "@playwright/test": "^1.62.1",
     "@shikijs/langs": "^4.3.1",
     "@types/mdast": "^4.0.4",
@@ -200,9 +194,13 @@
     "@types/react": "~18.3.1",
     "@types/react-dom": "~18.3.1",
     "@types/ws": "^8.5.10",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
     "anser": "^2.3.5",
+    "clsx": "^2.1.1",
     "cordis": "^4.0.0-rc.8",
     "diff": "^9.0.0",
+    "dompurify": "^3.4.14",
     "eslint": "^10.9.1",
     "eslint-plugin-react-hooks": "^7.1.1",
     "globals": "^17.12.0",
@@ -213,6 +211,7 @@
     "mdast-util-from-markdown": "^2.0.3",
     "mdast-util-gfm": "^3.1.0",
     "mdast-util-math": "^3.0.0",
+    "mermaid": "^11.16.1",
     "micromark-core-commonmark": "^2.0.3",
     "micromark-extension-gfm": "^3.0.0",
     "micromark-extension-math": "^3.1.0",
@@ -224,7 +223,9 @@
     "micromark-util-types": "^2.0.2",
     "react": "^18.2.0",
     "react-dom": "18.2.0",
+    "react-icons": "5.7.0",
     "rolldown": "1.2.16",
+    "rxjs": "^7.8.2",
     "shiki": "^4.3.1",
     "simple-icons": "^16.32.0",
     "tsdown": "^0.22.2",

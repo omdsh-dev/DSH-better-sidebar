@@ -1080,7 +1080,7 @@ describe('NativeTabTitle (the chip glyph)', () => {
     const { host, unmount } = renderTitle(records, service, nativeInfo('chip-1', 'stub-tab', 'Stub'), 'stub-tab')
     const chip = host.querySelector('[aria-hidden="true"]')
     expect(chip, 'the chip must carry a decorative glyph').not.toBeNull()
-    expect(chip!.querySelector('[data-stub-icon="14"]'), 'the descriptor icon renders at the chip scale').not.toBeNull()
+    expect(chip!.querySelector('[data-stub-icon="16"]'), 'the descriptor icon renders at the chip scale').not.toBeNull()
     expect(host.textContent, 'the title follows the glyph').toBe('Stub')
     expect(host.querySelector('[role="tab"]'), 'the chip itself is the host’s element, not the plugin’s').toBeNull()
     unmount()

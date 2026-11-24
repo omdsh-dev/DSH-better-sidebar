@@ -12,6 +12,7 @@
  *      re-match that lets a `detect` viewer claim a binary the extension
  *      match could not see (the builtin NUL probe on `binary-download`).
  */
+import type { EditLimitReason } from '../editor-limits.ts'
 import type { FileViewerDescriptor } from './service.ts'
 
 /**
@@ -36,7 +37,7 @@ export function isDirectoryReadError(error: unknown): boolean {
 export type FsReadOutcome =
   | { kind: 'text'; content: string; size: number }
   | { kind: 'binary'; size: number; head: string }
-  | { kind: 'too-large'; size: number; head: string }
+  | { kind: 'too-large'; size: number; head: string; reason?: EditLimitReason }
 
 /** What the editor host should do next. */
 export type EditorLoadAction =
@@ -48,9 +49,11 @@ export type EditorLoadAction =
     viewer: FileViewerDescriptor
     content?: string
     size?: number
-    /** Present when the file is above the editable threshold: the viewer must
-     *  render the read-only paged preview rather than an editor. */
-    largeFile?: { size: number }
+    /** Present when the host refused the document (byte limit or one line
+     *  above the edit buffer's line limit): the viewer must render the
+     *  read-only paged preview rather than an editor. `reason` tells the two
+     *  apart so the viewer can say why. */
+    largeFile?: { size: number; reason?: EditLimitReason }
     mediaUrl?: string
     customData?: unknown
   }
@@ -124,7 +127,13 @@ export function planFsReadOutcome(
     // cannot use, so an fsRead viewer is the only remaining sensible owner —
     // and the host only reaches this branch after matching one.
     if (viewer.fetchStrategy !== 'fsRead') return { kind: 'binary' }
-    return { kind: 'render', viewer, size: result.size, largeFile: { size: result.size } }
+    // `reason` rides through so the viewer's notice can tell "too big" from
+    // "one line too long" (#1165); an older host sends none, which reads as
+    // the size answer.
+    const largeFile = result.reason === undefined
+      ? { size: result.size }
+      : { size: result.size, reason: result.reason }
+    return { kind: 'render', viewer, size: result.size, largeFile }
   }
   return { kind: 'binary' }
 }

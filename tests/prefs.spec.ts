@@ -1,5 +1,12 @@
-import { describe, expect, it } from 'vitest'
-import { loadBootDecision, loadExternalDisable, loadPrefs, type SidebarSettingsClient } from '../src/client/prefs.ts'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import {
+  awaitBootDecision,
+  loadBootDecision,
+  loadExternalDisable,
+  loadPrefs,
+  type BootDecision,
+  type SidebarSettingsClient,
+} from '../src/client/prefs.ts'
 import { SIDEBAR_PREFS_DEFAULTS } from '../src/prefs-shared.ts'
 
 /** A fake settings wire face whose settingsGet resolves to one raw value. */
@@ -300,5 +307,55 @@ describe('boot decision (one fetch for prefs + external disable)', () => {
     const decision = await loadBootDecision(wire({ customCss: 'html { }' }))
     expect(decision.suspended).toBe(false)
     expect(decision.prefs.customCss).toBe('html { }')
+  })
+})
+
+/** A promise plus its resolver, for a settings read that answers late. */
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((settle) => { resolve = settle })
+  return { promise, resolve }
+}
+
+describe('boot decision timeout (slow settings route)', () => {
+  afterEach(() => { vi.useRealTimers() })
+
+  it('adopts a prefs answer that lands after the first-paint budget', async () => {
+    vi.useFakeTimers()
+    const view = deferred<{ value?: unknown; revision?: number; externalDisable?: boolean }>()
+    const slow: SidebarSettingsClient = {
+      settingsGet: () => view.promise,
+      settingsUpdate: async () => ({ value: {}, revision: 2 }),
+    }
+    const late: BootDecision[] = []
+    const pending = awaitBootDecision(slow, (decision) => { late.push(decision) }, 2000)
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(await pending, 'the boot path mounts on the defaults at the budget').toBeNull()
+    expect(late, 'no answer exists yet, so nothing is applied').toEqual([])
+
+    // The SAME read answers after the budget. The store's own
+    // settings/document-updated path only fires on a DOCUMENT change, so this
+    // continuation is the only way a disabled third-party tab type (or the
+    // external-disable flag) reaches the store on a slow boot (#1159).
+    view.resolve({
+      value: { tabsEnabled: { 'dsh-mnemon:memory': false }, customCss: 'html { }' },
+      revision: 1,
+      externalDisable: true,
+    })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(late).toHaveLength(1)
+    expect(late[0]?.prefs.tabsEnabled).toEqual({ 'dsh-mnemon:memory': false })
+    expect(late[0]?.prefs.customCss).toBe('html { }')
+    expect(late[0]?.suspended).toBe(true)
+  })
+
+  it('never runs the late continuation when the answer wins the race', async () => {
+    vi.useFakeTimers()
+    const late = vi.fn()
+    const decision = await awaitBootDecision(wire({ customCss: 'html { }' }), late, 2000)
+    expect(decision?.prefs.customCss).toBe('html { }')
+    expect(decision?.suspended).toBe(false)
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(late, 'an in-time answer must not be applied twice').not.toHaveBeenCalled()
   })
 })

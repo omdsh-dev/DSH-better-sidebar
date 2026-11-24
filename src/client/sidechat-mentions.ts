@@ -17,7 +17,7 @@
  * - a successful `write` / `edit` / `str_replace_editor` call's target path,
  * - a `deliverables` row (`files[].path`, the authoritative delivery record).
  */
-import type { SidechatTranscriptRow } from './sidechat-transcript.ts'
+import type { SidechatToolChild, SidechatTranscriptRow } from './sidechat-transcript.ts'
 import { parseArgsObject } from './sidechat-transcript.ts'
 import { baseName } from './paths.ts'
 
@@ -52,7 +52,7 @@ function pathValue(value: unknown): string | undefined {
  * @param row - one mapped `tool` row.
  * @returns the produced path exactly as the call spelled it.
  */
-function producedTargetOf(row: Extract<SidechatTranscriptRow, { kind: 'tool' }>): string | undefined {
+function producedTargetOf(row: { name: string; args?: string }): string | undefined {
   const pathKey = MUTATION_PATH_KEYS[row.name]
   if (pathKey === undefined) return undefined
   const args = parseArgsObject(row.args)
@@ -65,9 +65,26 @@ function producedTargetOf(row: Extract<SidechatTranscriptRow, { kind: 'tool' }>)
 }
 
 /**
+ * Recurse one tool row and its PTC children into the produced vocabulary. A
+ * failed node contributes no target of its own (the existing "a failed call
+ * produced nothing" rule), but its children still count: a `run_code` program
+ * can fail after a successful write, and a failed sub-call does not retract an
+ * earlier successful one.
+ */
+function addProducedPaths(
+  row: { name: string; args?: string; failed: boolean; children?: readonly SidechatToolChild[] },
+  add: (value: unknown) => void,
+): void {
+  if (row.failed !== true) add(producedTargetOf(row))
+  for (const child of row.children ?? []) addProducedPaths(child, add)
+}
+
+/**
  * Every path this thread produced, in first-seen order and deduplicated: the
  * target of a successful (`failed !== true`) mutation call, plus every
- * delivered file. Nothing else — see {@link MUTATION_PATH_KEYS}.
+ * delivered file. Nothing else — see {@link MUTATION_PATH_KEYS}. PTC sub-calls
+ * count too: a program's `write`/`edit` is the same production as a direct
+ * call, just nested under its `run_code` row.
  * @param rows - the thread's mapped transcript rows.
  * @returns the produced paths exactly as the producing row spelled them
  * (relative call arguments stay relative; delivery events are absolute).
@@ -78,10 +95,8 @@ export function producedFilePaths(rows: readonly SidechatTranscriptRow[]): strin
     if (typeof value === 'string' && value.trim() !== '') seen.add(value)
   }
   for (const row of rows) {
-    if (row.kind === 'tool') {
-      if (row.failed === true) continue
-      add(producedTargetOf(row))
-    } else if (row.kind === 'deliverables') {
+    if (row.kind === 'tool') addProducedPaths(row, add)
+    else if (row.kind === 'deliverables') {
       for (const file of row.files) add(file.path)
     }
   }

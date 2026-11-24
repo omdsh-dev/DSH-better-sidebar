@@ -27,6 +27,68 @@
 export const MAX_EDITABLE_BYTES = 5 * 1024 * 1024
 
 /**
+ * Why a read refused to hand a document to the editor at all.
+ *
+ * - `size` — the file is above {@link MAX_EDITABLE_BYTES};
+ * - `line` — the document's head contains one line at or above
+ *   {@link MAX_EDITABLE_LINE_CHARS} (a minified single-line file, #1165).
+ *
+ * The client shows a different notice per reason, so "too large" and "one line
+ * too long" do not have to pretend to be the same fact.
+ */
+export type EditLimitReason = 'size' | 'line'
+
+/**
+ * Longest single line the editor will accept into a CodeMirror document.
+ *
+ * CodeMirror virtualizes by LINE: a document whose one line is a few hundred
+ * KB is parsed, tokenized (syntax highlighting) and laid out in a single frame,
+ * and the renderer hangs — the only recovery is restarting the process (#1165:
+ * a 327 KB minified HTML file, i.e. far below {@link MAX_EDITABLE_BYTES}).
+ * The diff renderer already bounds its own rows at 20 K chars
+ * (`MAX_RENDERED_LINE_CHARS` in `src/client/diff/DiffRows.tsx`); this is the
+ * editor-side twin of that line.
+ */
+export const MAX_EDITABLE_LINE_CHARS = 20_000
+
+/**
+ * How much of a document's head {@link hasOverlongLine} inspects.
+ *
+ * The probe has to stay cheap, and the files it guards against are single-line
+ * artifacts (minified HTML / JS / JSON) whose long line STARTS at byte zero, so
+ * the head is where the evidence is. A long line that only appears past this
+ * window is not detected — a deliberate bound, not an oversight.
+ */
+export const LINE_PROBE_CHARS = 64 * 1024
+
+/**
+ * Whether a document must stay out of the edit buffer because one of its lines
+ * is too long for CodeMirror.
+ *
+ * Only the first {@link LINE_PROBE_CHARS} characters are examined (see the
+ * constant). A line cut off by that window counts by the part inside it.
+ * `\r\n` counts as one separator; a lone `\r` is not an EOL for this editor
+ * either (see `text-encoding.ts`), so it is treated as part of the line.
+ *
+ * @param text - the decoded document (the host calls this on the bytes it is
+ *   about to hand the client, never on the client itself).
+ * @returns true when some line inside the probe window reaches
+ *   {@link MAX_EDITABLE_LINE_CHARS} characters.
+ */
+export function hasOverlongLine(text: string): boolean {
+  const end = Math.min(text.length, LINE_PROBE_CHARS)
+  let start = 0
+  while (start < end) {
+    const newline = text.indexOf('\n', start)
+    const stop = newline === -1 || newline > end ? end : newline
+    if (stop - start >= MAX_EDITABLE_LINE_CHARS) return true
+    if (newline === -1 || newline >= end) return false
+    start = newline + 1
+  }
+  return false
+}
+
+/**
  * Bytes one `fs.readPage` request returns. Pages are trimmed back to the last
  * newline so a page is normally a whole number of lines (and therefore, for
  * JSONL, a whole number of records); a single line longer than this is

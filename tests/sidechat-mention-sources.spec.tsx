@@ -174,4 +174,77 @@ describe('the mention vocabulary is scoped to producing tools (D12)', () => {
       rendered.unmount()
     }
   })
+
+  it('counts mutation targets dispatched inside run_code, and still excludes its reads', async () => {
+    const PTC_WRITTEN = 'src/ptc-written.ts'
+    const PTC_READ = 'src/ptc-read.ts'
+    const root = 'ptc-root'
+    const dispatch = (seq: number, sub: string, name: string, args: Record<string, unknown>, text: string): SidebarSessionEvent[] => [
+      {
+        type: 'tool/ptc-dispatch-start',
+        seq,
+        time: seq * 1_000,
+        data: { rootCallId: root, parentCallId: root, subCallId: sub, name, arguments: args },
+      } as SidebarSessionEvent,
+      {
+        type: 'tool/ptc-dispatch',
+        seq: seq + 1,
+        time: (seq + 1) * 1_000,
+        data: { rootCallId: root, parentCallId: root, subCallId: sub, name, arguments: args, isError: false, content: [{ type: 'text', text }] },
+      } as SidebarSessionEvent,
+    ]
+    const list: SidebarSessionEvent[] = [
+      { type: 'session/end-seed', seq: 0, time: 0, data: { inherited: true } } as SidebarSessionEvent,
+      {
+        type: 'user/message',
+        seq: 1,
+        time: 1_000,
+        data: { content: [{ type: 'text', text: 'do it in code' }], source: { kind: 'user' } },
+      } as SidebarSessionEvent,
+      { type: 'turn/start', seq: 2, time: 2_000, data: { turn: 1 } } as SidebarSessionEvent,
+      {
+        type: 'tool/call',
+        seq: 3,
+        time: 3_000,
+        data: { turn: 1, step: 1, callId: root, name: 'run_code', arguments: JSON.stringify({ code: 'await tools.write({})', description: 'Write a file' }) },
+      } as SidebarSessionEvent,
+      ...dispatch(4, root + ':ptc:1', 'write', { file_path: PTC_WRITTEN, content: 'x' }, 'written'),
+      ...dispatch(6, root + ':ptc:2', 'read', { file_path: PTC_READ }, 'read'),
+      {
+        type: 'tool/result',
+        seq: 8,
+        time: 8_000,
+        data: {
+          turn: 1,
+          step: 1,
+          message: { source: { kind: 'tool', callId: root }, content: [{ type: 'tool-result', content: [{ type: 'text', text: 'done' }] }] },
+        },
+      } as SidebarSessionEvent,
+      {
+        type: 'assistant/message',
+        seq: 9,
+        time: 9_000,
+        data: {
+          turn: 1,
+          step: 2,
+          message: { content: [{ type: 'text', text: 'I wrote `' + PTC_WRITTEN + '` and read `' + PTC_READ + '`.' }] },
+        },
+      } as SidebarSessionEvent,
+    ]
+
+    const produced = producedFilePaths(transcriptRows(entries(list)))
+    expect(produced, 'a write inside run_code is production').toContain(PTC_WRITTEN)
+    expect(produced, 'a read inside run_code is not production').not.toContain(PTC_READ)
+
+    harness.wire.events = list
+    const rendered = harness.mount()
+    await harness.flush(4)
+    try {
+      const { container } = rendered
+      expect(mentionOf(container, PTC_WRITTEN), 'the PTC write stays clickable').toBeDefined()
+      expect(mentionOf(container, PTC_READ), 'the PTC read stays inert').toBeUndefined()
+    } finally {
+      rendered.unmount()
+    }
+  })
 })

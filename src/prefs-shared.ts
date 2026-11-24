@@ -66,10 +66,15 @@ export interface SidebarPrefs {
   /**
    * Whether the editor tab runs in merged mode: a path input replaces the
    * plain header and a toggleable file-tree panel (with a global name
-   * search) docks at the tab's right edge. On by default; also makes brand
-   * new sessions seed an empty editor tab (tree panel open) instead of the
-   * explorer tab. The switch lives under the editor card's gear in the
-   * Side card settings; off restores the pre-merge editor exactly.
+   * search) docks at the tab's right edge. Off by default; on makes a tree
+   * click switch the open file in place (same tab id and meta) instead of
+   * opening another window. The switch lives under the editor card's gear in
+   * the Side card settings.
+   *
+   * This no longer seeds anything: since the plugin's own right panel was
+   * retired (the host owns the right column and its tab list), a brand-new
+   * session starts with no tab at all, and the host's start page — which this
+   * plugin takes over — is what the first open lands on. See `guideTakeover`.
    */
   editorExplorer: boolean
   /**
@@ -190,6 +195,26 @@ export interface SidebarPrefs {
 
 /** The side-chat tab descriptor id; also the key of its settings blob. */
 export const SIDECHAT_PREFS_ID = 'sidechat'
+
+/** The plugin-owned setting key holding the native page mode. */
+export const SIDECHAT_TABS_SETTING = 'tabs'
+
+/** Whether side chats share one native page or each thread gets its own. */
+export type SidechatTabsMode = 'single' | 'multiple'
+
+/** Pages every document that never chose a mode gets: today's shared page. */
+export const SIDECHAT_TABS_DEFAULT: SidechatTabsMode = 'single'
+
+/**
+ * Validate one stored page-mode value. Anything that is not a known mode (an
+ * absent value, a hand-edited document) falls back to the shared page, so a
+ * bad preference can never make a plain + -> Side Chat open vanish.
+ * @param value - the raw stored value.
+ * @returns a known side-chat page mode.
+ */
+export function parseSidechatTabsMode(value: unknown): SidechatTabsMode {
+  return value === 'multiple' ? 'multiple' : SIDECHAT_TABS_DEFAULT
+}
 
 /** The plugin-owned setting key holding the composer's submit gesture. */
 export const SIDECHAT_SUBMIT_KEY_SETTING = 'submitKey'

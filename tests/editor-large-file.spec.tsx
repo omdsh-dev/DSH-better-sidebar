@@ -63,6 +63,8 @@ const SCOPE = { sessionId: 's1', cwd: '/p' }
 const PATH = '/p/big.txt'
 /** Above MAX_EDITABLE_BYTES (5 MiB): the host answers `too-large`. */
 const SIZE = 6 * 1024 * 1024
+/** A long-line refusal is far BELOW the byte limit (issue #1165). */
+const LONG_LINE_SIZE = 327 * 1024
 const PAGE = 'alpha\nbeta\n'
 
 function viewerProps(overrides: Partial<FileViewerProps> = {}): FileViewerProps {
@@ -123,6 +125,38 @@ describe('TextEditor over-limit preview', () => {
       // 0 and renders the page it got back.
       expect(readPage).toHaveBeenCalledWith(expect.anything(), PATH, 0)
       expect(container.textContent).toContain('alpha')
+    } finally {
+      unmount()
+    }
+  })
+
+  it('explains a long-line refusal even though the file is under the byte limit (#1165)', async () => {
+    attachLocale(new FakeLocale())
+    readPage.mockResolvedValue({
+      kind: 'text', text: 'x'.repeat(4096), offset: 0, nextOffset: LONG_LINE_SIZE, eof: true, size: LONG_LINE_SIZE, encoding: 'utf8',
+    })
+    const { container, unmount } = renderRoot(
+      createElement(TextEditor, viewerProps({
+        size: LONG_LINE_SIZE,
+        largeFile: { size: LONG_LINE_SIZE, reason: 'line' },
+      })),
+    )
+    try {
+      await flush()
+      // The notice names the actual reason: "the file is too large" would be
+      // a lie at 327 KB, and showing NO notice was the #1165 bug (the paged
+      // preview appeared silently).
+      expect(container.textContent).toContain(
+        t('previewLongLineNotice', { size: formatByteSize(LONG_LINE_SIZE) }),
+      )
+      expect(container.textContent).not.toContain(
+        t('previewOnlyNotice', { size: formatByteSize(LONG_LINE_SIZE), limit: MAX_EDITABLE_LABEL }),
+      )
+      // Same degraded path as the byte-limit refusal: no CodeMirror, no save.
+      expect(container.querySelector('.cm-editor')).toBeNull()
+      expect(container.querySelector('button[aria-label="Save"]')).toBeNull()
+      expect(container.querySelector('a[download]')).not.toBeNull()
+      expect(readPage).toHaveBeenCalledWith(expect.anything(), PATH, 0)
     } finally {
       unmount()
     }

@@ -34,6 +34,61 @@ export const builtinTabPlugins: readonly PluginEntry[] = [
     install: 'cd ~/.dsh && dsh plugin --profile web add dsh-better-sidebar && dsh plugin --profile web add git+https://github.com/Fisfzy/ego-browser.git',
   },
   {
+    id: '@local/dsh-session-sources',
+    name: () => t('pluginSessionSourcesName'),
+    url: 'https://github.com/CCColastic/dsh-session-sources',
+    description: () => t('pluginSessionSourcesDesc'),
+    // Optional better-sidebar integration with a native sidebar fallback.
+    // The pinned GitHub release includes the generated client bundle.
+    install: 'cd ~/.dsh && dsh plugin --profile web add "github:CCColastic/dsh-session-sources#v0.1.2"',
+  },
+  {
+    id: '@lucagiftzek/dsh-artifacts',
+    name: 'dsh-artifacts Artifacts',
+    url: 'https://github.com/lucagiftzek/dsh-artifacts',
+    description: 'An Artifacts tab that lists the files your agents produce and previews them in place (Markdown, HTML, images, audio, video, PDF, data), with live reload, version history and a template library agents can fill.',
+    // Plain English strings (the raw-name fallback form, like dsh-side-chat).
+    // Published on npm (scoped). No better-sidebar prerequisite in these five
+    // lines: the catalog runs inside better-sidebar, which is already installed
+    // at the build that fits the host (an unpinned re-add would pick 0.30.x,
+    // which 0.2.1 hosts refuse), like the dsh-ide-git and dsh-sentinel lines.
+    install: 'cd ~/.dsh && dsh plugin --profile web add @lucagiftzek/dsh-artifacts',
+  },
+  {
+    id: '@lucagiftzek/dsh-conductor',
+    name: 'dsh-conductor Conductor',
+    url: 'https://github.com/lucagiftzek/dsh-conductor',
+    description: 'Keeps long chats cheap: /new gives the same chat a fresh context from a model-written handoff, /rewind takes the chat and the agent\'s file edits back to any prompt, plus automatic compaction at your level, recovery after failed turns and silent messages between chats.',
+    // Registers the Conductor tab on better-sidebar (context meter, pins,
+    // inbox, history, agents); its commands and model tools work without it.
+    install: 'cd ~/.dsh && dsh plugin --profile web add @lucagiftzek/dsh-conductor',
+  },
+  {
+    id: '@lucagiftzek/dsh-mail',
+    name: 'dsh-mail Mail',
+    url: 'https://github.com/lucagiftzek/dsh-mail',
+    description: 'A Mail tab and mail tools for your agents: IMAP, POP3, SMTP and OAuth2 accounts, threads and search, drafts that wait for your approval, scheduled and bulk sends with unsubscribe handling.',
+    install: 'cd ~/.dsh && dsh plugin --profile web add @lucagiftzek/dsh-mail',
+  },
+  {
+    id: '@lucagiftzek/dsh-phone',
+    name: 'dsh-phone Phone',
+    url: 'https://github.com/lucagiftzek/dsh-phone',
+    description: 'A Phone tab for SMS, calls, live voicemail transcripts and Telegram, with call audio through your own server. Needs your own Twilio account or SIP server and the bundled phone-hookd daemon (see its README).',
+    // The install line adds the plugin; calls and SMS need the provider setup
+    // described in the repository README (the daemon ships in the package).
+    install: 'cd ~/.dsh && dsh plugin --profile web add @lucagiftzek/dsh-phone',
+  },
+  {
+    id: '@lucagiftzek/dsh-voice',
+    name: 'dsh-voice Reader',
+    url: 'https://github.com/lucagiftzek/dsh-voice',
+    description: 'Read-aloud and dictation with 23 TTS and STT providers, per-language voice routing and word highlighting; adds a TTS Reader tab that reads text aloud.',
+    // The Reader tab registers when better-sidebar is present; read-aloud and
+    // dictation in the chat work without it.
+    install: 'cd ~/.dsh && dsh plugin --profile web add @lucagiftzek/dsh-voice',
+  },
+  {
     id: '@modusensus/dsh-mneme',
     name: () => t('pluginMnemeName'),
     url: 'https://github.com/modusensus/dsh-mneme',
@@ -67,7 +122,7 @@ export const builtinTabPlugins: readonly PluginEntry[] = [
   {
     id: 'dsh-dev-git-graph',
     name: 'dsh-dev-git-graph 提交图',
-    url: 'https://github.com/kp-z/dsh-dev-git-graph',
+    url: 'https://github.com/kp-z/dsh-plugins',
     description: () => t('pluginDevGitGraphDesc'),
     // Optional peer of dsh-better-sidebar (native tab + DiffTab reuse when
     // present, overlay fallback when not); published on npm.
@@ -150,7 +205,18 @@ export const builtinTabPlugins: readonly PluginEntry[] = [
     // differential injection (only what changed), review-date reminders,
     // ranked search and a read-only sidebar tab. lib/ ships prebuilt, so the
     // pinned github:-form install needs no local build.
-    install: 'cd ~/.dsh && dsh plugin --profile web add "github:lpf20200901/dsh-memory-delta#v1.3.3"',
+    install: 'cd ~/.dsh && dsh plugin --profile web add "github:lpf20200901/dsh-memory-delta#v1.3.4"',
+  },
+  {
+    id: 'dsh-pr-inbox',
+    name: () => t('pluginPrInboxName'),
+    url: 'https://github.com/omdsh-dev/dsh-pr-inbox',
+    description: () => t('pluginPrInboxDesc'),
+    // Registers the PR tab through this plugin's service. Requires
+    // better-sidebar as the tab host; the plugin is read-only and uses the
+    // user's existing `gh` login (no token stored). GitHub source with
+    // committed lib/, so the pinned tag installs without a local build.
+    install: 'cd ~/.dsh && dsh plugin --profile web add dsh-better-sidebar && dsh plugin --profile web add "github:omdsh-dev/dsh-pr-inbox#v0.1.1"',
   },
   {
     id: 'dsh-sidebar-qa',
@@ -166,9 +232,7 @@ export const builtinTabPlugins: readonly PluginEntry[] = [
     name: () => t('pluginSidenoteName'),
     url: 'https://github.com/g-yixuan/dsh-sidenote',
     description: () => t('pluginSidenoteDesc'),
-    // dsh-sidenote hard-depends on dsh-better-sidebar (required peer), so
-    // the install line installs the prerequisite first, then the plugin.
-    install: 'cd ~/.dsh && dsh plugin --profile web add dsh-better-sidebar && dsh plugin --profile web add dsh-sidenote',
+    install: 'cd ~/.dsh && dsh plugin --profile web add dsh-sidenote',
   },
   {
     id: 'dsh-server-deck',
@@ -229,5 +293,17 @@ export const builtinTabPlugins: readonly PluginEntry[] = [
     // lines: better-sidebar 0.18.0 + DSH 0.1.2-rc.1 (since plugin 0.2.7)
     // and better-sidebar 0.17.1 + DSH 0.1.1-rc.x (stable).
     install: 'cd ~/.dsh && dsh plugin --profile web add dsh-better-sidebar && dsh plugin --profile web add dsh-turn-outline',
+  },
+  {
+    id: 'dsh-zotero-workspace',
+    name: () => t('pluginZoteroWorkspaceName'),
+    url: 'https://github.com/hudsonhou/dsh-zotero-workspace',
+    description: () => t('pluginZoteroWorkspaceDesc'),
+    // Standalone plugin (no better-sidebar peer): it registers through the
+    // host's native right-Sidebar tab registry because its tab needs the
+    // session-level inputActions to put the citation into the composer; when
+    // better-sidebar is installed, that same tab opens PDF/Markdown through
+    // this plugin's openFile. Install from the tagged GitHub release.
+    install: 'cd ~/.dsh && dsh plugin --profile web add "github:hudsonhou/dsh-zotero-workspace#v0.1.0"',
   },
 ]

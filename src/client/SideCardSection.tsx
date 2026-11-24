@@ -738,14 +738,20 @@ export function SideCardSection({ store, service, guideCatalog }: SideCardSectio
     setPrefs(outcome.ok ? outcome.prefs : previous)
   }
 
-  /** Optimistically apply one pref patch, then commit (revert on failure). */
-  const applyPref = (patch: Record<string, unknown>): void => {
+  /**
+   * Optimistically apply one pref patch, then commit (revert on failure).
+   * @param patch - the full local value (the UI reads this shape).
+   * @param wirePatch - the patch to send (defaults to `patch`); the host
+   *   deep-merges nested plain objects, so a sparse local map must send only
+   *   the touched key.
+   */
+  const applyPref = (patch: Record<string, unknown>, wirePatch: Record<string, unknown> = patch): void => {
     const previous = optimisticRef.current
     const next = { ...previous, ...patch } as SidebarPrefs
     optimisticRef.current = next
     setPrefs(next)
     setError(null)
-    void commit(patch).then(outcome => applyOutcome(previous, outcome))
+    void commit(wirePatch).then(outcome => applyOutcome(previous, outcome))
   }
 
   /** Flip one per-tab enable switch (merge into the tabsEnabled map). */
@@ -763,7 +769,9 @@ export function SideCardSection({ store, service, guideCatalog }: SideCardSectio
     const next = { ...optimisticRef.current.guideHidden }
     if (shown) delete next[key]
     else next[key] = true
-    applyPref({ guideHidden: next })
+    // A deletion cannot ride the host's deep merge, so a re-shown card sends
+    // the explicit `false` while the UI keeps the sparse map.
+    applyPref({ guideHidden: next }, { guideHidden: { [key]: !shown } })
   }
 
   /**

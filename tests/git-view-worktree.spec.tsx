@@ -258,11 +258,11 @@ describe('GitLens (changes tab, git lens) linked-worktree consistency', () => {
       await flushEffects()
 
       // The workspace container's child repositories retain their basename labels.
-      const repoOptions = openMoreSubmenu(container, t('gitRepository'))
-      expect(repoOptions.map(button => button.textContent)).toEqual(['a', 'b'])
+      const repoChips = [...container.querySelectorAll<HTMLButtonElement>('[data-scm-repos] [data-scm-repo]')]
+      expect(repoChips.map(chip => chip.textContent)).toEqual(['a', 'b'])
       const listingsBefore = worktrees.mock.calls.length
 
-      await act(async () => { repoOptions[1]!.click() })
+      await act(async () => { repoChips.find(chip => chip.dataset.scmRepo === REPO_B)!.click() })
       await flushEffects()
 
       // The listing carries the selected repoRoot — a container's own listing
@@ -286,6 +286,7 @@ describe('GitLens (changes tab, git lens) linked-worktree consistency', () => {
       act(() => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })) })
       act(() => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })) })
 
+      // The ⋯ → Repository submenu remains the folded/menu fallback.
       await chooseMoreOption(container, t('gitRepository'), 'a')
       expect(branchButton(container).title).toBe(`${t('branch')}: a-main*`)
       expect(container.querySelector('[data-path="a-change.ts"]')).not.toBeNull()

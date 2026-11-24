@@ -11,6 +11,16 @@ importers:
 
   .:
     dependencies:
+      '@deepseek-ai/schemastery':
+        specifier: '>=3.18.5 <4'
+        version: 3.19.0
+      ws:
+        specifier: ^8.18.0
+        version: 8.21.3
+      yaml:
+        specifier: ^2.9.1
+        version: 2.9.1
+    devDependencies:
       '@codemirror/commands':
         specifier: ^6.10.4
         version: 6.11.0
@@ -74,43 +84,6 @@ importers:
       '@codemirror/view':
         specifier: ^6.43.8
         version: 6.43.9
-      '@deepseek-ai/schemastery':
-        specifier: '>=3.18.5 <4'
-        version: 3.19.0
-      '@formkit/auto-animate':
-        specifier: ^0.10.0
-        version: 0.10.0
-      '@lezer/highlight':
-        specifier: ^1.2.3
-        version: 1.2.5
-      '@xterm/addon-fit':
-        specifier: ^0.11.0
-        version: 0.11.0
-      '@xterm/xterm':
-        specifier: ^6.0.0
-        version: 6.0.0
-      clsx:
-        specifier: ^2.1.1
-        version: 2.1.1
-      dompurify:
-        specifier: ^3.4.14
-        version: 3.4.14
-      mermaid:
-        specifier: ^11.16.1
-        version: 11.17.0
-      react-icons:
-        specifier: 5.7.0
-        version: 5.7.0(react@18.2.0)
-      rxjs:
-        specifier: ^7.8.2
-        version: 7.8.2
-      ws:
-        specifier: ^8.18.0
-        version: 8.21.3
-      yaml:
-        specifier: ^2.9.1
-        version: 2.9.1
-    devDependencies:
       '@cordisjs/plugin-loader':
         specifier: ^1.0.0-rc.5
         version: 1.0.0-rc.5(cordis@4.0.0-rc.8)(node-addon-require-builtin@0.1.9)
@@ -216,9 +189,15 @@ importers:
       '@eslint/js':
         specifier: ^10.0.1
         version: 10.0.1(eslint@10.9.1)
+      '@formkit/auto-animate':
+        specifier: ^0.10.0
+        version: 0.10.0
       '@huanlin/dsh-plugin-better-locale':
         specifier: ^0.1.0
         version: 0.1.0(@deepseek-ai/cordis@4.1.0)(@deepseek-ai/dsh-client-locale@0.2.2-rc.2(@deepseek-ai/cordis@4.1.0))(@deepseek-ai/dsh-client-ui-primitives@0.2.2-rc.2(@deepseek-ai/cordis@4.1.0))(@deepseek-ai/dsh-client-ui-settings@0.2.2-rc.2(@deepseek-ai/cordis@4.1.0))(@deepseek-ai/dsh-client-ui-slots@0.2.2-rc.2(@deepseek-ai/cordis@4.1.0))(react-dom@18.2.0(react@18.2.0))(react@18.2.0)
+      '@lezer/highlight':
+        specifier: ^1.2.3
+        version: 1.2.5
       '@playwright/test':
         specifier: ^1.62.1
         version: 1.62.1
@@ -240,15 +219,27 @@ importers:
       '@types/ws':
         specifier: ^8.5.10
         version: 8.18.2
+      '@xterm/addon-fit':
+        specifier: ^0.11.0
+        version: 0.11.0
+      '@xterm/xterm':
+        specifier: ^6.0.0
+        version: 6.0.0
       anser:
         specifier: ^2.3.5
         version: 2.3.5
+      clsx:
+        specifier: ^2.1.1
+        version: 2.1.1
       cordis:
         specifier: ^4.0.0-rc.8
         version: 4.0.0-rc.8(@cordisjs/plugin-loader@1.0.0-rc.5)
       diff:
         specifier: ^9.0.0
         version: 9.0.0
+      dompurify:
+        specifier: ^3.4.14
+        version: 3.4.14
       eslint:
         specifier: ^10.9.1
         version: 10.9.1
@@ -279,6 +270,9 @@ importers:
       mdast-util-math:
         specifier: ^3.0.0
         version: 3.0.0
+      mermaid:
+        specifier: ^11.16.1
+        version: 11.17.0
       micromark-core-commonmark:
         specifier: ^2.0.3
         version: 2.0.4
@@ -312,9 +306,15 @@ importers:
       react-dom:
         specifier: 18.2.0
         version: 18.2.0(react@18.2.0)
+      react-icons:
+        specifier: 5.7.0
+        version: 5.7.0(react@18.2.0)
       rolldown:
         specifier: 1.2.16
         version: 1.2.16
+      rxjs:
+        specifier: ^7.8.2
+        version: 7.8.2
       shiki:
         specifier: ^4.3.1
         version: 4.4.3
@@ -949,6 +949,10 @@ packages:
 
   '@eslint-community/regexpp@4.12.2':
     resolution: {integrity: sha512-EriSTlt5OC9/7SXkRSCAhfSxxoSUgBm33OH+IkwbdpgoqsSsUg7y3uh+IICI/Qg4BBWr3U2i39RpmycbxMq4ew==}
+    engines: {node: ^12.0.0 || ^14.0.0 || >=16.0.0}
+
+  '@eslint-community/regexpp@4.12.3':
+    resolution: {integrity: sha512-R76UKbvsqI68DJJVTVyqFKqU98CN4+B+acxNfEA2IFarSzP0SjtKf/3+fFiXzTyv5Fj3PxLkGHe2wnVWWMxobQ==}
     engines: {node: ^12.0.0 || ^14.0.0 || >=16.0.0}
 
   '@eslint/config-array@0.23.5':
@@ -3912,7 +3916,7 @@ snapshots:
       '@deepseek-ai/dsh-native-command': 0.2.2-rc.2(@deepseek-ai/cordis@4.1.0)
       '@deepseek-ai/dsh-official-bundles': 0.2.2-rc.2(@deepseek-ai/cordis@4.1.0)
       '@deepseek-ai/dsh-package-manifest': 0.2.2-rc.2(@deepseek-ai/cordis@4.1.0)
-      '@eslint-community/regexpp': 4.12.2
+      '@eslint-community/regexpp': 4.12.3
       ajv: 8.20.0
       js-yaml: 4.3.2
       node-addon-require-builtin: 0.1.9
@@ -4241,6 +4245,8 @@ snapshots:
       eslint-visitor-keys: 3.4.3
 
   '@eslint-community/regexpp@4.12.2': {}
+
+  '@eslint-community/regexpp@4.12.3': {}
 
   '@eslint/config-array@0.23.5':
     dependencies:

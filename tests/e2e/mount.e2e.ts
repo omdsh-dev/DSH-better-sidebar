@@ -31,7 +31,7 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { test, expect, type APIRequestContext } from '@playwright/test'
+import { test, expect, type APIRequestContext, type Page } from '@playwright/test'
 import { PAGE_URL, composerEditable, createHostApi, dismissOnboarding, gotoPage, hostRpc, sendFirstMessage, sidebarApi } from './host'
 
 /** Workspace the sidebar renders against (created by the lane's seeding). */
@@ -173,6 +173,91 @@ test.beforeAll(async () => {
 
 test.afterAll(async () => {
   await api?.dispose()
+})
+
+/** Set the side-chat page mode through the scratch profile's settings route. */
+async function setSidechatTabs(mode: 'single' | 'multiple'): Promise<void> {
+  const current = await api.post(sidebarApi('settings.get'), { data: {} })
+  expect(current.ok(), `settings.get: ${current.status()}`).toBe(true)
+  const body = await current.json() as { value?: { pluginSettings?: Record<string, Record<string, unknown>> } }
+  const pluginSettings = {
+    ...(body.value?.pluginSettings ?? {}),
+    sidechat: { ...(body.value?.pluginSettings?.sidechat ?? {}), tabs: mode },
+  }
+  const update = await api.post(sidebarApi('settings.update'), { data: { patch: { pluginSettings } } })
+  expect(update.ok(), `settings.update (sidechat tabs): ${update.status()} ${await update.text()}`).toBe(true)
+}
+
+/** Stub the side-chat transport for deterministic host/DOM-only assertions. */
+async function stubSidechat(page: Page): Promise<{ starts: () => number; pulls: string[] }> {
+  const state = { starts: 0, pulls: [] as string[] }
+  await page.route('**/sidebar/api/sidechat.*', async route => {
+    const method = route.request().url().split('/').pop()
+    const body = route.request().postDataJSON() as { childId?: string }
+    let value: unknown = { accepted: true }
+    if (method === 'sidechat.start') value = { childId: `test-thread-${++state.starts}` }
+    if (method === 'sidechat.info') value = { live: false, preset: 'test' }
+    if (method === 'sidechat.models') value = { available: false, groups: [], failures: [] }
+    if (method === 'sidechat.events') {
+      state.pulls.push(body.childId ?? '')
+      value = { events: [], live: [], pending: [] }
+    }
+    await route.fulfill({ json: { ok: true, value } })
+  })
+  return { starts: () => state.starts, pulls: state.pulls }
+}
+
+test('sidechat default: repeated guide opens keep the one shared page', async ({ page }) => {
+  await setSidechatTabs('single')
+  const sidechat = await stubSidechat(page)
+  await page.goto(PAGE_URL, { waitUntil: 'domcontentloaded' })
+  await expect(page.locator('[data-dsh-better-sidebar]')).toBeAttached({ timeout: 90_000 })
+  await dismissOnboarding(page)
+  await sendFirstMessage(page)
+  await page.locator('[data-sidebar-right-expand]').first().click()
+  await page.locator('[data-sidebar-right-guide-entry="sidechat"]').click()
+  await expect.poll(() => sidechat.starts()).toBe(1)
+  const tabs = page.locator('[data-sidebar-right-panel] [role="tab"]')
+  const initial = await tabs.count()
+  await page.locator('[data-dockkit-add-tab]').first().click()
+  await page.locator('[data-sidebar-right-guide-entry="sidechat"]').click()
+  // The host focuses the shared page; no second thread and no second tab.
+  await expect(tabs).toHaveCount(initial)
+  expect(sidechat.starts()).toBe(1)
+})
+
+test('sidechat multi-instance: both plus buttons preserve independent tabs across reload', async ({ page }) => {
+  await setSidechatTabs('multiple')
+  const sidechat = await stubSidechat(page)
+  await page.goto(PAGE_URL, { waitUntil: 'domcontentloaded' })
+  await expect(page.locator('[data-dsh-better-sidebar]')).toBeAttached({ timeout: 90_000 })
+  await dismissOnboarding(page)
+  await sendFirstMessage(page)
+  await page.locator('[data-sidebar-right-expand]').first().click()
+  await page.locator('[data-sidebar-right-guide-entry="sidechat"]').click()
+  await expect.poll(() => sidechat.starts()).toBe(1)
+  await expect.poll(() => sidechat.pulls.includes('test-thread-1')).toBe(true)
+  const tabs = page.locator('[data-sidebar-right-panel] [role="tab"]')
+  const initial = await tabs.count()
+  await page.locator('[data-dockkit-add-tab]').first().click()
+  await page.locator('[data-sidebar-right-guide-entry="sidechat"]').click()
+  await expect.poll(() => sidechat.starts()).toBe(2)
+  await expect(tabs).toHaveCount(initial + 1)
+  await expect.poll(() => sidechat.pulls.includes('test-thread-2')).toBe(true)
+  await page.locator('[data-dsh-native-tab-host]:visible button[aria-label="新建对话"], [data-dsh-native-tab-host]:visible button[aria-label="New thread"]').click()
+  await expect.poll(() => sidechat.starts()).toBe(3)
+  await expect(tabs).toHaveCount(initial + 2)
+  await expect.poll(() => sidechat.pulls.includes('test-thread-3')).toBe(true)
+  const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('dsh-sidebar:v1:native-sidechat-bindings') ?? '[]') as Array<{ threadId: string }>)
+  expect(saved.map(row => row.threadId).sort()).toEqual(['test-thread-1', 'test-thread-2', 'test-thread-3'])
+  sidechat.pulls.length = 0
+  await page.reload({ waitUntil: 'domcontentloaded' })
+  await expect(page.locator('[data-dsh-better-sidebar]')).toBeAttached({ timeout: 90_000 })
+  await expect(tabs).toHaveCount(initial + 2, { timeout: 30_000 })
+  for (let index = 0; index < await tabs.count(); index++) await tabs.nth(index).click()
+  await expect.poll(() => new Set(sidechat.pulls).size).toBe(3)
+  expect(sidechat.starts(), 'reload must not create replacement threads').toBe(3)
+  await setSidechatTabs('single')
 })
 
 test('plugin mounts into the DSH shell and survives a built-in tab sweep', async ({ page }) => {
@@ -345,6 +430,30 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
     'the web profile must not offer a browser guide entry at DSH 0.1.7',
   ).toHaveCount(0)
 
+  // Compare real boxes with the official compass title: jsdom cannot catch
+  // a nested inline SVG's baseline offset or the host gap plus our margin.
+  const chipGeometry = (node: Element) => {
+    const svg = node.querySelector('svg')!
+    const icon = svg.getBoundingClientRect()
+    const row = node.getBoundingClientRect()
+    const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT)
+    let text: Node | null
+    while ((text = walker.nextNode()) !== null) {
+      if (text.textContent?.trim() && !svg.contains(text)) break
+    }
+    if (text === null) throw new Error('tab title text is missing')
+    const range = document.createRange()
+    range.selectNodeContents(text)
+    return {
+      width: icon.width,
+      height: icon.height,
+      gap: range.getBoundingClientRect().left - icon.right,
+      offset: icon.top + icon.height / 2 - (row.top + row.height / 2),
+    }
+  }
+  const activeChipTitle = pane.locator('[data-dockkit-tab][aria-selected="true"] [data-dockkit-tab-title]').first()
+  const officialGeometry = await activeChipTitle.evaluate(chipGeometry)
+
   // Sweep every type through the guide. Each open mounts a real viewer (the
   // editor and mermaid chunks arrive lazily); a failure anywhere surfaces as a
   // pageerror or a crash strip, both of which the next assertion sees. A pane
@@ -369,6 +478,13 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
     }
     await page.waitForTimeout(1_500)
     await assertNoCrash()
+    if (kind === 'files' || kind === 'git') {
+      const geometry = await activeChipTitle.evaluate(chipGeometry)
+      expect(geometry.width).toBe(officialGeometry.width)
+      expect(geometry.height).toBe(officialGeometry.height)
+      expect(Math.abs(geometry.gap - officialGeometry.gap), `${kind} icon/title spacing`).toBeLessThan(0.5)
+      expect(Math.abs(geometry.offset - officialGeometry.offset), `${kind} icon vertical centring`).toBeLessThan(0.5)
+    }
   }
 
   // The sweep opened the Side Chat type, whose view auto-creates a thread and
