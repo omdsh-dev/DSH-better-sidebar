@@ -927,42 +927,12 @@
   background: var(--dsw-alias-bg-base);
 }
 
-/* A declined read is a reader-visible fact, not a broken image: one quiet
- * line in the chip's own typography. */
-.sidechatAttachmentFailed {
-  font-size: var(--dsh-content-font-size-secondary, 13px);
-  line-height: calc(18px + var(--dsh-content-font-delta-secondary, 0px));
-  font-family: var(--dsw-font-family);
-  color: var(--dsw-alias-label-tertiary);
-}
-
-/* The main conversation's file card: type glyph, name, size. */
+/* A file attachment is the shared list row now; this wrapper only keeps the
+ * chip's width bounds and the hover tooltip the row's ellipsis needs. */
 .sidechatAttachmentFile {
   display: inline-flex;
-  align-items: center;
-  gap: 6px;
   min-width: 0;
   max-width: 100%;
-  padding: 3px 6px;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 6px;
-  font-size: var(--dsh-content-font-size-secondary, 13px);
-  line-height: calc(18px + var(--dsh-content-font-delta-secondary, 0px));
-  font-family: var(--dsw-font-family);
-  color: var(--dsw-alias-label-secondary);
-}
-
-.sidechatAttachmentName {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--dsw-alias-label-primary);
-}
-
-.sidechatAttachmentSize {
-  flex: none;
-  color: var(--dsw-alias-label-tertiary);
 }
 
 @keyframes sidechatRowIn {

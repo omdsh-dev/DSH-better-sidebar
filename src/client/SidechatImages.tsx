@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import type { SidechatImageOccurrence } from '../sidechat-images.ts'
 import { hostRouteUrl } from './host-route-url.ts'
 import { t } from './locales.ts'
+import { Notice, StatusLine } from './ui/index.ts'
 import css from './SideChatView.module.css'
 
 function SavedImage({ childId, messageId, image, visible }: { childId: string; messageId: string; image: SidechatImageOccurrence; visible: boolean }): React.ReactNode {
@@ -22,14 +23,14 @@ function SavedImage({ childId, messageId, image, visible }: { childId: string; m
       }).catch(() => { if (!controller.signal.aborted) setState({ unavailable: true }) })
     return () => { controller.abort(); if (url !== undefined) URL.revokeObjectURL(url) }
   }, [childId, messageId, image.blockIndex, visible])
-  if (state === null) return <span>{t('sideChatImageLoading')}</span>
-  if ('unavailable' in state) return <span role="status">{t('sideChatImageUnavailable')}</span>
+  if (state === null) return <Notice kind="loading" tone="inline">{t('sideChatImageLoading')}</Notice>
+  if ('unavailable' in state) return <StatusLine plain role="status" text={t('sideChatImageUnavailable')} />
   return <a href={state.url} target="_blank" rel="noreferrer"><img className={css.sidechatImage} src={state.url} alt={image.name ?? t('sideChatImage')} onError={() => { setState({ unavailable: true }) }} /></a>
 }
 
 export function SidechatImages({ childId, messageId, images, visible }: { childId?: string; messageId?: string; images?: readonly SidechatImageOccurrence[]; visible: boolean }): React.ReactNode {
   if (images === undefined || images.length === 0) return null
   return <div className={css.sidechatImages}>{images.map(image => childId === undefined || messageId === undefined
-    ? <span key={image.blockIndex}>{t('sideChatImageUnavailable')}</span>
+    ? <StatusLine key={image.blockIndex} plain text={t('sideChatImageUnavailable')} />
     : <SavedImage key={`${messageId}:${image.blockIndex}`} childId={childId} messageId={messageId} image={image} visible={visible} />)}</div>
 }
