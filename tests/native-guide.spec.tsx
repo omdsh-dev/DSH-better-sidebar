@@ -14,6 +14,7 @@ import { createNativeTabRecords } from '../src/client/native/tab-adapter.tsx'
 import { createBetterSidebarService } from '../src/client/service.ts'
 import { createSidebarStore } from '../src/client/state.ts'
 import type { NativeGuideEntry } from '../src/client/native/guide-catalog.ts'
+import type { HostShellCatalog } from '../src/client/terminal-client.ts'
 import { SIDEBAR_PREFS_DEFAULTS } from '../src/prefs-shared.ts'
 import { renderRoot, setupReactAct } from './test-utils.ts'
 
@@ -62,7 +63,7 @@ function htmlOf(props: {
   prefs?: Partial<typeof SIDEBAR_PREFS_DEFAULTS>
   width?: number
   onOpen?: (entry: NativeGuideEntry, params?: Record<string, unknown>) => void
-  shellMenu?: { launchShells: (signal: AbortSignal) => Promise<{ shells: { name: string; path: string }[]; selectedShell?: string }>; selectShell: (path: string) => void }
+  shellMenu?: { launchShells: (signal: AbortSignal) => Promise<HostShellCatalog>; selectShell: (path: string) => void }
 }): string {
   return renderToString(createElement(GuideGrid, {
     entries: props.entries ?? entries,
@@ -249,7 +250,7 @@ describe('GuideGrid', () => {
     const without = htmlOf({ entries: [terminal] })
     expect(without).not.toContain('data-guide-shell-menu')
     const shells = {
-      launchShells: async () => ({ shells: [{ name: 'zsh', path: '/bin/zsh' }], selectedShell: '/bin/zsh' }),
+      launchShells: async () => ({ shells: [{ name: 'zsh', path: '/bin/zsh', args: ['-i'] }], selectedShell: '/bin/zsh' }),
       selectShell: () => {},
     }
     const withMenu = htmlOf({ entries: [terminal], shellMenu: shells })
@@ -260,7 +261,7 @@ describe('GuideGrid', () => {
     const terminal = entry('terminal')
     const selectShell = vi.fn()
     const launchShells = vi.fn(async () => ({
-      shells: [{ name: 'zsh', path: '/bin/zsh' }, { name: 'bash', path: '/bin/bash' }],
+      shells: [{ name: 'zsh', path: '/bin/zsh', args: ['-i'] }, { name: 'bash', path: '/bin/bash', args: ['-i'] }],
       selectedShell: '/bin/zsh',
     }))
     const onOpen = vi.fn()
@@ -416,7 +417,7 @@ describe('host services for the start page', () => {
     const catalog = { getSnapshot: () => [], subscribe: () => () => {} }
     const shellCalls: Array<{ sessionId: string; signal: AbortSignal }> = []
     const terminals = {
-      remote: { shells: [{ name: 'zsh', path: '/bin/zsh' }] },
+      remote: { shells: [{ name: 'zsh', path: '/bin/zsh', args: ['-i'] }] },
       selected: undefined as string | undefined,
       view: () => { throw new Error('unused') },
       close: () => {},

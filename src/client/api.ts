@@ -8,6 +8,7 @@
  * request). Failures surface as {@link SidebarApiError} with the wire code.
  */
 import type { SidechatImageUpload } from '../sidechat-images.ts'
+import type { ShellCandidateView } from '../terminal-shells.ts'
 import type { EditLimitReason } from '../editor-limits.ts'
 import { encodeHtmlUrl } from '../html-route.ts'
 import { hostRouteUrl } from './host-route-url.ts'
@@ -55,6 +56,12 @@ export interface FsEntry {
   /** Directory rows only: the contents are exactly one non-symlink child
    *  — the explorer folds such chains into one breadcrumb row. */
   compact?: boolean
+}
+
+/** A filesystem root offered by the shell browser's "This PC" view. */
+export interface FsDrive {
+  name: string
+  path: string
 }
 
 /** One level of a `fs.trees` batch: a listing, or that level's failure. */
@@ -434,8 +441,20 @@ function openExternal(payload: OpenExternalPayload): Promise<OpenExternalResult>
 export const api = {
   sessionCwd: (scope: SessionScope, signal?: AbortSignal) =>
     call<{ sessionId: string; cwd: string; root: string; parent: string | null }>('session.cwd', scopePayload(scope, {}), signal),
-  fsTree: (scope: SessionScope, path: string, exclude?: readonly string[], signal?: AbortSignal) =>
-    call<{ path: string; entries: FsEntry[]; truncated: boolean }>('fs.tree', scopePayload(scope, { path, exclude }), signal),
+  /** Host filesystem roots for the shell browser's drive chooser (no scope). */
+  fsDrives: (signal?: AbortSignal) =>
+    call<{ drives: FsDrive[] }>('fs.drives', {}, signal),
+  /**
+   * One directory level. `path` OMITS the key entirely when undefined, which
+   * the route reads as "the session cwd" — passing an empty string would trip
+   * its `requireString` instead, since `''` is not a path it can resolve.
+   */
+  fsTree: (scope: SessionScope, path?: string, exclude?: readonly string[], signal?: AbortSignal) =>
+    call<{ path: string; entries: FsEntry[]; truncated: boolean }>(
+      'fs.tree',
+      scopePayload(scope, path === undefined ? { exclude } : { path, exclude }),
+      signal,
+    ),
   /**
    * Batch listing: every requested level in ONE request (the tree's mount and
    * refresh send the expanded set instead of N `fsTree` calls). A level that
@@ -682,6 +701,17 @@ export const api = {
       patch,
       ...(expectedRevision !== undefined ? { expectedRevision } : {}),
     }),
+  /**
+   * The terminal shell candidates the HOST can discover.
+   * `null` = this deployment cannot edit config (no config editor, or no
+   * `terminal-controller` row): the panel hides the list rather than
+   * offering a control whose write would be refused.
+   */
+  terminalShells: () =>
+    call<ShellCandidateView | null>('terminal.shells', {}),
+  /** Add or remove one candidate name through the host's config editor. */
+  terminalShellsUpdate: (action: 'addCandidate' | 'removeCandidate', value: string) =>
+    call<ShellCandidateView>('terminal.shells.update', { action, value }),
   /** External open for the file tree's "open with" menu. Remote SSH editor
    *  URLs are launched on the browser/client machine; reveal and local URLs
    *  keep using the host's platform opener. */
