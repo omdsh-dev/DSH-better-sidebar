@@ -62,9 +62,9 @@ comm -23 \
 | `diff/DiffRows.tsx` | B3 | **已完成**：展开全部改 `ActionButton`；折叠行保持原生（测试按 `[data-expandable]` 定位） |
 | `TerminalView.tsx` | B3 | **已完成**：`StatusLine`（待连/已退出）+ `ActionButton`、`ErrorBlock`（不可用/错误）、`FallbackPane`（终端已失联） |
 | `OrphanedTab.tsx` | B3 | **本批已完成**：`FallbackPane`（`role="status"`）+ 既有 `EmptyState` |
-| `Switch.tsx` | B4 | `controls.ToggleSwitch`（唯一消费者 `native/guide-order.tsx`） |
-| `sidebar/dock-fallback.tsx` | B4 | `IconButton` / `ActionButton` |
-| `split-pane.tsx` | B4 | `IconButton`（拖拽手柄保留原生 pointer 事件） |
+| `Switch.tsx` | B4 | **已完成**：删除自绘开关，唯一消费者 `native/guide-order.tsx` 改用 `controls.ToggleSwitch`（native checkbox + `aria-label` → button `role="switch"` + `aria-checked`） |
+| `sidebar/dock-fallback.tsx` | B4 | **判断不接入**：本文件只有定位/让位逻辑，渲染的是一个定位 `<span>` 包壳与 `Sidebar.tsx` 的 `BottomDockToggle`，自身没有按钮或视觉件 |
+| `split-pane.tsx` | B4 | **判断不接入**：纯布局与拖拽手柄（原生 pointer 事件 + 帧批处理），空面板卡片是整块可点的卡片形状，不是 `IconButton`/`ActionButton` 的语义 |
 
 ### C 类：缺共享件（2，本轮已造件）
 
@@ -127,6 +127,14 @@ comm -23 \
 2. **B2 侧边对话**（`SidechatImages` → `SidechatAttachments`）。
 3. **B3 标签页与预览宿主**（`diff/*` → `TerminalView` → `media-preview` → `PdfView`/`LargeFileView` → `OrphanedTab` 收尾）。
 4. **B4 文件树与侧栏外壳**（`Switch` → `dock-fallback` → `split-pane`）：直接动交互与布局，放最后。
+
+## B4 实施记录（外壳与残余件）
+
+- **`Switch.tsx` → `ToggleSwitch`**：删掉自绘开关与 `Switch.module.css`，`native/guide-order.tsx` 改用组件层 `ToggleSwitch`。受控写回契约不变——下一次值仍由 prop 推导（`onChange(!checked)`），父级异步写回时开关不会被吞掉。`tests/switch.spec.tsx` 相应改名为 `tests/toggle-switch.spec.tsx`，断言从 `input[type=checkbox].checked` 改为 `[role="switch"]` 的 `aria-checked`；`tests/native-guide.spec.tsx` 两处开关查询（`Enable: Git`、`Show on the start page: A`）同步改选择器。
+- **`sidebar/dock-fallback.tsx` 不接入**：这个文件的价值全在相位判定、让位走查与 500ms 重对齐，渲染部分是定位包壳 + `BottomDockToggle`（后者在 `Sidebar.tsx`，已有自己的实现）。硬套 `IconButton` 只会把包壳变成按钮，语义反而错。
+- **`split-pane.tsx` 不接入**：`Divider` 是 pointer-capture 拖拽手柄（增量、帧批处理），`paneCard` 是整块空面板卡片，`TabBar` 有自己的组件。统一层没有对应形状，硬换会动交互。
+
+结论：B4 实际只有一处组件替换，另两处按「没有语义对应的共享件就不换」保留，与 U1 盘点时把外壳件标为 B4 的预期不同——盘点看见的是「自绘视觉」，实际读下来这两处是布局与手势。
 
 ## 组件层补件记录（U2）
 
