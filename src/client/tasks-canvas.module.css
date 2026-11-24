@@ -59,9 +59,3 @@
   font: var(--dsw-font-xxs-12);
   color: var(--dsw-alias-label-tertiary);
 }
-
-/* The hint's glyph is decoration: the copy line carries the message. */
-.loadingGlyph {
-  display: inline-flex;
-  flex: none;
-}
