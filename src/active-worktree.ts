@@ -22,7 +22,7 @@
  * (#952). Outside the workspace any linked worktree is adopted, which is PR
  * #802's cross-repository case. The highest-scoring adoptable worktree of the
  * newest event that has one wins, but only evidence after the last committed
- * working-directory/change is eligible. With no such evidence the session cwd
+ * workspace-root/change is eligible. With no such evidence the session cwd
  * itself is kept, a session living in a subdirectory of its repository
  * included: the repository top level is never a root on its own.
  *
@@ -150,7 +150,7 @@ function directoryEpochOf(ctx: Context, sessionId: string): number | undefined {
   let epoch = previous?.epoch ?? -1
   for (let index = end - 1; index >= start; index -= 1) {
     const event = session.eventAt(index)
-    if (event?.type !== 'working-directory/change') continue
+    if (event?.type !== 'workspace-root/change') continue
     epoch = event.seq
     break
   }
@@ -442,7 +442,7 @@ async function activeRootFromEvents(events: readonly SidebarSessionEvent[], base
     const event = events[index]
     // An explicit directory transition is the authority boundary. Older tool
     // paths belong to the previous execution context and must not override it.
-    if (event?.type === 'working-directory/change') break
+    if (event?.type === 'workspace-root/change') break
     if (event === undefined || event.type !== 'tool/call') continue
     const weights = new Map<string, ActivePathEntry>()
     collectActivePaths(event.data, weights, false)

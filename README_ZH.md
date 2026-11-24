@@ -7,7 +7,7 @@
   <a href="https://github.com/omdsh-dev/DSH-better-sidebar/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/omdsh-dev/DSH-better-sidebar/actions/workflows/ci.yml/badge.svg" /></a>
   <a href="https://github.com/omdsh-dev/DSH-better-sidebar/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/omdsh-dev/DSH-better-sidebar" /></a>
   <a href="https://opensource.org/licenses/MIT"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-yellow.svg" /></a>
-  <a href="https://www.npmjs.com/package/@deepseek-ai/dsh?activeTab=versions"><img alt="支持的 DSH 版本：0.2.2-rc.3+" src="https://img.shields.io/badge/DSH-0.2.2--rc.3%2B-4d6bfe" /></a>
+  <a href="https://www.npmjs.com/package/@deepseek-ai/dsh?activeTab=versions"><img alt="支持的 DSH 版本：0.2.3-alpha.2+" src="https://img.shields.io/badge/DSH-0.2.3--alpha.2%2B-4d6bfe" /></a>
 </div>
 
 <div align="center">
@@ -44,15 +44,16 @@
 dsh plugin --profile web add dsh-better-sidebar@latest
 ```
 
-装完**硬刷新浏览器**（Cmd/Ctrl+Shift+R）即可。要求 DSH **0.2.2-rc.3+**。
+装完**硬刷新浏览器**（Cmd/Ctrl+Shift+R）即可。要求 DSH **0.2.3-alpha.2+**。
 
-> **兼容性警告：插件版本必须与宿主线匹配。** 截至 2026-11-24，DSH 的 npm `latest` 与 `next` 都是 **0.2.2-rc.5**。**v0.33.0 要求 DSH 0.2.2-rc.3+**；仍在 **0.2.2-rc.2** 的宿主必须固定 `dsh-better-sidebar@0.32.1`，**0.2.2-rc.1** 的宿主固定 `dsh-better-sidebar@0.32.0`。仍停在 0.2.1 线（**0.2.1-rc.1 ~ rc.5**）的宿主必须固定 `dsh-better-sidebar@0.28.2`——v0.29.0 从未发布到 npm。DSH 0.2.1-alpha.5 用户固定 `dsh-better-sidebar@0.28.0-alpha.0`，**0.2.0-rc.2** 宿主固定 `dsh-better-sidebar@0.26.1`。0.x 的 caret 不跨 minor，因此一个构建无法同时服务两条宿主线。市场安装器按插件的 `latest` 安装、不按宿主版本选版本，旧宿主会收到版本拒绝错误——请升级宿主或显式固定版本。两个包的 `latest` 标签不是同一支持线。
+> **兼容性警告：插件版本必须与宿主线匹配。** 截至 2026-11-24，DSH 的 npm `latest` 与 `next` 都是 **0.2.2-rc.5**。**v0.34.0-alpha.0 要求 DSH 0.2.3-alpha.2+**（alpha 线），稳定线 **v0.33.0** 仍要求 DSH 0.2.2-rc.3+；仍在 **0.2.2-rc.2** 的宿主必须固定 `dsh-better-sidebar@0.32.1`，**0.2.2-rc.1** 的宿主固定 `dsh-better-sidebar@0.32.0`。仍停在 0.2.1 线（**0.2.1-rc.1 ~ rc.5**）的宿主必须固定 `dsh-better-sidebar@0.28.2`——v0.29.0 从未发布到 npm。DSH 0.2.1-alpha.5 用户固定 `dsh-better-sidebar@0.28.0-alpha.0`，**0.2.0-rc.2** 宿主固定 `dsh-better-sidebar@0.26.1`。0.x 的 caret 不跨 minor，因此一个构建无法同时服务两条宿主线。市场安装器按插件的 `latest` 安装、不按宿主版本选版本，旧宿主会收到版本拒绝错误——请升级宿主或显式固定版本。两个包的 `latest` 标签不是同一支持线。
 
 <details>
 <summary><b>按 DSH 版本选插件版本</b></summary>
 
 | 你的 DSH 版本 | 安装命令 |
 | --- | --- |
+| **0.2.3-alpha.2+** | `dsh plugin --profile web add dsh-better-sidebar@0.34.0-alpha.0` |
 | **0.2.2-rc.3+** | `dsh plugin --profile web add dsh-better-sidebar@0.33.0` |
 | **0.2.2-rc.2** | `dsh plugin --profile web add dsh-better-sidebar@0.32.1` |
 | **0.2.2-rc.1** | `dsh plugin --profile web add dsh-better-sidebar@0.32.0` |
@@ -75,7 +76,7 @@ dsh plugin --profile web add dsh-better-sidebar@latest
 
 ```text
 帮我安装 dsh-better-sidebar 插件（DSH 侧边栏工作台），步骤：
-1. 先确认 DSH 为 0.2.2-rc.3 或更新版本，再执行 dsh plugin --profile web add dsh-better-sidebar@0.33.0
+1. 先确认 DSH 为 0.2.3-alpha.2（alpha 线）或更新版本，再执行 dsh plugin --profile web add dsh-better-sidebar@0.34.0-alpha.0
 2. 完成后提醒我硬刷新浏览器（Cmd/Ctrl+Shift+R）
 遇到报错先查 https://github.com/omdsh-dev/DSH-better-sidebar README 的常见问题表。
 ```
@@ -98,7 +99,7 @@ dsh plugin --profile web add dsh-better-sidebar@latest
 | 页面出现**两个侧边栏** | 双挂载。删掉 `~/.dsh/profiles/web/cordis.patch.yml` 里旧的手动挂载行（`- insert: ... better-sidebar ...`）；聚合包以不同 id 挂载本包时会自动退让，无需处理。 |
 | 升级后设置页的值去哪了 | DSH 0.1.7 起偏好写在 profile 里本插件的挂载行上（默认 entry id `better-sidebar`），插件首次启动会把旧 `settings.yaml` 里的配置一次性回迁，不会覆盖新设的值。 |
 | 终端无法使用 | 终端由 **DSH 自身**提供（本插件不自带 PTY），请查 DSH 侧文档；底部终端显示「宿主未提供终端能力」= 这个部署没挂终端控制器。 |
-| 提示 `dsh: command not found` | 先安装 DSH；或用 `npx -y --package @deepseek-ai/dsh@0.2.2-rc.3 dsh plugin --profile web add dsh-better-sidebar@0.33.0`。 |
+| 提示 `dsh: command not found` | 先安装 DSH；或用 `npx -y --package @deepseek-ai/dsh@0.2.3-alpha.2 dsh plugin --profile web add dsh-better-sidebar@0.34.0-alpha.0`。 |
 
 </details>
 

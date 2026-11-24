@@ -69,9 +69,8 @@ export function useCenterColumn(
   useEffect(() => {
     let disposed = false
     let observer: ResizeObserver | undefined
-    // Locate the AppFrame's center column. DSH 0.1.x wraps slot hosts in
-    // [data-slot] containers: the conversation slot host (key
-    // `main.conversation` on 0.1.5-alpha.2+, `conversation` on alpha.1)
+    // Locate the AppFrame's center column. The host wraps slot hosts in
+    // [data-slot] containers: the conversation slot host (`main.conversation`)
     // sits inside the center column behind transparent `display: contents`
     // slot hosts, so the resolver walks up to the first ancestor that
     // renders a box — no hashed-class or positional dependency

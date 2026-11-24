@@ -7,7 +7,7 @@
   <a href="https://github.com/omdsh-dev/DSH-better-sidebar/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/omdsh-dev/DSH-better-sidebar/actions/workflows/ci.yml/badge.svg" /></a>
   <a href="https://github.com/omdsh-dev/DSH-better-sidebar/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/omdsh-dev/DSH-better-sidebar" /></a>
   <a href="https://opensource.org/licenses/MIT"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-yellow.svg" /></a>
-  <a href="https://www.npmjs.com/package/@deepseek-ai/dsh?activeTab=versions"><img alt="Supported DSH versions: 0.2.2-rc.3+" src="https://img.shields.io/badge/DSH-0.2.2--rc.3%2B-4d6bfe" /></a>
+  <a href="https://www.npmjs.com/package/@deepseek-ai/dsh?activeTab=versions"><img alt="Supported DSH versions: 0.2.3-alpha.2+" src="https://img.shields.io/badge/DSH-0.2.3--alpha.2%2B-4d6bfe" /></a>
 </div>
 
 <div align="center">
@@ -44,15 +44,16 @@ With the `dsh-context` plugin installed, three places offer a one-click jump int
 dsh plugin --profile web add dsh-better-sidebar@latest
 ```
 
-Then **hard-refresh the browser** (Cmd/Ctrl+Shift+R). Requires DSH **0.2.2-rc.3+**.
+Then **hard-refresh the browser** (Cmd/Ctrl+Shift+R). Requires DSH **0.2.3-alpha.2+**.
 
-> **Compatibility warning — match the plugin to the host line.** As of 2026-11-24, DSH's npm `latest` and `next` are both **0.2.2-rc.5**. **v0.33.0 requires DSH 0.2.2-rc.3+**; hosts on **0.2.2-rc.2** must pin `dsh-better-sidebar@0.32.1`, and hosts on **0.2.2-rc.1** must pin `dsh-better-sidebar@0.32.0`. Hosts on the 0.2.1 line (**0.2.1-rc.1 ~ rc.5**) must pin `dsh-better-sidebar@0.28.2` — v0.29.0 was never published to npm. DSH 0.2.1-alpha.5 users must pin `dsh-better-sidebar@0.28.0-alpha.0`, and hosts still on **0.2.0-rc.2** must pin `dsh-better-sidebar@0.26.1`. A 0.x caret never spans a minor version, so one plugin build cannot serve two host lines. The marketplace installer picks the plugin's `latest` regardless of host version, so an old host gets a version-rejection error — upgrade the host or pin the version explicitly. The two packages' `latest` tags are independent.
+> **Compatibility warning — match the plugin to the host line.** As of 2026-11-24, DSH's npm `latest` and `next` are both **0.2.2-rc.5**. **v0.34.0-alpha.0 requires DSH 0.2.3-alpha.2+** (alpha line), while the stable **v0.33.0** needs DSH 0.2.2-rc.3+; hosts on **0.2.2-rc.2** must pin `dsh-better-sidebar@0.32.1`, and hosts on **0.2.2-rc.1** must pin `dsh-better-sidebar@0.32.0`. Hosts on the 0.2.1 line (**0.2.1-rc.1 ~ rc.5**) must pin `dsh-better-sidebar@0.28.2` — v0.29.0 was never published to npm. DSH 0.2.1-alpha.5 users must pin `dsh-better-sidebar@0.28.0-alpha.0`, and hosts still on **0.2.0-rc.2** must pin `dsh-better-sidebar@0.26.1`. A 0.x caret never spans a minor version, so one plugin build cannot serve two host lines. The marketplace installer picks the plugin's `latest` regardless of host version, so an old host gets a version-rejection error — upgrade the host or pin the version explicitly. The two packages' `latest` tags are independent.
 
 <details>
 <summary><b>Pick the plugin version for your DSH version</b></summary>
 
 | Your DSH version | Install command |
 | --- | --- |
+| **0.2.3-alpha.2+** | `dsh plugin --profile web add dsh-better-sidebar@0.34.0-alpha.0` |
 | **0.2.2-rc.3+** | `dsh plugin --profile web add dsh-better-sidebar@0.33.0` |
 | **0.2.2-rc.2** | `dsh plugin --profile web add dsh-better-sidebar@0.32.1` |
 | **0.2.2-rc.1** | `dsh plugin --profile web add dsh-better-sidebar@0.32.0` |
@@ -75,7 +76,7 @@ Always pin **exact versions** for older releases (`latest` moves forward with ea
 
 ```text
 Install the dsh-better-sidebar plugin (a sidebar workbench for DSH):
-1. Confirm DSH is 0.2.2-rc.3 or newer, then run dsh plugin --profile web add dsh-better-sidebar@0.33.0
+1. Confirm DSH is 0.2.3-alpha.2 (alpha line) or newer, then run dsh plugin --profile web add dsh-better-sidebar@0.34.0-alpha.0
 2. Remind me to hard-refresh the browser (Cmd/Ctrl+Shift+R) afterwards
 If something fails, check the FAQ table in https://github.com/omdsh-dev/DSH-better-sidebar README first.
 ```
@@ -98,7 +99,7 @@ If something fails, check the FAQ table in https://github.com/omdsh-dev/DSH-bett
 | **Two sidebars** on the page | Double mounting. Remove the legacy manual mount line (`- insert: ... better-sidebar ...`) from `~/.dsh/profiles/web/cordis.patch.yml`; aggregate packages mounting this package under a different id are auto-yielded, no action needed. |
 | Settings values gone after upgrade | Since DSH 0.1.7, preferences live on this plugin's mount row in the profile (default entry id `better-sidebar`). The plugin migrates your old `settings.yaml` values once on first start and never overwrites newer values. |
 | Terminal unavailable | Terminals are provided by **DSH itself** (this plugin ships no PTY) — see DSH docs; "host provides no terminal capability" in the bottom terminal means this deployment has no terminal controller mounted. |
-| `dsh: command not found` | Install DSH first; or use `npx -y --package @deepseek-ai/dsh@0.2.2-rc.3 dsh plugin --profile web add dsh-better-sidebar@0.33.0`. |
+| `dsh: command not found` | Install DSH first; or use `npx -y --package @deepseek-ai/dsh@0.2.3-alpha.2 dsh plugin --profile web add dsh-better-sidebar@0.34.0-alpha.0`. |
 
 </details>
 

@@ -61,7 +61,7 @@ const canCreateSymlink = (() => {
 })()
 
 interface FakeContext {
-  connection: { requestRejection: () => undefined }
+  connection: { admit: () => ({ peer: null }) }
   webServer: {
     register: (route: SidebarWebRoute) => () => void
     registerUpgrade: (route: SidebarWebUpgradeRoute) => () => void
@@ -116,7 +116,7 @@ describe('host plugin smoke', () => {
     const upgrades: SidebarWebUpgradeRoute[] = []
     const effects: Array<() => void | (() => void)> = []
     const ctx: FakeContext = {
-      connection: { requestRejection: () => undefined },
+      connection: { admit: () => ({ peer: null }) },
       webServer: {
         register: (route) => { routes.push(route); return () => {} },
         registerUpgrade: (route) => { upgrades.push(route); return () => {} },
@@ -131,7 +131,10 @@ describe('host plugin smoke', () => {
       },
       // No settings service in the smoke context: the registration callback
       // never runs (cordis' service-less inject behaves the same).
-      inject: () => () => {},
+      inject: (deps: readonly string[], callback: (sctx: never) => void) => {
+        if (deps.includes('connection.authentication')) callback({ connection: { admit: () => ({ peer: null }) } } as never)
+        return () => {}
+      },
       on: () => () => {},
       // No jobs/agents services: the jobs routes degrade to a 503.
       get: () => undefined,
@@ -177,7 +180,7 @@ describe('host plugin smoke', () => {
     const upgrades: SidebarWebUpgradeRoute[] = []
     const effects: Array<() => void | (() => void)> = []
     const ctx: FakeContext = {
-      connection: { requestRejection: () => undefined },
+      connection: { admit: () => ({ peer: null }) },
       webServer: {
         register: () => () => {},
         registerUpgrade: (route) => { upgrades.push(route); return () => {} },
@@ -188,7 +191,10 @@ describe('host plugin smoke', () => {
         const cleanup = fn()
         if (typeof cleanup === 'function') effects.push(cleanup)
       },
-      inject: () => () => {},
+      inject: (deps: readonly string[], callback: (sctx: never) => void) => {
+        if (deps.includes('connection.authentication')) callback({ connection: { admit: () => ({ peer: null }) } } as never)
+        return () => {}
+      },
       on: () => () => {},
       get: () => undefined,
     }
@@ -227,7 +233,7 @@ describe('host plugin smoke', () => {
     const routes: SidebarWebRoute[] = []
     const effects: Array<() => void | (() => void)> = []
     const ctx: FakeContext = {
-      connection: { requestRejection: () => undefined },
+      connection: { admit: () => ({ peer: null }) },
       webServer: {
         register: (route) => { routes.push(route); return () => {} },
         registerUpgrade: () => () => {},
@@ -238,7 +244,10 @@ describe('host plugin smoke', () => {
         const cleanup = fn()
         if (typeof cleanup === 'function') effects.push(cleanup)
       },
-      inject: () => () => {},
+      inject: (deps: readonly string[], callback: (sctx: never) => void) => {
+        if (deps.includes('connection.authentication')) callback({ connection: { admit: () => ({ peer: null }) } } as never)
+        return () => {}
+      },
       on: () => () => {},
       get: () => undefined,
     }
@@ -537,7 +546,7 @@ describe('session cwd resolution over the API route', () => {
     const routes: SidebarWebRoute[] = []
     lastMountedRoutes = routes
     const ctx = {
-      connection: { requestRejection: () => undefined },
+      connection: { admit: () => ({ peer: null }) },
       webServer: {
         register: (route: SidebarWebRoute) => { routes.push(route); return () => {} },
         registerUpgrade: (route: SidebarWebUpgradeRoute) => { void route; return () => {} },
@@ -547,7 +556,10 @@ describe('session cwd resolution over the API route', () => {
       // The vendored cordis runs registration effects immediately.
       effect: (fn: () => void | (() => void)) => { fn() },
       // No settings service: the namespace registration never runs.
-      inject: () => () => {},
+      inject: (deps: readonly string[], callback: (sctx: never) => void) => {
+        if (deps.includes('connection.authentication')) callback({ connection: { admit: () => ({ peer: null }) } } as never)
+        return () => {}
+      },
       // The session/agent event feeds: nothing emits in these tests.
       on: () => () => {},
       // No jobs/agents services in the smoke context: the routes degrade.
@@ -788,7 +800,7 @@ describe('session cwd resolution over the API route', () => {
         workingDirectory: { get: () => current },
       })
       expect(await invoke(route, 'session.cwd', { sessionId: 'wd-linked' })).toMatchObject({ ok: true, value: { cwd: linked } })
-      events.push({ type: 'working-directory/change', seq: 1, time: 1, data: { cwd: main } })
+      events.push({ type: 'workspace-root/change', seq: 1, time: 1, data: { cwd: main } })
       current = main
       expect(await invoke(route, 'session.cwd', { sessionId: 'wd-linked' })).toMatchObject({ ok: true, value: { cwd: main } })
       expect(await invoke(route, 'git.status', { sessionId: 'wd-linked', cwd: linked })).toMatchObject({ ok: true, value: { branch: 'main' } })
@@ -807,7 +819,7 @@ describe('session cwd resolution over the API route', () => {
       sameBaseEvents.push({ type: 'turn/start', seq: 1, time: 1, data: { cwd: main } })
       expect(await invoke(sameBaseRoute, 'session.cwd', payload)).toMatchObject({ ok: true, value: { cwd: linked } })
       expect(snapshotEvents).toHaveBeenCalledTimes(1)
-      sameBaseEvents.push({ type: 'working-directory/change', seq: 2, time: 2, data: { cwd: main } })
+      sameBaseEvents.push({ type: 'workspace-root/change', seq: 2, time: 2, data: { cwd: main } })
       expect(await invoke(sameBaseRoute, 'session.cwd', payload)).toMatchObject({ ok: true, value: { cwd: main } })
       expect(await invoke(sameBaseRoute, 'session.cwd', payload)).toMatchObject({ ok: true, value: { cwd: main } })
       expect(snapshotEvents).toHaveBeenCalledTimes(2)
@@ -1685,7 +1697,7 @@ describe('sidechat prompt large-body admission', () => {
       isAttachmentError: () => false,
     }
     const ctx = {
-      connection: { requestRejection: () => undefined },
+      connection: { admit: () => ({ peer: null }) },
       webServer: {
         register: (route: SidebarWebRoute) => { routes.push(route); return () => {} },
         registerUpgrade: () => () => {},
@@ -1693,7 +1705,10 @@ describe('sidechat prompt large-body admission', () => {
       sessions: { get: () => undefined },
       tools: { register: () => () => {} },
       effect: (fn: () => void | (() => void)) => { fn() },
-      inject: () => () => {},
+      inject: (deps: readonly string[], callback: (sctx: never) => void) => {
+        if (deps.includes('connection.authentication')) callback({ connection: { admit: () => ({ peer: null }) } } as never)
+        return () => {}
+      },
       on: () => () => {},
       get: (key: string) => key === 'agents' ? { get: () => agent } : key === 'attachments' ? attachments : undefined,
       logger: { info: () => {}, warn: () => {}, debug: () => {}, error: () => {} },
@@ -1889,7 +1904,7 @@ const mountWithSettings = (settings?: unknown, home?: string): SidebarWebRoute =
   const routes: SidebarWebRoute[] = []
   lastMountedRoutes = routes
   const ctx = {
-    connection: { requestRejection: () => undefined },
+    connection: { admit: () => ({ peer: null }) },
     webServer: {
       register: (route: SidebarWebRoute) => { routes.push(route); return () => {} },
       registerUpgrade: (route: SidebarWebUpgradeRoute) => { void route; return () => {} },
@@ -1899,6 +1914,7 @@ const mountWithSettings = (settings?: unknown, home?: string): SidebarWebRoute =
     effect: (fn: () => void | (() => void)) => { fn() },
     inject: (deps: string[], callback: (sctx: { settings: unknown }) => void) => {
       if (deps.includes('settings') && settings !== undefined) callback({ settings })
+      if (deps.includes('connection.authentication')) callback({ connection: { admit: () => ({ peer: null }) } } as never)
       return () => {}
     },
     // The session/agent event feeds: nothing emits in these tests.
@@ -2137,7 +2153,7 @@ describe('agent sidebar-open tool gating', () => {
       configure: () => () => {},
     }
     const ctx = {
-      connection: { requestRejection: () => undefined },
+      connection: { admit: () => ({ peer: null }) },
       webServer: {
         register: (route: SidebarWebRoute) => { routes.push(route); return () => {} },
         registerUpgrade: (route: SidebarWebUpgradeRoute) => { void route; return () => {} },
@@ -2155,6 +2171,7 @@ describe('agent sidebar-open tool gating', () => {
       effect: (fn: () => void | (() => void)) => { fn() },
       inject: (deps: readonly string[], callback: (sctx: { settings: unknown }) => void) => {
         if (deps.includes('settings')) callback({ settings })
+        if (deps.includes('connection.authentication')) callback({ connection: { admit: () => ({ peer: null }) } } as never)
         return () => {}
       },
       on: () => () => {},

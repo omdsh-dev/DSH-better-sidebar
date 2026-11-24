@@ -59,7 +59,7 @@ const effects = []
 const routes = []
 const registry = { get: id => (id === 'ws-1' ? { path: workspace } : undefined) }
 const ctx = {
-  connection: { requestRejection: () => undefined },
+  connection: { admit: () => ({ peer: null }) },
   webServer: {
     register(route) {
       routes.push(route)
@@ -75,7 +75,8 @@ const ctx = {
     const cleanup = fn()
     if (typeof cleanup === 'function') effects.push(cleanup)
   },
-  inject() {
+  inject(deps, callback) {
+    if (deps.includes('connection.authentication')) callback({ connection: { admit: () => ({ peer: null }) } })
     return () => {}
   },
   on() {

@@ -9,7 +9,7 @@ import type { SidebarWebRoute } from '../src/context-types.ts'
 function mountApi(cwd: string): SidebarWebRoute {
   const routes: SidebarWebRoute[] = []
   const ctx = {
-    connection: { requestRejection: () => undefined },
+    connection: { admit: () => ({ peer: null }) },
     webRuntime: { trustedHosts: [] },
     webServer: {
       register: (route: SidebarWebRoute) => { routes.push(route); return () => {} },
@@ -18,7 +18,10 @@ function mountApi(cwd: string): SidebarWebRoute {
     sessions: { get: () => ({ header: { cwd }, snapshotEvents: () => [] }) },
     tools: { register: () => () => {} },
     effect: (fn: () => unknown) => { fn() },
-    inject: () => () => {},
+    inject: (deps: readonly string[], callback: (sctx: never) => void) => {
+      if (deps.includes('connection.authentication')) callback({ connection: { admit: () => ({ peer: null }) } } as never)
+      return () => {}
+    },
     on: () => () => {},
     get: () => undefined,
   }

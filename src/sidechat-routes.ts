@@ -25,7 +25,7 @@ import type { ImageAttachmentRef, StoredImageAttachment } from '@deepseek-ai/dsh
 import { parseSidechatPrompt, sidechatAdmissionError, sidechatAttachments, sidechatImageLimits } from './sidechat-image-admission.ts'
 import { randomUUID } from 'node:crypto'
 import { createUserMessage, ReasoningEffortId, type ContentBlock, type UserMessage } from '@deepseek-ai/dsh-llm'
-import type { MessageId } from '@deepseek-ai/dsh-llm/brand'
+import type { MessageId } from '@deepseek-ai/dsh-llm/types'
 import {
   installModelSelection,
   type Agent,
@@ -769,12 +769,14 @@ export function buildSidechatApi(
       })
       // A truncated inheritance can end before the parent's last directory
       // change. Header cwd alone cannot win: the host projection replays seed
-      // working-directory/change events over it. Stamp the committed directory
+      // workspace-root/change events over it. Stamp the committed directory
       // (the parent's LIVE cwd) at the seed boundary, using the host-owned event
       // rather than refolding its history or asking set() to enqueue a
-      // synthetic user notice.
+      // synthetic user notice. DSH 0.2.3-alpha.2 moved the projection authority
+      // from `working-directory/change` (model-era log) to `workspace-root/change`
+      // (host-committed move); only the latter is applied by the unit now.
       const directorySeed: SeedEvent[] = workingDirectory === undefined ? [] : [{
-        type: 'working-directory/change',
+        type: 'workspace-root/change',
         seq: inheritance.seed.length,
         time: Date.now(),
         data: { cwd: stampCwd },

@@ -138,6 +138,7 @@ export function createBundleRouteHandler(
 /** Register the /sidebar/bundle route (disposed with the fiber). */
 export function registerBundleRoute(ctx: Context, fence: (req: SidebarHttpRequest) => boolean): () => void {
   return ctx.webServer.register({
+    auth: 'anonymous',
     kind: 'prefix',
     path: '/sidebar/bundle',
     handler: createBundleRouteHandler(fence),
