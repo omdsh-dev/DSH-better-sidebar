@@ -31,7 +31,7 @@
  * sweep, and plugin teardown (which also kills a build still running).
  */
 import { randomUUID } from 'node:crypto'
-import { open, rm, stat } from 'node:fs/promises'
+import { open, rm, stat, type FileHandle } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { SidebarHttpResponse } from './context-types.ts'
@@ -52,6 +52,28 @@ import { SidebarError } from './wire.ts'
 export const ARCHIVE_MAX_BUILDING = 4
 /** How long a finished (or failed) archive stays downloadable. */
 export const ARCHIVE_TTL_MS = 5 * 60 * 1000
+/**
+ * How long teardown waits after the polite kill before escalating a running
+ * build to SIGKILL. A tool that ignores SIGTERM must not hold dispose forever.
+ */
+const DISPOSE_KILL_GRACE_MS = 5_000
+/** How long teardown waits for the close report AFTER SIGKILL, then gives up. */
+const DISPOSE_CLOSE_GRACE_MS = 1_000
+
+/**
+ * Wait for one promise for at most `ms`.
+ *
+ * Teardown needs a bounded wait, not an abstraction: `ms` is a hard cap, and
+ * an expiry answers `false` so the caller can escalate or move on.
+ */
+function settlesWithin(promise: Promise<void>, ms: number): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<boolean>((resolve) => {
+    timer = setTimeout(() => resolve(false), ms)
+  })
+  return Promise.race([promise.then(() => true), timeout])
+    .finally(() => clearTimeout(timer))
+}
 
 /** The finished archive on disk. */
 interface ArchiveFile {
@@ -196,8 +218,13 @@ export interface ArchiveTasks {
   release(id: string): void
   /** Number of live tasks (tests / diagnostics). */
   size(): number
-  /** Kill every running build and delete every temp file (plugin teardown). */
-  dispose(): void
+  /**
+   * Kill every running build, close every in-flight descriptor, then delete
+   * every temp file (plugin teardown). Async because Windows refuses to unlink
+   * a file while a handle to it is still open: the descriptor must be closed
+   * (and the close awaited) before the `rm`.
+   */
+  dispose(): Promise<void>
 }
 
 /** Options of {@link createArchiveTasks} (tests inject the spawn + temp dir). */
@@ -213,10 +240,32 @@ export interface ArchiveTaskOptions {
 /** Create one archive task table (one per plugin mount). */
 export function createArchiveTasks(options: ArchiveTaskOptions = {}): ArchiveTasks {
   const tasks = new Map<string, ArchiveTask>()
-  /** Running children, by task id (teardown kills them). */
-  const children = new Map<string, { kill(): void }>()
-  let resolvingArchives = 0
+  /**
+   * Running children, by task id (teardown kills them and then AWAITS their
+   * close event before unlinking the file they were writing). The wait is
+   * bounded: an unresponsive tool must not block dispose forever.
+   */
+  const children = new Map<string, { kill(signal?: NodeJS.Signals): void; closed: Promise<void> }>()
+  /**
+   * In-flight output descriptors, by task id (with the temp path they own).
+   * The descriptor stays open across the spawn (`stdio[1]` is that fd), so
+   * teardown must close it explicitly: a build whose child never reports back
+   * would otherwise leave the fd to the FileHandle GC finalizer (which Node
+   * now treats as an error). The path rides along because Windows refuses to
+   * unlink the file while the descriptor is open — teardown must close first,
+   * then remove.
+   */
+  const handles = new Map<string, { handle: FileHandle; path: string }>()
+  /** Teardown flag: an `open()` that resolves after dispose closes at once. */
   let disposed = false
+  /** One teardown per table: a second `dispose()` awaits the same cleanup. */
+  let disposing: Promise<void> | undefined
+  /**
+   * Tool probes in flight. They reserve capacity BEFORE a task exists, so a
+   * burst of selections cannot all pass the building check and then race the
+   * (async) probe into more concurrent tools than the cap allows.
+   */
+  let resolvingArchives = 0
   const spawner = options.spawn ?? undefined
 
   const tempPathOf = (id: string, ext: string): string =>
@@ -244,48 +293,54 @@ export function createArchiveTasks(options: ArchiveTaskOptions = {}): ArchiveTas
 
   return {
     async start({ sessionId, name, paths }) {
+      if (disposed) throw new SidebarError('unavailable', 'archive tasks were shut down', 503)
       sweep(Date.now())
       let building = 0
       for (const task of tasks.values()) if (task.state === 'building') building += 1
-      if (disposed) throw new SidebarError('unavailable', 'archive service disposed', 503)
       if (building + resolvingArchives >= ARCHIVE_MAX_BUILDING) {
         throw new SidebarError('bad-request', `too many archives are being built (max ${ARCHIVE_MAX_BUILDING})`, 409)
       }
+      const resolve = options.resolveTool ?? resolveArchiveTool
+      // One call either way: `spawn` has a default, so passing `undefined`
+      // selects the real implementation without a second code path.
       resolvingArchives += 1
+      let spec: ArchiveToolSpec | undefined
       try {
-        const resolve = options.resolveTool ?? resolveArchiveTool
-        // One call either way: `spawn` has a default, so passing `undefined`
-        // selects the real implementation without a second code path.
-        const spec = await resolve(spawner)
-        if (disposed) throw new SidebarError('unavailable', 'archive service disposed', 503)
-        if (spec === undefined) {
-          // A NEW wire code, and deliberately its own: "this machine has no zip
-          // and no tar" is not a failure of the selection, and the client shows
-          // it as an actionable sentence rather than a raw English message.
-          throw new SidebarError(
-            'unavailable',
-            'no archive tool is available: neither zip nor tar could be run',
-            501,
-          )
-        }
-        const plan = planArchive(paths, spec)
-        const id = `ar-${randomUUID()}`
-        const finalName = archiveFileName(name, spec.ext)
-        const tempPath = tempPathOf(id, spec.ext)
-        const task: ArchiveTask = {
-          id,
-          sessionId,
-          name: finalName,
-          state: 'building',
-          bytes: 0,
-          expiresAt: Number.POSITIVE_INFINITY,
-        }
-        tasks.set(id, task)
-        // Detached on purpose: the POST answers as soon as the id exists, and the
-        // task table (not the request) owns the error from here on.
-        void pack(id, task, plan, tempPath, spawner)
-        return { id, name: finalName, entries: paths.length }
-      } finally { resolvingArchives -= 1 }
+        spec = await resolve(spawner)
+      } finally {
+        resolvingArchives -= 1
+      }
+      // Teardown may land during the (async) tool probe: after this point no
+      // await separates the check from `tasks.set`, so the task cannot be
+      // created after dispose cleared the table.
+      if (disposed) throw new SidebarError('unavailable', 'archive tasks were shut down', 503)
+      if (spec === undefined) {
+        // A NEW wire code, and deliberately its own: "this machine has no zip
+        // and no tar" is not a failure of the selection, and the client shows
+        // it as an actionable sentence rather than a raw English message.
+        throw new SidebarError(
+          'unavailable',
+          'no archive tool is available: neither zip nor tar could be run',
+          501,
+        )
+      }
+      const plan = planArchive(paths, spec)
+      const id = `ar-${randomUUID()}`
+      const finalName = archiveFileName(name, spec.ext)
+      const tempPath = tempPathOf(id, spec.ext)
+      const task: ArchiveTask = {
+        id,
+        sessionId,
+        name: finalName,
+        state: 'building',
+        bytes: 0,
+        expiresAt: Number.POSITIVE_INFINITY,
+      }
+      tasks.set(id, task)
+      // Detached on purpose: the POST answers as soon as the id exists, and the
+      // task table (not the request) owns the error from here on.
+      void pack(id, task, plan, tempPath, spawner)
+      return { id, name: finalName, entries: paths.length }
     },
     status(id, sessionId) {
       sweep(Date.now())
@@ -309,19 +364,51 @@ export function createArchiveTasks(options: ArchiveTaskOptions = {}): ArchiveTas
       return tasks.size
     },
     dispose() {
-      disposed = true
-      for (const child of children.values()) {
-        try {
-          child.kill()
-        } catch {
-          // A child that already exited cannot be killed; nothing to do.
+      disposing ??= (async () => {
+        disposed = true
+        const running = [...children.values()]
+        for (const child of running) {
+          try {
+            child.kill()
+          } catch {
+            // A child that already exited cannot be killed; nothing to do.
+          }
         }
-      }
-      children.clear()
-      for (const task of tasks.values()) {
-        if (task.file !== undefined) void rm(task.file.path, { force: true }).catch(() => {})
-      }
-      tasks.clear()
+        children.clear()
+        // Wait for the killed builds to REPORT their close before closing the
+        // output descriptor and unlinking: on Windows the child may still hold
+        // the file, and `rm` would fail with EBUSY (a swallowed error that
+        // leaves the temp archive behind). The wait is bounded: a child that
+        // ignores the polite kill is escalated to SIGKILL, and one that still
+        // never reports close cannot block dispose past the hard cap.
+        await Promise.all(running.map(async (child) => {
+          if (await settlesWithin(child.closed, DISPOSE_KILL_GRACE_MS)) return
+          try {
+            child.kill('SIGKILL')
+          } catch {
+            // A child that exited between the timer and the escalation has
+            // nothing left to kill.
+          }
+          await settlesWithin(child.closed, DISPOSE_CLOSE_GRACE_MS)
+        }))
+        // Close every in-flight descriptor BEFORE unlinking its temp file:
+        // Windows answers EBUSY/EPERM for a file that still has an open handle,
+        // and a swallowed rm would leave the temp archive behind forever.
+        const closing: Promise<void>[] = []
+        const paths = new Set<string>()
+        for (const entry of handles.values()) {
+          paths.add(entry.path)
+          closing.push(entry.handle.close().catch(() => undefined))
+        }
+        handles.clear()
+        await Promise.all(closing)
+        for (const task of tasks.values()) {
+          if (task.file !== undefined) paths.add(task.file.path)
+        }
+        tasks.clear()
+        await Promise.all([...paths].map(path => rm(path, { force: true }).catch(() => undefined)))
+      })()
+      return disposing
     },
   }
 
@@ -346,22 +433,38 @@ export function createArchiveTasks(options: ArchiveTaskOptions = {}): ArchiveTas
       children.delete(id)
     }
     let handle: Awaited<ReturnType<typeof open>> | undefined
-    let ownsTemp = false
     try {
-      handle = await open(tempPath, 'wx')
-      ownsTemp = true
-      if (disposed) throw new Error('archive service disposed')
-      const result = await runArchiveTool(plan, handle.fd, spawner, child => { children.set(id, child) })
+      handle = await open(tempPath, 'w')
+      // `start` returns before this open resolves, so a teardown that lands in
+      // between must not leave the descriptor to the GC finalizer.
+      if (disposed) {
+        await handle.close().catch(() => undefined)
+        await rm(tempPath, { force: true }).catch(() => undefined)
+        // A race that slipped past `start`'s checks must settle as `error`,
+        // never leave a `building` task behind forever.
+        settle('archive tasks were shut down')
+        return
+      }
+      handles.set(id, { handle, path: tempPath })
+      const result = await runArchiveTool(plan, handle.fd, spawner, child => {
+        // `close` (not `exit`) is the event that also means the child is done
+        // touching whatever it inherited. Attached synchronously with the
+        // spawn, so a very fast child cannot emit it before we listen.
+        const closed = new Promise<void>(resolve => {
+          child.once('close', () => resolve())
+          child.once('error', () => resolve())
+        })
+        children.set(id, { kill: (signal) => { child.kill(signal) }, closed })
+      })
       await handle.close()
+      handles.delete(id)
       handle = undefined
-      if (disposed) throw new Error('archive service disposed')
       if (result.code !== 0) {
         settle(result.stderr === '' ? `${plan.spec.bin} exited with code ${result.code}` : result.stderr)
         await rm(tempPath, { force: true }).catch(() => {})
         return
       }
       const info = await stat(tempPath).catch(() => undefined)
-      if (disposed) throw new Error('archive service disposed')
       if (info === undefined) {
         settle(`${plan.spec.bin} produced no archive`)
         return
@@ -373,9 +476,10 @@ export function createArchiveTasks(options: ArchiveTaskOptions = {}): ArchiveTas
       // A tool that cannot be started at all, or a disk that refuses the temp
       // file. Either way the task must not stay `building` forever.
       await handle?.close().catch(() => {})
+      handles.delete(id)
       task.bytes = await stat(tempPath).then(info => info.size).catch(() => 0)
       settle(error instanceof Error ? error.message : String(error))
-      if (ownsTemp) await rm(tempPath, { force: true }).catch(() => {})
+      await rm(tempPath, { force: true }).catch(() => {})
     }
   }
 }

@@ -29,12 +29,23 @@ import {
 import { baseName, extOf } from './paths.ts'
 import { hostRouteUrl as resolveHostRoute } from './host-route-url.ts'
 import { builtinFileIcon, builtinFolderIcon } from './file-icons.tsx'
+import { createCluesClientRegistry, type BetterSidebarCluesClientFace } from './clues/registry.ts'
+import { createWindowHost } from './windows/host.ts'
+import type { BetterSidebarWindowsClientFace, WindowHostController } from './windows/types.ts'
 import type { SessionScope } from './api.ts'
 import type { SidebarPrefs } from '../prefs-shared.ts'
 import type { EditLimitReason } from '../editor-limits.ts'
 import { bindSidechatSurfaces, type SidechatSurfaceAdapter } from './sidechat-surface.ts'
 import { armLineEnd } from './line-target.ts'
 export type { SidechatSurface, SidechatSurfaceAdapter } from './sidechat-surface.ts'
+
+export type { BetterSidebarCluesClientFace } from './clues/registry.ts'
+export type { CluesClientApi } from './clues/api.ts'
+export type {
+  BetterSidebarWindowsClientFace, WindowBodyLayout, WindowBox, WindowContent,
+  WindowDocumentContent, WindowHandle, WindowHostController, WindowHostSnapshot, WindowNavigation,
+  WindowOpenOptions, WindowPage, WindowPageView, WindowSidebarAdapter, WindowSize, WindowSizePreset, WindowUpdate, WindowView,
+} from './windows/types.ts'
 
 /**
  * Public state vocabulary re-exported for consumers (type-only; the values
@@ -909,6 +920,24 @@ export interface BetterSidebarService {
   hasTab?(tabId: string, sessionId: string): boolean
   /** Subscribe to registry changes (register/dispose). */
   subscribe(listener: () => void): () => void
+  /**
+   * Clue collection extension face (S1): client renderers for clue sources,
+   * the source enable / @ preference semantics, and the typed `clues.*`
+   * wire methods. The host-side counterpart is the Cordis service
+   * `betterSidebarClues`; this face never imports node modules.
+   */
+  readonly clues: BetterSidebarCluesClientFace
+  /**
+   * Unified floating-window face (S6): `open()` returns a handle with
+   * update/focus/close, a stable window identity and the S1 format-renderer
+   * seat. This is the plugin's OWN persistent window host — NOT the removed
+   * `floatWindows` free-window system (v0.19.0 deleted that), and it does not
+   * claim compatibility with the old interface. External callers gate on the
+   * `'windowHost'` feature. The public face is open-only: the controller's
+   * internal members (finishClose/dispose) are deliberately NOT exposed to
+   * consumers, which must go through the returned handle.
+   */
+  readonly windows: BetterSidebarWindowsClientFace
   /** The plugin version this service instance was built from ('0.12.0'). */
   readonly version: string
   /**
@@ -995,6 +1024,17 @@ export interface BetterSidebarService {
   nativePathTabs(): NativePathTab[]
 }
 
+/**
+ * The activation-internal view of the service: the client half (index.tsx)
+ * mounts and disposes the single React window host through the controller,
+ * while `ctx.betterSidebar` consumers only ever see the open-only face.
+ * @internal
+ */
+export interface BetterSidebarServiceHost extends BetterSidebarService {
+  /** The same controller as `windows`, with the activation-internal members. */
+  readonly windowHost: WindowHostController
+}
+
 /** The file name of a path (both separators). */
 function baseNameOf(path: string): string {
   const at = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
@@ -1032,7 +1072,7 @@ export function matchUrlTarget(tabs: readonly TabDescriptor[], url: URL): TabDes
  * The plugin version this service instance reports. Keep in lockstep with
  * `package.json`'s version — `tests/service.spec.ts` asserts the pair.
  */
-export const SIDEBAR_SERVICE_VERSION = '0.32.1'
+export const SIDEBAR_SERVICE_VERSION = '0.34.0-alpha.0'
 
 /**
  * Monotonic capability list consumers use to gate new API usage (features
@@ -1063,6 +1103,12 @@ export const SIDEBAR_SERVICE_VERSION = '0.32.1'
  *   in the editor header (right of save/reload/tree). Same contract as
  *   `fileActions`: the header supplies the entry point, the owner does the
  *   work.
+ * - 'clues' (S1): the `clues` extension face (source display registry +
+ *   enablement semantics + typed `clues.*` wire methods).
+ * - 'windowHost' (S6): `BetterSidebarService.windows` — the unified persistent
+ *   window host (`open/update/focus/close`, size presets, maximize, navigation,
+ *   draft guard, S1 format-renderer content). This is NOT the removed
+ *   `floatWindows` feature.
  *
  * v0.19.0 REMOVED 'floatWindows': the free-window feature is gone (DSH 0.1.5
  * owns the right column, so the plugin keeps only its bottom workbench).
@@ -1085,6 +1131,8 @@ export const SIDEBAR_FEATURES = [
   'hostRouteUrl',
   'fileActions',
   'tabActions',
+  'clues',
+  'windowHost',
 ] as const
 
 /** Run one plugin callback; a throw is logged and never breaks the caller. */
@@ -1111,7 +1159,7 @@ export function isMultipleTab(descriptor: Pick<TabDescriptor, 'multiple'>): bool
   return typeof multiple === 'function' ? multiple() : multiple === true
 }
 
-export function createBetterSidebarService(store: SidebarStore): BetterSidebarService {
+export function createBetterSidebarService(store: SidebarStore): BetterSidebarServiceHost {
   const tabs = new Map<string, TabDescriptor>()
   const viewers = new Map<string, FileViewerDescriptor>()
   const fileIcons = new Map<string, FileIconDescriptor>()
@@ -1120,6 +1168,12 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
   const listeners = new Set<() => void>()
   /** The native right-Sidebar write face, installed by the client half. */
   let surface: SidebarSurface | undefined
+  // The clue extension face is constructed with the registry so its switches
+  // read the same live prefs as the tab/viewer switches do.
+  const clues = createCluesClientRegistry(() => store.getPrefs())
+  // One window host per service (per client plugin activation): its records
+  // live for the activation, and the plugin mounts its React host once.
+  const windows = createWindowHost({ sessionId: () => store.getSnapshot().sessionId })
 
   const notify = (): void => {
     for (const fn of [...listeners]) fn()
@@ -1752,7 +1806,7 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
     }, scope)
   }
 
-  const service: BetterSidebarService = {
+  const service: BetterSidebarServiceHost = {
     registerSidechatSurfaceAdapter: adapter => registerSidechatSurfaceAdapter(adapter),
     registerTab,
     registerFileViewer,
@@ -1787,6 +1841,9 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
     updateTab,
     activateTab,
     openFile,
+    clues,
+    windows,
+    windowHost: windows,
     hostRouteUrl: (path: string): string => resolveHostRoute(path).href,
     setSurface: (next: SidebarSurface | undefined) => { surface = next },
     nativePathTabs: () => surface?.pathTabs?.() ?? [],

@@ -17,7 +17,7 @@
    control does, and it never wraps onto a second line. */
 .headerButton {
   flex: none;
-  width: 28px;
+  width: 26px;
   padding: 0;
 }
 
@@ -45,8 +45,8 @@
   width: 100%;
   padding: 8px 8px 8px 10px;
   background: var(--dsw-alias-bg-layer-3);
-  border: 1px solid var(--dsw-alias-state-warn-primary);
-  border-radius: 8px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 6px;
   font: var(--dsw-font-xxs-12);
 }
 
@@ -78,6 +78,10 @@
 
 .alertClose {
   flex: none;
-  width: 24px;
+  width: 26px;
   padding: 0;
+}
+
+@media (pointer: coarse) {
+  .headerButton, .alertClose { min-width: 44px; min-height: 44px; }
 }

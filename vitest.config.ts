@@ -49,6 +49,8 @@ export default defineConfig({
       // Local dev worktrees (pnpm/DSH-style task branches) may carry stale
       // code against this checkout's node_modules — never collect them.
       '**/.worktrees/**',
+      // Local validation artifacts may include frozen baseline source/tests.
+      '**/.local/**',
       // Same hazard, different directory: the DSH worktree lanes keep their
       // checkouts under `.delta/`, which `.git/info/exclude` ignores but this
       // list is the only thing vitest reads. Left out, `pnpm test` collects
@@ -57,6 +59,11 @@ export default defineConfig({
       // Same for the agent worktree lanes (and the reason `pnpm lint` needs
       // the matching ignore): their spec copies would double-collect.
       '**/.agents/worktrees/**',
+      // A repo-local pnpm store (`.pnpm-store/`, gitignored) keeps whole
+      // project copies under `.pnpm-store/<version>/projects/<hash>/`; one
+      // `pnpm test` from the repo root otherwise collects those copies too
+      // and reports a second, stale test suite as ours.
+      '**/.pnpm-store/**',
       '**/node_modules/**',
       '**/dist/**',
       '**/cypress/**',

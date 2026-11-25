@@ -154,6 +154,7 @@ export function ViewModeToggle(props: {
     <Button
       variant="ghost"
       size="sm"
+      className={css.controlText}
       icon={toTree ? <IconTreeCornerRegular /> : <WorkflowGlyph size={13} />}
       aria-label={t(toTree ? 'tasksViewSwitchToTree' : 'tasksViewSwitchToGraph')}
       title={t(toTree ? 'tasksViewSwitchToTree' : 'tasksViewSwitchToGraph')}

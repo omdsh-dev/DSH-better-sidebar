@@ -4,7 +4,71 @@
 
 ### 未发布
 
+- 🧪 **DSH 0.2.3-alpha.2（alpha 线）适配**：14 条 DSH peer 与 `engines.dsh` 同批抬到 `0.2.3-alpha.2`，Cordis 依赖线同步到 `4.2.0-alpha.1`。宿主删除了 `@deepseek-ai/dsh-llm` 的 `./brand` 子路径，类型改从 `./types` 引入；目录投影的权威事件从 `working-directory/change` 换成 `workspace-root/change`，侧边对话的 cwd 边界戳记与工作树跟随随之调整；同时删除了所有旧宿主兼容分支（准入 `requestRejection` 回退、旧目录事件、旧 `data-slot` 锚点、`getOrigin` 探测）——这一版只服务 0.2.3-alpha.2+，更早宿主固定 v0.33.0。
+
+- 🎛️ **紧凑划选菜单**：操作菜单与译文面板分开定宽；改写悬停时向有空间的一侧展开二级浮层，也支持点击与键盘进入。窄屏仍保持侧弹，必要时覆盖部分主菜单。翻译结果的「返回 / 复制」改为并排底栏，长译文单独滚动。
+
+- 🧭 **开始页更直观**：「线索收集(beta)」用一行说明其用途——本地文件、飞书与 GitHub 的上下文信息中心；「侧边对话」移除 beta 标识。默认位置交换侧边对话与新建终端，用户已保存的自定义顺序不变。
+
+- ✨ **划选操作可配置**：统一文件编辑/预览与线索正文/评论的划选菜单；支持总开关、逐项开关、主菜单及改写类型排序、内置提示词编辑/恢复和自定义操作。改写收进二级菜单（扩写 / 去 AI 味 / 缩短 / 续写），默认在新的侧边会话立即执行，也可先填草稿。
+  - **改写直接更新原资源**：本地文件直接编辑原路径；远程正文沿用来源保存能力。只读内容、评论和当前有未保存编辑的表面不提供改写。
+  - **独立翻译**：直接调用宿主 LLM，不创建会话、不修改原文；译文留在划选浮层，可复制与重试。模型可独立配置，目标语言默认跟随当前界面语言。
+  - **明确插入目标**：「插入主会话 / 插入到侧边」仅填写草稿并保留来源，不发送；划选打开的侧边会话在宽屏浮动，手机窄屏以 Tab 打开。文件标签页恢复为与「本地文件」一致的文件夹图标。
+
 - **`sidebar_open` 明确区分请求已派发和已排队**（[#1174](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1174)）。开启模型主动打开侧栏后，工具反馈会说明请求是交给了已连接的侧栏，还是在等待连接。派发成功时，工具会提示页签是否已显示仍未确认。
+
+- ✨ **侧栏细节改进**：内容加载使用居中的环形动画，尊重减少动态效果偏好；转为浮窗后移除原标签页，草稿与滚动位置不变；浮窗边缘稍加粗，文件预览与线索收集使用更清晰的独立图标。
+  - **选区保留来源**：线索正文或评论的「选择并插入」同时携带稳定 `dsh-clue` 引用和选区原文，模型能识别来源；保存引用失败时保留选区供重试，不发送消息。
+  - **设置入口对齐**：标签页、文件预览开关旁始终保留设置按钮；无设置项时禁用，有设置项时即使功能关闭也可配置。开始页「更多」新增「侧边栏设置」。
+
+- 🧭 **新增「线索收集」Tab：把文件、飞书任务/文档、GitHub issue 与 PR 收进一处，用统一浮窗预览与编辑**：右侧栏多出一个 tab，顶部一条来源分段（本地文件 / GitHub Issues / GitHub Pull requests / 飞书文档 / 飞书任务，最后选中的来源会记住），其下是范围栏（当前仓库或工作区，可切换）与共享 `SearchField`；列表行 30px，行内动作只在悬停或键盘聚焦时出现（触控恒显且 44px）。
+  - **资料类型随栏宽切换**：宽栏横排显示各来源的图标和名称；窄栏保留紧凑下拉。资料浏览和包内添加共用这套控件，调整栏宽不会切换来源。
+  - **资料与资料包采用 VS Code 式可调分区**：多个区块可各自展开、同时显示；用鼠标、触控或键盘上下调整分隔柄。布局写入插件设置，折叠不丢失搜索、列表位置和草稿。
+  - **统一浮窗**：详情、包管理、添加成员、来源配置、新建包与分享都由同一个 `windows` 宿主承载（`FloatingWindow` 记忆位置与尺寸、支持最大化）。详情里预览与编辑是两个页签，读取与写入分两条路径：打开只读预览，`clues.loadEdit` 只在点「编辑」时发生，保存永远基于编辑文档自己的基线。
+  - **稳定引用**：tab 内与输入框里的 @ 都只落 `[[dsh-clue:…]]` / `[[dsh-cluepack:…]]` / `[[dsh-clue-snapshot:…]]` 这类稳定 token，跨会话、跨工作区都能解析回同一条线索。
+  - **`.cluepack` 分享**：按包或单条线索导出 / 导入，`references` 保留原引用；导入前给出可解析 / 不可解析的预览，未落地的行不写入。
+  - **来源运行面**：共享来源 runtime 负责依赖安装与连接授权（GitHub 走 `gh`，飞书走 lark-cli 设备码），表里逐来源显示就绪 / 缺依赖 / 未授权；状态只在显式读取时刷新，不轮询、不自动登录。新增依赖 `uqr` 0.1.3，把授权提示里的 `prompt.qr.uri` 渲染成可扫的二维码。
+  - **公共扩展面**：宿主 Cordis 服务 `betterSidebarClues` 与浮窗能力一起开放（`features` 新增 `clues` / `windowHost`），外部插件用同一套 API 注册线索来源与浮窗，见 `docs/external-plugin-guide.md` §7.1。
+  - **GitHub 预览显示头像、名称、分支与红绿变更量**；PR 概览分开显示合并、检查、评审与评论。没有数据时不显示虚假的就绪或审批数量。
+  - **少一条栏带**：详情原来在标题栏下还有一整行「本地缓存 · 刷新 · 打开原始来源」。缓存时间收进刷新按钮的 tooltip，刷新与「打开原始来源」并入头部右侧的动作位，正文上方的 chrome 从 5 条压到 3 条。
+  - **格式与渲染**：为 Markdown、HTML、JSONL 与代码提供只读预览器；写盘前按磁盘现状还原编码与行尾，客户端只发送 LF。
+  - 🧪 测试：新增 `clues-resource-summary`（两行头部、状态点词汇、默认态静默、动作位独立渲染）、`clues-resource-info`（白名单保留 / 拒绝）、`clues-settings-*`（六组导航、来源开关与批次、深链）、`clues-cache-ux`、`clues-pack-windows` 等用例；`tests/side-card-section.spec.tsx` 覆盖开始页接管与线索来源组共存；挂载 lane 在真实宿主 + Chromium 下覆盖线索 tab、浮窗与设置。
+  - 🪟 **线索窗口默认停靠在右侧栏**：有会话时，详情、包管理、添加成员、来源配置、新建包与分享直接以右侧栏 tab 打开，不再先弹浮窗；浮窗按钮仍可随时弹出同一个实例（草稿、滚动与导航栈都不重挂），没有会话时保持浮窗。
+  - 🔄 **设备码授权自动复查**：点「开始授权」拿到验证码后，设置页按 CLI 自己建议的间隔重发同一次显式轮询——页面隐藏即暂停，完成 / 过期 / 取消即停，连续失败 3 次退回手动；「我已完成，检查状态」按钮保留。runtime 本身仍然不排任何定时器。
+  - ✅ **CI 概览可展开且能识别部分结果**：在一次详情读取内显示最多 20 项检查，区分排队、运行、失败、跳过和取消；超出时标明已显示数量并跳转到 GitHub 完整检查。
+  - 🖼️ **预览修复**：本地 PNG/SVG 和 Markdown 相对图片可内联显示；飞书文档保留列表和表格。预览选区动作绑定打开它的会话，明确未准入时可以安全重试，不重复产生草稿或消息。
+  - 🌐 **i18n 只维护宿主官方语言**：zh / en 内置，ja / de / es / fr / pt / ru 懒加载，跟随宿主当前语言（先精确匹配、再基础语言、最后 en）；此前自带的 14 种第三语言词典与 better-locale 覆盖层一并删除。
+  - 🧪 测试：新增共享模式层（`ui-patterns`）与窗口默认停靠、设备码自动复查（含隐藏暂停 / 失败退回）与逐项 check 的读-白名单-渲染三段用例；`window-surfaces` 钉住「默认停靠且重开不改面」。**测试面按「删了再重写」收敛**：线索套件从约 5.0 万行压到约 1.8 万行（63 个冗余 spec 删除，其余保留契约、合并重复变体为表驱动），全仓用例 4432 项通过。
+
+### v0.33.0
+
+- 🧩 **DSH 0.2.3 上 `/sidebar/*` 恢复可用**（关联 [#1204](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1204)）：0.2.3 把 `admit` 的凭据校验委托给嵌套服务 `connection.authentication`，cordis 只允许**显式注入**该服务的调用方读取它；插件此前只注入 `connection`，`admit` 一被调用就抛 `cannot get property "connection.authentication" without inject`，被宿主兜底成空 body 的 400——底部终端 chunk 加载、打开文件、侧边对话全部只剩 `HTTP 400`。现在准入改走 `ctx.inject(['connection.authentication'])` 子 fiber 里的 `admit`；rc.2–rc.5 没有该服务，子 fiber 不激活，继续走 `requestRejection` / 直接 `admit`，旧宿主行为不变。
+  - 🧪 测试：`tests/trusted-hosts.spec.ts` 新增「0.2.3 宿主：插件上下文调用 `admit` 抛错、经注入的 provider 上下文放行」三档（放行 / 401 / 403），旧宿主两条路径的既有断言保留。
+
+- 🧷 **Git 详情面板的关闭按钮常驻在 Tabs 同一行的最右侧**（[#991](https://github.com/omdsh-dev/DSH-better-sidebar/issues/991)）：底部面板的「提交详情 / 内容 / 差异」是一条 Tabs，但关闭整块面板的 X 原先画在「内容 / 差异」的页内头行上——切到「提交详情」时它整条头行都不渲染，于是那个页签根本没有关闭入口，只能先切页签再点 X。现在关闭按钮属于 Tabs 那一行：无论选中哪个页签都停在最右端、位置不变，点击关闭的是整块面板；「内容 / 差异」头行里那个重复的 X 已移除。只有一个视图、没有 Tabs 行的预览仍保持原来的头行位置。
+  - 🧪 测试：`tests/changes-tab.spec.tsx` 逐个页签断言面板里**只有一个**关闭按钮、它挂在 Tabs 那一行且排在 tablist 之后（行尾），并从「提交详情」页签点击它关闭整块面板。
+
+- 🧷 **空白新会话在右侧栏展开时仍能打开底部工作台**（[#989](https://github.com/omdsh-dev/DSH-better-sidebar/issues/989)）：blank 会话里宿主不渲染会话头 utilities，插件的底部工作台入口只剩右上角那一个备用入口；而它在宿主右侧面板展开时整个不渲染，于是「先开右栏」就再也打不开底部工作台（#1053 修的是正常会话的会话头入口，这一处当时被留了下来）。现在展开态照常渲染，并改锚**面板左缘**——那一格是会话头那一行的右端空位，与收起态入口同一列，不压面板内容。
+  - 🧪 测试：`tests/dock-fallback.spec.tsx` 把「展开态不渲染」改成「展开态渲染且锚在面板左缘（756px）」并断言点击仍能打开；`tests/e2e/blank-session-dock-entry.e2e.ts` 新增真实宿主用例：空白会话展开右栏后入口仍在、屏上恰好一个、右缘不越过面板左缘、点击打开底部面板。
+
+- 🗂 **文件树的搜索头与会话页签的分隔线接上同一条线**（贡献者 PR [#1011](https://github.com/omdsh-dev/DSH-better-sidebar/pull/1011) @yanzhaohui1999）：右侧栏的面板体直接落在宿主 38px 页签条下面，而文件树的搜索头还在用底部工作台的度量（6px 内边距 + 1px `border-l1`），它的下边线落在 y=79、会话页签条的分隔线在 y=76（DSH 0.2.2-rc.5），接缝处因此错开 3px，粗细与色阶也不一致。现在改用宿主 `ui-sidebar-files` 面板自己那套头：38px border-box + 0.5px `border-l3` 细线，下边线与会话页签条重合；底部工作台保留原来的宽内边距。
+
+- 🎛 **Changes 的「Git / 本轮文件」切换恢复会话页的下划线 Tabs**（[#1235](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1235)）：#1101 为摆脱宿主私有哈希类名（#1098）改用公开的 `SegmentedControl`，视觉随之退回灰底胶囊——与会话页页头的下划线 Tabs 不是一套，#939 的结论等于丢了。现在这条切换由插件自己的样式表绘制：13px/500、未选中三级文字、选中态品牌色 + 2px 下划线压在页头分隔线上、24px 间距（#939 的审阅结论），ARIA 关联与左右方向键 / Home / End 漫游焦点照旧；不引用任何宿主私有类名，宿主改版不再影响它。
+  - 🧪 测试：`tests/changes-tab.spec.tsx` 断言页签条是插件自己的 `lensTabs/lensTab`、下划线由 `changes.module.css` 的主题 Token 画出，并保留键盘 / 持久化 / 刷新用例。
+
+- 🖥 **右侧栏全屏时底部工作台自动收起**（贡献者 PR [#1233](https://github.com/omdsh-dev/DSH-better-sidebar/pull/1233) @WinterXMQ）：宿主把右侧栏切到全屏后，面板铺满中心区，而底部工作台凭自身层级浮在它前面，既破坏全屏的整体感，也挡住面板里的操作。现在按宿主暴露的 `data-sidebar-right-panel="fullscreen"`（普通态为 `push`）用一条 `body:has(...)` 规则做视觉收起：滑出屏幕、隐藏、不接收指针事件。规则只改视觉、不碰 store 的 `bottomOpen`，退出全屏即自动失效，工作台连同原来的展开状态一起恢复。
+  - 🧪 测试：`tests/panel-host-css.spec.ts` 断言收起规则存在（`translateY(102%)` / `pointer-events: none` / `visibility: hidden`）且规则里不出现 `bottomOpen`——纯 CSS 收起，不需要记忆与恢复逻辑。
+
+- 🎛 **原生页签的图标与宿主标题的几何对齐**（贡献者 PR [#945](https://github.com/omdsh-dev/DSH-better-sidebar/pull/945) @hairyf）：页签 chip 里的图标此前按插件自己的 14px 尺寸加 6px 右外边距绘制，与宿主标题行自带的居中与 5px 间距叠在一起，图标偏小、偏左。现在图标取宿主页签条自己的 16px，居中与间距交给宿主标题行，并让内联 SVG 以块级显示，不再把基线空隙算进图标盒。
+  - 🧪 测试：`tests/native-surface.spec.ts` 钉住 chip 图标为 16px；`tests/e2e/mount.e2e.ts` 在真实宿主里把 files / git 页签的图标宽高、图标与标题间距、垂直居中逐项与官方页签标题的实测几何比对（jsdom 看不出内联 SVG 的基线偏移）。
+
+- 🎛 **任务图谱的视图切换控件改成方形**（贡献者 PR [#948](https://github.com/omdsh-dev/DSH-better-sidebar/pull/948) @hairyf）：图谱 / 树视图切换是一组分段控件，内部分段仍带圆角，在容器圆角里露出四个小尖角。现在内部分段改为直角、容器裁切溢出，分段与容器边缘齐平。
+  - 🧪 测试：`tests/tasks-motion.spec.ts` 钉住 `.controls` 的 `overflow: hidden` 与两个分段按钮的 `border-radius: 0`。
+
+- 🧷 **安装下限改由 `package.json#engines.dsh` 独立裁决（`>=0.2.2-rc.3 <0.3.0`）**：宿主预检先读该字段，字段存在时不再看 14 条 DSH peer，因此停在 0.2.1 及更早宿主的安装失败会被插件市场判成「先升级 DSH」，不再当作插件缺陷自动开 issue。0.2.2-rc.2 及更早的 0.2.2 宿主继续使用 v0.32.1。
+
+- 🧩 **DSH master（0.2.2-rc.3 之后）删除 `connection.requestRejection` 后，`/sidebar/*` 不再全部裸 400**（[#1204](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1204)）：HTTP/WS 准入改为先调用 `requestRejection`（rc.1–rc.3 行为不变），该方法缺席时改用官方替代 `admit` 并读同一个 `rejection` 字段；两者都没有时仍然直接抛错，不重建信任表。此前宿主删掉该方法后，每个请求在第一句就抛 `TypeError`，被宿主兜底成空 body 的 400，界面只剩 `HTTP 400`。
+  - 🧪 测试：`tests/trusted-hosts.spec.ts` 新增「`requestRejection` 缺席时走 `admit`」三档（放行 / 401 / 403），并保留「两者都没有仍抛 TypeError」的既有断言。
 
 - 💻 **侧边对话显示 PTC（run_code）工具调用树**：`run_code` 行收起时显示模型写的 description，展开后显示程序代码和最终结果；程序内通过 PTC 派发的 bash / read / grep / edit 等子调用缩进挂在它下方，根行收起也可见，并复用终端 / diff / read / search / web 结构卡片。运行中、失败、无 start 的 dispatch 都有对应显示；PTC 内成功 write/edit 的文件也进入可点击路径提及。`present` 仍保留顶层交付卡片，同时在子调用区留下一行。
   - 🧪 测试：`tests/sidechat-ptc-rows.spec.ts`（配对 / 运行态 / 失败 / 无 start / 嵌套 / 父行缺失 / 身份复用）、`tests/sidechat-ptc-subcalls.spec.tsx`（description 摘要、代码体、缩进与卡片、根行收起仍可见）、`tests/sidechat-mention-sources.spec.tsx`（PTC mutation 进入提及、read 不进入）。
@@ -41,6 +105,9 @@
 
 - 📦 **发布包只安装运行时真正需要的依赖**（[#1191](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1191)）：`dependencies` 只保留 host 半真正 import 的 `ws` / `yaml`；已经打进 `lib/client*.js` 的 CodeMirror、mermaid、xterm、react-icons、dompurify、clsx、rxjs 等移入 `devDependencies`。安装不再多拉约 240 MB / 1.26 万个文件，插件实际运行时仍只有插件本体加 `ws` / `yaml`。`src` 与 `./src/*` 导出**保留**，不做破坏性删除。
   - 🧪 守护：`tests/market-manifest.spec.ts` 同时校验仓库清单与 `pnpm pack` 后的发布清单，dependencies 必须恰好是 `ws` / `yaml`，且 `src` 仍在 `files` 里。
+
+- 🧩 **「添加页签插件」弹窗的推荐目录新增 9 个条目**：页签插件目录收录 Session Sources、dsh-artifacts、dsh-conductor、dsh-mail、dsh-phone、dsh-voice、dsh-pr-inbox、dsh-zotero-workspace（22 → 30 条），文件预览插件目录收录 dsh-bioviewer（5 → 6 条）；同时把 dsh-memory-delta 的钉版抬到 v1.3.4、修正 dsh-dev-git-graph 的仓库地址（已改名为 kp-z/dsh-plugins），并从这些安装命令里去掉了多余的 better-sidebar 前置依赖。
+  - 🧪 守护：`tests/plugin-list.spec.ts`。
 
 ### v0.32.1
 

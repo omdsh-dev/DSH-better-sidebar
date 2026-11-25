@@ -36,6 +36,7 @@ import type { SidebarStore } from '../state.ts'
 import { webTerminals } from '../terminal-client.ts'
 import type { NativeGuideCatalog } from './guide-catalog.ts'
 import { NativeGuide } from './guide.tsx'
+import { openClueSettingsWindow } from '../clues/windows/settings.tsx'
 import { EDITOR_KIND, FILES_KIND, nativeId } from './guide-ids.ts'
 import { mountedSessionId } from './surface.ts'
 import {
@@ -391,6 +392,7 @@ export function registerNativeSurface(deps: NativeSurfaceDeps): () => void {
                   catalog,
                   store,
                   service,
+                  onOpenSettings: () => { openClueSettingsWindow({ windows: service.windows, store, service, guideCatalog: catalog, group: 'general' }) },
                   ...(shellMenu === undefined ? {} : { shellMenu }),
                   ...(onBrowsePlugins === undefined ? {} : { onBrowsePlugins }),
                   ...(onCreatePlugin === undefined ? {} : { onCreatePlugin }),

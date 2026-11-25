@@ -117,6 +117,11 @@ describe('dock fallback（空白会话入口）', () => {
     // `bottomOpen: true` (the click would close it instead of open it).
     localStorage.clear()
     intervals.clear()
+    vi.stubGlobal('matchMedia', vi.fn((query: string): MediaQueryList => ({
+      matches: false, media: query, onchange: null,
+      addEventListener: () => {}, removeEventListener: () => {},
+      addListener: () => {}, removeListener: () => {}, dispatchEvent: () => true,
+    })))
     vi.spyOn(globalThis, 'setInterval').mockImplementation(((fn: () => void, ms?: number) => {
       const id = ++intervalSeq
       intervals.set(id, { fn, ms })
@@ -133,6 +138,7 @@ describe('dock fallback（空白会话入口）', () => {
     Reflect.deleteProperty(document, 'hidden')
     Reflect.deleteProperty(document, 'visibilityState')
     vi.restoreAllMocks()
+    vi.unstubAllGlobals()
   })
 
   it('renders the fallback entry and flips the bottom workbench through the store', async () => {
@@ -197,6 +203,27 @@ describe('dock fallback（空白会话入口）', () => {
   // 定位逻辑现在只服务**收起态**（右侧栏收起时宿主的角落只有「Open right sidebar」
   // 一个按钮）。让位仍是逐个槽位试探：万一宿主的收起态角落也并排了别的东西，
   // 固定偏移会正好落在**下一个**按钮上。
+  it('reserves the full 44px target on coarse pointers', async () => {
+    phaseIs(true)
+    vi.spyOn(window, 'matchMedia').mockImplementation(query => ({
+      matches: query === '(pointer: coarse)', media: query, onchange: null,
+      addEventListener: () => {}, removeEventListener: () => {},
+      addListener: () => {}, removeListener: () => {}, dispatchEvent: () => true,
+    }))
+    const anchor = appendAnchor(500)
+    const { unmount } = renderDockFallback()
+    try {
+      await settle()
+      const shell = document.querySelector<HTMLElement>('[data-dsh-dock-fallback]')!
+      expect(shell.style.left).toBe('448px')
+      expect(shell.style.top).toBe('4px')
+      expect(Number.parseFloat(shell.style.left) + 44).toBe(492)
+    } finally {
+      unmount()
+      anchor.remove()
+    }
+  })
+
   it('keeps stepping left until the slot is free of host buttons', async () => {
     phaseIs(true)
     const rect = (left: number, top: number) => () => ({
@@ -325,29 +352,46 @@ describe('dock fallback（空白会话入口）', () => {
     }
   })
 
-  // 用户定的规则：**宿主右侧面板展开时不显示这个按钮**。那个状态下宿主右上角
-  // 本来就是自己的一簇控件（Split / Fullscreen / Collapse right sidebar），入口挤进去
-  // 只会跟它们打架 —— 干脆不出现。这条规则同时把「展开态该把入口摆哪儿」整个问题去掉，
-  // 让位/命中测试那套只需要服务收起态。
-  it('renders no entry while the host right panel is expanded', async () => {
+  // #989：宿主右侧面板展开时**照常渲染**，改锚面板左缘。
+  // 展开态下宿主的 Split / Fullscreen / Collapse 搬进面板内部，锚在那簇控件左侧会落进
+  // 面板、盖住内容；面板左缘那一格是会话头那一行的右端空位，与收起态入口同一列。
+  // 旧行为（展开态整个不渲染）在 blank 会话里等于把唯一入口藏掉：会话头 utilities 在
+  // blank 态根本不渲染，于是「先开右栏就再也打不开底部工作台」。
+  it('keeps the entry while the host right panel is expanded, anchored left of the panel', async () => {
     phaseIs(true)
-    // 可见的 Collapse 控件（rect 非零）＝ 右侧栏展开；收起态的 Open 控件不可见。
+    // 可见的 Collapse 控件（rect 非零）＝ 右侧栏展开；收起态的 Open 控件不在场。
     const hostToggle = document.createElement('button')
     hostToggle.setAttribute('data-sidebar-right-toggle', 'true')
     hostToggle.setAttribute('aria-label', 'Collapse right sidebar')
     hostToggle.getBoundingClientRect = () => ({
-      x: 2000, y: 10, left: 2000, top: 10, width: 28, height: 28, right: 2028, bottom: 38,
+      x: 1406, y: 10, left: 1406, top: 10, width: 28, height: 28, right: 1434, bottom: 38,
       toJSON: () => ({}),
     }) as DOMRect
-    document.body.append(hostToggle)
-    const { unmount } = renderDockFallback()
+    // 面板本体：左缘 792（实测 1440 宽视口）。入口应贴在 792 - 8 - 28 = 756。
+    const panel = document.createElement('div')
+    panel.setAttribute('data-sidebar-right-panel', 'true')
+    panel.getBoundingClientRect = () => ({
+      x: 792, y: 0, left: 792, top: 0, width: 648, height: 900, right: 1440, bottom: 900,
+      toJSON: () => ({}),
+    }) as DOMRect
+    document.body.append(hostToggle, panel)
+    const { unmount, store } = renderDockFallback()
     try {
-      await act(async () => { await new Promise(resolve => { setTimeout(resolve, 0) }) })
-      expect(document.querySelector('[data-dsh-dock-fallback]'), '右侧栏展开时不该有备用入口').toBeNull()
-      expect(document.querySelector('[data-dsh-bottom-toggle]'), '右侧栏展开时不该有底部入口').toBeNull()
+      // 等相位真的落地（否则断言只是在「还没读到相位」上白过）。
+      await settle()
+      expect(vi.mocked(sessionPhase), '相位必须已经读过一次').toHaveBeenCalled()
+      expect(document.querySelector('[data-dsh-dock-fallback]'), '右侧栏展开时入口仍应在').not.toBeNull()
+      const shell = document.querySelector<HTMLElement>('[data-dsh-dock-fallback]')
+      expect(shell!.style.left, '展开态锚面板左缘，不压面板内容').toBe('756px')
+      expect(shell!.style.top, '与面板自己的角落控件同一行').toBe('10px')
+      // 入口可用：点一下就把底部工作台打开。
+      expect(store.getSnapshot().state?.bottomOpen).toBe(false)
+      clickFallbackToggle()
+      expect(store.getSnapshot().state?.bottomOpen).toBe(true)
     } finally {
       unmount()
       hostToggle.remove()
+      panel.remove()
     }
   })
 

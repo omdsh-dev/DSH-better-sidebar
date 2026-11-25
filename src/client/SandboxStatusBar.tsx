@@ -13,6 +13,7 @@
  */
 import clsx from 'clsx'
 import { t } from './locales.ts'
+import { ActionButton } from './ui/index.ts'
 import css from './sidebar.module.css'
 
 export function SandboxStatusBar(props: {
@@ -32,28 +33,28 @@ export function SandboxStatusBar(props: {
       <div className={clsx(css.sandboxStatus, css.sandboxStatusOn)}>
         <span className={css.sandboxDot} />
         <span className={css.sandboxStatusText} title={copy}>{copy}</span>
-        <button
-          type="button"
+        <ActionButton
+          size="sm"
           className={css.sandboxAction}
           onClick={onUnlock}
         >
           {t('sandboxUnlock')}
-        </button>
+        </ActionButton>
       </div>
     )
   }
   return (
-    <div className={clsx(css.sandboxStatus, css.sandboxStatusOff)}>
+    <div className={clsx(css.sandboxStatus, css.sandboxStatusOff)} role="alert">
       <span className={css.sandboxDot} />
       <span className={css.sandboxStatusText} title={dangerCopy}>{dangerCopy}</span>
       {local && (
-        <button
-          type="button"
+        <ActionButton
+          size="sm"
           className={css.sandboxAction}
           onClick={onRestore}
         >
           {t('sandboxRestore')}
-        </button>
+        </ActionButton>
       )}
     </div>
   )

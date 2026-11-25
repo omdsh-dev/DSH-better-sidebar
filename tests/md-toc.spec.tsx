@@ -87,7 +87,7 @@ describe('MdToc', () => {
     const panel = container.querySelector('[data-dsh-md-toc-panel]')
     expect(panel).not.toBeNull()
     const items = [...panel!.querySelectorAll('button')]
-    expect(items.map((item) => item.textContent)).toEqual(['1Title', '2Install', '2Usage', '3Deep'])
+    expect(items.map((item) => item.textContent)).toEqual(['Title', 'Install', 'Usage', 'Deep'])
     await unmount(root)
   })
 
@@ -190,4 +190,21 @@ describe('MdToc', () => {
     expect(container.querySelector('[data-dsh-md-toc-panel]'), 're-clicking the toggle must close').toBeNull()
     await unmount(root)
   })
+})
+
+
+it('outlines only the requested body scope, never comment headings', async () => {
+  const host = document.createElement('div')
+  document.body.appendChild(host)
+  const root = createRoot(host)
+  await act(async () => {
+    root.render(createElement('div', null,
+      createElement(MdToc, { scopeSelector: '[data-outline-body]' } as never),
+      createElement('div', { 'data-outline-body': '' }, createElement('h1', null, 'Body one'), createElement('h2', null, 'Body two'), createElement('h3', null, 'Body three')),
+      createElement('section', null, createElement('h2', null, 'Discussion'), createElement('h1', null, 'Comment heading'))))
+    await new Promise(resolve => setTimeout(resolve, 0))
+  })
+  await act(async () => { host.querySelector<HTMLButtonElement>('[data-dsh-md-toc]')!.click() })
+  expect([...host.querySelectorAll('[data-dsh-md-toc-panel] button')].map(item => item.textContent)).toEqual(['Body one', 'Body two', 'Body three'])
+  await unmount(root)
 })

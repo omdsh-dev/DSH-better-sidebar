@@ -68,11 +68,10 @@ function modeButton(container: HTMLDivElement, label: string): HTMLButtonElement
   return button
 }
 
-/** The active mode toggle carries one extra class (the "active" marker). */
+/** The shared mode tabs expose their selected state to assistive technology. */
 function activeMode(container: HTMLDivElement): string {
-  const preview = modeButton(container, 'Preview')
   const edit = modeButton(container, 'Edit')
-  return edit.classList.length > preview.classList.length ? 'edit' : 'preview'
+  return edit.getAttribute('aria-selected') === 'true' ? 'edit' : 'preview'
 }
 
 afterEach(() => {

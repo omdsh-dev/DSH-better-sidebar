@@ -20,6 +20,7 @@ import { useLayoutEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { IconListPenOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import { t } from './locales.ts'
+import { IconButton } from './ui/index.ts'
 import css from './sidebar.module.css'
 
 /** Fewer headings than this and the button stays hidden (no outline value). */
@@ -37,11 +38,12 @@ function signatureOf(entries: readonly TocEntry[]): string {
   return entries.map((entry) => `${entry.level}:${entry.text}`).join('\n')
 }
 
-export function MdToc(): ReactNode {
+export function MdToc({ scopeSelector }: { readonly scopeSelector?: string } = {}): ReactNode {
   const barRef = useRef<HTMLDivElement>(null)
   const [entries, setEntries] = useState<TocEntry[]>([])
   const [open, setOpen] = useState(false)
   const signatureRef = useRef('')
+  const elementsRef = useRef<readonly HTMLElement[]>([])
 
   useLayoutEffect(() => {
     // The bar's own host ref is attached before this effect runs; the scroll
@@ -50,21 +52,27 @@ export function MdToc(): ReactNode {
     if (container === null) return
     const scan = (): void => {
       const found: TocEntry[] = []
-      for (const el of container.querySelectorAll<HTMLElement>('h1, h2, h3, h4, h5, h6')) {
+      const scopes = scopeSelector === undefined ? [container] : [...container.querySelectorAll<HTMLElement>(scopeSelector)]
+      for (const el of scopes.flatMap(scope => [...scope.querySelectorAll<HTMLElement>('h1, h2, h3, h4, h5, h6, [role="heading"][aria-level]')])) {
+        if (el.closest('[data-md-toc-exclude], [hidden]') !== null) continue
         const text = (el.textContent ?? '').trim()
         if (text === '') continue
-        found.push({ level: Number(el.tagName.charAt(1)), text, el })
+        const level = Number(el.getAttribute('aria-level') ?? el.tagName.charAt(1))
+        if (!Number.isInteger(level) || level < 1) continue
+        found.push({ level, text, el })
       }
       const signature = signatureOf(found)
-      if (signature === signatureRef.current) return
+      if (signature === signatureRef.current && found.length === elementsRef.current.length
+        && found.every((entry, index) => entry.el === elementsRef.current[index])) return
+      elementsRef.current = found.map(entry => entry.el)
       signatureRef.current = signature
       setEntries(found)
     }
     scan()
     const observer = new MutationObserver(() => { scan() })
-    observer.observe(container, { childList: true, subtree: true })
+    observer.observe(container, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['hidden'] })
     return () => { observer.disconnect() }
-  }, [])
+  }, [scopeSelector])
 
   // Esc closes the popover (the panel is a sibling of the button, so focus
   // stays wherever the user came from — a document listener is the simplest).
@@ -120,24 +128,21 @@ export function MdToc(): ReactNode {
               title={entry.text}
               onClick={() => { jump(entry) }}
             >
-              <span className={css.tocItemLevel}>{entry.level}</span>
               <span className={css.tocItemText}>{entry.text}</span>
             </button>
           ))}
         </div>
       )}
       {showOutline && (
-        <button
-          type="button"
+        <IconButton
           className={css.tocButton}
+          label={t('toc')}
+          icon={<IconListPenOutlineRegular size={14} />}
           data-dsh-md-toc=""
-          aria-label={t('toc')}
           title={t('toc')}
           aria-expanded={open}
           onClick={() => { setOpen(!open) }}
-        >
-          <IconListPenOutlineRegular />
-        </button>
+        />
       )}
     </div>
   )

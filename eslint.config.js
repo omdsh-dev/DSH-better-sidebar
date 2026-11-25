@@ -26,6 +26,8 @@ export default tseslint.config(
       '.worktrees/',
       '.delta/',
       '.agents/worktrees/',
+      // Local validation output can contain frozen source/test baselines.
+      '.local/',
     ],
   },
 

@@ -14,10 +14,9 @@
  *   record + `navigation.params` and kept live across navigations, so a
  *   component that retitles itself (`updateTab`) or rewrites its path (the
  *   editor's in-place file switch) keeps working;
- * - the explorer's expansion/reveal sets: EXPANSION lives in the per-session
- *   state the workbench already uses (one set per session, shared by every
- *   native tab of that session — a closed tab cannot drop it), while the
- *   transient "show in folder" reveal stays per tab;
+ * - the explorer's expansion/reveal sets live in the per-session state the
+ *   workbench already uses. Native records project both sets, so an explicit
+ *   file reveal reaches existing and newly mounted native files trees;
  * - the per-kind instance counter behind titles like "Terminal 2".
  *
  * Nothing here is a singleton: the registry is created once per client
@@ -40,9 +39,10 @@ import { isUnread, toggleExpanded } from '../state.ts'
 import type { SidebarStore, SidebarTab, TabType } from '../state.ts'
 import css from '../sidebar.module.css'
 import { createSidechatBindings, isSidechatOccurrence } from './sidechat-bindings.ts'
+import design from '../ui/design.module.css'
 
 /** The chip glyph's size: the tab strip's own icon scale. */
-const CHIP_ICON_SIZE = 14
+const CHIP_ICON_SIZE = 16
 
 /** The editor kind: a chip for a file row shows the file's own glyph. */
 const EDITOR_KIND = 'editor'
@@ -106,7 +106,7 @@ interface View {
    * each render would re-run the tree's load effect for nothing.
    */
   expanded: string[]
-  /** The transient "show in folder" highlight: per tab by design. */
+  /** The transient reveal highlight projected from its content session store. */
   revealed: string[]
   /** Bumped on every mutation; the components subscribe to it. */
   version: number
@@ -208,7 +208,7 @@ export interface NativeTabRecords {
   nextInstance(kind: string): number
   /** A per-record version for `useSyncExternalStore`. */
   versionOf(sessionId: string, id: string): number
-  /** Subscribe to record changes (title/path/meta/expanded). */
+  /** Subscribe to record changes (title/path/meta/expanded/revealed). */
   subscribe(listener: () => void): () => void
 }
 
@@ -257,8 +257,10 @@ export function createNativeTabRecords(): NativeTabRecords {
   /** The session's expansion set (absent session = nothing expanded yet). */
   const expandedOf = (sessionId: string): string[] =>
     store?.getSessionState(sessionId)?.expanded ?? []
+  const revealedOf = (sessionId: string): string[] =>
+    store?.getSessionState(sessionId)?.revealed ?? []
   /**
-   * Re-read every view's expansion projection from the session state. Views
+   * Re-read every view's expansion/reveal projection from the session state. Views
    * that changed get a version bump (which is what re-renders their bodies);
    * identical sets keep their array identity so the tree's `expanded` prop —
    * and therefore its load effect — stays stable.
@@ -270,9 +272,11 @@ export function createNativeTabRecords(): NativeTabRecords {
       // Per-session reads, not one whole-map copy per pass: this runs on EVERY
       // store notify and the map copy allocated (and invalidated downstream
       // memos) once per notification.
-      const next = store.getSessionState(entry.scope.sessionId)?.expanded ?? []
-      if (samePaths(entry.expanded, next)) continue
-      views.set(id, { ...entry, expanded: next, version: entry.version + 1 })
+      const state = store.getSessionState(entry.scope.sessionId)
+      const expanded = state?.expanded ?? []
+      const revealed = state?.revealed ?? []
+      if (samePaths(entry.expanded, expanded) && samePaths(entry.revealed, revealed)) continue
+      views.set(id, { ...entry, expanded, revealed, version: entry.version + 1 })
       changed = true
     }
     if (changed) notify()
@@ -328,7 +332,7 @@ export function createNativeTabRecords(): NativeTabRecords {
           seat: sessionId,
           ...(contentId === undefined ? {} : { contentId }),
           expanded: expandedOf(scope.sessionId),
-          revealed: [],
+          revealed: revealedOf(scope.sessionId),
           version: 0,
         }
         persist(minted)
@@ -374,8 +378,9 @@ export function createNativeTabRecords(): NativeTabRecords {
       // The expansion set always mirrors the CURRENT session state (a record
       // reused for another session must not keep the previous one's set).
       const expanded = expandedOf(scope.sessionId)
-      if (existing.scope.sessionId !== scope.sessionId || !samePaths(existing.expanded, expanded)) {
-        views.set(key, { ...existing, scope, expanded, tab: { ...existing.tab, ...patch } })
+      const revealed = revealedOf(scope.sessionId)
+      if (existing.scope.sessionId !== scope.sessionId || !samePaths(existing.expanded, expanded) || !samePaths(existing.revealed, revealed)) {
+        views.set(key, { ...existing, scope, expanded, revealed, tab: { ...existing.tab, ...patch } })
         return views.get(key)!
       }
       if (existing.scope.cwd !== scope.cwd) {
@@ -573,7 +578,7 @@ export function NativeTabBody(props: NativeBodyInjected & NativeBodyFrameworkPro
     // the fill, mirroring `data-dsh-better-sidebar`.
     return createElement(
       'div',
-      { className: css.nativeTabHost, 'data-dsh-native-tab-host': '' },
+      { className: [design.surface, css.nativeTabHost].join(' '), 'data-dsh-native-tab-host': '' },
       createElement(OrphanedTab, { ctx, store, scope, tab: view.tab, visible: nativeTab.visible }),
     )
   }
@@ -592,7 +597,7 @@ export function NativeTabBody(props: NativeBodyInjected & NativeBodyFrameworkPro
       { controller: props.diagnostics },
       createElement(
         'div',
-        { className: css.nativeTabHost, 'data-dsh-native-tab-host': '' },
+        { className: [design.surface, css.nativeTabHost].join(' '), 'data-dsh-native-tab-host': '' },
         createElement(descriptor.component, {
           ctx,
           store,

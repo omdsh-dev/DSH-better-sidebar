@@ -1,0 +1,21 @@
+/** Native-inspired content artwork. Hue belongs to the host skin, not pixels. */
+.artwork {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  vertical-align: middle;
+}
+.artwork > svg {
+  display: block;
+  flex: none;
+}
+.packBack {
+  color: var(--dsw-alias-state-warn-primary, var(--dsw-alias-label-secondary));
+}
+.packFront {
+  color: var(--dsw-alias-state-business-primary, var(--dsw-alias-label-primary));
+}
+.packMark {
+  color: var(--dsw-alias-bg-base);
+}

@@ -1,0 +1,31 @@
+{
+  "origin": "http://127.0.0.1:3080",
+  "pluginMounted": true,
+  "cluesOpened": true,
+  "existingSessionSelected": true,
+  "messagesSent": 0,
+  "remoteWrites": 0,
+  "density": {
+    "height": 32,
+    "inputFontSize": "13px",
+    "gutter": 16,
+    "background": "rgb(255, 255, 255)"
+  },
+  "primary": {
+    "height": 32,
+    "fill": "rgb(51, 136, 187)",
+    "foreground": "rgb(15, 17, 21)",
+    "radius": "6px"
+  },
+  "selectiveAuthorizationApi": true,
+  "processes": {
+    "preview3080Before": "6598",
+    "preview3080After": "54761",
+    "preserve3384Before": "50833",
+    "preserve3384After": "50833"
+  },
+  "installedBundlesVerified": 8,
+  "packageSha256": "879183cd80184efa8676049e0d1bdc05449b485d61078b35bd0e847153368a68",
+  "pageErrors": [],
+  "verifiedAt": "2026-10-22T06:17:46.096Z"
+}

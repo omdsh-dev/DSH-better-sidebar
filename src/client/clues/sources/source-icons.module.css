@@ -1,0 +1,77 @@
+/*
+ * Token-only paint for the four built-in clue source glyphs.
+ *
+ * The glyphs themselves draw every shape with `currentColor`; the classes
+ * below are the ONLY place a color enters. That split is deliberate:
+ *
+ * - a consumer may paint the outer row / wrapper neutral (the tab strip and
+ *   the source rows already do), and that inherited ink cannot replace a
+ *   layer's own `color` declaration;
+ * - every declaration resolves to a `--dsw-alias-*` token, so skins keep
+ *   control; the fallback chain keeps at least one alternate alias if a host
+ *   drops a family;
+ * - no literal color, no `--dsw-static-*` primitive, and no `--dsh-*` local
+ *   variable is used here. The file is intentionally a flat list of classes,
+ *   one per painted layer, so the theme guard can scan it like any other
+ *   module stylesheet.
+ */
+
+/* GitHub issue: pale green underlay, green ring, brighter green dot. */
+.issueBackdrop {
+  color: var(--dsw-alias-state-success-tertiary, var(--dsw-alias-bg-base, currentColor));
+}
+
+.issueRing {
+  color: var(--dsw-alias-state-success-primary, var(--dsw-alias-label-secondary, currentColor));
+}
+
+.issueDot {
+  color: var(--dsw-alias-state-success-secondary, var(--dsw-alias-state-success-primary, var(--dsw-alias-label-secondary, currentColor)));
+}
+
+/* GitHub pull request: blue branch, green nodes, lighter green merge node. */
+.pullBranch {
+  color: var(--dsw-alias-state-business-primary, var(--dsw-alias-label-secondary, currentColor));
+}
+
+.pullNode {
+  color: var(--dsw-alias-state-success-primary, var(--dsw-alias-label-secondary, currentColor));
+}
+
+.pullNodeMerge {
+  color: var(--dsw-alias-state-success-secondary, var(--dsw-alias-state-success-primary, var(--dsw-alias-label-secondary, currentColor)));
+}
+
+/* Feishu docs: blue sheet, blue underlay, green fold, surface-colored text. */
+.docsBackdrop {
+  color: var(--dsw-alias-state-business-tertiary, var(--dsw-alias-bg-base, currentColor));
+}
+
+.docsSheet {
+  color: var(--dsw-alias-state-business-primary, var(--dsw-alias-label-secondary, currentColor));
+}
+
+.docsFold {
+  color: var(--dsw-alias-state-success-secondary, var(--dsw-alias-state-success-primary, var(--dsw-alias-label-secondary, currentColor)));
+}
+
+.docsText {
+  color: var(--dsw-alias-bg-base, var(--dsw-alias-label-secondary, currentColor));
+}
+
+/* Feishu tasks: amber frame + solid amber body, surface halo under an ink check. */
+.tasksBackdrop {
+  color: var(--dsw-alias-state-warn-secondary, var(--dsw-alias-state-warn-primary, var(--dsw-alias-label-secondary, currentColor)));
+}
+
+.tasksBase {
+  color: var(--dsw-alias-state-warn-primary, var(--dsw-alias-state-warn-secondary, var(--dsw-alias-label-secondary, currentColor)));
+}
+
+.tasksCheckHalo {
+  color: var(--dsw-alias-bg-base, var(--dsw-alias-label-secondary, currentColor));
+}
+
+.tasksCheck {
+  color: var(--dsw-alias-label-secondary, currentColor);
+}

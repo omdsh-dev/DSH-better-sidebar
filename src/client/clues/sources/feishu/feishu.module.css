@@ -1,0 +1,223 @@
+/*
+ * Feishu preview/editor surfaces.
+ *
+ * Every visual value rides the host's theme tokens (`--dsw-*` / `--ds-*`);
+ * there is no literal color, so both skins and the light/dark switch keep
+ * working. The layout is a plain vertical form/preview with wrapping text.
+ */
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: var(--ds-sidebar-gutter);
+  color: var(--dsw-alias-label-primary);
+  background: transparent;
+}
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.badge {
+  padding: 0 6px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 18px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: var(--ds-sidebar-radius);
+}
+
+.title {
+  margin: 0;
+  color: var(--dsw-alias-label-primary);
+  font-size: 14px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.hint {
+  margin: 0;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.pre {
+  max-height: 60vh;
+  margin: 0;
+  overflow: auto;
+  color: var(--dsw-alias-label-primary);
+  font-family: var(--ds-font-family-code);
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.fields {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+}
+
+.fieldRow {
+  display: grid;
+  grid-template-columns: minmax(72px, 120px) minmax(0, 1fr);
+  gap: 8px;
+  align-items: baseline;
+}
+
+.fieldRow dt {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+}
+
+.fieldRow dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--dsw-alias-label-primary);
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.input,
+.textarea {
+  width: 100%;
+}
+
+.textarea {
+  resize: vertical;
+  min-height: 64px;
+}
+
+.timeRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.timeRow > .input { flex: 1 1 200px; width: auto; }
+
+.checkbox {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+}
+
+.linkButton {
+  composes: button from "../../../ui/kit.module.css";
+  align-self: flex-start;
+  text-decoration: none;
+}
+.linkButton:hover { text-decoration: underline; }
+.textarea { max-height: 360px; overflow: auto; }
+@media (pointer: coarse) { .linkButton, .input { min-height: 44px; } }
+
+/* ── Readable document projection (S9 refresh) ─────────────────────────── */
+
+/* Rich text is the primary read view; raw XML lives in a collapsed <details>. */
+.markdownBody {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.markdownBody > * {
+  min-width: 0;
+}
+
+.markdownBody :where(p, li, h1, h2, h3, h4, h5, h6, blockquote) {
+  overflow-wrap: anywhere;
+}
+
+.docBlocks {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.docBlocks :where(p, ul, ol, pre, blockquote, figure, hr) { margin-block: 0; }
+.docBlocks :where(ul, ol) { padding-inline-start: 22px; }
+.docBlocks a { color: var(--ds-sidebar-accent); }
+.docBlocks [data-clue-image-preview] { margin-inline: 0; }
+.docBlocks hr { border: 0; border-top: 1px solid var(--dsw-alias-border-l2); }
+.docHeading { margin: 8px 0 0; font-size: 14px; font-weight: 600; }
+.docQuote {
+  padding: 6px 8px;
+  border-inline-start: 1px solid var(--dsw-alias-border-l2);
+  color: var(--dsw-alias-label-secondary);
+}
+.docCode {
+  padding: 8px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: var(--ds-sidebar-radius);
+  background: var(--dsw-alias-bg-base);
+  font-family: var(--ds-font-family-code, monospace);
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+.docTable { overflow-x: auto; }
+.docTable table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.docTable :where(td, th) { padding: 5px 8px; border: 1px solid var(--dsw-alias-border-l2); text-align: start; }
+.docTable th { background: var(--dsw-alias-interactive-bg-hover); }
+.docTodo { color: var(--dsw-alias-label-secondary); }
+.blockFallback {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--ds-sidebar-radius);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+}
+.taskFacts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 110px), 1fr));
+  gap: 6px 12px;
+  margin: 0;
+  padding-block-end: 8px;
+  border-bottom: 1px solid var(--dsw-alias-border-l2);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.taskFacts dt { color: var(--dsw-alias-label-tertiary); font-size: 11px; }
+.taskFacts dd { margin: 0; overflow-wrap: anywhere; }
+.taskFacts dd[data-feishu-task-completed='true'] { color: var(--dsw-alias-state-success-primary); }
+
+.rawDetails {
+  margin-top: 4px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+}
+
+/* Embedded task body: the shared header already carries title/people/times. */
+.bodyRow {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.bodyRow > dd {
+  min-width: 0;
+  margin: 0;
+}
+
+/* Keep the source heading hierarchy visible as well as semantic for MdToc. */
+.docHeading { margin-block-start: 8px; }
+h1.docHeading { font-size: 16px; line-height: 24px; }
+h2.docHeading { font-size: 15px; line-height: 22px; }
+h3.docHeading { font-size: 14px; line-height: 20px; }
+h5.docHeading, h6.docHeading, .docHeading[aria-level] { font-size: 13px; }

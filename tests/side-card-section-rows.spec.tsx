@@ -168,7 +168,7 @@ describe('FeatureSettingsRows typed rows (interactive)', () => {
 /** Open one select row's dropdown: click the anchor, the Menu portals its
  *  list into document.body (role="menuitem" rows). */
 function openSelect(container: HTMLDivElement): HTMLElement[] {
-  const anchor = container.querySelector<HTMLButtonElement>('button[aria-haspopup="listbox"]')!
+  const anchor = container.querySelector<HTMLButtonElement>('button[aria-haspopup="menu"]')!
   act(() => { anchor.click() })
   return [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')]
 }
@@ -245,6 +245,29 @@ describe('FeatureSettingsRows select rows (interactive)', () => {
     unmount()
   })
 
+  it('keeps numeric, boolean and string values distinct through the shared menu', () => {
+    const commits: unknown[] = []
+    const toggle: SidebarSettingToggle = {
+      key: 'scalarChoice', type: 'select', title: 'Scalar choice',
+      options: [
+        { value: 1, title: 'Number one' },
+        { value: '1', title: 'String one' },
+        { value: true, title: 'Boolean true' },
+        { value: 'true', title: 'String true' },
+      ],
+    }
+    const { container, unmount } = renderRoot(createElement(FeatureSettingsRows, {
+      toggles: [toggle], prefs, onToggle: () => {}, valueSource: () => 1,
+      onSelectValue: (_toggle, next) => { commits.push(next) },
+    }))
+    for (const index of [1, 2, 3]) {
+      const items = openSelect(container)
+      act(() => { items[index]!.click() })
+    }
+    expect(commits).toEqual(['1', true, 'true'])
+    unmount()
+  })
+
   it('shows an em dash when nothing is selected', () => {
     const toggle: SidebarSettingToggle = {
       key: 'editorExplorer',
@@ -258,7 +281,7 @@ describe('FeatureSettingsRows select rows (interactive)', () => {
       onToggle: () => {},
       valueSource: () => undefined,
     }))
-    expect(container.querySelector('button[aria-haspopup="listbox"]')!.textContent).toContain('—')
+    expect(container.querySelector('button[aria-haspopup="menu"]')!.textContent).toContain('—')
     unmount()
   })
 })

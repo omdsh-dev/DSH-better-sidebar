@@ -10,23 +10,36 @@
  */
 import type { api } from './api.ts'
 import {
+  CLUE_PREFS_ID,
+  CLUE_WINDOW_SURFACE_SETTING,
   EXPLORER_EXCLUDE_DEFAULTS,
   SIDEBAR_PREFS_DEFAULTS,
   SIDECHAT_PREFS_ID,
   SIDECHAT_SUBMIT_KEY_SETTING,
   SIDECHAT_TABS_SETTING,
+  isCluePacksMentionEnabled,
+  isClueSourceEnabled,
+  isClueSourceMentionEnabled,
+  parseClueWindowSurface,
   parseSidechatSubmitKey,
   parseSidechatTabsMode,
+  type ClueWindowSurface,
   type SidebarPrefs,
   type SidechatSubmitKey,
   type SidechatTabsMode,
 } from '../prefs-shared.ts'
 
 export {
+  CLUE_PREFS_ID,
+  CLUE_WINDOW_SURFACE_SETTING,
   EXPLORER_EXCLUDE_DEFAULTS,
   SIDEBAR_PREFS_DEFAULTS,
+  isCluePacksMentionEnabled,
+  isClueSourceEnabled,
+  isClueSourceMentionEnabled,
+  parseClueWindowSurface,
 }
-export type { SidebarPrefs }
+export type { ClueWindowSurface, SidebarPrefs }
 
 /** The settings wire face the preferences need (a subset of the plugin api). */
 export type SidebarSettingsClient = Pick<typeof api, 'settingsGet' | 'settingsUpdate'>
@@ -93,6 +106,11 @@ export function parsePrefs(value: unknown): SidebarPrefs {
     htmlViewerDefaultUnsafe: typeof record.htmlViewerDefaultUnsafe === 'boolean'
       ? record.htmlViewerDefaultUnsafe
       : SIDEBAR_PREFS_DEFAULTS.htmlViewerDefaultUnsafe,
+    clueSourcesEnabled: booleanMapOf(record.clueSourcesEnabled),
+    clueSourcesMentionEnabled: booleanMapOf(record.clueSourcesMentionEnabled),
+    cluePacksMentionEnabled: typeof record.cluePacksMentionEnabled === 'boolean'
+      ? record.cluePacksMentionEnabled
+      : SIDEBAR_PREFS_DEFAULTS.cluePacksMentionEnabled,
     tabsEnabled: booleanMapOf(record.tabsEnabled),
     viewersEnabled: booleanMapOf(record.viewersEnabled),
     pluginSettings: pluginSettingsMapOf(record.pluginSettings),
@@ -154,7 +172,33 @@ function pluginSettingsMapOf(value: unknown): Record<string, Record<string, unkn
       [SIDECHAT_SUBMIT_KEY_SETTING]: parseSidechatSubmitKey(sidechat[SIDECHAT_SUBMIT_KEY_SETTING]),
     }
   }
+  const clues = out[CLUE_PREFS_ID]
+  if (clues !== undefined && CLUE_WINDOW_SURFACE_SETTING in clues) {
+    out[CLUE_PREFS_ID] = {
+      ...clues,
+      [CLUE_WINDOW_SURFACE_SETTING]: parseClueWindowSurface(clues[CLUE_WINDOW_SURFACE_SETTING]),
+    }
+  }
   return out
+}
+
+/** Active clue window surface preference (updated by live store consumers; defaults to 'sidebar'). */
+let activeClueWindowSurface: ClueWindowSurface = 'sidebar'
+
+/** Read the configured clue window presentation from parsed preferences. */
+export function clueWindowSurfaceOf(prefs: SidebarPrefs): ClueWindowSurface {
+  return parseClueWindowSurface(prefs.pluginSettings[CLUE_PREFS_ID]?.[CLUE_WINDOW_SURFACE_SETTING])
+}
+
+/** Sync the live clue window surface preference for callers without direct store access. */
+export function syncClueWindowSurface(prefs: SidebarPrefs): ClueWindowSurface {
+  activeClueWindowSurface = clueWindowSurfaceOf(prefs)
+  return activeClueWindowSurface
+}
+
+/** Current preferred clue window surface ('sidebar' by default). */
+export function preferredClueWindowSurface(): ClueWindowSurface {
+  return activeClueWindowSurface
 }
 
 /**

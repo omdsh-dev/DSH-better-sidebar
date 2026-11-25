@@ -29,6 +29,8 @@ import { builtinTabs } from '../src/client/builtins/tabs.tsx'
 import { registerBuiltins } from '../src/client/builtins/index.ts'
 import { parkSidechatReopen } from '../src/client/SideChatView.tsx'
 import { terminalInstanceOf } from '../src/client/terminal-client.ts'
+import { orderGuideEntries } from '../src/client/native/guide-layout.ts'
+import { zh, en } from '../src/client/locales.ts'
 
 function setup(): { service: ReturnType<typeof createBetterSidebarService>; store: ReturnType<typeof createSidebarStore>; dispose: () => void } {
   const store = createSidebarStore()
@@ -38,10 +40,36 @@ function setup(): { service: ReturnType<typeof createBetterSidebarService>; stor
 }
 
 describe('built-in tab registrations', () => {
-  it('registers the 6 built-in tabs (the host owns the right-sidebar terminal and browser)', () => {
+  it('exchanges the default chat and host terminal positions without overriding saved order', () => {
     const { service } = setup()
+    // The host-owned New terminal guide is order 20; it is not terminal-bottom.
+    const entries = [
+      ...service.getTabs().filter(tab => !tab.hidden && !tab.bottomOnly)
+        .map(tab => ({ key: tab.id, order: tab.order ?? 100 })),
+      { key: 'terminal', order: 20 },
+    ].sort((a, b) => a.order - b.order)
+    expect(orderGuideEntries(entries, []).map(entry => entry.key))
+      .toEqual(['editor', 'sidechat', 'git', 'clues', 'subagent', 'terminal'])
+    const saved = ['editor', 'terminal', 'git', 'clues', 'subagent', 'sidechat']
+    expect(orderGuideEntries(entries, saved).map(entry => entry.key)).toEqual(saved)
+  })
+
+  it('describes the context hub directly and marks only Clues as beta', () => {
+    const { service } = setup()
+    expect((service.getTab('clues')!.title as () => string)()).toBe(en.clueTabTitle)
+    expect((service.getTab('clues')!.description as () => string)()).toBe('A context hub for local files, Feishu and GitHub')
+    expect((service.getTab('sidechat')!.title as () => string)()).toBe('Side Chat')
+    expect([zh.clueTabTitle, en.clueTabTitle]).toEqual(['线索收集(beta)', 'Clues (beta)'])
+    expect(zh.guideDescClues).toBe('本地文件、飞书与 GitHub 的上下文信息中心')
+    expect(zh.sideChat).toBe('侧边对话')
+  })
+
+  it('registers the 7 built-in tabs (the host owns the right-sidebar terminal and browser)', () => {
+    const { service } = setup()
+    // S9 adds the clue collection page: the pack library and the multi-source
+    // browser are one visible, single-instance native tab type.
     expect(service.getTabs().map(t => t.id).sort()).toEqual(
-      ['diff', 'editor', 'git', 'sidechat', 'subagent', 'terminal-bottom'],
+      ['clues', 'diff', 'editor', 'git', 'sidechat', 'subagent', 'terminal-bottom'],
     )
   })
 
@@ -137,10 +165,10 @@ describe('built-in tab registrations', () => {
     }
   })
 
-  it('the side chat tab sits between tasks and the removed terminal slot in the + menu', () => {
+  it('the side chat tab follows Files in the default menu', () => {
     const { service } = setup()
     const sidechat = service.getTab('sidechat')
-    expect(sidechat?.order).toBe(35)
+    expect(sidechat?.order).toBe(15)
     expect(sidechat?.hidden).not.toBe(true)
   })
 

@@ -13,11 +13,13 @@
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Context } from '../src/context-types.ts'
+import { insertClueSelectionReference } from '../src/client/clues/insert.ts'
 import {
   appendText,
   appendToDraft,
   foldClipboardOffset,
   insertDraftReference,
+  insertReferenceOrText,
 } from '../src/client/conversation-draft.ts'
 
 afterEach(() => {
@@ -139,6 +141,7 @@ function composerCtx(options: {
   accept?: boolean
   /** Apply the edit, then throw — the host's own update listeners failing. */
   throwAfterApply?: boolean
+  throwAfterSeparator?: boolean
   withConversation?: boolean
 } = {}) {
   let draft = options.draft ?? ''
@@ -176,6 +179,7 @@ function composerCtx(options: {
     emit: (name: string, payload: unknown): void => {
       emitted.push({ name, payload })
       bump()
+      if (options.throwAfterSeparator) throw new Error('separator listener failed after applying')
     },
   }
   const ctx = {
@@ -187,6 +191,30 @@ function composerCtx(options: {
   } as unknown as Context
   return { ctx, emitted, setDrafts, chipInserts }
 }
+
+describe('clue selection provenance', () => {
+  it('sends the stable source token and exact excerpt together in one chip', () => {
+    const fake = composerCtx()
+    expect(insertClueSelectionReference(fake.ctx, 's1', { clueId: 'c1', selection: 'Selected paragraph.\nSecond line.' })).toBe(true)
+    expect(fake.chipInserts).toEqual([{ ref: {
+      source: 'reference', ref: '[[dsh-clue:c1]]\n\nSelected paragraph.\nSecond line.',
+      label: 'Selected paragraph.', clipboardText: '[[dsh-clue:c1]]',
+    }, span: { draftRev: 0, start: 0, end: 0 } }])
+    expect(fake.setDrafts).toEqual([])
+  })
+  it('keeps provenance and the excerpt when only plain draft insertion is available', () => {
+    const fake = composerCtx({ withChipChannel: false })
+    expect(insertClueSelectionReference(fake.ctx, 's1', { clueId: 'c1', selection: 'Quoted text' })).toBe(true)
+    expect(fake.setDrafts).toEqual(['[[dsh-clue:c1]]\n\nQuoted text'])
+  })
+  it('does not modify the draft for an invalid source or an empty selection', () => {
+    const fake = composerCtx()
+    expect(insertClueSelectionReference(fake.ctx, 's1', { clueId: '', selection: 'Text' })).toBe(false)
+    expect(insertClueSelectionReference(fake.ctx, 's1', { clueId: 'c1', selection: '  ' })).toBe(false)
+    expect(fake.chipInserts).toEqual([])
+    expect(fake.setDrafts).toEqual([])
+  })
+})
 
 describe('insertDraftReference', () => {
   it('hands the host one chip carrying the label and the model text apart', () => {
@@ -283,22 +311,22 @@ describe('insertDraftReference', () => {
   })
 
   it('offsets past a command chip, which never appears in occurrences', () => {
-    // '/goal ' is a command chip: 6 draft characters, 1 detect character.
+    // '/goal' is one command chip; the trailing separator is one text node.
     const fake = composerCtx({ draft: '/goal ', phase: 'claimed' })
     insertDraftReference(fake.ctx, 's1', { label: 'a', text: 'a' })
-    expect((fake.chipInserts[0]?.span as { start: number }).start).toBe(1)
+    expect((fake.chipInserts[0]?.span as { start: number }).start).toBe(2)
   })
 
   it('adds both the command chip and reference chips to the offset', () => {
-    // '/goal ' (1 detect) + chip 'docs/a.md:12' (1 detect) → append at 2.
+    // Command chip + separator + reference chip occupy three detect positions.
     const fake = composerCtx({
       draft: '/goal docs/a.md:12',
       phase: 'claimed',
       occurrences: [{ offset: 6, length: 12 }],
     })
     insertDraftReference(fake.ctx, 's1', { label: 'b', text: 'b' })
-    // 2 folded positions + the reserved separator space.
-    expect((fake.chipInserts[0]?.span as { start: number }).start).toBe(3)
+    // 3 folded positions + the reserved separator space.
+    expect((fake.chipInserts[0]?.span as { start: number }).start).toBe(4)
   })
 
   it('reports false while the submission is frozen', () => {
@@ -370,7 +398,59 @@ describe('appendToDraft on a draft that already carries chips', () => {
     expect(fake.setDrafts).toEqual([])
     expect(fake.emitted).toHaveLength(1)
     expect(fake.emitted[0]?.name).toBe('slash/input-insert-text')
-    // '/goal ' folds to one detect character; nothing follows it.
-    expect((fake.emitted[0]?.payload as { span: { start: number } }).span.start).toBe(1)
+    // The command chip and its independently stored space occupy two positions.
+    expect((fake.emitted[0]?.payload as { span: { start: number } }).span.start).toBe(2)
   })
+})
+it.each(['adjudicating', 'submitting'] as const)('refuses plain and reference writes while %s', phase => {
+  const fake = composerCtx({ draft: 'existing draft', phase })
+  expect(appendToDraft(fake.ctx, 's1', 'new text')).toBe(false)
+  expect(insertDraftReference(fake.ctx, 's1', { label: 'selection', text: 'selected text' })).toBe(false)
+  expect(fake.setDrafts).toEqual([])
+  expect(fake.emitted).toEqual([])
+  expect(fake.chipInserts).toEqual([])
+})
+
+it('refuses to flatten existing chips when the host has no revision', () => {
+  vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+  const fake = composerCtx({ draft: 'a.md', occurrences: [{ offset: 0, length: 4 }], draftRev: undefined })
+  expect(appendToDraft(fake.ctx, 's1', 'new text')).toBe(false)
+  expect(fake.setDrafts).toEqual([])
+  expect(fake.emitted).toEqual([])
+})
+
+it('appends after the command separator in the host detect projection', () => {
+  // RC CommandChipNode.getTextContent() is token.trimEnd(); insertCommand
+  // appends the trailing separator as its own text node (client.js:14143/14776).
+  let draft = '/goal ', detect = '\uFFFC ', rev = 1
+  const setDraft = vi.fn()
+  const input = {
+    state: { getSnapshot: () => ({ draft, draftRev: rev, phase: 'claimed', claim: { token: '/goal ' }, occurrences: [] }) },
+    setDraft,
+  }
+  const actx = { emit: (_name: string, payload: { text: string; span: { start: number; end: number; draftRev: number } }) => {
+    expect(payload.span).toEqual({ start: detect.length, end: detect.length, draftRev: rev })
+    draft += payload.text; detect += payload.text; rev++
+  } }
+  const ctx = { sessions: { scope: () => actx }, get: () => ({ input: { for: () => input } }) } as unknown as Context
+  expect(appendToDraft(ctx, 's1', 'X')).toBe(true)
+  expect(draft).toBe('/goal X')
+  expect(detect).toBe('\uFFFC X')
+  expect(setDraft).not.toHaveBeenCalled()
+})
+
+it('does not report a reference inserted when only its separator was applied before an exception', () => {
+  vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+  const fake = composerCtx({ draft: 'hello', throwAfterSeparator: true })
+  expect(insertDraftReference(fake.ctx, 's1', { label: 'selection', text: 'payload' })).toBe(false)
+  expect(fake.chipInserts).toEqual([])
+})
+
+it('never duplicates the plain payload after a chip was applied and a host listener threw', () => {
+  vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+  const fake = composerCtx({ draft: 'hello ', throwAfterApply: true })
+  expect(insertReferenceOrText(fake.ctx, 's1', { label: 'selection', text: 'payload' })).toBe(true)
+  expect(fake.chipInserts).toHaveLength(1)
+  expect(fake.emitted).toEqual([])
+  expect(fake.setDrafts).toEqual([])
 })

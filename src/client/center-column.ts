@@ -1,15 +1,10 @@
 /**
- * Anchor selectors for the DSH AppFrame conversation slot host, newest first:
- *
- * - DSH 0.1.5-alpha.2 replaced the root `conversation` slot with a root-scoped
- *   keyed `main` slot, so the conversation renders under `main.conversation`
- *   (ConversationPanel -> `renderSlot('main.conversation')`);
- * - alpha.1 and earlier spell the same host `conversation`.
- *
- * Both keys are accepted deliberately so one build spans the alpha.1 → alpha.2
- * boundary; only one exists in any given host.
+ * Anchor selector for the DSH AppFrame conversation slot host: the conversation
+ * renders under the root-scoped keyed `main` slot (ConversationPanel ->
+ * `renderSlot('main.conversation')`), which the slot host marks with
+ * `data-slot="main.conversation"`.
  */
-const CENTER_COLUMN_SELECTOR = '#root [data-slot="main.conversation"], #root [data-slot="conversation"]'
+const CENTER_COLUMN_SELECTOR = '#root [data-slot="main.conversation"]'
 
 /** Match Sidebar's existing last-resort retry cadence (issue #248). */
 export const CENTER_COLUMN_REVALIDATE_MS = 1500

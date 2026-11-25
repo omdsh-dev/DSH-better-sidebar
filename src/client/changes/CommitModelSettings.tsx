@@ -15,11 +15,10 @@
  * (`pluginSettings.git.commitModel`); empty/absent means "follow".
  */
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { Menu } from '@deepseek-ai/dsh-client-ui-primitives'
 import { api, type GitModelCatalog } from '../api.ts'
 import { t } from '../locales.ts'
 import type { SidebarSettingsRenderProps } from '../service.ts'
-import { Notice } from '../ui/index.ts'
+import { Menu, Notice, SettingRow, TextInput, ToggleSwitch } from '../ui/index.ts'
 import css from './changes.module.css'
 
 /** The plugin-owned setting key (mirrored host-side in src/index.ts). */
@@ -173,26 +172,18 @@ export function CommitModelSettings(props: SidebarSettingsRenderProps) {
 
   return (
     <div className={css.commitModel}>
-      <div className={css.commitModelRow}>
-        <span className={css.commitModelTitle}>{t('commitModelTitle')}</span>
-        <label className={css.commitModelSwitch}>
-          <input
-            type="checkbox"
-            checked={follow}
-            onChange={(event) => {
-              const next = event.currentTarget.checked
-              setFollow(next)
-              if (next) {
-                setQuery('')
-                setInvalid(false)
-                updatePluginSetting(COMMIT_MODEL_SETTING_KEY, '')
-              }
-            }}
-          />
-          <span>{t('commitModelFollow')}</span>
-        </label>
-      </div>
-      <div className={css.commitModelDesc}>{t('commitModelDesc')}</div>
+      <SettingRow label={t('commitModelTitle')}>
+        <span>{t('commitModelFollow')}</span>
+        <ToggleSwitch aria-label={t('commitModelFollow')} checked={follow}
+          onChange={next => {
+            setFollow(next)
+            if (next) {
+              setQuery('')
+              setInvalid(false)
+              updatePluginSetting(COMMIT_MODEL_SETTING_KEY, '')
+            }
+          }} />
+      </SettingRow>
       {/* The candidate menu is PORTALLED (the primitives Menu), like every
           other dropdown in the side card: this panel renders inside the
           settings modal, whose body clips overflow, so an in-flow or absolute
@@ -206,12 +197,13 @@ export function CommitModelSettings(props: SidebarSettingsRenderProps) {
           open={open && !follow && matches.length > 0}
           className={css.commitModelMenuRoot}
           anchor={(
-            <input
+            <TextInput
               ref={inputRef}
               className={css.commitModelInput}
               type="text"
               value={query}
               disabled={follow}
+              aria-invalid={invalid || undefined}
               placeholder={t('commitModelSearchPlaceholder')}
               aria-label={t('commitModelSearchPlaceholder')}
               onChange={(event) => {

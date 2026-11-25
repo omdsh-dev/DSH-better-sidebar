@@ -37,11 +37,12 @@ function releaseDraftImages(images: readonly DraftImage[]): void {
   images.forEach(image => URL.revokeObjectURL(image.preview))
 }
 
-/**
- * Drop every saved draft and release the previews they kept alive. The app has
- * no reason to call this (a saved draft is bounded and cheap); it exists so a
- * test can start from a clean cache between cases.
- */
+/** Seed a NEW thread before mounting its composer; never sends a message. */
+export function seedSidechatDraft(childId: string, text: string): void {
+  saveDraft({ childId, text, images: [], revision: 0, active: false })
+}
+
+/** Release cached drafts and image previews; used to isolate component tests. */
 export function clearSavedSidechatDrafts(): void {
   for (const draft of savedDrafts.values()) releaseDraftImages(draft.images)
   savedDrafts.clear()

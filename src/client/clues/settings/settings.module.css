@@ -1,0 +1,609 @@
+/**
+ * S8 clue settings surfaces: the source table inside the Side card section and
+ * the source configuration window (CLI dependency + connection/authorization).
+ *
+ * Skin contract: every paint rides a --dsw-* / --ds-* token (no literal
+ * colors), and every container is `min-width: 0` + wrapping so the 320 / 390px
+ * narrow viewports never overflow horizontally. The wide form is a compact
+ * flex row (identity left, status middle, controls right); below the repo's
+ * source-container breakpoint the row stacks and controls wrap under the text.
+ */
+
+.sources {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-sidebar-space-3);
+  min-width: 0;
+  width: 100%;
+  max-width: var(--ds-sidebar-content-width);
+  container: sidebar-clue-sources / inline-size;
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.surfaceSettingRow {
+  padding-top: 2px;
+}
+
+.surfaceSegmented {
+  display: inline-flex;
+  flex: none;
+  padding: 2px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-2);
+}
+
+.surfaceSegment {
+  min-width: 68px;
+  padding: 3px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: 12px;
+  line-height: 18px;
+  cursor: pointer;
+}
+
+.surfaceSegment:hover {
+  color: var(--dsw-alias-label-primary);
+}
+
+.surfaceSegmentOn {
+  background: var(--dsw-alias-bg-layer-3);
+  color: var(--dsw-alias-label-primary);
+  font-weight: 500;
+}
+
+.surfaceSegment:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 2px;
+}
+
+.loading {
+  padding: var(--ds-sidebar-space-2) 0;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* Batch controls: a scope line plus the four explicit actions. */
+.batchBar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 0;
+  border-top: 1px solid var(--dsw-alias-border-l1);
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
+
+.batchScope {
+  flex: 1 1 220px;
+  min-width: 0;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--dsw-alias-label-tertiary);
+  overflow-wrap: anywhere;
+}
+
+.batchButtons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ds-sidebar-space-2);
+}
+
+.smallButton {
+  composes: button from "../../ui/kit.module.css";
+  flex: none;
+  min-width: 0;
+  max-width: 100%;
+  /* One 28px control scale with the switch and the group select. */
+  min-height: 28px;
+  height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.sourceList {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  min-width: 0;
+}
+
+/* One compact settings row: identity, state, controls. */
+.sourceRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ds-sidebar-space-2) var(--ds-sidebar-space-3);
+  min-width: 0;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
+
+.sourceIdentity {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.sourceIcon {
+  display: inline-flex;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  align-items: center;
+  justify-content: center;
+
+  color: var(--dsw-alias-label-secondary);
+}
+
+.sourceText {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.sourceName {
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--dsw-alias-label-primary);
+  overflow-wrap: anywhere;
+}
+
+/* Resting ready state stays quiet ink; actionable states carry a subtle pill. */
+.status {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  max-width: 100%;
+  padding: 1px 7px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--ds-sidebar-radius);
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+  line-height: 16px;
+  overflow-wrap: anywhere;
+}
+
+.status[data-kind='ready'] {
+  padding: 0 2px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.status[data-kind='missing'],
+.status[data-kind='incompatible'],
+.status[data-kind='auth-expired'],
+.status[data-kind='request-failed'],
+.status[data-kind='unavailable'] {
+  border-color: var(--dsw-alias-state-warn-primary);
+  color: var(--dsw-alias-state-warn-primary);
+}
+
+.sourceControls {
+  display: flex;
+  flex-wrap: nowrap;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+}
+
+/* The sanitized reason of a non-ready state, readable on the row itself. */
+.sourceDetail {
+  flex: 1 1 100%;
+  margin: 0;
+  padding: 0;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--dsw-alias-label-tertiary);
+  overflow-wrap: anywhere;
+}
+
+/* ── Native disclosures (secondary preferences / diagnostics) ───────────── */
+
+.advanced {
+  min-width: 0;
+  border-top: 1px solid var(--dsw-alias-border-l1);
+  padding-top: 2px;
+}
+
+.advancedSummary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--ds-sidebar-space-1) var(--ds-sidebar-space-2);
+  min-height: var(--ds-sidebar-control-height);
+  padding: 0;
+  list-style: none;
+  cursor: pointer;
+  user-select: none;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-secondary);
+  overflow-wrap: anywhere;
+}
+
+.advancedSummary::-webkit-details-marker {
+  display: none;
+}
+
+.advancedSummary::before {
+  content: '›';
+  display: inline-block;
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 14px;
+  line-height: 1;
+}
+
+.advanced[open] > .advancedSummary::before {
+  transform: rotate(90deg);
+}
+
+.advancedSummary:hover {
+  color: var(--dsw-alias-label-primary);
+}
+
+.advancedSummary:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 2px;
+  border-radius: var(--ds-sidebar-radius);
+}
+
+.disclosureMeta {
+  min-width: 0;
+  margin-left: auto;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  font-weight: 400;
+  text-align: end;
+  overflow-wrap: anywhere;
+}
+
+.advancedBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-sidebar-space-2);
+  min-width: 0;
+  padding: var(--ds-sidebar-space-1) 0 var(--ds-sidebar-space-2);
+}
+
+.advancedRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  padding: var(--ds-sidebar-space-2) 0;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
+
+.advancedLabel {
+  flex: 1 1 180px;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-secondary);
+  overflow-wrap: anywhere;
+}
+
+/* The pack row's identity inside the disclosure (icon + name + one-line desc). */
+.packIdentity {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 200px;
+  min-width: 0;
+}
+
+/* Nested inside the advanced body, the batch block needs no outer rules. */
+.advanced .batchBar {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+/* The local pack library: same row geometry, no source switch. */
+
+.addSource {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+/* ── Source configuration window body (S6 window content) ───────────────── */
+
+.config {
+  background: transparent;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-sidebar-space-4);
+  min-width: 0;
+  width: 100%;
+  max-width: calc(var(--ds-sidebar-content-width) + var(--ds-sidebar-gutter) * 2);
+  margin-inline: auto;
+  height: 100%;
+  max-height: 100%;
+  padding: var(--ds-sidebar-gutter);
+  box-sizing: border-box;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  container: sidebar-clue-config / inline-size;
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.configSection {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.configHeading {
+  margin: 0;
+  padding-bottom: var(--ds-sidebar-space-2);
+  border-bottom: 1px solid var(--dsw-alias-border-l2);
+  font-size: 11px;
+  line-height: 18px;
+  font-weight: 500;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.configMono {
+  font-family: var(--ds-font-family-code, monospace);
+  font-size: 11px;
+  line-height: 16px;
+  overflow-wrap: anywhere;
+}
+
+.configActions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--ds-sidebar-space-2);
+}
+
+.configInputRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ds-sidebar-space-2);
+  min-width: 0;
+}
+
+.configInput {
+  composes: input from "../../ui/kit.module.css";
+  flex: 1 1 200px;
+  min-width: 0;
+  font-family: var(--ds-font-family-code, monospace);
+}
+
+.configHint {
+  margin: 0;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--dsw-alias-label-tertiary);
+  overflow-wrap: anywhere;
+}
+
+.configError {
+  margin: 0;
+  padding: var(--ds-sidebar-space-2);
+  border: 1px solid var(--dsw-alias-state-warn-primary);
+  border-radius: var(--ds-sidebar-radius);
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--dsw-alias-state-warn-primary);
+  overflow-wrap: anywhere;
+}
+
+.dependencyBlock {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-sidebar-space-2);
+  min-width: 0;
+  padding: 4px 0;
+}
+
+.dependencyHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ds-sidebar-space-2) var(--ds-sidebar-space-3);
+  min-width: 0;
+}
+
+.dependencyIdentity {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 160px;
+  min-width: 0;
+}
+
+.dependencyName {
+  min-width: 0;
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 500;
+  color: var(--dsw-alias-label-primary);
+  overflow-wrap: anywhere;
+}
+
+.planDetails {
+  min-width: 0;
+}
+
+.plan {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-sidebar-space-2);
+  padding: var(--ds-sidebar-space-3) 0;
+  border: 0;
+  border-top: 1px solid var(--dsw-alias-border-l1);
+  background: transparent;
+  min-width: 0;
+}
+
+.planActions {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 11px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-secondary);
+  overflow-wrap: anywhere;
+}
+
+.progressTrack {
+  height: 4px;
+  width: 100%;
+  border-radius: 6px;
+  background: var(--dsw-alias-border-l1);
+  overflow: hidden;
+}
+
+.progressFill {
+  height: 100%;
+  border-radius: 6px;
+  background: var(--dsw-alias-button-primary-fill);
+}
+
+.qrBlock {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--ds-sidebar-space-2);
+  min-width: 0;
+}
+
+/* The QR is painted through the current theme tokens; in the host's dark
+   theme the same SVG is inverted so a scanner still sees dark modules on a
+   light surface (a scanned QR must not be light-on-dark). */
+.qrImage {
+  width: 160px;
+  height: 160px;
+  padding: 8px;
+  box-sizing: border-box;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--ds-sidebar-radius);
+  background: var(--dsw-alias-bg-base);
+  color: var(--dsw-alias-label-primary);
+}
+
+:global(body[data-ds-dark-theme]) .qrImage {
+  filter: invert(1);
+}
+
+.rowError {
+  flex: 1 1 100%;
+  margin: 0;
+  padding: 0;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--dsw-alias-state-error-primary);
+  overflow-wrap: anywhere;
+}
+
+.authPrompt {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-sidebar-space-2);
+  padding: var(--ds-sidebar-space-3) 0;
+  border: 0;
+  border-top: 1px solid var(--dsw-alias-border-l1);
+  background: transparent;
+  min-width: 0;
+}
+
+.authLink {
+  color: var(--dsw-alias-label-primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  overflow-wrap: anywhere;
+}
+
+/* Narrow form: the row stacks; controls wrap under the identity so a 320px
+   viewport never scrolls sideways. */
+@container sidebar-clue-sources (max-width: 420px) {
+  .batchBar {
+    align-items: flex-start;
+  }
+
+  .sourceRow {
+    align-items: flex-start;
+  }
+
+  .sourceIdentity {
+    flex-basis: 100%;
+  }
+
+  .sourceControls {
+    width: 100%;
+  }
+
+  .advancedRow {
+    align-items: flex-start;
+  }
+}
+
+.configSection + .configSection { padding-top: var(--ds-sidebar-space-2); }
+@media (pointer: coarse) {
+  .smallButton,
+  .configInput,
+  .advancedSummary {
+    min-height: 44px;
+  }
+}
+
+/* Permission choices share the settings panel; only native inputs own a fill. */
+.permissionChoices {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+.permissionChoices legend,
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+.permissionGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 2px 12px; }
+.permissionChoice { display: flex; align-items: center; min-height: 28px; gap: 8px; color: var(--dsw-alias-label-primary); cursor: pointer; }
+.permissionChoice input { margin: 0; accent-color: var(--dsw-alias-state-business-primary); }
+.permissionGranted { margin-inline-start: auto; color: var(--dsw-alias-label-tertiary); font-size: 11px; }
+@media (pointer: coarse) { .permissionChoice, .surfaceSegment { min-height: 44px; } }
+
+@container sidebar-clue-config (max-width: 480px) {
+  .configInputRow { align-items: stretch; }
+  .configInput { flex-basis: 100%; }
+  .permissionGrid { grid-template-columns: 1fr; }
+}

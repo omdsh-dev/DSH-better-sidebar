@@ -69,8 +69,8 @@ function routeInput(container: HTMLElement): HTMLInputElement {
   return input
 }
 
-function followSwitch(container: HTMLElement): HTMLInputElement {
-  const box = container.querySelector<HTMLInputElement>('input[type="checkbox"]')
+function followSwitch(container: HTMLElement): HTMLButtonElement {
+  const box = container.querySelector<HTMLButtonElement>('button[role="switch"]')
   if (box === null) throw new Error('the follow switch is missing')
   return box
 }
@@ -81,7 +81,7 @@ describe('CommitModelSettings', () => {
   it('follows the conversation by default and disables the route box while it does', async () => {
     const { container, unmount } = await mount({})
     try {
-      expect(followSwitch(container).checked).toBe(true)
+      expect(followSwitch(container).getAttribute('aria-checked')).toBe('true')
       expect(routeInput(container).disabled).toBe(true)
     } finally {
       unmount()
@@ -93,7 +93,7 @@ describe('CommitModelSettings', () => {
     try {
       const box = followSwitch(container)
       await act(async () => { box.click() })
-      expect(box.checked).toBe(false)
+      expect(box.getAttribute('aria-checked')).toBe('false')
       expect(routeInput(container).disabled).toBe(false)
     } finally {
       unmount()
@@ -128,7 +128,7 @@ describe('CommitModelSettings', () => {
       // A stored route means the switch starts OFF; the route is displayed,
       // but it is NOT projected into the search box (which would then filter
       // the menu down to the already-selected model).
-      expect(followSwitch(container).checked).toBe(false)
+      expect(followSwitch(container).getAttribute('aria-checked')).toBe('false')
       expect(container.textContent).toContain('Current: openai/gpt-4o')
       expect(routeInput(container).value).toBe('')
     } finally {

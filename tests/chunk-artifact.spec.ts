@@ -10,6 +10,7 @@
  */
 import { existsSync, readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
+import * as React from 'react'
 // Browser globals first: chunk bodies probe `self`/`document` at evaluation
 // (CodeMirror's UA probe).
 import './browser-globals.ts'
@@ -52,15 +53,13 @@ describe.skipIf(!chunksBuilt)('built chunk artifacts', () => {
   it('each chunk factory materializes through a require over the platform externals', () => {
     const registry = g.__dshChunks__ as Record<string, unknown>
     /**
-     * Externals whose members are CALLED while a chunk module is evaluated, so
-     * a bare marker object is not enough. The editor chunk memoizes its JSONL
-     * record row at module scope, which means `react.memo` has to be callable
-     * the moment the factory runs. Everything else stays a marker: the point of
-     * this case is that the REQUIRES resolve, not that a stub behaves like
-     * React.
+     * Module evaluation calls React.memo and creates bundle-local Contexts.
+     * Use the real pinned public React surface, so this checks platform
+     * resolution instead of a hand-written subset that drifts on new exports.
+     * Other externals remain markers: no component is rendered in this test.
      */
     const callable: Record<string, unknown> = {
-      react: { memo: (component: unknown) => component },
+      react: React,
     }
     const table = new Map<string, unknown>(CHUNK_EXTERNALS.map(spec => [spec, callable[spec] ?? { spec }]))
     for (const name of CHUNKS) {

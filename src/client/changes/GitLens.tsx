@@ -12,7 +12,7 @@ import {
   IconBranchOutlineRegular, IconCheckOutlineRegular, IconChevronRightOutlineRegular,
   IconCloseFillRegular, IconCodeOutlineRegular, IconCopyOutlineRegular, IconEllipsisOutlineRegular,
   IconPlusOutlineRegular,
-  IconRefreshOutlineRegular, IconSparkleRegular, IconTrashOutlineRegular, Menu, writeClipboard,
+  IconRefreshOutlineRegular, IconSparkleRegular, IconTrashOutlineRegular, writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context } from '../../context-types.ts'
 import type { GitLineCounts, GitLogEntry, GitStatusEntry, GitStatusResult, GitWorktree, SessionScope } from '../api.ts'
@@ -27,7 +27,7 @@ import type { SidebarDiffRef } from '../state.ts'
 import { buildRepositoryLabels } from './repo-labels.ts'
 import { RepoSwitcher } from './RepoSwitcher.tsx'
 import {
-  ConfirmDialog, IconButton, Notice, StatusBadge, invalidateGitStatus, statusOfXY,
+  ActionButton, ConfirmDialog, IconButton, Menu, Notice, StatusBadge, TextArea, WorkbenchSection, invalidateGitStatus, statusOfXY,
   useGitStatus, type GitFileStatus, type GitTone, type StatusTone,
 } from '../ui/index.ts'
 import { buildChangeTree, sumLineCounts, type ChangeDir, type ChangeFile, type ChangeNode } from './change-tree.ts'
@@ -235,8 +235,8 @@ function PlusMinus(props: { additions: number; deletions: number; note?: string 
   return (
     <span className={css.lineCounts} data-lines={props.note ?? 'count'}
       data-added={props.additions} data-deleted={props.deletions}>
-      {props.additions > 0 && <span className={diffCss.statAdd}>+{props.additions}</span>}
-      {props.deletions > 0 && <span className={diffCss.statDel}>−{props.deletions}</span>}
+      {props.additions > 0 && <span className={diffCss.statAdd}>+{props.additions.toLocaleString()}</span>}
+      {props.deletions > 0 && <span className={diffCss.statDel}>−{props.deletions.toLocaleString()}</span>}
     </span>
   )
 }
@@ -1106,19 +1106,17 @@ export function GitLens(props: GitLensProps) {
     const totals = staged ? stagedTotal : merge ? undefined : unstagedTotal
     return (
       <div className={css.group} data-group={id}>
-        <div className={`${css.scmHeader} ${css.groupHeader}`}>
-          <button type="button" className={css.scmDisclosure} aria-expanded={open} aria-label={`${label} (${rows.length})`} onClick={() => { toggleDir(key) }}>
-            <span className={css.chevron} data-open={open ? 'true' : undefined} aria-hidden="true"><IconChevronRightOutlineRegular size={12} /></span>
-            {label}
+        <WorkbenchSection title={label} open={open} onOpenChange={() => { toggleDir(key) }}
+          count={<span data-count={rows.length}>{rows.length.toLocaleString()}</span>}
+          actions={<>
             {totals !== undefined && totals.files > 0 && <PlusMinus additions={totals.additions} deletions={totals.deletions} note="group" />}
-          </button>
-          <IconButton className={css.headerAction} size="sm" disabled={busy || suggesting}
-            label={staged ? t('unstageAll') : t('stageAll')}
-            icon={staged ? MINUS_ICON : <IconPlusOutlineRegular size={12} />}
-            onClick={() => { stageAll(staged, merge) }} />
-          <span className={css.countPill} data-count={rows.length}>{rows.length}</span>
-        </div>
-        {open && renderTree(nodes, staged, merge)}
+            <IconButton className={css.headerAction} size="sm" disabled={busy || suggesting}
+              label={staged ? t('unstageAll') : t('stageAll')}
+              icon={staged ? MINUS_ICON : <IconPlusOutlineRegular size={12} />}
+              onClick={() => { stageAll(staged, merge) }} />
+          </>}>
+          {open && renderTree(nodes, staged, merge)}
+        </WorkbenchSection>
       </div>
     )
   }
@@ -1155,15 +1153,8 @@ export function GitLens(props: GitLensProps) {
 
         {isRepo && (
           <section className={css.changesSection} data-scm-section="changes">
-            <div className={css.scmHeader}>
-              <button type="button" className={css.scmDisclosure} aria-expanded={changesOpen}
-                onClick={() => { setChangesOpen(open => !open) }}>
-                <span className={css.chevron} data-open={changesOpen ? 'true' : undefined} aria-hidden="true">
-                  <IconChevronRightOutlineRegular size={12} />
-                </span>
-                {t('gitChanges')}
-              </button>
-              <div className={css.scmActions}>
+            <WorkbenchSection title={t('gitChanges')} open={changesOpen} onOpenChange={setChangesOpen}
+              actions={<div className={css.scmActions}>
                 <IconButton size="sm" icon={<IconCheckOutlineRegular size={14} />} label={t('commit')}
                   disabled={!canCommit} onClick={commit} />
                 <IconButton size="sm" icon={<IconRefreshOutlineRegular size={14} />} label={t('refresh')}
@@ -1198,12 +1189,11 @@ export function GitLens(props: GitLensProps) {
                     else if (id.startsWith('repo:')) chooseRepo(id.slice(5))
                     else if (id.startsWith('worktree:')) chooseWorktree(id.slice(9))
                   }} />
-              </div>
-            </div>
+              </div>}>
             {changesOpen && <div data-scm-changes>
               <div className={css.messageBox} data-message-box>
                 <span className={css.commitInputWrap}>
-                  <textarea ref={commitBoxRef} className={css.commitInput}
+                  <TextArea ref={commitBoxRef} className={css.commitInput}
                     placeholder={busy || suggesting ? '' : messagePlaceholder}
                     value={commitMsg} disabled={busy || suggesting} aria-busy={busy || suggesting}
                     data-message-busy={suggesting || committing ? 'true' : undefined}
@@ -1216,14 +1206,12 @@ export function GitLens(props: GitLensProps) {
                         event.preventDefault(); void suggestMessage()
                       }
                     }} />
-                  {(suggesting || committing) && <span className={css.commitBusyText} role="status" aria-live="polite">
+                  {(suggesting || committing) && <Notice kind="loading" tone="inline" className={css.commitBusyText} role="status">
                     {suggesting ? t('generatingCommitMessage') : t('committingMessage')}
-                  </span>}
-                  <button type="button" className={suggesting ? `${css.suggestButton} ${css.suggestBusy}` : css.suggestButton}
-                    aria-label={generateLabel} aria-busy={suggesting} title={generateLabel}
-                    disabled={busy || suggesting || entries.length === 0} onClick={() => { void suggestMessage() }}>
-                    <IconSparkleRegular size={14} />
-                  </button>
+                  </Notice>}
+                  <IconButton size="sm" className={css.suggestButton}
+                    icon={<IconSparkleRegular size={14} />} label={generateLabel} aria-busy={suggesting}
+                    disabled={busy || suggesting || entries.length === 0} onClick={() => { void suggestMessage() }} />
                 </span>
               </div>
               {clean && <Notice kind="empty">{t('changesClean')}</Notice>}
@@ -1231,19 +1219,13 @@ export function GitLens(props: GitLensProps) {
               {renderGroup('staged', t('gitStagedChanges'), stagedEntries, stagedTree, true)}
               {renderGroup('unstaged', t('gitChanges'), unstagedEntries, unstagedTree, false)}
             </div>}
+            </WorkbenchSection>
           </section>
         )}
 
         {isRepo && <section className={graphOpen ? css.graphSection : undefined} data-scm-section="graph">
-          <div className={css.scmHeader}>
-            <button type="button" className={css.scmDisclosure} aria-expanded={graphOpen}
-              onClick={() => { setGraphOpen(open => !open) }}>
-              <span className={css.chevron} data-open={graphOpen ? 'true' : undefined} aria-hidden="true">
-                <IconChevronRightOutlineRegular size={12} />
-              </span>
-              {t('gitGraph')}
-            </button>
-          </div>
+          <WorkbenchSection title={t('gitGraph')} open={graphOpen} onOpenChange={setGraphOpen}
+            className={css.graphWorkbench} bodyClassName={css.graphArea}>
           {graphOpen && <div data-scm-graph className={css.graphArea}>
             <GitGraphSection
               scope={graphScope}
@@ -1257,6 +1239,7 @@ export function GitLens(props: GitLensProps) {
               onContextMenu={openHistoryMenu}
             />
           </div>}
+          </WorkbenchSection>
         </section>}
       </div>
 
@@ -1270,21 +1253,21 @@ export function GitLens(props: GitLensProps) {
         <div className={css.footerRow} data-footer-row>
           <Menu open={branchOpen} onClose={() => { setBranchOpen(false) }} portal compact side="top" autoFocus
             className={css.branchMenu}
-            anchor={<button type="button" className={css.branchButton} aria-haspopup="menu" aria-expanded={branchOpen}
+            anchor={<ActionButton variant="ghost" className={css.branchButton} aria-haspopup="menu" aria-expanded={branchOpen}
               title={`${t('branch')}: ${branchLabel}${branchMarkers}`} disabled={busy || suggesting}
               onClick={() => { setBranchOpen(open => !open) }}>
               <IconBranchOutlineRegular size={14} /><span>{branchLabel}{branchMarkers}</span>
-            </button>}
+            </ActionButton>}
             items={branchNames.length === 0 ? [{ id: 'none', label: t('gitBranchesUnavailable'), disabled: true }]
               : branchNames.map(name => ({ id: name, label: name, disabled: busy || suggesting }))}
             selectedId={branch}
             onSelect={name => { setBranchOpen(false); void checkout(name) }} />
-          <button type="button" className={css.syncButton} aria-label={syncLabel} title={syncLabel}
+          <ActionButton variant="ghost" className={css.syncButton} aria-label={syncLabel} title={syncLabel}
             disabled={!canSync} onClick={sync}>
             <IconRefreshOutlineRegular size={11} />
             <span>{snapshot?.upstream !== undefined && snapshot.ahead !== undefined && snapshot.behind !== undefined
-              ? `${snapshot.behind}↓ ${snapshot.ahead}↑` : syncLabel}</span>
-          </button>
+              ? `${snapshot.behind.toLocaleString()}↓ ${snapshot.ahead.toLocaleString()}↑` : syncLabel}</span>
+          </ActionButton>
         </div>
       </div>}
 

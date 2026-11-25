@@ -15,6 +15,11 @@
  * views the caller hosts (the graph commit's `details` card) sit ahead of
  * both. A read op has no `diff` tab — nothing changed. With one or zero tabs
  * the pane is byte-for-byte the strip-less preview of before.
+ *
+ * Closing the pane is ONE action, not a per-view one: while the strip is up,
+ * its right end carries the pane's close button, so the exit sits on the same
+ * row as the tabs and never moves or disappears with the active view. A
+ * strip-less preview keeps the button in the diff head (its only row).
  */
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import { IconCloseOutlineRegular, IconFolderOpenOutlineRegular, IconRefreshOutlineRegular, IconRightUpOutlineRegular, IconShareOutlineRegular, MarkdownDelegateProvider, MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -43,7 +48,7 @@ import { useMarkdownSurface } from '../use-markdown-surface.ts'
 import { splitMermaidBlocks } from '../mermaid-blocks.ts'
 import { LazyMermaidMarkdown } from '../mermaid-lazy.tsx'
 import { createFrameBatcher } from '../frame-batcher.ts'
-import { Chip, IconButton, Notice, StatusBadge } from '../ui/index.ts'
+import { Chip, IconButton, Notice, StatusBadge, Tabs } from '../ui/index.ts'
 import css from './changes.module.css'
 import diffCss from '../diff/diff.module.css'
 
@@ -124,41 +129,14 @@ export interface PaneTab {
  * the only tab stop, and Left/Right/Home/End move focus AND selection (the
  * standard automatic-activation model). Born as the bottom pane's strip
  * (details / diff). Rendered only when the caller hosts more than one view,
- * so a diff-only preview never grows a strip.
+ * so a diff-only preview never grows a strip. It is the flexible half of the
+ * pane's strip row: the row's own chrome (border, padding, the close button
+ * after it) belongs to the caller, not to the tablist.
  */
 export function PaneTabStrip(props: { tabs: readonly PaneTab[]; active: string; onSelect(id: string): void; className?: string; label?: string }) {
-  const buttons = useRef<(HTMLButtonElement | null)[]>([])
-  const move = (to: number): void => {
-    const count = props.tabs.length
-    if (count === 0) return
-    const index = ((to % count) + count) % count
-    props.onSelect(props.tabs[index]!.id)
-    buttons.current[index]?.focus()
-  }
-  return (
-    <div className={props.className === undefined ? css.paneTabs : `${css.paneTabs} ${props.className}`}
-      role="tablist" aria-label={props.label}>
-      {props.tabs.map((tab, index) => (
-        <button
-          key={tab.id}
-          ref={(node) => { buttons.current[index] = node }}
-          type="button"
-          role="tab"
-          className={css.paneTab}
-          data-active={tab.id === props.active ? 'true' : undefined}
-          aria-selected={tab.id === props.active}
-          tabIndex={tab.id === props.active ? 0 : -1}
-          onClick={() => { props.onSelect(tab.id) }}
-          onKeyDown={(event) => {
-            if (event.key === 'ArrowRight') { event.preventDefault(); move(index + 1) }
-            else if (event.key === 'ArrowLeft') { event.preventDefault(); move(index - 1) }
-            else if (event.key === 'Home') { event.preventDefault(); move(0) }
-            else if (event.key === 'End') { event.preventDefault(); move(props.tabs.length - 1) }
-          }}
-        >{tab.label}</button>
-      ))}
-    </div>
-  )
+  return <Tabs value={props.active} options={props.tabs.map(tab => ({ value: tab.id, label: tab.label }))}
+    onChange={props.onSelect} ariaLabel={props.label ?? t('changesDiffTab')}
+    className={props.className === undefined ? css.paneTabs : `${css.paneTabs} ${props.className}`} />
 }
 
 /** The reading-mode body of one markdown op target: the shared MarkdownText
@@ -528,7 +506,26 @@ export function DiffPane({ target, ctx, scope, height, onHeightCommit, onClose, 
       }}
     />
   )
-  const strip = hasStrip ? <PaneTabStrip tabs={allTabs} active={active} onSelect={onSelectTab ?? (() => {})} /> : null
+  /** The pane's ONE close affordance. While the strip is up it rides the
+   *  strip row's right end (see `strip`), so closing the pane never depends on
+   *  which view is on screen; a strip-less preview keeps it in the diff head,
+   *  its only row. */
+  const closeButton = (
+    <IconButton
+      size="sm"
+      icon={<IconCloseOutlineRegular size={14} />}
+      label={t('changesClosePreview')}
+      onClick={onClose}
+    />
+  )
+  const strip = hasStrip
+    ? (
+      <div className={css.paneStrip}>
+        <PaneTabStrip tabs={allTabs} active={active} onSelect={onSelectTab ?? (() => {})} />
+        {closeButton}
+      </div>
+    )
+    : null
 
   // A caller-hosted view (the graph commit's card) takes over the head AND
   // the body: same frame, same handle, same height behaviour — only the
@@ -671,12 +668,7 @@ export function DiffPane({ target, ctx, scope, height, onHeightCommit, onClose, 
             onClick={() => { setContentRaw(value => !value) }}
           />
         )}
-        <IconButton
-          size="sm"
-          icon={<IconCloseOutlineRegular size={14} />}
-          label={t('changesClosePreview')}
-          onClick={onClose}
-        />
+        {hasStrip ? null : closeButton}
       </div>
       {active === 'content'
         ? (hasContentTab ? contentBody : <PaneEmpty text={t('changesNoContent')} />)

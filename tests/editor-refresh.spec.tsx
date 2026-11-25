@@ -19,10 +19,17 @@ import { allLeaves, createSidebarStore, type SidebarTab } from '../src/client/st
 setupReactAct()
 
 const fsRead = vi.fn()
-vi.mock('../src/client/api.ts', () => ({
-  api: { fsRead: (...args: unknown[]) => fsRead(...args) },
-  mediaUrl: () => '',
-}))
+vi.mock('../src/client/api.ts', () => {
+  class SidebarApiError extends Error {
+    readonly code: string
+    constructor(code: string, message: string) { super(message); this.name = 'SidebarApiError'; this.code = code }
+  }
+  return {
+    api: { fsRead: (...args: unknown[]) => fsRead(...args) },
+    mediaUrl: () => '',
+    SidebarApiError,
+  }
+})
 
 /** One fsRead call counter reset per test. */
 function reads(): number {
@@ -139,6 +146,66 @@ describe('EditorHost refresh (issue #167)', () => {
       click(preview)
       await act(async () => { await Promise.resolve() })
       expect(reads()).toBe(2)
+    } finally {
+      unmount()
+    }
+  })
+
+  it('B: keyboard selection keeps focus on preview across its asynchronous reload', async () => {
+    const { ctx, fileTab } = setup('preview')
+    const { container, unmount } = mount(ctx, fileTab)
+    try {
+      await act(async () => { await Promise.resolve() })
+      const [preview, edit] = [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')]
+      preview!.focus()
+      act(() => { preview!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })) })
+      expect(edit!.getAttribute('aria-selected')).toBe('true')
+      expect(document.activeElement).toBe(edit)
+      let release: (value: { kind: string; content: string; size: number }) => void = () => {}
+      fsRead.mockImplementationOnce(() => new Promise(resolve => { release = resolve }))
+      act(() => { edit!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true })) })
+      expect(reads()).toBe(2)
+      expect(container.querySelector('[role="tab"][aria-selected="true"]')).toBe(preview)
+      expect(document.activeElement).toBe(preview)
+      await act(async () => { release({ kind: 'text', content: 'fresh', size: 5 }); await Promise.resolve() })
+      const selected = container.querySelector<HTMLButtonElement>('[role="tab"][aria-selected="true"]')
+      expect(selected?.textContent).toBe('Preview')
+      expect(document.activeElement).toBe(selected)
+    } finally {
+      unmount()
+    }
+  })
+
+  it('clears the retained toolbar when the reload fails', async () => {
+    const { ctx, fileTab } = setup()
+    const { container, unmount } = mount(ctx, fileTab)
+    try {
+      await act(async () => { await Promise.resolve() })
+      fsRead.mockRejectedValueOnce(new Error('read failed'))
+      click(refreshButton(container)!)
+      await act(async () => { await Promise.resolve() })
+      expect(container.querySelector('[role="tablist"]')).toBeNull()
+      expect(container.querySelector('button[aria-label="Save"]')).toBeNull()
+      expect(container.querySelector('[role="alert"]')?.textContent).toContain('read failed')
+    } finally {
+      unmount()
+    }
+  })
+
+  it('clears the retained toolbar when the same file selects another viewer', async () => {
+    const { ctx, fileTab } = setup()
+    const { container, unmount } = mount(ctx, fileTab)
+    try {
+      await act(async () => { await Promise.resolve() })
+      ctx.betterSidebar.registerFileViewer({
+        id: 'plain', exts: ['ts'], priority: 100, fetchStrategy: 'none',
+        component: () => createElement('div', null, 'plain viewer'),
+      })
+      click(refreshButton(container)!)
+      await act(async () => { await Promise.resolve() })
+      expect(container.textContent).toContain('plain viewer')
+      expect(container.querySelector('[role="tablist"]')).toBeNull()
+      expect(container.querySelector('button[aria-label="Save"]')).toBeNull()
     } finally {
       unmount()
     }

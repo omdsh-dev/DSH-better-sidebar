@@ -1,0 +1,31 @@
+/** Plugin geometry inherits the active host palette, including custom skins. */
+:global(:root) {
+  --ds-sidebar-accent: var(--dsw-alias-state-business-primary);
+  --ds-sidebar-space-1: 4px;
+  --ds-sidebar-space-2: 8px;
+  --ds-sidebar-space-3: 12px;
+  --ds-sidebar-space-4: 16px;
+  --ds-sidebar-space-6: 24px;
+  --ds-sidebar-gutter: 12px;
+  --ds-sidebar-control-height: 32px;
+  --ds-sidebar-control-sm: 26px;
+  /* The one workbench section bar (VSCode explorer density). */
+  --ds-workbench-bar: 28px;
+  --ds-sidebar-icon-size: 32px;
+  --ds-sidebar-radius: 6px;
+  --ds-sidebar-window-radius: 12px;
+  --ds-sidebar-content-width: 800px;
+}
+
+/* Apply to every plugin surface and separately to its portaled content. */
+.surface {
+  --ds-sidebar-accent: var(--dsw-alias-state-business-primary);
+  --dsw-radius-sm: var(--ds-sidebar-radius);
+  --dsw-radius-md: var(--ds-sidebar-radius);
+  --dsw-radius-panel: var(--ds-sidebar-window-radius);
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xxs-12);
+  font-size: 13px;
+  line-height: 20px;
+  accent-color: var(--ds-sidebar-accent);
+}

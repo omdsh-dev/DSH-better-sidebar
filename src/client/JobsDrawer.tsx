@@ -20,7 +20,7 @@
  */
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
-  Button, IconChevronUpOutlineRegular, IconCopyOutlineRegular, IconStopFillRegular, StateDot, Switch, Tag,
+  IconChevronUpOutlineRegular, IconCopyOutlineRegular, IconStopFillRegular, StateDot, Tag,
   TerminalBlock, type TagTone,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SidebarClientJobsService, SidebarJobView, SidebarObservedJob } from '../context-types.ts'
@@ -37,6 +37,7 @@ import {
 import { FloatingWindow } from './FloatingWindow.tsx'
 import { useAutoAnimateRef } from './use-auto-animate.ts'
 import { t } from './locales.ts'
+import { ActionButton, IconButton, Notice, ToggleSwitch } from './ui/index.ts'
 import css from './tasks-graph.module.css'
 
 /** How long the kill button stays armed before it needs re-confirming. */
@@ -137,7 +138,7 @@ export function JobsDrawer(props: JobsDrawerProps): ReactNode {
   const open = manualOpen ?? autoOpen
   /** The rows: a job arriving or settling slides in instead of blinking. */
   const rowsRef = useRef<HTMLDivElement>(null)
-  useAutoAnimateRef(rowsRef)
+  useAutoAnimateRef(rowsRef, visible && open)
   const [armedId, setArmedId] = useState<string | undefined>(undefined)
   const [killingId, setKillingId] = useState<string | undefined>(undefined)
   const [killErrorId, setKillErrorId] = useState<string | undefined>(undefined)
@@ -183,20 +184,18 @@ export function JobsDrawer(props: JobsDrawerProps): ReactNode {
 
   return (
     <section className={css.jobsDrawer} aria-label={t('jobs')}>
-      <button
-        type="button"
+      <ActionButton
+        variant="ghost"
         className={css.jobsDrawerBar}
         aria-expanded={open}
         onClick={() => { setManualOpen(!open) }}
       >
         <span>{t('jobs')}</span>
-        <span className={css.jobsBigNum}>{liveCount > 0 ? liveCount : rows.length}</span>
         <span className={css.jobsDrawerCount}>{countLabel}</span>
         <span className={css.jobsDrawerChev} data-open={open ? 'true' : 'false'} aria-hidden="true">
           <IconChevronUpOutlineRegular size={12} />
         </span>
-      </button>
-      {!autoOpen && <div className={css.jobsAutoNote}>{t('jobsAutoCollapsed')}</div>}
+      </ActionButton>
       {open && (
         <div className={css.jobsDrawerBody} ref={rowsRef}>
           {rows.map((row) => {
@@ -222,7 +221,7 @@ export function JobsDrawer(props: JobsDrawerProps): ReactNode {
                 data-settled={live ? 'false' : 'true'}
                 data-open={openJobId === job.id ? 'true' : 'false'}
               >
-                <Button
+                <ActionButton
                   variant="ghost"
                   size="sm"
                   className={css.jobsRowMain}
@@ -243,7 +242,7 @@ export function JobsDrawer(props: JobsDrawerProps): ReactNode {
                       visible={ticking}
                     />
                   </span>
-                </Button>
+                </ActionButton>
                 {/*
                   The terminate column is reserved by EVERY row (settled ones
                   included): the button lives inside a fixed 28px box, so
@@ -252,12 +251,11 @@ export function JobsDrawer(props: JobsDrawerProps): ReactNode {
                 */}
                 <span className={css.jobsKillSlot}>
                   {job.status === 'running' && (
-                    <Button
+                    <ActionButton
                       variant="outline"
                       size="sm"
                       className={css.jobsKill}
                       data-armed={armed ? 'true' : 'false'}
-                      icon={<IconStopFillRegular size={11} />}
                       aria-label={armed ? t('jobKillConfirm') : t('jobKill')}
                       title={armed ? t('jobKillConfirm') : t('jobKill')}
                       disabled={killing}
@@ -266,10 +264,11 @@ export function JobsDrawer(props: JobsDrawerProps): ReactNode {
                         else setArmedId(job.id)
                       }}
                     >
+                      <IconStopFillRegular size={11} />
                       {armed ? t('jobKillConfirm') : undefined}
-                    </Button>
+                    </ActionButton>
                   )}
-                  {killFailed && <span className={css.jobsKillError}>{t('jobKillError')}</span>}
+                  {killFailed && <span className={css.jobsKillError} role="alert">{t('jobKillError')}</span>}
                 </span>
               </div>
             )
@@ -356,6 +355,7 @@ export function JobOutputWindow(props: {
       onClose={onClose}
       {...(anchor === undefined ? {} : { anchor })}
       bodyRef={bodyRef}
+      bodyLayout="scroll"
       actions={(
         <>
           {/*
@@ -364,11 +364,10 @@ export function JobOutputWindow(props: {
             (see the `diagnostics` prop) and the deployment has the page at all.
           */}
           <ContextDiagnosticsButton kind="job" target={diagnosticTarget} iconSize={12} onNavigate={onClose} />
-          <Button
-            variant="ghost"
+          <IconButton
             size="sm"
             icon={<IconCopyOutlineRegular size={12} />}
-            aria-label={copied ? t('jobCopied') : t('jobCopyOutput')}
+            label={copied ? t('jobCopied') : t('jobCopyOutput')}
             title={copied ? t('jobCopied') : t('jobCopyOutput')}
             disabled={text === ''}
             onClick={() => {
@@ -388,48 +387,46 @@ export function JobOutputWindow(props: {
             accessible name.
           */}
           <span className={css.jobPopFollow}>
-            <Switch
+            <ToggleSwitch
               checked={follow}
               onChange={setFollow}
-              label={t('jobFollowTail')}
+              aria-label={t('jobFollowTail')}
               disabled={!live}
             />
             <span className={css.jobPopFollowLabel}>{t('jobFollowTail')}</span>
           </span>
           {live && (
-            <Button
+            <ActionButton
               variant="outline"
               size="sm"
               className={armed ? css.jobPopKillArmed : undefined}
-              icon={<IconStopFillRegular size={11} />}
               disabled={killing}
               onClick={() => {
                 if (armed) void kill()
                 else setArmed(true)
               }}
             >
+              <IconStopFillRegular size={11} />
               {armed ? t('jobKillConfirm') : t('jobKill')}
-            </Button>
+            </ActionButton>
           )}
-          {killFailed && <div className={css.popError}>{t('jobKillError')}</div>}
+          {killFailed && <Notice kind="error" tone="inline">{t('jobKillError')}</Notice>}
         </div>
       )}
     >
       <div className={css.jobPopTitle}>
         <StateDot state={jobDotState(job.status)} size={6} />
-        <span className={css.popTitle} title={job.label}>{job.label}</span>
         <Tag tone={jobTone(job)}>{jobStatusLabel(job.status, t)}</Tag>
       </div>
       <div className={css.jobPopMeta}>
         <Tag tone="quiet">{job.kind}</Tag>
         {job.detail !== undefined && job.detail !== '' && <span>{job.detail}</span>}
-        <span className={css.popHint}>{t('jobDragHint')}</span>
       </div>
-      {observed === undefined && <div className={css.popHint}>{t('loading')}</div>}
+      {observed === undefined && <Notice kind="loading">{t('loading')}</Notice>}
       {observed !== undefined && (
         <>
-          {observed.gapBefore && <div className={css.popHint}>{t('jobOutputTruncated')}</div>}
-          {observed.error !== undefined && <div className={css.popError}>{t('jobOutputError')}</div>}
+          {observed.gapBefore && <Notice kind="warn">{t('jobOutputTruncated')}</Notice>}
+          {observed.error !== undefined && <Notice kind="error">{t('jobOutputError')}</Notice>}
           {observed.text.length > 0
             ? (
               <div>
@@ -444,7 +441,7 @@ export function JobOutputWindow(props: {
                 />
               </div>
             )
-            : <div className={css.popHint}>{t('jobNoOutput')}</div>}
+            : <Notice kind="empty">{t('jobNoOutput')}</Notice>}
         </>
       )}
     </FloatingWindow>

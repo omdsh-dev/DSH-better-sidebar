@@ -285,10 +285,38 @@ describe('ui kit atoms', () => {
     await unmount()
   })
 
+  it('Notice loading uses the shared indicator and announces its label once', async () => {
+    const { container, unmount } = await mount(createElement(Notice, { kind: 'loading', children: 'Loading resources' }))
+    const node = container.querySelector('[data-loading-indicator]')!
+    expect(node.getAttribute('role')).toBe('status')
+    expect(node.getAttribute('aria-live')).toBe('polite')
+    expect(node.textContent).toBe('Loading resources')
+    expect(node.querySelector('[aria-hidden="true"] svg')).not.toBeNull()
+    await unmount()
+  })
+
   it('StatusBadge exposes the tone as data for the sheet', async () => {
     const { container, unmount } = await mount(createElement(StatusBadge, { tone: 'untracked', title: 'Untracked', children: 'U' }))
     const badge = container.querySelector('[data-tone="untracked"]')!
     expect(badge.getAttribute('title')).toBe('Untracked')
+    await unmount()
+  })
+
+  it('keeps a busy confirmation open through Escape, mask and close button', async () => {
+    const onClose = vi.fn()
+    const onConfirm = vi.fn()
+    const { unmount } = await mount(createElement(ConfirmDialog, {
+      open: true, title: 'Delete?', description: 'gone forever', confirmLabel: 'Delete', cancelLabel: 'Cancel',
+      busy: true, danger: true, onConfirm, onClose,
+    }))
+    await act(async () => {
+      for (const button of document.querySelectorAll('button')) button.click()
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+      document.querySelector('[role=dialog]')?.parentElement?.click()
+    })
+    expect(onClose).not.toHaveBeenCalled()
+    expect(onConfirm).not.toHaveBeenCalled()
+    expect(document.querySelector('[role=dialog]')).not.toBeNull()
     await unmount()
   })
 

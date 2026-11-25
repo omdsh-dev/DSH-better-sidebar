@@ -159,3 +159,24 @@ describe('mermaid zoom modal surface css (issue #683)', () => {
     expect(viewport).toMatch(/cursor:\s*grab/)
   })
 })
+
+describe('bottom workbench vs host right-panel fullscreen', () => {
+  /** Body of the fullscreen-collapse rule, up to the un-indented closing brace. */
+  const fullscreenRule = stripComments(css).match(
+    /body:has\(\[data-sidebar-right-panel="fullscreen"\]\) \.bottomPanel \{([\s\S]*?)\n\}/,
+  )?.[1]
+
+  it('collapses the workbench while the host right panel is fullscreen', () => {
+    expect(fullscreenRule, 'a fullscreen-collapse rule must exist').toBeDefined()
+    expect(fullscreenRule, 'slide it off-screen').toMatch(/transform:\s*translateY\(102%\)/)
+    expect(fullscreenRule, 'make it non-interactive').toMatch(/pointer-events:\s*none/)
+    expect(fullscreenRule, 'hide it from view').toMatch(/visibility:\s*hidden/)
+  })
+
+  it('restores the original open state on exit by only changing visuals, never store state', () => {
+    // The rule is pure CSS: it never touches bottomOpen, so no remember/restore
+    // bookkeeping is needed and leaving fullscreen simply stops the rule applying.
+    expect(fullscreenRule).not.toMatch(/bottomOpen/)
+    expect(stripComments(css)).toContain('data-sidebar-right-panel="fullscreen"')
+  })
+})

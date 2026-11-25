@@ -11,7 +11,8 @@
  * - the FLOW surfaces (tree rows, jobs rows) are where FLIP belongs, and they
  *   keep it.
  */
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { tasksFlowAnimation } from '../src/client/use-auto-animate.ts'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
@@ -34,11 +35,26 @@ function code(relative: string): string {
     .replace(/^\s*\/\/.*$/gm, '')
 }
 
+afterEach(() => { vi.unstubAllGlobals() })
+
 describe('Tasks page motion', () => {
   it('keeps the FLIP library off the scaled canvas, and on the flow surfaces', () => {
     expect(code('src/client/TasksGraph.tsx')).not.toContain('use-auto-animate')
     expect(source('src/client/TasksTree.tsx')).toContain('useAutoAnimateRef')
     expect(source('src/client/JobsDrawer.tsx')).toContain('useAutoAnimateRef')
+  })
+
+  it('keeps graph control menu items square while clipping the rounded cluster', () => {
+    const styles = source('src/client/tasks-graph.module.css')
+    const controls = /\.controls \{([\s\S]*?)\n\}/.exec(styles)?.[1]
+    const button = /\.controlBtn \{([\s\S]*?)\n\}/.exec(styles)?.[1]
+    const textButton = /\.controlText \{([\s\S]*?)\n\}/.exec(styles)?.[1]
+    if (controls === undefined || button === undefined || textButton === undefined) {
+      throw new Error('graph control rules must exist')
+    }
+    expect(controls).toContain('overflow: hidden')
+    expect(button).toContain('border-radius: 0')
+    expect(textButton).toContain('border-radius: 0')
   })
 
   it('gives canvas cards a mount-only CSS entrance that respects reduced motion', () => {
@@ -49,8 +65,7 @@ describe('Tasks page motion', () => {
     const frames = /@keyframes dsh-card-in \{([\s\S]*?)\n\}/.exec(styles)?.[1]
     if (frames === undefined) throw new Error('the card entrance keyframes must exist')
     expect(frames).toContain('opacity: 0')
-    // Every reduced-motion block in the sheet is a candidate — the sweep has
-    // its own — and the card entrance must be switched off in one of them.
+    // Card entrances must switch off when reduced motion is requested.
     const reduced = [...styles.matchAll(/@media \(prefers-reduced-motion: reduce\) \{([\s\S]*?)\n\}/g)]
       .map(match => match[1])
       .join('\n')
@@ -58,7 +73,7 @@ describe('Tasks page motion', () => {
   })
 
   it('animates the canvas in LAYOUT coordinates, never with screen-space transforms', () => {
-    // The canvas's own tween: `left`/`top` are canvas units, so the fit's scale
+    // The canvas tween translates cards in canvas units, so the fit's scale
     // applies to the tween exactly as it applies to the final positions — and
     // the connectors (pure functions of the boxes) travel with the cards.
     expect(source('src/client/TasksGraph.tsx')).toContain('useTweenedLayout')
@@ -97,6 +112,30 @@ describe('Tasks page motion', () => {
 
   it('parks the motion host behind a WAAPI guard so tests and old hosts stay inert', () => {
     const hook = source('src/client/use-auto-animate.ts')
-    expect(hook).toContain("typeof Element.prototype.animate === 'function'")
+    expect(hook).toContain("typeof Element.prototype.animate !== 'function'")
+    expect(hook).toContain("typeof KeyframeEffect === 'undefined'")
+    expect(hook).toContain("typeof Animation === 'undefined'")
   })
+
+  it('uses only opacity and transforms for flow-list motion within 300ms', () => {
+    const effects: Array<{ frames: Keyframe[]; timing: KeyframeEffectOptions }> = []
+    vi.stubGlobal('KeyframeEffect', class {
+      constructor(_element: Element, frames: Keyframe[], timing: KeyframeEffectOptions) {
+        effects.push({ frames, timing })
+      }
+    })
+    const element = {} as Element
+    tasksFlowAnimation(element, 'add', { left: 20, top: 20, width: 100, height: 30 })
+    tasksFlowAnimation(element, 'remove', { left: 20, top: 20, width: 100, height: 30 })
+    tasksFlowAnimation(element, 'remain',
+      { left: 32, top: 16, width: 100, height: 30 },
+      { left: 20, top: 20, width: 140, height: 60 })
+    expect(effects).toHaveLength(3)
+    for (const effect of effects) {
+      expect(effect.timing.duration).toBeLessThanOrEqual(300)
+      for (const frame of effect.frames) expect(Object.keys(frame).every(key => ['opacity', 'transform'].includes(key))).toBe(true)
+    }
+    expect(effects[2]?.frames).toEqual([{ transform: 'translate(12px, -4px)' }, { transform: 'translate(0, 0)' }])
+  })
+
 })

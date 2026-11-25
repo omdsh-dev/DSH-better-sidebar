@@ -75,7 +75,7 @@ function fakeComposer(initial = ''): {
   let text = initial
   let draftRev = 0
   const input = {
-    state: { getSnapshot: (): { draft: string; draftRev: number } => ({ draft: text, draftRev }) },
+    state: { getSnapshot: (): { draft: string; draftRev: number; occurrences: [] } => ({ draft: text, draftRev, occurrences: [] }) },
     setDraft: (next: string): void => {
       text = next
       drafts.push(next)

@@ -584,7 +584,7 @@ describe('SideChatView archive', () => {
     // The shared page moves to the newest remaining thread, without the
     // independent mode's title reset.
     expect(host.betterSidebar.updateTab).toHaveBeenCalledTimes(1)
-    expect(host.betterSidebar.updateTab).toHaveBeenCalledWith('tab1', { meta: { threadId: 't2' } })
+    expect(host.betterSidebar.updateTab).toHaveBeenCalledWith('tab1', { meta: { threadId: 't2' } }, 'root')
     unmount()
   })
 
@@ -658,6 +658,40 @@ describe('SideChatView independent creation', () => {
     expect(host.betterSidebar.updateTab).toHaveBeenCalledWith('tab1', { meta: { threadId: 'a' } }, 'root')
     expect(host.betterSidebar.updateTab).toHaveBeenCalledWith('tab1', { meta: { threadId: 'b' } }, 'other')
     a.unmount(); b.unmount(); start.mockRestore()
+  })
+
+  it.each([false, true])('a floating seat binds locally in multiple mode %s even when not a native tab', async multipleTabs => {
+    const host = makeArchiveHost()
+    Object.assign(host.betterSidebar, { hasTab: () => false })
+    const dispose = vi.spyOn(api, 'sidechatDispose').mockResolvedValue({ accepted: true })
+    const props = viewProps(makeArchiveCtx(threadStore(), host), true)
+    props.tab = { ...props.tab, meta: { autoCreate: true } }
+    const onTabChange = vi.fn()
+    // No existing thread/last-thread hint for this parent: shared pages would
+    // otherwise correctly reattach instead of exercising the creation guard.
+    const scope = { sessionId: 'floating-parent-' + multipleTabs, cwd: '/p' }
+    const { unmount } = renderRoot(createElement(SideChatView, { ...props, scope, multipleTabs, onTabChange }))
+    await act(async () => {})
+    expect(onTabChange).toHaveBeenCalledWith({ meta: { threadId: 'session-new' } })
+    expect(host.betterSidebar.updateTab).not.toHaveBeenCalled()
+    expect(host.archiveSession).not.toHaveBeenCalled()
+    expect(dispose).not.toHaveBeenCalled()
+    unmount(); dispose.mockRestore()
+  })
+
+  it('a floating seat opens new threads through its callback, not either native page mode', async () => {
+    const host = makeArchiveHost()
+    const onOpenThread = vi.fn()
+    const { container, unmount } = renderRoot(createElement(SideChatView, {
+      ...viewProps(makeArchiveCtx(threadStore(), host), true), onOpenThread,
+    }))
+    await act(async () => {})
+    const plus = container.querySelector<HTMLButtonElement>('button[aria-label="新建对话"]')!
+    await act(async () => { plus.click() })
+    expect(onOpenThread).toHaveBeenCalledWith('session-new')
+    expect(host.betterSidebar.openTab).not.toHaveBeenCalled()
+    expect(host.betterSidebar.updateTab).not.toHaveBeenCalled()
+    unmount()
   })
 
   it('closing a starting tab releases the newly created orphan instead of rebinding', async () => {
@@ -756,7 +790,7 @@ describe('SideChatView queue, echo and model picker', () => {
     // explain themselves otherwise), and the native `title` bubble is gone:
     // the styled popup replaced it.
     for (const control of [newThread, threads, save, archive, model, send]) {
-      expect(control.getAttribute('title'), 'no native title bubble').toBeNull()
+      expect(control.getAttribute('title') ?? '', 'no native title bubble').toBe('')
       const anchor = control.parentElement
       expect(anchor?.tagName, 'each control sits in a hover anchor').toBe('SPAN')
       expect(composer!.contains(anchor), 'the anchor must be inside the composer box').toBe(true)

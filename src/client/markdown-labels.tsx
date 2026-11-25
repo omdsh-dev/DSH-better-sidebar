@@ -45,7 +45,7 @@ export interface MarkdownCopyLabels {
 type HostMarkdownLabels = ComponentProps<typeof MarkdownText>['labels']
 /**
  * How many distinct label sets the identity cache keeps. The plugin renders
- * one label set per locale revision (zh/en plus the better-locale override,
+ * one label set per locale revision (one per official host language,
  * and one per mounted view), so this is far above the real cardinality; the
  * bound only keeps a pathological caller from growing the map forever.
  */

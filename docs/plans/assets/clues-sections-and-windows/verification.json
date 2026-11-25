@@ -1,0 +1,203 @@
+{
+  "startTime": 1792503427166,
+  "duration": 12886.532,
+  "stats": {
+    "total": 2,
+    "expected": 2,
+    "unexpected": 0,
+    "flaky": 0,
+    "skipped": 0,
+    "ok": true
+  },
+  "errors": [],
+  "hostVersion": "0.2.1-rc.1",
+  "targetedRegressions": {
+    "files": 14,
+    "tests": 230
+  },
+  "screenshots": [
+    {
+      "file": "clues-integrated-light-320.png",
+      "sha256": "86e42e334c9f300b900d67ecafd97d2295cfa659e0905327f017fd6bcc55c82f"
+    },
+    {
+      "file": "clues-integrated-light-390.png",
+      "sha256": "843340de7cffc704e1289ffbe4872778ce43806e44a8aeeb6dd4250dcf717418"
+    },
+    {
+      "file": "clues-integrated-light-640.png",
+      "sha256": "4c1bd4ef3018f1b7ca806f285ce045cac503daf18c66e924a1b2b7c6cdb6f041"
+    },
+    {
+      "file": "clues-integrated-dark-320.png",
+      "sha256": "6d139bf95e1290ce9a7141c0a371afaa984f1524a12173b93448e02f4ca53719"
+    },
+    {
+      "file": "clues-integrated-dark-390.png",
+      "sha256": "4dcf683cfc1617939c765d5e1f9324bc7e52b5a90e811bafd81c9359456f64e1"
+    },
+    {
+      "file": "clues-integrated-dark-640.png",
+      "sha256": "c5a242b566c3130a70f126046a6082b68080afe4976f634bb8b0e1015ed07748"
+    },
+    {
+      "file": "clues-help.png",
+      "sha256": "d3fad978191083372c0005c1d3fb73db84ce36b32644e1a8d95271ea2d591ab7"
+    },
+    {
+      "file": "clues-sections-expanded.png",
+      "sha256": "843340de7cffc704e1289ffbe4872778ce43806e44a8aeeb6dd4250dcf717418"
+    },
+    {
+      "file": "clues-sections-collapsed-packs.png",
+      "sha256": "ddfabbb2be906e040c2564ac03af6dd12516983c8fae38b01b8ac952b3fffc70"
+    },
+    {
+      "file": "clues-sections-collapsed-browser.png",
+      "sha256": "648bea2cba6c71e62920fdb90b7cf9a87f8cc9bf5b88f7f4ef20dd7f37c1e9ba"
+    },
+    {
+      "file": "clues-sections-collapsed.png",
+      "sha256": "8077bc4e179b7936429eb631bfcd1d1f575a714a318c0ad4eeaccc98a7a3b30e"
+    },
+    {
+      "file": "clues-scope-github.png",
+      "sha256": "a4690cedf4bf95e544b1960ef72b137ce61ebc861cc76ef9eb92da18364beb29"
+    },
+    {
+      "file": "clues-scope-feishu.png",
+      "sha256": "4a118d35b91b81daa9aec0861634ba430774b5833c0fd9c73f957f3dca9012cf"
+    },
+    {
+      "file": "clues-short-height-search.png",
+      "sha256": "6e2445b77080883c9b7fef64fb6a86e618a3d0f00b7a13cdc3b22902f01e0ea6"
+    },
+    {
+      "file": "clues-pinned-390.png",
+      "sha256": "6f43dc18225265dc0c926ef034858f0bc079ecc7eef50fe9531efa9f73e6f0af"
+    },
+    {
+      "file": "clues-pack-management.png",
+      "sha256": "bf48459a7b7df8b00a3818f83e6e29c4c62642a0680448c34fd5cc33e5fff6ca"
+    },
+    {
+      "file": "clues-detail-window.png",
+      "sha256": "90ab1abc8e3080860794aab14490694e0f3fc7e32c703cd9dec6c8e93b223063"
+    },
+    {
+      "file": "clues-collection-window.png",
+      "sha256": "1e12beaf8907b7e08efa6fa5aef5da6611cc7b7450ef9bb7690c34e6d484880e"
+    },
+    {
+      "file": "clues-collection-long-name-320.png",
+      "sha256": "f1fb3ae7bdf25a1d6fe812681d43c6066c296da9e87d4d3ae7669bc1c69a9b2d"
+    },
+    {
+      "file": "clues-pack-create-window.png",
+      "sha256": "ac6ccbfa7835e762ef753fc813ba03e769b9b047aa91900502469a2d979d587d"
+    },
+    {
+      "file": "clues-workbench-overview.png",
+      "sha256": "56893eac628d6134b28b1380952cb2a9841b5be00d9ed15d02169b3ab598f483"
+    },
+    {
+      "file": "clues-integrated-shell-dark.png",
+      "sha256": "5f061ddf8db1ee0ccbe81e6521866367983036b4884a916cad1ccf025b2f1b85"
+    },
+    {
+      "file": "clues-share-fixed-actions.png",
+      "sha256": "e49c72e36287bc61348e0a66656ff3c0781dfea20790c85377d4f8f558d78eea"
+    },
+    {
+      "file": "clues-empty-packs-touch.png",
+      "sha256": "ad8ce6f876343ff7a2d134f5ae332c1affd900d63391821f123bc2230d00f71f"
+    },
+    {
+      "file": "clues-selection-actions-touch.png",
+      "sha256": "8706532960ecd93cca4cba3c37166db05e142374a92c1bf0ef122b6673e52dfd"
+    },
+    {
+      "file": "clues-share-touch-320x240.png",
+      "sha256": "60a7b89d63dce53ac6070411c5ca30d19002bac35013f7fa0685fd5f11aee163"
+    }
+  ],
+  "layoutMetricsFile": "clues-layout-metrics.json",
+  "colorMetricsFile": "clues-color-metrics.json",
+  "packagedSourceVerified": [
+    {
+      "file": "src/client/clues/tab/browser.tsx",
+      "sha256": "1a7dfeec5875060fd5ff63383cd1d173078c6c3d3571008667d7f4db53570be2"
+    },
+    {
+      "file": "src/client/clues/tab/packs.tsx",
+      "sha256": "ce81827414ec08fc5d2a4ed5fdeceabae5143727235b045479c114ddc4fbd16e"
+    },
+    {
+      "file": "src/client/clues/tab/CluesTab.tsx",
+      "sha256": "399110617982eadaa2ced70a1489314f79babb65c4a99ee88b582b32a96beeef"
+    },
+    {
+      "file": "src/client/clues/tab/clues-tab.module.css",
+      "sha256": "c8528fd4c41266942e22288bc7c46d30dfaf89dabf791d0556474671c94b18dd"
+    },
+    {
+      "file": "src/client/clues/windows/pack.tsx",
+      "sha256": "16b95c0c12a5ed65fc04d96b847d913255f43a1ca0024bc544abdf8a5f1db469"
+    },
+    {
+      "file": "src/client/clues/windows/pack.module.css",
+      "sha256": "baed3edc9a6b42f141009161902cb8a6d78b9cdb806d807c4831328890df1379"
+    },
+    {
+      "file": "src/client/clues/windows/create-pack.tsx",
+      "sha256": "7ac0edb5f3d8a532c3c3b86382caa0dee60ccda6aeaa9c62fb2eb866e6cc6b56"
+    },
+    {
+      "file": "src/client/clues/windows/create-pack.module.css",
+      "sha256": "b8923a736720756d827253646eac994e26b10217517e1d2575558399becd7442"
+    },
+    {
+      "file": "src/client/ui/WorkbenchSection.tsx",
+      "sha256": "1d251d081956f40ae033627b7a2e2882c813f0bfffc0c18423b96fb8648edc56"
+    },
+    {
+      "file": "src/client/ui/workbench-section.module.css",
+      "sha256": "46b4bebe1f63d36b443b220fdcbaf7931beb872d05ebd7831dae0730b5704329"
+    },
+    {
+      "file": "src/client/ui/use-scroll-load.ts",
+      "sha256": "61c3ad0768e41edecf9c3a531be51c995630b7b721022c1916e5f64de3e7c0fa"
+    },
+    {
+      "file": "src/client/ui/index.ts",
+      "sha256": "b6f66622473de3d066abdde50cd3b97e060e32866f923dc4aae605c9d9ba8840"
+    },
+    {
+      "file": "src/client/windows/HostedWindow.tsx",
+      "sha256": "f5eb229cf074f3042bcfa9e8b6352722263039f05e80d344f28b2767cd74d745"
+    },
+    {
+      "file": "src/client/windows/hosted-window.module.css",
+      "sha256": "4af354480a928c296b6e551b02c815d519089be0a2148da2f0c3987bdabc1946"
+    },
+    {
+      "file": "src/client/windows/host.ts",
+      "sha256": "3c627af814f4d670f2a7fff02d26d06abf7bd552ad72ab1ef4ac97ed02541a0a"
+    },
+    {
+      "file": "src/client/windows/WindowHost.tsx",
+      "sha256": "7f07358398b9ab40462f48a45a4df8a9070b3a7ae06da81c26d5cec7178c5560"
+    }
+  ],
+  "e2eSourceSha256": "d9f6e7946137b2311b2ea1cb8a44e513e1bd9404134e2d7d4266906e3e756bad",
+  "buildArtifacts": [
+    {
+      "file": "lib/client.js",
+      "sha256": "699e5d9341d195c8b4c94b59a04593142a4536c32abe11ee25e27605e3bbadbc"
+    },
+    {
+      "file": "dsh-better-sidebar-0.28.0.tgz",
+      "sha256": "314298396106c3f6ac6ef78eb81993d21637b55c02f2f5c86c3de49bd001bdd4"
+    }
+  ]
+}

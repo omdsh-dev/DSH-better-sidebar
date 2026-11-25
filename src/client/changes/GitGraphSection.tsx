@@ -9,12 +9,12 @@
  * selected commit upward for the tab's bottom pane (`details` tab). */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
 import {
-  Button, IconBranchOutlineRegular, IconCheckOutlineRegular, IconGlobeOutlineRegular,
+  IconBranchOutlineRegular, IconCheckOutlineRegular, IconGlobeOutlineRegular,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { api, SidebarApiError, type SessionScope } from '../api.ts'
 import type { SidebarDiffRef } from '../state.ts'
 import { relativeTime, t } from '../locales.ts'
-import { Notice } from '../ui/index.ts'
+import { ActionButton, Notice } from '../ui/index.ts'
 import { AnchoredPopover } from '../AnchoredPopover.tsx'
 import { edgePath, layoutGraph } from './graph-layout.ts'
 import { createFrameBatcher } from '../frame-batcher.ts'
@@ -350,7 +350,7 @@ export function GitGraphSection({ scope, worktree, visible, refreshTick = 0, onP
   return <section className={css.root} aria-label={t('gitGraph')} data-git-graph
     data-graph-count={page?.entries.length ?? 0}>
     <div className={css.toolbar}>
-      {linearFallback && <div role="status">{t('graphLinearFallback')}</div>}
+      {linearFallback && <Notice kind="hint" tone="inline" role="status">{t('graphLinearFallback')}</Notice>}
       {!linearFallback && <select className={css.select} aria-label={t('graphBranchFilter')}
         value={branch} onChange={event => { chooseBranch(event.target.value) }}>
         <option value="">{t('graphAllBranches')}</option>
@@ -366,9 +366,9 @@ export function GitGraphSection({ scope, worktree, visible, refreshTick = 0, onP
       }}>
       {error !== null && <div className={css.notice} role="alert">
         <Notice kind="warn">{stale ? t('graphStale') : t('graphLoadError')}{!stale && `: ${error}`}</Notice>
-        <Button onClick={() => { if (stale || !failedAppend.current) setRetry(value => value + 1); else void request(true) }}>{t('retry')}</Button>
+        <ActionButton onClick={() => { if (stale || !failedAppend.current) setRetry(value => value + 1); else void request(true) }}>{t('retry')}</ActionButton>
       </div>}
-      {loading && <div className={css.notice} role="status">{t('loading')}</div>}
+      {loading && <Notice kind="loading" role="status">{t('loading')}</Notice>}
       {!loading && !error && page !== null && page.entries.length === 0 && <div className={css.notice}>{t(page.isRepo ? 'graphEmpty' : 'notRepo')}</div>}
       {range.top > 0 && <div aria-hidden="true" data-graph-spacer="top" style={{ height: range.top }} />}
       {page?.entries.slice(range.start, range.end).map((entry, offset) => {
@@ -398,7 +398,7 @@ export function GitGraphSection({ scope, worktree, visible, refreshTick = 0, onP
       })}
       {range.bottom > 0 && <div aria-hidden="true" data-graph-spacer="bottom" style={{ height: range.bottom }} />}
       {page?.hasMore && !stale && <div className={css.notice} ref={sentinelRef} data-graph-sentinel>
-        <Button disabled={loading} onClick={() => { void request(true) }}>{t('graphLoadMore')}</Button>
+        <ActionButton disabled={loading} onClick={() => { void request(true) }}>{t('graphLoadMore')}</ActionButton>
       </div>}
     </div>
     {/* The middle information rung: more than the one-line row (author, both

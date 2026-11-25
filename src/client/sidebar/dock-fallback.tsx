@@ -1,9 +1,11 @@
 /**
- * 空白会话专用的底部工作台开关（issue #698 / #623）。
+ * 空白会话专用的底部工作台开关（issue #698 / #623 / #989）。
  *
  * blank 会话里宿主不渲染会话头，本插件挂在 `header.utilities` 的入口随之不可达；
  * 这里把同一个开关以 `position: fixed` 放到宿主「Open right sidebar」按钮的**左侧紧邻**
- * （按该按钮的 rect 对齐，随窗口 resize 与 500ms 周期重对齐）。
+ * （按该按钮的 rect 对齐，随窗口 resize 与 500ms 周期重对齐）。宿主右侧面板展开时
+ * 那个座位搬进面板内部，入口改锚**面板左缘**——blank 会话里它是唯一一个入口，
+ * 展开态藏掉就等于「先开右栏就再也打不开底部工作台」（#989，与 #1053 同一口径）。
  *
  * **重对齐的周期表只在入口真的渲染时存在**（v0.25 的稳态开销治理）：正常会话里本组件
  * 返回 `null`，而 `measure()` 的让位走查要做命中测试——表挂在早退之前时，一个看不见的
@@ -47,9 +49,9 @@ const MAX_RETREAT_STEPS = 100
  * @param top - 槽位上边（视口坐标）。
  * @returns 整格都空时为 true。
  */
-function slotFree(left: number, top: number): boolean {
-  const cy = top + BUTTON_SIZE / 2
-  for (const dx of [2, 8, BUTTON_SIZE / 2, BUTTON_SIZE - 8, BUTTON_SIZE - 2]) {
+function slotFree(left: number, top: number, size: number): boolean {
+  const cy = top + size / 2
+  for (const dx of [2, 8, size / 2, size - 8, size - 2]) {
     if (slotOccupied(left + dx, cy)) return false
   }
   return true
@@ -118,13 +120,50 @@ function slotOccupiedByRect(cx: number, cy: number): boolean {
 }
 
 /**
+ * 右侧栏展开时的锚点：**面板自身的左缘**（而不是面板里面那簇角落控件）。
+ *
+ * 展开态下宿主的 Split / Fullscreen / Collapse 搬进了右栏面板内部（实测
+ * `分栏@1334 / 全屏@1370 / 收起@1406`，面板左缘 792）。锚在那簇控件左侧会落在面板里、
+ * 盖住面板内容；锚在面板左缘则落在**会话头那一行的右端空位**上——正是收起态入口的
+ * 同一列（收起态实测 1364，展开态 756），视觉上始终「贴着右侧栏的左边」。
+ * @returns 视口坐标下的 top/left；面板不可量时返回 undefined（调用方退回旧锚点）。
+ */
+function panelEdge(): { top: number; left: number } | undefined {
+  // 宿主会为保留的会话留下不可见的副本（rect 全零），所以取**第一个真的量得出来**的，
+  // 而不是 querySelector 的第一个。
+  const rect = firstVisibleRect('[data-sidebar-right-panel]')
+  if (rect === undefined) return undefined
+  // 与面板自己的角落控件同一行：收起态那簇控件在会话头里，展开态搬进面板头部，
+  // 两态的 top 因此一致（实测都是 10）。量不到控件时退回面板顶部内缩。
+  const control = firstVisibleRect('[data-sidebar-right-toggle]')
+  const top = control !== undefined
+    ? Math.max(4, control.top + (control.height - BUTTON_SIZE) / 2)
+    : Math.max(4, rect.top + 10)
+  return { top, left: rect.left - GAP - BUTTON_SIZE }
+}
+
+/**
+ * 第一个**真的占版面**的匹配元素的 rect（不可见的保留副本一律跳过）。
+ * @param selector - 宿主元素的稳定 data 属性选择器。
+ * @returns 可见 rect；一个都没有时 undefined。
+ */
+function firstVisibleRect(selector: string): DOMRect | undefined {
+  for (const element of document.querySelectorAll(selector)) {
+    const rect = element.getBoundingClientRect()
+    if (rect.width > 0 && rect.height > 0) return rect
+  }
+  return undefined
+}
+
+/**
  * 量本按钮应放的 top/left：贴在宿主「右侧栏角落控件」的**左侧空位**上。
  *
  * 三件事都不能靠猜：
  *
  * 1. **锚点要认控件的两种形态**——右侧栏关闭时它带 `data-sidebar-right-expand`，
  *    打开时该属性整个消失、同一座位换成 `data-sidebar-right-toggle`。只认前者会落到
- *    视口兜底坐标（`innerWidth - 44`），而那里正是宿主自己的角落按钮群。
+ *    视口兜底坐标（`innerWidth - 44`），而那里正是宿主自己的角落按钮群。展开态改用
+ *    {@link panelEdge}（见那里的理由）。
  * 2. **让位不能让一个固定偏移**——宿主的角落控件是肩并肩一簇（实测打开态：
  *    `Split@2094 / Fullscreen@2130 / Collapse@2166`，各 28px、间隔 8px）。只往左挪
  *    `GAP + BUTTON_SIZE` 正好落在**下一个**按钮上（实测精确压住 Fullscreen 28x28px）。
@@ -138,24 +177,29 @@ function slotOccupiedByRect(cx: number, cy: number): boolean {
  * 按钮（红绿灯，约 88px），原生控件不会出现在命中测试栈里，所以那条下限必须显式保留；
  * 若下限之上仍无空位，接受与宿主内容重叠——空白会话没有别的底部工作台 opener，宁可叠
  * 内容也不叠系统控件、更不能把唯一入口藏掉。
+ * @param expanded - 宿主右侧面板是否展开（展开态锚面板左缘，见 {@link panelEdge}）。
  * @returns 视口坐标下的 top/left。
  */
-function measure(): { top: number; left: number } {
+function measure(expanded: boolean): { top: number; left: number } {
+  const anchored = expanded ? panelEdge() : undefined
   const anchor = document.querySelector('[data-sidebar-right-expand], [data-sidebar-right-toggle]')
   const rect = anchor?.getBoundingClientRect()
   // A collapsed right column can leave the toggle in the DOM with an all-zero
   // rect (the theme hides the panel with display:none). Treat that exactly like
   // a missing anchor: the zero rect would otherwise pin the entry to the
   // top-left 88px macOS traffic-light inset and cover the theme's own button.
-  const visible = rect !== undefined && rect.width > 0 && rect.height > 0
-  const top = visible ? Math.max(4, rect.top + (rect.height - BUTTON_SIZE) / 2) : 8
-  let left = visible ? rect.left - GAP - BUTTON_SIZE : window.innerWidth - BUTTON_SIZE - GAP - 8
+  const visible = anchored === undefined && rect !== undefined && rect.width > 0 && rect.height > 0
+  // The entry shares the IconButton geometry; a coarse pointer gets the 44px
+  // touch target the rest of the plugin uses at that input class.
+  const size = window.matchMedia?.('(pointer: coarse)').matches ? 44 : BUTTON_SIZE
+  const top = anchored?.top ?? (visible ? Math.max(4, rect.top + (rect.height - size) / 2) : 8)
+  let left = anchored?.left ?? (visible ? rect.left - GAP - size : window.innerWidth - size - GAP - 8)
   // 复用宿主 preload 的平台属性；原生红绿灯不会出现在 elementsFromPoint 中。
   // 48px 高度 / 88px 左侧留白与宿主 AppFrame / fullscreen dock strip 的几何一致。
   const root = document.documentElement
   const minLeft = root.dataset.platform === 'darwin' && !root.hasAttribute('data-fullscreen') && top < 48 ? 88 : 4
   for (let step = 0; step < MAX_RETREAT_STEPS && left >= minLeft; step++) {
-    if (slotFree(left, top)) return { top, left }
+    if (slotFree(left, top, size)) return { top, left }
     left -= STEP_PX
   }
   return { top, left: Math.max(left, minLeft) }
@@ -168,20 +212,21 @@ export function DockFallback({ store }: { store: SidebarStore }): ReactNode {
   )
   const phase = useSessionPhase(snapshot.sessionId)
   const rightOpen = useRightPanelOpen()
-  const [pos, setPos] = useState(measure)
+  const [pos, setPos] = useState(() => measure(rightOpen))
   const [headerEntry, setHeaderEntry] = useState(headerEntryPresent)
-  // 渲染条件（顺序即下面早退的顺序）：相位已读到 blank、会话头那套入口不在场、右侧面板收起。
-  const rendered = phase !== undefined && phase.blank && !headerEntry && !rightOpen
+  // 渲染条件（顺序即下面早退的顺序）：相位已读到 blank、会话头那套入口不在场。
+  // 右侧面板展开**不再**是渲染条件 —— 它只决定锚点（面板左缘，见 panelEdge）。
+  const rendered = phase !== undefined && phase.blank && !headerEntry
   const onResize = useCallback((): void => {
     // 页面不可见时什么都不做：看不到的版面不值得测量，state 也不需要写。
     if (document.hidden) return
     // 坐标没变就不换 state 对象：周期重测在版面静止时不该引起重渲染。
-    const next = measure()
+    const next = measure(rightOpen)
     setPos(prev => (prev.top === next.top && prev.left === next.left ? prev : next))
     setHeaderEntry(headerEntryPresent())
-  }, [])
-  // 窗口 resize 常驻（不随渲染门控）：入口此刻没渲染（非 blank 会话 / 面板展开）时的一次
-  // 尺寸变化也必须落到 state 里，等它重新出现时坐标才是对的。
+  }, [rightOpen])
+  // 窗口 resize 常驻（不随渲染门控）：入口此刻没渲染（非 blank 会话 / 会话头入口在场）
+  // 时的一次尺寸变化也必须落到 state 里，等它重新出现时坐标才是对的。
   useEffect(() => {
     window.addEventListener('resize', onResize)
     return () => { window.removeEventListener('resize', onResize) }
@@ -206,10 +251,10 @@ export function DockFallback({ store }: { store: SidebarStore }): ReactNode {
   if (phase === undefined || !phase.blank) return null
   // 兜底：相位说 blank、但会话头的入口确实在 DOM 里 —— 让位，绝不叠出第二套。
   if (headerEntry) return null
-  // 宿主右侧面板展开时不渲染：兜底入口是 fixed 定位、锚在那簇控件左侧，展开时锚点
-  // 落在面板内部，放过去会盖住面板内容。正常会话的顶部入口不受此限（见 Sidebar.tsx
-  // 的 BottomDockToggle：它在会话头 utilities 里，与旧栏控件分属两列）。
-  if (rightOpen) return null
+  // 宿主右侧面板展开时**照常渲染**（#989）：blank 会话不渲染会话头 utilities，本入口
+  // 是唯一一个，藏掉等于「先开右栏就再也打不开底部工作台」。展开态改锚面板左缘
+  // （{@link panelEdge}），不与面板内容抢位置；正常会话的顶部入口同理（见 Sidebar.tsx
+  // 的 BottomDockToggle，它在会话头 utilities 里，与旧栏控件分属两列）。
   // portal 到 body：面板宿主（z 20-30）的层叠上下文压不过会话头，按钮会被 titleRow
   // 拦截点击。40 高于 AppFrame(20) 与会话头、低于 DSH 浮层(100+)。
   return createPortal(

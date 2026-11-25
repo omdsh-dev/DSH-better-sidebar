@@ -1,20 +1,12 @@
-/* Tasks page shell: header row, empty/error states, and the state dot. The
-   graph canvas / tree rows / popovers / jobs drawer live in
-   tasks-graph.module.css; the old indentation-tree and jobs-dock classes
-   were pruned when the page moved to the unified model. */
 .subagent {
+  position: relative;
+  min-width: 0;
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
 }
 
-/* The page header wears the plugin's own page-header rhythm (sidebar.module.css
-   `.explorerHeader` / `.gitDiffTabHeader`): one control tall (28px) with the
-   standard 12px gutter, the 1px l1 rule closing the toolbar off from the canvas
-   (changes.module.css `.gitSection`), and a title/subject/meta hierarchy —
-   the page name reads first, the session it belongs to follows, the tree
-   readout closes the row as mono micro type. */
 .subagentHeader {
   flex: none;
   display: flex;
@@ -25,10 +17,6 @@
   border-bottom: 1px solid var(--dsw-alias-border-l1);
 }
 
-/* The page name + its session title share one baseline, so the 12px title and
-   the 11px dimmed subject read as one line of text rather than two boxes. The
-   heading clips (its own box only — the subject ellipsizes first), so a panel
-   narrower than the page name cannot push the separator into the count. */
 .subagentHeading {
   flex: 1;
   min-width: 0;
@@ -45,8 +33,6 @@
   white-space: nowrap;
 }
 
-/* The session the tree is rooted at: context, not the page name — it yields
-   first when the header runs out of room. */
 .subagentSubject {
   flex: 1;
   min-width: 0;
@@ -57,30 +43,20 @@
   white-space: nowrap;
 }
 
-/* The separator rides the subject's own ink, not the host's `label-dimmed`
-   (which host.css uses for `::placeholder` only): at 1.26:1 the dot vanished
-   and the title read as two adjacent strings, while the OTHER separator on the
-   same row (inside `.subagentCount`) is `label-secondary`. */
 .subagentSep {
   flex: none;
   font: var(--dsw-font-xxs-12);
   color: var(--dsw-alias-label-tertiary);
 }
 
-/* The descendant count readout ("3 个子代理 · 1 运行中"): mono micro type with
-   tabular figures, so the ticking numbers never shift the row it closes. */
 .subagentCount {
   flex: none;
-  font-family: var(--ds-font-family-code, monospace);
-  font-size: 10px;
+  font: var(--dsw-font-xxxs-11);
   font-variant-numeric: tabular-nums;
   color: var(--dsw-alias-label-secondary);
   white-space: nowrap;
 }
 
-/* The header's refresh control is the host ghost Button (28px tall, hover fill
-   from `--dsw-alias-interactive-bg-hover`); the class only keeps it from being
-   squeezed by a long session title. */
 .subagentRefresh {
   flex: none;
 }
@@ -95,10 +71,6 @@
   text-align: center;
 }
 
-/* One rung above `.subagentEmpty`, sized one step down — the same ink the
-   plugin's other empty panes use (`.explorerEmpty`, `.gitPlaceholder`). The
-   host's `label-dimmed` is its `::placeholder` ink; a whole sentence in it
-   measured 1.26:1 and was unreadable. */
 .subagentEmptyHint {
   font: var(--dsw-font-xxxs-11);
   color: var(--dsw-alias-label-tertiary);
@@ -114,13 +86,13 @@
   color: var(--dsw-alias-state-error-primary);
 }
 
-/* The banner's retry is the host outline Button (28px); the class keeps the
-   action from being squeezed by the failure message. */
 .subagentErrorRetry {
   flex: none;
 }
 
-/* The background-job drawer (bar, rows, output popover) is styled entirely in
-   tasks-graph.module.css — its `.jobs*` rules used to live here as dead copies
-   of the pre-drawer in-page section and were pruned. */
-
+@media (pointer: coarse), (max-width: 640px) {
+  .subagentHeader { min-height: 44px; height: auto; flex-wrap: wrap; padding: 4px 8px; gap: 4px 8px; }
+  .subagentHeading { flex-basis: calc(100% - 52px); }
+  .subagentCount { order: 1; flex-basis: 100%; padding-bottom: 4px; }
+  .subagentError { flex-wrap: wrap; }
+}
