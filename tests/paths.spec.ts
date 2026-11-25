@@ -10,6 +10,7 @@ describe('path helpers', () => {
     expect(relativeTo('/Users/me/code', '/Users/me/code/src/main.ts')).toBe('src/main.ts')
     expect(relativeTo('/Users/me/code', '/Users/me/code')).toBe('.')
     expect(relativeTo('/Users/me/code/', '/Users/me/code/src/a/b.ts')).toBe('src/a/b.ts')
+    expect(relativeTo('/w', '/w/a\\b.txt')).toBe('a\\b.txt')
   })
 
   it('falls back to the path unchanged when it lies outside the cwd', () => {
@@ -77,6 +78,7 @@ describe('path helpers', () => {
     expect(isWithinWorkspace('/work/proj', '/work/proj')).toBe(true)
     expect(isWithinWorkspace('/work/proj', '/work/proj2/a.ts')).toBe(false)
     expect(isWithinWorkspace('/work/proj', '/other/a.ts')).toBe(false)
+    expect(isWithinWorkspace('/work/a\\b.txt', '/work/a/b.txt')).toBe(false)
     // Mixed separators normalize on every platform.
     expect(isWithinWorkspace('C:\\Users\\me', 'C:/Users/me/src/a.ts')).toBe(true)
     // The live helper is case-insensitive on every platform by design: the

@@ -62,7 +62,7 @@ import { IconUploadOutline16, IconVscode16 } from './icons.tsx'
 import { isLikelyImeKey } from './ime-guard.ts'
 import type { OpenInApp, OpenInAppEntry } from './open-in-app.ts'
 import type { OpenWithTarget } from './open-with.ts'
-import { relativeTo } from './paths.ts'
+import { isPosixAbsolutePath, relativeTo } from './paths.ts'
 import { t } from './locales.ts'
 import type { BetterSidebarService, FileActionDescriptor, FileActionRow } from './service.ts'
 import {
@@ -83,15 +83,21 @@ interface LevelData {
 
 /** Root label: the last path segment (mirror of the host rootLabel). */
 export function baseName(path: string): string {
-  const trimmed = path.replace(/[\\/]+$/, '')
-  const at = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'))
+  const posix = isPosixAbsolutePath(path)
+  const trimmed = posix ? path.replace(/\/+$/, '') : path.replace(/[\\/]+$/, '')
+  const at = posix ? trimmed.lastIndexOf('/') : Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'))
   return at === -1 ? trimmed : trimmed.slice(at + 1)
 }
 
 /** The containing directory of an absolute row path (never the root edge here). */
 function parentOf(path: string): string {
-  const at = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
+  const at = isPosixAbsolutePath(path) ? path.lastIndexOf('/') : Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
   return at <= 0 ? path : path.slice(0, at)
+}
+
+/** 判断路径是否为当前目录的后代，保留 POSIX 文件名中的反斜杠。 */
+function isDescendantOf(path: string, directory: string): boolean {
+  return path.startsWith(`${directory}/`) || (!isPosixAbsolutePath(directory) && path.startsWith(`${directory}\\`))
 }
 
 /** A direct child path of one tree level (row paths may use either separator;
@@ -497,6 +503,11 @@ const RootRow = memo(function RootRow(props: RootRowProps): ReactNode {
  */
 type FsScope = { sessionId: string; cwd: string }
 
+interface RowActionOrigin {
+  scope: FsScope
+  searchKey: string | undefined
+}
+
 /** The scope a set of props belongs to (undefined while `cwd` is unresolved). */
 function scopeOf(live: { sessionId: string; cwd: string | undefined }): FsScope | undefined {
   return live.cwd === undefined ? undefined : { sessionId: live.sessionId, cwd: live.cwd }
@@ -525,6 +536,12 @@ function sameScope(armed: FsScope | undefined, live: FsScope | undefined): boole
     && armed.sessionId === live.sessionId && armed.cwd === live.cwd
 }
 
+/** 确认操作仍属于当前工作区和当前显示的结果。 */
+function isCurrentRowAction(origin: RowActionOrigin, live: Parameters<typeof scopeOf>[0] & { searchKey?: string | undefined }): boolean {
+  return origin.searchKey === live.searchKey && sameScope(origin.scope, scopeOf(live))
+}
+
+/** 渲染文件树与它的文件操作，也为搜索结果提供同一套操作。 */
 export function FileTree(props: {
   sessionId: string
   cwd: string | undefined
@@ -581,6 +598,18 @@ export function FileTree(props: {
    * warm, so clearing the query is free.
    */
   hidden?: boolean
+  /** 当前查询及结果版本，用于停用旧结果的菜单和编辑器。 */
+  searchKey?: string | undefined
+  /** 宿主实际搜索的目录，在文件夹标签页中可能与树根不同。 */
+  searchRoot?: string | undefined
+  /** 搜索结果使用文件树的菜单，但保留独立的选择范围。 */
+  renderSearchResults?: (actions: {
+    openMenu: (event: MouseEvent, path: string, isDir: boolean) => void
+    renameEditor: (path: string) => ReactNode
+    createEditor: (path: string) => ReactNode
+  }) => ReactNode
+  /** 通知当前搜索重新读取文件名。 */
+  onContentsChanged?: () => void
   /**
    * Whether the owning tab is on screen. Defaults to true; a parked tab
    * passes false so the shared git-status store stops polling for rows
@@ -657,25 +686,31 @@ export function FileTree(props: {
   /** The row whose path was just copied ("copied" label replaces its button). */
   const [copiedPath, setCopiedPath] = useState<string | null>(null)
   /** Open context menu: the row path (and whether it is a directory) plus the cursor position. */
-  const [rowMenu, setRowMenu] = useState<{ path: string; isDir: boolean; x: number; y: number } | null>(null)
+  const [menuTarget, setRowMenu] = useState<(RowActionOrigin & { path: string; isDir: boolean; x: number; y: number }) | null>(null)
+  const rowMenu = menuTarget !== null && isCurrentRowAction(menuTarget, props) ? menuTarget : null
   // The plugin submenu can tower past the viewport; publish its flip geometry
   // for layout.css while the row menu is open.
   /** The open-in-app rows for the open menu (null entries = listing failed). */
   const [apps, setApps] = useState<{ path: string; entries: readonly OpenInAppEntry[] | null } | null>(null)
   /** The row being renamed inline: its path plus the edit buffer. */
-  const [renaming, setRenaming] = useState<{ path: string; value: string } | null>(null)
+  const [renameDraft, setRenaming] = useState<(RowActionOrigin & { path: string; isDir: boolean; value: string }) | null>(null)
+  const renaming = renameDraft !== null && isCurrentRowAction(renameDraft, props) ? renameDraft : null
+  const renamingRef = useRef(renaming)
+  renamingRef.current = renaming
   /** The inline new-folder editor: the directory it inserts into plus the buffer. */
-  const [newFolder, setNewFolder] = useState<{ dir: string; value: string } | null>(null)
+  const [folderDraft, setNewFolder] = useState<(RowActionOrigin & { dir: string; value: string }) | null>(null)
+  const newFolder = folderDraft !== null && isCurrentRowAction(folderDraft, props) ? folderDraft : null
   /** The inline new-file editor: the directory it inserts into plus the buffer. */
-  const [newFile, setNewFile] = useState<{ dir: string; value: string } | null>(null)
+  const [fileDraft, setNewFile] = useState<(RowActionOrigin & { dir: string; value: string }) | null>(null)
+  const newFile = fileDraft !== null && isCurrentRowAction(fileDraft, props) ? fileDraft : null
   /**
    * The delete awaiting the confirmation modal's yes (single row), plus the
    * scope it was ARMED under — see {@link sameScope}: the confirmation can
    * outlive the project it was opened in, and the scope captured here is what
    * keeps the request from landing in the next one.
    */
-  const [confirmDelete, setConfirmDelete] =
-    useState<{ path: string; isDir: boolean; name: string; scope: FsScope } | null>(null)
+  const [deleteTarget, setConfirmDelete] = useState<(RowActionOrigin & { path: string; isDir: boolean; name: string }) | null>(null)
+  const confirmDelete = deleteTarget !== null && isCurrentRowAction(deleteTarget, props) ? deleteTarget : null
   /** The batch delete awaiting the confirmation modal's yes (plus its armed scope). */
   const [confirmDeleteSelected, setConfirmDeleteSelected] = useState<FsScope | null>(null)
   /** True while the batch delete walks its paths (locks the dialog). */
@@ -705,7 +740,7 @@ export function FileTree(props: {
   /** The body's viewport rect captured at drag entry (null = not measured). */
   const [dropRect, setDropRect] = useState<{ top: number; left: number; width: number; height: number } | null>(null)
   /** Context-menu "upload here" target directory. */
-  const pendingUploadDir = useRef<string | undefined>(undefined)
+  const pendingUpload = useRef<(RowActionOrigin & { path: string }) | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   /** Reset all drag state (drop landed, the drag left, or a new drag begins). */
@@ -995,7 +1030,7 @@ export function FileTree(props: {
    */
   const pruneTree = useCallback((prefix: string): void => {
     const parent = parentOf(prefix)
-    const under = (key: string): boolean => key === prefix || key.startsWith(`${prefix}/`) || key.startsWith(`${prefix}\\`)
+    const under = (key: string): boolean => key === prefix || isDescendantOf(key, prefix)
     for (const key of Object.keys(dataRef.current)) {
       if (under(key)) delete dataRef.current[key]
     }
@@ -1012,20 +1047,32 @@ export function FileTree(props: {
     name !== '' && name !== '.' && name !== '..' && !name.includes('/') && !name.includes('\\')
 
   /** Commit the inline rename: trim, no-op guard, then fs.rename + settle. */
-  const commitRename = (path: string, raw: string): void => {
+  const commitRename = (): void => {
+    const pending = renamingRef.current
+    if (pending === null || !isCurrentRowAction(pending, propsRef.current)) return
+    renamingRef.current = null
     setRenaming(null)
-    const name = raw.trim()
-    if (cwd === undefined || name === baseName(path) || !validName(name)) {
-      if (name !== baseName(path) && !validName(name)) setActionError(t('renameInvalid'))
+    const { path, scope } = pending
+    const originalName = baseName(path)
+    if (pending.value === originalName) return
+    const name = pending.value.trim()
+    if (name === originalName) return
+    if (!validName(name)) {
+      setActionError(t('renameInvalid'))
       return
     }
-    api.fsRename({ sessionId, cwd }, path, name)
+    const generation = scopeGenRef.current
+    api.fsRename(scope, path, name)
       .then((result) => {
+        if (generation !== scopeGenRef.current || !sameScope(scope, scopeOf(propsRef.current))) return
         setActionError(null)
         pruneTree(path)
+        if (pending.searchKey !== undefined) pruneSelection(path, pending.isDir)
         onPathRenamed?.(path, result.path)
+        propsRef.current.onContentsChanged?.()
       })
       .catch((error: unknown) => {
+        if (generation !== scopeGenRef.current || !sameScope(scope, scopeOf(propsRef.current))) return
         setActionError(error instanceof Error ? error.message : String(error))
       })
   }
@@ -1243,10 +1290,12 @@ export function FileTree(props: {
     setCopiedPath(null)
     setRenaming(null)
     setNewFolder(null)
+    setNewFile(null)
     // The ref is synced during render, so it still holds the previous session's
     // editor until the next one — long enough for a blur in this tick to mkdir
     // that dir under the new scope.
     newFolderRef.current = null
+    newFileRef.current = null
     setConfirmDelete(null)
     setConfirmDeleteSelected(null)
     // A batch walk of the PREVIOUS session may still be in flight: its flag
@@ -1256,9 +1305,26 @@ export function FileTree(props: {
     scopeGenRef.current += 1
     setActionError(null)
     setLoadError(null)
-    pendingUploadDir.current = undefined
+    pendingUpload.current = null
     resetDrop()
   }, [sessionId, cwd, resetDrop, clearSelection])
+
+  useEffect(() => {
+    setRowMenu(null)
+    setRenaming(null)
+    setNewFolder(null)
+    setNewFile(null)
+    setConfirmDelete(null)
+  }, [props.searchKey])
+
+  /** 清理搜索操作移除的树行及其后代，保留选区内其他路径。 */
+  const pruneSelection = (target: string, isDir: boolean): void => {
+    /** 与树缓存使用相同的目录边界。 */
+    const removed = (path: string): boolean => path === target || (isDir && isDescendantOf(path, target))
+    const remaining = new Set([...selectedRef.current].filter(path => !removed(path)))
+    if (anchorRef.current !== null && removed(anchorRef.current)) anchorRef.current = null
+    if (remaining.size !== selectedRef.current.size) setSelection(remaining)
+  }
 
   const copySelectedPaths = useCallback((): void => {
     void writeClipboard([...selectedRef.current].join('\n'))
@@ -1275,8 +1341,8 @@ export function FileTree(props: {
    * project's file.
    * @param target - The row awaiting deletion, plus its armed scope.
    */
-  const performDelete = (target: { path: string; isDir: boolean; scope: FsScope }): void => {
-    if (!sameScope(target.scope, scopeOf(propsRef.current))) return
+  const performDelete = (target: RowActionOrigin & { path: string; isDir: boolean }): void => {
+    if (!isCurrentRowAction(target, propsRef.current)) return
     const generation = scopeGenRef.current
     api.fsRemove(target.scope, target.path)
       .then(() => {
@@ -1286,8 +1352,13 @@ export function FileTree(props: {
         setActionError(null)
         pruneTree(target.path)
         onPathDeleted?.(target.path, target.isDir)
-        anchorRef.current = null
-        setSelection(new Set())
+        propsRef.current.onContentsChanged?.()
+        if (target.searchKey !== undefined) {
+          pruneSelection(target.path, target.isDir)
+        } else {
+          anchorRef.current = null
+          setSelection(new Set())
+        }
       })
       .catch((error: unknown) => {
         if (generation !== scopeGenRef.current) return
@@ -1321,12 +1392,15 @@ export function FileTree(props: {
     }
   }, [clearSelection, selectRange, toggleSelect])
 
-  const handleContextMenu = useCallback((event: MouseEvent<HTMLDivElement>, path: string, isDir: boolean): void => {
+  /** 为树行或搜索结果打开同一个菜单，保留树中的多选状态。 */
+  const handleContextMenu = useCallback((event: MouseEvent, path: string, isDir: boolean, searchKey?: string): void => {
     event.preventDefault()
     event.stopPropagation()
+    const scope = scopeOf(propsRef.current)
+    if (scope === undefined || searchKey !== propsRef.current.searchKey) return
     // VSCode semantics: right-clicking outside the selection collapses it
     // onto the row; right-clicking INSIDE it keeps the whole batch.
-    if (!selectedRef.current.has(path)) {
+    if (searchKey === undefined && !selectedRef.current.has(path)) {
       anchorRef.current = path
       kindRef.current.set(path, isDir)
       setSelection(new Set([path]))
@@ -1334,7 +1408,7 @@ export function FileTree(props: {
     // NOTE: the previous menu's app answer is deliberately KEPT — the render
     // only trusts it for the matching path, and dropping it here would cost an
     // extra render (and, on a reopen, a disabled "Loading…" frame).
-    setRowMenu({ path, isDir, x: event.clientX, y: event.clientY })
+    setRowMenu({ path, isDir, x: event.clientX, y: event.clientY, searchKey, scope })
   }, [setSelection])
 
   const handleReference = useCallback((path: string, isDir: boolean): void => {
@@ -1385,11 +1459,11 @@ export function FileTree(props: {
   newFolderRef.current = newFolder
 
   /** Open the inline editor at the TOP of `dir`'s level (expanding it first). */
-  const startNewFolder = (dir: string): void => {
+  const startNewFolder = (dir: string, { scope, searchKey }: RowActionOrigin): void => {
     const live = propsRef.current
-    if (live.cwd !== undefined && dir !== live.cwd && !expandedSetRef.current.has(dir)) live.onToggle(dir)
+    if (searchKey === undefined && dir !== scope.cwd && !expandedSetRef.current.has(dir)) live.onToggle(dir)
     setNewFile(null)
-    setNewFolder({ dir, value: '' })
+    setNewFolder({ dir, value: '', scope, searchKey })
   }
 
   /**
@@ -1398,23 +1472,28 @@ export function FileTree(props: {
    * lands after Enter must not fire a second mkdir.
    */
   const commitNewFolder = (dir: string, raw: string): void => {
-    if (newFolderRef.current === null) return
+    const pending = newFolderRef.current
+    if (pending === null || !isCurrentRowAction(pending, propsRef.current)) return
     newFolderRef.current = null
     setNewFolder(null)
     const name = raw.trim()
     const live = propsRef.current
-    if (live.cwd === undefined) return
     if (!validName(name)) {
       setActionError(t('newFolderInvalid'))
       return
     }
-    api.fsMkdir({ sessionId: live.sessionId, cwd: live.cwd }, dir, name)
+    const { scope, searchKey } = pending
+    const generation = scopeGenRef.current
+    api.fsMkdir(scope, dir, name)
       .then(() => {
+        if (generation !== scopeGenRef.current || !sameScope(scope, scopeOf(propsRef.current))) return
         setActionError(null)
-        if (dir !== live.cwd && !expandedSetRef.current.has(dir)) live.onToggle(dir)
+        if (searchKey === undefined && dir !== scope.cwd && !expandedSetRef.current.has(dir)) live.onToggle(dir)
         retryDir(dir)
+        live.onContentsChanged?.()
       })
       .catch((error: unknown) => {
+        if (generation !== scopeGenRef.current || !sameScope(scope, scopeOf(propsRef.current))) return
         setActionError(error instanceof Error ? error.message : String(error))
       })
   }
@@ -1429,11 +1508,11 @@ export function FileTree(props: {
   newFileRef.current = newFile
 
   /** Open the inline editor at the TOP of `dir`'s level (expanding it first). */
-  const startNewFile = (dir: string): void => {
+  const startNewFile = (dir: string, { scope, searchKey }: RowActionOrigin): void => {
     const live = propsRef.current
-    if (live.cwd !== undefined && dir !== live.cwd && !expandedSetRef.current.has(dir)) live.onToggle(dir)
+    if (searchKey === undefined && dir !== scope.cwd && !expandedSetRef.current.has(dir)) live.onToggle(dir)
     setNewFolder(null)
-    setNewFile({ dir, value: '' })
+    setNewFile({ dir, value: '', scope, searchKey })
   }
 
   /**
@@ -1445,12 +1524,12 @@ export function FileTree(props: {
    * obvious mistakes never cost a round trip.
    */
   const commitNewFile = (dir: string, raw: string): void => {
-    if (newFileRef.current === null) return
+    const pending = newFileRef.current
+    if (pending === null || !isCurrentRowAction(pending, propsRef.current)) return
     newFileRef.current = null
     setNewFile(null)
     const name = raw.trim()
     const live = propsRef.current
-    if (live.cwd === undefined) return
     if (!validName(name)) {
       setActionError(t('newFileInvalid'))
       return
@@ -1459,13 +1538,18 @@ export function FileTree(props: {
       setActionError(t('newFileExists'))
       return
     }
-    api.fsCreateFile({ sessionId: live.sessionId, cwd: live.cwd }, dir, name)
+    const { scope, searchKey } = pending
+    const generation = scopeGenRef.current
+    api.fsCreateFile(scope, dir, name)
       .then(() => {
+        if (generation !== scopeGenRef.current || !sameScope(scope, scopeOf(propsRef.current))) return
         setActionError(null)
-        if (dir !== live.cwd && !expandedSetRef.current.has(dir)) live.onToggle(dir)
+        if (searchKey === undefined && dir !== scope.cwd && !expandedSetRef.current.has(dir)) live.onToggle(dir)
         retryDir(dir)
+        live.onContentsChanged?.()
       })
       .catch((error: unknown) => {
+        if (generation !== scopeGenRef.current || !sameScope(scope, scopeOf(propsRef.current))) return
         setActionError(error instanceof Error ? error.message : String(error))
       })
   }
@@ -1518,6 +1602,7 @@ export function FileTree(props: {
         setActionError(null)
         pruneTree(path)
         live.onPathDeleted?.(path, kindRef.current.get(path) ?? false)
+        live.onContentsChanged?.()
         removed.push(path)
       }
       if (generation !== scopeGenRef.current) return
@@ -1814,8 +1899,8 @@ export function FileTree(props: {
     ]
   }
 
-  const zipEntries = (target: { path: string; isDir: boolean }): MenuEntry[] => {
-    const count = selected.size
+  const zipEntries = (target: { isDir: boolean; searchKey: string | undefined }): MenuEntry[] => {
+    const count = target.searchKey === undefined ? selected.size : 1
     if (count >= 2) {
       return [{
         id: 'archive-selection',
@@ -2079,7 +2164,7 @@ export function FileTree(props: {
    *  keys inside a live composition window by design (bare legacy 229
    *  keydowns pass it, #833), which is right for the guard and not enough
    *  here. */
-  const renderRenameRow = (entry: FsEntry, depth: number): ReactNode => (
+  const renderRenameRow = (entry: Pick<FsEntry, 'path' | 'isDir'>, depth: number): ReactNode => (
     <div
       key={entry.path}
       className={clsx(css.explorerRow, css.explorerRenaming)}
@@ -2103,13 +2188,14 @@ export function FileTree(props: {
             event.preventDefault()
             // A folded row renders at the chain HEAD while its menu addressed
             // the TAIL: commit the path the editor was opened for.
-            commitRename(renaming?.path ?? entry.path, renaming?.value ?? '')
+            commitRename()
           } else if (event.key === 'Escape') {
             event.preventDefault()
+            renamingRef.current = null
             setRenaming(null)
           }
         }}
-        onBlur={() => { commitRename(renaming?.path ?? entry.path, renaming?.value ?? '') }}
+        onBlur={commitRename}
       />
     </div>
   )
@@ -2188,9 +2274,9 @@ export function FileTree(props: {
     const level = data[dir]
     // Only ONE inline creator is open at a time (each start closes the other),
     // so the two are tested in a fixed order rather than merged.
-    const head = newFolder?.dir === dir
+    const head = newFolder?.searchKey === undefined && newFolder?.dir === dir
       ? renderNewFolderRow(dir, depth)
-      : newFile?.dir === dir ? renderNewFileRow(dir, depth) : null
+      : newFile?.searchKey === undefined && newFile?.dir === dir ? renderNewFileRow(dir, depth) : null
     // Both the not-yet-requested level (`undefined`) and the in-flight marker
     // `loadLevels` stores (`{}` — no entries, no error yet) draw the loading
     // row. Without the second half the marker fell into `entries ?? []` and
@@ -2235,7 +2321,7 @@ export function FileTree(props: {
           // an editor is not a click target — and a nested interactive inside
           // role="button" would be invalid anyway). A folded row's menu
           // addressed its TAIL, so any chain link puts the whole row here.
-          if (renaming !== null && (renaming.path === entry.path || chain?.some(link => link.path === renaming.path) === true)) {
+          if (renaming !== null && renaming.searchKey === undefined && (renaming.path === entry.path || chain?.some(link => link.path === renaming.path) === true)) {
             return renderRenameRow(entry, depth)
           }
           if (chain !== undefined) {
@@ -2291,7 +2377,39 @@ export function FileTree(props: {
     )
   }
 
-  return (
+  const operationStatus = (
+    <>
+      {actionError !== null && (
+        <div className={css.explorerActionError} role="alert">
+          <span className={css.explorerActionErrorText}>{actionError}</span>
+          <IconButton
+            size="sm"
+            label={t('dismiss')}
+            icon={<IconCloseFillRegular size={14} />}
+            onClick={() => { setActionError(null) }}
+          />
+        </div>
+      )}
+      {archiveBusy && <Notice kind="loading" tone="inline" role="status">{t('loading')}</Notice>}
+    </>
+  )
+
+  return (<>
+    {props.renderSearchResults !== undefined && (
+      <div className={clsx(css.explorerBody, hidden !== true && css.explorerHiddenPane)} hidden={hidden !== true}>
+        {hidden === true && (
+          <>
+            {operationStatus}
+            {props.renderSearchResults({
+              openMenu: (event, path, isDir) => { handleContextMenu(event, path, isDir, props.searchKey) },
+              renameEditor: (path) => renaming?.path === path ? renderRenameRow(renaming, 0) : null,
+              createEditor: (path) => newFolder?.dir === path ? renderNewFolderRow(path, 1)
+                : newFile?.dir === path ? renderNewFileRow(path, 1) : null,
+            })}
+          </>
+        )}
+      </div>
+    )}
     <div
       ref={bodyRef}
       className={clsx(css.explorerBody, hidden === true && css.explorerHiddenPane)}
@@ -2305,39 +2423,18 @@ export function FileTree(props: {
         if (event.target === event.currentTarget) clearSelection()
       }}
       onKeyDown={(event) => {
-        if (event.key === 'Escape') clearSelection()
+        if (event.key === 'Escape' && hidden !== true) clearSelection()
       }}
     >
       {root === undefined ? (
         <div className={css.explorerEmpty}>{t('noSession')}</div>
       ) : (
         <>
-          {/* The last mutation failure (rename/delete/mkdir/open-in-app):
-              dismissable, raw server text — the same show-the-truth policy the
-              fence notice uses. Any later action or a fresh attempt clears it. */}
-          {actionError !== null && (
-            <div className={css.explorerActionError} role="alert">
-              <span className={css.explorerActionErrorText}>{actionError}</span>
-              <IconButton
-                size="sm"
-                label={t('dismiss')}
-                icon={<IconCloseFillRegular size={14} />}
-                onClick={() => { setActionError(null) }}
-              />
-            </div>
-          )}
-          {/* The archive is built host-side, in one pass, while the STATUS
-              poll drives `done/total`: the line sits right under the error
-              strip (the two CAN coexist — a stale error stays readable while a
-              new attempt is in flight). `role="status"` makes it a polite live
-              region, so progress is announced without stealing focus. */}
+          {hidden !== true && operationStatus}
           {/* A refresh whose batch request failed: the rows above are the
               PREVIOUS listing, so the hint explains why nothing changed. */}
           {loadError !== null && (
             <Notice kind="warn" tone="inline">{loadError}</Notice>
-          )}
-          {archiveBusy && (
-            <Notice kind="loading" tone="inline" role="status">{t('loading')}</Notice>
           )}
           <RootRow
             path={root}
@@ -2415,19 +2512,20 @@ export function FileTree(props: {
         </>,
         document.body,
       )}
-      {/*
-        The one shared context menu, positioned at the right-click cursor
-        (portal so the tree's overflow clip cannot crop it).
-      */}
+    </div>
+    <>
+      {/* 菜单锚点放在两个视图之外，宿主会关闭锚点位于隐藏区域内的菜单。 */}
       <input
         ref={fileInputRef}
         type="file"
         multiple
         style={{ display: 'none' }}
         onChange={(event) => {
-          const dir = pendingUploadDir.current ?? root
-          pendingUploadDir.current = undefined
-          if (dir !== undefined && !busy) onUploadRequest(dir, uploadItemsFromFiles(event.target.files ?? []))
+          const target = pendingUpload.current
+          pendingUpload.current = null
+          if (target !== null && !busy && isCurrentRowAction(target, propsRef.current)) {
+            onUploadRequest(target.path, uploadItemsFromFiles(event.target.files ?? []))
+          }
           event.target.value = ''
         }}
       />
@@ -2468,7 +2566,7 @@ export function FileTree(props: {
           // 6: copy, then the mutations (never on the workspace root row).
           { id: 'relative', label: t('copyRelative'), icon: <IconCopyOutlineRegular size={14} /> },
           { id: 'absolute', label: t('copyAbsolute'), icon: <IconCopyOutlineRegular size={14} /> },
-          ...(rowMenu !== null && rowMenu.path !== cwd
+          ...(rowMenu !== null && rowMenu.path !== cwd && rowMenu.path !== props.searchRoot
             ? [
                 { id: 'mutate-sep', type: 'separator' } as MenuEntry,
                 { id: 'rename', label: t('rename'), icon: <IconEditOutlineRegular size={14} /> },
@@ -2478,7 +2576,7 @@ export function FileTree(props: {
         ]}
         onSelect={(id) => {
           const target = rowMenu
-          if (target === null) return
+          if (target === null || !isCurrentRowAction(target, propsRef.current)) return
           setRowMenu(null)
           if (id === 'open-new-tab') {
             onOpenFileNewTab?.(target.path)
@@ -2519,7 +2617,7 @@ export function FileTree(props: {
             return
           }
           if (id === 'archive-selection') {
-            downloadArchive([...selected])
+            downloadArchive(target.searchKey === undefined ? [...selected] : [target.path])
             return
           }
           if (id === 'download') {
@@ -2527,26 +2625,24 @@ export function FileTree(props: {
             return
           }
           if (id === 'upload-here') {
-            pendingUploadDir.current = target.path
+            pendingUpload.current = target
             fileInputRef.current?.click()
             return
           }
           if (id === 'new-folder') {
-            startNewFolder(target.path)
+            startNewFolder(target.path, target)
             return
           }
           if (id === 'new-file') {
-            startNewFile(target.path)
+            startNewFile(target.path, target)
             return
           }
           if (id === 'rename') {
-            setRenaming({ path: target.path, value: baseName(target.path) })
+            setRenaming({ path: target.path, isDir: target.isDir, value: baseName(target.path), scope: target.scope, searchKey: target.searchKey })
             return
           }
           if (id === 'delete') {
-            const armed = scopeOf(propsRef.current)
-            if (armed === undefined) return
-            setConfirmDelete({ path: target.path, isDir: target.isDir, name: baseName(target.path), scope: armed })
+            setConfirmDelete({ path: target.path, isDir: target.isDir, name: baseName(target.path), scope: target.scope, searchKey: target.searchKey })
             return
           }
           copyPath(
@@ -2597,6 +2693,6 @@ export function FileTree(props: {
         }}
         onClose={() => { setConfirmDeleteSelected(null) }}
       />
-    </div>
-  )
+    </>
+  </>)
 }

@@ -1517,16 +1517,16 @@ describe('session cwd resolution over the API route', () => {
       const route = mount({ sessions: { get: () => ({ header: { cwd: workspace } }) } })
       const target = join(workspace, 'src', 'index.ts')
       const hit = await invoke(route, 'fs.search', { sessionId: 's-search', query: target })
-      expect(hit.value).toEqual({ matches: [target], dirs: [], truncated: false })
+      expect(hit.value).toEqual({ cwd: workspace, matches: [target], paths: [target], dirs: [], truncated: false })
       const miss = await invoke(route, 'fs.search', { sessionId: 's-search', query: join(workspace, 'gone.ts') })
-      expect(miss.value).toEqual({ matches: [], dirs: [], truncated: false })
+      expect(miss.value).toEqual({ cwd: workspace, matches: [], paths: [], dirs: [], truncated: false })
       // A relative fragment searches the workspace tree by PATH (the name
       // walk can never match a separator-carrying query), and a dot-anchored
       // spelling resolves against the session cwd like fs.read does.
       const fragment = await invoke(route, 'fs.search', { sessionId: 's-search', query: 'src/index' })
-      expect(fragment.value).toEqual({ matches: ['src/index.ts'], dirs: [], truncated: false })
+      expect(fragment.value).toEqual({ cwd: workspace, matches: ['src/index.ts'], paths: [target], dirs: [], truncated: false })
       const anchored = await invoke(route, 'fs.search', { sessionId: 's-search', query: './src/index.ts' })
-      expect(anchored.value).toEqual({ matches: [join(workspace, 'src', 'index.ts')], dirs: [], truncated: false })
+      expect(anchored.value).toEqual({ cwd: workspace, matches: [target], paths: [target], dirs: [], truncated: false })
     } finally {
       removeTree(root)
     }

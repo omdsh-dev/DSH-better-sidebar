@@ -110,16 +110,8 @@ describe('normalizeEnginePaths', () => {
     ])
   })
 
-  it('strips a trailing CR from engine lines (Windows CRLF endings)', () => {
-    expect(normalizeEnginePaths(['src/util.ts\r', './b.ts\r'])).toEqual([
-      'src/util.ts',
-      'b.ts',
-    ])
-    // Same protection applies to the Windows shape.
-    expect(normalizeEnginePaths(['src\\util.ts\r', '.\\docs\\guide.md\r'], '\\')).toEqual([
-      'src/util.ts',
-      'docs/guide.md',
-    ])
+  it('preserves CR and LF inside a POSIX path', () => {
+    expect(normalizeEnginePaths(['./src/a\nb.ts\r'], '/')).toEqual(['src/a\nb.ts\r'])
   })
 })
 
@@ -706,12 +698,12 @@ describe('streamLines settles on close, not exit', () => {
     return { child: child as unknown as ChildProcess, stdout, emit }
   }
 
-  /** Feed lines into the fake stdout and wait until readline consumed them
+  /** Feed paths into stdout and wait until the consumer has received them
    *  all (the stream's `end` fires after the last data chunk) — the state a
    *  real child is in right before `close` fires. */
-  async function feed(stdout: PassThrough, lines: string): Promise<void> {
+  async function feed(stdout: PassThrough, paths: string): Promise<void> {
     const ended = new Promise<void>(resolve => { stdout.once('end', resolve) })
-    stdout.write(lines)
+    stdout.write(paths)
     stdout.end()
     await ended
   }
@@ -754,9 +746,9 @@ describe('streamLines settles on close, not exit', () => {
     // (exit) BEFORE their stdout has drained.
     first.emit('exit', 0)
     second.emit('exit', 0)
-    // Data is still in flight at exit time; it only reaches readline after.
-    await feed(first.stdout, 'src/util.ts\nsrc\n')
-    await feed(second.stdout, 'src\n')
+    // Data is still in flight at exit time; it reaches the listener afterward.
+    await feed(first.stdout, 'src/util.ts\0src\0')
+    await feed(second.stdout, 'src\0')
     // close has not fired yet, so nothing may have settled: an exit-based
     // settlement has already resolved here with the still-empty lines (the
     // bug this case pins — it made the pending probe fail first).
@@ -773,7 +765,7 @@ describe('streamLines settles on close, not exit', () => {
     // The main run completes normally (both settlement events — the exit one
     // keeps this case red under the old swallow-catch: the engine resolves
     // with silently empty dirs there).
-    await feed(first.stdout, 'src/util.ts\n')
+    await feed(first.stdout, 'src/util.ts\0')
     first.emit('exit', 0)
     first.emit('close', 0)
     // The --type d run dies: a rejection, which must reach runEngine's
