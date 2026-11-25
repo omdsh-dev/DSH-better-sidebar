@@ -1261,4 +1261,7 @@ export const de: Record<string, string> = {
   clueTabWorkspaceAria: 'Switch browse workspace',
   clueDetailUnsaved: 'Unsaved edits: save first, or discard them from the footer.',
   clueDetailDiscard: 'Discard edits',
+  featuredTabLabel: "Empfohlene Plugins",
+  featuredEntryDesc: "Community-kuratierte Plugins in einem Tab: Suche, Tag-Filter, Installation mit einem Klick und README-Details.",
+  featuredInstallFull: "Vollversion installieren",
 }

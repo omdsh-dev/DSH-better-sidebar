@@ -28,6 +28,7 @@ import { createNativeSurface } from './native/surface.ts'
 import { isTargetAvailable, openInterceptedLink, registerLinkInterception, shouldTakeOverLink } from './link-intercept.ts'
 import { registerImeGuard } from './ime-guard.ts'
 import { registerQuoteSource } from './selection-quote.ts'
+import { installFeaturedEntry } from './featured-entry.tsx'
 import { IconSideCardNav } from './icons.tsx'
 import { registerChatMarkdownMentions } from './chat-mentions.ts'
 import type { SettingsSectionIconOwnerProps } from '@deepseek-ai/dsh-client-ui-settings/client'
@@ -622,6 +623,16 @@ export function apply(ctx: Context): void {
       label: () => t('settingsNav'),
       inject: () => ({ store: sidebarStore, service, guideCatalog: nativeGuide.catalog }),
     }, SideCardSection))
+
+    // The inline "Featured plugins" tab: one entry that offers the full
+    // dsh-featured plugin's install and yields to it once loaded (see
+    // featured-entry.tsx). Own guard: a registration failure must not undo
+    // the sidebar's own slots above.
+    try {
+      installFeaturedEntry(ctx)
+    } catch (error) {
+      console.error('[dsh-better-sidebar] featured entry error:', error)
+    }
   } catch (error) {
     fail('load', error)
   }

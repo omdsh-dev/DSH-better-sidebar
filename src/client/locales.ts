@@ -1282,6 +1282,9 @@ export const zh = {
   clueWindowSurfaceFloating: '浮动窗口',
   cluePackRename: '重命名',
   clueAuthCopyLink: '复制授权链接',
+  featuredTabLabel: '精选插件',
+  featuredEntryDesc: '一个入口逛完社区精选的好插件：搜索、标签筛选、一键安装、README 详情。',
+  featuredInstallFull: '安装完整版',
 }
 
 /** The en dictionary (key-set-equal to zh, enforced by the type annotation). */
@@ -2552,6 +2555,9 @@ export const en: Record<keyof typeof zh, string> = {
   clueWindowSurfaceFloating: 'Floating window',
   cluePackRename: 'Rename',
   clueAuthCopyLink: 'Copy authorization link',
+  featuredTabLabel: "Featured plugins",
+  featuredEntryDesc: "One tab for community-curated plugins: search, tag filters, one-click install and README details.",
+  featuredInstallFull: "Install the full version",
 }
 
 /**

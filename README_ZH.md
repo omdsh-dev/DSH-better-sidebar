@@ -130,6 +130,8 @@ dsh plugin --profile web add dsh-better-sidebar@latest
 
 `ctx.betterSidebar` 向所有插件开放 `registerTab` / `registerFileViewer` / `registerFileIcon` / `registerFileAction` / `registerTabAction` 五个扩展点，内置 6 tab + 5 viewer 与第三方插件走同一套 API。GitHub topic [`dsh-better-sidebar`](https://github.com/topics/dsh-better-sidebar) 下已有 **30+ 生态插件**；完整接入文档见 **[docs/external-plugin-guide.md](./docs/external-plugin-guide.md)**。
 
+插件页还内置社区「精选插件」页签（[dsh-featured](https://github.com/skillpie/dsh-plugins/tree/main/dsh-featured) 生态）：可在其中安装完整版，装好后由完整版接管该页签。目录收录由 skillpie.cn 审核决定，不因托管该入口而改变。
+
 ```ts
 import type {} from 'dsh-better-sidebar'  // 触发 ctx.betterSidebar 类型合并
 export const inject = ['betterSidebar']

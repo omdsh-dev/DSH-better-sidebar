@@ -1272,4 +1272,7 @@ export const ru: Record<string, string> = {
   clueTabWorkspaceAria: 'Switch browse workspace',
   clueDetailUnsaved: 'Unsaved edits: save first, or discard them from the footer.',
   clueDetailDiscard: 'Discard edits',
+  featuredTabLabel: "Избранные плагины",
+  featuredEntryDesc: "Отобранные сообществом плагины в одной вкладке: поиск, фильтры по тегам, установка в один клик и подробности из README.",
+  featuredInstallFull: "Установить полную версию",
 }

@@ -1259,4 +1259,7 @@ export const es: Record<string, string> = {
   clueTabWorkspaceAria: "Cambiar el espacio de trabajo de exploración",
   clueDetailUnsaved: "Cambios sin guardar: guárdalos primero o descártalos desde el pie de página.",
   clueDetailDiscard: "Descartar cambios",
+  featuredTabLabel: "Plugins destacados",
+  featuredEntryDesc: "Todos los plugins destacados por la comunidad en una sola pestaña: búsqueda, filtros por etiqueta, instalación con un clic y detalles del README.",
+  featuredInstallFull: "Instalar la versión completa",
 }
