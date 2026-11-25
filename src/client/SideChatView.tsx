@@ -799,6 +799,12 @@ interface RowSurface {
   attachments: (list: readonly SidechatAttachment[]) => React.ReactNode
 }
 
+const terminalLabelKeys = {
+  aborted: 'sideChatTerminalAborted',
+  blocked: 'sideChatTerminalBlocked',
+  'max-tokens': 'sideChatTerminalMaxTokens',
+} as const
+
 /** One row renderer (React keys ride the source event seq). `surface` is the
  *  markdown prose pass the rows run before rendering — the rows are model
  *  prose, so a relative destination resolves against the session cwd (see
@@ -873,12 +879,9 @@ function renderRow(row: SidechatTranscriptRow, labels: RowLabels, surface: RowSu
         </div>
       )
     case 'terminal':
-      // The turn ended without a normal completion: say which way (the reader
-      // stopped it vs the output limit cut it), because the next thing the
-      // reader does differs — resend, or continue in a fresh turn.
       return (
         <div key={key} className={css.sidechatTerminal}>
-          {t(row.reason === 'max-tokens' ? 'sideChatTerminalMaxTokens' : 'sideChatTerminalAborted')}
+          {t(terminalLabelKeys[row.reason])}
         </div>
       )
     case 'compaction': {
@@ -1186,18 +1189,12 @@ export function SideChatView(props: {
     return pool.reduce((newest, row) => (rank(row.id) > rank(newest.id) ? row : newest)).id
   }, [list, scope.sessionId])
 
-  // The thread this tab is bound to rides tab.meta (refresh-restored).
-  const threadId = sidechatThreadIdOf(tab)
+  // A restored binding can precede the host's archive snapshot. Stop using it
+  // as soon as that snapshot marks the thread archived.
+  const boundThreadId = sidechatThreadIdOf(tab)
+  const bindingArchived = boundThreadId !== undefined && archivedIds.includes(boundThreadId)
+  const threadId = bindingArchived ? undefined : boundThreadId
   const autoCreate = (tab.meta as { autoCreate?: unknown } | undefined)?.autoCreate === true
-
-  useEffect(() => {
-    // The shared page follows the session's last/newest thread (the archive
-    // handler below moves it); only an independent occurrence unbinds itself.
-    if (!multipleTabs) return
-    if (threadId !== undefined && archivedIds.includes(threadId)) {
-      updateSeat({ meta: {}, title: t('sideChatUntitled') })
-    }
-  }, [archivedIds, threadId, multipleTabs, updateSeat])
 
   const draft = useSidechatDraft(threadId)
   const composer = draft.owner.text
@@ -1393,29 +1390,29 @@ export function SideChatView(props: {
    */
   const reattachTarget = useCallback((): string | undefined => {
     const remembered = lastSidechatThread(scope.sessionId)
-    if (remembered !== undefined && (threads.length === 0 || threads.some(row => row.id === remembered))) {
+    if (remembered !== undefined && !archivedIds.includes(remembered)
+      && (threads.length === 0 || threads.some(row => row.id === remembered))) {
       return remembered
     }
     return newestThreadId(threads)
-  }, [newestThreadId, scope.sessionId, threads])
+  }, [archivedIds, newestThreadId, scope.sessionId, threads])
 
-  // autoCreate is an explicit NEW conversation in independent mode; in shared
-  // mode a tab that lost its binding reattaches to the session's last thread
-  // instead of leaving another orphan "Side: New thread" behind.
+  // A shared page tries its remembered or newest live thread before creating
+  // one. An independent tab only restores its own binding.
   useEffect(() => {
-    if (threadId !== undefined || !visible) return
-    if (!multipleTabs) {
+    if (threadId !== undefined) return
+    if (visible && !multipleTabs) {
       const reattach = reattachTarget()
       if (reattach !== undefined) {
         updateSeat({ meta: { threadId: reattach } })
         return
       }
     }
-    if (autoCreate) void startThread()
-  }, [threadId, autoCreate, visible, startThread, reattachTarget, multipleTabs, updateSeat])
+    if (bindingArchived) updateSeat({ meta: {}, title: t('sideChatUntitled') })
+    else if (visible && autoCreate) void startThread()
+  }, [threadId, bindingArchived, autoCreate, visible, startThread, reattachTarget, multipleTabs, updateSeat])
 
-  // Compatibility hint for consumers of the old last-thread key. Our own
-  // restoration never reads it: every native occurrence has its own binding.
+  // Keep the shared page's restore hint in sync with its active binding.
   useEffect(() => {
     if (threadId !== undefined) rememberSidechatThread(scope.sessionId, threadId)
   }, [threadId, scope.sessionId])

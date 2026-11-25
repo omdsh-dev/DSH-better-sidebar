@@ -6,6 +6,8 @@
 
 ### Unreleased
 
+- **Skip archived conversations when reopening Side Chat** ([#1265](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1265)). The shared page picks an available thread or lets you start a new one. If the host blocks a turn, the transcript shows a notice.
+
 - **Reduce Git Graph deduplication work when loading more history** ([#1063](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1063), item 5). Each append indexes the full hashes of loaded commits before filtering the incoming page. New commits keep their page order, and duplicate-only pages still advance the cursor.
 
 - 🧪 **DSH 0.2.3-alpha.2 (alpha line)**: the 14 DSH peers and `engines.dsh` move to `0.2.3-alpha.2`, with the Cordis line at `4.2.0-alpha.1`. The host removed `@deepseek-ai/dsh-llm`'s `./brand` subpath, so the type now comes from `./types`, and the projection authority moved from `working-directory/change` to `workspace-root/change` — side-chat cwd stamps and worktree following moved with it. Every older-host compatibility branch is gone too (the `requestRejection` admission fallback, the legacy directory event, the old `data-slot` anchor and the `getOrigin` probe): this build serves 0.2.3-alpha.2+ only, and older hosts stay on v0.33.0.

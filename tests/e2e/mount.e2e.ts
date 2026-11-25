@@ -237,6 +237,37 @@ test('sidechat default: repeated guide opens keep the one shared page', async ({
   expect(sidechat.starts()).toBe(1)
 })
 
+test('sidechat default: reopening a closed tab binds a fresh unarchived thread (#1265)', async ({ page }) => {
+  await setSidechatTabs('single')
+  await gotoPage(page)
+  await dismissOnboarding(page)
+  await page.getByRole('button', { name: /^(New session|新建会话)$/i }).first().click()
+  await page.locator('[data-sidebar-right-expand]').first().click()
+  const entry = page.locator('[data-sidebar-right-guide-entry="sidechat"]:visible')
+  const openThread = async (): Promise<string> => {
+    const [events] = await Promise.all([
+      page.waitForRequest(request => request.url() === sidebarApi('sidechat.events')),
+      entry.click(),
+    ])
+    const { childId } = events.postDataJSON() as { childId: string }
+    expect(childId).toMatch(/^session-/)
+    return childId
+  }
+
+  const first = await openThread()
+  const [archive] = await Promise.all([
+    page.waitForResponse('**/api/workspace/archiveSession'),
+    page.locator('[data-sidebar-right-panel] [role="tab"][aria-selected="true"]:visible').first().click({ button: 'middle' }),
+  ])
+  expect((await archive.json()).result.value.archivedSessionIds).toContain(first)
+  if (!await entry.isVisible()) {
+    const addTab = page.locator('[data-dockkit-add-tab]:visible').first()
+    if (await addTab.isVisible()) await addTab.click()
+    else await page.locator('[data-sidebar-right-expand]:visible').first().click()
+  }
+  expect(await openThread()).not.toBe(first)
+})
+
 test('sidechat multi-instance: both plus buttons preserve independent tabs across reload', async ({ page }) => {
   await setSidechatTabs('multiple')
   const sidechat = await stubSidechat(page)

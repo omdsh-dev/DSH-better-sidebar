@@ -564,6 +564,7 @@ export const ja: Record<string, string> = {
   sideChatDequeue: 'キューから削除',
   sideChatRunError: '実行失敗：{message}',
   sideChatTerminalAborted: 'このターンは停止されました',
+  sideChatTerminalBlocked: 'ホストがこのターンをブロックしました',
   sideChatTerminalMaxTokens: '出力上限に達したため回答が途切れています',
   sideChatToolArguments: '引数',
   sideChatToolResult: '結果',

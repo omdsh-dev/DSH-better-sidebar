@@ -25,9 +25,8 @@
  * 4. The ERROR path is unchanged: `reason.kind === 'error'` still renders the
  *    existing error row with the provider's message, and never a terminal row;
  *    a normal completion renders neither.
- * 5. Localised copy only: both sentences come from the dictionaries
- *    (`sideChatTerminalAborted` / `sideChatTerminalMaxTokens`, added to zh, en
- *    and ja like every other key).
+ * 5. A blocked turn can end before an assistant attempt exists (#1265). Its
+ *    host-blocked status must still appear in the transcript in the UI language.
  * ==================================================================
  *
  * Mapping-level assertions run against `transcriptRows` (deterministic, no DOM);
@@ -97,6 +96,19 @@ describe('turn terminal rows (D9)', () => {
     const events = turnEvents({ kind: 'max-tokens' })
     expect(rowsOfKind(events, 'terminal'), 'a truncated answer leaves a terminal row').toHaveLength(1)
     expect(rowsOfKind(events, 'error')).toHaveLength(0)
+  })
+
+  it('shows a blocked turn even when the host never started an assistant attempt', async () => {
+    const events = turnEvents({ kind: 'blocked' })
+    expect(rowsOfKind(events, 'terminal')).toEqual([{ kind: 'terminal', seq: 90, reason: 'blocked' }])
+    harness.wire.events = events
+    const rendered = harness.mount()
+    try {
+      await harness.flush(4)
+      expect(rendered.container.textContent).toContain(t('sideChatTerminalBlocked'))
+    } finally {
+      rendered.unmount()
+    }
   })
 
   it('keeps the error path exactly as it was', () => {

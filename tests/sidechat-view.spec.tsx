@@ -149,29 +149,33 @@ function makeCtx(
  *  header's archive button reaches for, neither of them on the plugin's own
  *  context type (`workspaces` is the session list, `uiWorkspace` the session
  *  surface), so both ride the same `get` probe the view uses. */
-interface ArchiveHost {
-  archivedIds: string[]
-  archiveSession: ReturnType<typeof vi.fn>
-  betterSidebar: { updateTab: ReturnType<typeof vi.fn>; openTab: ReturnType<typeof vi.fn> }
-}
-
-function makeArchiveHost(archivedIds: string[] = []): ArchiveHost {
+function makeArchiveHost() {
+  let archivedIds: string[] = []
+  const listeners = new Set<() => void>()
   return {
-    archivedIds,
+    list: {
+      getSnapshot: () => ({ archivedSessionIds: archivedIds }),
+      subscribe(listener: () => void) {
+        listeners.add(listener)
+        return () => { listeners.delete(listener) }
+      },
+    },
+    setArchivedIds(ids: string[]) {
+      archivedIds = ids
+      for (const listener of listeners) listener()
+    },
     archiveSession: vi.fn(async () => {}),
     betterSidebar: { updateTab: vi.fn(), openTab: vi.fn() },
   }
 }
 
 /** makeCtx plus the archive host faces (the archive cases' whole subject). */
-function makeArchiveCtx(store: ReturnType<typeof makeStore>, host: ArchiveHost): Context {
+function makeArchiveCtx(store: ReturnType<typeof makeStore>, host: ReturnType<typeof makeArchiveHost>): Context {
   return {
     sessions: { list: store },
     get: (key: string) => {
       if (key === 'betterSidebar') return host.betterSidebar
-      if (key === 'workspaces') {
-        return { list: { getSnapshot: () => ({ archivedSessionIds: host.archivedIds }), subscribe: vi.fn(() => () => {}) } }
-      }
+      if (key === 'workspaces') return { list: host.list }
       if (key === 'uiWorkspace') return { archiveSession: host.archiveSession }
       return undefined
     },
@@ -495,6 +499,52 @@ describe('SideChatView archive', () => {
       root: { id: 'root', displayTitle: '主会话', running: false },
       t1: { id: 't1', displayTitle: '线程一', running },
     },
+  })
+
+  it.each([false, true])('reopens the shared page after its last thread was archived (another live thread: %s)', async hasLiveThread => {
+    const host = makeArchiveHost()
+    const { byId } = threadStore().getSnapshot()
+    const store = makeStore({ byId: { ...byId, t2: { ...byId.t1!, id: 't2', displayTitle: 'Side: 线程二' } } })
+    const props = viewProps(makeArchiveCtx(store, host))
+    const first = renderRoot(createElement(SideChatView, props))
+    await act(async () => {})
+    first.unmount()
+
+    host.setArchivedIds(hasLiveThread ? ['t1'] : ['t1', 't2'])
+    const reopened = renderRoot(createElement(SideChatView, {
+      ...props, tab: { ...props.tab, meta: { autoCreate: true } },
+    }))
+    await act(async () => {})
+
+    expect(host.betterSidebar.updateTab).not.toHaveBeenCalledWith('tab1', { meta: { threadId: 't1' } }, 'root')
+    const expectedThread = hasLiveThread ? 't2' : 'session-new'
+    expect(host.betterSidebar.updateTab).toHaveBeenCalledWith('tab1', { meta: { threadId: expectedThread } }, 'root')
+    expect(startCalls).toBe(hasLiveThread ? 0 : 1)
+    reopened.unmount()
+  })
+
+  it('restores the remembered thread before the list loads and releases it if the host later reports it archived', async () => {
+    const host = makeArchiveHost()
+    const store = makeStore({ byId: {} })
+    const props = viewProps(makeArchiveCtx(store, host))
+    const first = renderRoot(createElement(SideChatView, props))
+    await act(async () => {})
+    first.unmount()
+
+    const reopened = renderRoot(createElement(SideChatView, { ...props, tab: { ...props.tab, meta: {} } }))
+    await act(async () => {})
+    expect(host.betterSidebar.updateTab).toHaveBeenCalledWith('tab1', { meta: { threadId: 't1' } }, 'root')
+
+    // Apply the restored binding, then publish the host's later archive snapshot.
+    reopened.rerender(createElement(SideChatView, props))
+    host.betterSidebar.updateTab.mockClear()
+    expect(reopened.container.querySelector('textarea')).not.toBeNull()
+    await act(async () => { host.setArchivedIds(['t1']) })
+
+    expect(reopened.container.querySelector('textarea')).toBeNull()
+    expect(host.betterSidebar.updateTab).toHaveBeenCalledWith('tab1', { meta: {}, title: '新对话' }, 'root')
+    expect(startCalls).toBe(0)
+    reopened.unmount()
   })
 
   it('disables archiving a side thread and explains that the host can never show it again', async () => {
