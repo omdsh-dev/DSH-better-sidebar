@@ -31,7 +31,7 @@ import { t } from '../../locales.ts'
 import { CluePacksSection } from './packs.tsx'
 import { ClueBrowser } from './browser.tsx'
 import { ClueHelpOverlay, clueHelpSeen, markClueHelpSeen } from './help.tsx'
-import { ActionButton, EmptyState, IconButton, SidebarToolbar, WorkbenchSection } from '../../ui/index.ts'
+import { ActionButton, EmptyState, IconButton, SidebarToolbar, WorkbenchSection, WorkbenchStack } from '../../ui/index.ts'
 import { openClueDetailWindow, type ClueDetailTarget } from '../windows/detail.tsx'
 import { openClueCollectionForTarget } from '../windows/collect.tsx'
 import { openPackManagementWindow } from '../windows/pack.tsx'
@@ -41,7 +41,6 @@ import { LoadingIndicator } from '../../ui/LoadingIndicator.tsx'
 import { SelectMenu } from '../../ui/SelectMenu.tsx'
 import design from '../../ui/design.module.css'
 import css from './clues-tab.module.css'
-import { SectionStack } from './SectionStack.tsx'
 
 /** The plugin-settings key of the clue tab (one sparse blob). */
 const CLUE_TAB_SETTINGS_KEY = 'clues'
@@ -378,7 +377,7 @@ export function CluesTab({ ctx, store, scope, visible }: CluesTabProps): ReactNo
       )}
 
       {ready && browseWorkspaceId !== undefined && (
-        <SectionStack key={browseWorkspaceId} initialWeights={sectionLayoutOf(settings).weights}
+        <WorkbenchStack key={browseWorkspaceId} initialWeights={sectionLayoutOf(settings).weights}
           onResize={persistWeights} sections={[
             { id: 'browse', title: t('clueViewBrowse'), open: sections.browse, weight: 3, content: (
                 <WorkbenchSection

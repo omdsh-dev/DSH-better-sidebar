@@ -9,6 +9,7 @@ export {
 } from './kit.tsx'
 export { LoadingIndicator, type LoadingIndicatorProps } from './LoadingIndicator.tsx'
 export { WorkbenchSection, type WorkbenchSectionProps } from './WorkbenchSection.tsx'
+export { WorkbenchStack, type WorkbenchStackSection } from './WorkbenchStack.tsx'
 export { SelectMenu, type SelectMenuProps, type SelectOption } from './SelectMenu.tsx'
 export { TextInput, TextArea, NumberInput, Checkbox, ToggleSwitch, Tabs, SettingRow, type TabOption } from './controls.tsx'
 export {
