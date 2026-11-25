@@ -51,6 +51,10 @@ const SEEDED_MD_FILE = 'diagram.md'
  *  prove raw-HTML runs render as sanitized DOM and the TOC outline works. */
 const SEEDED_README_FILE = 'readme-style.md'
 
+/** A minimal draw.io document opened through the Files window's tree to force
+ *  the lazy maxGraph chunk (`client-drawio.js`) and an inert SVG preview. */
+const SEEDED_DRAWIO_FILE = 'architecture.drawio'
+
 /** A 1×1 PNG for the markdown local-image probe. */
 const SEEDED_PNG = 'pic.png'
 const ONE_PIXEL_PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='
@@ -154,6 +158,21 @@ async function seedSession(): Promise<void> {
     '| alpha | line one<br/>line two |',
     '',
     '[def]: https://example.com/def',
+    '',
+  ].join('\n'))
+  // The draw.io probe file: a plain mxGraphModel whose label is asserted in
+  // the rendered SVG. The compressed save form is covered by the unit suite;
+  // this lane proves the real lazy chunk and image path.
+  writeFileSync(join(WORKSPACE_PATH, SEEDED_DRAWIO_FILE), [
+    '<mxGraphModel dx="900" dy="600" grid="0">',
+    '  <root>',
+    '    <mxCell id="0" />',
+    '    <mxCell id="1" parent="0" />',
+    '    <mxCell id="a" value="Drawio smoke" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">',
+    '      <mxGeometry x="40" y="60" width="140" height="60" as="geometry" />',
+    '    </mxCell>',
+    '  </root>',
+    '</mxGraphModel>',
     '',
   ].join('\n'))
   // Seeded through the lanes' dual-protocol RPC helper (./host): 0.1.1-rc.x
@@ -1419,4 +1438,40 @@ test('the Plugins page can serve the shipped detail document image', async ({ pa
   const body = await response.text()
   expect(body, 'the shipped overview SVG').toContain('<svg')
   expect(body, 'not an empty placeholder').toContain('viewBox')
+})
+
+
+test('the drawio viewer renders a .drawio file from the tree', async ({ page }) => {
+  const pageErrors: string[] = []
+  page.on('pageerror', (error) => pageErrors.push(String(error)))
+
+  await gotoPage(page)
+  await dismissOnboarding(page)
+  await sendFirstMessage(page)
+
+  const pane = page.locator('[data-sidebar-right-panel]')
+  await page.locator('[data-sidebar-right-expand]').first().click()
+  await expect(pane).toBeVisible({ timeout: 30_000 })
+  if (await page.locator('[data-sidebar-right-guide]').count() === 0) {
+    await page.locator('[data-dockkit-add-tab]').first().click()
+  }
+  await page.locator('[data-sidebar-right-guide-entry="files"]').click()
+
+  // draw.io: the tree click must fetch the standalone maxGraph chunk and
+  // render the seeded model as a self-contained SVG image. A broken chunk,
+  // decoder, or renderer surfaces as the viewer's error pane or a page error.
+  const drawioChunk = page.waitForResponse(
+    (response) => response.url().includes('/sidebar/bundle/drawio.js'),
+    { timeout: 30_000 },
+  )
+  const drawioRow = pane.locator(`[role="button"][title$="${SEEDED_DRAWIO_FILE}"]:visible`)
+  await expect(drawioRow, `the seeded "${SEEDED_DRAWIO_FILE}" file must appear`).toHaveCount(1, { timeout: 30_000 })
+  await drawioRow.click({ position: { x: 8, y: 8 } })
+  // A chunk that the server answers with an error would still surface later as
+  // a missing preview; assert the response itself so the failure names the cause.
+  expect((await drawioChunk).status(), 'the drawio chunk must be served').toBe(200)
+  const preview = pane.locator('[data-drawio-preview="ready"] img')
+  await expect(preview, 'the draw.io file must render as an SVG image').toBeVisible({ timeout: 30_000 })
+  await expect(preview, 'the draw.io preview must carry intrinsic dimensions').toHaveAttribute('width', /[0-9]+/)
+  expect(pageErrors, 'no page error while rendering draw.io').toEqual([])
 })

@@ -1,5 +1,5 @@
 /**
- * Built-in registration tests: the plugin registers 6 tabs and 4 file
+ * Built-in registration tests: the plugin registers 6 tabs and 6 file
  * viewers through the same service external plugins use (dogfooding);
  * the catch-all `code` viewer and the html sandbox settings pin the
  * registry's behavior. The read-only previews (image / pdf /
@@ -366,15 +366,15 @@ describe('side chat close archives the bound thread', () => {
 })
 
 describe('built-in file viewer registrations', () => {
-  it('registers the 5 built-in file viewers (the read-only previews yielded to the host)', () => {
+  it('registers the 6 built-in file viewers (the read-only previews yielded to the host)', () => {
     const { service } = setup()
     expect(service.getFileViewers().map(v => v.id).sort()).toEqual(
-      ['code', 'html', 'jsonl', 'markdown', 'media'],
+      ['code', 'drawio', 'html', 'jsonl', 'markdown', 'media'],
     )
     // The yielded ids are gone: the host's own document preview
     // (ui-sidebar-documentpreview) owns images, pdf, spreadsheets, office
     // and plain text; the plugin keeps only markdown / html / the JSONL
-    // record preview / the media player / the editable code catch-all.
+    // record preview / the media player / the draw.io preview / the editable code catch-all.
     for (const id of ['image', 'pdf', 'binary-download']) {
       expect(service.getFileViewers().map(v => v.id), `${id} must not be built in`).not.toContain(id)
     }
@@ -383,6 +383,12 @@ describe('built-in file viewer registrations', () => {
     for (const id of ['docx', 'xlsx', 'pptx']) {
       expect(service.getFileViewers().map(v => v.id)).not.toContain(id)
     }
+  })
+
+  it('the drawio viewer claims .drawio and .dio before the code catch-all', () => {
+    const { service } = setup()
+    expect(service.matchFileViewer('/w/architecture.drawio')?.id).toBe('drawio')
+    expect(service.matchFileViewer('/w/architecture.dio')?.id).toBe('drawio')
   })
 
   it('the yielded viewer ids stay registrable by external plugins (public contract)', () => {

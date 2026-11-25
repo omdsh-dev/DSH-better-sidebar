@@ -54,6 +54,16 @@ export const IconHtmlOutline16 = ({ size = 16, className }: IconProps) => (
   </svg>
 )
 
+/** draw.io viewer glyph: two connected nodes in a diagram frame. */
+export const IconDrawioOutline16 = ({ size = 16, className }: IconProps) => (
+  <svg width={size} height={size} className={className} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <rect x="1.5" y="2.5" width="13" height="11" rx="2" stroke="currentColor" strokeWidth="1.5" />
+    <rect x="3.5" y="5" width="3.5" height="2.5" rx="0.5" stroke="currentColor" strokeWidth="1.25" />
+    <rect x="9" y="8.5" width="3.5" height="2.5" rx="0.5" stroke="currentColor" strokeWidth="1.25" />
+    <path d="M7 6.25h1.5V9.75H9" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+)
+
 /** History glyph (thread switcher): a clock with a counterclockwise arrow,
  *  in the app's outline style — the "past conversations" mark. */
 export const IconHistoryOutline16 = ({ size = 16, className }: IconProps) => (

@@ -84,7 +84,7 @@ describe('lazyChunkComponent', () => {
 describe('built-in descriptor contract (render-prop functions)', () => {
   it('every heavy built-in viewer component is callable as a plain function without a chunk (returns an element)', () => {
     const viewers = builtinViewers()
-    for (const id of ['markdown', 'html', 'code']) {
+    for (const id of ['markdown', 'html', 'drawio', 'code']) {
       const descriptor = viewers.find(viewer => viewer.id === id)
       expect(descriptor, id).toBeDefined()
       // No chunk registered: calling must not throw — it returns the lazy

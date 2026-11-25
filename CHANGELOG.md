@@ -5,6 +5,7 @@
 ### v0.33.0
 
 - 🧩 **DSH 0.2.3 上 `/sidebar/*` 恢复可用**（关联 [#1204](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1204)）：0.2.3 把 `admit` 的凭据校验委托给嵌套服务 `connection.authentication`，cordis 只允许**显式注入**该服务的调用方读取它；插件此前只注入 `connection`，`admit` 一被调用就抛 `cannot get property "connection.authentication" without inject`，被宿主兜底成空 body 的 400——底部终端 chunk 加载、打开文件、侧边对话全部只剩 `HTTP 400`。现在准入改走 `ctx.inject(['connection.authentication'])` 子 fiber 里的 `admit`；rc.2–rc.5 没有该服务，子 fiber 不激活，继续走 `requestRejection` / 直接 `admit`，旧宿主行为不变。
+  - 🔒 信任边界：`.drawio` 是不可信文件——`html=1` 标签降级成纯文本（不写进页面 DOM 的 innerHTML），远程 `image=` 样式丢弃（只留 `data:`），解压体按解压后大小上限拒绝；渲染结果以 `data:` URL 作为 `<img>` 挂载。
   - 🧪 测试：`tests/trusted-hosts.spec.ts` 新增「0.2.3 宿主：插件上下文调用 `admit` 抛错、经注入的 provider 上下文放行」三档（放行 / 401 / 403），旧宿主两条路径的既有断言保留。
 
 - 🧷 **Git 详情面板的关闭按钮常驻在 Tabs 同一行的最右侧**（[#991](https://github.com/omdsh-dev/DSH-better-sidebar/issues/991)）：底部面板的「提交详情 / 内容 / 差异」是一条 Tabs，但关闭整块面板的 X 原先画在「内容 / 差异」的页内头行上——切到「提交详情」时它整条头行都不渲染，于是那个页签根本没有关闭入口，只能先切页签再点 X。现在关闭按钮属于 Tabs 那一行：无论选中哪个页签都停在最右端、位置不变，点击关闭的是整块面板；「内容 / 差异」头行里那个重复的 X 已移除。只有一个视图、没有 Tabs 行的预览仍保持原来的头行位置。
@@ -31,6 +32,10 @@
 
 - 🧩 **DSH master（0.2.2-rc.3 之后）删除 `connection.requestRejection` 后，`/sidebar/*` 不再全部裸 400**（[#1204](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1204)）：HTTP/WS 准入改为先调用 `requestRejection`（rc.1–rc.3 行为不变），该方法缺席时改用官方替代 `admit` 并读同一个 `rejection` 字段；两者都没有时仍然直接抛错，不重建信任表。此前宿主删掉该方法后，每个请求在第一句就抛 `TypeError`，被宿主兜底成空 body 的 400，界面只剩 `HTTP 400`。
   - 🧪 测试：`tests/trusted-hosts.spec.ts` 新增「`requestRejection` 缺席时走 `admit`」三档（放行 / 401 / 403），并保留「两者都没有仍抛 TypeError」的既有断言。
+
+- 🖼 **`.drawio` / `.dio` 只读预览**：文件树点开 draw.io 文件不再落到 XML 源码，而是渲染成 SVG。两种 save 格式都认（明文 `mxGraphModel`，以及 draw.io 默认的 base64 + raw-DEFLATE + percent-escape 的 `mxfile/diagram`）；多页文件渲染第一页。渲染引擎走独立的 lazy chunk（`lib/client-drawio.js`，maxGraph），只在第一次打开时下载；图内脚本 inert，预览是只读的。文件树沿用现有拖拽上传链路，上传后点开即可。
+  - 🧪 测试：`tests/drawio.spec.ts`（明文/`mxfile`/压缩/bare base64/坏文件、SVG 尺寸与文字）；`tests/builtins.spec.ts` / `tests/lazy-chunk.spec.tsx` / `tests/file-icons.spec.tsx`（viewer 认领与图标）；`tests/locales.spec.ts`（全部语言 key 对齐）；`tests/e2e/mount.e2e.ts`（真实 `dsh web` 中拉取 `client-drawio.js` 并渲染 SVG）。
+
 
 - 💻 **侧边对话显示 PTC（run_code）工具调用树**：`run_code` 行收起时显示模型写的 description，展开后显示程序代码和最终结果；程序内通过 PTC 派发的 bash / read / grep / edit 等子调用缩进挂在它下方，根行收起也可见，并复用终端 / diff / read / search / web 结构卡片。运行中、失败、无 start 的 dispatch 都有对应显示；PTC 内成功 write/edit 的文件也进入可点击路径提及。`present` 仍保留顶层交付卡片，同时在子调用区留下一行。
   - 🧪 测试：`tests/sidechat-ptc-rows.spec.ts`（配对 / 运行态 / 失败 / 无 start / 嵌套 / 父行缺失 / 身份复用）、`tests/sidechat-ptc-subcalls.spec.tsx`（description 摘要、代码体、缩进与卡片、根行收起仍可见）、`tests/sidechat-mention-sources.spec.tsx`（PTC mutation 进入提及、read 不进入）。

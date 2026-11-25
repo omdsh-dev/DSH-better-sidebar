@@ -170,6 +170,6 @@ describe('/sidebar/bundle route', () => {
   })
 
   it('exports the chunk allowlist (mirror of src/client/chunk-loader.ts)', () => {
-    expect([...CHUNK_NAMES]).toEqual(['editor', 'mermaid', 'locale', 'terminal'])
+    expect([...CHUNK_NAMES]).toEqual(['editor', 'mermaid', 'locale', 'terminal', 'drawio'])
   })
 })
