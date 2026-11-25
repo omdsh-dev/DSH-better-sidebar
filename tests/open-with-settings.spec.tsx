@@ -59,7 +59,7 @@ describe('OpenWithSettings', () => {
 
   it('seeds the SSH host input from the persisted blob and commits edits', () => {
     harness = mountSettings(baseConfig)
-    const input = harness.container.querySelector<HTMLInputElement>('input:not([type])')
+    const input = harness.container.querySelector<HTMLInputElement>('input[aria-label="SSH remote host"]')
     expect(input?.value).toBe('dev')
     // The native value setter (React's value tracker must see the change).
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!

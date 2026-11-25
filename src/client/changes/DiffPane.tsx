@@ -48,7 +48,7 @@ import { useMarkdownSurface } from '../use-markdown-surface.ts'
 import { splitMermaidBlocks } from '../mermaid-blocks.ts'
 import { LazyMermaidMarkdown } from '../mermaid-lazy.tsx'
 import { createFrameBatcher } from '../frame-batcher.ts'
-import { Chip, IconButton, Notice, StatusBadge } from '../ui/index.ts'
+import { Chip, IconButton, Notice, StatusBadge, Tabs } from '../ui/index.ts'
 import css from './changes.module.css'
 import diffCss from '../diff/diff.module.css'
 
@@ -134,38 +134,9 @@ export interface PaneTab {
  * after it) belongs to the caller, not to the tablist.
  */
 export function PaneTabStrip(props: { tabs: readonly PaneTab[]; active: string; onSelect(id: string): void; className?: string; label?: string }) {
-  const buttons = useRef<(HTMLButtonElement | null)[]>([])
-  const move = (to: number): void => {
-    const count = props.tabs.length
-    if (count === 0) return
-    const index = ((to % count) + count) % count
-    props.onSelect(props.tabs[index]!.id)
-    buttons.current[index]?.focus()
-  }
-  return (
-    <div className={props.className === undefined ? css.paneTabs : `${css.paneTabs} ${props.className}`}
-      role="tablist" aria-label={props.label}>
-      {props.tabs.map((tab, index) => (
-        <button
-          key={tab.id}
-          ref={(node) => { buttons.current[index] = node }}
-          type="button"
-          role="tab"
-          className={css.paneTab}
-          data-active={tab.id === props.active ? 'true' : undefined}
-          aria-selected={tab.id === props.active}
-          tabIndex={tab.id === props.active ? 0 : -1}
-          onClick={() => { props.onSelect(tab.id) }}
-          onKeyDown={(event) => {
-            if (event.key === 'ArrowRight') { event.preventDefault(); move(index + 1) }
-            else if (event.key === 'ArrowLeft') { event.preventDefault(); move(index - 1) }
-            else if (event.key === 'Home') { event.preventDefault(); move(0) }
-            else if (event.key === 'End') { event.preventDefault(); move(props.tabs.length - 1) }
-          }}
-        >{tab.label}</button>
-      ))}
-    </div>
-  )
+  return <Tabs value={props.active} options={props.tabs.map(tab => ({ value: tab.id, label: tab.label }))}
+    onChange={props.onSelect} ariaLabel={props.label ?? t('changesDiffTab')}
+    className={props.className === undefined ? css.paneTabs : `${css.paneTabs} ${props.className}`} />
 }
 
 /** The reading-mode body of one markdown op target: the shared MarkdownText

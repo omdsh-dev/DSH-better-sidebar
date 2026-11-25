@@ -3,14 +3,81 @@
  * scans every `src/client/**\/*.module.css` and rejects a `color:`
  * declaration whose value does not dereference a `--dsw-*` / `--ds-*` token.
  *
- * Scale (see docs/plans/2026-09-27-files-changes-uiux.md §1): 12px body,
- * 11px meta, 28px controls, 2/3/4/8px radii — the tasks page's native scale,
- * which the files and changes pages are being cut to.
+ * Shared controls own their 13px/20px type as well as geometry. A page's
+ * compact metadata font must not change a field or action in a portal.
+ * Standard / compact controls are 32px / 26px, with 44px touch targets.
  */
+
+/* Text actions and fields share one geometry across tabs and hosted windows. */
+.button {
+  appearance: none;
+  box-sizing: border-box;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--ds-sidebar-space-2);
+  min-height: var(--ds-sidebar-control-height);
+  padding: 4px 12px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--ds-sidebar-radius);
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: 13px;
+  line-height: 20px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.buttonSm { min-height: var(--ds-sidebar-control-sm); padding: 2px 8px; font-size: 12px; }
+.buttonLabel { display: inline-flex; align-items: center; justify-content: center; gap: var(--ds-sidebar-space-2); }
+.button:hover:not(:disabled):not([aria-disabled='true']) {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+.buttonPrimary {
+  composes: button;
+  border-color: transparent;
+  background: var(--dsw-alias-button-primary-fill);
+  color: var(--dsw-alias-label-primary-foreground);
+}
+.buttonPrimary:hover:not(:disabled):not([aria-disabled='true']) {
+  background: var(--dsw-alias-button-primary-hover);
+  color: var(--dsw-alias-label-primary-foreground);
+}
+.buttonGhost { border-color: transparent; }
+.button:disabled, .button[aria-disabled='true'] { opacity: .4; cursor: default; }
+.button:focus-visible, .input:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 1px;
+}
+.button[aria-busy='true'] > .buttonLabel { opacity: 0; }
+.buttonSpinner { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
+.input {
+  appearance: none;
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: 100%;
+  min-height: var(--ds-sidebar-control-height);
+  padding: 5px 8px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--ds-sidebar-radius);
+  background: var(--dsw-alias-bg-base);
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  font-size: 13px;
+  line-height: 20px;
+}
+.input:disabled { opacity: .4; cursor: default; }
+.input[aria-invalid='true'] { border-color: var(--dsw-alias-state-error-primary); }
+@media (pointer: coarse) {
+  .button, .input { min-height: 44px; }
+}
 
 /* ── IconButton ─────────────────────────────────────────────────────────── */
 
 .iconButton {
+  appearance: none;
   box-sizing: border-box;
   display: inline-flex;
   align-items: center;
@@ -21,18 +88,18 @@
   background: none;
   color: var(--dsw-alias-label-secondary);
   cursor: pointer;
-  border-radius: 3px;
+  border-radius: var(--ds-sidebar-radius);
 }
 
 .iconButtonMd {
-  width: 28px;
-  height: 28px;
+  width: var(--ds-sidebar-icon-size);
+  height: var(--ds-sidebar-icon-size);
 }
 
 .iconButtonSm {
-  width: 24px;
-  height: 24px;
-  border-radius: 3px;
+  width: var(--ds-sidebar-control-sm);
+  height: var(--ds-sidebar-control-sm);
+  border-radius: var(--ds-sidebar-radius);
 }
 
 .iconButton:hover:not(:disabled) {
@@ -41,7 +108,7 @@
 }
 
 .iconButton:focus-visible {
-  outline: 2px solid var(--dsw-alias-interactive-bg-hover-accent);
+  outline: 2px solid var(--dsw-alias-brand-primary);
   outline-offset: -1px;
 }
 
@@ -57,6 +124,9 @@
 .iconButtonDanger {
   color: var(--dsw-alias-state-error-primary);
 }
+@media (pointer: coarse) {
+  .iconButton { width: 44px; height: 44px; }
+}
 
 /* ── Chip ───────────────────────────────────────────────────────────────── */
 
@@ -68,7 +138,7 @@
   height: 22px;
   padding: 0 8px;
   border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 999px;
+  border-radius: var(--ds-sidebar-radius);
   background: none;
   color: var(--dsw-alias-label-secondary);
   font: var(--dsw-font-xxxs-11);
@@ -168,7 +238,7 @@
 
 .noticeInline {
   padding: 0;
-  font-size: 10px;
+  font-size: 12px;
   line-height: 1.45;
 }
 
@@ -186,14 +256,48 @@
 
 /* ── ConfirmDialog ──────────────────────────────────────────────────────── */
 
+.confirmDialog.confirmDialog {
+  border: 1px solid var(--dsw-alias-border-l2);
+  box-shadow: none;
+  max-height: 100%;
+  gap: var(--ds-sidebar-space-4);
+  padding-bottom: 0;
+  border-radius: var(--ds-sidebar-window-radius);
+  background: var(--dsw-alias-bg-layer-1);
+}
+
+.confirmContent {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.confirmContent > div:first-child { padding: var(--ds-sidebar-gutter); }
+.confirmContent > div:last-child { margin-top: 0; padding: 0 var(--ds-sidebar-gutter); }
+.confirmDialog > :last-child {
+  flex: none;
+  padding: var(--ds-sidebar-space-3) var(--ds-sidebar-gutter);
+  border-top: 1px solid var(--dsw-alias-border-l1);
+}
+
+.confirmAction { min-height: var(--ds-sidebar-control-height); }
+.confirmDanger {
+  --dsw-alias-button-primary-fill: var(--dsw-alias-state-error-primary);
+  --dsw-alias-label-primary-foreground: light-dark(var(--dsw-alias-label-primary), var(--dsw-alias-bg-base));
+  --dsw-alias-button-primary-hover: color-mix(in srgb, var(--dsw-alias-state-error-primary) 88%, light-dark(var(--dsw-alias-bg-base), var(--dsw-alias-label-primary)));
+}
+
 .confirmDesc {
   margin: 0;
-  font: var(--dsw-font-s-14);
+  font: var(--dsw-font-xxs-12);
+  font-size: 13px;
+  line-height: 20px;
   color: var(--dsw-alias-label-primary);
 }
 
-.confirmDesc[data-danger='true'] {
-  color: var(--dsw-alias-label-primary);
+@media (pointer: coarse) {
+  .confirmAction { min-height: 44px; }
+  .confirmContent > div:first-child > button { width: 44px; height: 44px; }
 }
 
 /* ── StatusBadge ────────────────────────────────────────────────────────── */
@@ -203,7 +307,7 @@
   padding: 0 4px;
   border-radius: 2px;
   font: var(--dsw-font-xxxs-strong-11);
-  font-family: var(--ds-font-family-code, monospace);
+  font-variant-numeric: tabular-nums;
   color: var(--dsw-alias-label-secondary);
 }
 

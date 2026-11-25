@@ -18,8 +18,8 @@
 import { useCallback, useMemo, useRef, type KeyboardEvent, type ReactNode } from 'react'
 import clsx from 'clsx'
 import {
-  Button, IconChevronDownOutlineRegular, IconChevronRightOutlineRegular,
-  IconLoadingOutlineRegular, StateDot,
+  IconChevronDownOutlineRegular, IconChevronRightOutlineRegular,
+  StateDot,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TasksAgentNode, TasksFoldNode, TasksNode, TasksWorkflowNode } from './tasks-model.ts'
 import {
@@ -29,6 +29,7 @@ import {
 import { FoldToggleButton, ViewModeToggle } from './TasksGraph.tsx'
 import { useAutoAnimateRef } from './use-auto-animate.ts'
 import { t } from './locales.ts'
+import { ActionButton, IconButton, Notice } from './ui/index.ts'
 import css from './tasks-graph.module.css'
 
 /**
@@ -44,13 +45,14 @@ function nodeLabel(node: TasksNode): string {
   return foldTally(node)
 }
 
-function TreeLevel(props: { items: readonly ReactNode[] }): ReactNode {
+function TreeLevel(props: { items: readonly ReactNode[]; visible: boolean }): ReactNode {
   const ref = useRef<HTMLDivElement>(null)
-  useAutoAnimateRef(ref)
+  useAutoAnimateRef(ref, props.visible)
   return <div className={css.treeKids} ref={ref}>{props.items}</div>
 }
 
 export interface TasksTreeProps {
+  visible?: boolean
   nodes: readonly TasksNode[]
   folded: boolean
   /**
@@ -81,14 +83,14 @@ export interface TasksTreeProps {
 
 export function TasksTree(props: TasksTreeProps): ReactNode {
   const {
-    nodes, folded, collapsedIds, onToggleCollapse, onCollapseAll, onExpandAll,
+    visible = true, nodes, folded, collapsedIds, onToggleCollapse, onCollapseAll, onExpandAll,
     onNodeInfo, onWorkflowInfo, onOpenTask, onToggleFold, onExpandGroup,
     mode, onModeChange, loading,
   } = props
   const bodyRef = useRef<HTMLDivElement>(null)
   // The scroll container's own host covers the top level; every nested level
   // brings its own (see TreeLevel).
-  useAutoAnimateRef(bodyRef)
+  useAutoAnimateRef(bodyRef, visible)
 
   /** children by parent id (model order preserved). */
   const childrenOf = useMemo(() => {
@@ -178,6 +180,7 @@ export function TasksTree(props: TasksTreeProps): ReactNode {
         {body}
         {children.length > 0 && !collapsed && (
           <TreeLevel
+            visible={visible}
             items={children.map(child => renderNode(child, depth + 1, child === children[children.length - 1]))}
           />
         )}
@@ -191,22 +194,19 @@ export function TasksTree(props: TasksTreeProps): ReactNode {
      * the row's shape from the chevron's direction alone.
      */
     const disclosure = children.length === 0 ? null : (
-      <button
-        type="button"
+      <IconButton
+        size="sm"
         className={css.treeDisclosure}
-        aria-label={`${t(collapsed ? 'tasksTreeExpandRow' : 'tasksTreeCollapseRow')} ${nodeLabel(node)}`}
+        label={`${t(collapsed ? 'tasksTreeExpandRow' : 'tasksTreeCollapseRow')} ${nodeLabel(node)}`}
         title={t(collapsed ? 'tasksTreeExpandRow' : 'tasksTreeCollapseRow')}
+        icon={collapsed
+          ? <IconChevronRightOutlineRegular size={12} />
+          : <IconChevronDownOutlineRegular size={12} />}
         onClick={(event) => {
-          // The row's own click opens the detail window: the disclosure must
-          // never do both.
           event.stopPropagation()
           onToggleCollapse(node.id)
         }}
-      >
-        {collapsed
-          ? <IconChevronRightOutlineRegular size={12} />
-          : <IconChevronDownOutlineRegular size={12} />}
-      </button>
+      />
     )
     const row = node.kind === 'fold'
       ? (
@@ -326,10 +326,7 @@ export function TasksTree(props: TasksTreeProps): ReactNode {
         onKeyDown={onTreeKeyDown}
       >
         {loading === true && roots.length === 0 && (
-          <div className={css.viewEmptyHint}>
-            <span className={css.treeGlyph} aria-hidden="true"><IconLoadingOutlineRegular size={12} /></span>
-            {t('loading')}
-          </div>
+          <Notice kind="loading" tone="page">{t('loading')}</Notice>
         )}
         {roots.map(root => renderNode(root, 0, false))}
       </div>
@@ -342,7 +339,7 @@ export function TasksTree(props: TasksTreeProps): ReactNode {
           two axes would otherwise wear the same chevron vocabulary and the
           reader could not tell 折叠已完成的节点 from 收起所有子级.
         */}
-        <Button
+        <ActionButton
           variant="ghost"
           size="sm"
           className={css.controlText}
@@ -351,8 +348,8 @@ export function TasksTree(props: TasksTreeProps): ReactNode {
           onClick={onCollapseAll}
         >
           {t('tasksTreeCollapseAll')}
-        </Button>
-        <Button
+        </ActionButton>
+        <ActionButton
           variant="ghost"
           size="sm"
           className={css.controlText}
@@ -361,7 +358,7 @@ export function TasksTree(props: TasksTreeProps): ReactNode {
           onClick={onExpandAll}
         >
           {t('tasksTreeExpandAll')}
-        </Button>
+        </ActionButton>
       </div>
     </div>
   )

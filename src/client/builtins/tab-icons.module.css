@@ -33,3 +33,7 @@
      renders a step smaller than its siblings (see tab-icons.tsx). */
   color: var(--dsw-alias-label-primary);
 }
+
+.clues {
+  color: var(--dsw-alias-state-business-primary, var(--dsw-alias-brand-primary));
+}

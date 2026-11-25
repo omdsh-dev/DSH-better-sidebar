@@ -17,8 +17,9 @@
  */
 import { createContext, useContext, useSyncExternalStore, type ReactNode } from 'react'
 import {
-  Button, IconCloseOutlineRegular, IconContextInjectionOutlineRegular, IconWarningTriangleOutlineRegular,
+  IconCloseOutlineRegular, IconContextInjectionOutlineRegular, IconWarningTriangleOutlineRegular,
 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconButton } from './ui/index.ts'
 import type { Context, SidebarSubagentAddress } from '../context-types.ts'
 import {
   createContextDiagnostics,
@@ -92,8 +93,7 @@ export function ContextDiagnosticsButton(props: {
   if (store === undefined || target === undefined || snapshot?.available !== true) return null
   const busy = snapshot.busy === true
   return (
-    <Button
-      variant="ghost"
+    <IconButton
       size="sm"
       {...(className === undefined ? {} : { className })}
       {...{ [DIAGNOSTICS_ENTRY_ATTR]: kind }}
@@ -101,7 +101,7 @@ export function ContextDiagnosticsButton(props: {
       // every entry point while it runs.
       aria-busy={busy ? 'true' : undefined}
       icon={<IconContextInjectionOutlineRegular size={iconSize} />}
-      aria-label={t('contextDiagnostics')}
+      label={t('contextDiagnostics')}
       title={t('contextDiagnostics')}
       disabled={busy}
       onClick={() => {
@@ -129,14 +129,13 @@ function ContextDiagnosticsHeader(props: {
   if (snapshot?.available !== true) return null
   const busy = snapshot.busy === true
   return (
-    <Button
-      variant="ghost"
+    <IconButton
       size="sm"
       className={css.headerButton}
       {...{ [DIAGNOSTICS_ENTRY_ATTR]: 'session' satisfies DiagnosticsEntryKind }}
       aria-busy={busy ? 'true' : undefined}
       icon={<IconContextInjectionOutlineRegular size={14} />}
-      aria-label={t('contextDiagnostics')}
+      label={t('contextDiagnostics')}
       title={t('contextDiagnostics')}
       disabled={busy}
       onClick={() => {
@@ -180,12 +179,11 @@ export function ContextDiagnosticsAlert(props: { controller: ContextDiagnostics 
           </span>
           <span className={css.alertReason}>{t(reasonKey(error.reason))}</span>
         </span>
-        <Button
-          variant="ghost"
-          size="sm"
+        <IconButton
+              size="sm"
           className={css.alertClose}
           icon={<IconCloseOutlineRegular size={12} />}
-          aria-label={t('contextDiagnosticsDismiss')}
+          label={t('contextDiagnosticsDismiss')}
           title={t('contextDiagnosticsDismiss')}
           onClick={() => { controller.dismissError() }}
         />

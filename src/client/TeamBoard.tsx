@@ -20,15 +20,16 @@
  */
 import { useMemo, useRef, useState, type ReactNode } from 'react'
 import {
-  Button, IconChecklistOutlineRegular, IconCheckOutlineRegular, IconChevronUpOutlineRegular, IconEditOutlineRegular,
+  IconChecklistOutlineRegular, IconCheckOutlineRegular, IconChevronUpOutlineRegular, IconEditOutlineRegular,
   IconEllipsisOutlineRegular, IconPlusOutlineRegular, IconRefreshOutlineRegular, IconTrashOutlineRegular,
-  IconUserOutlineRegular, Menu, Pill, StateDot, Tag,
+  IconUserOutlineRegular, StateDot, Tag,
   type MenuEntry,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SidebarTeamTaskView } from '../context-types.ts'
 import type { TeamMemberRow } from './team-projection.ts'
 import { taskDotState, taskStatusLabel, taskTone } from './tasks-shared.tsx'
 import { t } from './locales.ts'
+import { ActionButton, Chip, IconButton, Menu, Notice } from './ui/index.ts'
 import css from './tasks-graph.module.css'
 
 /**
@@ -106,7 +107,7 @@ function TeamTaskRow(props: {
     // The row is a flex line so the trailing Menu can sit beside the press
     // target (`.teamTaskRow`).
     <div ref={rowRef} className={css.teamTaskRow}>
-      <Button
+      <ActionButton
         variant="ghost"
         size="sm"
         className={css.teamTask}
@@ -120,7 +121,7 @@ function TeamTaskRow(props: {
           <span className={css.teamTaskOwner} title={task.ownerName}>{task.ownerName}</span>
         )}
         <Tag tone={taskTone(task)}>{taskStatusLabel(task)}</Tag>
-      </Button>
+      </ActionButton>
       <Menu
         open={menuOpen}
         onClose={() => { setMenuOpen(false) }}
@@ -133,11 +134,10 @@ function TeamTaskRow(props: {
         portal
         compact
         anchor={(
-          <Button
-            variant="ghost"
+          <IconButton
             size="sm"
             icon={<IconEllipsisOutlineRegular size={13} />}
-            aria-label={`${t('teamTaskActions')} ${task.subject}`}
+            label={`${t('teamTaskActions')} ${task.subject}`}
             aria-haspopup="menu"
             aria-expanded={menuOpen}
             title={t('teamTaskActions')}
@@ -173,8 +173,8 @@ export function TeamBoard(props: TeamBoardProps): ReactNode {
 
   return (
     <section className={css.teamBoard} aria-label={t('teamBoard')} data-team-board>
-      <button
-        type="button"
+      <ActionButton
+        variant="ghost"
         className={css.teamBoardBar}
         aria-expanded={!collapsed}
         onClick={onToggleCollapsed}
@@ -191,18 +191,18 @@ export function TeamBoard(props: TeamBoardProps): ReactNode {
         >
           <IconChevronUpOutlineRegular size={12} />
         </span>
-      </button>
+      </ActionButton>
       {!collapsed && (
         <>
           <div className={css.teamMembers}>
-            <Pill
+            <Chip
               active={ownerFilter === undefined}
               onClick={() => { setOwnerFilter(undefined) }}
             >
               {t('teamFilterAll')}
-            </Pill>
+            </Chip>
             {members.map(member => (
-              <Pill
+              <Chip
                 key={member.id}
                 active={ownerFilter === member.name}
                 title={`${member.name} · ${member.role}`}
@@ -212,11 +212,11 @@ export function TeamBoard(props: TeamBoardProps): ReactNode {
               >
                 <StateDot size={6} state={memberDotState(member.status)} />
                 <span className={css.teamMemberName}>{member.name}</span>
-              </Pill>
+              </Chip>
             ))}
           </div>
           <div className={css.teamTasks}>
-            {shown.length === 0 && <div className={css.teamEmpty}>{t('teamTasksEmpty')}</div>}
+            {shown.length === 0 && <Notice kind="empty">{t('teamTasksEmpty')}</Notice>}
             {shown.map(task => (
               <TeamTaskRow
                 key={task.id}
@@ -227,14 +227,14 @@ export function TeamBoard(props: TeamBoardProps): ReactNode {
             ))}
           </div>
           <div className={css.teamActions}>
-            <Button
+            <ActionButton
               variant="outline"
               size="sm"
-              icon={<IconPlusOutlineRegular size={13} />}
               onClick={(event) => { onOpenTask(undefined, event.currentTarget) }}
             >
+              <IconPlusOutlineRegular size={13} />
               {t('teamTaskCreate')}
-            </Button>
+            </ActionButton>
           </div>
         </>
       )}

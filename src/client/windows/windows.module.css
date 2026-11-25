@@ -1,0 +1,359 @@
+/**
+ * Content styles of the public window host: the mounted navigation page stack
+ * and the read-only fallback for an unregistered content format.
+ *
+ * The page stack is the state-retention mechanism: covered pages are hidden
+ * with CSS (`display: none`) and never unmounted, so their inputs, selection
+ * and scroll position survive a push/back round trip. In `fill` bodies the
+ * active page owns a bounded flex box; content stretches inside it while long
+ * or third-party content retains a scroll fallback.
+ *
+ * Tokens only (`--dsw-alias-*` / `--dsw-font-*`): the plugin owns no colors.
+ */
+.pages {
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
+}
+
+.pages[data-layout='fill'] {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+
+.pages[data-layout='fill'] > .page[data-window-page='active'] {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
+  overflow: auto;
+}
+
+.pages[data-layout='fill'] > .page[data-window-page='active'] > :only-child {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.page[data-window-page='hidden'] {
+  display: none;
+}
+
+/* Per-page containment: a crashing source renderer shows this strip inside ITS
+   page; the window chrome (close/maximize) and every other window stay. */
+.windowBoundary {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  padding: 8px;
+  color: var(--dsw-alias-state-error-primary);
+  font: var(--dsw-font-xxs-12);
+  overflow-wrap: anywhere;
+}
+
+.document {
+  container-type: inline-size;
+  background: var(--dsw-alias-bg-base);
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
+  overflow: hidden;
+}
+
+/* A caller-owned summary above the mode bar: fixed, never part of the scroll. */
+.documentHeader {
+  display: flex;
+  flex-direction: column;
+  flex: 0 1 auto;
+  min-width: 0;
+  /* At 320x240 a metadata-heavy header scrolls itself instead of starving
+     the body; its natural height is used whenever there is room. */
+  max-height: 25%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.documentHeader:has([data-clue-resource-github]) { max-height: min(55%, 160px); }
+
+.modeBar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  padding: 4px var(--ds-sidebar-gutter);
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
+
+.modeBar > [role="tablist"] {
+  border-bottom: 0;
+  padding: 0;
+}
+
+.modeTab {
+  min-height: var(--ds-sidebar-control-height);
+}
+
+.documentModes {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.documentPane {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.documentPane[hidden] {
+  display: none;
+}
+
+@media (pointer: coarse) {
+  .modeTab { min-height: 44px; }
+}
+
+.formatContent {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.formatContent > :only-child {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* The reusable single-text carrier stretches inside each pane. */
+.textContent {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  flex: 1;
+}
+
+.textEditor,
+.textReadOnly {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  margin: 0;
+  padding: var(--ds-sidebar-gutter);
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 6px;
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xxs-12);
+  font-family: var(--ds-font-family-code, monospace);
+}
+
+.textEditor {
+  background: var(--dsw-alias-bg-base);
+  flex: 1;
+  resize: none;
+  overflow: auto;
+}
+
+.textEditor:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: -2px;
+}
+
+.textReadOnly {
+  flex: 1;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.documentImage {
+  display: grid;
+  place-items: center;
+  min-width: 0;
+  min-height: 120px;
+  margin: var(--ds-sidebar-gutter);
+  padding: var(--ds-sidebar-gutter);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: var(--ds-sidebar-radius);
+  background: var(--dsw-alias-bg-base);
+}
+.documentImage[data-image-unavailable] { min-height: 0; }
+.documentImage img { display: block; max-width: 100%; max-height: 65vh; object-fit: contain; }
+.documentImage figcaption { display: grid; gap: 6px; text-align: center; color: var(--dsw-alias-label-secondary); }
+.documentImage a { color: var(--ds-sidebar-accent); }
+
+.markdownPreview {
+  box-sizing: border-box;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  padding: var(--ds-sidebar-gutter);
+  overflow: auto;
+  overflow-wrap: anywhere;
+  color: var(--dsw-alias-label-primary);
+}
+
+/* Source-reported load/save state: explicit, in the same surface. */
+.documentStatus {
+  flex: none;
+  margin: 0;
+  padding: var(--ds-sidebar-space-2) var(--ds-sidebar-gutter);
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.documentError {
+  margin: 0 0 8px;
+  padding: 4px 8px;
+  border: 1px solid var(--dsw-alias-state-error-primary);
+  border-radius: 6px;
+  color: var(--dsw-alias-state-error-primary);
+  overflow-wrap: anywhere;
+}
+
+/* Unknown format: a read-only summary, never a generic save affordance. */
+.unknownFormat {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-primary);
+}
+
+.unknownHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.readOnlyBadge {
+  flex: none;
+  padding: 1px 6px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 6px;
+  font-size: 10px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.unknownTitle {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.hint {
+  margin: 0;
+  color: var(--dsw-alias-label-tertiary);
+  overflow-wrap: anywhere;
+}
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin: 0;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.meta div {
+  display: flex;
+  gap: 4px;
+  min-width: 0;
+}
+
+.meta dt {
+  font-family: var(--ds-font-family-code, monospace);
+}
+
+.meta dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.raw {
+  flex: 1;
+  min-height: 120px;
+  margin: 0;
+  padding: 8px 10px;
+  overflow: auto;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 6px;
+  color: var(--dsw-alias-label-secondary);
+  font-family: var(--ds-font-family-code, monospace);
+  font-size: 11px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Panel surfaces inherit one global paint; only the actual editor uses bg-base. */
+.modeBar,
+.documentModes,
+.documentPane,
+.formatContent,
+.textContent,
+.textReadOnly,
+.markdownPreview,
+.documentStatus,
+.documentError,
+.unknownFormat,
+.raw {
+  background: inherit;
+}
+
+.surfaceTarget {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+.nativeDestination {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+}
+.documentBody {
+  display: flex;
+  flex-direction: column;
+  flex: 1 0 auto;
+  min-width: 0;
+  min-height: 0;
+}
+.documentBody > :only-child {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+.afterBody {
+  flex: none;
+  min-width: 0;
+}
+
+/* Floating frames are fixed. Their stable containers take no document flow. */
+.surfaceTarget[data-window-surface='floating'] { display: contents; }

@@ -7,11 +7,11 @@
 
 | 项 | 值 |
 | --- | --- |
-| 基线宿主 | **DSH 0.2.2-rc.2**（v0.32.1 起） |
-| DSH peer 数量 | **14 条** `@deepseek-ai/dsh-*`，下限全部 `^0.2.2-rc.2` |
-| devDependencies | 每条 DSH 包精确钉 `0.2.2-rc.2`（**30 条**：0.2.2-rc.2 新增的传递 peer `@deepseek-ai/dsh-error` 已提升进 devDependencies） |
-| 伴随依赖 | Cordis peer `^4.1.0` / dev `4.1.0`、group `~1.1.0`、schemastery `~3.19.0` 解析、include `1.1.0` |
-| `engines.dsh` | **`>=0.2.2-rc.3 <0.3.0`**（package.json 与 `dsh.plugin.json` 同值；字段存在时宿主只按它判定，peer 不再参与） |
+| 基线宿主 | **DSH 0.2.3-alpha.2**（v0.34.0-alpha.0 起；安装下限与 peer 同批抬到 alpha 线） |
+| DSH peer 数量 | **14 条** `@deepseek-ai/dsh-*`，下限全部 `^0.2.3-alpha.2` |
+| devDependencies | 每条 DSH 包精确钉 `0.2.3-alpha.2`（**30 条**：传递 peer `@deepseek-ai/dsh-error` 在 0.2.2 线已提升进 devDependencies） |
+| 伴随依赖 | Cordis peer `^4.2.0-alpha.1` / dev `4.2.0-alpha.1`、group `~1.2.0-alpha.1`、schemastery `~3.20.0-alpha.1` 解析、include `1.2.0-alpha.1` |
+| `engines.dsh` | **`>=0.2.3-alpha.2 <0.3.0`**（package.json 与 `dsh.plugin.json` 同值；字段存在时宿主只按它判定，peer 不再参与） |
 | 守护测试 | tests/market-manifest.spec.ts（peer 形状）+ tests/dsh-baseline.spec.ts（CI / 脚本 / 文档同版） |
 
 14 条 peer 里包含 `dsh-client-ui-input-trigger`（划选引用 chip 的 `ctx.inputTriggers` 服务）；新增 peer 必须同批更新 AGENTS、本文件、指南与 README 的计数。
@@ -20,7 +20,9 @@
 
 | 用户的 DSH | 应安装的插件 |
 | --- | --- |
-| **0.2.2-rc.2+** | **v0.32.1**（当前线） |
+| **0.2.3-alpha.2+** | **v0.34.0-alpha.0**（alpha 线，进行中） |
+| **0.2.2-rc.3+** | **v0.33.0**（稳定线） |
+| 0.2.2-rc.2 | **v0.32.1** |
 | 0.2.2-rc.1 | **v0.32.0** |
 | 0.2.1-rc.1 ~ 0.2.1-rc.5 | **v0.28.2** |
 | 0.2.1-alpha.5 | v0.28.0-alpha.0 |
@@ -28,7 +30,7 @@
 | 0.2.0-rc.1 | v0.24.1 |
 | 0.1.7-rc.1 ~ 0.1.7 | v0.22.1 |
 
-下一版起 `package.json#engines.dsh` 为 `>=0.2.2-rc.3 <0.3.0`，安装下限随之抬到 rc.3；v0.32.1 仍接受 rc.2。
+自 v0.34.0-alpha.0 起 `package.json#engines.dsh` 为 `>=0.2.3-alpha.2 <0.3.0`，装在下限之下的宿主请继续用 v0.33.0；v0.32.1 仍接受 0.2.2-rc.2。
 
 ## 3. 为什么「一个构建只服务一条宿主线」
 
@@ -53,7 +55,7 @@
 ## 5. 仍然生效的删除契约（alpha.5 起）
 
 - 不再依赖 `dsh-invariants`、`ctx.invariants` 或上游 `/invariant` 子路径；不发布 invariant companion。
-- HTTP/WS 准入优先调用 `ctx.connection.requestRejection(req)`，**只有 `undefined` 放行**；DSH 0.2.2-rc.3 起该方法 deprecated、master 已删除，缺席时改调 `admit(req)` 并读同一个 `rejection` 字段（两者都没有则直接抛错）；不恢复 `webRuntime`，不自建信任例外。
+- HTTP/WS 准入只调 `ctx.connection.admit(req)`，读返回对象上的 `rejection` 字段。`admit` 把凭据校验委托给嵌套服务 `connection.authentication`，cordis 只允许**显式注入**该服务的调用方读取它，所以这一段放在 `ctx.inject(['connection.authentication'])` 子 fiber 里执行；服务缺席时准入直接抛错（v0.34.0-alpha.0 起删除 `requestRejection` 回退）。不恢复 `webRuntime`，不自建信任例外。
 
 ## 6. 0.2.1 → 0.2.2 的代码级差异（v0.30.0）
 
@@ -78,7 +80,26 @@
 - 验证结果（2026-11-16）：临时 worktree 把 devDependencies 的 30 条 DSH 包升到 `0.2.2-rc.3`（不提交）后，`typecheck` / `build` / `check:consumer-types` 通过；全量单测 302/303 文件、3,517 例通过——唯一失败是 `tests/dsh-baseline.spec.ts` 仍断言 dev 钉版为 rc.2（临时升版导致，属于验证环境而非代码）；rc.3 宿主真实挂载 26 通过 / 6 跳过。rc.2 宿主同样 26 通过 / 6 跳过。
 - 结论：当前构建服务 **0.2.2-rc.2 与 rc.3 两条 RC**；dev 钉版与 CI 仍保持 rc.2 基线；安装下限由 `engines.dsh` 裁决为 rc.3 起（见 §1）。
 
-## 9. 适配记录索引
+## 9. 0.2.2-rc.5 → 0.2.3-alpha.2（v0.34.0-alpha.0）
+
+| 变化 | 影响 | 处理 |
+| --- | --- | --- |
+| `@deepseek-ai/dsh-llm` 的 `exports` 删除 `./brand` 子路径（文件仍在 `lib/types/brand.d.ts`，`./types` 与根入口重新导出） | `src/sidechat-routes.ts` 的 `MessageId` 类型解析回退到旧副本，报两处 `[BRAND]` 不匹配 | 改从 `@deepseek-ai/dsh-llm/types` 引入 |
+| Cordis 抬到 `4.2.0-alpha.1`（宿主 peer `~4.2.0-alpha.1`）；`cordis-plugin-group` / `include` 抬到 `1.2.0-alpha.1`；`schemastery` 解析到 `~3.20.0-alpha.1` | dev 依赖树 | dev 钉 4.2.0-alpha.1 / group ~1.2.0-alpha.1 / include 1.2.0-alpha.1；schemastery peer 抬到 `>=3.20.0-alpha.1 <4` |
+| 宿主包集合：移除 `dsh-client-ui-settings-plugin-inventory` / `-settings-plugins`；`dsh-experimental-cua-macos` 改名 `dsh-cua-macos`；新增 session-panel / session-status / connector-account / timeline | 本插件未引用被移除的包 | 无需改动 |
+| 删除 `rankByName`、`ApiKeyCheck` / `assertUsableApiKey`、`SettingsPluginsTabOwnerProps` | 本插件 0 引用 | 无需改动 |
+| 会话格式版本仍是 4、`SUBAGENT_DESCRIPTOR_VERSION` 仍是 3 | — | 不变 |
+
+同一批删除的旧宿主兼容路径（不写运行时兼容层，旧宿主固定旧插件版本）：
+
+- `src/index.ts` 的 `requestRejection` 分支与直连 `admit` 回退——只剩注入 provider 一条路，服务缺席即抛 `TypeError`；
+- `src/active-worktree.ts` 的 `working-directory/change` 旧目录事件——只认 `workspace-root/change`；
+- `src/client/center-column.ts` 的 `[data-slot="conversation"]` 旧锚点——只认 `[data-slot="main.conversation"]`；
+- `src/clues/context/injection.ts` 对 `webServer.getOrigin` 的存在性探测——直接调用。
+
+验证（2026-11-24）：`pnpm peers check` / `typecheck` / `lint` / `test` 全绿——真实破损只有 `dsh-llm/brand` 一处。
+
+## 10. 适配记录索引
 
 - [0.2.2-rc.2](plans/2026-11-12-dsh-0.2.2-rc.2-adaptation.md)
 - [0.2.2-rc.1](plans/2026-11-04-dsh-0.2.2-rc.1-adaptation.md)

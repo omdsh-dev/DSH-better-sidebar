@@ -1,0 +1,338 @@
+[
+  {
+    "theme": "light",
+    "width": 320,
+    "sources": [
+      {
+        "sourceId": "builtin.files",
+        "paints": [
+          "rgb(247, 173, 49)",
+          "rgb(255, 255, 255)"
+        ]
+      },
+      {
+        "sourceId": "builtin.feishu.docs",
+        "paints": [
+          "rgb(228, 237, 253)",
+          "rgb(65, 118, 230)",
+          "rgb(78, 209, 126)",
+          "rgb(255, 255, 255)"
+        ]
+      },
+      {
+        "sourceId": "builtin.feishu.tasks",
+        "paints": [
+          "rgb(247, 173, 49)",
+          "rgb(245, 158, 11)",
+          "rgb(255, 255, 255)",
+          "rgb(97, 102, 107)"
+        ]
+      },
+      {
+        "sourceId": "builtin.github.issues",
+        "paints": [
+          "rgb(230, 250, 237)",
+          "rgb(34, 197, 94)",
+          "rgb(78, 209, 126)"
+        ]
+      },
+      {
+        "sourceId": "builtin.github.pulls",
+        "paints": [
+          "rgb(65, 118, 230)",
+          "rgb(34, 197, 94)",
+          "rgb(78, 209, 126)"
+        ]
+      }
+    ],
+    "pack": [
+      "rgb(245, 158, 11)",
+      "rgb(65, 118, 230)",
+      "rgb(255, 255, 255)"
+    ],
+    "resource": [
+      "rgb(65, 118, 230)",
+      "rgb(255, 255, 255)"
+    ]
+  },
+  {
+    "theme": "light",
+    "width": 390,
+    "sources": [
+      {
+        "sourceId": "builtin.files",
+        "paints": [
+          "rgb(247, 173, 49)",
+          "rgb(255, 255, 255)"
+        ]
+      },
+      {
+        "sourceId": "builtin.feishu.docs",
+        "paints": [
+          "rgb(228, 237, 253)",
+          "rgb(65, 118, 230)",
+          "rgb(78, 209, 126)",
+          "rgb(255, 255, 255)"
+        ]
+      },
+      {
+        "sourceId": "builtin.feishu.tasks",
+        "paints": [
+          "rgb(247, 173, 49)",
+          "rgb(245, 158, 11)",
+          "rgb(255, 255, 255)",
+          "rgb(97, 102, 107)"
+        ]
+      },
+      {
+        "sourceId": "builtin.github.issues",
+        "paints": [
+          "rgb(230, 250, 237)",
+          "rgb(34, 197, 94)",
+          "rgb(78, 209, 126)"
+        ]
+      },
+      {
+        "sourceId": "builtin.github.pulls",
+        "paints": [
+          "rgb(65, 118, 230)",
+          "rgb(34, 197, 94)",
+          "rgb(78, 209, 126)"
+        ]
+      }
+    ],
+    "pack": [
+      "rgb(245, 158, 11)",
+      "rgb(65, 118, 230)",
+      "rgb(255, 255, 255)"
+    ],
+    "resource": [
+      "rgb(65, 118, 230)",
+      "rgb(255, 255, 255)"
+    ]
+  },
+  {
+    "theme": "light",
+    "width": 640,
+    "sources": [
+      {
+        "sourceId": "builtin.files",
+        "paints": [
+          "rgb(247, 173, 49)",
+          "rgb(255, 255, 255)"
+        ]
+      },
+      {
+        "sourceId": "builtin.feishu.docs",
+        "paints": [
+          "rgb(228, 237, 253)",
+          "rgb(65, 118, 230)",
+          "rgb(78, 209, 126)",
+          "rgb(255, 255, 255)"
+        ]
+      },
+      {
+        "sourceId": "builtin.feishu.tasks",
+        "paints": [
+          "rgb(247, 173, 49)",
+          "rgb(245, 158, 11)",
+          "rgb(255, 255, 255)",
+          "rgb(97, 102, 107)"
+        ]
+      },
+      {
+        "sourceId": "builtin.github.issues",
+        "paints": [
+          "rgb(230, 250, 237)",
+          "rgb(34, 197, 94)",
+          "rgb(78, 209, 126)"
+        ]
+      },
+      {
+        "sourceId": "builtin.github.pulls",
+        "paints": [
+          "rgb(65, 118, 230)",
+          "rgb(34, 197, 94)",
+          "rgb(78, 209, 126)"
+        ]
+      }
+    ],
+    "pack": [
+      "rgb(245, 158, 11)",
+      "rgb(65, 118, 230)",
+      "rgb(255, 255, 255)"
+    ],
+    "resource": [
+      "rgb(65, 118, 230)",
+      "rgb(255, 255, 255)"
+    ]
+  },
+  {
+    "theme": "dark",
+    "width": 320,
+    "sources": [
+      {
+        "sourceId": "builtin.files",
+        "paints": [
+          "rgb(247, 173, 49)",
+          "rgb(255, 255, 255)"
+        ]
+      },
+      {
+        "sourceId": "builtin.feishu.docs",
+        "paints": [
+          "rgb(52, 65, 91)",
+          "rgb(122, 170, 255)",
+          "rgb(78, 209, 126)",
+          "rgb(21, 21, 23)"
+        ]
+      },
+      {
+        "sourceId": "builtin.feishu.tasks",
+        "paints": [
+          "rgb(247, 173, 49)",
+          "rgb(245, 158, 11)",
+          "rgb(21, 21, 23)",
+          "rgb(207, 211, 214)"
+        ]
+      },
+      {
+        "sourceId": "builtin.github.issues",
+        "paints": [
+          "rgb(35, 60, 44)",
+          "rgb(34, 197, 94)",
+          "rgb(78, 209, 126)"
+        ]
+      },
+      {
+        "sourceId": "builtin.github.pulls",
+        "paints": [
+          "rgb(122, 170, 255)",
+          "rgb(34, 197, 94)",
+          "rgb(78, 209, 126)"
+        ]
+      }
+    ],
+    "pack": [
+      "rgb(245, 158, 11)",
+      "rgb(122, 170, 255)",
+      "rgb(21, 21, 23)"
+    ],
+    "resource": [
+      "rgb(65, 118, 230)",
+      "rgb(255, 255, 255)"
+    ]
+  },
+  {
+    "theme": "dark",
+    "width": 390,
+    "sources": [
+      {
+        "sourceId": "builtin.files",
+        "paints": [
+          "rgb(247, 173, 49)",
+          "rgb(255, 255, 255)"
+        ]
+      },
+      {
+        "sourceId": "builtin.feishu.docs",
+        "paints": [
+          "rgb(52, 65, 91)",
+          "rgb(122, 170, 255)",
+          "rgb(78, 209, 126)",
+          "rgb(21, 21, 23)"
+        ]
+      },
+      {
+        "sourceId": "builtin.feishu.tasks",
+        "paints": [
+          "rgb(247, 173, 49)",
+          "rgb(245, 158, 11)",
+          "rgb(21, 21, 23)",
+          "rgb(207, 211, 214)"
+        ]
+      },
+      {
+        "sourceId": "builtin.github.issues",
+        "paints": [
+          "rgb(35, 60, 44)",
+          "rgb(34, 197, 94)",
+          "rgb(78, 209, 126)"
+        ]
+      },
+      {
+        "sourceId": "builtin.github.pulls",
+        "paints": [
+          "rgb(122, 170, 255)",
+          "rgb(34, 197, 94)",
+          "rgb(78, 209, 126)"
+        ]
+      }
+    ],
+    "pack": [
+      "rgb(245, 158, 11)",
+      "rgb(122, 170, 255)",
+      "rgb(21, 21, 23)"
+    ],
+    "resource": [
+      "rgb(65, 118, 230)",
+      "rgb(255, 255, 255)"
+    ]
+  },
+  {
+    "theme": "dark",
+    "width": 640,
+    "sources": [
+      {
+        "sourceId": "builtin.files",
+        "paints": [
+          "rgb(247, 173, 49)",
+          "rgb(255, 255, 255)"
+        ]
+      },
+      {
+        "sourceId": "builtin.feishu.docs",
+        "paints": [
+          "rgb(52, 65, 91)",
+          "rgb(122, 170, 255)",
+          "rgb(78, 209, 126)",
+          "rgb(21, 21, 23)"
+        ]
+      },
+      {
+        "sourceId": "builtin.feishu.tasks",
+        "paints": [
+          "rgb(247, 173, 49)",
+          "rgb(245, 158, 11)",
+          "rgb(21, 21, 23)",
+          "rgb(207, 211, 214)"
+        ]
+      },
+      {
+        "sourceId": "builtin.github.issues",
+        "paints": [
+          "rgb(35, 60, 44)",
+          "rgb(34, 197, 94)",
+          "rgb(78, 209, 126)"
+        ]
+      },
+      {
+        "sourceId": "builtin.github.pulls",
+        "paints": [
+          "rgb(122, 170, 255)",
+          "rgb(34, 197, 94)",
+          "rgb(78, 209, 126)"
+        ]
+      }
+    ],
+    "pack": [
+      "rgb(245, 158, 11)",
+      "rgb(122, 170, 255)",
+      "rgb(21, 21, 23)"
+    ],
+    "resource": [
+      "rgb(65, 118, 230)",
+      "rgb(255, 255, 255)"
+    ]
+  }
+]

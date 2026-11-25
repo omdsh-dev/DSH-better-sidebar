@@ -1,0 +1,22 @@
+/**
+ * Create-pack window styles (S9).
+ *
+ * Skin contract: every paint uses a --dsw-* token, the compact form fills the
+ * window body, and the two actions stay at the bottom of the surface. Touch
+ * layouts get full-height controls.
+ */
+
+.root {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-sidebar-space-3);
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  padding: var(--ds-sidebar-gutter);
+  overflow: hidden;
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xxs-12);
+}

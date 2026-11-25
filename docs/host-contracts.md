@@ -2,9 +2,9 @@
 
 > 从 `AGENTS.md` §3 移出的深度参考（原 §3.4 第 1–13 条与 0.1.5–0.1.7 历史线中仍然生效的部分）。
 > **编号保持不变**：代码、测试与文档里写的「AGENTS.md §3.4 第 N 条」就是本文第 N 条。
-> 历史版本已不在支持线内（当前基线 DSH 0.2.2-rc.2，见 [docs/dsh-version-adaptation.md](dsh-version-adaptation.md)）；逐条适配过程见 [docs/plans/](plans/) 与 [CHANGELOG.md](../CHANGELOG.md)。
+> 历史版本已不在支持线内（当前基线 DSH 0.2.3-alpha.2，见 [docs/dsh-version-adaptation.md](dsh-version-adaptation.md)）；逐条适配过程见 [docs/plans/](plans/) 与 [CHANGELOG.md](../CHANGELOG.md)。
 
-当前适配约束：HTTP/WS 均由宿主 Connection 的准入方法裁决 Host/Origin 与浏览器认证——`requestRejection(req)` 存在时用它（只有 `undefined` 放行），rc.3 之后它被删除、只剩 `admit(req)`，则读 `admit` 返回对象上的同一个 `rejection` 字段；不读取已删除的 `webRuntime`，也不自建信任表。alpha.5 同时移除了 `@deepseek-ai/dsh-invariants`、`ctx.invariants` 和上游 `/invariant` 子路径；本插件不再发布 invariant companion。
+当前适配约束：HTTP/WS 均由宿主 Connection 的 `admit(req)` 裁决 Host/Origin 与浏览器认证，读返回对象上的 `rejection` 字段。`admit` 把凭据校验委托给嵌套服务 `connection.authentication`，cordis 只允许显式注入该服务的调用方读取它，因此准入在 `ctx.inject(['connection.authentication'])` 子 fiber 内执行；这是唯一路径——0.2.3 删除了 `requestRejection`，本构建不再保留旧宿主回退，也不读取已删除的 `webRuntime`、不自建信任表。alpha.5 同时移除了 `@deepseek-ai/dsh-invariants`、`ctx.invariants` 和上游 `/invariant` 子路径；本插件不再发布 invariant companion。
 
 **本次 0.2.2-rc.1 → rc.2 有真实契约变化**：`ui-primitives` 的 `Menu` 用 `anchorRef` / `anchorPoint` 取代 `getAnchorRect`，portal 菜单改为 CSS Anchor Positioning，子菜单改为 portal 到 `document.body` 并按空间选 side / single-page；`@deepseek-ai/dsh-agent-team`（base composition）取代实验包，`TeamService` 的 `tryMembership` 换成 `isEnabled`；所有宿主包把 Cordis peer 收紧到 `~4.1.0`，并新增 `@deepseek-ai/dsh-error` 传递 peer。上一轮 0.2.1 → 0.2.2 的 `AgentModel` / PTC / sprite 变化见 [0.2.2-rc.1 适配记录](plans/2026-11-04-dsh-0.2.2-rc.1-adaptation.md)。逐项证据见 [0.2.2-rc.2 适配记录](plans/2026-11-12-dsh-0.2.2-rc.2-adaptation.md)。
 

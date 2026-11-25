@@ -1,5 +1,5 @@
 /**
- * Full-window upload progress over the files tree: a blurred scrim (same mask
+ * Full-window upload progress over the files tree: a flat scrim (same mask
  * token as the repo's Modal primitive) with a card showing the target
  * directory, file-level progress, and a cancel button. Esc cancels too —
  * clicking the scrim does not, so a stray click can never abort an upload.
@@ -10,6 +10,7 @@ import { useEffect, type ReactNode } from 'react'
 import { IconUploadOutline16 } from './icons.tsx'
 import { t } from './locales.ts'
 import { uploadHintText } from './upload.ts'
+import { ActionButton } from './ui/index.ts'
 import css from './sidebar.module.css'
 
 export function UploadOverlay(props: {
@@ -52,10 +53,10 @@ export function UploadOverlay(props: {
         >
           <div className={css.uploadOverlayProgressFill} style={{ width: `${percent}%` }} />
         </div>
-        <div className={css.uploadOverlayStatus}>{uploadHintText(done, total, current, dir, t)}</div>
-        <button type="button" className={css.uploadOverlayCancel} disabled={cancelling} onClick={onCancel}>
+        <div className={css.uploadOverlayStatus} role="status">{uploadHintText(done, total, current, dir, t)}</div>
+        <ActionButton className={css.uploadOverlayCancel} busy={cancelling} onClick={onCancel}>
           {t('cancel')}
-        </button>
+        </ActionButton>
       </div>
     </div>
   )

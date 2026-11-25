@@ -71,19 +71,19 @@ it('orders distinct conflict/index/worktree groups, folds independently, and kee
   try {
     const { container } = view
     expect([...container.querySelectorAll<HTMLElement>('[data-group]')].map(el => el.dataset.group)).toEqual(['merge', 'staged', 'unstaged'])
-    expect([...container.querySelectorAll('[data-group] > header [data-count], [data-group] > div:first-child [data-count]')].map(el => el.textContent)).toEqual(['1', '1', '2'])
+    expect([...container.querySelectorAll('[data-group] h3 [data-count]')].map(el => el.textContent)).toEqual(['1', '1', '2'])
     expect(container.querySelector('[data-group="staged"] [data-path="src/partial.ts"] [data-tone]')!.textContent).toBe('M')
     expect(container.querySelector('[data-group="unstaged"] [data-path="src/partial.ts"] [data-tone]')!.textContent).toBe('D')
     const group = (name: string): HTMLElement => container.querySelector<HTMLElement>(`[data-group="${name}"]`)!
-    const disclosure = (name: string): HTMLButtonElement => group(name).querySelector<HTMLButtonElement>(':scope > div:first-child > button[aria-expanded]')!
+    const disclosure = (name: string): HTMLButtonElement => group(name).querySelector<HTMLButtonElement>('h3 > button[aria-expanded]')!
     for (const [name, count] of [['merge', '1'], ['staged', '1'], ['unstaged', '2']] as const) {
-      expect(group(name).firstElementChild!.lastElementChild!.getAttribute('data-count')).toBe(count)
-      expect(disclosure(name).getAttribute('aria-label')).toContain(count)
+      expect(group(name).querySelector('[data-count]')!.getAttribute('data-count')).toBe(count)
+      expect(disclosure(name).textContent).toContain(count)
     }
     await click(disclosure('staged'))
     expect(disclosure('staged').getAttribute('aria-expanded')).toBe('false')
     expect(group('staged').querySelector('[data-path]')).toBeNull()
-    expect(group('staged').firstElementChild!.lastElementChild!.getAttribute('data-count')).toBe('1')
+    expect(group('staged').querySelector('[data-count]')!.getAttribute('data-count')).toBe('1')
     expect(group('unstaged').querySelector('[data-path="src/partial.ts"]')).not.toBeNull()
     await click(disclosure('unstaged'))
     expect(disclosure('unstaged').getAttribute('aria-expanded')).toBe('false')

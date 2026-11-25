@@ -1,0 +1,176 @@
+/*
+ * Collapsible sidebar section: the VSCode-style 28px disclosure bar over a
+ * body that stays mounted while hidden. Token-only by the repo's skin
+ * contract; the chevron is a real icon node.
+ */
+
+.root {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* An open section takes the slack; a collapsed one only takes its bar. */
+.root[data-open='true'] {
+  flex: 1 1 auto;
+}
+
+.root[data-open='false'] {
+  flex: none;
+}
+
+/* A compact open section is capped so a neighbour stays reachable. */
+.root[data-size='compact'][data-open='true'] {
+  flex: 0 1 auto;
+  max-height: 40%;
+}
+
+.header {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  flex: none;
+  min-height: var(--ds-workbench-bar, 28px);
+  /* The divider is part of the bar, not an extra pixel on top of it: sections
+     are measured against the 28px workbench bar (changes graph, clue rows). */
+  height: var(--ds-workbench-bar, 28px);
+  border-top: 1px solid var(--dsw-alias-border-l2);
+  background: transparent;
+}
+
+.heading {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  font: inherit;
+}
+
+/* The disclosure target: a full-bleed native button, so keyboard activation
+   and the expanded state are platform behaviour rather than bespoke JS. */
+.toggle {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  min-height: var(--ds-workbench-bar, 28px);
+  padding: 0 8px;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+}
+
+.toggle:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.toggle:active {
+  background: var(--dsw-alias-interactive-bg-active);
+  color: var(--dsw-alias-label-primary);
+}
+
+.toggle:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary, var(--dsw-alias-label-primary));
+  outline-offset: -2px;
+}
+
+/* Nested sections only indent the header text, never the hover fill. */
+.root[data-level='1'] > .header .toggle {
+  padding-inline-start: 20px;
+}
+
+.chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 12px;
+  height: 20px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.chevron svg {
+  display: block;
+  flex: none;
+}
+
+.icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.icon svg {
+  display: block;
+  flex: none;
+  width: 14px;
+  height: 14px;
+}
+
+/* The title is shown verbatim: no uppercase transform, no forced tracking. */
+.title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.count {
+  flex: none;
+  padding: 0 2px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 16px;
+  font-variant-numeric: tabular-nums;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+  padding-inline-end: 6px;
+}
+
+/* Mounted-but-hidden: the body keeps its component state while collapsed. */
+.body {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* An author `display` would otherwise outrank the UA [hidden] rule. */
+.body[hidden] {
+  display: none;
+}
+
+/* Touch layouts get a full touch target for the whole bar. */
+@media (hover: none), (pointer: coarse) {
+  .header,
+  .toggle {
+    min-height: 44px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toggle {
+    transition: none;
+  }
+}

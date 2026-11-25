@@ -9,7 +9,7 @@
  * All operations are conversation-scoped: requests carry a sessionId and the
  * session's authoritative cwd comes from the session store.
  */
-import { open, readFile, stat } from 'node:fs/promises'
+import { readFile, stat } from 'node:fs/promises'
 import { basename, extname, isAbsolute, join, sep } from 'node:path'
 import type { Stats } from 'node:fs'
 import type { IncomingMessage, ServerResponse } from 'node:http'
@@ -36,6 +36,8 @@ import { decodeHtmlUrl } from './html-route.ts'
 import { registerBundleRoute } from './bundle-route.ts'
 import { createDirectoryWatchers, type DirectoryWatchers } from './fs-watch.ts'
 import { createSidechatPushHub } from './sidechat-push.ts'
+import { createSelectionTranslationHandler } from './selection-translation.ts'
+import { parentModelSelection, type SidechatLogEvent } from './sidechat-core.ts'
 import { launchExternal } from './open-external.ts'
 import { createArchiveTasks, respondArchiveDownload, type ArchiveTasks } from './archive-route.ts'
 import * as git from './git.ts'
@@ -49,7 +51,7 @@ import { buildSidechatApi } from './sidechat-routes.ts'
 import { createAssistantLiveBuffer, type AssistantLiveBuffer } from './assistant-live.ts'
 import { readSidechatImage } from './sidechat-routes.ts'
 import { SIDECHAT_METADATA_BYTES, sidechatPromptBodyLimit } from './sidechat-image-admission.ts'
-import { readJsonBody, readTextBody, requireString, SidebarError, writeError, writeJson, writeOk } from './wire.ts'
+import { MAX_CLUE_SAVE_BODY_BYTES, readJsonBody, readTextBody, requireString, SidebarError, writeError, writeJson, writeOk } from './wire.ts'
 import { byteRangeOf, streamFileToResponse } from './file-stream.ts'
 import { fileReadError } from './fs-read-error.ts'
 import { createChangesOpsApi } from './changes-ops.ts'
@@ -71,10 +73,17 @@ import {
 // row bound, so it lives in a dependency-free module both can import.
 import { FS_TREES_MAX_PATHS } from './fs-batch.ts'
 import { activeWorktreeRootOf } from './active-worktree.ts'
-import { decodeTextAs, decodeTextBytes, isWideEncoding, lastLineBreakEnd, type TextEncoding } from './text-encoding.ts'
-import { hasOverlongLine, MAX_EDITABLE_BYTES, PAGE_BYTES, WRITE_BODY_GUARD_BYTES, type EditLimitReason } from './editor-limits.ts'
+import { WRITE_BODY_GUARD_BYTES } from './editor-limits.ts'
+import { installClueStack } from './clues/install-stack.ts'
+import { installClueAgentRead } from './clues/agent-read.ts'
+import { installClueActions } from './clues/install-actions.ts'
+import { createClueSessionDelivery } from './clues/session-delivery.ts'
+import { ClueError } from './clues/error.ts'
+import { readPage, readText } from './fs-read.ts'
 
 export { Config }
+// Re-exported for consumers that referenced the read shape from the package root.
+export type { SidebarReadResult } from './fs-read.ts'
 export type { SidebarConfig, ResolvedSidebarConfig }
 // Re-export the Context augmentation (`declare module '@deepseek-ai/cordis'`)
 // so consumers `import type {} from 'dsh-better-sidebar'` and gain
@@ -482,9 +491,6 @@ async function resolveStatusPath(cwd: string, raw: string, selected?: string): P
   return requireAbsolute(join(root, raw))
 }
 
-/** How many leading bytes a binary read returns for client-side detect sniffing. */
-const READ_HEAD_LIMIT = 4096
-
 /**
  * `stat` one path for a raw byte route, turning an unreadable path into the
  * route's own error shape.
@@ -499,223 +505,6 @@ async function statFileForRoute(path: string): Promise<Stats> {
   return await stat(path).catch((error: unknown) => {
     throw fileReadError(path, error)
   })
-}
-
-/** One file read, in the shape the client's viewer dispatch consumes. */
-export type SidebarReadResult =
-  | { kind: 'text'; content: string; size: number; mtimeMs: number }
-  | { kind: 'binary'; size: number; mtimeMs: number; head: string }
-  | { kind: 'too-large'; size: number; mtimeMs: number; head: string; reason: EditLimitReason }
-
-/**
- * Read one file for the editor host.
- *
- * Three outcomes, and the size policy is deliberately about EDITING rather
- * than about transfer:
- *
- * - at or below {@link MAX_EDITABLE_BYTES}: the whole document (or the binary
- *   verdict + a 4 KiB sniff head);
- * - above it: `too-large` (reason `size`), carrying only the 4 KiB head;
- * - at or below it, but with a line at or above `MAX_EDITABLE_LINE_CHARS` in
- *   the document head: also `too-large`, with reason `line` (#1165). CodeMirror
- *   virtualizes by line, so one line of a few hundred KB is laid out in one
- *   frame and hangs the renderer — the explicit probe is what keeps such a
- *   document out of the edit buffer even though it passes the byte limit.
- *
- * Every `too-large` carries only the 4 KiB head. The client answers it with
- * the read-only paged preview, and the head still lets a `detect`-based
- * third-party viewer claim the file — which is also what keeps the binary
- * path (images, office documents) intact for a file of any size.
- *
- * There is no truncation outcome any more. The old capped read handed the
- * editor a partial document it could neither trust nor save (issue #732);
- * "too big to edit" is now its own state instead of a quietly damaged one.
- *
- * Text encoding is detected before the NUL-based binary verdict, so UTF-16 /
- * UTF-32 / GBK text stays text.
- */
-async function readText(path: string): Promise<SidebarReadResult> {
-  const info = await stat(path).catch((error: unknown) => {
-    throw fileReadError(path, error)
-  })
-  if (info.isDirectory()) {
-    // A dedicated code, not a generic fs failure: the client promotes the tab
-    // to the plugin's folder window instead of rendering this as an error (a
-    // chat folder link, a sidebar_open folder, a pasted directory path).
-    throw new SidebarError('fs-directory', `"${path}" is a directory`, 400)
-  }
-  const size = info.size
-  const oversized = size > MAX_EDITABLE_BYTES
-  const handle = await open(path, 'r').catch((error: unknown) => {
-    throw fileReadError(path, error)
-  })
-  try {
-    // An over-limit file still yields its first bytes: that is what decides
-    // text-vs-binary and what feeds the client's content sniffer.
-    const window = oversized ? READ_HEAD_LIMIT : size
-    const buffer = Buffer.alloc(window)
-    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0)
-    const slice = buffer.subarray(0, bytesRead)
-    const decoded = decodeTextBytes(slice, oversized)
-    if (decoded === null) {
-      return {
-        kind: 'binary',
-        size,
-        mtimeMs: info.mtimeMs,
-        head: slice.subarray(0, Math.min(slice.length, READ_HEAD_LIMIT)).toString('base64'),
-      }
-    }
-    if (oversized) {
-      return {
-        kind: 'too-large',
-        size,
-        mtimeMs: info.mtimeMs,
-        head: slice.toString('base64'),
-        reason: 'size',
-      }
-    }
-    // The byte limit is not the only way a document is too much for the
-    // editor: one line of a few hundred KB hangs CodeMirror's per-line
-    // virtualization (#1165). The document is already decoded here, so the
-    // probe runs on the host — the client never scans the bytes, and no
-    // CodeMirror state is ever built for the file.
-    if (hasOverlongLine(decoded.content)) {
-      return {
-        kind: 'too-large',
-        size,
-        mtimeMs: info.mtimeMs,
-        // Sniff bytes only, never the document: the same `too-large`
-        // contract as the size branch above.
-        head: slice.subarray(0, Math.min(slice.length, READ_HEAD_LIMIT)).toString('base64'),
-        reason: 'line',
-      }
-    }
-    return { kind: 'text', content: decoded.content, size, mtimeMs: info.mtimeMs }
-  } finally {
-    await handle.close()
-  }
-}
-
-/**
- * The WIDE encoding a file was found to use, per (path, size, mtime) triple.
- *
- * Only wide encodings (UTF-16/UTF-32) are memoized, and that is the whole
- * point: a page window that happens to contain no NUL bytes cannot tell wide
- * text from byte-oriented text, so a later window of a UTF-16 document must
- * not be allowed to re-decide. Byte-oriented encodings (UTF-8 / GBK / GB18030)
- * are deliberately NOT memoized — a long ASCII prefix sniffs as UTF-8 while a
- * later GBK window sniffs as GBK, and decoding each window on its own terms is
- * what recovers the right text for both. (That is safe because pages are
- * line-aligned: 0x0A can be neither a UTF-8 continuation byte nor a GBK trail
- * byte, so a window boundary never splits a character.)
- *
- * The size+mtime in the key drops the entry the moment the file changes.
- */
-const wideEncodingCache = new Map<string, TextEncoding>()
-/** Bound on {@link wideEncodingCache} (a paged read is a handful of entries). */
-const PAGE_ENCODING_CACHE_MAX = 64
-
-/** One page of a large text file: whole lines, plus where to continue. */
-interface ReadPageResult {
-  kind: 'text'
-  text: string
-  offset: number
-  nextOffset: number
-  eof: boolean
-  size: number
-  mtimeMs: number
-  encoding: TextEncoding
-}
-
-/**
- * Read one byte window of a text file, trimmed back to the last newline so a
- * page is a whole number of lines — and, for a JSONL file, a whole number of
- * records.
- *
- * A window with no newline at all (one line longer than {@link PAGE_BYTES}) is
- * returned untrimmed: the client stitches consecutive pages back together and
- * gives up on a single record past its own bound.
- *
- * @param path - absolute, already resolved path.
- * @param offset - byte offset to start at (`0` for the first page).
- * @throws {SidebarError} fs-error for an unreadable path or a bad offset.
- */
-async function readPage(path: string, offset: number): Promise<ReadPageResult> {
-  const info = await stat(path).catch((error: unknown) => {
-    throw fileReadError(path, error)
-  })
-  if (info.isDirectory()) {
-    throw new SidebarError('fs-directory', `"${path}" is a directory`, 400)
-  }
-  const size = info.size
-  if (offset >= size) {
-    return {
-      kind: 'text',
-      text: '',
-      offset,
-      nextOffset: size,
-      eof: true,
-      size,
-      mtimeMs: info.mtimeMs,
-      encoding: 'utf8',
-    }
-  }
-  const handle = await open(path, 'r').catch((error: unknown) => {
-    throw fileReadError(path, error)
-  })
-  try {
-    const length = Math.min(PAGE_BYTES, size - offset)
-    const buffer = Buffer.alloc(length)
-    const { bytesRead } = await handle.read(buffer, 0, length, offset)
-    let slice = buffer.subarray(0, bytesRead)
-    let nextOffset = offset + bytesRead
-    const cacheKey = `${path}\u0000${size}\u0000${info.mtimeMs}`
-    const locked = wideEncodingCache.get(cacheKey)
-    if (nextOffset < size) {
-      // Trim back to a line break so a page is a whole number of lines — and,
-      // for JSONL, a whole number of records. Judged in the encoding's own
-      // character width, because a naive byte search for 0x0A cuts UTF-16
-      // characters in half (see lastLineBreakEnd). A window with no break at
-      // all is returned untrimmed and stitched by the client.
-      const lastBreak = lastLineBreakEnd(slice, locked ?? 'utf8')
-      if (lastBreak >= 0) {
-        slice = slice.subarray(0, lastBreak)
-        nextOffset = offset + lastBreak
-      }
-    }
-    const decoded = decodeTextBytes(slice, true)
-    let encoding: TextEncoding
-    let text: string
-    if (locked !== undefined) {
-      // A wide encoding the file already proved. Only offset 0 can carry a
-      // BOM, and decodeTextBytes is the one that strips it, so page 0 keeps its
-      // result while every later page decodes BOM-less under the locked verdict.
-      encoding = locked
-      text = offset === 0 && decoded !== null ? decoded.content : decodeTextAs(slice, locked)
-    } else {
-      encoding = decoded?.encoding ?? 'utf8'
-      text = decoded?.content ?? decodeTextAs(slice, 'utf8')
-      if (decoded !== null && isWideEncoding(decoded.encoding)) {
-        if (wideEncodingCache.size >= PAGE_ENCODING_CACHE_MAX) {
-          const oldest = wideEncodingCache.keys().next()
-          if (!oldest.done) wideEncodingCache.delete(oldest.value)
-        }
-        wideEncodingCache.set(cacheKey, decoded.encoding)
-      }
-    }
-    return {
-      kind: 'text',
-      text,
-      offset,
-      nextOffset,
-      eof: nextOffset >= size,
-      size,
-      mtimeMs: info.mtimeMs,
-      encoding,
-    }
-  } finally {
-    await handle.close()
-  }
 }
 
 /** One API method dispatch table entry. */
@@ -1113,6 +902,15 @@ function buildApi(
       if (endLine < startLine) throw new SidebarError('bad-request', '"endLine" must not precede "startLine"')
       return { lines: await git.blame(cwd, path, startLine, endLine, repoRoot) }
     },
+    'selection.translate': async (payload, signal) => {
+      const llm = ctx.get('llm') as LlmServiceFace | undefined
+      if (llm === undefined) throw new SidebarError('selection-error', 'the harness LLM service is unavailable', 503)
+      return createSelectionTranslationHandler({ llm, resolveModel: sessionId => {
+        const events = ctx.sessions.get(sessionId)?.snapshotEvents()
+        const selected = events === undefined ? undefined : parentModelSelection(events as unknown as readonly SidechatLogEvent[])
+        return selected ?? conversationModelRoute(ctx, sessionId) ?? defaultModelRoute(ctx)
+      } })(payload, signal)
+    },
     // Commit-message suggestion: build a prompt from the pending changes and
     // stream it through the harness LLM service (`ctx.llm`) — no agent is
     // spawned, no session event is written, and the sidebar never sees a
@@ -1463,22 +1261,50 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   const resolved = resolveSidebarConfig(config)
   // Connection owns both deployment trust and authentication; never infer or
   // bypass its policy from invocation flags or a copied trust list.
-  // DSH 0.2.2-rc.3 deprecated `requestRejection` and DSH master removed it, leaving
-  // `admit` (the method the old wrapper delegated to) as the only admission call.
-  // Prefer the old method while it exists so rc.1–rc.3 semantics stay byte-identical,
-  // then fall back to `admit` and read the same `rejection` field. Never rebuild a
-  // trust list here: when neither method exists the request fails loudly.
+  // DSH 0.2.3 deleted `requestRejection`; `admit` is the only admission call and
+  // it verifies credentials with the verifier registered under the NESTED
+  // `connection.authentication` service. Cordis refuses that read unless the
+  // caller declares the dependency, so admission lives in the injected child
+  // fiber — the only path this build supports. Never rebuild a trust list here:
+  // without the provider the request fails loudly.
+  /** `admit` refuses by carrying `rejection`; nothing else counts as a refusal. */
+  const admitted = (verdict: unknown): boolean =>
+    !(verdict !== null && typeof verdict === 'object' && 'rejection' in verdict)
+  let admit: ((req: SidebarHttpRequest) => boolean) | undefined
+  ctx.inject(['connection.authentication'], (providerCtx) => {
+    const connection = (providerCtx as Context).connection
+    const call = connection.admit
+    admit = (req) => admitted(call.call(connection, req))
+  })
   const fence = (req: SidebarHttpRequest): boolean => {
-    const connection = ctx.connection
-    const requestRejection = connection.requestRejection
-    if (typeof requestRejection === 'function') return requestRejection.call(connection, req) === undefined
-    const admit = connection.admit
-    if (typeof admit === 'function') {
-      const admission = admit.call(connection, req)
-      return !(admission !== null && typeof admission === 'object' && 'rejection' in admission)
-    }
-    throw new TypeError('connection exposes neither requestRejection nor admit')
+    if (admit !== undefined) return admit(req)
+    throw new TypeError('connection admission requires the injected authentication provider')
   }
+  // The clue stack's context injection reads the live Side card preferences
+  // (source switches). The settings face is filled by the `ctx.inject` below,
+  // which runs after this body, so every read is lazy and a deployment
+  // without the settings service keeps the schema defaults.
+  let settingsFace: SidebarSettingsFace | undefined
+  const readCluePrefs = (): SidebarPrefs => {
+    const value = settingsFace?.get().value
+    return value !== null && typeof value === 'object' ? value as SidebarPrefs : SIDEBAR_PREFS_DEFAULTS
+  }
+  // Clue collection (S1–S9): the complete stack — durable store, the built-in
+  // file/GitHub/Feishu sources, the one dependency/connection runtime, the
+  // first-turn context injection, the share service with its raw routes, and
+  // the client's workspace lookup. Installed before the routes so the
+  // dispatcher's fallback sees it; every registration owns an effect-based
+  // teardown.
+  const clueStack = installClueStack(ctx, { readPrefs: readCluePrefs, fence })
+  // The ONE deliberate loopback authentication exception: a fixed read-only
+  // route that accepts a cookie-less local POST (the injected `curl` command)
+  // after checking the real peer socket, the OS-assigned listener port, the
+  // literal loopback Host, and the absence of browser/proxy headers. Every
+  // other /sidebar route keeps the ordinary fence above.
+  ctx.effect(
+    () => installClueAgentRead(ctx, clueStack.clues),
+    'dsh-better-sidebar: clue agent read route',
+  )
   // The model-facing open-request registry: queues `sidebar_open` requests
   // per session and pushes them to connected sidebar views over the
   // `/sidebar/ws/agent-opens` socket.
@@ -1492,7 +1318,6 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   // ('settings.get'/'settings.update'), which now call `describe`/`update`.
   // Deployments without a settings service simply never fill the face and the
   // client falls back to the schema defaults.
-  let settingsFace: SidebarSettingsFace | undefined
   // The model-facing `sidebar_open` tool is gated on the side-card setting
   // `agentOpenTools` (default off): nothing is injected until the user turns
   // the feature on; turning it off mid-session unregisters the tool.
@@ -1641,7 +1466,10 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   // kills a build still running and deletes the temp files it was holding —
   // an unmounted plugin must not leave orphan archives in the OS temp dir.
   const archiveTasks = createArchiveTasks()
-  ctx.effect(() => () => { archiveTasks.dispose() }, 'dsh-better-sidebar: archive task table')
+  // Return the teardown promise itself: Cordis awaits async disposers, and
+  // closing the in-flight descriptor before the unlink is what keeps a
+  // Windows temp file from becoming undeletable.
+  ctx.effect(() => () => archiveTasks.dispose(), 'dsh-better-sidebar: archive task table')
   const sidechatLifetime = new AbortController()
   ctx.effect(() => () => { sidechatLifetime.abort() }, 'dsh-better-sidebar: sidechat admissions')
   const api = buildApi(ctx, resolved, () => settingsFace, assistantLive, archiveTasks, sidechatLifetime.signal)
@@ -1666,7 +1494,29 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
     let released = false
     return () => { if (!released) { released = true; largePromptAdmissions-- } }
   }
+  const deliverClueOperation = createClueSessionDelivery(ctx, async payload => {
+    const agents = ctx.get('agents') as { get(id: string): unknown } | undefined
+    if (agents?.get(payload.sessionId) === undefined) {
+      const controller = ctx.get('sessionController') as {
+        resolveAgent?(id: string): Promise<{ agent: unknown } | { error: unknown }>
+      } | undefined
+      if (controller?.resolveAgent === undefined) throw new ClueError('unsupported', 'the parent conversation cannot be resumed')
+      const restored = await controller.resolveAgent(payload.sessionId)
+      if ('error' in restored) throw restored.error
+    }
+    return await api['sidechat.start']!(payload) as { childId: string }
+  })
+  installClueActions(ctx, {
+    clues: clueStack.clues,
+    runtime: clueStack.runtime,
+    deliver: async operation => {
+      const receipt = await deliverClueOperation({ sessionId: operation.sessionId, target: operation.target,
+        requestId: operation.requestId, prompt: operation.prompt, signal: operation.signal })
+      return { deliveryId: receipt.sessionId }
+    },
+  })
   ctx.effect(() => ctx.webServer.register({
+    auth: 'anonymous',
     kind: 'prefix',
     path: '/sidebar/api',
     handler: async (req, res) => {
@@ -1687,7 +1537,12 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
       const imagePrompt = method === 'sidechat.prompt'
       let releaseImagePrompt: (() => void) | undefined
       const admitLargePrompt = (): void => { releaseImagePrompt ??= reserveLargePrompt() }
-      const controller = method === 'changes.ops' ? new AbortController() : undefined
+      // Clue methods are cancellable too: the dispatcher below is the one
+      // route that serves them (no second route, no second fence).
+      const clueService = ctx.get('betterSidebarClues') as import('./clues/service.ts').CluesService | undefined
+      const controller = method === 'changes.ops' || method === 'selection.translate' || clueService?.hasApi(method) === true
+        ? new AbortController()
+        : undefined
       const response = controller === undefined ? undefined : res as ServerResponse
       const abort = (): void => { controller?.abort() }
       response?.once('close', abort)
@@ -1698,9 +1553,20 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
           const declared = Number(req.headers['content-length'])
           if (Number.isFinite(declared) && declared > SIDECHAT_METADATA_BYTES) admitLargePrompt()
         }
+        // The ordinary JSON bound (1 MiB) is right for every control payload,
+        // but an EDIT document carries the user's text: `clues.saveEdit` gets
+        // the editable-size-derived bound so a 1–5 MiB source document can be
+        // written back (see MAX_CLUE_SAVE_BODY_BYTES).
+        // The enlarged bound applies only while the clue service actually
+        // claims `clues.saveEdit`; a disposed/absent service must not turn the
+        // method into a 16 MiB body sink (the dispatcher then answers 404).
         const payload = await readJsonBody(
           req,
-          imagePrompt ? sidechatPromptBodyLimit(ctx) : undefined,
+          imagePrompt
+            ? sidechatPromptBodyLimit(ctx)
+            : method === 'clues.saveEdit' && clueService?.hasApi(method) === true
+              ? MAX_CLUE_SAVE_BODY_BYTES
+              : undefined,
           // A chunked (or lying-header) body is counted as soon as the bytes
           // it delivered could hold an image.
           imagePrompt ? total => { if (total > SIDECHAT_METADATA_BYTES) admitLargePrompt() } : undefined,
@@ -1711,11 +1577,29 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
         // 200 "[object Undefined]", valueOf/hasOwnProperty answered 500.
         // The typeof guard also rejects a non-function own value.
         const handler = Object.hasOwn(api, method) ? api[method] : undefined
-        if (typeof handler !== 'function') {
+        if (typeof handler === 'function') {
+          const result = await handler(payload, controller?.signal)
+          if (controller?.signal.aborted !== true) writeOk(res, result)
+        } else if (clueService !== undefined && clueService.hasApi(method)) {
+          // The clue service's API seam: later specs (S2+) register their own
+          // methods on it, so this is the only dispatcher fallback they need.
+          // Caller is the interactive UI; the abort signal is forwarded.
+          // S6/S2 integrations may serialize only the payload: forward an
+          // optional string `sessionId` exactly like the service's own read
+          // methods do. Non-string values are ignored, never coerced.
+          const payloadRecord = payload !== null && typeof payload === 'object'
+            ? payload as Record<string, unknown>
+            : undefined
+          const payloadSessionId = payloadRecord?.sessionId
+          const result = await clueService.invokeApi(method, payload, {
+            caller: 'ui',
+            ...(typeof payloadSessionId === 'string' ? { sessionId: payloadSessionId } : {}),
+            ...(controller?.signal === undefined ? {} : { signal: controller.signal }),
+          })
+          if (controller?.signal.aborted !== true) writeOk(res, result)
+        } else {
           throw new SidebarError('not-found', `unknown sidebar API method "${method}"`, 404)
         }
-        const result = await handler(payload, controller?.signal)
-        if (controller?.signal.aborted !== true) writeOk(res, result)
       } catch (error) {
         if (controller?.signal.aborted !== true) writeError(res, error)
       } finally {
@@ -1726,6 +1610,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   }), 'dsh-better-sidebar: /sidebar/api routes')
 
   ctx.effect(() => ctx.webServer.register({
+    auth: 'anonymous',
     kind: 'exact',
     path: '/sidebar/sidechat-image',
     handler: async (req, res) => {
@@ -1751,6 +1636,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   // failed or oversized upload never leaves a partial file (see
   // fs-operations.ts for the containment and shape rules).
   ctx.effect(() => ctx.webServer.register({
+    auth: 'anonymous',
     kind: 'exact',
     path: '/sidebar/upload',
     handler: async (req, res) => {
@@ -1789,6 +1675,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   // envelope no longer caps what an editor can write back. The encoding and
   // line-ending round-trip lives in writeWorkspaceText, unchanged.
   ctx.effect(() => ctx.webServer.register({
+    auth: 'anonymous',
     kind: 'exact',
     path: '/sidebar/write',
     handler: async (req, res) => {
@@ -1842,6 +1729,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   // file once, with the RFC 5987 disposition. `archiveTasks` owns the
   // concurrency cap, the TTL, and deleting the temp file.
   ctx.effect(() => ctx.webServer.register({
+    auth: 'anonymous',
     kind: 'exact',
     path: '/sidebar/archive',
     handler: async (req, res) => {
@@ -1867,6 +1755,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
 
   // ── Media route (images for the editor) ─────────────────────────────────
   ctx.effect(() => ctx.webServer.register({
+    auth: 'anonymous',
     kind: 'prefix',
     path: '/sidebar/file',
     handler: async (req, res) => {
@@ -1958,6 +1847,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   // the URL (e.g. a popup opened by a previewed page) stays in an opaque
   // origin with no same-origin access to the GUI.
   ctx.effect(() => ctx.webServer.register({
+    auth: 'anonymous',
     kind: 'prefix',
     path: '/sidebar/html',
     handler: async (req, res) => {
@@ -2017,6 +1907,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   // editor / folder-window / browser tab open.
   const agentOpenWss = new WebSocketServer({ noServer: true })
   ctx.effect(() => ctx.webServer.registerUpgrade({
+    auth: 'anonymous',
     path: '/sidebar/ws/agent-opens',
     handler: (req, socket, head) => {
       if (!fence(req)) {
@@ -2038,6 +1929,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   // lexical rules), so the watch observes what the tree can list.
   const fsWatchWss = new WebSocketServer({ noServer: true })
   ctx.effect(() => ctx.webServer.registerUpgrade({
+    auth: 'anonymous',
     path: '/sidebar/ws/fs-watch',
     handler: (req, socket, head) => {
       if (!fence(req)) {
@@ -2060,6 +1952,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   const sidechatPush = createSidechatPushHub(ctx)
   ctx.effect(() => () => { sidechatPush.dispose() }, 'dsh-better-sidebar: side-chat push hub')
   ctx.effect(() => ctx.webServer.registerUpgrade({
+    auth: 'anonymous',
     path: '/sidebar/ws/sidechat',
     handler: (req, socket, head) => {
       if (!fence(req)) {

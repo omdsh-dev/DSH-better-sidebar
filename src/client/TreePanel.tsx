@@ -21,7 +21,7 @@
  */
 import { useEffect, useMemo, useRef, useState, type InputHTMLAttributes } from 'react'
 import clsx from 'clsx'
-import { IconChevronsUpDownOutlineRegular, IconFolderOpenRegular, IconRefreshOutlineRegular, Menu } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconChevronsUpDownOutlineRegular, IconFolderOpenRegular, IconRefreshOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import { api } from './api.ts'
 import type { BetterSidebarService } from './service.ts'
 import { ancestorDirs } from './state.ts'
@@ -32,7 +32,7 @@ import type { OpenInApp } from './open-in-app.ts'
 import type { OpenWithTarget } from './open-with.ts'
 import { t } from './locales.ts'
 import { isWithinWorkspace, resolveSidebarPath } from './paths.ts'
-import { IconButton } from './ui/index.ts'
+import { IconButton, LoadingIndicator, Menu, Notice, TextInput } from './ui/index.ts'
 import { UploadOverlay } from './UploadOverlay.tsx'
 import {
   summarizeResults, uploadHintText, uploadItemsFromFiles, uploadToDir,
@@ -214,7 +214,13 @@ export function TreePanel(props: {
       }).catch((failure: unknown) => {
         if (controller.signal.aborted) return
         setResults(null)
-        setError(failure instanceof Error ? failure.message : String(failure))
+        const message = failure instanceof Error ? failure.message : String(failure)
+        // An unreadable search root is now a real failure (the host used to
+        // answer it as an empty, legitimate-looking result). Keep the
+        // localized failure label in front of the host's concrete reason
+        // instead of showing a bare English errno sentence.
+        const code = (failure as { code?: unknown } | null)?.code
+        setError(code === 'fs-error' ? `${t('error')}: ${message}` : message)
       })
     }, 300)
     return () => {
@@ -252,67 +258,73 @@ export function TreePanel(props: {
   }
 
   return (
-    <div className={clsx(css.editorTreePanel, full === true && css.editorTreePanelFull)}>
+    <div className={clsx(css.editorTreePanel, full === true && css.editorTreePanelFull)} data-sidebar-surface="files">
       <div className={css.editorTreeSearch}>
-        <input
+        <TextInput
           className={css.editorSearchInput}
+          aria-label={t('editorSearchPlaceholder')}
+          type="search"
           value={query}
           placeholder={t('editorSearchPlaceholder')}
           spellCheck={false}
           onChange={(event) => { setQuery(event.target.value) }}
         />
-        <IconButton
-          label={t('refresh')}
-          icon={<IconRefreshOutlineRegular size={14} />}
-          onClick={() => { setRefreshTick(tick => tick + 1) }}
-        />
-        {/* Row order: the two keys are one choice (check mark), the
-            folders-first switch is independent — the same two-group menu the
-            host's own menus use. Picking a row closes the menu like every
-            other menu in the plugin. */}
-        <Menu
-          open={sortOpen}
-          onClose={() => { setSortOpen(false) }}
-          onSelect={(id) => {
-            setSort((current) => {
-              if (id === 'sort-name') return { ...current, key: 'name' }
-              if (id === 'sort-type') return { ...current, key: 'type' }
-              return { ...current, dirsFirst: !current.dirsFirst }
-            })
-            setSortOpen(false)
-          }}
-          items={[
-            { id: 'sort-name', label: t('sortByName'), icon: <IconChevronsUpDownOutlineRegular size={14} /> },
-            { id: 'sort-type', label: t('sortByType'), icon: <IconChevronsUpDownOutlineRegular size={14} /> },
-            { type: 'separator', id: 'sort-sep' },
-            { id: 'sort-folders-first', label: t('sortFoldersFirst') },
-          ]}
-          selectedIds={[
-            sort.key === 'name' ? 'sort-name' : 'sort-type',
-            ...(sort.dirsFirst ? ['sort-folders-first'] : []),
-          ]}
-          align="end"
-          compact
-          anchor={(
-            <IconButton
-              label={t('sort')}
-              icon={<IconChevronsUpDownOutlineRegular size={14} />}
-              onClick={() => { setSortOpen(open => !open) }}
-            />
-          )}
-        />
-        <IconButton
-          label={t('uploadFiles')}
-          icon={<IconUploadOutline16 size={14} />}
-          disabled={busy}
-          onClick={() => { fileInputRef.current?.click() }}
-        />
-        <IconButton
-          label={t('uploadFolder')}
-          icon={<IconFolderOpenRegular size={14} />}
-          disabled={busy}
-          onClick={() => { folderInputRef.current?.click() }}
-        />
+        <div className={css.editorTreeActions}>
+          <IconButton
+            label={t('refresh')}
+            icon={<IconRefreshOutlineRegular size={14} />}
+            onClick={() => { setRefreshTick(tick => tick + 1) }}
+          />
+          {/* Row order: the two keys are one choice (check mark), the
+              folders-first switch is independent — the same two-group menu the
+              host's own menus use. Picking a row closes the menu like every
+              other menu in the plugin. */}
+          <Menu
+            open={sortOpen}
+            onClose={() => { setSortOpen(false) }}
+            onSelect={(id) => {
+              setSort((current) => {
+                if (id === 'sort-name') return { ...current, key: 'name' }
+                if (id === 'sort-type') return { ...current, key: 'type' }
+                return { ...current, dirsFirst: !current.dirsFirst }
+              })
+              setSortOpen(false)
+            }}
+            items={[
+              { id: 'sort-name', label: t('sortByName'), icon: <IconChevronsUpDownOutlineRegular size={14} /> },
+              { id: 'sort-type', label: t('sortByType'), icon: <IconChevronsUpDownOutlineRegular size={14} /> },
+              { type: 'separator', id: 'sort-sep' },
+              { id: 'sort-folders-first', label: t('sortFoldersFirst') },
+            ]}
+            selectedIds={[
+              sort.key === 'name' ? 'sort-name' : 'sort-type',
+              ...(sort.dirsFirst ? ['sort-folders-first'] : []),
+            ]}
+            align="end"
+            compact
+            anchor={(
+              <IconButton
+                label={t('sort')}
+                aria-haspopup="menu"
+                aria-expanded={sortOpen}
+                icon={<IconChevronsUpDownOutlineRegular size={14} />}
+                onClick={() => { setSortOpen(open => !open) }}
+              />
+            )}
+          />
+          <IconButton
+            label={t('uploadFiles')}
+            icon={<IconUploadOutline16 size={14} />}
+            disabled={busy}
+            onClick={() => { fileInputRef.current?.click() }}
+          />
+          <IconButton
+            label={t('uploadFolder')}
+            icon={<IconFolderOpenRegular size={14} />}
+            disabled={busy}
+            onClick={() => { folderInputRef.current?.click() }}
+          />
+        </div>
         <input
           ref={fileInputRef}
           type="file"
@@ -336,7 +348,7 @@ export function TreePanel(props: {
         />
       </div>
       {uploadStatus !== '' && (
-        <div className={clsx(css.editorSearchHint, uploadFailed && css.editorError)} title={uploadStatus}>{uploadStatus}</div>
+        <div className={clsx(css.editorSearchHint, uploadFailed && css.editorError)} title={uploadStatus} role={uploadFailed ? 'alert' : 'status'}>{uploadStatus}</div>
       )}
       {/* Search results: parked (not unmounted) while the query is empty. Its
           contents render only for a live query — a parked panel must not put
@@ -347,8 +359,8 @@ export function TreePanel(props: {
       >
         {searching && (
           <>
-            {error !== null && <div className={clsx(css.editorSearchHint, css.editorError)}>{error}</div>}
-            {error === null && results === null && <div className={css.editorSearchHint}>{t('loading')}</div>}
+            {error !== null && <Notice kind="error" role="alert">{error}</Notice>}
+            {error === null && results === null && <LoadingIndicator label={t('loading')} />}
             {error === null && results !== null && results.matches.length === 0 && (
               <div className={css.editorSearchHint}>{t('editorSearchNoResults')}</div>
             )}

@@ -135,8 +135,8 @@ describe('side-chat submit key — defaults and validation (prefs layer)', () =>
     }))
 
     // The closed control shows the STORED mode (not a hard-coded default) and
-    // advertises itself as a listbox the user can open. The page also carries
-    // the page-mode select, so scope by the row title.
+    // advertises the menu it opens. The page also carries the page-mode
+    // select, so address the submit control by its accessible label.
     const anchor = selectRowAnchor(view.container, t('settingsSidechatSubmitKeyTitle'))
     expect(anchor.textContent).toContain(t('settingsSidechatSubmitModEnter'))
 
@@ -189,10 +189,8 @@ describe('side-chat submit key — defaults and validation (prefs layer)', () =>
 
 /** Find one plugin row's select trigger by its title (the page now has two). */
 function selectRowAnchor(container: HTMLElement, title: string): HTMLButtonElement {
-  const titleSpan = [...container.querySelectorAll<HTMLElement>('span')]
-    .find(span => span.textContent === title)
-  const row = titleSpan?.parentElement?.parentElement
-  const anchor = row?.querySelector<HTMLButtonElement>('button[aria-haspopup="listbox"]') ?? null
+  const anchor = [...container.querySelectorAll<HTMLButtonElement>('button[aria-haspopup="menu"]')]
+    .find(button => button.getAttribute('aria-label') === title) ?? null
   if (anchor === null) throw new Error('select row missing: ' + title)
   return anchor
 }

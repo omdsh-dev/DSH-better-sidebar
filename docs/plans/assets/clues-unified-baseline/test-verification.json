@@ -1,0 +1,27 @@
+{
+  "hostVersion": "0.2.1-rc.1",
+  "fullMount": {
+    "passed": 15,
+    "skipped": 3,
+    "duration": "3.0m",
+    "ptyPermitted": true
+  },
+  "clueScenariosSeconds": [
+    17.9,
+    2.6
+  ],
+  "designUnitTests": 146,
+  "designUnitFiles": 4,
+  "steadyState": {
+    "observedMs": 15000,
+    "idleRequests": 0,
+    "idleCwdReads": 0
+  },
+  "drag": {
+    "frames": 96,
+    "p95Ms": 10,
+    "maxMs": 11,
+    "widthLeakPx": 0
+  },
+  "screenshots": 33
+}

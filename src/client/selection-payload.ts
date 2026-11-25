@@ -5,10 +5,9 @@
  * directly.
  *
  * Insert shape (agreed with the product owner):
- * - Selection ≤ SELECTION_LIMIT characters: a fenced code block whose info
- *   line is `相对路径:起止行` and whose body is the selected text.
- * - Selection over the limit: a single plain-text line `相对路径:起止行`
- *   (no fence, no content).
+ * - The compact chip label is `相对路径:起止行`; the complete selection is
+ *   carried in a fenced payload expanded only when the message is sent.
+ * - Selection length never silently turns the payload into a path-only hint.
  * - The path is relative to the session cwd (the same projection the
  *   explorer's @ button uses); an unknown cwd falls back to the absolute
  *   path.
@@ -22,9 +21,6 @@
  */
 import { relativeTo } from './paths.ts'
 import type { PendingReference } from './conversation-draft.ts'
-
-/** Max inserted selection length (UTF-16 code units, i.e. JS `.length`). */
-export const SELECTION_LIMIT = 500
 
 /** The source line span a selection maps to (1-based, inclusive). */
 export interface SelectionLines {
@@ -58,9 +54,8 @@ export function whereOf(path: string, lines?: SelectionLines): string {
 }
 
 /**
- * The composer payload for one selection: the chip label and the model text.
- * Over the limit the content is dropped and both halves are the plain path
- * line (an empty fenced block would just occupy the draft).
+ * The composer payload keeps a compact chip label and complete model text.
+ * No file appearance is attached: a fenced selection is not an openable path.
  */
 export function buildSelectionInsert(
   path: string,
@@ -69,7 +64,6 @@ export function buildSelectionInsert(
   selected: string,
 ): PendingReference {
   const header = headerOf(path, cwd, lines)
-  if (selected.length > SELECTION_LIMIT) return { label: header, text: header }
   return { label: header, text: `\`\`\`${header}\n${selected}\n\`\`\`` }
 }
 

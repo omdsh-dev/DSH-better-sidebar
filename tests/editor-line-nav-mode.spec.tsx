@@ -30,12 +30,19 @@ import { allLeaves, createSidebarStore, type SidebarStore, type SidebarTab } fro
 setupReactAct()
 
 const fsRead = vi.fn()
-vi.mock('../src/client/api.ts', () => ({
-  api: {
-    fsRead: (...args: unknown[]) => fsRead(...args),
-    mediaUrl: () => '',
-  },
-}))
+vi.mock('../src/client/api.ts', () => {
+  class SidebarApiError extends Error {
+    readonly code: string
+    constructor(code: string, message: string) { super(message); this.name = 'SidebarApiError'; this.code = code }
+  }
+  return {
+    api: {
+      fsRead: (...args: unknown[]) => fsRead(...args),
+      mediaUrl: () => '',
+    },
+    SidebarApiError,
+  }
+})
 
 const SESSION = 'line-nav-session'
 const BODY = '# title\n\nfirst\n\nsecond\n'
@@ -313,6 +320,31 @@ describe('clicking the same chip twice lands and flashes both times', () => {
       expect(flashes[1]).toEqual(flashes[0])
       expect(flashes[0]?.from).toBe(landings[0])
       expect(flashes[1]?.from).toBe(landings[1])
+    } finally {
+      view.unmount()
+    }
+  })
+})
+
+describe('markdown preview mode keyboard focus', () => {
+  it('keeps the selected Preview tab focused through the real TextEditor reload', async () => {
+    const { ctx, store, tabOf } = harness()
+    const view = mount(ctx, tabOf('/tmp/readme.md'), store)
+    try {
+      await settle()
+      const preview = modeButton(view.container, 'Preview')
+      const edit = modeButton(view.container, 'Edit')
+      preview.focus()
+      act(() => { preview.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })) })
+      expect(editing(view.container)).toBe(true)
+      expect(document.activeElement).toBe(edit)
+      act(() => { edit.dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true })) })
+      await settle()
+      expect(reads()).toBe(2)
+      expect(editing(view.container)).toBe(false)
+      expect(modeButton(view.container, 'Preview')).toBe(preview)
+      expect(preview.getAttribute('aria-selected')).toBe('true')
+      expect(document.activeElement).toBe(preview)
     } finally {
       view.unmount()
     }

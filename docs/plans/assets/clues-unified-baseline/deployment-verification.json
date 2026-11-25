@@ -1,0 +1,28 @@
+{
+  "origin": "http://127.0.0.1:3080",
+  "pluginMounted": true,
+  "cluesOpened": true,
+  "existingSessionSelected": true,
+  "messagesSent": 0,
+  "remoteWrites": 0,
+  "density": {
+    "height": 30,
+    "inputFontSize": "12px",
+    "background": "rgb(255, 255, 255)"
+  },
+  "selectiveAuthorizationApi": true,
+  "availableCapabilities": [
+    "docs.read",
+    "docs.search",
+    "docs.edit",
+    "wiki.read",
+    "tasks.read",
+    "tasks.edit"
+  ],
+  "processes": {
+    "preview3080": "6598",
+    "unchanged3384": "50833"
+  },
+  "pageErrors": [],
+  "verifiedAt": "2026-10-21T14:42:45.647Z"
+}

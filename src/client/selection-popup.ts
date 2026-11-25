@@ -27,19 +27,22 @@
  * click commits (the hook's capture-phase listener runs first and must not
  * hide for it).
  */
-import { useEffect, useRef, useState, type RefObject } from 'react'
+import { useEffect, useRef, useState, type MutableRefObject, type RefObject } from 'react'
+import { isLikelyImeKey } from './ime-guard.ts'
 
 /**
  * The floating "add to conversation" action: payload + viewport anchor.
  * The payload type belongs to the caller; the hook only carries it through.
  */
-export interface SelectionPopup<T> {
+export interface SelectionPopup<T = string> {
   insert: T
+  /** Raw source selection, separate from a compact chip or shortened projection. */
+  selection: string
   left: number
   top: number
 }
 
-export interface SelectionPopupOptions<T> {
+export interface SelectionPopupOptions<T = string> {
   /** Commit the payload into the composer draft (button click). */
   onCommit(insert: T): void
   /**
@@ -50,20 +53,26 @@ export interface SelectionPopupOptions<T> {
   getSurface(): HTMLElement | null
 }
 
-export interface SelectionPopupControls<T> {
+export interface SelectionPopupControls<T = string> {
   /** The current popup (null = hidden). */
   popup: SelectionPopup<T> | null
   /** Attach to the portaled button element. */
   buttonRef: RefObject<HTMLButtonElement>
+  /**
+   * Attach to the whole portaled popup surface (a multi-action menu's
+   * container). An outside mousedown must not dismiss the menu before its
+   * item's click lands.
+   */
+  popupRef: MutableRefObject<HTMLElement | null>
   /** Anchor the popup above a selection (viewport-clamped). */
-  show(insert: T, left: number, top: number): void
+  show(insert: T, left: number, top: number, selection?: string): void
   /** Hide the popup (idempotent). */
   hide(): void
   /** The button's click: commit the stored payload, then hide. */
   commit(): void
 }
 
-export function useSelectionPopup<T>(options: SelectionPopupOptions<T>): SelectionPopupControls<T> {
+export function useSelectionPopup<T = string>(options: SelectionPopupOptions<T>): SelectionPopupControls<T> {
   // Latest-callback refs: the dismissal listeners live for the mount's
   // lifetime, so they must not capture stale closures across renders.
   const onCommitRef = useRef(options.onCommit)
@@ -76,12 +85,15 @@ export function useSelectionPopup<T>(options: SelectionPopupOptions<T>): Selecti
   const popupRef = useRef<SelectionPopup<T> | null>(null)
   /** The portaled button itself (for the outside-click guard). */
   const buttonRef = useRef<HTMLButtonElement>(null)
+  /** The whole popup surface (a menu may be wider than its legacy button). */
+  const popupSurfaceRef = useRef<HTMLElement>(null)
   /** The surface visibility observer (created lazily on open). */
   const observerRef = useRef<IntersectionObserver | null>(null)
 
-  const show = (insert: T, left: number, top: number): void => {
+  const show = (insert: T, left: number, top: number, selection = typeof insert === 'string' ? insert : ''): void => {
     const next: SelectionPopup<T> = {
       insert,
+      selection,
       left: Math.min(Math.max(left, 80), window.innerWidth - 80),
       top,
     }
@@ -108,10 +120,16 @@ export function useSelectionPopup<T>(options: SelectionPopupOptions<T>): Selecti
       if (popupRef.current === null) return
       const button = buttonRef.current
       if (button !== null && (button === event.target || button.contains(event.target as Node))) return
+      const surface = popupSurfaceRef.current
+      if (surface !== null && (surface === event.target || surface.contains(event.target as Node))) return
       hide()
     }
     const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape' && popupRef.current !== null) hide()
+      if (event.key === 'Escape' && popupSurfaceRef.current?.getAttribute('data-selection-submenu') === 'true') return
+      if (event.key === 'Escape' && popupRef.current !== null && !isLikelyImeKey(event)) {
+        event.preventDefault() // The popup owns Escape before a containing window.
+        hide()
+      }
     }
     const onVisibilityChange = (): void => {
       if (document.hidden && popupRef.current !== null) hide()
@@ -155,5 +173,5 @@ export function useSelectionPopup<T>(options: SelectionPopupOptions<T>): Selecti
     observer.observe(surface)
   }, [popupOpen])
 
-  return { popup, buttonRef, show, hide, commit }
+  return { popup, buttonRef, popupRef: popupSurfaceRef, show, hide, commit }
 }

@@ -1,0 +1,36 @@
+/* The switcher owns its own container so it works in the tab AND in a window. */
+.root { container-type: inline-size; display: block; min-width: 0; width: 100%; }
+.wide { display: block; min-width: 0; }
+.narrow { display: none; min-width: 0; }
+
+.tabs { box-sizing: border-box; width: 100%; }
+/* Size each segment to its label before distributing the remaining space. */
+.tabs > [role='tab'] { flex-basis: auto; font-size: 12px; }
+.tabLabel { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-width: 0; max-width: 100%; }
+.tabIcon { display: inline-flex; flex: none; align-items: center; }
+.tabIcon svg { display: block; }
+.tabText { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.select {
+  display: flex;
+  width: 100%;
+  min-height: 26px;
+  padding: 2px 6px;
+  gap: 4px;
+  justify-content: flex-start;
+  border-color: var(--dsw-alias-border-l1);
+  background: transparent;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 16px;
+}
+.select > svg:last-child { margin-inline-start: auto; }
+@media (hover: none), (pointer: coarse) {
+  .select { min-height: 44px; }
+}
+
+/* Below the five-segment comfort width the select is the honest form. */
+@container (max-width: 519px) {
+  .wide { display: none; }
+  .narrow { display: block; }
+}

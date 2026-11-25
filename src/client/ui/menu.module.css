@@ -1,0 +1,14 @@
+.menu.menu, .menu [role='menu'] {
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-primary);
+  box-shadow: none;
+  backdrop-filter: none;
+  font: var(--dsw-font-xxs-12);
+  font-size: 13px;
+  line-height: 20px;
+}
+.menu [role='menuitem'] { min-height: 28px; border-radius: 4px; font: inherit; }
+.menu [role='separator'] { border-width: 1px; }
+@media (pointer: coarse) { .menu [role='menuitem'] { min-height: 44px; } }

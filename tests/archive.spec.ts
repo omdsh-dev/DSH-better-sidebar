@@ -176,16 +176,23 @@ function responseRecorder(): { res: SidebarHttpResponse; wire: Wire } {
 /** The host mounted against a fake context: both archive routes + the API. */
 function mountHost(): { api: SidebarWebRoute; download: SidebarWebRoute } {
   const routes: SidebarWebRoute[] = []
+  const cleanups: Array<() => void | Promise<void>> = []
   const ctx = {
-    connection: { requestRejection: () => undefined },
+    connection: { admit: () => ({ peer: null }) },
     webServer: {
       register: (route: SidebarWebRoute) => { routes.push(route); return () => {} },
       registerUpgrade: (route: SidebarWebUpgradeRoute) => { void route; return () => {} },
     },
     sessions: { get: () => undefined },
     tools: { register: () => () => {} },
-    effect: (fn: () => void | (() => void)) => { fn() },
-    inject: () => () => {},
+    effect: (fn: () => void | (() => void | Promise<void>)) => {
+      const cleanup = fn()
+      if (typeof cleanup === 'function') cleanups.push(cleanup)
+    },
+    inject: (deps: readonly string[], callback: (sctx: never) => void) => {
+      if (deps.includes('connection.authentication')) callback({ connection: { admit: () => ({ peer: null }) } } as never)
+      return () => {}
+    },
     on: () => () => {},
     get: () => undefined,
   }
@@ -194,6 +201,9 @@ function mountHost(): { api: SidebarWebRoute; download: SidebarWebRoute } {
   const download = routes.find(candidate => candidate.path === '/sidebar/archive')
   if (api === undefined) throw new Error('test setup: /sidebar/api route not registered')
   if (download === undefined) throw new Error('test setup: /sidebar/archive route not registered')
+  mounts.push(async () => {
+    for (const cleanup of cleanups.reverse()) await cleanup()
+  })
   return { api, download }
 }
 
@@ -253,6 +263,14 @@ let scratch = ''
 let tempDir = ''
 /** Every table this case built: disposed after it (a hanging build holds a descriptor). */
 const tables: ArchiveTasks[] = []
+/**
+ * Cleanups of every `mountHost()` this case built. The mounted host's effects
+ * own the archive task table, and a test that starts a HANGING build must
+ * dispose it — otherwise the open temp descriptor is left to the FileHandle
+ * GC finalizer (an error on current Node) instead of being closed. Teardown is
+ * async (close-before-unlink), so the case awaits every cleanup.
+ */
+const mounts: Array<() => Promise<void>> = []
 const savedTmp = { TMPDIR: process.env.TMPDIR, TEMP: process.env.TEMP, TMP: process.env.TMP }
 
 beforeEach(() => {
@@ -274,7 +292,8 @@ afterEach(async () => {
   await new Promise(resolve => setTimeout(resolve, 50))
   // Before the mocks go: `dispose()` kills through a fake whose `kill` is a
   // `vi.fn`, and those implementations do not survive a restore.
-  for (const tasks of tables.splice(0)) tasks.dispose()
+  for (const dispose of mounts.splice(0)) await dispose()
+  for (const tasks of tables.splice(0)) await tasks.dispose()
   // A killed child closes asynchronously; let the close land (and the packer
   // close its descriptor) before the directories underneath it disappear.
   await new Promise(resolve => setTimeout(resolve, 50))
@@ -316,6 +335,8 @@ interface ToolBehavior {
     stderr?: string
     /** Keep running until `kill()` (a build teardown has to end). */
     hang?: boolean
+    /** Ignore the polite kill; only SIGKILL reports close (teardown escalation). */
+    ignoreTerm?: boolean
   }
 }
 
@@ -331,9 +352,10 @@ function toolSpawn(behavior: ToolBehavior = {}): { spawner: ArchiveSpawn; childr
     const run = behavior.run ?? {}
     let hangs = run.hang === true
     // A killed child exits BY SIGNAL — 'close' with no exit code, which is
-    // exactly what a real SIGTERM looks like from here.
-    child.kill = vi.fn(() => {
-      if (hangs) {
+    // exactly what a real SIGTERM looks like from here. `ignoreTerm` models a
+    // tool that ignores the polite signal and only dies on SIGKILL.
+    child.kill = vi.fn((signal?: string) => {
+      if (hangs && (run.ignoreTerm !== true || signal === 'SIGKILL')) {
         hangs = false
         child.emit('close', null)
       }
@@ -606,15 +628,58 @@ describe('archive task table (injected spawn)', () => {
     await vi.waitFor(() => { expect(running.children).toHaveLength(1) })
     await vi.waitFor(() => { expect(existsSync(runningFile)).toBe(true) })
 
-    running.tasks.dispose()
-    ready.tasks.dispose()
+    // Teardown awaits the descriptor close before unlinking, so the temp
+    // files are gone by the time the promise settles (the Windows lane needs
+    // exactly that ordering).
+    await running.tasks.dispose()
+    await ready.tasks.dispose()
     expect(running.children[0]!.kill).toHaveBeenCalled()
-    await vi.waitFor(() => {
-      expect(existsSync(runningFile)).toBe(false)
-      expect(existsSync(finishedFile)).toBe(false)
-    })
+    expect(existsSync(runningFile)).toBe(false)
+    expect(existsSync(finishedFile)).toBe(false)
     expect(running.tasks.size()).toBe(0)
     expect(ready.tasks.size()).toBe(0)
+  })
+
+  it('dispose() bounds the wait for a build that ignores the polite kill', async () => {
+    const { tasks, tempDir, children } = makeTable({
+      behavior: { run: { hang: true, ignoreTerm: true } },
+    })
+    const started = await tasks.start({ sessionId: 's-1', name: 'stubborn', paths: sampleSelection() })
+    const file = join(tempDir, archiveTempName(started.id, '.zip'))
+    await vi.waitFor(() => { expect(children).toHaveLength(1) })
+    await vi.waitFor(() => { expect(existsSync(file)).toBe(true) })
+
+    // The first (polite) kill is ignored; only SIGKILL closes the child. Run
+    // the grace timers on the fake clock instead of waiting five real seconds.
+    vi.useFakeTimers()
+    try {
+      const disposing = tasks.dispose()
+      await vi.advanceTimersByTimeAsync(5_001)
+      await disposing
+    } finally {
+      vi.useRealTimers()
+    }
+    const child = children[0]!
+    expect(child.kill).toHaveBeenNthCalledWith(1, undefined)
+    expect(child.kill).toHaveBeenNthCalledWith(2, 'SIGKILL')
+    expect(existsSync(file)).toBe(false)
+    expect(tasks.size()).toBe(0)
+  })
+
+  it('refuses a build that races teardown instead of leaving it building', async () => {
+    const { tasks } = makeTable({ behavior: { run: { hang: true } } })
+    // `start` awaits the tool probe; dispose lands while that await is in
+    // flight. The post-probe disposed check must refuse the build rather than
+    // create a task after the table was cleared.
+    const starting = tasks.start({ sessionId: 's-1', name: 'race', paths: sampleSelection() })
+    const disposing = tasks.dispose()
+    await expect(starting).rejects.toMatchObject({ code: 'unavailable', status: 503 })
+    await disposing
+    expect(tasks.size()).toBe(0)
+
+    // A build requested after teardown is refused for the same reason.
+    await expect(tasks.start({ sessionId: 's-1', name: 'late', paths: sampleSelection() }))
+      .rejects.toMatchObject({ code: 'unavailable', status: 503 })
   })
 })
 

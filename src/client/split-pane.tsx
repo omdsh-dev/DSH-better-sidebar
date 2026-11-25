@@ -231,6 +231,10 @@ function LeafView(props: {
           {leaf.tabs.map(tab => (
             <div
               key={tab.id}
+              role="tabpanel"
+              id={`dsh-workbench-panel-${leaf.id}-${tab.id}`}
+              aria-labelledby={`dsh-workbench-tab-${leaf.id}-${tab.id}`}
+              hidden={tab.id !== activeTab?.id}
               className={clsx(css.paneTab, tab.id !== activeTab?.id && css.paneTabHidden)}
             >
               {renderTab(tab, tab.id === activeTab?.id, leaf.id)}

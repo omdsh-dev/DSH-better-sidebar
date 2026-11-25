@@ -11,10 +11,11 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import clsx from 'clsx'
 import {
-  IconCloseFillRegular, IconPlusOutlineRegular, Menu,
+  IconCloseFillRegular, IconPlusOutlineRegular,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SidebarTab } from './state.ts'
 import { t } from './locales.ts'
+import { IconButton, Menu } from './ui/index.ts'
 import css from './sidebar.module.css'
 
 /** One + menu option. */
@@ -122,7 +123,7 @@ export function TabBar(props: {
   // below can skip the wrapper entirely when there is nothing to show (an
   // empty wrapper is a flex item and would still affect the strip layout).
   // `false` is treated like null: React renders it as nothing anyway.
-  const activeRightTab = tabs.find(tab => tab.id === active)
+  const activeRightTab = tabs.find(tab => tab.id === active) ?? tabs[tabs.length - 1]
   const rightActions = getTabRightActions !== undefined && activeRightTab !== undefined
     ? getTabRightActions(activeRightTab, paneId)
     : null
@@ -214,11 +215,12 @@ export function TabBar(props: {
         if (payload !== null) onDropTab(payload, null)
       }}
     >
-      <div ref={listRef} className={css.tabList}>
+      <div ref={listRef} className={css.tabList} role="tablist" aria-label={t('settingsGroupTabs')}>
         {tabs.map(tab => (
           <div
             key={tab.id}
-            className={clsx(css.tab, active === tab.id && css.tabActive)}
+            className={clsx(css.tab, activeRightTab?.id === tab.id && css.tabActive)}
+            role="presentation"
             title={tab.title}
             draggable
             onDragStart={(event) => {
@@ -257,30 +259,52 @@ export function TabBar(props: {
               setTabMenu({ tabId: tab.id, x: event.clientX, y: event.clientY })
             }}
           >
-            {getTabIcon?.(tab) ?? null}
-            {getTabBadge?.(tab) ?? null}
-            <span className={css.tabTitle}>{tab.title}</span>
-            {isTabUnread?.(tab) === true
-              ? (
-                <span
-                  className={css.tabUnreadDot}
-                  role="img"
-                  aria-label={t('tabUnread')}
-                  title={t('tabUnread')}
-                />
-              )
-              : null}
             <button
               type="button"
+              className={css.tabTrigger}
+              role="tab"
+              id={`dsh-workbench-tab-${paneId}-${tab.id}`}
+              aria-controls={`dsh-workbench-panel-${paneId}-${tab.id}`}
+              aria-selected={activeRightTab?.id === tab.id}
+              tabIndex={activeRightTab?.id === tab.id ? 0 : -1}
+              onKeyDown={(event) => {
+                if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
+                event.preventDefault()
+                const index = tabs.indexOf(tab)
+                const rtl = getComputedStyle(event.currentTarget).direction === 'rtl'
+                const step = (event.key === 'ArrowRight') !== rtl ? 1 : -1
+                const nextIndex = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1
+                  : (index + step + tabs.length) % tabs.length
+                const target = tabs[nextIndex]
+                if (target === undefined) return
+                onActivate(target.id)
+                listRef.current?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[nextIndex]?.focus()
+              }}
+            >
+              {getTabIcon?.(tab) ?? null}
+              {getTabBadge?.(tab) ?? null}
+              <span className={css.tabTitle}>{tab.title}</span>
+              {isTabUnread?.(tab) === true
+                ? (
+                  <span
+                    className={css.tabUnreadDot}
+                    role="img"
+                    aria-label={t('tabUnread')}
+                    title={t('tabUnread')}
+                  />
+                )
+                : null}
+            </button>
+            <IconButton
+              size="sm"
               className={css.tabClose}
-              aria-label={t('close')}
+              label={t('close')}
+              icon={<IconCloseFillRegular size={14} />}
               onClick={(event) => {
                 event.stopPropagation()
                 onClose(tab.id)
               }}
-            >
-              <IconCloseFillRegular size={14} />
-            </button>
+            />
           </div>
         ))}
         {/*
@@ -305,15 +329,15 @@ export function TabBar(props: {
           compact
           align="end"
           anchor={(
-            <button
-              type="button"
+            <IconButton
               className={css.tabBarPlus}
-              aria-label={t('newTab')}
+              label={t('newTab')}
+              icon={<IconPlusOutlineRegular size={14} />}
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
               title={t('newTab')}
               onClick={() => { setMenuOpen(v => !v); setTabMenu(null) }}
-            >
-              <IconPlusOutlineRegular />
-            </button>
+            />
           )}
         />
         {/*

@@ -1,0 +1,111 @@
+.guideDialog.guideDialog {
+  width: min(520px, calc(100vw - 32px));
+  max-width: 100%;
+  gap: 0;
+  padding-bottom: 0;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--ds-sidebar-window-radius);
+  box-shadow: none;
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xxs-12);
+}
+
+.guideContent {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.guideContent > div:first-child {
+  padding: 14px 16px 10px;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
+
+.guideContent > div:last-child {
+  margin-top: 0;
+  padding: 14px 16px;
+}
+
+.guideDialog > :last-child {
+  flex: none;
+  padding: 10px 16px;
+  border-top: 1px solid var(--dsw-alias-border-l1);
+}
+
+.guide {
+  min-width: 0;
+  container: clue-help / inline-size;
+}
+
+.steps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.steps li {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: var(--ds-sidebar-radius);
+  background: var(--dsw-alias-bg-base);
+}
+
+.stepHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin-bottom: 2px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.stepIndex {
+  color: var(--dsw-alias-label-tertiary);
+  font-family: var(--ds-font-family-code, monospace);
+  font-size: 11px;
+  line-height: 16px;
+  font-variant-numeric: tabular-nums;
+}
+
+.steps strong {
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 500;
+  color: var(--dsw-alias-label-primary);
+}
+
+.steps small {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 17px;
+}
+
+.hint {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0 0;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.hint svg {
+  flex: none;
+}
+
+@container clue-help (max-width: 420px) {
+  .steps {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+}
+

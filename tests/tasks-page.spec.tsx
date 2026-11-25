@@ -350,9 +350,9 @@ describe('Tasks page interactions', () => {
       createElement(SubagentView, { sessionId: 'root', active: true, ctx: makeCtx(store) }),
     )
     await flushJobs()
-    // 9 agents ≥ 8: collapsed, the auto note explains, no rows rendered.
+    // 9 agents ≥ 8: the count and disclosure carry the collapsed state.
     expect(container.textContent).not.toContain('sleep 300')
-    expect(container.textContent).toContain('已自动折叠')
+    expect(container.textContent).not.toContain('已自动折叠')
     const bar = container.querySelector('button[aria-expanded]') as HTMLButtonElement
     expect(bar.getAttribute('aria-expanded')).toBe('false')
     await act(async () => { bar.click() })

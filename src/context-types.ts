@@ -35,12 +35,22 @@ import type { BetterSidebarService } from './client/service.ts'
 import type { ProcessActivitySummary } from './process-activity.ts'
 
 /** The request face route handlers see (structural subset of node's
- *  IncomingMessage: the URL/method/header reads and the async body
- *  iteration `readJsonBody` uses). */
+ *  IncomingMessage: the URL/method/header reads, the async body iteration
+ *  `readJsonBody` uses, and the optional peer socket facts the fixed loopback
+ *  clue read route needs). */
 export interface SidebarHttpRequest {
   url?: string
   method?: string
   headers: Record<string, string | string[] | undefined>
+  /** The accepted connection's peer/local endpoints (plain structural facts;
+   *  no Node type enters this declaration graph). */
+  socket?: {
+    readonly remoteAddress?: string
+    readonly localPort?: number
+  }
+  /** Optional close hook (Node emits this on the request). */
+  once?(event: 'aborted' | 'close', listener: () => void): unknown
+  off?(event: 'aborted' | 'close', listener: () => void): unknown
   [Symbol.asyncIterator](): AsyncIterator<string | Uint8Array>
 }
 
@@ -62,6 +72,9 @@ export interface SidebarHttpResponse {
   end(body?: string | Uint8Array): void
   /** Tear the connection down (mid-stream failure, client abort). */
   destroy?(error?: Error): void
+  /** Optional close hook used to abort a pending agent read. */
+  once?(event: 'close' | 'finish', listener: () => void): unknown
+  off?(event: 'close' | 'finish', listener: () => void): unknown
 }
 
 /** The upgrade socket face (structural subset: the destroy the fences use). */
@@ -77,12 +90,17 @@ export type SidebarUpgradeHead = Uint8Array
 export interface SidebarWebRoute {
   kind: 'exact' | 'prefix'
   path: string
+  /** Host admission policy; DSH 0.2.3 defaults to `required`, so every route
+   *  that enforces admission itself declares `anonymous` and keeps its fence. */
+  auth?: 'anonymous' | 'required' | 'deny'
   handler: (req: SidebarHttpRequest, res: SidebarHttpResponse) => void | Promise<void>
 }
 
 /** One exact-path HTTP upgrade registration (mirror of WebUpgradeRoute). */
 export interface SidebarWebUpgradeRoute {
   path: string
+  /** See {@link SidebarWebRoute.auth}: the upgrade handler fences itself. */
+  auth?: 'anonymous' | 'required' | 'deny'
   handler: (req: SidebarHttpRequest, socket: SidebarUpgradeSocket, head: SidebarUpgradeHead) => void | Promise<void>
 }
 
@@ -90,6 +108,14 @@ export interface SidebarWebUpgradeRoute {
 export interface SidebarWebServer {
   register(route: SidebarWebRoute): () => void
   registerUpgrade(route: SidebarWebUpgradeRoute): () => void
+  /**
+   * The OS-assigned listening port (`0` config resolves to the real number
+   * once bound). The fixed loopback clue read route compares the request
+   * socket's local port with this value instead of trusting the `Host` header.
+   */
+  readonly port?: number
+  /** Root URL local clients use (`http://127.0.0.1:<port>`); may throw before bind. */
+  getOrigin?(): string
 }
 
 /** A published session's immutable original-project metadata. */
@@ -118,12 +144,10 @@ export interface SidebarSessionStore {
  * Host request admission plus the client transport recovery face.
  */
 export interface SidebarConnectionService {
-  /** Public Host/Origin and authentication policy (DSH 0.2.0-rc.2+). Deprecated
-   *  after 0.2.2-rc.3 and removed on DSH master — `admit` is the replacement. */
-  requestRejection?(request: { headers: Record<string, string | string[] | undefined> }): 401 | 403 | undefined
-  /** Host admission (DSH 0.2.2-rc.3+, the method `requestRejection` delegated to).
-   *  Returns an object carrying `rejection` when the request is refused. */
-  admit?(request: { headers: Record<string, string | string[] | undefined> }): unknown
+  /** Host admission (DSH 0.2.3+): verifies Host/Origin and browser credentials
+   *  through the injected `connection.authentication` verifier and returns an
+   *  object carrying `rejection` when the request is refused. */
+  admit(request: { headers: Record<string, string | string[] | undefined> }): unknown
   state: {
     getSnapshot(): 'connected' | 'disconnected' | 'connecting' | undefined
     subscribe(listener: () => void): () => void
@@ -834,13 +858,59 @@ export interface SidebarLoaderEntry {
 }
 
 /**
+ * One credential reference resolved for a single operation (mirror of
+ * @deepseek-ai/dsh-credentials' CredentialProvider.resolve). The value is
+ * consumed immediately and never copied into preferences, clues or a cache.
+ */
+export interface SidebarCredentialProvider {
+  /** Resolve one environment-variable-style reference, or undefined. */
+  resolve(ref: string): Promise<{ value: string; source: string } | undefined>
+  /** Presence/writability facts for configuration surfaces (never the value). */
+  describe?(ref: string): Promise<{ configured: boolean; source?: string; writable?: boolean }>
+}
+
+/** One tool execution handed to the host registry (structural mirror). */
+export interface SidebarToolExecutionInput {
+  readonly callId: string
+  readonly name: string
+  /** Losslessly JSON-serializable parsed arguments (the tool validates its schema). */
+  readonly arguments: unknown
+  /** The live agent on whose behalf the call runs; absent only for read-only UI calls. */
+  readonly agent?: unknown
+  readonly signal: AbortSignal
+}
+
+/** One host tool failure (the raw message never reaches a model projection here). */
+export interface SidebarToolExecutionFailure {
+  readonly message: string
+  /**
+   * Structured failure metadata. `code` is absent on some host denials (for
+   * example an approval/channel denial), so the MCP bridge also recognizes the
+   * structured `name`/`reason` before falling back to a sanitized `failed`.
+   */
+  readonly info?: { readonly name: string; readonly code?: string; readonly reason?: string }
+}
+
+/** One materialized host tool outcome (structural mirror of ToolExecutionResult). */
+export interface SidebarToolExecutionResult {
+  readonly isError: boolean
+  readonly value?: unknown
+  readonly content?: readonly unknown[]
+  readonly error?: SidebarToolExecutionFailure
+}
+
+/**
  * The tools service face (mirror of @deepseek-ai/dsh-tools' ToolRuntime).
  * The host half registers model-facing tools here; the registry attaches the
  * returned disposer to the contributing fiber so unloading unregisters them.
+ * `execute` is the public dispatch path S2's MCP bridge uses — it runs the
+ * host's own guards/approval policy and is optional on trimmed deployments.
  */
 export interface SidebarToolsService {
   /** Register one tool definition (raw JSON-Schema or defineTool-sugar form). */
   register(tool: unknown): () => void
+  /** Dispatch one tool call through the registry pipeline (guards/approval included). */
+  execute?(input: SidebarToolExecutionInput): Promise<SidebarToolExecutionResult>
 }
 
 /**
@@ -881,6 +951,11 @@ export interface SidebarContextShape {
   settings: SidebarSettingsService
   /** The tool registry face. */
   tools: SidebarToolsService
+  /**
+   * Host credential seam (optional). S2 resolves a secret per operation from it
+   * and never copies the value into preferences, clues, exports or a cache.
+   */
+  credentials?: SidebarCredentialProvider
   /** The client locale service face. */
   locale: SidebarLocaleService
   /** The client module system (rc.8+ chunk-loader externals). */

@@ -55,7 +55,7 @@ const NODE_TITLE_LINES = 2
 /** The mono meta line — `--dsw-font-xxxs-11` (11px/14px) plus its 2px lead. */
 const NODE_META_H = 14 + 2
 /** The state bar — `.cardBar`'s fixed height (its top border sits inside it). */
-const NODE_BAR_H = 22
+const NODE_BAR_H = 26
 /** One line of the card's text tail — `.cardText`'s 10px/1.3 box. */
 const NODE_TEXT_LINE_H = 13
 /** The text tail's lead above the first line (`margin-top` in `.cardText`). */

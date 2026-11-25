@@ -31,6 +31,7 @@ import { IconCopyOutlineRegular, MarkdownText, writeClipboard } from '@deepseek-
 import { isDarkScheme, subscribeColorScheme } from './theme.ts'
 import { markdownTextProps } from './markdown-labels.tsx'
 import { t } from './locales.ts'
+import design from './ui/design.module.css'
 import { sanitizeSvg } from './mermaid-sanitize.ts'
 import { useViewportInsetTop } from './viewport-inset.ts'
 import type { MermaidMarkdownProps } from './mermaid-blocks.ts'
@@ -339,7 +340,7 @@ function MermaidZoomModal({ svg, onClose }: { svg: SVGSVGElement; onClose: () =>
   }, [zoom, reset, close])
 
   return createPortal(
-    <div className={css.mermaidModal} data-mermaid-modal ref={overlayRef}>
+    <div className={`${design.surface} ${css.mermaidModal}`} data-mermaid-modal role="dialog" aria-modal="true" aria-label={`Mermaid · ${t('preview')}`} ref={overlayRef}>
       <div
         className={css.mermaidModalToolbar}
         data-mermaid-toolbar
