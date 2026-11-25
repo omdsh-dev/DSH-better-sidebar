@@ -52,6 +52,14 @@ function defuseModel(model: { cells?: Record<string, unknown>; setStyle?: (cell:
     const entry = cell as { value?: unknown; style?: unknown }
     if (typeof entry.value === 'string' && entry.value.includes('<')) {
       entry.value = labelText(entry.value)
+    } else if (
+      entry.value !== null &&
+      typeof entry.value === 'object' &&
+      typeof (entry.value as { label?: unknown }).label === 'string'
+    ) {
+      // `<UserObject label="…">` wrapping keeps the label on a value object.
+      const wrapped = entry.value as { label: string }
+      if (wrapped.label.includes('<')) wrapped.label = labelText(wrapped.label)
     }
     if (typeof entry.style !== 'string') continue
     let style = entry.style.replace(/(^|;)html=1(?=;|$)/gu, '$1html=0')

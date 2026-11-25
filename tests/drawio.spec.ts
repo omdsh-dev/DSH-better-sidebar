@@ -70,11 +70,32 @@ describe('drawio hostile input', () => {
   it('turns an HTML label into text instead of live markup', () => {
     const hostile = MODEL.replace(
       'value="API"',
-      'value="&lt;img src=x onerror=&quot;globalThis.__pwned=1&quot;&gt;"',
+      'value="SAFE_TEXT &lt;img src=x onerror=&quot;globalThis.__pwned=1&quot;&gt;"',
     )
     const markup = decodeURIComponent(renderDrawioSvg(decodeDrawio(hostile)).url)
+    // The label still renders — as text — so the assertion below is about the
+    // markup being neutralized, not about the label vanishing.
+    expect(markup).toContain('SAFE_TEXT')
     expect(markup).not.toContain('onerror')
     expect(markup).not.toContain('<img')
+    expect((globalThis as { __pwned?: unknown }).__pwned).toBeUndefined()
+  })
+
+  it('defuses an HTML label carried by a UserObject wrapper', () => {
+    const hostile = `<mxGraphModel><root>
+  <mxCell id="0" />
+  <mxCell id="1" parent="0" />
+  <UserObject label="SAFE_WRAPPED &lt;img src=x onerror=&quot;globalThis.__pwned=1&quot;&gt;" id="a">
+    <mxCell style="rounded=1;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+      <mxGeometry x="40" y="60" width="140" height="60" as="geometry" />
+    </mxCell>
+  </UserObject>
+</root></mxGraphModel>`
+    // The serializer does not carry a wrapper label onto the cell, so this path
+    // renders no label at all; what matters is that no markup can reach the DOM.
+    const markup = decodeURIComponent(renderDrawioSvg(decodeDrawio(hostile)).url)
+    expect(markup).not.toContain('SAFE_WRAPPED <img')
+    expect(markup).not.toContain('onerror')
     expect((globalThis as { __pwned?: unknown }).__pwned).toBeUndefined()
   })
 
