@@ -1467,7 +1467,9 @@ test('the drawio viewer renders a .drawio file from the tree', async ({ page }) 
   const drawioRow = pane.locator(`[role="button"][title$="${SEEDED_DRAWIO_FILE}"]:visible`)
   await expect(drawioRow, `the seeded "${SEEDED_DRAWIO_FILE}" file must appear`).toHaveCount(1, { timeout: 30_000 })
   await drawioRow.click({ position: { x: 8, y: 8 } })
-  await drawioChunk
+  // A chunk that the server answers with an error would still surface later as
+  // a missing preview; assert the response itself so the failure names the cause.
+  expect((await drawioChunk).status(), 'the drawio chunk must be served').toBe(200)
   const preview = pane.locator('[data-drawio-preview="ready"] img')
   await expect(preview, 'the draw.io file must render as an SVG image').toBeVisible({ timeout: 30_000 })
   await expect(preview, 'the draw.io preview must carry intrinsic dimensions').toHaveAttribute('width', /[0-9]+/)

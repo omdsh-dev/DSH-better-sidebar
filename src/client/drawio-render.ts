@@ -22,6 +22,46 @@ export interface DrawioSvg {
   height: number
 }
 
+/**
+ * Convert an HTML label to plain text.
+ *
+ * `DOMParser` builds an inert document: no script runs, no image loads, so a
+ * hostile label cannot do anything while it is being defused.
+ * @param html - the cell label as stored in the file.
+ * @returns the label's text content.
+ */
+function labelText(html: string): string {
+  const doc = new DOMParser().parseFromString(html.replace(/<br\s*\/?>/giu, '\n'), 'text/html')
+  return (doc.body.textContent ?? '').replace(/\u00a0/gu, ' ')
+}
+
+/**
+ * Remove the two ways a diagram file can reach out of an inert image.
+ *
+ * maxGraph renders `html=1` labels by assigning their markup to `innerHTML` in a
+ * container attached to the live page, where an `<img onerror=…>` label would
+ * run in the app's origin — an origin that can call the local session RPC. The
+ * styles `image=…` would also make the browser fetch a remote URL while the
+ * diagram is being measured. Both are turned off before the graph is refreshed:
+ * labels become text, and a remote image style is dropped.
+ * @param model - the imported diagram model, mutated in place.
+ */
+function defuseModel(model: { cells?: Record<string, unknown>; setStyle?: (cell: unknown, style: string) => void }): void {
+  const cells = Object.values(model.cells ?? {})
+  for (const cell of cells) {
+    const entry = cell as { value?: unknown; style?: unknown }
+    if (typeof entry.value === 'string' && entry.value.includes('<')) {
+      entry.value = labelText(entry.value)
+    }
+    if (typeof entry.style !== 'string') continue
+    let style = entry.style.replace(/(^|;)html=1(?=;|$)/gu, '$1html=0')
+    style = style.replace(/(^|;)image=([^;]*)(?=;|$)/gu, (_match, lead: string, url: string) =>
+      /^\s*data:/iu.test(decodeURIComponent(url)) ? _match : `${lead}image=none`,
+    )
+    if (style !== entry.style) model.setStyle?.(cell, style)
+  }
+}
+
 /** Build the defaults draw.io uses for an unstyled vertex or edge. */
 function createDrawioStylesheet(): Stylesheet {
   const stylesheet = new Stylesheet()
@@ -56,6 +96,7 @@ export function renderDrawioSvg(xml: string): DrawioSvg {
     graph = new Graph(container, undefined, undefined, createDrawioStylesheet())
     graph.setEnabled(false)
     new ModelXmlSerializer(graph.getDataModel()).import(xml)
+    defuseModel(graph.getDataModel() as unknown as { cells?: Record<string, unknown>; setStyle?: (cell: unknown, style: string) => void })
     graph.getView().validate()
     graph.refresh()
 

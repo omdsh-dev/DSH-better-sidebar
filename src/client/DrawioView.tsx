@@ -1,6 +1,6 @@
 /** Read-only draw.io preview: decode the file, render its first page as SVG. */
 import { useEffect, useState } from 'react'
-import { decodeDrawio } from './drawio.ts'
+import { decodeDrawio, DrawioParseError } from './drawio.ts'
 import { renderDrawioSvg, type DrawioSvg } from './drawio-render.ts'
 import { t } from './locales.ts'
 import css from './sidebar.module.css'
@@ -31,9 +31,14 @@ export function DrawioView(props: { content?: string; size?: number; largeFile?:
     try {
       setLoad({ status: 'ready', diagram: renderDrawioSvg(decodeDrawio(content)) })
     } catch (error) {
+      // Parser messages are ours and localized; a renderer failure carries
+      // maxGraph internals, which belong in the console, not in the UI.
+      if (!(error instanceof DrawioParseError)) {
+        console.warn('[better-sidebar] drawio render failed', error)
+      }
       setLoad({
         status: 'error',
-        message: error instanceof Error ? error.message : t('drawioMalformed'),
+        message: error instanceof DrawioParseError ? error.message : t('drawioCannotRender'),
       })
     }
   }, [content, largeFile, path])

@@ -56,6 +56,40 @@ describe('decodeDrawio', () => {
   })
 })
 
+describe('drawio hostile input', () => {
+  it('renders only the first page of a multi-page file', () => {
+    const first = MODEL.replace('value="API"', 'value="FIRST_PAGE"')
+    const second = MODEL.replace('value="API"', 'value="SECOND_PAGE"')
+    const file = `<mxfile><diagram id="p1" name="Page-1">${first.replace(/^<\?xml[^>]*>\s*/u, '')}</diagram><diagram id="p2" name="Page-2">${second.replace(/^<\?xml[^>]*>\s*/u, '')}</diagram></mxfile>`
+    const svg = renderDrawioSvg(decodeDrawio(file))
+    const markup = decodeURIComponent(svg.url)
+    expect(markup).toContain('FIRST_PAGE')
+    expect(markup).not.toContain('SECOND_PAGE')
+  })
+
+  it('turns an HTML label into text instead of live markup', () => {
+    const hostile = MODEL.replace(
+      'value="API"',
+      'value="&lt;img src=x onerror=&quot;globalThis.__pwned=1&quot;&gt;"',
+    )
+    const markup = decodeURIComponent(renderDrawioSvg(decodeDrawio(hostile)).url)
+    expect(markup).not.toContain('onerror')
+    expect(markup).not.toContain('<img')
+    expect((globalThis as { __pwned?: unknown }).__pwned).toBeUndefined()
+  })
+
+  it('drops a remote image style but keeps a data URL', () => {
+    const remote = MODEL.replace('fillColor=#dae8fc;', 'image=https%3A%2F%2Fexample.test%2Fa.png;')
+    expect(decodeURIComponent(renderDrawioSvg(decodeDrawio(remote)).url)).not.toContain('example.test')
+  })
+
+  it('refuses a body that decompresses past the size limit', () => {
+    // ~24 MiB of one character compresses to a few KiB.
+    const bomb = compress(`<mxGraphModel><root><a>${'a'.repeat(24 * 1024 * 1024)}</a></root></mxGraphModel>`)
+    expect(() => inflateDrawioBody(bomb)).toThrowError(/decompresses past the size limit/u)
+  })
+})
+
 describe('renderDrawioSvg', () => {
   it('renders the model to a data URL with its intrinsic size', () => {
     const svg = renderDrawioSvg(decodeDrawio(MODEL))

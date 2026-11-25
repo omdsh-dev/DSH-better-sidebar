@@ -5,6 +5,7 @@
 ### v0.33.0
 
 - 🧩 **DSH 0.2.3 上 `/sidebar/*` 恢复可用**（关联 [#1204](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1204)）：0.2.3 把 `admit` 的凭据校验委托给嵌套服务 `connection.authentication`，cordis 只允许**显式注入**该服务的调用方读取它；插件此前只注入 `connection`，`admit` 一被调用就抛 `cannot get property "connection.authentication" without inject`，被宿主兜底成空 body 的 400——底部终端 chunk 加载、打开文件、侧边对话全部只剩 `HTTP 400`。现在准入改走 `ctx.inject(['connection.authentication'])` 子 fiber 里的 `admit`；rc.2–rc.5 没有该服务，子 fiber 不激活，继续走 `requestRejection` / 直接 `admit`，旧宿主行为不变。
+  - 🔒 信任边界：`.drawio` 是不可信文件——`html=1` 标签降级成纯文本（不写进页面 DOM 的 innerHTML），远程 `image=` 样式丢弃（只留 `data:`），解压体按解压后大小上限拒绝；渲染结果以 `data:` URL 作为 `<img>` 挂载。
   - 🧪 测试：`tests/trusted-hosts.spec.ts` 新增「0.2.3 宿主：插件上下文调用 `admit` 抛错、经注入的 provider 上下文放行」三档（放行 / 401 / 403），旧宿主两条路径的既有断言保留。
 
 - 🧷 **Git 详情面板的关闭按钮常驻在 Tabs 同一行的最右侧**（[#991](https://github.com/omdsh-dev/DSH-better-sidebar/issues/991)）：底部面板的「提交详情 / 内容 / 差异」是一条 Tabs，但关闭整块面板的 X 原先画在「内容 / 差异」的页内头行上——切到「提交详情」时它整条头行都不渲染，于是那个页签根本没有关闭入口，只能先切页签再点 X。现在关闭按钮属于 Tabs 那一行：无论选中哪个页签都停在最右端、位置不变，点击关闭的是整块面板；「内容 / 差异」头行里那个重复的 X 已移除。只有一个视图、没有 Tabs 行的预览仍保持原来的头行位置。

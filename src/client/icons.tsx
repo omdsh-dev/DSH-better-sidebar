@@ -64,15 +64,6 @@ export const IconDrawioOutline16 = ({ size = 16, className }: IconProps) => (
   </svg>
 )
 
-/** Browser tab glyph: a globe with meridians. */
-export const IconGlobeOutline16 = ({ size = 16, className }: IconProps) => (
-  <svg width={size} height={size} className={className} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <circle cx="8" cy="8" r="6.5" stroke="currentColor" strokeWidth="1.5" />
-    <ellipse cx="8" cy="8" rx="2.8" ry="6.5" stroke="currentColor" strokeWidth="1.5" />
-    <path d="M1.5 8h13M8 1.5c-2.4 1.8-2.4 11.2 0 13M8 1.5c2.4 1.8 2.4 11.2 0 13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-  </svg>
-)
-
 /** History glyph (thread switcher): a clock with a counterclockwise arrow,
  *  in the app's outline style — the "past conversations" mark. */
 export const IconHistoryOutline16 = ({ size = 16, className }: IconProps) => (
