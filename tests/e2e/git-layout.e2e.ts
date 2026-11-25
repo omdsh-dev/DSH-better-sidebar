@@ -164,7 +164,14 @@ test('a selected change row stays an in-flow band inside its group', async ({ pa
     // Nothing selected yet: every row is already an in-flow band in its group.
     await expect(page.locator('[data-group="merge"] [data-row="src/app/main.ts"]')).toBeVisible()
     await expect(page.locator('[data-group="staged"] [data-row="src/app/util.ts"]')).toBeVisible()
-    await expect(page.locator('[data-graph-commit]')).toHaveCount(3)
+    // Include the unmerged side commit so the layout probe still runs with three graph rows.
+    const graph = page.locator('[data-git-graph]:visible')
+    const branchFilter = graph.getByRole('button', { name: 'Branch filter', exact: true })
+    await expect(branchFilter).toHaveText('main')
+    await branchFilter.click()
+    await page.getByRole('menuitem', { name: 'All branches', exact: true }).click()
+    await expect(graph.getByText('side change', { exact: true })).toBeVisible()
+    await expect(graph.locator('[data-graph-commit]')).toHaveCount(3)
     await expect.poll(() => rowGeometryProblems(page, null), { timeout: 10_000 }).toEqual([])
 
     // Both bands carry the SAME path: each selection must keep its own row put.
