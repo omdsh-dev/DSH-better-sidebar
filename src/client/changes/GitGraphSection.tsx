@@ -14,7 +14,7 @@ import {
 import { api, SidebarApiError, type SessionScope } from '../api.ts'
 import type { SidebarDiffRef } from '../state.ts'
 import { relativeTime, t } from '../locales.ts'
-import { ActionButton, Notice } from '../ui/index.ts'
+import { ActionButton, Notice, SelectMenu } from '../ui/index.ts'
 import { AnchoredPopover } from '../AnchoredPopover.tsx'
 import { edgePath, layoutGraph } from './graph-layout.ts'
 import { createFrameBatcher } from '../frame-batcher.ts'
@@ -136,8 +136,16 @@ export function RefPill({ pill, slot }: { pill: RefPillModel; slot?: number }) {
   </span>
 }
 
-export function GitGraphSection({ scope, worktree, visible, refreshTick = 0, onPreview, selectedRef, onClearPreview, onDetailsChange, onContextMenu }: GitGraphSectionProps) {
-  const [branch, setBranch] = useState('')
+export function GitGraphSection(props: GitGraphSectionProps) {
+  // Each target owns its filter, cursor and in-flight reads, including when
+  // two worktrees have a branch with the same display name.
+  const { scope, worktree } = props
+  return <TargetGraph key={JSON.stringify([scope.sessionId, scope.cwd, scope.repoRoot, worktree])} {...props} />
+}
+
+function TargetGraph({ scope, worktree, visible, refreshTick = 0, onPreview, selectedRef, onClearPreview, onDetailsChange, onContextMenu }: GitGraphSectionProps) {
+  // undefined follows the checkout, '' is the user's explicit all-branches view.
+  const [branch, setBranch] = useState<string>()
   const [page, setPage] = useState<GraphPage | null>(null)
   const [branches, setBranches] = useState<GraphPage['branches']>([])
   const [linearFallback, setLinearFallback] = useState(false)
@@ -232,7 +240,8 @@ export function GitGraphSection({ scope, worktree, visible, refreshTick = 0, onP
       } else {
         try {
           result = await api.gitGraph(scope, {
-            branch: branch || undefined, count: 50,
+            ...(branch === undefined ? { currentBranch: true } : { branch: branch || undefined }),
+            count: 50,
             cursor: append ? previous?.nextCursor : undefined,
           }, worktree, controller.signal)
           fallback = false
@@ -275,14 +284,6 @@ export function GitGraphSection({ scope, worktree, visible, refreshTick = 0, onP
       }
     }
   }
-  useEffect(() => {
-    // Clear history on real target/filter changes, never show another repo's rows.
-    pageRef.current = null
-    setPage(null)
-    setBranch('')
-    setBranches([])
-    setLinearFallback(false)
-  }, [scope.sessionId, scope.cwd, scope.repoRoot, worktree])
   useEffect(() => {
     if (visible) void request(false)
     return () => { generation.current += 1; active.current?.abort() }
@@ -350,17 +351,22 @@ export function GitGraphSection({ scope, worktree, visible, refreshTick = 0, onP
     pageRef.current = null
     setPage(null)
   }
+  const allBranchesLabel = t('graphAllBranches')
+  const branchOptions = useMemo(() => {
+    const options = [{ value: '', label: allBranchesLabel },
+      ...branches.map(item => ({ value: item.ref, label: item.name }))]
+    if (branch && !branches.some(item => item.ref === branch)) options.push({ value: branch, label: branch })
+    return options
+  }, [allBranchesLabel, branch, branches])
 
   return <section className={css.root} aria-label={t('gitGraph')} data-git-graph
     data-graph-count={page?.entries.length ?? 0}>
     <div className={css.toolbar}>
       {linearFallback && <Notice kind="hint" tone="inline" role="status">{t('graphLinearFallback')}</Notice>}
-      {!linearFallback && <select className={css.select} aria-label={t('graphBranchFilter')}
-        value={branch} onChange={event => { chooseBranch(event.target.value) }}>
-        <option value="">{t('graphAllBranches')}</option>
-        {branches.map(item => <option key={item.ref} value={item.ref}>{item.name}</option>)}
-        {branch && !branches.some(item => item.ref === branch) && <option value={branch}>{branch}</option>}
-      </select>}
+      {!linearFallback && <SelectMenu ariaLabel={t('graphBranchFilter')}
+        value={branch ?? page?.selectedBranch ?? ''} onChange={chooseBranch}
+        options={branch === undefined && page === null ? [] : branchOptions}
+        placeholder={t('graphBranchFilter')} />}
     </div>
     <div className={css.scroll} aria-busy={loading} ref={scrollRef} data-graph-scroll
       onScroll={() => {

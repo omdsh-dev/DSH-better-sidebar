@@ -26,7 +26,16 @@ test('read-only Git Graph renders merge history and filters without checkout', a
   git('add', '.')
   git('commit', '-m', 'Graph main')
   git('merge', '--no-ff', 'feature', '-m', 'Graph merge')
-  const before = { head: git('rev-parse', 'HEAD'), refs: git('show-ref'), status: git('status', '--porcelain') }
+  git('checkout', 'feature')
+  git('commit', '--allow-empty', '-m', 'Feature-only work')
+  git('checkout', 'main')
+  const checkoutState = () => ({
+    branch: git('symbolic-ref', '--short', 'HEAD'),
+    head: git('rev-parse', 'HEAD'),
+    refs: git('show-ref'),
+    status: git('status', '--porcelain'),
+  })
+  const before = checkoutState()
   const api = await createHostApi()
   const errors: string[] = []
   page.on('pageerror', error => errors.push(String(error)))
@@ -49,6 +58,10 @@ test('read-only Git Graph renders merge history and filters without checkout', a
     const graph = page.locator('[data-git-graph]:visible')
     await expect(graph.getByText('Graph merge', { exact: true }).first()).toBeVisible({ timeout: 30_000 })
     await expect(graph.getByText('Graph feature', { exact: true }).first()).toBeVisible()
+    const featureOnly = graph.getByText('Feature-only work', { exact: true })
+    await expect(featureOnly).toHaveCount(0)
+    const branchFilter = graph.getByRole('button', { name: 'Branch filter', exact: true })
+    await expect(branchFilter).toHaveText('main')
     const expectGraphFillsHeight = async () => {
       await expect.poll(() => page.evaluate(() => {
         const graphBox = document.querySelector('[data-git-graph]')!.getBoundingClientRect()
@@ -92,11 +105,21 @@ test('read-only Git Graph renders merge history and filters without checkout', a
     await expect(paneRoot.getByRole('button', { name: 'Close preview', exact: true })).toHaveCount(1)
     await closeButton.click()
     await expect(paneRoot).toHaveCount(0)
-    const branchFilter = page.locator('[data-git-graph] select').filter({ has: page.locator('option[value="refs/heads/feature"]') })
-    await branchFilter.selectOption('refs/heads/feature')
+    await branchFilter.click()
+    const allBranches = page.getByRole('menuitem', { name: 'All branches', exact: true })
+    await expect(allBranches).toBeVisible()
+    await page.screenshot({ path: testInfo.outputPath('git-graph-branch-menu.png'), fullPage: true })
+    await allBranches.click()
+    await expect(branchFilter).toHaveText('All branches')
+    await expect(featureOnly).toBeVisible()
+    await expect(graph.getByText('Graph merge', { exact: true }).first()).toBeVisible()
+    await branchFilter.click()
+    await page.getByRole('menuitem', { name: 'feature', exact: true }).click()
+    await expect(branchFilter).toHaveText('feature')
+    await expect(featureOnly).toBeVisible()
     await expect(graph.getByText('Graph merge', { exact: true })).toHaveCount(0)
     await expect(graph.getByText('Graph feature', { exact: true }).first()).toBeVisible()
-    expect({ head: git('rev-parse', 'HEAD'), refs: git('show-ref'), status: git('status', '--porcelain') }).toEqual(before)
+    expect(checkoutState()).toEqual(before)
     await page.setViewportSize({ width: 1024, height: 800 })
     await graph.getByText('Graph feature', { exact: true }).first().click()
     await expect(page.locator('[class*="diffPane"]')).toBeVisible()

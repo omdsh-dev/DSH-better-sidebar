@@ -15,12 +15,20 @@ export interface GitGraphEntry {
   message: string
 }
 export interface GitGraphBranch { ref: string; name: string; hashFull: string }
-export interface GitGraphOptions { branch?: string; count?: number; cursor?: string }
+export interface GitGraphOptions {
+  branch?: string
+  /** With no explicit branch, follow the checkout's local branch when it has a tip. */
+  currentBranch?: boolean
+  count?: number
+  cursor?: string
+}
 export interface GitGraphResult {
   isRepo: boolean
   root?: string
   entries: GitGraphEntry[]
   branches: GitGraphBranch[]
+  /** Full ref used for the traversal. Absent for the all-branches view. */
+  selectedBranch?: string
   hasMore: boolean
   nextCursor?: string
   snapshot: string
@@ -65,7 +73,7 @@ function cursorOf(value: unknown): { fingerprint: string; offset: number } | und
   } catch { return fail('Invalid graph cursor') }
 }
 
-async function snapshotOf(root: string, branch: string | undefined) {
+async function snapshotOf(root: string, { branch, currentBranch }: GitGraphOptions) {
   const raw = await readGit(root, ['for-each-ref', '--sort=refname', '--format=%(refname)%00%(objectname)', 'refs/heads/', 'refs/remotes/'])
   const branches: GitGraphBranch[] = raw.trimEnd().split('\n').filter(Boolean).map(line => {
     const [ref, hashFull] = line.split('\0')
@@ -92,11 +100,10 @@ async function snapshotOf(root: string, branch: string | undefined) {
     if (!ref?.startsWith('refs/tags/') || !hashFull || !OID.test(hashFull)) return fail('Invalid Git tag output', 'git-error')
     return [{ name: `tag: ${ref.slice('refs/tags/'.length)}`, hashFull }]
   })
-  const fingerprint = createHash('sha256').update(JSON.stringify({ root, branch, branches, tags: rawTags, head, symbolicHead })).digest('hex')
-  const selected = branch === undefined ? undefined : branches.find(item => item.ref === branch)
-  const tips = branch === undefined
-    ? [...new Set([...branches.map(item => item.hashFull), ...(head ? [head] : [])])].sort()
-    : selected ? [selected.hashFull] : []
+  const ref = branch ?? (currentBranch && symbolicHead.startsWith('refs/heads/') ? symbolicHead : undefined)
+  const selected = ref === undefined ? undefined : branches.find(item => item.ref === ref)
+  const fingerprint = createHash('sha256').update(JSON.stringify({ root, branch: branch ?? selected?.ref, branches, tags: rawTags, head, symbolicHead })).digest('hex')
+  const tips = selected ? [selected.hashFull] : [...new Set([...branches.map(item => item.hashFull), ...(head ? [head] : [])])].sort()
   const decorations = new Map<string, string[]>()
   for (const item of [...branches, ...tags]) {
     const refs = decorations.get(item.hashFull) ?? []
@@ -165,6 +172,7 @@ export async function gitHistory(cwd: string, options: GitHistoryOptions = {}, s
  * pages from different histories. No server cache or repository mutation. */
 export async function gitGraph(cwd: string, options: GitGraphOptions = {}, selectedRepo?: string): Promise<GitGraphResult> {
   const { branch, count = 50 } = options
+  if (options.currentBranch !== undefined && typeof options.currentBranch !== 'boolean') fail('Invalid current branch option')
   if (branch !== undefined && (typeof branch !== 'string' || branch.length > 1024 || !/^refs\/(heads|remotes)\/.+/.test(branch))) fail('Expected a full local or remote branch ref')
   if (typeof count !== 'number' || !Number.isSafeInteger(count) || count < 1) fail('Invalid graph count')
   const limit = Math.min(count, 200)
@@ -184,7 +192,7 @@ export async function gitGraph(cwd: string, options: GitGraphOptions = {}, selec
     }
     root = (await readGit(root, ['rev-parse', '--show-toplevel'])).trim()
   }
-  const before = await snapshotOf(root, branch)
+  const before = await snapshotOf(root, options)
   if (cursor && cursor.fingerprint !== before.fingerprint) fail('Graph changed; refresh', 'graph-stale')
   if (branch !== undefined && !before.selected) fail('Unknown graph branch')
   const offset = cursor?.offset ?? 0
@@ -203,11 +211,12 @@ export async function gitGraph(cwd: string, options: GitGraphOptions = {}, selec
         author: fields[i + 2]!, date: fields[i + 3]!, subject: fields[i + 4]!, message: fields[i + 5]!, refs: before.decorations.get(hashFull) ?? [] })
     }
   }
-  const after = await snapshotOf(root, branch)
+  const after = await snapshotOf(root, options)
   if (after.fingerprint !== before.fingerprint) fail('Graph changed; refresh', 'graph-stale')
   const hasMore = entries.length > limit
   if (hasMore && offset + limit > MAX_OFFSET) fail('Graph history limit reached (10000)', 'graph-limit')
   return { isRepo: true, root, entries: entries.slice(0, limit), branches: before.branches, hasMore,
+    ...(before.selected ? { selectedBranch: before.selected.ref } : {}),
     ...(hasMore ? { nextCursor: Buffer.from(JSON.stringify({ version: 1, fingerprint: before.fingerprint, offset: offset + limit })).toString('base64url') } : {}),
     snapshot: before.fingerprint }
 }
