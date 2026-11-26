@@ -1,0 +1,18 @@
+{
+  "verifiedAt": "2026-10-20T16:14:10.900Z",
+  "hostVersion": "0.2.1-rc.1",
+  "pluginVersion": "0.28.0",
+  "branch": "feat/clues-uiux-refresh",
+  "tests": { "files": 67, "passed": 1388, "skipped": 1, "durationSeconds": 25.07 },
+  "mount": { "passed": 2, "durationSeconds": 14.5, "scratch": "/tmp/dsh-e2e-mount.nAarzX/home", "pageErrors": [] },
+  "package": { "sha256": "11c6fa3ab37ab9dba5f84994581eb367d4ea6a0c710e0cd0998160d8cfad8d3c", "modifiedSourcesByteMatched": 72 },
+  "installedBundles": {
+    "client.js": "af7814919234dc0946c1f68f8b5e5b5c84442a864b4f008783e3fc944db6d322",
+    "index.js": "5ac442ea98c34186f7614701d0c70cd430e738aefc4f7ce6e01fc8aa2168fd38",
+    "clues.js": "d2977b68e155ba96d813b01931fe10eb6e639706b3dfc13091d0568046aedc05"
+  },
+  "preview": { "origin": "http://127.0.0.1:3080", "profile": "sidebar-test", "processName": "dsh-sidebar-preview-3080", "pid": 40004, "pluginMounted": true, "defaultScopeApi": true, "pageErrors": [], "liveConversationInteractionsExercised": false },
+  "existingGui": { "origin": "http://127.0.0.1:3384", "pid": 15534, "changed": false },
+  "screenshots": 31,
+  "limitations": ["Remote GitHub and Feishu install, authorization and writes were not performed", "Missing-dependency browser state uses a controlled sanitized DTO", "Full repository tests and complete mount lane were not rerun"]
+}

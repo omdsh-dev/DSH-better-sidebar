@@ -117,6 +117,11 @@ describe('dock fallback（空白会话入口）', () => {
     // `bottomOpen: true` (the click would close it instead of open it).
     localStorage.clear()
     intervals.clear()
+    vi.stubGlobal('matchMedia', vi.fn((query: string): MediaQueryList => ({
+      matches: false, media: query, onchange: null,
+      addEventListener: () => {}, removeEventListener: () => {},
+      addListener: () => {}, removeListener: () => {}, dispatchEvent: () => true,
+    })))
     vi.spyOn(globalThis, 'setInterval').mockImplementation(((fn: () => void, ms?: number) => {
       const id = ++intervalSeq
       intervals.set(id, { fn, ms })
@@ -133,6 +138,7 @@ describe('dock fallback（空白会话入口）', () => {
     Reflect.deleteProperty(document, 'hidden')
     Reflect.deleteProperty(document, 'visibilityState')
     vi.restoreAllMocks()
+    vi.unstubAllGlobals()
   })
 
   it('renders the fallback entry and flips the bottom workbench through the store', async () => {
@@ -197,6 +203,27 @@ describe('dock fallback（空白会话入口）', () => {
   // 定位逻辑现在只服务**收起态**（右侧栏收起时宿主的角落只有「Open right sidebar」
   // 一个按钮）。让位仍是逐个槽位试探：万一宿主的收起态角落也并排了别的东西，
   // 固定偏移会正好落在**下一个**按钮上。
+  it('reserves the full 44px target on coarse pointers', async () => {
+    phaseIs(true)
+    vi.spyOn(window, 'matchMedia').mockImplementation(query => ({
+      matches: query === '(pointer: coarse)', media: query, onchange: null,
+      addEventListener: () => {}, removeEventListener: () => {},
+      addListener: () => {}, removeListener: () => {}, dispatchEvent: () => true,
+    }))
+    const anchor = appendAnchor(500)
+    const { unmount } = renderDockFallback()
+    try {
+      await settle()
+      const shell = document.querySelector<HTMLElement>('[data-dsh-dock-fallback]')!
+      expect(shell.style.left).toBe('448px')
+      expect(shell.style.top).toBe('4px')
+      expect(Number.parseFloat(shell.style.left) + 44).toBe(492)
+    } finally {
+      unmount()
+      anchor.remove()
+    }
+  })
+
   it('keeps stepping left until the slot is free of host buttons', async () => {
     phaseIs(true)
     const rect = (left: number, top: number) => () => ({

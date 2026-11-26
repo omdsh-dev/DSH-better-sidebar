@@ -12,6 +12,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactElement, type ReactNode } from 'react'
 import { t } from '../locales.ts'
 import { coalesceInline, diffInline, MIN_FOLD, type DiffRow, type DiffSegment, type FoldSegment, type InlineDiff } from './rows.ts'
+import { ActionButton } from '../ui/index.ts'
 import { hasBlockComment, isColored, scanLine, type CodeToken, type TokenType } from './highlight.ts'
 import css from './diff.module.css'
 
@@ -51,11 +52,11 @@ function tokenSpanClass(type: TokenType, changed: boolean): string {
 }
 
 /** Render scanned tokens as colored nodes; uncolored runs stay text. */
-function tokensToNodes(tokens: readonly CodeToken[], changed = false): ReactNode[] {
+function tokensToNodes(tokens: readonly CodeToken[], changed = false, keyOffset = 0): ReactNode[] {
   const nodes: ReactNode[] = []
   for (const token of tokens) {
     if (!changed && !isColored(token)) nodes.push(token.text)
-    else nodes.push(<span key={String(nodes.length)} className={tokenSpanClass(token.type, changed)}>{token.text}</span>)
+    else nodes.push(<span key={String(keyOffset + nodes.length)} className={tokenSpanClass(token.type, changed)}>{token.text}</span>)
   }
   return nodes
 }
@@ -207,7 +208,7 @@ export function DiffRows({ segments, lang, resolveFold }: DiffRowsProps) {
                 for (const seg of side) {
                   const scan = scanLine(seg.text, lang, state)
                   state = scan.inBlock
-                  nodes.push(...tokensToNodes(scan.tokens, seg.changed))
+                  nodes.push(...tokensToNodes(scan.tokens, seg.changed, nodes.length))
                 }
                 return nodes
               })()
@@ -306,9 +307,9 @@ export function DiffRows({ segments, lang, resolveFold }: DiffRowsProps) {
     <div className={css.rows}>
       {parts}
       {renderedRows >= MAX_ROWS && !expandedAll && (
-        <button type="button" className={css.expand} onClick={() => { setExpandedAll(true) }}>
+        <ActionButton size="sm" className={css.expand} onClick={() => { setExpandedAll(true) }}>
           {t('diffExpand', { count: segments.reduce((sum, s) => sum + (s.kind === 'hunk' ? s.rows.length : 0), 0) - renderedRows })}
-        </button>
+        </ActionButton>
       )}
     </div>
   )

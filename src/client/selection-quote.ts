@@ -365,7 +365,18 @@ export function registerQuoteSource(ctx: Context): () => void {
  * @returns the fenced block (or the bare header line when over the limit).
  */
 export function quoteFallbackInsert(sel: QuoteSelection): string {
-  return buildSelectionInsert(sel.path, sel.cwd, sel.lines, sel.text).text
+  return reducedSelectionText(sel)
+}
+
+/** The legacy 500-unit bound for a STORED quote payload (never the live
+ *  popup payload): past it the record and the fallback keep the header line. */
+const QUOTE_TEXT_LIMIT = 500
+
+/** The reduced payload a quote record/fallback stores for one selection. */
+function reducedSelectionText(sel: QuoteSelection): string {
+  return sel.text.length > QUOTE_TEXT_LIMIT
+    ? headerOf(sel.path, sel.cwd, sel.lines)
+    : buildSelectionInsert(sel.path, sel.cwd, sel.lines, sel.text).text
 }
 
 /**
@@ -405,8 +416,9 @@ export function insertQuoteChip(ctx: Context, sessionId: string, sel: QuoteSelec
   const clipboardText = headerOf(sel.path, sel.cwd, sel.lines)
   // Built ONCE and kept in its size-reduced form (a raw selection is
   // unbounded storage); the chip's fallback text and the send-time payload are
-  // the same bytes the pre-chip insert produced.
-  const insert = buildSelectionInsert(sel.path, sel.cwd, sel.lines, sel.text)
+  // the same bytes the pre-chip insert produced. The live popup payload itself
+  // is never truncated — only this stored record is bounded.
+  const insertText = reducedSelectionText(sel)
   const record: QuoteRecord = {
     id: quoteId(n),
     sessionId,
@@ -416,7 +428,7 @@ export function insertQuoteChip(ctx: Context, sessionId: string, sel: QuoteSelec
     ...(sel.lines === undefined ? {} : { lines: sel.lines }),
     label: t('quoteChip', { where: whereOf(sel.path, sel.lines) }),
     clipboardText,
-    text: insert.text,
+    text: insertText,
   }
   const reference: PendingReference = {
     source: QUOTE_SOURCE,
@@ -428,7 +440,7 @@ export function insertQuoteChip(ctx: Context, sessionId: string, sel: QuoteSelec
     // send), but the plain-text form an ordinary path would fall back to —
     // and the fenced block itself, so a chip that cannot land still yields
     // the same payload as the pre-chip insert.
-    text: insert.text,
+    text: insertText,
   }
   records.set(record.id, record)
   if (!saveStore()) {

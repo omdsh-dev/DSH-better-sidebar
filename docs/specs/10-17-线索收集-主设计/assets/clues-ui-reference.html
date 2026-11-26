@@ -1,0 +1,345 @@
+<!DOCTYPE html><html lang="zh-CN"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>线索收集 · 布局研究 03</title>
+<style>:root { color-scheme: light dark; --dsw-alias-bg-base: #f2f4f6; --dsw-alias-bg-layer-1: #fff; --dsw-alias-bg-layer-2: #f8f9fa; --dsw-alias-label-primary: #21272d; --dsw-alias-label-secondary: #62707b; --dsw-alias-label-tertiary: #8a959e; --dsw-alias-border-l1: #e4e8eb; --dsw-alias-border-l2: #cbd3d9; --dsw-alias-state-business-primary: #3388BB; --dsw-alias-state-success-primary: #4c8c65; --dsw-alias-state-warn-primary: #a26e20; --dsw-shadow-lv3: 0 16px 60px #15232b1c; --ds-font-family-code: ui-monospace,SFMono-Regular,Consolas,monospace; --dsw-alias-state-business-on-primary: #101b24; }
+@media (prefers-color-scheme: dark) {
+  :root { --dsw-alias-bg-base: #141719; --dsw-alias-bg-layer-1: #202427; --dsw-alias-bg-layer-2: #272d31; --dsw-alias-label-primary: #e7edef; --dsw-alias-label-secondary: #b0bbc1; --dsw-alias-label-tertiary: #7e8d96; --dsw-alias-border-l1: #30393e; --dsw-alias-border-l2: #435159; --dsw-alias-state-business-primary: #3388BB; --dsw-alias-state-success-primary: #8dbda0; --dsw-alias-state-warn-primary: #d0b16f; --dsw-shadow-lv3: 0 16px 60px #00000040; --dsw-alias-state-business-on-primary: #101b24; }
+}
+* { box-sizing: border-box; letter-spacing: 0px; }
+body { margin: 0px; font: 13px / 1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif; background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary); }
+h1, h2, h3, p { margin: 0px; }
+h1 { font-size: 22px; font-weight: 600; }
+h2 { font-size: 16px; font-weight: 600; }
+h3 { font-size: 13px; font-weight: 600; }
+button, input, select { font: inherit; color: inherit; }
+button { cursor: pointer; background: none; border: 1px solid var(--dsw-alias-border-l2); border-radius: 4px; padding: 4px 10px; min-height: 30px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; white-space: nowrap; }
+button:hover { background: var(--dsw-alias-bg-layer-2); }
+button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible, summary:focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary); outline-offset: 2px; }
+button:disabled { opacity: 0.4; cursor: default; }
+input[type="search"], input[type="text"] { width: 100%; min-width: 0px; border: 1px solid var(--dsw-alias-border-l2); border-radius: 4px; background: var(--dsw-alias-bg-layer-1); height: 32px; padding: 0px 10px; outline-offset: 0px; }
+input[type="checkbox"] { accent-color: var(--dsw-alias-state-business-primary); }
+svg.icon { width: 16px; height: 16px; flex: 0 0 auto; vertical-align: middle; display: block; }
+.icon.large { width: 21px; height: 21px; }
+.icon.small { width: 13px; height: 13px; }
+.icon-button { width: 30px; height: 30px; padding: 0px; min-height: 30px; border-color: transparent; flex: 0 0 auto; }
+.icon-button:hover { background: var(--dsw-alias-bg-base); }
+.icon-button.active { color: var(--dsw-alias-state-business-primary); }
+.at { font: 500 17px var(--ds-font-family-code); }
+.mono { font-family: var(--ds-font-family-code); font-variant-numeric: tabular-nums; }
+.muted { color: var(--dsw-alias-label-secondary); }
+.faint { color: var(--dsw-alias-label-tertiary); }
+.push { flex: 1 1 0%; min-width: 0px; }
+.ghost { border-color: transparent; }
+.primary { color: var(--dsw-alias-state-business-on-primary); background: var(--dsw-alias-state-business-primary); border-color: var(--dsw-alias-state-business-primary); }
+.primary:hover { background: var(--dsw-alias-state-business-primary); opacity: 0.9; }
+.head, .foot { max-width: 1400px; margin: auto; padding: 25px 24px; }
+.head { display: flex; align-items: flex-start; gap: 24px; border-bottom: 1px solid var(--dsw-alias-border-l2); }
+.head p { font-size: 12px; color: var(--dsw-alias-label-secondary); margin-top: 7px; }
+.head .edition { margin-left: auto; font: 11px var(--ds-font-family-code); color: var(--dsw-alias-label-tertiary); padding-top: 8px; white-space: nowrap; }
+.variants { max-width: 1400px; margin: auto; padding: 26px 24px 32px; display: grid; grid-template-columns: 380px minmax(0px, 1fr); gap: 30px; align-items: start; }
+.stage { min-width: 0px; }
+.stage-title { display: flex; gap: 10px; align-items: baseline; margin-bottom: 12px; }
+.stage-title span { font: 11px var(--ds-font-family-code); color: var(--dsw-alias-label-tertiary); }
+.stage-title h2 { font-size: 13px; }
+.caption { margin-top: 12px; font-size: 12px; line-height: 1.8; color: var(--dsw-alias-label-secondary); }
+.app-shell { height: 886px; min-width: 0px; display: flex; flex-direction: column; background: var(--dsw-alias-bg-layer-1); border: 1px solid var(--dsw-alias-border-l2); overflow: hidden; }
+.app-head { height: 44px; flex: 0 0 auto; display: flex; align-items: center; gap: 10px; padding: 0px 12px; border-bottom: 1px solid var(--dsw-alias-border-l2); }
+.app-head h2 { font-size: 15px; }
+.app-head .context { font-size: 10px; color: var(--dsw-alias-label-secondary); max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pack-zone { flex: 0 0 auto; background-position-x: ; background-position-y: ; background-repeat: ; background-attachment: ; background-origin: ; background-clip: ; background-color: ; border-bottom: 1px solid var(--dsw-alias-border-l2); background-image: radial-gradient(circle,var(--dsw-alias-border-l2) .55px,transparent .55px); background-size: 16px 16px; }
+.section-head { display: flex; align-items: center; gap: 8px; padding: 10px 12px 8px; }
+.section-head h3 { font-size: 13px; white-space: nowrap; }
+.counter { font-style: ; font-variant-ligatures: ; font-variant-caps: ; font-variant-east-asian: ; font-variant-alternates: ; font-variant-position: ; font-variant-emoji: ; font-weight: ; font-stretch: ; font-size: ; line-height: ; font-family: ; font-optical-sizing: ; font-size-adjust: ; font-kerning: ; font-feature-settings: ; font-variation-settings: ; font-language-override: ; color: var(--dsw-alias-label-secondary); font-variant-numeric: tabular-nums; }
+.compact-search { position: relative; margin-left: auto; width: 126px; max-width: 180px; flex: 1 1 0%; min-width: 0px; }
+.compact-search .icon { position: absolute; left: 8px; top: 9px; width: 13px; height: 13px; color: var(--dsw-alias-label-tertiary); }
+.compact-search input { height: 30px; font-size: 11px; padding-left: 27px; background: var(--dsw-alias-bg-layer-1); }
+.pack-grid { display: grid; grid-template-columns: repeat(2, minmax(0px, 1fr)); gap: 9px; padding: 0px 12px; }
+.pack-node { min-width: 0px; border: 1px solid var(--dsw-alias-border-l2); border-radius: 6px; overflow: hidden; background: var(--dsw-alias-bg-layer-1); }
+.pack-hit { width: 100%; border: 0px; border-radius: 0px; height: 58px; padding: 9px 11px; display: grid; flex-direction: column; align-items: center; justify-content: space-between; text-align: left; white-space: normal; grid-template-columns: 16px minmax(0px, 1fr) 14px; column-gap: 8px; }
+.pack-signal { display: contents; align-items: center; gap: 10px; color: var(--dsw-alias-label-secondary); }
+.pack-signal .at { margin-left: 0px; font-size: 14px; color: var(--dsw-alias-label-tertiary); grid-area: 1 / 3; }
+.pack-title { font-size: 13px; font-weight: 600; line-height: 18px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; grid-area: 1 / 2; }
+.pack-hit:hover { background: color-mix(in srgb,var(--dsw-alias-state-business-primary) 7%,var(--dsw-alias-bg-layer-1)); }
+.pack-hit:hover .at { color: var(--dsw-alias-state-business-primary); }
+.pack-edit { width: 100%; height: 24px; min-height: 24px; padding: 0px 10px; border-right: 0px; border-bottom: 0px; border-left: 0px; border-image: none; border-top: 1px solid var(--dsw-alias-border-l1); border-radius: 0px; display: flex; justify-content: space-between; background: var(--dsw-alias-bg-layer-2); font-size: 10px; color: var(--dsw-alias-label-secondary); }
+.pack-edit:hover { color: var(--dsw-alias-state-business-primary); background: color-mix(in srgb,var(--dsw-alias-state-business-primary) 6%,var(--dsw-alias-bg-layer-1)); }
+.pack-node.featured { border-color: color-mix(in srgb,var(--dsw-alias-state-business-primary) 65%,var(--dsw-alias-border-l2)); }
+.pack-node.featured .pack-signal { color: var(--dsw-alias-state-business-primary); }
+.pager { display: flex; align-items: center; gap: 5px; min-height: 35px; padding: 3px 10px; font-size: 10px; color: var(--dsw-alias-label-secondary); }
+.pager .page-number { font: 10px var(--ds-font-family-code); min-width: 48px; text-align: center; }
+.pager .icon-button { width: 26px; min-height: 26px; height: 26px; }
+.source-region { flex: 1 1 0%; min-height: 0px; display: flex; flex-direction: column; }
+.source-region > .section-head { padding-top: 13px; padding-bottom: 10px; }
+.section-head .section-meta { font-size: 10px; color: var(--dsw-alias-label-tertiary); }
+.source-layout { display: flex; flex-direction: column; min-height: 0px; flex: 1 1 0%; }
+.source-nav { display: grid; grid-template-columns: repeat(5, minmax(0px, 1fr)); gap: 4px; padding: 0px 10px 11px; border-bottom: 1px solid var(--dsw-alias-border-l1); }
+.source-button { height: 54px; border-color: transparent; flex-direction: column; gap: 4px; padding: 4px 2px; font-size: 10px; min-width: 0px; color: var(--dsw-alias-label-secondary); }
+.source-button .icon { width: 19px; height: 19px; }
+.source-button.selected { color: var(--dsw-alias-state-business-primary); border-color: color-mix(in srgb,var(--dsw-alias-state-business-primary) 35%,var(--dsw-alias-border-l1)); background: color-mix(in srgb,var(--dsw-alias-state-business-primary) 7%,var(--dsw-alias-bg-layer-1)); }
+.source-button .source-count { display: none; }
+.source-main { display: flex; flex-direction: column; flex: 1 1 0%; min-height: 0px; min-width: 0px; }
+.query { padding: 10px 12px 6px; position: relative; display: flex; align-items: center; gap: 6px; }
+.query .icon { position: absolute; left: 22px; top: 20px; color: var(--dsw-alias-label-tertiary); width: 14px; height: 14px; }
+.query input { padding-left: 30px; font-size: 12px; height: 34px; }
+.query .clear { position: absolute; right: 16px; top: 13px; color: var(--dsw-alias-label-secondary); }
+.query .clear .icon { position: static; width: 13px; height: 13px; }
+.scope { display: flex; align-items: center; gap: 6px; padding: 0px 12px 7px; font-size: 10px; color: var(--dsw-alias-label-secondary); min-width: 0px; }
+.scope button { font-size: 10px; min-height: 24px; padding: 2px 5px; min-width: 0px; }
+.scope .repo { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--ds-font-family-code); display: inline-block; max-width: 185px; }
+.scope .open { color: var(--dsw-alias-state-success-primary); }
+.source-scroll { flex: 1 1 0%; min-height: 0px; overflow: auto; scrollbar-width: thin; overscroll-behavior: contain; }
+.group-label { height: 25px; padding: 0px 13px; display: flex; align-items: center; gap: 6px; font-size: 10px; color: var(--dsw-alias-label-tertiary); border-bottom: 1px solid var(--dsw-alias-border-l1); }
+.group-label.pinned-label { color: var(--dsw-alias-state-business-primary); }
+.group-label + .clue-row { border-top: 0px; }
+.clue-row { display: flex; align-items: center; gap: 4px; min-height: 51px; padding: 2px 7px 2px 12px; border-bottom: 1px solid var(--dsw-alias-border-l1); min-width: 0px; }
+.clue-row:hover { background: var(--dsw-alias-bg-layer-2); }
+.clue-hit { flex: 1 1 0%; min-width: 0px; display: block; text-align: left; min-height: 44px; padding: 5px 0px; border: 0px; white-space: normal; border-radius: 0px; }
+.clue-hit:hover { background: none; }
+.clue-title { font-size: 12px; font-weight: 500; line-height: 18px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.clue-sub { display: flex; align-items: center; gap: 7px; margin-top: 3px; min-width: 0px; font-size: 10px; color: var(--dsw-alias-label-tertiary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.clue-row .icon-button { width: 25px; height: 28px; min-height: 28px; color: var(--dsw-alias-label-tertiary); }
+.clue-row .icon-button.pinned { color: var(--dsw-alias-state-business-primary); }
+.clue-row .icon-button:hover { color: var(--dsw-alias-label-primary); }
+.clue-row .row-number { font-family: var(--ds-font-family-code); color: var(--dsw-alias-label-secondary); }
+.status-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--dsw-alias-state-success-primary); flex: 0 0 auto; }
+.source-main > .pager { flex: 0 0 auto; border-top: 1px solid var(--dsw-alias-border-l2); background: var(--dsw-alias-bg-layer-2); }
+.app-wide .pack-grid { grid-template-columns: repeat(4, minmax(0px, 1fr)); gap: 10px; }
+.app-wide .pack-hit { height: 64px; }
+.app-wide .pack-title { font-size: 14px; line-height: 20px; }
+.app-wide .pack-zone .section-head { padding: 13px 16px 11px; }
+.app-wide .pack-grid { padding: 0px 16px; }
+.app-wide .pack-zone > .pager { padding-left: 16px; padding-right: 16px; }
+.app-wide .source-layout { display: grid; grid-template-columns: 146px minmax(0px, 1fr); }
+.app-wide .source-nav { display: flex; flex-direction: column; gap: 5px; padding: 0px 10px 12px; border-bottom: 0px; border-right: 1px solid var(--dsw-alias-border-l1); }
+.app-wide .source-button { height: 39px; flex: 0 0 auto; flex-direction: row; justify-content: flex-start; gap: 9px; padding: 0px 9px; font-size: 11px; }
+.app-wide .source-button .icon { width: 17px; height: 17px; }
+.app-wide .source-button .source-count { display: block; margin-left: auto; font: 10px var(--ds-font-family-code); color: var(--dsw-alias-label-tertiary); }
+.app-wide .source-main .query { padding-top: 0px; padding-bottom: 9px; }
+.app-wide .query > .icon { top: 10px; }
+.app-wide .scope { padding-bottom: 10px; }
+.app-wide .source-region > .section-head { padding-left: 16px; padding-top: 15px; padding-bottom: 15px; }
+.app-wide .clue-row { min-height: 60px; padding-right: 12px; padding-left: 15px; }
+.app-wide .clue-title { font-size: 13px; line-height: 20px; }
+.app-wide .clue-sub { font-size: 11px; }
+.app-wide .clue-row .icon-button { width: 29px; height: 30px; }
+.app-wide .group-label { padding-left: 15px; height: 29px; }
+.legend { margin-top: 18px; display: grid; grid-template-columns: repeat(3, minmax(0px, 1fr)); gap: 20px; }
+.legend div { border-top: 1px solid var(--dsw-alias-border-l2); padding-top: 10px; }
+.legend h3 { font-size: 12px; margin-bottom: 5px; }
+.legend p { font-size: 12px; line-height: 1.8; color: var(--dsw-alias-label-secondary); }
+.editor-study { max-width: 1400px; margin: auto; padding: 8px 24px 36px; display: grid; grid-template-columns: minmax(0px, 760px) minmax(200px, 1fr); gap: 38px; align-items: start; }
+.window { display: flex; flex-direction: column; height: 566px; background: var(--dsw-alias-bg-layer-1); border: 1px solid var(--dsw-alias-border-l2); border-radius: 8px; box-shadow: var(--dsw-shadow-lv3); overflow: hidden; min-width: 0px; }
+.window-head { height: 42px; flex: 0 0 auto; background: var(--dsw-alias-bg-layer-2); border-bottom: 1px solid var(--dsw-alias-border-l2); display: flex; align-items: center; gap: 8px; padding: 0px 9px 0px 16px; }
+.window-head h3 { font-size: 12px; }
+.window-scroll { flex: 1 1 0%; min-height: 0px; overflow: auto; }
+.form-top { padding: 18px 20px 13px; display: grid; grid-template-columns: minmax(0px, 1fr) auto; gap: 14px; align-items: end; }
+.field { display: block; font-size: 11px; color: var(--dsw-alias-label-secondary); }
+.field input { margin-top: 6px; font-size: 14px; font-weight: 500; color: var(--dsw-alias-label-primary); height: 34px; }
+.member-heading { display: flex; align-items: center; gap: 7px; padding: 7px 20px; font-size: 11px; color: var(--dsw-alias-label-secondary); border-bottom: 1px solid var(--dsw-alias-border-l1); }
+.member-row { display: flex; align-items: center; gap: 10px; padding: 10px 20px; min-height: 56px; border-bottom: 1px solid var(--dsw-alias-border-l1); }
+.member-row > .icon { color: var(--dsw-alias-label-secondary); width: 17px; height: 17px; }
+.member-row .name { flex: 1 1 0%; min-width: 0px; font-size: 12px; }
+.member-row .name strong { font-weight: 500; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.member-row .name small { display: block; font-size: 10px; color: var(--dsw-alias-label-tertiary); margin-top: 2px; }
+.binding { border-bottom: 1px solid var(--dsw-alias-border-l1); }
+.binding summary { cursor: pointer; padding: 12px 20px; font-size: 12px; }
+.binding-row { padding: 0px 20px 13px; display: flex; align-items: center; gap: 10px; font-size: 12px; }
+.binding-row label { display: flex; align-items: center; gap: 6px; }
+.binding-row select { border: 1px solid var(--dsw-alias-border-l2); border-radius: 4px; background: var(--dsw-alias-bg-layer-1); height: 30px; padding: 0px 25px 0px 8px; min-width: 0px; max-width: 100%; }
+.window-footer { height: 48px; flex: 0 0 auto; padding: 8px 12px; border-top: 1px solid var(--dsw-alias-border-l2); background: var(--dsw-alias-bg-layer-2); display: flex; align-items: center; gap: 8px; font-size: 10px; color: var(--dsw-alias-label-secondary); }
+.annotations { padding-top: 32px; }
+.annotations section { border-top: 1px solid var(--dsw-alias-border-l2); padding: 14px 0px 18px; }
+.annotations h3 { font-size: 13px; margin-bottom: 7px; }
+.annotations p { font-size: 12px; line-height: 1.9; color: var(--dsw-alias-label-secondary); }
+.foot { border-top: 1px solid var(--dsw-alias-border-l2); font-size: 11px; color: var(--dsw-alias-label-tertiary); }
+@media (max-width: 1120px) {
+  .variants { grid-template-columns: 350px minmax(0px, 1fr); gap: 20px; }
+  .app-wide .pack-grid { grid-template-columns: repeat(2, minmax(0px, 1fr)); }
+  .app-wide .pack-hit { height: 58px; }
+  .app-wide .pack-title { font-size: 13px; }
+  .app-wide .source-layout { grid-template-columns: 120px minmax(0px, 1fr); }
+  .app-wide .source-nav { padding-left: 7px; padding-right: 7px; }
+  .app-wide .source-button { gap: 6px; padding-left: 6px; padding-right: 6px; font-size: 10px; }
+  .app-wide .source-button .source-count { display: none; }
+  .app-wide .clue-row { padding-left: 10px; padding-right: 7px; gap: 1px; }
+  .app-wide .clue-title { font-size: 12px; }
+  .legend { grid-template-columns: 1fr; gap: 10px; }
+  .editor-study { grid-template-columns: minmax(0px, 760px); }
+  .annotations { padding-top: 0px; display: grid; grid-template-columns: repeat(3, minmax(0px, 1fr)); gap: 20px; }
+}
+@media (max-width: 800px) {
+  .variants { display: flex; flex-direction: column; gap: 28px; padding: 22px 16px; }
+  .stage { width: 100%; }
+  .app-shell { max-width: 480px; margin: auto; height: 886px; }
+  .app-wide { max-width: none; }
+  .app-wide .source-layout { display: flex; flex-direction: column; }
+  .app-wide .source-nav { display: grid; grid-template-columns: repeat(5, minmax(0px, 1fr)); padding: 0px 10px 11px; border-right: 0px; border-bottom: 1px solid var(--dsw-alias-border-l1); }
+  .app-wide .source-button { height: 54px; flex-direction: column; justify-content: center; gap: 4px; font-size: 10px; padding: 4px 2px; }
+  .app-wide .source-main .query { padding-top: 10px; padding-bottom: 6px; }
+  .app-wide .query > .icon { top: 20px; }
+  .app-wide .source-region > .section-head { padding: 13px 12px 10px; }
+  .app-wide .pack-zone .section-head { padding: 10px 12px 8px; }
+  .app-wide .pack-grid { padding: 0px 12px; }
+  .app-wide .clue-row { min-height: 51px; padding: 2px 7px 2px 12px; gap: 4px; }
+  .app-wide .clue-title { font-size: 12px; line-height: 18px; }
+  .app-wide .clue-sub { font-size: 10px; }
+  .app-wide .clue-row .icon-button { width: 25px; height: 28px; }
+  .app-wide .group-label { height: 25px; padding-left: 13px; }
+  .head, .foot { padding: 21px 16px; }
+  .head { gap: 10px; }
+  .head .edition { font-size: 10px; }
+  .head h1 { font-size: 20px; }
+  .editor-study { padding: 0px 16px 28px; display: flex; flex-direction: column; gap: 20px; }
+  .annotations { display: block; padding: 0px; }
+  .window { height: 590px; }
+  .form-top { padding: 15px 14px 10px; gap: 8px; }
+  .form-top > button { font-size: 11px; padding: 4px 7px; }
+  .member-row { padding: 10px 14px; gap: 8px; }
+  .member-heading { padding-left: 14px; padding-right: 14px; }
+  .binding summary { padding-left: 14px; padding-right: 14px; }
+  .binding-row { padding-left: 14px; padding-right: 14px; flex-wrap: wrap; }
+  .window-footer { padding-left: 10px; padding-right: 10px; }
+  .legend { display: block; }
+  .legend div { margin-bottom: 12px; }
+  .compact-search { width: 110px; }
+  .pack-title { font-size: 13px; grid-area: 1 / 2; }
+  .app-head .context { max-width: 85px; }
+  .clue-row .clue-sub { max-width: 205px; }
+}
+@media (max-width: 360px) {
+  .section-head { gap: 5px; padding-left: 9px; padding-right: 9px; }
+  .section-head h3 { font-size: 12px; }
+  .compact-search { width: 80px; }
+  .pack-grid { padding: 0px 9px; gap: 7px; }
+  .pack-hit { padding: 8px; height: 58px; display: grid; grid-template-columns: 16px minmax(0px, 1fr) 14px; column-gap: 8px; align-items: center; }
+  .source-button { font-size: 9px; }
+  .clue-row { padding-left: 9px; gap: 1px; }
+  .clue-row .icon-button { width: 23px; }
+  .query input { font-size: 11px; }
+  .window-head { padding-left: 12px; }
+  .form-top { grid-template-columns: minmax(0px, 1fr); }
+  .form-top > button { justify-self: start; }
+  .head .edition { display: none; }
+}
+.pack-signal > .icon { grid-area: 1 / 1; }
+.pack-zone > .pager { min-height: 30px; }
+.source-button.selected { color: var(--dsw-alias-label-primary); }
+.source-button.selected > .icon { color: var(--dsw-alias-state-business-primary); }
+.group-label.pinned-label { color: var(--dsw-alias-label-secondary); }
+.group-label.pinned-label > .icon { color: var(--dsw-alias-state-business-primary); }
+.pack-edit:hover { color: var(--dsw-alias-label-primary); }</style>
+</head>
+<body>
+<svg width="0" height="0" aria-hidden="true" style="position:absolute;overflow:hidden"><defs>
+<!-- Artwork copied from the installed DSH ui-primitives library; GitHub mark from Simple Icons (CC0). -->
+<symbol id="i-search" viewBox="0 0 16 16" fill="none" stroke-width="1.3"><path d="M6.58727 11.8586C9.55061 11.8586 11.9529 9.45637 11.9529 6.49304C11.9529 3.5297 9.55061 1.12744 6.58727 1.12744C3.62394 1.12744 1.22168 3.5297 1.22168 6.49304C1.22168 9.45637 3.62394 11.8586 6.58727 11.8586Z" stroke="currentColor"></path><path d="M10.2991 10.3933L14.7783 14.8725" stroke="currentColor"></path></symbol>
+<symbol id="i-settings" viewBox="0 0 16 16" fill="none" stroke-width="1.3"><path d="M8 9.75012C8.9665 9.75012 9.75 8.96662 9.75 8.00012C9.75 7.03362 8.9665 6.25012 8 6.25012C7.0335 6.25012 6.25 7.03362 6.25 8.00012C6.25 8.96662 7.0335 9.75012 8 9.75012Z" stroke="currentColor"></path><path d="M13.0107 7.79377C12.9505 7.89401 12.9205 7.94413 12.9205 7.99951C12.9205 8.0549 12.9505 8.10502 13.0106 8.20528L13.9849 9.83006C14.045 9.93029 14.0751 9.9804 14.0751 10.0358C14.0751 10.0911 14.045 10.1413 13.9849 10.2415L13.0037 11.8777C12.9468 11.9726 12.9184 12.0201 12.8725 12.0461C12.8267 12.072 12.7713 12.072 12.6607 12.072H10.6704C10.5598 12.072 10.5045 12.072 10.4586 12.098C10.4128 12.1239 10.3843 12.1714 10.3274 12.2662L9.33825 13.9142C9.28133 14.009 9.25287 14.0564 9.20703 14.0823C9.16118 14.1083 9.10588 14.1083 8.99529 14.1083H7.00486C6.89426 14.1083 6.83896 14.1083 6.79312 14.0823C6.74727 14.0564 6.71881 14.009 6.6619 13.9142L5.67273 12.2662C5.61581 12.1714 5.58735 12.1239 5.54151 12.098C5.49566 12.072 5.44036 12.072 5.32977 12.072H3.33945C3.2288 12.072 3.17347 12.072 3.12761 12.0461C3.08176 12.0201 3.0533 11.9726 2.9964 11.8777L2.0152 10.2415C1.9551 10.1413 1.92505 10.0911 1.92505 10.0358C1.92505 9.9804 1.9551 9.93029 2.0152 9.83006L2.98951 8.20528C3.04963 8.10502 3.07969 8.0549 3.07969 7.99951C3.07968 7.94413 3.04961 7.89401 2.98946 7.79377L2.01529 6.17011C1.95514 6.06987 1.92507 6.01975 1.92507 5.96437C1.92506 5.90899 1.95512 5.85886 2.01524 5.7586L2.9964 4.1224C3.0533 4.0275 3.08176 3.98005 3.12761 3.95408C3.17347 3.92811 3.2288 3.92811 3.33945 3.92811H5.32977C5.44036 3.92811 5.49566 3.92811 5.54151 3.90216C5.58735 3.87621 5.61581 3.82879 5.67273 3.73397L6.6619 2.08599C6.71881 1.99116 6.74727 1.94375 6.79312 1.9178C6.83896 1.89185 6.89426 1.89185 7.00486 1.89185H8.99529C9.10588 1.89185 9.16118 1.89185 9.20703 1.9178C9.25287 1.94375 9.28133 1.99116 9.33825 2.08599L10.3274 3.73397C10.3843 3.82879 10.4128 3.87621 10.4586 3.90216C10.5045 3.92811 10.5598 3.92811 10.6704 3.92811H12.6607C12.7713 3.92811 12.8267 3.92811 12.8725 3.95408C12.9184 3.98005 12.9468 4.0275 13.0037 4.1224L13.9849 5.7586C14.045 5.85886 14.0751 5.90899 14.0751 5.96437C14.0751 6.01975 14.045 6.06987 13.9849 6.17011L13.0107 7.79377Z" stroke="currentColor" stroke-miterlimit="10"></path></symbol>
+<symbol id="i-plus" viewBox="0 0 16 16" fill="none" stroke-width="1.3"><path d="M8 2V14" stroke="currentColor"></path><path d="M2 8H14" stroke="currentColor"></path></symbol>
+<symbol id="i-pr" viewBox="0 0 16 16" fill="none" stroke-width="1.3"><path d="M1.01503 8.0001L5.6964 8.0001C6.41913 8.0001 6.78049 8.0001 7.12115 7.91951C7.4232 7.84804 7.71233 7.73014 7.97821 7.57C8.27809 7.38939 8.5364 7.13669 9.05303 6.63129L11.3281 4.40564" stroke="currentColor"></path><path d="M1.01221 7.9999L5.6964 7.9999C6.41913 7.9999 6.78049 7.9999 7.12115 8.08049C7.4232 8.15196 7.71233 8.26986 7.97821 8.43C8.27809 8.61061 8.5364 8.86331 9.05303 9.36871L11.3281 11.5944" stroke="currentColor"></path><circle cx="12.4502" cy="3.3079" r="1.56962" stroke="currentColor"></circle><circle cx="12.4502" cy="12.6921" r="1.56962" stroke="currentColor"></circle></symbol>
+<symbol id="i-prev" viewBox="0 0 16 16" fill="none" stroke-width="1.3"><path d="M10 4L6.70711 7.29289C6.31658 7.68342 6.31658 8.31658 6.70711 8.70711L10 12" stroke="currentColor"></path></symbol>
+<symbol id="i-next" viewBox="0 0 16 16" fill="none" stroke-width="1.3"><path d="M6 12L9.29289 8.70711C9.68342 8.31658 9.68342 7.68342 9.29289 7.29289L6 4" stroke="currentColor"></path></symbol>
+<symbol id="i-close" viewBox="0 0 16 16" fill="none" stroke-width="1.3"><path d="M2.5 2.5L13.5 13.5" stroke="currentColor"></path><path d="M13.5 2.5L2.5 13.5" stroke="currentColor"></path></symbol>
+<symbol id="i-doc" viewBox="0 0 16 16" fill="none" stroke-width="1.3"><path d="M6.15479 4.91687H9.84543" stroke="currentColor"></path><path d="M11.8798 9.55347V2.71525C11.8798 2.37416 11.564 2.09766 11.1744 2.09766H4.82577C4.43618 2.09766 4.12036 2.37416 4.12036 2.71525V9.55347" stroke="currentColor"></path><path d="M2.28735 13.8022V8.84792C2.28735 8.77514 2.36262 8.72673 2.42884 8.75693L13.2936 13.7112C13.3914 13.7558 13.3596 13.9022 13.2521 13.9022H2.38735C2.33213 13.9022 2.28735 13.8575 2.28735 13.8022Z" stroke="currentColor"></path><path d="M7.46929 10.979L13.5783 8.7416C13.6435 8.7177 13.7126 8.76601 13.7126 8.83551L13.7125 13.8022C13.7125 13.8574 13.6678 13.9022 13.6125 13.9022H7.99999" stroke="currentColor"></path><path d="M6.15479 7.2395H9.05644" stroke="currentColor"></path></symbol>
+<symbol id="i-edit" viewBox="0 0 16 16" fill="none" stroke-width="1.3"><path d="M8.85596 2.69971H4.19971C3.37141 2.69971 2.69992 3.37146 2.69971 4.19971V11.8003C2.69992 12.6285 3.37141 13.3003 4.19971 13.3003H11.8003C12.6283 13.2999 13.3001 12.6283 13.3003 11.8003V7.89893H14.3003V11.8003C14.3001 13.1806 13.1806 14.2999 11.8003 14.3003H4.19971C2.81913 14.3003 1.69992 13.1808 1.69971 11.8003V4.19971C1.69992 2.81918 2.81913 1.69971 4.19971 1.69971H8.85596V2.69971Z" fill="currentColor"></path><path d="M7.7849 8.23878L13.888 2.13574" stroke="currentColor"></path></symbol>
+<symbol id="i-file" viewBox="0 0 16 16" fill="none" stroke-width="1.3"><path d="M2.55912 7.93683C2.67584 7.49906 3.0723 7.19446 3.52536 7.19446H13.6491C14.3061 7.19446 14.7846 7.81725 14.6153 8.45209L13.4411 12.856C13.3244 13.2938 12.9279 13.5984 12.4748 13.5984H2.35113C1.69411 13.5984 1.21562 12.9756 1.38489 12.3407L2.55912 7.93683Z" fill="currentColor" opacity="0.16"></path><path d="M13.6491 6.69446C14.6346 6.69453 15.3522 7.62895 15.0983 8.58118L13.9245 12.9845C13.7494 13.6412 13.1539 14.0988 12.4743 14.0988H2.35126C1.36574 14.0988 0.648153 13.1643 0.902044 12.212L2.07587 7.80774C2.25102 7.15128 2.84567 6.69455 3.52509 6.69446H13.6491ZM3.52509 7.69446C3.29865 7.69455 3.10004 7.84674 3.04169 8.06555L1.86786 12.4698C1.78345 12.7872 2.02285 13.0988 2.35126 13.0988H12.4743C12.7007 13.0988 12.8992 12.9463 12.9577 12.7277L14.1325 8.32336C14.2171 8.00598 13.9776 7.69453 13.6491 7.69446H3.52509Z" fill="currentColor"></path><path d="M4.7666 1.90137C5.13227 1.90144 5.48571 2.03525 5.75977 2.27734L7.27246 3.61328C7.36379 3.69382 7.48174 3.73828 7.60352 3.73828H12.3994C13.2276 3.73841 13.8993 4.41005 13.8994 5.23828V6.7168C13.8183 6.70327 13.735 6.69436 13.6494 6.69434H12.8994V5.23828C12.8993 4.96233 12.6754 4.73841 12.3994 4.73828H7.60352C7.23781 4.73828 6.88446 4.60438 6.61035 4.3623L5.09766 3.02637C5.00636 2.94576 4.88838 2.90144 4.7666 2.90137H2.0498C1.77366 2.90137 1.5498 3.12523 1.5498 3.40137V9.78223L0.902344 12.2119C0.648452 13.1642 1.36604 14.0986 2.35156 14.0986H2.0498C1.2214 14.0986 0.549838 13.427 0.549805 12.5986V3.40137C0.549805 2.57294 1.22138 1.90137 2.0498 1.90137H4.7666Z" fill="currentColor"></path></symbol>
+<symbol id="i-task" viewBox="0 0 16 16" fill="none" stroke-width="1.3"><path d="M3.75 6.25C4.7165 6.25 5.5 5.4665 5.5 4.5C5.5 3.5335 4.7165 2.75 3.75 2.75C2.7835 2.75 2 3.5335 2 4.5C2 5.4665 2.7835 6.25 3.75 6.25Z" stroke="currentColor"></path><path d="M7.5 4.5H13.5" stroke="currentColor"></path><path d="M3.75 13.25C4.7165 13.25 5.5 12.4665 5.5 11.5C5.5 10.5335 4.7165 9.75 3.75 9.75C2.7835 9.75 2 10.5335 2 11.5C2 12.4665 2.7835 13.25 3.75 13.25Z" stroke="currentColor"></path><path d="M7.5 11.5H13.5" stroke="currentColor"></path></symbol>
+<symbol id="i-pack" viewBox="0 0 16 16" fill="none" stroke-width="1.3"><path d="M13.5 2.5H2.5C1.94772 2.5 1.5 2.94772 1.5 3.5V4.5C1.5 5.05228 1.94772 5.5 2.5 5.5H13.5C14.0523 5.5 14.5 5.05228 14.5 4.5V3.5C14.5 2.94772 14.0523 2.5 13.5 2.5Z" stroke="currentColor"></path><path d="M2.5 5.5V13.5C2.5 13.7652 2.60536 14.0196 2.79289 14.2071C2.98043 14.3946 3.23478 14.5 3.5 14.5H12.5C12.7652 14.5 13.0196 14.3946 13.2071 14.2071C13.3946 14.0196 13.5 13.7652 13.5 13.5V5.5" stroke="currentColor"></path><path d="M6.5 9.5H9.5" stroke="currentColor"></path></symbol>
+<symbol id="i-pin" viewBox="0 0 16 16" fill="none" stroke-width="1.3"><path d="M9.96976 1.70572L13.1554 3.93629L10.9019 8.12317L11.5158 11.605L10.7192 12.7427L2.52767 7.00693L3.3243 5.86922L6.80612 5.25528L9.96976 1.70572Z" stroke="currentColor" stroke-linejoin="round"></path><path d="M6.05285 9.47511C6.27284 9.16094 6.70586 9.08458 7.02003 9.30457C7.3342 9.52455 7.41055 9.95757 7.19057 10.2717L3.98587 14.4708L3.21223 13.9291L6.05285 9.47511Z" fill="currentColor"></path></symbol>
+<symbol id="i-pinned" viewBox="0 0 16 16" fill="none" stroke-width="1.3"><path d="M9.96976 1.70572L13.1554 3.93629L10.9019 8.12317L11.5158 11.605L10.7192 12.7427L2.52767 7.00693L3.3243 5.86922L6.80612 5.25528L9.96976 1.70572Z" fill="currentColor" stroke="currentColor" stroke-linejoin="round"></path><path d="M6.05285 9.47511C6.27284 9.16094 6.70586 9.08458 7.02003 9.30457C7.3342 9.52455 7.41055 9.95757 7.19057 10.2717L3.98587 14.4708L3.21223 13.9291L6.05285 9.47511Z" fill="currentColor"></path></symbol>
+<symbol id="i-github" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"></path></symbol>
+</defs></svg>
+<header class="head"><div><h1>线索收集</h1><p>布局研究 03 · 压紧包节点，主题主色 #3388BB。示例数据，非功能实现。</p></div><span class="edition">DESIGN / 03</span></header>
+<main>
+<div class="variants">
+<section class="stage">
+<div class="stage-title"><span>01</span><h2>侧栏形态</h2></div>
+<div class="app-shell">
+<header class="app-head"><h2>线索收集</h2><span class="push"></span><span class="context">账户服务</span><button class="icon-button" title="线索设置" aria-label="线索设置"><svg class="icon"><use href="#i-settings"></use></svg></button></header>
+<section class="pack-zone">
+<div class="section-head"><h3>线索包</h3><span class="counter">36</span><div class="compact-search"><svg class="icon"><use href="#i-search"></use></svg><input type="search" placeholder="搜索包" aria-label="搜索线索包"></div><button class="icon-button" title="新建线索包" aria-label="新建线索包"><svg class="icon"><use href="#i-plus"></use></svg></button><button class="icon-button" title="导入和更多操作" aria-label="导入和更多操作">⋯</button></div>
+<div class="pack-grid">
+<article class="pack-node featured"><button class="pack-hit" title="插入登录链路评审到输入框"><span class="pack-signal"><svg class="icon"><use href="#i-pack"></use></svg><span class="at">@</span></span><span class="pack-title">登录链路评审</span></button><button class="pack-edit" title="编辑登录链路评审"><span><span class="mono">04</span> 条线索</span><svg class="icon small"><use href="#i-edit"></use></svg></button></article>
+<article class="pack-node"><button class="pack-hit" title="插入设计系统与规范到输入框"><span class="pack-signal"><svg class="icon"><use href="#i-pack"></use></svg><span class="at">@</span></span><span class="pack-title">设计系统与规范</span></button><button class="pack-edit" title="编辑设计系统与规范"><span><span class="mono">06</span> 条线索</span><svg class="icon small"><use href="#i-edit"></use></svg></button></article>
+<article class="pack-node"><button class="pack-hit" title="插入迭代 07 交付到输入框"><span class="pack-signal"><svg class="icon"><use href="#i-pack"></use></svg><span class="at">@</span></span><span class="pack-title">迭代 07 交付</span></button><button class="pack-edit" title="编辑迭代 07 交付"><span><span class="mono">08</span> 条线索</span><svg class="icon small"><use href="#i-edit"></use></svg></button></article>
+<article class="pack-node"><button class="pack-hit" title="插入历史决策与迁移到输入框"><span class="pack-signal"><svg class="icon"><use href="#i-pack"></use></svg><span class="at">@</span></span><span class="pack-title">历史决策与迁移</span></button><button class="pack-edit" title="编辑历史决策与迁移"><span><span class="mono">03</span> 条线索</span><svg class="icon small"><use href="#i-edit"></use></svg></button></article>
+</div>
+<div class="pager"><span>最近使用</span><span class="push"></span><button class="icon-button" title="上一页线索包" aria-label="上一页线索包" disabled=""><svg class="icon"><use href="#i-prev"></use></svg></button><span class="page-number">01 / 09</span><button class="icon-button" title="下一页线索包" aria-label="下一页线索包"><svg class="icon"><use href="#i-next"></use></svg></button></div>
+</section>
+<section class="source-region">
+<div class="section-head"><h3>来源</h3><span class="counter">05</span><span class="push"></span><button class="icon-button" title="添加来源插件" aria-label="添加来源插件"><svg class="icon"><use href="#i-plus"></use></svg></button></div>
+<div class="source-layout">
+<nav class="source-nav" aria-label="线索来源"><button class="source-button"><svg class="icon"><use href="#i-file"></use></svg><span>文件</span></button><button class="source-button"><svg class="icon"><use href="#i-doc"></use></svg><span>飞书文档</span></button><button class="source-button"><svg class="icon"><use href="#i-task"></use></svg><span>飞书任务</span></button><button class="source-button selected" aria-current="page"><svg class="icon"><use href="#i-github"></use></svg><span>Issues</span></button><button class="source-button"><svg class="icon"><use href="#i-pr"></use></svg><span>PRs</span></button></nav>
+<div class="source-main">
+<div class="query"><svg class="icon"><use href="#i-search"></use></svg><input type="search" aria-label="搜索或添加线索" placeholder="搜索标题、编号或粘贴链接"></div>
+<div class="scope"><button class="ghost"><svg class="icon small"><use href="#i-github"></use></svg><span class="repo">acme / accounts</span><span>⌄</span></button><span class="push"></span><button class="ghost open">Open <span>⌄</span></button></div>
+<div class="source-scroll">
+<div class="group-label pinned-label"><svg class="icon small"><use href="#i-pinned"></use></svg><span>置顶</span><span class="mono">02</span></div>
+<div class="clue-row"><button class="clue-hit" title="插入线索到输入框"><span class="clue-title">登录状态在页面刷新后丢失</span><span class="clue-sub"><span class="row-number">#128</span><span>bug</span><span>2 小时前</span></span></button><button class="icon-button pinned" title="取消置顶" aria-label="取消置顶"><svg class="icon small"><use href="#i-pinned"></use></svg></button><button class="icon-button" title="查看和编辑线索" aria-label="查看和编辑线索"><svg class="icon small"><use href="#i-edit"></use></svg></button></div>
+<div class="clue-row"><button class="clue-hit" title="插入线索到输入框"><span class="clue-title">统一会话恢复策略</span><span class="clue-sub"><span class="row-number">#116</span><span>enhancement</span></span></button><button class="icon-button pinned" title="取消置顶" aria-label="取消置顶"><svg class="icon small"><use href="#i-pinned"></use></svg></button><button class="icon-button" title="查看和编辑线索" aria-label="查看和编辑线索"><svg class="icon small"><use href="#i-edit"></use></svg></button></div>
+<div class="group-label"><span>最近更新</span><span class="push"></span><span class="mono">126</span></div>
+<div class="clue-row"><button class="clue-hit" title="插入线索到输入框"><span class="clue-title">补齐登录态边界测试</span><span class="clue-sub"><span class="row-number">#134</span><span>testing</span><span>18 分钟前</span></span></button><button class="icon-button" title="置顶" aria-label="置顶"><svg class="icon small"><use href="#i-pin"></use></svg></button><button class="icon-button" title="查看和编辑线索" aria-label="查看和编辑线索"><svg class="icon small"><use href="#i-edit"></use></svg></button></div>
+<div class="clue-row"><button class="clue-hit" title="插入线索到输入框"><span class="clue-title">增加设备列表与最近活动时间</span><span class="clue-sub"><span class="row-number">#132</span><span>feature</span><span>1 小时前</span></span></button><button class="icon-button" title="置顶" aria-label="置顶"><svg class="icon small"><use href="#i-pin"></use></svg></button><button class="icon-button" title="查看和编辑线索" aria-label="查看和编辑线索"><svg class="icon small"><use href="#i-edit"></use></svg></button></div>
+<div class="clue-row"><button class="clue-hit" title="插入线索到输入框"><span class="clue-title">登录错误状态的界面反馈</span><span class="clue-sub"><span class="row-number">#129</span><span>design</span><span>昨天</span></span></button><button class="icon-button" title="置顶" aria-label="置顶"><svg class="icon small"><use href="#i-pin"></use></svg></button><button class="icon-button" title="查看和编辑线索" aria-label="查看和编辑线索"><svg class="icon small"><use href="#i-edit"></use></svg></button></div>
+</div>
+<div class="pager"><span>10 条 / 页</span><span class="push"></span><button class="icon-button" title="上一页线索" aria-label="上一页线索" disabled=""><svg class="icon"><use href="#i-prev"></use></svg></button><span class="page-number">01 / 13</span><button class="icon-button" title="下一页线索" aria-label="下一页线索"><svg class="icon"><use href="#i-next"></use></svg></button></div>
+</div></div></section>
+</div>
+<p class="caption">包库与来源各自分页。包节点上部插入、底条编辑；工作区绑定不出现在主页面。</p>
+</section>
+<section class="stage">
+<div class="stage-title"><span>02</span><h2>宽幅形态</h2></div>
+<div class="app-shell app-wide">
+<header class="app-head"><h2>线索收集</h2><span class="push"></span><span class="context">账户服务</span><button class="icon-button" title="线索设置" aria-label="线索设置"><svg class="icon"><use href="#i-settings"></use></svg></button></header>
+<section class="pack-zone">
+<div class="section-head"><h3>线索包</h3><span class="counter">36</span><div class="compact-search"><svg class="icon"><use href="#i-search"></use></svg><input type="search" placeholder="搜索线索包" aria-label="搜索线索包"></div><button class="icon-button" title="新建线索包" aria-label="新建线索包"><svg class="icon"><use href="#i-plus"></use></svg></button><button class="icon-button" title="导入和更多操作" aria-label="导入和更多操作">⋯</button></div>
+<div class="pack-grid">
+<article class="pack-node featured"><button class="pack-hit" title="插入登录链路评审到输入框"><span class="pack-signal"><svg class="icon large"><use href="#i-pack"></use></svg><span class="at">@</span></span><span class="pack-title">登录链路评审</span></button><button class="pack-edit" title="编辑登录链路评审"><span><span class="mono">04</span> 条线索</span><svg class="icon small"><use href="#i-edit"></use></svg></button></article>
+<article class="pack-node"><button class="pack-hit" title="插入设计系统与规范到输入框"><span class="pack-signal"><svg class="icon large"><use href="#i-pack"></use></svg><span class="at">@</span></span><span class="pack-title">设计系统与规范</span></button><button class="pack-edit" title="编辑设计系统与规范"><span><span class="mono">06</span> 条线索</span><svg class="icon small"><use href="#i-edit"></use></svg></button></article>
+<article class="pack-node"><button class="pack-hit" title="插入迭代 07 交付到输入框"><span class="pack-signal"><svg class="icon large"><use href="#i-pack"></use></svg><span class="at">@</span></span><span class="pack-title">迭代 07 交付</span></button><button class="pack-edit" title="编辑迭代 07 交付"><span><span class="mono">08</span> 条线索</span><svg class="icon small"><use href="#i-edit"></use></svg></button></article>
+<article class="pack-node"><button class="pack-hit" title="插入历史决策与迁移到输入框"><span class="pack-signal"><svg class="icon large"><use href="#i-pack"></use></svg><span class="at">@</span></span><span class="pack-title">历史决策与迁移</span></button><button class="pack-edit" title="编辑历史决策与迁移"><span><span class="mono">03</span> 条线索</span><svg class="icon small"><use href="#i-edit"></use></svg></button></article>
+</div>
+<div class="pager"><span>最近使用</span><span class="push"></span><button class="icon-button" title="上一页线索包" aria-label="上一页线索包" disabled=""><svg class="icon"><use href="#i-prev"></use></svg></button><span class="page-number">01 / 09</span><button class="icon-button" title="下一页线索包" aria-label="下一页线索包"><svg class="icon"><use href="#i-next"></use></svg></button></div>
+</section>
+<section class="source-region">
+<div class="section-head"><h3>来源</h3><span class="counter">05</span><span class="push"></span><span class="section-meta">GitHub Pull Requests</span><button class="icon-button" title="添加来源插件" aria-label="添加来源插件"><svg class="icon"><use href="#i-plus"></use></svg></button></div>
+<div class="source-layout">
+<nav class="source-nav" aria-label="线索来源"><button class="source-button"><svg class="icon"><use href="#i-file"></use></svg><span>文件</span><span class="source-count">12</span></button><button class="source-button"><svg class="icon"><use href="#i-doc"></use></svg><span>飞书文档</span><span class="source-count">03</span></button><button class="source-button"><svg class="icon"><use href="#i-task"></use></svg><span>飞书任务</span><span class="source-count">08</span></button><button class="source-button"><svg class="icon"><use href="#i-github"></use></svg><span>Issues</span><span class="source-count">126</span></button><button class="source-button selected" aria-current="page"><svg class="icon"><use href="#i-pr"></use></svg><span>PRs</span><span class="source-count">24</span></button></nav>
+<div class="source-main">
+<div class="query"><svg class="icon"><use href="#i-search"></use></svg><input type="search" aria-label="搜索或添加线索" placeholder="搜索标题、编号或粘贴链接"></div>
+<div class="scope"><button class="ghost"><svg class="icon small"><use href="#i-github"></use></svg><span class="repo">acme / accounts</span><span>⌄</span></button><span class="push"></span><button class="ghost open">Open <span>⌄</span></button><button class="ghost">最近更新 <span>⌄</span></button></div>
+<div class="source-scroll">
+<div class="group-label pinned-label"><svg class="icon small"><use href="#i-pinned"></use></svg><span>置顶</span><span class="mono">02</span></div>
+<div class="clue-row"><button class="clue-hit" title="插入线索到输入框"><span class="clue-title">统一登录态校验与错误处理</span><span class="clue-sub"><span class="row-number">#146</span><span class="status-dot"></span><span>Review required</span><span>2 小时前</span></span></button><button class="icon-button pinned" title="取消置顶" aria-label="取消置顶"><svg class="icon small"><use href="#i-pinned"></use></svg></button><button class="icon-button" title="查看和编辑线索" aria-label="查看和编辑线索"><svg class="icon"><use href="#i-edit"></use></svg></button></div>
+<div class="clue-row"><button class="clue-hit" title="插入线索到输入框"><span class="clue-title">改进账户设置中的表单反馈</span><span class="clue-sub"><span class="row-number">#138</span><span>Draft</span><span>昨天</span></span></button><button class="icon-button pinned" title="取消置顶" aria-label="取消置顶"><svg class="icon small"><use href="#i-pinned"></use></svg></button><button class="icon-button" title="查看和编辑线索" aria-label="查看和编辑线索"><svg class="icon"><use href="#i-edit"></use></svg></button></div>
+<div class="group-label"><span>最近更新</span><span class="push"></span><span class="mono">24</span></div>
+<div class="clue-row"><button class="clue-hit" title="插入线索到输入框"><span class="clue-title">补充会话恢复与页面刷新测试</span><span class="clue-sub"><span class="row-number">#152</span><span class="status-dot"></span><span>Checks passed</span><span>12 分钟前</span></span></button><button class="icon-button" title="置顶" aria-label="置顶"><svg class="icon small"><use href="#i-pin"></use></svg></button><button class="icon-button" title="查看和编辑线索" aria-label="查看和编辑线索"><svg class="icon"><use href="#i-edit"></use></svg></button></div>
+<div class="clue-row"><button class="clue-hit" title="插入线索到输入框"><span class="clue-title">修复设备名称过长时的布局溢出</span><span class="clue-sub"><span class="row-number">#150</span><span class="status-dot"></span><span>Approved</span><span>45 分钟前</span></span></button><button class="icon-button" title="置顶" aria-label="置顶"><svg class="icon small"><use href="#i-pin"></use></svg></button><button class="icon-button" title="查看和编辑线索" aria-label="查看和编辑线索"><svg class="icon"><use href="#i-edit"></use></svg></button></div>
+<div class="clue-row"><button class="clue-hit" title="插入线索到输入框"><span class="clue-title">添加会话活跃时间与设备筛选</span><span class="clue-sub"><span class="row-number">#149</span><span>Draft</span><span>1 小时前</span></span></button><button class="icon-button" title="置顶" aria-label="置顶"><svg class="icon small"><use href="#i-pin"></use></svg></button><button class="icon-button" title="查看和编辑线索" aria-label="查看和编辑线索"><svg class="icon"><use href="#i-edit"></use></svg></button></div>
+<div class="clue-row"><button class="clue-hit" title="插入线索到输入框"><span class="clue-title">优化账户安全设置中的加载状态</span><span class="clue-sub"><span class="row-number">#147</span><span>Review required</span><span>3 小时前</span></span></button><button class="icon-button" title="置顶" aria-label="置顶"><svg class="icon small"><use href="#i-pin"></use></svg></button><button class="icon-button" title="查看和编辑线索" aria-label="查看和编辑线索"><svg class="icon"><use href="#i-edit"></use></svg></button></div>
+</div>
+<div class="pager"><span>10 条 / 页</span><span class="push"></span><button class="icon-button" title="上一页线索" aria-label="上一页线索" disabled=""><svg class="icon"><use href="#i-prev"></use></svg></button><span class="page-number">01 / 03</span><button class="icon-button" title="下一页线索" aria-label="下一页线索"><svg class="icon"><use href="#i-next"></use></svg></button></div>
+</div></div></section>
+</div>
+<div class="legend"><div><h3>包的两个操作区</h3><p>主体直接插入输入框，底部成员条打开编辑浮窗。两者有独立的悬停与键盘焦点。</p></div><div><h3>来源浏览，不是收藏全集</h3><p>能列举就直接分页；不能列举则显示置顶项，并通过同一输入框搜索或添加。</p></div><div><h3>稳定的历史引用</h3><p>置顶只影响常用入口。取消置顶、翻页、重启或闲置都不会使历史引用过期。</p></div></div>
+</section>
+</div>
+<section class="editor-study">
+<div class="stage"><div class="stage-title"><span>03</span><h2>底部成员条打开的包编辑浮窗</h2></div>
+<div class="window">
+<header class="window-head"><svg class="icon"><use href="#i-pack"></use></svg><h3>编辑线索包</h3><span class="push"></span><button class="icon-button" title="最大化" aria-label="最大化">□</button><button class="icon-button" title="关闭" aria-label="关闭"><svg class="icon"><use href="#i-close"></use></svg></button></header>
+<div class="window-scroll">
+<div class="form-top"><label class="field">名称<input type="text" value="登录链路评审"></label><button><svg class="icon small"><use href="#i-plus"></use></svg>添加成员</button></div>
+<div class="member-heading"><span>成员</span><span class="mono">04</span><span class="push"></span><button class="icon-button" title="搜索包内成员" aria-label="搜索包内成员"><svg class="icon small"><use href="#i-search"></use></svg></button></div>
+<div class="member-row"><svg class="icon"><use href="#i-file"></use></svg><div class="name"><strong>认证接口约定</strong><small>文件 · auth-contract.md</small></div><button class="icon-button" title="编辑成员内容" aria-label="编辑成员内容"><svg class="icon"><use href="#i-edit"></use></svg></button><button class="icon-button" title="从包中移除" aria-label="从包中移除"><svg class="icon small"><use href="#i-close"></use></svg></button></div>
+<div class="member-row"><svg class="icon"><use href="#i-doc"></use></svg><div class="name"><strong>账户体系方案</strong><small>飞书文档 · 身份与权限</small></div><button class="icon-button" title="编辑成员内容" aria-label="编辑成员内容"><svg class="icon"><use href="#i-edit"></use></svg></button><button class="icon-button" title="从包中移除" aria-label="从包中移除"><svg class="icon small"><use href="#i-close"></use></svg></button></div>
+<div class="member-row"><svg class="icon"><use href="#i-github"></use></svg><div class="name"><strong>登录状态在页面刷新后丢失</strong><small>GitHub Issues · #128</small></div><button class="icon-button" title="编辑成员内容" aria-label="编辑成员内容"><svg class="icon"><use href="#i-edit"></use></svg></button><button class="icon-button" title="从包中移除" aria-label="从包中移除"><svg class="icon small"><use href="#i-close"></use></svg></button></div>
+<div class="member-row"><svg class="icon"><use href="#i-task"></use></svg><div class="name"><strong>补齐登录态测试</strong><small>飞书任务 · 进行中</small></div><button class="icon-button" title="编辑成员内容" aria-label="编辑成员内容"><svg class="icon"><use href="#i-edit"></use></svg></button><button class="icon-button" title="从包中移除" aria-label="从包中移除"><svg class="icon small"><use href="#i-close"></use></svg></button></div>
+<details class="binding" open=""><summary>工作区绑定</summary><div class="binding-row"><label><input type="checkbox" checked="">自动关联</label><select aria-label="绑定的工作区"><option>账户服务</option><option>设计系统</option></select></div></details>
+</div>
+<footer class="window-footer"><span>4 条线索</span><span class="push"></span><button>导出</button><button class="primary">保存</button></footer>
+</div></div>
+<aside class="annotations"><section><h3>图标是来源契约的一部分</h3><p>来源注册时提供图标与名称；来源切换、详情标题、设置页沿用同一身份。内置使用已有宿主图标与品牌资产，外部来源缺省时采用类型回退。</p></section><section><h3>绑定只在内部设置</h3><p>绑定工作区放在包或单条线索的编辑浮窗中。主页面保留轻量快捷入口，绑定不作为读取权限。</p></section><section><h3>统一浮窗继续深化</h3><p>按内容类型设置初始尺寸，提供最大化与还原。从包进入成员后支持返回，保留包内编辑状态；不叠加多层弹窗。</p></section></aside>
+</section>
+</main>
+<footer class="foot">静态设计稿 · 无脚本、外部依赖或网络请求。图标来自已有 DSH ui-primitives 与 Simple Icons；示例内容不表示真实连接或加载结果。</footer>
+</body></html>

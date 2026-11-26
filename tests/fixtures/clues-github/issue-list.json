@@ -1,0 +1,43 @@
+{
+  "data": {
+    "repository": {
+      "issues": {
+        "totalCount": 1038,
+        "pageInfo": {
+          "hasNextPage": true,
+          "endCursor": "Y3Vyc29yOnYyOpK0MjAyNi0xMC0xN1QxOTozMjozMVrPAAAAAV_M_JY="
+        },
+        "nodes": [
+          {
+            "number": 14728,
+            "title": "[aw] Dependabot PR Triage (skills-driven) exceeded daily AI credits budget",
+            "state": "OPEN",
+            "createdAt": "2026-10-17T19:30:00Z",
+            "updatedAt": "2026-10-17T19:43:04Z",
+            "closedAt": null,
+            "url": "https://github.com/cli/cli/issues/14728",
+            "author": {
+              "login": "cli-triage",
+              "name": "CLI Triage",
+              "url": "https://github.com/apps/cli-triage"
+            },
+            "assignees": {
+              "nodes": [
+                { "login": "octocat", "name": "The Octocat", "url": "https://github.com/octocat" }
+              ]
+            },
+            "labels": { "nodes": [{ "name": "triage" }] }
+          },
+          {
+            "number": 14732,
+            "title": "แบบร่างจำลอง",
+            "state": "OPEN",
+            "updatedAt": "2026-10-17T19:32:31Z",
+            "url": "https://github.com/cli/cli/issues/14732",
+            "author": { "login": "phatcharaporn1134" }
+          }
+        ]
+      }
+    }
+  }
+}

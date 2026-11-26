@@ -30,6 +30,7 @@ import { IconChevronUpOutlineRegular, StateDot } from '@deepseek-ai/dsh-client-u
 import type { TasksNodeState } from './tasks-model.ts'
 import { nodeDotState, stateLabel } from './tasks-shared.tsx'
 import { t } from './locales.ts'
+import { IconButton } from './ui/index.ts'
 import css from './tasks-graph.module.css'
 
 /** The five kinds of card the graph draws. */
@@ -160,7 +161,7 @@ export function CardBar(props: {
   state: TasksNodeState
   /** The merged process activity line (running nodes and settled summaries). */
   activity?: string
-  /** Whether the node is executing (drives the sweep). */
+  /** Whether the node is executing (the static running-state hook). */
   running?: boolean
   /** Fold the node into its parent's completed aggregate (settled nodes only). */
   onFold?: (event: { stopPropagation(): void }) => void
@@ -199,26 +200,16 @@ export function CardBar(props: {
             <span className={css.barActivity} title={line}>{line}</span>
           )}
           {props.onFold !== undefined && (
-            <button
-              type="button"
+            <IconButton
+              size="sm"
               className={css.barFold}
-              aria-label={props.foldLabel ?? t('tasksFoldOne')}
-              title={props.foldLabel ?? t('tasksFoldOne')}
+              label={props.foldLabel ?? t('tasksFoldOne')}
+              icon={<IconChevronUpOutlineRegular size={12} />}
               onClick={(event) => {
-                // The card's own click opens the detail popover: folding must
-                // never do both.
                 event.stopPropagation()
                 props.onFold?.(event)
               }}
-            >
-              {/*
-                The COLLAPSE direction (chevron up = gather into the group): the
-                aggregate card at the other end of the same motion offers the
-                EXPAND one (chevron down). Two opposite actions must not share
-                a glyph — the first cut drew both as a down chevron.
-              */}
-              <IconChevronUpOutlineRegular size={12} />
-            </button>
+            />
           )}
         </>
       )}

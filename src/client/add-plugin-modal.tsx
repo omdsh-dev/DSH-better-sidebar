@@ -25,8 +25,10 @@ import type { BetterSidebarService } from './service.ts'
 import { PLUGIN_TOPIC_URL, type PluginEntry } from './plugins-shared.ts'
 import { builtinTabPlugins } from './plugins-tabs.ts'
 import { builtinViewerPlugins } from './plugins-viewers.ts'
+import { ActionButton, TextInput } from './ui/index.ts'
 import { t } from './locales.ts'
 import css from './SideCardSection.module.css'
+import design from './ui/design.module.css'
 
 /** Which extension point the modal is adding a plugin for. */
 export type PluginKind = 'tab' | 'viewer'
@@ -115,22 +117,22 @@ export function PluginListBody(props: { service: BetterSidebarService; kind: Plu
           {name}
         </button>
         <span className={css.pluginEntryActions}>
-          <button
+          <ActionButton
             type="button"
             className={css.pluginJumpBtn}
             aria-label={`${t('openPlugin')}: ${name}`}
             onClick={() => { jump(entry) }}
           >
             {t('openPlugin')}
-          </button>
-          <button
+          </ActionButton>
+          <ActionButton
             type="button"
             className={css.pluginCopyBtn}
             aria-label={`${t('copyInstall')}: ${name}`}
             onClick={() => { copy(entry) }}
           >
             {copiedId === entry.id ? t('copied') : t('copy')}
-          </button>
+          </ActionButton>
         </span>
       </div>
       <div className={css.pluginDesc}>
@@ -143,14 +145,14 @@ export function PluginListBody(props: { service: BetterSidebarService; kind: Plu
 
   return (
     <div className={css.pluginList}>
-      <button
+      <ActionButton
         type="button"
         className={css.pluginTopicBtn}
         onClick={() => { window.open(PLUGIN_TOPIC_URL, '_blank', 'noopener') }}
       >
         {t('addPluginsBrowseMore')}
-      </button>
-      <input
+      </ActionButton>
+      <TextInput
         type="search"
         className={css.pluginSearch}
         placeholder={t('addPluginsSearch')}
@@ -190,13 +192,13 @@ export function AddPluginModal(props: { service: BetterSidebarService; onClose: 
       open
       onClose={onClose}
       title={kind === 'tab' ? t('addPluginsTabCard') : t('addPluginsViewerCard')}
-      description={kind === 'tab' ? t('addPluginsTabDesc') : t('addPluginsViewerDesc')}
       closeLabel={t('close')}
-      className={css.pluginModal}
+      className={`${design.surface} ${css.pluginModal}`}
+      contentClassName={css.dialogContent}
       footer={(
-        <button type="button" className={css.done} onClick={onClose}>
+        <ActionButton onClick={onClose}>
           {t('settingsDone')}
-        </button>
+        </ActionButton>
       )}
     >
       <PluginListBody service={service} kind={kind} />

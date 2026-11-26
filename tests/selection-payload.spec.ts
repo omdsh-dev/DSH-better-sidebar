@@ -1,12 +1,11 @@
 /**
  * Pure payload logic for the viewer selection popup ("add to
  * conversation"): the fence header (relative path + line span), the
- * over-limit plain-line fallback, and the best-effort reverse-search that
+ * complete fenced payload behind a compact label, and the reverse-search that
  * maps a preview selection back to source lines.
  */
 import { describe, expect, it } from 'vitest'
 import {
-  SELECTION_LIMIT,
   buildSelectionInsert,
   headerOf,
   linesOfSelection,
@@ -46,27 +45,27 @@ describe('buildSelectionInsert', () => {
     })
   })
 
-  it('accepts a selection exactly at the limit (fenced)', () => {
-    const text = 'x'.repeat(SELECTION_LIMIT)
+  it('keeps a 500-character selection complete', () => {
+    const text = 'x'.repeat(500)
     expect(buildSelectionInsert('/p/a.ts', '/p', { start: 1, end: 1 }, text)).toEqual({
       label: 'a.ts:1',
       text: `\`\`\`a.ts:1\n${text}\n\`\`\``,
     })
   })
 
-  it('drops the content past the limit: one plain path line, no fence', () => {
-    const text = 'x'.repeat(SELECTION_LIMIT + 1)
+  it('keeps a selection past the former 500-character threshold complete', () => {
+    const text = 'x'.repeat(501)
     expect(buildSelectionInsert('/p/a.ts', '/p', { start: 7, end: 7 }, text)).toEqual({
       label: 'a.ts:7',
-      text: 'a.ts:7',
+      text: `\`\`\`a.ts:7\n${text}\n\`\`\``,
     })
   })
 
-  it('keeps the plain-line form when past the limit without line numbers', () => {
-    const text = 'x'.repeat(SELECTION_LIMIT + 1)
+  it('keeps a long selection complete even without line numbers', () => {
+    const text = 'x'.repeat(10_000)
     expect(buildSelectionInsert('/p/a.ts', '/p', undefined, text)).toEqual({
       label: 'a.ts',
-      text: 'a.ts',
+      text: `\`\`\`a.ts\n${text}\n\`\`\``,
     })
   })
 })

@@ -1,0 +1,390 @@
+/*
+ * Shared clue resource metadata (S9).
+ *
+ * The host's own detail rows are ink on the surface with one accent and no
+ * fills; this block follows that, so it reads as part of the window rather than
+ * as a card pinned on top:
+ *
+ * - every value is text at 12px/18px or 11px/16px, all tabular;
+ * - a semantic colour appears only on a 12px verdict glyph, or on the word of a
+ *   destructive fact (CI failing, changes requested, conflicts) — nothing is
+ *   filled, and a healthy request stays monochrome;
+ * - separation comes from an 8px gap and the tertiarily-inked second line, not
+ *   from boxes, chips or dividers.
+ */
+.summary {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--ds-sidebar-space-3);
+  min-width: 0;
+  padding: 8px var(--ds-sidebar-gutter) 7px;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 18px;
+  font-variant-numeric: tabular-nums;
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex: 1;
+  min-width: 0;
+}
+
+/* The action seat never wraps and never takes the metadata's room. */
+.actions {
+  display: flex;
+  align-items: center;
+  flex: none;
+  gap: var(--ds-sidebar-space-1);
+  margin-inline-start: auto;
+}
+
+.identity {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 8px;
+  min-width: 0;
+}
+
+/* The one loud value of the header; everything around it is a step quieter. */
+.number {
+  color: var(--dsw-alias-label-primary);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.state {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 5px;
+  color: var(--dsw-alias-label-secondary);
+  white-space: nowrap;
+}
+
+.meta {
+  min-width: 0;
+  color: var(--dsw-alias-label-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Branches are a mono tail on the facts line, never the identity line. */
+.branch {
+  min-width: 0;
+  max-width: 100%;
+  color: var(--dsw-alias-label-tertiary);
+  font-family: var(--ds-font-family-code, monospace);
+  font-size: 11px;
+  line-height: 16px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.path {
+  flex: 1 1 160px;
+  min-width: 0;
+  color: var(--dsw-alias-label-tertiary);
+  font-family: var(--ds-font-family-code, monospace);
+  font-size: 11px;
+  line-height: 16px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The facts line: verdict glyph, ink words, branch tail — no capsules. */
+.facts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 8px;
+  min-width: 0;
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.fact {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  color: var(--dsw-alias-label-tertiary);
+  white-space: nowrap;
+}
+
+/* Only a fact a reader must not miss earns colour. */
+.fact[data-ink='error'] { color: var(--dsw-alias-state-error-primary); }
+
+/* CI: the verdict glyph carries the semantic colour, its word stays quiet. */
+.checks {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  color: var(--dsw-alias-label-tertiary);
+  white-space: nowrap;
+}
+
+/* The dot carries its own state colour; the word stays tertiary, so a healthy
+   request never paints a coloured word next to a coloured glyph. */
+.checks[data-ink='error'] { color: var(--dsw-alias-state-error-primary); }
+
+.checksGlyph {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+}
+
+/* ── List/card row variant ──────────────────────────────────────────────── */
+
+.inline {
+  display: flex;
+  flex-wrap: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  gap: 4px 8px;
+  align-items: center;
+  min-width: 0;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 16px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* A row states its number in secondary ink: it is the row's identity, but the
+   title above it stays the loudest line. */
+.inline > [data-clue-resource-inline-identity] {
+  color: var(--dsw-alias-label-secondary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.inline > [data-clue-resource-inline-author],
+.inline > [data-clue-resource-inline-due],
+.inline > [data-clue-resource-inline-checks] {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Individual checks (detail header, collapsed) ────────────────────────── */
+
+/* A disclosure, not a band: the header keeps its two quiet lines until the
+   reader asks which jobs ran, so an open pull request with 20 checks still
+   reads as one line. */
+.checksDisclosure {
+  min-width: 0;
+  margin-top: 1px;
+}
+
+.checksSummary {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  list-style: none;
+  user-select: none;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 16px;
+  cursor: pointer;
+}
+
+.checksSummary::-webkit-details-marker { display: none; }
+.checksSummary:hover { color: var(--dsw-alias-label-secondary); }
+
+.checksChevron {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  transition: transform 140ms ease;
+}
+
+.checksDisclosure[open] > .checksSummary > .checksChevron {
+  transform: rotate(90deg);
+}
+
+/* A failing count is the one fact a reader must not miss; the rows below
+   stay quiet and let their own dots carry the state. */
+.checksFailing[data-ink='error'] { color: var(--dsw-alias-state-error-primary); }
+
+.checksList {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-height: 216px;
+  margin: 2px 0 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.checkRow {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.checkGlyph {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+}
+
+.checkName {
+  min-width: 0;
+  color: var(--dsw-alias-label-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-decoration: none;
+}
+
+a.checkName:hover { text-decoration: underline; }
+
+.resourceTitle {
+  margin: 0 0 5px;
+  color: var(--dsw-alias-label-primary);
+  font-size: 17px;
+  line-height: 1.3;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.summary[data-clue-resource-github] { flex-wrap: wrap; align-items: flex-start; }
+.summary[data-clue-resource-github] .body { flex: 1 1 250px; gap: 3px; }
+.author, .person { min-width: 0; }
+.person {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  vertical-align: middle;
+  text-decoration: none;
+  color: var(--dsw-alias-label-primary);
+  font-weight: 600;
+}
+a.person:hover .personName { text-decoration: underline; }
+.personName { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.avatar {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  overflow: hidden;
+  border-radius: 50%;
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 10px;
+}
+.avatar img { width: 100%; height: 100%; object-fit: cover; }
+.inline .avatar { width: 14px; height: 14px; }
+.githubState {
+  display: inline-flex;
+  padding: 1px 6px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--ds-sidebar-radius);
+}
+.githubState[data-clue-resource-state-chip='open'] .state { color: var(--dsw-alias-state-success-primary); }
+.branch code { font: inherit; color: var(--dsw-alias-label-secondary); }
+.changes { display: inline-flex; gap: 5px; font-weight: 600; white-space: nowrap; }
+
+[data-check-tone='pass'], [data-check-tone='merged'] { color: var(--dsw-alias-state-success-primary); }
+[data-check-tone='fail'] { color: var(--dsw-alias-state-error-primary); }
+[data-check-tone='wait'] { color: var(--dsw-alias-state-warn-primary); }
+[data-check-tone='other'], [data-check-tone='closed'] { color: var(--dsw-alias-label-tertiary); }
+.quietMark { display: inline-grid; width: 12px; height: 12px; place-items: center; font-weight: 600; line-height: 1; }
+
+.gate {
+  min-width: 0;
+  margin: var(--ds-sidebar-gutter) var(--ds-sidebar-gutter) 0;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--ds-sidebar-radius);
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-bg-base);
+  font-size: 12px;
+  line-height: 17px;
+  font-variant-numeric: tabular-nums;
+}
+.gateHeadline {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 10px;
+}
+.gateHeadline strong { display: block; font-size: 13px; font-weight: 600; }
+.gateIcon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 50%;
+}
+.gateCaption { color: var(--dsw-alias-label-tertiary); font-size: 11px; }
+.gateFacts {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  border-top: 1px solid var(--dsw-alias-border-l1);
+  background: var(--dsw-alias-border-l1);
+}
+.gateCell {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+  align-items: stretch;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 0;
+  background: var(--dsw-alias-bg-base);
+  color: inherit;
+  font: inherit;
+  text-align: start;
+}
+button.gateCell { cursor: pointer; }
+button.gateCell:hover { background: var(--dsw-alias-interactive-bg-hover); }
+button.gateCell:focus-visible { outline: 1px solid var(--ds-sidebar-accent); outline-offset: -2px; }
+.gateLabel { display: flex; align-items: center; justify-content: space-between; gap: 2px; font-weight: 600; overflow-wrap: anywhere; }
+.gateLabel svg { flex: none; color: var(--dsw-alias-label-tertiary); }
+.gateCell[aria-expanded='true'] .gateLabel svg { transform: rotate(90deg); }
+.gateCell .checks { white-space: normal; overflow-wrap: anywhere; }
+.gateValue:not([data-check-tone]) { color: var(--dsw-alias-label-secondary); }
+.gateValue { min-width: 0; overflow-wrap: anywhere; }
+.checkMeter { display: flex; gap: 2px; min-height: 3px; margin: 3px 0 2px; }
+.checkMeter > span { flex: 1 1 0; border-radius: 2px; background: currentColor; }
+.checkMeter > [data-check-tone='other'] { background: var(--dsw-alias-border-l2); }
+.gateChecks { border-top: 1px solid var(--dsw-alias-border-l1); }
+.checkListHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  padding: 6px 10px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+}
+.checkListHead a { display: inline-flex; align-items: center; gap: 3px; color: var(--ds-sidebar-accent); }
+.checkRows { list-style: none; margin: 0; padding: 0; }
+.checkRows > li { gap: 7px; padding: 6px 10px; border-top: 1px solid var(--dsw-alias-border-l1); }
+.checkRows .checkName { flex: 1 1 auto; white-space: normal; overflow-wrap: anywhere; color: var(--dsw-alias-label-primary); }
+.checkRowState { flex: none; font-variant-numeric: tabular-nums; }
+@container (max-width: 360px) {
+  .summary[data-clue-resource-github] { gap: 4px; }
+  .summary[data-clue-resource-github] .body { flex-basis: 100%; }
+  .resourceTitle { font-size: 15px; }
+  .gateFacts { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .gateCell[data-clue-change-request-fact='checks'] { grid-column: 1 / -1; }
+}

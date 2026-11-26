@@ -53,6 +53,8 @@ export interface NativeGuideProps {
   onBrowsePlugins?: () => void
   /** Host "create your plugin" action, when the workspace can start a session. */
   onCreatePlugin?: () => void
+  /** Open the same Sidebar settings used elsewhere in the plugin. */
+  onOpenSettings?: () => void
 }
 
 /** The grid's inputs, extracted for direct rendering in tests. */
@@ -71,6 +73,8 @@ export interface GuideGridProps {
   onBrowsePlugins?: () => void
   /** Host "Create your plugin" action, when the workspace can start a session. */
   onCreatePlugin?: () => void
+  /** Open the same Sidebar settings used elsewhere in the plugin. */
+  onOpenSettings?: () => void
   shellMenu?: GuideShellMenu | undefined
 }
 
@@ -204,7 +208,7 @@ function GuideCard(props: {
 export function GuideGrid(props: GuideGridProps) {
   const {
     entries, prefs, width, onOpen, onSaveOrder, onToggleHidden, onSaveRows,
-    onBrowsePlugins, onCreatePlugin, shellMenu,
+    onBrowsePlugins, onCreatePlugin, onOpenSettings, shellMenu,
   } = props
   const inventory = props.inventory ?? entries
   const [orderOpen, setOrderOpen] = useState(false)
@@ -262,7 +266,8 @@ export function GuideGrid(props: GuideGridProps) {
     ...(layout.overflow.length === 0 ? [] : [{ type: 'separator' as const, id: 'overflow-separator' }]),
     ...hostActions,
     ...(hostActions.length === 0 ? [] : [{ type: 'separator' as const, id: 'actions-separator' }]),
-    { id: 'order', label: t('guideOrder'), icon: menuIcon(<IconSettingsOutlineRegular size={14} />) },
+    { id: 'order', label: t('guideOrder'), icon: menuIcon(<IconEllipsisOutlineRegular size={14} />) },
+    ...(onOpenSettings === undefined ? [] : [{ id: 'settings', label: t('clueSettingsWindowTitle'), icon: menuIcon(<IconSettingsOutlineRegular size={14} />) }]),
   ]
 
   /** The grid body; the More anchor is a card-sized Menu trigger. */
@@ -283,6 +288,10 @@ export function GuideGrid(props: GuideGridProps) {
         }
         if (id === 'create') {
           onCreatePlugin?.()
+          return
+        }
+        if (id === 'settings') {
+          onOpenSettings?.()
           return
         }
         if (id === 'order') {
@@ -365,7 +374,7 @@ function useGuideWidth(ref: { current: HTMLDivElement | null }): number {
 
 /** The chain component registered into the host's guide slot. */
 export function NativeGuide(props: NativeGuideProps) {
-  const { catalog, store, service, shellMenu, onBrowsePlugins, onCreatePlugin, useTabInfo } = props
+  const { catalog, store, service, shellMenu, onBrowsePlugins, onCreatePlugin, onOpenSettings, useTabInfo } = props
   const entries = useSyncExternalStore(catalog.subscribe, catalog.getSnapshot, catalog.getSnapshot)
   const [descriptors, setDescriptors] = useState(() => service.getTabs())
   useEffect(() => service.subscribe(() => setDescriptors(service.getTabs())), [service])
@@ -414,6 +423,7 @@ export function NativeGuide(props: NativeGuideProps) {
         onSaveRows={(next) => { saveGuideRows(store, next) }}
         onBrowsePlugins={onBrowsePlugins}
         onCreatePlugin={onCreatePlugin}
+        onOpenSettings={onOpenSettings}
         shellMenu={shellMenu}
       />
     </div>

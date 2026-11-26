@@ -60,7 +60,7 @@
 
 - **构建纯度**：client bundle 禁止 value-import `@dsh-external/*` 或非白名单 `@deepseek-ai/*`（tsdown.config.ts 拦截）；跨插件交互走 `ctx.betterSidebar`。
 - **懒加载 chunk**：重依赖只在 `lib/client-<name>.js`，经 `/sidebar/bundle` 下发；核心 bundle 禁止静态 import `src/client/chunks/*`；`CHUNK_NAMES` 的 5 处镜像要同步。
-- **i18n**：新增 zh key 必须同步 locales-ja.ts 与其余词典（tests/locales.spec.ts 守护）。
+- **i18n**：只维护宿主官方语言（zh/en 内置，ja/de/es/fr/pt/ru 懒加载）；新增 zh key 必须同步 en 与其余词典（tests/locales.spec.ts 守护）。
 - **保存语义**：写盘前按磁盘现状还原编码与行尾；客户端只发送 LF。
 - **皮肤**：视觉值只用 `--dsw-alias-*` / `--dsw-font-*` / `--ds-*`，零硬编码颜色，插件没有任何豁免面。
 - **图标**：宿主 `Icon*` 默认 16px，要 14px 显式传 `size={14}`；设置页导航图标走 `settings.section.icon` 插槽，不要用「标记行 + CSS 遮盖」。

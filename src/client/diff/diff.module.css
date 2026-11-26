@@ -57,12 +57,11 @@
 .foldRow[data-expandable='true'] .foldMarker::before { content: '›'; color: var(--dsw-alias-label-tertiary); transition: transform var(--ds-transition-duration-slow) var(--ds-ease-in-out); }
 
 /* The huge-file overflow reveal under a capped hunk. */
-.expand { display: block; width: calc(100% - 20px); margin: 4px 10px; padding: 4px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 6px; background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; font-size: 11px; cursor: pointer; }
-.expand:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
+.expand { display: flex; width: calc(100% - 20px); margin: 4px 10px; }
 
 /* Multi-file documents (commit patches): collapsible file headers. */
 .files { display: flex; flex-direction: column; }
-.fileBlock { display: flex; flex-direction: column; }
+.fileBlock { display: flex; flex-direction: column; border-bottom: 1px solid var(--dsw-alias-border-l1); }
 .file { display: flex; align-items: center; gap: 6px; width: 100%; padding: 6px 10px; border: 0; background: transparent; font: inherit; font-size: 11px; text-align: left; cursor: pointer; }
 .file:disabled { cursor: default; }
 .file:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover); }
@@ -71,7 +70,7 @@
 .filePath { font-family: var(--ds-font-family-code, monospace); color: var(--dsw-alias-label-primary); word-break: break-all; min-width: 0; }
 .fileOld { flex: none; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dsw-alias-label-tertiary); font-family: var(--ds-font-family-code, monospace); }
 .fileTag { flex: none; border-radius: 4px; font-size: 10px; line-height: 16px; padding: 0 5px; background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-secondary); }
-.fileStats { margin-left: auto; flex: none; display: inline-flex; gap: 5px; font-size: 10px; font-family: var(--ds-font-family-code, monospace); }
+.fileStats { margin-left: auto; flex: none; display: inline-flex; gap: 5px; font: var(--dsw-font-xxxs-11); }
 .statAdd { color: var(--dsw-alias-state-success-primary); }
 .statDel { color: var(--dsw-alias-state-error-primary); }
 
@@ -84,3 +83,11 @@
 @media (prefers-reduced-motion: reduce) {
   .fileChevron { transition: none; }
 }
+
+/* Dedicated diff tabs use the same compact toolbar and feedback as previews. */
+.tab { display: flex; flex-direction: column; height: 100%; min-height: 0; min-width: 0; color: var(--dsw-alias-label-primary); font: var(--dsw-font-xxs-12); background: var(--dsw-alias-bg-base); }
+.tabHeader { flex: none; display: flex; align-items: center; gap: 8px; min-height: 36px; padding: 0 8px 0 12px; border-bottom: 1px solid var(--dsw-alias-border-l1); }
+.tabTitle { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tabBody { flex: 1; min-height: 0; overflow-y: auto; }
+.lineNo, .fileStats { font-variant-numeric: tabular-nums; }
+@media (pointer: coarse) { .file { min-height: 44px; } }

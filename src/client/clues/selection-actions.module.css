@@ -1,0 +1,103 @@
+/**
+ * Selection action menu (UI19). Layout-neutral wrapper + a portaled floating
+ * menu styled after the host's compact Menu surface. Token-only paint, 28px
+ * compact items (44px under coarse pointer).
+ */
+.surface {
+  display: contents;
+}
+
+.menu,
+.flyout {
+  box-sizing: border-box;
+  position: fixed;
+  z-index: 1100;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-3, var(--dsw-alias-bg-layer-1));
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xxs-12);
+}
+
+.menu { transform: translate(-50%, calc(-100% - 8px)); }
+.flyout { z-index: 1101; }
+.rewrite > span { flex: 1; }
+.chevron { margin-inline-start: auto; padding-inline-start: 8px; }
+.translationView { overflow: hidden; }
+.translationView .translation { flex: 1; min-height: 0; overflow-y: auto; }
+
+.menuBelow {
+  transform: translate(-50%, 8px);
+}
+
+.insertGroup {
+  display: flex;
+  flex: none;
+  gap: 4px;
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid var(--dsw-alias-border-l1);
+}
+
+.insertGroup > button { flex: 1; justify-content: center; white-space: normal; }
+.translation {
+  padding: 8px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+  font: var(--dsw-font-xxs-12);
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  min-height: 28px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--ds-sidebar-radius);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  line-height: 18px;
+  text-align: start;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.item:hover,
+.item:focus-visible {
+  background: var(--dsw-alias-interactive-bg-hover-solid, var(--dsw-alias-interactive-bg-hover));
+  outline: none;
+}
+
+.item:disabled {
+  color: var(--dsw-alias-label-tertiary);
+  cursor: default;
+}
+
+.item:disabled:hover {
+  background: transparent;
+}
+
+.error {
+  margin: 4px 6px 2px;
+  color: var(--dsw-alias-state-error-primary);
+  font: var(--dsw-font-xxxs-11);
+  white-space: normal;
+}
+
+@media (pointer: coarse) {
+  .item {
+    min-height: 44px;
+    padding: 0 10px;
+  }
+}

@@ -33,6 +33,7 @@ import { formatByteSize, MAX_EDITABLE_BYTES, MAX_EDITABLE_LABEL, type EditLimitR
 import { isJsonlPath, isTreeRecord, parseRecord, summarizeRecord } from './jsonl.ts'
 import { splitLines, useTextPager } from './text-pages.ts'
 import { t } from './locales.ts'
+import { ActionButton, DownloadLink, EmptyState, IconButton, LoadingIndicator, Notice } from './ui/index.ts'
 import css from './sidebar.module.css'
 
 /**
@@ -161,8 +162,8 @@ export function LargeFileView(props: {
           <span>{props.reason === 'line'
             ? t('previewLongLineNotice', { size: formatByteSize(size) })
             : t('previewOnlyNotice', { size: formatByteSize(size), limit: MAX_EDITABLE_LABEL })}</span>
-          <button
-            type="button"
+          <ActionButton
+            size="sm"
             className={css.largeFileNoticeAction}
             disabled={pager.atEnd || pager.atCap || pager.loadingAll}
             title={pager.atCap ? t('previewRowLimit', { rows: maxRows }) : undefined}
@@ -174,23 +175,21 @@ export function LargeFileView(props: {
                 total: formatByteSize(size),
               })
               : t('loadAll')}
-          </button>
-          <a className={css.largeFileDownload} href={downloadUrl(scope, path)} download>
-            {t('downloadToView')}
-          </a>
+          </ActionButton>
+          <DownloadLink href={downloadUrl(scope, path)}>{t('downloadToView')}</DownloadLink>
         </div>
       )}
       {pager.atCap && (
-        <div className={css.editorBanner}>{t('previewRowLimit', { rows: maxRows })}</div>
+        <div className={css.editorBanner} role="status">{t('previewRowLimit', { rows: maxRows })}</div>
       )}
       <div
         className={clsx(css.largeFileBody, records && css.largeFileRecords)}
         ref={bodyRef}
         onScroll={onScroll}
       >
-        {pager.error !== null && <div className={css.editorError}>{pager.error}</div>}
+        {pager.error !== null && <Notice kind="error" role="alert">{pager.error}</Notice>}
         {pager.error === null && pager.loading && pager.pages.length === 0 && (
-          <div className={css.editorPlaceholder}>{t('loading')}</div>
+          <LoadingIndicator label={t('loading')} />
         )}
         {pager.error === null && pager.pages.length > 0 && records && (
           <ol className={css.largeFileList} start={firstNumber}>
@@ -226,7 +225,7 @@ export function LargeFileView(props: {
           </div>
         )}
         {pager.error === null && pager.atEnd && totalRows === 0 && !pager.loading && (
-          <div className={css.editorPlaceholder}>{t('largeFileEmpty')}</div>
+          <EmptyState tone="well" title={t('largeFileEmpty')} />
         )}
       </div>
       {showFooter && (
@@ -239,15 +238,12 @@ export function LargeFileView(props: {
             {`${formatByteSize(pager.loadedBytes)} / ${formatByteSize(size)}`}
           </span>
           {pager.loading && !pager.loadingAll && <span className={css.largeFilePageLabel}>{t('loading')}</span>}
-          <button
-            type="button"
-            className={css.iconButton}
-            aria-label={t('refresh')}
+          <IconButton
+            label={t('refresh')}
+            icon={<IconRefreshOutlineRegular size={14} />}
             title={t('refresh')}
             onClick={pager.reload}
-          >
-            <IconRefreshOutlineRegular size={14} />
-          </button>
+          />
         </div>
       )}
     </div>

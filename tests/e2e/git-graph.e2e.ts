@@ -49,11 +49,18 @@ test('read-only Git Graph renders merge history and filters without checkout', a
     const graph = page.locator('[data-git-graph]:visible')
     await expect(graph.getByText('Graph merge', { exact: true }).first()).toBeVisible({ timeout: 30_000 })
     await expect(graph.getByText('Graph feature', { exact: true }).first()).toBeVisible()
+    // With a resizable stack the panes keep their minimum heights and the stack
+    // itself scrolls when the panel is short (a preview pane open at 1024×800).
+    // The invariant is therefore about the CLIPPED edge: the bottom-most visible
+    // pixel of the graph area is the footer's top edge, never a gap and never a
+    // paint over the footer. Tall panels simply have graph.bottom === footer.top.
     const expectGraphFillsHeight = async () => {
       await expect.poll(() => page.evaluate(() => {
         const graphBox = document.querySelector('[data-git-graph]')!.getBoundingClientRect()
+        const clip = document.querySelector('[data-git-scroll]')!.getBoundingClientRect()
         const footer = document.querySelector('[data-git-footer]')!.getBoundingClientRect()
-        return Math.abs(footer.top - graphBox.bottom)
+        // The scroller IS the clip; its bottom must meet the footer.
+        return Math.abs(footer.top - clip.bottom) + Math.abs(footer.top - Math.min(graphBox.bottom, clip.bottom))
       }), { message: 'the graph must use the available height above the footer' }).toBeLessThanOrEqual(1)
     }
     await page.setViewportSize({ width: 1440, height: 1400 })
@@ -132,13 +139,22 @@ test('read-only Git Graph renders merge history and filters without checkout', a
     await expect.poll(async () => graph.locator('[data-graph-commit]').first().getAttribute('data-graph-commit'))
       .not.toBe(topHash)
     await expect(graph.getByText('Graph base', { exact: true })).toBeVisible()
+    // The stack owns the height now: the 40 new rows scroll inside the changes
+    // pane, and the outer body never becomes the scroller again.
     const outer = page.locator('[data-git-scroll]')
-    expect(await outer.evaluate(el => el.scrollHeight > el.clientHeight)).toBe(true)
-    expect(await graph.evaluate(el => Math.round(el.getBoundingClientRect().height))).toBe(220)
-    await outer.evaluate(el => { el.scrollTop = el.scrollHeight })
+    expect(await outer.evaluate(el => el.scrollHeight <= el.clientHeight)).toBe(true)
+    const listScroller = page.locator('[data-scm-section="changes"] [data-scm-changes]')
+    expect(await listScroller.evaluate(el => el.scrollHeight > el.clientHeight)).toBe(true)
+    // The graph keeps whatever its pane gives it (weight 1 of the open panes),
+    // which is a bounded window rather than the fixed 220px of the single-scroller layout.
+    const graphHeight = await graph.evaluate(el => Math.round(el.getBoundingClientRect().height))
+    expect(graphHeight).toBeGreaterThan(112)
+    await listScroller.evaluate(el => { el.scrollTop = el.scrollHeight })
     await expectGraphFillsHeight()
     await page.screenshot({ path: testInfo.outputPath('git-graph-long-changes.png'), fullPage: true })
-    await changes.locator(':scope > div > button[aria-expanded]').click()
+    // The section header is the plugin's shared disclosure (h3 > button), not
+    // the bare div > button the earlier hand-rolled header used.
+    await changes.locator('button[aria-expanded]').first().click()
     await expectGraphFillsHeight()
     expect(errors).toEqual([])
   } finally {

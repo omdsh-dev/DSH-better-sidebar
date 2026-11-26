@@ -5,11 +5,11 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
-const baseline = '0.2.2-rc.2'
+const baseline = '0.2.3-alpha.2'
 /** The host runtime the mount lane and the standalone installers pin. It follows
  *  `package.json#engines.dsh`, which is stricter than the peer floor: the plugin
  *  installs on this line or newer, so every place that actually runs it moves. */
-const hostBaseline = '0.2.2-rc.3'
+const hostBaseline = '0.2.3-alpha.2'
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
 const bash = readFileSync(new URL('../scripts/install.sh', import.meta.url), 'utf8')
 const powershell = readFileSync(new URL('../scripts/install.ps1', import.meta.url), 'utf8')

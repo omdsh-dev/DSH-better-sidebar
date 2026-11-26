@@ -1,0 +1,199 @@
+/**
+ * Share window styles (S9): tabs, pack picker, preview summaries and progress.
+ * Skin contract: every paint rides a --dsw-* token; lists scroll inside the
+ * window so the action row stays reachable.
+ */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-sidebar-space-3);
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  box-sizing: border-box;
+  container-type: inline-size;
+  /* The content owns its gutter; the shared host is edge-to-edge. */
+  padding: var(--ds-sidebar-gutter);
+  /* Normally only content scrolls. At the minimum window height, allow the
+     whole page to scroll rather than clipping a wrapped/touch-sized footer. */
+  overflow: hidden;
+  scrollbar-width: thin;
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-primary);
+}
+
+.tabs {
+  display: flex;
+  gap: var(--ds-sidebar-space-1);
+  flex: none;
+  padding: 0 0 6px;
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-sidebar-space-2);
+  min-width: 0;
+}
+
+.hint {
+  margin: 0;
+  color: var(--dsw-alias-label-tertiary);
+  overflow-wrap: anywhere;
+}
+
+.fieldLabel {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.actions,
+.summaryRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ds-sidebar-space-2);
+}
+
+.action {
+  composes: button from "../../ui/kit.module.css";
+}
+
+.progress {
+  padding: 4px 8px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: var(--ds-sidebar-radius);
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-secondary);
+  overflow-wrap: anywhere;
+}
+
+.summary {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-sidebar-space-2);
+  padding: var(--ds-sidebar-gutter);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: var(--ds-sidebar-radius);
+  background: var(--dsw-alias-bg-layer-1);
+  min-width: 0;
+}
+
+.summaryRow {
+  color: var(--dsw-alias-label-secondary);
+}
+
+.warningList {
+  margin: 0;
+  padding-inline-start: 18px;
+  color: var(--dsw-alias-state-warn-primary);
+  overflow-wrap: anywhere;
+}
+
+.warningLine {
+  color: var(--dsw-alias-state-warn-primary);
+  overflow-wrap: anywhere;
+}
+
+.itemList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-sidebar-space-1);
+  max-height: 220px;
+  overflow: auto;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.itemRow {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  min-width: 0;
+  padding: 4px 0;
+  border-radius: var(--ds-sidebar-radius);
+}
+
+.itemRow[data-unresolved='true'] {
+  border: 1px solid var(--dsw-alias-border-l2);
+}
+
+.itemTitle {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.itemMeta {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 16px;
+  overflow-wrap: anywhere;
+}
+
+.filePicker {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--ds-sidebar-space-2);
+  min-width: 0;
+  min-height: 36px;
+  padding: 4px 10px;
+  box-sizing: border-box;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--ds-sidebar-radius);
+  background: var(--dsw-alias-bg-base);
+  cursor: pointer;
+}
+.filePicker:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+.filePicker:has(.fileInput:focus-visible) {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 1px;
+}
+.fileInput {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: inherit;
+}
+.fileButton {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  gap: 5px;
+  color: var(--dsw-alias-label-primary);
+  font-weight: 500;
+  white-space: nowrap;
+}
+.fileName {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+}
+
+.content {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-gutter: stable;
+}
+.itemMeta { font-variant-numeric: tabular-nums; }
+.hint { font: var(--dsw-font-xxs-12); }
+.itemRow + .itemRow { border-top: 1px solid var(--dsw-alias-border-l1); }
+.summaryRow { font-variant-numeric: tabular-nums; }
+@media (pointer: coarse) {
+  .action, .filePicker { min-height: 44px; }
+}

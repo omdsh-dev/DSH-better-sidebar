@@ -1,12 +1,10 @@
 /**
  * Chrome of the plugin's persistent floating window (FloatingWindow.tsx):
- * a fixed, portaled card with a drag handle title bar, a scrolling body, an
- * optional footer and three resize strips.
+ * a fixed, portaled card with a drag handle title bar, a toolbar row, a
+ * scrolling body, an optional footer and three resize strips.
  *
  * Tokens only (`--dsw-alias-*` / `--dsw-font-*`): the frame wears the same
- * 1px `border-l2` edge and 8px radius as the Tasks page's node cards, and the
- * floating layer keeps the app's `--dsw-shadow-lv3` (the one shadow tier the
- * plugin is allowed on a floating surface).
+ * 2px `border-l4` edge, 6px corners and a flat token surface.
  */
 .window {
   position: fixed;
@@ -16,54 +14,121 @@
   min-width: 0;
   min-height: 0;
   background: var(--dsw-alias-bg-layer-1);
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 8px;
-  box-shadow: var(--dsw-shadow-lv3);
+  border: 2px solid var(--dsw-alias-border-l4);
+  border-radius: 6px;
+  box-shadow: none;
   overflow: hidden;
   font: var(--dsw-font-xxs-12);
   color: var(--dsw-alias-label-primary);
   box-sizing: border-box;
 }
 
-/* The drag handle. It is exactly one control tall, so the close button and the
-   title sit on one optical line whatever the header's actions are. */
+/* A maximized window owns the viewport: square edges, no floating shadow. */
+.window[data-window-maximized='true'] {
+  border-radius: 0;
+  box-shadow: none;
+}
+
+/* The drag handle. It is exactly one control tall, so the window controls and
+   the title sit on one optical line whatever the toolbar contains. */
 .titleBar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--ds-sidebar-space-2);
   flex: none;
-  min-height: 34px;
-  padding: 0 6px 0 12px;
+  min-height: 36px;
+  box-sizing: border-box;
+  padding: 4px var(--ds-sidebar-gutter);
   border-bottom: 1px solid var(--dsw-alias-border-l1);
-  background: var(--dsw-alias-bg-layer-2);
+  background: var(--dsw-alias-bg-layer-1);
   cursor: grab;
   user-select: none;
+}
+
+/* Native right-sidebar tabs already carry the title and close button; docked
+   windows keep only a slim utility strip for Back + "Pop out". */
+.dockedBar {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-sidebar-space-2);
+  flex: none;
+  min-height: 30px;
+  box-sizing: border-box;
+  padding: 2px var(--ds-sidebar-gutter);
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+  background: var(--dsw-alias-bg-base);
 }
 
 .titleBar:active {
   cursor: grabbing;
 }
 
+/* The navigation (back) seat sits before the identity, outside the title's
+   ellipsis region so a long title never covers it. */
+.titleLeading {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  margin-inline-start: -4px;
+}
+
 .title {
+  flex: 1;
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-  font-family: var(--ds-font-family-code, monospace);
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 500;
+  color: var(--dsw-alias-label-primary);
+}
+
+/* The dirty marker is a dot, not a growing label: the title keeps its room. */
+.dirty {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--dsw-alias-state-warn-primary);
+}
+
+.saving {
+  flex: none;
   font-size: 11px;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--dsw-alias-label-tertiary);
+  white-space: nowrap;
 }
 
 .titleActions {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--ds-sidebar-space-1);
   flex: none;
+  margin-inline-start: auto;
 }
 
+.windowControl,
 .close {
   flex: none;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border-radius: var(--ds-sidebar-radius);
+}
+
+/* Resource actions live HERE, never in the identity bar. */
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--ds-sidebar-space-2);
+  flex: none;
+  padding: var(--ds-sidebar-space-2) var(--ds-sidebar-gutter);
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+  background: var(--dsw-alias-bg-layer-1);
 }
 
 /* The body IS the height bound: whatever the caller renders (a long terminal
@@ -74,7 +139,7 @@
   min-height: 0;
   overflow: auto;
   overscroll-behavior: contain;
-  padding: 10px 12px 12px;
+  padding: var(--ds-sidebar-gutter);
 }
 
 /* A body whose content should FILL the window instead of stacking from the top
@@ -84,10 +149,13 @@
 .bodyFill {
   display: flex;
   flex-direction: column;
+  min-width: 0;
+  padding: 0;
 }
 
 .bodyFill > * {
   flex: 1;
+  min-width: 0;
   min-height: 0;
 }
 
@@ -95,11 +163,23 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 8px;
   flex: none;
-  padding: 8px 12px;
+  box-sizing: border-box;
+  min-height: 42px;
+  padding: 6px var(--ds-sidebar-gutter);
   border-top: 1px solid var(--dsw-alias-border-l1);
-  background: var(--dsw-alias-bg-base);
+  background: inherit;
+}
+
+@media (pointer: coarse) {
+  .windowControl,
+  .close,
+  .titleLeading > button {
+    min-width: 44px;
+    min-height: 44px;
+  }
 }
 
 /* Resize strips sit on top of the body's own scrollbar area; each one owns
@@ -110,7 +190,7 @@
 }
 
 .handleRight {
-  top: 34px;
+  top: 44px;
   right: 0;
   bottom: 0;
   width: 6px;
@@ -132,11 +212,45 @@
   width: 16px;
   height: 16px;
   cursor: nwse-resize;
-  background: linear-gradient(
-    135deg,
-    transparent 0%,
-    transparent 55%,
-    color-mix(in srgb, var(--dsw-alias-label-tertiary) 45%, transparent) 55%,
-    color-mix(in srgb, var(--dsw-alias-label-tertiary) 45%, transparent) 100%
-  );
+  background: transparent;
+}
+
+/* One retained frame also fits the native tab's bounded block host. */
+.window[data-window-docked='true'] {
+  position: relative;
+  z-index: auto;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: var(--dsw-alias-bg-base);
+}
+.window[data-window-docked='true'] .toolbar { background: var(--dsw-alias-bg-base); }
+.surfaceControl {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ds-sidebar-space-1);
+  flex: none;
+  padding-inline: 6px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.surfaceControl svg { flex: none; }
+
+.handleCorner::after {
+  content: '';
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  width: 6px;
+  height: 6px;
+  border-right: 1px solid var(--dsw-alias-border-l3);
+  border-bottom: 1px solid var(--dsw-alias-border-l3);
+}
+.toolbar > *, .footer > * { min-width: 0; max-width: 100%; }
+@media (max-width: 480px) {
+  .titleBar { padding-inline: var(--ds-sidebar-space-2); }
+  .surfaceControl { padding-inline: var(--ds-sidebar-space-2); }
+  .toolbar, .footer { justify-content: flex-start; }
 }

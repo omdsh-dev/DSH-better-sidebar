@@ -32,8 +32,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useSyncExternalStore } from 'react'
 import {
-  Button, IconRefreshOutlineRegular,
+  IconRefreshOutlineRegular,
 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { ActionButton, IconButton, Notice } from './ui/index.ts'
 import type {
   Context,
   SidebarClientJobsService,
@@ -713,7 +714,7 @@ export function SubagentView(props: {
   })()
 
   return (
-    <div className={legacy.subagent} style={{ position: 'relative' }}>
+    <div className={legacy.subagent} data-sidebar-surface="tasks">
       <div className={legacy.subagentHeader}>
         <span className={legacy.subagentHeading}>
           <span className={legacy.subagentTitle}>{t('subagent')}</span>
@@ -738,12 +739,11 @@ export function SubagentView(props: {
           squeezed by a long session title. Plain `title` rather than the host
           Tooltip: the Tooltip anchors by ref and the host Button forwards none.
         */}
-        <Button
-          variant="ghost"
+        <IconButton
           size="sm"
           className={legacy.subagentRefresh}
           icon={<IconRefreshOutlineRegular size={14} />}
-          aria-label={t('refresh')}
+          label={t('refresh')}
           title={t('refresh')}
           disabled={rootId === undefined}
           onClick={() => {
@@ -762,26 +762,23 @@ export function SubagentView(props: {
         />
       )}
       {failedParents.length > 0 && (
-        <div className={legacy.subagentError}>
+        <div className={legacy.subagentError} role="alert">
           <span>{t('catalogLoadFailed', { count: failedParents.length })}</span>
           {/* Host outline Button (28px); the module class keeps the retry from
               being squeezed by the banner's message. */}
-          <Button
+          <ActionButton
             variant="outline"
             size="sm"
             className={legacy.subagentErrorRetry}
-            icon={<IconRefreshOutlineRegular size={14} />}
             onClick={() => { for (const parent of failedParents) refresh(parent) }}
           >
+            <IconRefreshOutlineRegular size={14} />
             {t('retry')}
-          </Button>
+          </ActionButton>
         </div>
       )}
       {readyEmpty && (
-        <div className={legacy.subagentEmpty}>
-          <div>{t('subagentEmpty')}</div>
-          <div className={legacy.subagentEmptyHint}>{t('subagentEmptyDesc')}</div>
-        </div>
+        <Notice kind="empty" tone="page">{t('subagentEmpty')}</Notice>
       )}
       {!readyEmpty && rootId !== undefined && (
         mode === 'graph'
@@ -803,6 +800,7 @@ export function SubagentView(props: {
           )
           : (
             <TasksTree
+              visible={active}
               nodes={model}
               folded={folded}
               collapsedIds={collapsedIds}

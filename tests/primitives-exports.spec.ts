@@ -64,7 +64,7 @@ function importedSymbols(): string[] {
       // `import type { … }` imports nothing at runtime.
       if (match[1] !== undefined) continue
       for (const raw of match[2]!.split(',')) {
-        const name = raw.trim().replace(/^type\s+/, '')
+        const name = raw.trim().replace(/^type\s+/, '').split(' as ')[0]!
         if (name === '' || name.startsWith('type ')) continue
         // A per-specifier `type` marker has no runtime counterpart either.
         if (/^type\s/.test(raw.trim())) continue

@@ -1,0 +1,1733 @@
+/**
+ * The clue service: the host-authoritative registry and domain operations of
+ * S1 (published as the Cordis service `betterSidebarClues`).
+ *
+ * Responsibilities:
+ * - **registration** — sources register their descriptor, type descriptors and
+ *   operations through one API; duplicates are rejected explicitly, the
+ *   returned disposer only removes runtime capability (never persisted data),
+ *   so re-registering the same source id restores resolution of every existing
+ *   reference;
+ * - **dispatch** — resolve/list/search/read/loadEdit/saveEdit/portable are
+ *   routed to the owning source with an abort signal and the caller identity;
+ *   errors are normalized to the fixed {@link ClueError} categories without
+ *   ever echoing transport output, tokens or environment secrets;
+ * - **stable identity** — `ensureClue` is the only place that mints a durable
+ *   reference: the source normalizes the locator, the normalized locator is
+ *   the equality key, and re-ensuring the same resource returns the SAME id
+ *   (the store's per-workspace transaction makes that true under concurrency);
+ * - **library semantics** — pins and bindings are shortcut relations, packs are
+ *   de-duplicated member sets; removing any of them never deletes a clue, and
+ *   deleting a pack only removes that pack (its members and their other pack
+ *   memberships stay);
+ * - **extension seam** — later specs register their own API methods with
+ *   {@link CluesService.registerApi}; the index.ts dispatcher always falls back
+ *   here, so those specs never touch the dispatcher.
+ */
+import { randomUUID } from 'node:crypto'
+import { inferClueDefaultScope } from './default-scope.ts'
+import {
+  normalizeClueResourceInfo,
+  normalizeClueSubtitle,
+  sameClueResourceInfo,
+} from './resource-info.ts'
+import { CluesStore, type WorkspaceState } from './store.ts'
+import { normalizeClueComment, normalizeClueDiscussion } from './discussion.ts'
+import type { ClueCommentsListParams, ClueCommentsCreateParams, ClueCommentCreateResult, ClueDiscussionPage } from './types.ts'
+import {
+  BUILTIN_SOURCE_IDS,
+  CLUE_CODEC_SOURCE,
+  PACK_CODEC_SOURCE,
+  RESERVED_SOURCE_IDS,
+  ClueError,
+  isClueError,
+  type Clue,
+  type ClueApiContext,
+  type ClueApiHandler,
+  type ClueAsset,
+  type ClueBinding,
+  type ClueBindingTarget,
+  type ClueCaller,
+  type ClueCandidate,
+  type ClueEditDocument,
+  type ClueErrorCategory,
+  type ClueListResult,
+  type ClueDefaultScopeResult,
+  type CluesDefaultScopeParams,
+  type ClueLocatorContext,
+  type ClueOperationContext,
+  type CluesBindingMutationParams,
+  type CluesBindingsResult,
+  type CluesEnsureParams,
+  type CluesEnsureResult,
+  type CluesImportUnresolvedParams,
+  type CluesLibraryResult,
+  type CluesListParams,
+  type CluesPackCreateParams,
+  type CluesPackDeleteParams,
+  type CluesPackDeleteResult,
+  type CluesPackMemberParams,
+  type CluesPackMutationResult,
+  type CluesPackRenameParams,
+  type CluesPacksResult,
+  type CluesPinMutationParams,
+  type CluesPinsResult,
+  type CluesReadParams,
+  type CluesResolveParams,
+  type CluesSearchParams,
+  type CluesSnapshotReadParams,
+  type CluePack,
+  type CluePin,
+  type CluePortableRef,
+  type ClueReadResult,
+  type ClueResourceInfo,
+  type ClueSaveEditInput,
+  type ClueSaveEditResult,
+  type ClueSnapshotContent,
+  type ClueSnapshotMeta,
+  type ClueSnapshotRecord,
+  type ClueSourceCapabilities,
+  type ClueSourceDescriptor,
+  type ClueSourceFilter,
+  type ClueTypeDescriptor,
+  type ClueUnresolved,
+  type JsonValue,
+  type Locator,
+} from './types.ts'
+
+/** What a source's `resolve` receives (workspace identity lives in the context). */
+export interface ClueResolveInput {
+  readonly text?: string
+  readonly locator?: Locator
+  readonly typeId?: string
+  /**
+   * True when the caller named THIS source. Auto resolution gives every source
+   * the same input, so a source that does not recognize a foreign locator
+   * should answer "no candidate"; an explicit call may report the malformed
+   * locator instead of returning an empty list.
+   */
+  readonly explicit?: boolean
+}
+
+/** What a source's `list`/`search` receives. */
+export interface ClueSourceListInput {
+  readonly scope?: JsonValue
+  readonly cursor?: string
+  readonly limit?: number
+}
+
+/** What a source's `search` receives. */
+export interface ClueSourceSearchInput extends ClueSourceListInput {
+  readonly query: string
+}
+
+/** What a source's `read` receives. */
+export interface ClueSourceReadInput {
+  readonly typeId: string
+  readonly locator: Locator
+  /** Explicit byte offset for pageable content. */
+  readonly offset?: number
+}
+
+/** What a source's `saveEdit` receives. */
+export interface ClueSourceSaveInput extends ClueSourceReadInput {
+  readonly document: ClueSaveEditInput
+}
+
+/**
+ * The operations one source implements. Every optional member must be
+ * advertised in the descriptor's `capabilities`; the registry refuses to call
+ * one that was not declared (and answers `unsupported` when absent).
+ */
+export interface ClueSourceOperations {
+  /** Parse a user-supplied text or an existing locator into canonical candidates. */
+  resolve?(input: ClueResolveInput, context: ClueOperationContext): Promise<ClueCandidate | readonly ClueCandidate[] | undefined>
+  list?(input: ClueSourceListInput, context: ClueOperationContext): Promise<ClueListResult>
+  search?(input: ClueSourceSearchInput, context: ClueOperationContext): Promise<ClueListResult>
+  read?(input: ClueSourceReadInput, context: ClueOperationContext): Promise<ClueReadResult>
+  listComments?(input: ClueSourceReadInput & { readonly cursor?: string; readonly limit?: number; readonly parentId?: string }, context: ClueOperationContext): Promise<ClueDiscussionPage>
+  createComment?(input: ClueSourceReadInput & { readonly body: string; readonly replyToId?: string; readonly requestId: string }, context: ClueOperationContext): Promise<ClueCommentCreateResult>
+  loadEdit?(input: ClueSourceReadInput, context: ClueOperationContext): Promise<ClueEditDocument>
+  saveEdit?(input: ClueSourceSaveInput, context: ClueOperationContext): Promise<ClueSaveEditResult>
+  portable?(input: ClueSourceReadInput, context: ClueOperationContext): Promise<CluePortableRef>
+  /** Canonicalize a locator (the source owns resource identity). */
+  normalizeLocator?(locator: Locator, context: ClueLocatorContext): Locator
+  /** Stable equality key of one (already normalized) locator. */
+  locatorKey?(locator: Locator): string
+}
+
+/** One source registration; the disposer removes exactly this registration. */
+export interface ClueSourceRegistration {
+  readonly descriptor: ClueSourceDescriptor
+  readonly types: readonly ClueTypeDescriptor[]
+  readonly operations?: ClueSourceOperations
+}
+
+/** Caller-supplied context of one service operation. */
+export interface ClueCallOptions {
+  readonly caller?: ClueCaller
+  readonly signal?: AbortSignal
+  readonly sessionId?: string
+}
+
+/** Options of {@link createCluesService}. */
+export interface CluesServiceOptions {
+  /** Durable storage; omitted builds one from `root`. */
+  readonly store?: CluesStore
+  /** Plugin user-data directory (used when `store` is omitted). */
+  readonly root?: string
+  /**
+   * The core's built-in sources, registered at construction time. This is the
+   * ONLY path for a reserved built-in id (`builtin.files`, …): the public
+   * {@link CluesService.registerSource} rejects every reserved id, so a
+   * third-party registrant can never claim one before (or instead of) the
+   * core's own source.
+   */
+  readonly builtinSources?: readonly ClueSourceRegistration[]
+  /** Resolve the host workspace directory for an id (workspaceRegistry.get). */
+  readonly resolveWorkspacePath?: (workspaceId: string) => string | undefined
+  /** Clock injection (tests). */
+  readonly now?: () => string
+  /** Stable-id generator injection (tests). */
+  readonly newId?: (kind: 'clue' | 'pack' | 'snapshot') => string
+}
+
+/** One registered source and its live operations. */
+interface RegisteredSource {
+  readonly descriptor: ClueSourceDescriptor
+  readonly types: readonly ClueTypeDescriptor[]
+  readonly operations?: ClueSourceOperations
+}
+
+interface RegisteredApi {
+  readonly handler: ClueApiHandler
+}
+
+/** Snapshot input (S7 owns import policy; S1 owns storage/read). */
+export interface ClueSnapshotInput {
+  readonly clueId: string
+  readonly format: string
+  readonly data: JsonValue
+  readonly text?: string
+  readonly assets?: readonly ClueAsset[]
+  readonly fetchedAt?: string
+  readonly sourceVersion?: string
+  readonly discussion?: ClueDiscussionPage
+  readonly integrity?: 'verified' | 'unknown'
+  /** Optional caller-chosen id (import may need one); generated otherwise. */
+  readonly snapshotId?: string
+}
+
+/** The host clue service face (published as `betterSidebarClues`). */
+export interface CluesService {
+  // Registry
+  registerSource(registration: ClueSourceRegistration): () => void
+  getSources(): readonly ClueSourceDescriptor[]
+  getSource(sourceId: string): ClueSourceDescriptor | undefined
+  getTypes(sourceId?: string): readonly ClueTypeDescriptor[]
+
+  // Source operations
+  defaultScope(params: CluesDefaultScopeParams, options?: ClueCallOptions): Promise<ClueDefaultScopeResult>
+  resolve(params: CluesResolveParams, options?: ClueCallOptions): Promise<readonly ClueCandidate[]>
+  list(params: CluesListParams, options?: ClueCallOptions): Promise<ClueListResult>
+  search(params: CluesSearchParams, options?: ClueCallOptions): Promise<ClueListResult>
+  read(params: CluesReadParams, options?: ClueCallOptions): Promise<ClueReadResult>
+  commentsList(params: ClueCommentsListParams, options?: ClueCallOptions): Promise<ClueDiscussionPage>
+  commentsCreate(params: ClueCommentsCreateParams, options?: ClueCallOptions): Promise<ClueCommentCreateResult>
+  loadEdit(params: CluesReadParams, options?: ClueCallOptions): Promise<ClueEditDocument>
+  saveEdit(
+    params: CluesReadParams & { readonly document: ClueSaveEditInput },
+    options?: ClueCallOptions,
+  ): Promise<ClueSaveEditResult>
+  portable(params: CluesReadParams, options?: ClueCallOptions): Promise<CluePortableRef>
+
+  // Stable references and library
+  ensure(params: CluesEnsureParams, options?: ClueCallOptions): Promise<CluesEnsureResult>
+  /**
+   * Core-only (S7 import): persist a stable reference whose source is not
+   * available here. Not registered as an HTTP API method. Dedupes by
+   * sourceId + locator key when a usable locator exists; an existing RESOLVED
+   * clue wins (`created: false`), an existing unresolved row is updated in
+   * place so its id stays stable.
+   */
+  importUnresolved(
+    params: CluesImportUnresolvedParams,
+    options?: ClueCallOptions,
+  ): Promise<CluesEnsureResult>
+  listClues(workspaceId: string): Promise<CluesLibraryResult>
+
+  // Pins
+  listPins(workspaceId: string): Promise<CluesPinsResult>
+  addPin(params: CluesPinMutationParams, options?: ClueCallOptions): Promise<CluesPinsResult>
+  removePin(params: CluesPinMutationParams, options?: ClueCallOptions): Promise<CluesPinsResult>
+
+  // Packs
+  listPacks(workspaceId: string): Promise<CluesPacksResult>
+  createPack(params: CluesPackCreateParams, options?: ClueCallOptions): Promise<CluesPackMutationResult>
+  renamePack(params: CluesPackRenameParams, options?: ClueCallOptions): Promise<CluesPackMutationResult>
+  addPackMember(params: CluesPackMemberParams, options?: ClueCallOptions): Promise<CluesPackMutationResult>
+  removePackMember(params: CluesPackMemberParams, options?: ClueCallOptions): Promise<CluesPackMutationResult>
+  deletePack(params: CluesPackDeleteParams, options?: ClueCallOptions): Promise<CluesPackDeleteResult>
+
+  // Bindings
+  listBindings(workspaceId: string): Promise<CluesBindingsResult>
+  addBinding(params: CluesBindingMutationParams, options?: ClueCallOptions): Promise<CluesBindingsResult>
+  removeBinding(params: CluesBindingMutationParams, options?: ClueCallOptions): Promise<CluesBindingsResult>
+
+  // Snapshots (content survives source unload; S7 owns import)
+  putSnapshot(workspaceId: string, input: ClueSnapshotInput): Promise<ClueSnapshotMeta>
+  readSnapshot(params: CluesSnapshotReadParams): Promise<ClueSnapshotRecord>
+  listSnapshots(workspaceId: string): Promise<readonly ClueSnapshotMeta[]>
+
+  // API method seam (later specs register here instead of editing index.ts)
+  registerApi(name: string, handler: ClueApiHandler): () => void
+  hasApi(name: string): boolean
+  invokeApi(name: string, payload: unknown, context?: ClueApiContext): Promise<unknown>
+
+  /** Release every registration. Persisted data is untouched (HMR-safe). */
+  dispose(): void
+
+  /** Public identity constants clients/other specs need (never duplicated). */
+  readonly codecs: { readonly clues: typeof CLUE_CODEC_SOURCE; readonly packs: typeof PACK_CODEC_SOURCE }
+  /** Built-in identity list, mirroring {@link BUILTIN_SOURCE_IDS}. */
+  readonly builtinSourceIds: readonly string[]
+}
+
+/** Default page bound accepted from a caller (sources may impose smaller ones). */
+const DEFAULT_PAGE_LIMIT = 100
+/** Upper bound of one caller page request (explicit; never silently shrunk). */
+const MAX_PAGE_LIMIT = 500
+/** Name length bound of a pack (a title, not an identifier). */
+const MAX_PACK_NAME = 200
+/** Maximum number of pack members accepted in one create call. */
+const MAX_PACK_MEMBERS = 10_000
+
+/**
+ * Failures that mean a source does not own the input rather than "the
+ * resource failed": auto resolution (no explicit `sourceId`) keeps asking the
+ * later sources. A missing source dependency is the same kind of miss for the
+ * caller — the resource may well belong to another source.
+ *
+ * Everything else (auth-required, permission-denied, rate-limited, failed,
+ * timeout, cancelled, conflict) is about a recognized resource, so it
+ * propagates instead of silently producing "no candidates".
+ */
+const AUTO_RESOLVE_MISS_CATEGORIES: ReadonlySet<ClueErrorCategory> = new Set([
+  'not-found',
+  'unsupported',
+  'dependency-missing',
+  'dependency-incompatible',
+])
+
+/** Whether a thrown value looks like an aborted operation. */
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && (error.name === 'AbortError' || error.name === 'TimeoutError')
+}
+
+/** Stable, order-independent JSON text used as the default locator key. */
+export function stableLocatorKey(value: JsonValue): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value)
+  if (Array.isArray(value)) return `[${value.map(item => stableLocatorKey(item)).join(',')}]`
+  const keys = Object.keys(value).sort()
+  return `{${keys.map(key => `${JSON.stringify(key)}:${stableLocatorKey(value[key]!)}`).join(',')}}`
+}
+
+/** Validate a raw locator/value as a plain JSON object. */
+function requireLocator(value: unknown, what = 'locator'): Locator {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw new ClueError('invalid-request', `clue ${what} must be a JSON object`)
+  }
+  try {
+    JSON.stringify(value)
+  } catch {
+    throw new ClueError('invalid-request', `clue ${what} is not JSON-serializable`)
+  }
+  return value as Locator
+}
+
+/**
+ * Validate and copy one portable reference supplied by an importer.
+ *
+ * The store validates `ClueUnresolved.portable` on every READ, so a malformed
+ * one written here would make the whole workspace library unreadable (every
+ * later `listClues` / import fails as corrupt). The public boundary therefore
+ * refuses it before the write, and copies only the contract fields: unknown
+ * keys from an untrusted importer must not be persisted.
+ */
+function portableRefOf(value: unknown): CluePortableRef | undefined {
+  if (value === undefined) return undefined
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw new ClueError('invalid-request', 'clue portable reference must be a JSON object')
+  }
+  const raw = value as Record<string, unknown>
+  if (typeof raw.portable !== 'boolean') {
+    throw new ClueError('invalid-request', 'clue portable reference needs a boolean "portable" field')
+  }
+  const locator = raw.locator === undefined ? undefined : requireLocator(raw.locator, 'portable locator')
+  if (raw.reason !== undefined && typeof raw.reason !== 'string') {
+    throw new ClueError('invalid-request', 'clue portable reference "reason" must be a string')
+  }
+  return {
+    portable: raw.portable,
+    ...(locator === undefined ? {} : { locator }),
+    ...(raw.reason === undefined ? {} : { reason: raw.reason as string }),
+  }
+}
+
+/** Validate and clamp one explicit page limit. */
+function pageLimitOf(limit: number | undefined, sourceId: string): number {
+  if (limit === undefined) return DEFAULT_PAGE_LIMIT
+  if (!Number.isInteger(limit) || limit < 1 || limit > MAX_PAGE_LIMIT) {
+    throw new ClueError('invalid-request', `source "${sourceId}" received an invalid page limit (1..${MAX_PAGE_LIMIT})`)
+  }
+  return limit
+}
+
+/** Non-empty workspace id or a clear failure. */
+function requireWorkspaceId(workspaceId: string): string {
+  if (typeof workspaceId !== 'string' || workspaceId.trim() === '') {
+    throw new ClueError('invalid-request', 'a non-empty workspace id is required')
+  }
+  return workspaceId
+}
+
+/** Trimmed pack name or a clear failure. */
+function packNameOf(name: string): string {
+  const trimmed = typeof name === 'string' ? name.trim() : ''
+  if (trimmed === '' || trimmed.length > MAX_PACK_NAME) {
+    throw new ClueError('invalid-request', `a pack name must be 1..${MAX_PACK_NAME} characters`)
+  }
+  return trimmed
+}
+
+/** Target equality key of a binding. */
+function bindingKey(target: ClueBindingTarget): string {
+  return target.kind === 'clue' ? `clue:${target.clueId}` : `pack:${target.packId}`
+}
+
+/**
+ * Whether a value is a plain JSON value (no NaN/Infinity, undefined, function
+ * or cyclic object). `JSON.stringify` alone would silently turn NaN into
+ * `null`, which would make a filter value differ from what the registrant
+ * supplied.
+ */
+function isPlainJsonValue(value: unknown, depth = 0): boolean {
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') return true
+  if (typeof value === 'number') return Number.isFinite(value)
+  if (typeof value !== 'object' || depth > 16) return false
+  if (Array.isArray(value)) return value.every(item => isPlainJsonValue(item, depth + 1))
+  return Object.values(value as Record<string, unknown>)
+    .every(item => item !== undefined && isPlainJsonValue(item, depth + 1))
+}
+
+/**
+ * Validate and copy one source filter declaration.
+ *
+ * The descriptor travels to the browser as serializable metadata; the client
+ * writes an option's `value` into `scope[scopeKey]`. A malformed declaration
+ * (duplicate/empty ids, a default naming no option, a non-JSON value or an
+ * unknown `appliesTo`) would produce a dead filter in the UI, so it is refused
+ * at registration instead of being silently rendered.
+ */
+function copySourceFilter(filter: JsonValue, sourceId: string, index: number): ClueSourceFilter {
+  const fail = (detail: string): never => {
+    throw new Error(`[clues] source "${sourceId}" filters[${index}] ${detail}`)
+  }
+  if (filter === null || typeof filter !== 'object' || Array.isArray(filter)) {
+    fail('must be a JSON object')
+  }
+  const raw = filter as Record<string, JsonValue>
+  const scopeKey = typeof raw.scopeKey === 'string' && raw.scopeKey.trim() !== ''
+    ? raw.scopeKey
+    : fail('needs a non-empty scopeKey')
+  const appliesTo = raw.appliesTo
+  if (
+    appliesTo !== undefined
+    && appliesTo !== 'list'
+    && appliesTo !== 'search'
+    && appliesTo !== 'both'
+  ) {
+    fail('appliesTo must be "list", "search" or "both"')
+  }
+  const rawOptions = Array.isArray(raw.options) && raw.options.length > 0
+    ? raw.options
+    : fail('needs at least one option')
+  const seen = new Set<string>()
+  const options = rawOptions.map((option, optionIndex) => {
+    if (option === null || typeof option !== 'object' || Array.isArray(option)) {
+      fail(`options[${optionIndex}] must be a JSON object`)
+    }
+    const record = option as Record<string, JsonValue>
+    const id = typeof record.id === 'string' && record.id.trim() !== ''
+      ? record.id
+      : fail(`options[${optionIndex}] needs a non-empty id`)
+    if (seen.has(id)) fail(`has duplicate option id "${id}"`)
+    seen.add(id)
+    const value = record.value
+    if (value !== undefined && !isPlainJsonValue(value)) {
+      fail(`options[${optionIndex}].value must be a JSON value`)
+    }
+    return {
+      id,
+      ...(value === undefined ? {} : { value: cloneJsonValue(value) }),
+    }
+  })
+  const defaultOptionId = raw.defaultOptionId
+  if (defaultOptionId !== undefined) {
+    const valid = typeof defaultOptionId === 'string' && seen.has(defaultOptionId)
+    if (!valid) fail('defaultOptionId must name one of its options')
+  }
+  return {
+    scopeKey,
+    ...(appliesTo === undefined
+      ? {}
+      : { appliesTo: appliesTo as 'list' | 'search' | 'both' }),
+    ...(defaultOptionId === undefined
+      ? {}
+      : { defaultOptionId: defaultOptionId as string }),
+    options,
+  }
+}
+
+/** Deep-copy one JSON value (a filter option value is caller-owned). */
+function cloneJsonValue(value: JsonValue): JsonValue {
+  return JSON.parse(JSON.stringify(value)) as JsonValue
+}
+
+/**
+ * Copy one source descriptor down to the mutable-looking leaves.
+ *
+ * A plain `{ ...descriptor }` shares `capabilities` (and `dependencyIds`)
+ * with the registrant and with every caller, so mutating a returned
+ * `capabilities.read` silently disabled the registered source's read. The
+ * registry stores this copy and each getter hands out a fresh one.
+ */
+function copySourceDescriptor(descriptor: ClueSourceDescriptor): ClueSourceDescriptor {
+  return {
+    ...descriptor,
+    types: [...descriptor.types],
+    capabilities: { ...descriptor.capabilities,
+      ...(descriptor.capabilities.comments === undefined ? {} : { comments: { ...descriptor.capabilities.comments } }),
+    },
+    ...(descriptor.dependencyIds === undefined ? {} : { dependencyIds: [...descriptor.dependencyIds] }),
+    ...(descriptor.filters === undefined
+      ? {}
+      : {
+          filters: descriptor.filters.map(filter => ({
+            scopeKey: filter.scopeKey,
+            ...(filter.appliesTo === undefined ? {} : { appliesTo: filter.appliesTo }),
+            ...(filter.defaultOptionId === undefined ? {} : { defaultOptionId: filter.defaultOptionId }),
+            options: filter.options.map(option => ({
+              id: option.id,
+              ...(option.value === undefined ? {} : { value: cloneJsonValue(option.value) }),
+            })),
+          })),
+        }),
+    ...(descriptor.extensions === undefined ? {} : { extensions: { ...descriptor.extensions } }),
+  }
+}
+
+/** Copy one type descriptor (capabilities and formats are the mutable leaves). */
+function copyTypeDescriptor(type: ClueTypeDescriptor): ClueTypeDescriptor {
+  return {
+    ...type,
+    formats: [...type.formats],
+    capabilities: { ...type.capabilities },
+    ...(type.extensions === undefined ? {} : { extensions: { ...type.extensions } }),
+  }
+}
+
+/**
+ * Create one clue service instance. One instance per plugin mount: its
+ * registries die with {@link CluesService.dispose}, which is what the
+ * `ctx.effect` in `installClues` hooks into.
+ * @param options - storage, workspace-path resolver and test seams.
+ */
+export function createCluesService(options: CluesServiceOptions = {}): CluesService {
+  const store = options.store ?? new CluesStore({ root: options.root })
+  const now = options.now ?? (() => new Date().toISOString())
+  const newId = options.newId ?? ((kind: 'clue' | 'pack' | 'snapshot') => `${kind}-${randomUUID()}`)
+  const sources = new Map<string, RegisteredSource>()
+  const types = new Map<string, ClueTypeDescriptor>()
+  const apis = new Map<string, RegisteredApi>()
+  // Retain outcomes (including uncertain writes) so double submit never replays.
+  const commentWrites = new Map<string, { signature: string; pending: boolean; result: Promise<ClueCommentCreateResult> }>()
+  let disposed = false
+
+  const workspacePathOf = (workspaceId: string): string | undefined => {
+    if (options.resolveWorkspacePath === undefined) return undefined
+    try {
+      const path = options.resolveWorkspacePath(workspaceId)
+      return typeof path === 'string' && path !== '' ? path : undefined
+    } catch {
+      // A registry miss is not an access decision: the source simply lacks a
+      // workspace directory and reports its own clear failure.
+      return undefined
+    }
+  }
+
+  const contextOf = (workspaceId: string, call: ClueCallOptions = {}): ClueOperationContext => {
+    const workspacePath = workspacePathOf(workspaceId)
+    return {
+      workspaceId,
+      caller: call.caller ?? 'ui',
+      ...(workspacePath === undefined ? {} : { workspacePath }),
+      ...(call.signal === undefined ? {} : { signal: call.signal }),
+      ...(call.sessionId === undefined ? {} : { sessionId: call.sessionId }),
+    }
+  }
+
+  const throwIfAborted = (signal: AbortSignal | undefined): void => {
+    if (signal?.aborted === true) {
+      throw new ClueError('cancelled', 'clue operation was cancelled')
+    }
+  }
+
+  /**
+   * Normalize any thrown value to a clue error. The raw error text is
+   * deliberately NOT copied: transport stdout/stderr, Authorization headers,
+   * tokens and environment secrets must never reach the wire or the model.
+   */
+  const normalizeError = (error: unknown, sourceId?: string): ClueError => {
+    if (isClueError(error)) return error
+    if (isAbortError(error)) return new ClueError('cancelled', 'clue operation was cancelled')
+    const code = (error as { code?: unknown } | null)?.code
+    if (code === 'ENOENT') return new ClueError('not-found', 'the referenced resource no longer exists')
+    if (code === 'EACCES' || code === 'EPERM') {
+      return new ClueError('permission-denied', 'the host user cannot access the referenced resource')
+    }
+    return new ClueError(
+      'failed',
+      sourceId === undefined
+        ? 'clue operation failed'
+        : `clue source "${sourceId}" failed`,
+    )
+  }
+
+  const sourceFor = (sourceId: string): RegisteredSource => {
+    const source = sources.get(sourceId)
+    if (source === undefined) {
+      throw new ClueError('source-missing', `clue source "${sourceId}" is not available`)
+    }
+    return source
+  }
+
+  const orderedSources = (): RegisteredSource[] =>
+    [...sources.values()].sort((a, b) =>
+      (a.descriptor.order - b.descriptor.order) || a.descriptor.sourceId.localeCompare(b.descriptor.sourceId))
+
+  /** Run one source operation with abort checks and error normalization. */
+  const callSource = async <T>(
+    source: RegisteredSource,
+    context: ClueOperationContext,
+    operation: () => Promise<T>,
+  ): Promise<T> => {
+    throwIfAborted(context.signal)
+    let result: T
+    try {
+      result = await operation()
+    } catch (error) {
+      throw normalizeError(error, source.descriptor.sourceId)
+    }
+    throwIfAborted(context.signal)
+    return result
+  }
+
+  const normalizeSourceLocator = (
+    source: RegisteredSource,
+    locator: Locator,
+    context: ClueOperationContext,
+  ): Locator => {
+    const raw = requireLocator(locator)
+    if (source.operations?.normalizeLocator === undefined) return raw
+    try {
+      return requireLocator(source.operations.normalizeLocator(raw, {
+        workspaceId: context.workspaceId,
+        ...(context.workspacePath === undefined ? {} : { workspacePath: context.workspacePath }),
+      }))
+    } catch (error) {
+      throw normalizeError(error, source.descriptor.sourceId)
+    }
+  }
+
+  const locatorKeyOf = (source: RegisteredSource, locator: Locator): string => {
+    if (source.operations?.locatorKey !== undefined) {
+      try {
+        const key = source.operations.locatorKey(locator)
+        if (typeof key === 'string' && key !== '') return key
+      } catch {
+        // Fall through to the default canonical JSON key: a broken custom key
+        // must not make an existing reference unreadable.
+      }
+    }
+    return stableLocatorKey(locator)
+  }
+
+  /**
+   * Equality key of a STORED locator. A portable-only import deliberately
+   * stores `{}` until the source is re-registered; a source-specific key
+   * implementation may reject that placeholder, which is simply "not a
+   * match" — it must not make every later lookup in the workspace fail.
+   */
+  const storedLocatorKeyOf = (source: RegisteredSource, locator: Locator): string | undefined => {
+    try {
+      return locatorKeyOf(source, locator)
+    } catch {
+      return undefined
+    }
+  }
+
+  const findClueByLocator = (
+    state: WorkspaceState,
+    source: RegisteredSource,
+    key: string,
+  ): Clue | undefined => state.clues.find(clue =>
+    clue.sourceId === source.descriptor.sourceId && storedLocatorKeyOf(source, clue.locator) === key)
+
+  const stateOrEmpty = async (workspaceId: string): Promise<WorkspaceState> => {
+    if (!store.available) {
+      return { revision: 0, clues: [], packs: [], pins: [], bindings: [] }
+    }
+    return store.read(workspaceId)
+  }
+
+  const requireStore = (): CluesStore => {
+    if (!store.available) {
+      throw new ClueError('failed', 'clue storage is unavailable: the DSH profile home is unknown')
+    }
+    return store
+  }
+
+  const typeOf = (source: RegisteredSource, typeId: string): ClueTypeDescriptor => {
+    const type = types.get(typeId)
+    if (type === undefined || type.sourceId !== source.descriptor.sourceId) {
+      throw new ClueError('unsupported', `clue source "${source.descriptor.sourceId}" does not offer type "${typeId}"`)
+    }
+    return type
+  }
+
+  /**
+   * Context of one read/edit call. The payload's `sessionId` wins over the
+   * method option so S6/S2 integrations that only serialize the payload still
+   * hand the caller session to the source.
+   */
+  const contextFor = (params: CluesReadParams, call: ClueCallOptions): ClueOperationContext =>
+    contextOf(requireWorkspaceId(params.workspaceId), {
+      ...call,
+      ...(params.sessionId === undefined ? {} : { sessionId: params.sessionId }),
+    })
+
+  /** Refuse an operation the source's declared capabilities do not advertise. */
+  const requireSourceCapability = (
+    source: RegisteredSource,
+    capability: keyof ClueSourceCapabilities,
+    what: string,
+  ): void => {
+    if (source.descriptor.capabilities[capability] !== true) {
+      throw new ClueError('unsupported', `clue source "${source.descriptor.sourceId}" does not support ${what}`)
+    }
+  }
+
+  /** Refuse an operation the named type's declared capabilities do not advertise. */
+  const requireTypeCapability = (
+    source: RegisteredSource,
+    typeId: string,
+    capability: keyof ClueTypeDescriptor['capabilities'],
+    what: string,
+  ): void => {
+    if (typeOf(source, typeId).capabilities[capability] !== true) {
+      throw new ClueError('unsupported', `clue type "${typeId}" does not support ${what}`)
+    }
+  }
+
+  const normalizeCandidate = (
+    candidate: ClueCandidate,
+    fallback: { source: RegisteredSource; typeId?: string },
+    context: ClueOperationContext,
+    existing: WorkspaceState | undefined,
+  ): ClueCandidate => {
+    const source = sources.get(candidate.sourceId) ?? fallback.source
+    const declared = candidate.typeId !== undefined && candidate.typeId !== ''
+      ? candidate.typeId
+      : fallback.typeId ?? source.types[0]?.typeId
+    if (declared === undefined) {
+      throw new ClueError('unsupported', `clue source "${source.descriptor.sourceId}" returned a candidate without a type`)
+    }
+    typeOf(source, declared)
+    const locator = normalizeSourceLocator(source, candidate.locator, context)
+    const title = typeof candidate.title === 'string' && candidate.title.trim() !== ''
+      ? candidate.title
+      : String(locator.path ?? locator.id ?? locator.url ?? 'clue')
+    const key = locatorKeyOf(source, locator)
+    const clueId = existing?.clues.find(clue =>
+      clue.sourceId === source.descriptor.sourceId
+      && storedLocatorKeyOf(source, clue.locator) === key)?.id
+    return {
+      sourceId: source.descriptor.sourceId,
+      typeId: declared,
+      locator,
+      title,
+      ...(candidate.subtitle === undefined ? {} : { subtitle: candidate.subtitle }),
+      ...(candidate.info === undefined
+        ? {}
+        : { info: normalizeClueResourceInfo(candidate.info, 'candidate info') }),
+      ...(candidate.meta === undefined ? {} : { meta: candidate.meta }),
+      ...(clueId === undefined ? {} : { clueId }),
+    }
+  }
+
+  /** Validate the display snapshot of one candidate page (list/search). */
+  const withValidatedCandidateInfo = (result: ClueListResult): ClueListResult => ({
+    ...result,
+    items: result.items.map(candidate => candidate.info === undefined
+      ? candidate
+      : { ...candidate, info: normalizeClueResourceInfo(candidate.info, 'candidate info') }),
+  })
+
+  /**
+   * Reconcile a successful save's source-authoritative display snapshot onto
+   * the EXISTING stored clue for the same resource.
+   *
+   * The save already wrote the remote content; this keeps the local snapshot
+   * (pins, packs, library rows) from showing a stale state such as `active`
+   * after the source confirmed `completed`. It never creates a clue (a save of
+   * an unsaved candidate has no local row) and never writes a caller-supplied
+   * snapshot: `info` is only the normalized value the source returned. The
+   * write is skipped entirely when the snapshot is unchanged, so a no-op save
+   * does not bump the workspace revision.
+   */
+  const reconcileSavedInfo = async (
+    workspaceId: string,
+    source: RegisteredSource,
+    locator: Locator,
+    clueId: string | undefined,
+    info: ClueResourceInfo,
+  ): Promise<void> => {
+    if (!store.available) return
+    let changed = false
+    await requireStore().transact(workspaceId, undefined, (state) => {
+      const existing = clueId === undefined
+        ? findClueByLocator(state, source, locatorKeyOf(source, locator))
+        : state.clues.find(clue => clue.id === clueId)
+      if (existing === undefined) return
+      if (sameClueResourceInfo(info, existing.info)) return
+      const next: Clue = { ...existing, info, updatedAt: now() }
+      state.clues[state.clues.indexOf(existing)] = next
+      changed = true
+    }, { writeIf: () => changed })
+  }
+
+  const resolveRef = async (
+    params: CluesReadParams,
+    call: ClueCallOptions,
+  ): Promise<{ source: RegisteredSource; typeId: string; locator: Locator; clue?: Clue }> => {
+    const workspaceId = requireWorkspaceId(params.workspaceId)
+    const context = contextOf(workspaceId, call)
+    if (typeof params.clueId === 'string' && params.clueId !== '') {
+      const state = await stateOrEmpty(workspaceId)
+      const clue = state.clues.find(candidate => candidate.id === params.clueId)
+      if (clue === undefined) {
+        throw new ClueError('not-found', `clue "${params.clueId}" does not exist in this workspace`)
+      }
+      // An imported-but-unresolved reference must not try its source at all:
+      // the source may answer a misleading not-found/permission error, while
+      // the actual state is "the source this clue names is not available
+      // here". `ensure` clears the marker once the source really resolves it.
+      if (clue.unresolved !== undefined) {
+        throw new ClueError(
+          'source-missing',
+          `clue "${clue.id}" is unresolved: ${clue.unresolved.reason}`,
+        )
+      }
+      const source = sourceFor(clue.sourceId)
+      return { source, typeId: clue.typeId, locator: clue.locator, clue }
+    }
+    if (params.sourceId === undefined || params.typeId === undefined || params.locator === undefined) {
+      throw new ClueError('invalid-request', 'reading or editing requires a clueId or a sourceId + typeId + locator')
+    }
+    const source = sourceFor(params.sourceId)
+    typeOf(source, params.typeId)
+    const locator = normalizeSourceLocator(source, params.locator, context)
+    return { source, typeId: params.typeId, locator }
+  }
+
+  const sourcePage = async (
+    params: CluesListParams,
+    call: ClueCallOptions,
+    kind: 'list' | 'search',
+  ): Promise<ClueListResult> => {
+    const workspaceId = requireWorkspaceId(params.workspaceId)
+    const source = sourceFor(params.sourceId)
+    const capability: keyof ClueSourceCapabilities = kind
+    if (source.descriptor.capabilities[capability] !== true || source.operations?.[kind] === undefined) {
+      throw new ClueError(
+        'unsupported',
+        `clue source "${params.sourceId}" does not support ${kind}`,
+      )
+    }
+    pageLimitOf(params.limit, params.sourceId)
+    const context = contextOf(workspaceId, call)
+    throwIfAborted(call.signal)
+    const inferred = params.scope === undefined && !(kind === 'search' && params.sourceId === BUILTIN_SOURCE_IDS.feishuDocs)
+      ? await inferClueDefaultScope(params.sourceId, context.workspacePath)
+      : undefined
+    throwIfAborted(call.signal)
+    const scope = params.scope === undefined ? inferred?.scope : params.scope
+    const input: ClueSourceListInput = {
+      ...(scope === undefined ? {} : { scope }),
+      ...(params.cursor === undefined ? {} : { cursor: params.cursor }),
+      ...(params.limit === undefined ? {} : { limit: params.limit }),
+    }
+    const result = kind === 'list'
+      ? await callSource(source, context, async () => source.operations!.list!(input, context))
+      : await callSource(source, context, async () => source.operations!.search!({ ...input, query: (params as CluesSearchParams).query }, context))
+    const validated = withValidatedCandidateInfo(result)
+    return inferred?.scope === undefined ? validated : { ...validated, effectiveScope: inferred.scope }
+  }
+
+  /**
+   * Register one source. `allowReserved` is set only by the core's own
+   * construction path ({@link CluesServiceOptions.builtinSources}); every
+   * public call rejects the fixed built-in ids.
+   */
+  const registerSourceRecord = (registration: ClueSourceRegistration, allowReserved: boolean): () => void => {
+    if (disposed) {
+      throw new Error('[clues] cannot register a source on a disposed service')
+    }
+    const descriptor = registration.descriptor
+    const sourceId = descriptor?.sourceId
+    if (typeof sourceId !== 'string' || sourceId.trim() === '') {
+      throw new Error('[clues] a source registration needs a non-empty sourceId')
+    }
+    if (!allowReserved && RESERVED_SOURCE_IDS.includes(sourceId)) {
+      throw new Error(`[clues] source id "${sourceId}" is reserved by the core`)
+    }
+    if (sources.has(sourceId)) {
+      throw new Error(`[clues] source "${sourceId}" is already registered`)
+    }
+    const comments = descriptor.capabilities.comments
+    if (comments !== undefined && (typeof comments !== 'object' || comments === null
+      || typeof comments.read !== 'boolean' || typeof comments.create !== 'boolean'
+      || !['native', 'quote', 'none'].includes(comments.reply))) {
+      throw new ClueError('invalid-request', 'the source comment capabilities are invalid')
+    }
+    // Filters are client-rendered but host-owned: validate the generic JSON
+    // shape here, then deep-copy it below so a registrant cannot mutate what
+    // every later catalogue read sees.
+    const declaredFilters = descriptor.filters === undefined ? [] : descriptor.filters
+    if (!Array.isArray(declaredFilters)) {
+      throw new Error(`[clues] source "${sourceId}" filters must be an array`)
+    }
+    const filters = declaredFilters.map((filter, index) =>
+      copySourceFilter(filter as unknown as JsonValue, sourceId, index))
+    const declaredTypes = Array.isArray(descriptor.types) ? descriptor.types : []
+    const seen = new Set<string>()
+    for (const type of registration.types) {
+      if (type.sourceId !== sourceId) {
+        throw new Error(`[clues] type "${type.typeId}" belongs to "${type.sourceId}", not "${sourceId}"`)
+      }
+      if (seen.has(type.typeId)) {
+        throw new Error(`[clues] type "${type.typeId}" declared twice by source "${sourceId}"`)
+      }
+      if (types.has(type.typeId)) {
+        throw new Error(`[clues] type "${type.typeId}" is already registered`)
+      }
+      if (!declaredTypes.includes(type.typeId)) {
+        throw new Error(`[clues] source "${sourceId}" must list type "${type.typeId}" in its descriptor`)
+      }
+      seen.add(type.typeId)
+    }
+    if (declaredTypes.length !== registration.types.length || declaredTypes.some(id => !seen.has(id))) {
+      throw new Error(`[clues] source "${sourceId}" declares types it did not register`)
+    }
+    const registeredTypes = registration.types.map(copyTypeDescriptor)
+    const registered: RegisteredSource = {
+      descriptor: copySourceDescriptor({
+        ...descriptor,
+        types: declaredTypes,
+        ...(descriptor.filters === undefined ? {} : { filters }),
+      }),
+      types: registeredTypes,
+      ...(registration.operations === undefined ? {} : { operations: registration.operations }),
+    }
+    sources.set(sourceId, registered)
+    for (const type of registeredTypes) types.set(type.typeId, type)
+    return () => {
+      if (sources.get(sourceId) !== registered) return
+      sources.delete(sourceId)
+      for (const type of registeredTypes) {
+        if (types.get(type.typeId) === type) types.delete(type.typeId)
+      }
+    }
+  }
+
+  const service: CluesService = {
+    codecs: { clues: CLUE_CODEC_SOURCE, packs: PACK_CODEC_SOURCE },
+    builtinSourceIds: Object.values(BUILTIN_SOURCE_IDS),
+
+    registerSource(registration: ClueSourceRegistration): () => void {
+      return registerSourceRecord(registration, false)
+    },
+
+    getSources(): readonly ClueSourceDescriptor[] {
+      return orderedSources().map(source => copySourceDescriptor(source.descriptor))
+    },
+
+    getSource(sourceId: string): ClueSourceDescriptor | undefined {
+      const source = sources.get(sourceId)
+      return source === undefined ? undefined : copySourceDescriptor(source.descriptor)
+    },
+
+    getTypes(sourceId?: string): readonly ClueTypeDescriptor[] {
+      const all = [...types.values()]
+      return (sourceId === undefined ? all : all.filter(type => type.sourceId === sourceId))
+        .map(copyTypeDescriptor)
+    },
+
+    async resolve(params: CluesResolveParams, call: ClueCallOptions = {}): Promise<readonly ClueCandidate[]> {
+      const workspaceId = requireWorkspaceId(params.workspaceId)
+      const context = contextOf(workspaceId, call)
+      let candidates: ClueCandidate[] = []
+      const explicitSourceId = params.sourceId
+      const requested = explicitSourceId === undefined
+        ? orderedSources()
+        : [sourceFor(explicitSourceId)]
+      for (const source of requested) {
+        if (source.descriptor.capabilities.resolve !== true || source.operations?.resolve === undefined) {
+          if (explicitSourceId !== undefined) {
+            throw new ClueError('unsupported', `clue source "${source.descriptor.sourceId}" cannot resolve references`)
+          }
+          continue
+        }
+        const input: ClueResolveInput = {
+          ...(params.text === undefined ? {} : { text: params.text }),
+          ...(params.locator === undefined ? {} : { locator: params.locator }),
+          ...(params.typeId === undefined ? {} : { typeId: params.typeId }),
+          ...(explicitSourceId === undefined ? {} : { explicit: true }),
+        }
+        let raw: ClueCandidate | readonly ClueCandidate[] | undefined
+        try {
+          raw = await callSource(source, context, async () => source.operations!.resolve!(input, context))
+        } catch (error) {
+          // Auto resolution asks the sources in order. A source that does not
+          // own the input (a URL is not a local path, a path is not a pulled
+          // issue, an unavailable transport) must not stop the later sources
+          // from answering — otherwise the order-0 builtin poisons every
+          // remote URL/issue reference. An explicit sourceId still reports its
+          // own failure, and auth/permission failures always propagate.
+          if (
+            explicitSourceId === undefined
+            && isClueError(error)
+            && AUTO_RESOLVE_MISS_CATEGORIES.has(error.category)
+          ) {
+            continue
+          }
+          throw error
+        }
+        const list = raw === undefined ? [] : Array.isArray(raw) ? raw : [raw]
+        candidates = list.map(candidate => normalizeCandidate(candidate, {
+          source,
+          ...(params.typeId === undefined ? {} : { typeId: params.typeId }),
+        }, context, undefined))
+        if (candidates.length > 0) break
+      }
+      // No source owned the input: an empty candidate list is the "not found
+      // anywhere" answer of auto resolution (the caller passed no source to
+      // blame). An explicit-source call propagates its failures above; it can
+      // only get here when the source genuinely returned no candidate.
+      const state = await stateOrEmpty(workspaceId)
+      const seen = new Set<string>()
+      const normalized: ClueCandidate[] = []
+      for (const candidate of candidates) {
+        const source = sourceFor(candidate.sourceId)
+        const key = `${candidate.sourceId}\u0000${locatorKeyOf(source, candidate.locator)}`
+        if (seen.has(key)) continue
+        seen.add(key)
+        normalized.push(normalizeCandidate(candidate, { source }, context, state))
+      }
+      return normalized
+    },
+
+    async defaultScope(params: CluesDefaultScopeParams, call: ClueCallOptions = {}): Promise<ClueDefaultScopeResult> {
+      const workspaceId = requireWorkspaceId(params.workspaceId)
+      sourceFor(params.sourceId)
+      throwIfAborted(call.signal)
+      const result = await inferClueDefaultScope(params.sourceId, workspacePathOf(workspaceId))
+      throwIfAborted(call.signal)
+      return result
+    },
+
+    async list(params: CluesListParams, call: ClueCallOptions = {}): Promise<ClueListResult> {
+      return sourcePage(params, call, 'list')
+    },
+
+    async search(params: CluesSearchParams, call: ClueCallOptions = {}): Promise<ClueListResult> {
+      return sourcePage(params, call, 'search')
+    },
+
+    async read(params: CluesReadParams, call: ClueCallOptions = {}): Promise<ClueReadResult> {
+      const ref = await resolveRef(params, call)
+      const context = contextFor(params, call)
+      if (ref.source.operations?.read === undefined) {
+        throw new ClueError('unsupported', `clue source "${ref.source.descriptor.sourceId}" cannot read content`)
+      }
+      requireSourceCapability(ref.source, 'read', 'reads')
+      requireTypeCapability(ref.source, ref.typeId, 'read', 'reads')
+      const input: ClueSourceReadInput = {
+        typeId: ref.typeId,
+        locator: ref.locator,
+        ...(params.offset === undefined ? {} : { offset: params.offset }),
+      }
+      const result = await callSource(ref.source, context, async () => ref.source.operations!.read!(input, context))
+      let discussion: ClueDiscussionPage | undefined
+      if (params.includeDiscussion !== false && (params.includeDiscussion === true || (params.offset ?? 0) === 0)
+        && ref.source.descriptor.capabilities.comments?.read === true) {
+        try {
+          discussion = await service.commentsList({ ...params, ...(params.commentsCursor === undefined ? {} : { cursor: params.commentsCursor }) }, call)
+        } catch (error) {
+          throwIfAborted(call.signal)
+          discussion = {
+            status: 'unavailable', items: [], fetchedAt: now(), complete: false, coverage: 'document',
+            error: { category: isClueError(error) ? error.category : 'failed', message: 'the resource discussion could not be read' },
+          }
+        }
+      }
+      return {
+        ...result,
+        ...(discussion === undefined ? {} : { discussion }),
+        fetchedAt: result.fetchedAt ?? now(),
+        ...(result.info === undefined
+          ? {}
+          : { info: normalizeClueResourceInfo(result.info, 'read info') }),
+      } as ClueReadResult
+    },
+
+    async commentsList(params: ClueCommentsListParams, call: ClueCallOptions = {}): Promise<ClueDiscussionPage> {
+      const ref = await resolveRef(params, call)
+      const context = contextFor(params, call)
+      if (ref.source.descriptor.capabilities.comments?.read !== true || ref.source.operations?.listComments === undefined) {
+        throw new ClueError('unsupported', 'this source does not provide discussion reads')
+      }
+      if (params.limit !== undefined && (!Number.isInteger(params.limit) || params.limit < 1 || params.limit > 100)) {
+        throw new ClueError('invalid-request', 'the comment page limit must be between 1 and 100')
+      }
+      for (const value of [params.cursor, params.parentId]) {
+        if (value !== undefined && (typeof value !== 'string' || value.trim() === '' || value.length > 16_384)) {
+          throw new ClueError('invalid-request', 'the comment cursor or parent is invalid')
+        }
+      }
+      const page = await callSource(ref.source, context, () => ref.source.operations!.listComments!({
+        typeId: ref.typeId, locator: ref.locator, limit: params.limit ?? 30,
+        ...(params.cursor === undefined ? {} : { cursor: params.cursor }),
+        ...(params.parentId === undefined ? {} : { parentId: params.parentId }),
+      }, context))
+      return normalizeClueDiscussion(page)
+    },
+
+    async commentsCreate(params: ClueCommentsCreateParams, call: ClueCallOptions = {}): Promise<ClueCommentCreateResult> {
+      if ((call.caller ?? 'ui') !== 'ui') throw new ClueError('permission-denied', 'posting a comment requires an explicit interactive action')
+      if (typeof params.body !== 'string' || params.body.trim() === '' || Buffer.byteLength(params.body) > (1 << 20)
+        || typeof params.requestId !== 'string' || !/^[A-Za-z0-9_-]{1,200}$/u.test(params.requestId)
+        || (params.replyToId !== undefined && (typeof params.replyToId !== 'string' || params.replyToId.trim() === '' || params.replyToId.length > 2048))) {
+        throw new ClueError('invalid-request', 'a comment requires a bounded body and submission identity')
+      }
+      const ref = await resolveRef(params, call)
+      const context = contextFor(params, call)
+      const capability = ref.source.descriptor.capabilities.comments
+      if (capability?.create !== true || ref.source.operations?.createComment === undefined
+        || (params.replyToId !== undefined && capability.reply === 'none')) {
+        throw new ClueError('unsupported', 'this source does not support this comment action')
+      }
+      const key = `${context.workspaceId}\u0000${ref.source.descriptor.sourceId}\u0000${params.requestId}`
+      const signature = JSON.stringify([ref.typeId, locatorKeyOf(ref.source, ref.locator), context.sessionId, params.body, params.replyToId])
+      const existing = commentWrites.get(key)
+      if (existing !== undefined) {
+        if (existing.signature !== signature) throw new ClueError('conflict', 'the submission identity was already used for a different comment')
+        return existing.result
+      }
+      if (commentWrites.size >= 256) {
+        const oldest = [...commentWrites].find(([, value]) => !value.pending)?.[0]
+        if (oldest === undefined) throw new ClueError('rate-limited', 'too many comment submissions are pending')
+        commentWrites.delete(oldest)
+      }
+      const entry = { signature, pending: true, result: Promise.resolve().then(async () => {
+        const result = await callSource(ref.source, context, () => ref.source.operations!.createComment!({
+          typeId: ref.typeId, locator: ref.locator, body: params.body, requestId: params.requestId,
+          ...(params.replyToId === undefined ? {} : { replyToId: params.replyToId }),
+        }, context))
+        return { comment: normalizeClueComment(result.comment), savedAt: result.savedAt ?? now() }
+      }).finally(() => { entry.pending = false }) }
+      commentWrites.set(key, entry)
+      return entry.result
+    },
+
+    async loadEdit(params: CluesReadParams, call: ClueCallOptions = {}): Promise<ClueEditDocument> {
+      const ref = await resolveRef(params, call)
+      const context = contextFor(params, call)
+      if (ref.source.operations?.loadEdit === undefined) {
+        throw new ClueError('unsupported', `clue source "${ref.source.descriptor.sourceId}" is not editable`)
+      }
+      requireSourceCapability(ref.source, 'edit', 'edits')
+      requireTypeCapability(ref.source, ref.typeId, 'edit', 'edits')
+      const input: ClueSourceReadInput = { typeId: ref.typeId, locator: ref.locator }
+      const result = await callSource(ref.source, context, async () => ref.source.operations!.loadEdit!(input, context))
+      return result.info === undefined
+        ? result
+        : { ...result, info: normalizeClueResourceInfo(result.info, 'edit info') }
+    },
+
+    async saveEdit(
+      params: CluesReadParams & { readonly document: ClueSaveEditInput },
+      call: ClueCallOptions = {},
+    ): Promise<ClueSaveEditResult> {
+      // The HTTP layer validates the document, but the service is a public
+      // surface too: a direct caller must get the fixed `invalid-request`
+      // category instead of a downstream TypeError from a source.
+      if (
+        params.document === null
+        || typeof params.document !== 'object'
+        || Array.isArray(params.document)
+      ) {
+        throw new ClueError('invalid-request', 'a clue edit save needs a document object')
+      }
+      const ref = await resolveRef(params, call)
+      const context = contextFor(params, call)
+      if (ref.source.operations?.saveEdit === undefined) {
+        throw new ClueError('unsupported', `clue source "${ref.source.descriptor.sourceId}" is not editable`)
+      }
+      requireSourceCapability(ref.source, 'edit', 'edits')
+      requireTypeCapability(ref.source, ref.typeId, 'edit', 'edits')
+      const input: ClueSourceSaveInput = {
+        typeId: ref.typeId,
+        locator: ref.locator,
+        // Copy the contract fields only. Display metadata (`info`) belongs to
+        // reads, never to a remote write: a client cannot steer the write or
+        // have its snapshot echoed by smuggling extra document keys.
+        document: {
+          format: params.document.format,
+          data: params.document.data,
+          ...(params.document.baseRevision === undefined
+            ? {}
+            : { baseRevision: params.document.baseRevision }),
+        },
+      }
+      const result = await callSource(ref.source, context, async () => ref.source.operations!.saveEdit!(input, context))
+      const info = result.info === undefined
+        ? undefined
+        : normalizeClueResourceInfo(result.info, 'saved info')
+      if (info !== undefined) {
+        try {
+          await reconcileSavedInfo(context.workspaceId, ref.source, ref.locator, ref.clue?.id, info)
+        } catch {
+          // The SOURCE save already committed. The local display snapshot is
+          // best-effort metadata; turning a store failure into a save failure
+          // would make the client keep a dirty draft and retry the remote write
+          // (a duplicate edit). The store error is not echoed either.
+        }
+      }
+      return {
+        ...result,
+        savedAt: result.savedAt ?? now(),
+        ...(info === undefined ? {} : { info }),
+      } as ClueSaveEditResult
+    },
+
+    async portable(params: CluesReadParams, call: ClueCallOptions = {}): Promise<CluePortableRef> {
+      const ref = await resolveRef(params, call)
+      const context = contextFor(params, call)
+      if (ref.source.descriptor.capabilities.portable !== true || ref.source.operations?.portable === undefined) {
+        return { portable: false, reason: 'the source does not provide portable references' }
+      }
+      const input: ClueSourceReadInput = { typeId: ref.typeId, locator: ref.locator }
+      return callSource(ref.source, context, async () => ref.source.operations!.portable!(input, context))
+    },
+
+    async ensure(params: CluesEnsureParams, call: ClueCallOptions = {}): Promise<CluesEnsureResult> {
+      throwIfAborted(call.signal)
+      const workspaceId = requireWorkspaceId(params.workspaceId)
+      const source = sourceFor(params.sourceId)
+      typeOf(source, params.typeId)
+      const context = contextOf(workspaceId, call)
+      const locator = normalizeSourceLocator(source, params.locator, context)
+      const key = locatorKeyOf(source, locator)
+      const title = typeof params.title === 'string' && params.title.trim() !== ''
+        ? params.title.trim()
+        : String(locator.path ?? locator.id ?? locator.url ?? 'clue')
+      // Validate BEFORE touching the store: a malformed snapshot must not
+      // become a partially-written clue row that makes the whole library
+      // unreadable on the next start.
+      const subtitle = normalizeClueSubtitle(params.subtitle)
+      const info = params.info === undefined
+        ? undefined
+        : normalizeClueResourceInfo(params.info, 'clue ensure info')
+      let changed = true
+      const transaction = await requireStore().transact(workspaceId, undefined, (state) => {
+        // A direct locator match wins. An import that only knew a portable
+        // locator stored `{}` as its locator, so retry the portable one too:
+        // remapping must not mint a second id for the same resource.
+        const existing = findClueByLocator(state, source, key)
+          ?? state.clues.find(clue =>
+            clue.sourceId === source.descriptor.sourceId
+            && clue.unresolved?.portable?.locator !== undefined
+            && storedLocatorKeyOf(source, clue.unresolved.portable.locator) === key)
+        if (existing !== undefined) {
+          if (existing.unresolved === undefined) {
+            const infoChanged = info !== undefined && !sameClueResourceInfo(info, existing.info)
+            const subtitleChanged = subtitle !== undefined && subtitle !== existing.subtitle
+            if (!infoChanged && !subtitleChanged) {
+              // Identical display metadata is NOT a write: no revision bump,
+              // no `updatedAt` churn for a per-row ensure on every render.
+              changed = false
+              return { clue: existing, created: false }
+            }
+            const next: Clue = {
+              ...existing,
+              ...(infoChanged ? { info } : {}),
+              ...(subtitleChanged ? { subtitle } : {}),
+              updatedAt: now(),
+            }
+            state.clues[state.clues.indexOf(existing)] = next
+            return { clue: next, created: false, updated: true }
+          }
+          // REMAP: the same stable reference resolves now. Keep its id (packs,
+          // pins, bindings and snapshots already point at it), adopt the
+          // resolved locator/title, and clear the unresolved marker.
+          const next: Clue = {
+            ...existing,
+            typeId: params.typeId,
+            locator,
+            title,
+            ...(subtitle === undefined ? {} : { subtitle }),
+            ...(info === undefined ? {} : { info }),
+            updatedAt: now(),
+            unresolved: undefined,
+          }
+          state.clues[state.clues.indexOf(existing)] = next
+          return { clue: next, created: false, updated: true }
+        }
+        const timestamp = now()
+        const clue: Clue = {
+          id: newId('clue'),
+          sourceId: source.descriptor.sourceId,
+          typeId: params.typeId,
+          locator,
+          title,
+          ...(subtitle === undefined ? {} : { subtitle }),
+          ...(info === undefined ? {} : { info }),
+          workspaceId,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        }
+        state.clues.push(clue)
+        return { clue, created: true }
+      }, { writeIf: () => changed })
+      return transaction.result
+    },
+
+    async importUnresolved(
+      params: CluesImportUnresolvedParams,
+      call: ClueCallOptions = {},
+    ): Promise<CluesEnsureResult> {
+      throwIfAborted(call.signal)
+      const workspaceId = requireWorkspaceId(params.workspaceId)
+      const sourceId = typeof params.sourceId === 'string' ? params.sourceId.trim() : ''
+      if (sourceId === '') {
+        throw new ClueError('invalid-request', 'an unresolved clue needs a non-empty sourceId')
+      }
+      const typeId = typeof params.typeId === 'string' ? params.typeId.trim() : ''
+      if (typeId === '') {
+        throw new ClueError('invalid-request', 'an unresolved clue needs a non-empty typeId')
+      }
+      const title = typeof params.title === 'string' ? params.title.trim() : ''
+      if (title === '') {
+        throw new ClueError('invalid-request', 'an unresolved clue needs a non-empty title')
+      }
+      const reason = typeof params.reason === 'string' ? params.reason.trim() : ''
+      if (reason === '') {
+        throw new ClueError('invalid-request', 'an unresolved clue needs a non-empty reason')
+      }
+      const locator = requireLocator(params.locator)
+      const portable = portableRefOf(params.portable)
+      const source = sources.get(sourceId)
+      const context = contextOf(workspaceId, call)
+      // The row stores exactly what the importer supplied (a portable locator
+      // or `{}`), never a fabricated resolvable address. DEDUPE, however, must
+      // recognize the resource under EVERY address the import carries: a
+      // portable-only row has an empty locator, so comparing `clue.locator`
+      // alone minted a second id for the same resource.
+      const keyOf = (value: Locator): string => source === undefined
+        ? stableLocatorKey(value)
+        : locatorKeyOf(source, normalizeSourceLocator(source, value, context))
+      const importKeys = new Set<string>()
+      for (const value of [locator, portable?.locator]) {
+        if (value === undefined || Object.keys(value).length === 0) continue
+        importKeys.add(keyOf(value))
+      }
+      /** Keys under which one stored row already names this resource. */
+      const storedKeysOf = (clue: Clue): string[] => {
+        const keys: string[] = []
+        for (const value of [clue.locator, clue.unresolved?.portable?.locator]) {
+          if (value === undefined) continue
+          if (source === undefined) {
+            keys.push(stableLocatorKey(value))
+            continue
+          }
+          const key = storedLocatorKeyOf(source, value)
+          if (key !== undefined) keys.push(key)
+        }
+        return keys
+      }
+      const unresolved: ClueUnresolved = {
+        reason,
+        ...(portable === undefined ? {} : { portable }),
+      }
+      const transaction = await requireStore().transact(workspaceId, undefined, (state) => {
+        if (importKeys.size > 0) {
+          const existing = state.clues.find(clue =>
+            clue.sourceId === sourceId
+            && storedKeysOf(clue).some(key => importKeys.has(key)))
+          if (existing !== undefined) {
+            if (existing.unresolved === undefined) return { clue: existing, created: false }
+            const next: Clue = { ...existing, title, unresolved, updatedAt: now() }
+            state.clues[state.clues.indexOf(existing)] = next
+            return { clue: next, created: false, updated: true }
+          }
+        }
+        const timestamp = now()
+        const clue: Clue = {
+          id: newId('clue'),
+          sourceId,
+          typeId,
+          locator,
+          title,
+          workspaceId,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          unresolved,
+        }
+        state.clues.push(clue)
+        return { clue, created: true }
+      })
+      return transaction.result
+    },
+
+    async listClues(workspaceId: string): Promise<CluesLibraryResult> {
+      const state = await requireStore().read(requireWorkspaceId(workspaceId))
+      return { clues: [...state.clues], revision: state.revision }
+    },
+
+    async listPins(workspaceId: string): Promise<CluesPinsResult> {
+      const state = await requireStore().read(requireWorkspaceId(workspaceId))
+      return { pins: [...state.pins], revision: state.revision }
+    },
+
+    async addPin(params: CluesPinMutationParams, call: ClueCallOptions = {}): Promise<CluesPinsResult> {
+      throwIfAborted(call.signal)
+      const workspaceId = requireWorkspaceId(params.workspaceId)
+      const transaction = await requireStore().transact(workspaceId, params.expectedRevision, (state) => {
+        if (!state.clues.some(clue => clue.id === params.clueId)) {
+          throw new ClueError('not-found', `clue "${params.clueId}" does not exist in this workspace`)
+        }
+        if (!state.pins.some(pin => pin.clueId === params.clueId)) {
+          const pin: CluePin = { workspaceId, clueId: params.clueId, createdAt: now() }
+          state.pins.push(pin)
+        }
+        return state.pins
+      })
+      return { pins: transaction.result, revision: transaction.revision }
+    },
+
+    async removePin(params: CluesPinMutationParams, call: ClueCallOptions = {}): Promise<CluesPinsResult> {
+      throwIfAborted(call.signal)
+      const workspaceId = requireWorkspaceId(params.workspaceId)
+      const transaction = await requireStore().transact(workspaceId, params.expectedRevision, (state) => {
+        state.pins = state.pins.filter(pin => pin.clueId !== params.clueId)
+        return state.pins
+      })
+      return { pins: transaction.result, revision: transaction.revision }
+    },
+
+    async listPacks(workspaceId: string): Promise<CluesPacksResult> {
+      const state = await requireStore().read(requireWorkspaceId(workspaceId))
+      return { packs: [...state.packs], revision: state.revision }
+    },
+
+    async createPack(params: CluesPackCreateParams, call: ClueCallOptions = {}): Promise<CluesPackMutationResult> {
+      throwIfAborted(call.signal)
+      const workspaceId = requireWorkspaceId(params.workspaceId)
+      const name = packNameOf(params.name)
+      const requested = params.members ?? []
+      if (requested.length > MAX_PACK_MEMBERS) {
+        throw new ClueError('invalid-request', `a pack accepts at most ${MAX_PACK_MEMBERS} members`)
+      }
+      const members = [...new Set(requested.filter(id => typeof id === 'string' && id !== ''))]
+      const transaction = await requireStore().transact(workspaceId, params.expectedRevision, (state) => {
+        const known = new Set(state.clues.map(clue => clue.id))
+        const missing = members.find(id => !known.has(id))
+        if (missing !== undefined) {
+          throw new ClueError('not-found', `clue "${missing}" does not exist in this workspace`)
+        }
+        const timestamp = now()
+        const pack: CluePack = {
+          id: newId('pack'),
+          name,
+          workspaceId,
+          members,
+          revision: 1,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        }
+        state.packs.push(pack)
+        return { pack }
+      })
+      return {
+        pack: transaction.result.pack,
+        revision: transaction.revision,
+        packRevision: transaction.result.pack.revision,
+      }
+    },
+
+    async renamePack(params: CluesPackRenameParams, call: ClueCallOptions = {}): Promise<CluesPackMutationResult> {
+      throwIfAborted(call.signal)
+      const workspaceId = requireWorkspaceId(params.workspaceId)
+      const name = packNameOf(params.name)
+      const transaction = await requireStore().transact(workspaceId, undefined, (state) => {
+        const pack = requirePack(state, params.packId)
+        requirePackRevision(pack, params.expectedRevision)
+        // CluePack is readonly: replace the row with a new object instead of
+        // mutating the committed shape (the store persists the replaced row).
+        const next: CluePack = { ...pack, name, revision: pack.revision + 1, updatedAt: now() }
+        state.packs[state.packs.indexOf(pack)] = next
+        return { pack: next }
+      })
+      return {
+        pack: transaction.result.pack,
+        revision: transaction.revision,
+        packRevision: transaction.result.pack.revision,
+      }
+    },
+
+    async addPackMember(params: CluesPackMemberParams, call: ClueCallOptions = {}): Promise<CluesPackMutationResult> {
+      throwIfAborted(call.signal)
+      const workspaceId = requireWorkspaceId(params.workspaceId)
+      const transaction = await requireStore().transact(workspaceId, undefined, (state) => {
+        const pack = requirePack(state, params.packId)
+        requirePackRevision(pack, params.expectedRevision)
+        if (!state.clues.some(clue => clue.id === params.clueId)) {
+          throw new ClueError('not-found', `clue "${params.clueId}" does not exist in this workspace`)
+        }
+        if (pack.members.includes(params.clueId)) return { pack }
+        const next: CluePack = {
+          ...pack,
+          members: [...pack.members, params.clueId],
+          revision: pack.revision + 1,
+          updatedAt: now(),
+        }
+        state.packs[state.packs.indexOf(pack)] = next
+        return { pack: next }
+      })
+      return {
+        pack: transaction.result.pack,
+        revision: transaction.revision,
+        packRevision: transaction.result.pack.revision,
+      }
+    },
+
+    async removePackMember(params: CluesPackMemberParams, call: ClueCallOptions = {}): Promise<CluesPackMutationResult> {
+      throwIfAborted(call.signal)
+      const workspaceId = requireWorkspaceId(params.workspaceId)
+      const transaction = await requireStore().transact(workspaceId, undefined, (state) => {
+        const pack = requirePack(state, params.packId)
+        requirePackRevision(pack, params.expectedRevision)
+        if (!pack.members.includes(params.clueId)) return { pack }
+        const next: CluePack = {
+          ...pack,
+          members: pack.members.filter(id => id !== params.clueId),
+          revision: pack.revision + 1,
+          updatedAt: now(),
+        }
+        state.packs[state.packs.indexOf(pack)] = next
+        return { pack: next }
+      })
+      return {
+        pack: transaction.result.pack,
+        revision: transaction.revision,
+        packRevision: transaction.result.pack.revision,
+      }
+    },
+
+    async deletePack(params: CluesPackDeleteParams, call: ClueCallOptions = {}): Promise<CluesPackDeleteResult> {
+      throwIfAborted(call.signal)
+      const workspaceId = requireWorkspaceId(params.workspaceId)
+      const transaction = await requireStore().transact(workspaceId, undefined, (state) => {
+        const pack = requirePack(state, params.packId)
+        requirePackRevision(pack, params.expectedRevision)
+        state.packs = state.packs.filter(candidate => candidate.id !== params.packId)
+        state.bindings = state.bindings.filter(binding =>
+          !(binding.target.kind === 'pack' && binding.target.packId === params.packId))
+        return { packs: state.packs, packRevision: pack.revision }
+      })
+      return {
+        deleted: true,
+        packs: transaction.result.packs,
+        revision: transaction.revision,
+        packRevision: transaction.result.packRevision,
+      }
+    },
+
+    async listBindings(workspaceId: string): Promise<CluesBindingsResult> {
+      const state = await requireStore().read(requireWorkspaceId(workspaceId))
+      return { bindings: [...state.bindings], revision: state.revision }
+    },
+
+    async addBinding(params: CluesBindingMutationParams, call: ClueCallOptions = {}): Promise<CluesBindingsResult> {
+      throwIfAborted(call.signal)
+      const workspaceId = requireWorkspaceId(params.workspaceId)
+      const target = params.target
+      if (target === null || typeof target !== 'object' || (target.kind !== 'clue' && target.kind !== 'pack')) {
+        throw new ClueError('invalid-request', 'a binding target must be a clue or a pack')
+      }
+      const key = bindingKey(target)
+      const transaction = await requireStore().transact(workspaceId, params.expectedRevision, (state) => {
+        if (target.kind === 'clue' && !state.clues.some(clue => clue.id === target.clueId)) {
+          throw new ClueError('not-found', `clue "${target.clueId}" does not exist in this workspace`)
+        }
+        if (target.kind === 'pack' && !state.packs.some(pack => pack.id === target.packId)) {
+          throw new ClueError('not-found', `pack "${target.packId}" does not exist in this workspace`)
+        }
+        if (!state.bindings.some(binding => bindingKey(binding.target) === key)) {
+          const binding: ClueBinding = { workspaceId, target, createdAt: now() }
+          state.bindings.push(binding)
+        }
+        return state.bindings
+      })
+      return { bindings: transaction.result, revision: transaction.revision }
+    },
+
+    async removeBinding(params: CluesBindingMutationParams, call: ClueCallOptions = {}): Promise<CluesBindingsResult> {
+      throwIfAborted(call.signal)
+      const workspaceId = requireWorkspaceId(params.workspaceId)
+      const key = bindingKey(params.target)
+      const transaction = await requireStore().transact(workspaceId, params.expectedRevision, (state) => {
+        state.bindings = state.bindings.filter(binding => bindingKey(binding.target) !== key)
+        return state.bindings
+      })
+      return { bindings: transaction.result, revision: transaction.revision }
+    },
+
+    async putSnapshot(workspaceId: string, input: ClueSnapshotInput): Promise<ClueSnapshotMeta> {
+      const id = requireWorkspaceId(workspaceId)
+      const state = await requireStore().read(id)
+      if (!state.clues.some(clue => clue.id === input.clueId)) {
+        throw new ClueError('not-found', `clue "${input.clueId}" does not exist in this workspace`)
+      }
+      const timestamp = now()
+      const meta: ClueSnapshotMeta = {
+        snapshotId: input.snapshotId ?? newId('snapshot'),
+        workspaceId: id,
+        clueId: input.clueId,
+        format: input.format,
+        fetchedAt: input.fetchedAt ?? timestamp,
+        createdAt: timestamp,
+        ...(input.sourceVersion === undefined ? {} : { sourceVersion: input.sourceVersion }),
+        integrity: input.integrity ?? 'unknown',
+      }
+      const content: ClueSnapshotContent = {
+        format: input.format,
+        data: input.data,
+        ...(input.text === undefined ? {} : { text: input.text }),
+        ...(input.assets === undefined ? {} : { assets: input.assets }),
+        ...(input.discussion === undefined ? {} : { discussion: input.discussion }),
+      }
+      return requireStore().putSnapshot(id, meta, content)
+    },
+
+    async readSnapshot(params: CluesSnapshotReadParams): Promise<ClueSnapshotRecord> {
+      const workspaceId = requireWorkspaceId(params.workspaceId)
+      return requireStore().readSnapshot(workspaceId, params.snapshotId)
+    },
+
+    async listSnapshots(workspaceId: string): Promise<readonly ClueSnapshotMeta[]> {
+      return requireStore().listSnapshots(requireWorkspaceId(workspaceId))
+    },
+
+    registerApi(name: string, handler: ClueApiHandler): () => void {
+      if (disposed) {
+        throw new Error('[clues] cannot register an API method on a disposed service')
+      }
+      if (typeof name !== 'string' || name.trim() === '') {
+        throw new Error('[clues] an API method needs a non-empty name')
+      }
+      if (typeof handler !== 'function') {
+        throw new Error(`[clues] API method "${name}" needs a handler function`)
+      }
+      if (apis.has(name)) {
+        throw new Error(`[clues] API method "${name}" is already registered`)
+      }
+      const entry: RegisteredApi = { handler }
+      apis.set(name, entry)
+      return () => {
+        if (apis.get(name) === entry) apis.delete(name)
+      }
+    },
+
+    hasApi(name: string): boolean {
+      return apis.has(name)
+    },
+
+    async invokeApi(name: string, payload: unknown, context: ClueApiContext = { caller: 'ui' }): Promise<unknown> {
+      const entry = apis.get(name)
+      if (entry === undefined) {
+        throw new ClueError('not-found', `unknown clue API method "${name}"`)
+      }
+      if (context.signal?.aborted === true) {
+        throw new ClueError('cancelled', 'clue operation was cancelled')
+      }
+      try {
+        return await entry.handler(payload, context)
+      } catch (error) {
+        // S2+ handlers run CLI/HTTP integrations; their raw stdout/stderr or
+        // headers must never reach the wire. Normalization is the boundary,
+        // exactly like a source operation (an intentional ClueError keeps its
+        // fixed category and safe message).
+        throw normalizeError(error)
+      }
+    },
+
+    dispose(): void {
+      if (disposed) return
+      disposed = true
+      commentWrites.clear()
+      sources.clear()
+      types.clear()
+      apis.clear()
+    },
+  }
+
+  // The core's own sources use the reserved registration path; a duplicate
+  // id or type fails construction loudly instead of blocking an external one.
+  for (const registration of options.builtinSources ?? []) {
+    registerSourceRecord(registration, true)
+  }
+
+  return service
+}
+
+/** The pack a mutation names, or not-found. */
+function requirePack(state: WorkspaceState, packId: string): CluePack {
+  const pack = state.packs.find(candidate => candidate.id === packId)
+  if (pack === undefined) {
+    throw new ClueError('not-found', `pack "${packId}" does not exist in this workspace`)
+  }
+  return pack
+}
+
+/** Pack-local CAS guard (the pack's own revision, not the workspace revision). */
+function requirePackRevision(pack: CluePack, expectedRevision: number | undefined): void {
+  if (expectedRevision !== undefined && expectedRevision !== pack.revision) {
+    throw new ClueError(
+      'conflict',
+      `pack "${pack.id}" changed: expected revision ${expectedRevision}, found ${pack.revision}`,
+    )
+  }
+}

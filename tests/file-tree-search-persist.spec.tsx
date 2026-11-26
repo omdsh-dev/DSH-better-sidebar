@@ -143,6 +143,21 @@ describe('TreePanel search keeps the tree mounted', () => {
     // No second listing: the cache (and the expansion state) survived.
     expect(fsTrees).toHaveBeenCalledTimes(1)
   })
+
+  it('shows an unreadable root as a localized failure, not an empty result', async () => {
+    // The host now fails a permission-denied ROOT instead of answering it as
+    // an empty list. The hint keeps the localized failure label and appends
+    // the host's concrete reason (which includes the path).
+    fsSearch.mockRejectedValue(Object.assign(
+      new Error('cannot search "/tmp": EACCES: permission denied'),
+      { code: 'fs-error' },
+    ))
+    harness = mountPanel()
+    await act(async () => {})
+    await search(harness.container, 'a')
+    expect(resultsBody(harness.container).textContent)
+      .toContain('Failed to load: cannot search "/tmp": EACCES: permission denied')
+  })
 })
 
 describe('TreePanel refresh and truncated levels', () => {

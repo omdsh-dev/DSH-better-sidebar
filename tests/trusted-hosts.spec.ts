@@ -1,12 +1,26 @@
-/** The sidebar must use native Connection admission, never a reconstructed trust list. */
+/** The sidebar must use native Connection admission, never a reconstructed trust list.
+ *
+ * DSH 0.2.3 deleted `requestRejection`: `admit` is the only admission call and it
+ * verifies credentials through the NESTED `connection.authentication` service,
+ * which cordis only exposes to the caller that injected the dependency. The
+ * plugin therefore admits from its injected child fiber and has no second path:
+ * without the provider every fenced request fails loudly.
+ */
 import { describe, expect, it, vi } from 'vitest'
 import { apply } from '../src/index.ts'
 import type { SidebarHttpRequest, SidebarWebRoute, SidebarWebUpgradeRoute } from '../src/context-types.ts'
 
-/** No retired webRuntime service: rc.2 and newer both expose Connection admission. */
-function mount(initialRejection: 401 | 403 | undefined = undefined) {
+/** Mount the plugin with a 0.2.3 host: bare `admit` on the plugin context that
+ *  rejects the nested read, plus the injected provider connection the plugin's
+ *  child fiber declares. */
+function mount(initialRejection: 401 | 403 | undefined = undefined, activateProvider = true) {
   let rejection = initialRejection
-  const connection = { requestRejection: vi.fn((_request: SidebarHttpRequest) => rejection) }
+  const providerAdmit = vi.fn((_request: SidebarHttpRequest) =>
+    rejection === undefined ? { peer: {} } : { rejection })
+  const providerConnection = { admit: providerAdmit }
+  const connection = {
+    admit: () => { throw new Error('cannot get property "connection.authentication" without inject') },
+  }
   const routes: SidebarWebRoute[] = []
   const upgrades: SidebarWebUpgradeRoute[] = []
   const effects: Array<() => void> = []
@@ -16,6 +30,9 @@ function mount(initialRejection: 401 | 403 | undefined = undefined) {
     webServer: {
       register: (route: SidebarWebRoute) => { routes.push(route); return () => {} },
       registerUpgrade: (route: SidebarWebUpgradeRoute) => { upgrades.push(route); return () => {} },
+      // The approved loopback read route compares the peer socket's local port
+      // with the real bound port.
+      port: 3080,
     },
     sessions: { get: () => undefined },
     tools: { register: () => () => {} },
@@ -30,17 +47,18 @@ function mount(initialRejection: 401 | 403 | undefined = undefined) {
     on: () => () => {},
     get: () => undefined,
   } as never)
+  if (activateProvider) {
+    for (const injection of injections) {
+      if (injection.deps.includes('connection.authentication')) injection.activate({ connection: providerConnection })
+    }
+  }
   return {
     connection,
+    providerAdmit,
+    providerConnection,
     routes,
     upgrades,
     setRejection: (next: 401 | 403 | undefined) => { rejection = next },
-    /** Fire the child fiber that waits for `connection.authentication` (0.2.3+). */
-    activateProvider: (providerConnection: unknown = connection) => {
-      for (const injection of injections) {
-        if (injection.deps.includes('connection.authentication')) injection.activate({ connection: providerConnection })
-      }
-    },
     cleanup: () => { for (const cleanup of effects) cleanup() },
   }
 }
@@ -77,13 +95,13 @@ describe('native Connection admission', () => {
       const { req } = request('/sidebar/api/session.cwd', {
         host: 'example.com',
         origin: 'https://example.com',
-        cookie: 'native-authenticated-session',
+        cookie: 'test-cookie',
       })
       const { res, out } = response()
       await mounted.routes.find(route => route.path === '/sidebar/api')!.handler(req, res)
       expect(out.status).toBe(200)
-      expect(mounted.connection.requestRejection).toHaveBeenCalledExactlyOnceWith(req)
-      expect(mounted.connection.requestRejection.mock.contexts[0]).toBe(mounted.connection)
+      expect(mounted.providerAdmit).toHaveBeenCalledExactlyOnceWith(req)
+      expect(mounted.providerAdmit.mock.contexts[0]).toBe(mounted.providerConnection)
     } finally {
       mounted.cleanup()
     }
@@ -93,19 +111,35 @@ describe('native Connection admission', () => {
     const mounted = mount(rejection)
     try {
       expect(mounted.routes.map(route => route.path)).toEqual([
+        // S7 share surface (four exact POST routes, fenced per request).
+        '/sidebar/clues/share/export-preview', '/sidebar/clues/share/export',
+        '/sidebar/clues/share/import-preview', '/sidebar/clues/share/import',
+        // Two approved exact loopback POST exceptions (not a generic API bypass).
+        '/sidebar/agent/clues/read', '/sidebar/agent/clues/commit',
         '/sidebar/api', '/sidebar/sidechat-image', '/sidebar/upload', '/sidebar/write', '/sidebar/bundle',
         '/sidebar/archive', '/sidebar/file', '/sidebar/html',
       ])
       expect(mounted.upgrades.map(route => route.path)).toEqual([
         '/sidebar/ws/agent-opens', '/sidebar/ws/fs-watch', '/sidebar/ws/sidechat',
       ])
+      const agentPaths = ['/sidebar/agent/clues/read', '/sidebar/agent/clues/commit']
       for (const route of mounted.routes) {
+        if (agentPaths.includes(route.path)) continue
         const input = request(route.path)
         const { res, out } = response()
         await route.handler(input.req, res)
         expect(out.status, route.path).toBe(403)
         expect(input.reads(), route.path).toBe(0)
-        expect(mounted.connection.requestRejection).toHaveBeenLastCalledWith(input.req)
+        expect(mounted.providerAdmit).toHaveBeenLastCalledWith(input.req)
+      }
+      // Both exact routes reject a non-loopback peer before reading a body.
+      for (const path of agentPaths) {
+        const input = request(path)
+        const { res, out } = response()
+        await mounted.routes.find(route => route.path === path)!.handler(input.req, res)
+        expect(out.status).toBe(403)
+        expect(input.reads()).toBe(0)
+        expect(mounted.providerAdmit).not.toHaveBeenCalledWith(input.req)
       }
       for (const route of mounted.upgrades) {
         const input = request(route.path)
@@ -113,91 +147,43 @@ describe('native Connection admission', () => {
         await route.handler(input.req, socket, new Uint8Array())
         expect(socket.destroy, route.path).toHaveBeenCalledOnce()
         expect(input.reads(), route.path).toBe(0)
-        expect(mounted.connection.requestRejection).toHaveBeenLastCalledWith(input.req)
+        expect(mounted.providerAdmit).toHaveBeenLastCalledWith(input.req)
       }
-      expect(mounted.connection.requestRejection).toHaveBeenCalledTimes(mounted.routes.length + mounted.upgrades.length)
+      // One admission check per FENCED HTTP route and per WebSocket upgrade.
+      expect(mounted.providerAdmit).toHaveBeenCalledTimes(mounted.routes.length + mounted.upgrades.length - agentPaths.length)
     } finally {
       mounted.cleanup()
     }
   })
 
-  it.each([null, false, 0, ''])('does not treat an unexpected falsy verdict (%s) as admission', async (verdict) => {
-    const mounted = mount()
+  it('does not admit through the bare connection when the authentication provider never activates', async () => {
+    const mounted = mount(undefined, false)
     try {
-      mounted.connection.requestRejection.mockReturnValue(verdict as never)
-      for (const route of mounted.routes) {
-        const input = request(route.path)
-        const { res, out } = response()
-        await route.handler(input.req, res)
-        expect(out.status, route.path).toBe(403)
-        expect(input.reads(), route.path).toBe(0)
-      }
-      for (const route of mounted.upgrades) {
-        const input = request(route.path)
-        const socket = { destroy: vi.fn() }
-        await route.handler(input.req, socket, new Uint8Array())
-        expect(socket.destroy, route.path).toHaveBeenCalledOnce()
-        expect(input.reads(), route.path).toBe(0)
-      }
-    } finally {
-      mounted.cleanup()
-    }
-  })
-
-  it('has no old-host fallback when native admission is missing', async () => {
-    const mounted = mount()
-    try {
-      Reflect.deleteProperty(mounted.connection, 'requestRejection')
       const input = request('/sidebar/api/session.cwd')
       const { res, out } = response()
-      await expect(mounted.routes.find(route => route.path === '/sidebar/api')!.handler(input.req, res)).rejects.toThrow(TypeError)
+      await expect(mounted.routes.find(route => route.path === '/sidebar/api')!.handler(input.req, res))
+        .rejects.toThrow(TypeError)
       expect(out.status).toBe(0)
       expect(input.reads()).toBe(0)
+      // The bare context `admit` throws when it reads the uninjected service;
+      // reaching it would surface that error instead of the fence's TypeError.
+      expect(() => (mounted.connection.admit as () => unknown)()).toThrow(/without inject/)
     } finally {
       mounted.cleanup()
     }
   })
 
-  it('falls back to native admit once requestRejection is gone', async () => {
+  it('admits through the injected authentication provider', async () => {
     const mounted = mount()
     try {
-      let rejection: 401 | 403 | undefined
-      const admit = vi.fn(() => (rejection === undefined ? {} : { rejection }))
-      Reflect.deleteProperty(mounted.connection, 'requestRejection')
-      Object.assign(mounted.connection as unknown as Record<string, unknown>, { admit })
       const route = mounted.routes.find(candidate => candidate.path === '/sidebar/api')!
       for (const [verdict, expected] of [[undefined, 200], [401, 403], [403, 403]] as const) {
-        rejection = verdict
+        mounted.setRejection(verdict)
         const { res, out } = response()
         await route.handler(request('/sidebar/api/session.cwd').req, res)
         expect(out.status).toBe(expected)
       }
-      expect(admit).toHaveBeenCalledTimes(3)
-    } finally {
-      mounted.cleanup()
-    }
-  })
-
-  it('admits through the injected authentication provider when admit reads the nested service', async () => {
-    const mounted = mount()
-    try {
-      let rejection: 401 | 403 | undefined
-      const providerAdmit = vi.fn(() => (rejection === undefined ? { peer: {} } : { rejection }))
-      // 0.2.3 host: the plugin's own context exposes `admit`, but cordis refuses the
-      // nested `connection.authentication` read unless the provider fiber declared it.
-      Reflect.deleteProperty(mounted.connection, 'requestRejection')
-      Object.assign(mounted.connection as unknown as Record<string, unknown>, {
-        admit: () => { throw new Error('cannot get property "connection.authentication" without inject') },
-      })
-      mounted.activateProvider({ admit: providerAdmit })
-      const route = mounted.routes.find(candidate => candidate.path === '/sidebar/api')!
-      for (const [verdict, expected] of [[undefined, 200], [401, 403], [403, 403]] as const) {
-        rejection = verdict
-        const { res, out } = response()
-        await route.handler(request('/sidebar/api/session.cwd').req, res)
-        expect(out.status).toBe(expected)
-      }
-      expect(providerAdmit).toHaveBeenCalledTimes(3)
+      expect(mounted.providerAdmit).toHaveBeenCalledTimes(3)
     } finally {
       mounted.cleanup()
     }
@@ -219,7 +205,7 @@ describe('native Connection admission', () => {
         const { res, out } = response()
         await mounted.routes.find(route => route.path === '/sidebar/file')!.handler(req, res)
         expect(out.status).toBe(403)
-        expect(mounted.connection.requestRejection).toHaveBeenLastCalledWith(req)
+        expect(mounted.providerAdmit).toHaveBeenLastCalledWith(req)
         expect(req.headers).toBe(headers)
       }
     } finally {
@@ -238,7 +224,7 @@ describe('native Connection admission', () => {
         await route.handler(req, res)
         expect(out.status).toBe(expected)
       }
-      expect(mounted.connection.requestRejection).toHaveBeenCalledTimes(4)
+      expect(mounted.providerAdmit).toHaveBeenCalledTimes(4)
     } finally {
       mounted.cleanup()
     }

@@ -1,0 +1,15 @@
+.toolbar {
+  display: flex;
+  align-items: center;
+  flex: none;
+  gap: 4px;
+  min-width: 0;
+  min-height: 32px;
+  padding: 0 8px;
+  box-sizing: border-box;
+}
+.start { display: flex; align-items: center; flex: 1; gap: 4px; min-width: 0; }
+.end { display: flex; align-items: center; flex: none; gap: 2px; }
+@media (pointer: coarse) {
+  .toolbar { min-height: 44px; }
+}

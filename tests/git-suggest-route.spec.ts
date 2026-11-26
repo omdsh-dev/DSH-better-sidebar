@@ -208,7 +208,7 @@ function mount(setup: {
     },
     logger: { info: () => {}, warn: () => {} },
     profileContext: undefined,
-    connection: { requestRejection: () => undefined },
+    connection: { admit: () => ({ peer: null }) },
     webServer: {
       register: (route: SidebarWebRoute) => { routes.push(route); return () => {} },
       registerUpgrade: (_route: SidebarWebUpgradeRoute) => () => {},
@@ -219,6 +219,7 @@ function mount(setup: {
     effect: (fn: () => void | (() => void)) => { fn() },
     inject: (deps: readonly string[], cb: (sctx: unknown) => void) => {
       if (deps.includes('settings')) cb({ settings })
+      if (deps.includes('connection.authentication')) cb({ connection: { admit: () => ({ peer: null }) } } as never)
       return () => {}
     },
     on: () => () => {},

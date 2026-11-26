@@ -1,0 +1,274 @@
+/** Pack content and fixed footer share the product scale. */
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-sidebar-space-3);
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  box-sizing: border-box;
+  container-type: inline-size;
+  padding: var(--ds-sidebar-gutter);
+  overflow: hidden;
+  scrollbar-width: thin;
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-primary);
+}
+/* A bleed footer owns the window's bottom edge. The root's own bottom inset
+   would otherwise sit above the footer's 12px padding, leaving 26px inside the
+   2px floating edge instead of the intended 14px: the negative bottom margin of
+   `.actionFooterBleed` cannot pull the footer past the content box once the
+   flexing `.content` consumes every pixel, so the inset is cancelled here. */
+.root:has(> [data-clue-pack-footer]),
+.root:has(> [data-clue-pack-add-footer]) {
+  padding-bottom: 0;
+}
+
+.content {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--ds-sidebar-space-3);
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+.head {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: var(--ds-sidebar-space-2);
+  flex: none;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
+/* Inline-editable Linear/Notion-style heading: quiet at rest, framed on hover/focus. */
+.nameInput {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 28px;
+  padding: 2px 6px;
+  margin-inline-start: -6px;
+  border-color: transparent;
+  background: transparent;
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 600;
+}
+.nameInput:hover:not(:disabled) {
+  border-color: var(--dsw-alias-border-l2);
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+.nameInput:focus {
+  border-color: var(--dsw-alias-border-l2);
+  background: var(--dsw-alias-bg-base);
+}
+.headActions {
+  display: flex;
+  align-items: center;
+  flex: none;
+  gap: var(--ds-sidebar-space-1);
+  margin-inline-start: auto;
+}
+.nameInput:focus-visible,
+.select:focus-visible,
+.scopeTrigger:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 1px;
+}
+.sectionHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  flex: none;
+  gap: var(--ds-sidebar-space-2);
+}
+.sectionTitle {
+  margin: 0;
+  font-size: 11px;
+  line-height: 16px;
+  font-weight: 500;
+  color: var(--dsw-alias-label-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+.body,
+.addPage {
+  display: flex;
+  flex-direction: column;
+  flex: none;
+  gap: var(--ds-sidebar-space-2);
+  min-width: 0;
+  min-height: 0;
+}
+.memberList {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin: 0 calc(-1 * var(--ds-sidebar-space-2));
+  padding: 0;
+  border: 0;
+  list-style: none;
+}
+.memberGlyph {
+  display: inline-flex;
+  flex: none;
+  color: var(--dsw-alias-label-secondary);
+}
+.memberSource,
+.memberState {
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 16px;
+}
+.memberState {
+  padding: 0 5px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--ds-sidebar-radius);
+}
+.binding {
+  flex: none;
+  padding-top: 6px;
+  border-top: 1px solid var(--dsw-alias-border-l1);
+}
+.bindingRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ds-sidebar-space-2);
+}
+.bindingState {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+}
+.select {
+  min-width: 0;
+  max-width: 220px;
+  min-height: var(--ds-sidebar-control-sm);
+  padding: 2px 8px;
+  font-size: 12px;
+}
+.addToolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 4px;
+  min-width: 0;
+}
+@container (min-width: 544px) {
+  .addToolbar { flex-wrap: wrap; }
+}
+.toolbarSpacer { flex: 1 1 0; min-width: 0; }
+.scopeTrigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 48%;
+  min-height: 26px;
+  padding: 2px 6px;
+  border: 0;
+  border-radius: var(--ds-sidebar-radius);
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  font: var(--dsw-font-xxs-12);
+  cursor: pointer;
+}
+.scopeTrigger:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+.scopeTrigger > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.scopeTrigger > svg { flex: none; }
+.scopeHint {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 16px;
+  overflow-wrap: anywhere;
+}
+.scopeEditor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-sidebar-space-2);
+  padding: var(--ds-sidebar-space-2) var(--ds-sidebar-space-3);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: var(--ds-sidebar-radius);
+  background: var(--dsw-alias-bg-layer-1);
+}
+.scopeActions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: var(--ds-sidebar-space-2);
+}
+.fieldError {
+  color: var(--dsw-alias-state-error-primary);
+  font-size: 11px;
+  line-height: 16px;
+}
+.queryRow {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+.searchInput {
+  flex: 1;
+  width: 100%;
+  min-width: 0;
+}
+.addScroll {
+  flex: none;
+  min-height: 0;
+}
+.addList {
+  margin: 0 calc(-1 * var(--ds-sidebar-space-2));
+  padding: 0;
+  list-style: none;
+}
+.addRow {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  min-height: 30px;
+  box-sizing: border-box;
+  padding: 2px var(--ds-sidebar-space-2);
+  border-radius: var(--ds-sidebar-radius);
+}
+.addRow:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+.addRow[data-selected='true'] {
+  background: var(--dsw-alias-interactive-bg-active);
+}
+.addLabel {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: var(--ds-sidebar-space-2);
+  min-width: 0;
+  cursor: pointer;
+}
+.addTitle {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  line-height: 18px;
+}
+@media (pointer: coarse) {
+  .nameInput,
+  .select,
+  .scopeTrigger,
+  .addLabel,
+  .addRow { min-height: 44px; }
+}
+.menuAnchor { position: absolute; }

@@ -1,0 +1,16 @@
+.discussion { flex: none; min-width: 0; padding: var(--ds-sidebar-gutter); border-top: 1px solid var(--dsw-alias-border-l1); color: var(--dsw-alias-label-primary); background: transparent; font-size: 13px; line-height: 1.55; }
+.heading { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; margin-bottom: 8px; }
+.heading h2 { margin: 0; font-size: 12px; line-height: 18px; font-weight: 500; color: var(--dsw-alias-label-secondary); font-variant-numeric: tabular-nums; }
+.hint, .meta { color: var(--dsw-alias-label-tertiary); font-size: 11px; line-height: 16px; overflow-wrap: anywhere; }
+.comment { padding: 10px 0; border-top: 1px solid var(--dsw-alias-border-l1); }
+.comment[data-clue-reply-to] { margin-inline-start: 12px; padding-inline-start: 10px; border-inline-start: 1px solid var(--dsw-alias-border-l2); }
+.meta, .actions, .replyContext { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.meta strong { color: var(--dsw-alias-label-primary); font-weight: 500; }
+.meta a { color: var(--dsw-alias-label-tertiary); text-decoration: none; }
+.meta a:hover { color: var(--dsw-alias-label-primary); text-decoration: underline; }
+.state { border: 1px solid var(--dsw-alias-border-l1); border-radius: var(--ds-sidebar-radius); padding: 0 5px; color: var(--dsw-alias-label-tertiary); font-size: 11px; }
+.body { margin: 4px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.composer { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--dsw-alias-border-l1); }
+.composerLabel { font-size: 12px; font-weight: 500; color: var(--dsw-alias-label-secondary); }
+.composer textarea { width: 100%; min-height: 68px; }
+.composer .actions { justify-content: flex-end; }

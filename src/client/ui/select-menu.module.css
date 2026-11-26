@@ -1,0 +1,42 @@
+.root {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+.trigger {
+  composes: input from './kit.module.css';
+  display: inline-flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ds-sidebar-space-2);
+  text-align: start;
+  cursor: pointer;
+}
+.trigger:hover,
+.trigger[aria-expanded='true'] {
+  background: var(--dsw-alias-interactive-bg-hover);
+  border-color: var(--dsw-alias-label-tertiary);
+}
+.trigger:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 2px;
+}
+.trigger:disabled { opacity: 0.4; cursor: default; }
+.trigger > svg { flex: none; }
+.label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.list {
+  max-width: calc(100vw - 24px);
+  max-height: min(320px, calc(100dvh - 24px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.optionCopy { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.optionDescription { color: var(--dsw-alias-label-tertiary); font: var(--dsw-font-xxs-12); white-space: normal; overflow-wrap: anywhere; }
+@media (pointer: coarse) { .trigger { min-height: 44px; } }

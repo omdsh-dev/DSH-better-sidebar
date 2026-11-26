@@ -27,17 +27,19 @@ function mount(cwd: string, options: { root?: string; phase?: 'pending' | 'ready
   let draft = 'before'
   let draftRev = 1
   const setDraft = vi.fn((text: string) => { draft = text; draftRev++ })
-  const emit = vi.fn((_event: string, _payload: unknown) => {
-    if (options.chip) draftRev++
+  const emit = vi.fn((_event: string, payload: { text: string }) => {
+    if (options.chip) { draft += payload.text; draftRev++ }
   })
   const insertReference = vi.fn((_ref: unknown, _span: unknown) => {
     if (!options.chip) return false
     draftRev++
     return true
   })
+  const focus = vi.fn()
   const input = {
     state: { getSnapshot: () => ({ draft, draftRev }) },
     setDraft,
+    focus,
     ...options.chip === false ? {} : { insertReference },
   }
   const workspaces = { list: { getSnapshot: () => ({
@@ -73,7 +75,7 @@ function mount(cwd: string, options: { root?: string; phase?: 'pending' | 'ready
   expect(reference).toBeTypeOf('function')
   return {
     insert: (path: string, isDir: boolean) => { act(() => { reference!(path, isDir) }) },
-    draft: () => draft, emit, insertReference, setDraft, warn,
+    draft: () => draft, emit, focus, insertReference, setDraft, warn,
     unmount: () => { act(() => { root.unmount() }); container.remove() },
   }
 }
@@ -84,7 +86,8 @@ describe('Sidebar workspace references', () => {
     try {
       view.insert('/work/my dir', true)
       expect(view.draft()).toBe('before @"my dir/" ')
-      expect(view.emit).not.toHaveBeenCalled()
+      expect(view.insertReference).not.toHaveBeenCalled()
+      expect(view.setDraft).toHaveBeenCalledTimes(1)
     } finally { view.unmount() }
   })
 
@@ -98,6 +101,7 @@ describe('Sidebar workspace references', () => {
         source: 'reference', ref: '@"docs/my notes.md"', label: 'my notes.md', appearance: 'file', clipboardText: '@"docs/my notes.md"',
       }, { draftRev: 2, start: 7, end: 7 })
       expect(view.setDraft).not.toHaveBeenCalled()
+      expect(view.focus).toHaveBeenCalledTimes(1)
     } finally { view.unmount() }
   })
 
@@ -107,6 +111,7 @@ describe('Sidebar workspace references', () => {
       view.insert(`/work/${directory}`, true)
       const beforeFile = view.draft()
       expect(beforeFile).toMatch(/\s$/)
+      expect(view.focus).toHaveBeenCalledTimes(1)
       view.insert('/work/notes.md', false)
       expect(view.insertReference).toHaveBeenCalledWith({
         source: 'reference', ref: '@notes.md', label: 'notes.md', appearance: 'file', clipboardText: '@notes.md',
@@ -120,6 +125,7 @@ describe('Sidebar workspace references', () => {
     try {
       view.insert('/work/my notes.md', false)
       expect(view.draft()).toBe('before @"my notes.md"')
+      expect(view.focus).toHaveBeenCalledTimes(1)
     } finally { view.unmount() }
   })
 
@@ -144,7 +150,7 @@ describe('Sidebar workspace references', () => {
     try {
       view.insert('/work/src/a.ts', false)
       expect(view.draft()).toBe('before')
-      expect(view.emit).not.toHaveBeenCalled()
+      expect(view.setDraft).not.toHaveBeenCalled()
       expect(view.warn).toHaveBeenCalled()
       // Resolve the host snapshot later: the next click must see fresh data.
       Object.assign(options, { root: '/work', phase: 'ready', state: 'idle', workspaceService: true })
@@ -159,7 +165,7 @@ describe('Sidebar workspace references', () => {
       view.insert(path, false)
       view.insert(path, true)
       expect(view.draft()).toBe('before')
-      expect(view.emit).not.toHaveBeenCalled()
+      expect(view.setDraft).not.toHaveBeenCalled()
       expect(view.warn).toHaveBeenCalled()
     } finally { view.unmount() }
   })

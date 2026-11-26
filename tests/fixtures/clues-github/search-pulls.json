@@ -1,0 +1,20 @@
+{
+  "data": {
+    "search": {
+      "issueCount": 71,
+      "pageInfo": { "hasNextPage": false, "endCursor": "Y3Vyc29yOjI=" },
+      "nodes": [
+        {
+          "number": 14727,
+          "title": "fix(issue create): resolve --type before creating the issue",
+          "state": "OPEN",
+          "isDraft": false,
+          "updatedAt": "2026-10-17T15:26:56Z",
+          "url": "https://github.com/cli/cli/pull/14727",
+          "author": { "login": "umairnaeem0309" },
+          "mergedAt": null
+        }
+      ]
+    }
+  }
+}

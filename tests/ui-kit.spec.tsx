@@ -12,7 +12,7 @@ import { createElement, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
 import { setupReactAct } from './test-utils.ts'
-import { Chip, ConfirmDialog, IconButton, Notice, SectionHeader, StatusBadge } from '../src/client/ui/kit.tsx'
+import { Chip, ConfirmDialog, DownloadLink, FileAttachmentChip, IconButton, Notice, SectionHeader, StatusBadge } from '../src/client/ui/kit.tsx'
 import { invalidateGitStatus, statusOfXY, useGitStatus, type GitStatusView } from '../src/client/ui/git-status.ts'
 import type { GitStatusResult } from '../src/client/api.ts'
 
@@ -285,10 +285,38 @@ describe('ui kit atoms', () => {
     await unmount()
   })
 
+  it('Notice loading uses the shared indicator and announces its label once', async () => {
+    const { container, unmount } = await mount(createElement(Notice, { kind: 'loading', children: 'Loading resources' }))
+    const node = container.querySelector('[data-loading-indicator]')!
+    expect(node.getAttribute('role')).toBe('status')
+    expect(node.getAttribute('aria-live')).toBe('polite')
+    expect(node.textContent).toBe('Loading resources')
+    expect(node.querySelector('[aria-hidden="true"] svg')).not.toBeNull()
+    await unmount()
+  })
+
   it('StatusBadge exposes the tone as data for the sheet', async () => {
     const { container, unmount } = await mount(createElement(StatusBadge, { tone: 'untracked', title: 'Untracked', children: 'U' }))
     const badge = container.querySelector('[data-tone="untracked"]')!
     expect(badge.getAttribute('title')).toBe('Untracked')
+    await unmount()
+  })
+
+  it('keeps a busy confirmation open through Escape, mask and close button', async () => {
+    const onClose = vi.fn()
+    const onConfirm = vi.fn()
+    const { unmount } = await mount(createElement(ConfirmDialog, {
+      open: true, title: 'Delete?', description: 'gone forever', confirmLabel: 'Delete', cancelLabel: 'Cancel',
+      busy: true, danger: true, onConfirm, onClose,
+    }))
+    await act(async () => {
+      for (const button of document.querySelectorAll('button')) button.click()
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+      document.querySelector('[role=dialog]')?.parentElement?.click()
+    })
+    expect(onClose).not.toHaveBeenCalled()
+    expect(onConfirm).not.toHaveBeenCalled()
+    expect(document.querySelector('[role=dialog]')).not.toBeNull()
     await unmount()
   })
 
@@ -308,6 +336,51 @@ describe('ui kit atoms', () => {
     await act(async () => { cancel?.click() })
     expect(onConfirm).toHaveBeenCalledTimes(1)
     expect(onClose).toHaveBeenCalledTimes(1)
+    await unmount()
+  })
+})
+
+describe('DownloadLink', () => {
+  it('is a real anchor that downloads instead of navigating in place', async () => {
+    const { container, unmount } = await mount(createElement(DownloadLink, { href: '/sidebar/file?path=a.bin', children: 'Download' }))
+    const link = container.querySelector('a')
+    expect(link?.getAttribute('href')).toBe('/sidebar/file?path=a.bin')
+    expect(link?.hasAttribute('download')).toBe(true)
+    expect(link?.className).toContain('downloadLink')
+    expect(link?.className).not.toContain('downloadLinkInline')
+    await unmount()
+  })
+
+  it('drops the pill for the inline variant a notice bar uses', async () => {
+    const { container, unmount } = await mount(createElement(DownloadLink, { href: '/x', variant: 'inline', children: 'Download' }))
+    expect(container.querySelector('a')?.className).toContain('downloadLinkInline')
+    await unmount()
+  })
+})
+
+describe('FileAttachmentChip', () => {
+  it('renders a static file card with the host glyph, name and size — never a control', async () => {
+    const { container, unmount } = await mount(createElement(FileAttachmentChip, {
+      name: 'report.pdf', size: '1.2 MB', title: '/tmp/report.pdf',
+    }))
+    const chip = container.querySelector<HTMLElement>('[class*="fileChip"]')!
+    expect(chip.tagName).toBe('SPAN')
+    expect(chip.getAttribute('title')).toBe('/tmp/report.pdf')
+    expect(container.querySelector('[class*="fileChipName"]')!.textContent).toBe('report.pdf')
+    expect(container.querySelector('[class*="fileChipSize"]')!.textContent).toBe('1.2 MB')
+    expect(chip.querySelector('svg')).not.toBeNull()
+    expect(container.querySelector('button, a')).toBeNull()
+    await unmount()
+  })
+
+  it('marks an unavailable attachment without dropping its identity', async () => {
+    const { container, unmount } = await mount(createElement(FileAttachmentChip, {
+      name: 'gone.png', unavailable: true,
+    }))
+    const chip = container.querySelector<HTMLElement>('[class*="fileChip"]')!
+    expect(chip.dataset.unavailable).toBe('true')
+    expect(chip.textContent).toContain('gone.png')
+    expect(container.querySelector('[class*="fileChipSize"]')).toBeNull()
     await unmount()
   })
 })

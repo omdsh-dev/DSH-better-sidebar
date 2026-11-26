@@ -54,6 +54,7 @@ import {
   type HostTerminalEnvironment, type HostTerminalView, type HostTerminalViewState,
 } from './terminal-client.ts'
 import { terminalClipboardKey } from './terminal-clipboard.ts'
+import { ActionButton, ErrorBlock, FallbackPane, StatusLine } from './ui/index.ts'
 import css from './terminal.module.css'
 
 /** The props the bottom terminal view consumes from its tab descriptor. */
@@ -109,8 +110,8 @@ export function TerminalBottomView({ ctx, scope, tab, visible }: TerminalBottomP
 
   if (service === undefined) {
     return (
-      <section className={css.root} data-dsh-bottom-terminal data-terminal-state="unavailable">
-        <p className={css.notice} role="alert">{t('terminalUnavailable')}</p>
+      <section className={css.root} data-sidebar-surface="terminal" data-dsh-bottom-terminal data-terminal-state="unavailable">
+        <ErrorBlock message={t('terminalUnavailable')} />
       </section>
     )
   }
@@ -124,40 +125,48 @@ export function TerminalBottomView({ ctx, scope, tab, visible }: TerminalBottomP
   const status = missing || ended ? undefined : statusOf(state)
 
   return (
-    <section className={css.root} data-dsh-bottom-terminal data-terminal-state={state.phase}>
+    <section className={css.root} data-sidebar-surface="terminal" data-dsh-bottom-terminal data-terminal-state={state.phase}>
       {status !== undefined && (
-        <div className={css.status} role="status">
-          <span>{status}</span>
-          {reconnectable(state) && (
-            <button
-              type="button"
-              className={css.action}
-              onClick={() => {
-                // The host's own rule: a view with a terminal but no live
-                // attachment reconnects (a fresh snapshot follows); a view
-                // that never got one re-runs environment/terminal lookup.
-                if (state.info === undefined) void model.refresh()
-                else model.connect()
-              }}
-            >
-              {t('terminalRetry')}
-            </button>
-          )}
-        </div>
+        <StatusLine
+          role="status"
+          text={status}
+          action={reconnectable(state)
+            ? (
+                <ActionButton
+                  size="sm"
+                  onClick={() => {
+                    // The host's own rule: a view with a terminal but no live
+                    // attachment reconnects (a fresh snapshot follows); a view
+                    // that never got one re-runs environment/terminal lookup.
+                    if (state.info === undefined) void model.refresh()
+                    else model.connect()
+                  }}
+                >
+                  {t('terminalRetry')}
+                </ActionButton>
+              )
+            : undefined}
+        />
       )}
-      {(missing || ended) && (
-        <div className={css.noticeBlock}>
-          <p className={missing ? css.notice : css.status} role={missing ? 'alert' : 'status'}>
-            {missing ? t('terminalGone') : t('exited')}
-          </p>
-          <button type="button" className={css.action} onClick={newTerminal}>{t('terminalNew')}</button>
-        </div>
+      {missing && (
+        <FallbackPane
+          role="alert"
+          title={t('terminalGone')}
+          actions={<ActionButton size="sm" onClick={newTerminal}>{t('terminalNew')}</ActionButton>}
+        />
+      )}
+      {!missing && ended && (
+        <StatusLine
+          role="status"
+          text={t('exited')}
+          action={<ActionButton size="sm" onClick={newTerminal}>{t('terminalNew')}</ActionButton>}
+        />
       )}
       {state.info !== undefined && !missing && (
         <TerminalScreen model={model} state={state} visible={visible} scheme={scheme} label={t('terminal')} />
       )}
       {state.error !== undefined && state.issue === undefined && (
-        <p className={css.error} role="alert">{t('terminalError')}: {state.error}</p>
+        <ErrorBlock message={`${t('terminalError')}: ${state.error}`} />
       )}
     </section>
   )

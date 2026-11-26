@@ -18,6 +18,7 @@ import {
   type CustomEditor,
   type OpenWithConfig,
 } from './open-with.ts'
+import { ActionButton, Checkbox, IconButton, SettingRow, TextInput } from './ui/index.ts'
 import { t } from './locales.ts'
 import css from './SideCardSection.module.css'
 
@@ -66,63 +67,46 @@ export function OpenWithSettings(props: {
 
   return (
     <div className={css.popupRows}>
-      <div className={css.popupRow}>
-        <span className={css.rowText}>
-          <span className={css.title}>{t('openWithSettingsSshTitle')}</span>
-          <span className={css.desc}>{t('openWithSettingsSshDesc')}</span>
-        </span>
-        <input
+      <SettingRow label={t('openWithSettingsSshTitle')} description={t('openWithSettingsSshDesc')} className={css.popupRow}>
+        <TextInput
           className={css.typedInput}
+          aria-label={t('openWithSettingsSshTitle')}
           value={draft.sshHost}
           placeholder={t('openWithSettingsSshPlaceholder')}
           spellCheck={false}
           onChange={(event) => { setSshHost(event.target.value) }}
         />
-      </div>
-      <div className={css.popupRow}>
-        <span className={css.rowText}>
-          <span className={css.title}>{t('openWithSettingsCustomTitle')}</span>
-          <span className={css.desc}>{t('openWithSettingsCustomDesc')}</span>
-        </span>
-        <span className={css.control}>
-          <button type="button" className={css.done} onClick={addCustom}>
-            {t('openWithSettingsAdd')}
-          </button>
-        </span>
-      </div>
+      </SettingRow>
+      <SettingRow label={t('openWithSettingsCustomTitle')} className={css.popupRow}>
+        <ActionButton onClick={addCustom}>{t('openWithSettingsAdd')}</ActionButton>
+      </SettingRow>
       {draft.customEditors.map(editor => (
         <div key={editor.id} className={css.openWithEditorRow}>
-          <input
+          <TextInput
             className={css.openWithEditorInput}
+            aria-label={t('openWithSettingsName')}
             value={editor.name}
             placeholder={t('openWithSettingsName')}
             spellCheck={false}
             onChange={(event) => { patchCustom(editor.id, { name: event.target.value }) }}
           />
-          <input
+          <TextInput
             className={css.openWithEditorTemplate}
+            aria-label={t('openWithSettingsTemplate')}
             value={editor.urlTemplate}
             placeholder={t('openWithSettingsTemplate')}
             spellCheck={false}
             onChange={(event) => { patchCustom(editor.id, { urlTemplate: event.target.value }) }}
           />
           <label className={css.openWithFamily} title={t('openWithSettingsFamilyDesc')}>
-            <input
-              type="checkbox"
+            <Checkbox
               checked={editor.isVscodeFamily}
               onChange={(event) => { patchCustom(editor.id, { isVscodeFamily: event.currentTarget.checked }) }}
             />
             <span>{t('openWithSettingsFamily')}</span>
           </label>
-          <button
-            type="button"
-            className={css.openWithRemove}
-            aria-label={t('openWithSettingsRemove')}
-            title={t('openWithSettingsRemove')}
-            onClick={() => { removeCustom(editor.id) }}
-          >
-            <IconCloseOutlineRegular size={14} />
-          </button>
+          <IconButton icon={<IconCloseOutlineRegular size={14} />} label={t('openWithSettingsRemove')}
+            danger onClick={() => { removeCustom(editor.id) }} />
         </div>
       ))}
       {hasInvalid && (

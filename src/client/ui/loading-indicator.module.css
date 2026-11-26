@@ -1,0 +1,33 @@
+.root {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--ds-sidebar-space-2);
+  min-width: 0;
+  color: var(--dsw-alias-label-tertiary);
+  font: var(--dsw-font-xxs-12);
+}
+.inline { display: inline-flex; }
+.centered {
+  flex: 1;
+  align-self: stretch;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 96px;
+  padding: 24px;
+  box-sizing: border-box;
+  text-align: center;
+}
+.track { opacity: 0.18; }
+.glyph {
+  display: inline-flex;
+  flex: none;
+  color: var(--dsw-alias-brand-primary);
+  animation: loading-rotate 1s linear infinite;
+}
+.glyph > svg { display: block; }
+.label { min-width: 0; overflow-wrap: anywhere; }
+@keyframes loading-rotate { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .glyph { animation: none; }
+}

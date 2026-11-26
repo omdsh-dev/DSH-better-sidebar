@@ -8,7 +8,7 @@
  * only (react + ui-primitives, all provided or inlined — the editor and
  * mermaid libraries arrive as lazy chunks).
  */
-import { createElement } from 'react'
+import { createElement, Fragment } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import type { Context } from '../context-types.ts'
 import { createSidebarStore } from './state.ts'
@@ -17,6 +17,7 @@ import { disposeSidechatSurfaces } from './sidechat-surface.ts'
 import { revalidateChunksOnReactivate, setChunkModuleSystem } from './chunk-loader.ts'
 import { registerBuiltins } from './builtins/index.ts'
 import { Sidebar } from './Sidebar.tsx'
+import { WindowHost, registerWindowSidebarSurface } from './windows/index.ts'
 import { RenderBoundary } from './RenderBoundary.tsx'
 import { createNativeTabRecords } from './native/tab-adapter.tsx'
 import { registerNativeSurface } from './native/index.ts'
@@ -32,9 +33,29 @@ import { registerChatMarkdownMentions } from './chat-mentions.ts'
 import type { SettingsSectionIconOwnerProps } from '@deepseek-ai/dsh-client-ui-settings/client'
 import { awaitBootDecision, type BootDecision } from './prefs.ts'
 import { SideCardSection } from './SideCardSection.tsx'
-import { api } from './api.ts'
-import { LOCALE_NS, attachLocale, attachBetterLocale, t, zh, en } from './locales.ts'
+import { api, call } from './api.ts'
+import { insertReferenceOrText } from './conversation-draft.ts'
+import { openSelectionSidechat } from './selection-sidechat.tsx'
+import { seedSidechatDraft } from './sidechat-draft.ts'
+import { selectionSettingsOf } from '../selection-settings.ts'
+import { serializeClueToken } from '../clues/context/tokens.ts'
+import { setClueSelectionActionContext, setClueSelectionActionStarter, setSelectionMenuSettings } from './clues/selection-actions.tsx'
+import { createClueActionRefreshWatcher, type ClueActionDraftStatus, type ClueActionRefreshResult } from './clues/action-refresh.ts'
+import { invalidateClueAgentSave, type ClueClientResourceInput } from './clues/api.ts'
+import { LOCALE_NS, attachLocale, attachLocaleDicts, t, zh, en } from './locales.ts'
 import { loadChunk } from './chunk-loader.ts'
+
+/** Official host languages whose dictionaries ride the lazy `locale` chunk. */
+const LAZY_LOCALES = new Set(['ja', 'de', 'es', 'fr', 'pt', 'ru'])
+import { registerGithubSourceClient } from './clues/sources/github/index.tsx'
+import { registerFeishuSourceClient } from './clues/sources/feishu/index.tsx'
+import { appDateTime } from './clues/sources/feishu/time.ts'
+import { installClueInputTriggers } from './clues/mentions.ts'
+import { insertClueReferenceSpan, insertClueSelectionReference, setClueNoticeSink } from './clues/insert.ts'
+import { clueMentionsCopy, feishuClientLabels } from './clues/locale-copy.ts'
+import { notifyClue } from './clues/notify.ts'
+import { resolveWorkspaceIdForSession } from './clues/workspace-id.ts'
+import { openClueReference } from './clues/open-reference.ts'
 import css from './sidebar.module.css'
 import './layout.css'
 
@@ -78,69 +99,40 @@ export function apply(ctx: Context): void {
     return () => { offZh(); offEn() }
   }, 'dsh-better-sidebar: dictionaries')
 
-  // Opt-in third-language support through @huanlin/dsh-plugin-better-locale.
-  // When that plugin is installed, it publishes `ctx.betterLocale` (the
-  // override store) and patches LocaleRuntime.prototype.lookup to consult
-  // it. We mirror the same override awareness into the sidebar's own `t()`:
-  // attachBetterLocale() makes t() consult the store's getOverride first,
-  // so the sidebar's chrome (which bypasses ctx.locale and calls t()
-  // directly) also switches to the override language. We also register
-  // the ja dict with the better-locale store so external callers of
-  // ctx.locale.lookup('betterSidebar', key) get the override text too.
-  //
-  // Activation-order-safe: ctx.get('betterLocale') is a non-reactive read
-  // (cordis only re-evaluates declared `inject` deps). If better-locale
-  // activates after better-sidebar, the initial read returns undefined.
-  // We subscribe to the locale revision — better-locale bumps it on
-  // activation (when a persisted override exists) and on every override
-  // switch — and re-check ctx.get on each bump, attaching + registering
-  // the ja dict once the store becomes available.
+  // The official host languages beyond zh/en ride the lazy `locale` chunk:
+  // fetched the first time the host is on one of them, then registered into
+  // the shared registry (so `ctx.locale.bind('betterSidebar')` resolves too)
+  // and handed to `t()`. Registration bumps the locale revision, which
+  // re-renders the sidebar root once the dictionaries land.
   ctx.effect(() => {
-    let dispose: (() => void) | undefined
-    // Guards the async chunk registration below: a sync() re-run (or fiber
-    // disposal) that lands while the chunk is still in flight must render
-    // that registration moot.
-    let generation = 0
+    let disposed = false
+    let offDicts: (() => void) | undefined
     const sync = (): void => {
-      generation += 1
-      dispose?.()
-      dispose = undefined
-      const store = ctx.get('betterLocale') as
-        | {
-            readonly active: string | undefined
-            getOverride(dshActive: string, ns: string, key: string): string | undefined
-            isOverrideActive(dshActive: string): boolean
-            register(ns: string, dicts: Record<string, Record<string, string>>): () => void
-            subscribe(listener: () => void): () => void
-          }
-        | undefined
-      attachBetterLocale(store)
-      if (store !== undefined) {
-        // The 19 override dictionaries ride the lazy `locale` chunk: until
-        // it lands, the store has no betterSidebar entries and t() keeps
-        // the zh/en chain; the store's own revision bump on register
-        // re-renders the chrome once the dicts arrive.
-        const myGeneration = generation
-        void loadChunk('locale')
-          .then(mod => {
-            if (myGeneration !== generation) return
-            dispose = store.register(LOCALE_NS, mod.localeDicts as Record<string, Record<string, string>>)
-          })
-          .catch(() => { /* the dicts stay unregistered; the zh/en chain runs */ })
-      }
+      if (offDicts !== undefined || disposed) return
+      const active = ctx.locale.getSnapshot().active.toLowerCase().split('-')[0]!
+      if (!LAZY_LOCALES.has(active)) return
+      offDicts = () => {}
+      void loadChunk('locale')
+        .then(mod => {
+          if (disposed) return
+          // Attach before registering: register() notifies subscribers, and the
+          // sidebar's revision snapshot must already see the new dictionaries.
+          const dicts = mod.localeDicts as Record<string, Record<string, string>>
+          attachLocaleDicts(dicts)
+          const offs = Object.entries(dicts).map(([id, dict]) => ctx.locale.register(LOCALE_NS, id, dict))
+          offDicts = () => { for (const off of offs) off() }
+        })
+        .catch(() => { offDicts = undefined })
     }
-    // Initial check (picks up the store if better-locale activated first).
     sync()
-    // Re-check on every locale revision bump (better-locale bumps when it
-    // activates with a persisted override, and when the user switches).
     const unsubscribe = ctx.locale.subscribe(sync)
     return () => {
-      generation += 1
+      disposed = true
       unsubscribe()
-      dispose?.()
-      attachBetterLocale(undefined)
+      offDicts?.()
+      attachLocaleDicts({})
     }
-  }, 'dsh-better-sidebar: better-locale lazy integration')
+  }, 'dsh-better-sidebar: lazy locale dictionaries')
   // A failure anywhere in the client lifecycle must never take the app down
   // silently: log with the plugin prefix and pin a visible diagnostic strip
   // to the page so a blank panel is never the only symptom. This strip is
@@ -177,6 +169,61 @@ export function apply(ctx: Context): void {
   ctx.provide('betterSidebar', service)
   ctx.effect(() => () => { disposeSidechatSurfaces(service) }, 'dsh-better-sidebar: sidechat surface adapters')
   ctx.effect(() => registerChatMarkdownMentions(ctx), 'dsh-better-sidebar: chat Markdown mentions')
+  // The shared draft-insert helpers (file tree / Tab) report refusals through
+  // the plugin's ONE visible notice sink. Without this wiring they fell back
+  // to console.warn and the user never saw why an insert failed.
+  ctx.effect(() => {
+    setClueNoticeSink(notifyClue)
+    return () => { setClueNoticeSink(undefined) }
+  }, 'dsh-better-sidebar: clue notice sink')
+  // The unified window host's records live with the service; the React host is
+  // mounted ONCE in the root tree below (never per tab body), and disposing the
+  // service drops any open window. (Each mounted window's layer registration is
+  // released by FloatingWindow's own unmount effect.)
+  ctx.effect(() => () => { service.windowHost.dispose() }, 'dsh-better-sidebar: window host')
+  // Clue client surfaces (S3/S4/S5). The host half publishes the catalogue and
+  // the `clues.*` methods; the browser half registers the source glyphs, the
+  // structured format renderers and the two `@` trigger sources through the
+  // ONE face on the service. Every registration owns its effect disposer, so an
+  // HMR reload cannot leave a duplicate display or renderer behind.
+  ctx.effect(
+    () => registerGithubSourceClient(service.clues),
+    'dsh-better-sidebar: github clue client',
+  )
+  ctx.effect(
+    () => registerFeishuSourceClient(service.clues, {
+      // The live getter keeps every visible label following the locale without
+      // a re-registration; `subscribe` additionally re-registers the renderers
+      // so an open window re-renders with the new copy.
+      labels: feishuClientLabels,
+      formatDateTime: value => appDateTime(value),
+      subscribe: listener => ctx.locale.subscribe(listener),
+    }),
+    'dsh-better-sidebar: feishu clue client',
+  )
+  // The composer's `@` sources. Workspace resolution is the authoritative
+  // session → workspace lookup (never a cwd guess); refusals surface as the
+  // plugin's own visible notice instead of a silent no-op.
+  ctx.effect(
+    () => installClueInputTriggers(ctx, {
+      face: service.clues,
+      resolveWorkspaceId: session => resolveWorkspaceIdForSession(ctx, session.sessionId),
+      onNotice: message => { notifyClue(message) },
+      openReference: reference => openClueReference(ctx, reference),
+      // Every user-visible refusal follows the active locale. The copy is
+      // created ONCE here but its stale-prone strings are lazy getters (insert
+      // notices), so a locale switch reaches the next candidate round without
+      // re-installing the trigger sources. (Model-facing projection labels
+      // minted inside the codec stay stable English metadata.)
+      copy: clueMentionsCopy(),
+      // A not-yet-stored search hit is ensured on pick; this tail applies the
+      // chip with the ORIGINAL pick-time detect span/draftRev, so an edit or
+      // submission during the ensure keeps the draft untouched.
+      insertReference: (reference, session, span) =>
+        insertClueReferenceSpan(ctx, session.sessionId, reference, span),
+    }),
+    'dsh-better-sidebar: clue @ sources',
+  )
   // The native right-Sidebar surface: the plugin's content is registered as
   // DSH tab types (one per descriptor) and every open routes there, so the
   // right column belongs to the host and only the bottom workbench stays
@@ -207,6 +254,56 @@ export function apply(ctx: Context): void {
     }),
     'dsh-better-sidebar: native right-Sidebar registrations',
   )
+  ctx.effect(
+    () => registerWindowSidebarSurface(ctx, service.windowHost),
+    'dsh-better-sidebar: retained window native destinations',
+  )
+  ctx.effect(() => {
+    let active = true
+    const refresh = createClueActionRefreshWatcher<ClueClientResourceInput>({
+      sessions: ctx.sessions,
+      readDrafts: () => call<readonly ClueActionDraftStatus[]>('clues.drafts.list', {}),
+      invalidate: invalidateClueAgentSave,
+    })
+    let savedPrefs = sidebarStore.getSnapshot().prefs
+    const publishSettings = (): void => {
+      savedPrefs = sidebarStore.getSnapshot().prefs
+      setSelectionMenuSettings(selectionSettingsOf(savedPrefs), () => ctx.locale.getSnapshot().active)
+    }
+    publishSettings()
+    const offSettings = sidebarStore.subscribe(() => { if (sidebarStore.getSnapshot().prefs !== savedPrefs) publishSettings() })
+    setClueSelectionActionContext({ onInsert: async input => {
+      if (input.target === 'side') {
+        if (input.sessionId === undefined) return false
+        const { childId } = await api.sidechatStart(input.sessionId)
+        seedSidechatDraft(childId, input.clueId === undefined ? input.reference?.text ?? input.insert
+          : serializeClueToken('clue', input.clueId) + '\n\n' + input.selection)
+        openSelectionSidechat(ctx, input.sessionId, childId)
+        return true
+      }
+      const inserted = input.sessionId !== undefined && (input.clueId === undefined
+        ? insertReferenceOrText(ctx, input.sessionId, input.reference ?? { label: input.selection.slice(0, 80), text: input.insert })
+        : insertClueSelectionReference(ctx, input.sessionId, { clueId: input.clueId, selection: input.selection, label: input.reference?.label }))
+      if (!inserted) notifyClue(t('clueInsertFailed'))
+      return inserted
+    } })
+    setClueSelectionActionStarter(async request => {
+      const result = await call<ClueActionRefreshResult & { prompt?: string }>('clues.actions.start', { ...request })
+      if (!active) return result
+      if (result.prompt !== undefined) {
+        const { childId } = await api.sidechatStart(request.sessionId)
+        if (!active) return result
+        seedSidechatDraft(childId, result.prompt)
+        openSelectionSidechat(ctx, request.sessionId, childId)
+        refresh.track(request, { ...result, deliveryId: childId })
+      } else {
+        refresh.track(request, result)
+        if (request.target === 'side' && result.deliveryId !== undefined) openSelectionSidechat(ctx, request.sessionId, result.deliveryId)
+      }
+      return result
+    })
+    return () => { active = false; offSettings(); refresh.dispose(); setClueSelectionActionContext(null); setClueSelectionActionStarter(undefined) }
+  }, 'dsh-better-sidebar: selection action insert and direct submit')
   // The bottom workbench's expand/collapse button in DSH's session header
   // (the header's corner seat belongs to the native sidebar's own control).
   ctx.effect(
@@ -361,7 +458,15 @@ export function apply(ctx: Context): void {
             createElement(
               ContextDiagnosticsHost,
               { controller: diagnostics },
-              createElement(Sidebar, { ctx, store: sidebarStore }),
+              createElement(
+                Fragment,
+                null,
+                createElement(Sidebar, { ctx, store: sidebarStore }),
+                // The public window host is a ROOT-level singleton: every
+                // `ctx.betterSidebar.windows.open()` renders here, so native
+                // tab bodies (which stay mounted forever) never duplicate it.
+                createElement(WindowHost, { host: service.windowHost, formats: service.clues }),
+              ),
             ),
           ))
           mounted = true

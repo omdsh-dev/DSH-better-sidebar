@@ -1,0 +1,154 @@
+/**
+ * Clue detail window chrome (S9): loading and explicit failure surfaces only —
+ * the document itself renders through the source-registered S6 renderer.
+ */
+
+.status {
+  background: transparent;
+  padding: var(--ds-sidebar-gutter);
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.failure {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-sidebar-space-2);
+  margin: var(--ds-sidebar-gutter);
+  padding: 10px 12px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--ds-sidebar-radius);
+  background: var(--dsw-alias-bg-layer-1);
+  font-size: 12px;
+  line-height: 18px;
+  overflow-wrap: anywhere;
+}
+
+.action {
+  composes: button buttonSm from "../../ui/kit.module.css";
+  text-decoration: none;
+}
+
+
+
+.footer {
+  /* The global window action row is a flex container; this content must span
+     its full width or the right-aligned actions sit at the content edge. */
+  width: 100%;
+  min-width: 0;
+  background: inherit;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--ds-sidebar-space-3);
+  justify-content: space-between;
+}
+
+.footerActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ds-sidebar-space-2);
+  margin-inline-start: auto;
+}
+
+.binding {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-sidebar-space-1);
+  flex: 1 1 240px;
+  min-width: 0;
+}
+
+.bindingHint {
+  margin: 0;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 16px;
+  overflow-wrap: anywhere;
+}
+
+.bindingRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ds-sidebar-space-2);
+  margin-top: 2px;
+}
+
+.bindingState {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.select {
+  min-width: 0;
+  max-width: 180px;
+  min-height: var(--ds-sidebar-control-height);
+  box-sizing: border-box;
+  padding: var(--ds-sidebar-space-1) var(--ds-sidebar-space-2);
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--ds-sidebar-radius);
+  background: var(--dsw-alias-bg-base);
+  color: var(--dsw-alias-label-secondary);
+}
+
+.bindingFailure {
+  color: var(--dsw-alias-state-error-primary);
+  font-size: 11px;
+  line-height: 16px;
+  overflow-wrap: anywhere;
+}
+
+.select:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 1px; }
+@media (pointer: coarse) { .action, .select { min-height: 44px; } }
+
+/* Binding is an explicit secondary disclosure; the primary footer stays small. */
+.bindingDetails {
+  flex: 1 1 160px;
+  min-width: 0;
+  color: var(--dsw-alias-label-secondary);
+}
+
+/* ── Unified detail chrome (S9 refresh) ─────────────────────────────────── */
+
+.view {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: var(--dsw-alias-bg-base);
+}
+
+/* Resource actions sit at the end of the header's metadata block: Refresh is
+   always visible, and its tooltip carries the cache age. */
+.headerActions {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--ds-sidebar-space-1);
+}
+
+/* The original-source link is the header's one text action. */
+.sourceLink {
+  composes: button buttonSm from "../../ui/kit.module.css";
+  gap: 4px;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+/* The footer remains useful at narrow widths and touch sizes. */
+.footer { box-sizing: border-box; min-height: 36px; align-items: center; padding-block: 0; }
+.footerActions { justify-content: flex-end; gap: 6px; }
+.continuation { padding: 10px var(--ds-sidebar-gutter); border-top: 1px solid var(--dsw-alias-border-l1); color: var(--dsw-alias-label-secondary); }
+.continuation [role=alert] { margin-bottom: 8px; color: var(--dsw-alias-state-error-primary); }
+@media (max-width: 480px) {
+  .bindingDetails { flex-basis: 100%; }
+  .footerActions { width: 100%; }
+}
+@media (pointer: coarse) { .footerActions > .action { min-height: 44px; } }

@@ -49,7 +49,7 @@ import {
   IconArchiveOutlineRegular, IconChevronRightOutlineRegular, IconCloseFillRegular, IconCodeOutlineRegular, IconCopyOutlineRegular,
   IconDownloadOutlineRegular,
   IconEditOutlineRegular, IconFolderOpenRegular, IconLinkOutlineRegular, IconPlusOutlineRegular, IconTrashOutlineRegular,
-  Menu, type MenuEntry, type MenuItem, writeClipboard,
+  type MenuEntry, type MenuItem, writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { SiCursor, SiZedindustries } from 'react-icons/si'
 import { VscFolderOpened, VscLinkExternal, VscPin, VscPinned } from 'react-icons/vsc'
@@ -66,7 +66,7 @@ import { relativeTo } from './paths.ts'
 import { t } from './locales.ts'
 import type { BetterSidebarService, FileActionDescriptor, FileActionRow } from './service.ts'
 import {
-  Chip, ConfirmDialog, IconButton, Notice, StatusBadge, useGitStatus,
+  ActionButton, ConfirmDialog, IconButton, Menu, Notice, StatusBadge, TextInput, useGitStatus,
   type GitTone, type StatusTone,
 } from './ui/index.ts'
 import { uploadItemsFromDrop, uploadItemsFromFiles, type UploadItem } from './upload.ts'
@@ -150,49 +150,6 @@ function gitToneLabel(tone: GitTone): string {
 function badgeToneOf(tone: GitTone): StatusTone {
   return tone === 'copied' ? 'added' : tone
 }
-
-/**
- * The drop overlay's hero art: an arrow rising out of a notched tray
- * (upload zone — the same glyph family as the toolbar's upload icon) and a
- * tilted pair of photo cards (chat zone). Hand-drawn, but every ink is a
- * theme token: the SVG paints `currentColor` and the classes below pick the
- * accent / tint / cut-out inks.
- */
-const UploadDropIllustration = () => (
-  <svg width="64" height="56" viewBox="0 0 64 56" fill="none" aria-hidden="true">
-    <g className={css.uploadDropArtPrimary}>
-      <path d="M32 28V11" stroke="currentColor" strokeWidth="5" strokeLinecap="round" />
-      <path d="M23 20l9-9 9 9" stroke="currentColor" strokeWidth="5" strokeLinecap="round" strokeLinejoin="round" />
-    </g>
-    <path
-      className={css.uploadDropArtAccent}
-      d="M10 40a4 4 0 0 1 4-4h7l3.2 4.6a5 5 0 0 0 4.1 2.2h7.4a5 5 0 0 0 4.1-2.2L43 36h7a4 4 0 0 1 4 4v2a10 10 0 0 1-10 10H20A10 10 0 0 1 10 42v-2z"
-      fill="currentColor"
-    />
-  </svg>
-)
-
-/** The chat zone's art: two tilted photo cards, each with its own
- *  sun-over-mountains motif (the back card carries detail too, so it never
- *  reads as a bare blob). Same token-only rule as the tray above. */
-const ChatDropIllustration = () => (
-  <svg width="96" height="76" viewBox="0 0 96 76" fill="none" aria-hidden="true">
-    <g transform="rotate(-12 24 34)">
-      <rect className={css.uploadDropArtAccent} x="6" y="16" width="36" height="36" rx="10" fill="currentColor" />
-      <g className={css.uploadDropArtCut}>
-        <circle cx="16" cy="27" r="3.5" fill="currentColor" />
-        <path d="M11 44l8-9 6 6 4-4 8 9" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
-      </g>
-    </g>
-    <g transform="rotate(8 61 35)">
-      <rect className={css.uploadDropArtPrimary} x="40" y="12" width="42" height="46" rx="10" fill="currentColor" />
-      <g className={css.uploadDropArtCut}>
-        <circle cx="55" cy="27" r="5" fill="currentColor" />
-        <path d="M46 50l10-13 7 8 6-6 9 11" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round" />
-      </g>
-    </g>
-  </svg>
-)
 
 /** The modifier subset row activation needs (clicks and Enter/Space share it). */
 interface ActivateModifiers {
@@ -2104,9 +2061,8 @@ export function FileTree(props: {
    * Focus + select an inline editor once, on mount. The callback identity
    * must stay STABLE (useCallback []): an inline arrow re-runs on every
    * render (detach null → attach el), and focus()/select() mid-keystroke
-   * would reselect the whole buffer while typing. A plain <input>, not the
-   * primitives Input — that one forwards no ref, and focus+select is the
-   * entire point here.
+   * would reselect the whole buffer while typing. TextInput forwards the native
+   * ref so focus and selection stay attached to the actual field.
    */
   const renameInputRef = useCallback((el: HTMLInputElement | null): void => {
     if (el !== null) {
@@ -2132,7 +2088,7 @@ export function FileTree(props: {
       {entry.isDir
         ? dirRowIcon(entry.path, expandedSet.has(entry.path))
         : service !== undefined ? service.fileIcon(entry.path, 14) : builtinFileIcon(entry.path, 14)}
-      <input
+      <TextInput
         ref={renameInputRef}
         className={css.explorerRenameInput}
         value={renaming?.value ?? ''}
@@ -2164,7 +2120,7 @@ export function FileTree(props: {
   const renderNewFolderRow = (dir: string, depth: number): ReactNode => (
     <div className={clsx(css.explorerRow, css.explorerRenaming)} style={{ paddingLeft: depth * 22 + 6 }}>
       {dirRowIcon(dir, true)}
-      <input
+      <TextInput
         ref={renameInputRef}
         className={css.explorerRenameInput}
         value={newFolder?.value ?? ''}
@@ -2202,7 +2158,7 @@ export function FileTree(props: {
     return (
       <div className={clsx(css.explorerRow, css.explorerRenaming)} style={{ paddingLeft: depth * 22 + 6 }}>
         {service !== undefined ? service.fileIcon(probe, 14) : builtinFileIcon(probe, 14)}
-        <input
+        <TextInput
           ref={renameInputRef}
           className={css.explorerRenameInput}
           value={newFile?.value ?? ''}
@@ -2400,12 +2356,12 @@ export function FileTree(props: {
             <div className={css.explorerSelectionBar} role="toolbar" aria-label={t('filesSelected', { count: selected.size })}>
               <span className={css.explorerSelectionText}>{t('filesSelected', { count: selected.size })}</span>
               <span className={css.explorerSelectionActions}>
-                <Chip onClick={copySelectedPaths}>{t('copyPaths')}</Chip>
-                <Chip onClick={() => {
+                <ActionButton size="sm" variant="ghost" onClick={copySelectedPaths}>{t('copyPaths')}</ActionButton>
+                <ActionButton size="sm" variant="ghost" onClick={() => {
                   const armed = scopeOf(propsRef.current)
                   if (armed !== undefined) setConfirmDeleteSelected(armed)
-                }}>{t('deleteSelected')}</Chip>
-                <Chip onClick={clearSelection}>{t('clearSelection')}</Chip>
+                }}>{t('deleteSelected')}</ActionButton>
+                <ActionButton size="sm" variant="ghost" onClick={clearSelection}>{t('clearSelection')}</ActionButton>
               </span>
             </div>
           )}
@@ -2417,7 +2373,7 @@ export function FileTree(props: {
          * above DSH's own whole-page drop mask (z-1000, see InputBar's
          * document-level intake) so the two never compete. A LIGHT mask dims
          * the viewport: the dimmed conversation column still takes drops into
-         * the chat natively (this layer is pointer-inert), while the dashed
+         * the chat natively (this layer is pointer-inert), while the 1px
          * frame marks the tree as the workspace-upload zone. Deliberate
          * exception to the "panel stays below the DSH float stack" rule:
          * transient, and the drop always lands on the element beneath. The
@@ -2437,7 +2393,7 @@ export function FileTree(props: {
             }}
           >
             <div className={css.uploadDropHero}>
-              <UploadDropIllustration />
+
               <div className={css.uploadDropZonePill}>
                 <IconUploadOutline16 size={14} />
                 <span className={css.uploadDropZoneText}>
@@ -2451,7 +2407,7 @@ export function FileTree(props: {
           {dropRect.left >= 200 && (
             <div className={css.uploadDropChatHint} style={{ width: dropRect.left }}>
               <div className={css.uploadDropChatCard}>
-                <ChatDropIllustration />
+
                 <span>{t('uploadDropChat')}</span>
               </div>
             </div>

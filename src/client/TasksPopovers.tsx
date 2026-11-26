@@ -27,7 +27,7 @@
 import { useRef, useState, type ReactNode } from 'react'
 import clsx from 'clsx'
 import {
-  Button, IconChevronDownOutlineRegular, IconRightUpOutlineRegular, MenuSurface, StateDot, Tag,
+  Button, IconChevronDownOutlineRegular, IconRightUpOutlineRegular, StateDot, Tag,
   useDismissOnOutsidePointer,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SidebarSubagentAddress, SidebarTokenUsage } from '../context-types.ts'
@@ -42,6 +42,7 @@ import { elapsedMs, totalTokens } from './session-metrics.ts'
 import { formatJobDuration } from './subagent-jobs.ts'
 import { formatTokens } from './sidechat-transcript.ts'
 import { chatT, t, type CopyKey } from './locales.ts'
+import { MenuSurface } from './ui/index.ts'
 import css from './tasks-graph.module.css'
 
 /**
@@ -128,9 +129,9 @@ function JumpActions(props: {
       <Button
         variant="primary"
         size="sm"
-        icon={<IconRightUpOutlineRegular size={12} />}
         onClick={() => { onJump(node, primaryPlace) }}
       >
+        <IconRightUpOutlineRegular size={12} />
         {t('tasksNodeJump')}
       </Button>
       {split && (

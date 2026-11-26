@@ -224,7 +224,7 @@ export function desktopFileUrl(target: string, baseUrl: string): string {
  * @returns The owner's local-path image vocabulary.
  */
 export function createMarkdownPathImages(
-  scope: SessionScope,
+  scope: SessionScope | undefined,
   filePath: string,
   baseUrl: string = hostHttpBase(),
 ): MarkdownPathImages {
@@ -244,18 +244,18 @@ export function createMarkdownPathImages(
       // load it). The path goes through the same media route as a relative one.
       const filePathFromUrl = fileUrlToLocalPath(destination)
       if (filePathFromUrl !== undefined) {
-        if (!desktop) return markdownMediaUrl(filePathFromUrl, scope, baseUrl)
+        if (!desktop && scope !== undefined) return markdownMediaUrl(filePathFromUrl, scope, baseUrl)
         return desktopFileUrl(filePathFromUrl, baseUrl)
       }
       const decoded = decodeDestination(destination)
       if (decoded === undefined) return undefined
       const target = markdownImageTarget(decoded, filePath)
       if (target === undefined) return undefined
-      if (!desktop) return markdownMediaUrl(target, scope, baseUrl)
+      if (!desktop && scope !== undefined) return markdownMediaUrl(target, scope, baseUrl)
       // The host file route requires an ABSOLUTE path (a relative one answers
       // 400 "absolute path required"); a relative tab path is the common case
       // for files opened from chat, so join the workspace root explicitly.
-      const absolute = absoluteTarget(target, scope.cwd)
+      const absolute = absoluteTarget(target, scope?.cwd)
       return absolute === undefined ? undefined : desktopFileUrl(absolute, baseUrl)
     },
   }

@@ -1,0 +1,24 @@
+{
+  "packagedSourceFilesVerified": 92,
+  "packageSha256": "879183cd80184efa8676049e0d1bdc05449b485d61078b35bd0e847153368a68",
+  "bundles": {
+    "client.js": "5ae71d0b8cdd14adabb6c0ea27caae09f5d756dfed0c3f00c7da245fbf6bd038",
+    "client-registry.js": "10b81a916a9ff155b5a5042e12c62990d8888a4506d122e5a3708a6a85dba10e",
+    "client-locale.js": "5762a21e76ec65b41c78b70e58605f8fd7a8c715a2fb302847cb24e49e228449",
+    "client-editor.js": "22130df6ecd571a8cf5e65e0166f8077cb057f7c9ea839eb7bc9e9d7b9da436a",
+    "client-terminal.js": "f59910c39fbea0abb103a94747e2f0a69424b0f8901cd63e30264ee8485985c9",
+    "client-mermaid.js": "ad5f648344756db32dab47e8746b61ab7a876ca27e33dedae23eb4c6facb2178",
+    "index.js": "8f739591d6957e75fe830f70017b45aeee42af9f0544e71f6c2b3a6d124452f5",
+    "clues.js": "d2977b68e155ba96d813b01931fe10eb6e639706b3dfc13091d0568046aedc05"
+  },
+  "screenshots": 42,
+  "targetedMount": {
+    "passed": 2,
+    "durationSeconds": 28.1
+  },
+  "unitGate": {
+    "filesPassed": 288,
+    "passed": 4111,
+    "skipped": 18
+  }
+}
