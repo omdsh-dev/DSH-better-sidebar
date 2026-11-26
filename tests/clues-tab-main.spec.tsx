@@ -1289,6 +1289,33 @@ describe('clue workbench UX regressions', () => {
     expect(scopeWindow().querySelector('input[placeholder="owner/repo or repository URL"]')).toBe(scopeInput)
     expect(scopeInput.value).toBe('unsaved/repository')
   })
+  it.each([[4_999, 1], [5_000, 2]])('after %i ms without a reader, resuming the list takes %i total requests', async (awayMs, expectedReads) => {
+    vi.useFakeTimers()
+    try {
+      let release!: () => void
+      const gate = new Promise<void>(resolve => { release = resolve })
+      const fetchList = vi.fn(async () => {
+        await gate
+        return new Response(JSON.stringify({ ok: true, value: { items: [] } }))
+      })
+      vi.stubGlobal('fetch', fetchList)
+      const reader = new AbortController()
+      const input = { sourceId: FILES.sourceId }
+      const first = cluesApi.list('ws-1', input, reader.signal)
+      await Promise.resolve()
+      expect(fetchList).toHaveBeenCalledTimes(1)
+      reader.abort()
+      await expect(first).rejects.toMatchObject({ name: 'AbortError' })
+
+      vi.advanceTimersByTime(awayMs)
+      const resumed = cluesApi.list('ws-1', input)
+      release()
+      await expect(resumed).resolves.toEqual({ items: [] })
+      expect(fetchList).toHaveBeenCalledTimes(expectedReads)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
   it('paints warm pages and the pack shelf from the shared cache after hide/show and remount', async () => {
     const warm: ClueCandidate = {
       sourceId: FILES.sourceId, typeId: 'file', clueId: 'c-warm', title: 'Warm note', locator: { path: 'warm.md' },

@@ -12,7 +12,7 @@ import { join } from 'node:path'
 import { test, expect, type Locator, type Page, type TestInfo } from '@playwright/test'
 import { createHostApi, dismissOnboarding, gotoPage, hostRpc, sendFirstMessage } from './host'
 import type { WorkflowRunView } from '../../src/workflow-runs'
-import { clueView, expectNoOverflow, floatClueWindow, setTheme } from './ui-helpers'
+import { clueView, expectNoOverflow, floatClueWindow, selectClueSource, setTheme } from './ui-helpers'
 
 async function openGuide(page: Page, kind: string): Promise<void> {
   const panel = page.locator('[data-sidebar-right-panel]:visible')
@@ -267,6 +267,8 @@ for (const touch of [false, true]) {
       await clues.evaluate(node => { node.style.maxWidth = '390px' })
       const sourceSelect = sourceNavigation.getByRole('button', { name: 'Source', exact: true })
       await expect(sourceSelect).toBeVisible()
+      // The host remembers the last source. This fixture uses acceptance.md.
+      await selectClueSource(clues, 'builtin.files')
       metrics.cluesTab = await controlStyle(sourceSelect)
       await sourceSelect.focus()
       await expect(sourceSelect).toBeFocused()

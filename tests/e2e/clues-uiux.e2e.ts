@@ -32,6 +32,17 @@ interface ClueLayoutMetric {
 /** The versioned marker the guide dialog writes when the reader closes it. */
 const CLUE_HELP_SEEN_KEY = 'dsh-better-sidebar:clues-help-seen-v2'
 
+/** Keep one list request pending until the test releases it to the real host. */
+async function holdNextListRequest(page: Page): Promise<() => void> {
+  let release!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve })
+  await page.route('**/sidebar/api/clues.list', async route => {
+    await gate
+    await route.continue()
+  }, { times: 1 })
+  return release
+}
+
 /**
  * Start a case as a returning reader. The first-visit guide is its own normal
  * test; every other case marks it seen through this helper rather than poking
@@ -596,35 +607,29 @@ test('clues workbench stays usable across column widths and host themes', async 
 
     // Loading: a delayed list request must expose the real spinner, with CSS
     // rotation in normal motion and none under reduced motion.
-    let delayNextList = true
-    const listRoute = '**/sidebar/api/clues.list'
-    await page.route(listRoute, async route => {
-      if (delayNextList) {
-        delayNextList = false
-        await new Promise(resolve => setTimeout(resolve, 5_200))
-      }
-      await route.continue()
-    })
+    const releaseList = await holdNextListRequest(page)
     const beforeLoading = clueListRequests
-    await browser.getByRole('button', { name: 'Refresh', exact: true }).click()
     const loading = browser.locator('[data-clue-refresh-status="refreshing"] [data-loading-indicator]')
-    await expect(loading).toBeVisible()
-    expect(await loading.evaluate(node => getComputedStyle(node.querySelector('[aria-hidden="true"]') ?? node).animationName)).not.toBe('none')
-    await expect.poll(() => clueListRequests).toBe(beforeLoading + 1)
-    // Leave while the actual HTTP is pending, then return inside the shared
-    // five-second protection window. A second wire request would be a regression.
-    await toggleBrowser()
-    await expect(browser).toBeHidden()
-    const leftAt = Date.now()
-    await page.waitForTimeout(4_500)
-    await toggleBrowser()
-    await expect(browser).toBeVisible()
-    requestMetrics.pendingViewTimeAwayMs = Date.now() - leftAt
+    try {
+      await browser.getByRole('button', { name: 'Refresh', exact: true }).click()
+      await expect(loading).toBeVisible()
+      expect(await loading.evaluate(node => getComputedStyle(node.querySelector('[aria-hidden="true"]') ?? node).animationName)).not.toBe('none')
+      await expect.poll(() => clueListRequests).toBe(beforeLoading + 1)
+      // Reopen while the first request is still pending. The returning view
+      // should resume its refresh without starting a second request.
+      await toggleBrowser()
+      await expect(browser).toBeHidden()
+      const leftAt = Date.now()
+      await toggleBrowser()
+      await expect(loading).toBeVisible()
+      requestMetrics.pendingViewTimeAwayMs = Date.now() - leftAt
+    } finally {
+      releaseList()
+    }
     await expect(loading).toHaveCount(0)
     await expect(browser.locator('[data-clue-browser-state="page"]')).toBeVisible()
     expect(clueListRequests).toBe(beforeLoading + 1)
     requestMetrics.pendingViewReturnListRequests = clueListRequests - beforeLoading
-    await page.unroute(listRoute)
 
     // A settled page is a cache paint: switching views and returning adds no
     // read, and the same rows stay on screen.
@@ -637,23 +642,19 @@ test('clues workbench stays usable across column widths and host themes', async 
     expect(clueListRequests).toBe(settledViewRequests)
     requestMetrics.settledViewReturnListRequests = clueListRequests - settledViewRequests
 
-    delayNextList = true
-    await page.route(listRoute, async route => {
-      if (delayNextList) {
-        delayNextList = false
-        await new Promise(resolve => setTimeout(resolve, 900))
-      }
-      await route.continue()
-    })
     await page.emulateMedia({ reducedMotion: 'reduce' })
+    const releaseReduced = await holdNextListRequest(page)
     const beforeReduced = clueListRequests
-    await browser.getByRole('button', { name: 'Refresh', exact: true }).click()
-    await expect(loading).toBeVisible()
-    expect(await loading.evaluate(node => getComputedStyle(node.querySelector('[aria-hidden="true"]') ?? node).animationName)).toBe('none')
-    await expect.poll(() => clueListRequests).toBe(beforeReduced + 1)
+    try {
+      await browser.getByRole('button', { name: 'Refresh', exact: true }).click()
+      await expect(loading).toBeVisible()
+      expect(await loading.evaluate(node => getComputedStyle(node.querySelector('[aria-hidden="true"]') ?? node).animationName)).toBe('none')
+      await expect.poll(() => clueListRequests).toBe(beforeReduced + 1)
+    } finally {
+      releaseReduced()
+    }
     await expect(loading).toHaveCount(0)
     await expect(browser.locator('[data-clue-browser-state="page"]')).toBeVisible()
-    await page.unroute(listRoute)
     await page.emulateMedia({ reducedMotion: 'no-preference' })
 
     // The activation-scoped cache (no read TTL) serves a warm Files flip
