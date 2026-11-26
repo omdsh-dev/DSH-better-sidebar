@@ -4,6 +4,10 @@
 >
 > 📝 The Chinese [CHANGELOG](./CHANGELOG.md) is the authoritative, item-by-item record; this file carries the English summaries and has historically lagged behind it. Where the two disagree, the Chinese one is current.
 
+### Unreleased
+
+- Fix reopening a new Side Chat created from a compacted conversation with model retries. The child keeps the full inherited history when shortening it would drop a record needed to replay a retry. [#1158](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1158)
+
 ### v0.34.0-alpha.0
 
 - 🎛 **Changes and Graph on the Git page are resizable**: both sections share the same draggable stack as Clues, with a divider that responds to mouse and touch dragging as well as Home / End / ↑ / ↓; each section scrolls on its own and no divider shows while only one section is open. The split is not persisted and a refresh returns to the default.

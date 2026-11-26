@@ -2,6 +2,10 @@
 
 > 本文档收录 dsh-better-sidebar 的完整发布历史（最新版摘要见 [README](README_ZH.md)；同步发布于 [GitHub Releases](https://github.com/omdsh-dev/DSH-better-sidebar/releases)）。
 
+### 未发布
+
+- 修复从压缩过的会话新建侧聊后无法重新打开的问题。如果缩短历史会丢掉模型重试所需的请求记录，新侧聊会保留完整的继承历史。[#1158](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1158)
+
 ### v0.34.0-alpha.0
 
 - 🎛 **Git 页的 Changes 与 Graph 可以拖动改高度**：两个分区与「线索收集」共用同一套可拖动堆叠，中间的分隔柄支持鼠标与触控拖拽，也可以按 Home / End / ↑ / ↓ 调整；各自内部滚动，只剩一个分区时不显示分隔柄。分区比例不写入设置，刷新后回到默认。

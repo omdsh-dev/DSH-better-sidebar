@@ -24,6 +24,17 @@ function lo(type: string, seq: number, data: Record<string, unknown> = {}): Side
   return { type, seq, time: seq * 1000, data } as SidebarSessionEvent
 }
 
+function requestHeader(seq: number, provider: string, reason: 'initial' | 'change'): SidebarSessionEvent {
+  return lo('request/header', seq, { reason, header: { config: { provider, model: 'model-x' } } })
+}
+
+function scheduledRetry(seq: number, provider: string, attempt: { turn: number; step: number; retryId: string; retry: number }): SidebarSessionEvent {
+  return lo('llm/retry', seq, {
+    ...attempt, provider, policyKey: 'policy', mode: 'normal', maxRetries: 2, delayMs: 1,
+    failure: { code: 'RATE_LIMIT', message: 'retry', status: 429 },
+  })
+}
+
 /** Surface-eligible event appended the way the live pipeline appends it. */
 function sf(type: string, seq: number, data: Record<string, unknown>): SidebarSessionEvent {
   return { type, seq, time: seq * 1000, data, surfaceOp: 'append' } as SidebarSessionEvent
@@ -340,6 +351,65 @@ function expectAcceptedSeed(seed: readonly SidebarSessionEvent[]): void {
 }
 
 describe('buildSidechatInheritance compaction tail', () => {
+  it.each(['shadowed', 'retained'] as const)('keeps retries readable when the matching request header is %s (#1158)', (headerPosition) => {
+    const events = [
+      ...systemHead(),
+      requestHeader(3, 'first-provider', 'initial'),
+      lo('step/end', 4, { turn: 1, step: 1 }),
+      lo('turn/end', 5, { turn: 1, reason: { kind: 'completed' } }),
+    ]
+    const shadowed = turn(events.length, 2)
+    events.push(...shadowed.events)
+    events.push(lo('turn/start', events.length, { turn: 3 }))
+    events.push(lo('step/start', events.length, { turn: 3, step: 1 }))
+    events.push(sf('user/message', events.length, userMessage('m-keep', 'kept question')))
+
+    const provider = headerPosition === 'retained' ? 'second-provider' : 'first-provider'
+    if (headerPosition === 'retained') events.push(requestHeader(events.length, provider, 'change'))
+    for (const retry of [1, 2]) {
+      const attempt = { turn: 3, step: 1, retryId: 'r1', retry }
+      events.push(scheduledRetry(events.length, provider, attempt))
+      events.push(lo('llm/retry-started', events.length, attempt))
+    }
+    // A later provider switch cannot establish the route for earlier retries.
+    events.push(requestHeader(events.length, 'next-provider', 'change'))
+    events.push(lo('step/end', events.length, { turn: 3, step: 1 }))
+    events.push(lo('turn/end', events.length, { turn: 3, reason: { kind: 'completed' } }))
+    events.push(...compactionGroup(events.length, shadowed.nodes))
+
+    const { seed } = buildSidechatInheritance(events)
+    const retryAt = seed.findIndex(event => event.type === 'llm/retry')
+    const precedingHeader = seed.slice(0, retryAt).findLast(event => event.type === 'request/header')
+    expect(precedingHeader?.data).toMatchObject({ header: { config: { provider } } })
+    expect(seed.filter(event => event.type.startsWith('llm/retry')).map(event => [event.type, event.data.retry])).toEqual([
+      ['llm/retry', 1], ['llm/retry-started', 1], ['llm/retry', 2], ['llm/retry-started', 2],
+    ])
+    expect(visibleSequence(seed)).toEqual(visibleSequence(events))
+    expectAcceptedSeed(seed)
+    if (headerPosition === 'retained') expect(seed.length).toBeLessThan(events.length)
+  })
+
+  it('keeps a delayed retry start paired with the attempt scheduled before compaction (#1158)', () => {
+    const attempt = { turn: 1, step: 1, retryId: 'r1', retry: 1 }
+    const events = [
+      ...systemHead(),
+      requestHeader(3, 'test', 'initial'),
+      scheduledRetry(4, 'test', attempt),
+      lo('step/end', 5, { turn: 1, step: 1 }),
+      lo('turn/end', 6, { turn: 1, reason: { kind: 'completed' } }),
+    ]
+    const shadowed = turn(events.length, 2)
+    events.push(...shadowed.events)
+    events.push(...compactionGroup(events.length, shadowed.nodes))
+    events.push(lo('llm/retry-started', events.length, attempt))
+
+    const { seed } = buildSidechatInheritance(events)
+    expect(seed.filter(event => event.type.startsWith('llm/retry'))).toMatchObject([
+      { type: 'llm/retry', data: attempt }, { type: 'llm/retry-started', data: attempt },
+    ])
+    expectAcceptedSeed(seed)
+  })
+
   it('reuses the last summarizing compaction instead of copying the shadowed span', () => {
     const events = compactedLog()
     const { seed, snapshot } = buildSidechatInheritance(events)
