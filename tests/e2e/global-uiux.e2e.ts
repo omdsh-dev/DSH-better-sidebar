@@ -162,8 +162,12 @@ for (const touch of [false, true]) {
 
       await openGuide(page, 'git')
       const gitRoot = panel.locator('[data-git-root]:visible')
+      const changedFile = gitRoot.locator('[data-row="sample.ts"]')
       const changesTabs = panel.getByRole('tablist', { name: 'Git', exact: true })
       const gitTab = changesTabs.getByRole('tab', { name: 'Git', exact: true })
+      // The first Git status adds controls after the tab. Wait for the fixture
+      // change so Tab and Shift+Tab traverse the same set of controls.
+      await expect(changedFile).toBeVisible()
       await keyboardFocus(page, gitTab)
       await gitTab.press('ArrowRight')
       const sessionTab = changesTabs.getByRole('tab', { name: 'Session', exact: true })
@@ -172,9 +176,9 @@ for (const touch of [false, true]) {
       await screenshotMatrix(page, sessionTab.locator('xpath=../..'), 'session-files', info)
       await sessionTab.press('Home')
       await expect(gitRoot).toBeVisible()
-      await expect(gitRoot.locator('[data-row="sample.ts"]')).toBeVisible()
+      await expect(changedFile).toBeVisible()
       await screenshotMatrix(page, gitRoot, 'git', info)
-      await gitRoot.locator('[data-row="sample.ts"] [data-path="sample.ts"]').click()
+      await changedFile.locator('[data-path="sample.ts"]').click()
       await expect(panel.locator('[class*="diffPane"]')).toBeVisible()
       await screenshotMatrix(page, changesTabs.locator('xpath=../..'), 'git-diff', info)
       metrics.gitTab = await controlStyle(gitTab)
