@@ -1,9 +1,10 @@
 /** A vertical workbench stack. A sash redistributes only the two nearest open sections. */
 import { Fragment, useEffect, useId, useRef, useState, type ReactNode } from 'react'
-import { createFrameBatcher } from '../../frame-batcher.ts'
-import css from './clues-tab.module.css'
+import { createFrameBatcher } from '../frame-batcher.ts'
+import css from './workbench-stack.module.css'
 
-interface Section {
+export interface WorkbenchStackSection {
+  /** Stable id; also the persistence key of this section's weight. */
   id: string
   title: string
   open: boolean
@@ -82,8 +83,8 @@ function Sash({ top, bottom, ratio, onPreview, onCommit }: {
     }} />
 }
 
-export function SectionStack({ sections, initialWeights, onResize }: {
-  sections: readonly Section[]
+export function WorkbenchStack({ sections, initialWeights, onResize }: {
+  sections: readonly WorkbenchStackSection[]
   initialWeights?: Record<string, unknown>
   onResize(weights: Record<string, number>): void
 }): ReactNode {
@@ -94,7 +95,7 @@ export function SectionStack({ sections, initialWeights, onResize }: {
   })))
   const opened = sections.filter(section => section.open)
   const openWeight = opened.reduce((sum, section) => sum + (weights[section.id] ?? section.weight), 0)
-  let previous: Section | undefined
+  let previous: WorkbenchStackSection | undefined
   return <div className={css.stack}>
     {sections.map(section => {
       const top = section.open ? previous : undefined

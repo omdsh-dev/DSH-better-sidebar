@@ -17,7 +17,7 @@
  */
 import { forwardRef, type ButtonHTMLAttributes, type MouseEvent, type ReactNode } from 'react'
 import clsx from 'clsx'
-import { Modal } from '@deepseek-ai/dsh-client-ui-primitives'
+import { FileTypeIcon, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 import { LoadingIndicator } from './LoadingIndicator.tsx'
 import design from './design.module.css'
 import css from './kit.module.css'
@@ -102,6 +102,69 @@ export function Chip(props: {
       <span className={css.chipLabel}>{props.children}</span>
       {props.count !== undefined && <span className={css.chipCount}>{props.count}</span>}
     </button>
+  )
+}
+
+/**
+ * Props of {@link FileAttachmentChip}.
+ */
+export interface FileAttachmentChipProps {
+  /** File name shown as the chip's title. */
+  readonly name: string
+  /** Human-readable size ("312 KB"); omitted when the host cannot know it. */
+  readonly size?: string
+  /** Path that picks the host's file-type glyph; defaults to `name`. */
+  readonly path?: string
+  /** Native tooltip, typically the attachment's full path. */
+  readonly title?: string
+  /** The message still names the attachment but it can no longer be resolved. */
+  readonly unavailable?: boolean
+  readonly className?: string | undefined
+}
+
+/**
+ * The ONE static file attachment: the host's file-type glyph, the name and the
+ * size on the same 22px band as {@link Chip}. It is a picture, not a control —
+ * there is no button, no hover, no focus — because an attachment inside a
+ * message is data the reader reads, unlike the filter chips that act.
+ */
+export function FileAttachmentChip(props: FileAttachmentChipProps): ReactNode {
+  const { name, size, path, title, unavailable, className } = props
+  return (
+    <span
+      className={clsx(css.fileChip, className)}
+      title={title}
+      {...(unavailable === true ? { 'data-unavailable': 'true' } : {})}
+    >
+      <span className={css.fileChipIcon} aria-hidden="true"><FileTypeIcon path={path ?? name} size={16} /></span>
+      <span className={css.fileChipName}>{name}</span>
+      {size !== undefined && <span className={css.fileChipSize}>{size}</span>}
+    </span>
+  )
+}
+
+/**
+ * The ONE download affix: a real anchor carrying `download`, so the file goes
+ * to disk instead of opening a tab. `button` is the bordered pill a fallback
+ * pane offers as its way out; `inline` is the underlined escape hatch a notice
+ * bar puts beside its sentence. Four surfaces cut this recipe by hand before
+ * (binary download, media fallback, PDF toolbar, large-file notice).
+ */
+export function DownloadLink(props: {
+  href: string
+  children: ReactNode
+  variant?: 'button' | 'inline'
+  className?: string | undefined
+}): ReactNode {
+  const { href, children, variant = 'button', className } = props
+  return (
+    <a
+      className={clsx(css.downloadLink, variant === 'inline' && css.downloadLinkInline, className)}
+      href={href}
+      download
+    >
+      {children}
+    </a>
   )
 }
 

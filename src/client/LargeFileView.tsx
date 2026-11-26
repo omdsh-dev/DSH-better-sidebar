@@ -33,7 +33,7 @@ import { formatByteSize, MAX_EDITABLE_BYTES, MAX_EDITABLE_LABEL, type EditLimitR
 import { isJsonlPath, isTreeRecord, parseRecord, summarizeRecord } from './jsonl.ts'
 import { splitLines, useTextPager } from './text-pages.ts'
 import { t } from './locales.ts'
-import { ActionButton, IconButton, LoadingIndicator, Notice } from './ui/index.ts'
+import { ActionButton, DownloadLink, EmptyState, IconButton, LoadingIndicator, Notice } from './ui/index.ts'
 import css from './sidebar.module.css'
 
 /**
@@ -176,9 +176,7 @@ export function LargeFileView(props: {
               })
               : t('loadAll')}
           </ActionButton>
-          <a className={css.largeFileDownload} href={downloadUrl(scope, path)} download>
-            {t('downloadToView')}
-          </a>
+          <DownloadLink href={downloadUrl(scope, path)}>{t('downloadToView')}</DownloadLink>
         </div>
       )}
       {pager.atCap && (
@@ -227,7 +225,7 @@ export function LargeFileView(props: {
           </div>
         )}
         {pager.error === null && pager.atEnd && totalRows === 0 && !pager.loading && (
-          <div className={css.editorPlaceholder}>{t('largeFileEmpty')}</div>
+          <EmptyState tone="well" title={t('largeFileEmpty')} />
         )}
       </div>
       {showFooter && (

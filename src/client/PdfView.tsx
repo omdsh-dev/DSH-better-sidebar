@@ -4,6 +4,7 @@ import clsx from 'clsx'
 import { downloadUrl, mediaUrl, type SessionScope } from './api.ts'
 import { t } from './locales.ts'
 import { LoadingIndicator } from './ui/LoadingIndicator.tsx'
+import { DownloadLink, ErrorBlock } from './ui/index.ts'
 import css from './sidebar.module.css'
 
 export function PdfView(props: { scope: SessionScope; path: string; title: string }) {
@@ -87,13 +88,11 @@ export function PdfView(props: { scope: SessionScope; path: string; title: strin
   return (
     <div className={css.editorPdf}>
       <div className={css.editorPdfToolbar}>
-        <a className={css.editorDownloadLink} href={downloadUrl(scope, path)} download>
-          {t('downloadToView')}
-        </a>
+        <DownloadLink href={downloadUrl(scope, path)}>{t('downloadToView')}</DownloadLink>
       </div>
       <div className={css.editorPdfStage}>
         {load.status === 'loading' && <LoadingIndicator centered />}
-        {load.status === 'error' && <div className={css.editorError}>{load.message}</div>}
+        {load.status === 'error' && <ErrorBlock message={load.message} />}
         {load.status === 'ready' && (
           <iframe
             ref={frameRef}

@@ -18,7 +18,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createElement } from 'react'
 import {
-  ActionFooter, ChoiceCard, EmptyState, ErrorBlock, FactList, FactRow, Field, ListRow, StatusLine,
+  ActionFooter, ChoiceCard, EmptyState, ErrorBlock, FactList, FactRow, FallbackPane, Field, ListRow, StatusLine,
 } from '../src/client/ui/patterns.tsx'
 import { renderRoot, setupReactAct, type RenderedRoot } from './test-utils.ts'
 
@@ -137,6 +137,29 @@ describe('ListRow', () => {
   it('passes data attributes through for a stable e2e locator', () => {
     view = renderRoot(createElement(ListRow, { title: 'Row', 'data-clue-result-row': 'clue-1' }))
     expect(view.container.querySelector('[data-clue-result-row]')).not.toBeNull()
+  })
+
+  it('carries a collapsible header expanded state on its one button', () => {
+    view = renderRoot(createElement(ListRow, {
+      title: 'Environment',
+      titleAs: 'button',
+      'aria-expanded': true,
+      'aria-controls': 'panel-body',
+      'aria-label': 'Environment section',
+    }))
+    const button = view.container.querySelector('button')!
+    expect(button.getAttribute('aria-expanded')).toBe('true')
+    expect(button.getAttribute('aria-controls')).toBe('panel-body')
+    expect(button.getAttribute('aria-label')).toBe('Environment section')
+    // The row shell itself is not the control, so it must not claim the state.
+    expect(byClass(view.container, 'listRow')!.hasAttribute('aria-expanded')).toBe(false)
+  })
+
+  it('renders a disabled row as inert while keeping its title readable', () => {
+    view = renderRoot(createElement(ListRow, { title: 'Locked', titleAs: 'button', disabled: true }))
+    expect((view.container.querySelector('button') as HTMLButtonElement).disabled).toBe(true)
+    expect(byClass(view.container, 'listRow')!.dataset.disabled).toBe('true')
+    expect(byClass(view.container, 'listRow')!.textContent).toContain('Locked')
   })
 })
 
@@ -300,6 +323,14 @@ describe('StatusLine', () => {
     expect(view.container.querySelector('[role="status"]')).not.toBeNull()
   })
 
+  it('can interrupt with an alert when the line reports a failure', () => {
+    view = renderRoot(createElement(StatusLine, { text: 'Upload failed', tone: 'error', role: 'alert' }))
+    const line = view.container.querySelector('[role="alert"]')
+    expect(line).not.toBeNull()
+    expect(line!.getAttribute('role')).toBe('alert')
+    expect(view.container.querySelector('[role="status"]')).toBeNull()
+  })
+
   it('separates the trailing action from the text', () => {
     view = renderRoot(createElement(StatusLine, {
       text: 'Failed', tone: 'error',
@@ -333,5 +364,21 @@ describe('ActionFooter', () => {
     expect(byClass(view.container, 'actionFooterBleed')).toBeNull()
     view.rerender(createElement(ActionFooter, { end: 'x', bleed: true }))
     expect(byClass(view.container, 'actionFooterBleed')).not.toBeNull()
+  })
+})
+
+describe('FallbackPane', () => {
+  it('centres the caller sentence and its way out in a pane-filling block', () => {
+    view = renderRoot(createElement(FallbackPane, { title: 'No preview', actions: 'Download' }))
+    const pane = byClass(view.container, 'fallbackPane')!
+    expect(byClass(pane, 'emptyTitle')!.textContent).toBe('No preview')
+    expect(byClass(pane, 'emptyActions')!.textContent).toBe('Download')
+  })
+
+  it('announces itself only when the caller asks', () => {
+    view = renderRoot(createElement(FallbackPane, { title: 'Unregistered tab' }))
+    expect(view.container.querySelector('[role="status"]')).toBeNull()
+    view.rerender(createElement(FallbackPane, { title: 'Unregistered tab', role: 'status' }))
+    expect(view.container.querySelector('[role="status"]')).not.toBeNull()
   })
 })

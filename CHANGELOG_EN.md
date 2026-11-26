@@ -6,6 +6,18 @@
 
 ### Unreleased
 
+- **`sidebar_open` distinguishes dispatched and queued requests** ([#1174](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1174)). When model-driven sidebar opens are enabled, the tool reports whether it dispatched the request to an attached view or queued it for a connection. Tab visibility is unconfirmed after dispatch.
+
+### v0.34.0-alpha.0
+
+- 🎛 **Changes and Graph on the Git page are resizable**: both sections share the same draggable stack as Clues, with a divider that responds to mouse and touch dragging as well as Home / End / ↑ / ↓; each section scrolls on its own and no divider shows while only one section is open. The split is not persisted and a refresh returns to the default.
+
+- 🎨 **One component layer across the interface**: the task window, side-chat attachments and images, tabs and previews (diff, terminal, media / PDF / large files) and the file-tree shell now take their fields, rows, empty and error states, download links and switches from one shared kit, with consistent hierarchy, accessibility and theme tokens; behavior and copy are unchanged.
+
+- 🧷 **The file tree's right-click menu works on PC again** (contributed PR [#1222](https://github.com/omdsh-dev/DSH-better-sidebar/pull/1222) by @whalestar-doc): the menu was not declared `contextual`, so the host treated it as a regular menu and rendered nothing on `contextmenu`.
+
+- **Reduce Git Graph deduplication work when loading more history** ([#1063](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1063), item 5; contributed PR [#1241](https://github.com/omdsh-dev/DSH-better-sidebar/pull/1241) by @ai-zen-future). Each append indexes the full hashes of loaded commits before filtering the incoming page. New commits keep their page order, and duplicate-only pages still advance the cursor.
+
 - 🧪 **DSH 0.2.3-alpha.2 (alpha line)**: the 14 DSH peers and `engines.dsh` move to `0.2.3-alpha.2`, with the Cordis line at `4.2.0-alpha.1`. The host removed `@deepseek-ai/dsh-llm`'s `./brand` subpath, so the type now comes from `./types`, and the projection authority moved from `working-directory/change` to `workspace-root/change` — side-chat cwd stamps and worktree following moved with it. Every older-host compatibility branch is gone too (the `requestRejection` admission fallback, the legacy directory event, the old `data-slot` anchor and the `getOrigin` probe): this build serves 0.2.3-alpha.2+ only, and older hosts stay on v0.33.0.
 
 - 🎛️ **Compact selection menus**: action menus use a smaller width than translation results. Rewrite opens a lateral flyout on hover, click or keyboard, flipping sides to fit; narrow screens keep the flyout with partial parent overlap. Translation results place Back and Copy together in a bottom bar, with long text scrolling separately.
@@ -16,8 +28,6 @@
   - **Rewrite the original source**: local actions edit the original path; remote bodies use the existing source save flow. Read-only content, comments and surfaces with unsaved edits do not offer rewriting.
   - **Standalone translation**: call the host LLM directly, without creating a session or changing the source. Results stay in the popup with copy/retry. Configure a separate model; the target language follows the UI by default.
   - **Explicit insertion targets**: insert into main or side chat only fills a draft and preserves provenance. Selection side chats float on wide screens and open as tabs on narrow screens. The Files tab again matches the Local files folder icon.
-
-- **`sidebar_open` distinguishes dispatched and queued requests** ([#1174](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1174)). When model-driven sidebar opens are enabled, the tool reports whether it dispatched the request to an attached view or queued it for a connection. Tab visibility is unconfirmed after dispatch.
 
 - ✨ **Sidebar polish**: content loading uses a centered ring animation with reduced-motion support. Floating a window removes its former tab while preserving drafts and scroll position; floating edges are slightly stronger, and file preview and Clues have distinct, clearer icons.
   - **Selection provenance**: inserting a clue body or comment selection carries both a stable `dsh-clue` reference and the exact excerpt. Failed reference preparation keeps the selection available for retry and never sends a message.

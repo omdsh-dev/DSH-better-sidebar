@@ -288,9 +288,16 @@ test('UI19 translates read-only body and comments inline and inserts without sen
     await menu.screenshot({ path: info.outputPath('selection-translation-' + theme + '.png') })
   }
   await page.setViewportSize({ width: 390, height: 844 })
+  // The menu re-clamps from `useViewportSize`, which measures on the next
+  // animation frame after a resize; reading the box straight after
+  // setViewportSize() races that frame. Poll for the settled geometry so the
+  // assertion covers the re-clamp instead of the resize timing.
+  await expect.poll(async () => {
+    const box = await menu.boundingBox()
+    return box === null ? Number.POSITIVE_INFINITY : Math.round(box.x + box.width)
+  }, { message: 'the menu re-clamps inside the 390px viewport' }).toBeLessThanOrEqual(390)
   const bounds = (await menu.boundingBox())!
   expect(bounds.x).toBeGreaterThanOrEqual(0)
-  expect(bounds.x + bounds.width).toBeLessThanOrEqual(390)
   await expect(footer.getByRole('menuitem', { name: 'Back', exact: true })).toBeVisible()
   await expect(footer.getByRole('menuitem', { name: 'Copy', exact: true })).toBeVisible()
   expect(await menu.evaluate(node => node.scrollWidth <= node.clientWidth)).toBe(true)
