@@ -451,7 +451,9 @@ export const api = {
   fsTrees: (scope: SessionScope, paths: readonly string[], exclude?: readonly string[], signal?: AbortSignal) =>
     call<{ levels: FsLevel[] }>('fs.trees', scopePayload(scope, { paths: [...paths], exclude }), signal),
   /** Global recursive file search rooted at the session cwd (the editor
-   *  side panel's search box). A name query matches cwd-relative
+   *  side panel's search box). The response includes the host's search cwd
+   *  and the absolute `paths` corresponding to the `matches` labels.
+   *  A name query matches cwd-relative
    *  '/'-separated paths; a separator-carrying fragment matches by PATH;
    *  a query naming one path (absolute, `~/…`, `./x`, `../x`) is stat'ed
    *  through the same resolution fs.read uses and yields the RESOLVED
@@ -461,7 +463,7 @@ export const api = {
    *  never match and are never descended (host-side, in lockstep with the
    *  tree; a pasted direct-open path is explicit intent and skips it). */
   fsSearch: (scope: SessionScope, query: string, exclude?: readonly string[], signal?: AbortSignal) =>
-    call<{ matches: string[]; dirs: string[]; truncated: boolean }>('fs.search', scopePayload(scope, { query, exclude }), signal),
+    call<{ cwd: string; matches: string[]; paths: string[]; dirs: string[]; truncated: boolean }>('fs.search', scopePayload(scope, { query, exclude }), signal),
   fsRead: (scope: SessionScope, path: string, signal?: AbortSignal) =>
     call<FsReadResult>('fs.read', scopePayload(scope, { path }), signal),
   /** One page of a large text file, for the read-only paged preview.

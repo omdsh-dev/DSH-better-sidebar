@@ -31,7 +31,7 @@
  *   stripped-down host or a bare test context).
  */
 import type { Context } from '../context-types.ts'
-import { resolveSidebarPath } from './paths.ts'
+import { isPosixAbsolutePath, resolveSidebarPath } from './paths.ts'
 
 export function addressBaseOf(ctx: Context, sessionId: string | undefined): string | undefined {
   if (sessionId === undefined) return undefined
@@ -71,7 +71,7 @@ export function addressBaseOf(ctx: Context, sessionId: string | undefined): stri
  */
 export function resolveAddressPath(base: string | undefined, path: string): string {
   const resolved = resolveSidebarPath(base, path)
-  if (base === undefined || !base.includes('\\')) return resolved
+  if (base === undefined || isPosixAbsolutePath(base) || !base.includes('\\')) return resolved
   const folded = resolved.replace(/[/\\]+/g, '\\')
   return /^[\\/]{2}/.test(resolved) ? `\\\\${folded.replace(/^\\+/, '')}` : folded
 }

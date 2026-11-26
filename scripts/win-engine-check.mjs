@@ -11,6 +11,7 @@
  *   pin every result path would leak a backslash into the walk contract.
  * - A non-ASCII file name comes back through the UTF-8 pipeline instead of
  *   the console code page.
+ * - Paths are NUL-delimited, so line endings in a file name stay in the path.
  *
  * A missing engine SKIPS (the script stays runnable on a dev machine and on
  * the ubuntu lane, where fd is absent); an assertion failure exits non-zero.
@@ -23,7 +24,7 @@ import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { fdArgv, rgArgv } from '../src/search-engines.ts'
+import { fdArgv, normalizeEnginePaths, rgArgv } from '../src/search-engines.ts'
 
 const assertMode = process.argv.includes('--assert')
 
@@ -36,7 +37,8 @@ writeFileSync(join(scratch, '中文文件名.ts'), 'code')
 
 let failed = false
 
-function run(label, binary, args, { checkUnicode = false } = {}) {
+/** 检查引擎输出的分隔符、编码与预期路径。 */
+function run(label, binary, args, { checkUnicode = false, checkPath } = {}) {
   let stdout
   try {
     stdout = execFileSync(binary, args, { cwd: scratch, encoding: 'buffer' })
@@ -54,8 +56,16 @@ function run(label, binary, args, { checkUnicode = false } = {}) {
   console.log('backslash:', hasBackslash, '| CR:', hasCR)
   console.log('raw:', JSON.stringify(text))
   if (!assertMode) return
-  if (hasBackslash || hasCR) {
+  if (hasBackslash || (hasCR && checkPath === undefined)) {
     console.error(`ASSERT FAIL: ${label} leaked backslash/CR into output`)
+    failed = true
+  }
+  if (text !== '' && !text.endsWith('\0')) {
+    console.error(`ASSERT FAIL: ${label} did not emit NUL-delimited paths`)
+    failed = true
+  }
+  if (checkPath !== undefined && !normalizeEnginePaths(text.split('\0'), '/').includes(checkPath)) {
+    console.error(`ASSERT FAIL: ${label} did not preserve the complete path`)
     failed = true
   }
   if (checkUnicode && !text.includes('中文文件名.ts')) {
@@ -75,6 +85,12 @@ if (process.argv.includes('--probe')) {
   // A query with no non-ASCII bytes still exercises the path-separator pin.
   run('rg argv (query=a)', 'rg', rgArgv('a'))
   run('fd argv (query=a)', 'fd', fdArgv(10, 'a'))
+  if (process.platform !== 'win32') {
+    const multiline = 'multiline-probe\nsegment.ts\r'
+    writeFileSync(join(scratch, multiline), 'code')
+    run('rg preserves multiline paths', 'rg', rgArgv('multiline-probe'), { checkPath: multiline })
+    run('fd preserves multiline paths', 'fd', fdArgv(10, 'multiline-probe'), { checkPath: multiline })
+  }
 }
 
 rmSync(scratch, { recursive: true, force: true })

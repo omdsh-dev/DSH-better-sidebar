@@ -29,6 +29,8 @@
  * `dsh-v0.1.5-alpha.2`) — and is pinned by tests/resource-address.spec.ts.
  */
 
+import { isAbsolutePath as isSidebarAbsolutePath, isPosixAbsolutePath } from './paths.ts'
+
 /** The scheme and type every file address opens with. */
 export const FILE_ADDRESS_PREFIX = 'dsh-resource://file/'
 
@@ -67,13 +69,14 @@ function isDriveSegment(segment: string | undefined): boolean {
 /**
  * Build the address of a file read through one session.
  * @param sessionId - the session whose workspace root resolves the path.
- * @param path - absolute or workspace-relative path; backslashes are normalized
- *   to `/`, and leading `./` prefixes are dropped (a leading `/` is KEPT: an
+ * @param path - absolute or workspace-relative path; Windows separators are
+ *   normalized to `/`, and leading `./` prefixes are dropped (a leading `/` is KEPT: an
  *   absolute path stays absolute inside the session scope).
  * @returns the `dsh-resource://file/session/<sessionId>/<path>` address.
  */
 export function sessionFileAddress(sessionId: string, path: string): string {
-  const normalized = path.replace(/\\/g, '/').replace(/^(?:\.\/)+/, '')
+  const nativePath = isPosixAbsolutePath(path) ? path : path.replace(/\\/g, '/')
+  const normalized = nativePath.replace(/^(?:\.\/)+/, '')
   return `${FILE_ADDRESS_PREFIX}session/${encodeSegment(sessionId)}/${encodePath(normalized)}`
 }
 
@@ -141,10 +144,16 @@ function isAbsolutePath(path: string): boolean {
  * @returns the `dsh-resource://file/…` address.
  */
 export function fileAddressFor(sessionId: string, cwd: string | undefined, path: string): string {
+  // 保持绝对路径，确保相对地址解析时保留 POSIX 文件名中的反斜杠。
+  if (isPosixAbsolutePath(path) && path.includes('\\')) return sessionFileAddress(sessionId, path)
   const normalized = path.replace(/\\/g, '/')
   if (!isAbsolutePath(normalized)) return sessionFileAddress(sessionId, normalized)
   const root = cwd === undefined ? '' : cwd.replace(/\\/g, '/').replace(/\/+$/, '')
   if (root !== '' && normalized === root) return sessionFileAddress(sessionId, '')
-  if (root !== '' && normalized.startsWith(`${root}/`)) return sessionFileAddress(sessionId, normalized.slice(root.length + 1))
+  if (root !== '' && normalized.startsWith(`${root}/`)) {
+    const relative = normalized.slice(root.length + 1)
+    // `~/…` 或 `C:/…` 可以是 POSIX 工作区内合法的目录结构。
+    if (!isSidebarAbsolutePath(relative)) return sessionFileAddress(sessionId, relative)
+  }
   return sessionFileAddress(sessionId, normalized)
 }

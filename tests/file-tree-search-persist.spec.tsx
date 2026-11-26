@@ -38,8 +38,8 @@ function defaultListing(path: string): Listing {
 
 const { fsTrees, fsSearch } = vi.hoisted(() => ({
   fsTrees: vi.fn(async (_scope: unknown, paths: readonly string[]) => ({ levels: paths.map(path => defaultListing(path)) })),
-  fsSearch: vi.fn(async (): Promise<{ matches: string[]; dirs: string[]; truncated: boolean }> =>
-    ({ matches: ['a.ts'], dirs: [], truncated: false })),
+  fsSearch: vi.fn(async (): ReturnType<typeof import('../src/client/api.ts').api.fsSearch> =>
+    ({ cwd: '/tmp', matches: ['a.ts'], paths: ['/tmp/a.ts'], dirs: [], truncated: false })),
 }))
 
 vi.mock('../src/client/api.ts', () => ({
@@ -119,7 +119,7 @@ afterEach(() => {
   fsTrees.mockReset()
   fsTrees.mockImplementation(async (_scope: unknown, paths: readonly string[]) => ({ levels: paths.map(path => defaultListing(path)) }))
   fsSearch.mockReset()
-  fsSearch.mockImplementation(async () => ({ matches: ['a.ts'], dirs: [], truncated: false }))
+  fsSearch.mockImplementation(async () => ({ cwd: '/tmp', matches: ['a.ts'], paths: ['/tmp/a.ts'], dirs: [], truncated: false }))
 })
 
 describe('TreePanel search keeps the tree mounted', () => {
@@ -210,7 +210,7 @@ describe('TreePanel directory hits navigate instead of opening', () => {
   }
 
   it('expands a directory hit in the tree and never asks to open it as a file', async () => {
-    fsSearch.mockResolvedValue({ matches: ['src', 'src/a.ts'], dirs: ['src'], truncated: false })
+    fsSearch.mockResolvedValue({ cwd: '/tmp', matches: ['src', 'src/a.ts'], paths: ['/tmp/src', '/tmp/src/a.ts'], dirs: ['src'], truncated: false })
     const onToggle = vi.fn()
     const onOpenFile = vi.fn()
     harness = mountPanel({ onToggle, onOpenFile })
@@ -233,7 +233,7 @@ describe('TreePanel directory hits navigate instead of opening', () => {
   })
 
   it('expands every ancestor of a nested hit, but only collapsed ones', async () => {
-    fsSearch.mockResolvedValue({ matches: ['src/deep', 'src/deep/a.ts'], dirs: ['src/deep'], truncated: false })
+    fsSearch.mockResolvedValue({ cwd: '/w/app', matches: ['src/deep', 'src/deep/a.ts'], paths: ['/w/app/src/deep', '/w/app/src/deep/a.ts'], dirs: ['src/deep'], truncated: false })
     const onToggle = vi.fn()
     harness = mountPanel({ cwd: '/w/app', expanded: ['/w/app/src'], onToggle })
     await act(async () => {})
@@ -248,7 +248,7 @@ describe('TreePanel directory hits navigate instead of opening', () => {
   })
 
   it('still opens a file hit, leaving the expansion state untouched', async () => {
-    fsSearch.mockResolvedValue({ matches: ['src', 'src/a.ts'], dirs: ['src'], truncated: false })
+    fsSearch.mockResolvedValue({ cwd: '/tmp', matches: ['src', 'src/a.ts'], paths: ['/tmp/src', '/tmp/src/a.ts'], dirs: ['src'], truncated: false })
     const onToggle = vi.fn()
     const onOpenFile = vi.fn()
     harness = mountPanel({ onToggle, onOpenFile })
@@ -269,7 +269,7 @@ describe('TreePanel directory hits navigate instead of opening', () => {
   // would otherwise synthesize cwd-length prefixes of the foreign path that
   // match no tree row and persist as junk `expanded` entries.
   it('clears the query for a directory hit outside the cwd without toggling anything', async () => {
-    fsSearch.mockResolvedValue({ matches: ['/elsewhere/records'], dirs: ['/elsewhere/records'], truncated: false })
+    fsSearch.mockResolvedValue({ cwd: '/tmp', matches: ['/elsewhere/records'], paths: ['/elsewhere/records'], dirs: ['/elsewhere/records'], truncated: false })
     const onToggle = vi.fn()
     harness = mountPanel({ onToggle })
     await act(async () => {})

@@ -23,7 +23,6 @@
  * (setEngineHooks).
  */
 import { spawn, type ChildProcess } from 'node:child_process'
-import { createInterface } from 'node:readline'
 import { join, posix, sep, win32 } from 'node:path'
 import { homedir } from 'node:os'
 import { debugLog } from './search-debug.ts'
@@ -261,14 +260,14 @@ export const SKIP_DIR_NAMES: readonly string[] = [
  *  it must not disable the engine for every other search root. */
 export class EngineTimeoutError extends Error {}
 
-/** Stream a child's stdout line-by-line, capped at `max` lines (the child is
- *  killed past the cap so a huge result set never buffers into memory). */
-function streamLines(
+/** 读取 NUL 分隔的路径，保留文件名中的换行符，并限制结果数量。 */
+function streamPaths(
   child: ChildProcess,
   max: number,
-): Promise<{ lines: string[]; truncated: boolean }> {
+): Promise<{ paths: string[]; truncated: boolean }> {
   return new Promise((resolve, reject) => {
-    const lines: string[] = []
+    const paths: string[] = []
+    let partial = ''
     let truncated = false
     let closed = false
     const finish = (error: unknown): void => {
@@ -279,7 +278,7 @@ function streamLines(
         child.kill()
         reject(error)
       } else {
-        resolve({ lines, truncated })
+        resolve({ paths, truncated })
       }
     }
     const timer = setTimeout(() => { finish(new EngineTimeoutError('search engine timed out')) }, ENGINE_TIMEOUT_MS)
@@ -289,7 +288,7 @@ function streamLines(
     // the exit event can win the race and resolve this promise with a still
     // EMPTY `lines` array (fd's second `--type d` run was the common victim:
     // matches intact, dirs silently empty). `close` fires only after every
-    // stdio stream has ended, so every readline `line` event has fired
+    // stdio stream has ended, so every stdout `data` event has fired
     // before the settlement. The truncation kill and the timeout/error
     // finishes above are unaffected: whichever finish ran first sets
     // `closed`, and this handler is idempotent.
@@ -300,6 +299,8 @@ function streamLines(
         // rg exits 1 when nothing matched — that is a successful empty run,
         // not an error (fd exits 0 either way).
         finish(new Error(`search engine exited with ${String(code)}`))
+      } else if (partial !== '') {
+        finish(new Error('incomplete search engine path'))
       } else {
         finish(undefined)
       }
@@ -309,37 +310,37 @@ function streamLines(
       finish(new Error('search engine stdout unavailable'))
       return
     }
-    const rl = createInterface({ input: stdout })
-    rl.on('line', (line) => {
-      if (line === '' || truncated) return
-      lines.push(line)
-      if (lines.length > max) {
-        truncated = true
-        child.kill()
+    stdout.setEncoding('utf8')
+    stdout.on('data', (chunk: string) => {
+      if (closed || truncated) return
+      const complete = (partial + chunk).split('\0')
+      partial = complete.pop()!
+      for (const path of complete) {
+        if (path === '') continue
+        paths.push(path)
+        if (paths.length > max) {
+          truncated = true
+          child.kill()
+          break
+        }
       }
     })
   })
 }
 
-/** Normalize one engine's stdout lines to the walk contract: root-relative,
+/** Normalize one engine's paths to the walk contract: root-relative,
  *  '/'-separated, no leading './'. fd/rg emit relative paths with the
  *  PLATFORM separator; the walk contract is '/'-separated on every platform.
  *  `separator` defaults to the platform separator — pass '\\' to model
  *  Windows engine output (rg on Windows emits '\' paths and '.\' prefixes;
  *  Windows file names can never contain '\' or '/', so the substitution is
- *  lossless there). A trailing '\r' is also stripped: Windows engines emit
- *  CRLF line endings, and while readline usually swallows the CR, a leftover
- *  one must never leak into a path (safe on every platform — a POSIX file
- *  whose name ends in CR is pathological). */
-export function normalizeEnginePaths(lines: readonly string[], separator: string = sep): string[] {
+ *  lossless there). */
+export function normalizeEnginePaths(paths: readonly string[], separator: string = sep): string[] {
   const out: string[] = []
-  for (const line of lines) {
-    if (line === '') continue
-    const trimmed = line.endsWith('\r') ? line.slice(0, -1) : line
-    if (trimmed === '') continue
+  for (const path of paths) {
     // A leading '.\' becomes './' after the separator substitution below;
     // the './' prefix strip then covers both POSIX and Windows output.
-    const normalized = trimmed.split(separator).join('/')
+    const normalized = path.split(separator).join('/')
     const bare = normalized.startsWith('./') ? normalized.slice(2) : normalized
     // fd prints DIRECTORY hits with a trailing separator ('src/util/') while
     // rg --files reports files only, so the '--type d' run is the one that
@@ -366,7 +367,7 @@ export function normalizeEnginePaths(lines: readonly string[], separator: string
  *  a positional, not become an fd option. */
 export function fdArgv(cap: number, query: string, type?: 'd'): string[] {
   return [
-    '--hidden', '--no-ignore',
+    '--hidden', '--no-ignore', '--print0',
     ...SKIP_DIR_NAMES.flatMap(name => ['--exclude', name]),
     '--fixed-strings', '--ignore-case',
     ...(type === undefined ? [] : ['--type', type]),
@@ -391,7 +392,7 @@ export function rgArgv(query: string): string[] {
   ])
   const escaped = escapeGlob(query)
   return [
-    '--files', '--hidden', '--no-ignore',
+    '--files', '--hidden', '--no-ignore', '--null',
     ...skipGlobs,
     // Three query globs. The slash-free form matches BASENAMES only (rg
     // follows gitignore semantics — no '/' in the pattern means basename
@@ -458,8 +459,8 @@ export function deriveRgMatches(
  *  matching directories; deriveRgMatches converts the latter into the
  *  directory matches the walk contract reports and drops nothing else.
  *
- *  Truncation symmetry: `streamLines` marks truncated when the stream
- *  exceeds `cap = maxMatches + 1` lines (the +1 is a sentinel proving
+ *  Truncation symmetry: `streamPaths` marks truncated when the stream
+ *  exceeds `cap = maxMatches + 1` paths (the +1 is a sentinel proving
  *  "there is more"). rg has no --max-results so it naturally overflows
  *  into the sentinel; fd MUST NOT cap at `cap` (it would stop exactly at
  *  the sentinel and never be seen as truncated) — pin its --max-results
@@ -475,24 +476,24 @@ function runChild(
   const cap = maxMatches + 1
   if (probe.engine === 'rg') {
     const child = spawner(probe.binary, rgArgv(query), { cwd: root, stdio: ['ignore', 'pipe', 'ignore'] })
-    return streamLines(child, cap).then(({ lines, truncated }) => {
-      const derived = deriveRgMatches(normalizeEnginePaths(lines), query, maxMatches)
+    return streamPaths(child, cap).then(({ paths, truncated }) => {
+      const derived = deriveRgMatches(normalizeEnginePaths(paths), query, maxMatches)
       return { paths: derived.paths, dirs: derived.dirs, truncated: truncated || derived.truncated }
     })
   }
   const child = spawner(probe.binary, fdArgv(cap, query), { cwd: root, stdio: ['ignore', 'pipe', 'ignore'] })
   const dirChild = spawner(probe.binary, fdArgv(cap, query, 'd'), { cwd: root, stdio: ['ignore', 'pipe', 'ignore'] })
   return Promise.all([
-    streamLines(child, cap),
+    streamPaths(child, cap),
     // The directory run's failure is NOT swallowed (#883): a rejected dirs
     // stream rejects the whole engine call, so runEngine records the failure
     // and this one search falls back to the plain walk — exactly
     // the main run's failure handling. The old swallow-catch degraded the
     // failure into "zero directories", invisible in every environment.
-    streamLines(dirChild, cap),
+    streamPaths(dirChild, cap),
   ]).then(([matches, dirs]) => {
-    const paths = normalizeEnginePaths(matches.lines)
-    const dirSet = new Set(normalizeEnginePaths(dirs.lines))
+    const paths = normalizeEnginePaths(matches.paths)
+    const dirSet = new Set(normalizeEnginePaths(dirs.paths))
     return {
       paths,
       dirs: paths.filter(path => dirSet.has(path)),

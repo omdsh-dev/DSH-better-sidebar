@@ -683,7 +683,21 @@ function buildApi(
       const { cwd } = await cwdOf(payload)
       const record = payload as { exclude?: unknown }
       const query = requireString(payload, 'query')
-      return searchFiles(cwd, query, { exclude: compileExcludePatterns(record.exclude, cwd) })
+      const result = await searchFiles(cwd, query, { exclude: compileExcludePatterns(record.exclude, cwd) })
+      // 直接搜索已经返回绝对路径。名称搜索按宿主的路径规则拼接结果，
+      // 工作区中名为 `~` 的目录不能被误认为用户主目录。
+      const paths = result.matches.map(match => isAbsolute(match) ? match : join(cwd, match))
+      const knownDirectories = new Set(result.dirs)
+      const gate = createProbeGate()
+      // 名称搜索引擎会把目录符号链接列为文件。菜单沿用文件树对目标类型的判定。
+      const dirs = await Promise.all(result.matches.map(async (match, index) => {
+        if (knownDirectories.has(match)) return true
+        return gate.run(() => stat(paths[index]!).then(info => info.isDirectory(), (error: NodeJS.ErrnoException) => {
+          if (error.code === 'ENOENT' || error.code === 'ENOTDIR' || error.code === 'ELOOP' || error.code === 'EACCES' || error.code === 'EPERM') return false
+          throw error
+        }))
+      }))
+      return { cwd, ...result, paths, dirs: result.matches.filter((_match, index) => dirs[index]) }
     },
     'fs.read': async (payload) => {
       const { cwd } = await cwdOf(payload)

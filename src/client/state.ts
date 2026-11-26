@@ -10,6 +10,7 @@
  * operations are pure functions over the node, unit-tested in tests/state.spec.ts.
  */
 import { SIDEBAR_PREFS_DEFAULTS, type SidebarPrefs } from '../prefs-shared.ts'
+import { isPosixAbsolutePath } from './paths.ts'
 
 /**
  * Tab type identifier. Builtins register their ids (editor / git / terminal
@@ -592,11 +593,13 @@ export function toggleExpanded(state: SidebarState, path: string): SidebarState 
  */
 export function ancestorDirs(cwd: string | undefined, files: readonly string[]): string[] {
   const found = new Set<string>()
-  const rootParts = (cwd ?? '').split(/[\\/]+/).filter(part => part !== '')
+  const root = cwd ?? ''
+  const rootParts = root.split(isPosixAbsolutePath(root) ? /\/+/ : /[\\/]+/).filter(part => part !== '')
   for (const file of files) {
     if (typeof file !== 'string' || file === '') continue
-    const parts = file.split(/[\\/]+/).filter(part => part !== '' && part !== '.')
-    const separator = file.includes('\\') ? '\\' : '/'
+    const posix = isPosixAbsolutePath(file)
+    const parts = file.split(posix ? /\/+/ : /[\\/]+/).filter(part => part !== '' && part !== '.')
+    const separator = !posix && file.includes('\\') ? '\\' : '/'
     // Keep the original leading separator(s) when rebuilding ancestor dirs:
     // FileTree matches expansion against ABSOLUTE paths, so dropping the
     // root (POSIX `/w/src` → `w/src`) or a UNC prefix (`\\server\share`)

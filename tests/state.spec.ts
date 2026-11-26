@@ -837,6 +837,7 @@ describe('ancestorDirs (the levels a lazy tree must expand)', () => {
     // its own ancestor.
     expect(ancestorDirs('/w/src', ['/w/src/sub/deep/a.ts'])).toEqual(['/w/src/sub', '/w/src/sub/deep'])
     expect(ancestorDirs('/w/src', ['/w/src/a.ts'])).toEqual([])
+    expect(ancestorDirs('/w', ['/w/a\\b/nested/a.ts'])).toEqual(['/w/a\\b', '/w/a\\b/nested'])
   })
 
   it('keeps a Windows drive-letter root and a UNC prefix', () => {

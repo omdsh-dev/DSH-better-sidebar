@@ -112,6 +112,10 @@ describe('fileAddressFor', () => {
 
   it('scopes an absolute path inside the workspace to the session', () => {
     expect(fileAddressFor('s1', '/work', '/work/src/a.ts')).toBe('dsh-resource://file/session/s1/src/a.ts')
+    expect(fileAddressFor('s1', '/work', '/work/~/a.ts')).toBe('dsh-resource://file/session/s1//work/~/a.ts')
+    expect(parseFileAddress(fileAddressFor('s1', '/work', '/work/a\\b.txt'))).toEqual({
+      scope: 'session', sessionId: 's1', path: '/work/a\\b.txt',
+    })
   })
 
   it('scopes the workspace root itself to the session', () => {

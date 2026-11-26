@@ -19,7 +19,7 @@
  * drop over the file window uploads here and never reaches DSH's chat
  * intake.
  */
-import { useEffect, useMemo, useRef, useState, type InputHTMLAttributes } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState, type InputHTMLAttributes } from 'react'
 import clsx from 'clsx'
 import { IconChevronsUpDownOutlineRegular, IconFolderOpenRegular, IconRefreshOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import { api } from './api.ts'
@@ -31,7 +31,7 @@ import { IconUploadOutline16 } from './icons.tsx'
 import type { OpenInApp } from './open-in-app.ts'
 import type { OpenWithTarget } from './open-with.ts'
 import { t } from './locales.ts'
-import { isWithinWorkspace, resolveSidebarPath } from './paths.ts'
+import { isWithinWorkspace } from './paths.ts'
 import { IconButton, LoadingIndicator, Menu, Notice, TextInput } from './ui/index.ts'
 import { UploadOverlay } from './UploadOverlay.tsx'
 import {
@@ -50,6 +50,7 @@ interface UploadSession {
   controller: AbortController
 }
 
+/** 提供工作区的文件树、文件名搜索与上传入口。 */
 export function TreePanel(props: {
   sessionId: string
   cwd: string | undefined
@@ -102,8 +103,12 @@ export function TreePanel(props: {
     onReferenceFile, onPathRenamed, onPathDeleted, visible, full, service,
   } = props
   const [query, setQuery] = useState('')
-  const [results, setResults] = useState<{ matches: string[]; dirs: string[]; truncated: boolean } | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [searchResponse, setSearchResponse] = useState<{
+    key: string
+    results: Awaited<ReturnType<typeof api.fsSearch>> | null
+    error: string | null
+  } | null>(null)
+  const [searchRevision, setSearchRevision] = useState(0)
   const [refreshTick, setRefreshTick] = useState(0)
   /**
    * The explorer's row order (the header's sort control). Starts at the
@@ -164,6 +169,7 @@ export function TreePanel(props: {
       // Reload the tree whatever the outcome: files may have landed before a
       // cancel, and failures leave whatever did succeed visible.
       setRefreshTick(tick => tick + 1)
+      setSearchRevision(revision => revision + 1)
       if (cancelledRef.current) {
         setUploadStatus(t('uploadCancelled'))
         setUploadFailed(true)
@@ -199,35 +205,35 @@ export function TreePanel(props: {
   // than an assumption (a re-run resets the 300ms debounce, so a per-render
   // identity would keep the search from ever settling).
   const excludeKey = (exclude ?? []).join('\0')
+  // 搜索结果可以触发文件修改，切换目录或查询后不能继续操作上一轮结果。
+  const searchKey = JSON.stringify([sessionId, cwd, needle, excludeKey, searchRevision])
+  const results = searchResponse?.key === searchKey ? searchResponse.results : null
+  const error = searchResponse?.key === searchKey ? searchResponse.error : null
   useEffect(() => {
-    if (needle === '') {
-      setResults(null)
-      setError(null)
-      return
-    }
+    setSearchResponse(null)
+    if (needle === '') return
     const controller = new AbortController()
     const patterns = excludeKey === '' ? undefined : excludeKey.split('\0')
     const timer = window.setTimeout(() => {
       api.fsSearch({ sessionId, cwd }, needle, patterns, controller.signal).then((found) => {
-        setResults(found)
-        setError(null)
+        if (controller.signal.aborted) return
+        setSearchResponse({ key: searchKey, results: found, error: null })
       }).catch((failure: unknown) => {
         if (controller.signal.aborted) return
-        setResults(null)
         const message = failure instanceof Error ? failure.message : String(failure)
         // An unreadable search root is now a real failure (the host used to
         // answer it as an empty, legitimate-looking result). Keep the
         // localized failure label in front of the host's concrete reason
         // instead of showing a bare English errno sentence.
         const code = (failure as { code?: unknown } | null)?.code
-        setError(code === 'fs-error' ? `${t('error')}: ${message}` : message)
+        setSearchResponse({ key: searchKey, results: null, error: code === 'fs-error' ? `${t('error')}: ${message}` : message })
       })
     }, 300)
     return () => {
       window.clearTimeout(timer)
       controller.abort()
     }
-  }, [sessionId, cwd, needle, excludeKey])
+  }, [sessionId, cwd, needle, excludeKey, searchKey])
 
   const busy = upload !== null
   /** Directory hits (the host reports them separately): a click navigates the
@@ -247,8 +253,7 @@ export function TreePanel(props: {
   // and `ancestorDirs` would synthesize cwd-length prefixes of a foreign
   // path that toggle nothing and persist as junk `expanded` entries. Such a
   // row only clears the query.
-  const openSearchDir = (rel: string): void => {
-    const target = resolveSidebarPath(cwd, rel)
+  const openSearchDir = (target: string): void => {
     if (cwd !== undefined && isWithinWorkspace(cwd, target)) {
       for (const path of [...ancestorDirs(cwd, [target]), target]) {
         if (!expanded.includes(path)) onToggle(path)
@@ -350,47 +355,7 @@ export function TreePanel(props: {
       {uploadStatus !== '' && (
         <div className={clsx(css.editorSearchHint, uploadFailed && css.editorError)} title={uploadStatus} role={uploadFailed ? 'alert' : 'status'}>{uploadStatus}</div>
       )}
-      {/* Search results: parked (not unmounted) while the query is empty. Its
-          contents render only for a live query — a parked panel must not put
-          state text (the loading line) into the panel's DOM. */}
-      <div
-        className={clsx(css.explorerBody, !searching && css.explorerHiddenPane)}
-        hidden={!searching}
-      >
-        {searching && (
-          <>
-            {error !== null && <Notice kind="error" role="alert">{error}</Notice>}
-            {error === null && results === null && <LoadingIndicator label={t('loading')} />}
-            {error === null && results !== null && results.matches.length === 0 && (
-              <div className={css.editorSearchHint}>{t('editorSearchNoResults')}</div>
-            )}
-            {error === null && results !== null && results.matches.map((rel) => {
-              const isDirHit = dirHits.has(rel)
-              return (
-                <button
-                  key={rel}
-                  type="button"
-                  className={clsx(css.editorSearchResult, isDirHit && css.editorSearchResultDir)}
-                  title={rel}
-                  data-dsh-search-dir={isDirHit ? 'true' : undefined}
-                  onClick={() => {
-                    if (isDirHit) openSearchDir(rel)
-                    else onOpenFile(resolveSidebarPath(cwd, rel))
-                  }}
-                >
-                  {isDirHit && <IconFolderOpenRegular size={14} />}
-                  <span className={css.editorSearchResultLabel}>{rel}</span>
-                </button>
-              )
-            })}
-            {error === null && results?.truncated === true && (
-              <div className={css.editorSearchHint}>{t('editorSearchTruncated')}</div>
-            )}
-          </>
-        )}
-      </div>
-      {/* The tree stays MOUNTED while searching: its level cache and the
-          directory watcher survive a query, so clearing the box is free. */}
+      {/* 搜索与文件树共享操作，查询期间保留文件树缓存与目录监听。 */}
       <FileTree
         sessionId={sessionId}
         cwd={cwd}
@@ -411,13 +376,53 @@ export function TreePanel(props: {
         onReferenceFile={onReferenceFile}
         onPathRenamed={onPathRenamed}
         onPathDeleted={onPathDeleted}
+        onContentsChanged={() => { setSearchRevision(revision => revision + 1) }}
         refreshTick={refreshTick}
         onUploadRequest={startUpload}
         busy={busy}
         hidden={searching}
+        searchKey={searching ? searchKey : undefined}
+        searchRoot={results?.cwd}
         visible={visible !== false}
         sort={sort}
         service={service}
+        renderSearchResults={({ openMenu, renameEditor, createEditor }) => (
+          <>
+            {error !== null && <Notice kind="error" role="alert">{error}</Notice>}
+            {error === null && results === null && <LoadingIndicator label={t('loading')} />}
+            {error === null && results !== null && results.matches.length === 0 && (
+              <div className={css.editorSearchHint}>{t('editorSearchNoResults')}</div>
+            )}
+            {error === null && results !== null && results.matches.map((rel, index) => {
+              const isDirHit = dirHits.has(rel)
+              const path = results.paths[index]!
+              return (
+                <Fragment key={rel}>
+                  {renameEditor(path) ?? (
+                    <button
+                      type="button"
+                      className={clsx(css.editorSearchResult, isDirHit && css.editorSearchResultDir)}
+                      title={rel}
+                      data-dsh-search-dir={isDirHit ? 'true' : undefined}
+                      onContextMenu={(event) => { openMenu(event, path, isDirHit) }}
+                      onClick={() => {
+                        if (isDirHit) openSearchDir(path)
+                        else onOpenFile(path)
+                      }}
+                    >
+                      {isDirHit && <IconFolderOpenRegular size={14} />}
+                      <span className={css.editorSearchResultLabel}>{rel}</span>
+                    </button>
+                  )}
+                  {isDirHit && createEditor(path)}
+                </Fragment>
+              )
+            })}
+            {error === null && results?.truncated === true && (
+              <div className={css.editorSearchHint}>{t('editorSearchTruncated')}</div>
+            )}
+          </>
+        )}
       />
       {upload !== null && (
         <UploadOverlay

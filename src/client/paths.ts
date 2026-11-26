@@ -1,8 +1,8 @@
 /**
  * Path projection helpers shared by the explorer rows: workspace-relative
  * mentions and session-cwd-relative "copy relative path".
- * The fs-tree joins with '/' even on Windows, so both separators normalize
- * to '/' before comparison.
+ * Windows separators normalize to '/' before comparison. On POSIX a
+ * backslash can be part of a file name.
  *
  * This module is dependency-free (no node:path in the client bundle): the
  * host is the authority for path semantics, so this mirror deliberately
@@ -27,6 +27,11 @@ export function isAbsolutePath(path: string): boolean {
     || path.startsWith('/') || /^[A-Za-z]:[\\/]/.test(path) || /^[\\/]{2}[^\\/]/.test(path)
 }
 
+/** 区分 POSIX 绝对路径和可能使用正斜杠的 Windows UNC 路径。 */
+export function isPosixAbsolutePath(path: string): boolean {
+  return path.startsWith('/') && !path.startsWith('//')
+}
+
 /**
  * The path relative to the session's working directory.
  * @param cwd - the explorer root (absolute).
@@ -40,10 +45,11 @@ export function isAbsolutePath(path: string): boolean {
  * relative text keeps the caller's own casing.
  */
 export function relativeTo(cwd: string, path: string): string {
-  const base = cwd.replace(/[\\/]+$/, '')
+  const posix = isPosixAbsolutePath(cwd)
+  const base = posix ? cwd.replace(/\/+$/, '') : cwd.replace(/[\\/]+$/, '')
   const norm = (value: string): string => value.replace(/\\/g, '/')
-  const nBase = norm(base)
-  const nPath = norm(path)
+  const nBase = posix ? base : norm(base)
+  const nPath = posix ? path : norm(path)
   if (nPath === nBase) return '.'
   if (nPath.toLowerCase().startsWith(`${nBase.toLowerCase()}/`)) return nPath.slice(nBase.length + 1)
   return path
@@ -79,7 +85,8 @@ export function workspaceRelativePath(root: string | undefined, path: string): s
  * under the session root.
  */
 export function isWithinWorkspace(base: string, target: string): boolean {
-  const norm = (value: string): string => value.replace(/[\\/]+/g, '/').replace(/\/$/, '')
+  const separators = isPosixAbsolutePath(base) ? /\/+/g : /[\\/]+/g
+  const norm = (value: string): string => value.replace(separators, '/').replace(/\/$/, '')
   const b = norm(base)
   const t = norm(target)
   const lb = b.toLowerCase()
@@ -92,7 +99,7 @@ export function isWithinWorkspace(base: string, target: string): boolean {
  * a worktree label). Returns the whole string when no separator is present.
  */
 export function baseName(path: string): string {
-  const at = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
+  const at = isPosixAbsolutePath(path) ? path.lastIndexOf('/') : Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
   return at === -1 ? path : path.slice(at + 1)
 }
 
@@ -118,8 +125,9 @@ export function resolveSidebarPath(cwd: string | undefined, path: string): strin
   if (isAbsolutePath(path)) return path
   const base = cwd ?? ''
   if (base === '') return path
-  const separator = base.includes('\\') ? '\\' : '/'
-  return `${base.replace(/[\\/]+$/, '')}${separator}${path}`
+  const posix = isPosixAbsolutePath(base)
+  const separator = !posix && base.includes('\\') ? '\\' : '/'
+  return `${posix ? base.replace(/\/+$/, '') : base.replace(/[\\/]+$/, '')}${separator}${path}`
 }
 
 /**
@@ -138,7 +146,7 @@ export function resolveSidebarPath(cwd: string | undefined, path: string): strin
  */
 export function resolveNativeSidebarPath(cwd: string | undefined, path: string): string {
   const resolved = resolveSidebarPath(cwd, path)
-  if (cwd === undefined || !cwd.includes('\\')) return resolved
+  if (cwd === undefined || isPosixAbsolutePath(cwd) || !cwd.includes('\\')) return resolved
   const normalized = resolved.replace(/\//g, '\\')
   if (/^[A-Za-z]:\\$/.test(normalized)) return normalized
   return normalized.replace(/\\+$/, '')
