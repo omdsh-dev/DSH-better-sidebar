@@ -88,6 +88,11 @@
 
 .listRow[data-dimmed='true'] { color: var(--dsw-alias-label-tertiary); }
 
+/* An inert row keeps its place and its name: the opacity, never a removal, is
+   what says "not actionable". */
+.listRow[data-disabled='true'] { opacity: 0.4; }
+.listRow[data-disabled='true']:hover { background: none; }
+
 .listRowLeading {
   display: inline-flex;
   align-items: center;
@@ -557,4 +562,17 @@
 
 @media (pointer: coarse) {
   .disclosureSummary { min-height: 44px; }
+}
+
+/* A pane-filling centred message (patterns.tsx’s FallbackPane): the body a
+   viewer or window shows when there is nothing to render, with its way out
+   under the sentence. It owns the fill; the sentence belongs to the caller. */
+.fallbackPane {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--ds-sidebar-space-4) var(--ds-sidebar-space-3);
+  text-align: center;
 }

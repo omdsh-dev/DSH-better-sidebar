@@ -79,10 +79,12 @@
   flex-direction: column;
 }
 
-.changesSection { flex: none; }
-/* Bound the section's minimum, not its maximum: 28px header + 220px viewport.
-   An automatic minimum would let the entire history stretch the outer scroller. */
-.graphSection { flex: 1; min-height: 248px; display: flex; flex-direction: column; }
+.changesSection { display: flex; flex: 1; flex-direction: column; min-height: 0; min-width: 0; overflow: hidden; }
+/* The stack hands each open pane a flex height; the section's own body scrolls,
+   so both sections keep their header while the list moves under it. */
+.changesBody { display: flex; flex: 1; flex-direction: column; min-height: 0; overflow: hidden; }
+.changesSection [data-scm-changes] { flex: 1; min-height: 0; overflow-y: auto; }
+.graphSection { display: flex; flex: 1; flex-direction: column; min-height: 248px; overflow: hidden; }
 .graphArea { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 
 .scmHeader { display: flex; align-items: center; min-height: 28px; padding: 0 6px; }

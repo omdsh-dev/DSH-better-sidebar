@@ -155,9 +155,15 @@ function mockGraphEmpty(): void {
   })
 }
 
+/** The bottom pane's own resize handle. The Git lens stacks Changes and Graph
+ *  behind a section sash, so a bare `[role="separator"]` query would now hit
+ *  that sash first: the section sash carries `aria-controls`, the pane handle
+ *  does not, which is what tells them apart. */
+const PREVIEW_HANDLE = '[role="separator"]:not([aria-controls])'
+
 /** The open bottom pane's frame: the drag handle's parent (the pane root). */
 function paneOf(container: HTMLElement): HTMLElement {
-  const handle = container.querySelector<HTMLElement>('[role="separator"]')
+  const handle = container.querySelector<HTMLElement>(PREVIEW_HANDLE)
   expect(handle, 'the bottom pane frame is open').not.toBeNull()
   return handle!.parentElement as HTMLElement
 }
@@ -829,7 +835,7 @@ describe('ChangesTab', () => {
         expect(row).not.toBeNull()
         await act(async () => { row!.click() })
         await flushEffects()
-        return container.querySelector<HTMLElement>('[role="separator"]')?.parentElement?.style.height
+        return container.querySelector<HTMLElement>(PREVIEW_HANDLE)?.parentElement?.style.height
       } finally {
         act(() => { root.unmount() })
         container.remove()
@@ -912,7 +918,9 @@ describe('ChangesTab', () => {
     expect(rule('.gitScroll')).toContain('overflow-x: hidden')
     expect(rule('.gitScroll')).toContain('flex: 1')
     expect(rule('.gitScroll')).toContain('flex-direction: column')
-    expect(rule('.changesSection')).toContain('flex: none')
+    // The two sections now share one stack: each fills the height the sash
+    // hands it, while .gitScroll stays the panel's single scroller for notices.
+    expect(rule('.changesSection')).toContain('flex: 1')
     expect(rule('.graphSection')).toContain('flex: 1')
     expect(rule('.graphArea')).toContain('flex: 1')
     expect(rule('.graphArea')).not.toContain('height: min(')
@@ -984,7 +992,7 @@ describe('ChangesTab bottom pane tabs', () => {
       // ONE region: a single drag handle, and the strip row is its sibling
       // INSIDE that same frame (the header's lens control is outside it). The
       // row carries the tablist and the pane's close button.
-      expect(container.querySelectorAll('[role="separator"]')).toHaveLength(1)
+      expect(container.querySelectorAll(PREVIEW_HANDLE)).toHaveLength(1)
       const pane = paneOf(container)
       expect(pane.children[0]!.getAttribute('role')).toBe('separator')
       expect(pane.children[1]!.querySelector('[role="tablist"]')).not.toBeNull()
@@ -1082,7 +1090,7 @@ describe('ChangesTab bottom pane tabs', () => {
       await act(async () => { row.click() })
       await flushEffects()
 
-      expect(container.querySelectorAll('[role="separator"]')).toHaveLength(1)
+      expect(container.querySelectorAll(PREVIEW_HANDLE)).toHaveLength(1)
       const pane = paneOf(container)
       // Same strip as everywhere else — the lens above does not change it.
       expect(paneTabs(container).map(tab => tab.textContent)).toEqual([t('graphDetails'), t('changesContentTab'), t('changesDiffTab')])
@@ -1290,7 +1298,7 @@ describe('ChangesTab bottom pane tabs', () => {
       expect(paneOf(container).querySelector(`section[aria-label="${t('graphDetails')}"]`)).not.toBeNull()
       await act(async () => { closeButtons()[0]!.click() })
       await settle()
-      expect(container.querySelector('[role="separator"]')).toBeNull()
+      expect(container.querySelector(PREVIEW_HANDLE)).toBeNull()
     } finally {
       act(() => { root.unmount() })
       container.remove()

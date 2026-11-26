@@ -61,45 +61,7 @@
   background: var(--dsw-alias-bg-layer-2);
 }
 
-.noticeBlock {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 16px;
-  min-height: 0;
-  padding: 24px;
-  overflow: auto;
-}
 
-.notice {
-  max-width: 32ch;
-  margin: 0;
-  line-height: 1.6;
-  text-align: center;
-  overflow-wrap: anywhere;
-  color: var(--dsw-alias-label-primary);
-}
 
-.error {
-  margin: 0;
-  padding: 10px 12px;
-  overflow-wrap: anywhere;
-  color: var(--dsw-alias-label-primary);
-  background: var(--dsw-alias-bg-layer-2);
-}
 
-.action {
-  flex: none;
-  padding: 3px 10px;
-  border: 0.5px solid var(--dsw-alias-border-l4);
-  border-radius: 6px;
-  cursor: pointer;
-  color: var(--dsw-alias-label-primary);
-  background: var(--dsw-alias-bg-layer-1);
-}
 
-.action:hover {
-  background: var(--dsw-alias-bg-layer-2);
-}

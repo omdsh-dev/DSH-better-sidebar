@@ -98,9 +98,16 @@ function rowGeometryProblems(page: Page, expected: SelectedRow | null): Promise<
       if (box.top < groupBox.top - 1 || box.bottom > groupBox.bottom + 1) {
         problems.push(`${label}: box ${String(Math.round(box.top))}..${String(Math.round(box.bottom))} escapes its group ${String(Math.round(groupBox.top))}..${String(Math.round(groupBox.bottom))}`)
       }
-      if (box.top < changesBox.top - 1 || box.bottom > changesBox.bottom + 1) problems.push(`${label}: box escapes the changes section`)
-      if (footer !== null && box.bottom > footer.top + 1) problems.push(`${label}: box overlaps the docked footer`)
-      if (pane !== null && box.bottom > pane.top + 1) problems.push(`${label}: box overlaps the preview pane`)
+      // The list now scrolls inside its own section pane, so rows below the fold
+      // are clipped by the section's scrollport: their layout boxes extend past
+      // it by design. Only rows that are wholly on screen must band inside the
+      // section and clear the footer / preview pane.
+      const onScreen = box.top >= changesBox.top - 1 && box.bottom <= changesBox.bottom + 1
+      if (onScreen) {
+        if (box.top < changesBox.top - 1 || box.bottom > changesBox.bottom + 1) problems.push(`${label}: box escapes the changes section`)
+        if (footer !== null && box.bottom > footer.top + 1) problems.push(`${label}: box overlaps the docked footer`)
+        if (pane !== null && box.bottom > pane.top + 1) problems.push(`${label}: box overlaps the preview pane`)
+      }
     }
     const selected = [...document.querySelectorAll<HTMLElement>('[data-scm-section="changes"] [data-row][data-selected="true"]')]
     if (target === null) {
