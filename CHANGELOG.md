@@ -2,9 +2,15 @@
 
 > 本文档收录 dsh-better-sidebar 的完整发布历史（最新版摘要见 [README](README_ZH.md)；同步发布于 [GitHub Releases](https://github.com/omdsh-dev/DSH-better-sidebar/releases)）。
 
-### 未发布
+### v0.34.0-alpha.0
 
-- **减少 Git 提交图加载更多历史时的去重开销**（[#1063](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1063) 第 5 项）。追加一页时按完整提交哈希为已加载历史建立集合，再按原顺序追加新记录。整页重复时也会继续推进分页游标。
+- 🎛 **Git 页的 Changes 与 Graph 可以拖动改高度**：两个分区与「线索收集」共用同一套可拖动堆叠，中间的分隔柄支持鼠标与触控拖拽，也可以按 Home / End / ↑ / ↓ 调整；各自内部滚动，只剩一个分区时不显示分隔柄。分区比例不写入设置，刷新后回到默认。
+
+- 🎨 **界面组件收敛到同一层**：任务窗口、侧边对话的附件与图片、标签页与预览（diff、终端、媒体 / PDF / 大文件）、文件树外壳的字段、行、空态、错误态、下载链接与开关改用同一套共享组件，信息层级、可访问性与主题令牌一致；行为与文案不变。
+
+- 🧷 **PC 端文件树的右键菜单恢复**（贡献者 PR [#1222](https://github.com/omdsh-dev/DSH-better-sidebar/pull/1222) @whalestar-doc）：右键菜单没有声明 `contextual`，宿主按普通菜单处理，`contextmenu` 之后不渲染；补上声明后与宿主自己的右键菜单一致。
+
+- **减少 Git 提交图加载更多历史时的去重开销**（[#1063](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1063) 第 5 项；贡献者 PR [#1241](https://github.com/omdsh-dev/DSH-better-sidebar/pull/1241) @ai-zen-future）。追加一页时按完整提交哈希为已加载历史建立集合，再按原顺序追加新记录。整页重复时也会继续推进分页游标。
 
 - 🧪 **DSH 0.2.3-alpha.2（alpha 线）适配**：14 条 DSH peer 与 `engines.dsh` 同批抬到 `0.2.3-alpha.2`，Cordis 依赖线同步到 `4.2.0-alpha.1`。宿主删除了 `@deepseek-ai/dsh-llm` 的 `./brand` 子路径，类型改从 `./types` 引入；目录投影的权威事件从 `working-directory/change` 换成 `workspace-root/change`，侧边对话的 cwd 边界戳记与工作树跟随随之调整；同时删除了所有旧宿主兼容分支（准入 `requestRejection` 回退、旧目录事件、旧 `data-slot` 锚点、`getOrigin` 探测）——这一版只服务 0.2.3-alpha.2+，更早宿主固定 v0.33.0。
 
