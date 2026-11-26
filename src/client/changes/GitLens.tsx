@@ -27,7 +27,7 @@ import type { SidebarDiffRef } from '../state.ts'
 import { buildRepositoryLabels } from './repo-labels.ts'
 import { RepoSwitcher } from './RepoSwitcher.tsx'
 import {
-  ActionButton, ConfirmDialog, IconButton, Menu, Notice, StatusBadge, TextArea, WorkbenchSection, invalidateGitStatus, statusOfXY,
+  ActionButton, ConfirmDialog, IconButton, Menu, Notice, StatusBadge, TextArea, WorkbenchSection, WorkbenchStack, invalidateGitStatus, statusOfXY,
   useGitStatus, type GitFileStatus, type GitTone, type StatusTone,
 } from '../ui/index.ts'
 import { buildChangeTree, sumLineCounts, type ChangeDir, type ChangeFile, type ChangeNode } from './change-tree.ts'
@@ -432,6 +432,8 @@ export function GitLens(props: GitLensProps) {
   const [graphRefresh, setGraphRefresh] = useState(0)
   const [changesOpen, setChangesOpen] = useState(true)
   const [graphOpen, setGraphOpen] = useState(true)
+  /** Section weights of the changes/graph stack; kept in memory, the Git page has no settings key yet. */
+  const [sectionWeights, setSectionWeights] = useState<Record<string, number>>({})
   /**
    * The open More Actions menu: the trigger's viewport corner (null = closed).
    * Its repo/worktree rows carry nested submenus, which the primitives anchor
@@ -1152,8 +1154,18 @@ export function GitLens(props: GitLensProps) {
         )}
 
         {isRepo && (
+          <WorkbenchStack
+            initialWeights={sectionWeights}
+            onResize={setSectionWeights}
+            sections={[
+              {
+                id: 'changes',
+                title: t('gitChanges'),
+                open: changesOpen,
+                weight: 2,
+                content: (
           <section className={css.changesSection} data-scm-section="changes">
-            <WorkbenchSection title={t('gitChanges')} open={changesOpen} onOpenChange={setChangesOpen}
+            <WorkbenchSection title={t('gitChanges')} open={changesOpen} onOpenChange={setChangesOpen} bodyClassName={css.changesBody}
               actions={<div className={css.scmActions}>
                 <IconButton size="sm" icon={<IconCheckOutlineRegular size={14} />} label={t('commit')}
                   disabled={!canCommit} onClick={commit} />
@@ -1221,9 +1233,15 @@ export function GitLens(props: GitLensProps) {
             </div>}
             </WorkbenchSection>
           </section>
-        )}
-
-        {isRepo && <section className={graphOpen ? css.graphSection : undefined} data-scm-section="graph">
+                ),
+              },
+              {
+                id: 'graph',
+                title: t('gitGraph'),
+                open: graphOpen,
+                weight: 1,
+                content: (
+<section className={graphOpen ? css.graphSection : undefined} data-scm-section="graph">
           <WorkbenchSection title={t('gitGraph')} open={graphOpen} onOpenChange={setGraphOpen}
             className={css.graphWorkbench} bodyClassName={css.graphArea}>
           {graphOpen && <div data-scm-graph className={css.graphArea}>
@@ -1240,7 +1258,12 @@ export function GitLens(props: GitLensProps) {
             />
           </div>}
           </WorkbenchSection>
-        </section>}
+        </section>
+                ),
+              },
+            ]}
+          />
+        )}
       </div>
 
       {/* A sibling of the scroller: usable even with both sections folded. */}

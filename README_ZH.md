@@ -81,7 +81,7 @@ dsh plugin --profile web add dsh-better-sidebar@latest
 遇到报错先查 https://github.com/omdsh-dev/DSH-better-sidebar README 的常见问题表。
 ```
 
-**一键脚本**——克隆本仓库后执行 `bash scripts/install.sh 0.33.0`（macOS / Linux / Windows Git Bash；Windows 原生用 `./scripts/install.ps1 -Version 0.33.0`），自动完成安装 + bundle 注册。
+**一键脚本**——克隆本仓库后执行 `bash scripts/install.sh 0.34.0-alpha.0`（macOS / Linux / Windows Git Bash；Windows 原生用 `./scripts/install.ps1 -Version 0.34.0-alpha.0`），自动完成安装 + bundle 注册。
 
 **更新**：重跑一次安装命令即可，然后硬刷新浏览器。
 
@@ -105,6 +105,13 @@ dsh plugin --profile web add dsh-better-sidebar@latest
 
 ## 🆕 最近更新
 
+**v0.34.0-alpha.0 — 适配 DSH 0.2.3-alpha.2（alpha 线）、可拖动 Git 分区与界面组件收敛**
+
+- **适配 DSH 0.2.3-alpha.2**：14 条 DSH peer 与安装下限同批抬到 alpha 线，Cordis 依赖线同步到 `4.2.0-alpha.1`；0.2.3 之前的老宿主请继续用 v0.33.0。
+- **Git 页的 Changes 与 Graph 可以拖动改高度**：与「线索收集」共用同一套可拖动分区，鼠标、触控与键盘都能调整，两个分区各自滚动。
+- **界面组件收敛到同一层**：任务窗口、侧边对话、标签页与预览、文件树外壳的字段、行、空态、错误态、下载链接与开关统一到共享组件。
+- **线索收集与划选**：新增「线索收集」Tab（本地文件 / GitHub / 飞书），划选菜单支持独立的翻译与可配置改写；PC 端文件树的右键菜单恢复。
+
 **v0.33.0 — 侧边对话工具树、安装下限与一批界面修复**
 
 - **侧边对话显示 PTC（`run_code`）工具调用树**：收起时看到模型写的说明，展开后是程序代码与最终结果，程序内派发的 bash / read / grep / edit 等子调用缩进挂在下面。
@@ -118,13 +125,6 @@ dsh plugin --profile web add dsh-better-sidebar@latest
 - **团队任务板写入改走内置 Agent Team 服务**：原实验包升级为 base composition 里的 `@deepseek-ai/dsh-agent-team`，Team 模式按会话开启。
 - **插件页新增图文详情**：右侧栏总览图 +「每个会话独立」示意图，并用编号说明各项功能。
 - **DSH 0.2.2-rc.1 宿主继续使用插件 v0.32.0**；0.2.2-rc.2+ 请使用本版本。
-
-**v0.32.0 — 开始页接管与卡片打磨**
-
-- **右侧栏开始页改由插件接管**：宽屏两列、行数可配置（默认 6），常驻「更多」卡片与调整顺序，支持居中/靠上，以及默认开启的接管开关（关闭恢复宿主页面）。
-- **宿主的开始页能力保留**：终端卡片保留原生 Shell 菜单，「更多」恢复「浏览更多插件」「创建你的插件」；本插件 tab 与「侧边栏内容」卡片共用同一个功能开关。
-- **卡片副标题固定一行**并以省略号截断，「更多」菜单图标与文字垂直居中。
-- **自 v0.30.1 起还包含**：Markdown `data:`/`file://` 图片、桌面壳 HTML 预览内联、内置音视频预览、侧边对话大修、数据安全修复、线性时间 diff 高亮等。
 
 ## 🔌 插件生态
 

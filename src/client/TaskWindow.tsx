@@ -21,7 +21,7 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import clsx from 'clsx'
 import {
-  Button, IconCheckOutlineRegular, IconEditOutlineRegular,
+  IconCheckOutlineRegular, IconEditOutlineRegular,
   IconRefreshOutlineRegular, IconTrashOutlineRegular, Input, MarkdownDelegateProvider, MarkdownText, Pill, StateDot, Tag,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context, SidebarTeamTaskView } from '../context-types.ts'
@@ -30,6 +30,7 @@ import { markdownTextProps } from './markdown-labels.tsx'
 import { useMarkdownSurface } from './use-markdown-surface.ts'
 import { FloatingWindow } from './FloatingWindow.tsx'
 import { taskBlocked, taskDotState, taskStatusLabel, taskTone } from './tasks-shared.tsx'
+import { ActionButton, FactList, Field, Notice } from './ui/index.ts'
 import type { TeamMemberRow } from './team-projection.ts'
 import { t } from './locales.ts'
 import css from './tasks-graph.module.css'
@@ -50,10 +51,13 @@ export function MultilineField(props: {
   label: string
   placeholder?: string
   rows?: number
+  /** Id the enclosing {@link Field}'s label points at. */
+  id?: string
   onChange?(next: string): void
 }): ReactNode {
   return (
     <textarea
+      id={props.id}
       className={css.taskTextarea}
       value={props.value}
       rows={props.rows ?? 7}
@@ -118,21 +122,18 @@ function TaskViewBody(props: {
   const { task } = props
   const surface = useMarkdownSurface({ ctx: props.ctx, sessionId: props.sessionId })
   const body = task.description.trim()
+  const facts = [
+    { key: 'owner', label: t('teamTaskOwner'), value: task.ownerName ?? t('teamTaskUnowned') },
+    ...(task.blockedBy.length === 0
+      ? []
+      : [{ key: 'blocked-by', label: t('teamTaskBlockedBy'), value: task.blockedBy.join(' · ') }]),
+  ]
   return (
     <>
-      <div className={css.jobPopMeta}>
-        <span className={css.popKey}>{t('teamTaskOwner')}</span>
-        <span className={css.jobPopValue}>{task.ownerName ?? t('teamTaskUnowned')}</span>
-        {task.blockedBy.length > 0 && (
-          <>
-            <span className={css.popKey}>{t('teamTaskBlockedBy')}</span>
-            <span className={css.jobPopValue}>{task.blockedBy.join(' · ')}</span>
-          </>
-        )}
-      </div>
+      <FactList className={css.taskFacts} facts={facts} />
       <div className={css.taskMarkdown} data-task-description ref={surface.surfaceRef}>
         {body === ''
-          ? <div className={css.popHint}>{t('teamTaskNoDescription')}</div>
+          ? <Notice kind="hint" tone="inline">{t('teamTaskNoDescription')}</Notice>
           : (
             <MarkdownDelegateProvider openFile={surface.openFile}>
               <MarkdownText
@@ -147,15 +148,14 @@ function TaskViewBody(props: {
             </MarkdownDelegateProvider>
           )}
       </div>
-      <div className={css.taskField}>
-        <span className={css.taskLabel}>{t('teamTaskOwner')}</span>
+      <Field className={css.taskField} label={t('teamTaskOwner')}>
         <OwnerPicker
           members={props.teammates}
           owner={task.ownerName}
           disabled={props.busy}
           onPick={props.onReassign}
         />
-      </div>
+      </Field>
     </>
   )
 }
@@ -177,12 +177,20 @@ function TaskEditBody(props: {
   onSubject(next: string): void
   onDescription(next: string): void
 }): ReactNode {
+  const subjectId = useId()
   const subjectHintId = useId()
+  const descriptionId = useId()
   return (
     <div className={css.taskForm} data-window-no-drag>
-      <label className={css.taskField}>
-        <span className={css.taskLabel}>{t('teamTaskSubject')}</span>
+      <Field
+        label={t('teamTaskSubject')}
+        htmlFor={subjectId}
+        error={props.invalid
+          ? <span id={subjectHintId}>{t('teamTaskSubjectPlaceholder')}</span>
+          : undefined}
+      >
         <Input
+          id={subjectId}
           className={css.taskInput}
           value={props.subject}
           placeholder={t('teamTaskSubjectPlaceholder')}
@@ -191,21 +199,16 @@ function TaskEditBody(props: {
           aria-describedby={props.invalid ? subjectHintId : undefined}
           onChange={(event) => { props.onSubject(event.target.value) }}
         />
-        {props.invalid && (
-          <span id={subjectHintId} className={css.popHint}>
-            {t('teamTaskSubjectPlaceholder')}
-          </span>
-        )}
-      </label>
-      <label className={css.taskField}>
-        <span className={css.taskLabel}>{t('teamTaskDescription')}</span>
+      </Field>
+      <Field label={t('teamTaskDescription')} htmlFor={descriptionId}>
         <MultilineField
+          id={descriptionId}
           value={props.description}
           label={t('teamTaskDescription')}
           placeholder={t('teamTaskDescriptionPlaceholder')}
           onChange={props.onDescription}
         />
-      </label>
+      </Field>
     </div>
   )
 }
@@ -384,16 +387,16 @@ export function TaskWindow(props: TaskWindowProps): ReactNode {
           {editing
             ? (
               <>
-                <Button
+                <ActionButton
                   variant="primary"
                   size="sm"
-                  icon={<IconCheckOutlineRegular size={12} />}
                   disabled={busy || subject.trim() === ''}
                   onClick={save}
                 >
+                  {<IconCheckOutlineRegular size={12} />}
                   {creating ? t('teamTaskCreate') : t('teamTaskSave')}
-                </Button>
-                <Button
+                </ActionButton>
+                <ActionButton
                   variant="outline"
                   size="sm"
                   disabled={busy}
@@ -408,15 +411,14 @@ export function TaskWindow(props: TaskWindowProps): ReactNode {
                   }}
                 >
                   {t('teamTaskCancel')}
-                </Button>
+                </ActionButton>
               </>
             )
             : task === undefined ? null : (
               <>
-                <Button
+                <ActionButton
                   variant="outline"
                   size="sm"
-                  icon={<IconEditOutlineRegular size={12} />}
                   onClick={() => {
                     // Draft and CAS base from the same read (see editRevisionRef),
                     // so a pending conflict re-base has nothing left to correct.
@@ -428,8 +430,9 @@ export function TaskWindow(props: TaskWindowProps): ReactNode {
                     setEditing(true)
                   }}
                 >
+                  {<IconEditOutlineRegular size={12} />}
                   {t('teamTaskEdit')}
-                </Button>
+                </ActionButton>
                 {/*
                   The board's state machine, in the window: pending → claim →
                   in_progress → complete → completed → reopen. 0.1.7's service
@@ -441,24 +444,23 @@ export function TaskWindow(props: TaskWindowProps): ReactNode {
                 */}
                 {task.status === 'completed'
                   ? (
-                    <Button
+                    <ActionButton
                       variant="primary"
                       size="sm"
-                      icon={<IconRefreshOutlineRegular size={12} />}
                       disabled={busy}
                       onClick={() => void mutate(() => api.teamsTaskUpdate(rootId, {
                         taskId: task.id, expectedRevision: task.revision, action: 'reopen',
                       }))}
                     >
+                      {<IconRefreshOutlineRegular size={12} />}
                       {t('teamTaskReopen')}
-                    </Button>
+                    </ActionButton>
                   )
                   : task.status === 'pending'
                     ? (
-                      <Button
+                      <ActionButton
                         variant="primary"
                         size="sm"
-                        icon={<IconCheckOutlineRegular size={12} />}
                         // Claiming is refused while a blocker is open
                         // (`TEAM_TASK_BLOCKED`); the Tag beside the subject
                         // already says why, so the button just says "not yet".
@@ -468,27 +470,27 @@ export function TaskWindow(props: TaskWindowProps): ReactNode {
                           taskId: task.id, expectedRevision: task.revision, action: 'claim',
                         }))}
                       >
+                        {<IconCheckOutlineRegular size={12} />}
                         {t('teamTaskClaim')}
-                      </Button>
+                      </ActionButton>
                     )
                     : (
-                      <Button
+                      <ActionButton
                         variant="primary"
                         size="sm"
-                        icon={<IconCheckOutlineRegular size={12} />}
                         disabled={busy}
                         onClick={() => void mutate(() => api.teamsTaskUpdate(rootId, {
                           taskId: task.id, expectedRevision: task.revision, action: 'complete',
                         }))}
                       >
+                        {<IconCheckOutlineRegular size={12} />}
                         {t('teamTaskComplete')}
-                      </Button>
+                      </ActionButton>
                     )}
-                <Button
+                <ActionButton
                   variant="outline"
                   size="sm"
                   className={clsx(css.taskDanger, armedDelete && css.taskDangerArmed)}
-                  icon={<IconTrashOutlineRegular size={12} />}
                   disabled={busy}
                   onClick={() => {
                     if (!armedDelete) { setArmedDelete(true); return }
@@ -498,8 +500,9 @@ export function TaskWindow(props: TaskWindowProps): ReactNode {
                     }), { close: true })
                   }}
                 >
+                  {<IconTrashOutlineRegular size={12} />}
                   {armedDelete ? t('teamTaskDeleteConfirm') : t('teamTaskDelete')}
-                </Button>
+                </ActionButton>
               </>
             )}
         </div>
@@ -537,7 +540,7 @@ export function TaskWindow(props: TaskWindowProps): ReactNode {
           />
         )}
 
-      {note !== undefined && <div className={css.teamNote}>{note}</div>}
+      {note !== undefined && <Notice kind="error" className={css.taskNote}>{note}</Notice>}
       </div>
     </FloatingWindow>
   )

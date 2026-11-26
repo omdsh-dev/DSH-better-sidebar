@@ -303,3 +303,29 @@ it('checks out a plain branch and refreshes placeholder, resources, graph and fo
     expect(vi.mocked(api.gitGraph).mock.calls.length).toBeGreaterThan(graphCalls)
   } finally { view.unmount() }
 })
+
+it('stacks Changes and Graph behind one draggable sash and drops it when a section folds', async () => {
+  const view = await mount(() => tracked())
+  try {
+    const { container } = view
+    const separators = (): HTMLElement[] => [...container.querySelectorAll<HTMLElement>('[role="separator"]')]
+    expect(separators()).toHaveLength(1)
+    const sash = separators()[0]!
+    expect(sash.getAttribute('aria-orientation')).toBe('horizontal')
+    const [topId, bottomId] = sash.getAttribute('aria-controls')!.split(' ')
+    const top = document.getElementById(topId!)!
+    const bottom = document.getElementById(bottomId!)!
+    expect(top.contains(container.querySelector('[data-scm-section="changes"]'))).toBe(true)
+    expect(bottom.contains(container.querySelector('[data-scm-section="graph"]'))).toBe(true)
+    const grow = (el: HTMLElement): number => Number.parseFloat(el.style.flexGrow)
+    const before = grow(top)
+    act(() => { sash.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true })) })
+    // The sash hands the next slice of the pair to the pane below it.
+    expect(grow(top)).toBeGreaterThan(before)
+    expect(grow(bottom)).toBeLessThan(grow(top))
+    // One open section leaves nothing to divide: the sash goes away with it.
+    const graph = container.querySelector<HTMLButtonElement>('[data-scm-section="graph"] button[aria-expanded]')!
+    await click(graph)
+    expect(separators()).toHaveLength(0)
+  } finally { view.unmount() }
+})
