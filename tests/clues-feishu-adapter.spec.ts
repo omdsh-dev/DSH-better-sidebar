@@ -28,6 +28,7 @@
  * survive as a safe projection, while raw messages, hints, device codes and
  * token-shaped values never do.
  */
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 vi.mock('../src/clues/request-gate.ts', () => vi.importActual('./fixtures/clues-source-request-gate.ts'))
@@ -47,7 +48,7 @@ import { bareResult, cliResult, failResult, FakeLarkRuntime, okResult, statusRes
 /** The real bare auth-status answer for one user identity. */
 const statusData = (user: Record<string, JsonValue>): CliResult => statusResult({ user })
 const NOW = '2026-10-17T00:00:00.000Z'
-const CWD = '/tmp/dsh-feishu-adapter'
+const CWD = join(tmpdir(), 'dsh-feishu-adapter')
 const FULL_CAPABILITIES = ['docs.read', 'docs.search', 'docs.edit', 'wiki.read', 'tasks.read', 'tasks.edit']
 /** The real lark-cli 1.0.55 scope names that cover the declared capabilities. */
 const ALL_SCOPES = [

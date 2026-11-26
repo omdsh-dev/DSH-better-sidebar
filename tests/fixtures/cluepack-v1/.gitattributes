@@ -1,0 +1,2 @@
+# The manifest records the exact byte length and SHA-256 of each content file.
+content/*.json text eol=lf
