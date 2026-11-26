@@ -321,3 +321,83 @@
 .statusBadge[data-tone='write'] { color: var(--dsw-alias-state-business-primary); }
 .statusBadge[data-tone='edit'] { color: var(--dsw-alias-state-warn-primary); }
 .statusBadge[data-tone='neutral'] { color: var(--dsw-alias-label-tertiary); }
+
+/* The one download affordance (kit.tsx’s DownloadLink): a bordered pill in a
+   fallback pane, or the underlined escape hatch inside a notice bar. */
+.downloadLink {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ds-sidebar-space-2);
+  padding: 6px 14px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xxs-strong-12);
+  text-decoration: none;
+  cursor: pointer;
+  transition:
+    background var(--ds-transition-duration-slow) var(--ds-ease-in-out),
+    border-color var(--ds-transition-duration-slow) var(--ds-ease-in-out);
+}
+
+.downloadLink:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.downloadLink:focus-visible {
+  outline: 2px solid var(--dsw-alias-interactive-bg-hover-accent);
+  outline-offset: -1px;
+}
+
+.downloadLinkInline {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-decoration: underline;
+}
+
+.downloadLinkInline:hover {
+  background: none;
+}
+
+/* A static file attachment: the chip's band without the chip's control. The
+   glyph is the host's own artwork, so no color is decided here beyond the
+   label tokens. */
+.fileChip {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--ds-sidebar-radius);
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xxxs-11);
+}
+
+.fileChipIcon {
+  display: inline-flex;
+  flex: none;
+}
+
+.fileChipName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fileChipSize {
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.fileChip[data-unavailable='true'] {
+  opacity: 0.4;
+}

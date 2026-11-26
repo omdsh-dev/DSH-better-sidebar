@@ -81,7 +81,7 @@ Install the dsh-better-sidebar plugin (a sidebar workbench for DSH):
 If something fails, check the FAQ table in https://github.com/omdsh-dev/DSH-better-sidebar README first.
 ```
 
-**One-line script** — clone this repo and run `bash scripts/install.sh 0.33.0` (macOS / Linux / Windows Git Bash; `./scripts/install.ps1 -Version 0.33.0` for native Windows). It handles installation + bundle registration.
+**One-line script** — clone this repo and run `bash scripts/install.sh 0.34.0-alpha.0` (macOS / Linux / Windows Git Bash; `./scripts/install.ps1 -Version 0.34.0-alpha.0` for native Windows). It handles installation + bundle registration.
 
 **Updating**: just re-run the install command, then hard-refresh the browser.
 
@@ -105,6 +105,13 @@ If something fails, check the FAQ table in https://github.com/omdsh-dev/DSH-bett
 
 ## 🆕 Recent Updates
 
+**v0.34.0-alpha.0 — DSH 0.2.3-alpha.2 support (alpha line), resizable Git sections and one component layer**
+
+- **DSH 0.2.3-alpha.2 support**: the 14 DSH peers and the install floor move to the alpha line together, with the Cordis line at `4.2.0-alpha.1`; older hosts stay on v0.33.0.
+- **Changes and Graph on the Git page are resizable**: they share the Clues draggable stack, adjust with mouse, touch or the keyboard, and each scrolls on its own.
+- **One component layer across the interface**: the task window, side chat, tabs and previews, and the file-tree shell now take fields, rows, empty and error states, download links and switches from the shared kit.
+- **Clues and selection**: a new Clues tab (local files / GitHub / Feishu), standalone translation and configurable rewriting in the selection menu, and the PC file-tree right-click menu is back.
+
 **v0.33.0 — Side Chat tool trees, install floor, and a batch of UI fixes**
 
 - **Side Chat renders PTC (`run_code`) tool trees**: the collapsed row shows the model's description, expanding reveals the program and its final result, and the bash / read / grep / edit calls it dispatches hang indented underneath.
@@ -118,13 +125,6 @@ If something fails, check the FAQ table in https://github.com/omdsh-dev/DSH-bett
 - **Team task boards write through the built-in Agent Team service**: the opt-in experimental team package became `@deepseek-ai/dsh-agent-team` in the base composition, with per-session Team mode.
 - **The Plugins page now shows illustrated details**: an overview of the right sidebar and a per-conversation isolation diagram, with numbered notes for each tool.
 - **DSH 0.2.2-rc.1 hosts stay on plugin v0.32.0**; 0.2.2-rc.2+ should use this release.
-
-**v0.32.0 — plugin-owned start page and card polish**
-
-- **The right sidebar start page is now plugin-owned**: a responsive two-column grid, a configurable row budget (default 6), a persistent More card with Reorder, center/top alignment, and a default-on takeover switch that restores the host page when off.
-- **The host's start-page actions survive**: the terminal card keeps its native shell menu, More restores "Browse more plugins" / "Create your plugin", and Better Sidebar tabs share the same enable switch as their sidebar-content card.
-- **Card subtitles stay on one line** with an ellipsis, and More-menu icons are vertically centered with their labels.
-- **Also included since v0.30.1**: Markdown `data:`/`file://` images, desktop-shell HTML preview inlining, built-in audio/video previews, the side-chat overhaul, data-safety fixes, and the linear-time diff highlighter.
 
 ## 🔌 Plugin Ecosystem
 

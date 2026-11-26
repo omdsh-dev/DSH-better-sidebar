@@ -2556,6 +2556,7 @@ export function FileTree(props: {
         }}
         portal
         compact
+        contextual
         align="start"
         anchorPoint={rowMenu === null ? undefined : { x: rowMenu.x, y: rowMenu.y }}
         anchor={<span />}

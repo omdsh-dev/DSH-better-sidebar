@@ -33,7 +33,7 @@ import clsx from 'clsx'
 import {
   Button, IconChevronDownOutlineRegular, IconChevronUpOutlineRegular,
   IconFullscreenOutlineRegular,
-  IconLoadingOutlineRegular, IconTreeCornerRegular,
+  IconTreeCornerRegular,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TasksAgentNode, TasksFoldNode, TasksNode, TasksWorkflowNode } from './tasks-model.ts'
 import { tasksEdges } from './tasks-model.ts'
@@ -58,6 +58,7 @@ import {
 } from './tasks-shared.tsx'
 import { CardBar, CardTop, phaseClass, type CardKind } from './tasks-card.tsx'
 import { localeSignature, t } from './locales.ts'
+import { LoadingIndicator } from './ui/index.ts'
 import css from './tasks-graph.module.css'
 import canvasCss from './tasks-canvas.module.css'
 
@@ -587,8 +588,7 @@ export function TasksGraph(props: TasksGraphProps): ReactNode {
             zoom / node clicks fully live underneath. */}
         {loading === true && nodes.length === 0 && (
           <div className={canvasCss.loading}>
-            <span className={canvasCss.loadingGlyph} aria-hidden="true"><IconLoadingOutlineRegular size={12} /></span>
-            {t('loading')}
+            <LoadingIndicator label={t('loading')} inline />
           </div>
         )}
         <div

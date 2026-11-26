@@ -219,9 +219,9 @@ describe('GuideGrid', () => {
       ;(reorder as HTMLElement).click()
       await Promise.resolve()
     })
-    const toggle = document.querySelector('input[aria-label="Enable: Git"]') as HTMLInputElement
+    const toggle = document.querySelector('[role="switch"][aria-label="Enable: Git"]') as HTMLElement
     expect(toggle).not.toBeNull()
-    expect(toggle.checked).toBe(false)
+    expect(toggle.getAttribute('aria-checked')).toBe('false')
     act(() => { toggle.click() })
     expect(onToggleHidden).toHaveBeenCalledWith(expect.objectContaining({ key: 'git' }), false)
     mounted.unmount()
@@ -340,9 +340,9 @@ describe('NativeGuide', () => {
       ;(reorder as HTMLElement).click()
       await Promise.resolve()
     })
-    const toggle = document.querySelector('input[aria-label="Show on the start page: A"]') as HTMLInputElement
+    const toggle = document.querySelector('[role="switch"][aria-label="Show on the start page: A"]') as HTMLElement
     expect(toggle).not.toBeNull()
-    expect(toggle.checked).toBe(false)
+    expect(toggle.getAttribute('aria-checked')).toBe('false')
     await act(async () => {
       toggle.click()
       // The host deep-merges nested plain objects, so a patch with the key

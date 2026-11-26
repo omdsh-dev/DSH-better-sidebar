@@ -12,6 +12,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactElement, type ReactNode } from 'react'
 import { t } from '../locales.ts'
 import { coalesceInline, diffInline, MIN_FOLD, type DiffRow, type DiffSegment, type FoldSegment, type InlineDiff } from './rows.ts'
+import { ActionButton } from '../ui/index.ts'
 import { hasBlockComment, isColored, scanLine, type CodeToken, type TokenType } from './highlight.ts'
 import css from './diff.module.css'
 
@@ -306,9 +307,9 @@ export function DiffRows({ segments, lang, resolveFold }: DiffRowsProps) {
     <div className={css.rows}>
       {parts}
       {renderedRows >= MAX_ROWS && !expandedAll && (
-        <button type="button" className={css.expand} onClick={() => { setExpandedAll(true) }}>
+        <ActionButton size="sm" className={css.expand} onClick={() => { setExpandedAll(true) }}>
           {t('diffExpand', { count: segments.reduce((sum, s) => sum + (s.kind === 'hunk' ? s.rows.length : 0), 0) - renderedRows })}
-        </button>
+        </ActionButton>
       )}
     </div>
   )
