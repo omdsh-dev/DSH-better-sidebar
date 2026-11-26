@@ -245,10 +245,14 @@ export function GitGraphSection({ scope, worktree, visible, refreshTick = 0, onP
       }
       if (controller.signal.aborted || gen !== generation.current) return
       if (!append) setLinearFallback(fallback)
-      const next = append && previous ? {
-        ...result,
-        entries: [...previous.entries, ...result.entries.filter(entry => !previous.entries.some(old => old.hashFull === entry.hashFull))],
-      } : result
+      let next = result
+      if (append && previous) {
+        const previousHashes = new Set(previous.entries.map(entry => entry.hashFull))
+        next = {
+          ...result,
+          entries: [...previous.entries, ...result.entries.filter(entry => !previousHashes.has(entry.hashFull))],
+        }
+      }
       pageRef.current = next
       setPage(next)
       setBranches(next.branches)
