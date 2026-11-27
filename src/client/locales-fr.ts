@@ -558,6 +558,7 @@ export const fr: Record<string, string> = {
   sideChatDequeue: 'Retirer de la file',
   sideChatRunError: 'Échec de l’exécution : {message}',
   sideChatTerminalAborted: 'Ce tour a été arrêté',
+  sideChatTerminalBlocked: "Ce tour a été bloqué par l'hôte (cette conversation latérale est peut-être archivée ; essayez un nouveau fil)",
   sideChatTerminalMaxTokens: 'Limite de sortie atteinte — la réponse est tronquée',
   sideChatToolArguments: 'Arguments',
   sideChatToolResult: 'Résultat',
