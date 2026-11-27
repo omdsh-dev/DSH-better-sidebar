@@ -185,6 +185,7 @@ describe('the header control', () => {
     expect(button).not.toBeNull()
     expect(button?.getAttribute('aria-label')).toBe('上下文诊断')
     expect(button?.getAttribute('aria-busy')).toBeNull()
+    expect(button?.hasAttribute('title')).toBe(false)
 
     await act(async () => { button?.click() })
     expect(fake.opens).toEqual([{ sessionId: 's1', label: '当前会话' }])

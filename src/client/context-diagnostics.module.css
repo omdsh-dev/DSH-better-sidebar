@@ -2,8 +2,7 @@
  * The diagnostics chrome: ONE header control, and the frame-wide error alert.
  *
  * Both surfaces ride existing scale and tokens only (skin contract, guide §12):
- * the control is a host `Button sm` (28px) whose box is fixed so it can never
- * squeeze the header's own row at the sidebar's narrow width, and the alert is
+ * the control shares the bottom-panel toggle style, and the alert is
  * a small card on the floating layer (`shell.overlay`), painted like the
  * plugin's other floating surfaces, with a warning-token edge.
  *
@@ -17,7 +16,6 @@
    control does, and it never wraps onto a second line. */
 .headerButton {
   flex: none;
-  width: 26px;
   padding: 0;
 }
 

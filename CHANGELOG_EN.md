@@ -6,6 +6,8 @@
 
 ### v0.34.0-alpha.0
 
+- **Consistent Context Diagnostics toolbar button**: its tooltip and button styling now match the bottom-panel toggle.
+
 - 🎛 **Changes and Graph on the Git page are resizable**: both sections share the same draggable stack as Clues, with a divider that responds to mouse and touch dragging as well as Home / End / ↑ / ↓; each section scrolls on its own and no divider shows while only one section is open. The split is not persisted and a refresh returns to the default.
 
 - 🎨 **One component layer across the interface**: the task window, side-chat attachments and images, tabs and previews (diff, terminal, media / PDF / large files) and the file-tree shell now take their fields, rows, empty and error states, download links and switches from one shared kit, with consistent hierarchy, accessibility and theme tokens; behavior and copy are unchanged.
