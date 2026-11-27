@@ -15,13 +15,18 @@
  * `fetchResource`, so the resolution and rewriting rules are unit-testable and
  * the component owns transport, aborting and object-URL lifetime.
  *
- * Only same-origin resources are inlined. External http(s) URLs, `data:`,
- * `blob:` and `file:` are left exactly as authored; a failed local fetch also
- * leaves the authored reference (the page still renders, the one resource
- * may not). The returned document is always UTF-8 and keeps the route's
- * `object-src 'none'` defense as a meta CSP; the iframe sandbox attribute
- * remains the primary boundary (no `allow-same-origin` is ever added).
+ * Only resources inside the previewed file's own folder are inlined: the top
+ * frame fetches with the GUI's own credentials and the bytes end up readable
+ * by the page's scripts, so it must never fetch more than the page could load
+ * as a plain folder of files (see {@link insidePreviewFolder}). External
+ * http(s) URLs, `data:`, `blob:` and `file:` are left exactly as authored; an
+ * out-of-folder or failed local fetch also leaves the authored reference (the
+ * page still renders, the one resource may not). The returned document is
+ * always UTF-8 and keeps the route's `object-src 'none'` defense as a meta
+ * CSP; the iframe sandbox attribute remains the primary boundary (no
+ * `allow-same-origin` is ever added).
  */
+import { HTML_ROUTE_PREFIX } from '../html-route.ts'
 
 /** One fetched local resource, already in memory. */
 export interface InlineResource {
@@ -67,6 +72,56 @@ export function inlineableUrl(reference: string, baseUrl: string): URL | undefin
   }
   if (!sameOrigin(url, base)) return undefined
   return url
+}
+
+/**
+ * Whether a resolved resource URL lies inside the previewed file's own folder:
+ * same origin, the document is a `/sidebar/html/<session>/...` route, and the
+ * resource path is the document's folder prefix followed only by plain name
+ * segments. Each segment is checked DECODED, because the route decodes it
+ * before joining the path: an empty, `.` or `..` segment, or one hiding a `/`
+ * or `\` (`%2F`, `%5C`, or a raw backslash, which a non-special scheme keeps
+ * in the path), is refused. Everything else — a walk out of the folder,
+ * another session's route, `/sidebar/file` or any other same-origin endpoint —
+ * is never fetched. The folder comes from `documentUrl`, never from an
+ * authored `<base>`, so a page cannot widen it.
+ * @param resourceUrl - The absolute resource URL about to be fetched.
+ * @param documentUrl - The previewed file's absolute route URL.
+ * @returns true only for a file at or below the document's folder.
+ */
+export function insidePreviewFolder(resourceUrl: string, documentUrl: string): boolean {
+  let resource: URL
+  let page: URL
+  try {
+    resource = new URL(resourceUrl)
+    page = new URL(documentUrl)
+  } catch {
+    return false
+  }
+  if (!sameOrigin(resource, page)) return false
+  // The document must BE an html route, with the prefix at the start of the
+  // path (the same contract as decodeHtmlUrl), not merely contain one later.
+  // Inlining only runs in the desktop shell, whose page is `dsh-app://app/`, so
+  // its routes sit at the origin root; a reverse-proxied web deployment (the
+  // one place a directory prefix exists) keeps the route-src iframe instead.
+  if (!page.pathname.startsWith(HTML_ROUTE_PREFIX)) return false
+  const folder = page.pathname.slice(0, page.pathname.lastIndexOf('/') + 1)
+  // Fail closed unless the session segment is non-empty and the folder
+  // extends past `/sidebar/html/<session>`.
+  const sessionEnd = folder.indexOf('/', HTML_ROUTE_PREFIX.length)
+  if (sessionEnd <= HTML_ROUTE_PREFIX.length) return false
+  if (!resource.pathname.startsWith(folder)) return false
+  const rest = resource.pathname.slice(folder.length)
+  if (rest === '') return false
+  return rest.split('/').every((segment) => {
+    let name: string
+    try {
+      name = decodeURIComponent(segment)
+    } catch {
+      return false
+    }
+    return name !== '' && name !== '.' && name !== '..' && !name.includes('/') && !name.includes('\\')
+  })
 }
 
 /** Base64 in bounded chunks so a multi-megabyte asset cannot overflow the
@@ -245,7 +300,8 @@ function isStylesheet(link: Element): boolean {
  * Build the self-contained document for one HTML file.
  * @param html - The authored HTML text.
  * @param documentUrl - The file's absolute route URL (the base for relatives).
- * @param fetchResource - Same-origin resource fetcher (injected; may fail).
+ * @param fetchResource - Resource fetcher (injected; may fail); only called
+ *  for URLs inside the document's own folder.
  * @returns The rewritten, UTF-8, self-contained HTML.
  */
 export async function inlineHtmlDocument(
@@ -266,7 +322,9 @@ export async function inlineHtmlDocument(
   }
   baseElement?.removeAttribute('href')
 
-  const cache = new ResourceCache(fetchResource)
+  // Every fetch funnels through this cache: anything outside the previewed
+  // file's folder resolves to "not inlined" without a request.
+  const cache = new ResourceCache((url) => (insidePreviewFolder(url, documentUrl) ? fetchResource(url) : Promise.resolve(undefined)))
   const tasks: Promise<void>[] = []
 
   for (const link of [...doc.querySelectorAll('link')]) {
