@@ -1047,7 +1047,7 @@ export function GitLens(props: GitLensProps) {
   useEffect(() => {
     rowActions.current = {
       preview: (node, staged) => {
-        onPreview(worktreeRefOf(node.path, isUntrackedStatus(node.status), staged, chosenPathRef.current, repoRootRef.current))
+        onPreview(worktreeRefOf(node.path, isUntrackedStatus(node.status), staged, chosenPathRef.current, repoRootRef.current ?? snapshot?.root))
       },
       stage: (path, staged, merge) => { stageEntry(path, staged, merge) },
     }
