@@ -8,8 +8,9 @@
  *
  * The queue surface (2026-10-12): the unclaimed inbox renders as pending
  * bubbles with a working dequeue, a just-sent message echoes locally before
- * any durable event exists, the thinking spinner appears immediately, and the
- * composer bar's model picker lists the host catalog and pins a route. Every
+ * any durable event exists, and the thinking spinner appears immediately.
+ * A blocked turn retires its own echo. The composer bar's model picker
+ * lists the host catalog and pins a route. Every
  * thread function (model / threads / save / archive) must render in that
  * composer bar — below the input — never in a top header.
  */
@@ -269,6 +270,25 @@ function jsonResponse(value: unknown): Response {
 /** The thread's own log BEFORE any model output: a message was sent, nothing
  *  has streamed yet (the immediate thinking-spinner case). */
 const EARLY_EVENTS = EVENTS.slice(0, 5)
+
+function inboxInsertion(messageId: string, text: string) {
+  return {
+    type: 'agent/inbox/spliced', seq: 1, time: 1_000,
+    data: { target: 'next-turn', start: 0, inserted: [{ id: messageId, content: [{ type: 'text', text }] }] },
+  }
+}
+
+/** The host claims the message and blocks its turn before any user/message is written. */
+function blockedTurnEvents(messageId: string) {
+  return [
+    inboxInsertion(messageId, 'question'),
+    { type: 'turn/start', seq: 2, time: 1_010, data: { turn: 1 } },
+    { type: 'agent/inbox/spliced', seq: 3, time: 1_020, data: {
+      target: 'next-turn', start: 0, removedCount: 1, inserted: [],
+    } },
+    { type: 'turn/end', seq: 4, time: 1_040, data: { turn: 1, reason: { kind: 'blocked' } } },
+  ]
+}
 
 let eventsPulls = 0
 /** The wire values the fetch stub serves; each test overrides what it reads. */
@@ -916,12 +936,58 @@ describe('SideChatView queue, echo and model picker', () => {
     unmount()
   })
 
-  it('retires the echo once the host reports the message pending', async () => {
-    pendingValue = [{ id: 'm9', target: 'next-step', text: 'echo me' }]
+  it('clears the queued echo and thinking indicator when the host immediately blocks the turn', async () => {
+    eventsValue = [EVENTS[0]]
+    const { container, unmount } = renderRoot(createElement(SideChatView, viewProps(makeCtx(threadStore()))))
+    try {
+      await act(async () => {})
+      act(() => { typeComposer(container, 'question') })
+      eventsValue = blockedTurnEvents('m9')
+      await act(async () => { container.querySelector<HTMLButtonElement>('button[aria-label="发送"]')?.click() })
+
+      expect(promptCalls).toHaveLength(1)
+      expect(container.textContent).toContain('宿主阻止了本轮对话')
+      expect(container.textContent).not.toContain('排队中')
+      expect(container.textContent).not.toContain('正在深入…')
+    } finally {
+      unmount()
+    }
+  })
+
+  it.each([
+    { arrival: 'before', initialEvents: 4 },
+    { arrival: 'during', initialEvents: 2 },
+  ])('keeps a new echo when a previous message is blocked $arrival the send', async ({ initialEvents }) => {
+    const previousTurn = blockedTurnEvents('older-message')
+    eventsValue = [EVENTS[0], ...previousTurn.slice(0, initialEvents)]
+    const { container, unmount } = renderRoot(createElement(SideChatView, viewProps(makeCtx(threadStore()))))
+    try {
+      await act(async () => {})
+      act(() => { typeComposer(container, 'next question') })
+      // The post-send read can still bring in the previous turn's claim and terminal event.
+      eventsValue = previousTurn.slice(initialEvents)
+      await act(async () => { container.querySelector<HTMLButtonElement>('button[aria-label="发送"]')?.click() })
+
+      expect(container.textContent).toContain('宿主阻止了本轮对话')
+      expect(container.textContent).toContain('next question')
+      expect(container.textContent).toContain('排队中')
+      expect(container.textContent).toContain('正在深入…')
+    } finally {
+      unmount()
+    }
+  })
+
+  it.each([
+    { source: 'the pending snapshot alone', includeInsertion: false },
+    { source: 'both the pending snapshot and inbox log', includeInsertion: true },
+  ])('shows one queued message when confirmed by $source', async ({ includeInsertion }) => {
+    eventsValue = [EVENTS[0]]
     const { container, unmount } = renderRoot(createElement(SideChatView, viewProps(makeCtx(threadStore()))))
     await act(async () => {})  // flush the initial transcript pull
 
     act(() => { typeComposer(container, 'echo me') })
+    eventsValue = includeInsertion ? [inboxInsertion('m9', 'echo me')] : []
+    pendingValue = [{ id: 'm9', target: 'next-turn', text: 'echo me' }]
     await act(async () => {
       container.querySelector<HTMLButtonElement>('button[aria-label="发送"]')?.click()
     })

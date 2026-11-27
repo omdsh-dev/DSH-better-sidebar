@@ -94,6 +94,7 @@ import type { SidechatForkPoint } from '../sidechat-core.ts'
 import {
   SIDE_LABEL_PREFIX,
   SIDE_NEW_THREAD_TITLE,
+  pendingInputId,
   sideThreadRows,
   threadHasCompletedTurn,
   type SideThreadRow,
@@ -1683,17 +1684,21 @@ export function SideChatView(props: {
   )
 
   const echoText = echo?.text ?? ''
+  const entries = cacheRef.current.entries
+  const showEcho = useMemo(() => {
+    if (echo === null) return false
+    const { messageId } = echo
+    if (pendingRows.some(item => item.id === messageId)) return false
+    if (rows.some(row => row.kind === 'user' && row.messageId === messageId)) return false
+    // A blocked turn can claim the prompt between polls, before it becomes
+    // a user row. Its durable inbox insertion still identifies this send.
+    return !entries.some(({ event }) => event.type === 'agent/inbox/spliced'
+      && event.data.target === 'next-turn' && Array.isArray(event.data.inserted)
+      && event.data.inserted.some(message => pendingInputId(message) === messageId))
+  }, [echo, pendingRows, rows, entries])
   useEffect(() => {
-    if (echo === null || busy === 'sending') return
-    if (pendingRows.some(item => item.id === echo.messageId)) {
-      setEcho(null)
-      return
-    }
-    if (rows.some(row => row.kind === 'user' && row.messageId === echo.messageId)) {
-      setEcho(null)
-    }
-  }, [echo, busy, pendingRows, rows])
-  const showEcho = echo !== null && !pendingRows.some(item => item.id === echo.messageId) && !rows.some(row => row.kind === 'user' && row.messageId === echo.messageId)
+    if (echo !== null && !showEcho && busy !== 'sending') setEcho(null)
+  }, [echo, showEcho, busy])
 
   const canSave = threadId !== undefined && threadHasCompletedTurn(cacheRef.current.entries)
   const trailingPending = threadId !== undefined && threadTrailingPending(cacheRef.current.entries)
@@ -1703,7 +1708,7 @@ export function SideChatView(props: {
    *  reports it running. A RUNNING thread keeps the row regardless (the
    *  long-tool-call window has no streaming text to show progress). */
   const hasOutputRow = rows.some(row => row.kind === 'assistant' || row.kind === 'reasoning')
-  const showThinking = threadId !== undefined && (running || ((echo !== null || busy === 'sending') && !hasOutputRow))
+  const showThinking = threadId !== undefined && (running || ((showEcho || busy === 'sending') && !hasOutputRow))
 
   // Follow the stream: while the reader is at (or near) the bottom, growth
   // pins the scroller to the BOTTOM OFFSET (scrollHeight - clientHeight) — the

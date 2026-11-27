@@ -6,7 +6,7 @@
 
 ### Unreleased
 
-- **Skip archived conversations when reopening Side Chat** ([#1265](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1265)). The shared page picks an available thread or lets you start a new one. If the host blocks a turn, the transcript shows a notice.
+- **Skip archived conversations when reopening Side Chat** ([#1265](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1265)). The shared page picks an available thread or lets you start a new one. If the host blocks a turn, the transcript shows the blocked notice and clears the queued and thinking indicators for that message.
 
 ### v0.34.0-alpha.0
 
