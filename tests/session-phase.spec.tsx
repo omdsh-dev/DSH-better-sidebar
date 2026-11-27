@@ -55,6 +55,71 @@ function setPageHidden(hidden: boolean): void {
   })
 }
 
+describe('useSessionPhase backoff', () => {
+  let unmount: (() => void) | undefined
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.mocked(sessionPhase).mockReset()
+    vi.mocked(sessionPhase).mockImplementation(async () => ({ blank: true }))
+  })
+  afterEach(() => {
+    act(() => { unmount?.() })
+    unmount = undefined
+    Reflect.deleteProperty(document, 'hidden')
+    Reflect.deleteProperty(document, 'visibilityState')
+    vi.useRealTimers()
+  })
+
+  it('backs off 1s → 5s while blank is unchanged and never exceeds the cap', async () => {
+    const view = renderRoot(createElement(Probe, { sessionId: 's1' }))
+    unmount = view.unmount
+    await settle()
+    // 首次读取在 t=0；第一次读回时还没有「上一次」相位，所以间隔留在 1s，之后每次没变就 ×1.5。
+    await advance(1_000)
+    expect(vi.mocked(sessionPhase)).toHaveBeenCalledTimes(2)
+    await advance(1_500)
+    expect(vi.mocked(sessionPhase)).toHaveBeenCalledTimes(3)
+    await advance(2_250)
+    expect(vi.mocked(sessionPhase)).toHaveBeenCalledTimes(4)
+    await advance(3_375)
+    expect(vi.mocked(sessionPhase)).toHaveBeenCalledTimes(5)
+    await advance(5_000)
+    expect(vi.mocked(sessionPhase)).toHaveBeenCalledTimes(6)
+    await advance(4_999)
+    expect(vi.mocked(sessionPhase)).toHaveBeenCalledTimes(6)
+    await advance(1)
+    expect(vi.mocked(sessionPhase)).toHaveBeenCalledTimes(7)
+  })
+
+  it('arms no timer while hidden and returns to the fast cadence on visibilitychange', async () => {
+    const view = renderRoot(createElement(Probe, { sessionId: 's1' }))
+    unmount = view.unmount
+    await settle()
+    for (let i = 0; i < 6; i++) await advance(5_000) // fully backed off
+    const before = vi.mocked(sessionPhase).mock.calls.length
+    act(() => { setPageHidden(true); document.dispatchEvent(new Event('visibilitychange')) })
+    await advance(60_000)
+    expect(vi.mocked(sessionPhase).mock.calls.length, '隐藏期间零请求').toBe(before)
+    expect(vi.getTimerCount(), '隐藏期间不挂定时器').toBe(0)
+    act(() => { setPageHidden(false); document.dispatchEvent(new Event('visibilitychange')) })
+    await settle()
+    expect(vi.mocked(sessionPhase).mock.calls.length, '回到可见立刻补一次').toBe(before + 1)
+    await advance(1_500)
+    expect(vi.mocked(sessionPhase).mock.calls.length, '间隔重置回快节奏（1s×1.5，而不是 5s）').toBe(before + 2)
+  })
+
+  it('refreshes at once when the window regains focus', async () => {
+    const view = renderRoot(createElement(Probe, { sessionId: 's1' }))
+    unmount = view.unmount
+    await settle()
+    for (let i = 0; i < 4; i++) await advance(5_000)
+    const before = vi.mocked(sessionPhase).mock.calls.length
+    act(() => { window.dispatchEvent(new Event('focus')) })
+    await settle()
+    expect(vi.mocked(sessionPhase).mock.calls.length).toBe(before + 1)
+  })
+})
+
 describe('useSessionPhase', () => {
   let unmount: (() => void) | undefined
 
@@ -82,9 +147,11 @@ describe('useSessionPhase', () => {
     const rendersAfterFirstRead = renders
 
     // 一个 tick 一次 act：React 不会把 5 次 tick 的更新并成一批，因此「每秒重渲染一次」
-    // 在旧实现下会实打实地涨 5 次。
-    for (let tick = 0; tick < 5; tick++) await advance(1_000)
-    expect(vi.mocked(sessionPhase), '轮询本身仍在跑').toHaveBeenCalledTimes(6)
+    // 在旧实现下会实打实地涨 5 次。退避之后 30s 内只有 1+(1,1.5,2.3,3.4,5…) 次请求。
+    for (let tick = 0; tick < 30; tick++) await advance(1_000)
+    const calls = vi.mocked(sessionPhase).mock.calls.length
+    expect(calls, '轮询本身仍在跑').toBeGreaterThan(3)
+    expect(calls, '退避后远少于每秒一次（旧实现 31 次）').toBeLessThan(12)
     expect(renders, 'blank 没翻转 → 一次都不该重渲染').toBe(rendersAfterFirstRead)
     expect(phaseText(view.container)).toBe('true')
   })

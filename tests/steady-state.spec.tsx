@@ -252,11 +252,6 @@ const TIMER_LEDGER: Array<{ file: string; gate: string; why: string }> = [
     why: '任务耗时文本：抽成自持 state 的 memo 组件，仅在抽屉可见时走秒',
   },
   {
-    file: 'session-phase.ts',
-    gate: 'document.hidden',
-    why: 'blank 相位：仅相位未定期间，隐藏时跳过请求，翻成非 blank 即停表',
-  },
-  {
     file: 'use-polling.ts',
     gate: 'enabled',
     why: '全插件唯一的轮询引擎：每个调用点都以 enabled 表达可见性',
