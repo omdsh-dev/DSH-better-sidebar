@@ -3,6 +3,9 @@
 > 状态：已实现（`fix/871-preserve-eol`）。来源：[issue #871](https://github.com/omdsh-dev/DSH-better-sidebar/issues/871)
 > ——它是 `fix/crlf-markdown-surface`（`dev` 合并 `0ee870a`）的**直接后续**：那一批修的是读取侧的三层
 > `\r` 误判，刻意没动写入侧。
+>
+> 复核后续（`fix/871-eol-followup`）：补上「前 4096 字符里一个换行都没有」这一格的用例与边界表，
+> 并修正 §3 写反的调用顺序。**实现与行为零改动**——那一格的判据与宿主的 `editText` 逐字相同，刻意不改（§6 第 3 条）。
 
 ## 1. 问题
 
@@ -41,7 +44,8 @@
     `decodeTextBytes` 返回的 `content` 本身不做行尾归一化，直接拿来投票。二进制读（`decoded === null`）
     与 `ENOENT` 都返回 `{ encoding: 'utf8', eol: 'lf' }`。
 - `src/index.ts` 的 `fs.write`：`const { encoding, eol } = await fileFormatOf(path)`，
-  落盘改为 `encodeText(restoreEol(content, eol), encoding)`。顺序仍是「mtime 门 → sniff → 写」，
+  落盘改为 `encodeText(restoreEol(content, eol), encoding)`。顺序是 **sniff → mtime 门 → 写**
+  （sniff 只是一趟读、没有副作用，所以排在冲突门之前；本批之前就是这样，本节早先把它写反了），
   所以还原依据是**磁盘当前**状态（外部改过就用外部的新风格），与编码检测同一取舍。
 
 **为什么不把 `eol` 记进客户端 / per-tab store。** 那样等于再造一份状态，要跟未保存草稿、多 tab 共享
@@ -57,6 +61,7 @@
 | --- | --- | --- |
 | 混合行尾 | 按**多数风格整份回写** | 与宿主 `editText` 同款取舍；「只改被编辑行」做不到——CodeMirror 只给整份文档，没有逐行归属 |
 | CR-only（经典 Mac） | 不识别、字节原样保留 | 归一化只认 `\r\n`；新插入的行会是 LF（结果是混合），与宿主一致，不自行发明 |
+| 前 4096 字符里**一个换行都没有**（首行 > 4 KiB 的单行 / 压缩文件） | 投 **LF**，整份回写 LF | 窗口内**没有票可投**（`crlf > lf` 不成立即判 LF），窗口外的 CRLF 保不住——这是宿主 `detectLineEndings` 的**同一判据**，插件刻意不发明第二套（否则同一个文件，插件保存与模型 `edit` 结论不同）；用例见 §5，取舍见 §6 第 3 条 |
 | 新文件（`ENOENT`） | UTF-8 + **LF** | **项目级行尾一致性是另一个问题**：本批只保证「不改一个文件既有的格式」，不推断项目约定（兄弟目录多数票 / `.gitattributes` / 偏好都不是本批的事） |
 | 内容里已含 `\r\n`（粘贴、老调用方） | 不产生 `\r\r\n` | 先归一化再 join |
 | 大文件截断只读、二进制、上传 | 不进这条路径 | 只读态没有保存入口；二进制走下载面板 |
@@ -69,6 +74,11 @@
 - `tests/fs-write-route.spec.ts`：三条端到端——CRLF 文件写 LF 文档后**除被编辑行外全 CRLF**且没有裸 `\n`、
   LF 文件不引入 `\r`、GBK + CRLF 组合（LF 文档 → GBK + CRLF 字节，两个 restore 都要开火）。
 - 判别性（实测）：把 `restoreEol(content, eol)` 换回 `content` → 后两条端到端用例**红**，其余仍绿。
+- **复核后续补的两格（`fix/871-eol-followup`）**：§4 那条窗口盲区原先既没有用例也没进边界表。
+  `tests/text-encoding.spec.ts` 加一对判别性对子——首行 4000 字符 + `\r\n` 判 `crlf`、首行 5000 字符 + `\r\n`
+  判 `lf`（同一份内容只挪动换行与 4096 窗口的相对位置），外加 `fileFormatOf` 落在磁盘上的两档（首行 5000 字符、
+  首行 70000 字符越过 64 KiB sniff）；`tests/fs-write-route.spec.ts` 加一条**边界钉桩**——首行 5000 字符的
+  CRLF 文件保存后确实整份变 LF。它断言的是**决定**而不是意外：判据与宿主同口径，改判据要先按 §6 第 3 条走。
 
 ## 6. 后续（不在本批）
 
@@ -77,3 +87,7 @@
    本批只在 issue 里留结论，不阻塞落地。
 2. **新文件的 EOL 与项目级一致性**：默认 LF 是现状的诚实描述；若要做「跟随项目约定」，需要先定义口径
    （读 `.gitattributes`？同目录多数票？设置项？），另立 issue。
+3. **窗口盲区不做扩展（复核时确认的取舍）**：把投票窗口在「前 4096 字符里无换行」时扩到整趟 64 KiB sniff，
+   能救回首行超 4 KiB 的 CRLF 文件被整份改写；代价是插件保存与宿主 `edit` 的判据**不再逐字相同**——同一个文件，
+   保存走插件、模型 `edit` 走宿主，会得到两个结论。本轮选择**同口径 + 把这一格写进 §4 边界表 + 加用例钉住**
+   （原来缺的就是这两样）。要改判据就与上游一起改 `detectLineEndings`，不要在插件里分叉。
