@@ -142,7 +142,21 @@ export async function gitHistory(cwd: string, options: GitHistoryOptions = {}, s
       cursor = parsed
     } catch { fail('Invalid history cursor') }
   }
-  const root = selectedRepo !== undefined ? await repoRoot(cwd, selectedRepo) : (await readGit(cwd, ['rev-parse', '--show-toplevel'])).trim()
+  let root: string
+  try {
+    root = selectedRepo !== undefined ? await repoRoot(cwd, selectedRepo) : (await readGit(cwd, ['rev-parse', '--show-toplevel'])).trim()
+  } catch (error) {
+    // `cwd` may be a workspace CONTAINER — a project directory that is not
+    // itself a repository but holds one or more of them — and then
+    // `rev-parse --show-toplevel` answers "fatal: not a git repository".
+    // gitGraph() already resolves that case through repository discovery
+    // (the graph falls back to THIS linear reader past its branch limit, and
+    // every later page goes through it), so the history reader has to answer
+    // for the same cwd shape. Discovery failing means the error was real:
+    // rethrow the original so non-repositories keep their git-error shape.
+    if (!(error instanceof GitCommandError) || !/^fatal: not a git repository(?: \(|:)/.test(error.message)) throw error
+    root = await repoRoot(cwd, selectedRepo).catch(() => { throw error })
+  }
   const before = await historySnapshot(root)
   if (cursor && cursor.fingerprint !== before) fail('History changed; refresh', 'graph-stale')
   const offset = cursor?.offset ?? 0

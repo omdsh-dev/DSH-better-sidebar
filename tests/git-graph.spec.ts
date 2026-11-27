@@ -197,6 +197,28 @@ describe('read-only Git graph', () => {
     expect((await gitGraph(linked, {}, join(container, 'b'))).entries[0]?.hashFull).toBe(head)
   })
 
+  it('reads history from a container workspace without an explicit repository', async () => {
+    // A workspace CONTAINER (a directory that is not itself a repository but
+    // holds repositories) has no `rev-parse --show-toplevel` answer; the graph
+    // falls back to this linear reader past its branch limit and every later
+    // page goes through it, so the reader must discover the same child root
+    // the graph does instead of failing with "not a git repository".
+    const container = temp()
+    for (const name of ['alpha', 'beta']) {
+      git(container, 'init', '-b', 'main', name)
+      git(join(container, name), 'config', 'user.name', 'Graph Tester')
+      git(join(container, name), 'config', 'user.email', 'graph@example.test')
+      git(join(container, name), 'config', 'commit.gpgsign', 'false')
+      commit(join(container, name), name)
+    }
+    const history = await gitHistory(container)
+    expect(history.root).toBe(join(container, 'alpha'))
+    expect(history.entries.map(entry => entry.subject)).toEqual(['alpha'])
+    // The fallback must not turn a genuinely repository-less cwd into an empty
+    // page: that error still surfaces as the original git failure.
+    await expect(gitHistory(temp())).rejects.toMatchObject({ code: 'git-error' })
+  })
+
   it('fails visibly instead of truncating oversized full messages', async () => {
     const dir = repo()
     const message = join(dir, 'message')
