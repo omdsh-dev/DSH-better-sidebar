@@ -62,6 +62,9 @@ test('read-only Git Graph renders merge history and filters without checkout', a
     await expect(featureOnly).toHaveCount(0)
     const branchFilter = graph.getByRole('button', { name: 'Branch filter', exact: true })
     await expect(branchFilter).toHaveText('main')
+    // Evidence for the selector's closed state: the host-standard pill in the
+    // toolbar, same fixture and viewport as the open-menu screenshot below.
+    await graph.screenshot({ path: testInfo.outputPath('git-graph-selector.png') })
     // With a resizable stack the panes keep their minimum heights and the stack
     // itself scrolls when the panel is short (a preview pane open at 1024×800).
     // The invariant is therefore about the CLIPPED edge: the bottom-most visible
@@ -115,6 +118,11 @@ test('read-only Git Graph renders merge history and filters without checkout', a
     await branchFilter.click()
     const allBranches = page.getByRole('menuitem', { name: 'All branches', exact: true })
     await expect(allBranches).toBeVisible()
+    // The menu opens BELOW the control: the filter itself stays readable while
+    // the list is open, so the trigger is never hidden under its own menu.
+    const filterBox = (await branchFilter.boundingBox())!
+    const menuBox = (await page.getByRole('menu').boundingBox())!
+    expect(menuBox.y).toBeGreaterThanOrEqual(filterBox.y + filterBox.height)
     await page.screenshot({ path: testInfo.outputPath('git-graph-branch-menu.png'), fullPage: true })
     await allBranches.click()
     await expect(branchFilter).toHaveText('All branches')

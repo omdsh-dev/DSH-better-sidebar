@@ -4,6 +4,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { createElement } from 'react'
 import { act } from 'react-dom/test-utils'
 import { SelectMenu } from '../src/client/ui/SelectMenu.tsx'
+import css from '../src/client/ui/select-menu.module.css'
 import { renderRoot, setupReactAct, type RenderedRoot } from './test-utils.ts'
 setupReactAct()
 let view: RenderedRoot | undefined
@@ -30,6 +31,22 @@ it('selects through the themed menu without a native select and returns focus', 
   expect(onChange).toHaveBeenCalledExactlyOnceWith('two')
   expect(trigger.getAttribute('aria-expanded')).toBe('false')
   expect(document.activeElement).toBe(trigger)
+})
+it('renders the host selector pill for toolbar surfaces', () => {
+  // The graph toolbar sits beside host controls, so its filter uses the host's
+  // standard selector pill (the Language / Enter-behavior rows' button) rather
+  // than the input-sized field.
+  view = renderRoot(createElement(SelectMenu, { value: 'one', options, onChange: () => {}, ariaLabel: 'Branch filter', variant: 'selector' }))
+  const trigger = view.container.querySelector<HTMLButtonElement>('button')!
+  expect(trigger.classList.contains(css.triggerSelector!)).toBe(true)
+  expect(trigger.classList.contains(css.trigger!)).toBe(false)
+  expect(trigger.closest('.' + css.rootSelector!)).not.toBeNull()
+  expect(trigger.closest('.' + css.root!)).toBeNull()
+  // It is still the same control: opening, selecting and closing behave alike.
+  act(() => trigger.click())
+  expect(trigger.getAttribute('aria-expanded')).toBe('true')
+  act(() => [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(row => row.textContent?.includes('Second'))!.click())
+  expect(trigger.getAttribute('aria-expanded')).toBe('false')
 })
 it('keeps multiple selection open and emits values in option order', () => {
   const onValuesChange = vi.fn()

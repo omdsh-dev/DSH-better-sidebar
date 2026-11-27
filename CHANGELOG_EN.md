@@ -6,7 +6,7 @@
 
 ### Unreleased
 
-- **Git Graph opens on the current worktree's branch.** Use the DSH filter menu to browse another branch or all branches while keeping the same branch checked out. ([#990](https://github.com/omdsh-dev/DSH-better-sidebar/issues/990))
+- **Git Graph opens on the current worktree's branch.** Use the DSH filter menu to browse another branch or all branches while keeping the same branch checked out. The filter matches the host's standard selector, and its menu opens below the control instead of covering it. ([#990](https://github.com/omdsh-dev/DSH-better-sidebar/issues/990))
 
 ### v0.34.0-alpha.0
 

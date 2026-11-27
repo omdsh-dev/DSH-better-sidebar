@@ -363,7 +363,7 @@ function TargetGraph({ scope, worktree, visible, refreshTick = 0, onPreview, sel
     data-graph-count={page?.entries.length ?? 0}>
     <div className={css.toolbar}>
       {linearFallback && <Notice kind="hint" tone="inline" role="status">{t('graphLinearFallback')}</Notice>}
-      {!linearFallback && <SelectMenu ariaLabel={t('graphBranchFilter')}
+      {!linearFallback && <SelectMenu ariaLabel={t('graphBranchFilter')} variant="selector"
         value={branch ?? page?.selectedBranch ?? ''} onChange={chooseBranch}
         options={branch === undefined && page === null ? [] : branchOptions}
         placeholder={t('graphBranchFilter')} />}

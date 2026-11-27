@@ -23,7 +23,7 @@ async function openGuide(page: Page, kind: string): Promise<void> {
 async function controlStyle(control: Locator) {
   return control.evaluate(node => {
     const s = getComputedStyle(node)
-    return { fontSize: s.fontSize, lineHeight: s.lineHeight, minHeight: s.minHeight,
+    return { fontSize: s.fontSize, lineHeight: s.lineHeight, minHeight: s.minHeight, height: s.height,
       borderWidth: s.borderWidth, borderStyle: s.borderStyle, borderRadius: s.borderRadius,
       boxShadow: s.boxShadow, backgroundImage: s.backgroundImage, padding: s.padding,
       color: s.color, backgroundColor: s.backgroundColor }
@@ -388,7 +388,10 @@ for (const touch of [false, true]) {
           await screenshotMatrix(page, settings, 'settings-' + group.toLowerCase().replaceAll(' ', '-'), info)
         }
       }
-      expect(metrics.gitSelect).toMatchObject({ minHeight: touch ? '44px' : '32px', borderWidth: '1px', borderStyle: 'solid', boxShadow: 'none', backgroundImage: 'none' })
+      // The graph's branch filter is the host's standard selector pill (the
+      // Language / Enter-behavior rows' control): borderless module-platform
+      // surface, 36px tall and 44px under a coarse pointer.
+      expect(metrics.gitSelect).toMatchObject({ height: touch ? '44px' : '36px', borderWidth: '0px', borderStyle: 'none', boxShadow: 'none', backgroundImage: 'none' })
       // The plugin's own tab strips share ONE control; the changes lens's Git /
       // session switch is upstream's conversation-page underline strip (#1236)
       // and deliberately keeps its own shape, so it is held to the invariants

@@ -4,7 +4,7 @@
 
 ### 未发布
 
-- **Git 提交图默认显示当前工作树的分支历史**。通过 DSH 的分支筛选菜单可以查看其他分支或所有分支，工作树仍停留在原分支。（[#990](https://github.com/omdsh-dev/DSH-better-sidebar/issues/990)）
+- **Git 提交图默认显示当前工作树的分支历史**。通过 DSH 的分支筛选菜单可以查看其他分支或所有分支，工作树仍停留在原分支；筛选器与宿主标准选择器同款，菜单在控件下方展开，不再盖住控件本身。（[#990](https://github.com/omdsh-dev/DSH-better-sidebar/issues/990)）
 
 ### v0.34.0-alpha.0
 
