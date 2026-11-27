@@ -112,15 +112,22 @@ export function fileUrlToLocalPath(destination: string): string | undefined {
  * prefix. The host's `requireAbsolute` (`path.resolve`) normalizes anyway,
  * but producing a canonical path here keeps the media URLs clean.
  * Shared with the markdown navigation resolver (`markdown-navigation.ts`),
- * which canonicalizes a claimed link target the same way.
+ * which canonicalizes a claimed link target the same way. Image destinations
+ * may still be workspace-relative: preserve their leading parents until the
+ * workspace root is known, without changing navigation's absolute-path default.
  */
-export function normalizeLocalPath(path: string): string {
+export function normalizeLocalPath(path: string, preserveRelativeParents = false): string {
   const drive = /^([A-Za-z]:)[\\/]/.exec(path)?.[1]
+  const rooted = drive !== undefined || path.startsWith('/') || path.startsWith('\\')
   const body = drive !== undefined ? path.slice(drive.length) : path
   const parts = body.split(/[\\/]+/).filter((segment) => segment !== '' && segment !== '.')
   const out: string[] = []
   for (const part of parts) {
-    if (part === '..') { out.pop(); continue }
+    if (part === '..') {
+      if (out.length > 0 && out[out.length - 1] !== '..') out.pop()
+      else if (preserveRelativeParents && !rooted) out.push(part)
+      continue
+    }
     out.push(part)
   }
   if (drive !== undefined) return `${drive}\\${out.join('\\')}`
@@ -179,9 +186,10 @@ export function markdownImageTarget(destination: string, filePath: string): stri
   // The host's file-link grammar refuses queries and scheme-relative forms.
   if (dest.includes('?') || /^[\\/]{2}/.test(dest)) return undefined
   const slash = Math.max(filePath.lastIndexOf('/'), filePath.lastIndexOf('\\'))
-  const directory = slash === -1 ? '/' : filePath.slice(0, slash + 1)
+  // A basename-only document address is workspace-relative, not rooted at `/`.
+  const directory = slash === -1 ? '' : filePath.slice(0, slash + 1)
   const candidate = isAbsolutePath(dest) ? dest : directory + dest
-  return normalizeLocalPath(candidate)
+  return normalizeLocalPath(candidate, true)
 }
 
 /**
@@ -322,7 +330,7 @@ function resolveMediaDest(
   // Mirrors api.ts fileUrl/mediaUrl for the /sidebar/file media route, made
   // absolute (and prefix-preserving) so the shared MarkdownText http(s)
   // allowlist accepts it.
-  const params = new URLSearchParams({ sessionId: scope.sessionId, path: normalizeLocalPath(candidate) })
+  const params = new URLSearchParams({ sessionId: scope.sessionId, path: normalizeLocalPath(candidate, true) })
   if (scope.cwd !== undefined && scope.cwd !== '') params.set('cwd', scope.cwd)
   return hostRouteUrl(`sidebar/file?${params.toString()}`, baseUrl).href
 }
@@ -377,7 +385,7 @@ export function rewriteLocalImageUrls(
   baseUrl: string,
 ): string {
   const slash = Math.max(filePath.lastIndexOf('/'), filePath.lastIndexOf('\\'))
-  const directory = slash === -1 ? '/' : filePath.slice(0, slash + 1)
+  const directory = slash === -1 ? '' : filePath.slice(0, slash + 1)
   return rewriteImageDestinations(text, (dest) => resolveMediaDest(dest, scope, directory, baseUrl))
 }
 

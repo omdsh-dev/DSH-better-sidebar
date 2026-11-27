@@ -36,6 +36,16 @@ describe('markdownImageTarget', () => {
     expect(markdownImageTarget('../assets/b.png', '/repo/docs/sub/readme.md')).toBe('/repo/docs/assets/b.png')
   })
 
+  it('keeps images beside a bare document filename workspace-relative', () => {
+    expect(markdownImageTarget('./images/example.png', 'README.md')).toBe('images/example.png')
+    expect(markdownImageTarget('images/example.png', 'README.md')).toBe('images/example.png')
+  })
+
+  it('preserves parent segments until a workspace-relative target is joined to cwd', () => {
+    expect(markdownImageTarget('../images/example.png', 'README.md')).toBe('../images/example.png')
+    expect(markdownImageTarget('../../images/example.png', 'docs/README.md')).toBe('../images/example.png')
+  })
+
   it('passes absolute local paths through', () => {
     expect(markdownImageTarget('/repo/assets/b.png', '/repo/docs/readme.md')).toBe('/repo/assets/b.png')
     expect(markdownImageTarget('~/pics/a.png', '/repo/docs/readme.md')).toBe('~/pics/a.png')
@@ -154,9 +164,50 @@ describe('createMarkdownPathImages', () => {
     )
   })
 
-  it('falls back without a workspace root when the tab path is relative (desktop)', () => {
-    const images = createMarkdownPathImages({ sessionId: 'abc' }, 'docs/readme.md', APP)
+  it('resolves images beside a bare document filename against cwd on desktop', () => {
+    const images = createMarkdownPathImages(scope, 'README.md', APP)
+    expect(images.resolve('./images/example.png')).toBe(
+      'dsh-app://app/api/file?path=%2Frepo%2Fimages%2Fexample.png',
+    )
+  })
+
+  it.each(['README.md', 'docs/readme.md'])('falls back without a workspace root for relative tab %s (desktop)', (filePath) => {
+    const images = createMarkdownPathImages({ sessionId: 'abc' }, filePath, APP)
     expect(images.resolve('./img.png')).toBeUndefined()
+  })
+
+  it.each([ORIGIN, 'https://host.example.test/proxy/3080/'])(
+    'keeps images beside a bare document workspace-relative on browser base %s',
+    (baseUrl) => {
+      const images = createMarkdownPathImages(scope, 'README.md', baseUrl)
+      expect(images.resolve('./images/example.png')).toBe(
+        `${baseUrl.replace(/\/$/, '')}/sidebar/file?sessionId=abc&path=images%2Fexample.png&cwd=%2Frepo`,
+      )
+    },
+  )
+
+  it.each([
+    ['README.md', '../images/example.png'],
+    ['docs/README.md', '../../images/example.png'],
+  ])('resolves parent segments from relative tab %s against cwd', (filePath, destination) => {
+    const parentScope: SessionScope = { sessionId: 'abc', cwd: '/workspace/project' }
+    expect(createMarkdownPathImages(parentScope, filePath, APP).resolve(destination)).toBe(
+      'dsh-app://app/api/file?path=%2Fworkspace%2Fimages%2Fexample.png',
+    )
+    expect(createMarkdownPathImages(parentScope, filePath, ORIGIN).resolve(destination)).toBe(
+      'http://127.0.0.1:3080/sidebar/file?sessionId=abc&path=..%2Fimages%2Fexample.png&cwd=%2Fworkspace%2Fproject',
+    )
+  })
+
+  it('resolves parent segments beside a bare document against a Windows cwd on desktop', () => {
+    const images = createMarkdownPathImages(
+      { sessionId: 'abc', cwd: 'C:\\workspace\\project' },
+      'README.md',
+      APP,
+    )
+    expect(images.resolve('../images/example.png')).toBe(
+      'dsh-app://app/api/file?path=C%3A%5Cworkspace%5Cimages%5Cexample.png',
+    )
   })
 
   it('keeps the relative spelling with a cwd on the browser page base', () => {
@@ -258,6 +309,18 @@ describe('resolveLocalMediaDest (raw HTML leaves)', () => {
     )
   })
 
+  it.each([ORIGIN, 'https://host.example.test/proxy/3080/', APP])(
+    'keeps raw HTML images beside a bare document workspace-relative on %s',
+    (baseUrl) => {
+      expect(resolveLocalMediaDest('./images/example.png', scope, 'README.md', baseUrl)).toBe(
+        `${baseUrl.replace(/\/$/, '')}/sidebar/file?sessionId=abc&path=images%2Fexample.png&cwd=%2Frepo`,
+      )
+      expect(resolveLocalMediaDest('../images/example.png', scope, 'README.md', baseUrl)).toBe(
+        `${baseUrl.replace(/\/$/, '')}/sidebar/file?sessionId=abc&path=..%2Fimages%2Fexample.png&cwd=%2Frepo`,
+      )
+    },
+  )
+
   it('rewrites a raw HTML file: URL through the media route', () => {
     expect(resolveLocalMediaDest('file:///repo/docs/shot.png', scope, '/repo/docs/readme.md', ORIGIN)).toBe(
       'http://127.0.0.1:3080/sidebar/file?sessionId=abc&path=%2Frepo%2Fdocs%2Fshot.png&cwd=%2Frepo',
@@ -280,6 +343,22 @@ describe('resolveLocalMediaDest (raw HTML leaves)', () => {
 
 describe('rewriteLocalImageUrls: CommonMark angle destinations and titles (N7)', () => {
   const MEDIA = (path: string): string => `${ORIGIN}/sidebar/file?sessionId=abc&path=${encodeURIComponent(path)}&cwd=%2Frepo`
+
+  it('keeps inline and reference images beside a bare document workspace-relative', () => {
+    const md = '![inline](./images/example.png)\n\n![logo][logo]\n\n[logo]: images/logo.svg'
+    expect(rewriteLocalImageUrls(md, scope, 'README.md', ORIGIN)).toBe(
+      `![inline](${MEDIA('images/example.png')})\n\n![logo][logo]\n\n[logo]: ${MEDIA('images/logo.svg')}`,
+    )
+  })
+
+  it.each([
+    ['README.md', '../images/example.png'],
+    ['docs/README.md', '../../images/example.png'],
+  ])('preserves workspace-relative parent segments in legacy tab %s', (filePath, destination) => {
+    expect(rewriteLocalImageUrls(`![a](${destination})`, scope, filePath, ORIGIN)).toBe(
+      `![a](${MEDIA('../images/example.png')})`,
+    )
+  })
 
   it('rewrites an angle-delimited destination, including its space', () => {
     const out = rewriteLocalImageUrls('![a](<./cat image.png>)', scope, '/repo/readme.md', ORIGIN)

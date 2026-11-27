@@ -80,6 +80,9 @@
 - 🧩 **DSH master（0.2.2-rc.3 之后）删除 `connection.requestRejection` 后，`/sidebar/*` 不再全部裸 400**（[#1204](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1204)）：HTTP/WS 准入改为先调用 `requestRejection`（rc.1–rc.3 行为不变），该方法缺席时改用官方替代 `admit` 并读同一个 `rejection` 字段；两者都没有时仍然直接抛错，不重建信任表。此前宿主删掉该方法后，每个请求在第一句就抛 `TypeError`，被宿主兜底成空 body 的 400，界面只剩 `HTTP 400`。
   - 🧪 测试：`tests/trusted-hosts.spec.ts` 新增「`requestRejection` 缺席时走 `admit`」三档（放行 / 401 / 403），并保留「两者都没有仍抛 TypeError」的既有断言。
 
+- 🖼️ **从会话中打开的 Markdown 裸文件名也能正确显示相对图片**：当打开地址只有 `README.md` 等文件名、没有目录部分时，以会话工作区为基准解析图片，不再误当成文件系统根目录；相对地址中的前导 `..` 也保留给宿主按工作区路径解析。适用于 Markdown 图片语法及内嵌 HTML 图片。
+  - 🧪 测试：`tests/markdown-images.spec.ts`、`tests/markdown-html-render.spec.tsx`。
+
 - 💻 **侧边对话显示 PTC（run_code）工具调用树**：`run_code` 行收起时显示模型写的 description，展开后显示程序代码和最终结果；程序内通过 PTC 派发的 bash / read / grep / edit 等子调用缩进挂在它下方，根行收起也可见，并复用终端 / diff / read / search / web 结构卡片。运行中、失败、无 start 的 dispatch 都有对应显示；PTC 内成功 write/edit 的文件也进入可点击路径提及。`present` 仍保留顶层交付卡片，同时在子调用区留下一行。
   - 🧪 测试：`tests/sidechat-ptc-rows.spec.ts`（配对 / 运行态 / 失败 / 无 start / 嵌套 / 父行缺失 / 身份复用）、`tests/sidechat-ptc-subcalls.spec.tsx`（description 摘要、代码体、缩进与卡片、根行收起仍可见）、`tests/sidechat-mention-sources.spec.tsx`（PTC mutation 进入提及、read 不进入）。
 

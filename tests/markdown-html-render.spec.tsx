@@ -393,6 +393,33 @@ describe('MarkdownDocument (local markdown images)', () => {
     await unmount(root)
   })
 
+  it.each([
+    {
+      label: 'browser behind a reverse proxy',
+      renderMedia: media,
+      expectedMarkdownSrc: 'http://gui.origin/proxy/3080/sidebar/file?sessionId=s1&path=images%2Fexample.png&cwd=%2Fws',
+    },
+    {
+      label: 'desktop shell',
+      renderMedia: desktopMedia,
+      expectedMarkdownSrc: 'dsh-app://app/api/file?path=%2Fws%2Fimages%2Fexample.png',
+    },
+  ])('renders markdown and raw HTML images from a bare document ($label)', async ({ renderMedia, expectedMarkdownSrc }) => {
+    const { container, root } = await renderDocument([
+      '<picture><img src="./images/raw.png" alt="raw"/></picture>',
+      '',
+      '![markdown](./images/example.png)',
+    ].join('\n'), { ...renderMedia, path: 'README.md' })
+    const markdown = container.querySelector('img[alt="markdown"]')
+    expect(markdown, 'the root-document image must render as <img>, not alt fallback').not.toBeNull()
+    // The desktop host appends a freshness counter to its authenticated URL.
+    expect(markdown?.getAttribute('src')?.split('&load=')[0]).toBe(expectedMarkdownSrc)
+    expect(container.querySelector('img[alt="raw"]')?.getAttribute('src')).toBe(
+      `${renderMedia.baseUrl}sidebar/file?sessionId=s1&path=images%2Fraw.png&cwd=%2Fws`,
+    )
+    await unmount(root)
+  })
+
   it('keeps remote image destinations untouched', async () => {
     const { container, root } = await renderDocument('![r](https://example.com/x.png)')
     const img = container.querySelector('img')
