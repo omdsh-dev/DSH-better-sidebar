@@ -25,6 +25,7 @@ dsh-better-sidebar is built with the community. This file records the PR authors
 | @iasiv5 | Responsive multi-repo switcher with location labels | [#1130](https://github.com/omdsh-dev/DSH-better-sidebar/pull/1130) |
 | @wang-kaopu | Clickable absolute Markdown paths in chat | [#882](https://github.com/omdsh-dev/DSH-better-sidebar/pull/882) |
 | @llwinty | WSL repository roots keep their UNC spelling, so the Git tab loads | [#1206](https://github.com/omdsh-dev/DSH-better-sidebar/pull/1206) |
+| @whalestar-doc | Git refresh failures log the real error; the empty-pane card grid scrolls instead of clipping | [#1226](https://github.com/omdsh-dev/DSH-better-sidebar/pull/1226) |
 
 | @WinterXMQ | The bottom workbench collapses itself while the right panel is fullscreen | [#1233](https://github.com/omdsh-dev/DSH-better-sidebar/pull/1233) |
 | @hairyf | Native tab icons match the host title geometry; the task-graph view switch is square | [#945](https://github.com/omdsh-dev/DSH-better-sidebar/pull/945), [#948](https://github.com/omdsh-dev/DSH-better-sidebar/pull/948) |

@@ -563,8 +563,8 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 }
 
 /* An empty pane's welcome cards: a responsive grid of openable types — as
-   many per row as the pane width allows; rows that cannot fit the pane
-   height are clipped (never scrolled or squeezed smaller).
+   many per row as the pane width allows; when the pane is too short for all
+   rows the grid scrolls instead of hiding the cards below the fold (#1086).
 
    The card itself mirrors DSH's OWN guide capsule (the built-in tab types'
    entry box, `ui-sidebar-right`'s GuideBody / `ui-sidebar-terminal`'s
@@ -581,7 +581,10 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   align-content: start;
   gap: 12px;
   padding: 12px;
-  overflow: hidden;
+  /* Many-panel sessions overflow this grid; scroll instead of clipping the
+     last row (issue #1086). */
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .paneCard {

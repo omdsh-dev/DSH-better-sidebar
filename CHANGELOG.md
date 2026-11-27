@@ -18,6 +18,9 @@
 
 - 🧪 **DSH 0.2.3-alpha.2（alpha 线）适配**：14 条 DSH peer 与 `engines.dsh` 同批抬到 `0.2.3-alpha.2`，Cordis 依赖线同步到 `4.2.0-alpha.1`。宿主删除了 `@deepseek-ai/dsh-llm` 的 `./brand` 子路径，类型改从 `./types` 引入；目录投影的权威事件从 `working-directory/change` 换成 `workspace-root/change`，侧边对话的 cwd 边界戳记与工作树跟随随之调整；同时删除了所有旧宿主兼容分支（准入 `requestRejection` 回退、旧目录事件、旧 `data-slot` 锚点、`getOrigin` 探测）——这一版只服务 0.2.3-alpha.2+，更早宿主固定 v0.33.0。
 
+- 🧷 **底部工作台的空面板卡片可滚动**（[#1086](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1086)，贡献者 PR [#1226](https://github.com/omdsh-dev/DSH-better-sidebar/pull/1226) @whalestar-doc）：面板高度不足时，可打开类型卡片的网格原来被 `overflow: hidden` 裁掉最后一行，用户看不到也点不到；现在内容超出时网格滚动，矮面板 / 窄栏里的所有类型都能到达。
+- 🩺 **Git 状态刷新失败保留真实原因**（[#1189](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1189)，贡献者 PR [#1226](https://github.com/omdsh-dev/DSH-better-sidebar/pull/1226) @whalestar-doc）：客户端不再吞掉异常，抓到的错误先以 `console.warn` 输出，排查「加载失败」时能区分缺 git、超时和仓库错误；界面文案不变。
+
 - 🎛️ **紧凑划选菜单**：操作菜单与译文面板分开定宽；改写悬停时向有空间的一侧展开二级浮层，也支持点击与键盘进入。窄屏仍保持侧弹，必要时覆盖部分主菜单。翻译结果的「返回 / 复制」改为并排底栏，长译文单独滚动。
 
 - 🧭 **开始页更直观**：「线索收集(beta)」用一行说明其用途——本地文件、飞书与 GitHub 的上下文信息中心；「侧边对话」移除 beta 标识。默认位置交换侧边对话与新建终端，用户已保存的自定义顺序不变。
