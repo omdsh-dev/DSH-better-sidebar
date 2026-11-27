@@ -76,8 +76,31 @@ function createWorkflowEventMirror(ctx: Context): { entries(sessionId: string): 
  * one), matching the Subagent page's own fallback lineage.
  * @param ctx - host plugin context.
  */
+/** One session's folded runs, keyed by the exact input window they came from. */
+interface RunCacheEntry {
+  /** Store log length when the fold ran. */
+  length: number
+  /** Store log's last event seq when the fold ran (-1 for an empty log). */
+  lastSeq: number
+  /** Live-mirror length when the fold ran. */
+  mirrorLength: number
+  /** Live mirror's last seq when the fold ran (-1 for an empty mirror). */
+  mirrorLastSeq: number
+  runs: WorkflowRunView[]
+}
+
 export function buildWorkflowsApi(ctx: Context): SidebarWorkflowRoutes {
   const mirror = createWorkflowEventMirror(ctx)
+  /**
+   * Per-session fold cache.
+   *
+   * The store log is append-only and the mirror is a bounded ring, so
+   * `(length, last seq)` of both identifies the exact input the previous fold
+   * saw. A settled session's runs never change, yet every 5 s poll re-read and
+   * re-folded every session of the tree. Entries are pruned to the tree being
+   * reported so a session that leaves it stops being retained.
+   */
+  const folds = new Map<string, RunCacheEntry>()
   /** The tree's session ids: the root plus every descendant the catalog knows. */
   const treeSessionIds = async (rootSessionId: string): Promise<string[]> => {
     const subagents = ctx.get('subagents') as SidebarSubagentsService | undefined
@@ -96,20 +119,39 @@ export function buildWorkflowsApi(ctx: Context): SidebarWorkflowRoutes {
   return {
     async list(payload) {
       const rootSessionId = requireString(payload, 'rootSessionId')
+      const ids = await treeSessionIds(rootSessionId)
+      const tree = new Set(ids)
+      for (const key of folds.keys()) if (!tree.has(key)) folds.delete(key)
       const runs: WorkflowRunView[] = []
-      for (const sessionId of await treeSessionIds(rootSessionId)) {
+      for (const sessionId of ids) {
         try {
+          const stored = ctx.sessions.get(sessionId)?.snapshotEvents() ?? []
+          const mirrored = mirror.entries(sessionId)
+          const length = stored.length
+          const lastSeq = length === 0 ? -1 : stored[length - 1]!.seq
+          const mirrorLength = mirrored.length
+          const mirrorLastSeq = mirrorLength === 0 ? -1 : mirrored[mirrorLength - 1]!.seq
+          const cached = folds.get(sessionId)
+          if (cached !== undefined
+            && cached.length === length
+            && cached.lastSeq === lastSeq
+            && cached.mirrorLength === mirrorLength
+            && cached.mirrorLastSeq === mirrorLastSeq) {
+            runs.push(...cached.runs)
+            continue
+          }
           // Merge the store's event log with the live mirror, deduped by
           // seq — an event mirrored live AND already stored never
           // double-folds.
           const bySeq = new Map<number, SidebarSessionEvent>()
-          for (const event of ctx.sessions.get(sessionId)?.snapshotEvents() ?? []) {
+          for (const event of stored) {
             if (event.type.startsWith('tool-workflow/')) bySeq.set(event.seq, event)
           }
-          for (const event of mirror.entries(sessionId)) bySeq.set(event.seq, event)
-          if (bySeq.size === 0) continue
+          for (const event of mirrored) bySeq.set(event.seq, event)
           const ordered = [...bySeq.values()].sort((left, right) => left.seq - right.seq)
-          runs.push(...foldWorkflowRuns(ordered, sessionId))
+          const folded = bySeq.size === 0 ? [] : foldWorkflowRuns(ordered, sessionId)
+          folds.set(sessionId, { length, lastSeq, mirrorLength, mirrorLastSeq, runs: folded })
+          runs.push(...folded)
         } catch {
           // One session's log is not readable/foldable: skip only it.
         }
