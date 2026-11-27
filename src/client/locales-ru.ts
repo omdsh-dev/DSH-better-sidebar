@@ -564,6 +564,7 @@ export const ru: Record<string, string> = {
   sideChatDequeue: 'Убрать из очереди',
   sideChatRunError: 'Сбой выполнения: {message}',
   sideChatTerminalAborted: 'Этот ход остановлен',
+  sideChatTerminalBlocked: 'Хост заблокировал этот ход (возможно, этот боковой диалог в архиве; попробуйте новый поток)',
   sideChatTerminalMaxTokens: 'Достигнут лимит вывода — ответ обрезан',
   sideChatToolArguments: 'Аргументы',
   sideChatToolResult: 'Результат',

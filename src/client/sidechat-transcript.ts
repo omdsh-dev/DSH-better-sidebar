@@ -212,9 +212,11 @@ export type SidechatTranscriptRow =
   /** A turn that ended WITHOUT a normal completion, so the transcript says why
    *  it stops there instead of looking deliberately finished: the reader (or
    *  the agent) stopped it (`aborted`), or the output limit cut it
-   *  (`max-tokens`). One row per turn — the attempt's terminal finish reason and
-   *  the `turn/end` that repeats it are the same event. */
-  | { kind: 'terminal'; seq: number; reason: 'aborted' | 'max-tokens' }
+   *  (`max-tokens`), or the host refused the turn altogether (`blocked`, e.g.
+   *  an archived thread — see #1265; without a row the composer looked dead).
+   *  One row per turn — the attempt's terminal finish reason and the
+   *  `turn/end` that repeats it are the same event. */
+  | { kind: 'terminal'; seq: number; reason: 'aborted' | 'max-tokens' | 'blocked' }
   /** One `image` / `file` content block of an ASSISTANT message, rendered in
    *  block order: the assistant branch explodes a message per content block, so
    *  an attachment needs its own row to keep that order. A USER message keeps
@@ -870,11 +872,14 @@ function attemptFailure(stream: unknown): string | undefined {
  * both mean "stopped before it finished", while `max-tokens` means the model hit
  * the output limit and the answer is cut off.
  */
-function terminalReason(reason: unknown): 'aborted' | 'max-tokens' | undefined {
+function terminalReason(reason: unknown): 'aborted' | 'max-tokens' | 'blocked' | undefined {
   if (reason === null || typeof reason !== 'object' || Array.isArray(reason)) return undefined
   const kind = (reason as { kind?: unknown }).kind
   if (kind === 'aborted' || kind === 'interrupted') return 'aborted'
   if (kind === 'max-tokens') return 'max-tokens'
+  // The host's pre-step gate: the turn never reached a model request. Left
+  // unmapped it renders NOTHING, which reads as "the message was never sent".
+  if (kind === 'blocked') return 'blocked'
   return undefined
 }
 
@@ -884,7 +889,7 @@ function terminalReason(reason: unknown): 'aborted' | 'max-tokens' | undefined {
  * read for the stop/limit kinds instead of errors). Undefined for every other
  * ending.
  */
-function attemptTerminal(stream: unknown): 'aborted' | 'max-tokens' | undefined {
+function attemptTerminal(stream: unknown): 'aborted' | 'max-tokens' | 'blocked' | undefined {
   if (!Array.isArray(stream)) return undefined
   for (const record of stream) {
     if (record === null || typeof record !== 'object') continue
