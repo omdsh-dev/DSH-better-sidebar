@@ -36,6 +36,7 @@ import { decodeHtmlUrl } from './html-route.ts'
 import { registerBundleRoute } from './bundle-route.ts'
 import { createDirectoryWatchers, type DirectoryWatchers } from './fs-watch.ts'
 import { createSidechatPushHub } from './sidechat-push.ts'
+import { FEATURED_SOURCE, integrateFeaturedPlugins } from './featured-source.ts'
 import { createSelectionTranslationHandler } from './selection-translation.ts'
 import { parentModelSelection, type SidechatLogEvent } from './sidechat-core.ts'
 import { launchExternal } from './open-external.ts'
@@ -1964,6 +1965,19 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
       })
     },
   }), 'dsh-better-sidebar: side-chat push WebSocket')
+
+  // ── Community "Featured plugins" integration ───────────────────────────
+  // The plugins page's featured tab: this plugin contributes its catalog
+  // source to the cross-plugin `featured-plugins` service, and the first
+  // activated integrator additionally serves the aggregate route the full
+  // dsh-featured plugin reads (see featured-source.ts). The module degrades
+  // internally; this guard is the last line so a failure can never take the
+  // sidebar host down.
+  try {
+    integrateFeaturedPlugins(ctx, FEATURED_SOURCE)
+  } catch (error) {
+    ctx.logger.warn('dsh-better-sidebar: featured plugins integration failed: %s', error instanceof Error ? error.message : String(error))
+  }
 
   ctx.effect(() => () => {
     openToolsDisposers?.()

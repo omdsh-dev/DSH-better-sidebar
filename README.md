@@ -127,6 +127,8 @@ If something fails, check the FAQ table in https://github.com/omdsh-dev/DSH-bett
 
 `ctx.betterSidebar` offers five extension points to every plugin — `registerTab` / `registerFileViewer` / `registerFileIcon` / `registerFileAction` / `registerTabAction`; the built-in 6 tabs + 5 viewers use the very same API. The GitHub topic [`dsh-better-sidebar`](https://github.com/topics/dsh-better-sidebar) already lists **30+ ecosystem plugins**; the full integration guide is at **[docs/external-plugin-guide.md](./docs/external-plugin-guide.md)**.
 
+The Plugins page also gains a community **Featured plugins** tab (the [dsh-featured](https://github.com/skillpie/dsh-plugins/tree/main/dsh-featured) ecosystem): install the full plugin from it and it takes over the tab. Catalog listings are curated separately at skillpie.cn and are not implied by hosting this entry.
+
 ```ts
 import type {} from 'dsh-better-sidebar'  // triggers the ctx.betterSidebar type merge
 export const inject = ['betterSidebar']

@@ -1276,4 +1276,7 @@ export const ja: Record<string, string> = {
   clueTabWorkspaceAria: '閲覧ワークスペースを切り替え',
   clueDetailUnsaved: '未保存の変更があります。先に保存するか、フッターから破棄してください。',
   clueDetailDiscard: '変更を破棄',
+  featuredTabLabel: 'おすすめプラグイン',
+  featuredEntryDesc: 'コミュニティ厳選のプラグインをひとつのタブで：検索、タグ絞り込み、ワンクリックインストール、README 詳細。',
+  featuredInstallFull: '完全版をインストール',
 }
