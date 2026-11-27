@@ -17,7 +17,7 @@
  */
 import { createContext, useContext, useSyncExternalStore, type ReactNode } from 'react'
 import {
-  IconCloseOutlineRegular, IconContextInjectionOutlineRegular, IconWarningTriangleOutlineRegular,
+  IconCloseOutlineRegular, IconContextInjectionOutlineRegular, IconWarningTriangleOutlineRegular, Tooltip,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { IconButton } from './ui/index.ts'
 import type { Context, SidebarSubagentAddress } from '../context-types.ts'
@@ -31,6 +31,7 @@ import {
 import { mountedSessionId } from './native/surface.ts'
 import { t, type CopyKey } from './locales.ts'
 import css from './context-diagnostics.module.css'
+import sidebarCss from './sidebar.module.css'
 
 /** The entry id both slot registrations use. */
 export const HEADER_ENTRY_ID = 'dsh-better-sidebar:context-diagnostics'
@@ -128,21 +129,24 @@ function ContextDiagnosticsHeader(props: {
   const snapshot = useDiagnosticsSnapshot(controller)
   if (snapshot?.available !== true) return null
   const busy = snapshot.busy === true
+  const label = t('contextDiagnostics')
   return (
-    <IconButton
-      size="sm"
-      className={css.headerButton}
-      {...{ [DIAGNOSTICS_ENTRY_ATTR]: 'session' satisfies DiagnosticsEntryKind }}
-      aria-busy={busy ? 'true' : undefined}
-      icon={<IconContextInjectionOutlineRegular size={14} />}
-      label={t('contextDiagnostics')}
-      title={t('contextDiagnostics')}
-      disabled={busy}
-      onClick={() => {
-        if (!isCurrent()) return
-        controller.open({ sessionId, label: t('contextDiagnosticsTarget') })
-      }}
-    />
+    <Tooltip label={label} side="bottom" delayMs={500} disabled={busy}>
+      <button
+        type="button"
+        className={`${sidebarCss.toggleButton} ${css.headerButton}`}
+        {...{ [DIAGNOSTICS_ENTRY_ATTR]: 'session' satisfies DiagnosticsEntryKind }}
+        aria-busy={busy ? 'true' : undefined}
+        aria-label={label}
+        disabled={busy}
+        onClick={() => {
+          if (!isCurrent()) return
+          controller.open({ sessionId, label: t('contextDiagnosticsTarget') })
+        }}
+      >
+        <IconContextInjectionOutlineRegular size={14} />
+      </button>
+    </Tooltip>
   )
 }
 
