@@ -5,7 +5,7 @@
  * Unknown formats stay read-only and never acquire a generic save path.
  */
 import { createElement, useCallback, useId, useState, useSyncExternalStore, type KeyboardEvent, type ReactNode } from 'react'
-import { MarkdownText, type MarkdownPathImages } from '@deepseek-ai/dsh-client-ui-primitives'
+import { MarkdownText, type MarkdownPathImages } from '@deepseek-ai/dsh-client-ui-primitives/client'
 import { BUILTIN_SOURCE_IDS } from '../../clues/types.ts'
 import { hostHttpBase } from '../desktop-env.ts'
 import { desktopFileUrl } from '../markdown-images.ts'

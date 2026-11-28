@@ -22,7 +22,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode
 import {
   IconChevronUpOutlineRegular, IconCopyOutlineRegular, IconStopFillRegular, StateDot, Tag,
   TerminalBlock, type TagTone,
-} from '@deepseek-ai/dsh-client-ui-primitives'
+} from '@deepseek-ai/dsh-client-ui-primitives/client'
 import type { SidebarClientJobsService, SidebarJobView, SidebarObservedJob } from '../context-types.ts'
 import type { ContextDiagnosticTarget } from './context-diagnostics.ts'
 import { ContextDiagnosticsButton } from './context-diagnostics-ui.tsx'

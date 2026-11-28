@@ -35,7 +35,7 @@
  */
 import { Fragment, createElement, useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { ReactNode } from 'react'
-import { IconRefreshOutlineRegular, IconRightUpOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconRefreshOutlineRegular, IconRightUpOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives/client'
 import { ActionButton, IconButton } from '../../ui/kit.tsx'
 import { Disclosure, ErrorBlock } from '../../ui/patterns.tsx'
 import type { WindowDocumentContent, WindowHandle } from '../../windows/types.ts'

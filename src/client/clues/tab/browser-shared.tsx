@@ -9,7 +9,7 @@
  */
 import { useId } from 'react'
 import type { ReactNode } from 'react'
-import { FileTypeIcon } from '@deepseek-ai/dsh-client-ui-primitives'
+import { FileTypeIcon } from '@deepseek-ai/dsh-client-ui-primitives/client'
 import { VscReferences } from 'react-icons/vsc'
 import type {
   ClueCandidate,

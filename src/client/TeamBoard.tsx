@@ -24,7 +24,7 @@ import {
   IconEllipsisOutlineRegular, IconPlusOutlineRegular, IconRefreshOutlineRegular, IconTrashOutlineRegular,
   IconUserOutlineRegular, StateDot, Tag,
   type MenuEntry,
-} from '@deepseek-ai/dsh-client-ui-primitives'
+} from '@deepseek-ai/dsh-client-ui-primitives/client'
 import type { SidebarTeamTaskView } from '../context-types.ts'
 import type { TeamMemberRow } from './team-projection.ts'
 import { taskDotState, taskStatusLabel, taskTone } from './tasks-shared.tsx'

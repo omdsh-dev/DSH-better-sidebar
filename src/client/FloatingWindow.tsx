@@ -41,7 +41,7 @@ import {
   type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject,
 } from 'react'
 import { createPortal } from 'react-dom'
-import { IconCloseFillRegular, IconFullscreenOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconCloseFillRegular, IconFullscreenOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives/client'
 import { ActionButton, IconButton } from './ui/index.ts'
 import { createFrameBatcher } from './frame-batcher.ts'
 import { isNarrowWidth } from './breakpoints.ts'

@@ -1,6 +1,6 @@
 import { forwardRef, type ComponentProps, type ReactNode } from 'react'
 import clsx from 'clsx'
-import { Menu as HostMenu, MenuSurface as HostMenuSurface } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Menu as HostMenu, MenuSurface as HostMenuSurface } from '@deepseek-ai/dsh-client-ui-primitives/client'
 import design from './design.module.css'
 import css from './menu.module.css'
 

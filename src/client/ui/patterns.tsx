@@ -28,7 +28,7 @@
  */
 import type { CSSProperties, MouseEvent, ReactNode } from 'react'
 import clsx from 'clsx'
-import { IconChevronRightOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconChevronRightOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives/client'
 import { ActionButton } from './kit.tsx'
 import css from './patterns.module.css'
 

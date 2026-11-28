@@ -33,7 +33,7 @@ import type { ReactNode } from 'react'
 import {
   IconCheckOutlineRegular,
   IconPlusOutlineRegular,
-} from '@deepseek-ai/dsh-client-ui-primitives'
+} from '@deepseek-ai/dsh-client-ui-primitives/client'
 import type { ClueCandidate, CluePack, CluesPacksResult } from '../../../clues/types.ts'
 import type { BetterSidebarCluesClientFace } from '../registry.ts'
 import type { BetterSidebarWindowsClientFace, WindowHandle } from '../../windows/types.ts'

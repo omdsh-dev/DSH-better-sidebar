@@ -1,6 +1,6 @@
 /** Whole-resource discussion. Source replies/reviews stay separate from the body. */
 import { useId, useMemo, useRef, useState, type ReactNode } from 'react'
-import { MarkdownText, type MarkdownPathImages } from '@deepseek-ai/dsh-client-ui-primitives'
+import { MarkdownText, type MarkdownPathImages } from '@deepseek-ai/dsh-client-ui-primitives/client'
 import type { ClueComment, ClueCommentCapabilities, ClueDiscussionPage } from '../../../clues/types.ts'
 import { markdownTextProps } from '../../markdown-labels.tsx'
 import { t, type CopyKey } from '../../locales.ts'

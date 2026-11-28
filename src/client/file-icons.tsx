@@ -19,7 +19,7 @@
  * `ctx.betterSidebar.registerFileIcon`; their registrations win over these.
  */
 import type { ReactNode } from 'react'
-import { FileTypeIcon } from '@deepseek-ai/dsh-client-ui-primitives'
+import { FileTypeIcon } from '@deepseek-ai/dsh-client-ui-primitives/client'
 
 /**
  * A file row: the host's own classifier and artwork for any path. Unknown

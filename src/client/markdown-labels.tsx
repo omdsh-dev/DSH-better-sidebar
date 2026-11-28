@@ -24,8 +24,8 @@
  * it does in DSH's own chat.
  */
 import type { ComponentProps } from 'react'
-import { MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { MarkdownFileMentions } from '@deepseek-ai/dsh-client-ui-primitives'
+import { MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives/client'
+import type { MarkdownFileMentions } from '@deepseek-ai/dsh-client-ui-primitives/client'
 
 /** The code-card chrome the plugin threads through its own props (e.g.
  *  MermaidMarkdownProps.codeLabels — the chunk contract carries the same

@@ -310,9 +310,12 @@ describe('sidechat.start', () => {
       mode: 'continuable',
       provider: 'sidechat',
       label: sideLabel('explain the event flow'),
-      agentProvider: 'test',
-      agentModel: 'model-x',
     })
+    // DSH 0.2.3-alpha.3 moved model choices out of the descriptor into the
+    // child's own `model/selection` events: the route still rides the agent
+    // options, and the descriptor must NOT carry the historical fields.
+    expect(options.seed.at(-1)?.data).not.toHaveProperty('agentProvider')
+    expect(options.seed.at(-1)?.data).not.toHaveProperty('agentModel')
     // First contact is SPLIT: the boundary rides agent.inject (plugin-stamped
     // context, no wake), the question is the follow-up that wakes the driver.
     // The stamp is the plugin's producer-owned kind: session format v4
@@ -462,11 +465,12 @@ describe('sidechat.start', () => {
       seed: readonly { type: string; data: Record<string, unknown> }[]
     }
     expect(options.agentOptions).toEqual({ provider: 'openrouter', model: 'ox-alpha', reasoningEffort: 'high' })
-    // The durable descriptor keeps the same route (honest catalog row).
-    expect(options.seed.at(-1)?.data).toMatchObject({
-      agentProvider: 'openrouter',
-      agentModel: 'ox-alpha',
-    })
+    // DSH 0.2.3-alpha.3 keeps model choices out of the durable descriptor (it
+    // carries identity only); the route rides agentOptions and the child's own
+    // `model/selection` seam. A historical agentProvider/agentModel here would
+    // be rejected by the descriptor input type.
+    expect(options.seed.at(-1)?.data).not.toHaveProperty('agentProvider')
+    expect(options.seed.at(-1)?.data).not.toHaveProperty('agentModel')
   })
 
   it('inherits the parent last-used route from its request headers when no explicit switch is pending', async () => {

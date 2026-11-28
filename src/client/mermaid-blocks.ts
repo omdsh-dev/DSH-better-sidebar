@@ -10,7 +10,7 @@
  */
 
 import type { MarkdownCopyLabels } from './markdown-labels.tsx'
-import type { MarkdownPathImages } from '@deepseek-ai/dsh-client-ui-primitives'
+import type { MarkdownPathImages } from '@deepseek-ai/dsh-client-ui-primitives/client'
 
 /** One fenced mermaid diagram lifted out of the markdown source. */
 export interface MermaidBlock {

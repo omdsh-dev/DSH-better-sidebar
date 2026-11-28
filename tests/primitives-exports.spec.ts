@@ -18,10 +18,12 @@ import { describe, expect, it } from 'vitest'
 import { readFileSync, readdirSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import * as primitives from '@deepseek-ai/dsh-client-ui-primitives'
+import * as primitives from '@deepseek-ai/dsh-client-ui-primitives/client'
 
-/** The specifier whose named exports the plugin depends on. */
-const PACKAGE = '@deepseek-ai/dsh-client-ui-primitives'
+/** The specifier whose named exports the plugin depends on (DSH 0.2.3-alpha.3
+ *  moved the browser implementation to the `/client` entry; the root id is the
+ *  host-side empty `apply`). */
+const PACKAGE = '@deepseek-ai/dsh-client-ui-primitives/client'
 
 const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)))
 

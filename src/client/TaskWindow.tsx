@@ -23,7 +23,7 @@ import clsx from 'clsx'
 import {
   IconCheckOutlineRegular, IconEditOutlineRegular,
   IconRefreshOutlineRegular, IconTrashOutlineRegular, Input, MarkdownDelegateProvider, MarkdownText, Pill, StateDot, Tag,
-} from '@deepseek-ai/dsh-client-ui-primitives'
+} from '@deepseek-ai/dsh-client-ui-primitives/client'
 import type { Context, SidebarTeamTaskView } from '../context-types.ts'
 import { api } from './api.ts'
 import { markdownTextProps } from './markdown-labels.tsx'

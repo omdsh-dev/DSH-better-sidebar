@@ -1,4 +1,4 @@
-import type { MarkdownPathImages } from '@deepseek-ai/dsh-client-ui-primitives'
+import type { MarkdownPathImages } from '@deepseek-ai/dsh-client-ui-primitives/client'
 import type { JsonValue } from '../../../../clues/types.ts'
 
 /** Only a provider-supplied repo and immutable ref may resolve GitHub-relative media. */

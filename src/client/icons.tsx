@@ -4,7 +4,7 @@
  * the tab descriptors (`descriptor.icon`), not in a type-keyed switch — the
  * icon mapping was registry-ized with the tab types.
  */
-import { IconPanelLeftOutlineRegular, type IconProps } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconPanelLeftOutlineRegular, type IconProps } from '@deepseek-ai/dsh-client-ui-primitives/client'
 
 /** Bottom toggle: reuse the native panel glyph, rotated toward the bottom. */
 export const IconPanelBottomOutline16 = ({ size = 16, className }: IconProps) => (

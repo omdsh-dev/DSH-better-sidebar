@@ -40,7 +40,7 @@ import type {
   ClueResourceState,
   ClueResourceTime,
 } from '../../clues/types.ts'
-import { IconCheckOutlineRegular, IconChevronRightOutlineRegular, IconClockOutlineRegular, IconCloseOutlineRegular, IconRightUpOutlineRegular, StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconCheckOutlineRegular, IconChevronRightOutlineRegular, IconClockOutlineRegular, IconCloseOutlineRegular, IconRightUpOutlineRegular, StateDot } from '@deepseek-ai/dsh-client-ui-primitives/client'
 import { t } from '../locales.ts'
 import css from './resource-summary.module.css'
 

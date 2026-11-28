@@ -54,15 +54,19 @@ const NODE_BUILTINS = new Set([
   ...builtinModules.map(id => `node:${id}`),
 ])
 
-/** Module specifiers the web shell shares into the frozen module table (the official PLATFORM_MODULES list; `dsh-client-runtime` was removed upstream in DSH 0.1.2-alpha and no chunk requires it). */
+/** Module specifiers the web shell shares into the frozen module table. DSH
+ *  0.2.3-alpha.3 split every Client package into a host root entry and a
+ *  browser `/client` entry: the frozen table (and every official plugin
+ *  bundle) uses the `/client` ids, while the root id now resolves to the
+ *  host-side empty `apply`. */
 const CLIENT_EXTERNALS = [
   'react',
   'react/jsx-runtime',
   'react-dom',
   'react-dom/client',
   'cordis',
-  '@deepseek-ai/dsh-client-ui-slots',
-  '@deepseek-ai/dsh-client-ui-primitives',
+  '@deepseek-ai/dsh-client-ui-slots/client',
+  '@deepseek-ai/dsh-client-ui-primitives/client',
 ]
 
 /**

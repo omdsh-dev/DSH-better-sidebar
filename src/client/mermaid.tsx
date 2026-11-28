@@ -27,7 +27,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { createRoot, type Root } from 'react-dom/client'
-import { IconCopyOutlineRegular, MarkdownText, writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconCopyOutlineRegular, MarkdownText, writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives/client'
 import { isDarkScheme, subscribeColorScheme } from './theme.ts'
 import { markdownTextProps } from './markdown-labels.tsx'
 import { t } from './locales.ts'

@@ -54,13 +54,13 @@ import {
   IconPlusOutlineRegular,
   IconSettingsOutlineRegular,
   Modal,
-} from '@deepseek-ai/dsh-client-ui-primitives'
+} from '@deepseek-ai/dsh-client-ui-primitives/client'
 import clsx from 'clsx'
 import { SelectionSettingsPanel } from './SelectionSettings.tsx'
 import { selectionSettingsOf } from '../selection-settings.ts'
 // Type-only: pulls the settings shell's SlotMap merges ('settings.section').
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
-import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
+import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots/client'
 import { CLUE_PREFS_ID, CLUE_WINDOW_SURFACE_SETTING, type SidebarPrefs } from '../prefs-shared.ts'
 import { api } from './api.ts'
 import { parsePrefs, syncClueWindowSurface } from './prefs.ts'

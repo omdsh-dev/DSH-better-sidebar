@@ -1,4 +1,4 @@
-import type { MarkdownFileMentions } from '@deepseek-ai/dsh-client-ui-primitives'
+import type { MarkdownFileMentions } from '@deepseek-ai/dsh-client-ui-primitives/client'
 import type { HTMLAttributes } from 'react'
 import type { Context } from '../context-types.ts'
 import { t } from './locales.ts'

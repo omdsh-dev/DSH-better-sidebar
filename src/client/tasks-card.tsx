@@ -26,7 +26,7 @@
  */
 import type { ReactNode } from 'react'
 import clsx from 'clsx'
-import { IconChevronUpOutlineRegular, StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconChevronUpOutlineRegular, StateDot } from '@deepseek-ai/dsh-client-ui-primitives/client'
 import type { TasksNodeState } from './tasks-model.ts'
 import { nodeDotState, stateLabel } from './tasks-shared.tsx'
 import { t } from './locales.ts'

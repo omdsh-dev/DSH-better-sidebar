@@ -209,8 +209,6 @@ describe('sidechat seed against the real dsh-session validator', () => {
       mode: 'continuable',
       provider: 'sidechat',
       label: 'Side: test',
-      agentProvider: 'test',
-      agentModel: 'model-x',
     })
     const withDescriptor = [
       ...seed,

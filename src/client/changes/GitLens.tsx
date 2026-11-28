@@ -13,7 +13,7 @@ import {
   IconCloseFillRegular, IconCodeOutlineRegular, IconCopyOutlineRegular, IconEllipsisOutlineRegular,
   IconPlusOutlineRegular,
   IconRefreshOutlineRegular, IconSparkleRegular, IconTrashOutlineRegular, writeClipboard,
-} from '@deepseek-ai/dsh-client-ui-primitives'
+} from '@deepseek-ai/dsh-client-ui-primitives/client'
 import type { Context } from '../../context-types.ts'
 import type { GitLineCounts, GitLogEntry, GitStatusEntry, GitStatusResult, GitWorktree, SessionScope } from '../api.ts'
 import { api, SidebarApiError } from '../api.ts'

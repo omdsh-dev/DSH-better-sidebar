@@ -15,7 +15,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
-import { IconArchiveOutlineRegular, IconQuestionOutlineRegular, IconSearchOutlineRegular, IconSettingsOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconArchiveOutlineRegular, IconQuestionOutlineRegular, IconSearchOutlineRegular, IconSettingsOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives/client'
 import type { TabComponentProps } from '../../service.ts'
 import type { BetterSidebarService } from '../../service.ts'
 import type { SidebarPrefs } from '../../../prefs-shared.ts'

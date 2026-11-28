@@ -7,7 +7,7 @@
  */
 import { describe, it, expect, vi } from 'vitest'
 import type { ReactElement, ReactNode } from 'react'
-import { FileTypeIcon } from '@deepseek-ai/dsh-client-ui-primitives'
+import { FileTypeIcon } from '@deepseek-ai/dsh-client-ui-primitives/client'
 
 // Mock browser globals (SidebarStore.reduce → schedulePersist uses window.setTimeout)
 const g = globalThis as Record<string, unknown>

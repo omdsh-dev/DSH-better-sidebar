@@ -25,7 +25,7 @@ import {
   IconSearchOutlineRegular,
   IconThinkOutlineRegular,
   IconUsersOutlineRegular,
-} from '@deepseek-ai/dsh-client-ui-primitives'
+} from '@deepseek-ai/dsh-client-ui-primitives/client'
 import type { ProcessActivity } from '../process-activity.ts'
 
 /** One glyph renderer (host icon components accept a pixel size). */

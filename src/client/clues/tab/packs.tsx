@@ -33,8 +33,8 @@ import {
   IconRefreshOutlineRegular,
   IconShareOutlineRegular,
   IconTrashOutlineRegular,
-} from '@deepseek-ai/dsh-client-ui-primitives'
-import type { MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
+} from '@deepseek-ai/dsh-client-ui-primitives/client'
+import type { MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives/client'
 import { CluePackArtwork } from '../artwork.tsx'
 import type { CluePack } from '../../../clues/types.ts'
 import type { BetterSidebarCluesClientFace } from '../registry.ts'

@@ -30,7 +30,7 @@ import {
   type ReactNode,
 } from 'react'
 import { createPortal } from 'react-dom'
-import { usePointerGrace } from '@deepseek-ai/dsh-client-ui-primitives'
+import { usePointerGrace } from '@deepseek-ai/dsh-client-ui-primitives/client'
 import { call } from '../api.ts'
 import { t } from '../locales.ts'
 import { useSelectionPopup } from '../selection-popup.ts'

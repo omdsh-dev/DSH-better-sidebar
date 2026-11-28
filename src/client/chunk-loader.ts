@@ -77,8 +77,10 @@ export const CHUNK_EXTERNALS: readonly string[] = [
   'react-dom',
   'react-dom/client',
   'cordis',
-  '@deepseek-ai/dsh-client-ui-slots',
-  '@deepseek-ai/dsh-client-ui-primitives',
+  // DSH 0.2.3-alpha.3: every Client package exposes its browser half at the
+  // `/client` subpath; the bare root is the host-side empty entry.
+  '@deepseek-ai/dsh-client-ui-slots/client',
+  '@deepseek-ai/dsh-client-ui-primitives/client',
 ]
 
 /** Chunk script endpoint served by the plugin host half (src/bundle-route.ts). */

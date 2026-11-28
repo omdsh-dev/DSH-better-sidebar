@@ -12,7 +12,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import clsx from 'clsx'
 import {
   IconCloseFillRegular, IconPlusOutlineRegular,
-} from '@deepseek-ai/dsh-client-ui-primitives'
+} from '@deepseek-ai/dsh-client-ui-primitives/client'
 import type { SidebarTab } from './state.ts'
 import { t } from './locales.ts'
 import { IconButton, Menu } from './ui/index.ts'

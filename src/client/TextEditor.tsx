@@ -20,7 +20,7 @@ import { EditorState } from '@codemirror/state'
 import { EditorView as CodeMirrorView, keymap, lineNumbers } from '@codemirror/view'
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
 import { openSearchPanel } from '@codemirror/search'
-import { IconCheckOutlineRegular, IconSearchOutlineRegular, MarkdownDelegateProvider, MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconCheckOutlineRegular, IconSearchOutlineRegular, MarkdownDelegateProvider, MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives/client'
 import { markdownTextProps } from './markdown-labels.tsx'
 import {
   applyGitLineKinds,

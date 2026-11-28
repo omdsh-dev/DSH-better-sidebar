@@ -7,11 +7,11 @@
 
 | 项 | 值 |
 | --- | --- |
-| 基线宿主 | **DSH 0.2.3-alpha.2**（v0.34.0-alpha.0 起；安装下限与 peer 同批抬到 alpha 线） |
-| DSH peer 数量 | **14 条** `@deepseek-ai/dsh-*`，下限全部 `^0.2.3-alpha.2` |
-| devDependencies | 每条 DSH 包精确钉 `0.2.3-alpha.2`（**30 条**：传递 peer `@deepseek-ai/dsh-error` 在 0.2.2 线已提升进 devDependencies） |
-| 伴随依赖 | Cordis peer `^4.2.0-alpha.1` / dev `4.2.0-alpha.1`、group `~1.2.0-alpha.1`、schemastery `~3.20.0-alpha.1` 解析、include `1.2.0-alpha.1` |
-| `engines.dsh` | **`>=0.2.3-alpha.2 <0.3.0`**（package.json 与 `dsh.plugin.json` 同值；字段存在时宿主只按它判定，peer 不再参与） |
+| 基线宿主 | **DSH 0.2.3-alpha.3**（下一版 alpha 起；安装下限与 peer 同批抬到 alpha 线） |
+| DSH peer 数量 | **14 条** `@deepseek-ai/dsh-*`，下限全部 `^0.2.3-alpha.3` |
+| devDependencies | 每条 DSH 包精确钉 `0.2.3-alpha.3`（**30 条**：传递 peer `@deepseek-ai/dsh-error` 在 0.2.2 线已提升进 devDependencies） |
+| 伴随依赖 | Cordis peer `^4.2.0-alpha.2` / dev `4.2.0-alpha.2`、group `~1.2.0-alpha.2`、schemastery `~3.20.0-alpha.2` 解析、include `1.2.0-alpha.2` |
+| `engines.dsh` | **`>=0.2.3-alpha.3 <0.3.0`**（package.json 与 `dsh.plugin.json` 同值；字段存在时宿主只按它判定，peer 不再参与） |
 | 守护测试 | tests/market-manifest.spec.ts（peer 形状）+ tests/dsh-baseline.spec.ts（CI / 脚本 / 文档同版） |
 
 14 条 peer 里包含 `dsh-client-ui-input-trigger`（划选引用 chip 的 `ctx.inputTriggers` 服务）；新增 peer 必须同批更新 AGENTS、本文件、指南与 README 的计数。
@@ -20,7 +20,8 @@
 
 | 用户的 DSH | 应安装的插件 |
 | --- | --- |
-| **0.2.3-alpha.2+** | **v0.34.0-alpha.0**（alpha 线） |
+| **0.2.3-alpha.3+** | 下一版 alpha（待发布） |
+| 0.2.3-alpha.2 | **v0.34.0-alpha.1**（alpha 线） |
 | **0.2.2-rc.3+** | **v0.33.0**（稳定线） |
 | 0.2.2-rc.2 | **v0.32.1** |
 | 0.2.2-rc.1 | **v0.32.0** |
@@ -30,7 +31,7 @@
 | 0.2.0-rc.1 | v0.24.1 |
 | 0.1.7-rc.1 ~ 0.1.7 | v0.22.1 |
 
-自 v0.34.0-alpha.0 起 `package.json#engines.dsh` 为 `>=0.2.3-alpha.2 <0.3.0`，装在下限之下的宿主请继续用 v0.33.0；v0.32.1 仍接受 0.2.2-rc.2。
+下一版起 `package.json#engines.dsh` 为 `>=0.2.3-alpha.3 <0.3.0`；0.2.3-alpha.2 宿主固定 v0.34.0-alpha.1，0.2.2-rc.3+ 宿主固定 v0.33.0，v0.32.1 仍接受 0.2.2-rc.2。
 
 ## 3. 为什么「一个构建只服务一条宿主线」
 
@@ -99,7 +100,19 @@
 
 验证（2026-11-24）：`pnpm peers check` / `typecheck` / `lint` / `test` 全绿——真实破损只有 `dsh-llm/brand` 一处。
 
-## 10. 适配记录索引
+
+## 10. 0.2.3-alpha.2 → 0.2.3-alpha.3（下一版 alpha）
+
+| 变化 | 影响 | 处理 |
+| --- | --- | --- |
+| 所有 Client 包（`dsh-client-ui-primitives` / `-slots` / `-locale` / `-conversation` / `-sidebar-right` 等）拆成「根 = 宿主侧空 `apply`」与 `/client` = 浏览器 bundle | 源码里从包**根** import 组件在运行期变成 `undefined`（React 报 `Element type is invalid`），类型面仍通过 | 80 个文件的组件 import 全部改为 `/client`；构建的 `CLIENT_EXTERNALS`、chunk 外部表与两份产物守护测试同步为 `/client` |
+| `/client` 产物是 `window.__ModuleLoader__.load(...)` 的模块表 chunk，不是 ESM | 单元测试无法直接 import；`vi.mock` 的模块 id 也要跟着换 | vitest 只对 `dsh-client-ui-primitives/client`、`dsh-client-ui-slots/client` 加 alias 指到包内 `src/client/index.ts`（源码由 Vite 转换；生产构建仍走 external） |
+| `ContinuableSubagentDescriptorInput` 收窄为 `Pick<Data, 'mode'／'provider'／'label'>`：模型选择改由子会话自己的 `model/selection` 事件承载 | `snapshotSubagentDescriptor()` 再传 `agentProvider` / `agentModel` 会类型报错 | `sidechat.start` 的 descriptor 只写身份字段；路由仍走 `agentOptions`，创建后的 model-selection seam 负责持久化 |
+| Cordis 抬到 `4.2.0-alpha.2`；group / include 抬到 `1.2.0-alpha.2`；schemastery 解析到 `~3.20.0-alpha.2` | dev 依赖树 | dev 钉 4.2.0-alpha.2 / group ~1.2.0-alpha.2 / include 1.2.0-alpha.2；schemastery peer 抬到 `>=3.20.0-alpha.2 <4` |
+
+验证（2026-11-28）：`pnpm typecheck` / `lint` / `test` 全绿（366 文件、4632 通过、18 skipped）；`pnpm peers check` 无失配。真实宿主挂载见下一批 commit 的验证记录。
+
+## 11. 适配记录索引
 
 - [0.2.2-rc.2](plans/2026-11-12-dsh-0.2.2-rc.2-adaptation.md)
 - [0.2.2-rc.1](plans/2026-11-04-dsh-0.2.2-rc.1-adaptation.md)

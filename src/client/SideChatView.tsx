@@ -71,7 +71,7 @@ import {
   type SearchBlockLabels,
   type TerminalBlockLabels,
   type WebBlockLabels,
-} from '@deepseek-ai/dsh-client-ui-primitives'
+} from '@deepseek-ai/dsh-client-ui-primitives/client'
 import { markdownLabels, markdownTextProps } from './markdown-labels.tsx'
 import { producedFilePaths, resolveProducedPath } from './sidechat-mentions.ts'
 import {

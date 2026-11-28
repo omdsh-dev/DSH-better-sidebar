@@ -19,7 +19,7 @@
  * broken image; a `file` block never reads bytes at all.
  */
 import { useCallback, useSyncExternalStore } from 'react'
-import { fileSizeText } from '@deepseek-ai/dsh-client-ui-primitives'
+import { fileSizeText } from '@deepseek-ai/dsh-client-ui-primitives/client'
 import type { Context } from '../context-types.ts'
 import type {
   SidechatAttachment,

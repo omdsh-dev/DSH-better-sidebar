@@ -10,7 +10,7 @@
  * untracked fallbacks and the per-file fold cache cannot drift apart);
  * rendering goes through the shared {@link DiffFiles} renderer.
  */
-import { IconRefreshOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconRefreshOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives/client'
 import type { SessionScope } from './api.ts'
 import type { SidebarDiffRef } from './state.ts'
 import { DiffFiles } from './diff/DiffFiles.tsx'

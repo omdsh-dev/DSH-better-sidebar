@@ -760,12 +760,15 @@ export function buildSidechatApi(
       // one is deterministically rendered as a 'corrupt' diagnostic. The
       // SubagentView filters the 'Side: ' label out, so the topology UI
       // stays noise-free; the row only serves enumeration correctness.
+      // DSH 0.2.3-alpha.3 narrowed the continuable descriptor input to its
+      // identity fields: model choices belong to the child's own
+      // `model/selection` events, and `agentProvider` / `agentModel` survive
+      // only on historical records. The route still reaches the child through
+      // `agentOptions` below (and the model-selection seam after create).
       const descriptor = snapshotSubagentDescriptor({
         mode: 'continuable',
         provider: 'sidechat',
         label,
-        ...(routeProvider === undefined ? {} : { agentProvider: routeProvider }),
-        ...(routeModel === undefined ? {} : { agentModel: routeModel }),
       })
       // A truncated inheritance can end before the parent's last directory
       // change. Header cwd alone cannot win: the host projection replays seed

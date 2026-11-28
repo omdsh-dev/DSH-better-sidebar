@@ -17,7 +17,7 @@
  */
 import { forwardRef, type ButtonHTMLAttributes, type MouseEvent, type ReactNode } from 'react'
 import clsx from 'clsx'
-import { FileTypeIcon, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
+import { FileTypeIcon, Modal } from '@deepseek-ai/dsh-client-ui-primitives/client'
 import { LoadingIndicator } from './LoadingIndicator.tsx'
 import design from './design.module.css'
 import css from './kit.module.css'

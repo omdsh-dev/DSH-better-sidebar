@@ -30,7 +30,7 @@
  * `<img>` has no protocol vocabulary to satisfy.
  */
 
-import type { MarkdownPathImages } from '@deepseek-ai/dsh-client-ui-primitives'
+import type { MarkdownPathImages } from '@deepseek-ai/dsh-client-ui-primitives/client'
 import type { SessionScope } from './api.ts'
 import { hostHttpBase } from './desktop-env.ts'
 import { hostRouteUrl } from './host-route-url.ts'

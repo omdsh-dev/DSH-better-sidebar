@@ -33,7 +33,7 @@
  * and `icon` — so the Side card settings page can render the enable/disable
  * inventory without hardcoding (eating our own dogfood).
  */
-import { IconCodeOutlineRegular, IconPlayOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconCodeOutlineRegular, IconPlayOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives/client'
 import { lazyChunkComponent } from '../lazy-chunk.tsx'
 import {
   IconMarkdownOutline16,

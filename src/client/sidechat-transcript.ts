@@ -38,7 +38,7 @@ import type {
   SearchFileGroup,
   WebBlockProps,
   WebSourceView,
-} from '@deepseek-ai/dsh-client-ui-primitives'
+} from '@deepseek-ai/dsh-client-ui-primitives/client'
 import { projectSidechatContent, type SidechatImageOccurrence } from '../sidechat-images.ts'
 import type { SidebarHistoryEntry } from '../context-types.ts'
 import { isContextInjectionMessage, SIDE_BOUNDARY_PROMPT, threadOwnLogEvents } from '../sidechat-core.ts'

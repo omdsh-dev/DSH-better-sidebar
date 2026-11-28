@@ -34,7 +34,7 @@ import {
   Button, IconChevronDownOutlineRegular, IconChevronUpOutlineRegular,
   IconFullscreenOutlineRegular,
   IconTreeCornerRegular,
-} from '@deepseek-ai/dsh-client-ui-primitives'
+} from '@deepseek-ai/dsh-client-ui-primitives/client'
 import type { TasksAgentNode, TasksFoldNode, TasksNode, TasksWorkflowNode } from './tasks-model.ts'
 import { tasksEdges } from './tasks-model.ts'
 import {

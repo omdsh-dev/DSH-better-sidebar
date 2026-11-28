@@ -10,7 +10,7 @@
  * this component owns only its own section.
  */
 import { useState } from 'react'
-import { IconCloseOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconCloseOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives/client'
 import {
   isValidCustomEditor,
   newCustomEditorId,

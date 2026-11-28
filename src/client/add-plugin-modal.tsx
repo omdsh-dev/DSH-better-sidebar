@@ -20,7 +20,7 @@
  * in SideCardSection); the modal itself mounts only while open.
  */
 import { useState, type ReactNode } from 'react'
-import { Modal, writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Modal, writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives/client'
 import type { BetterSidebarService } from './service.ts'
 import { PLUGIN_TOPIC_URL, type PluginEntry } from './plugins-shared.ts'
 import { builtinTabPlugins } from './plugins-tabs.ts'

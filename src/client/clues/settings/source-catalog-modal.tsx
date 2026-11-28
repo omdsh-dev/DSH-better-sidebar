@@ -13,7 +13,7 @@
  * Modal must never be renderToString'd (same rule as `PluginListBody`).
  */
 import { useState, type ReactNode } from 'react'
-import { writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives'
+import { writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives/client'
 import { ActionButton, TextInput } from '../../ui/index.ts'
 import { t } from '../../locales.ts'
 import { PLUGIN_TOPIC_URL } from '../../plugins-shared.ts'

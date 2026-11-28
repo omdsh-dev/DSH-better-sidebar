@@ -19,7 +19,7 @@ import type { ReactNode } from 'react'
 import {
   IconAgentPresetOutlineRegular, IconBranchOutlineRegular, IconChecklistOutlineRegular, IconUserOutlineRegular,
   type StateDotState,
-} from '@deepseek-ai/dsh-client-ui-primitives'
+} from '@deepseek-ai/dsh-client-ui-primitives/client'
 import type { SidebarChildLiveView } from '../context-types.ts'
 import { doneActivityTitle, liveActivityLabel } from './process-labels.ts'
 import type {

@@ -18,7 +18,7 @@
  */
 import { useLayoutEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
-import { IconListPenOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconListPenOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives/client'
 import { t } from './locales.ts'
 import { IconButton } from './ui/index.ts'
 import css from './sidebar.module.css'

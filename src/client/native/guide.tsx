@@ -14,7 +14,7 @@ import {
   IconPlusOutlineRegular,
   IconSettingsOutlineRegular,
   Menu,
-} from '@deepseek-ai/dsh-client-ui-primitives'
+} from '@deepseek-ai/dsh-client-ui-primitives/client'
 import clsx from 'clsx'
 import type { SidebarPrefs } from '../../prefs-shared.ts'
 import type { HostShellCatalog } from '../terminal-client.ts'
