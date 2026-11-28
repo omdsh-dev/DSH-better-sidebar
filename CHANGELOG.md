@@ -4,6 +4,9 @@
 
 ### v0.34.0-alpha.1
 
+- ✨ **opencode-go 这类按会话路由的供应商下，「生成提交信息」不再恒失败**（[#1278](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1278)）：`git.suggest-message` 调用 `ctx.llm.stream` 时没有传 `sessionId`，而适配器只在它存在时才写传输层元数据——opencode.ai 的网关要求 `x-opencode-session` 头，缺了就直接回 `400 MissingSessionID`，这条辅助调用因此必现失败（直连 OpenAI / DeepSeek 不校验该头，所以一直没被发现）。现在路由把会话 id 透传进 `llm.stream`；同时空消息分支会带上 `finish.failure.message`，报错不再只剩一句 `finish=error`，400 的真实原因能直接看到。
+  - 🧪 测试：`tests/git-suggest-route.spec.ts` 新增两例——`llm.stream` 收到请求自己的会话 id；失败的 finish 把供应商原文带进错误文案（`finish=error: …`）。
+
 - 🩹 **侧边对话关闭 Tab 再打开后「发不出去」**（[#1265](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1265)）：关闭侧边对话 Tab 会把线程会话归档，而宿主会拒绝归档会话的每一次唤醒——消息显示已接受，随后静默结束为 `blocked`，既没有回答也没有任何提示。现在关闭 Tab 只释放运行时、不再归档；已经处于归档状态的线程在重新绑定或发送前会自动解除归档（重开 Tab 会恢复原对话）；万一仍被宿主拒绝，转写里会补一行「本轮被宿主阻止」的说明，不再毫无反馈。
 
 ### v0.34.0-alpha.0
