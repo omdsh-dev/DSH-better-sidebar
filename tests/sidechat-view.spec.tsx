@@ -152,6 +152,7 @@ function makeCtx(
 interface ArchiveHost {
   archivedIds: string[]
   archiveSession: ReturnType<typeof vi.fn>
+  unarchiveSession: ReturnType<typeof vi.fn>
   betterSidebar: { updateTab: ReturnType<typeof vi.fn>; openTab: ReturnType<typeof vi.fn> }
 }
 
@@ -159,6 +160,7 @@ function makeArchiveHost(archivedIds: string[] = []): ArchiveHost {
   return {
     archivedIds,
     archiveSession: vi.fn(async () => {}),
+    unarchiveSession: vi.fn(async () => {}),
     betterSidebar: { updateTab: vi.fn(), openTab: vi.fn() },
   }
 }
@@ -172,7 +174,7 @@ function makeArchiveCtx(store: ReturnType<typeof makeStore>, host: ArchiveHost):
       if (key === 'workspaces') {
         return { list: { getSnapshot: () => ({ archivedSessionIds: host.archivedIds }), subscribe: vi.fn(() => () => {}) } }
       }
-      if (key === 'uiWorkspace') return { archiveSession: host.archiveSession }
+      if (key === 'uiWorkspace') return { archiveSession: host.archiveSession, unarchiveSession: host.unarchiveSession }
       return undefined
     },
   } as unknown as Context
@@ -616,6 +618,79 @@ describe('SideChatView archive', () => {
     // staying bound to the session the host just archived.
     expect(host.betterSidebar.updateTab).toHaveBeenCalledTimes(1)
     expect(host.betterSidebar.updateTab).toHaveBeenCalledWith('tab1', { meta: {}, title: '新对话' }, 'root')
+    unmount()
+  })
+})
+
+describe('SideChatView archived threads (#1265)', () => {
+  it('unarchives the bound thread instead of leaving every turn silently blocked', async () => {
+    const host = makeArchiveHost(['t1'])
+    const props = viewProps(makeArchiveCtx(threadStore(), host))
+    const { unmount } = renderRoot(createElement(SideChatView, props))
+    await act(async () => {})
+    expect(host.unarchiveSession).toHaveBeenCalledWith('t1')
+    // Restoring the thread must not drop the tab's binding.
+    expect(host.betterSidebar.updateTab).not.toHaveBeenCalled()
+    unmount()
+  })
+
+  it('restores a remembered archived thread through the unarchive face instead of opening a dead end', async () => {
+    const host = makeArchiveHost()
+    // The previous case's mount remembered root → t1 (the same map real use
+    // writes); archive it, then open an UNBOUND shared page in that session.
+    const bound = viewProps(makeArchiveCtx(threadStore(), host))
+    const first = renderRoot(createElement(SideChatView, bound))
+    await act(async () => {})
+    first.unmount()
+
+    host.archivedIds.push('t1')
+    const unbound = { ...viewProps(makeArchiveCtx(threadStore(), host)), tab: { id: 'tab1', type: 'sidechat', title: '新对话', meta: {} } as SidebarTab }
+    const { unmount } = renderRoot(createElement(SideChatView, unbound))
+    await act(async () => {})
+    expect(host.betterSidebar.updateTab, 'the old conversation comes back').toHaveBeenCalledWith('tab1', { meta: { threadId: 't1' } }, 'root')
+    unmount()
+  })
+
+  it('does not reattach a remembered archived thread when the host cannot unarchive', async () => {
+    // A context without the uiWorkspace unarchive face: the old dead end.
+    const ctxWithoutRestore = (store: ReturnType<typeof makeStore>, host: ArchiveHost): Context => ({
+      sessions: { list: store },
+      get: (key: string) => {
+        if (key === 'betterSidebar') return host.betterSidebar
+        if (key === 'workspaces') return { list: { getSnapshot: () => ({ archivedSessionIds: host.archivedIds }), subscribe: vi.fn(() => () => {}) } }
+        return undefined
+      },
+    } as unknown as Context)
+    const host = makeArchiveHost()
+    const bound = viewProps(ctxWithoutRestore(threadStore(), host))
+    const first = renderRoot(createElement(SideChatView, bound))
+    await act(async () => {})
+    first.unmount()
+
+    host.archivedIds.push('t1')
+    const unbound = { ...viewProps(ctxWithoutRestore(threadStore(), host)), tab: { id: 'tab1', type: 'sidechat', title: '新对话', meta: {} } as SidebarTab }
+    const { unmount } = renderRoot(createElement(SideChatView, unbound))
+    await act(async () => {})
+    expect(host.betterSidebar.updateTab).not.toHaveBeenCalledWith('tab1', { meta: { threadId: 't1' } }, 'root')
+    unmount()
+  })
+
+  it('unarchives before the first prompt when the thread was archived mid-session', async () => {
+    const host = makeArchiveHost()
+    const props = viewProps(makeArchiveCtx(threadStore(), host))
+    const { container, unmount } = renderRoot(createElement(SideChatView, props))
+    await act(async () => {})
+    // Archive it after the panel is already bound (the tab-close path used to
+    // do this behind the open page); archivedSessionIdsOf reads this array
+    // live, so the send path sees it without a re-render.
+    host.archivedIds.push('t1')
+    act(() => { typeComposer(container, '继续问') })
+    const send = container.querySelector<HTMLButtonElement>('button[aria-label="发送"]')
+    if (send === null) throw new Error('the send button is missing')
+    await act(async () => { send.click() })
+    await act(async () => { await Promise.resolve() })
+    expect(host.unarchiveSession).toHaveBeenCalledWith('t1')
+    expect(promptCalls).toHaveLength(1)
     unmount()
   })
 })
