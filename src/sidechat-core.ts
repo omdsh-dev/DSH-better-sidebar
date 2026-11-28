@@ -523,22 +523,20 @@ function compactionTail(events: readonly SidechatLogEvent[]): SidechatLogEvent[]
   }
   if (!turnSequenceValid(seed)) return undefined
   if (!inboxSplicesValid(seed)) return undefined
-  if (!bracketsValid(seed)) return undefined
+  if (!retainedDependenciesValid(seed)) return undefined
   return seed
 }
 
 /**
- * Relational pre-check mirroring the host's grouped-record rules: a
- * successful `compaction/end` requires a `compaction/summary` of the same
- * compactionId earlier in the log, and a `command/done` requires its
- * `command/run` (same commandId) before it. Dropping a summary or a run
- * with the forgotten span while keeping its partner would ship a seed the
- * host's invariant companions reject, so any unmatched partner falls back
- * to the full copy.
+ * A compacted child must still have the earlier records that its retained
+ * events depend on. If a prerequisite was lost, use the original history
+ * so the host can reopen the child.
  */
-function bracketsValid(seed: readonly SeedEvent[]): boolean {
+function retainedDependenciesValid(seed: readonly SeedEvent[]): boolean {
   const summarized = new Set<string>()
   const ranCommands = new Set<string>()
+  const scheduledAttempts = new Map<string, number>()
+  let requestProvider: unknown
   for (const event of seed) {
     const data = dataOf(event)
     if (event.type === 'compaction/summary') {
@@ -553,6 +551,19 @@ function bracketsValid(seed: readonly SeedEvent[]): boolean {
     } else if (event.type === 'command/done') {
       const id = data.commandId
       if (typeof id !== 'string' || !ranCommands.has(id)) return false
+    } else if (event.type === 'request/header') {
+      const header = data.header as { config?: { provider?: unknown } } | undefined
+      requestProvider = header?.config?.provider
+    } else if (event.type === 'llm/retry' || event.type === 'llm/retry-started') {
+      const id = data.retryId
+      const attempt = numberAt(data, 'retry')
+      if (typeof id !== 'string' || attempt < 1) return false
+      const lastScheduled = scheduledAttempts.get(id) ?? 0
+      if (event.type === 'llm/retry') {
+        // The host carries the last request provider across turns (#1158).
+        if (typeof requestProvider !== 'string' || data.provider !== requestProvider || attempt !== lastScheduled + 1) return false
+        scheduledAttempts.set(id, attempt)
+      } else if (attempt > lastScheduled) return false
     }
   }
   return true
