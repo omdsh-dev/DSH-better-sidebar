@@ -23,7 +23,7 @@ async function openGuide(page: Page, kind: string): Promise<void> {
 async function controlStyle(control: Locator) {
   return control.evaluate(node => {
     const s = getComputedStyle(node)
-    return { fontSize: s.fontSize, lineHeight: s.lineHeight, minHeight: s.minHeight,
+    return { fontSize: s.fontSize, lineHeight: s.lineHeight, minHeight: s.minHeight, height: s.height,
       borderWidth: s.borderWidth, borderStyle: s.borderStyle, borderRadius: s.borderRadius,
       boxShadow: s.boxShadow, backgroundImage: s.backgroundImage, padding: s.padding,
       color: s.color, backgroundColor: s.backgroundColor }
@@ -178,14 +178,15 @@ for (const touch of [false, true]) {
       await expect(panel.locator('[class*="diffPane"]')).toBeVisible()
       await screenshotMatrix(page, changesTabs.locator('xpath=../..'), 'git-diff', info)
       metrics.gitTab = await controlStyle(gitTab)
-      // Upstream keeps ONE native select in the changes lens: the graph's own
-      // branch filter (#944). It is also the only <select> left on the surface.
-      const branchFilter = gitRoot.locator('[data-git-graph] select').first()
+      const branchFilter = gitRoot.getByRole('button', { name: 'Branch filter', exact: true })
       await expect(branchFilter).toBeVisible()
       metrics.gitSelect = await controlStyle(branchFilter)
-      await branchFilter.selectOption('refs/heads/review')
-      await expect(branchFilter).toHaveValue('refs/heads/review')
-      await branchFilter.selectOption('')
+      await branchFilter.press('ArrowDown')
+      await page.getByRole('menuitem', { name: 'review', exact: true }).click()
+      await expect(branchFilter).toHaveText('review')
+      await branchFilter.click()
+      await page.getByRole('menuitem', { name: 'All branches', exact: true }).click()
+      await expect(branchFilter).toHaveText('All branches')
       const commit = gitRoot.getByRole('button', { name: 'Commit', exact: true })
       await expect(commit).toBeDisabled()
       metrics.disabled = await controlStyle(commit)
@@ -387,7 +388,10 @@ for (const touch of [false, true]) {
           await screenshotMatrix(page, settings, 'settings-' + group.toLowerCase().replaceAll(' ', '-'), info)
         }
       }
-      expect(metrics.gitSelect).toMatchObject({ minHeight: touch ? '44px' : '32px', borderWidth: '1px', borderStyle: 'solid', boxShadow: 'none', backgroundImage: 'none' })
+      // The graph's branch filter is the host's standard selector pill (the
+      // Language / Enter-behavior rows' control): borderless module-platform
+      // surface, 36px tall and 44px under a coarse pointer.
+      expect(metrics.gitSelect).toMatchObject({ height: touch ? '44px' : '36px', borderWidth: '0px', borderStyle: 'none', boxShadow: 'none', backgroundImage: 'none' })
       // The plugin's own tab strips share ONE control; the changes lens's Git /
       // session switch is upstream's conversation-page underline strip (#1236)
       // and deliberately keeps its own shape, so it is held to the invariants

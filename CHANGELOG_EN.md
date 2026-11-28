@@ -4,6 +4,10 @@
 >
 > 📝 The Chinese [CHANGELOG](./CHANGELOG.md) is the authoritative, item-by-item record; this file carries the English summaries and has historically lagged behind it. Where the two disagree, the Chinese one is current.
 
+### Unreleased
+
+- **Git Graph opens on the current worktree's branch.** Use the DSH filter menu to browse another branch or all branches while keeping the same branch checked out. The filter matches the host's standard selector, and its menu opens below the control instead of covering it. ([#990](https://github.com/omdsh-dev/DSH-better-sidebar/issues/990))
+
 ### v0.34.0-alpha.1
 
 - 🩹 **Side Chat could not send after its tab was closed and reopened** ([#1265](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1265)): closing the tab archived the thread session, and the host refuses every wake of an archived session — the prompt was accepted, then the turn silently ended `blocked` with no reply and no message. Closing now only releases the runtime and never archives; a thread that is already archived is unarchived when it is re-bound or before the next prompt (reopening the tab brings the conversation back); and a turn the host still refuses leaves a visible "blocked by the host" row instead of nothing.

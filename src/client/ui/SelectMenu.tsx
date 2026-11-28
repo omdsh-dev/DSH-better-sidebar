@@ -20,6 +20,13 @@ interface SelectCommonProps {
   readonly className?: string
   readonly title?: string
   readonly placeholder?: ReactNode
+  /**
+   * `field` (default) is the input-sized control for form rows and dialogs.
+   * `selector` is the host's standard selector pill — the borderless
+   * module-platform button the host's own Language and Enter-behavior rows
+   * use — for toolbars that sit beside host controls.
+   */
+  readonly variant?: 'field' | 'selector'
 }
 export type SelectMenuProps = SelectCommonProps & ({
   readonly value: string
@@ -34,17 +41,13 @@ export type SelectMenuProps = SelectCommonProps & ({
 })
 
 export function SelectMenu(props: SelectMenuProps): ReactNode {
-  const { options, ariaLabel, disabled, className, title, placeholder } = props
+  const { options, ariaLabel, disabled, className, title, placeholder, variant = 'field' } = props
   const [open, setOpen] = useState(false)
-  // The host menu positions from an anchor POINT (rc.2 replaced the rect
-  // callback), so the trigger's frame is sampled when the menu opens rather
-  // than read during render.
-  const [point, setPoint] = useState<{ x: number; y: number } | undefined>(undefined)
+  // The trigger element IS the host menu's CSS anchor: the list opens 4px
+  // below it (or above it when the viewport is short) instead of covering it.
+  // A captured point would anchor the list at the trigger's top edge, hiding
+  // the control under its own menu.
   const trigger = useRef<HTMLButtonElement>(null)
-  const anchorAtTrigger = (): void => {
-    const rect = trigger.current?.getBoundingClientRect()
-    setPoint(rect === undefined ? undefined : { x: rect.x, y: rect.y })
-  }
   const valueId = useId()
   const multiple = props.values !== undefined
   const selectedValues = props.values ?? [props.value]
@@ -58,24 +61,25 @@ export function SelectMenu(props: SelectMenuProps): ReactNode {
   // so an always-mounted (closed) menu would break the server-rendered
   // settings surfaces that render this control.
   return (
-    <div className={css.root}>
-      <button ref={trigger} type="button" className={clsx(css.trigger, className)}
+    <div className={variant === 'selector' ? css.rootSelector : css.root}>
+      <button ref={trigger} type="button"
+        className={clsx(variant === 'selector' ? css.triggerSelector : css.trigger, className)}
         aria-label={ariaLabel} aria-describedby={valueId} aria-haspopup="menu" aria-expanded={open && !locked}
         title={title ?? selected[0]?.title ?? (typeof selectedLabel === 'string' ? selectedLabel : ariaLabel)}
-        disabled={locked} onClick={() => { anchorAtTrigger(); setOpen(current => !current) }}
+        disabled={locked} onClick={() => { setOpen(current => !current) }}
         onKeyDown={event => {
           if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
             event.preventDefault()
-            anchorAtTrigger()
             setOpen(true)
           }
         }}>
-        {!multiple && selected[0]?.icon}<span id={valueId} className={css.label}>{selectedLabel}</span><IconChevronDownOutlineRegular size={14} />
+        {!multiple && selected[0]?.icon}<span id={valueId} className={css.label}>{selectedLabel}</span>
+        <IconChevronDownOutlineRegular size={variant === 'selector' ? 16 : 14} />
       </button>
       {open && !locked && (
         <Menu open onClose={() => { setOpen(false) }} portal compact autoFocus
           listClassName={css.list}
-          anchorPoint={point} anchor={<span />}
+          anchorRef={trigger} anchor={<span />}
           items={options.map(option => ({ id: option.value, disabled: option.disabled, icon: option.icon,
             label: option.description ? <span className={css.optionCopy}><span>{option.label}</span><span className={css.optionDescription}>{option.description}</span></span> : option.label }))}
           selectedId={multiple ? undefined : props.value} selectedIds={multiple ? props.values : undefined}

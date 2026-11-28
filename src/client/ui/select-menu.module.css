@@ -25,6 +25,42 @@
 }
 .trigger:disabled { opacity: 0.4; cursor: default; }
 .trigger > svg { flex: none; }
+/* Host-standard selector pill — the borderless module-platform button the
+   host's own Language row (dsh-client-locale) and Enter-behavior row
+   (dsh-client-ui-conversation) render, with the chevron on the trailing edge.
+   Toolbars that sit beside host controls use this instead of the input-sized
+   field; the menu still opens from the trigger element, never over it. */
+.rootSelector {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
+}
+.triggerSelector {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
+  align-items: center;
+  gap: 12px;
+  height: 36px;
+  padding: 0 14px;
+  border: none;
+  border-radius: var(--dsw-radius-md);
+  background: var(--dsw-alias-bg-module-platform);
+  font: inherit;
+  font-size: 14px;
+  line-height: 22px;
+  color: var(--dsw-alias-label-primary);
+  text-align: start;
+  cursor: pointer;
+}
+@media (hover: hover) {
+  .triggerSelector:hover,
+  .triggerSelector[aria-expanded='true'] { background: var(--dsw-alias-interactive-bg-hover); }
+}
+.triggerSelector:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 2px; }
+.triggerSelector:disabled { opacity: 0.4; cursor: default; }
+.triggerSelector > svg { flex: none; }
+@media (pointer: coarse) { .triggerSelector { height: 44px; } }
 .label {
   min-width: 0;
   overflow: hidden;

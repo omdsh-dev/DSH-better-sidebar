@@ -164,9 +164,8 @@ describe('GitLens (changes tab, git lens) linked-worktree consistency', () => {
       expect(container.textContent).not.toContain('Main checkout commit')
       expect(branch).toHaveBeenCalledWith(expect.anything(), AGENT)
       expect(graph).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ count: 50 }), AGENT, expect.anything())
-      // The repo / worktree pickers moved into More Actions (#944); the only
-      // select left is the Graph section's own branch filter.
-      expect([...container.querySelectorAll('select')]).toHaveLength(1)
+      // The repo and worktree pickers live in More Actions (#944).
+      expect(container.querySelector('select')).toBeNull()
       const options = openMoreSubmenu(container, t('worktree'))
       expect(options.map(button => button.textContent)).toEqual(['main · main (0)', 'agent · agent (1)'])
       await act(async () => { options[0]!.click() })

@@ -15,6 +15,14 @@ const flush = async () => { await act(async () => { await Promise.resolve() }) }
 function button(container: HTMLElement, text: string): HTMLButtonElement {
   return [...container.querySelectorAll('button')].find(node => node.textContent === text)!
 }
+function branchFilter(container: HTMLElement): HTMLButtonElement {
+  return container.querySelector<HTMLButtonElement>(`button[aria-label="${t('graphBranchFilter')}"]`)!
+}
+const menuItems = () => [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')]
+async function chooseBranch(container: HTMLElement, label: string): Promise<void> {
+  await act(async () => { branchFilter(container).click() })
+  await act(async () => { menuItems().find(item => item.textContent === label)!.click() })
+}
 /** jsdom ships no IntersectionObserver, so the sentinel effect is inert there;
  *  these tests install a fake one on globalThis and restore the saved value. */
 interface FakeObserver {
@@ -94,11 +102,47 @@ describe('read-only graph', () => {
       expect(mounted.container.querySelectorAll('[data-graph-commit]')).toHaveLength(2)
       await act(async () => { mounted.container.querySelector<HTMLButtonElement>('[data-graph-commit]')!.click() })
       expect(preview).toHaveBeenCalledWith(expect.objectContaining({ kind: 'commit', worktree: '/linked', repoRoot: '/repo', hashFull: 'a' }))
-      await act(async () => { const select = mounted.container.querySelector('select')!; select.value = 'refs/heads/topic'; select.dispatchEvent(new Event('change', { bubbles: true })) })
+      await chooseBranch(mounted.container, 'topic')
       expect(clear).toHaveBeenCalled()
       expect(graph.mock.calls.at(-1)![1]).toMatchObject({ branch: 'refs/heads/topic', cursor: undefined })
       expect(checkout).not.toHaveBeenCalled()
       expect(mounted.container.textContent).not.toContain('subject a')
+    } finally { mounted.unmount() }
+  })
+  it.each([
+    { label: t('graphAllBranches'), ref: undefined, target: { worktree: '/other-worktree' } },
+    { label: 'topic', ref: 'refs/heads/topic', target: { scope: { ...defaults.scope, repoRoot: '/other-repo' } } },
+  ])('keeps a manual $label filter until the graph target changes', async ({ label, ref, target }) => {
+    const graph = vi.spyOn(api, 'gitGraph').mockImplementation(async (scope, opts, worktree) => {
+      const head = worktree === defaults.worktree && scope.repoRoot === defaults.scope.repoRoot ? 'main' : 'next'
+      return {
+        ...page(opts?.cursor ? 'older' : 'first', !opts?.cursor),
+        branches: [head, 'topic'].map(name => ({ ref: `refs/heads/${name}`, name, hashFull: 'first' })),
+        selectedBranch: opts?.currentBranch ? `refs/heads/${head}` : opts?.branch,
+      }
+    })
+    const checkout = vi.spyOn(api, 'gitCheckout')
+    const mounted = renderRoot(createElement(GitGraphSection, defaults))
+    try {
+      await flush()
+      expect(branchFilter(mounted.container).textContent).toBe('main')
+      await chooseBranch(mounted.container, label)
+      await act(async () => { button(mounted.container, t('graphLoadMore')).click() })
+      expect(graph.mock.calls.at(-1)![1]?.cursor).toBe('opaque')
+      mounted.rerender(createElement(GitGraphSection, { ...defaults, refreshTick: 1 }))
+      await flush()
+      expect(graph.mock.calls.slice(1).map(([, opts]) => opts?.cursor)).toEqual([undefined, 'opaque', undefined])
+      for (const [, opts] of graph.mock.calls.slice(1)) {
+        expect(opts?.currentBranch).toBeFalsy()
+        expect(opts?.branch).toBe(ref)
+      }
+      expect(branchFilter(mounted.container).textContent).toBe(label)
+      const previousCalls = graph.mock.calls.length
+      mounted.rerender(createElement(GitGraphSection, { ...defaults, ...target, refreshTick: 1 }))
+      await flush()
+      expect(graph.mock.calls.slice(previousCalls).map(([, opts]) => opts?.currentBranch)).toEqual([true])
+      expect(branchFilter(mounted.container).textContent).toBe('next')
+      expect(checkout).not.toHaveBeenCalled()
     } finally { mounted.unmount() }
   })
   it('aborts hidden and old-session requests and ignores late answers', async () => {
@@ -123,10 +167,9 @@ describe('read-only graph', () => {
     const mounted = renderRoot(createElement(GitGraphSection, defaults))
     try {
       await flush()
-      const change = async (value: string) => act(async () => { const select = mounted.container.querySelector('select')!; select.value = value; select.dispatchEvent(new Event('change', { bubbles: true })) })
-      await change('refs/heads/topic')
+      await chooseBranch(mounted.container, 'topic')
       const signal = graph.mock.calls[1]![3]!
-      await change('')
+      await chooseBranch(mounted.container, t('graphAllBranches'))
       expect(signal.aborted).toBe(true)
       await act(async () => { resolve(page('late-topic')) })
       expect(mounted.container.textContent).toContain('subject all')
@@ -201,17 +244,19 @@ describe('graph toolbar', () => {
     const mounted = renderRoot(createElement(GitGraphSection, defaults))
     try {
       await flush()
-      const select = mounted.container.querySelector<HTMLSelectElement>(`select[aria-label="${t('graphBranchFilter')}"]`)!
-      expect(select).not.toBeNull()
-      expect([...select.options].map(option => option.textContent)).toEqual([t('graphAllBranches'), 'topic'])
-      const toolbar = select.parentElement!
+      const select = branchFilter(mounted.container)
+      expect(select.getAttribute('aria-haspopup')).toBe('menu')
+      const toolbar = select.closest('[data-git-graph]')!.firstElementChild!
       // The select is the toolbar's ONLY interactive control — a re-added
       // hint, legend trigger or action has to fail here.
       expect([...toolbar.querySelectorAll('select, button, input, textarea, a[href], [role="button"]')]).toEqual([select])
       for (const hint of REMOVED_READ_ONLY_HINTS) expect(mounted.container.textContent).not.toContain(hint)
       for (const wording of REMOVED_LEGEND) expect(mounted.container.textContent).not.toContain(wording)
       // The old select tooltip carried the removed read-only copy.
-      expect(select.getAttribute('title')).toBeNull()
+      expect(REMOVED_READ_ONLY_HINTS).not.toContain(select.title)
+      await act(async () => { select.click() })
+      expect(menuItems().map(item => item.textContent)).toEqual([t('graphAllBranches'), 'topic'])
+      await act(async () => { select.click() })
       // Nothing in the lens opens a floating card on hover any more …
       await act(async () => { toolbar.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, relatedTarget: null })) })
       expect(dialog()).toBeNull()
@@ -224,7 +269,7 @@ describe('graph toolbar', () => {
     try {
       await flush()
       expect(mounted.container.textContent).toContain(t('graphEmpty'))
-      expect(mounted.container.querySelector('button')).toBeNull()
+      expect([...mounted.container.querySelectorAll('button')]).toEqual([branchFilter(mounted.container)])
     } finally { mounted.unmount() }
   })
 

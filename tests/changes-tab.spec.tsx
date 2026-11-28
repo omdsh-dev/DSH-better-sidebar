@@ -883,11 +883,9 @@ describe('ChangesTab', () => {
 
       const changes = scroller!.querySelector('[data-scm-section="changes"]')
       const graph = scroller!.querySelector('[data-scm-section="graph"]')
-      // The repo / worktree pickers moved into More Actions (#944), so the
-      // Graph section's branch filter is the only select left in the lens.
-      const selects = [...container.querySelectorAll('select')]
-      expect(selects).toHaveLength(1)
-      expect(graph!.contains(selects[0]!)).toBe(true)
+      // Repo and worktree selection live in More Actions. The graph has its own filter menu.
+      expect(container.querySelector('select')).toBeNull()
+      expect(graph!.querySelector(`button[aria-haspopup="menu"][aria-label="${t('graphBranchFilter')}"]`)).not.toBeNull()
       const message = changes!.querySelector('[data-message-box]')
       const unstaged = changes!.querySelector('[data-group="unstaged"]')
       expect(message!.querySelector('textarea')).not.toBeNull()

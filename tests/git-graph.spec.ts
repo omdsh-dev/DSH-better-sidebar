@@ -39,8 +39,36 @@ function files(dir: string): Record<string, string> {
 describe('read-only Git graph', () => {
   it('distinguishes non-repositories, unborn repositories and real failures', async () => {
     expect(await gitGraph(temp())).toMatchObject({ isRepo: false, entries: [] })
-    expect(await gitGraph(repo())).toMatchObject({ isRepo: true, entries: [], hasMore: false })
+    const unborn = await gitGraph(repo(), { currentBranch: true })
+    expect(unborn).toMatchObject({ isRepo: true, entries: [], hasMore: false })
+    expect(unborn.selectedBranch).toBeUndefined()
     await expect(gitGraph(join(temp(), 'missing'))).rejects.toMatchObject({ code: 'git-error' })
+  })
+
+  it('defaults to the checked-out ref of each worktree and falls back to all branches when detached', async () => {
+    const dir = repo()
+    const base = commit(dir, 'shared history')
+    const linked = join(temp(), 'linked')
+    git(dir, 'worktree', 'add', '-b', 'feature/linked', linked)
+    const linkedTip = commit(linked, 'linked history only')
+    const mainTip = commit(dir, 'main history only')
+    git(dir, 'branch', 'alias-at-main', mainTip)
+
+    const mainPage = await gitGraph(dir, { currentBranch: true, count: 1 })
+    expect(mainPage.selectedBranch).toBe('refs/heads/main')
+    expect(mainPage.entries.map(entry => entry.hashFull)).toEqual([mainTip])
+    const older = await gitGraph(dir, { currentBranch: true, count: 1, cursor: mainPage.nextCursor })
+    expect(older.entries.map(entry => entry.hashFull)).toEqual([base])
+    expect(older.hasMore).toBe(false)
+
+    const linkedPage = await gitGraph(linked, { currentBranch: true }, dir)
+    expect(linkedPage.selectedBranch).toBe('refs/heads/feature/linked')
+    expect(linkedPage.entries.map(entry => entry.hashFull)).toEqual([linkedTip, base])
+    git(linked, 'checkout', '--detach')
+    const detached = await gitGraph(linked, { currentBranch: true }, dir)
+    expect(detached.selectedBranch).toBeUndefined()
+    expect(detached.entries).toEqual((await gitGraph(linked, {}, dir)).entries)
+    expect(detached.entries.map(entry => entry.hashFull)).toContain(mainTip)
   })
 
   it('returns merge parents, branch decorations, full messages and stable pages without writes', async () => {
