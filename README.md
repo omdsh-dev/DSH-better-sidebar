@@ -46,14 +46,14 @@ dsh plugin --profile web add dsh-better-sidebar@latest
 
 Then **hard-refresh the browser** (Cmd/Ctrl+Shift+R). Requires DSH **0.2.3-alpha.2+**.
 
-> **Compatibility warning — match the plugin to the host line.** As of 2026-11-24, DSH's npm `latest` and `next` are both **0.2.2-rc.5**. **v0.34.0-alpha.0 requires DSH 0.2.3-alpha.2+** (alpha line), while the stable **v0.33.0** needs DSH 0.2.2-rc.3+; hosts on **0.2.2-rc.2** must pin `dsh-better-sidebar@0.32.1`, and hosts on **0.2.2-rc.1** must pin `dsh-better-sidebar@0.32.0`. Hosts on the 0.2.1 line (**0.2.1-rc.1 ~ rc.5**) must pin `dsh-better-sidebar@0.28.2` — v0.29.0 was never published to npm. DSH 0.2.1-alpha.5 users must pin `dsh-better-sidebar@0.28.0-alpha.0`, and hosts still on **0.2.0-rc.2** must pin `dsh-better-sidebar@0.26.1`. A 0.x caret never spans a minor version, so one plugin build cannot serve two host lines. The marketplace installer picks the plugin's `latest` regardless of host version, so an old host gets a version-rejection error — upgrade the host or pin the version explicitly. The two packages' `latest` tags are independent.
+> **Compatibility warning — match the plugin to the host line.** As of 2026-11-24, DSH's npm `latest` and `next` are both **0.2.2-rc.5**. **v0.34.0-alpha.1 requires DSH 0.2.3-alpha.2+** (alpha line), while the stable **v0.33.0** needs DSH 0.2.2-rc.3+; hosts on **0.2.2-rc.2** must pin `dsh-better-sidebar@0.32.1`, and hosts on **0.2.2-rc.1** must pin `dsh-better-sidebar@0.32.0`. Hosts on the 0.2.1 line (**0.2.1-rc.1 ~ rc.5**) must pin `dsh-better-sidebar@0.28.2` — v0.29.0 was never published to npm. DSH 0.2.1-alpha.5 users must pin `dsh-better-sidebar@0.28.0-alpha.0`, and hosts still on **0.2.0-rc.2** must pin `dsh-better-sidebar@0.26.1`. A 0.x caret never spans a minor version, so one plugin build cannot serve two host lines. The marketplace installer picks the plugin's `latest` regardless of host version, so an old host gets a version-rejection error — upgrade the host or pin the version explicitly. The two packages' `latest` tags are independent.
 
 <details>
 <summary><b>Pick the plugin version for your DSH version</b></summary>
 
 | Your DSH version | Install command |
 | --- | --- |
-| **0.2.3-alpha.2+** | `dsh plugin --profile web add dsh-better-sidebar@0.34.0-alpha.0` |
+| **0.2.3-alpha.2+** | `dsh plugin --profile web add dsh-better-sidebar@0.34.0-alpha.1` |
 | **0.2.2-rc.3+** | `dsh plugin --profile web add dsh-better-sidebar@0.33.0` |
 | **0.2.2-rc.2** | `dsh plugin --profile web add dsh-better-sidebar@0.32.1` |
 | **0.2.2-rc.1** | `dsh plugin --profile web add dsh-better-sidebar@0.32.0` |
@@ -76,12 +76,12 @@ Always pin **exact versions** for older releases (`latest` moves forward with ea
 
 ```text
 Install the dsh-better-sidebar plugin (a sidebar workbench for DSH):
-1. Confirm DSH is 0.2.3-alpha.2 (alpha line) or newer, then run dsh plugin --profile web add dsh-better-sidebar@0.34.0-alpha.0
+1. Confirm DSH is 0.2.3-alpha.2 (alpha line) or newer, then run dsh plugin --profile web add dsh-better-sidebar@0.34.0-alpha.1
 2. Remind me to hard-refresh the browser (Cmd/Ctrl+Shift+R) afterwards
 If something fails, check the FAQ table in https://github.com/omdsh-dev/DSH-better-sidebar README first.
 ```
 
-**One-line script** — clone this repo and run `bash scripts/install.sh 0.34.0-alpha.0` (macOS / Linux / Windows Git Bash; `./scripts/install.ps1 -Version 0.34.0-alpha.0` for native Windows). It handles installation + bundle registration.
+**One-line script** — clone this repo and run `bash scripts/install.sh 0.34.0-alpha.1` (macOS / Linux / Windows Git Bash; `./scripts/install.ps1 -Version 0.34.0-alpha.1` for native Windows). It handles installation + bundle registration.
 
 **Updating**: just re-run the install command, then hard-refresh the browser.
 
@@ -99,11 +99,15 @@ If something fails, check the FAQ table in https://github.com/omdsh-dev/DSH-bett
 | **Two sidebars** on the page | Double mounting. Remove the legacy manual mount line (`- insert: ... better-sidebar ...`) from `~/.dsh/profiles/web/cordis.patch.yml`; aggregate packages mounting this package under a different id are auto-yielded, no action needed. |
 | Settings values gone after upgrade | Since DSH 0.1.7, preferences live on this plugin's mount row in the profile (default entry id `better-sidebar`). The plugin migrates your old `settings.yaml` values once on first start and never overwrites newer values. |
 | Terminal unavailable | Terminals are provided by **DSH itself** (this plugin ships no PTY) — see DSH docs; "host provides no terminal capability" in the bottom terminal means this deployment has no terminal controller mounted. |
-| `dsh: command not found` | Install DSH first; or use `npx -y --package @deepseek-ai/dsh@0.2.3-alpha.2 dsh plugin --profile web add dsh-better-sidebar@0.34.0-alpha.0`. |
+| `dsh: command not found` | Install DSH first; or use `npx -y --package @deepseek-ai/dsh@0.2.3-alpha.2 dsh plugin --profile web add dsh-better-sidebar@0.34.0-alpha.1`. |
 
 </details>
 
 ## 🆕 Recent Updates
+
+**v0.34.0-alpha.1 — Side Chat keeps working after its tab is closed and reopened**
+
+- **Side Chat no longer goes silent after a tab reopen**: closing a Side Chat tab archived its thread session, and the host refuses every wake of an archived session — the message looked sent, but no reply ever came. Closing now only releases the runtime and never archives, so reopening the panel restores the conversation; a thread that is already archived is unarchived when the panel binds to it or before the next prompt, with no need to rebuild it; and if the host still refuses, the transcript says so instead of showing nothing.
 
 **v0.34.0-alpha.0 — DSH 0.2.3-alpha.2 support (alpha line), resizable Git sections and one component layer**
 
@@ -118,13 +122,6 @@ If something fails, check the FAQ table in https://github.com/omdsh-dev/DSH-bett
 - **The install floor is now `engines.dsh` (DSH 0.2.2-rc.3+)**: older hosts are told to upgrade DSH in the plugin market instead of being filed as plugin defects; hosts on 0.2.2-rc.2 stay on v0.32.1.
 - **UI fixes**: the bottom workbench collapses itself when the sidebar goes fullscreen, the file tree's search header lines up with the session tab rule, native tab icons match the host title geometry, the task graph's view switch is square again, and the Changes lens switcher is back to underline tabs.
 - **Also**: the "add tab plugin" catalog gains 9 entries, and the published package installs only `ws` / `yaml`, so installs are far smaller.
-
-**v0.32.1 — DSH 0.2.2-rc.2 compatibility**
-
-- **Right-click and open-with menus follow the host's new positioning**: DSH 0.2.2-rc.2 replaced the old rectangle callback with CSS-anchored menus and moved submenus to their own portal, so the sidebar now lets the host place them instead of overriding submenu geometry.
-- **Team task boards write through the built-in Agent Team service**: the opt-in experimental team package became `@deepseek-ai/dsh-agent-team` in the base composition, with per-session Team mode.
-- **The Plugins page now shows illustrated details**: an overview of the right sidebar and a per-conversation isolation diagram, with numbered notes for each tool.
-- **DSH 0.2.2-rc.1 hosts stay on plugin v0.32.0**; 0.2.2-rc.2+ should use this release.
 
 ## 🔌 Plugin Ecosystem
 
@@ -249,7 +246,7 @@ Windows / Linux / macOS supported (macOS verified daily, the rest covered by uni
 QQ group: 577011007
 
 <div align="center">
-  <img width="220" alt="WeChat group QR" src="https://github.com/user-attachments/assets/c4266ec9-3db2-406e-b7e1-384be09e3654" />
+  <img width="220" alt="WeChat group QR" src="https://github.com/user-attachments/assets/62b8f6e7-c00a-4ae2-853b-ab332a459e9c" />
   <img width="220" alt="QQ group QR" src="https://github.com/user-attachments/assets/9be34629-26ef-4537-aad4-1393c147f81c" />
 </div>
 

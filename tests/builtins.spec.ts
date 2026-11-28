@@ -309,7 +309,7 @@ describe('built-in tab registrations', () => {
   })
 })
 
-describe('side chat close archives the bound thread', () => {
+describe('side chat close releases the live agent without archiving the thread', () => {
   const scope = { sessionId: 'parent' }
 
   function bound(threadId: string) {
@@ -332,44 +332,34 @@ describe('side chat close archives the bound thread', () => {
 
   afterEach(() => { vi.restoreAllMocks() })
 
-  it('archives a bound thread with stopActivity, then disposes the live agent', async () => {
-    const order: string[] = []
-    let settle!: () => void
-    const gate = new Promise<void>(resolve => { settle = resolve })
-    const archiveSession = vi.fn(async (sessionId: string) => {
-      order.push(`archive:${sessionId}`)
-      await gate
-    })
-    const dispose = vi.spyOn(api, 'sidechatDispose').mockImplementation(async (childId) => {
-      order.push(`dispose:${childId}`)
-      return { accepted: true }
-    })
+  it('disposes the live agent and never archives the thread (#1265)', async () => {
+    // Archiving on close is what made a reopened side chat unable to send:
+    // every later prompt was accepted and then silently ended `blocked`, and
+    // the archive control is disabled for side threads because the UI cannot
+    // unarchive them (#949). Close now only releases the runtime; the session
+    // stays persisted so the panel can reattach and continue it.
+    const archiveSession = vi.fn(async () => {})
+    const dispose = vi.spyOn(api, 'sidechatDispose').mockResolvedValue({ accepted: true })
     sidechatClose(ctxWithArchive(archiveSession))?.(bound('child-1'), scope)
-    expect(archiveSession).toHaveBeenCalledWith('child-1', { stopActivity: true })
-    expect(dispose).not.toHaveBeenCalled()
-    settle()
     await vi.waitFor(() => {
-      expect(order).toEqual(['archive:child-1', 'dispose:child-1'])
+      expect(dispose).toHaveBeenCalledWith('child-1')
     })
+    expect(archiveSession).not.toHaveBeenCalled()
   })
 
-  it('still disposes when archive is unavailable or rejects, with no unhandled rejection', async () => {
+  it('swallows a dispose rejection and resolves when the workspace service throws', async () => {
     const rejections: unknown[] = []
     const onRejection = (reason: unknown): void => { rejections.push(reason) }
     process.on('unhandledRejection', onRejection)
-    const dispose = vi.spyOn(api, 'sidechatDispose').mockResolvedValue({ accepted: true })
+    const dispose = vi.spyOn(api, 'sidechatDispose').mockRejectedValue(new Error('dispose failed'))
     try {
-      sidechatClose(ctxWithArchive())?.(bound('child-missing'), scope)
       const throwing = {
         get: () => { throw new Error('no workspace service') },
       } as unknown as Context
       sidechatClose(throwing)?.(bound('child-throw'), scope)
-      const archiveSession = vi.fn(() => Promise.reject(new Error('archive failed')))
-      sidechatClose(ctxWithArchive(archiveSession))?.(bound('child-reject'), scope)
       await vi.waitFor(() => {
-        expect(dispose.mock.calls.map(call => call[0])).toEqual(['child-missing', 'child-throw', 'child-reject'])
+        expect(dispose).toHaveBeenCalledWith('child-throw')
       })
-      expect(archiveSession).toHaveBeenCalledWith('child-reject', { stopActivity: true })
       await new Promise(resolve => { setTimeout(resolve, 0) })
       expect(rejections).toEqual([])
     } finally {
@@ -377,7 +367,7 @@ describe('side chat close archives the bound thread', () => {
     }
   })
 
-  it('does not archive or dispose an unbound autoCreate tab', async () => {
+  it('neither dispatches nor releases an unbound autoCreate tab', async () => {
     const archiveSession = vi.fn(async () => {})
     const dispose = vi.spyOn(api, 'sidechatDispose').mockResolvedValue({ accepted: true })
     sidechatClose(ctxWithArchive(archiveSession))?.({
