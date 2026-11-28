@@ -30,7 +30,7 @@
  * Ctrl/Cmd+Enter and remains the caller's source-owned write path).
  */
 import { createElement, type KeyboardEvent, type ReactNode } from 'react'
-import type { MarkdownPathImages } from '@deepseek-ai/dsh-client-ui-primitives'
+import type { MarkdownPathImages } from '@deepseek-ai/dsh-client-ui-primitives/client'
 import type {
   ClueFormatRenderer,
   ClueFormatRendererProps,

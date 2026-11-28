@@ -12,7 +12,7 @@
  * their separate layered artwork. `tests/theme.spec.ts` guards the palette.
  */
 import type { ReactNode } from 'react'
-import { FileTypeIcon } from '@deepseek-ai/dsh-client-ui-primitives'
+import { FileTypeIcon } from '@deepseek-ai/dsh-client-ui-primitives/client'
 import styles from './tab-icons.module.css'
 import {
   VscCommentDiscussion,

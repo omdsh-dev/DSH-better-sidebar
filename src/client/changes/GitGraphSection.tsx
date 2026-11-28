@@ -10,7 +10,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
 import {
   IconBranchOutlineRegular, IconCheckOutlineRegular, IconGlobeOutlineRegular,
-} from '@deepseek-ai/dsh-client-ui-primitives'
+} from '@deepseek-ai/dsh-client-ui-primitives/client'
 import { api, SidebarApiError, type SessionScope } from '../api.ts'
 import type { SidebarDiffRef } from '../state.ts'
 import { relativeTime, t } from '../locales.ts'

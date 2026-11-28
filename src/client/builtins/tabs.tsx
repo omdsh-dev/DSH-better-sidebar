@@ -18,7 +18,7 @@
  * can never become a second right-Sidebar terminal capsule beside the host's
  * own. See docs/plans/2026-10-05-bottom-terminal-tab.md.
  */
-import { IconCodeOutlineRegular, IconPanelLeftOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconCodeOutlineRegular, IconPanelLeftOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives/client'
 import { useCallback, useSyncExternalStore } from 'react'
 import {
   changesTabIcon, filesTabIcon, sidechatTabIcon, tasksTabIcon, terminalTabIcon,

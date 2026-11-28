@@ -22,7 +22,7 @@
  * strip-less preview keeps the button in the diff head (its only row).
  */
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
-import { IconCloseOutlineRegular, IconFolderOpenOutlineRegular, IconRefreshOutlineRegular, IconRightUpOutlineRegular, IconShareOutlineRegular, MarkdownDelegateProvider, MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconCloseOutlineRegular, IconFolderOpenOutlineRegular, IconRefreshOutlineRegular, IconRightUpOutlineRegular, IconShareOutlineRegular, MarkdownDelegateProvider, MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives/client'
 import type { Context } from '../../context-types.ts'
 import type { SessionScope } from '../api.ts'
 import { api, htmlUrl } from '../api.ts'

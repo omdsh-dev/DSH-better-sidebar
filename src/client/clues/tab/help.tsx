@@ -1,13 +1,13 @@
 /** The three-step clue guide in the host's accessible modal layer. */
 import { type ReactNode } from 'react'
 import clsx from 'clsx'
-import { Modal } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Modal } from '@deepseek-ai/dsh-client-ui-primitives/client'
 import {
   IconContextInjectionOutlineRegular,
   IconFolderOpenRegular,
   IconLinkOutlineRegular,
   IconPaperPlaneOutlineRegular,
-} from '@deepseek-ai/dsh-client-ui-primitives'
+} from '@deepseek-ai/dsh-client-ui-primitives/client'
 import { ActionButton } from '../../ui/index.ts'
 import { t } from '../../locales.ts'
 import design from '../../ui/design.module.css'

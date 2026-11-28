@@ -60,7 +60,7 @@ vi.mock('../src/client/sidechat-transcript.ts', async (importOriginal) => {
   }
 })
 
-vi.mock('@deepseek-ai/dsh-client-ui-primitives', async (importOriginal) => {
+vi.mock('@deepseek-ai/dsh-client-ui-primitives/client', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@deepseek-ai/dsh-client-ui-primitives')>()
   const react = await import('react')
   type Props = ComponentProps<typeof actual.MarkdownText>

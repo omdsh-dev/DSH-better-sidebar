@@ -11,8 +11,23 @@
  * outside `node_modules` and are transformed by default.
  */
 import { defineConfig } from 'vitest/config'
+import { fileURLToPath } from 'node:url'
+
+/** DSH 0.2.3-alpha.3 split every Client package into a host root entry and a
+ *  browser `/client` bundle. The bundle is a `window.__ModuleLoader__.load(...)`
+ *  chunk program, not an ESM module, so unit tests resolve the `/client`
+ *  specifier to the package's own TypeScript source instead (Vite transforms
+ *  it; production builds leave the specifier external for the DSH loader). */
+const hostClientSource = (name: string, entry: string): string =>
+  fileURLToPath(new URL(`./node_modules/@deepseek-ai/${name}/${entry}`, import.meta.url))
 
 export default defineConfig({
+  resolve: {
+    alias: {
+      '@deepseek-ai/dsh-client-ui-primitives/client': hostClientSource('dsh-client-ui-primitives', 'src/client/index.ts'),
+      '@deepseek-ai/dsh-client-ui-slots/client': hostClientSource('dsh-client-ui-slots', 'src/client/index.ts'),
+    },
+  },
   test: {
     // Bridge Node's `localStorage` accessor to jsdom's store (see the file).
     setupFiles: ['tests/setup.ts'],

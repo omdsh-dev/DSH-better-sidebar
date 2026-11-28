@@ -3,7 +3,7 @@
  * reorder dialog. One implementation keeps the clamping and the commit-on-
  * blur/Enter behavior identical in both places.
  */
-import { Input } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Input } from '@deepseek-ai/dsh-client-ui-primitives/client'
 import css from './guide.module.css'
 
 /** Props of the shared row-count input. */

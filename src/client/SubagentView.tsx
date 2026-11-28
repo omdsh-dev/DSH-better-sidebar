@@ -33,7 +33,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { useSyncExternalStore } from 'react'
 import {
   IconRefreshOutlineRegular,
-} from '@deepseek-ai/dsh-client-ui-primitives'
+} from '@deepseek-ai/dsh-client-ui-primitives/client'
 import { ActionButton, IconButton, Notice } from './ui/index.ts'
 import type {
   Context,

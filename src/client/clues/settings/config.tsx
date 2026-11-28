@@ -30,7 +30,7 @@
  *   an extra field in.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives'
+import { writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives/client'
 import { encode as encodeQr } from 'uqr'
 import { t, type CopyKey } from '../../locales.ts'
 import { clueRuntimeApi, type ClueRuntimeApi } from '../runtime-api.ts'

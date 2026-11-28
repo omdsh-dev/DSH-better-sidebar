@@ -162,7 +162,7 @@ describe('DSH community-market manifest compatibility', () => {
     const dshPeers = Object.keys(peers).filter(name => name === '@deepseek-ai/dsh' || name.startsWith('@deepseek-ai/dsh-'))
     expect(dshPeers.length).toBeGreaterThan(10)
     for (const name of dshPeers) {
-      expect(peers[name], name).toMatch(/^\^0\.2\.3-alpha\.2$/)
+      expect(peers[name], name).toMatch(/^\^0\.2\.3-alpha\.3$/)
     }
   })
 })

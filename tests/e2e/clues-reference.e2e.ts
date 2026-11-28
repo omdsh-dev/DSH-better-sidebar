@@ -70,7 +70,13 @@ test('clues keep consecutive native chips and resolve an unstored @ pick with lo
     await page.keyboard.press('ControlOrMeta+End')
     await page.keyboard.type(' @unseen-reference')
     const option = page.locator('[role="option"][id^="dsh-slash-option-better-sidebar:clues-"]').filter({ hasText: 'unseen-reference.md' })
-    await expect(page.getByRole('option', { name: 'unseen-reference.md', exact: true }).first()).toBeVisible()
+    // DSH 0.2.3-alpha.3 added the host's own "Files & folders" trigger: the
+    // same workspace file is offered by a `dsh-slash-option-reference-*` row
+    // IMMEDIATELY, while the clue source answers after its debounce + source
+    // search. Match by THIS plugin's option id (never the generic role+name
+    // query, which settles on the native row) and let Playwright wait for our
+    // debounced result instead of counting it in the same tick.
+    await expect(option).toHaveCount(1, { timeout: 30_000 })
     await testInfo.attach('native-menu-observation.json', { body: JSON.stringify(await page.getByRole('option').evaluateAll(nodes => nodes.map(node => ({ id: node.id, text: node.textContent, html: node.outerHTML.slice(0, 1500) }))), null, 2), contentType: 'application/json' })
     await expect(option).toHaveCount(1)
     expect((await option.innerText()).trim()).toBe('unseen-reference.md')

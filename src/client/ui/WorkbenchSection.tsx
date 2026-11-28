@@ -16,7 +16,7 @@ import clsx from 'clsx'
 import {
   IconChevronDownOutlineRegular,
   IconChevronRightOutlineRegular,
-} from '@deepseek-ai/dsh-client-ui-primitives'
+} from '@deepseek-ai/dsh-client-ui-primitives/client'
 import css from './workbench-section.module.css'
 
 /** Props of {@link WorkbenchSection}. */

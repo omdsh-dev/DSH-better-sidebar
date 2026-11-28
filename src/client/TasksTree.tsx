@@ -20,7 +20,7 @@ import clsx from 'clsx'
 import {
   IconChevronDownOutlineRegular, IconChevronRightOutlineRegular,
   StateDot,
-} from '@deepseek-ai/dsh-client-ui-primitives'
+} from '@deepseek-ai/dsh-client-ui-primitives/client'
 import type { TasksAgentNode, TasksFoldNode, TasksNode, TasksWorkflowNode } from './tasks-model.ts'
 import {
   AgentGlyph, agentChip, agentMeta, FoldGlyph, foldPreviews, foldTally, LiveLine, nodeDotState,

@@ -13,7 +13,7 @@
  */
 import {
   IconClockOutlineRegular, IconCopyOutlineRegular, IconUserOutlineRegular, MarkdownText, writeClipboard,
-} from '@deepseek-ai/dsh-client-ui-primitives'
+} from '@deepseek-ai/dsh-client-ui-primitives/client'
 import { relativeTime, t } from '../locales.ts'
 import { markdownTextProps } from '../markdown-labels.tsx'
 import { IconButton } from '../ui/index.ts'

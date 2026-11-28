@@ -1,7 +1,7 @@
 /** Shared single and multiple choice control with host placement and keyboard behavior. */
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import clsx from 'clsx'
-import { IconChevronDownOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconChevronDownOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives/client'
 import { Menu } from './Menu.tsx'
 import css from './select-menu.module.css'
 

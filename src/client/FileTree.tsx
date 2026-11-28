@@ -50,7 +50,7 @@ import {
   IconDownloadOutlineRegular,
   IconEditOutlineRegular, IconFolderOpenRegular, IconLinkOutlineRegular, IconPlusOutlineRegular, IconTrashOutlineRegular,
   type MenuEntry, type MenuItem, writeClipboard,
-} from '@deepseek-ai/dsh-client-ui-primitives'
+} from '@deepseek-ai/dsh-client-ui-primitives/client'
 import { SiCursor, SiZedindustries } from 'react-icons/si'
 import { VscFolderOpened, VscLinkExternal, VscPin, VscPinned } from 'react-icons/vsc'
 import { api, archiveBuild, archiveDownloadUrl, archiveStatus, downloadUrl, SidebarApiError, type FsEntry, type FsLevel } from './api.ts'

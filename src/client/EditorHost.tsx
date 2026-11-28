@@ -25,7 +25,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { createElement } from 'react'
 import clsx from 'clsx'
-import { Button, IconCheckOutlineRegular, IconFolderOpenRegular, IconRefreshOutlineRegular, IconSearchOutlineRegular, writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconCheckOutlineRegular, IconFolderOpenRegular, IconRefreshOutlineRegular, IconSearchOutlineRegular, writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives/client'
 import type { Context } from '../context-types.ts'
 import type { EditLimitReason } from '../editor-limits.ts'
 import { api, mediaUrl, SidebarApiError, type SessionScope } from './api.ts'

@@ -16,7 +16,7 @@
  * or even the window's own close control (the plugin's per-surface rule).
  */
 import { Component, useCallback, useEffect, useState, useSyncExternalStore, type ReactNode } from 'react'
-import { IconChevronLeftOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconChevronLeftOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives/client'
 import { IconButton } from '../ui/index.ts'
 import { useViewportSize } from '../breakpoints.ts'
 import { FloatingWindow } from '../FloatingWindow.tsx'

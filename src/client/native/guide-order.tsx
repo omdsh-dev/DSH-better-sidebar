@@ -8,7 +8,7 @@ import {
   IconChevronDownOutlineRegular,
   IconChevronUpOutlineRegular,
   Modal,
-} from '@deepseek-ai/dsh-client-ui-primitives'
+} from '@deepseek-ai/dsh-client-ui-primitives/client'
 import clsx from 'clsx'
 import type { NativeGuideEntry } from './guide-catalog.ts'
 import { t } from '../locales.ts'

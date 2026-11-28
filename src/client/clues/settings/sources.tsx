@@ -20,7 +20,7 @@
  * never rendered as ready.
  */
 import type { ReactNode } from 'react'
-import { FileTypeIcon, IconLinkOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
+import { FileTypeIcon, IconLinkOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives/client'
 import { BUILTIN_SOURCE_IDS } from '../../../clues/types.ts'
 import { CluePackArtwork } from '../artwork.tsx'
 import { LoadingIndicator } from '../../ui/LoadingIndicator.tsx'

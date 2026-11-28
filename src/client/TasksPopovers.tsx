@@ -29,7 +29,7 @@ import clsx from 'clsx'
 import {
   Button, IconChevronDownOutlineRegular, IconRightUpOutlineRegular, StateDot, Tag,
   useDismissOnOutsidePointer,
-} from '@deepseek-ai/dsh-client-ui-primitives'
+} from '@deepseek-ai/dsh-client-ui-primitives/client'
 import type { SidebarSubagentAddress, SidebarTokenUsage } from '../context-types.ts'
 import type { TasksAgentNode, TasksWorkflowNode } from './tasks-model.ts'
 import type { ContextDiagnosticTarget } from './context-diagnostics.ts'

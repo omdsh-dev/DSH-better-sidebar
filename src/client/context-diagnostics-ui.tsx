@@ -18,7 +18,7 @@
 import { createContext, useContext, useSyncExternalStore, type ReactNode } from 'react'
 import {
   IconCloseOutlineRegular, IconContextInjectionOutlineRegular, IconWarningTriangleOutlineRegular,
-} from '@deepseek-ai/dsh-client-ui-primitives'
+} from '@deepseek-ai/dsh-client-ui-primitives/client'
 import { IconButton } from './ui/index.ts'
 import type { Context, SidebarSubagentAddress } from '../context-types.ts'
 import {

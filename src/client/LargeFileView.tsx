@@ -26,7 +26,7 @@
  */
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type UIEvent } from 'react'
 import clsx from 'clsx'
-import { IconRefreshOutlineRegular, JsonTree, type JsonTreeLabels } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconRefreshOutlineRegular, JsonTree, type JsonTreeLabels } from '@deepseek-ai/dsh-client-ui-primitives/client'
 import type { SessionScope } from './api.ts'
 import { downloadUrl } from './api.ts'
 import { formatByteSize, MAX_EDITABLE_BYTES, MAX_EDITABLE_LABEL, type EditLimitReason } from '../editor-limits.ts'

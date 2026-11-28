@@ -14,7 +14,7 @@
  * conversion by the host.
  */
 import type { ReactNode } from 'react'
-import type { MarkdownPathImages } from '@deepseek-ai/dsh-client-ui-primitives'
+import type { MarkdownPathImages } from '@deepseek-ai/dsh-client-ui-primitives/client'
 import type { ClueEditDocument, ClueReadResult, JsonValue } from '../../clues/types.ts'
 import type { ViewportSize, WindowBox, WindowSize, WindowSizePreset } from './geometry.ts'
 

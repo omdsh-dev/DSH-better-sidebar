@@ -6,7 +6,7 @@
  * source browser both address the current session's workspace, never a cwd, so
  * a second copy of the page would only duplicate the same queries.
  */
-import { IconFullscreenOutlineRegular, IconPanelLeftOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconFullscreenOutlineRegular, IconPanelLeftOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives/client'
 import { CLUE_WINDOW_SURFACE_DEFAULT, CLUE_WINDOW_SURFACE_SETTING } from '../../prefs-shared.ts'
 import { t } from '../locales.ts'
 import { CluesTab } from '../clues/tab/CluesTab.tsx'

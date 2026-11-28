@@ -1,7 +1,7 @@
 /** Keep the host Markdown renderer as the default; a registered consumer may
  * enhance only this real row root while it is visible and durably identified. */
 import { useLayoutEffect, useRef } from 'react'
-import { MarkdownText, type MarkdownFileMentions } from '@deepseek-ai/dsh-client-ui-primitives'
+import { MarkdownText, type MarkdownFileMentions } from '@deepseek-ai/dsh-client-ui-primitives/client'
 import { markdownTextProps, type MarkdownCopyLabels } from './markdown-labels.tsx'
 import { attachSidechatSurface, isSidechatSurfaceIdentity } from './sidechat-surface.ts'
 import type { SidechatTranscriptRow } from './sidechat-transcript.ts'

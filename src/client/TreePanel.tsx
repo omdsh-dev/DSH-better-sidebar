@@ -21,7 +21,7 @@
  */
 import { useEffect, useMemo, useRef, useState, type InputHTMLAttributes } from 'react'
 import clsx from 'clsx'
-import { IconChevronsUpDownOutlineRegular, IconFolderOpenRegular, IconRefreshOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconChevronsUpDownOutlineRegular, IconFolderOpenRegular, IconRefreshOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives/client'
 import { api } from './api.ts'
 import type { BetterSidebarService } from './service.ts'
 import { ancestorDirs } from './state.ts'

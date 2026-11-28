@@ -5,7 +5,7 @@
  */
 import { forwardRef, type InputHTMLAttributes, type ReactNode } from 'react'
 import clsx from 'clsx'
-import { IconSearchOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconSearchOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives/client'
 import css from './search-field.module.css'
 
 /** Props of {@link SearchField}. */

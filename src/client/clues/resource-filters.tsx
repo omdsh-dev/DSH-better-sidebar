@@ -1,7 +1,7 @@
 /** One source-declared filter surface for tab browsing and pack member browsing. */
 import { useRef, useState, type ReactNode } from 'react'
-import { IconCheckOutlineRegular, IconSlidersTwoOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconCheckOutlineRegular, IconSlidersTwoOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives/client'
+import type { MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives/client'
 import type { ClueSourceDescriptor, JsonObject, JsonValue } from '../../clues/types.ts'
 import { BUILTIN_SOURCE_IDS } from '../../clues/types.ts'
 import { IconButton } from '../ui/kit.tsx'
