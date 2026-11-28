@@ -552,6 +552,7 @@ export const de: Record<string, string> = {
   sideChatDequeue: 'Aus der Warteschlange entfernen',
   sideChatRunError: 'Ausführung fehlgeschlagen: {message}',
   sideChatTerminalAborted: 'Dieser Durchlauf wurde gestoppt',
+  sideChatTerminalBlocked: 'Dieser Durchlauf wurde vom Host blockiert (diese Unterhaltung ist möglicherweise archiviert; versuche einen neuen Thread)',
   sideChatTerminalMaxTokens: 'Ausgabelimit erreicht — die Antwort ist abgeschnitten',
   sideChatToolArguments: 'Argumente',
   sideChatToolResult: 'Ergebnis',
