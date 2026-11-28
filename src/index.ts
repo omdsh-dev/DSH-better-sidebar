@@ -413,10 +413,18 @@ interface LlmServiceFace {
  * and checked: a deployment without the LLM surface gets a clean 503 instead
  * of a TypeError. Chunks are assembled with the harness's own BlockAssembler
  * — the same chunk-to-message algorithm the agent loop uses.
+ *
+ * `sessionId` is the conversation this suggestion belongs to. The harness
+ * forwards it to the adapter as transport metadata, and some providers route
+ * on it: opencode.ai's gateway rejects a request without the
+ * `x-opencode-session` header that the pi-ai adapter only emits when the
+ * field is present (#1278). The official auxiliary calls
+ * (`dsh-session-title-llm`) pass it for the same reason.
  */
 async function streamCommitMessage(
   ctx: Context,
   route: CommitModelRoute,
+  sessionId: string,
   system: string,
   user: string,
 ): Promise<string> {
@@ -433,6 +441,9 @@ async function streamCommitMessage(
     for await (const chunk of llm.stream({
       provider: route.provider,
       model: route.model,
+      // Branded at the type level only: the route already carries the plain
+      // session id string the request arrived with.
+      sessionId: sessionId as GenerateOptions['sessionId'],
       messages: [createUserMessage({
         content: [{ type: 'text', text: user }],
         // The plugin's producer-owned source kind (0.1.7 removed the shared
@@ -462,11 +473,19 @@ async function streamCommitMessage(
   if (message === '') {
     // The finish reason separates "the model stopped without text" (often a
     // reasoning model that spent its budget thinking) from a transport
-    // failure, so the panel's error line stays actionable.
-    const finish = (assembler.finish as { kind?: unknown } | undefined)?.kind
+    // failure, so the panel's error line stays actionable. A FAILING finish
+    // also carries the provider's own text in `failure.message`; dropping it
+    // left every rejected request reading `finish=error` and nothing else, so
+    // the user could not even tell a missing routing header from a bad key
+    // (#1278).
+    const finish = assembler.finish as
+      | { kind?: unknown; failure?: { message?: unknown } }
+      | undefined
+    const kind = typeof finish?.kind === 'string' ? finish.kind : 'unknown'
+    const failure = typeof finish?.failure?.message === 'string' ? finish.failure.message.trim() : ''
     throw new SidebarError(
       'git-suggest-error',
-      `the model returned an empty message (finish=${typeof finish === 'string' ? finish : 'unknown'})`,
+      `the model returned an empty message (finish=${kind}${failure === '' ? '' : `: ${failure}`})`,
       500,
     )
   }
@@ -945,7 +964,7 @@ function buildApi(
           ? { diff: await git.diff(cwd, undefined, false, repoRoot), files: unstaged }
           : { diff: '', files: untracked }
       const prompt = buildCommitPrompt(language, focus.files.map(entry => entry.path), truncateDiff(focus.diff))
-      const message = await streamCommitMessage(ctx, route, prompt.system, prompt.user)
+      const message = await streamCommitMessage(ctx, route, sessionId, prompt.system, prompt.user)
       return { message, provider: route.provider, model: route.model }
     },
     // The route the NEXT suggestion would use (pinned → the conversation's own

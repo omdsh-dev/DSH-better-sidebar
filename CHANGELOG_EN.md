@@ -6,6 +6,9 @@
 
 ### v0.34.0-alpha.1
 
+- ✨ **"Generate commit message" no longer always fails on session-routed providers such as opencode-go** ([#1278](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1278)): `git.suggest-message` called `ctx.llm.stream` without a `sessionId`, and the adapter only writes transport metadata when that field is present — opencode.ai's gateway requires the `x-opencode-session` header and answers `400 MissingSessionID` without it, so this one auxiliary call failed every time (direct OpenAI / DeepSeek endpoints ignore the header, which is why it went unnoticed). The route now passes the conversation's session id through, and the empty-message branch carries `finish.failure.message`, so the error is no longer just `finish=error` and the real 400 reason is visible.
+  - 🧪 Tests: `tests/git-suggest-route.spec.ts` adds two cases — `llm.stream` receives the request's own session id, and a failing finish puts the provider's text into the error message (`finish=error: …`).
+
 - 🩹 **Side Chat could not send after its tab was closed and reopened** ([#1265](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1265)): closing the tab archived the thread session, and the host refuses every wake of an archived session — the prompt was accepted, then the turn silently ended `blocked` with no reply and no message. Closing now only releases the runtime and never archives; a thread that is already archived is unarchived when it is re-bound or before the next prompt (reopening the tab brings the conversation back); and a turn the host still refuses leaves a visible "blocked by the host" row instead of nothing.
 
 ### v0.34.0-alpha.0

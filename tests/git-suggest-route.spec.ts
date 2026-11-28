@@ -3,8 +3,9 @@
  * `/sidebar/api` surface: the provider/model route one suggestion runs on
  * (pinned → the conversation's own → the harness default → a clean error), the
  * prompt assembly and diff truncation, every generation bound handed to the
- * harness LLM service, the answer shape `src/client/api.ts` declares, the
- * error mapping, and the invariant that a suggestion never writes to the
+ * harness LLM service (including the session id adapters route on), the answer
+ * shape `src/client/api.ts` declares, the error mapping down to the provider's
+ * own failure text, and the invariant that a suggestion never writes to the
  * repository.
  *
  * The three suites around this route each cover another layer and none of them
@@ -95,6 +96,7 @@ function headerEvent(provider: string, model: string): { type: string; data: unk
 interface StreamCall {
   provider?: string
   model?: string
+  sessionId?: string
   system?: string
   messages?: readonly { role?: string; content?: readonly { type?: string; text?: string }[] }[]
   maxTokens?: number
@@ -475,6 +477,24 @@ describe('git.suggest-message: prompt and generation bounds', () => {
     }
   })
 
+  it('stamps the request\'s own session id on the stream call', async () => {
+    const dir = makePendingRepo()
+    try {
+      const harness = mount({ agentOptions: { provider: 'p', model: 'm' } })
+
+      const result = await invoke(harness.route, 'git.suggest-message', { sessionId: 's-route', cwd: dir, language: 'en' })
+
+      expect(result.ok).toBe(true)
+      // The harness forwards this to the adapter as transport metadata, and
+      // providers that route on it (opencode.ai's `x-opencode-session`) reject
+      // the request outright when it is absent (#1278). It is the CONVERSATION
+      // the panel belongs to, not the pinned route or the working directory.
+      expect(harness.calls[0]?.sessionId).toBe('s-route')
+    } finally {
+      removeTree(dir)
+    }
+  })
+
   it('asks in the panel\'s language and defaults to English', async () => {
     const dir = makePendingRepo()
     try {
@@ -606,6 +626,35 @@ describe('git.suggest-message: answer shape and error mapping', () => {
       expect(result.error?.code).toBe('git-suggest-error')
       expect(result.error?.message).toContain('empty message')
       expect(result.error?.message).toContain('finish=stop')
+    } finally {
+      removeTree(dir)
+    }
+  })
+
+  it('carries the provider\'s own failure text out of an empty generation', async () => {
+    const dir = makePendingRepo()
+    try {
+      const harness = mount({ agentOptions: { provider: 'p', model: 'm' } })
+      // A rejected request: the provider answers with a failing finish and no
+      // content at all — the shape opencode.ai's gateway returns when the
+      // routing header is missing (#1278).
+      harness.model.chunks = [{
+        type: 'finish',
+        reason: {
+          kind: 'error',
+          failure: { code: 'MissingSessionID', message: 'Request is missing x-opencode-session', status: 400 },
+        },
+      }]
+
+      const result = await invoke(harness.route, 'git.suggest-message', { sessionId: 's-failure', cwd: dir, language: 'en' })
+
+      expect(result.ok).toBe(false)
+      expect(result.status).toBe(500)
+      expect(result.error?.code).toBe('git-suggest-error')
+      // The finish kind alone is not actionable: it stays (it separates a
+      // stalled reasoning model from a rejected request) and the provider's
+      // own text rides along after it.
+      expect(result.error?.message).toContain('finish=error: Request is missing x-opencode-session')
     } finally {
       removeTree(dir)
     }
