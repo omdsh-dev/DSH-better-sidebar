@@ -226,7 +226,7 @@ describe('CLI boundary', () => {
 
   it.skipIf(process.platform !== 'win32')('executes a .cmd shim with shell:false', async () => {
     const dir = tempDir(), script = join(dir, 'probe.cmd')
-    writeFileSync(script, '@echo off\r\necho {%1}\r\n')
+    writeFileSync(script, '@echo off\r\nif not "%2"=="" exit /b 1\r\necho {%~1}\r\n')
     const result = await createCliRunner({ spawn: createNodeSpawn(), env: process.env }).run({ command: script, args: ['hello world'], cwd: dir })
     expect(result.exitCode).toBe(0)
     expect(result.stdout.trim()).toBe('{hello world}')

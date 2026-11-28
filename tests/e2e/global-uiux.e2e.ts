@@ -12,7 +12,7 @@ import { join } from 'node:path'
 import { test, expect, type Locator, type Page, type TestInfo } from '@playwright/test'
 import { createHostApi, dismissOnboarding, gotoPage, hostRpc, sendFirstMessage } from './host'
 import type { WorkflowRunView } from '../../src/workflow-runs'
-import { clueView, expectNoOverflow, floatClueWindow, setTheme } from './ui-helpers'
+import { clueView, expectNoOverflow, floatClueWindow, selectClueSource, setTheme } from './ui-helpers'
 
 async function openGuide(page: Page, kind: string): Promise<void> {
   const panel = page.locator('[data-sidebar-right-panel]:visible')
@@ -162,8 +162,12 @@ for (const touch of [false, true]) {
 
       await openGuide(page, 'git')
       const gitRoot = panel.locator('[data-git-root]:visible')
+      const changedFile = gitRoot.locator('[data-row="sample.ts"]')
       const changesTabs = panel.getByRole('tablist', { name: 'Git', exact: true })
       const gitTab = changesTabs.getByRole('tab', { name: 'Git', exact: true })
+      // The first Git status adds controls after the tab. Wait for the fixture
+      // change so Tab and Shift+Tab traverse the same set of controls.
+      await expect(changedFile).toBeVisible()
       await keyboardFocus(page, gitTab)
       await gitTab.press('ArrowRight')
       const sessionTab = changesTabs.getByRole('tab', { name: 'Session', exact: true })
@@ -172,9 +176,9 @@ for (const touch of [false, true]) {
       await screenshotMatrix(page, sessionTab.locator('xpath=../..'), 'session-files', info)
       await sessionTab.press('Home')
       await expect(gitRoot).toBeVisible()
-      await expect(gitRoot.locator('[data-row="sample.ts"]')).toBeVisible()
+      await expect(changedFile).toBeVisible()
       await screenshotMatrix(page, gitRoot, 'git', info)
-      await gitRoot.locator('[data-row="sample.ts"] [data-path="sample.ts"]').click()
+      await changedFile.locator('[data-path="sample.ts"]').click()
       await expect(panel.locator('[class*="diffPane"]')).toBeVisible()
       await screenshotMatrix(page, changesTabs.locator('xpath=../..'), 'git-diff', info)
       metrics.gitTab = await controlStyle(gitTab)
@@ -263,6 +267,8 @@ for (const touch of [false, true]) {
       await clues.evaluate(node => { node.style.maxWidth = '390px' })
       const sourceSelect = sourceNavigation.getByRole('button', { name: 'Source', exact: true })
       await expect(sourceSelect).toBeVisible()
+      // The host remembers the last source. This fixture uses acceptance.md.
+      await selectClueSource(clues, 'builtin.files')
       metrics.cluesTab = await controlStyle(sourceSelect)
       await sourceSelect.focus()
       await expect(sourceSelect).toBeFocused()

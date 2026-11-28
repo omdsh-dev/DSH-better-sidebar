@@ -362,10 +362,11 @@ export async function searchFiles(root: string, query: string, opts: FsSearchOpt
       // more; slice back to the caller's budget and re-derive the directory
       // subset from what was kept, so dirs never names a dropped row.
       const matches = [...paths].sort().slice(0, maxMatches)
+      const truncated = result.truncated || paths.length > maxMatches
       const kept = new Set(matches)
       const dirs = [...new Set(result.dirs)].filter(dir => kept.has(dir)).sort()
-      debugLog(`[dsh-search] engine=${probe.engine} bin=${probe.binary} root=${relRoot(root)} query="${needle}" hits=${matches.length} truncated=${result.truncated} ${(performance.now() - started).toFixed(0)}ms`)
-      return { matches, dirs, truncated: result.truncated }
+      debugLog(`[dsh-search] engine=${probe.engine} bin=${probe.binary} root=${relRoot(root)} query="${needle}" hits=${matches.length} truncated=${truncated} ${(performance.now() - started).toFixed(0)}ms`)
+      return { matches, dirs, truncated }
     } catch {
       // runEngine already recorded the failure (broken engine or timeout);
       // the next engine — or the walk below — gets its turn.

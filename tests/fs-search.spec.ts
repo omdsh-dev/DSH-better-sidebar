@@ -599,10 +599,10 @@ describe('fs-search dispatch', () => {
     }
   })
 
-  it('caps engine output at maxMatches and reports truncated', async () => {
+  it('reports truncation when the caller drops the extra match from a complete engine result', async () => {
     setEngineHooks({
       prober: async () => [fakeFd],
-      runner: async () => ({ paths: ['a', 'b', 'c'], dirs: [], truncated: true }),
+      runner: async () => ({ paths: ['a', 'b', 'c'], dirs: [], truncated: false }),
     })
     expect(await searchFiles('/workspace', 'x', { maxMatches: 2 })).toEqual({
       matches: ['a', 'b'],
@@ -642,7 +642,7 @@ describe('fs-search dispatch', () => {
       }),
     })
     const exclude = compileExcludePatterns(['third_party', '*.log'], '/workspace')
-    expect(await searchFiles('/workspace', 'index', { exclude })).toEqual({
+    expect(await searchFiles('/workspace', 'index', { exclude, maxMatches: 1 })).toEqual({
       matches: ['src/index.ts'],
       dirs: [],
       truncated: false,

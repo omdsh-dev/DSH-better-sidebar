@@ -1112,24 +1112,33 @@ export function createInstallManager(options: InstallManagerOptions): InstallMan
 
 // ── Default node transport ─────────────────────────────────────────────────
 
-/** The command/argv shape used to extract one archive (pure, testable). */
+/** Select the host extractor and its argv for one validated archive. */
 export function archiveExtractCommand(
   platform: NodeJS.Platform,
   archive: 'zip' | 'tar.gz',
   archivePath: string,
   destination: string,
   stripComponents: number,
+  options: { env?: NodeJS.ProcessEnv; exists?: (path: string) => boolean } = {},
 ): { command: string; args: string[] } | undefined {
   const strip = stripComponents > 0 ? [`--strip-components=${stripComponents}`] : []
-  if (archive === 'tar.gz') {
-    return { command: 'tar', args: ['-xzf', archivePath, '-C', destination, ...strip] }
+  if (archive === 'zip' && platform !== 'darwin' && platform !== 'win32') {
+    if (stripComponents > 0) return undefined
+    return { command: 'unzip', args: ['-q', archivePath, '-d', destination] }
   }
-  // bsdtar (macOS / Windows 10+) reads zip; GNU tar on Linux does not.
-  if (platform === 'darwin' || platform === 'win32') {
-    return { command: 'tar', args: ['-xf', archivePath, '-C', destination, ...strip] }
+  let command = 'tar'
+  if (platform === 'win32') {
+    // Git Bash can put GNU tar ahead of the Windows bsdtar. The latter
+    // accepts drive-qualified archive paths and handles ZIP distributions.
+    const env = options.env ?? process.env
+    const root = env.SystemRoot ?? env.SYSTEMROOT
+    if (root !== undefined && win32.isAbsolute(root)) {
+      const systemTar = win32.join(root, 'System32', 'tar.exe')
+      const exists = options.exists ?? existsSync
+      if (exists(systemTar)) command = systemTar
+    }
   }
-  if (stripComponents > 0) return undefined
-  return { command: 'unzip', args: ['-q', archivePath, '-d', destination] }
+  return { command, args: [archive === 'zip' ? '-xf' : '-xzf', archivePath, '-C', destination, ...strip] }
 }
 
 /** Exact local-only npm argv (never `-g`, never a profile dependency tree). */
@@ -1227,7 +1236,7 @@ export interface NodeInstallTransportOptions {
   /** Shared CLI runner (timeout/cancel/env/redaction contract). */
   readonly runner: CliRunner
   readonly platform?: NodeJS.Platform
-  /** Parent environment used to locate npm on Windows (defaults to process.env). */
+  /** Parent environment used to locate system tools on Windows (defaults to process.env). */
   readonly env?: NodeJS.ProcessEnv
   /** Node executable used to run npm-cli.js (defaults to process.execPath). */
   readonly nodeExecutable?: string
@@ -1381,6 +1390,7 @@ export function createNodeInstallTransport(options: NodeInstallTransportOptions)
         input.archivePath,
         input.destination,
         input.stripComponents,
+        { env: options.env },
       )
       if (command === undefined) {
         throw new ClueError('unsupported', `extracting ${input.archive} archives is not supported on this platform`)

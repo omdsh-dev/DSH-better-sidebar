@@ -33,7 +33,7 @@
  */
 import { randomUUID } from 'node:crypto'
 import { parseClueDiscussion } from './discussion.ts'
-import { access, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
+import { access, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative, sep } from 'node:path'
 import {
   ClueError,
@@ -370,13 +370,30 @@ async function fileExists(path: string): Promise<boolean> {
   }
 }
 
+/** A missing entry is valid only if the nearest existing ancestor is a directory. */
+async function isMissingStoreEntry(path: string, error: unknown): Promise<boolean> {
+  if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return false
+  // On Windows, looking below a regular file can also produce ENOENT.
+  let parent = dirname(path)
+  for (;;) {
+    try {
+      return (await stat(parent)).isDirectory()
+    } catch (statError) {
+      if ((statError as NodeJS.ErrnoException).code !== 'ENOENT') return false
+    }
+    const next = dirname(parent)
+    if (next === parent) return false
+    parent = next
+  }
+}
+
 /** Read one stored JSON file, or undefined when it does not exist. */
 async function readJsonFile(path: string): Promise<unknown | undefined> {
   let text: string
   try {
     text = await readFile(path, 'utf8')
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
+    if (await isMissingStoreEntry(path, error)) return undefined
     throw new ClueError('failed', `clue storage is not readable: ${error instanceof Error ? error.message : String(error)}`)
   }
   try {
@@ -452,7 +469,7 @@ export class CluesStore {
     try {
       text = await readFile(path, 'utf8')
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return emptyWorkspaceState()
+      if (await isMissingStoreEntry(path, error)) return emptyWorkspaceState()
       throw new ClueError('failed', `clue storage is not readable: ${error instanceof Error ? error.message : String(error)}`)
     }
     return parseState(text, workspaceId)
@@ -510,7 +527,7 @@ export class CluesStore {
     try {
       names = await readdir(dir)
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
+      if (await isMissingStoreEntry(dir, error)) return []
       throw new ClueError('failed', `clue snapshots are not readable: ${error instanceof Error ? error.message : String(error)}`)
     }
     const metas: ClueSnapshotMeta[] = []

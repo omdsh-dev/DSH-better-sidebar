@@ -7,10 +7,11 @@
  * the mount's disposer while the persisted clue library stays intact.
  */
 import { afterEach, describe, expect, it } from 'vitest'
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createCluesService, type CluesService, type ClueSourceRegistration } from '../src/clues/service.ts'
+import { CluesStore } from '../src/clues/store.ts'
 import { ClueError, type CluePortableRef, type ClueReadResult } from '../src/clues/types.ts'
 import {
   CLUES_SHARE_ROUTE_PATHS, DEFAULT_MAX_API_IMPORT_BYTES, cluepackDisposition, CLUES_SHARE_API_METHODS,
@@ -413,12 +414,26 @@ describe('createCluesShareRoutes', () => {
 })
 
 describe('S1 storage failure messages', () => {
+  it('distinguishes a fresh store from a path blocked by a file', async () => {
+    const base = mkdtempSync(join(tmpdir(), 'dsh-clues-share-store-'))
+    roots.push(base)
+    const root = join(base, 'store')
+    const store = new CluesStore({ root })
+    await expect(store.read('ws-1')).resolves.toMatchObject({ revision: 0, clues: [] })
+    await expect(store.listSnapshots('ws-1')).resolves.toEqual([])
+    await expect(store.readSnapshotMeta('ws-1', 'missing')).rejects.toMatchObject({ category: 'not-found' })
+    expect(existsSync(root)).toBe(false)
+
+    writeFileSync(root, 'not a directory')
+    await expect(store.read('ws-1')).rejects.toMatchObject({ category: 'failed' })
+    await expect(store.listSnapshots('ws-1')).rejects.toMatchObject({ category: 'failed' })
+    await expect(store.readSnapshotMeta('ws-1', 'missing')).rejects.toMatchObject({ category: 'failed' })
+  })
   it('never echoes the absolute store path through preview, route or progress', async () => {
     const base = mkdtempSync(join(tmpdir(), 'dsh-clues-share-store-error-'))
     roots.push(base)
     const root = join(base, 'store')
-    // A file where the store root directory is expected makes every read fail
-    // with ENOTDIR naming the absolute path, which S1 wraps verbatim.
+    // The underlying filesystem error may include the absolute store path.
     writeFileSync(root, 'not a directory', 'utf8')
     let next = 0
     const service = createCluesService({ root, now: () => NOW, newId: kind => kind + '-' + (++next) })

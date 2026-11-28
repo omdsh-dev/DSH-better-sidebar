@@ -181,6 +181,7 @@
     "@deepseek-ai/dsh-tools": "0.2.3-alpha.2",
     "@deepseek-ai/dsh-user-approval": "0.2.3-alpha.2",
     "@deepseek-ai/dsh-util-code-language": "0.2.3-alpha.2",
+    "@deepseek-ai/dsh-util-file-drag": "0.2.3-alpha.2",
     "@deepseek-ai/dsh-util-time": "0.2.3-alpha.2",
     "@deepseek-ai/dsh-util-workspace-path": "0.2.3-alpha.2",
     "@deepseek-ai/dsh-working-directory": "0.2.3-alpha.2",

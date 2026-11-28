@@ -4,6 +4,10 @@
 >
 > 📝 The Chinese [CHANGELOG](./CHANGELOG.md) is the authoritative, item-by-item record; this file carries the English summaries and has historically lagged behind it. Where the two disagree, the Chinese one is current.
 
+### Unreleased
+
+- **Fix Clues file search, import previews, and Windows tool installation.** File search keeps the total open when more matches are available. Import previews report a storage error if a file blocks the store directory. On Windows, dependency installation prefers the system tar for drive-qualified archive paths and ZIP packages. [#1271](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1271)
+
 ### v0.34.0-alpha.1
 
 - 🩹 **Side Chat could not send after its tab was closed and reopened** ([#1265](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1265)): closing the tab archived the thread session, and the host refuses every wake of an archived session — the prompt was accepted, then the turn silently ended `blocked` with no reply and no message. Closing now only releases the runtime and never archives; a thread that is already archived is unarchived when it is re-bound or before the next prompt (reopening the tab brings the conversation back); and a turn the host still refuses leaves a visible "blocked by the host" row instead of nothing.

@@ -24,6 +24,7 @@ import type {
   InstallExtractInput, InstallNpmInput, InstallTransport,
 } from '../src/clues/runtime/types.ts'
 import { createCliRunner, createNodeSpawn } from '../src/clues/runtime/cli.ts'
+import { createZip } from '../src/clues/share/zip.ts'
 import { removeTree } from './temp-tree.ts'
 
 const roots: string[] = []
@@ -445,20 +446,40 @@ describe('npm launch and argv', () => {
     expect(archiveExtractCommand('linux', 'zip', '/a.zip', '/dest', 0)).toEqual({ command: 'unzip', args: ['-q', '/a.zip', '-d', '/dest'] })
     expect(archiveExtractCommand('linux', 'zip', '/a.zip', '/dest', 1)).toBeUndefined()
   })
+
+  it('uses Windows system tar before PATH for both formats when available', () => {
+    const systemRoot = 'E:\\Windows'
+    const systemTar = win32.join(systemRoot, 'System32', 'tar.exe')
+    const destination = 'D:\\temp dir\\out'
+    for (const archive of ['tar.gz', 'zip'] as const) {
+      const path = `D:\\temp dir\\asset.${archive}`
+      const command = archiveExtractCommand('win32', archive, path, destination, 0, {
+        env: { SYSTEMROOT: systemRoot }, exists: candidate => candidate === systemTar,
+      })
+      expect(command).toEqual({ command: systemTar, args: [archive === 'zip' ? '-xf' : '-xzf', path, '-C', destination] })
+      expect(archiveExtractCommand('win32', archive, path, destination, 0, {
+        env: { SystemRoot: systemRoot }, exists: () => false,
+      })?.command).toBe('tar')
+    }
+  })
 })
 
 describe('real archive extraction', () => {
-  it('extracts a validated tar.gz through the system tar', async () => {
-    const dir = tempHome(), archivePath = join(dir, 'asset.tar.gz')
-    writeFileSync(archivePath, tarGz([{ name: 'bin/gh', data: '#!/bin/sh\necho ok\n' }]))
+  it.each([
+    { archive: 'tar.gz', extractor: 'tar', name: 'bin/gh' },
+    { archive: 'zip', extractor: 'ZIP extractor', name: 'bin/gh.exe' },
+  ] as const)('extracts a validated $archive through the system $extractor', async ({ archive, name }) => {
+    const dir = tempHome(), archivePath = join(dir, `asset.${archive}`)
+    const data = '#!/bin/sh\necho ok\n'
+    writeFileSync(archivePath, archive === 'zip' ? createZip([{ name, data: Buffer.from(data) }]) : tarGz([{ name, data }]))
     const destination = join(dir, 'out')
     mkdirSync(destination)
     const transport = createNodeInstallTransport({
       fetch: async () => { throw new Error('the extract path must not fetch') },
       runner: createCliRunner({ spawn: createNodeSpawn(), env: process.env }), platform: process.platform,
     })
-    await transport.extract({ archivePath, archive: 'tar.gz', destination, stripComponents: 0 })
-    expect(readFileSync(join(destination, 'bin', 'gh'), 'utf8')).toBe('#!/bin/sh\necho ok\n')
+    await transport.extract({ archivePath, archive, destination, stripComponents: 0 })
+    expect(readFileSync(join(destination, name), 'utf8')).toBe(data)
   })
 })
 

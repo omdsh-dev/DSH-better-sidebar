@@ -326,32 +326,24 @@ describe('reader semantics through the route', () => {
     expect(json(await call(post({ body: clueBody(foreign) })))).toMatchObject({ ok: true, value: { status: 'ok', workspaceId: 'ws-2', text: 'live:foreign' } })
   })
 
-  it('aborts the source read when the response closes or the request emits aborted', async () => {
-    const signals: AbortSignal[] = []
-    service.registerSource(source('test.slow', async (_input, context) => {
-      signals.push(context.signal!)
-      await new Promise((_resolve, reject) => {
-        context.signal?.addEventListener('abort', () => reject(new Error('aborted')), { once: true })
-      })
-      return { format: 'text/plain', data: {}, text: 'never', fetchedAt: NOW }
-    }))
-    const closing = closableResponse()
-    const pendingClose = route.handler(post({ body: clueBody(await addClue('test.slow', 'slow', 'Slow')) }), closing)
-    await new Promise(resolve => setTimeout(resolve, 10))
-    closing.close()
-    await pendingClose
-    expect(signals[0]?.aborted).toBe(true)
-    expect(closing.status).toBe(0)
-    expect(closing.body).toBe('')
-
-    const request = post({ body: clueBody(await addClue('test.slow', 'slow2', 'Slow 2')) })
-    const aborted = fakeResponse()
-    const pendingAbort = route.handler(request, aborted)
-    await new Promise(resolve => setTimeout(resolve, 10))
-    request.emitAborted()
-    await pendingAbort
-    expect(signals[1]?.aborted).toBe(true)
-    expect(aborted.status).toBe(0)
+  it.each(['response close', 'request abort'])('aborts an active source read on %s', async event => {
+    let notifyReadStarted!: (signal: AbortSignal) => void
+    const readStarted = new Promise<AbortSignal>(resolve => { notifyReadStarted = resolve })
+    service.registerSource(source('test.slow', (_input, context) => new Promise((_resolve, reject) => {
+      const signal = context.signal!
+      signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true })
+      notifyReadStarted(signal)
+    })))
+    const request = post({ body: clueBody(await addClue('test.slow', 'slow', 'Slow')) })
+    const response = closableResponse()
+    const handled = route.handler(request, response)
+    const signal = await readStarted
+    if (event === 'response close') response.close()
+    else request.emitAborted()
+    await handled
+    expect(signal.aborted).toBe(true)
+    expect(response.status).toBe(0)
+    expect(response.body).toBe('')
   })
 })
 

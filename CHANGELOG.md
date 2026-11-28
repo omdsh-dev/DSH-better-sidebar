@@ -2,6 +2,10 @@
 
 > 本文档收录 dsh-better-sidebar 的完整发布历史（最新版摘要见 [README](README_ZH.md)；同步发布于 [GitHub Releases](https://github.com/omdsh-dev/DSH-better-sidebar/releases)）。
 
+### 未发布
+
+- **修复线索文件搜索、分享导入和 Windows 工具安装**。文件搜索还有下一页时不再提前显示最终总数。线索存储路径被普通文件占用时，导入预览会报告存储错误。Windows 安装依赖时优先使用系统自带的 tar，以支持带盘符的归档路径和 ZIP 包。[#1271](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1271)
+
 ### v0.34.0-alpha.1
 
 - 🩹 **侧边对话关闭 Tab 再打开后「发不出去」**（[#1265](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1265)）：关闭侧边对话 Tab 会把线程会话归档，而宿主会拒绝归档会话的每一次唤醒——消息显示已接受，随后静默结束为 `blocked`，既没有回答也没有任何提示。现在关闭 Tab 只释放运行时、不再归档；已经处于归档状态的线程在重新绑定或发送前会自动解除归档（重开 Tab 会恢复原对话）；万一仍被宿主拒绝，转写里会补一行「本轮被宿主阻止」的说明，不再毫无反馈。
