@@ -2,6 +2,10 @@
 
 > 本文档收录 dsh-better-sidebar 的完整发布历史（最新版摘要见 [README](README_ZH.md)；同步发布于 [GitHub Releases](https://github.com/omdsh-dev/DSH-better-sidebar/releases)）。
 
+### 未发布
+
+- **`sidebar_open` 明确区分请求已派发和已排队**（[#1174](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1174)）。开启模型主动打开侧栏后，工具反馈会说明请求是交给了已连接的侧栏，还是在等待连接。派发成功时，工具会提示页签是否已显示仍未确认。
+
 ### v0.34.0-alpha.1
 
 - 🩹 **侧边对话关闭 Tab 再打开后「发不出去」**（[#1265](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1265)）：关闭侧边对话 Tab 会把线程会话归档，而宿主会拒绝归档会话的每一次唤醒——消息显示已接受，随后静默结束为 `blocked`，既没有回答也没有任何提示。现在关闭 Tab 只释放运行时、不再归档；已经处于归档状态的线程在重新绑定或发送前会自动解除归档（重开 Tab 会恢复原对话）；万一仍被宿主拒绝，转写里会补一行「本轮被宿主阻止」的说明，不再毫无反馈。

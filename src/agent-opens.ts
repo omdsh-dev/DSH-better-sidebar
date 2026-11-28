@@ -220,9 +220,8 @@ export function registerOpenTool(
       + 'a URL opens in the sidebar browser (sandboxed iframe). '
       + 'The panel auto-expands for content opens and the tab title defaults to the file/folder name or the URL hostname. '
       + 'The path may be absolute or relative to the session working directory. '
-      + 'The open lands in the CALLING session\'s sidebar: while that session\'s sidebar view is not connected '
-      + '(e.g. the session is not the active one), the open is queued and delivered when the session sidebar is next shown — '
-      + 'the result reports `delivered` so you know whether it is visible right now. '
+      + 'The request targets the calling session\'s sidebar. The host dispatches it to an attached sidebar view or queues it for a view to attach. '
+      + '`delivered` reports whether the host dispatched the request at call time. Tab visibility is unconfirmed. '
       + 'The side card setting "model opens files/folders/pages in the sidebar" must be on, and the target tab type must be enabled in that session\'s settings.',
     parameters: {
       target: {
@@ -240,20 +239,20 @@ export function registerOpenTool(
         type: 'object',
         additionalProperties: false,
         properties: {
-          kind: { type: 'string', required: true, description: 'What was opened: file | folder | url.' },
+          kind: { type: 'string', required: true, description: 'Type of target requested (file, folder, or URL).' },
           target: { type: 'string', required: true, description: 'The absolute path or URL the open was requested for.' },
           title: { type: 'string', required: true, description: 'The tab title used (provided title, basename, or hostname).' },
           delivered: {
             type: 'boolean',
             required: true,
-            description: 'Whether the open was pushed to a connected sidebar at call time (false = queued until the session sidebar is next shown).',
+            description: 'True if the host dispatched the open request to an attached sidebar view. False if the host queued the request. Tab visibility is unconfirmed.',
           },
         },
       },
       render: textRender((v: { kind: AgentOpenKind; target: string; title: string; delivered: boolean }) =>
         v.delivered
-          ? `Opened ${v.kind} "${v.title}" (${v.target}) in the sidebar.`
-          : `Requested opening ${v.kind} "${v.title}" (${v.target}) in the sidebar — the session sidebar is not connected yet, so the open is queued and will appear when it is next shown.`,
+          ? `Dispatched the sidebar request to open ${v.kind} "${v.title}" (${v.target}). Tab visibility is unconfirmed.`
+          : `Queued the sidebar request to open ${v.kind} "${v.title}" (${v.target}) pending a connection.`,
       ),
     },
     execute: async (args: { target: string; title?: string }, exec: ToolRunContext) => {

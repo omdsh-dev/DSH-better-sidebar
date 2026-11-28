@@ -157,6 +157,17 @@ describe('sidebar_open tool', () => {
     expect(() => mount().dispose()).not.toThrow()
   })
 
+  it('describes delivered as dispatch status rather than tab visibility', () => {
+    const { captured } = mount()
+    const tool = toolOf(captured, 'sidebar_open')
+    expect(tool.description).toContain('Tab visibility is unconfirmed.')
+    expect(tool.output.schema).toMatchObject({
+      properties: {
+        delivered: { description: expect.stringContaining('Tab visibility is unconfirmed.') },
+      },
+    })
+  })
+
   it('opens an existing file (schema-valid output, delivered with a subscriber)', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'sidebar-open-'))
     try {
@@ -166,10 +177,16 @@ describe('sidebar_open tool', () => {
       const received: unknown[] = []
       const detach = registry.attach('s1', (request) => { received.push(request) })
       const tool = toolOf(captured, 'sidebar_open')
-      const value = await tool.execute({ target: file }, exec('s1'))
-      expect(value).toEqual({ kind: 'file', target: file, title: 'a.txt', delivered: true })
+      const args = { target: file }
+      const expected = { kind: 'file', target: file, title: 'a.txt', delivered: true }
+      const value = await tool.execute(args, exec('s1'))
+      expect(value).toEqual(expected)
       expect(validateJsonSchemaValue(tool.output.schema, value, 'value')).toEqual([])
       expect(received).toHaveLength(1)
+      expect(tool.output.render(args, expected)).toEqual([{
+        type: 'text',
+        text: `Dispatched the sidebar request to open file "a.txt" (${file}). Tab visibility is unconfirmed.`,
+      }])
       detach()
     } finally {
       removeTree(dir)
@@ -182,8 +199,15 @@ describe('sidebar_open tool', () => {
       writeFileSync(join(dir, 'note.md'), '# hi')
       const { captured, registry } = mount({ resolveCwd: async () => dir })
       const tool = toolOf(captured, 'sidebar_open')
-      const value = await tool.execute({ target: 'note.md' }, exec('s1'))
-      expect(value).toMatchObject({ kind: 'file', target: join(dir, 'note.md'), title: 'note.md', delivered: false })
+      const args = { target: 'note.md' }
+      const file = join(dir, 'note.md')
+      const expected = { kind: 'file', target: file, title: 'note.md', delivered: false }
+      const value = await tool.execute(args, exec('s1'))
+      expect(value).toEqual(expected)
+      expect(tool.output.render(args, expected)).toEqual([{
+        type: 'text',
+        text: `Queued the sidebar request to open file "note.md" (${file}) pending a connection.`,
+      }])
       // Queued: a later attach replays it.
       const received: unknown[] = []
       const detach = registry.attach('s1', (request) => { received.push(request) })
