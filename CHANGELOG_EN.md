@@ -8,6 +8,10 @@
 
 - **`sidebar_open` distinguishes dispatched and queued requests** ([#1174](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1174)). When model-driven sidebar opens are enabled, the tool reports whether it dispatched the request to an attached view or queued it for a connection. Tab visibility is unconfirmed after dispatch.
 
+### v0.34.0-alpha.1
+
+- 🩹 **Side Chat could not send after its tab was closed and reopened** ([#1265](https://github.com/omdsh-dev/DSH-better-sidebar/issues/1265)): closing the tab archived the thread session, and the host refuses every wake of an archived session — the prompt was accepted, then the turn silently ended `blocked` with no reply and no message. Closing now only releases the runtime and never archives; a thread that is already archived is unarchived when it is re-bound or before the next prompt (reopening the tab brings the conversation back); and a turn the host still refuses leaves a visible "blocked by the host" row instead of nothing.
+
 ### v0.34.0-alpha.0
 
 - 🎛 **Changes and Graph on the Git page are resizable**: both sections share the same draggable stack as Clues, with a divider that responds to mouse and touch dragging as well as Home / End / ↑ / ↓; each section scrolls on its own and no divider shows while only one section is open. The split is not persisted and a refresh returns to the default.

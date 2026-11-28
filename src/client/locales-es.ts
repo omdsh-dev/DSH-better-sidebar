@@ -555,6 +555,7 @@ export const es: Record<string, string> = {
   sideChatDequeue: "Quitar de la cola",
   sideChatRunError: "Error de ejecución: {message}",
   sideChatTerminalAborted: "Este turno se detuvo",
+  sideChatTerminalBlocked: 'El host bloqueó este turno (esta conversación lateral puede estar archivada; prueba un hilo nuevo)',
   sideChatTerminalMaxTokens: "Se alcanzó el límite de salida; la respuesta está cortada",
   sideChatToolArguments: "Argumentos",
   sideChatToolResult: "Resultado",
