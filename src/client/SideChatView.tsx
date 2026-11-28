@@ -350,6 +350,7 @@ interface ArchivedSessionsFace {
 
 interface ArchiveSessionFace {
   archiveSession?: (sessionId: string, options: { stopActivity: boolean }) => Promise<void>
+  unarchiveSession?: (sessionId: string) => Promise<void>
 }
 
 /** A stable "nothing is archived" snapshot: the archive set feeds
@@ -800,12 +801,6 @@ interface RowSurface {
   attachments: (list: readonly SidechatAttachment[]) => React.ReactNode
 }
 
-const terminalLabelKeys = {
-  aborted: 'sideChatTerminalAborted',
-  blocked: 'sideChatTerminalBlocked',
-  'max-tokens': 'sideChatTerminalMaxTokens',
-} as const
-
 /** One row renderer (React keys ride the source event seq). `surface` is the
  *  markdown prose pass the rows run before rendering — the rows are model
  *  prose, so a relative destination resolves against the session cwd (see
@@ -880,9 +875,14 @@ function renderRow(row: SidechatTranscriptRow, labels: RowLabels, surface: RowSu
         </div>
       )
     case 'terminal':
+      // The turn ended without a normal completion: say which way (the reader
+      // stopped it vs the output limit cut it), because the next thing the
+      // reader does differs — resend, or continue in a fresh turn.
       return (
         <div key={key} className={css.sidechatTerminal}>
-          {t(terminalLabelKeys[row.reason])}
+          {t(row.reason === 'max-tokens'
+            ? 'sideChatTerminalMaxTokens'
+            : row.reason === 'blocked' ? 'sideChatTerminalBlocked' : 'sideChatTerminalAborted')}
         </div>
       )
     case 'compaction': {
@@ -1190,12 +1190,25 @@ export function SideChatView(props: {
     return pool.reduce((newest, row) => (rank(row.id) > rank(newest.id) ? row : newest)).id
   }, [list, scope.sessionId])
 
-  // A restored binding can precede the host's archive snapshot. Stop using it
-  // as soon as that snapshot marks the thread archived.
-  const boundThreadId = sidechatThreadIdOf(tab)
-  const bindingArchived = boundThreadId !== undefined && archivedIds.includes(boundThreadId)
-  const threadId = bindingArchived ? undefined : boundThreadId
+  // The thread this tab is bound to rides tab.meta (refresh-restored).
+  const threadId = sidechatThreadIdOf(tab)
   const autoCreate = (tab.meta as { autoCreate?: unknown } | undefined)?.autoCreate === true
+
+  // An archived side thread cannot run a turn: the host's archived-session gate
+  // ends every wake as `blocked` with no model request (#1265). Side threads are
+  // only ever archived by the old tab-close path (the archive control is
+  // disabled for them, #949), so binding one is repaired by restoring it rather
+  // than by dropping the conversation. A host without the unarchive face keeps
+  // the old fallback for an independent occurrence.
+  useEffect(() => {
+    if (threadId === undefined || !archivedIds.includes(threadId)) return
+    const service = ctx.get('uiWorkspace') as unknown as ArchiveSessionFace | undefined
+    if (service?.unarchiveSession !== undefined) {
+      void service.unarchiveSession(threadId).catch(() => {})
+      return
+    }
+    if (multipleTabs) updateSeat({ meta: {}, title: t('sideChatUntitled') })
+  }, [archivedIds, threadId, multipleTabs, updateSeat, ctx])
 
   const draft = useSidechatDraft(threadId)
   const composer = draft.owner.text
@@ -1391,29 +1404,40 @@ export function SideChatView(props: {
    */
   const reattachTarget = useCallback((): string | undefined => {
     const remembered = lastSidechatThread(scope.sessionId)
-    if (remembered !== undefined && !archivedIds.includes(remembered)
-      && (threads.length === 0 || threads.some(row => row.id === remembered))) {
-      return remembered
+    if (remembered !== undefined) {
+      if (!archivedIds.includes(remembered)) {
+        // A live remembered thread (an empty `threads` here means the list has
+        // not loaded yet, the old `threads.length === 0` case).
+        if (threads.length === 0 || threads.some(row => row.id === remembered)) return remembered
+      } else {
+        // An archived remembered thread is the exact state the old tab-close
+        // path produced (#1265). Restore it instead of silently opening an
+        // empty page — but only when the host can unarchive it; otherwise the
+        // binding would be a dead end that accepts prompts and never replies.
+        const workspace = ctx.get('uiWorkspace') as unknown as ArchiveSessionFace | undefined
+        if (workspace?.unarchiveSession !== undefined) return remembered
+      }
     }
     return newestThreadId(threads)
-  }, [archivedIds, newestThreadId, scope.sessionId, threads])
+  }, [archivedIds, ctx, newestThreadId, scope.sessionId, threads])
 
-  // A shared page tries its remembered or newest live thread before creating
-  // one. An independent tab only restores its own binding.
+  // autoCreate is an explicit NEW conversation in independent mode; in shared
+  // mode a tab that lost its binding reattaches to the session's last thread
+  // instead of leaving another orphan "Side: New thread" behind.
   useEffect(() => {
-    if (threadId !== undefined) return
-    if (visible && !multipleTabs) {
+    if (threadId !== undefined || !visible) return
+    if (!multipleTabs) {
       const reattach = reattachTarget()
       if (reattach !== undefined) {
         updateSeat({ meta: { threadId: reattach } })
         return
       }
     }
-    if (bindingArchived) updateSeat({ meta: {}, title: t('sideChatUntitled') })
-    else if (visible && autoCreate) void startThread()
-  }, [threadId, bindingArchived, autoCreate, visible, startThread, reattachTarget, multipleTabs, updateSeat])
+    if (autoCreate) void startThread()
+  }, [threadId, autoCreate, visible, startThread, reattachTarget, multipleTabs, updateSeat])
 
-  // Keep the shared page's restore hint in sync with its active binding.
+  // Compatibility hint for consumers of the old last-thread key. Our own
+  // restoration never reads it: every native occurrence has its own binding.
   useEffect(() => {
     if (threadId !== undefined) rememberSidechatThread(scope.sessionId, threadId)
   }, [threadId, scope.sessionId])
@@ -1942,6 +1966,12 @@ export function SideChatView(props: {
         throw new Error('Sidechat surface is no longer active or the prompt is empty')
       }
       setError(null)
+      // Repair an archived thread before the first prompt: the restore runs in
+      // parallel with typing, so a fast send can still arrive here first.
+      const workspace = ctx.get('uiWorkspace') as unknown as ArchiveSessionFace | undefined
+      if (workspace?.unarchiveSession !== undefined && archivedSessionIdsOf(ctx).includes(childId)) {
+        await workspace.unarchiveSession(childId)
+      }
       await api.sidechatPrompt(childId, text)
       if (surfaceBinding.active) {
         void fetchThread(childId)
@@ -1951,7 +1981,7 @@ export function SideChatView(props: {
       if (surfaceBinding.active) setError(cause instanceof Error ? cause.message : String(cause))
       throw cause
     }
-  }, [surfaceBinding, fetchThread, fetchInfo])
+  }, [surfaceBinding, fetchThread, fetchInfo, ctx])
   /** The GenUI binding every transcript row shares (identity matters: the row
    *  memo below must not rebuild a row for an unchanged thread/visibility). */
   const genuiRowSurface = useMemo<SidechatRowSurfaceBinding>(
@@ -2063,6 +2093,15 @@ export function SideChatView(props: {
     try {
       const images = await encodeSidechatImages(attempt)
       if (!attempt.owner.active) return
+      // An archived thread's wake is refused by the host's archived-session
+      // gate before any model request (#1265): restore it right before the
+      // prompt. The bind effect above normally wins this race; this covers a
+      // thread archived while the panel was already open.
+      const workspace = ctx.get('uiWorkspace') as unknown as ArchiveSessionFace | undefined
+      if (workspace?.unarchiveSession !== undefined && archivedSessionIdsOf(ctx).includes(childId)) {
+        await workspace.unarchiveSession(childId)
+        if (!attempt.owner.active) return
+      }
       const result = await api.sidechatPrompt(childId, attempt.text, images)
       if (!attempt.owner.active) return
       setEcho({ text: attempt.text, messageId: result.messageId, hasImages: images.length > 0 })

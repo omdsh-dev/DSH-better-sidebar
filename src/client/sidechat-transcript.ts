@@ -119,8 +119,6 @@ export interface SidechatToolChild {
   children?: SidechatToolChild[]
 }
 
-type TerminalReason = 'aborted' | 'blocked' | 'max-tokens'
-
 /** One compact transcript row rendered in the thread view. `seq` is the
  *  source event's log sequence. Text/reasoning also retain the original
  *  content-block index: one event can yield several rows, so seq alone is
@@ -211,9 +209,14 @@ export type SidechatTranscriptRow =
     outputTokens?: number
     durationMs?: number
   }
-  /** A stopped, blocked or output-limited turn. An attempt's finish and the
-   *  subsequent `turn/end` share one terminal row. */
-  | { kind: 'terminal'; seq: number; reason: TerminalReason }
+  /** A turn that ended WITHOUT a normal completion, so the transcript says why
+   *  it stops there instead of looking deliberately finished: the reader (or
+   *  the agent) stopped it (`aborted`), or the output limit cut it
+   *  (`max-tokens`), or the host refused the turn altogether (`blocked`, e.g.
+   *  an archived thread — see #1265; without a row the composer looked dead).
+   *  One row per turn — the attempt's terminal finish reason and the
+   *  `turn/end` that repeats it are the same event. */
+  | { kind: 'terminal'; seq: number; reason: 'aborted' | 'max-tokens' | 'blocked' }
   /** One `image` / `file` content block of an ASSISTANT message, rendered in
    *  block order: the assistant branch explodes a message per content block, so
    *  an attachment needs its own row to keep that order. A USER message keeps
@@ -867,13 +870,16 @@ function attemptFailure(stream: unknown): string | undefined {
  * The TERMINAL state of a turn, or undefined when the reason is a normal finish
  * or a provider error (which gets its own row): `aborted` and `interrupted`
  * both mean "stopped before it finished", while `max-tokens` means the model hit
- * the output limit and `blocked` means the host rejected a step.
+ * the output limit and the answer is cut off.
  */
-function terminalReason(reason: unknown): TerminalReason | undefined {
+function terminalReason(reason: unknown): 'aborted' | 'max-tokens' | 'blocked' | undefined {
   if (reason === null || typeof reason !== 'object' || Array.isArray(reason)) return undefined
   const kind = (reason as { kind?: unknown }).kind
   if (kind === 'aborted' || kind === 'interrupted') return 'aborted'
-  if (kind === 'max-tokens' || kind === 'blocked') return kind
+  if (kind === 'max-tokens') return 'max-tokens'
+  // The host's pre-step gate: the turn never reached a model request. Left
+  // unmapped it renders NOTHING, which reads as "the message was never sent".
+  if (kind === 'blocked') return 'blocked'
   return undefined
 }
 
@@ -883,7 +889,7 @@ function terminalReason(reason: unknown): TerminalReason | undefined {
  * read for the stop/limit kinds instead of errors). Undefined for every other
  * ending.
  */
-function attemptTerminal(stream: unknown): TerminalReason | undefined {
+function attemptTerminal(stream: unknown): 'aborted' | 'max-tokens' | 'blocked' | undefined {
   if (!Array.isArray(stream)) return undefined
   for (const record of stream) {
     if (record === null || typeof record !== 'object') continue
@@ -1071,7 +1077,8 @@ export function transcriptRows(entries: readonly SidebarHistoryEntry[], prev?: r
           errorTurns.add(turn)
           rows.push({ kind: 'error', seq: event.seq, text: failure })
         }
-        // A blocked turn can end here without any assistant attempt.
+        // A stop or an output-limit cut is not an error, but it must not look
+        // like a deliberate finish either: one terminal row per turn.
         const terminal = terminalReason(data.reason)
         if (terminal !== undefined && !terminalTurns.has(turn)) {
           terminalTurns.add(turn)

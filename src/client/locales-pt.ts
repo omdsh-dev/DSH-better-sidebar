@@ -549,7 +549,7 @@ export const pt: Record<string, string> = {
   sideChatDequeue: 'Remover da fila',
   sideChatRunError: 'Falha na execução: {message}',
   sideChatTerminalAborted: 'Esta rodada foi interrompida',
-  sideChatTerminalBlocked: 'O host bloqueou esta rodada',
+  sideChatTerminalBlocked: 'O host bloqueou este turno (esta conversa lateral pode estar arquivada; tente um novo tópico)',
   sideChatTerminalMaxTokens: 'Limite de saída atingido — a resposta está cortada',
   sideChatToolArguments: 'Argumentos',
   sideChatToolResult: 'Resultado',

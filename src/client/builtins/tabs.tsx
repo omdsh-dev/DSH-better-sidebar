@@ -43,36 +43,16 @@ import {
 import type { Context } from '../../context-types.ts'
 import type { TabComponentProps, TabDescriptor } from '../service.ts'
 
-/** Host session surface (`ctx.get('uiWorkspace')`). Archive is optional. */
-interface ArchiveSessionFace {
-  archiveSession?: (sessionId: string, options: { stopActivity: boolean }) => Promise<void>
-}
-
 /**
- * Hide a closed Side Chat thread, then release its live agent.
- *
- * `stopActivity` settles a running turn before the session leaves the list.
- * The workspace service is optional: a missing service or a rejected archive
- * still disposes, and the close path itself never rejects. An unbound tab
- * never reaches here.
+ * Release a closed Side Chat thread's live agent. Deliberately does NOT archive
+ * it: an archived side thread cannot be resumed — its next prompt is accepted
+ * and then silently ends `blocked` (#1265) — and the archive control is
+ * disabled for side threads because the UI cannot unarchive them (#949). The
+ * session stays persisted (unarchived, hidden with its parent's other side
+ * threads) so reopening the panel can reattach and continue it.
  */
-function releaseSidechat(ctx: Context, threadId: string): void {
-  const dispose = (): void => {
-    void api.sidechatDispose(threadId).catch(() => {})
-  }
-  void (async () => {
-    try {
-      const service = ctx.get('uiWorkspace') as unknown as ArchiveSessionFace | undefined
-      // Method call: an unbound `archiveSession` would lose the service as `this`.
-      if (service?.archiveSession !== undefined) {
-        await service.archiveSession(threadId, { stopActivity: true })
-      }
-    } catch {
-      // Archive is best-effort. Dispose still runs in finally.
-    } finally {
-      dispose()
-    }
-  })()
+function releaseSidechat(threadId: string): void {
+  void api.sidechatDispose(threadId).catch(() => {})
 }
 
 /**
@@ -351,7 +331,7 @@ export function builtinTabs(ctx: Context): readonly TabDescriptor[] {
       // unbound fresh tab has no session, so close cleans nothing up.
       onClose: (tab) => {
         const threadId = sidechatThreadIdOf(tab)
-        if (threadId !== undefined) releaseSidechat(ctx, threadId)
+        if (threadId !== undefined) releaseSidechat(threadId)
       },
       // The composer's submit gesture (Enter vs Cmd/Ctrl+Enter) is a
       // plugin-owned setting: a select row under the side-chat card's gear in

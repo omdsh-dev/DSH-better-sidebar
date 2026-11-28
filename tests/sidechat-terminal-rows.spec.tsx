@@ -25,8 +25,13 @@
  * 4. The ERROR path is unchanged: `reason.kind === 'error'` still renders the
  *    existing error row with the provider's message, and never a terminal row;
  *    a normal completion renders neither.
- * 5. A blocked turn can end before an assistant attempt exists (#1265). Its
- *    host-blocked status must still appear in the transcript in the UI language.
+ * 5. Localised copy only: both sentences come from the dictionaries
+ *    (`sideChatTerminalAborted` / `sideChatTerminalMaxTokens`, added to zh, en
+ *    and ja like every other key).
+ * 6. A HOST-BLOCKED turn (`turn/end { reason: { kind: 'blocked' } }`, e.g. an
+ *    archived thread, #1265) also leaves exactly one terminal row, with its
+ *    own `sideChatTerminalBlocked` sentence: the prompt is accepted but no
+ *    model request happens, and the old silent drop read as "cannot send".
  * ==================================================================
  *
  * Mapping-level assertions run against `transcriptRows` (deterministic, no DOM);
@@ -39,9 +44,10 @@ import { transcriptRows } from '../src/client/sidechat-transcript.ts'
 import { t } from '../src/client/locales.ts'
 import type { SidebarHistoryEntry } from '../src/context-types.ts'
 
-/** The two terminal sentences this contract names. */
+/** The terminal sentences this contract names. */
 const ABORTED_KEY = 'sideChatTerminalAborted'
 const MAX_TOKENS_KEY = 'sideChatTerminalMaxTokens'
+const BLOCKED_KEY = 'sideChatTerminalBlocked'
 
 /** Translate a key this spec names but the build may not have yet. */
 function copy(key: string, params?: Record<string, string | number>): string {
@@ -98,14 +104,24 @@ describe('turn terminal rows (D9)', () => {
     expect(rowsOfKind(events, 'error')).toHaveLength(0)
   })
 
-  it('shows a blocked turn even when the host never started an assistant attempt', async () => {
+  it('maps a host-blocked turn onto exactly one terminal row of its own', () => {
     const events = turnEvents({ kind: 'blocked' })
-    expect(rowsOfKind(events, 'terminal')).toEqual([{ kind: 'terminal', seq: 90, reason: 'blocked' }])
-    harness.wire.events = events
+    const terminal = rowsOfKind(events, 'terminal')
+    expect(terminal, 'a blocked wake leaves a terminal row').toHaveLength(1)
+    expect(terminal[0]).toMatchObject({ kind: 'terminal', reason: 'blocked' })
+    expect(rowsOfKind(events, 'error')).toHaveLength(0)
+  })
+
+  it('shows the blocked sentence in the transcript, distinct from the stop and limit ones', async () => {
+    harness.wire.events = turnEvents({ kind: 'blocked' })
     const rendered = harness.mount()
+    await harness.flush(4)
     try {
-      await harness.flush(4)
-      expect(rendered.container.textContent).toContain(t('sideChatTerminalBlocked'))
+      const blocked = copy(BLOCKED_KEY)
+      expect(blocked, `the ${BLOCKED_KEY} key must exist in the locale dictionary`).not.toBe(BLOCKED_KEY)
+      expect(blocked).not.toBe(copy(ABORTED_KEY))
+      expect(blocked).not.toBe(copy(MAX_TOKENS_KEY))
+      expect(rendered.container.textContent, 'a blocked turn says why it never answered').toContain(blocked)
     } finally {
       rendered.unmount()
     }
@@ -171,6 +187,7 @@ describe('turn terminal rows (D9)', () => {
       const text = rendered.container.textContent ?? ''
       expect(text).not.toContain(copy(ABORTED_KEY))
       expect(text).not.toContain(copy(MAX_TOKENS_KEY))
+      expect(text).not.toContain(copy(BLOCKED_KEY))
     } finally {
       rendered.unmount()
     }
